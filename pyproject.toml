@@ -61,7 +61,7 @@ dev = [
     "pytest",
     "ruff>=0.12,<1",
     "build==1.5.0",
-    "mypy>=1.16,<2",
+    "mypy>=1.16,<3",
     "types-PyYAML",
     "types-requests",
     "setuptools==83.0.0",
