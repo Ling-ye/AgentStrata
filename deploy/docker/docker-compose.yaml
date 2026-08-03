@@ -19,7 +19,7 @@
 services:
   # ---------- Tavily web search (quota proxy → official MCP) -----------------
   tavily-mcp:
-    image: node:22-alpine
+    image: node:26-alpine
     container_name: chatcopilot-tavily-mcp
     init: true
     command: ["node", "/app/proxy.mjs"]
@@ -213,7 +213,7 @@ services:
 
   # ---------- Brave Search (native HTTP transport, no supergateway needed) -----
   brave-search-mcp:
-    image: node:22-alpine
+    image: node:26-alpine
     container_name: chatcopilot-brave-search-mcp
     init: true
     command: ["npx", "-y", "@brave/brave-search-mcp-server", "--transport", "http"]
