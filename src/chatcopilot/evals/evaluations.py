@@ -1,0 +1,2258 @@
+"""Canonical Evaluation domain and unified orchestration.
+
+An Evaluation is the only top-level run resource.  Lifecycle status describes
+the orchestration, while each Trial has an independent outcome.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+import re
+import shlex
+import shutil
+import time
+import uuid
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Iterator, Literal, Mapping, Sequence, TypeAlias
+
+from chatcopilot.agent.backends.registry import backend_ids
+from chatcopilot.core.config import load_config
+from chatcopilot.evals.artifact_ids import (
+    contained_artifact_path,
+    safe_artifact_component,
+    trial_artifact_id,
+)
+from chatcopilot.evals.isolated_executor import (
+    IsolatedTarget,
+    IsolatedTrialRequest,
+    execute_isolated_trial,
+    load_evaluation_runtime,
+)
+from chatcopilot.evals.models import EvalCase, EvalCaseResult, to_jsonable
+from chatcopilot.evals.profiles import ProfileCase, get_profile
+from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, sanitize_text
+from chatcopilot.evals.registry import get_cases, get_standard
+from chatcopilot.evals.runner import run_suite
+
+EvaluationKind = Literal["comparison", "suite"]
+EvaluationStatus = Literal[
+    "queued",
+    "running",
+    "completed",
+    "partial",
+    "cancelled",
+    "interrupted",
+    "error",
+]
+TrialOutcome = Literal["passed", "failed", "skipped", "error"]
+TargetExecutor = Literal["direct_llm", "agent_configured", "agent_isolated", "dry_run"]
+ComparisonPreset = Literal["quick", "standard", "custom"]
+
+ProgressCallback = Callable[[dict[str, Any]], None]
+CancelCheck = Callable[[], bool]
+TrialExecutor = Callable[["TrialExecutionRequest"], "EvaluationTrial"]
+_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_TERMINAL_STATUSES = frozenset(
+    {"completed", "partial", "cancelled", "interrupted", "error"}
+)
+_DEFAULT_COMPARISON_TARGETS = ("codex", "native")
+_TIE_THRESHOLD = 0.05
+
+
+@dataclass(frozen=True)
+class EvaluationTarget:
+    """Resolved and fingerprinted execution lane."""
+
+    target_id: str
+    label: str
+    executor: TargetExecutor
+    backend: str
+    model: str
+    reasoning_effort: str
+    fingerprint: str
+    config_fingerprint: str = ""
+
+
+@dataclass(frozen=True)
+class ComparisonEvaluationRequest:
+    """Resolved request for a versioned Profile comparison."""
+
+    evaluation_id: str
+    kind: Literal["comparison"]
+    bot: str
+    profile: str
+    preset: ComparisonPreset
+    targets: tuple[str, ...]
+    case_refs: tuple[str, ...]
+    repetitions: int
+    max_wall_seconds: float
+    seed: int
+
+
+@dataclass(frozen=True)
+class SuiteEvaluationRequest:
+    """Resolved request for one official or built-in benchmark Suite."""
+
+    evaluation_id: str
+    kind: Literal["suite"]
+    bot: str
+    suite: str
+    case_ids: tuple[str, ...]
+    dry_run: bool
+    llm_judge: bool
+
+
+EvaluationRequest: TypeAlias = ComparisonEvaluationRequest | SuiteEvaluationRequest
+
+
+@dataclass(frozen=True)
+class TrialExecutionRequest:
+    """One executor invocation inside a complete target group."""
+
+    evaluation_id: str
+    kind: EvaluationKind
+    bot: str
+    output: Path
+    suite_id: str
+    profile: str
+    profile_case: ProfileCase | None
+    case: EvalCase
+    dimension: str
+    target: EvaluationTarget
+    attempt: int
+    order: int
+    dry_run: bool = False
+    llm_judge: bool = False
+
+
+@dataclass(frozen=True)
+class EvaluationTrial:
+    """Coverage-complete evidence for one Case, attempt, and Target."""
+
+    trial_id: str
+    evaluation_id: str
+    kind: EvaluationKind
+    bot: str
+    profile: str
+    suite_id: str
+    case_ref: str
+    case_id: str
+    dimension: str
+    target_id: str
+    target_fingerprint: str
+    executor: TargetExecutor
+    backend: str
+    model: str
+    reasoning_effort: str
+    attempt: int
+    order: int
+    outcome: TrialOutcome
+    score: float = 0.0
+    max_score: float = 1.0
+    passed: bool = False
+    duration_seconds: float = 0.0
+    final_text: str = ""
+    stop_reason: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    judge: dict[str, Any] | None = None
+    events: tuple[dict[str, Any], ...] = ()
+    usage_totals: dict[str, int] = field(default_factory=dict)
+    tool_summary: dict[str, int] = field(default_factory=dict)
+    evidence: dict[str, Any] = field(default_factory=dict)
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class CaseComparison:
+    case_ref: str
+    case_id: str
+    dimension: str
+    sample_size: int
+    verdict: str
+    targets: dict[str, dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class EvaluationResult:
+    """Authoritative top-level Evaluation result."""
+
+    evaluation_id: str
+    kind: EvaluationKind
+    bot: str
+    status: EvaluationStatus
+    started_at: str
+    finished_at: str
+    duration_seconds: float
+    profile: str = ""
+    suite: str = ""
+    preset: str = ""
+    repetitions: int = 1
+    max_wall_seconds: float = 0.0
+    seed: int = 0
+    targets: tuple[EvaluationTarget, ...] = ()
+    selected_cases: tuple[str, ...] = ()
+    trials: tuple[EvaluationTrial, ...] = ()
+    comparisons: tuple[CaseComparison, ...] = ()
+    dimensions: dict[str, Any] = field(default_factory=dict)
+    summary: dict[str, Any] = field(default_factory=dict)
+    config_snapshot: dict[str, Any] = field(default_factory=dict)
+    error: str = ""
+
+
+class EvaluationValidationError(ValueError):
+    """Structured validation failure safe to expose through Console or CLI."""
+
+    def __init__(self, message: str, *, checks: Sequence[Mapping[str, Any]]) -> None:
+        super().__init__(message)
+        self.code = "evaluation_validation_failed"
+        self.message = message
+        self.checks = [dict(item) for item in checks]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"code": self.code, "message": self.message, "checks": self.checks}
+
+
+@dataclass(frozen=True)
+class _ResumeCheckpoint:
+    trials: tuple[EvaluationTrial, ...] = ()
+    started_at: str = ""
+    duration_seconds: float = 0.0
+
+
+def parse_evaluation_request(request: Mapping[str, Any] | EvaluationRequest) -> EvaluationRequest:
+    """Strictly parse a discriminated request and resolve preset defaults."""
+
+    if isinstance(request, (ComparisonEvaluationRequest, SuiteEvaluationRequest)):
+        return request
+    if not isinstance(request, Mapping):
+        raise ValueError("evaluation request must be an object")
+    kind = str(request.get("kind", "")).strip().lower()
+    if kind == "comparison":
+        return _parse_comparison_request(request)
+    if kind == "suite":
+        return _parse_suite_request(request)
+    raise ValueError("kind must be 'comparison' or 'suite'")
+
+
+def validate_evaluation(
+    request: Mapping[str, Any] | EvaluationRequest,
+) -> dict[str, Any]:
+    """Validate without writing artifacts, starting workers, or preparing data."""
+
+    checks: list[dict[str, Any]] = []
+    try:
+        parsed = parse_evaluation_request(request)
+        checks.append(_check("request", "请求结构", True, f"kind={parsed.kind}"))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_check("request", "请求结构", False, str(exc), "修正评测请求字段"))
+        return _validation_payload(False, checks, None, ())
+
+    if parsed.kind == "comparison":
+        targets = _validate_comparison(parsed, checks)
+    else:
+        targets = _validate_suite(parsed, checks)
+    ready = bool(targets) and all(bool(item.get("ok")) for item in checks)
+    return _validation_payload(ready, checks, parsed, targets)
+
+
+def run_evaluation(
+    request: Mapping[str, Any] | EvaluationRequest,
+    *,
+    output: Path,
+    progress_callback: ProgressCallback | None = None,
+    cancel_check: CancelCheck | None = None,
+    trial_executor: TrialExecutor | None = None,
+    resume: bool = False,
+) -> EvaluationResult:
+    """Run case × attempt × targets with complete target-group checkpoints."""
+
+    validation = validate_evaluation(request)
+    if not validation["ready"]:
+        failed = [item for item in validation["checks"] if not item.get("ok")]
+        message = "; ".join(str(item.get("detail", "")) for item in failed)
+        raise EvaluationValidationError(
+            message or "evaluation validation failed",
+            checks=validation["checks"],
+        )
+    parsed = parse_evaluation_request(request)
+    targets = tuple(_target_from_dict(item) for item in validation["targets"])
+    output = output.expanduser().resolve()
+    cases = _execution_cases(parsed)
+    snapshot = _config_snapshot(parsed, targets, cases)
+    if resume:
+        checkpoint = _resume_checkpoint(
+            output=output,
+            request=parsed,
+            targets=targets,
+            cases=cases,
+            config_snapshot=snapshot,
+        )
+    else:
+        _validate_fresh_output(
+            output=output,
+            request=parsed,
+            targets=targets,
+        )
+        checkpoint = _ResumeCheckpoint()
+    output.mkdir(parents=True, exist_ok=True)
+    if not resume:
+        _persist_request(parsed, targets, output)
+
+    started_clock = time.monotonic()
+    started_at = checkpoint.started_at or _utc_now()
+    trials: list[EvaluationTrial] = list(checkpoint.trials)
+    status: EvaluationStatus = "running"
+    error = ""
+    repetitions = parsed.repetitions if parsed.kind == "comparison" else 1
+    max_wall_seconds = parsed.max_wall_seconds if parsed.kind == "comparison" else 0.0
+    seed = parsed.seed if parsed.kind == "comparison" else 0
+    total_trials = len(cases) * repetitions * len(targets)
+    complete_groups = _complete_group_keys(trials, targets)
+    execute = trial_executor or execute_evaluation_trial
+    result = _build_result(
+        request=parsed,
+        targets=targets,
+        cases=cases,
+        trials=trials,
+        status=status,
+        started_at=started_at,
+        started_clock=started_clock,
+        previous_duration_seconds=checkpoint.duration_seconds,
+        config_snapshot=snapshot,
+    )
+    _persist_evaluation(result, output)
+    _record_event(
+        output,
+        progress_callback,
+        event="evaluation_started",
+        evaluation_id=parsed.evaluation_id,
+        kind=parsed.kind,
+        status=status,
+        completed_trials=len(trials),
+        total_trials=total_trials,
+    )
+
+    group_index = 0
+    try:
+        stop = False
+        for case in cases:
+            case_ref = _case_ref(
+                case,
+                suite_id=parsed.suite if parsed.kind == "suite" else "",
+            )
+            for attempt in range(1, repetitions + 1):
+                group_key = (case_ref, attempt)
+                if group_key in complete_groups:
+                    group_index += 1
+                    continue
+                if cancel_check is not None and cancel_check():
+                    status = "cancelled"
+                    stop = True
+                    break
+                elapsed_seconds = (
+                    checkpoint.duration_seconds + time.monotonic() - started_clock
+                )
+                if max_wall_seconds > 0 and elapsed_seconds >= max_wall_seconds:
+                    status = "partial"
+                    stop = True
+                    break
+
+                ordered_targets = list(targets)
+                if parsed.kind == "comparison" and (seed + group_index) % 2 == 1:
+                    ordered_targets.reverse()
+                group_index += 1
+                group: list[EvaluationTrial] = []
+                for order, target in enumerate(ordered_targets, start=1):
+                    execution_request = _trial_request(
+                        request=parsed,
+                        output=output,
+                        case=case,
+                        target=target,
+                        attempt=attempt,
+                        order=order,
+                    )
+                    _reset_trial_workspace(execution_request)
+                    _record_event(
+                        output,
+                        progress_callback,
+                        event="trial_started",
+                        evaluation_id=parsed.evaluation_id,
+                        case_ref=case_ref,
+                        target_id=target.target_id,
+                        target_fingerprint=target.fingerprint,
+                        attempt=attempt,
+                        order=order,
+                        completed_trials=len(trials),
+                        total_trials=total_trials,
+                    )
+                    try:
+                        trial = execute(execution_request)
+                    except Exception as exc:  # noqa: BLE001
+                        trial = _error_trial(execution_request, exc)
+                    trial = replace(trial, trial_id=_trial_id(execution_request))
+                    group.append(_sanitize_trial(trial, output=output))
+                    _record_event(
+                        output,
+                        progress_callback,
+                        event="trial_completed",
+                        evaluation_id=parsed.evaluation_id,
+                        case_ref=case_ref,
+                        target_id=target.target_id,
+                        target_fingerprint=target.fingerprint,
+                        attempt=attempt,
+                        outcome=group[-1].outcome,
+                        completed_trials=len(trials) + len(group),
+                        total_trials=total_trials,
+                    )
+
+                # A checkpoint either contains every Target in the group or none.
+                if len(group) == len(targets):
+                    trials.extend(group)
+                    complete_groups.add(group_key)
+                result = _build_result(
+                    request=parsed,
+                    targets=targets,
+                    cases=cases,
+                    trials=trials,
+                    status=status,
+                    started_at=started_at,
+                    started_clock=started_clock,
+                    previous_duration_seconds=checkpoint.duration_seconds,
+                    config_snapshot=snapshot,
+                )
+                _persist_evaluation(result, output)
+                _record_event(
+                    output,
+                    progress_callback,
+                    event="target_group_completed",
+                    evaluation_id=parsed.evaluation_id,
+                    kind=parsed.kind,
+                    status=status,
+                    case_ref=case_ref,
+                    attempt=attempt,
+                    completed_trials=len(trials),
+                    total_trials=total_trials,
+                )
+            if stop:
+                break
+    except KeyboardInterrupt:
+        status = "interrupted"
+        error = "evaluation interrupted"
+    except Exception as exc:  # noqa: BLE001
+        status = "error"
+        error = f"{type(exc).__name__}: {exc}"
+
+    if status == "running":
+        status = "completed"
+    result = _build_result(
+        request=parsed,
+        targets=targets,
+        cases=cases,
+        trials=trials,
+        status=status,
+        started_at=started_at,
+        started_clock=started_clock,
+        previous_duration_seconds=checkpoint.duration_seconds,
+        config_snapshot=snapshot,
+        error=error,
+        finished=True,
+    )
+    _persist_evaluation(result, output)
+    _record_event(
+        output,
+        progress_callback,
+        event="evaluation_completed",
+        evaluation_id=parsed.evaluation_id,
+        kind=parsed.kind,
+        status=result.status,
+        completed_trials=len(result.trials),
+        total_trials=total_trials,
+    )
+    return result
+
+
+def execute_evaluation_trial(request: TrialExecutionRequest) -> EvaluationTrial:
+    """Dispatch explicitly to the supported executor policies."""
+
+    if request.target.executor == "agent_isolated":
+        if request.profile_case is None:
+            raise ValueError("agent_isolated requires a Profile Case")
+        isolated = execute_isolated_trial(
+            IsolatedTrialRequest(
+                bot=request.bot,
+                evaluation_id=request.evaluation_id,
+                output=request.output,
+                profile_case=request.profile_case,
+                target=IsolatedTarget(
+                    target_id=request.target.target_id,
+                    backend=request.target.backend,
+                    label=request.target.label,
+                    fingerprint=request.target.fingerprint,
+                    model=request.target.model,
+                    reasoning_effort=request.target.reasoning_effort,
+                ),
+                attempt=request.attempt,
+                order=request.order,
+            )
+        )
+        return EvaluationTrial(
+            trial_id=isolated.trial_id,
+            evaluation_id=request.evaluation_id,
+            kind=request.kind,
+            bot=request.bot,
+            profile=request.profile,
+            suite_id=isolated.suite_id,
+            case_ref=isolated.case_ref,
+            case_id=isolated.case_id,
+            dimension=isolated.dimension,
+            target_id=request.target.target_id,
+            target_fingerprint=request.target.fingerprint,
+            executor=request.target.executor,
+            backend=request.target.backend,
+            model=request.target.model,
+            reasoning_effort=request.target.reasoning_effort,
+            attempt=request.attempt,
+            order=request.order,
+            outcome=_normalize_outcome(isolated.outcome),
+            score=isolated.score,
+            max_score=1.0,
+            passed=isolated.passed,
+            duration_seconds=isolated.duration_seconds,
+            final_text=isolated.final_text,
+            stop_reason=isolated.stop_reason,
+            started_at=isolated.started_at,
+            finished_at=isolated.finished_at,
+            judge=isolated.judge,
+            events=isolated.events,
+            usage_totals=isolated.usage_totals or {},
+            tool_summary=isolated.tool_summary or {},
+            evidence=isolated.evidence or {},
+            error=isolated.error,
+        )
+
+    if request.target.executor not in {"direct_llm", "agent_configured", "dry_run"}:
+        raise ValueError(f"unsupported evaluation executor: {request.target.executor}")
+    run = run_suite(
+        request.suite_id,
+        bot=request.bot or None,
+        dry_run=request.target.executor == "dry_run",
+        llm_judge=request.llm_judge,
+        case_ids=[request.case.case_id],
+        workspace_root=contained_artifact_path(
+            request.output,
+            "workspaces",
+            _trial_id(request),
+        ),
+    )
+    if len(run.cases) != 1:
+        raise ValueError(
+            f"{request.suite_id}:{request.case.case_id} produced {len(run.cases)} results"
+        )
+    return _trial_from_case_result(request, run.cases[0])
+
+
+def evaluation_result_to_dict(result: EvaluationResult) -> dict[str, Any]:
+    """Return a stable JSON-ready result shape for Console and CLI."""
+
+    payload = to_jsonable(result)
+    return redact_payload(
+        payload,
+        secrets=collect_env_secrets(),
+        roots={"repository": Path.cwd()},
+    )
+
+
+def aggregate_comparison(
+    trials: Sequence[EvaluationTrial],
+    cases: Sequence[ProfileCase],
+    targets: Sequence[EvaluationTarget],
+) -> tuple[tuple[CaseComparison, ...], dict[str, Any], dict[str, Any]]:
+    """Aggregate only complete, outcome-bearing target pairs."""
+
+    comparisons: list[CaseComparison] = []
+    target_ids = tuple(target.target_id for target in targets)
+    for item in cases:
+        case_trials = [trial for trial in trials if trial.case_ref == item.ref]
+        complete_attempts = _valid_complete_attempts(case_trials, targets)
+        comparable = [
+            trial for trial in case_trials if trial.attempt in complete_attempts
+        ]
+        target_stats = {
+            target.target_id: _target_statistics(
+                [trial for trial in comparable if trial.target_id == target.target_id]
+            )
+            for target in targets
+        }
+        verdict = _verdict(target_stats, target_ids, bool(complete_attempts))
+        comparisons.append(
+            CaseComparison(
+                case_ref=item.ref,
+                case_id=item.case_id,
+                dimension=item.dimension,
+                sample_size=len(complete_attempts) if len(targets) == 2 else 0,
+                verdict=verdict,
+                targets=target_stats,
+            )
+        )
+
+    dimensions: dict[str, Any] = {}
+    for dimension in dict.fromkeys(item.dimension for item in cases):
+        dimension_cases = [item for item in cases if item.dimension == dimension]
+        refs = {item.ref for item in dimension_cases}
+        dimension_trials = [trial for trial in trials if trial.case_ref in refs]
+        complete_by_ref = {
+            item.ref: _valid_complete_attempts(
+                [trial for trial in dimension_trials if trial.case_ref == item.ref],
+                targets,
+            )
+            for item in dimension_cases
+        }
+        comparable = [
+            trial
+            for trial in dimension_trials
+            if trial.attempt in complete_by_ref.get(trial.case_ref, set())
+        ]
+        target_stats = {
+            target.target_id: _target_statistics(
+                [trial for trial in comparable if trial.target_id == target.target_id]
+            )
+            for target in targets
+        }
+        sample_size = sum(len(value) for value in complete_by_ref.values())
+        dimensions[dimension] = {
+            "case_count": len(dimension_cases),
+            "sample_size": sample_size if len(targets) == 2 else 0,
+            "verdict": _verdict(target_stats, target_ids, sample_size > 0),
+            "targets": target_stats,
+        }
+
+    case_verdicts = [item.verdict for item in comparisons]
+    wins = {
+        target.target_id: case_verdicts.count(target.target_id)
+        for target in targets
+    } if len(targets) == 2 else {}
+    summary = {
+        "case_count": len(cases),
+        "trial_count": len(trials),
+        "paired_attempt_count": (
+            sum(item.sample_size for item in comparisons) if len(targets) == 2 else 0
+        ),
+        "wins": wins,
+        "ties": case_verdicts.count("tie") if len(targets) == 2 else 0,
+        "inconclusive": case_verdicts.count("inconclusive"),
+        "tie_threshold": _TIE_THRESHOLD,
+        "outcomes": _outcome_counts(trials),
+        "cost": "unknown",
+        "scope_note": "Directional Profile comparison; not a general intelligence ranking.",
+    }
+    return tuple(comparisons), dimensions, summary
+
+
+def _parse_comparison_request(request: Mapping[str, Any]) -> ComparisonEvaluationRequest:
+    allowed = {
+        "evaluation_id",
+        "kind",
+        "bot",
+        "profile",
+        "preset",
+        "targets",
+        "case_refs",
+        "repetitions",
+        "max_wall_seconds",
+        "seed",
+    }
+    _reject_extra_fields(request, allowed)
+    evaluation_id = _evaluation_id(request.get("evaluation_id"))
+    bot = _required_text(request.get("bot"), "bot")
+    profile_id = str(request.get("profile") or "agent-comparison-mvp").strip().lower()
+    profile = get_profile(profile_id)
+    preset = str(request.get("preset") or "quick").strip().lower()
+    if preset not in {"quick", "standard", "custom"}:
+        raise ValueError("preset must be quick, standard, or custom")
+    override_fields = {
+        "targets",
+        "case_refs",
+        "repetitions",
+        "max_wall_seconds",
+        "seed",
+    }
+    targets: tuple[str, ...]
+    case_refs: tuple[str, ...]
+    supplied_overrides = sorted(field for field in override_fields if field in request)
+    if preset in {"quick", "standard"}:
+        if supplied_overrides:
+            raise ValueError(
+                f"{preset} preset does not accept overrides: {', '.join(supplied_overrides)}"
+            )
+        mode = profile.modes.get(preset)
+        if mode is None:
+            raise ValueError(f"profile {profile_id} does not define preset {preset}")
+        targets = _DEFAULT_COMPARISON_TARGETS
+        case_refs = tuple(item.ref for item in profile.cases)
+        repetitions = mode.repetitions
+        max_wall_seconds = float(mode.max_wall_seconds)
+        seed = profile.default_seed
+    else:
+        missing = sorted(field for field in override_fields if field not in request)
+        if missing:
+            raise ValueError(f"custom preset requires: {', '.join(missing)}")
+        targets = _unique_texts(request.get("targets"), "targets")
+        case_refs = _unique_texts(request.get("case_refs"), "case_refs")
+        repetitions = _positive_int(request.get("repetitions"), "repetitions")
+        max_wall_seconds = _positive_number(
+            request.get("max_wall_seconds"), "max_wall_seconds"
+        )
+        seed = _integer(request.get("seed"), "seed")
+    known_cases = {item.ref for item in profile.cases}
+    unknown = [value for value in case_refs if value not in known_cases]
+    if unknown:
+        raise ValueError(f"unknown Profile Case refs: {', '.join(unknown)}")
+    return ComparisonEvaluationRequest(
+        evaluation_id=evaluation_id,
+        kind="comparison",
+        bot=bot,
+        profile=profile.profile_id,
+        preset=preset,  # type: ignore[arg-type]
+        targets=targets,
+        case_refs=case_refs,
+        repetitions=repetitions,
+        max_wall_seconds=max_wall_seconds,
+        seed=seed,
+    )
+
+
+def _parse_suite_request(request: Mapping[str, Any]) -> SuiteEvaluationRequest:
+    allowed = {
+        "evaluation_id",
+        "kind",
+        "bot",
+        "suite",
+        "case_ids",
+        "dry_run",
+        "llm_judge",
+    }
+    _reject_extra_fields(request, allowed)
+    suite = _required_text(request.get("suite"), "suite").lower().replace("_", "-")
+    get_standard(suite)
+    dry_run = _strict_bool(request.get("dry_run", False), "dry_run")
+    llm_judge = _strict_bool(request.get("llm_judge", False), "llm_judge")
+    if llm_judge and suite != "gaia":
+        raise ValueError("llm_judge is supported only for GAIA")
+    raw_case_ids = request.get("case_ids")
+    case_ids = () if raw_case_ids is None else _unique_texts(raw_case_ids, "case_ids")
+    bot = str(request.get("bot") or "").strip()
+    if not dry_run and not bot:
+        raise ValueError("bot is required unless dry_run is true")
+    return SuiteEvaluationRequest(
+        evaluation_id=_evaluation_id(request.get("evaluation_id")),
+        kind="suite",
+        bot=bot,
+        suite=suite,
+        case_ids=case_ids,
+        dry_run=dry_run,
+        llm_judge=llm_judge,
+    )
+
+
+def _validate_comparison(
+    request: ComparisonEvaluationRequest,
+    checks: list[dict[str, Any]],
+) -> tuple[EvaluationTarget, ...]:
+    profile = get_profile(request.profile)
+    cases = [item for item in profile.cases if item.ref in set(request.case_refs)]
+    checks.append(
+        _check(
+            "profile",
+            "Profile 与固定 Case",
+            len(cases) == len(request.case_refs),
+            f"profile={profile.profile_id}, cases={len(cases)}",
+        )
+    )
+    targets: list[EvaluationTarget] = []
+    try:
+        with _preserved_environment():
+            runtime = load_evaluation_runtime(request.bot)
+            config = load_config(env_prefix=runtime.spec.llm.env_prefix)
+            config_fingerprint = _runtime_behavior_fingerprint(runtime)
+            checks.append(
+                _check("botspec", "BotSpec", True, runtime.source_path.parent.name)
+            )
+            for target_id in request.targets:
+                target, target_check = _isolated_target(
+                    target_id,
+                    config,
+                    config_fingerprint=config_fingerprint,
+                )
+                checks.append(target_check)
+                targets.append(target)
+    except Exception as exc:  # noqa: BLE001
+        checks.append(
+            _check("botspec", "BotSpec", False, str(exc), "检查 BotSpec 与 local.env")
+        )
+        return ()
+
+    for item in cases:
+        allowed = item.case.metadata.get("allowed_tools", [])
+        fixture_ok = item.case.category != "code" or bool(
+            item.case.metadata.get("fixture_files")
+        )
+        checks.append(
+            _check(
+                f"policy:{item.ref}",
+                f"隔离策略 · {item.case_id}",
+                isinstance(allowed, list) and fixture_ok,
+                f"allow={','.join(str(value) for value in allowed) or 'none'}",
+                "为 Profile Case 声明工具白名单和代码 fixture",
+            )
+        )
+    return tuple(targets)
+
+
+def _validate_suite(
+    request: SuiteEvaluationRequest,
+    checks: list[dict[str, Any]],
+) -> tuple[EvaluationTarget, ...]:
+    standard = get_standard(request.suite)
+    try:
+        loaded = get_cases(standard.suite_id, auto_prepare=False)
+        selected = _select_suite_cases(loaded, request.case_ids)
+        ready = bool(selected)
+        detail = f"suite={standard.suite_id}, cases={len(selected)}"
+        if not loaded and standard.requires_external_data:
+            detail = standard.setup_hint or "official data is not prepared"
+        checks.append(
+            _check(
+                "suite",
+                "Suite 数据与 Case",
+                ready,
+                detail,
+                "先准备官方数据或修正 case_ids",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        checks.append(
+            _check("suite", "Suite 数据与 Case", False, str(exc), "修正数据或 Case")
+        )
+        return ()
+
+    if request.dry_run:
+        target = _make_target(
+            target_id="dry-run",
+            label="Dry Run",
+            executor="dry_run",
+            backend="none",
+            model="",
+            reasoning_effort="",
+            config_fingerprint=_hash_json(
+                {"executor": "dry_run", "suite": request.suite}
+            ),
+        )
+        checks.append(_check("executor", "执行器", True, "dry_run"))
+        return (target,)
+
+    try:
+        with _preserved_environment():
+            runtime = load_evaluation_runtime(request.bot)
+            config = load_config(env_prefix=runtime.spec.llm.env_prefix)
+            config_fingerprint = _runtime_behavior_fingerprint(runtime)
+            backend = str(getattr(runtime, "agent_backend", "native"))
+            if standard.suite_id == "bfcl":
+                target = _make_target(
+                    target_id="chat-direct",
+                    label="Chat LLM",
+                    executor="direct_llm",
+                    backend="direct",
+                    model=str(config.llm.model or ""),
+                    reasoning_effort="",
+                    config_fingerprint=config_fingerprint,
+                )
+                credential_ready = bool(str(config.llm.api_key or "").strip())
+                ready = bool(target.model) and credential_ready
+                detail = (
+                    f"executor=direct_llm, model={target.model or 'missing'}, "
+                    f"credential={'configured' if credential_ready else 'missing'}"
+                )
+            else:
+                model, effort = _configured_model(backend, config)
+                target = _make_target(
+                    target_id=f"{backend}-configured",
+                    label=f"{backend.title()} configured",
+                    executor="agent_configured",
+                    backend=backend,
+                    model=model,
+                    reasoning_effort=effort,
+                    config_fingerprint=config_fingerprint,
+                )
+                ready = backend in backend_ids() and bool(model)
+                detail = (
+                    f"executor=agent_configured, backend={backend}, "
+                    f"model={model or 'missing'}"
+                )
+                if backend == "codex":
+                    command_parts = shlex.split(str(config.routing.code_command or ""))
+                    binary = command_parts[0] if command_parts else ""
+                    ready = ready and bool(binary and shutil.which(binary))
+                    detail += f", command={'available' if binary and shutil.which(binary) else 'missing'}"
+                else:
+                    credential_ready = bool(str(config.llm.api_key or "").strip())
+                    ready = ready and credential_ready
+                    detail += (
+                        f", credential={'configured' if credential_ready else 'missing'}"
+                    )
+            checks.append(
+                _check(
+                    "executor",
+                    "执行器",
+                    ready,
+                    detail,
+                    "检查 Bot LLM、backend 与凭据配置",
+                )
+            )
+            return (target,)
+    except Exception as exc:  # noqa: BLE001
+        checks.append(
+            _check("executor", "执行器", False, str(exc), "检查 BotSpec 与 local.env")
+        )
+        return ()
+
+
+def _execution_cases(
+    request: EvaluationRequest,
+) -> tuple[ProfileCase, ...] | tuple[EvalCase, ...]:
+    if request.kind == "comparison":
+        profile = get_profile(request.profile)
+        known = {item.ref: item for item in profile.cases}
+        return tuple(known[value] for value in request.case_refs)
+    cases = get_cases(request.suite, auto_prepare=False)
+    return _select_suite_cases(cases, request.case_ids)
+
+
+def _trial_request(
+    *,
+    request: EvaluationRequest,
+    output: Path,
+    case: ProfileCase | EvalCase,
+    target: EvaluationTarget,
+    attempt: int,
+    order: int,
+) -> TrialExecutionRequest:
+    if isinstance(case, ProfileCase):
+        profile_case = case
+        eval_case = case.case
+        suite_id = case.suite_id
+        dimension = case.dimension
+        profile = request.profile if isinstance(request, ComparisonEvaluationRequest) else ""
+    else:
+        profile_case = None
+        eval_case = case
+        suite_id = request.suite if isinstance(request, SuiteEvaluationRequest) else ""
+        dimension = case.category
+        profile = ""
+    return TrialExecutionRequest(
+        evaluation_id=request.evaluation_id,
+        kind=request.kind,
+        bot=request.bot,
+        output=output,
+        suite_id=suite_id,
+        profile=profile,
+        profile_case=profile_case,
+        case=eval_case,
+        dimension=dimension,
+        target=target,
+        attempt=attempt,
+        order=order,
+        dry_run=isinstance(request, SuiteEvaluationRequest) and request.dry_run,
+        llm_judge=isinstance(request, SuiteEvaluationRequest) and request.llm_judge,
+    )
+
+
+def _trial_from_case_result(
+    request: TrialExecutionRequest,
+    result: EvalCaseResult,
+) -> EvaluationTrial:
+    metadata = result.metadata if isinstance(result.metadata, dict) else {}
+    usage = metadata.get("usage_totals")
+    if not isinstance(usage, dict):
+        usage = {}
+    evidence = {key: value for key, value in metadata.items() if key != "usage_totals"}
+    return EvaluationTrial(
+        trial_id=_trial_id(request),
+        evaluation_id=request.evaluation_id,
+        kind=request.kind,
+        bot=request.bot,
+        profile=request.profile,
+        suite_id=request.suite_id,
+        case_ref=f"{request.suite_id}:{request.case.case_id}",
+        case_id=request.case.case_id,
+        dimension=request.dimension,
+        target_id=request.target.target_id,
+        target_fingerprint=request.target.fingerprint,
+        executor=request.target.executor,
+        backend=request.target.backend,
+        model=request.target.model,
+        reasoning_effort=request.target.reasoning_effort,
+        attempt=request.attempt,
+        order=request.order,
+        outcome=_normalize_outcome(result.status),
+        score=result.score,
+        max_score=result.max_score,
+        passed=bool(result.judge and result.judge.passed),
+        duration_seconds=result.duration_seconds,
+        final_text=result.final_text,
+        stop_reason=result.stop_reason,
+        started_at=result.started_at,
+        finished_at=result.finished_at,
+        judge=to_jsonable(result.judge) if result.judge is not None else None,
+        events=result.events,
+        usage_totals={
+            str(key): int(value) for key, value in usage.items() if isinstance(value, int)
+        },
+        evidence=evidence,
+        error=result.error,
+    )
+
+
+def _build_result(
+    *,
+    request: EvaluationRequest,
+    targets: tuple[EvaluationTarget, ...],
+    cases: Sequence[ProfileCase | EvalCase],
+    trials: Sequence[EvaluationTrial],
+    status: EvaluationStatus,
+    started_at: str,
+    started_clock: float,
+    previous_duration_seconds: float,
+    config_snapshot: dict[str, Any],
+    error: str = "",
+    finished: bool = False,
+) -> EvaluationResult:
+    profile_value: str
+    suite_value: str
+    preset_value: str
+    if request.kind == "comparison":
+        profile_cases = tuple(case for case in cases if isinstance(case, ProfileCase))
+        comparisons, dimensions, summary = aggregate_comparison(
+            trials, profile_cases, targets
+        )
+        profile_value = request.profile
+        suite_value = ""
+        preset_value = request.preset
+        repetitions = request.repetitions
+        max_wall_seconds = request.max_wall_seconds
+        seed = request.seed
+    else:
+        comparisons = ()
+        dimensions = {}
+        summary = _suite_summary(trials)
+        profile_value = ""
+        suite_value = request.suite
+        preset_value = ""
+        repetitions = 1
+        max_wall_seconds = 0.0
+        seed = 0
+    return EvaluationResult(
+        evaluation_id=request.evaluation_id,
+        kind=request.kind,
+        bot=request.bot,
+        status=status,
+        started_at=started_at,
+        finished_at=_utc_now() if finished else "",
+        duration_seconds=(
+            previous_duration_seconds + time.monotonic() - started_clock
+        ),
+        profile=profile_value,
+        suite=suite_value,
+        preset=preset_value,
+        repetitions=repetitions,
+        max_wall_seconds=max_wall_seconds,
+        seed=seed,
+        targets=targets,
+        selected_cases=tuple(
+            (
+                case.ref
+                if isinstance(case, ProfileCase)
+                else f"{suite_value}:{case.case_id}"
+            )
+            for case in cases
+        ),
+        trials=tuple(trials),
+        comparisons=comparisons,
+        dimensions=dimensions,
+        summary=summary,
+        config_snapshot=config_snapshot,
+        error=sanitize_text(error, secrets=collect_env_secrets()),
+    )
+
+
+def _persist_evaluation(
+    result: EvaluationResult,
+    output: Path,
+) -> None:
+    payload = _sanitize(evaluation_result_to_dict(result), output=output)
+    if (output / "trials").is_symlink():
+        raise ValueError("Evaluation trials root must not be a symlink")
+    trial_root = contained_artifact_path(output, "trials")
+    trial_artifacts = [
+        (
+            contained_artifact_path(
+                output,
+                "trials",
+                f"{safe_artifact_component(trial.get('trial_id', ''))}.json",
+            ),
+            trial,
+        )
+        for trial in payload.get("trials", [])
+    ]
+    _write_json(output / "result.json", payload)
+    state = {
+        "evaluation_id": result.evaluation_id,
+        "kind": result.kind,
+        "status": result.status,
+        "pid": None if result.status in _TERMINAL_STATUSES else os.getpid(),
+        "started_at": result.started_at,
+        "finished_at": result.finished_at,
+        "duration_seconds": result.duration_seconds,
+        "completed_trials": len(result.trials),
+        "planned_trials": (
+            len(result.selected_cases) * result.repetitions * len(result.targets)
+        ),
+        "error": result.error,
+    }
+    _write_json(output / "state.json", _sanitize(state, output=output))
+    _write_text(output / "summary.md", _summary_markdown(payload))
+    trial_root.mkdir(parents=True, exist_ok=True)
+    for trial_path, trial in trial_artifacts:
+        _write_json(trial_path, trial)
+
+
+def _persist_request(
+    request: EvaluationRequest,
+    targets: Sequence[EvaluationTarget],
+    output: Path,
+) -> None:
+    """Preserve Console-owned descriptive metadata around the core request."""
+
+    path = output / "request.json"
+    existing: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing = loaded
+        except (OSError, ValueError, json.JSONDecodeError):
+            existing = {}
+    bot_spec = existing.get("bot_spec") or _portable_bot_ref(request.bot)
+    core_request = _runnable_request_dict(request)
+    core_request["bot"] = bot_spec
+    payload: dict[str, Any] = {
+        **existing,
+        "bot_id": existing.get("bot_id") or _bot_id(request.bot),
+        "created_at": existing.get("created_at") or _utc_now(),
+        "bot_spec": bot_spec,
+        "evaluation_id": request.evaluation_id,
+        "kind": request.kind,
+        "targets": [to_jsonable(target) for target in targets],
+        "core_request": core_request,
+    }
+    if request.kind == "comparison":
+        payload.update(
+            {
+                "profile_id": request.profile,
+                "preset": request.preset,
+                "target_ids": list(request.targets),
+                "case_refs": list(request.case_refs),
+                "repetitions": request.repetitions,
+                "max_wall_seconds": request.max_wall_seconds,
+                "seed": request.seed,
+            }
+        )
+    else:
+        payload.update(
+            {
+                "suite_id": request.suite,
+                "case_ids": list(request.case_ids),
+                "dry_run": request.dry_run,
+                "llm_judge": request.llm_judge,
+            }
+        )
+    _write_json(path, _sanitize(payload, output=output))
+
+
+def _validate_fresh_output(
+    *,
+    output: Path,
+    request: EvaluationRequest,
+    targets: Sequence[EvaluationTarget],
+) -> None:
+    if not output.exists():
+        return
+    if not output.is_dir():
+        raise ValueError("Evaluation output already exists and is not a directory")
+    entries = {entry.name: entry for entry in output.iterdir()}
+    required = {"request.json", "state.json"}
+    allowed = {*required, "run.log"}
+    if not entries:
+        return
+    if not required.issubset(entries) or not set(entries).issubset(allowed):
+        raise ValueError(
+            "Evaluation output is non-empty and is not a Console bootstrap directory"
+        )
+    for name, entry in entries.items():
+        if entry.is_symlink() or not entry.is_file():
+            raise ValueError(f"Console bootstrap artifact is unsafe: {name}")
+    run_log = entries.get("run.log")
+    if run_log is not None and run_log.stat().st_size:
+        raise ValueError("Console bootstrap run.log must be empty")
+
+    stored_request = _read_json_object(
+        entries["request.json"],
+        "Console bootstrap request.json",
+    )
+    if "core_request" in stored_request:
+        raise ValueError("Console bootstrap request.json is already owned by Evaluation")
+    expected = _expected_bootstrap_request(request, targets)
+    expected_request_keys = {*expected, "created_at"}
+    if set(stored_request) != expected_request_keys:
+        raise ValueError("Console bootstrap request fields do not match Evaluation")
+    if not isinstance(stored_request.get("created_at"), str) or not str(
+        stored_request["created_at"]
+    ).strip():
+        raise ValueError("Console bootstrap created_at is invalid")
+    mismatches = [
+        field_name
+        for field_name, expected_value in expected.items()
+        if stored_request.get(field_name) != expected_value
+    ]
+    if mismatches:
+        raise ValueError(
+            "Console bootstrap request does not match Evaluation: "
+            + ", ".join(sorted(mismatches))
+        )
+
+    state = _read_json_object(
+        entries["state.json"],
+        "Console bootstrap state.json",
+    )
+    expected_state_keys = {
+        "evaluation_id",
+        "kind",
+        "status",
+        "pid",
+        "started_at",
+        "finished_at",
+        "duration_seconds",
+        "completed_trials",
+        "planned_trials",
+        "error",
+    }
+    if set(state) != expected_state_keys:
+        raise ValueError("Console bootstrap state fields do not match Evaluation")
+    status = state.get("status")
+    if (
+        state.get("evaluation_id") != request.evaluation_id
+        or state.get("kind") != request.kind
+        or status not in {"queued", "running"}
+        or state.get("finished_at") is not None
+        or state.get("duration_seconds") is not None
+        or state.get("completed_trials") != 0
+        or state.get("error") is not None
+        or isinstance(state.get("planned_trials"), bool)
+        or not isinstance(state.get("planned_trials"), int)
+        or state["planned_trials"] < 0
+    ):
+        raise ValueError("Console bootstrap state does not match Evaluation")
+    if status == "queued" and (
+        state.get("pid") is not None or state.get("started_at") is not None
+    ):
+        raise ValueError("Console bootstrap queued state is invalid")
+    if status == "running" and (
+        isinstance(state.get("pid"), bool)
+        or not isinstance(state.get("pid"), int)
+        or state["pid"] <= 0
+        or not isinstance(state.get("started_at"), str)
+        or not str(state["started_at"]).strip()
+    ):
+        raise ValueError("Console bootstrap running state is invalid")
+
+
+def _expected_bootstrap_request(
+    request: EvaluationRequest,
+    targets: Sequence[EvaluationTarget],
+) -> dict[str, Any]:
+    expected: dict[str, Any] = {
+        "evaluation_id": request.evaluation_id,
+        "kind": request.kind,
+        "bot_id": _bot_id(request.bot),
+        "bot_spec": _portable_bot_ref(request.bot),
+        "targets": [to_jsonable(target) for target in targets],
+    }
+    if request.kind == "comparison":
+        expected.update(
+            {
+                "profile_id": request.profile,
+                "preset": request.preset,
+                "target_ids": list(request.targets),
+                "case_refs": list(request.case_refs),
+                "repetitions": request.repetitions,
+                "max_wall_seconds": request.max_wall_seconds,
+                "seed": request.seed,
+            }
+        )
+    else:
+        expected.update(
+            {
+                "suite_id": request.suite,
+                "case_ids": list(request.case_ids),
+                "dry_run": request.dry_run,
+                "llm_judge": request.llm_judge,
+            }
+        )
+    return expected
+
+
+def _resume_checkpoint(
+    *,
+    output: Path,
+    request: EvaluationRequest,
+    targets: Sequence[EvaluationTarget],
+    cases: Sequence[ProfileCase | EvalCase],
+    config_snapshot: Mapping[str, Any],
+) -> _ResumeCheckpoint:
+    result_path = output / "result.json"
+    _validate_resume_artifact_paths(output)
+    if not result_path.is_file():
+        raise ValueError("resume requested but result.json does not exist")
+    payload = _read_json_object(result_path, "resume result.json")
+    try:
+        json.dumps(payload, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "resume result.json contains non-finite or invalid JSON values"
+        ) from exc
+    if payload.get("evaluation_id") != request.evaluation_id:
+        raise ValueError("resume evaluation_id does not match result.json")
+    if payload.get("kind") != request.kind:
+        raise ValueError("resume kind does not match result.json")
+    if payload.get("status") == "completed":
+        raise ValueError("completed Evaluation cannot be resumed")
+    stored_snapshot = payload.get("config_snapshot")
+    if not isinstance(stored_snapshot, Mapping):
+        raise ValueError("resume result.json has no immutable config snapshot")
+    for field_name in ("request_hash", "case_hash", "target_fingerprints", "judge"):
+        if stored_snapshot.get(field_name) != config_snapshot.get(field_name):
+            raise ValueError(f"resume {field_name} does not match result.json")
+    trials = _validated_resume_trials(
+        payload.get("trials"),
+        request=request,
+        targets=targets,
+        cases=cases,
+    )
+    started_at = str(payload.get("started_at") or "").strip()
+    if not started_at:
+        raise ValueError("resume result.json has no started_at")
+    duration_seconds = _finite_non_negative_number(
+        payload.get("duration_seconds"),
+        "resume duration_seconds",
+    )
+    return _ResumeCheckpoint(
+        trials=trials,
+        started_at=started_at,
+        duration_seconds=duration_seconds,
+    )
+
+
+def _validate_resume_artifact_paths(output: Path) -> None:
+    for name in (
+        "request.json",
+        "state.json",
+        "result.json",
+        "summary.md",
+        "progress.jsonl",
+        "trials",
+        "workspaces",
+    ):
+        path = output / name
+        if path.is_symlink():
+            raise ValueError(f"resume artifact must not be a symlink: {name}")
+        contained_artifact_path(output, name)
+
+
+def _validated_resume_trials(
+    raw_trials: Any,
+    *,
+    request: EvaluationRequest,
+    targets: Sequence[EvaluationTarget],
+    cases: Sequence[ProfileCase | EvalCase],
+) -> tuple[EvaluationTrial, ...]:
+    if not isinstance(raw_trials, list):
+        raise ValueError("resume result.trials must be a list")
+    target_by_id = {target.target_id: target for target in targets}
+    expected_case_ids = {
+        _case_ref(
+            case,
+            suite_id=request.suite if request.kind == "suite" else "",
+        ): case.case_id
+        for case in cases
+    }
+    repetitions = request.repetitions if request.kind == "comparison" else 1
+    identities: set[tuple[str, int, str]] = set()
+    trial_ids: set[str] = set()
+    group_targets: dict[tuple[str, int], set[str]] = {}
+    group_orders: dict[tuple[str, int], set[int]] = {}
+    trials: list[EvaluationTrial] = []
+    for index, raw in enumerate(raw_trials):
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"resume Trial {index} must be an object")
+        try:
+            json.dumps(raw, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"resume Trial {index} contains non-finite or invalid JSON values"
+            ) from exc
+        events = raw.get("events")
+        if not isinstance(events, list) or any(
+            not isinstance(item, Mapping) for item in events
+        ):
+            raise ValueError(f"resume Trial {index} events must be a list of objects")
+        try:
+            trial = _trial_from_dict(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"resume Trial {index} is malformed") from exc
+        if trial.evaluation_id != request.evaluation_id or trial.kind != request.kind:
+            raise ValueError(f"resume Trial {index} Evaluation identity does not match")
+        expected_case_id = expected_case_ids.get(trial.case_ref)
+        if expected_case_id is None or trial.case_id != expected_case_id:
+            raise ValueError(f"resume Trial {index} Case identity does not match")
+        if (
+            isinstance(trial.attempt, bool)
+            or not isinstance(trial.attempt, int)
+            or not 1 <= trial.attempt <= repetitions
+        ):
+            raise ValueError(f"resume Trial {index} attempt is out of range")
+        target = target_by_id.get(trial.target_id)
+        if target is None or trial.target_fingerprint != target.fingerprint:
+            raise ValueError(f"resume Trial {index} Target fingerprint does not match")
+        if (
+            trial.executor != target.executor
+            or trial.backend != target.backend
+            or trial.model != target.model
+            or trial.reasoning_effort != target.reasoning_effort
+        ):
+            raise ValueError(f"resume Trial {index} Target semantics do not match")
+        if (
+            isinstance(trial.order, bool)
+            or not isinstance(trial.order, int)
+            or not 1 <= trial.order <= len(targets)
+        ):
+            raise ValueError(f"resume Trial {index} order is out of range")
+        if trial.outcome not in {"passed", "failed", "skipped", "error"}:
+            raise ValueError(f"resume Trial {index} outcome is invalid")
+        expected_trial_id = trial_artifact_id(
+            trial.case_id,
+            attempt=trial.attempt,
+            target_fingerprint=trial.target_fingerprint,
+        )
+        if trial.trial_id != expected_trial_id or trial.trial_id in trial_ids:
+            raise ValueError(f"resume Trial {index} id is invalid or duplicated")
+        identity = (trial.case_ref, trial.attempt, trial.target_id)
+        if identity in identities:
+            raise ValueError(f"resume Trial {index} identity is duplicated")
+        identities.add(identity)
+        trial_ids.add(trial.trial_id)
+        group_key = (trial.case_ref, trial.attempt)
+        group_targets.setdefault(group_key, set()).add(trial.target_id)
+        orders = group_orders.setdefault(group_key, set())
+        if trial.order in orders:
+            raise ValueError(f"resume Trial {index} order is duplicated")
+        orders.add(trial.order)
+        trials.append(trial)
+
+    expected_targets = set(target_by_id)
+    if any(values != expected_targets for values in group_targets.values()):
+        raise ValueError("resume result contains an incomplete Target group")
+    return tuple(trials)
+
+
+def _trial_from_dict(payload: Mapping[str, Any]) -> EvaluationTrial:
+    values = dict(payload)
+    values["events"] = tuple(
+        item for item in values.get("events", []) if isinstance(item, dict)
+    )
+    return EvaluationTrial(**values)
+
+
+def _complete_group_keys(
+    trials: Sequence[EvaluationTrial],
+    targets: Sequence[EvaluationTarget],
+) -> set[tuple[str, int]]:
+    expected = {target.fingerprint for target in targets}
+    grouped: dict[tuple[str, int], set[str]] = {}
+    for trial in trials:
+        grouped.setdefault((trial.case_ref, trial.attempt), set()).add(
+            trial.target_fingerprint
+        )
+    return {key for key, fingerprints in grouped.items() if fingerprints == expected}
+
+
+def _valid_complete_attempts(
+    trials: Sequence[EvaluationTrial],
+    targets: Sequence[EvaluationTarget],
+) -> set[int]:
+    attempts = {
+        target.target_id: {
+            trial.attempt
+            for trial in trials
+            if trial.target_id == target.target_id
+            and trial.outcome in {"passed", "failed"}
+        }
+        for target in targets
+    }
+    return set.intersection(*attempts.values()) if attempts else set()
+
+
+def _target_statistics(trials: Sequence[EvaluationTrial]) -> dict[str, Any]:
+    valid = [trial for trial in trials if trial.outcome in {"passed", "failed"}]
+    scores = [
+        trial.score / trial.max_score if trial.max_score else 0.0 for trial in valid
+    ]
+    usage: dict[str, int] = {}
+    for trial in valid:
+        for key, value in trial.usage_totals.items():
+            usage[key] = usage.get(key, 0) + value
+    return {
+        "passed_count": sum(1 for trial in valid if trial.passed),
+        "attempt_count": len(valid),
+        "mean_score": (sum(scores) / len(scores)) if scores else None,
+        "score_min": min(scores) if scores else None,
+        "score_max": max(scores) if scores else None,
+        "usage_totals": usage,
+        "cost": "unknown",
+    }
+
+
+def _verdict(
+    target_stats: Mapping[str, Mapping[str, Any]],
+    target_ids: Sequence[str],
+    has_samples: bool,
+) -> str:
+    if len(target_ids) != 2:
+        return "not_applicable"
+    if not has_samples:
+        return "inconclusive"
+    values = [target_stats[target_id].get("mean_score") for target_id in target_ids]
+    if any(value is None for value in values):
+        return "inconclusive"
+    first_value, second_value = values
+    if first_value is None or second_value is None:
+        return "inconclusive"
+    first, second = float(first_value), float(second_value)
+    if abs(first - second) <= _TIE_THRESHOLD + 1e-12:
+        return "tie"
+    return target_ids[0] if first > second else target_ids[1]
+
+
+def _suite_summary(trials: Sequence[EvaluationTrial]) -> dict[str, Any]:
+    outcomes = _outcome_counts(trials)
+    score = sum(trial.score for trial in trials)
+    max_score = sum(trial.max_score for trial in trials) or 1.0
+    return {
+        "total": len(trials),
+        "passed": outcomes["passed"],
+        "failed": outcomes["failed"],
+        "skipped": outcomes["skipped"],
+        "errors": outcomes["error"],
+        "score": score,
+        "max_score": max_score,
+        "score_ratio": score / max_score,
+        "outcomes": outcomes,
+    }
+
+
+def _outcome_counts(trials: Sequence[EvaluationTrial]) -> dict[str, int]:
+    return {
+        outcome: sum(1 for trial in trials if trial.outcome == outcome)
+        for outcome in ("passed", "failed", "skipped", "error")
+    }
+
+
+def _isolated_target(
+    target_id: str,
+    config: Any,
+    *,
+    config_fingerprint: str,
+) -> tuple[EvaluationTarget, dict[str, Any]]:
+    normalized = str(target_id).strip().lower()
+    if normalized == "codex":
+        model = str(config.routing.code_model or "")
+        effort = str(config.routing.code_reasoning_effort or "")
+        command_parts = shlex.split(str(config.routing.code_command or ""))
+        binary = command_parts[0] if command_parts else ""
+        ready = bool(model and binary and shutil.which(binary))
+        detail = (
+            f"backend=codex, model={model or 'missing'}, "
+            f"command={'available' if binary and shutil.which(binary) else 'missing'}"
+        )
+        target = _make_target(
+            target_id="codex",
+            label="Codex",
+            executor="agent_isolated",
+            backend="codex",
+            model=model,
+            reasoning_effort=effort,
+            config_fingerprint=config_fingerprint,
+        )
+    elif normalized == "native":
+        model = str(config.llm.model or "")
+        credential_ready = bool(str(config.llm.api_key or "").strip())
+        ready = bool(model) and credential_ready
+        detail = (
+            f"backend=native, model={model or 'missing'}, "
+            f"credential={'configured' if credential_ready else 'missing'}"
+        )
+        target = _make_target(
+            target_id="native",
+            label="Native Agent",
+            executor="agent_isolated",
+            backend="native",
+            model=model,
+            reasoning_effort="",
+            config_fingerprint=config_fingerprint,
+        )
+    else:
+        raise ValueError(f"unsupported comparison Target: {target_id}")
+    return target, _check(
+        f"target:{target.target_id}",
+        f"Target · {target.label}",
+        ready,
+        detail,
+        "检查 LLM、凭据和 Codex CLI 配置",
+    )
+
+
+def _configured_model(backend: str, config: Any) -> tuple[str, str]:
+    if backend == "codex":
+        return (
+            str(config.routing.code_model or ""),
+            str(config.routing.code_reasoning_effort or ""),
+        )
+    return str(config.llm.model or ""), ""
+
+
+def _runtime_behavior_fingerprint(runtime: Any) -> str:
+    """Hash resolved, non-secret behavior that can affect an Evaluation Target."""
+
+    mcp_servers: list[dict[str, Any]] = []
+    for server in runtime.mcp_servers:
+        value = to_jsonable(server)
+        env = value.pop("env", {})
+        headers = value.pop("headers", {})
+        value["env_keys"] = sorted(str(key) for key in env)
+        value["header_keys"] = sorted(str(key) for key in headers)
+        mcp_servers.append(value)
+    rag_sources = [
+        {
+            "path": _portable_behavior_path(source.path, runtime.source_path.parent),
+            "label": source.label,
+            "include": list(source.include),
+            "exclude": list(source.exclude),
+            "max_chunk_chars": source.max_chunk_chars,
+        }
+        for source in runtime.rag_sources
+    ]
+    skills = [
+        {
+            "id": entry.id,
+            "name": entry.name,
+            "description": entry.description,
+            "body_hash": hashlib.sha256(
+                entry.body_path.read_bytes()
+            ).hexdigest(),
+        }
+        for entry in runtime.skills
+    ]
+    payload = {
+        "bot_spec_hash": _hash_json(_behavior_json_value(runtime.spec.raw)),
+        "prompts": {
+            "system": runtime.system_prompt,
+            "refusal": runtime.refusal_prompt,
+            "safety": runtime.safety_prompt_override,
+            "memory": runtime.memory_prompt_override,
+            "modes": runtime.mode_prompt_overrides,
+            "roles": runtime.role_prompt_overrides,
+            "capability_fragments": list(runtime.capability_prompt_fragments),
+        },
+        "tools": {
+            "packs": list(runtime.tool_packs),
+            "features": list(runtime.tool_features),
+            "exclude": list(runtime.exclude_tools),
+            "mcp_servers": mcp_servers,
+        },
+        "agent": {
+            "backend": runtime.agent_backend,
+            "subagents": _behavior_json_value(to_jsonable(runtime.subagents)),
+        },
+        "context": {
+            "spec": _behavior_json_value(to_jsonable(runtime.spec.context)),
+            "memory_namespace": runtime.memory_namespace,
+            "rag_sources": rag_sources,
+            "skills": skills,
+        },
+        "access": _behavior_json_value(to_jsonable(runtime.access)),
+    }
+    sanitized = redact_payload(
+        _behavior_json_value(payload),
+        secrets=collect_env_secrets(),
+        roots={
+            "repository": Path.cwd(),
+            "bot": runtime.source_path.parent,
+        },
+    )
+    return _hash_json(sanitized)
+
+
+def _portable_behavior_path(path: Path, bot_root: Path) -> str:
+    resolved = path.expanduser().resolve()
+    try:
+        return "$BOT/" + resolved.relative_to(bot_root.resolve()).as_posix()
+    except ValueError:
+        return "external:" + hashlib.sha256(
+            str(resolved).encode("utf-8")
+        ).hexdigest()
+
+
+def _behavior_json_value(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {
+            str(key): _behavior_json_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_behavior_json_value(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _make_target(
+    *,
+    target_id: str,
+    label: str,
+    executor: TargetExecutor,
+    backend: str,
+    model: str,
+    reasoning_effort: str,
+    config_fingerprint: str,
+) -> EvaluationTarget:
+    fingerprint_payload = {
+        "target_id": target_id,
+        "executor": executor,
+        "backend": backend,
+        "model": model,
+        "reasoning_effort": reasoning_effort,
+        "config_fingerprint": config_fingerprint,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            fingerprint_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return EvaluationTarget(
+        target_id=target_id,
+        label=label,
+        executor=executor,
+        backend=backend,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        fingerprint=fingerprint,
+        config_fingerprint=config_fingerprint,
+    )
+
+
+def _target_from_dict(payload: Mapping[str, Any]) -> EvaluationTarget:
+    return EvaluationTarget(**dict(payload))
+
+
+def _config_snapshot(
+    request: EvaluationRequest,
+    targets: Sequence[EvaluationTarget],
+    cases: Sequence[ProfileCase | EvalCase],
+) -> dict[str, Any]:
+    case_payload = [
+        to_jsonable(case.case if isinstance(case, ProfileCase) else case) for case in cases
+    ]
+    return {
+        "request_hash": _hash_json(_effective_request_dict(request)),
+        "case_hash": _hash_json(case_payload),
+        "target_fingerprints": {
+            target.target_id: target.fingerprint for target in targets
+        },
+        "judge": (
+            "gaia-llm-fallback"
+            if isinstance(request, SuiteEvaluationRequest) and request.llm_judge
+            else "suite-or-profile-defined"
+        ),
+    }
+
+
+def _effective_request_dict(request: EvaluationRequest) -> dict[str, Any]:
+    payload = to_jsonable(request)
+    payload["bot"] = _portable_bot_ref(request.bot)
+    return payload
+
+
+def _runnable_request_dict(request: EvaluationRequest) -> dict[str, Any]:
+    if request.kind == "comparison":
+        payload: dict[str, Any] = {
+            "evaluation_id": request.evaluation_id,
+            "kind": request.kind,
+            "bot": request.bot,
+            "profile": request.profile,
+            "preset": request.preset,
+        }
+        if request.preset == "custom":
+            payload.update(
+                {
+                    "targets": list(request.targets),
+                    "case_refs": list(request.case_refs),
+                    "repetitions": request.repetitions,
+                    "max_wall_seconds": request.max_wall_seconds,
+                    "seed": request.seed,
+                }
+            )
+        return payload
+    return {
+        "evaluation_id": request.evaluation_id,
+        "kind": request.kind,
+        "bot": request.bot,
+        "suite": request.suite,
+        "case_ids": list(request.case_ids),
+        "dry_run": request.dry_run,
+        "llm_judge": request.llm_judge,
+    }
+
+
+def _validation_payload(
+    ready: bool,
+    checks: Sequence[Mapping[str, Any]],
+    request: EvaluationRequest | None,
+    targets: Sequence[EvaluationTarget],
+) -> dict[str, Any]:
+    payload = {
+        "ready": bool(ready),
+        "checks": [dict(item) for item in checks],
+        "effective_request": (
+            _effective_request_dict(request) if request is not None else None
+        ),
+        "targets": [to_jsonable(target) for target in targets],
+    }
+    return redact_payload(
+        payload,
+        secrets=collect_env_secrets(),
+        roots={"repository": Path.cwd()},
+    )
+
+
+def _select_suite_cases(
+    cases: Sequence[EvalCase],
+    case_ids: Sequence[str],
+) -> tuple[EvalCase, ...]:
+    if not case_ids:
+        return tuple(cases)
+    known = {case.case_id: case for case in cases}
+    missing = [case_id for case_id in case_ids if case_id not in known]
+    if missing:
+        raise ValueError(f"unknown Suite Case ids: {', '.join(missing)}")
+    return tuple(known[case_id] for case_id in case_ids)
+
+
+def _case_ref(
+    case: ProfileCase | EvalCase,
+    *,
+    suite_id: str = "",
+) -> str:
+    if isinstance(case, ProfileCase):
+        return case.ref
+    if suite_id:
+        return f"{suite_id}:{case.case_id}"
+    suite_id = str(case.metadata.get("suite_id", "")).strip()
+    return f"{suite_id}:{case.case_id}" if suite_id else case.case_id
+
+
+def _trial_id(request: TrialExecutionRequest) -> str:
+    return trial_artifact_id(
+        request.case.case_id,
+        attempt=request.attempt,
+        target_fingerprint=request.target.fingerprint,
+    )
+
+
+def _reset_trial_workspace(request: TrialExecutionRequest) -> None:
+    output = request.output.expanduser().resolve()
+    workspace_link = output / "workspaces"
+    if workspace_link.is_symlink():
+        raise ValueError("Evaluation workspace root must not be a symlink")
+    workspace_root = contained_artifact_path(output, "workspaces")
+    if workspace_root.exists() and not workspace_root.is_dir():
+        raise ValueError("Evaluation workspace root must be a directory")
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    candidate_link = workspace_root / _trial_id(request)
+    if candidate_link.is_symlink():
+        raise ValueError("Evaluation Trial workspace must not be a symlink")
+    candidate = contained_artifact_path(
+        output,
+        "workspaces",
+        _trial_id(request),
+    )
+    if candidate.exists():
+        if not candidate.is_dir():
+            raise ValueError("Evaluation Trial workspace must be a directory")
+        shutil.rmtree(candidate)
+    candidate.mkdir(parents=True)
+
+
+def _normalize_outcome(value: Any) -> TrialOutcome:
+    normalized = str(value).strip().lower()
+    if normalized in {"passed", "failed", "skipped", "error"}:
+        return normalized  # type: ignore[return-value]
+    return "error"
+
+
+def _error_trial(
+    request: TrialExecutionRequest,
+    exc: Exception,
+) -> EvaluationTrial:
+    now = _utc_now()
+    return EvaluationTrial(
+        trial_id=_trial_id(request),
+        evaluation_id=request.evaluation_id,
+        kind=request.kind,
+        bot=request.bot,
+        profile=request.profile,
+        suite_id=request.suite_id,
+        case_ref=(
+            request.profile_case.ref
+            if request.profile_case is not None
+            else f"{request.suite_id}:{request.case.case_id}"
+        ),
+        case_id=request.case.case_id,
+        dimension=request.dimension,
+        target_id=request.target.target_id,
+        target_fingerprint=request.target.fingerprint,
+        executor=request.target.executor,
+        backend=request.target.backend,
+        model=request.target.model,
+        reasoning_effort=request.target.reasoning_effort,
+        attempt=request.attempt,
+        order=request.order,
+        outcome="error",
+        started_at=now,
+        finished_at=now,
+        error=f"{type(exc).__name__}: {exc}",
+    )
+
+
+def _sanitize_trial(trial: EvaluationTrial, *, output: Path) -> EvaluationTrial:
+    payload = _sanitize(to_jsonable(trial), output=output)
+    try:
+        json.dumps(payload, allow_nan=False)
+    except ValueError as exc:
+        raise ValueError("Trial contains NaN or Infinity") from exc
+    payload["events"] = tuple(payload.get("events", []))
+    return EvaluationTrial(**payload)
+
+
+def _sanitize(value: Any, *, output: Path) -> Any:
+    return redact_payload(
+        value,
+        secrets=collect_env_secrets(),
+        roots={"evaluation": output, "repository": Path.cwd()},
+    )
+
+
+def _summary_markdown(payload: Mapping[str, Any]) -> str:
+    summary = payload.get("summary", {})
+    lines = [
+        f"# Evaluation · {payload.get('evaluation_id', '')}",
+        "",
+        f"- kind: `{payload.get('kind', '')}`",
+        f"- status: `{payload.get('status', '')}`",
+        f"- bot: `{payload.get('bot', '')}`",
+        f"- profile: `{payload.get('profile', '')}`",
+        f"- suite: `{payload.get('suite', '')}`",
+        f"- trials: `{summary.get('trial_count', summary.get('total', 0))}`",
+        "",
+    ]
+    if payload.get("kind") == "comparison":
+        lines.extend(
+            [
+                "## Capability dimensions",
+                "",
+                "| Dimension | Cases | Paired samples | Verdict |",
+                "| --- | ---: | ---: | --- |",
+            ]
+        )
+        for dimension, item in payload.get("dimensions", {}).items():
+            lines.append(
+                f"| {dimension} | {item.get('case_count', 0)} | "
+                f"{item.get('sample_size', 0)} | {item.get('verdict', '')} |"
+            )
+    else:
+        lines.extend(
+            [
+                "## Outcomes",
+                "",
+                f"- passed: `{summary.get('passed', 0)}`",
+                f"- failed: `{summary.get('failed', 0)}`",
+                f"- skipped: `{summary.get('skipped', 0)}`",
+                f"- errors: `{summary.get('errors', 0)}`",
+                f"- score_ratio: `{float(summary.get('score_ratio', 0)):.3f}`",
+            ]
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+@contextmanager
+def _preserved_environment() -> Iterator[None]:
+    before = dict(os.environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(before)
+
+
+def _reject_extra_fields(request: Mapping[str, Any], allowed: set[str]) -> None:
+    extras = sorted(str(key) for key in request if str(key) not in allowed)
+    if extras:
+        raise ValueError(f"unexpected fields: {', '.join(extras)}")
+
+
+def _evaluation_id(value: Any) -> str:
+    identifier = str(value or "").strip() or _new_evaluation_id()
+    if not _ID_PATTERN.fullmatch(identifier):
+        raise ValueError("evaluation_id must use 1-128 letters, digits, '_' or '-'")
+    return identifier
+
+
+def _required_text(value: Any, field_name: str) -> str:
+    result = str(value or "").strip()
+    if not result:
+        raise ValueError(f"{field_name} is required")
+    return result
+
+
+def _unique_texts(value: Any, field_name: str) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{field_name} must be a non-empty list")
+    result = tuple(str(item).strip() for item in value)
+    if not result or any(not item for item in result):
+        raise ValueError(f"{field_name} must be a non-empty list")
+    if len(set(result)) != len(result):
+        raise ValueError(f"{field_name} must not contain duplicates")
+    return result
+
+
+def _positive_int(value: Any, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a positive integer")
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a positive integer") from exc
+    if result <= 0 or result != value:
+        raise ValueError(f"{field_name} must be a positive integer")
+    return result
+
+
+def _positive_number(value: Any, field_name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be positive")
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be positive") from exc
+    if not math.isfinite(result) or result <= 0:
+        raise ValueError(f"{field_name} must be positive")
+    return result
+
+
+def _finite_non_negative_number(value: Any, field_name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a finite non-negative number")
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{field_name} must be a finite non-negative number"
+        ) from exc
+    if not math.isfinite(result) or result < 0:
+        raise ValueError(f"{field_name} must be a finite non-negative number")
+    return result
+
+
+def _integer(value: Any, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+    if result != value:
+        raise ValueError(f"{field_name} must be an integer")
+    return result
+
+
+def _strict_bool(value: Any, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a boolean")
+    return value
+
+
+def _check(
+    code: str,
+    label: str,
+    ok: bool,
+    detail: str,
+    action: str = "",
+) -> dict[str, Any]:
+    return {
+        "code": code,
+        "label": label,
+        "ok": bool(ok),
+        "detail": detail,
+        "action": action,
+    }
+
+
+def _record_event(
+    output: Path,
+    callback: ProgressCallback | None,
+    **payload: Any,
+) -> None:
+    sanitized = redact_payload(
+        payload,
+        secrets=collect_env_secrets(),
+        roots={"evaluation": output, "repository": Path.cwd()},
+    )
+    if (output / "progress.jsonl").is_symlink():
+        raise ValueError("Evaluation progress.jsonl must not be a symlink")
+    path = contained_artifact_path(output, "progress.jsonl")
+    _append_jsonl(path, sanitized)
+    if callback is not None:
+        callback(sanitized)
+
+
+def _hash_json(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    _write_text(
+        path,
+        json.dumps(payload, allow_nan=False, ensure_ascii=False, indent=2) + "\n",
+    )
+
+
+def _append_jsonl(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(
+            json.dumps(payload, allow_nan=False, ensure_ascii=False, separators=(",", ":"))
+            + "\n"
+        )
+
+
+def _write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _read_json_object(path: Path, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is unreadable") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must be an object")
+    return payload
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _new_evaluation_id() -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return f"eval-{timestamp}-{uuid.uuid4().hex[:8]}"
+
+
+def _bot_id(bot: str) -> str:
+    value = str(bot).strip()
+    if any(char in value for char in ("/", "\\")):
+        path = Path(value)
+        return path.parent.name if path.name == "bot.yaml" else path.name
+    return value
+
+
+def _portable_bot_ref(bot: str) -> str:
+    value = str(bot).strip()
+    if not value or not any(char in value for char in ("/", "\\")):
+        return value
+    path = Path(value)
+    try:
+        return path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return value
+
+
+__all__ = [
+    "CaseComparison",
+    "ComparisonEvaluationRequest",
+    "ComparisonPreset",
+    "EvaluationKind",
+    "EvaluationRequest",
+    "EvaluationResult",
+    "EvaluationStatus",
+    "EvaluationTarget",
+    "EvaluationTrial",
+    "EvaluationValidationError",
+    "SuiteEvaluationRequest",
+    "TargetExecutor",
+    "TrialExecutionRequest",
+    "TrialOutcome",
+    "aggregate_comparison",
+    "evaluation_result_to_dict",
+    "execute_evaluation_trial",
+    "parse_evaluation_request",
+    "run_evaluation",
+    "validate_evaluation",
+]

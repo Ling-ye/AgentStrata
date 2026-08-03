@@ -1,0 +1,86 @@
+---
+description: external_tools 层规则：三入口分层（spec/cli/service）、ToolDef 契约、领域包边界
+globs: src/chatcopilot/external_tools/**
+alwaysApply: false
+---
+
+# External Tools 层
+
+外部工具是 ChatCopilot 的**专业领域能力**。每个 domain 是独立子包，**不依赖** `chatcopilot.middleware.*` / `chatcopilot.platforms.*` / `chatcopilot.agent.*` 的具体实现。
+
+## 现有 domain
+
+```
+external_tools/
+├── feishu/                     # 通用文档、表格、多维表格、知识库和消息能力
+├── career/                     # 用户指定公司/岗位的职业情报与本地快照
+├── dev/                        # 受控文件、shell 与异步代码任务
+├── wiki/                       # 私有本地 Markdown Wiki
+├── unity_codebase/            # Unity 代码库只读检索（read_tools + skill_tools + C# 模式 + ripgrep）
+├── windows_fs/                # Windows 文件系统受限读取
+└── shared/
+    ├── tool_spec.py           # ToolDef / HandlerResult 通用契约
+    ├── service_contracts.py   # ToolServiceResult
+    ├── spec_helpers.py        # ToolDef 构造辅助
+    └── env_template.py        # 环境模板渲染
+```
+
+## 三入口分层（**所有 domain 必须遵守**）
+
+```
+机器人 / curl API / CLI
+        ↓
+external_tools.<domain>.Service     ← 唯一业务门面
+        ↓
+modules/ 领域实现                    ← 真实业务逻辑
+        ↓
+远端公开服务、飞书文档、代码仓库或 workspace
+```
+
+每个 domain 的标准文件：
+
+```
+external_tools/<domain>/
+├── service.py    # Service 类：组织领域动作，返回结构化 ToolServiceResult
+├── spec.py       # ToolDef 声明 + 参数校验 + workspace 解析 + 机器人回复格式化
+├── cmd.py        # CLI 调度入口（被 cli.py / __main__.py 调）
+├── cli.py        # argparse + 控制台输出 + 退出码
+└── modules/      # 真实实现（按领域选择）
+```
+
+> `windows_fs/` 和 `unity_codebase/` 因体量小，扁平化为 `tools.py` + `path_guard.py` + `_*.py`，不强制 `service.py / modules/` 拆分；新增**大型** domain 必须遵循上面的三入口结构。
+
+## 入口职责（**互相不越界**）
+
+| 入口 | 文件 | 只负责 |
+| --- | --- | --- |
+| 机器人 | `spec.py` | `ToolDef` 声明、参数校验、workspace 解析、给 bot 的回复格式化 |
+| curl API | `middleware/http/.../routes.py` | HTTP 解析、鉴权、作业调度、JSON 响应、结果查询 |
+| CLI | `cmd.py` / `cli.py` | argparse、控制台输出、退出码 |
+
+**`middleware/http/` 不得实现业务**——只能调 `Service`，或提交后台 job。绕过 `Service` 直接调 `modules/` 是违规。
+
+## 工具注册（与 BotSpec 解耦）
+
+- 工具发现统一在 `agent/tools/registry.py`，自动 import `external_tools.*` 并把 `ToolDef` 注册。
+- `tool_pack_prompts.py` 只声明 tool pack prompt fragments，**不**列工具。
+- 要从某个 bot 隐藏工具，在 `bots/<bot>/bot.yaml` 的 `tools.hide` 写工具名。
+
+## 新增 domain 步骤
+
+1. 建 `external_tools/<domain>/` 标准目录（`service.py` / `spec.py` / `cmd.py` / `cli.py` / `modules/`）
+2. 在 `<domain>/tool_pack_prompts.py` 用 `ToolPackPrompt(...)` 声明 prompt fragments，并在 `botspec/registry.py` 注册 tool pack
+3. `ToolDef` 用 `shared.tool_spec` 的构造器，handler 返回 `HandlerResult` 或 `ToolServiceResult`
+4. 在需要的 `bots/<bot>/bot.yaml` 的 `tools.packs` 加入新 pack id
+5. 写单测：`tests/unit/test_<domain>_*.py`
+
+## 关键约束
+
+- **不要** `import chatcopilot.middleware.*` 或 `chatcopilot.platforms.*`。需要的中间件能力通过函数参数注入（如 workspace path、submit_job 回调）。
+- `ToolDef` 改字段必须同步 `shared/tool_spec.py` + 所有 `spec.py` + `agent/tools/registry.py` + `tests/unit/test_external_tools_registry.py`。
+- 大文件解析 / 长时任务必须设计成**可后台化**——handler 接受 `background_submitter` hook，决定是否转后台。
+- 飞书相关凭证只从 env 读，不写入 yaml；底层进程驱动统一走 `external_tools/shared/lark_cli.py`。
+
+## 详细文档
+
+- `docs/external-tools-architecture.md`

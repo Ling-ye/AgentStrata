@@ -1,0 +1,24 @@
+[Unit]
+Description=AgentStrata bot instance %i (cc-connect + ACP runtime)
+Documentation=https://github.com/Ling-ye/AgentStrata
+After=default.target
+
+[Service]
+Type=simple
+# 每个实例的 wsl_home 由 register.sh 写入下面这个 env 文件（含 CCP_WSL_HOME）。
+# 这样既支持 ~/ChatCopilot-<id> 约定，也支持 bot.yaml 里自定义 wsl_home。
+EnvironmentFile=%h/.config/chatcopilot-console/%i.env
+# start.sh 本身就是「前台 exec cc-connect」，会从所在目录名自动推导 instance，
+# 因此直接复用，无需为 systemd 另写启动逻辑。
+ExecStart=/usr/bin/env bash ${CCP_WSL_HOME}/deploy/wsl/start.sh
+Restart=on-failure
+RestartSec=5
+# cc-connect 自身的业务日志仍按 start.sh 的逻辑落到 ~/chatcopilot-logs/<id>/；
+# 这里把 start.sh 的启动横幅与异常收进 journald，便于 journalctl --user 排障。
+StandardOutput=journal
+StandardError=journal
+KillMode=mixed
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

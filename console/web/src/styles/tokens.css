@@ -1,0 +1,43 @@
+:root,
+body {
+  --cc-bg-page: rgb(var(--gray-1));
+  --cc-bg-panel: var(--color-bg-2);
+  --cc-bg-card: var(--color-bg-1);
+  --cc-bg-subtle: rgb(var(--gray-2));
+  --cc-bg-muted: rgb(var(--gray-3));
+  --cc-bg-strong: rgb(var(--gray-4));
+  --cc-bg-primary-subtle: rgb(var(--primary-1));
+  --cc-bg-success-subtle: rgb(var(--success-1));
+  --cc-bg-warning-subtle: rgb(var(--warning-1));
+  --cc-bg-danger-subtle: rgb(var(--danger-1));
+  --cc-text-primary: var(--color-text-1);
+  --cc-text-secondary: var(--color-text-2);
+  --cc-text-tertiary: var(--color-text-3);
+  --cc-text-inverse: #fff;
+  --cc-primary: rgb(var(--primary-6));
+  --cc-primary-hover: rgb(var(--primary-1));
+  --cc-primary-active: rgb(var(--primary-7));
+  --cc-danger: rgb(var(--danger-6));
+  --cc-success: rgb(var(--success-6));
+  --cc-warning: rgb(var(--warning-6));
+  --cc-info: rgb(var(--arcoblue-6));
+  --cc-meta: rgb(var(--gray-7));
+  --cc-border-color: var(--color-border-2);
+  --cc-border-strong-color: var(--color-border-3);
+  --cc-sidebar-width: 200px;
+  --cc-page-max-width: 1200px;
+  --cc-content-padding-x: 28px;
+  --cc-content-padding-y: 24px;
+  --cc-gap-xs: 4px;
+  --cc-gap-sm: 8px;
+  --cc-gap-md: 12px;
+  --cc-gap-lg: 16px;
+  --cc-gap-xl: 22px;
+  --cc-section-radius: 10px;
+  --cc-card-radius: 8px;
+  --cc-control-radius: 6px;
+  --cc-border: 1px solid var(--cc-border-color);
+  --cc-border-strong: 1px solid var(--cc-border-strong-color);
+  --cc-dashed-border: 1px dashed var(--cc-border-strong-color);
+  --cc-shadow-card: 0 4px 14px rgba(0, 0, 0, 0.04);
+}

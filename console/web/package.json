@@ -1,0 +1,27 @@
+{
+  "name": "chatcopilot-console-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "rsbuild dev",
+    "build": "tsc -b && rsbuild build",
+    "test": "vitest run",
+    "preview": "rsbuild preview"
+  },
+  "dependencies": {
+    "@arco-design/web-react": "^2.66.15",
+    "@rsbuild/core": "^2.1.0",
+    "@rsbuild/plugin-react": "^2.1.0",
+    "@tanstack/react-query": "^5.101.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-resizable": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.5.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,73 @@
+# Platform-neutral source repositories exposed to this bot.
+repositories:
+  - id: chatcopilot
+    display_name: AgentStrata
+    # Runtime uses CHATCOPILOT_CODEBASE_CHATCOPILOT_ROOT from local.env;
+    # the fallback keeps standalone BotSpec validation usable.
+    root: "${CHATCOPILOT_CODEBASE_CHATCOPILOT_ROOT:-~/ChatCopilot}"
+    description: AgentStrata multi-bot platform source code.
+    base_branch: main
+    write_enabled: true
+    branch_prefix: bot
+    include_globs:
+      - "**"
+    deny_globs:
+      - "console/web/dist/**"
+      - "scratch_unit_tests/**"
+      - "scratch_unit_tests2/**"
+    allow_extensions:
+      - .py
+      - .ps1
+      - .sh
+      - .ts
+      - .tsx
+      - .js
+      - .json
+      - .yaml
+      - .yml
+      - .toml
+      - .md
+      - .txt
+      - .css
+      - .html
+    write_globs:
+      - "src/**"
+      - "bots/**"
+      - "deploy/**"
+      - "console/**"
+      - "tests/**"
+      - "docs/**"
+      - "AGENTS.md"
+      - "README.md"
+      - "requirements.txt"
+    required_docs:
+      - AGENTS.md
+      - README.md
+    checks:
+      - id: compile
+        argv: [python, -m, compileall, -q, src, bots, tests]
+        timeout_seconds: 180
+      - id: unit
+        argv: [python, -m, pytest, tests/unit, -q, -p, no:cacheprovider]
+        timeout_seconds: 600
+      - id: lingye-botspec
+        argv: [python, -m, chatcopilot, botspec, validate, bots/lingye-copilot-qq/bot.yaml]
+        timeout_seconds: 60
+
+  # Additional repositories can be registered explicitly. Keep physical paths in
+  # local.env and keep write permissions scoped with write_globs.
+  #
+  # - id: tool-a
+  #   display_name: Tool A
+  #   root: "${CHATCOPILOT_CODEBASE_TOOL_A_ROOT}"
+  #   base_branch: main
+  #   write_enabled: true
+  #   branch_prefix: bot
+  #   include_globs: ["**"]
+  #   deny_globs: ["dist/**", "build/**"]
+  #   allow_extensions: [.py, .go, .cs, .yaml, .md]
+  #   write_globs: ["src/**", "tests/**", "docs/**", "README.md"]
+  #   checks:
+  #     - id: unit
+  #       argv: [python, -m, pytest, tests/unit, -q]
+  #       timeout_seconds: 300

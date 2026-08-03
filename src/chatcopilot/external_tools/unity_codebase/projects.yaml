@@ -1,0 +1,68 @@
+# Unity project registry consumed by ``unity.codebase.read`` and ``unity.skills``.
+#
+# Each key under ``projects`` is the logical project id surfaced to the LLM via
+# the ``project`` argument (default: ``sample_game``). The agent never sees the raw
+# physical path; routing happens here.
+#
+# Use ``${VAR}`` or ``${VAR:-default}`` to inject env overrides without editing
+# this file (handy when the same code base is deployed to multiple hosts).
+# Override the whole file via ``CHATCOPILOT_UNITY_PROJECTS`` (absolute path).
+
+projects:
+  sample_game:
+    display_name: "Sample Unity Game"
+    root: "${CHATCOPILOT_UNITY_SAMPLE_GAME_ROOT:-~/projects/sample-unity-game}"
+    description: >-
+      Example Unity project. Set CHATCOPILOT_UNITY_SAMPLE_GAME_ROOT in local.env
+      or replace this entry through CHATCOPILOT_UNITY_PROJECTS.
+    allow_globs:
+      - "Assets/Scripts/**"
+      - "Assets/**/*.cs"
+      - "Assets/**/*.lua"
+      - "Packages/**"
+      - "ExternalTools/ForAI/**"
+      - ".cursor/**"
+      - ".claude/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "README.md"
+      - "*.md"
+    deny_globs:
+      - "Library/**"
+      - "Temp/**"
+      - "Build/**"
+      - "Logs/**"
+      - "**/__pycache__/**"
+      - "**/.git/**"
+      - "Assets/**/*.png"
+      - "Assets/**/*.jpg"
+      - "Assets/**/*.jpeg"
+      - "Assets/**/*.tga"
+      - "Assets/**/*.psd"
+      - "Assets/**/*.fbx"
+      - "Assets/**/*.wav"
+      - "Assets/**/*.mp3"
+      - "Assets/**/*.ogg"
+      - "Assets/**/*.anim"
+      - "Assets/**/*.asset"
+      - "Assets/**/*.prefab"
+      - "Assets/**/*.unity"
+      - "Assets/**/*.mat"
+      - "Assets/**/*.meta"
+    allow_extensions:
+      - ".cs"
+      - ".lua"
+      - ".md"
+      - ".json"
+      - ".yaml"
+      - ".yml"
+      - ".asmdef"
+      - ".uxml"
+      - ".uss"
+      - ".shader"
+      - ".compute"
+      - ".cginc"
+      - ".hlsl"
+      - ".txt"
+      - ".xml"
+      - ".csproj"

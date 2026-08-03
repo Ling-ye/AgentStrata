@@ -1,0 +1,142 @@
+---
+id: task-observability-workbench
+type: feature
+status: implemented
+created: 2026-07-24
+---
+
+# Task Observability Workbench
+
+## Summary
+
+Replace the console's wide task table with a master-detail observability
+workbench for all bots. The first release exposes only newly recorded
+`schema_version=2` tasks and presents live status, nested execution steps,
+elapsed time, token/cache forecasts, actual usage, actual estimated cost, and
+raw execution events.
+
+The workbench keeps the existing React, Arco Design, and polling stack. It does
+not add task ETA, predicted cost, task mutation actions, historical migration,
+SSE, pagination, virtual scrolling, text-delta replay, authentication, or a
+change to the console's anonymous `0.0.0.0:8910` listener.
+
+## Design
+
+### Runtime contracts
+
+- Persist `schema_version=2` in each new `task.json`.
+- Persist a `TaskStepV2` collection. Each step records a stable ID, type,
+  optional parent, depth, status, title, start/end timestamps, elapsed time,
+  model/tool/job-stage metadata, estimated and actual token/cache usage,
+  inclusive child usage, and references to its raw events.
+- Token usage records input, non-cached input, output, reasoning, total, cached,
+  cache-read, and cache-write tokens. Cached tokens are an input subset and are
+  never added to totals a second time.
+- Persist a fixed `TaskForecastV2` with status `rough`, `ready`, or
+  `insufficient`, model/context/sample metadata, estimator version, and the
+  task baseline. Once first calculated for a task, the baseline is not
+  recomputed while that task runs.
+- Record routing, LLM start/finish/failure, tool start/finish, nested spans,
+  task completion, job submission, and job stage transitions. A job heartbeat
+  with no stage/status change must not create a timeline step.
+- Raw events retain emitted tool arguments, results, and errors. Text stream
+  deltas and provider-private `reasoning_content` are not persisted.
+- Parent steps may expose inclusive child usage, while task totals count each
+  leaf LLM call exactly once. Background jobs appear as nested branches.
+
+### Forecasting
+
+- The rough input estimator includes messages, system instructions, and tool
+  schemas and identifies its output as an estimate.
+- After 20 valid completed calls with the same bot, model, context, and
+  main/subagent role, calibrate rough input with the median actual-to-estimated
+  ratio.
+- Forecast output and cache components from the median of the most recent 200
+  valid matching calls, with a minimum of 20.
+- Forecast task totals from the median of the most recent 200 completed v2
+  tasks matching bot, primary model, and context, with a minimum of 20.
+- Cold-start and non-matching histories remain explicitly insufficient rather
+  than borrowing incompatible samples.
+
+### Console API
+
+- `GET /api/bots/{instance_id}/tasks?limit=50` returns at most the latest 50 v2
+  task summaries and excludes legacy tasks.
+- `GET /api/bots/{instance_id}/tasks/{task_id}` returns the step tree, timing
+  classifications, actual usage, fixed forecast, and cumulative actual
+  estimated cost.
+- `GET /api/bots/{instance_id}/tasks/{task_id}/events` lazily returns the task
+  raw events plus associated job stage events.
+- Task identifiers are validated; task and job paths are resolved within the
+  selected instance workspace. Corrupt or incomplete records are skipped
+  safely.
+
+### Workbench UI
+
+- Use an approximately 95%-viewport master-detail modal. The left pane groups
+  the latest 50 tasks into running, attention-required, and recently completed
+  sections and supports client-side keyword search.
+- Each navigation item shows title, state, current step, wall-clock duration,
+  and token summary.
+- The detail header shows state, current step, live wall-clock duration,
+  model/tool/background timing, fixed token/cache baseline, actual cumulative
+  usage, and actual cumulative estimated cost.
+- Render steps as an indented nested timeline. A step shows its start time,
+  live/final duration, estimated-to-actual token/cache values, state, and
+  summary. Expanding it reveals associated raw JSON.
+- Poll the list and selected task every three seconds. Update running durations
+  locally every second. Load raw events only on demand.
+- Preserve copy actions for task IDs, background job IDs, and diagnostic
+  commands. Do not add cancel, retry, or follow-up actions.
+- Below 960 px, use a list-to-single-column-detail drill-down with a back
+  action.
+
+### Data boundary and retention
+
+Raw execution records follow the existing 30-day and 1 GiB per-instance
+cleanup policy. This release deliberately adds no authentication: anyone able
+to reach the anonymous console listener can read the exposed raw events.
+
+## Acceptance
+
+- New tasks are recorded as schema v2 and contain paired, nested execution
+  steps with valid live/final timings.
+- Failed LLM calls close their steps, job stages are nested without heartbeat
+  noise, and parent/task token totals do not double count children or cache.
+- Forecasts respect the 20-sample threshold, 200-sample cap, model/context/role
+  isolation, median calculation, rough-input calibration, and fixed task
+  baseline behavior.
+- The task list excludes every legacy task and returns no more than 50 records.
+- Detail and event routes safely handle corrupt records, running updates,
+  associated jobs, invalid IDs, and path traversal attempts.
+- The desktop workbench and narrow-screen drill-down visibly support running,
+  success, failure, empty, insufficient-sample, deep-nesting, and long-JSON
+  states.
+- Runtime and console documentation define metric semantics, cold-start
+  behavior, retention, and the unauthenticated raw-event boundary.
+
+## Verification
+
+- Run the SDD specification checker before implementation and again after the
+  final status update.
+- Run focused unit and API tests for task recording, forecasting, background
+  status transitions, route validation, legacy exclusion, detail/event
+  assembly, and corrupt-data tolerance.
+- Run the relevant ACP streaming and agent trace tests.
+- Build `console/web` for production.
+- Inspect the visible desktop and narrow-screen interfaces in a real browser;
+  hidden DOM text is not sufficient evidence.
+- Run the repository full verification command and record any unrelated
+  pre-existing failures separately.
+
+Recorded 2026-07-24:
+
+- `python3 scripts/check_sdd_specs.py`: passed.
+- Focused runtime, forecasting, API/console, Job-stage, Agent trace, and ACP
+  streaming tests: 50 passed.
+- `python scripts/check_repo.py full`: passed, including Ruff, typed contracts,
+  dependency consistency, wheel build, 1117 passed / 1 skipped Python tests
+  plus 48 subtests, and the console production build.
+- Real-browser desktop/narrow-screen inspection was not run because the
+  session exposed no browser-control interface. The production TypeScript and
+  CSS build passed; visible layout remains the outstanding manual check.

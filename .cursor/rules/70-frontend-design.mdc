@@ -1,0 +1,41 @@
+---
+description: Console 前端设计与 AI 协作规则
+globs: console/web/**,docs/console.md,README.md,AGENTS.md
+alwaysApply: false
+---
+
+# Console 前端设计规则
+
+适用于修改 `console/web/**` 或控制台前端说明文档。目标是把 OpenUI、screenshot-to-code、ComUICoder、Playwright visual comparison、Storybook visual testing 这类开源方法吸收到协作流程里，而不是把它们的代码或依赖引入仓库。Codex、Cursor 和其他代码 AI 的共享执行细则见 `docs/ai-frontend.md`。
+
+## 固定工作流
+
+1. **明确意图**：先确认目标用户、页面任务、主要操作路径、成功状态和失败状态；能从现有页面/API/type 推导的，不要反问。
+2. **盘点现状**：修改前先读相关页面、组件、`console/web/src/styles.css`、`console/web/package.json` 和已有 Arco / Query / Rsbuild 用法，复用现有布局、间距、状态色、表格和抽屉模式。
+3. **语义拆块**：复杂页面先按业务语义拆成区域、列表项、操作区、反馈区，再决定组件边界；重复结构优先抽组件，但新增组件必须能说明复用价值或降低复杂度。
+4. **功能 parity**：组件迁移必须保留旧页面的信息字段和操作入口，不能只以 build 通过或隐藏 DOM 文本存在作为完成标准。
+5. **视觉反馈**：实现后用本地浏览器预览检查桌面和窄屏宽度；重点看当前可见页面的信息层级、对齐、可扫描性、文本溢出、按钮尺寸、空/加载/错误状态和弹窗/表格滚动。
+6. **工具优先级**：能使用现有浏览器工具或 MCP 时，优先用它打开页面、截图或检查 DOM；没有可用浏览器时，至少完成构建并说明未做视觉验证。
+7. **控制外溢**：只改完成任务必需的文件；不顺手重做无关页面，不借机替换 UI 栈，不提交截图基线或引入视觉测试框架，除非任务明确要求。
+
+## 栈与组件约束
+
+- 控制台前端保持 React 18 + Rsbuild/Rspack + Arco Design + TanStack Query；不默认引入 Tailwind、shadcn、MUI、Chakra、Ant Design、Storybook、Chromatic 或 Playwright 测试依赖。
+- 优先使用 Arco Design 的 Button、Tag、Tabs、Table、Modal、Drawer、Descriptions、Typography、Space、Tooltip 等原生组件；旧 UI 语义兼容层已移除，触碰页面时必须把旧 Semi 风格 prop 改成显式 Arco API。
+- 优先把全局布局和共享样式放进 `console/web/src/styles.css`；局部样式可以内联，但不能让页面形成不可复用的大块杂乱样式。
+- 图标、颜色、状态标签、按钮文案要贴合运维控制台语境，避免纯装饰性视觉元素。
+
+## 控制台视觉原则
+
+- 运维控制台不是营销页：界面应信息密集、安静、可扫描，优先支持重复操作和异常定位。
+- 不做大 Hero、渐变球、氛围背景、插画式装饰、卡片套卡片或过大的展示型标题。
+- 固定格式元素要有稳定尺寸或响应式约束，避免 hover、loading、长文本、标签数量变化导致布局跳动。
+- 文本必须在桌面和窄屏宽度下可读且不互相遮挡；长 ID、日志、任务名、平台账号等内容要考虑截断、换行或滚动。
+- 颜色应围绕状态表达和信息分组使用，避免页面被单一色系或高饱和装饰色主导。
+
+## 验证要求
+
+- 只改文档/规则时，至少运行 `git diff --check`。
+- 修改 `console/web/**` 时，至少运行 `cd console/web; npm run build`，并用浏览器检查主页面桌面宽度和窄屏宽度。
+- 浏览器检查优先复用当前 AI 环境已有的 Browser/Playwright 类工具或 MCP；不要为了单次修复新增依赖、截图基线或 CI 服务。
+- 如果未来要把 Playwright 截图对比或 Storybook 视觉测试正式接入，必须另起设计任务，明确依赖、脚本、基线文件存放和 CI 策略。

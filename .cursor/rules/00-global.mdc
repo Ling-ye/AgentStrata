@@ -1,0 +1,43 @@
+---
+description: ChatCopilot 全局工作原则、回复语言、代码风格、Git 与验证约束
+alwaysApply: true
+---
+
+# ChatCopilot 全局原则
+
+每轮只保留全局硬约束；分层、前端、部署、BotSpec、Agent、external tools 细则按目录读取对应 scoped rule。
+
+## 沟通
+
+- 所有面向用户的回复使用**简体中文**。
+- 代码注释优先英文（与现有代码一致）；新增文档可中文。
+- 不主动创建文档文件（`*.md`、`README` 等），除非用户明确要求。
+
+## 代码
+
+- 改动遵循"优雅且专业，默认不考虑老数据/老代码兼容性"——**但**不得破坏与本次任务**无关**的已有功能。
+- 修改前先用 Read 工具读相关文件；修改后用 ReadLints 检查新引入的 lint 错误并修复。
+- 不写"`# 把 x 设为 y`"这类同语反复的注释；只在表达**非显而易见的意图、权衡、约束**时写注释。
+- Python 目标版本 `>=3.10,<3.14`（见 `pyproject.toml`）。包结构为 src-layout，所有导入以 `chatcopilot.` 开头。
+
+## Git
+
+- **永远不要由 AI 执行 `git commit` / `git push`**——commit 由用户本人完成。
+- 如果用户索要 commit 描述，给出**中文、单行、≤50 字**的简洁概括；不要生成多行 body 除非用户要求。
+- 不要修改 `.git/` 或 `git config`。
+
+## 快速验证
+
+修改后按改动类型择一验证，不要为了形式跑全量矩阵：
+
+```bash
+python -m compileall src bots tests
+python -m pytest tests/unit -q -k <keyword>
+python -m chatcopilot botspec validate bots/<bot-id>/bot.yaml
+```
+
+## 平台环境
+
+- 终端命令默认用 PowerShell 语法（`Get-ChildItem`、反引号换行）。
+- 部署脚本和运行时命令保持 bash（`deploy/wsl/` 下）。
+- 不要把本机绝对路径写进代码或 `bots/<bot-id>/bot.yaml`——走 env 变量。

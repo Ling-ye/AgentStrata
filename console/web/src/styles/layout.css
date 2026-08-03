@@ -1,0 +1,136 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--cc-bg-page);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+}
+
+.console-layout {
+  min-height: 100vh;
+}
+
+.console-sider {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--cc-sidebar-width);
+  display: flex;
+  flex-direction: column;
+  background: var(--cc-bg-card);
+  border-right: var(--cc-border);
+  z-index: 100;
+}
+
+.console-logo {
+  padding: 20px 16px 12px;
+  border-bottom: var(--cc-border);
+}
+
+.console-logo-title {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.console-sidebar {
+  flex: 1;
+  border-right: none !important;
+}
+
+.console-content {
+  margin-left: var(--cc-sidebar-width);
+  padding: var(--cc-content-padding-y) var(--cc-content-padding-x) 64px;
+  max-width: var(--cc-page-max-width);
+}
+
+.console-section {
+  background: var(--cc-bg-panel);
+  border: var(--cc-border-strong);
+  border-radius: var(--cc-section-radius);
+  padding: 18px;
+  margin-bottom: var(--cc-gap-xl);
+  box-shadow: var(--cc-shadow-card);
+}
+
+.section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--cc-gap-lg);
+  margin-bottom: var(--cc-gap-lg);
+}
+
+.section-heading {
+  min-width: 0;
+}
+
+.section-title {
+  margin: 0;
+}
+
+.infra-grid,
+.bot-grid,
+.settings-grid {
+  display: grid;
+  gap: var(--cc-gap-lg);
+}
+
+.infra-grid,
+.settings-grid {
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+.bot-grid {
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+}
+
+@media (max-width: 860px) {
+  :root,
+  body {
+    --cc-sidebar-width: 168px;
+    --cc-content-padding-x: 16px;
+    --cc-content-padding-y: 16px;
+  }
+
+  .console-content {
+    max-width: none;
+  }
+
+  .section-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .bot-grid,
+  .infra-grid,
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+}
+
+@media (max-width: 640px) {
+  .console-layout {
+    display: block;
+  }
+
+  .console-sider {
+    position: static;
+    width: 100% !important;
+    flex: none !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    min-height: auto;
+    border-right: 0;
+    border-bottom: var(--cc-border);
+  }
+
+  .console-content {
+    margin-left: 0;
+  }
+
+}

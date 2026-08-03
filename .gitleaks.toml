@@ -1,0 +1,31 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "agentstrata-private-host"
+description = "Private or local hostnames must not be committed"
+regex = '''(?i)(?:^|[^a-z0-9._-])(?:[a-z][a-z0-9+.-]*://)?[a-z0-9][a-z0-9._-]{0,252}(?:\.corp|\.home|\.internal|\.intranet|\.lan|\.local|\.localhost)(?::[0-9]{1,5})?(?:[/\s"'?#]|$)'''
+keywords = [".corp", ".home", ".internal", ".intranet", ".lan", ".local", ".localhost"]
+tags = ["privacy", "network"]
+
+[[rules.allowlists]]
+description = "Standard WSL localhost bridge hostname"
+regexTarget = "match"
+regexes = [
+  '''(?i)wsl\.localhost''',
+]
+
+[[rules]]
+id = "agentstrata-private-ipv4"
+description = "RFC1918 IPv4 addresses must not be committed"
+regex = '''(?:10(?:\.[0-9]{1,3}){3}|172\.(?:1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}|192\.168(?:\.[0-9]{1,3}){2})'''
+keywords = ["10.", "172.", "192.168."]
+tags = ["privacy", "network"]
+
+[[rules]]
+id = "agentstrata-sensitive-uri-query"
+description = "Credential-like URI query values must not be committed"
+regex = '''(?i)[?&](?:access_token|api[_-]?key|client_secret|credential|passwd|password|secret|signature|token)=([a-z0-9._~+/=-]{12,})'''
+secretGroup = 1
+keywords = ["access_token", "api_key", "api-key", "client_secret", "credential", "passwd", "password", "secret", "signature", "token"]
+tags = ["privacy", "credential", "url"]

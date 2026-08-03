@@ -1,0 +1,56 @@
+name: Feature request
+description: Propose a scoped capability or workflow improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove credentials, private endpoints, stable platform identities,
+        private project names, machine paths, and unredacted logs.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What concrete developer or operator problem is unsolved?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe observable behavior, not only an implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Primary surface
+      options:
+        - Agent runtime
+        - Tools or MCP
+        - Context
+        - Platform adapter
+        - Deployment
+        - Evaluation
+        - Operations console
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and scope
+      description: Existing workarounds, non-goals, and compatibility impact.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing Issues and project documentation.
+          required: true
+        - label: This request does not require an unreviewed automatic installer.
+          required: true

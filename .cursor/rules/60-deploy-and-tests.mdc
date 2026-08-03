@@ -1,0 +1,125 @@
+---
+description: 部署（WSL2 / Docker）与测试组织规则
+globs: deploy/**,tests/**
+alwaysApply: false
+---
+
+# 部署与测试
+
+## 代码 AI 任务诊断
+
+收到 `task_*` 或 `job_*` 时遵循 `docs/ai-debugging.md`，优先在 WSL 源仓运行 `python -m console.control diagnose --id <id> --out <dir>`。单任务排查禁止先拉 full dump，也禁止删除任务目录或重启服务破坏现场。
+
+## 部署目录
+
+```
+deploy/
+├── wsl/                       # 主线：Linux / WSL2 + cc-connect
+│   ├── start.sh               # chatcopilot@.service 的 ExecStart（前台跑 cc-connect）
+│   ├── status.sh              # 健康检查（dump.sh 也会调它）
+│   ├── sync_code.sh           # WSL 源仓 → 各实例代码同步（控制台「更新代码并重启」底层）
+│   ├── dump.sh                # 诊断快照（控制台「诊断」底层）
+│   ├── bot_wrapper.sh         # bash 入口包装
+│   ├── bootstrap_wsl.sh       # 重建 venv + 渲染配置（控制台「重建环境」底层）
+│   ├── setup_wsl_root.sh / setup_wsl_user.sh
+│   ├── _load_env.sh / _session_env.sh / _apply_config.sh  # 后者只是薄封装，调 `chatcopilot bot doctor` + `render-cc-config`
+│   ├── _try_cc_connect.sh / _stop_cc.sh
+│   ├── env.example            # 实例 env 模板（必看）
+│   ├── win/push-console.ps1   # legacy：旧 Windows 副本临时迁移到 WSL 源仓，不是默认入口
+│   └── secrets/               # 飞书 App secret 实例目录（不要提交真实凭证）
+├── docker/                    # Docker 部署说明
+├── common/                    # 部署通用契约
+└── ci/blueking/               # 蓝鲸 CI
+```
+
+> 运维入口统一为 [运维控制台](../../docs/console.md)（`console/`）。动作按钮 1:1 落 sh：起停重启 → `console/scripts/ctl.sh`，写机密 → `console/scripts/write_env.sh`，控制台自身 → systemd `chatcopilot-console.service`（`console/setup_console.sh` 一次性装好）。
+
+## 多实例硬约定
+
+每个机器人实例**独立**以下资源（按实例 id 命名）：
+
+| 资源 | 路径模板 |
+| --- | --- |
+| 代码目录 | `~/ChatCopilot-<instance-id>/` |
+| env 文件 | `~/.chatcopilot-<instance-id>.env` （`chmod 600`） |
+| workspace | `~/chatcopilot-workspaces/<instance-id>/` |
+| cc-connect home | `~/.chatcopilot-runtime/<instance-id>/.cc-connect/` |
+| 日志 | `~/chatcopilot-logs/<instance-id>/` |
+
+## 部署关键命令
+
+```bash
+# Linux / WSL2 侧：首次一次性装控制台（systemd 开机自启），之后开浏览器 http://localhost:8910
+cd ~/ChatCopilot && bash console/setup_console.sh
+
+# 更新控制台和实例
+bash deploy/wsl/deploy_console.sh --update-only
+bash deploy/wsl/update_instance.sh --instance <bot-id>
+
+# 纯命令行等价（脱离 UI）
+python -m console.control list --json
+python -m console.control restart --instance <bot-id>
+python -m console.control sync    --instance <bot-id>
+bash console/scripts/ctl.sh start <bot-id>          # 起停重启动作脚本
+bash deploy/wsl/status.sh --instance <bot-id>        # 健康检查
+```
+
+`_apply_config.sh` 已不含平台分支 / heredoc：cc-connect `config.toml` 与凭证检查全部委托 CLI，平台差异由 `platforms/<type>/adapter.py` 的 `required_secrets` / `render_cc_connect_section` / `render_extra_files` 声明。新增平台不改部署脚本。可单独跑：
+
+```bash
+python -m chatcopilot bot doctor --bot bots/<bot-id>/bot.yaml
+python -m chatcopilot bot render-cc-config --bot bots/<bot-id>/bot.yaml --out <cc-connect-home>/config.toml
+```
+
+## 凭证 / 安全
+
+- **不要把以下内容提交到仓库**：
+  - 真实飞书 App secret（用 `*.example.json` 占位）
+  - LLM API key
+  - 用户上传文件、RAG 数据、记忆文件、日志
+  - 机器本地路径（`/srv/agentstrata/...`、`D:\...`）
+- `deploy/wsl/secrets/<instance-id>/feishu_app.json` 走 `.gitignore`；模板放 `feishu_app.example.json`。
+- env 文件 `chmod 600`。
+
+## 测试
+
+```
+tests/
+├── unit/         # 单元测试：纯函数 / 模块边界
+└── integration/  # 集成测试：ACP 流、access_control、warehouse migration、botspec smoke
+```
+
+### 运行
+
+```bash
+# 全部
+python -m pytest tests/unit tests/integration -q
+
+# 只跑单测（最常用）
+python -m pytest tests/unit -q
+
+# 按关键字过滤
+python -m pytest tests/unit -q -k workspace
+python -m pytest tests/integration -q -k acp
+```
+
+### 命名约定
+
+- 单测文件：`test_<被测模块>.py`（如 `test_bot_session.py` 对应 `agent/session.py`）
+- 集成测试：`test_<功能链路>.py`（如 `test_acp_attachment_gate.py`）
+- 测试类/函数：`Test<Class>` / `test_<行为描述>`
+
+### 修改代码后的最小测试集
+
+| 改了什么 | 必跑 |
+| --- | --- |
+| `agent/protocol.py` 或 `session.py` | `tests/unit/test_bot_session.py` + `tests/integration/test_acp_streaming_updates.py` |
+| `agent/tools/registry.py` | `tests/unit/test_external_tools_registry.py` |
+| `middleware/acp/*` | `tests/integration/test_acp_*.py` |
+| `middleware/access_control.py` / `payload_sanitizer.py` | `tests/integration/test_access_control.py` |
+| `middleware/runtime/workspace/*` | `tests/unit/test_owner_workspace_tools.py` + `tests/unit/test_windows_fs_path_guard.py` |
+| `botspec/*` | `tests/unit/test_botspec_loader_platform.py` + `tests/integration/test_lingye_botspec_smoke.py` |
+| `external_tools/feishu/*` | `tests/unit/test_feishu_tools.py` + `test_feishu_tool_pack_prompts.py` |
+| `external_tools/unity_codebase/*` | `tests/unit/test_unity_codebase_*.py` |
+| `platforms/*`（adapter / registry / router） | `tests/unit/test_platforms_router.py` + `test_platforms_registry.py` |
+| `agent/tools/file_delivery.py` 或 `send_files_to_user` | `tests/unit/test_file_delivery_hook.py` |

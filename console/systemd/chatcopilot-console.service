@@ -1,0 +1,24 @@
+[Unit]
+Description=AgentStrata 运维控制台后端 (FastAPI + SSE, 0.0.0.0:8910)
+Documentation=https://github.com/Ling-ye/AgentStrata
+After=default.target
+
+[Service]
+Type=simple
+# 控制台原生跑在 WSL 源仓 ~/ChatCopilot；源仓更新后用 deploy_console.sh
+# 或控制台自身更新入口重建前端并重启本服务。
+WorkingDirectory=%h/ChatCopilot
+ExecStart=%h/ChatCopilot/.venv/bin/python -m console.backend
+Restart=on-failure
+RestartSec=3
+# 绑定 0.0.0.0 使 WSL2 localhost 转发和直接 IP 访问均可用。
+Environment=CHATCOPILOT_CONSOLE_HOST=0.0.0.0
+Environment=CHATCOPILOT_CONSOLE_PORT=8910
+Environment=PYTHONPATH=%h/ChatCopilot/src
+StandardOutput=journal
+StandardError=journal
+KillMode=mixed
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

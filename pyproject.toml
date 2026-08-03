@@ -1,0 +1,112 @@
+[build-system]
+requires = [
+    "setuptools==83.0.0",
+    "wheel==0.47.0",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentstrata"
+version = "0.1.0.dev0"
+description = "Declarative runtime, operations, and evaluation platform for multi-channel AI agents"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["ai-agents", "bot", "mcp", "multi-agent", "onebot"]
+authors = [
+    { name = "Lingye", email = "616202172@qq.com" },
+]
+requires-python = ">=3.10,<3.14"
+maintainers = [
+    { name = "Lingye", email = "616202172@qq.com" },
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "ruamel.yaml>=0.18",
+    "PyYAML>=6.0",
+    "Requests>=2.32,<3",
+    "mcp-server-git>=0.6",
+]
+
+[project.optional-dependencies]
+agent = [
+    "openai>=1.40.0",
+    "mcp>=1.27,<2",
+    "langgraph>=1.2,<2",
+]
+acp = [
+    "agent-client-protocol>=0.10.0",
+    "websockets>=12",
+]
+desktop = [
+    "numpy>=2.2,<2.3",
+    "pandas==2.3.3",
+    "PyInstaller==6.17.0",
+]
+test = [
+    "pytest",
+]
+dev = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pytest",
+    "ruff>=0.12,<1",
+    "build==1.5.0",
+    "mypy>=1.16,<2",
+    "types-PyYAML",
+    "types-requests",
+    "setuptools==83.0.0",
+    "wheel==0.47.0",
+]
+
+[project.scripts]
+agentstrata = "chatcopilot.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/Ling-ye/AgentStrata"
+Changelog = "https://github.com/Ling-ye/AgentStrata/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md"
+Security = "https://github.com/Ling-ye/AgentStrata/security/policy"
+Repository = "https://github.com/Ling-ye/AgentStrata"
+Issues = "https://github.com/Ling-ye/AgentStrata/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = [
+    "chatcopilot*",
+]
+
+[tool.setuptools.package-data]
+chatcopilot = [
+    "agent/context/builtin_prompts/*.md",
+    "botspec/*.yaml",
+    "evals/suites/**/*.yaml",
+    "external_tools/unity_codebase/*.yaml",
+    "external_tools/windows_fs/*.yaml",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["scratch_unit_tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+check_untyped_defs = true
+ignore_missing_imports = true

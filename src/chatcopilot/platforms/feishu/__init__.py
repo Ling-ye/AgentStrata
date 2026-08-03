@@ -1,0 +1,2 @@
+"""Feishu platform adapter."""
+

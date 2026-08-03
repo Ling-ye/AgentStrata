@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible problem in current main or the latest published AgentStrata release.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove credentials, private logs, access tokens, and user data before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: AgentStrata version
+      description: Release tag or exact commit.
+      placeholder: commit SHA or release tag
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation
+      options:
+        - Source checkout
+        - Python package
+        - WSL deployment
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS/WSL version, Python version, backend, platform, and model provider.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal commands, BotSpec excerpt, and steps that reproduce the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and redacted evidence
+      description: Include the smallest relevant traceback or task ID. Do not paste secrets.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I reproduced this on the latest published release or current main.
+          required: true
+        - label: I removed credentials, private logs, and personal data.
+          required: true
+        - label: I searched existing Issues for duplicates.
+          required: true

@@ -1,0 +1,76 @@
+---
+description: middleware 层规则：ACP 协议、Workspace、background jobs、MCP/HTTP 入口
+globs: src/chatcopilot/middleware/**
+alwaysApply: false
+---
+
+# Middleware 层
+
+中间件承担：**协议帧、跨切面策略、共享会话基础设施**。Agent 不感知任何中间件类型。
+
+## 模块边界
+
+```
+middleware/
+├── acp/                          # 飞书 ACP server（生产主链路）
+│   ├── server.py                 # AcpChatAgent 入口，方法 initialize/session_new/session_prompt/session_cancel
+│   ├── agent_bridge.py           # ACP 帧 ↔ AgentTask 转换
+│   ├── meta_commands.py          # /debug、模式切换、job_id 查询等不进 LLM 的命令
+│   ├── job_dispatch.py           # 后台任务派发与回执
+│   ├── event_translator.py       # AgentEvent → session_update(update_agent_message_text)
+│   ├── attachment_classifier.py  # extract_prompt_parts / should_short_circuit_attachment_only
+│   ├── attachment_pipeline.py    # import_transport_attachments + 异步 ack
+│   ├── private_space.py          # per-user 私人空间 inventory
+│   └── session_state.py          # build_session_state：Workspace + Role + Mode + AgentSession
+├── mcp/server.py                 # stdio MCP server：把 agent 工具暴露给外部 MCP 客户端
+├── http/                         # 通用 route registry / server / auth
+├── runtime/
+│   ├── workspace/                # per-session Workspace 模型与 resolver
+│   │   ├── model.py              # Workspace dataclass + is_inside / 子目录工厂
+│   │   ├── resolver.py           # 从 env (USER_ID/CHAT_ID/CHAT_KIND/USER_NAME) 解析
+│   │   ├── identity.py           # owner/admin 名册兜底
+│   │   ├── inventory.py          # 私人空间清单
+│   │   └── cleanup.py            # 过期文件清理
+│   └── jobs/                     # 后台任务：submitter/worker/queue/notification
+├── access_control.py             # Role / AssistantMode / get_owners
+└── payload_sanitizer.py          # per-role tool payload 过滤（通过 hook 注入 agent）
+```
+
+## 关键不变量
+
+1. **ACP `prompt` 派发顺序**（在 `acp/server.py::_prompt_locked`）：
+   - meta_commands → 短路（不进 LLM）
+   - 私人空间 inventory 查询 → 短路
+   - 纯附件上传（`should_short_circuit_attachment_only`）→ 只做 `import_transport_attachments` + debounced ack
+   - 文件 + 任务动词 → 落盘 + 在 user_text 末尾拼 `[资源引用: xxx]` hint → `AgentTask`
+   - 纯文本 → 直接构造 `AgentTask`
+2. **会话锁**：每个 ACP `session_id` 用 `asyncio.Lock` 串行化所有 prompt，避免并发污染 workspace。
+3. **per-user Workspace**：cc-connect 通过 `session.started` hook 注入 `USER_ID` / `CHAT_ID` / `CHAT_KIND` / `USER_NAME` 到进程 env。
+   - p2p → `<workspace_root>/p2p_<user_id>/`
+   - group → `<workspace_root>/group_<chat_id>/user_<user_id>/`
+   - 缺 user_id 时由 `identity.py` 按发送人姓名回查 Owners/Admins 兜底。
+4. **路径越权防御**：所有写入路径必须 `Workspace.is_inside(dst)` 校验；含 `..`、绝对路径段、Windows 盘符的文件名一律丢弃。
+5. **附件搬运**：从共享 `default/.cc-connect/attachments/` `shutil.copy2` 到 per-user `<workspace>/.cc-connect/attachments/`，**搬运后删除源文件**。
+6. **回执 debounce**：3 秒 debounce + 最多 15 秒轮询；超时给"等了较长时间仍未确认"提示。
+
+## Agent 注入 hook
+
+中间件用以下 hook 把策略**注入** agent 层（不修改 agent 源码）：
+
+- `tool_payload_filter` → `payload_sanitizer.build_filter(role)`，按 Role 过滤工具入参
+- `background_submitter` → `runtime/jobs/submitter.py::submit_tool_job`，把长任务转后台
+- `file_sender` → `agent_bridge` 用当前平台 adapter 的 `resolve_sendable_paths` + `send_files` 构造的闭包，注入 `AgentRuntime.new_session`，供 `send_files_to_user` 工具回传文件（agent 层不感知具体平台）
+- 不要绕过这些 hook 在 agent 内部写 Role/Job/平台 相关分支
+
+## 后台任务
+
+- 提交：`submit_tool_job(tool_name, args, ...)` 在 agent 工具中调用 → 立即返回 `job_id` + 状态提示
+- 执行：`python -m chatcopilot.middleware.runtime.jobs.worker <request.json>`（子进程，不要直接调）
+- 完成回调：`_watch_background_job` 直接 `send_via_cc_connect` 把产物推回飞书会话，不依赖用户再次提问
+
+## 修改约束
+
+- 改 ACP 协议方法：必须更新 `agent_bridge.py` + `event_translator.py` + `tests/integration/test_acp_*.py`。
+- 改 Workspace 字段：必须同步 `resolver.py` + `model.py` + `inventory.py` + 所有 `chatcopilot.middleware.runtime.workspace` 的使用方。
+- 改 `payload_sanitizer.py` / `access_control.py`：跑 `tests/integration/test_access_control.py`。
+- 不要在中间件里 `import chatcopilot.platforms.feishu.*` 的具体业务函数——只通过 `platforms.router` / `platforms.registry.get_adapter()` 拿 `PlatformAdapter` 实例，调它暴露的契约方法（`build_system_prompt` / `resolve_user_display_name` / `send_files` 等）。

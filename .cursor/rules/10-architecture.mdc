@@ -1,0 +1,45 @@
+---
+description: ChatCopilot 6 层架构总图、跨层契约、分层依赖规则
+alwaysApply: true
+---
+
+# ChatCopilot 分层架构
+
+仓库是**单代码库、多机器人**平台：`bots/<bot-id>/bot.yaml` 选定一个实例，基础设施共享。
+
+## 6 层结构（依赖只能从上往下）
+
+```
+1. 配置层      bots/ + src/chatcopilot/botspec/
+2. 平台接入    src/chatcopilot/platforms/
+3. 中间件      src/chatcopilot/middleware/
+4. Agent       src/chatcopilot/agent/
+5. 外部工具    src/chatcopilot/external_tools/
+6. 部署        deploy/
+```
+
+辅助层：`src/chatcopilot/core/`（常量、env 前缀、错误、settings、日志）被任意层使用。
+
+## 跨层契约（**只许通过这些**）
+
+| 契约 | 模块 | 谁产 谁消 |
+| --- | --- | --- |
+| `BotSpec` / `BotRuntimeContext` | `botspec/` | 配置层 → 装配 runtime context，注入 env、prompt、tool packs、hidden tools |
+| `AgentTask` / `AgentEvent` / `AgentResult` | `agent/protocol.py` | 中间件 → Agent 唯一入口 |
+| `Workspace` | `middleware/runtime/workspace/` | 中间件解析，传给 Agent 与工具 |
+| `ToolDef` / `HandlerResult` | `external_tools/shared/` 和 `agent/tools/` | 外部工具 → Agent ToolExecutor |
+| `EventSink` 回调 | `agent/protocol.py` | Agent 推流给中间件；中间件翻译成平台帧 |
+
+## 硬规则（违反就拒绝）
+
+1. **Agent 层**禁止 `import` 任何下列符号：`Role`、`Workspace`、`BotRuntimeContext`、ACP 帧类型、任何 `chatcopilot.platforms.*`、`chatcopilot.middleware.*`。
+   - 角色相关过滤通过 `tool_payload_filter` hook 注入；后台任务通过 `background_submitter` hook 注入。
+2. **平台层**禁止直接调 `AgentSession`；必须经中间件构造 `AgentTask`。
+3. **外部工具**禁止 `import` `chatcopilot.middleware.*` 和 `chatcopilot.platforms.*`；它们只能依赖 `external_tools/shared/` 与标准库/第三方。
+4. **工具包由 `tools.packs` 声明**——工具发现统一走 `agent/tools/registry`，prompt fragments 由 tool pack manifest 贡献。
+5. 新增平台时只写 `platforms/<name>/adapter.py`（暴露模块级 `ADAPTER`，由 `registry` 自动发现）；新增工具包/工具同样"在对应层下加目录，不在跨层文件里写 if 分支"。
+
+## 按需阅读
+
+- 架构细节：`docs/architecture.md`、`docs/runtime.md`
+- 平台 / BotSpec / 部署 / 工具细则：对应 `.cursor/rules/*.mdc` scoped rule

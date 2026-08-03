@@ -1,0 +1,87 @@
+---
+description: BotSpec 模型、机器人实例配置、四面组合装配的修改规则
+globs: src/chatcopilot/botspec/**,bots/**
+alwaysApply: false
+---
+
+# BotSpec 与机器人实例
+
+`bots/<bot-id>/bot.yaml` 是一个可部署机器人的**唯一稳定边界**：平台、LLM、`behavior`、`tools`、`agents`、`context`、workspace、deploy。
+
+## 目录约定
+
+```
+bots/<bot-id>/
+├── bot.yaml                 # BotSpec 主文件（必需）
+├── prompts/
+│   ├── persona.md           # 必填：机器人身份/个性/领域范围/风格/本 bot 工具规则
+│   ├── refusal.md           # 可选：拒答模板
+│   ├── safety.md            # 可选：覆盖框架默认安全规则
+│   ├── memory.md            # 可选：覆盖框架默认记忆规则
+│   ├── modes/<mode>.md      # 可选：业务模式提示词
+│   └── roles/<role>.md      # 可选：覆盖框架默认角色行为（owner/admin/user）
+├── mcp/servers.yaml         # 可选：外部 MCP server 配置
+├── rag/sources.yaml         # 可选：RAG 数据源
+├── memory/schema.yaml       # 可选：长期记忆 schema
+├── skills/
+│   ├── manifest.yaml        # skill 索引
+│   └── <skill-id>/SKILL.md  # 单个 skill
+└── package.allowlist.yaml   # 打包允许清单
+```
+
+## BotSpec 字段（顶层）
+
+- `id` / `display_name` — 实例唯一标识
+- `platform.type` / `adapter` / `mention_name` — 走 `platforms/<type>/adapter.py`；`type` 白名单由 `platforms/registry`（扫描 `ADAPTER`）动态给出，**不**在 `loader.py` 硬编码
+- `llm.env_prefix` — 共享 LLM 配置 loader 的 env 前缀（如 `CHATCOPILOT_CHAT`）
+- `behavior` — 相对 `bots/<bot-id>/` 的 md 路径，分层装配（**机制下沉、内容上浮**）：
+  - `behavior.persona`（必填）：机器人身份/个性/领域范围/风格/本 bot 工具规则
+  - `behavior.refusal`（可选）：拒答口径
+  - `behavior.safety` / `behavior.memory_rules`（可选）：覆盖框架内置中性默认（`agent/context/builtin_prompts/`）
+  - `behavior.modes.<key>`（可选）：业务模式提示词，仅启用角色矩阵的平台按 `AssistantMode` 取用
+  - `behavior.roles.<key>`（可选）：覆盖框架默认 owner/admin/user 角色行为；未覆盖的角色仍用默认
+  - 通用机制文本（记忆/安全/角色）默认走框架内置中性默认，bot 不写就用默认、写了就覆盖；平台层 `platforms/<p>/persona.py` 只做装配机制（运行时头部 + 拼接顺序 + 按枚举选层），**不**内嵌任何 bot 专属内容
+- `tools.packs` — 本实例启用的本地/内置工具包 id 列表
+- `tools.features` — 非工具 schema 的运行特性，例如 `chat.file_uploads` / `chat.private_workspace`
+- `tools.mcp.servers` — 外部 MCP server 绑定文件指针
+- `tools.hide` — 从运行时隐藏的具体工具名
+- `agents` — subagent preset、workflow、统一搜索和预算
+- `context` — RAG、长期记忆存储、代码仓库注册表和 playbook manifest
+- `workspace.root_env` — env 变量名（**不**写绝对路径）
+- `deploy.*` — WSL 路径、env file、cc-connect home、project_name
+- `packaging.allowlist` — 部署打包白名单
+
+## Tool pack 规则
+
+- Pack id 形如 `<domain>.<feature>`，例如 `feishu.document`、`web.fetch`、`filesystem.windows.read`。
+- Pack 可以贡献 prompt fragments，也可以映射本地/内置工具模块；工具发现统一走 `agent/tools/registry`。
+- 新增 pack：在 `botspec/registry.py` 注册 tool pack；若需要 prompt fragments，再在对应 `external_tools/<domain>/tool_pack_prompts.py` 提供 `ToolPackPrompt(...)` builder。
+- 要从某个 bot 中隐藏具体工具，用 `tools.hide`（按工具名而非 pack 名）。
+
+## botspec 子模块
+
+```
+botspec/
+├── model.py            # BotSpec / dataclass 模型
+├── loader.py           # YAML → BotSpec
+├── runtime.py          # BotSpec → BotRuntimeContext（解析 prompt/skills/env）
+├── registry.py         # 全局 tool pack / tool feature 注册表
+├── tool_pack_prompt.py # ToolPackPrompt prompt fragment 模型
+├── skills.py           # skills/manifest.yaml 解析
+├── cli.py              # `python -m chatcopilot bot ...`：list / new / doctor / render-cc-config
+└── __main__.py         # `python -m chatcopilot botspec ...` CLI
+```
+
+## 新增一个机器人实例
+
+1. `python -m chatcopilot bot new <bot-id> --platform <type>` 脚手架（或手动 `mkdir bots/<bot-id>/` + `prompts/`）
+2. 写 `bot.yaml`（参考 `bots/lingye-copilot-qq/bot.yaml`，**复用** `workspace.read_write` 等通用 pack）
+3. `python -m chatcopilot bot doctor --bot bots/<bot-id>/bot.yaml`（校验 BotSpec + 平台凭证）
+4. 在 WSL 源仓 `~/ChatCopilot` 运行 `bash deploy/wsl/deploy_console.sh --status` 确认控制台可用（控制台靠 `bots/<bot-id>/bot.yaml` 自动发现新实例）
+5. 在[运维控制台](../../docs/console.md) `http://localhost:8910` 点该实例卡片的「首次部署」走向导（机密 / 同步 / 重建 / 注册 / 启动）
+
+## 修改约束
+
+- 改 `model.py` 字段必须同步：`loader.py`、`runtime.py`、`docs/bot-spec.md`、`bots/*/bot.yaml` 的所有现有实例。
+- **不要**在 `bot.yaml` 写本机绝对路径（如 `/srv/agentstrata/...`、`D:\...`）——走 `env_file` + env 前缀。
+- 改任意 `bot.yaml` 后**必须**跑 `botspec validate`。
