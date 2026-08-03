@@ -50,7 +50,7 @@ acp = [
 desktop = [
     "numpy>=2.2,<2.3",
     "pandas==2.3.3",
-    "PyInstaller==6.17.0",
+    "PyInstaller==6.21.0",
 ]
 test = [
     "pytest",
