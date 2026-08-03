@@ -1,0 +1,20 @@
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+default_permissions = "chatcopilot-dev"
+
+[permissions.chatcopilot-dev]
+description = "ChatCopilot workspace, local debug caches, network, and localhost tools."
+extends = ":workspace"
+
+[permissions.chatcopilot-dev.filesystem]
+":tmpdir" = "write"
+":slash_tmp" = "write"
+"~/.cache" = "write"
+"~/AppData/Local/pip/Cache" = "write"
+"~/.nuget/packages" = "write"
+"~/go/pkg/mod" = "write"
+"~/AppData/Local/Unity/cache" = "write"
+
+[permissions.chatcopilot-dev.network]
+enabled = true
+allow_local_binding = true

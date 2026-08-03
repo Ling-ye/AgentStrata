@@ -1,0 +1,25 @@
+profiles:
+  - profile_id: agent-comparison-mvp
+    name: Agent 能力对比 MVP
+    description: 四个固定代表任务，只用于观察当前 Codex 与 Native 的方向性差异。
+    default_seed: 20260723
+    modes:
+      quick:
+        repetitions: 1
+        max_wall_seconds: 2700
+      standard:
+        repetitions: 3
+        max_wall_seconds: 2700
+    cases:
+      - suite_id: ifeval
+        case_id: ifeval-json-format
+        dimension: instruction_following
+      - suite_id: gaia-smoke
+        case_id: gaia-smoke-arithmetic
+        dimension: knowledge_research
+      - suite_id: agent-comparison
+        case_id: comparison-tool-lookup
+        dimension: tool_orchestration
+      - suite_id: agent-comparison
+        case_id: comparison-code-multiply
+        dimension: code

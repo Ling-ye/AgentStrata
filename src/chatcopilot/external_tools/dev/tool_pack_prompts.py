@@ -1,0 +1,46 @@
+"""Tool-pack prompt fragments for direct development tools."""
+from __future__ import annotations
+
+from chatcopilot.contracts.tool_packs import ToolPackPrompt
+
+
+def build_dev_files_pack() -> ToolPackPrompt:
+    return ToolPackPrompt(
+        name="dev.files",
+        prompt_fragments=(
+            "## File operations\n\n"
+            "Use read_file, edit_file, write_file, delete_file, list_directory, and "
+            "search_content for direct project file work. Prefer edit_file for a focused "
+            "replacement and write_file for a new file or a deliberate full rewrite."
+        ),
+    )
+
+
+def build_dev_shell_pack() -> ToolPackPrompt:
+    return ToolPackPrompt(
+        name="dev.shell",
+        prompt_fragments=(
+            "## Shell execution\n\n"
+            "Use run_command for tests, validation, and project CLI operations. Respect the "
+            "configured project root and command timeout."
+        ),
+    )
+
+
+def build_dev_code_tasks_pack() -> ToolPackPrompt:
+    return ToolPackPrompt(
+        name="dev.code_tasks",
+        prompt_fragments=(
+            "## Isolated code tasks\n\n"
+            "For any request that requires changing repository source, tests, specs, "
+            "documentation, dependencies, BotSpec, adapters, or deployment, call "
+            "start_code_task with the complete user intent and observable acceptance "
+            "criteria. Return the task id immediately. Use get_code_task to answer progress "
+            "questions, cancel_code_task to stop work, and resume_code_task for corrective "
+            "follow-up. Do not mutate source directly from the main conversation.\n\n"
+            "For an external open-source adapter, first call prepare_adapter_source and "
+            "show its exact envelope and digest to the Owner. Wait for explicit approval "
+            "before calling approve_adapter_source. Only then call "
+            "forge_open_source_adapter with the unchanged one-shot approval."
+        ),
+    )

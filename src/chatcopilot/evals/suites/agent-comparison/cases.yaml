@@ -1,0 +1,45 @@
+cases:
+  - case_id: comparison-tool-lookup
+    input: >-
+      Use the lookup_eval_fact tool with key "comparison-token". Then reply with
+      only the value returned by the tool. Do not guess the value.
+    category: tool_orchestration
+    expected_behavior: Call the permitted deterministic tool with the exact key and return its value.
+    metadata:
+      adapter: agent_comparison
+      task_kind: tool
+      source: builtin-comparison
+      allowed_tools: [lookup_eval_fact]
+      expected_tool: lookup_eval_fact
+      expected_key: comparison-token
+      expected_answer: paired-evidence
+
+  - case_id: comparison-code-multiply
+    input: >-
+      The isolated repository contains calculator.py and test_calculator.py.
+      Fix the multiply function so the tests pass. Inspect the files, make the
+      smallest change, run the tests, and briefly state what changed.
+    category: code
+    expected_behavior: Repair the isolated fixture without touching files outside it.
+    metadata:
+      adapter: agent_comparison
+      task_kind: code
+      source: builtin-comparison
+      allowed_tools: [read_file, edit_file, write_file, list_directory, search_content, run_command]
+      fixture_files:
+        calculator.py: |
+          def multiply(left: int, right: int) -> int:
+              return left + right
+        test_calculator.py: |
+          import unittest
+
+          from calculator import multiply
+
+
+          class CalculatorTests(unittest.TestCase):
+              def test_multiply(self) -> None:
+                  self.assertEqual(multiply(6, 7), 42)
+
+
+          if __name__ == "__main__":
+              unittest.main()

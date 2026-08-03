@@ -1,0 +1,15 @@
+repositories:
+  - id: demo
+    display_name: Demo
+    root: "${TEST_CODEBASE_READ_ROOT}"
+    include_globs:
+      - "src/**"
+      - "-dash/**"
+      - "README.md"
+    deny_globs:
+      - "build/**"
+    allow_extensions:
+      - .py
+      - .cs
+      - .go
+      - .md

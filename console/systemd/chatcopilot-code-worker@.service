@@ -1,0 +1,26 @@
+[Unit]
+Description=AgentStrata isolated code-task recovery worker for %i
+After=default.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/chatcopilot-console/%i.env
+EnvironmentFile=%h/.config/chatcopilot-console/%i-code-worker.env
+ExecStart=/usr/bin/env bash -c 'exec "$CCP_WSL_HOME/.venv/bin/python" -m chatcopilot.code_task_service --workspace-root "$CHATCOPILOT_WORKSPACE_ROOT"'
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=256M
+TasksMax=64
+StandardOutput=journal
+StandardError=journal
+KillMode=mixed
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

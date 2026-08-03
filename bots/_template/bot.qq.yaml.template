@@ -1,0 +1,60 @@
+id: __BOT_ID__
+display_name: __DISPLAY_NAME__
+
+platform:
+  type: qq
+  adapter: qq_acp
+  mention_name: __MENTION_NAME__
+
+llm:
+  chat:
+    env_prefix: CHATCOPILOT_CHAT
+
+prompts:
+  persona: prompts/persona.md
+  refusal: prompts/refusal.md
+
+tools:
+  packs:
+    - workspace.read_write
+    - memory.chat
+    - persona.manage
+    - mcp.admin
+  features:
+    - chat.file_uploads
+    - chat.private_workspace
+  mcp:
+    servers: mcp/servers.yaml
+
+agents:
+  backend: native
+  presets:
+    - mcp_query
+
+context:
+  memory_store:
+    provider: markdown
+    namespace: __BOT_ID__
+    schema: memory/schema.yaml
+
+workspace:
+  root_env: CHATCOPILOT_WORKSPACE_ROOT
+
+deploy:
+  target: wsl2
+  instance_id: __BOT_ID__
+  wsl_home: ~/ChatCopilot-__BOT_ID__
+  workspace_root: ~/chatcopilot-workspaces/__BOT_ID__
+  log_dir: ~/chatcopilot-logs/__BOT_ID__
+  env_file: ~/.chatcopilot-__BOT_ID__.env
+  cc_connect_config_dir: ~/.chatcopilot-runtime/__BOT_ID__/.cc-connect
+  project_name: chatcopilot-__BOT_ID__
+
+packaging:
+  allowlist: package.allowlist.yaml
+
+access:
+  private_require_whitelist: true
+  group_require_whitelist: true
+  group_require_mention: true
+  whitelist_env: __WHITELIST_ENV__

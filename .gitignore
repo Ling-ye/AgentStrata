@@ -1,0 +1,145 @@
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE文件
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# Linter / 类型检查 / 测试缓存
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.tox/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Node.js
+node_modules/
+
+# 构建文件
+build/
+dist/
+*.egg-info/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+*.toc
+*.spec
+*.bak
+*.orig
+*.pid
+*.lock
+
+# 本地环境变量 / 凭证（禁止提交）
+.env
+.env.local
+.env.*.local
+
+# SQLite 临时文件
+*.sqlite3-journal
+*.db-journal
+
+# 测试数据
+**/test_data/
+
+# 数据目录与临时下载产物（飞书源表 / 内存快照 / diff 结果，禁止提交）
+_feishu_attach_tmp/
+.tmp_extract_test/
+
+# ChatAgent workspace fallback 在仓库根创建的子目录（cc-connect 自动落附件 + 工具产物，禁止提交）
+.cc-connect/
+/downloads/
+/results/
+/uploads/
+
+# Skill 流水线运行日志（memory_report-pipeline 等阶段产物）
+_phase*.log
+
+# WSL 端日志拉到 Windows 后的归档目录（历史产物）
+_wsl_logs/
+
+# WSL 调试快照目录（由 deploy/wsl/dump.sh / 控制台「诊断」生成；可能含机密 / 用户对话历史）
+_wsl_debug/
+
+# Agent 评测运行报告与临时工作区（如需提交基准，使用脱敏后的固定 baselines/fixtures 目录）
+/reports/evals/*
+!/reports/evals/baselines/
+!/reports/evals/fixtures/
+
+# 数据文件（Excel / CSV）
+*.xlsx
+*.csv
+
+# 平台凭证（明文，禁止提交；feishu_app.json 等都属于实凭证）
+deploy/wsl/secrets/*
+!deploy/wsl/secrets/feishu_app.example.json
+!deploy/wsl/secrets/README.md
+
+# Bot 本地部署配置（明文，禁止提交；*.example 作为模板保留）
+bots/*/local.env
+!bots/*/local.env.example
+
+# Bot-local adapter approvals are machine state, not repository content.
+bots/*/.agentstrata/adapter-approvals/
+
+# Bot-local private tool configuration (project schemas, aliases, taxonomies).
+bots/*/.agentstrata/private-config/
+
+# Docker 基础服务本地配置与临时产物
+deploy/docker/.env
+!deploy/docker/.env.example
+deploy/docker/_*
+
+# ChatAgent 子模块本地配置（含 api_key，禁止提交）
+apps/ChatAgent/config.yaml
+chatcopilot/agent/config.yaml
+
+# Local credentials and signing material
+/.codex/auth.json
+/auth.json
+/credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.kdbx
+
+# Local databases and opaque export archives
+*.sqlite
+*.sqlite3
+*.db
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+
+# Known accidental shell/search artifact at the repository root
+/=

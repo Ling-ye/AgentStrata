@@ -1,0 +1,449 @@
+name: Prepare GitHub release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Signed annotated stable tag, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify tag and repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      tag_object: ${{ steps.verify_tag.outputs.tag_object }}
+      tag_commit: ${{ steps.verify_tag.outputs.tag_commit }}
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+    steps:
+      - name: Validate request
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$REPOSITORY_VISIBILITY" = "public"
+          test "$GITHUB_REF_TYPE" = "tag"
+          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+      - name: Check out tag and complete history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify signed annotated tag and ancestry
+        id: verify_tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          local_tag_object="$(git rev-parse "$RELEASE_TAG")"
+          local_tag_commit="$(git rev-parse "$RELEASE_TAG^{}")"
+          test "$local_tag_commit" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+          ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")"
+          remote_object_type="$(jq -r '.object.type' <<<"$ref_json")"
+          remote_tag_object="$(jq -r '.object.sha' <<<"$ref_json")"
+          test "$remote_object_type" = "tag"
+          test "$remote_tag_object" = "$local_tag_object"
+
+          tag_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${remote_tag_object}")"
+          test "$(jq -r '.tag' <<<"$tag_json")" = "$RELEASE_TAG"
+          test "$(jq -r '.verification.verified' <<<"$tag_json")" = "true"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = "commit"
+          remote_tag_commit="$(jq -r '.object.sha' <<<"$tag_json")"
+          test "$remote_tag_commit" = "$local_tag_commit"
+
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$remote_tag_commit" origin/main
+          echo "tag_object=$remote_tag_object" >> "$GITHUB_OUTPUT"
+          echo "tag_commit=$remote_tag_commit" >> "$GITHUB_OUTPUT"
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.10"
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: console/web/package-lock.json
+      - name: Install development dependencies
+        run: |
+          python -m pip install -e ".[agent,acp,dev]"
+          npm ci --prefix console/web
+      - name: Verify public history and secrets
+        run: |
+          python scripts/check_public_repo.py --history
+          bash scripts/check_secrets.sh history
+      - name: Validate release metadata
+        shell: bash
+        run: |
+          mapfile -t tagger_timestamps < <(
+            git for-each-ref \
+              --format='%(taggerdate:unix)' \
+              "refs/tags/$RELEASE_TAG"
+          )
+          test "${#tagger_timestamps[@]}" -eq 1
+          [[ "${tagger_timestamps[0]}" =~ ^[0-9]+$ ]]
+          test "${tagger_timestamps[0]}" -gt 0
+          release_date_utc="$(
+            date --utc --date="@${tagger_timestamps[0]}" +%F
+          )"
+          python scripts/check_release.py \
+            --tag "$RELEASE_TAG" \
+            --as-of-date-utc "$release_date_utc"
+      - name: Run full repository gate
+        run: python scripts/check_repo.py full
+      - name: Run console tests
+        run: npm test --prefix console/web
+
+  build:
+    name: Build hermetic release candidate
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      tag_object: ${{ steps.verify_tag.outputs.tag_object }}
+      tag_commit: ${{ steps.verify_tag.outputs.tag_commit }}
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+      EXPECTED_TAG_OBJECT: ${{ needs.verify.outputs.tag_object }}
+      EXPECTED_TAG_COMMIT: ${{ needs.verify.outputs.tag_commit }}
+    steps:
+      - name: Validate request
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$REPOSITORY_VISIBILITY" = "public"
+          test "$GITHUB_REF_TYPE" = "tag"
+          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+          test -n "$EXPECTED_TAG_OBJECT"
+          test -n "$EXPECTED_TAG_COMMIT"
+      - name: Check out tag and complete history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reverify signed annotated tag and ancestry
+        id: verify_tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          local_tag_object="$(git rev-parse "$RELEASE_TAG")"
+          local_tag_commit="$(git rev-parse "$RELEASE_TAG^{}")"
+          test "$local_tag_object" = "$EXPECTED_TAG_OBJECT"
+          test "$local_tag_commit" = "$EXPECTED_TAG_COMMIT"
+          test "$local_tag_commit" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+          ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")"
+          test "$(jq -r '.object.type' <<<"$ref_json")" = "tag"
+          test "$(jq -r '.object.sha' <<<"$ref_json")" = "$EXPECTED_TAG_OBJECT"
+          tag_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${EXPECTED_TAG_OBJECT}")"
+          test "$(jq -r '.tag' <<<"$tag_json")" = "$RELEASE_TAG"
+          test "$(jq -r '.verification.verified' <<<"$tag_json")" = "true"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = "commit"
+          test "$(jq -r '.object.sha' <<<"$tag_json")" = "$EXPECTED_TAG_COMMIT"
+
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$EXPECTED_TAG_COMMIT" origin/main
+          echo "tag_object=$EXPECTED_TAG_OBJECT" >> "$GITHUB_OUTPUT"
+          echo "tag_commit=$EXPECTED_TAG_COMMIT" >> "$GITHUB_OUTPUT"
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.10"
+      - name: Install hash-locked build closure
+        run: |
+          python -m pip install \
+            --disable-pip-version-check \
+            --isolated \
+            --index-url https://pypi.org/simple \
+            --no-deps \
+            --require-hashes \
+            --only-binary=:all: \
+            --requirement requirements/release-build.txt
+      - name: Build and validate distributions twice
+        shell: bash
+        env:
+          VERIFIED_TAG_COMMIT: ${{ steps.verify_tag.outputs.tag_commit }}
+        run: |
+          export SOURCE_DATE_EPOCH
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$VERIFIED_TAG_COMMIT")"
+          test "$SOURCE_DATE_EPOCH" -gt 0
+          mapfile -t tagger_timestamps < <(
+            git for-each-ref \
+              --format='%(taggerdate:unix)' \
+              "refs/tags/$RELEASE_TAG"
+          )
+          test "${#tagger_timestamps[@]}" -eq 1
+          [[ "${tagger_timestamps[0]}" =~ ^[0-9]+$ ]]
+          test "${tagger_timestamps[0]}" -gt 0
+          release_date_utc="$(
+            date --utc --date="@${tagger_timestamps[0]}" +%F
+          )"
+          python scripts/check_release.py \
+            --tag "$RELEASE_TAG" \
+            --as-of-date-utc "$release_date_utc" \
+            --notes-output /tmp/release-notes.md
+
+          mkdir release-build-a release-build-b release-bundle
+          python -m build --no-isolation --sdist --wheel --outdir release-build-a
+          python -m build --no-isolation --sdist --wheel --outdir release-build-b
+
+          mapfile -t wheels_a < <(find release-build-a -maxdepth 1 -type f -name '*.whl' -printf '%f\n')
+          mapfile -t sdists_a < <(find release-build-a -maxdepth 1 -type f -name '*.tar.gz' -printf '%f\n')
+          mapfile -t wheels_b < <(find release-build-b -maxdepth 1 -type f -name '*.whl' -printf '%f\n')
+          mapfile -t sdists_b < <(find release-build-b -maxdepth 1 -type f -name '*.tar.gz' -printf '%f\n')
+          test "${#wheels_a[@]}" -eq 1
+          test "${#sdists_a[@]}" -eq 1
+          test "${#wheels_b[@]}" -eq 1
+          test "${#sdists_b[@]}" -eq 1
+          test "${wheels_a[0]}" = "${wheels_b[0]}"
+          test "${sdists_a[0]}" = "${sdists_b[0]}"
+
+          python scripts/verify_release_artifacts.py \
+            --wheel "release-build-a/${wheels_a[0]}" \
+            --sdist "release-build-a/${sdists_a[0]}"
+          python scripts/verify_release_artifacts.py \
+            --wheel "release-build-b/${wheels_b[0]}" \
+            --sdist "release-build-b/${sdists_b[0]}"
+
+          normalize_sdist() {
+            local archive="$1"
+            local extract_dir="$2"
+            local archive_name root_name
+            archive_name="${archive##*/}"
+            root_name="${archive_name%.tar.gz}"
+            [[ "$root_name" =~ ^agentstrata-[0-9A-Za-z][0-9A-Za-z._-]*$ ]]
+
+            mkdir "$extract_dir"
+            tar --extract --gzip --file "$archive" --directory "$extract_dir" \
+              --no-same-owner --no-same-permissions
+            local entries=("$extract_dir"/*)
+            test "${#entries[@]}" -eq 1
+            test "${entries[0]}" = "$extract_dir/$root_name"
+            test -d "${entries[0]}"
+
+            tar --sort=name --format=posix \
+              --mtime="@$SOURCE_DATE_EPOCH" \
+              --owner=0 --group=0 --numeric-owner \
+              --mode='u+rwX,go+rX,go-w' \
+              --pax-option=delete=atime,delete=ctime \
+              --create --file=- --directory="$extract_dir" "$root_name" \
+              | gzip -n -9 >"${archive}.normalized"
+            mv "${archive}.normalized" "$archive"
+          }
+          normalize_sdist "release-build-a/${sdists_a[0]}" release-normalize-a
+          normalize_sdist "release-build-b/${sdists_b[0]}" release-normalize-b
+
+          cmp "release-build-a/${wheels_a[0]}" "release-build-b/${wheels_b[0]}"
+          cmp "release-build-a/${sdists_a[0]}" "release-build-b/${sdists_b[0]}"
+          python scripts/verify_release_artifacts.py \
+            --wheel "release-build-a/${wheels_a[0]}" \
+            --sdist "release-build-a/${sdists_a[0]}"
+
+          cp "release-build-a/${wheels_a[0]}" release-bundle/
+          cp "release-build-a/${sdists_a[0]}" release-bundle/
+          cmp "release-build-a/${wheels_a[0]}" "release-bundle/${wheels_a[0]}"
+          cmp "release-build-a/${sdists_a[0]}" "release-bundle/${sdists_a[0]}"
+          cp /tmp/release-notes.md release-bundle/RELEASE_NOTES.md
+          printf '\n<!-- agentstrata-release-run:%s -->\n' \
+            "$GITHUB_RUN_ID" >> release-bundle/RELEASE_NOTES.md
+          (
+            cd release-bundle
+            sha256sum agentstrata-* RELEASE_NOTES.md > SHA256SUMS
+          )
+      - name: Upload verified release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ inputs.tag }}
+          path: |
+            release-bundle/agentstrata-*.whl
+            release-bundle/agentstrata-*.tar.gz
+            release-bundle/SHA256SUMS
+            release-bundle/RELEASE_NOTES.md
+          if-no-files-found: error
+          retention-days: 7
+
+  install-test:
+    name: Install-test stored release candidate
+    needs: [verify, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      EXPECTED_TAG_OBJECT: ${{ needs.build.outputs.tag_object }}
+      EXPECTED_TAG_COMMIT: ${{ needs.build.outputs.tag_commit }}
+    steps:
+      - name: Check out verified tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify checkout binding
+        shell: bash
+        run: |
+          test -n "$EXPECTED_TAG_OBJECT"
+          test -n "$EXPECTED_TAG_COMMIT"
+          test "$(git rev-parse "$RELEASE_TAG")" = "$EXPECTED_TAG_OBJECT"
+          test "$(git rev-parse "$RELEASE_TAG^{}")" = "$EXPECTED_TAG_COMMIT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_TAG_COMMIT"
+          test "$GITHUB_SHA" = "$EXPECTED_TAG_COMMIT"
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.10"
+      - name: Install hash-locked build closure
+        run: |
+          python -m pip install \
+            --disable-pip-version-check \
+            --isolated \
+            --index-url https://pypi.org/simple \
+            --no-deps \
+            --require-hashes \
+            --only-binary=:all: \
+            --requirement requirements/release-build.txt
+      - name: Download release candidate copy
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-${{ inputs.tag }}
+          path: release-test-copy
+      - name: Verify and install release candidate copy
+        shell: bash
+        run: |
+          (cd release-test-copy && sha256sum --check --strict SHA256SUMS)
+          mapfile -t wheels < <(find release-test-copy -maxdepth 1 -type f -name '*.whl')
+          mapfile -t sdists < <(find release-test-copy -maxdepth 1 -type f -name '*.tar.gz')
+          test "${#wheels[@]}" -eq 1
+          test "${#sdists[@]}" -eq 1
+          python scripts/verify_release_artifacts.py \
+            --wheel "${wheels[0]}" \
+            --sdist "${sdists[0]}" \
+            --normal-install
+
+  release:
+    name: Attest and create draft release
+    needs: [verify, build, install-test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      EXPECTED_TAG_OBJECT: ${{ needs.build.outputs.tag_object }}
+      EXPECTED_TAG_COMMIT: ${{ needs.build.outputs.tag_commit }}
+    steps:
+      - name: Download verified release candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-${{ inputs.tag }}
+          path: release-bundle
+      - name: Verify transferred checksums
+        shell: bash
+        run: (cd release-bundle && sha256sum --check --strict SHA256SUMS)
+      - name: Reverify tag before attestation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -n "$EXPECTED_TAG_OBJECT"
+          test -n "$EXPECTED_TAG_COMMIT"
+          ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")"
+          test "$(jq -r '.object.type' <<<"$ref_json")" = "tag"
+          test "$(jq -r '.object.sha' <<<"$ref_json")" = "$EXPECTED_TAG_OBJECT"
+          tag_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${EXPECTED_TAG_OBJECT}")"
+          test "$(jq -r '.tag' <<<"$tag_json")" = "$RELEASE_TAG"
+          test "$(jq -r '.verification.verified' <<<"$tag_json")" = "true"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = "commit"
+          test "$(jq -r '.object.sha' <<<"$tag_json")" = "$EXPECTED_TAG_COMMIT"
+          remote_merge_base="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/compare/${EXPECTED_TAG_COMMIT}...main" \
+              --jq '.merge_base_commit.sha'
+          )"
+          test "$remote_merge_base" = "$EXPECTED_TAG_COMMIT"
+      - name: Attest release artifacts
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: |
+            release-bundle/agentstrata-*
+            release-bundle/SHA256SUMS
+            release-bundle/RELEASE_NOTES.md
+      - name: Reverify tag and create draft GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")"
+          test "$(jq -r '.object.type' <<<"$ref_json")" = "tag"
+          test "$(jq -r '.object.sha' <<<"$ref_json")" = "$EXPECTED_TAG_OBJECT"
+
+          tag_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${EXPECTED_TAG_OBJECT}")"
+          test "$(jq -r '.tag' <<<"$tag_json")" = "$RELEASE_TAG"
+          test "$(jq -r '.verification.verified' <<<"$tag_json")" = "true"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = "commit"
+          test "$(jq -r '.object.sha' <<<"$tag_json")" = "$EXPECTED_TAG_COMMIT"
+          remote_merge_base="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/compare/${EXPECTED_TAG_COMMIT}...main" \
+              --jq '.merge_base_commit.sha'
+          )"
+          test "$remote_merge_base" = "$EXPECTED_TAG_COMMIT"
+
+          gh release create "$RELEASE_TAG" \
+            release-bundle/agentstrata-* \
+            release-bundle/SHA256SUMS \
+            release-bundle/RELEASE_NOTES.md \
+            --draft \
+            --notes-file release-bundle/RELEASE_NOTES.md \
+            --title "AgentStrata ${RELEASE_TAG#v}" \
+            --verify-tag \
+            --repo "$GITHUB_REPOSITORY"
+
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
+          test "$(jq -r '.draft' <<<"$release_json")" = "true"
+          test "$(jq -r '.tag_name' <<<"$release_json")" = "$RELEASE_TAG"
+          release_marker="<!-- agentstrata-release-run:${GITHUB_RUN_ID} -->"
+          test "$(jq -r --arg marker "$release_marker" '.body | contains($marker)' <<<"$release_json")" = "true"
+
+          ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")"
+          test "$(jq -r '.object.type' <<<"$ref_json")" = "tag"
+          test "$(jq -r '.object.sha' <<<"$ref_json")" = "$EXPECTED_TAG_OBJECT"
+          tag_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${EXPECTED_TAG_OBJECT}")"
+          test "$(jq -r '.tag' <<<"$tag_json")" = "$RELEASE_TAG"
+          test "$(jq -r '.verification.verified' <<<"$tag_json")" = "true"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = "commit"
+          test "$(jq -r '.object.sha' <<<"$tag_json")" = "$EXPECTED_TAG_COMMIT"
+          remote_merge_base="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/compare/${EXPECTED_TAG_COMMIT}...main" \
+              --jq '.merge_base_commit.sha'
+          )"
+          test "$remote_merge_base" = "$EXPECTED_TAG_COMMIT"
+          echo "verified draft release id $(jq -r '.id' <<<"$release_json")"

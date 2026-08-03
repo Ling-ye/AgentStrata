@@ -1,0 +1,119 @@
+---
+description: Agent 层规则：AgentTask/Event/Result 协议、Session 循环、ToolExecutor、LLM 客户端
+globs: src/chatcopilot/agent/**
+alwaysApply: false
+---
+
+# Agent 层
+
+**Agent 层是平台中立的**。它消费 `AgentTask`，产出 `AgentEvent` 流和 `AgentResult`。不感知 Role / Workspace / BotRuntimeContext / ACP 帧 / 任何 platform 模块。
+
+## 模块边界
+
+```
+agent/
+├── protocol.py        # AgentTask / ResourceRef / AgentEvent / AgentResult / EventSink
+├── runtime.py         # AgentRuntime：跨 ACP session 共享的运行时
+├── session.py         # AgentSession：LLM ↔ Tool 主循环，snapshot_messages()
+├── llm_client.py      # OpenAI-compatible 客户端（LiteLLM gateway → dashscope/deepseek）
+├── config.py          # LLM 配置 loader（按 env_prefix）
+├── concurrency.py     # 子线程 / 流式回调辅助
+├── context/
+│   ├── prompt_builder.py   # 装配 system message
+│   ├── task_framing.py     # AgentTask → user message
+│   ├── manager.py          # ContextManager：上下文窗口管理（滑动窗口 + token 裁剪 + 工具摘要）
+│   └── token_estimator.py  # 字符级 token 估算器（不依赖 tokenizer 库）
+├── trace.py           # 轻量内置 trace：TraceContext(contextvar) + trace_id/span_id 工具
+├── subagents/
+│   ├── spec.py        # SubagentDef + ToolSelectorSpec/ToolMatchRule（声明式工具白名单）
+│   ├── selector.py    # build_predicate(selector)：编译谓词 + user-facing 硬禁
+│   ├── registry.py    # 内置 preset 与 delegate 工具装配
+│   ├── result.py      # SubagentResult schema + 强制 submit_result 工具（tool-emit）
+│   ├── runner.py      # 嵌套 AgentSession 执行 subagent（预算 + trace + transcript）
+│   └── registry.py    # SubagentSpec(preset+custom) → delegate ToolDef
+├── skills/index.py    # per-process skill 索引
+├── memory/
+│   ├── provider.py    # MemoryProvider Protocol
+│   └── markdown.py    # MarkdownMemoryProvider 实现
+├── rag/provider.py    # Retriever Protocol（占位）
+├── tools/
+│   ├── registry.py    # 工具发现：merge agent/tools/builtin + external_tools/
+│   ├── executor.py    # ToolExecutor.execute(name, args) — in-process 调；管理 file_sender contextvar
+│   ├── file_delivery.py # 平台无关文件回传 hook（FileSender contextvar）
+│   └── builtin/       # 内置工具：workspace_tools(send_files_to_user) / memory_tools / skill_tools / external_diff_tools
+└── mcp/client.py      # 外部 MCP server 客户端（占位，未启用）
+```
+
+## 协议（**不可破坏**）
+
+```python
+AgentTask(text: str, resources: list[ResourceRef], system_appendix: str|None, metadata: dict)
+AgentEvent = TextDelta | FinalText | ToolStarted | ToolFinished | SpanStarted | SpanFinished | TurnError
+AgentResult(final_text, stop_reason, produced_resources, message_count)
+# ToolStarted/ToolFinished 携带可选 trace_id/span_id/parent_span_id/depth；SpanStarted/SpanFinished
+# 表达 subagent 委托边界（depth>0），SpanFinished.data 可带 subagent transcript + 结构化结果。
+# stop_reason: end_turn | tool_failure_cap | iteration_cap | tool_call_cap | timeout_cap | llm_error
+```
+
+调用方式：
+
+```python
+session = AgentRuntime.new_session(...)
+result = session.run_task(task, on_event=lambda ev: ...)   # 单一 EventSink 回调
+middleware.ship(result.produced_resources)                 # 中间件取产物文件
+session.snapshot_messages()                                # 中间件持久化 transcript
+```
+
+## 硬约束
+
+1. **禁止 import**：
+   - `chatcopilot.middleware.*` / `chatcopilot.platforms.*`
+   - `Role` / `AssistantMode` / `Workspace` / `BotRuntimeContext`
+   - ACP 帧类型（`ContentBlock`、`SessionUpdate` 等）
+2. **策略注入**通过 hook，**不**在 agent 内 if Role / 平台：
+   - `tool_payload_filter: Callable[[str, dict], dict]` — 工具入参过滤
+   - `background_submitter: Callable[..., str]` — 长任务转后台
+   - `file_sender`（`tools/file_delivery.py` 的 contextvar hook）— 由中间件绑定当前平台 adapter，供 `send_files_to_user` 回传文件；agent 只调 `get_current_file_sender()`，不 import 任何 platform
+3. **工具调用走 in-process**：`AgentSession` 命中 `tool_calls` 时直接调 `ToolExecutor.execute(name, args)`，**不**走 stdio MCP（避免序列化 + 第三方 CLI system prompt 污染）。
+4. **LLM 在子线程跑流式**，事件通过 `concurrency.py` 的辅助安全回传主线程。
+5. `agent/tools/registry` 只按 tool pack id 解析工具模块；tool pack prompt fragments 由 BotSpec runtime 装配，不在 Agent 层读取 BotSpec。
+
+## 添加新内置工具
+
+1. 在 `agent/tools/builtin/<name>.py` 写 handler，返回 `HandlerResult`
+2. 在 `agent/tools/builtin/__init__.py` 注册到 registry
+3. 写单测 `tests/unit/test_<name>.py`
+4. **不**修改 `executor.py`（除非真的需要新执行模式）
+
+## Subagent（subagent-as-tool，2026 设计）
+
+- **纯 subagent-as-tool**：主 Agent 是唯一对用户说话的大脑；subagent 是"员工"，作为 delegate 工具被调用，只把**结构化结论**回给主 Agent。不引 planner、不并行。
+- **声明式工具白名单**：每个 subagent 的可见工具由 `ToolSelectorSpec`（数据）决定，不再写 Python 谓词。`selector.any` 跨规则 OR、规则内非空字段 AND；`build_predicate` 编译谓词并**硬禁 user-facing 工具**（`metadata.user_facing=True`，如 `send_files_to_user`）。
+- **强制结构化输出**：subagent 必须调用内置 `submit_result` 工具收尾（tool-emit）。`runner` 读 holder 产出真结构化 `{ok,summary,evidence,outputs,limits,next_steps}`；未调用则降级把 `final_text` 包进 `summary` 并标 `limits.partial=true`。
+- **安全交集**：最终 `allow_tool = selector AND not user_facing AND mcp_allowed_for_subagent AND permission_filter`，selector 永远只能收窄、不能放宽。
+- **trace + transcript**：subagent 复用主调用的 `TraceContext`（contextvar），把真实 `on_event` 透进嵌套 session；内部 tool span 以 depth+2 挂到 delegate span 下；`SpanStarted/SpanFinished` 标 subagent 边界，transcript 经 `SpanFinished.data` 落到 `tasks/<id>/subagents/<span>.json`。
+- **预算/终止**：每个 subagent 有 `max_model_turns / max_tool_calls / timeout_seconds / max_output_chars`（BotSpec `subagents` 声明）。
+
+### 新增 subagent
+
+- **preset**：在 `subagents/presets.py` 加一个 `SubagentDef`（selector + prompt）；保持平台中立、selector 不含写风险/ user-facing。
+- **custom**：在 `bots/<id>/bot.yaml` 的 `subagents.custom` 声明 `name/tool_name/summary/prompt(指针)/selector/budget`；prompt 指针由 `botspec/runtime.py` 解析成文本。
+- 改 `submit_result` schema / runner 结构化逻辑：跑 `tests/unit/test_subagents.py`；改 selector：跑 `test_subagent_selector.py`；改 trace：跑 `test_agent_trace.py`。
+
+## 主 Agent 预算（与 subagent 对齐）
+
+`config.py::RuntimeConfig` 暴露 `max_tool_iterations`(默认 8) / `max_tool_calls`(默认 None=不限) / `turn_timeout_seconds`(默认 None)。env 前缀同 `llm.env_prefix`：`{PREFIX}_MAX_TOOL_ITERATIONS / _MAX_TOOL_CALLS / _TURN_TIMEOUT_SECONDS`（`0`/负数视为不限）。`runtime.py::new_session` 用这些值替换历史硬编码 `8`。
+
+## 添加新 MemoryProvider / Retriever
+
+1. 实现 `Protocol`
+2. 在 `BotRuntimeContext` 装配处接入（由 botspec 决定 provider 字符串 → 类）
+3. 不要让 agent 直接 `import` 具体 provider 实现——通过 Protocol + 工厂
+
+## 修改约束
+
+- 改 `protocol.py` 字段：必须同步 `runtime.py` / `session.py` / `middleware/acp/agent_bridge.py` / `middleware/acp/event_translator.py` / 所有调用方。
+- 改 `tools/registry.py` 的发现逻辑：跑 `tests/unit/test_external_tools_registry.py`。
+- 改 `session.py` 的 LLM ↔ Tool 循环：跑 `tests/unit/test_bot_session.py` + `tests/integration/test_acp_streaming_updates.py`。
+- 改 `context/manager.py`（上下文裁剪策略）：跑 `tests/unit/test_context_manager.py`。
+- `ContextManager` 是纯函数式视图生成器（`frozen=True`），只有 `prepare_messages` 一个公共方法，返回裁剪后的副本，**绝不修改** `AgentSession._messages`。

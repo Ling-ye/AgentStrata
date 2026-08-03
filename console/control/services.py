@@ -1,0 +1,721 @@
+"""基础设施服务管理：声明式 catalog + 按 service_type 分组的纯函数。
+
+支持两类外部服务：
+- compose: docker-compose 管理（小红书 / Tavily / Sequential Thinking MCP）
+- standalone: 独立 docker 容器（NapCat QQ Gateway）
+
+Bot 级内嵌工具包（Feishu Tools / workspace 等）不在此 catalog，
+由 status API 的 tool_packs 字段从 BotSpec 读取并按 namespace 分组返回。
+
+新增服务只需在 SERVICES 中加一条 ServiceDef。
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import socket
+import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from typing import Any, Iterator, Literal
+from urllib.parse import parse_qs, urlencode, urlparse
+
+from console.control.discovery import repo_root
+
+ServiceType = Literal["compose", "standalone", "embedded", "remote"]
+
+# ---------------------------------------------------------------------------
+# 登录状态缓存（TTL-based，避免每次状态轮询触发 MCP 调用）
+# ---------------------------------------------------------------------------
+_LOGIN_STATE_CACHE: dict[str, tuple[str | None, float]] = {}
+_DOCKER_INSPECT_TIMEOUT = float(os.environ.get("CHATCOPILOT_CONSOLE_DOCKER_INSPECT_TIMEOUT", "1.0"))
+_LOGIN_CACHE_TTL = 120.0  # 秒
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+# ---------------------------------------------------------------------------
+# all_services_status 结果缓存（TTL-based，避免多路并发请求重复触发 docker inspect）
+# ---------------------------------------------------------------------------
+_STATUS_CACHE: tuple[list[dict[str, Any]], float] | None = None
+_STATUS_CACHE_TTL = float(os.environ.get("CHATCOPILOT_CONSOLE_STATUS_CACHE_TTL", "10.0"))
+
+
+def get_cached_login_state(service_id: str) -> str | None:
+    """Return cached login state or None if unknown / expired."""
+    entry = _LOGIN_STATE_CACHE.get(service_id)
+    if entry and (time.time() - entry[1]) < _LOGIN_CACHE_TTL:
+        return entry[0]
+    return None
+
+
+def update_login_cache(service_id: str, state: str) -> None:
+    """Update login state cache after an explicit check."""
+    _LOGIN_STATE_CACHE[service_id] = (state, time.time())
+
+
+@dataclass(frozen=True)
+class ServiceDef:
+    id: str
+    display_name: str
+    service_type: ServiceType
+    # compose
+    container: str = ""
+    compose_service: str = ""
+    compose_file: str = ""
+    # standalone
+    container_prefix: str = ""
+    bound_instance_ids: tuple[str, ...] = ()
+    # embedded
+    env_key: str = ""
+    # tool packs
+    actions: tuple[str, ...] = ()
+    has_login: bool = False
+    has_doctor: bool = False
+    mcp_refs: tuple[str, ...] = ()
+    platforms: tuple[str, ...] = ()
+    tool_pack_ids: tuple[str, ...] = ()
+    extra: dict = field(default_factory=dict)
+
+
+SERVICES: tuple[ServiceDef, ...] = (
+    ServiceDef(
+        id="xiaohongshu",
+        display_name="小红书 MCP",
+        service_type="compose",
+        container="chatcopilot-xiaohongshu-mcp",
+        compose_service="xiaohongshu-mcp",
+        compose_file="deploy/docker/docker-compose.yaml",
+        actions=("start", "stop", "restart", "pull"),
+        has_login=True,
+        has_doctor=True,
+        mcp_refs=("xiaohongshu-search",),
+        extra={"login_type": "qrcode"},
+    ),
+    ServiceDef(
+        id="tavily",
+        display_name="Tavily Web Search",
+        service_type="compose",
+        container="chatcopilot-tavily-mcp",
+        compose_service="tavily-mcp",
+        compose_file="deploy/docker/docker-compose.yaml",
+        actions=("start", "stop", "restart", "pull"),
+        has_doctor=True,
+        env_key="TAVILY_API_KEY",
+        mcp_refs=("tavily-search",),
+    ),
+    ServiceDef(
+        id="sequential-thinking",
+        display_name="Sequential Thinking MCP",
+        service_type="compose",
+        container="chatcopilot-sequential-thinking-mcp",
+        compose_service="sequential-thinking-mcp",
+        compose_file="deploy/docker/docker-compose.yaml",
+        actions=("start", "stop", "restart", "pull"),
+        has_doctor=True,
+        mcp_refs=("sequential-thinking",),
+    ),
+    ServiceDef(
+        id="searxng",
+        display_name="SearXNG No-Key Search",
+        service_type="compose",
+        container="chatcopilot-searxng-mcp",
+        compose_service="searxng-mcp",
+        compose_file="deploy/docker/docker-compose.yaml",
+        actions=("start", "stop", "restart", "pull"),
+        has_doctor=True,
+        mcp_refs=("searxng-search",),
+    ),
+    ServiceDef(
+        id="taoke",
+        display_name="Taoke Shopping MCP",
+        service_type="compose",
+        container="chatcopilot-taoke-mcp",
+        compose_service="taoke-mcp",
+        compose_file="deploy/docker/docker-compose.yaml",
+        actions=("start", "stop", "restart", "pull"),
+        has_doctor=False,
+        mcp_refs=("taoke-shopping",),
+    ),
+    ServiceDef(
+        id="napcat",
+        display_name="NapCat QQ Gateway",
+        service_type="standalone",
+        container_prefix="napcat-",
+        bound_instance_ids=("lingye-copilot-qq",),
+        actions=("start", "stop", "restart"),
+        has_login=True,
+        platforms=("qq",),
+        extra={"login_type": "webui_link"},
+    ),
+    ServiceDef(
+        id="github",
+        display_name="GitHub MCP (readonly)",
+        service_type="remote",
+        mcp_refs=("github-readonly",),
+    ),
+)
+
+
+def find_service(service_id: str) -> ServiceDef | None:
+    return next((s for s in SERVICES if s.id == service_id), None)
+
+
+# ---------------------------------------------------------------------------
+# 统一入口
+# ---------------------------------------------------------------------------
+
+def _compute_services_status() -> list[dict[str, Any]]:
+    """Run all docker/status checks in parallel and return ordered results."""
+    tasks: list[tuple[int, Any]] = []
+    for svc in SERVICES:
+        if svc.service_type == "compose":
+            tasks.append((len(tasks), (svc, None, "compose")))
+        elif svc.service_type == "standalone":
+            for inst_id in svc.bound_instance_ids:
+                tasks.append((len(tasks), (svc, inst_id, "standalone")))
+        elif svc.service_type == "embedded":
+            tasks.append((len(tasks), (svc, None, "embedded")))
+        elif svc.service_type == "remote":
+            tasks.append((len(tasks), (svc, None, "remote")))
+
+    results: dict[int, dict[str, Any]] = {}
+
+    def _run(idx: int, svc: Any, inst_id: Any, kind: str) -> tuple[int, dict[str, Any]]:
+        if kind == "compose":
+            return idx, compose_status(svc)
+        if kind == "standalone":
+            return idx, standalone_status(svc, inst_id)
+        if kind == "embedded":
+            return idx, embedded_status(svc)
+        return idx, remote_status(svc)
+
+    with ThreadPoolExecutor(max_workers=min(len(tasks) or 1, 8)) as pool:
+        futures = {
+            pool.submit(_run, idx, svc, inst_id, kind): idx
+            for idx, (svc, inst_id, kind) in tasks
+        }
+        for future in as_completed(futures):
+            idx, result = future.result()
+            results[idx] = result
+
+    return [results[i] for i in sorted(results)]
+
+
+def all_services_status() -> list[dict[str, Any]]:
+    """Return cached or freshly computed service status list."""
+    global _STATUS_CACHE
+    now = time.monotonic()
+    if _STATUS_CACHE is not None:
+        cached, ts = _STATUS_CACHE
+        if now - ts < _STATUS_CACHE_TTL:
+            return cached
+    result = _compute_services_status()
+    _STATUS_CACHE = (result, now)
+    return result
+
+
+def invalidate_status_cache() -> None:
+    """Force-expire the status cache (e.g., after an action that changes container state)."""
+    global _STATUS_CACHE
+    _STATUS_CACHE = None
+
+
+# ---------------------------------------------------------------------------
+# compose 类型（docker-compose 管理的服务）
+# ---------------------------------------------------------------------------
+
+def _docker_inspect(container: str) -> dict[str, Any] | None:
+    try:
+        cp = subprocess.run(
+            [
+                "docker", "inspect", "--format",
+                '{"status":"{{.State.Status}}",'
+                '"health":"{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",'
+                '"running":{{.State.Running}},'
+                '"started_at":"{{.State.StartedAt}}"}',
+                container,
+            ],
+            capture_output=True, text=True, timeout=_DOCKER_INSPECT_TIMEOUT,
+        )
+        if cp.returncode != 0:
+            return None
+        return json.loads(cp.stdout.strip())
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return None
+
+
+def _container_uptime_s(started_at: str) -> int | None:
+    if not started_at or started_at.startswith("0001"):
+        return None
+    try:
+        from datetime import datetime, timezone
+        started_at = started_at.replace("Z", "+00:00")
+        if "." in started_at:
+            dot_idx = started_at.index(".")
+            plus_idx = started_at.index("+", dot_idx) if "+" in started_at[dot_idx:] else started_at.index("-", dot_idx + 1)
+            frac = started_at[dot_idx + 1:plus_idx][:6]
+            started_at = started_at[:dot_idx + 1] + frac + started_at[plus_idx:]
+        dt = datetime.fromisoformat(started_at)
+        return max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+    except (ValueError, TypeError):
+        return None
+
+
+def _health_to_color(health: str, running: bool) -> tuple[str, str]:
+    """Return (state, color) from docker health/running info."""
+    if health == "healthy":
+        return "healthy", "green"
+    if health in ("starting", "none") and running:
+        return "running", "yellow"
+    if not running:
+        return "stopped", "red"
+    return "unhealthy", "red"
+
+
+def compose_status(svc: ServiceDef) -> dict[str, Any]:
+    info = _docker_inspect(svc.container)
+    if info is None:
+        return _base_status(svc, state="not_found", color="grey")
+    running = bool(info.get("running", False))
+    health = str(info.get("health", "none"))
+    state, color = _health_to_color(health, running)
+    uptime = _container_uptime_s(str(info.get("started_at", ""))) if running else None
+    result = _base_status(svc, state=state, color=color)
+    result.update(container=svc.container, uptime_s=uptime)
+    return result
+
+
+def compose_up_all() -> dict[str, Any]:
+    """Run `docker compose up -d` for all compose services at once."""
+    compose_files = {svc.compose_file for svc in SERVICES if svc.service_type == "compose" and svc.compose_file}
+    if not compose_files:
+        return {"ok": False, "error": "no compose services configured"}
+    results: list[dict[str, Any]] = []
+    for cf in sorted(compose_files):
+        path = str(repo_root() / cf)
+        results.append(_compose_run(path, ["up", "-d"]))
+    all_ok = all(r.get("ok") for r in results)
+    invalidate_status_cache()
+    return {
+        "ok": all_ok,
+        "results": results,
+        "stdout": "\n".join(r.get("stdout", "") for r in results).strip(),
+        "stderr": "\n".join(r.get("stderr", "") for r in results).strip(),
+    }
+
+
+def compose_action(svc: ServiceDef, verb: str) -> dict[str, Any]:
+    compose_file = str(repo_root() / svc.compose_file)
+    if verb == "pull":
+        return _compose_run(compose_file, ["pull", svc.compose_service])
+    if verb == "start":
+        return _compose_run(compose_file, ["up", "-d", svc.compose_service])
+    if verb == "stop":
+        return _compose_run(compose_file, ["stop", svc.compose_service])
+    if verb == "restart":
+        return _compose_run(compose_file, ["restart", svc.compose_service])
+    return {"ok": False, "error": f"不支持的动作：{verb}"}
+
+
+def _compose_run(compose_file: str, args: list[str]) -> dict[str, Any]:
+    cmd = ["docker", "compose", "-f", compose_file, *args]
+    try:
+        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=120.0)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": str(exc)}
+    return {
+        "ok": cp.returncode == 0,
+        "stdout": (cp.stdout or "").strip(),
+        "stderr": (cp.stderr or "").strip(),
+    }
+
+
+_DOCTOR_TARGETS: dict[str, str] = {
+    "xiaohongshu": "xhs",
+    "tavily": "tavily",
+    "sequential-thinking": "sequential-thinking",
+    "searxng": "searxng",
+}
+
+
+def compose_action_streaming(svc: ServiceDef, verb: str) -> Iterator[str]:
+    """Long-running compose actions (pull / doctor) as streaming output."""
+    compose_file = str(repo_root() / svc.compose_file)
+    if verb == "pull":
+        args = ["docker", "compose", "-f", compose_file, "pull", svc.compose_service]
+    elif verb == "doctor":
+        script = repo_root() / "deploy" / "docker" / "services.sh"
+        doctor_target = _DOCTOR_TARGETS.get(svc.id, svc.id)
+        args = ["bash", str(script), "doctor", doctor_target]
+    else:
+        yield f"[ERR] 不支持流式动作：{verb}"
+        yield "__EXIT__ 2"
+        return
+
+    yield f"[infra] {svc.display_name}: {verb}"
+    env = dict(os.environ)
+    uid = os.getuid()
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+    env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{uid}/bus")
+    try:
+        proc = subprocess.Popen(
+            args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, env=env,
+        )
+    except OSError as exc:
+        yield f"[ERR] 无法启动：{exc}"
+        yield "__EXIT__ 127"
+        return
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        yield line.rstrip("\n")
+    proc.wait()
+    yield f"__EXIT__ {proc.returncode}"
+
+
+def compose_logs(svc: ServiceDef) -> Iterator[str]:
+    cmd = ["docker", "logs", "-f", "--tail", "200", svc.container]
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
+        )
+    except OSError as exc:
+        yield f"[ERR] {exc}"
+        return
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        yield line.rstrip("\n")
+
+
+# ---------------------------------------------------------------------------
+# standalone 类型（独立 docker 容器）
+# ---------------------------------------------------------------------------
+
+def _standalone_container(svc: ServiceDef, instance_id: str) -> str:
+    return f"{svc.container_prefix}{instance_id}"
+
+
+def standalone_status(svc: ServiceDef, instance_id: str) -> dict[str, Any]:
+    container = _standalone_container(svc, instance_id)
+    info = _docker_inspect(container)
+    if info is None:
+        result = _base_status(svc, state="not_found", color="grey")
+        result["instance_id"] = instance_id
+        result["id"] = f"{svc.id}:{instance_id}"
+        return result
+    running = bool(info.get("running", False))
+    health = str(info.get("health", "none"))
+    state, color = _health_to_color(health, running)
+    uptime = _container_uptime_s(str(info.get("started_at", ""))) if running else None
+    result = _base_status(svc, state=state, color=color)
+    result.update(
+        id=f"{svc.id}:{instance_id}",
+        container=container,
+        uptime_s=uptime,
+        instance_id=instance_id,
+    )
+    return result
+
+
+def standalone_action(svc: ServiceDef, instance_id: str, verb: str) -> dict[str, Any]:
+    container = _standalone_container(svc, instance_id)
+    if svc.id == "napcat" and verb in {"start", "restart"}:
+        return _qq_gateway_action(instance_id, verb)
+    if verb == "start":
+        return _docker_simple(["docker", "start", container])
+    if verb == "stop":
+        return _docker_simple(["docker", "stop", container])
+    if verb == "restart":
+        return _docker_simple(["docker", "restart", container])
+    return {"ok": False, "error": f"不支持的动作：{verb}"}
+
+
+def _qq_gateway_action(instance_id: str, action: str) -> dict[str, Any]:
+    """Run a guarded NapCat lifecycle action through the WSL gateway script."""
+    if action not in {"bootstrap", "start", "restart", "sync-token"}:
+        return {"ok": False, "error": f"unsupported NapCat gateway action: {action}"}
+    script = repo_root() / "deploy" / "wsl" / "qq_gateway.sh"
+    try:
+        cp = subprocess.run(
+            ["bash", str(script), action, "--instance", instance_id],
+            capture_output=True,
+            text=True,
+            timeout=120.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": str(exc)}
+    return {
+        "ok": cp.returncode == 0,
+        "stdout": _ANSI_ESCAPE_RE.sub("", cp.stdout or "").strip(),
+        "stderr": _ANSI_ESCAPE_RE.sub("", cp.stderr or "").strip(),
+    }
+
+
+def _docker_simple(cmd: list[str]) -> dict[str, Any]:
+    try:
+        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=60.0)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": str(exc)}
+    return {
+        "ok": cp.returncode == 0,
+        "stdout": (cp.stdout or "").strip(),
+        "stderr": (cp.stderr or "").strip(),
+    }
+
+
+def standalone_logs(svc: ServiceDef, instance_id: str) -> Iterator[str]:
+    container = _standalone_container(svc, instance_id)
+    cmd = ["docker", "logs", "-f", "--tail", "200", container]
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
+        )
+    except OSError as exc:
+        yield f"[ERR] {exc}"
+        return
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        yield line.rstrip("\n")
+
+
+# ---------------------------------------------------------------------------
+# embedded 类型（agent 内嵌，仅状态展示）
+# ---------------------------------------------------------------------------
+
+_WEBUI_TOKEN_RE = re.compile(r"WebUi Token:\s*([^\s]+)")
+_WEBUI_URL_RE = re.compile(r"WebUi User Panel Url:\s*(https?://[^\s]+)")
+
+
+def _token_from_webui_url(url: str) -> str:
+    try:
+        values = parse_qs(urlparse(url).query).get("token", [])
+    except ValueError:
+        return ""
+    return values[-1].strip() if values else ""
+
+
+def _select_webui_url(urls: list[str]) -> str:
+    for url in reversed(urls):
+        if "[::]" not in url:
+            return url
+    return urls[-1] if urls else ""
+
+
+def standalone_webui_token(
+    svc: ServiceDef,
+    instance_id: str,
+    *,
+    host: str = "localhost",
+    port: str = "6099",
+) -> dict[str, Any]:
+    """Read the latest NapCat WebUI token from container logs on demand."""
+    container = _standalone_container(svc, instance_id)
+    info = _docker_inspect(container)
+    if info is None:
+        return {"ok": False, "error": f"NapCat container not found: {container}"}
+    running = bool(info.get("running", False))
+
+    try:
+        cp = subprocess.run(
+            ["docker", "logs", "--tail", "300", container],
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": f"failed to read NapCat logs: {exc}"}
+    if cp.returncode != 0:
+        return {
+            "ok": False,
+            "error": f"failed to read NapCat logs for {container}",
+        }
+
+    text = "\n".join(part for part in (cp.stdout, cp.stderr) if part)
+    urls = [m.group(1).strip() for m in _WEBUI_URL_RE.finditer(text)]
+    tokens = [m.group(1).strip() for m in _WEBUI_TOKEN_RE.finditer(text)]
+    url = _select_webui_url(urls)
+    token = _token_from_webui_url(url) or (tokens[-1] if tokens else "")
+
+    if not token:
+        return {
+            "ok": False,
+            "error": "NapCat WebUI token was not found in recent container logs; start NapCat and wait for WebUI startup output.",
+            "container": container,
+        }
+    try:
+        url = _local_webui_url(host, port, token)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "container": container}
+
+    return {
+        "ok": True,
+        "token": token,
+        "url": url,
+        "container": container,
+        "running": running,
+    }
+
+
+def _local_webui_url(host: str, port: str, token: str) -> str:
+    normalized_host = host.strip().lower()
+    if normalized_host not in {"localhost", "127.0.0.1", "::1"}:
+        raise ValueError("NapCat WebUI host must be loopback")
+    try:
+        normalized_port = int(port)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("NapCat WebUI port must be an integer") from exc
+    if not 1 <= normalized_port <= 65535:
+        raise ValueError("NapCat WebUI port must be between 1 and 65535")
+    rendered_host = f"[{normalized_host}]" if ":" in normalized_host else normalized_host
+    return (
+        f"http://{rendered_host}:{normalized_port}/webui?"
+        f"{urlencode({'token': token})}"
+    )
+
+
+def _webui_port_ready(host: str, port: str) -> bool:
+    try:
+        normalized_port = int(port)
+        with socket.create_connection((host, normalized_port), timeout=0.5):
+            return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def standalone_webui_session(
+    svc: ServiceDef,
+    instance_id: str,
+    *,
+    host: str = "localhost",
+    port: str = "6099",
+    timeout_seconds: float = 20.0,
+) -> dict[str, Any]:
+    """Bootstrap NapCat safely and return a ready, tokenized localhost WebUI URL."""
+    try:
+        _local_webui_url(host, port, "probe")
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    bootstrap = _qq_gateway_action(instance_id, "bootstrap")
+    if not bootstrap.get("ok"):
+        return {
+            "ok": False,
+            "error": (
+                bootstrap.get("error")
+                or bootstrap.get("stderr")
+                or "NapCat WebUI bootstrap failed"
+            ),
+        }
+
+    deadline = time.monotonic() + timeout_seconds
+    last_error = "NapCat WebUI token is not available yet"
+    while True:
+        result = standalone_webui_token(
+            svc,
+            instance_id,
+            host=host,
+            port=port,
+        )
+        if result.get("ok"):
+            if _webui_port_ready(host, port):
+                return {**result, "running": True, "bootstrapped": True}
+            last_error = "NapCat WebUI port is not ready"
+        else:
+            last_error = str(result.get("error") or last_error)
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.25)
+
+    return {
+        "ok": False,
+        "error": f"{last_error}; retry WebUI login after NapCat finishes starting",
+    }
+
+
+def embedded_status(svc: ServiceDef) -> dict[str, Any]:
+    configured = not svc.env_key or bool(os.environ.get(svc.env_key, "").strip())
+    state = "configured" if configured else "unconfigured"
+    color = "green" if configured else "grey"
+    return _base_status(svc, state=state, color=color)
+
+
+# ---------------------------------------------------------------------------
+# remote 类型（远端 HTTP MCP，无本地容器）
+# ---------------------------------------------------------------------------
+
+def remote_status(svc: ServiceDef) -> dict[str, Any]:
+    return _base_status(svc, state="enabled", color="green")
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _check_env_configured(svc: ServiceDef) -> bool:
+    """Check if the required env key is configured in the appropriate source.
+
+    For compose services, read from deploy/docker/.env (where Docker picks it up).
+    For others, fall back to the console process's own environment.
+    """
+    key = svc.env_key
+    if not key:
+        return False
+    if svc.service_type == "compose" and svc.compose_file:
+        dotenv_path = repo_root() / "deploy" / "docker" / ".env"
+        if dotenv_path.is_file():
+            try:
+                for line in dotenv_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        if k.strip() == key and v.strip():
+                            return True
+            except OSError:
+                pass
+        return False
+    return bool(os.environ.get(key, "").strip())
+
+
+def _base_status(svc: ServiceDef, *, state: str, color: str) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "id": svc.id,
+        "display_name": svc.display_name,
+        "service_type": svc.service_type,
+        "state": state,
+        "color": color,
+        "container": None,
+        "uptime_s": None,
+        "actions": list(svc.actions),
+        "has_login": svc.has_login,
+        "has_doctor": svc.has_doctor,
+        "instance_id": None,
+        "login_state": get_cached_login_state(svc.id) if svc.has_login else None,
+        "login_type": svc.extra.get("login_type") if svc.has_login else None,
+        "mcp_refs": list(svc.mcp_refs),
+        "platforms": list(svc.platforms),
+        "tool_pack_ids": list(svc.tool_pack_ids),
+        "extra": dict(svc.extra),
+    }
+    if svc.env_key:
+        result["env_configured"] = _check_env_configured(svc)
+    checks: list[dict[str, Any]] = []
+    reasons: list[str] = []
+
+    def add(name: str, ok: bool, severity: str, message: str) -> None:
+        checks.append({"name": name, "ok": ok, "severity": severity, "message": message})
+        if not ok:
+            reasons.append(message)
+
+    add("state", color in {"green", "yellow"}, "critical", f"service state is {state}.")
+    if result.get("env_configured") is False:
+        add("env", False, "warning", "required environment variable is not configured.")
+    if svc.has_login and result.get("login_state") == "logged_out":
+        add("login", False, "warning", "login state is logged out.")
+    result["checks"] = checks
+    result["reasons"] = reasons
+    return result

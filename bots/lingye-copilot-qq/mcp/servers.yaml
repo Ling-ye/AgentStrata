@@ -1,0 +1,29 @@
+# External MCP servers used by this bot.
+servers:
+- ref: tavily-search
+  enabled: true
+  timeout_seconds: 3600
+- ref: sequential-thinking
+  enabled: false
+  timeout_seconds: 3600
+- ref: brave-search
+  enabled: false
+  timeout_seconds: 3600
+- ref: searxng-search
+  enabled: true
+  timeout_seconds: 3600
+- ref: xiaohongshu-search
+  enabled: true
+  timeout_seconds: 3600
+- ref: playwright-browser
+  enabled: true
+  timeout_seconds: 3600
+- ref: github-readonly
+  enabled: true
+  timeout_seconds: 3600
+- ref: taoke-shopping
+  enabled: true
+  timeout_seconds: 3600
+- ref: git-local
+  enabled: true
+  timeout_seconds: 3600

@@ -1,0 +1,38 @@
+name: Usage question
+description: Ask a focused, reproducible question about AgentStrata
+title: "[Question]: "
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Search existing issues first. Remove credentials, tenant URLs, stable
+        platform identities, private project names, and machine paths.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What are you trying to accomplish?
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What you tried
+      description: Include minimal configuration and redacted output.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python version, and AgentStrata version or commit.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Public-data check
+      options:
+        - label: I removed secrets, private identifiers, and private endpoints.
+          required: true

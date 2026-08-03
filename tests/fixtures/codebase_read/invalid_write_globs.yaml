@@ -1,0 +1,7 @@
+repositories:
+  - id: invalid
+    root: "${TEST_CODEBASE_READ_ROOT}"
+    write_enabled: true
+    checks:
+      - id: verify
+        argv: [python, -m, compileall, -q, .]

@@ -1,0 +1,5 @@
+paths:
+  - src/chatcopilot/**
+  - bots/__BOT_ID__/**
+  - deploy/wsl/**
+  - requirements.txt

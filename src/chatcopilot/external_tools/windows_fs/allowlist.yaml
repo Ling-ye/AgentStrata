@@ -1,0 +1,45 @@
+# Global allow-list for the ``filesystem.windows.read`` tool pack.
+# Tools refuse to read or search any path that does not start with one of
+# ``allowed_roots`` (after normalization), matches any ``denied_patterns``, or
+# whose extension is not in ``allowed_extensions``.
+#
+# Public source ships with no machine-specific root. Configure comma-separated
+# absolute paths through ``CHATCOPILOT_WINDOWS_FS_EXTRA_ROOTS`` in ignored
+# local.env, or point ``CHATCOPILOT_WINDOWS_FS_ALLOWLIST`` at a private YAML.
+# An empty list fails closed.
+
+allowed_roots: []
+
+denied_patterns:
+  - "**/Library/**"
+  - "**/Temp/**"
+  - "**/Build/**"
+  - "**/Logs/**"
+  - "**/.git/**"
+  - "**/node_modules/**"
+  - "**/__pycache__/**"
+
+allowed_extensions:
+  - ".cs"
+  - ".lua"
+  - ".md"
+  - ".json"
+  - ".yaml"
+  - ".yml"
+  - ".txt"
+  - ".asmdef"
+  - ".uxml"
+  - ".uss"
+  - ".shader"
+  - ".compute"
+  - ".cginc"
+  - ".hlsl"
+  - ".cfg"
+  - ".ini"
+  - ".toml"
+  - ".xml"
+  - ".csproj"
+  - ".props"
+  - ".targets"
+
+max_read_bytes: 1048576

@@ -1,0 +1,12 @@
+# External MCP servers used by this bot.
+# Set enabled: true and configure required env vars in local.env before use.
+#
+# Search MCP servers (risk: search) automatically generate per-source
+# search subagents (search_tavily, search_xiaohongshu, etc.).
+servers:
+  - ref: tavily-search
+    enabled: false
+  - ref: searxng-search
+    enabled: false
+  - ref: xiaohongshu-search
+    enabled: false
