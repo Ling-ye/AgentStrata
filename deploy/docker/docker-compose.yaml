@@ -135,7 +135,7 @@ services:
 
   # ---------- Xiaohongshu (browser-backed, single-concurrency) ---------------
   xiaohongshu-mcp:
-    image: xpzouying/xiaohongshu-mcp:v1.2.6@sha256:59fa30292e0c994cb2267c2d16b4ec119af800287a735c7386de1cd9c755bc6d
+    image: xpzouying/xiaohongshu-mcp:v2.2.6@sha256:e0cfcc3d037238ca60b70678bf247739a909094977899f9fdaef4963d483869b
     container_name: chatcopilot-xiaohongshu-mcp
     init: true
     tty: true
