@@ -101,7 +101,7 @@ services:
         max-file: "3"
 
   searxng-mcp:
-    image: python:3.13-alpine
+    image: python:3.14-alpine
     container_name: chatcopilot-searxng-mcp
     command: ["python", "/app/server.py"]
     restart: unless-stopped
@@ -168,7 +168,7 @@ services:
 
   # ---------- Playwright dynamic webpage reader (single-concurrency) ---------
   playwright-mcp:
-    image: mcr.microsoft.com/playwright/mcp:v0.0.76
+    image: mcr.microsoft.com/playwright/mcp:v0.0.78
     container_name: chatcopilot-playwright-mcp
     init: true
     entrypoint: ["node"]
