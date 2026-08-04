@@ -65,6 +65,7 @@ class CareerSourceProvider(ABC):
     company: str
     aliases: tuple[str, ...]
     source_url: str
+    official_job_hosts: tuple[str, ...] = ()
 
     @abstractmethod
     def search(
@@ -76,6 +77,24 @@ class CareerSourceProvider(ABC):
         posted_within_days: int,
     ) -> ProviderResult:
         """Return normalized public jobs or an actionable unavailable result."""
+
+    def matches_company(self, value: str) -> bool:
+        normalized = value.strip().casefold()
+        return normalized == self.company.casefold() or normalized in {
+            alias.casefold() for alias in self.aliases
+        }
+
+    def validate_job_url(self, source_url: str) -> None:
+        """Reject a persisted job URL outside this provider's official hosts."""
+        parsed = urllib.parse.urlparse(source_url)
+        host = (parsed.hostname or "").casefold()
+        if self.official_job_hosts and not any(
+            host == suffix or host.endswith("." + suffix)
+            for suffix in self.official_job_hosts
+        ):
+            raise ValueError(
+                f"{self.company} fallback 岗位必须使用该公司官方招聘域名"
+            )
 
 
 def fallback_query(company: str, source_url: str, keywords: tuple[str, ...]) -> str:

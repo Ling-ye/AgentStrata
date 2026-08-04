@@ -66,9 +66,14 @@ OpenAPI 响应检查与通用 GET 逃生门。源代码、示例和测试不得�
 ## 职业情报
 
 `career.intelligence` 保留 watchlist、岗位快照、证据等级、薪资样本和 JD 分析，但
-默认公司列表为空。用户必须指定公司或岗位；未配置专用 provider 时返回
-`fallback_query`，由统一搜索入口查找官方职位详情，再通过 ingest 工具写入当前
-workspace 的 SQLite 数据库。
+默认关注公司为空。用户必须指定公司或岗位；显式目标命中经过审阅的公开 provider
+时，可以读取公开招聘接口或生成限定官方站点的降级检索。未配置专用 provider 时
+返回 `fallback_query`，由统一搜索入口查找官方职位详情，再通过 ingest 工具写入
+当前 workspace 的 SQLite 数据库。
+
+已知 provider 会校验 fallback 岗位的官方域名和详情页形态；接口失败或只有招聘
+入口页时不会伪造完整快照，也不会推进“疑似下线”计数。provider catalog 只表达
+能力，不表达用户偏好。
 
 公开夹具使用中性公司、城市和保留示例域名。
 
