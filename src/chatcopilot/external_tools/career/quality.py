@@ -4,6 +4,7 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from chatcopilot.external_tools.career.dates import normalize_date
+from chatcopilot.external_tools.career.providers.registry import find_provider
 
 _GRADE_VALUE = {"A": 1, "B": 2, "C": 3, "D": 4}
 _SOURCE_TYPE_CAP = {
@@ -31,6 +32,13 @@ def effective_source_grade(record: dict[str, object]) -> str:
     source_type = str(record.get("source_type") or "").strip()
     host = (urlparse(str(record.get("source_url") or "")).hostname or "").casefold()
     cap = _SOURCE_TYPE_CAP.get(source_type, "D")
+    provider = find_provider(str(record.get("company") or ""))
+    if (
+        source_type == "official"
+        and provider is not None
+        and not _host_matches(host, provider.official_job_hosts)
+    ):
+        cap = "D"
     if any(host == suffix or host.endswith("." + suffix) for suffix in _COMMUNITY_HOST_SUFFIXES):
         cap = "C"
     if any(host == suffix or host.endswith("." + suffix) for suffix in _SEARCH_HOST_SUFFIXES):

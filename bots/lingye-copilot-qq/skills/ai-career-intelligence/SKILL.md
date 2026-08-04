@@ -7,14 +7,14 @@ description: 搜索目标公司的 AI/Agent 后端岗位，研究薪资待遇和
 
 ## 适用范围
 
-用于研究用户明确指定公司或岗位的 AI/Agent 后端职位、岗位变化、薪资待遇、面试流程、高频题和学习重点。只做公开信息研究，不登录招聘账号，不自动投递，不绕过验证码；没有用户指定目标时先请求目标范围，不使用内置公司名单。
+用于研究用户明确指定公司或岗位的 AI/Agent 后端职位、岗位变化、薪资待遇、面试流程、高频题和学习重点。只做公开信息研究，不登录招聘账号，不自动投递，不绕过验证码；没有用户指定目标时先请求目标范围。provider catalog 只优化已明确的目标，不得被解释成内置关注公司名单。
 
 ## 执行顺序
 
 1. 调用 `career_watchlist_show`。用户明确指定公司、关键词或城市时，以本轮要求为准；只有用户要求长期修改关注范围时才调用 `career_watchlist_update`。
 2. 调用 `search_company_ai_jobs` 获取最近 30 天（用户另有要求时按用户窗口）的官方岗位和快照差异。
 3. 检查每个 provider 的状态。对失败来源，把工具返回的 `fallback_query` 原样放入联网研究 task pack，不要声称已从官方接口抓到岗位。
-4. 统一调用 `search_information`：公司官网、官方博客和通用网页使用 `source_hints=["web"]`；需要小红书样本时加入 `experience`。同时需要岗位、薪资、待遇、面经和学习重点时，在一次请求中写明逻辑来源、各类必需字段、中国大陆、岗位 30 天/薪资面经 12 个月等时间窗口，由搜索入口规划并串行执行必要来源。
+4. 统一调用 `search_information`：公司官网、官方博客和通用网页使用 `source_hints=["web"]`；需要社区经验样本时加入 `experience`。同时需要岗位、薪资、待遇、面经和学习重点时，在一次请求中写明逻辑来源、各类必需字段、中国大陆、岗位 30 天/薪资面经 12 个月等时间窗口，由搜索入口规划并串行执行必要来源。
 5. 对 fallback 来源，研究结果必须返回公司官方职位详情 URL、岗位名和可解析发布日期；主 Agent 审核后调用 `career_jobs_ingest`，并传入与本轮一致的关键词、城市、时间窗口和结果中的实际 `source_name`。搜索摘要、面经或社区 URL 不得写成岗位。
 6. 让搜索 subagent 输出可被 `career_intel_ingest` 接收的 evidence records；每条包含 `source_type`。主 Agent 审核字段后再保存。搜索摘要或无正文信息只能使用 `source_type=search_snippet`、D 级。
 7. 调用 `career_intel_query(since_days=365)` 合并本轮与历史证据，最后形成报告。需要完整 JD 时才传 `detail=true`。

@@ -16,6 +16,10 @@ from chatcopilot.external_tools.career.models import (
     JobListing,
     ProviderResult,
 )
+from chatcopilot.external_tools.career.providers.registry import (
+    find_provider,
+    supported_company_aliases,
+)
 from chatcopilot.external_tools.career.quality import (
     effective_source_grade,
     validate_and_normalize_evidence,
@@ -33,7 +37,7 @@ DEFAULT_WATCHLIST = {
     "locations": [],
 }
 
-DEFAULT_COMPANIES: dict[str, list[str]] = {}
+DEFAULT_COMPANIES = supported_company_aliases()
 _NON_JOB_HOSTS = (
     "bing.com", "google.com", "baidu.com", "xiaohongshu.com", "zhihu.com",
     "nowcoder.com", "maimai.cn",
@@ -640,6 +644,9 @@ def _validate_official_job_url(company: str, source_url: str) -> None:
         raise ValueError("source_url 必须是公开 HTTP(S) 岗位链接")
     if any(host == suffix or host.endswith("." + suffix) for suffix in _NON_JOB_HOSTS):
         raise ValueError("source_url 不能是搜索页、社区帖子或面经链接")
+    provider = find_provider(company)
+    if provider is not None:
+        provider.validate_job_url(source_url)
 
 
 def relevance(job: JobListing, keywords: list[str]) -> tuple[int, list[str]]:
@@ -654,10 +661,9 @@ def relevance(job: JobListing, keywords: list[str]) -> tuple[int, list[str]]:
 
 
 def canonical_company(value: str) -> str:
-    normalized = value.strip().casefold()
-    for company, aliases in DEFAULT_COMPANIES.items():
-        if normalized in {alias.casefold() for alias in aliases}:
-            return company
+    provider = find_provider(value)
+    if provider is not None:
+        return provider.company
     return value.strip()
 
 

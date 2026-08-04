@@ -104,9 +104,11 @@ repository paths, and credentials belong only in ignored runtime config or the
 operator credential store. Public templates contain names and placeholders,
 not working values.
 
-Career-intelligence tools start with no built-in company watchlist. The user
-must specify a company or position; public code stores workspace-local
-snapshots and evidence without embedding personal targets.
+Career-intelligence tools start with an empty company watchlist. The user must
+specify a company or position. Explicitly requested companies may use a
+reviewed public provider; every other target receives a structured web-search
+fallback. Snapshots and evidence remain workspace-local, so the provider
+catalog does not embed personal targets.
 
 ## Architecture
 

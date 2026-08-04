@@ -113,7 +113,9 @@ Codex 主 backend 不创建 Native/ LangGraph 的搜索 subagent。`risk: search
 - `codebases`：逻辑仓库注册表，物理路径通过 env 解析。
 - `dev`：源码根 env、允许/拒绝路径和 shell timeout。
 
-职业情报工具没有内置公司列表；用户或 workspace watchlist 必须显式提供目标。
+职业情报工具的默认关注公司为空；用户或 workspace watchlist 必须显式提供目标。
+显式目标可以命中经过审阅的公开 provider，未命中或 provider 不可用时返回结构化
+搜索降级，不会把 provider 目录当作个人默认关注列表。
 
 ### `workspace`
 
