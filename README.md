@@ -15,6 +15,17 @@ evaluations.
 > **Status:** alpha source baseline, version `0.1.0.dev0`. The first public
 > state is source-only and does not represent a published `v0.1.0` Release.
 
+## Development history
+
+AgentStrata was developed across multiple private repositories from November
+2025 through August 2026. The later private repository alone contains 196
+commits; the public root records the August 2026 open-source baseline rather
+than the beginning of implementation.
+
+See [Project history and architecture evolution](https://github.com/Ling-ye/AgentStrata/blob/main/docs/project-history.md)
+for the initial design, problems encountered, architectural changes, and the
+resulting system structure.
+
 ## Why AgentStrata
 
 - **Declarative instances.** BotSpec keeps behavior and capabilities adjacent
@@ -189,6 +200,7 @@ files and private reports never belong in Git.
 | Goal | Guide |
 | --- | --- |
 | Browse all documentation | [Documentation center](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md) |
+| Understand project history and architecture evolution | [Project history](https://github.com/Ling-ye/AgentStrata/blob/main/docs/project-history.md) |
 | Create and configure a bot | [BotSpec reference](https://github.com/Ling-ye/AgentStrata/blob/main/docs/bot-spec.md) |
 | Install on Linux / WSL | [Deployment guide](https://github.com/Ling-ye/AgentStrata/blob/main/docs/deployment.md) |
 | Update, restart, inspect, or diagnose | [Operations runbook](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md) |
