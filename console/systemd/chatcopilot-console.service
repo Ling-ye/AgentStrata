@@ -1,7 +1,8 @@
 [Unit]
 Description=AgentStrata 运维控制台后端 (FastAPI + SSE, 0.0.0.0:8910)
 Documentation=https://github.com/Ling-ye/AgentStrata
-After=default.target
+Wants=chatcopilot-evaluation.service
+After=default.target chatcopilot-evaluation.service
 
 [Service]
 Type=simple
@@ -14,6 +15,7 @@ RestartSec=3
 # 绑定 0.0.0.0 使 WSL2 localhost 转发和直接 IP 访问均可用。
 Environment=CHATCOPILOT_CONSOLE_HOST=0.0.0.0
 Environment=CHATCOPILOT_CONSOLE_PORT=8910
+Environment=CHATCOPILOT_EVALUATION_SOCKET=%t/agentstrata-evaluation/service.sock
 Environment=PYTHONPATH=%h/ChatCopilot/src
 StandardOutput=journal
 StandardError=journal

@@ -1,11 +1,11 @@
 # 运维控制台
 
-运维控制台是 AgentStrata 在 WSL 中管理多机器人实例的 Web 入口。默认地址是 `http://localhost:8910`，后端由 `chatcopilot-console.service` 托管，前端产物位于 `console/web/dist` 并由 FastAPI 同源挂载。日常启停、更新、日志和诊断命令统一见 [`operations.md`](operations.md)。
+运维控制台是 AgentStrata 在 WSL 中管理多机器人实例的 Web 入口。默认地址是 `http://localhost:8910`，后端由 `chatcopilot-console.service` 托管，前端产物位于 `console/web/dist` 并由 FastAPI 同源挂载。Evaluation 生命周期不在 Console 进程中，而是由独立的 `chatcopilot-evaluation.service` 管理。日常启停、更新、日志和诊断命令统一见 [`operations.md`](operations.md)。
 
 ## 技术栈
 
 - 前端：React 18 + Rsbuild/Rspack + Arco Design + TanStack Query。
-- 后端：FastAPI 路由 + `console/control/**` 控制层。
+- 后端：FastAPI UI/BFF + `console/control/**` 通用控制层；Evaluation 调用通过同 UID Unix socket 进入独立 service。
 - 长任务和日志：后端 SSE 流，前端用专用 hook 展示到任务/日志抽屉。
 - 构建命令：`cd console/web; npm run build`。
 
@@ -17,7 +17,7 @@
   `services.sh start` 做 desired-state reconcile，不会启动已禁用服务。
 - **机器人实例**：展示每个 BotSpec 实例的部署、注册、运行、平台连接、日志、任务、更新和诊断入口。
 - **组件目录**：按 `tools` / `prompts` / `agents` / `context` 四个 surface 只读浏览工具包、运行特性、MCP 服务、提示词、Agent preset、workflow DTO 和上下文来源；数据只来自 `chatcopilot.component_catalog` 的精确 pack/tool 投影，不直接读取 Agent/BotSpec 内部 registry 或自行 import 工具模块。
-- [KNOWN][HIGH] **评测中心**：固定为「新建评测 / 评测记录 / 任务集」三个页签。Agent Profile 对比和 BFCL / GAIA / IFEval Suite 运行统一为 `Evaluation` 资源；记录页负责筛选、查看详情、取消、删除、重跑和导出，任务集页统一展示 Profile、Suite 数据准备状态与 Case coverage。报告统一保存在 `reports/evals/evaluations/<evaluation-id>/`。
+- **评测中心**：固定为「新建评测 / 评测记录 / 任务集」三个页签。Agent Profile 对比和 BFCL / GAIA / IFEval Suite 运行统一为 `Evaluation` 资源；记录页负责筛选、查看详情、取消、删除、重跑和导出，任务集页统一展示 Profile、Suite 数据准备状态与 Case coverage。报告统一保存在 `reports/evals/evaluations/<evaluation-id>/`。
 
 Console 后端的进程执行、YAML 投影和 job/task/log 可观测读取分别位于 `process_executor.py`、`yaml_io.py` 和 `observability.py`，`operations.py` 只保留控制面编排与兼容导出。前端路由按页面懒加载；Evals 的详情组件/展示函数位于 `features/evals/`，BotToolEditor 的模型与状态 hook 位于 `features/bots/tool-editor/`。
 - **设置**：控制台自身更新、控制台后端日志等全局维护入口。
@@ -69,22 +69,29 @@ Token 口径：
 
 统一资源名与状态口径见 [`evaluation-glossary.md`](evaluation-glossary.md)。
 
-[KNOWN][HIGH] `Evaluation` 是唯一运行资源，使用 `evaluation_id` 标识，并以 `kind: comparison | suite` 区分执行方式。生命周期状态固定为 `queued / running / completed / partial / cancelled / interrupted / error`；通过/失败和 Codex/Native/平局只属于结果，不混入生命周期。
+`Evaluation` 是唯一运行资源，使用 `evaluation_id` 标识，并以 `kind: comparison | suite` 区分执行方式。生命周期状态固定为 `queued / running / completed / partial / cancelled / interrupted / error`；通过/失败和 Codex/Native/平局只属于结果，不混入生命周期。
 
 - `comparison`：选择 Bot、Profile 与 `quick / standard / custom` preset。Quick 和 Standard 使用服务端固定默认值，不接受执行参数覆盖；Custom 必须显式提供 Targets、Case refs、重复次数、预算和 seed。MVP Profile `agent-comparison-mvp` 仍覆盖 IFEval 指令遵循、GAIA smoke、确定性工具调用和隔离代码修复，不生成“智能总分”。
 - `suite`：选择 BFCL、GAIA 或 IFEval，可指定任意 Case、dry-run 和 GAIA judge。官方 Suite 数据仍按需准备；Profile Case 使用稳定版本化定义，不依赖官方数据缓存。
 
-[KNOWN][HIGH] 新建评测只保留一个 Bot 选择器和一个「开始评测」动作。`POST /api/evals/evaluations` 在落盘和启动子进程前原子执行 fail-closed 预检；阻断响应使用 `code/message/checks`，前端展开具体检查项，不再把对象转成 `[object Object]`。字段变化会清除旧阻断状态，旧异步响应不能回写到已切换的 Bot、Suite、表单或记录；SSE 重连按稳定事件内容去重。同一 Bot 的活动 Evaluation 通过持久化 claim 跨 Console manager 和进程互斥，受管进程真正退出前禁止删除、重跑或创建下一条。
+新建评测只保留一个 Bot 选择器和一个「开始评测」动作。`POST /api/evals/evaluations` 由 Console BFF 完成 HTTP 校验后，通过同 UID Unix socket 调用 Evaluation service。Service 在落盘和启动 worker 前原子执行 fail-closed 预检；阻断响应使用 `code/message/checks`，前端展开具体检查项。同一 Bot 的活动 Evaluation 通过 service 拥有的持久化 claim 跨线程和进程互斥，受管 worker 真正退出前禁止删除、重跑或为同 Bot 创建下一条。
 
-[KNOWN][HIGH] Target 记录 executor、backend、model、reasoning effort 和包含已解析 Bot runtime 行为摘要的稳定 fingerprint；逐 Trial checkpoint 必须完成整个 Target 组后才参与胜负聚合。Resume 在任何写入前校验完整请求、Case 快照、Target fingerprint 和已有 Trial 结构，不能修改请求后混用旧 Trial；已完成 Evaluation 不可 Resume，未 checkpoint 的 workspace 残留会在重跑前清理。非 Resume 只接受新目录或严格匹配且无证据文件的 Console bootstrap。评测只在子进程内覆盖 backend，不修改 BotSpec 或线上会话；Case 工具默认拒绝，代码写入只发生在 Evaluation 的隔离 workspace。外部 Case ID 不直接形成 workspace 或 artifact 路径，包含 `/` 时仍可作为原始领域标识查询。Case coverage 按 Bot + Case + Target fingerprint 聚合，因此模型、Bot runtime 或执行策略变化后不会误用旧覆盖记录。
+创建、重跑、取消和删除在任何状态修改前先由 service 返回绑定操作与 Evaluation ID 的 accepted 帧。创建与重跑使用稳定 Evaluation ID 和请求指纹；accepted 后连接中断时，client 只查询或重放同一个 ID，不会因为普通读取超时让页面显示失败、后台却又生成一条身份未知的 Evaluation。
+
+Console 不创建 Evaluation manager、不持有 worker，也不在 lifespan 结束时改写评测状态。重启、更新或暂时停止 Console 不影响已运行的 Evaluation；Console 恢复后可继续查询、读取 SSE 或取消同一记录。Evaluation service 不可用时，`/api/evals/**` 返回明确的 `503`，不降级为 Console 进程内 manager。`GET /api/evals/health` 返回 service ready、活动记录数、`idle_proven` 和 maintenance 状态。运行代码更新持有 service-owned maintenance lease 时，新建 Evaluation 返回 `409`，读取、导出和取消等既有记录操作仍可用。
+
+Target 记录 executor、backend、model、reasoning effort 和包含已解析 Bot runtime 行为摘要的稳定 fingerprint；逐 Trial checkpoint 必须完成整个 Target 组后才参与胜负聚合。Resume 在任何写入前校验完整请求、Case 快照、Target fingerprint 和已有 Trial 结构，不能修改请求后混用旧 Trial；已完成 Evaluation 不可 Resume，未 checkpoint 的 workspace 残留会在重跑前清理。受管 worker 只接受严格匹配的 service bootstrap，直接 CLI 则保留 standalone resume 语义。评测只在 worker 进程内覆盖 backend，不修改 BotSpec 或线上会话；Case 工具默认拒绝，代码写入只发生在 Evaluation 的隔离 workspace。外部 Case ID 不直接形成 workspace 或 artifact 路径，包含 `/` 时仍可作为原始领域标识查询。Case coverage 按 Bot + Case + Target fingerprint 聚合。
 
 CLI 的 prepare、validate 和 run 命令统一见 [`operations.md#evaluation`](operations.md#evaluation)；本页只维护 Console 与 API 契约。
 
-[KNOWN][HIGH] Evaluation 目录只保留权威的 `request.json`、`state.json`、`result.json`、逐 Trial 证据、Core 单写的 `progress.jsonl`、脱敏 `run.log` 和 Markdown 报告。Evaluation 目录、activity claim 和权威 artifact 不接受符号链接，读取、流式传输、导出、取消和删除前核对 `evaluation_id`；遗留 worker 只有在 argv 中唯一 `--output` 与记录目录规范路径精确相等时才可发送信号。原始事件不落盘；事件、回答、工具参数、启动错误和报告在写 checkpoint 前过滤凭据字段、通用 token、已知 secret 和机器绝对路径。CLI 布尔值、列表和预算使用严格类型并拒绝 NaN/Infinity，`evaluation_id` 与 Console 统一为 1–128 位字母、数字、下划线或连字符；报告比较只接受 lifecycle completed、同 kind、同 Profile/Suite、同 Case/Trial 样本、同 Judge 且 executor/backend 语义可比的 Evaluation。费用无法可靠取得时显示 `unknown`。
+Evaluation 目录的写入权按文件固定分配：application service 写 `request.json`、`state.json`、activity claim、maintenance lease 和合作式取消标记；Core 写 `result.json`、`summary.md`、`progress.jsonl` 和逐 Trial 证据；managed worker 自行写脱敏 `run.log`；Console 不写任何 Evaluation artifact。Evaluation 目录、activity claim、maintenance marker、取消标记和权威 artifact 不接受符号链接，并校验 owner、类型、权限、单硬链接与 `evaluation_id`；遗留 worker 只有在 argv 精确包含 managed-worker 模块、且唯一 `--output` 与记录目录规范路径相等时才可发送信号。JSON/Markdown 导出从 UDS 到 HTTP 均按块传输，不在 Console 中完整缓冲报告。事件、回答、工具参数、启动错误和报告在写 checkpoint 前过滤凭据字段、通用 token、已知 secret 和机器绝对路径。
+
+该边界只实现 AgentStrata 同仓库、同版本的本机 Evaluation 服务，不引入外部评测引擎、实验追踪平台、远程 evaluator 或第二套报告存储。
 
 评测 API：
 
 - `GET /api/evals/profiles`
+- `GET /api/evals/health`
 - `GET /api/evals/suites`
 - `POST /api/evals/suites/{suite_id}/prepare`
 - `GET /api/evals/cases/coverage`
@@ -102,6 +109,9 @@ CLI 的 prepare、validate 和 run 命令统一见 [`operations.md#evaluation`](
 实例更新、Console 更新、状态、重启和日志的完整命令集中在
 [`operations.md`](operations.md)。控制台中的“更新并重启”和“更新控制台”分别调用
 `update_instance.sh` 与 `deploy_console.sh --update-only`，不维护第二套运维流程。
+“更新控制台”只允许通过 `systemd-run --user` 的独立 transient unit 启动；无法
+创建该 unit 时明确失败，不使用仍留在 Console service cgroup 内的
+`setsid` / `nohup` fallback，也不会先获取 Evaluation maintenance lease。
 
 [KNOWN][HIGH] 「能力与工具」Tab 以 `tools` / `prompts` / `agents` / `context`
 四面展示当前配置。可编辑项写回 WSL 源仓中的 `bots/<id>/bot.yaml` 和

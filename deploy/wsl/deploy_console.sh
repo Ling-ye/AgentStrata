@@ -6,7 +6,7 @@
 #
 # Usage:
 #   bash deploy/wsl/deploy_console.sh                 # install/repair console
-#   bash deploy/wsl/deploy_console.sh --update-only   # rebuild web + restart service
+#   bash deploy/wsl/deploy_console.sh --update-only   # rebuild web + restart Evaluation / Console
 #   bash deploy/wsl/deploy_console.sh --skip-web      # skip web build
 #   bash deploy/wsl/deploy_console.sh --restart-only  # only restart service
 #   bash deploy/wsl/deploy_console.sh --status        # health check only
@@ -16,13 +16,17 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." >/dev/null 2>&1 && pwd)"
 UNIT_NAME="chatcopilot-console.service"
+EVALUATION_UNIT_NAME="chatcopilot-evaluation.service"
 CONSOLE_URL="http://127.0.0.1:8910/api/bots"
+EVALUATION_BFF_URL="http://127.0.0.1:8910/api/evals/health"
 
 SKIP_WEB=0
 RESTART_ONLY=0
 STATUS_ONLY=0
 UPDATE_ONLY=0
 DRY_RUN=0
+MAINTENANCE_HELD=0
+MAINTENANCE_LEASE_ID=""
 
 usage() {
     sed -n '2,18p' "$0"
@@ -64,6 +68,7 @@ err()  { printf "%s[ERR]%s %s\n" "$C_ERR" "$C_END" "$*" >&2; }
 uid="$(id -u)"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$uid/bus}"
+EVALUATION_SOCKET="$XDG_RUNTIME_DIR/agentstrata-evaluation/service.sock"
 
 run_or_print() {
     if [ "$DRY_RUN" -eq 1 ]; then
@@ -134,11 +139,12 @@ preflight_web() {
 }
 
 http_status() {
+    local url="$1"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsS "$CONSOLE_URL" >/dev/null
+        curl -fsS "$url" >/dev/null
         return $?
     fi
-    python3 - "$CONSOLE_URL" <<'PY'
+    python3 - "$url" <<'PY'
 import sys
 from urllib.request import urlopen
 
@@ -147,25 +153,147 @@ with urlopen(sys.argv[1], timeout=5) as resp:
 PY
 }
 
+evaluation_health() {
+    local python="$REPO_ROOT/.venv/bin/python"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        run_or_print "$python" -m chatcopilot.evals.service health \
+            --socket "$EVALUATION_SOCKET"
+        return 0
+    fi
+    if [ ! -x "$python" ]; then
+        return 1
+    fi
+    PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+        "$python" -m chatcopilot.evals.service health \
+        --socket "$EVALUATION_SOCKET" >/dev/null 2>&1
+}
+
+maintenance_enter() {
+    local python="$REPO_ROOT/.venv/bin/python"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        MAINTENANCE_LEASE_ID="00000000000000000000000000000000"
+        run_or_print "$python" -m chatcopilot.evals.service health \
+            --socket "$EVALUATION_SOCKET"
+        run_or_print "$python" -m chatcopilot.evals.service maintenance enter \
+            --socket "$EVALUATION_SOCKET" \
+            --lease-id "$MAINTENANCE_LEASE_ID"
+        MAINTENANCE_HELD=1
+        return 0
+    fi
+    if [ ! -x "$python" ]; then
+        return 1
+    fi
+    MAINTENANCE_LEASE_ID="$(
+        PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+            "$python" -m chatcopilot.evals.service maintenance enter \
+            --socket "$EVALUATION_SOCKET"
+    )" || return 1
+    if [[ ! "$MAINTENANCE_LEASE_ID" =~ ^[0-9a-f]{32}$ ]]; then
+        MAINTENANCE_LEASE_ID=""
+        return 1
+    fi
+    MAINTENANCE_HELD=1
+}
+
+maintenance_leave() {
+    local python="$REPO_ROOT/.venv/bin/python"
+    if [ "$MAINTENANCE_HELD" -ne 1 ] || [ -z "$MAINTENANCE_LEASE_ID" ]; then
+        return 0
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        run_or_print "$python" -m chatcopilot.evals.service maintenance leave \
+            --socket "$EVALUATION_SOCKET" \
+            --lease-id "$MAINTENANCE_LEASE_ID"
+    elif [ ! -x "$python" ] || ! \
+        PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+            "$python" -m chatcopilot.evals.service maintenance leave \
+            --socket "$EVALUATION_SOCKET" \
+            --lease-id "$MAINTENANCE_LEASE_ID"; then
+        return 1
+    fi
+    MAINTENANCE_HELD=0
+    MAINTENANCE_LEASE_ID=""
+}
+
+release_maintenance_on_exit() {
+    local status=$?
+    local lease_id="$MAINTENANCE_LEASE_ID"
+    trap - EXIT
+    if [ "$MAINTENANCE_HELD" -eq 1 ] && ! maintenance_leave; then
+        err "failed to release Evaluation maintenance lease: $lease_id"
+        echo "  Recover the service, then run:" >&2
+        echo "  $REPO_ROOT/.venv/bin/python -m chatcopilot.evals.service maintenance leave --socket $EVALUATION_SOCKET --lease-id $lease_id" >&2
+        status=1
+    fi
+    exit "$status"
+}
+
+wait_for_unit() {
+    local unit="$1" attempts="$2" attempt
+    for attempt in $(seq 1 "$attempts"); do
+        if systemctl --user is-active --quiet "$unit"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+wait_for_evaluation() {
+    local attempt
+    if [ "$DRY_RUN" -eq 1 ]; then
+        evaluation_health
+        return $?
+    fi
+    for attempt in $(seq 1 20); do
+        if evaluation_health; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+wait_for_http() {
+    local url="$1" attempts="$2" attempt
+    for attempt in $(seq 1 "$attempts"); do
+        if http_status "$url" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 print_diagnostics() {
     echo
     warn "diagnostic commands:"
+    echo "  systemctl --user status $EVALUATION_UNIT_NAME --no-pager -l"
+    echo "  journalctl --user -u $EVALUATION_UNIT_NAME --no-pager -n 120"
     echo "  systemctl --user status $UNIT_NAME --no-pager -l"
     echo "  journalctl --user -u $UNIT_NAME --no-pager -n 120"
     echo "  bash $REPO_ROOT/deploy/wsl/deploy_console.sh --status"
 }
 
 check_status() {
+    info "checking $EVALUATION_UNIT_NAME ..."
+    if ! wait_for_unit "$EVALUATION_UNIT_NAME" 5; then
+        err "$EVALUATION_UNIT_NAME is not running"
+        print_diagnostics
+        return 1
+    fi
+    ok "$EVALUATION_UNIT_NAME is running"
+
+    info "checking Evaluation Unix socket ..."
+    if ! wait_for_evaluation; then
+        err "Evaluation service is unavailable through $EVALUATION_SOCKET"
+        print_diagnostics
+        return 1
+    fi
+    ok "Evaluation Unix socket is healthy: $EVALUATION_SOCKET"
+
     info "checking $UNIT_NAME ..."
-    local service_ok=0
-    for _ in 1 2 3 4 5; do
-        if systemctl --user is-active --quiet "$UNIT_NAME"; then
-            service_ok=1
-            break
-        fi
-        sleep 1
-    done
-    if [ "$service_ok" -ne 1 ]; then
+    if ! wait_for_unit "$UNIT_NAME" 5; then
         err "$UNIT_NAME is not running"
         print_diagnostics
         return 1
@@ -173,20 +301,20 @@ check_status() {
     ok "$UNIT_NAME is running"
 
     info "checking $CONSOLE_URL ..."
-    local http_ok=0
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-        if http_status >/dev/null 2>&1; then
-            http_ok=1
-            break
-        fi
-        sleep 1
-    done
-    if [ "$http_ok" -ne 1 ]; then
+    if ! wait_for_http "$CONSOLE_URL" 15; then
         err "Console HTTP API is unavailable: $CONSOLE_URL"
         print_diagnostics
         return 1
     fi
     ok "Console HTTP API is available: http://localhost:8910"
+
+    info "checking Console Evaluation BFF ..."
+    if ! wait_for_http "$EVALUATION_BFF_URL" 5; then
+        err "Console Evaluation BFF is unavailable: $EVALUATION_BFF_URL"
+        print_diagnostics
+        return 1
+    fi
+    ok "Console Evaluation BFF reaches the Unix socket service"
 }
 
 build_web() {
@@ -214,6 +342,19 @@ restart_console() {
     ok "$UNIT_NAME restart requested"
 }
 
+restart_evaluation() {
+    info "restarting $EVALUATION_UNIT_NAME ..."
+    run_or_print systemctl --user restart "$EVALUATION_UNIT_NAME" || return $?
+    ok "$EVALUATION_UNIT_NAME restart requested"
+    info "waiting for Evaluation Unix socket health ..."
+    if ! wait_for_evaluation; then
+        err "Evaluation service did not become healthy: $EVALUATION_SOCKET"
+        print_diagnostics
+        return 1
+    fi
+    ok "Evaluation Unix socket is healthy"
+}
+
 echo
 printf "%s=== AgentStrata Console deploy ===%s\n" "$C_BOLD" "$C_END"
 echo
@@ -230,9 +371,21 @@ preflight_web
 if [ "$RESTART_ONLY" -eq 1 ]; then
     restart_console || exit $?
 elif [ "$UPDATE_ONLY" -eq 1 ]; then
-    info "updating Console service only ..."
-    build_web || { err "web build failed; service was not restarted"; exit 1; }
+    info "updating Evaluation and Console services ..."
+    trap release_maintenance_on_exit EXIT
+    info "atomically entering Evaluation maintenance ..."
+    if ! maintenance_enter; then
+        err "Evaluation is active or idle cannot be proven; update refused"
+        exit 1
+    fi
+    build_web || { err "web build failed; services were not restarted"; exit 1; }
+    restart_evaluation || exit $?
     restart_console || exit $?
+    if ! maintenance_leave; then
+        err "updated services are healthy, but the Evaluation maintenance lease remains active"
+        exit 1
+    fi
+    trap - EXIT
 else
     info "installing/repairing Console service ..."
     install_or_repair_console || exit $?

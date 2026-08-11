@@ -23,17 +23,17 @@ Comparison 选择版本化 Profile。Quick/Standard 使用 Profile 的服务端�
 
 统一持久化位于 `reports/evals/evaluations/<evaluation-id>/`，权威文件为 `request.json`、`state.json`、`result.json`、`summary.md`、`progress.jsonl` 与逐 Trial 证据。Case 覆盖按 Bot、Case 和 Target fingerprint 聚合。
 
-恢复是同一 Evaluation 的续跑，不是修改请求后复用旧 Trial。恢复前必须在任何写入之前同时核对完整请求、Case 快照、已有 Trial 和包含 Bot runtime 行为摘要的 Target fingerprint；任一 fingerprint 或 checkpoint 结构漂移都拒绝恢复。已完成 Evaluation 不再恢复，未形成完整 Target 组的 workspace 必须在重跑前清理，不能把中断残留带入 Judge。非 Resume 只能写入新目录或严格匹配、无证据文件的 Console bootstrap 目录，不能覆盖旧 Evaluation。外部 Suite 的原始 Case ID 只作为领域标识，workspace 和 Trial artifact 文件名必须使用确定性的安全编码，不能参与路径解析；包含 `/` 的 Case ID 仍须可通过查询与详情 API 访问。
+恢复是同一 Evaluation 的续跑，不是修改请求后复用旧 Trial。恢复前必须在任何写入之前同时核对完整请求、Case 快照、已有 Trial 和包含 Bot runtime 行为摘要的 Target fingerprint；任一 fingerprint 或 checkpoint 结构漂移都拒绝恢复。已完成 Evaluation 不再恢复，未形成完整 Target 组的 workspace 必须在重跑前清理，不能把中断残留带入 Judge。非 Resume 只能写入新目录或严格匹配、无证据文件的 Evaluation service bootstrap 目录，不能覆盖旧 Evaluation。外部 Suite 的原始 Case ID 只作为领域标识，workspace 和 Trial artifact 文件名必须使用确定性的安全编码，不能参与路径解析；包含 `/` 的 Case ID 仍须可通过查询与详情 API 访问。
 
 持久化边界统一识别 credential、secret、password、API key 以及通用 token 字段和环境变量，并清除未声明的机器绝对路径。Core 是 `progress.jsonl` 的唯一结构化进度写入者，Console monitor 只写脱敏日志。比较报告只接受 lifecycle 已完成、同 kind、同 Profile/Suite、同 Case/Trial 样本、同 Judge 且 Target executor/backend 语义可比的 Evaluation，禁止跨任务集计算伪差值；所有数值参数必须是有限数。`evaluation_id` 在 CLI、Core 和 Console 统一为 1–128 位 ASCII 字母、数字、下划线或连字符。
 
-同一 Bot 的活动 Evaluation 约束跨 Console manager 和进程生效。创建使用持久化根级原子 claim，进程真正退出后才释放；只要 manager 仍持有活进程，记录就不能删除、重跑或让同 Bot 启动下一条。Worker 身份只能通过解析 argv 中唯一的 `--output` 并与 Evaluation 目录规范路径精确匹配，不能使用路径子串；遗留 PID 存在但身份暂时无法验证时必须 fail closed，不能发送信号、定态或释放 claim。Evaluation 目录、claim 和权威 artifact 均拒绝符号链接，读取、流式传输、导出和删除前必须核对记录内的 `evaluation_id`。
+同一 Bot 的活动 Evaluation 约束跨 Evaluation application 线程和 service 进程生效。创建使用持久化根级原子 claim，进程真正退出后才释放；只要 service 仍观察到活进程，记录就不能删除、重跑或让同 Bot 启动下一条。Worker 身份只能通过解析 argv 中唯一的 `--output` 并与 Evaluation 目录规范路径精确匹配，不能使用路径子串；遗留 PID 存在但身份暂时无法验证时必须 fail closed，不能发送信号、定态或释放 claim。Evaluation 目录、claim 和权威 artifact 均拒绝符号链接，读取、流式传输、导出和删除前必须核对记录内的 `evaluation_id`。进程与部署所有权的后续边界以 `evaluation-service-boundary` 规格为准。
 
 控制台一级区域固定为“新建评测 / 评测记录 / 任务集”。新建页共享 Bot 选择和单一启动动作；评测记录统一列表并从宽抽屉查看两类详情；任务集聚合 Profile、Suite 数据准备、Case 与覆盖历史。
 
 ## Acceptance
 
-- Comparison 与 Suite 都从同一 API、manager、CLI 和持久化根创建、观察、取消、重跑、删除与导出。
+- Comparison 与 Suite 都从同一 API、Evaluation application、CLI 和持久化根创建、观察、取消、重跑、删除与导出。
 - 一键 Quick/Standard 不再产生额外字段 422；所有结构化错误均显示字段或阻断原因，不出现 `[object Object]`。
 - BFCL direct-LLM、GAIA/IFEval Agent、dry-run、Profile 隔离、完整配对、seed、预算和脱敏语义保持。
 - Evaluation status 与 Trial outcome 分离；单 Target 不生成胜负，多 Case 同 Dimension 正确累计。

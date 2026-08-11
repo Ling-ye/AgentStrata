@@ -42,7 +42,9 @@ resulting system structure.
   mutation to isolated code tasks that validate and prepare draft pull
   requests; they do not merge or deploy automatically.
 - **Unified evaluation.** Profile comparisons, BFCL, GAIA, and IFEval use one
-  Evaluation resource and one artifact layout.
+  Evaluation resource and one artifact layout. A same-version local Evaluation
+  service owns managed workers and lifecycle state; the Console is its UI/BFF
+  over a same-user Unix socket.
 
 ## Quick start
 
@@ -160,13 +162,24 @@ and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.m
 | Agent backends | Native; LangGraph; Codex |
 | Models | OpenAI-compatible chat/research APIs; Codex CLI device authentication |
 | Capabilities | Local tool packs; in-process web search; reviewed MCP bindings; RAG; memory; private Wiki |
-| Operations | React/FastAPI Console; diagnostics; task status; logs |
-| Deployment | Linux / WSL; systemd user services; desired-state Docker infrastructure |
-| Evaluation | Profile comparisons; BFCL; GAIA; IFEval |
+| Operations | React/FastAPI Console BFF; diagnostics; task status; logs |
+| Deployment | Linux / WSL; Console and Evaluation systemd user services; desired-state Docker infrastructure |
+| Evaluation | Local lifecycle service; managed workers; Profile comparisons; BFCL; GAIA; IFEval |
 
 Third-party MCP servers and Skills are not downloaded, installed, or enabled
 automatically. Review source, license, command, secret use, and remote write
 behavior before adding a binding.
+
+The Evaluation service is part of this repository and release. It does not
+bundle an external evaluation engine, experiment tracker, remote evaluator, or
+second report store; those integrations require a separate reviewed design.
+Console-only restarts leave managed evaluations running. Code updates require
+an atomic service-owned maintenance lease: the service proves idle and blocks
+new Evaluations for the entire build and restart window, so a new supervisor
+never adopts a worker that already loaded an older release. The in-Console
+update action requires an independent `systemd-run --user` transient unit;
+if that unit cannot be created, it fails before running the update script or
+acquiring the maintenance lease.
 
 ## Public-boundary checks
 
@@ -224,10 +237,8 @@ Run `.venv/bin/python scripts/check_repo.py full` before broad runtime,
 packaging, deployment, or Console changes. Architecture, public contracts,
 deployment workflows, and migrations use
 [SDD-lite](https://github.com/Ling-ye/AgentStrata/blob/main/docs/sdd.md).
-<<<<<<< Updated upstream
 The fast profile also audits exact tool-pack membership and checks that Agent,
 Console, MCP, subagent, and workflow catalog projections cannot silently drift.
-=======
 Isolated code-task validation reuses the source checkout's `.venv` and
 `console/web/node_modules` as read-only toolchains, so install both Python and
 Console development dependencies in the source checkout before starting the
@@ -237,7 +248,6 @@ not pass that candidate index into tests that create their own repositories.
 Each quick/full command runs offline in a newly materialized exact candidate tree
 with a fresh private home, so clone-local ignored files, shell profiles, and
 artifacts from earlier validation attempts cannot enter the next check.
->>>>>>> Stashed changes
 
 ## Compatibility
 

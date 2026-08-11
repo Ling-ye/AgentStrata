@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -22,17 +21,11 @@ from console.backend.routes import (  # noqa: E402
     shared_services,
     tasks,
 )
+from chatcopilot.evals.service import EvaluationServiceClient  # noqa: E402
 from console.backend.tasks import TaskManager  # noqa: E402
-from console.control.evaluations import EvaluationManager  # noqa: E402
 
 
-@asynccontextmanager
-async def _lifespan(application: FastAPI):
-    yield
-    application.state.evaluations.close()
-
-
-app = FastAPI(title="AgentStrata Console", version="1.0", lifespan=_lifespan)
+app = FastAPI(title="AgentStrata Console", version="1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,7 +35,7 @@ app.add_middleware(
 )
 
 app.state.tasks = TaskManager()
-app.state.evaluations = EvaluationManager()
+app.state.evaluations = EvaluationServiceClient()
 
 app.include_router(overview.router)
 app.include_router(bots.router)

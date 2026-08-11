@@ -98,8 +98,73 @@ NapCat / OneBot 网关接入。账号、群号、用户 ID、tenant 端点和凭
 ## Evaluation
 
 Profile comparison 与 BFCL / GAIA / IFEval Suite 统一使用 `Evaluation`，以 `kind`
-区分。状态、claim、进程、artifact 和 resume 校验都集中到一个 manager 与
-`reports/evals/evaluations/<evaluation-id>/` 目录。
+区分。生命周期状态只表示排队、运行和终态；Trial outcome 和 Case
+Comparison 只表示评分结果。
+
+```text
+Console UI
+  -> FastAPI BFF /api/evals/**
+  -> same-user Unix domain socket
+  -> chatcopilot.evals.service
+  -> chatcopilot.evals.application
+  -> managed worker
+  -> Evaluation Core + reports/evals/evaluations/<evaluation-id>/
+```
+
+`chatcopilot.evals.application` 是受管 Evaluation 的唯一应用控制面，拥有 Bot
+解析、无副作用预检、activity claim、worker supervision、lifecycle
+state、取消、恢复、删除、coverage 和 Suite catalog。
+`chatcopilot.evals.service` 用版本化 framed-JSON 协议将这些 use case 暴露到
+本机 Unix socket；它不监听 TCP，也不依赖 `console.*`。Console 只保留页面、
+HTTP/SSE 投影和错误状态映射，服务不可用时返回 `503`，不在进程内启动
+备用 manager。
+
+Socket 默认放在 `XDG_RUNTIME_DIR/agentstrata-evaluation/service.sock`；父目录与
+socket 分别使用 `0700` 和 `0600`。Client 在连接前校验目录和
+socket 的 owner、inode 类型、符号链接与权限；server 还会拒绝非同
+UID peer。协议限制 frame 大小、请求 ID、方法集与
+payload 形状。Profile、Suite、Case、数据准备、coverage、记录、事件和报告
+都通过同一 client；凭据只由 Evaluation service 从 Bot 的私有 `local.env`
+读取，不通过 UDS payload。
+
+写操作采用显式 accepted 边界：server 只有在 client 收到绑定 request ID、操作和
+Evaluation ID 的 accepted 帧后才执行 mutation。`start` / `rerun` 由 client 生成
+稳定 Evaluation ID，并以规范请求指纹支持同请求幂等恢复；连接在 accepted 后丢失
+时只用同一 ID 查询或重试，同 ID 请求漂移被拒绝。Suite 官方数据准备在独立子进程
+中使用私有环境快照，长时间下载不会占用服务进程的全局环境锁。
+
+Artifact 写入权按文件分配：
+
+| 所有者 | 可写内容 |
+| --- | --- |
+| Evaluation application | `request.json`、`state.json`、activity claim、maintenance lease、取消标记 |
+| Evaluation Core | `result.json`、`summary.md`、`progress.jsonl`、`trials/*.json` |
+| managed worker | 脱敏 `run.log` |
+| Console | 无；只通过 service client 读取和发起操作 |
+
+受管 worker 在独立 session 中运行，不继承 Console cgroup 或 stdout pipe。
+Console 启停不影响正在运行的 Evaluation。Evaluation service 重启时使用
+state、claim 与 worker PID 重建观察；只有 worker argv 中唯一 `--output` 的规范
+路径精确等于 Evaluation 目录时才能发送信号。PID 存在但身份无法证明时
+保持 fail closed，不释放 claim、不定态且不杀进程。
+
+运行代码更新不是“先查一次 idle 再继续”的两步操作。Evaluation application 在
+与 `start()` 相同的跨进程 creation guard 内确认 lifecycle、claim 与 worker 都可
+证明空闲，并写入私有 `.maintenance.json` lease；`start()` 在预检前和落盘前都
+检查该 marker。Lease 跨 Evaluation service 重启保持，覆盖构建、两个 service
+重启和健康检查的完整窗口，成功或可恢复失败后由相同 lease ID 释放。
+
+Worker 启动前通过继承的单次 pipe 等待 application 放行。Service 只有在 PID
+已持久化到 state 和 claim 后才释放 worker；若 service 在这段窗口崩溃，pipe
+关闭会使 worker 在 Core 写入前退出，不会留下无 claim 的执行进程。受管根的
+既存祖先链不得包含符号链接；目录与文件在敏感读取时通过 `lstat`、
+`O_NOFOLLOW` 和 `fstat` 校验当前 UID、`0700` / `0600`、inode 类型与单硬链接。
+
+这是同仓库、同版本、单机单用户边界。当前不引入外部评测引擎、实验
+追踪平台、远程 evaluator、分布式 lease 或第二套报告存储。未来外部框架
+只能在独立规格中以可选 adapter 或脱敏 exporter 接入，不得成为第二个
+lifecycle owner。详细验收见
+[`evaluation-service-boundary`](../specs/evaluation-service-boundary/spec.md)。
 
 ## 验证入口
 

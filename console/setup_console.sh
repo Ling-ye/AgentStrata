@@ -8,8 +8,8 @@
 # 做的事：
 #   1. 建 venv + 装 console/requirements.txt
 #   2. npm ci + build 前端（产物 console/web/dist，后端同源托管）
-#   3. 渲染并安装 systemd --user 单元 chatcopilot-console.service（路径指向本仓库）
-#   4. 开 lingering + enable --now
+#   3. 渲染并安装 Evaluation / Console 两个 systemd --user 单元
+#   4. 开 lingering，先启动并验证 Evaluation，再启动 Console
 #
 # 用法（WSL 终端，在控制仓库根或 console/ 下均可）：
 #   bash console/setup_console.sh
@@ -20,7 +20,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
 USER_UNIT_DIR="$HOME/.config/systemd/user"
 UNIT_NAME="chatcopilot-console.service"
+EVALUATION_UNIT_NAME="chatcopilot-evaluation.service"
 TEMPLATE="$SCRIPT_DIR/systemd/$UNIT_NAME"
+EVALUATION_TEMPLATE="$SCRIPT_DIR/systemd/$EVALUATION_UNIT_NAME"
+EVALUATION_ROOT="$REPO_ROOT/reports/evals/evaluations"
+MAINTENANCE_HELD=0
+MAINTENANCE_LEASE_ID=""
 
 SKIP_WEB=0
 for arg in "$@"; do
@@ -39,6 +44,8 @@ err()  { printf "\033[1;31m[ERR]\033[0m %s\n" "$*" >&2; }
 print_service_diagnostics() {
     echo >&2
     warn "排查命令："
+    echo "  systemctl --user status $EVALUATION_UNIT_NAME --no-pager -l" >&2
+    echo "  journalctl --user -u $EVALUATION_UNIT_NAME --no-pager -n 120" >&2
     echo "  systemctl --user status $UNIT_NAME --no-pager -l" >&2
     echo "  journalctl --user -u $UNIT_NAME --no-pager -n 120" >&2
     echo "  bash $REPO_ROOT/deploy/wsl/deploy_console.sh --status" >&2
@@ -47,6 +54,60 @@ print_service_diagnostics() {
 uid="$(id -u)"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$uid/bus}"
+EVALUATION_SOCKET="$XDG_RUNTIME_DIR/agentstrata-evaluation/service.sock"
+
+wait_for_evaluation() {
+    local attempt
+    for attempt in $(seq 1 20); do
+        if "$VENV/bin/python" -m chatcopilot.evals.service health \
+            --socket "$EVALUATION_SOCKET" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+maintenance_enter() {
+    MAINTENANCE_LEASE_ID="$(
+        PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+            "$VENV/bin/python" -m chatcopilot.evals.service maintenance enter \
+            --socket "$EVALUATION_SOCKET"
+    )" || return 1
+    if [[ ! "$MAINTENANCE_LEASE_ID" =~ ^[0-9a-f]{32}$ ]]; then
+        MAINTENANCE_LEASE_ID=""
+        return 1
+    fi
+    MAINTENANCE_HELD=1
+}
+
+maintenance_leave() {
+    if [ "$MAINTENANCE_HELD" -ne 1 ] || [ -z "$MAINTENANCE_LEASE_ID" ]; then
+        return 0
+    fi
+    if [ ! -x "$VENV/bin/python" ] || ! \
+        PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+            "$VENV/bin/python" -m chatcopilot.evals.service maintenance leave \
+            --socket "$EVALUATION_SOCKET" \
+            --lease-id "$MAINTENANCE_LEASE_ID"; then
+        return 1
+    fi
+    MAINTENANCE_HELD=0
+    MAINTENANCE_LEASE_ID=""
+}
+
+release_maintenance_on_exit() {
+    local status=$?
+    local lease_id="$MAINTENANCE_LEASE_ID"
+    trap - EXIT
+    if [ "$MAINTENANCE_HELD" -eq 1 ] && ! maintenance_leave; then
+        err "无法释放 Evaluation maintenance lease：$lease_id"
+        echo "  恢复 Evaluation service 后执行：" >&2
+        echo "  $VENV/bin/python -m chatcopilot.evals.service maintenance leave --socket $EVALUATION_SOCKET --lease-id $lease_id" >&2
+        status=1
+    fi
+    exit "$status"
+}
 
 if ! dpkg -s dbus-user-session >/dev/null 2>&1; then
     err "缺少 dbus-user-session，systemctl --user 没有稳定的用户总线。"
@@ -76,6 +137,38 @@ info "控制仓库：$REPO_ROOT"
 
 # ---- 1. venv + 依赖 ----
 VENV="$REPO_ROOT/.venv"
+evaluation_unit_installed=0
+if [ -f "$USER_UNIT_DIR/$EVALUATION_UNIT_NAME" ] || \
+    systemctl --user cat "$EVALUATION_UNIT_NAME" >/dev/null 2>&1; then
+    evaluation_unit_installed=1
+fi
+if [ "$evaluation_unit_installed" -eq 1 ]; then
+    if ! systemctl --user is-active --quiet "$EVALUATION_UNIT_NAME"; then
+        err "Evaluation service 已安装但未运行；无法证明空闲，拒绝更新运行代码。"
+        echo "  请先恢复 $EVALUATION_UNIT_NAME，再重试。" >&2
+        exit 1
+    fi
+    if [ ! -x "$VENV/bin/python" ]; then
+        err "Evaluation service 已安装，但现有 Python 环境不可用；拒绝绕过空闲证明。"
+        exit 1
+    fi
+    if ! maintenance_enter; then
+        err "检测到活动 Evaluation、已有维护租约或无法证明服务空闲；拒绝更新运行代码。"
+        echo "  请等待评测结束或先通过 Console 取消，再重试。" >&2
+        exit 1
+    fi
+    trap release_maintenance_on_exit EXIT
+elif systemctl --user is-active --quiet "$UNIT_NAME"; then
+    err "首次安装 Evaluation service 时检测到仍在运行的旧 Console；无法排除旧 manager 创建评测。"
+    echo "  请先停止 $UNIT_NAME，确认没有活动评测，再重试。" >&2
+    exit 1
+elif [ -d "$EVALUATION_ROOT" ] && \
+    find "$EVALUATION_ROOT" -maxdepth 1 \
+        \( -name '.active-*.json' -o -name '.maintenance.json' \) \
+        -print -quit | grep -q .; then
+    err "首次安装前发现活动 claim 或 maintenance marker；拒绝更新运行代码。"
+    exit 1
+fi
 if [ ! -x "$VENV/bin/python" ]; then
     info "建 venv：$VENV"
     python3 -m venv "$VENV" || { err "python3 -m venv 失败（缺 python3-venv？）"; exit 1; }
@@ -93,6 +186,7 @@ if ! PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" "$VENV/bin/python" -
 import console.backend.app  # noqa: F401
 import console.control.cli  # noqa: F401
 import console.control.yaml_editor  # noqa: F401
+import chatcopilot.evals.service  # noqa: F401
 import chatcopilot.platforms.base  # noqa: F401
 PY
 then
@@ -118,16 +212,45 @@ else
     warn "未找到 npm，跳过前端 build。请在能装 Node 的环境构建 console/web 后再访问界面。"
 fi
 
-# ---- 3. 渲染并安装 systemd 单元（把 %h/ChatCopilot 替换成真实仓库路径）----
-if [ ! -f "$TEMPLATE" ]; then
-    err "找不到单元模板：$TEMPLATE"
+# ---- 3. 私有 Evaluation 目录 + systemd 单元 ----
+if ! EVALUATION_ROOT="$EVALUATION_ROOT" python3 - <<'PY'
+import os
+import stat
+from pathlib import Path
+
+target = Path(os.environ["EVALUATION_ROOT"])
+current = Path(target.anchor)
+for part in target.parts[1:]:
+    current /= part
+    try:
+        metadata = current.lstat()
+    except FileNotFoundError:
+        continue
+    if stat.S_ISLNK(metadata.st_mode):
+        raise SystemExit(1)
+PY
+then
+    err "拒绝包含符号链接祖先的 Evaluation 目录：$EVALUATION_ROOT"
+    exit 1
+fi
+if ! mkdir -p "$EVALUATION_ROOT" || ! chmod 700 "$EVALUATION_ROOT"; then
+    err "无法创建私有 Evaluation 目录：$EVALUATION_ROOT"
+    exit 1
+fi
+
+if [ ! -f "$TEMPLATE" ] || [ ! -f "$EVALUATION_TEMPLATE" ]; then
+    err "找不到单元模板：$TEMPLATE 或 $EVALUATION_TEMPLATE"
     exit 1
 fi
 mkdir -p "$USER_UNIT_DIR"
 sed "s#%h/ChatCopilot#$REPO_ROOT#g" "$TEMPLATE" > "$USER_UNIT_DIR/$UNIT_NAME"
+sed "s#%h/ChatCopilot#$REPO_ROOT#g" "$EVALUATION_TEMPLATE" \
+    > "$USER_UNIT_DIR/$EVALUATION_UNIT_NAME"
+chmod 644 "$USER_UNIT_DIR/$UNIT_NAME" "$USER_UNIT_DIR/$EVALUATION_UNIT_NAME"
 ok "已安装单元：$USER_UNIT_DIR/$UNIT_NAME"
+ok "已安装单元：$USER_UNIT_DIR/$EVALUATION_UNIT_NAME"
 
-# ---- 4. lingering + enable --now ----
+# ---- 4. lingering + Evaluation 健康门禁 + Console ----
 if command -v loginctl >/dev/null 2>&1; then
     linger="$(loginctl show-user "$USER" -p Linger 2>/dev/null | cut -d= -f2)"
     if [ "$linger" != "yes" ]; then
@@ -142,20 +265,38 @@ fi
 if ! systemctl --user daemon-reload 2>/dev/null; then
     warn "daemon-reload 失败（检查 XDG_RUNTIME_DIR）"
 fi
-if ! systemctl --user enable "$UNIT_NAME" 2>/dev/null; then
+if ! systemctl --user enable "$EVALUATION_UNIT_NAME" "$UNIT_NAME" 2>/dev/null; then
     err "enable 失败。"
     print_service_diagnostics
     exit 1
 fi
-if systemctl --user restart "$UNIT_NAME" 2>/dev/null; then
-    ok "控制台已重启并设为开机自启"
-else
-    err "restart 失败。"
+if ! systemctl --user restart "$EVALUATION_UNIT_NAME" 2>/dev/null; then
+    err "Evaluation service restart 失败。"
     print_service_diagnostics
     exit 1
 fi
+if ! wait_for_evaluation; then
+    err "Evaluation service Unix socket 健康检查失败：$EVALUATION_SOCKET"
+    print_service_diagnostics
+    exit 1
+fi
+ok "Evaluation service 已重启并通过 Unix socket 健康检查"
+
+if ! systemctl --user restart "$UNIT_NAME" 2>/dev/null; then
+    err "Console restart 失败。"
+    print_service_diagnostics
+    exit 1
+fi
+ok "控制台已重启；两个服务均已设为开机自启"
+
+if ! maintenance_leave; then
+    err "服务已更新，但 Evaluation maintenance lease 仍处于活动状态。"
+    exit 1
+fi
+trap - EXIT
 
 echo
 ok "完成。浏览器打开： http://localhost:8910"
+echo "  Evaluation：systemctl --user status $EVALUATION_UNIT_NAME"
 echo "  查看状态：systemctl --user status $UNIT_NAME"
 echo "  看日志：  journalctl --user -u $UNIT_NAME -f"

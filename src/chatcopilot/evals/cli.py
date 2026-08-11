@@ -17,6 +17,7 @@ from chatcopilot.evals.evaluations import (
     validate_evaluation,
 )
 from chatcopilot.evals.official_data import prepare_official_data
+from chatcopilot.evals.paths import is_managed_evaluation_output
 from chatcopilot.evals.registry import get_standard, list_standards
 from chatcopilot.evals.report import compare_reports, render_compare_markdown
 
@@ -62,7 +63,11 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--seed", type=int)
     run.add_argument("--dry-run", action="store_true")
     run.add_argument("--llm-judge", action="store_true")
-    run.add_argument("--output", type=Path, help="Canonical Evaluation directory.")
+    run.add_argument(
+        "--output",
+        type=Path,
+        help="Standalone Evaluation directory outside the managed service root.",
+    )
     run.add_argument("--validate-only", action="store_true")
     run.add_argument("--resume", action="store_true")
     run.add_argument("--json", action="store_true")
@@ -148,8 +153,23 @@ def _cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         request = {**request, "evaluation_id": effective["evaluation_id"]}
     output = args.output
     if output is None:
-        output = Path("reports") / "evals" / "evaluations" / effective["evaluation_id"]
-    elif output.name != effective["evaluation_id"]:
+        print(
+            json.dumps(
+                {
+                    "code": "evaluation_output_required",
+                    "message": (
+                        "standalone evals run requires --output outside the "
+                        "managed Evaluation service root"
+                    ),
+                    "checks": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    if output.name != effective["evaluation_id"]:
         print(
             json.dumps(
                 {
@@ -161,6 +181,23 @@ def _cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                     "checks": [],
                 },
                 ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    if is_managed_evaluation_output(output):
+        print(
+            json.dumps(
+                {
+                    "code": "evaluation_output_reserved",
+                    "message": (
+                        "standalone evals run cannot write inside the managed "
+                        "Evaluation service root"
+                    ),
+                    "checks": [],
+                },
+                ensure_ascii=False,
+                indent=2,
             ),
             file=sys.stderr,
         )
@@ -188,9 +225,7 @@ def _cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             json.dumps(
                 {
                     "code": (
-                        "evaluation_resume_rejected"
-                        if args.resume
-                        else "evaluation_run_failed"
+                        "evaluation_resume_rejected" if args.resume else "evaluation_run_failed"
                     ),
                     "message": str(exc),
                     "checks": [],
@@ -231,16 +266,13 @@ def _load_request_argument(raw: str) -> dict[str, Any]:
     if isinstance(nested, dict):
         return {str(key): item for key, item in nested.items()}
 
-    # Console owns these descriptive fields.  They are deliberately outside
-    # the strict core request schema.
+    # The managed application owns these descriptive fields. They remain
+    # deliberately outside the strict Core request schema.
     kind = str(payload.get("kind") or "").strip()
     core: dict[str, Any] = {
         "kind": kind,
         "bot": str(
-            payload.get("bot")
-            or payload.get("bot_spec")
-            or payload.get("bot_id")
-            or ""
+            payload.get("bot") or payload.get("bot_spec") or payload.get("bot_id") or ""
         ).strip(),
     }
     if payload.get("evaluation_id"):
@@ -248,16 +280,12 @@ def _load_request_argument(raw: str) -> dict[str, Any]:
     if kind == "comparison":
         core.update(
             {
-                "profile": str(
-                    payload.get("profile") or payload.get("profile_id") or ""
-                ),
+                "profile": str(payload.get("profile") or payload.get("profile_id") or ""),
                 "preset": str(payload.get("preset") or "quick"),
             }
         )
         if core["preset"] == "custom":
-            target_field = (
-                "target_ids" if "target_ids" in payload else "targets"
-            )
+            target_field = "target_ids" if "target_ids" in payload else "targets"
             core["targets"] = payload.get(target_field)
             core["case_refs"] = payload.get("case_refs")
             core["repetitions"] = payload.get("repetitions")
@@ -267,9 +295,7 @@ def _load_request_argument(raw: str) -> dict[str, Any]:
     if kind == "suite":
         core.update(
             {
-                "suite": str(
-                    payload.get("suite") or payload.get("suite_id") or ""
-                ),
+                "suite": str(payload.get("suite") or payload.get("suite_id") or ""),
                 "dry_run": payload.get("dry_run", False),
                 "llm_judge": payload.get("llm_judge", False),
             }

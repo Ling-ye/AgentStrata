@@ -11,7 +11,8 @@ AgentStrata 源仓
   -> 唯一应提交的工作区；BotSpec、prompt、代码、部署脚本
 
 共享基础设施
-  -> Console、BotSpec 所需的隔离 Docker 服务、平台 gateway
+  -> Evaluation service（UDS + managed worker lifecycle）
+  -> Console UI/BFF、BotSpec 所需的隔离 Docker 服务、平台 gateway
 
 实例副本（deploy.wsl_home）
   -> 实例 venv、渲染 env、cc-connect、ACP runtime、systemd user service
@@ -39,7 +40,8 @@ Python 依赖以根目录 `pyproject.toml` 为事实源。分层 `requirements.t
 
 ## 首次安装
 
-准备源仓 venv、Node/npm、cc-connect、Console 依赖和 systemd user service：
+准备源仓 venv、Node/npm、cc-connect、Console 依赖，并安装 Console 与
+Evaluation 两个 systemd user service：
 
 ```bash
 bash deploy/wsl/install_wsl_env.sh --with-console
@@ -101,6 +103,35 @@ NapCat 或认证失败时 fail closed，不能先停止健康服务再尝试修�
 [`operations.md#codex-main--worker-认证`](operations.md#codex-main--worker-认证)。
 [KNOWN][HIGH] `host` 与 `auto_publish` 已删除；code-worker 只从远端干净基线交付草稿 PR，不覆盖源仓、不 merge、不部署或重启。角色、credential generation 或 caller 策略变化会使旧 resume ID 失效。
 
+### Evaluation service
+
+Evaluation 是与 Console 同仓库、同版本部署的独立本机服务。
+`chatcopilot-evaluation.service` 先于 `chatcopilot-console.service` 启动，在
+`XDG_RUNTIME_DIR/agentstrata-evaluation/service.sock` 创建当前用户私有的
+Unix socket。父目录与 socket 的权限分别为 `0700` 和 `0600`；该服务
+不监听 TCP，不对其他用户提供 API。
+
+Evaluation application 是 activity claim、lifecycle state 和 managed worker 的唯一
+owner。Console 只通过 UDS client 提供 UI/BFF；重启或更新 Console 不会
+杀死正在运行的 Evaluation。Managed worker 使用独立 session，自行写
+脱敏 `run.log`，不依赖 Console 的 cgroup、lifespan 或 stdout pipe。Service
+重启后会用 claim、state 和精确的 worker argv 身份重新观察存活进程。
+
+`CHATCOPILOT_EVALUATION_SOCKET` 可为客户端和服务端指定其他本机 socket，
+`CHATCOPILOT_EVALUATION_ROOT` 可显式指定 artifact root。部署脚本使用源仓
+`reports/evals/evaluations/` 作为默认 root，不在代码或 BotSpec 中写机器
+绝对路径。日常状态、日志和显式重启命令见
+[`operations.md#evaluation`](operations.md#evaluation)。
+
+`deploy_console.sh --restart-only` 只重启 Console。`--update-only` 和已安装环境的
+安装修复先通过 UDS 原子获取 maintenance lease：service 在与创建 Evaluation
+相同的跨进程锁内证明 lifecycle、claim 和 worker 均可确认空闲，随后持久化
+`.maintenance.json`；marker 存在期间所有新建 Evaluation 都返回 conflict。租约
+贯穿“构建 Console web → 重启 Evaluation service → UDS health → 重启 Console”，
+最后才释放。存在 queued/running Evaluation、未知状态、遗留 claim、身份不明
+worker、service 不可达或已安装 unit 未运行时都在任何依赖与构建更新前失败关闭。
+这避免空闲检查与新建请求之间的竞态，也避免新 service 接管已加载旧代码的 worker。
+
 ## Windows 冷启动唤醒 WSL
 
 [KNOWN][HIGH] WSL 内的 systemd、user linger 和 Docker restart policy 不会唤醒尚未
@@ -138,7 +169,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 | workspace | `~/chatcopilot-workspaces/<id>` | 运行时 |
 | 日志 | `~/chatcopilot-logs/<id>` | cc-connect / runtime |
 | cc-connect home | `~/.chatcopilot-runtime/<id>` | cc-connect |
-| Evaluation | `reports/evals/evaluations/<evaluation-id>/` | Evaluation Core |
+| 受管 Evaluation | `reports/evals/evaluations/<evaluation-id>/` | Application 写 request/state/claim；Core 写 result/progress/trials；worker 写脱敏日志 |
 
 不要在代码或版本化 YAML 中写机器绝对路径。机器路径经 BotSpec 的 `root_env` 或私有
 env 提供。
@@ -153,12 +184,15 @@ env 提供。
 - `local.env.example` 与 `.env.example` 只提供变量名和安全占位符。
 - AgentStrata 不自动下载、安装或启用第三方 MCP/Skill。操作者审核源码、许可证、
   启动方式、secret 引用和远端写行为后，手工安装并绑定已审阅服务。
+- Evaluation service 不会自动安装外部评测引擎、实验追踪平台、
+  remote evaluator 或 exporter。
 
 ## 部署验收
 
 ```bash
 python -m chatcopilot botspec validate bots/lingye-copilot-qq/bot.yaml
 bash deploy/wsl/deploy_console.sh --status
+python -m chatcopilot.evals.service health --json
 bash deploy/docker/services.sh status
 python -m console.control list --json
 ```

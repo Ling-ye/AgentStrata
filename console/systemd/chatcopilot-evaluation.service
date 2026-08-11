@@ -1,0 +1,33 @@
+[Unit]
+Description=AgentStrata Evaluation service (same-user Unix socket)
+Documentation=https://github.com/Ling-ye/AgentStrata
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/ChatCopilot
+ExecStart=%h/ChatCopilot/.venv/bin/python -m chatcopilot.evals.service serve --socket %t/agentstrata-evaluation/service.sock --repository-root %h/ChatCopilot --artifact-root %h/ChatCopilot/reports/evals/evaluations
+Restart=on-failure
+RestartSec=3
+RuntimeDirectory=agentstrata-evaluation
+RuntimeDirectoryMode=0700
+UMask=0077
+Environment=CHATCOPILOT_SOURCE_ROOT=%h/ChatCopilot
+Environment=CHATCOPILOT_EVALUATION_ROOT=%h/ChatCopilot/reports/evals/evaluations
+Environment=CHATCOPILOT_EVALUATION_SOCKET=%t/agentstrata-evaluation/service.sock
+Environment=PYTHONPATH=%h/ChatCopilot/src
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+LockPersonality=true
+StandardOutput=journal
+StandardError=journal
+# Managed workers use their own process groups and are re-observed by the new
+# service process after a restart. Never let a service restart signal them.
+KillMode=process
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

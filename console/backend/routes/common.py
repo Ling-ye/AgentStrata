@@ -4,9 +4,12 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
+from chatcopilot.evals.service import (
+    EvaluationServiceClient,
+    EvaluationServiceError,
+)
 from console.backend.tasks import TaskManager
 from console.control.discovery import find_instance
-from console.control.evaluations import EvaluationManager
 from console.control.instances import BotInstance
 
 
@@ -17,14 +20,37 @@ def get_task_manager(request: Request) -> TaskManager:
     return manager
 
 
-def get_evaluation_manager(request: Request) -> EvaluationManager:
-    manager = getattr(request.app.state, "evaluations", None)
-    if manager is None:
+def get_evaluation_client(request: Request) -> EvaluationServiceClient:
+    client = getattr(request.app.state, "evaluations", None)
+    if client is None:
         raise HTTPException(
             status_code=500,
-            detail="evaluation manager is not initialized",
+            detail="evaluation service client is not initialized",
         )
-    return manager
+    return client
+
+
+def raise_evaluation_service_error(exc: EvaluationServiceError) -> None:
+    status_by_code = {
+        "evaluation_blocked": 422,
+        "not_found": 404,
+        "conflict": 409,
+        "invalid_request": 400,
+        "service_unavailable": 503,
+        "invalid_response": 502,
+        "internal_error": 502,
+    }
+    status_code = status_by_code.get(exc.code, 502)
+    detail: object
+    if exc.code == "evaluation_blocked":
+        detail = {
+            "code": exc.code,
+            "message": exc.message,
+            "checks": exc.checks,
+        }
+    else:
+        detail = exc.message
+    raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 def get_instance(instance_id: str) -> BotInstance:

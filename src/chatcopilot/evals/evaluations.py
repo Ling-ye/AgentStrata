@@ -13,6 +13,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import time
 import uuid
 from contextlib import contextmanager
@@ -35,6 +36,7 @@ from chatcopilot.evals.isolated_executor import (
     load_evaluation_runtime,
 )
 from chatcopilot.evals.models import EvalCase, EvalCaseResult, to_jsonable
+from chatcopilot.evals.paths import is_managed_evaluation_output
 from chatcopilot.evals.profiles import ProfileCase, get_profile
 from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, sanitize_text
 from chatcopilot.evals.registry import get_cases, get_standard
@@ -58,9 +60,7 @@ ProgressCallback = Callable[[dict[str, Any]], None]
 CancelCheck = Callable[[], bool]
 TrialExecutor = Callable[["TrialExecutionRequest"], "EvaluationTrial"]
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-_TERMINAL_STATUSES = frozenset(
-    {"completed", "partial", "cancelled", "interrupted", "error"}
-)
+_TERMINAL_STATUSES = frozenset({"completed", "partial", "cancelled", "interrupted", "error"})
 _DEFAULT_COMPARISON_TARGETS = ("codex", "native")
 _TIE_THRESHOLD = 0.05
 
@@ -270,6 +270,7 @@ def run_evaluation(
     cancel_check: CancelCheck | None = None,
     trial_executor: TrialExecutor | None = None,
     resume: bool = False,
+    managed: bool = False,
 ) -> EvaluationResult:
     """Run case × attempt × targets with complete target-group checkpoints."""
 
@@ -286,6 +287,8 @@ def run_evaluation(
     output = output.expanduser().resolve()
     cases = _execution_cases(parsed)
     snapshot = _config_snapshot(parsed, targets, cases)
+    if managed and resume:
+        raise ValueError("managed Evaluation cannot use the standalone resume path")
     if resume:
         checkpoint = _resume_checkpoint(
             output=output,
@@ -299,10 +302,11 @@ def run_evaluation(
             output=output,
             request=parsed,
             targets=targets,
+            managed=managed,
         )
         checkpoint = _ResumeCheckpoint()
-    output.mkdir(parents=True, exist_ok=True)
-    if not resume:
+    _ensure_private_dir(output)
+    if not resume and not managed:
         _persist_request(parsed, targets, output)
 
     started_clock = time.monotonic()
@@ -327,7 +331,7 @@ def run_evaluation(
         previous_duration_seconds=checkpoint.duration_seconds,
         config_snapshot=snapshot,
     )
-    _persist_evaluation(result, output)
+    _persist_evaluation(result, output, write_state=not managed)
     _record_event(
         output,
         progress_callback,
@@ -338,6 +342,10 @@ def run_evaluation(
         completed_trials=len(trials),
         total_trials=total_trials,
     )
+    # Validation and durable bootstrap writes are control-plane work. The
+    # execution budget begins only after they are complete; resumed runtime is
+    # still accounted for through checkpoint.duration_seconds.
+    started_clock = time.monotonic()
 
     group_index = 0
     try:
@@ -356,9 +364,7 @@ def run_evaluation(
                     status = "cancelled"
                     stop = True
                     break
-                elapsed_seconds = (
-                    checkpoint.duration_seconds + time.monotonic() - started_clock
-                )
+                elapsed_seconds = checkpoint.duration_seconds + time.monotonic() - started_clock
                 if max_wall_seconds > 0 and elapsed_seconds >= max_wall_seconds:
                     status = "partial"
                     stop = True
@@ -427,7 +433,7 @@ def run_evaluation(
                     previous_duration_seconds=checkpoint.duration_seconds,
                     config_snapshot=snapshot,
                 )
-                _persist_evaluation(result, output)
+                _persist_evaluation(result, output, write_state=not managed)
                 _record_event(
                     output,
                     progress_callback,
@@ -464,7 +470,7 @@ def run_evaluation(
         error=error,
         finished=True,
     )
-    _persist_evaluation(result, output)
+    _persist_evaluation(result, output, write_state=not managed)
     _record_event(
         output,
         progress_callback,
@@ -581,9 +587,7 @@ def aggregate_comparison(
     for item in cases:
         case_trials = [trial for trial in trials if trial.case_ref == item.ref]
         complete_attempts = _valid_complete_attempts(case_trials, targets)
-        comparable = [
-            trial for trial in case_trials if trial.attempt in complete_attempts
-        ]
+        comparable = [trial for trial in case_trials if trial.attempt in complete_attempts]
         target_stats = {
             target.target_id: _target_statistics(
                 [trial for trial in comparable if trial.target_id == target.target_id]
@@ -634,10 +638,11 @@ def aggregate_comparison(
         }
 
     case_verdicts = [item.verdict for item in comparisons]
-    wins = {
-        target.target_id: case_verdicts.count(target.target_id)
-        for target in targets
-    } if len(targets) == 2 else {}
+    wins = (
+        {target.target_id: case_verdicts.count(target.target_id) for target in targets}
+        if len(targets) == 2
+        else {}
+    )
     summary = {
         "case_count": len(cases),
         "trial_count": len(trials),
@@ -706,9 +711,7 @@ def _parse_comparison_request(request: Mapping[str, Any]) -> ComparisonEvaluatio
         targets = _unique_texts(request.get("targets"), "targets")
         case_refs = _unique_texts(request.get("case_refs"), "case_refs")
         repetitions = _positive_int(request.get("repetitions"), "repetitions")
-        max_wall_seconds = _positive_number(
-            request.get("max_wall_seconds"), "max_wall_seconds"
-        )
+        max_wall_seconds = _positive_number(request.get("max_wall_seconds"), "max_wall_seconds")
         seed = _integer(request.get("seed"), "seed")
     known_cases = {item.ref for item in profile.cases}
     unknown = [value for value in case_refs if value not in known_cases]
@@ -781,9 +784,7 @@ def _validate_comparison(
             runtime = load_evaluation_runtime(request.bot)
             config = load_config(env_prefix=runtime.spec.llm.env_prefix)
             config_fingerprint = _runtime_behavior_fingerprint(runtime)
-            checks.append(
-                _check("botspec", "BotSpec", True, runtime.source_path.parent.name)
-            )
+            checks.append(_check("botspec", "BotSpec", True, runtime.source_path.parent.name))
             for target_id in request.targets:
                 target, target_check = _isolated_target(
                     target_id,
@@ -793,16 +794,12 @@ def _validate_comparison(
                 checks.append(target_check)
                 targets.append(target)
     except Exception as exc:  # noqa: BLE001
-        checks.append(
-            _check("botspec", "BotSpec", False, str(exc), "检查 BotSpec 与 local.env")
-        )
+        checks.append(_check("botspec", "BotSpec", False, str(exc), "检查 BotSpec 与 local.env"))
         return ()
 
     for item in cases:
         allowed = item.case.metadata.get("allowed_tools", [])
-        fixture_ok = item.case.category != "code" or bool(
-            item.case.metadata.get("fixture_files")
-        )
+        fixture_ok = item.case.category != "code" or bool(item.case.metadata.get("fixture_files"))
         checks.append(
             _check(
                 f"policy:{item.ref}",
@@ -837,9 +834,7 @@ def _validate_suite(
             )
         )
     except Exception as exc:  # noqa: BLE001
-        checks.append(
-            _check("suite", "Suite 数据与 Case", False, str(exc), "修正数据或 Case")
-        )
+        checks.append(_check("suite", "Suite 数据与 Case", False, str(exc), "修正数据或 Case"))
         return ()
 
     if request.dry_run:
@@ -850,9 +845,7 @@ def _validate_suite(
             backend="none",
             model="",
             reasoning_effort="",
-            config_fingerprint=_hash_json(
-                {"executor": "dry_run", "suite": request.suite}
-            ),
+            config_fingerprint=_hash_json({"executor": "dry_run", "suite": request.suite}),
         )
         checks.append(_check("executor", "执行器", True, "dry_run"))
         return (target,)
@@ -891,21 +884,18 @@ def _validate_suite(
                     config_fingerprint=config_fingerprint,
                 )
                 ready = backend in backend_ids() and bool(model)
-                detail = (
-                    f"executor=agent_configured, backend={backend}, "
-                    f"model={model or 'missing'}"
-                )
+                detail = f"executor=agent_configured, backend={backend}, model={model or 'missing'}"
                 if backend == "codex":
                     command_parts = shlex.split(str(config.routing.code_command or ""))
                     binary = command_parts[0] if command_parts else ""
                     ready = ready and bool(binary and shutil.which(binary))
-                    detail += f", command={'available' if binary and shutil.which(binary) else 'missing'}"
+                    detail += (
+                        f", command={'available' if binary and shutil.which(binary) else 'missing'}"
+                    )
                 else:
                     credential_ready = bool(str(config.llm.api_key or "").strip())
                     ready = ready and credential_ready
-                    detail += (
-                        f", credential={'configured' if credential_ready else 'missing'}"
-                    )
+                    detail += f", credential={'configured' if credential_ready else 'missing'}"
             checks.append(
                 _check(
                     "executor",
@@ -917,9 +907,7 @@ def _validate_suite(
             )
             return (target,)
     except Exception as exc:  # noqa: BLE001
-        checks.append(
-            _check("executor", "执行器", False, str(exc), "检查 BotSpec 与 local.env")
-        )
+        checks.append(_check("executor", "执行器", False, str(exc), "检查 BotSpec 与 local.env"))
         return ()
 
 
@@ -1038,9 +1026,7 @@ def _build_result(
     preset_value: str
     if request.kind == "comparison":
         profile_cases = tuple(case for case in cases if isinstance(case, ProfileCase))
-        comparisons, dimensions, summary = aggregate_comparison(
-            trials, profile_cases, targets
-        )
+        comparisons, dimensions, summary = aggregate_comparison(trials, profile_cases, targets)
         profile_value = request.profile
         suite_value = ""
         preset_value = request.preset
@@ -1064,9 +1050,7 @@ def _build_result(
         status=status,
         started_at=started_at,
         finished_at=_utc_now() if finished else "",
-        duration_seconds=(
-            previous_duration_seconds + time.monotonic() - started_clock
-        ),
+        duration_seconds=(previous_duration_seconds + time.monotonic() - started_clock),
         profile=profile_value,
         suite=suite_value,
         preset=preset_value,
@@ -1075,11 +1059,7 @@ def _build_result(
         seed=seed,
         targets=targets,
         selected_cases=tuple(
-            (
-                case.ref
-                if isinstance(case, ProfileCase)
-                else f"{suite_value}:{case.case_id}"
-            )
+            (case.ref if isinstance(case, ProfileCase) else f"{suite_value}:{case.case_id}")
             for case in cases
         ),
         trials=tuple(trials),
@@ -1094,6 +1074,8 @@ def _build_result(
 def _persist_evaluation(
     result: EvaluationResult,
     output: Path,
+    *,
+    write_state: bool = True,
 ) -> None:
     payload = _sanitize(evaluation_result_to_dict(result), output=output)
     if (output / "trials").is_symlink():
@@ -1120,14 +1102,13 @@ def _persist_evaluation(
         "finished_at": result.finished_at,
         "duration_seconds": result.duration_seconds,
         "completed_trials": len(result.trials),
-        "planned_trials": (
-            len(result.selected_cases) * result.repetitions * len(result.targets)
-        ),
+        "planned_trials": (len(result.selected_cases) * result.repetitions * len(result.targets)),
         "error": result.error,
     }
-    _write_json(output / "state.json", _sanitize(state, output=output))
+    if write_state:
+        _write_json(output / "state.json", _sanitize(state, output=output))
     _write_text(output / "summary.md", _summary_markdown(payload))
-    trial_root.mkdir(parents=True, exist_ok=True)
+    _ensure_private_dir(trial_root)
     for trial_path, trial in trial_artifacts:
         _write_json(trial_path, trial)
 
@@ -1137,7 +1118,7 @@ def _persist_request(
     targets: Sequence[EvaluationTarget],
     output: Path,
 ) -> None:
-    """Preserve Console-owned descriptive metadata around the core request."""
+    """Preserve application-owned descriptive metadata around the Core request."""
 
     path = output / "request.json"
     existing: dict[str, Any] = {}
@@ -1190,55 +1171,71 @@ def _validate_fresh_output(
     output: Path,
     request: EvaluationRequest,
     targets: Sequence[EvaluationTarget],
+    managed: bool = False,
 ) -> None:
+    if not managed and is_managed_evaluation_output(output):
+        raise ValueError("standalone Evaluation output cannot use the managed service root")
     if not output.exists():
         return
     if not output.is_dir():
         raise ValueError("Evaluation output already exists and is not a directory")
     entries = {entry.name: entry for entry in output.iterdir()}
-    required = {"request.json", "state.json"}
-    allowed = {*required, "run.log"}
+    if managed:
+        _validate_managed_bootstrap(
+            entries=entries,
+            request=request,
+            targets=targets,
+        )
+        return
     if not entries:
         return
+    raise ValueError("fresh standalone Evaluation output directory must be empty")
+
+
+def _validate_managed_bootstrap(
+    *,
+    entries: Mapping[str, Path],
+    request: EvaluationRequest,
+    targets: Sequence[EvaluationTarget],
+) -> None:
+    required = {"request.json", "state.json"}
+    allowed = {*required, "run.log", ".cancel-requested.json"}
     if not required.issubset(entries) or not set(entries).issubset(allowed):
-        raise ValueError(
-            "Evaluation output is non-empty and is not a Console bootstrap directory"
-        )
+        raise ValueError("Evaluation output is not a managed service bootstrap directory")
     for name, entry in entries.items():
         if entry.is_symlink() or not entry.is_file():
-            raise ValueError(f"Console bootstrap artifact is unsafe: {name}")
+            raise ValueError(f"managed bootstrap artifact is unsafe: {name}")
     run_log = entries.get("run.log")
     if run_log is not None and run_log.stat().st_size:
-        raise ValueError("Console bootstrap run.log must be empty")
-
-    stored_request = _read_json_object(
+        raise ValueError("managed bootstrap run.log must be empty before Core starts")
+    stored_request = _read_private_json_object(
         entries["request.json"],
-        "Console bootstrap request.json",
+        "Evaluation service request.json",
     )
-    if "core_request" in stored_request:
-        raise ValueError("Console bootstrap request.json is already owned by Evaluation")
-    expected = _expected_bootstrap_request(request, targets)
-    expected_request_keys = {*expected, "created_at"}
-    if set(stored_request) != expected_request_keys:
-        raise ValueError("Console bootstrap request fields do not match Evaluation")
-    if not isinstance(stored_request.get("created_at"), str) or not str(
-        stored_request["created_at"]
-    ).strip():
-        raise ValueError("Console bootstrap created_at is invalid")
-    mismatches = [
-        field_name
-        for field_name, expected_value in expected.items()
-        if stored_request.get(field_name) != expected_value
-    ]
-    if mismatches:
-        raise ValueError(
-            "Console bootstrap request does not match Evaluation: "
-            + ", ".join(sorted(mismatches))
-        )
-
-    state = _read_json_object(
+    expected = {
+        **_expected_bootstrap_request(request, targets),
+        "created_at": stored_request.get("created_at"),
+        "core_request": _runnable_request_dict(request),
+    }
+    start_fingerprint = stored_request.get("start_request_fingerprint")
+    if start_fingerprint is not None:
+        if (
+            not isinstance(start_fingerprint, str)
+            or len(start_fingerprint) != 64
+            or any(char not in "0123456789abcdef" for char in start_fingerprint)
+        ):
+            raise ValueError("Evaluation service start request fingerprint is invalid")
+        expected["start_request_fingerprint"] = start_fingerprint
+    if (
+        not isinstance(stored_request.get("created_at"), str)
+        or not str(stored_request["created_at"]).strip()
+    ):
+        raise ValueError("Evaluation service request created_at is invalid")
+    if stored_request != expected:
+        raise ValueError("Evaluation service request does not match managed worker")
+    state = _read_private_json_object(
         entries["state.json"],
-        "Console bootstrap state.json",
+        "Evaluation service state.json",
     )
     expected_state_keys = {
         "evaluation_id",
@@ -1253,12 +1250,11 @@ def _validate_fresh_output(
         "error",
     }
     if set(state) != expected_state_keys:
-        raise ValueError("Console bootstrap state fields do not match Evaluation")
-    status = state.get("status")
+        raise ValueError("Evaluation service state fields do not match managed worker")
     if (
         state.get("evaluation_id") != request.evaluation_id
         or state.get("kind") != request.kind
-        or status not in {"queued", "running"}
+        or state.get("status") not in {"queued", "running"}
         or state.get("finished_at") is not None
         or state.get("duration_seconds") is not None
         or state.get("completed_trials") != 0
@@ -1267,11 +1263,10 @@ def _validate_fresh_output(
         or not isinstance(state.get("planned_trials"), int)
         or state["planned_trials"] < 0
     ):
-        raise ValueError("Console bootstrap state does not match Evaluation")
-    if status == "queued" and (
-        state.get("pid") is not None or state.get("started_at") is not None
-    ):
-        raise ValueError("Console bootstrap queued state is invalid")
+        raise ValueError("Evaluation service state does not match managed worker")
+    status = state["status"]
+    if status == "queued" and (state.get("pid") is not None or state.get("started_at") is not None):
+        raise ValueError("Evaluation service queued state is invalid")
     if status == "running" and (
         isinstance(state.get("pid"), bool)
         or not isinstance(state.get("pid"), int)
@@ -1279,7 +1274,7 @@ def _validate_fresh_output(
         or not isinstance(state.get("started_at"), str)
         or not str(state["started_at"]).strip()
     ):
-        raise ValueError("Console bootstrap running state is invalid")
+        raise ValueError("Evaluation service running state is invalid")
 
 
 def _expected_bootstrap_request(
@@ -1333,9 +1328,7 @@ def _resume_checkpoint(
     try:
         json.dumps(payload, allow_nan=False)
     except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "resume result.json contains non-finite or invalid JSON values"
-        ) from exc
+        raise ValueError("resume result.json contains non-finite or invalid JSON values") from exc
     if payload.get("evaluation_id") != request.evaluation_id:
         raise ValueError("resume evaluation_id does not match result.json")
     if payload.get("kind") != request.kind:
@@ -1417,9 +1410,7 @@ def _validated_resume_trials(
                 f"resume Trial {index} contains non-finite or invalid JSON values"
             ) from exc
         events = raw.get("events")
-        if not isinstance(events, list) or any(
-            not isinstance(item, Mapping) for item in events
-        ):
+        if not isinstance(events, list) or any(not isinstance(item, Mapping) for item in events):
             raise ValueError(f"resume Trial {index} events must be a list of objects")
         try:
             trial = _trial_from_dict(raw)
@@ -1482,9 +1473,7 @@ def _validated_resume_trials(
 
 def _trial_from_dict(payload: Mapping[str, Any]) -> EvaluationTrial:
     values = dict(payload)
-    values["events"] = tuple(
-        item for item in values.get("events", []) if isinstance(item, dict)
-    )
+    values["events"] = tuple(item for item in values.get("events", []) if isinstance(item, dict))
     return EvaluationTrial(**values)
 
 
@@ -1495,9 +1484,7 @@ def _complete_group_keys(
     expected = {target.fingerprint for target in targets}
     grouped: dict[tuple[str, int], set[str]] = {}
     for trial in trials:
-        grouped.setdefault((trial.case_ref, trial.attempt), set()).add(
-            trial.target_fingerprint
-        )
+        grouped.setdefault((trial.case_ref, trial.attempt), set()).add(trial.target_fingerprint)
     return {key for key, fingerprints in grouped.items() if fingerprints == expected}
 
 
@@ -1509,8 +1496,7 @@ def _valid_complete_attempts(
         target.target_id: {
             trial.attempt
             for trial in trials
-            if trial.target_id == target.target_id
-            and trial.outcome in {"passed", "failed"}
+            if trial.target_id == target.target_id and trial.outcome in {"passed", "failed"}
         }
         for target in targets
     }
@@ -1519,9 +1505,7 @@ def _valid_complete_attempts(
 
 def _target_statistics(trials: Sequence[EvaluationTrial]) -> dict[str, Any]:
     valid = [trial for trial in trials if trial.outcome in {"passed", "failed"}]
-    scores = [
-        trial.score / trial.max_score if trial.max_score else 0.0 for trial in valid
-    ]
+    scores = [trial.score / trial.max_score if trial.max_score else 0.0 for trial in valid]
     usage: dict[str, int] = {}
     for trial in valid:
         for key, value in trial.usage_totals.items():
@@ -1671,9 +1655,7 @@ def _runtime_behavior_fingerprint(runtime: Any) -> str:
             "id": entry.id,
             "name": entry.name,
             "description": entry.description,
-            "body_hash": hashlib.sha256(
-                entry.body_path.read_bytes()
-            ).hexdigest(),
+            "body_hash": hashlib.sha256(entry.body_path.read_bytes()).hexdigest(),
         }
         for entry in runtime.skills
     ]
@@ -1722,19 +1704,14 @@ def _portable_behavior_path(path: Path, bot_root: Path) -> str:
     try:
         return "$BOT/" + resolved.relative_to(bot_root.resolve()).as_posix()
     except ValueError:
-        return "external:" + hashlib.sha256(
-            str(resolved).encode("utf-8")
-        ).hexdigest()
+        return "external:" + hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()
 
 
 def _behavior_json_value(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, Mapping):
-        return {
-            str(key): _behavior_json_value(item)
-            for key, item in value.items()
-        }
+        return {str(key): _behavior_json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_behavior_json_value(item) for item in value]
     if isinstance(value, (str, int, float, bool)) or value is None:
@@ -1795,9 +1772,7 @@ def _config_snapshot(
     return {
         "request_hash": _hash_json(_effective_request_dict(request)),
         "case_hash": _hash_json(case_payload),
-        "target_fingerprints": {
-            target.target_id: target.fingerprint for target in targets
-        },
+        "target_fingerprints": {target.target_id: target.fingerprint for target in targets},
         "judge": (
             "gaia-llm-fallback"
             if isinstance(request, SuiteEvaluationRequest) and request.llm_judge
@@ -1852,9 +1827,7 @@ def _validation_payload(
     payload = {
         "ready": bool(ready),
         "checks": [dict(item) for item in checks],
-        "effective_request": (
-            _effective_request_dict(request) if request is not None else None
-        ),
+        "effective_request": (_effective_request_dict(request) if request is not None else None),
         "targets": [to_jsonable(target) for target in targets],
     }
     return redact_payload(
@@ -1906,7 +1879,7 @@ def _reset_trial_workspace(request: TrialExecutionRequest) -> None:
     workspace_root = contained_artifact_path(output, "workspaces")
     if workspace_root.exists() and not workspace_root.is_dir():
         raise ValueError("Evaluation workspace root must be a directory")
-    workspace_root.mkdir(parents=True, exist_ok=True)
+    _ensure_private_dir(workspace_root)
     candidate_link = workspace_root / _trial_id(request)
     if candidate_link.is_symlink():
         raise ValueError("Evaluation Trial workspace must not be a symlink")
@@ -1919,7 +1892,7 @@ def _reset_trial_workspace(request: TrialExecutionRequest) -> None:
         if not candidate.is_dir():
             raise ValueError("Evaluation Trial workspace must be a directory")
         shutil.rmtree(candidate)
-    candidate.mkdir(parents=True)
+    _ensure_private_dir(candidate)
 
 
 def _normalize_outcome(value: Any) -> TrialOutcome:
@@ -2095,9 +2068,7 @@ def _finite_non_negative_number(value: Any, field_name: str) -> float:
     try:
         result = float(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"{field_name} must be a finite non-negative number"
-        ) from exc
+        raise ValueError(f"{field_name} must be a finite non-negative number") from exc
     if not math.isfinite(result) or result < 0:
         raise ValueError(f"{field_name} must be a finite non-negative number")
     return result
@@ -2175,25 +2146,120 @@ def _write_json(path: Path, payload: Any) -> None:
 
 
 def _append_jsonl(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(
-            json.dumps(payload, allow_nan=False, ensure_ascii=False, separators=(",", ":"))
-            + "\n"
+    _ensure_private_dir(path.parent)
+    if path.is_symlink():
+        raise ValueError(f"Evaluation artifact cannot be a symlink: {path.name}")
+    flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    created = False
+    try:
+        descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+    except FileExistsError:
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            raise ValueError(f"Evaluation artifact cannot be opened safely: {path.name}") from exc
+    except OSError as exc:
+        raise ValueError(f"Evaluation artifact cannot be created safely: {path.name}") from exc
+    try:
+        if created and os.name != "nt":
+            os.fchmod(descriptor, 0o600)
+        _validate_private_artifact_metadata(
+            os.fstat(descriptor),
+            path,
+            label="Evaluation artifact",
         )
+        with os.fdopen(descriptor, "a", encoding="utf-8", newline="\n") as handle:
+            descriptor = -1
+            handle.write(
+                json.dumps(
+                    payload,
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def _write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    _ensure_private_dir(path.parent)
+    if path.is_symlink():
+        raise ValueError(f"Evaluation artifact cannot be a symlink: {path.name}")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
     try:
-        temporary.write_text(content, encoding="utf-8")
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
         temporary.replace(path)
     finally:
         try:
             temporary.unlink()
         except FileNotFoundError:
             pass
+
+
+def _ensure_private_dir(path: Path) -> None:
+    if path.is_symlink():
+        raise ValueError(f"Evaluation directory cannot be a symlink: {path.name}")
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if not path.is_dir():
+        raise ValueError(f"Evaluation path is not a directory: {path.name}")
+    if os.name != "nt":
+        path.chmod(0o700)
+
+
+def _validate_private_artifact_metadata(
+    metadata: os.stat_result,
+    path: Path,
+    *,
+    label: str,
+) -> None:
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"{label} must be a regular file: {path.name}")
+    if os.name == "nt":
+        return
+    if metadata.st_uid != os.getuid():
+        raise PermissionError(f"{label} must be owned by the current user: {path.name}")
+    if stat.S_IMODE(metadata.st_mode) != 0o600:
+        raise PermissionError(f"{label} must use mode 0600: {path.name}")
+    if metadata.st_nlink != 1:
+        raise ValueError(f"{label} must have exactly one hard link: {path.name}")
+
+
+def _read_private_json_object(path: Path, label: str) -> dict[str, Any]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(f"{label} cannot be opened safely") from exc
+    try:
+        _validate_private_artifact_metadata(
+            os.fstat(descriptor),
+            path,
+            label=label,
+        )
+        try:
+            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                descriptor = -1
+                payload = json.load(handle)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"{label} is unreadable") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must be an object")
+    return payload
 
 
 def _read_json_object(path: Path, label: str) -> dict[str, Any]:

@@ -12,7 +12,6 @@ import errno
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 import time
@@ -80,9 +79,10 @@ def _docker_service_script() -> Path:
 # 更新控制台自身（重建前端 + 重启后端）
 #
 # 难点：脚本最后会 restart chatcopilot-console，即后端自己所属的服务。若脚本作为
-# 后端进程的子进程运行，restart 时整个服务 cgroup 被杀，脚本会半途夭折。因此必须
-# 把它丢到独立 cgroup：优先 systemd-run --user 起瞬时单元，回退 setsid 脱离。
-# 这是 fire-and-forget：函数立即返回，真正的构建 + 重启在后台进行。
+# 后端进程的子进程运行，restart 时整个服务 cgroup 被杀，脚本会半途夭折。因此只允许
+# systemd-run --user 创建独立 transient unit。setsid/nohup 不能脱离 systemd cgroup，
+# 不具备这个安全属性，不能作为 fallback。这是 fire-and-forget：函数立即返回，真正的
+# 构建 + 重启在 transient unit 中进行。
 # ---------------------------------------------------------------------------
 def trigger_console_update() -> Dict[str, object]:
     script = _deploy_script("deploy_console.sh")
@@ -96,18 +96,13 @@ def trigger_console_update() -> Dict[str, object]:
     env.setdefault("XDG_RUNTIME_DIR", runtime_dir)
     env.setdefault("DBUS_SESSION_BUS_ADDRESS", dbus)
 
-    log_path = repo_root() / "_wsl_logs" / "console-update.log"
-    try:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        log_path = Path("/tmp/console-update.log")
-
     unit = f"cc-console-update-{int(time.time())}"
     systemd_run = [
         "systemd-run",
         "--user",
         "--collect",
         f"--unit={unit}",
+        "--property=Type=exec",
         f"--setenv=XDG_RUNTIME_DIR={runtime_dir}",
         f"--setenv=DBUS_SESSION_BUS_ADDRESS={dbus}",
         "bash",
@@ -123,21 +118,24 @@ def trigger_console_update() -> Dict[str, object]:
         run_err = (cp.stderr or cp.stdout or "").strip()
 
     if cp is not None and cp.returncode == 0:
-        return {"ok": True, "mode": "systemd-run", "unit": unit,
-                "message": "控制台更新中（重建前端 + 重启后端），数十秒后请刷新页面。"}
+        return {
+            "ok": True,
+            "mode": "systemd-run",
+            "unit": unit,
+            "message": "控制台更新中（重建前端 + 重启后端），数十秒后请刷新页面。",
+        }
 
-    # 回退：setsid 脱离父进程组，nohup 重定向到日志，独立于后端 cgroup 后台执行。
-    fallback_cmd = (
-        f"nohup bash {shlex.quote(str(script))} --update-only "
-        f">{shlex.quote(str(log_path))} 2>&1 &"
-    )
-    fallback = ["setsid", "bash", "-c", fallback_cmd]
-    try:
-        subprocess.Popen(fallback, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except OSError as exc:
-        return {"ok": False, "error": f"启动更新失败（systemd-run: {run_err}; setsid: {exc}）"}
-    return {"ok": True, "mode": "setsid", "log": str(log_path),
-            "message": "控制台更新中（重建前端 + 重启后端），数十秒后请刷新页面。"}
+    if not run_err and cp is not None:
+        run_err = f"exit code {cp.returncode}"
+    return {
+        "ok": False,
+        "error": (
+            "无法通过独立 systemd transient unit 启动控制台更新；已安全中止，"
+            "未运行更新脚本，也未获取 Evaluation maintenance lease。"
+            "请在 WSL 终端执行 bash deploy/wsl/deploy_console.sh --update-only。"
+            f"systemd-run: {run_err or 'unknown error'}"
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------

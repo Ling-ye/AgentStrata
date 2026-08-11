@@ -13,6 +13,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from chatcopilot.evals.adapters import gaia
+from chatcopilot.evals.application.bots import temporary_eval_env
+from chatcopilot.evals.application.catalog import (
+    list_case_summaries,
+    list_profile_descriptors,
+    list_suite_descriptors,
+    stream_prepare_suite,
+)
 from chatcopilot.evals.env import normalize_eval_env
 from chatcopilot.evals.official_data import bfcl_cache_dir, ifeval_cache_path
 from chatcopilot.evals.registry import get_cases
@@ -22,13 +29,6 @@ from chatcopilot.evals.runner import (
     _run_agent_cases,
     _select_cases,
     run_suite,
-)
-from console.control.evals import (
-    _temporary_env,
-    list_case_summaries,
-    list_profile_descriptors,
-    list_suite_descriptors,
-    stream_prepare_suite,
 )
 
 
@@ -315,7 +315,7 @@ def test_bot_eval_env_overrides_and_restores_process_env(
     key = "CHATCOPILOT_IFEVAL_DATA_PATH"
     monkeypatch.setenv(key, "global-value")
 
-    with _temporary_env({key: "bot-value"}):
+    with temporary_eval_env({key: "bot-value"}):
         assert os.environ[key] == "bot-value"
 
     assert os.environ[key] == "global-value"
@@ -399,7 +399,7 @@ def test_official_cache_makes_bfcl_and_ifeval_balanced_100() -> None:
 
 
 def test_stream_prepare_suite_refreshes_bfcl_cases_from_cache() -> None:
-    def fake_prepare(suite_id: str) -> dict:
+    def fake_prepare(suite_id: str, _values: dict, _repository: Path) -> dict:
         assert suite_id == "bfcl"
         _write_bfcl_official_cache(bfcl_cache_dir())
         return {
@@ -409,7 +409,7 @@ def test_stream_prepare_suite_refreshes_bfcl_cases_from_cache() -> None:
         }
 
     with patch(
-        "console.control.evals.prepare_official_data",
+        "chatcopilot.evals.application.catalog._run_prepare_process",
         side_effect=fake_prepare,
     ):
         lines = list(stream_prepare_suite("bfcl"))

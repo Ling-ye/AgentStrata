@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import time
 from dataclasses import replace
@@ -9,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import chatcopilot.evals.evaluations as evaluation_module
+import chatcopilot.evals.paths as evaluation_paths
 from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.evals.cli import main as evals_cli_main
 from chatcopilot.evals.artifact_ids import trial_artifact_id
@@ -72,6 +74,13 @@ def _custom_request(
     }
 
 
+def _write_repository_markers(root: Path) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text("[project]\nname = 'test'\n", encoding="utf-8")
+    (root / "src/chatcopilot").mkdir(parents=True)
+    return root
+
+
 def _trial(
     request: TrialExecutionRequest,
     *,
@@ -79,10 +88,7 @@ def _trial(
     score: float = 1.0,
 ) -> EvaluationTrial:
     return EvaluationTrial(
-        trial_id=(
-            f"{request.case.case_id}-a{request.attempt}-"
-            f"{request.target.fingerprint[:12]}"
-        ),
+        trial_id=(f"{request.case.case_id}-a{request.attempt}-{request.target.fingerprint[:12]}"),
         evaluation_id=request.evaluation_id,
         kind=request.kind,
         bot=request.bot,
@@ -132,7 +138,7 @@ def _create_resumable_evaluation(
     assert result.status == "cancelled"
 
 
-def _write_comparison_bootstrap(
+def _write_managed_comparison_bootstrap(
     request: dict,
     output: Path,
     *,
@@ -145,11 +151,7 @@ def _write_comparison_bootstrap(
     validation = validate_evaluation(request)
     bot_spec = str(request["bot"])
     bot_path = Path(bot_spec)
-    bot_id = (
-        bot_path.parent.name
-        if bot_path.name == "bot.yaml"
-        else bot_path.name
-    )
+    bot_id = bot_path.parent.name if bot_path.name == "bot.yaml" else bot_path.name
     stored_request = {
         "evaluation_id": parsed.evaluation_id,
         "kind": parsed.kind,
@@ -165,6 +167,18 @@ def _write_comparison_bootstrap(
         "seed": parsed.seed,
         "targets": validation["targets"],
         **(request_overrides or {}),
+    }
+    stored_request["core_request"] = {
+        "evaluation_id": parsed.evaluation_id,
+        "kind": parsed.kind,
+        "bot": bot_spec,
+        "profile": parsed.profile,
+        "preset": parsed.preset,
+        "targets": list(parsed.targets),
+        "case_refs": list(parsed.case_refs),
+        "repetitions": parsed.repetitions,
+        "max_wall_seconds": parsed.max_wall_seconds,
+        "seed": parsed.seed,
     }
     output.mkdir()
     (output / "request.json").write_text(
@@ -183,9 +197,7 @@ def _write_comparison_bootstrap(
                 "duration_seconds": None,
                 "completed_trials": 0,
                 "planned_trials": (
-                    len(parsed.case_refs)
-                    * parsed.repetitions
-                    * len(parsed.targets)
+                    len(parsed.case_refs) * parsed.repetitions * len(parsed.targets)
                 ),
                 "error": None,
                 **(state_overrides or {}),
@@ -194,6 +206,10 @@ def _write_comparison_bootstrap(
         encoding="utf-8",
     )
     (output / "run.log").write_text(run_log, encoding="utf-8")
+    if os.name != "nt":
+        output.chmod(0o700)
+        for artifact in output.iterdir():
+            artifact.chmod(0o600)
 
 
 def test_strict_quick_request_rejects_all_creation_overrides() -> None:
@@ -226,7 +242,7 @@ def test_fresh_run_rejects_nonempty_output_without_modifying_it(
     stale.write_text('{"stale":true}\n', encoding="utf-8")
     before = stale.read_bytes()
 
-    with pytest.raises(ValueError, match="not a Console bootstrap"):
+    with pytest.raises(ValueError, match="must be empty"):
         run_evaluation(
             _custom_request(evaluation_id="eval-stale-output"),
             output=output,
@@ -237,15 +253,66 @@ def test_fresh_run_rejects_nonempty_output_without_modifying_it(
     assert list(output.iterdir()) == [stale]
 
 
+def test_standalone_core_rejects_managed_service_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _write_repository_markers(tmp_path / "repo")
+    console = repository / "console"
+    console.mkdir()
+    monkeypatch.chdir(console)
+    monkeypatch.setenv("CHATCOPILOT_SOURCE_ROOT", str(repository))
+    monkeypatch.delenv("CHATCOPILOT_EVALUATION_ROOT", raising=False)
+    output = repository / "reports/evals/evaluations/eval-reserved-core"
+
+    with pytest.raises(ValueError, match="managed service root"):
+        run_evaluation(
+            {
+                "evaluation_id": output.name,
+                "kind": "suite",
+                "suite": "ifeval",
+                "case_ids": ["ifeval-json-format"],
+                "dry_run": True,
+                "llm_judge": False,
+            },
+            output=output,
+            trial_executor=_trial,
+        )
+
+    assert not output.exists()
+
+
+def test_standalone_core_rejects_configured_managed_service_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    managed_root = tmp_path / "configured-evaluations"
+    managed_root.mkdir()
+    sentinel = managed_root / "keep.txt"
+    sentinel.write_text("preserve\n", encoding="utf-8")
+    monkeypatch.setenv("CHATCOPILOT_EVALUATION_ROOT", str(managed_root))
+    output = managed_root / "eval-configured-core"
+
+    with pytest.raises(ValueError, match="managed service root"):
+        run_evaluation(
+            _custom_request(evaluation_id=output.name),
+            output=output,
+            trial_executor=_trial,
+        )
+
+    assert sentinel.read_text(encoding="utf-8") == "preserve\n"
+    assert not output.exists()
+
+
 @pytest.mark.parametrize(
     ("overrides", "run_log", "message"),
     (
-        ({"bot_spec": "bots/other/bot.yaml"}, "", "bot_spec"),
-        ({"bot_id": "other-bot"}, "", "bot_id"),
+        ({"bot_spec": "bots/other/bot.yaml"}, "", "request does not match"),
+        ({"bot_id": "other-bot"}, "", "request does not match"),
         ({}, "stale output", "run.log must be empty"),
     ),
 )
-def test_fresh_run_rejects_forged_or_used_console_bootstrap(
+def test_managed_run_rejects_forged_or_used_service_bootstrap(
     tmp_path: Path,
     overrides: dict,
     run_log: str,
@@ -254,36 +321,35 @@ def test_fresh_run_rejects_forged_or_used_console_bootstrap(
     request = _custom_request(evaluation_id="eval-forged-bootstrap")
     request["bot"] = "bots/lingye-copilot-qq/bot.yaml"
     output = tmp_path / "eval-forged-bootstrap"
-    _write_comparison_bootstrap(
+    _write_managed_comparison_bootstrap(
         request,
         output,
         request_overrides=overrides,
         run_log=run_log,
     )
-    before = {
-        path.name: path.read_bytes()
-        for path in output.iterdir()
-    }
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
 
     with pytest.raises(ValueError, match=message):
-        run_evaluation(request, output=output, trial_executor=_trial)
+        run_evaluation(request, output=output, trial_executor=_trial, managed=True)
 
-    assert {
-        path.name: path.read_bytes()
-        for path in output.iterdir()
-    } == before
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == before
 
 
 @pytest.mark.parametrize(
     ("request_overrides", "state_overrides", "message"),
     (
-        ({"unexpected": True}, {}, "request fields"),
+        ({"unexpected": True}, {}, "request does not match"),
+        (
+            {"start_request_fingerprint": "g" * 64},
+            {},
+            "start request fingerprint is invalid",
+        ),
         ({}, {"unexpected": True}, "state fields"),
         ({}, {"completed_trials": 1}, "state does not match"),
         ({}, {"error": "forged"}, "state does not match"),
     ),
 )
-def test_fresh_run_requires_exact_console_bootstrap_shape(
+def test_managed_run_requires_exact_service_bootstrap_shape(
     tmp_path: Path,
     request_overrides: dict,
     state_overrides: dict,
@@ -292,24 +358,96 @@ def test_fresh_run_requires_exact_console_bootstrap_shape(
     request = _custom_request(evaluation_id="eval-strict-bootstrap")
     request["bot"] = "bots/lingye-copilot-qq/bot.yaml"
     output = tmp_path / "eval-strict-bootstrap"
-    _write_comparison_bootstrap(
+    _write_managed_comparison_bootstrap(
         request,
         output,
         request_overrides=request_overrides,
         state_overrides=state_overrides,
     )
-    before = {
-        path.name: path.read_bytes()
-        for path in output.iterdir()
-    }
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
 
     with pytest.raises(ValueError, match=message):
-        run_evaluation(request, output=output, trial_executor=_trial)
+        run_evaluation(request, output=output, trial_executor=_trial, managed=True)
 
-    assert {
-        path.name: path.read_bytes()
-        for path in output.iterdir()
-    } == before
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == before
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX artifact metadata boundary")
+@pytest.mark.parametrize("artifact_name", ("request.json", "state.json"))
+@pytest.mark.parametrize(
+    ("violation", "message"),
+    (
+        ("owner", "owned by the current user"),
+        ("mode", "mode 0600"),
+        ("hardlink", "exactly one hard link"),
+    ),
+)
+def test_managed_run_rejects_unsafe_bootstrap_inode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_name: str,
+    violation: str,
+    message: str,
+) -> None:
+    request = _custom_request(evaluation_id="eval-unsafe-bootstrap")
+    request["bot"] = "bots/lingye-copilot-qq/bot.yaml"
+    output = tmp_path / "eval-unsafe-bootstrap"
+    _write_managed_comparison_bootstrap(request, output)
+    artifact = output / artifact_name
+    original = artifact.read_bytes()
+
+    if violation == "owner":
+        owner_uid = artifact.stat().st_uid
+        monkeypatch.setattr(evaluation_module.os, "getuid", lambda: owner_uid + 1)
+    elif violation == "mode":
+        artifact.chmod(0o644)
+    else:
+        os.link(artifact, tmp_path / f"{artifact_name}.alias")
+
+    with pytest.raises((PermissionError, ValueError), match=message):
+        run_evaluation(request, output=output, trial_executor=_trial, managed=True)
+
+    assert artifact.read_bytes() == original
+    if violation == "mode":
+        assert artifact.stat().st_mode & 0o777 == 0o644
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX artifact metadata boundary")
+@pytest.mark.parametrize(
+    ("violation", "message"),
+    (
+        ("owner", "owned by the current user"),
+        ("mode", "mode 0600"),
+        ("hardlink", "exactly one hard link"),
+    ),
+)
+def test_progress_append_rejects_unsafe_existing_inode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    violation: str,
+    message: str,
+) -> None:
+    output = tmp_path / "eval-progress-inode"
+    output.mkdir(mode=0o700)
+    progress = output / "progress.jsonl"
+    progress.write_text('{"event":"existing"}\n', encoding="utf-8")
+    progress.chmod(0o600)
+    original = progress.read_bytes()
+
+    if violation == "owner":
+        owner_uid = progress.stat().st_uid
+        monkeypatch.setattr(evaluation_module.os, "getuid", lambda: owner_uid + 1)
+    elif violation == "mode":
+        progress.chmod(0o644)
+    else:
+        os.link(progress, tmp_path / "progress.alias")
+
+    with pytest.raises((PermissionError, ValueError), match=message):
+        evaluation_module._append_jsonl(progress, {"event": "forbidden"})
+
+    assert progress.read_bytes() == original
+    if violation == "mode":
+        assert progress.stat().st_mode & 0o777 == 0o644
 
 
 @pytest.mark.parametrize(
@@ -318,9 +456,7 @@ def test_fresh_run_requires_exact_console_bootstrap_shape(
 )
 def test_core_evaluation_id_matches_console_grammar(evaluation_id: str) -> None:
     with pytest.raises(ValueError, match="evaluation_id"):
-        parse_evaluation_request(
-            _custom_request(evaluation_id=evaluation_id)
-        )
+        parse_evaluation_request(_custom_request(evaluation_id=evaluation_id))
 
 
 def test_profile_cases_are_stable_when_official_data_env_is_invalid(
@@ -534,9 +670,7 @@ def test_resume_rejects_request_drift_without_touching_artifacts(
     )
     _create_resumable_evaluation(request, output)
     before = {
-        path.relative_to(output): path.read_bytes()
-        for path in output.rglob("*")
-        if path.is_file()
+        path.relative_to(output): path.read_bytes() for path in output.rglob("*") if path.is_file()
     }
 
     with pytest.raises(ValueError, match="request_hash"):
@@ -548,9 +682,7 @@ def test_resume_rejects_request_drift_without_touching_artifacts(
         )
 
     after = {
-        path.relative_to(output): path.read_bytes()
-        for path in output.rglob("*")
-        if path.is_file()
+        path.relative_to(output): path.read_bytes() for path in output.rglob("*") if path.is_file()
     }
     assert after == before
 
@@ -998,21 +1130,20 @@ def test_persistence_redacts_secrets_and_preserves_console_metadata(
     output = tmp_path / "eval-redacted"
     request = _custom_request(evaluation_id="eval-redacted")
     request["bot"] = "bots/lingye-copilot-qq/bot.yaml"
-    _write_comparison_bootstrap(request, output)
+    _write_managed_comparison_bootstrap(request, output)
 
     def execute(request: TrialExecutionRequest) -> EvaluationTrial:
         return replace(
             _trial(request),
             final_text=f"super-secret-value at {request.output}",
-            events=(
-                {"type": "ToolFinished", "summary": "api_key=super-secret-value"},
-            ),
+            events=({"type": "ToolFinished", "summary": "api_key=super-secret-value"},),
         )
 
     run_evaluation(
         request,
         output=output,
         trial_executor=execute,
+        managed=True,
     )
     persisted = "\n".join(
         path.read_text(encoding="utf-8")
@@ -1292,6 +1423,204 @@ def test_cli_json_stdout_remains_one_parseable_document(
     assert "completed Evaluation cannot be resumed" in rerun.err
 
 
+def test_cli_requires_explicit_output_outside_managed_service_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repository = _write_repository_markers(tmp_path / "repo")
+    console = repository / "console"
+    console.mkdir()
+    monkeypatch.chdir(console)
+    monkeypatch.setenv("CHATCOPILOT_SOURCE_ROOT", str(repository))
+    monkeypatch.delenv("CHATCOPILOT_EVALUATION_ROOT", raising=False)
+    arguments = [
+        "run",
+        "--suite",
+        "ifeval",
+        "--dry-run",
+        "--case-id",
+        "ifeval-json-format",
+        "--json",
+    ]
+
+    missing_code = evals_cli_main(arguments)
+    missing = json.loads(capsys.readouterr().err)
+
+    assert missing_code == 2
+    assert missing["code"] == "evaluation_output_required"
+    assert not (repository / "reports").exists()
+
+    reserved = repository / "reports/evals/evaluations/eval-reserved"
+    reserved_code = evals_cli_main(
+        [*arguments, "--evaluation-id", reserved.name, "--output", str(reserved)]
+    )
+    rejected = json.loads(capsys.readouterr().err)
+
+    assert reserved_code == 2
+    assert rejected["code"] == "evaluation_output_reserved"
+    assert not reserved.exists()
+
+
+@pytest.mark.parametrize(
+    "output_value",
+    (
+        "../reports/evals/evaluations/eval-relative-reserved",
+        "{absolute}",
+    ),
+)
+def test_managed_root_detection_is_stable_from_repository_subdirectory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    output_value: str,
+) -> None:
+    repository = _write_repository_markers(tmp_path / "repo")
+    console = repository / "console"
+    console.mkdir()
+    monkeypatch.chdir(console)
+    monkeypatch.setenv("CHATCOPILOT_SOURCE_ROOT", str(repository))
+    monkeypatch.delenv("CHATCOPILOT_EVALUATION_ROOT", raising=False)
+    absolute = repository / "reports/evals/evaluations/eval-absolute-reserved"
+    output = Path(output_value.format(absolute=absolute))
+
+    assert evaluation_paths.managed_evaluation_root() == (repository / "reports/evals/evaluations")
+    assert evaluation_paths.is_managed_evaluation_output(output)
+    code = evals_cli_main(
+        [
+            "run",
+            "--suite",
+            "ifeval",
+            "--dry-run",
+            "--case-id",
+            "ifeval-json-format",
+            "--evaluation-id",
+            output.name,
+            "--output",
+            str(output),
+            "--json",
+        ]
+    )
+    rejected = json.loads(capsys.readouterr().err)
+
+    assert code == 2
+    assert rejected["code"] == "evaluation_output_reserved"
+    assert not output.exists()
+
+
+def test_relative_configured_managed_root_is_anchored_to_repository(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _write_repository_markers(tmp_path / "repo")
+    console = repository / "console"
+    console.mkdir()
+    monkeypatch.chdir(console)
+    monkeypatch.setenv("CHATCOPILOT_SOURCE_ROOT", str(repository))
+    monkeypatch.setenv("CHATCOPILOT_EVALUATION_ROOT", "var/evaluations")
+    output = repository / "var/evaluations/eval-configured-relative"
+
+    assert evaluation_paths.managed_evaluation_root() == repository / "var/evaluations"
+    assert evaluation_paths.is_managed_evaluation_output(output)
+
+
+def test_cli_allows_manual_root_from_repository_subdirectory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repository = _write_repository_markers(tmp_path / "repo")
+    console = repository / "console"
+    console.mkdir()
+    monkeypatch.chdir(console)
+    monkeypatch.setenv("CHATCOPILOT_SOURCE_ROOT", str(repository))
+    monkeypatch.delenv("CHATCOPILOT_EVALUATION_ROOT", raising=False)
+    output = Path("../reports/evals/manual/eval-manual")
+
+    code = evals_cli_main(
+        [
+            "run",
+            "--suite",
+            "ifeval",
+            "--dry-run",
+            "--case-id",
+            "ifeval-json-format",
+            "--evaluation-id",
+            output.name,
+            "--output",
+            str(output),
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert json.loads(captured.out)["evaluation_id"] == output.name
+    assert (repository / "reports/evals/manual/eval-manual/result.json").is_file()
+
+
+def test_managed_root_discovery_fails_closed_without_trusted_repository(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("CHATCOPILOT_SOURCE_ROOT", raising=False)
+    monkeypatch.delenv("CHATCOPILOT_EVALUATION_ROOT", raising=False)
+    monkeypatch.setattr(evaluation_paths, "__file__", str(outside / "paths.py"))
+
+    with pytest.raises(RuntimeError, match="cannot locate a trusted"):
+        evaluation_paths.managed_evaluation_root()
+
+
+def test_configured_source_root_must_be_a_valid_repository(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invalid = tmp_path / "not-a-repository"
+    invalid.mkdir()
+    monkeypatch.setenv("CHATCOPILOT_SOURCE_ROOT", str(invalid))
+
+    with pytest.raises(RuntimeError, match="must contain pyproject.toml"):
+        evaluation_paths.managed_evaluation_root()
+
+
+def test_cli_rejects_configured_managed_service_root_without_side_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    managed_root = tmp_path / "configured-evaluations"
+    managed_root.mkdir()
+    sentinel = managed_root / "keep.txt"
+    sentinel.write_text("preserve\n", encoding="utf-8")
+    monkeypatch.setenv("CHATCOPILOT_EVALUATION_ROOT", str(managed_root))
+    output = managed_root / "eval-configured-cli"
+
+    code = evals_cli_main(
+        [
+            "run",
+            "--suite",
+            "ifeval",
+            "--dry-run",
+            "--case-id",
+            "ifeval-json-format",
+            "--evaluation-id",
+            output.name,
+            "--output",
+            str(output),
+            "--json",
+        ]
+    )
+    rejected = json.loads(capsys.readouterr().err)
+
+    assert code == 2
+    assert rejected["code"] == "evaluation_output_reserved"
+    assert sentinel.read_text(encoding="utf-8") == "preserve\n"
+    assert not output.exists()
+
+
 def test_cli_prepare_uses_official_data_preparer(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1344,9 +1673,7 @@ def test_cli_request_rejects_boolean_and_list_coercion(
     payload: dict,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code = evals_cli_main(
-        ["run", "--request", json.dumps(payload), "--validate-only"]
-    )
+    exit_code = evals_cli_main(["run", "--request", json.dumps(payload), "--validate-only"])
     captured = capsys.readouterr()
 
     assert exit_code == 2

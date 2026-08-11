@@ -1,11 +1,13 @@
-"""Persistent control-plane manager for unified evaluations."""
+"""Persistent application control plane for unified evaluations."""
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -17,11 +19,14 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, Iterator, Literal, Mapping, Sequence
 
+from chatcopilot.evals.application.bots import (
+    EvaluationBotRef,
+    EvaluationBotResolver,
+    bot_env,
+    bot_spec_path,
+    temporary_eval_env,
+)
 from chatcopilot.evals.redaction import collect_env_secrets, sanitize_text
-from console.control.discovery import repo_root
-from console.control.evals import _bot_env, _bot_spec_path, _temporary_env
-from console.control.instances import BotInstance
-from console.control.operations import KEEPALIVE
 
 ACTIVE_STATUSES = {"queued", "running"}
 TERMINAL_STATUSES = {
@@ -31,11 +36,15 @@ TERMINAL_STATUSES = {
     "interrupted",
     "error",
 }
+MAINTENANCE_FILENAME = ".maintenance.json"
 ValidationResult = Mapping[str, Any]
-Validator = Callable[[BotInstance, Mapping[str, Any]], ValidationResult]
+Validator = Callable[[EvaluationBotRef, Mapping[str, Any]], ValidationResult]
+BotResolver = Callable[[str], EvaluationBotRef]
 WorkerPidStatus = Literal["matched", "unknown", "exited"]
+KEEPALIVE = "\x00"
 _ROOT_LOCKS_GUARD = threading.Lock()
 _ROOT_LOCKS: dict[str, threading.RLock] = {}
+LOGGER = logging.getLogger(__name__)
 
 
 def _root_thread_lock(root: Path) -> threading.RLock:
@@ -49,7 +58,19 @@ def _locked_file(path: Path) -> Iterator[None]:
     """Hold a process-safe advisory lock for a short control-plane mutation."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle = path.open("a+b")
+    flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        _validate_private_file_metadata(
+            os.fstat(descriptor),
+            path,
+            label="Evaluation service lock",
+        )
+    except Exception:
+        os.close(descriptor)
+        raise
+    handle = os.fdopen(descriptor, "a+b")
     locked = False
     try:
         if os.name == "nt":
@@ -103,63 +124,166 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _validate_private_file_metadata(
+    metadata: os.stat_result,
+    path: Path,
+    *,
+    label: str = "evaluation artifact",
+) -> None:
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"{label} is not a regular file: {path.name}")
+    if os.name != "nt":
+        if metadata.st_uid != os.getuid():
+            raise PermissionError(f"{label} must be owned by the service user: {path.name}")
+        if stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise PermissionError(f"{label} must use mode 0600: {path.name}")
+        if metadata.st_nlink != 1:
+            raise ValueError(f"{label} must have exactly one hard link: {path.name}")
+
+
+def _validate_private_directory_metadata(
+    metadata: os.stat_result,
+    path: Path,
+    *,
+    label: str,
+) -> None:
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError(f"{label} is not a directory: {path.name}")
+    if os.name != "nt":
+        if metadata.st_uid != os.getuid():
+            raise PermissionError(f"{label} must be owned by the service user: {path.name}")
+        if stat.S_IMODE(metadata.st_mode) != 0o700:
+            raise PermissionError(f"{label} must use mode 0700: {path.name}")
+
+
+def _reject_symlink_components(path: Path) -> None:
+    """Reject every existing symlink in an absolute path before mutation."""
+
+    absolute = path if path.is_absolute() else path.absolute()
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError(f"Evaluation path cannot contain a symlink: {current}")
+
+
 def _read_json(path: Path) -> dict[str, Any]:
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
         return {}
+    except OSError as exc:
+        raise ValueError(f"evaluation artifact cannot be opened safely: {path.name}") from exc
+    try:
+        _validate_private_file_metadata(os.fstat(descriptor), path)
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = -1
+            value = json.load(handle)
+    except json.JSONDecodeError:
+        return {}
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
     return value if isinstance(value, dict) else {}
+
+
+@contextmanager
+def _open_private_text(
+    path: Path,
+    *,
+    errors: str | None = None,
+) -> Iterator[Any]:
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(f"evaluation artifact cannot be opened safely: {path.name}") from exc
+    try:
+        _validate_private_file_metadata(os.fstat(descriptor), path)
+        with os.fdopen(
+            descriptor,
+            "r",
+            encoding="utf-8",
+            errors=errors,
+        ) as handle:
+            descriptor = -1
+            yield handle
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(dict(payload), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    try:
+        existing = path.lstat()
+    except FileNotFoundError:
+        existing = None
+    if existing is not None:
+        _validate_private_file_metadata(existing, path)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
     )
-    temporary.replace(path)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(dict(payload), ensure_ascii=False, indent=2) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
-def _default_validator(
-    instance: BotInstance,
+def _validate_request(
+    bot: EvaluationBotRef,
     request: Mapping[str, Any],
+    repository_root: Path,
 ) -> ValidationResult:
     from chatcopilot.evals.evaluations import validate_evaluation
 
-    with _temporary_env(_bot_env(instance)):
-        return validate_evaluation(_core_request(instance, request))
+    with temporary_eval_env(bot_env(bot, repository_root)):
+        return validate_evaluation(_core_request(bot, request, repository_root))
 
 
 def _core_request(
-    instance: BotInstance,
+    bot: EvaluationBotRef,
     request: Mapping[str, Any],
+    repository_root: Path,
     *,
     evaluation_id: str | None = None,
 ) -> dict[str, Any]:
     kind = str(request.get("kind") or "")
     common = {
         "kind": kind,
-        "bot": str(_bot_spec_path(instance)),
+        "bot": str(bot_spec_path(bot, repository_root)),
     }
     if evaluation_id:
         common["evaluation_id"] = evaluation_id
     if kind == "comparison":
         value = {
             **common,
-            "profile": str(
-                request.get("profile_id") or request.get("profile") or ""
-            ),
+            "profile": str(request.get("profile_id") or request.get("profile") or ""),
             "preset": str(request.get("preset") or "quick"),
         }
         if value["preset"] == "custom":
             value.update(
                 {
-                    "targets": list(
-                        request.get("target_ids")
-                        or request.get("targets")
-                        or ()
-                    ),
+                    "targets": list(request.get("target_ids") or request.get("targets") or ()),
                     "case_refs": list(request.get("case_refs") or ()),
                     "repetitions": request.get("repetitions"),
                     "max_wall_seconds": request.get("max_wall_seconds"),
@@ -170,9 +294,7 @@ def _core_request(
     if kind == "suite":
         return {
             **common,
-            "suite": str(
-                request.get("suite_id") or request.get("suite") or ""
-            ),
+            "suite": str(request.get("suite_id") or request.get("suite") or ""),
             "case_ids": list(request.get("case_ids") or ()),
             "dry_run": bool(request.get("dry_run", False)),
             "llm_judge": bool(request.get("llm_judge", False)),
@@ -181,7 +303,7 @@ def _core_request(
 
 
 def _stored_request(
-    instance: BotInstance,
+    bot: EvaluationBotRef,
     request: Mapping[str, Any],
     effective: Mapping[str, Any],
     targets: Sequence[Any],
@@ -189,31 +311,15 @@ def _stored_request(
     kind = str(request.get("kind") or "")
     value: dict[str, Any] = {
         "kind": kind,
-        "bot_id": instance.instance_id,
+        "bot_id": bot.instance_id,
     }
     if kind == "comparison":
         value.update(
             {
-                "profile_id": str(
-                    effective.get("profile")
-                    or request.get("profile_id")
-                    or ""
-                ),
-                "preset": str(
-                    effective.get("preset")
-                    or request.get("preset")
-                    or "quick"
-                ),
-                "target_ids": list(
-                    effective.get("targets")
-                    or request.get("target_ids")
-                    or ()
-                ),
-                "case_refs": list(
-                    effective.get("case_refs")
-                    or request.get("case_refs")
-                    or ()
-                ),
+                "profile_id": str(effective.get("profile") or request.get("profile_id") or ""),
+                "preset": str(effective.get("preset") or request.get("preset") or "quick"),
+                "target_ids": list(effective.get("targets") or request.get("target_ids") or ()),
+                "case_refs": list(effective.get("case_refs") or request.get("case_refs") or ()),
                 "repetitions": effective.get(
                     "repetitions",
                     request.get("repetitions"),
@@ -228,16 +334,8 @@ def _stored_request(
     elif kind == "suite":
         value.update(
             {
-                "suite_id": str(
-                    effective.get("suite")
-                    or request.get("suite_id")
-                    or ""
-                ),
-                "case_ids": list(
-                    effective.get("case_ids")
-                    or request.get("case_ids")
-                    or ()
-                ),
+                "suite_id": str(effective.get("suite") or request.get("suite_id") or ""),
+                "case_ids": list(effective.get("case_ids") or request.get("case_ids") or ()),
                 "dry_run": bool(
                     effective.get(
                         "dry_run",
@@ -254,54 +352,111 @@ def _stored_request(
         )
     else:
         raise ValueError(f"unsupported evaluation kind: {kind}")
-    value["targets"] = [
-        dict(item) if isinstance(item, Mapping) else item for item in targets
-    ]
+    value["targets"] = [dict(item) if isinstance(item, Mapping) else item for item in targets]
     return value
 
 
-class EvaluationManager:
+def _start_request_fingerprint(request: Mapping[str, Any]) -> str:
+    try:
+        encoded = json.dumps(
+            dict(request),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("evaluation request is not canonical JSON") from exc
+    return sha256(encoded).hexdigest()
+
+
+class EvaluationApplication:
     def __init__(
         self,
         root: Path | None = None,
         *,
+        repository_root: Path | None = None,
         validator: Validator | None = None,
+        bot_resolver: BotResolver | None = None,
     ) -> None:
-        self.root = (
-            root or repo_root() / "reports" / "evals" / "evaluations"
-        ).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
-        self._validator = validator or _default_validator
+        repository_value = (repository_root or Path.cwd()).expanduser()
+        if not repository_value.is_absolute():
+            repository_value = repository_value.absolute()
+        _reject_symlink_components(repository_value)
+        self.repository_root = repository_value
+        root_value = root or self.repository_root / "reports" / "evals" / "evaluations"
+        root_path = root_value.expanduser()
+        if not root_path.is_absolute():
+            root_path = self.repository_root / root_path
+        self.root = root_path.absolute()
+        _reject_symlink_components(self.root)
+        if root is None:
+            try:
+                self.root.relative_to(self.repository_root)
+            except ValueError as exc:
+                raise ValueError("Default Evaluation root must stay inside the repository") from exc
+        self._ensure_private_root()
+        self._resolve_bot = bot_resolver or EvaluationBotResolver(self.repository_root)
+        self._validator = validator
         self._lock = threading.RLock()
-        self._processes: dict[str, subprocess.Popen[str]] = {}
+        self._processes: dict[str, subprocess.Popen[Any]] = {}
         self._process_bot_ids: dict[str, str] = {}
         self._cancelled: set[str] = set()
         self._recover_interrupted()
 
+    def _ensure_private_root(self) -> None:
+        self.root.mkdir(parents=True, mode=0o700, exist_ok=True)
+        _reject_symlink_components(self.root)
+        if os.name != "nt":
+            self.root.chmod(0o700)
+        self._verify_private_root()
+
+    def _verify_private_root(self) -> None:
+        _reject_symlink_components(self.root)
+        _validate_private_directory_metadata(
+            self.root.lstat(),
+            self.root,
+            label="Evaluation root",
+        )
+
     def start(
         self,
         *,
-        instance: BotInstance,
+        bot_id: str,
         request: Mapping[str, Any],
+        evaluation_id: str | None = None,
     ) -> dict[str, Any]:
+        bot = self._resolve_bot(bot_id)
         clean_request = dict(request)
-        clean_request["bot_id"] = instance.instance_id
+        clean_request["bot_id"] = bot.instance_id
+        request_fingerprint = _start_request_fingerprint(clean_request)
+        requested_id = str(evaluation_id or "").strip()
+        if requested_id:
+            self._evaluation_dir(requested_id)
         with self._creation_guard(), self._lock:
-            active = self._active_for_bot_locked(instance.instance_id)
+            if requested_id and self._evaluation_dir(requested_id).exists():
+                return self._idempotent_start_result(
+                    requested_id,
+                    bot_id=bot.instance_id,
+                    request_fingerprint=request_fingerprint,
+                )
+            self._require_creation_allowed_locked()
+            active = self._active_for_bot_locked(bot.instance_id)
             if active is not None:
                 raise RuntimeError(
-                    f"Bot {instance.instance_id} already has an active evaluation: "
+                    f"Bot {bot.instance_id} already has an active evaluation: "
                     f"{active['evaluation_id']}"
                 )
 
-        validation = dict(self._validator(instance, clean_request))
+        validation = dict(
+            self._validator(bot, clean_request)
+            if self._validator is not None
+            else _validate_request(bot, clean_request, self.repository_root)
+        )
         if not validation.get("ready"):
             payload = {
                 "code": "evaluation_blocked",
-                "message": str(
-                    validation.get("message")
-                    or "评测条件未满足，未创建评测记录"
-                ),
+                "message": str(validation.get("message") or "评测条件未满足，未创建评测记录"),
                 "checks": list(validation.get("checks") or ()),
             }
             raise EvaluationBlocked(payload)
@@ -317,34 +472,49 @@ class EvaluationManager:
         ):
             target_values = targets
         clean_request = _stored_request(
-            instance,
+            bot,
             clean_request,
             effective,
             target_values,
         )
 
         with self._creation_guard(), self._lock:
-            active = self._active_for_bot_locked(instance.instance_id)
+            if requested_id and self._evaluation_dir(requested_id).exists():
+                return self._idempotent_start_result(
+                    requested_id,
+                    bot_id=bot.instance_id,
+                    request_fingerprint=request_fingerprint,
+                )
+            self._require_creation_allowed_locked()
+            active = self._active_for_bot_locked(bot.instance_id)
             if active is not None:
                 raise RuntimeError(
-                    f"Bot {instance.instance_id} already has an active evaluation: "
+                    f"Bot {bot.instance_id} already has an active evaluation: "
                     f"{active['evaluation_id']}"
                 )
-            evaluation_id = (
-                "eval-"
-                + datetime.now().strftime("%Y%m%d-%H%M%S")
-                + "-"
-                + uuid.uuid4().hex[:8]
+            evaluation_id = requested_id or (
+                "eval-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
             )
             directory = self._evaluation_dir(evaluation_id)
             created_at = _utc_now()
             stored_request = {
                 **clean_request,
                 "evaluation_id": evaluation_id,
-                "bot_id": instance.instance_id,
-                "bot_spec": str(_bot_spec_path(instance).relative_to(repo_root())),
+                "bot_id": bot.instance_id,
+                "start_request_fingerprint": request_fingerprint,
+                "bot_spec": str(
+                    bot_spec_path(bot, self.repository_root).relative_to(self.repository_root)
+                ),
                 "created_at": created_at,
             }
+            core_request = _core_request(
+                bot,
+                stored_request,
+                self.repository_root,
+                evaluation_id=evaluation_id,
+            )
+            core_request["bot"] = stored_request["bot_spec"]
+            stored_request["core_request"] = core_request
             state = {
                 "evaluation_id": evaluation_id,
                 "kind": str(clean_request.get("kind") or ""),
@@ -361,14 +531,14 @@ class EvaluationManager:
                 "error": None,
             }
             try:
-                self._create_claim(instance.instance_id, evaluation_id)
-                directory.mkdir(parents=True)
+                self._create_claim(bot.instance_id, evaluation_id)
+                directory.mkdir(parents=True, mode=0o700)
                 _write_json(directory / "request.json", stored_request)
                 _write_json(directory / "state.json", state)
-                self._spawn(evaluation_id, instance, stored_request)
+                self._spawn(evaluation_id, bot)
             except Exception as exc:
                 safe_error = self._sanitize_startup_error(
-                    instance,
+                    bot,
                     directory,
                     exc,
                 )
@@ -385,7 +555,7 @@ class EvaluationManager:
                 self._process_bot_ids.pop(evaluation_id, None)
                 if process is not None:
                     self._terminate_process(process)
-                self._release_claim(instance.instance_id, evaluation_id)
+                self._release_claim(bot.instance_id, evaluation_id)
                 raise RuntimeError(safe_error) from exc
         return self.get(evaluation_id)
 
@@ -397,6 +567,7 @@ class EvaluationManager:
         target: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
+        self._verify_private_root()
         values: list[dict[str, Any]] = []
         for path in self.root.iterdir():
             if not path.is_dir():
@@ -423,6 +594,128 @@ class EvaluationManager:
             reverse=True,
         )
         return values
+
+    def active_count(self) -> int:
+        """Count active lifecycle records without reading large Core results."""
+
+        return int(self.update_readiness()["active_count"])
+
+    def maintenance_status(self) -> dict[str, Any] | None:
+        """Return the persisted maintenance lease, if one is active."""
+
+        with self._lock:
+            return self._read_maintenance_locked()
+
+    def enter_maintenance(self, lease_id: str) -> dict[str, Any]:
+        """Atomically prove idle and prevent new Evaluation creation."""
+
+        lease = self._validated_lease_id(lease_id)
+        with self._creation_guard(), self._lock:
+            existing = self._read_maintenance_locked()
+            if existing is not None:
+                if existing.get("lease_id") == lease:
+                    return dict(existing)
+                raise RuntimeError("Evaluation maintenance is already active")
+            readiness = self.update_readiness()
+            if (
+                readiness.get("idle_proven") is not True
+                or int(readiness.get("active_count") or 0) != 0
+            ):
+                raise RuntimeError("Evaluation is active or idle state cannot be proven")
+            payload = {
+                "maintenance": True,
+                "schema_version": 1,
+                "lease_id": lease,
+                "created_at": _utc_now(),
+                "owner_pid": os.getpid(),
+            }
+            _write_json(self.root / MAINTENANCE_FILENAME, payload)
+            return dict(payload)
+
+    def leave_maintenance(self, lease_id: str) -> dict[str, Any]:
+        """Release the matching persisted maintenance lease."""
+
+        lease = self._validated_lease_id(lease_id)
+        with self._creation_guard(), self._lock:
+            existing = self._read_maintenance_locked()
+            if existing is None:
+                return {"maintenance": False, "lease_id": lease}
+            if existing.get("lease_id") != lease:
+                raise RuntimeError("Evaluation maintenance lease does not match")
+            path = self.root / MAINTENANCE_FILENAME
+            self._verify_artifact_file(path, required=True)
+            path.unlink()
+            return {"maintenance": False, "lease_id": lease}
+
+    def update_readiness(self) -> dict[str, Any]:
+        """Return a fail-closed snapshot proving whether code may be updated.
+
+        This method deliberately takes only the re-entrant in-process lock. Callers
+        that need a transactional idle-to-maintenance transition must hold the
+        process-wide creation guard around this snapshot and their state change.
+        """
+
+        with self._lock:
+            self._verify_private_root()
+            active_count = 0
+            idle_proven = True
+            for path in self.root.iterdir():
+                if not path.name.startswith("eval-"):
+                    continue
+                try:
+                    directory = self._evaluation_dir(path.name)
+                    state_path = directory / "state.json"
+                    self._verify_artifact_file(state_path, required=True)
+                    state = _read_json(state_path)
+                except (KeyError, OSError, PermissionError, RuntimeError, ValueError):
+                    idle_proven = False
+                    continue
+                if not state or state.get("evaluation_id") != path.name:
+                    idle_proven = False
+                    continue
+                status = state.get("status")
+                if status in ACTIVE_STATUSES:
+                    active_count += 1
+                    idle_proven = False
+                    continue
+                if status not in TERMINAL_STATUSES:
+                    idle_proven = False
+                    continue
+
+                request: dict[str, Any] = {}
+                try:
+                    request_path = directory / "request.json"
+                    self._verify_artifact_file(request_path, required=True)
+                    request = _read_json(request_path)
+                except (KeyError, OSError, PermissionError, RuntimeError, ValueError):
+                    idle_proven = False
+                if not request or request.get("evaluation_id") != path.name:
+                    idle_proven = False
+                bot_id = str(request.get("bot_id") or "")
+                process = self._processes.get(path.name)
+                has_local_process = process is not None and process.poll() is None
+                if isinstance(state.get("pid"), int) or has_local_process:
+                    try:
+                        if self._evaluation_is_live(
+                            path.name,
+                            bot_id=bot_id,
+                            state=state,
+                        ):
+                            idle_proven = False
+                    except (OSError, PermissionError, RuntimeError, ValueError):
+                        idle_proven = False
+
+            # A claim can exist before the lifecycle directory is published, and a
+            # surviving worker can retain one after a contradictory terminal state.
+            # Either condition means absence of active work has not been proven.
+            if any(process.poll() is None for process in self._processes.values()) or any(
+                self.root.glob(".active-*.json")
+            ):
+                idle_proven = False
+            return {
+                "active_count": active_count,
+                "idle_proven": idle_proven,
+            }
 
     def get(
         self,
@@ -462,9 +755,7 @@ class EvaluationManager:
                 "duration_seconds",
                 state.get("duration_seconds"),
             ),
-            "summary": result.get("summary")
-            if isinstance(result.get("summary"), Mapping)
-            else {},
+            "summary": result.get("summary") if isinstance(result.get("summary"), Mapping) else {},
             "selection": self._selection_summary(request),
         }
         if include_result:
@@ -484,16 +775,19 @@ class EvaluationManager:
             required=True,
         )
         comparisons = result.get("comparisons")
-        comparison = next(
-            (
-                value
-                for value in comparisons
-                if isinstance(value, Mapping)
-                and str(value.get("case_ref") or value.get("case_id") or "")
-                == case_ref
-            ),
-            None,
-        ) if isinstance(comparisons, list) else None
+        comparison = (
+            next(
+                (
+                    value
+                    for value in comparisons
+                    if isinstance(value, Mapping)
+                    and str(value.get("case_ref") or value.get("case_id") or "") == case_ref
+                ),
+                None,
+            )
+            if isinstance(comparisons, list)
+            else None
+        )
         trials = [
             value
             for value in result.get("trials", [])
@@ -520,49 +814,55 @@ class EvaluationManager:
         self,
         evaluation_id: str,
         *,
-        instance: BotInstance,
+        new_evaluation_id: str | None = None,
     ) -> dict[str, Any]:
         directory = self._verified_evaluation_dir(evaluation_id)
         stored = _read_json(directory / "request.json")
         return self.start(
-            instance=instance,
+            bot_id=str(stored.get("bot_id") or ""),
             request=self._clone_request(stored),
+            evaluation_id=new_evaluation_id,
         )
+
+    def _idempotent_start_result(
+        self,
+        evaluation_id: str,
+        *,
+        bot_id: str,
+        request_fingerprint: str,
+    ) -> dict[str, Any]:
+        directory = self._verified_evaluation_dir(evaluation_id)
+        stored = _read_json(directory / "request.json")
+        if (
+            stored.get("bot_id") != bot_id
+            or stored.get("start_request_fingerprint") != request_fingerprint
+        ):
+            raise RuntimeError("evaluation_id already belongs to a different start request")
+        return self.get(evaluation_id)
 
     def cancel(self, evaluation_id: str) -> dict[str, Any]:
         bot_id = ""
-        external_pid: int | None = None
-        worker_identity_unknown = False
+        worker_pid: int | None = None
         with self._creation_guard(), self._lock:
             state = self._state(evaluation_id)
             if state.get("status") not in ACTIVE_STATUSES:
-                raise RuntimeError(
-                    "only queued or running evaluations can be cancelled"
-                )
-            request = _read_json(
-                self._evaluation_dir(evaluation_id) / "request.json"
-            )
+                raise RuntimeError("only queued or running evaluations can be cancelled")
+            request = _read_json(self._evaluation_dir(evaluation_id) / "request.json")
             bot_id = str(request.get("bot_id") or "")
-            process = self._processes.get(evaluation_id)
-            if process is None or process.poll() is not None:
-                (
-                    external_pid,
-                    worker_identity_unknown,
-                ) = self._managed_worker_observation(
-                    evaluation_id,
-                    bot_id=bot_id,
-                    state=state,
-                )
+            worker_pid, worker_identity_unknown = self._managed_worker_observation(
+                evaluation_id,
+                bot_id=bot_id,
+                state=state,
+            )
             if worker_identity_unknown:
                 raise RuntimeError(
                     "evaluation worker still exists but its identity "
                     "cannot be verified; cancellation refused"
                 )
+            self._write_cancel_marker(evaluation_id)
             self._cancelled.add(evaluation_id)
-        if process is not None and process.poll() is None:
-            self._terminate_process(process)
-        elif external_pid is not None:
-            self._terminate_pid(external_pid)
+        if worker_pid is not None:
+            self._request_pid_stop(worker_pid)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             with self._creation_guard(), self._lock:
@@ -572,19 +872,47 @@ class EvaluationManager:
                     bot_id=bot_id,
                     state=current_state,
                 ):
-                    self._finalize_cancelled(evaluation_id)
-                    if bot_id:
-                        self._release_claim(bot_id, evaluation_id)
+                    if current_state.get("status") in ACTIVE_STATUSES:
+                        self._finalize_cancelled(evaluation_id)
+                    self._complete_terminal_finalization(
+                        evaluation_id,
+                        bot_id=bot_id,
+                    )
                     return self.get(evaluation_id, include_result=False)
             time.sleep(0.05)
+        with self._creation_guard(), self._lock:
+            current_state = self._state(evaluation_id)
+            worker_pid, worker_identity_unknown = self._managed_worker_observation(
+                evaluation_id,
+                bot_id=bot_id,
+                state=current_state,
+            )
+            if worker_identity_unknown:
+                raise RuntimeError(
+                    "evaluation worker identity changed during cancellation; "
+                    "forced termination refused"
+                )
+        if worker_pid is not None:
+            self._kill_pid(worker_pid)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if not self._pid_exists(worker_pid):
+                    with self._creation_guard(), self._lock:
+                        current_state = self._state(evaluation_id)
+                        if current_state.get("status") in ACTIVE_STATUSES:
+                            self._finalize_cancelled(evaluation_id)
+                        self._complete_terminal_finalization(
+                            evaluation_id,
+                            bot_id=bot_id,
+                        )
+                        return self.get(evaluation_id, include_result=False)
+                time.sleep(0.05)
         raise RuntimeError("evaluation process did not stop after cancellation")
 
     def delete(self, evaluation_id: str) -> None:
         with self._creation_guard(), self._lock:
             state = self._state(evaluation_id)
-            request = _read_json(
-                self._verified_evaluation_dir(evaluation_id) / "request.json"
-            )
+            request = _read_json(self._verified_evaluation_dir(evaluation_id) / "request.json")
             bot_id = str(request.get("bot_id") or "")
             if self._evaluation_is_live(
                 evaluation_id,
@@ -631,11 +959,7 @@ class EvaluationManager:
                         if part
                     )
                 )
-                fingerprint = str(
-                    trial.get("target_fingerprint")
-                    or trial.get("fingerprint")
-                    or ""
-                )
+                fingerprint = str(trial.get("target_fingerprint") or trial.get("fingerprint") or "")
                 current_bot = str(evaluation.get("bot_id") or "")
                 if not current_bot or not case_ref or not fingerprint:
                     continue
@@ -656,17 +980,13 @@ class EvaluationManager:
                     "executor": str(trial.get("executor") or ""),
                     "backend": str(trial.get("backend") or ""),
                     "model": str(trial.get("model") or ""),
-                    "reasoning_effort": str(
-                        trial.get("reasoning_effort") or ""
-                    ),
+                    "reasoning_effort": str(trial.get("reasoning_effort") or ""),
                     "outcome": str(trial.get("outcome") or ""),
                     "score": trial.get("score"),
                     "max_score": trial.get("max_score"),
                     "duration_seconds": trial.get("duration_seconds"),
                     "finished_at": str(
-                        trial.get("finished_at")
-                        or evaluation.get("finished_at")
-                        or ""
+                        trial.get("finished_at") or evaluation.get("finished_at") or ""
                     ),
                     "error": str(trial.get("error") or ""),
                 }
@@ -721,12 +1041,7 @@ class EvaluationManager:
         return {
             "generated_at": _utc_now(),
             "summary": {
-                "case_count": len(
-                    {
-                        (item["bot_id"], item["case_ref"])
-                        for item in records
-                    }
-                ),
+                "case_count": len({(item["bot_id"], item["case_ref"]) for item in records}),
                 "failed_case_count": len(
                     {
                         (item["bot_id"], item["case_ref"])
@@ -735,9 +1050,7 @@ class EvaluationManager:
                     }
                 ),
                 "bot_count": len({item["bot_id"] for item in records}),
-                "target_count": len(
-                    {item["target_fingerprint"] for item in records}
-                ),
+                "target_count": len({item["target_fingerprint"] for item in records}),
             },
             "records": records,
         }
@@ -781,12 +1094,8 @@ class EvaluationManager:
                 required=False,
             )
             self._verify_artifact_file(path, required=False)
-            if path.is_file():
-                with path.open(
-                    "r",
-                    encoding="utf-8",
-                    errors="replace",
-                ) as handle:
+            if path.exists():
+                with _open_private_text(path, errors="replace") as handle:
                     handle.seek(position)
                     for line in handle:
                         try:
@@ -809,113 +1118,89 @@ class EvaluationManager:
                 yield KEEPALIVE
             time.sleep(poll_seconds)
 
-    def close(self) -> None:
-        with self._creation_guard(), self._lock:
-            processes = [
-                (
-                    evaluation_id,
-                    process,
-                    self._process_bot_ids.get(evaluation_id, ""),
-                )
-                for evaluation_id, process in self._processes.items()
-            ]
-            for evaluation_id, _process, _bot_id in processes:
-                try:
-                    self._reconcile_stopped_evaluation(
-                        evaluation_id,
-                        "console backend stopped before completion",
-                    )
-                except OSError:
-                    continue
-        for _evaluation_id, process, _bot_id in processes:
-            self._terminate_process(process)
-        with self._creation_guard(), self._lock:
-            for evaluation_id, process, bot_id in processes:
-                if process.poll() is None:
-                    continue
-                self._processes.pop(evaluation_id, None)
-                self._process_bot_ids.pop(evaluation_id, None)
-                if bot_id:
-                    self._release_claim(bot_id, evaluation_id)
-
     def _spawn(
         self,
         evaluation_id: str,
-        instance: BotInstance,
-        request: Mapping[str, Any],
+        bot: EvaluationBotRef,
     ) -> None:
         directory = self._evaluation_dir(evaluation_id)
+        cancel_path = self._cancel_path(evaluation_id)
+        startup_reader, startup_writer = os.pipe()
+        os.set_inheritable(startup_reader, True)
         command = [
             sys.executable,
             "-m",
-            "chatcopilot",
-            "evals",
-            "run",
+            "chatcopilot.evals.managed_worker",
             "--request",
-            json.dumps(
-                _core_request(
-                    instance,
-                    request,
-                    evaluation_id=evaluation_id,
-                ),
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
+            str(directory / "request.json"),
             "--output",
             str(directory),
+            "--cancel-file",
+            str(cancel_path),
+            "--log-file",
+            str(directory / "run.log"),
+            "--startup-fd",
+            str(startup_reader),
         ]
 
         env = os.environ.copy()
-        env.update(_bot_env(instance))
-        src = str(repo_root() / "src")
+        env.update(bot_env(bot, self.repository_root))
+        src = str(self.repository_root / "src")
         env["PYTHONPATH"] = os.pathsep.join(
             [
                 src,
-                *[
-                    item
-                    for item in env.get("PYTHONPATH", "").split(os.pathsep)
-                    if item
-                ],
+                *[item for item in env.get("PYTHONPATH", "").split(os.pathsep) if item],
             ]
         )
         flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-        process = subprocess.Popen(
-            command,
-            cwd=str(repo_root()),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            start_new_session=os.name != "nt",
-            creationflags=flags,
-        )
-        self._processes[evaluation_id] = process
-        self._process_bot_ids[evaluation_id] = instance.instance_id
-        state = self._state(evaluation_id)
-        state.update(
-            {
-                "status": "running",
-                "started_at": _utc_now(),
-                "pid": process.pid,
-            }
-        )
-        _write_json(directory / "state.json", state)
-        self._update_claim(
-            instance.instance_id,
-            evaluation_id,
-            worker_pid=process.pid,
-        )
-        secrets = collect_env_secrets(env)
+        popen_options: dict[str, Any]
+        if os.name == "nt":
+            popen_options = {"close_fds": False}
+        else:
+            popen_options = {"pass_fds": (startup_reader,)}
+        process: subprocess.Popen[Any]
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=str(self.repository_root),
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=False,
+                start_new_session=os.name != "nt",
+                creationflags=flags,
+                **popen_options,
+            )
+            os.close(startup_reader)
+            startup_reader = -1
+            self._processes[evaluation_id] = process
+            self._process_bot_ids[evaluation_id] = bot.instance_id
+            state = self._state(evaluation_id)
+            state.update(
+                {
+                    "status": "running",
+                    "started_at": _utc_now(),
+                    "pid": process.pid,
+                }
+            )
+            _write_json(directory / "state.json", state)
+            self._update_claim(
+                bot.instance_id,
+                evaluation_id,
+                worker_pid=process.pid,
+            )
+            if os.write(startup_writer, b"\x01") != 1:
+                raise RuntimeError("Evaluation worker startup handshake failed")
+        finally:
+            if startup_reader >= 0:
+                os.close(startup_reader)
+            os.close(startup_writer)
         threading.Thread(
             target=self._monitor,
             args=(
                 evaluation_id,
                 process,
-                secrets,
-                instance.instance_id,
+                bot.instance_id,
             ),
             name=f"evaluation-{evaluation_id}",
             daemon=True,
@@ -924,80 +1209,91 @@ class EvaluationManager:
     def _monitor(
         self,
         evaluation_id: str,
-        process: subprocess.Popen[str],
-        secrets: Sequence[str],
+        process: subprocess.Popen[Any],
         bot_id: str,
     ) -> None:
-        directory = self._evaluation_dir(evaluation_id)
-        assert process.stdout is not None
-        try:
-            with (directory / "run.log").open(
-                "a",
-                encoding="utf-8",
-                buffering=1,
-            ) as log_handle:
-                for raw_line in process.stdout:
-                    clean = sanitize_text(
-                        raw_line.rstrip("\r\n"),
-                        secrets=secrets,
-                        roots={
-                            "evaluation": directory,
-                            "repository": repo_root(),
-                        },
-                    )
-                    log_handle.write(clean + "\n")
-        except OSError:
-            for _raw_line in process.stdout:
-                pass
         exit_code = process.wait()
+        self._finalize_worker_exit(
+            evaluation_id,
+            bot_id=bot_id,
+            exit_code=exit_code,
+        )
+
+    def _finalize_worker_exit(
+        self,
+        evaluation_id: str,
+        *,
+        bot_id: str,
+        exit_code: int | None,
+    ) -> None:
         with self._creation_guard(), self._lock:
+            terminal_state_persisted = False
             try:
+                directory = self._verified_evaluation_dir(evaluation_id)
                 state_path = directory / "state.json"
-                self._verify_artifact_file(state_path, required=False)
                 state = _read_json(state_path)
-                if not state or not directory.is_dir():
-                    return
+                if not state:
+                    raise ValueError("evaluation state is not valid JSON")
                 result = self._verified_result(
                     evaluation_id,
                     directory=directory,
                     required=False,
                 )
-                if evaluation_id in self._cancelled:
-                    status = "cancelled"
-                    self._patch_report_status(
-                        evaluation_id,
-                        status,
-                        "evaluation cancelled by user",
-                    )
-                elif result.get("status") in TERMINAL_STATUSES:
+                if result.get("status") in TERMINAL_STATUSES:
                     status = str(result["status"])
+                elif evaluation_id in self._cancelled or self._cancel_requested(evaluation_id):
+                    status = "cancelled"
+                    state["error"] = "evaluation cancelled before Core finalized"
                 else:
                     status = "error"
-                    state["error"] = (
-                        "evaluation process exited without a final result"
-                    )
+                    state["error"] = "evaluation process exited without a final result"
                 state.update(
                     {
                         "status": status,
                         "finished_at": _utc_now(),
                         "pid": None,
+                        "duration_seconds": result.get(
+                            "duration_seconds",
+                            state.get("duration_seconds"),
+                        ),
+                        "completed_trials": len(result.get("trials", []))
+                        if isinstance(result.get("trials"), list)
+                        else state.get("completed_trials", 0),
                     }
                 )
                 if exit_code and not state.get("error"):
-                    state["error"] = (
-                        f"evaluation process exited with code {exit_code}"
-                    )
+                    state["error"] = f"evaluation process exited with code {exit_code}"
                 _write_json(directory / "state.json", state)
-            except (OSError, ValueError):
-                pass
-            finally:
-                self._processes.pop(evaluation_id, None)
-                self._process_bot_ids.pop(evaluation_id, None)
-                self._cancelled.discard(evaluation_id)
-                self._release_claim(bot_id, evaluation_id)
+                terminal_state_persisted = True
+            except Exception as exc:
+                LOGGER.error(
+                    "Evaluation worker finalization failed; activity claim retained "
+                    "evaluation_id=%s error_type=%s",
+                    evaluation_id,
+                    type(exc).__name__,
+                )
+
+            self._processes.pop(evaluation_id, None)
+            self._process_bot_ids.pop(evaluation_id, None)
+            if not terminal_state_persisted:
+                return
+            try:
+                self._complete_terminal_finalization(
+                    evaluation_id,
+                    bot_id=bot_id,
+                )
+            except Exception as exc:
+                LOGGER.error(
+                    "Evaluation terminal cleanup failed; activity claim retained "
+                    "evaluation_id=%s error_type=%s",
+                    evaluation_id,
+                    type(exc).__name__,
+                )
 
     def _recover_interrupted(self) -> None:
+        inherited: list[tuple[str, str, int]] = []
         with self._creation_guard(), self._lock:
+            self._verify_private_root()
             for path in self.root.iterdir():
                 if not path.is_dir():
                     continue
@@ -1012,20 +1308,66 @@ class EvaluationManager:
                 state = _read_json(state_path)
                 request = _read_json(request_path)
                 bot_id = str(request.get("bot_id") or "")
-                if self._evaluation_is_live(
+                worker_pid, identity_unknown = self._managed_worker_observation(
                     path.name,
                     bot_id=bot_id,
                     state=state,
-                ):
+                )
+                if worker_pid is not None:
+                    if state.get("pid") != worker_pid:
+                        state.update(
+                            {
+                                "status": "running",
+                                "pid": worker_pid,
+                                "started_at": state.get("started_at") or _utc_now(),
+                            }
+                        )
+                        _write_json(state_path, state)
+                    if bot_id:
+                        claim = self._read_claim(bot_id)
+                        if claim is None:
+                            self._create_claim(bot_id, path.name)
+                        self._update_claim(
+                            bot_id,
+                            path.name,
+                            worker_pid=worker_pid,
+                        )
+                    inherited.append((path.name, bot_id, worker_pid))
+                    continue
+                if identity_unknown:
                     continue
                 if state.get("status") in ACTIVE_STATUSES:
                     self._reconcile_stopped_evaluation(
                         path.name,
-                        "console backend restarted before completion",
+                        "evaluation service restarted after worker exit",
                     )
                 if bot_id:
                     self._release_claim(bot_id, path.name)
             self._remove_stale_orphan_claims()
+        for evaluation_id, bot_id, worker_pid in inherited:
+            threading.Thread(
+                target=self._watch_inherited_worker,
+                args=(evaluation_id, bot_id, worker_pid),
+                name=f"evaluation-inherited-{evaluation_id}",
+                daemon=True,
+            ).start()
+
+    def _watch_inherited_worker(
+        self,
+        evaluation_id: str,
+        bot_id: str,
+        worker_pid: int,
+    ) -> None:
+        directory = self._evaluation_dir(evaluation_id)
+        while self._worker_pid_status(worker_pid, directory) == "matched":
+            time.sleep(0.1)
+        if self._worker_pid_status(worker_pid, directory) == "unknown":
+            return
+        self._finalize_worker_exit(
+            evaluation_id,
+            bot_id=bot_id,
+            exit_code=None,
+        )
 
     def _reconcile_stopped_evaluation(
         self,
@@ -1103,7 +1445,6 @@ class EvaluationManager:
             }
         )
         _write_json(directory / "state.json", state)
-        self._patch_report_status(evaluation_id, status, message)
 
     def _finalize_cancelled(self, evaluation_id: str) -> None:
         state = self._state(evaluation_id)
@@ -1119,22 +1460,30 @@ class EvaluationManager:
             self._evaluation_dir(evaluation_id) / "state.json",
             state,
         )
-        self._patch_report_status(
-            evaluation_id,
-            "cancelled",
-            "evaluation cancelled by user",
-        )
-        self._cancelled.discard(evaluation_id)
 
-    @staticmethod
+    def _complete_terminal_finalization(
+        self,
+        evaluation_id: str,
+        *,
+        bot_id: str,
+    ) -> None:
+        state = self._state(evaluation_id)
+        if state.get("status") not in TERMINAL_STATUSES:
+            raise RuntimeError("evaluation terminal state was not persisted")
+        self._remove_cancel_marker(evaluation_id)
+        self._cancelled.discard(evaluation_id)
+        if bot_id:
+            self._release_claim(bot_id, evaluation_id)
+
     def _sanitize_startup_error(
-        instance: BotInstance,
+        self,
+        bot: EvaluationBotRef,
         directory: Path,
         exc: Exception,
     ) -> str:
         env = os.environ.copy()
         try:
-            env.update(_bot_env(instance))
+            env.update(bot_env(bot, self.repository_root))
         except Exception:
             pass
         return sanitize_text(
@@ -1142,15 +1491,49 @@ class EvaluationManager:
             secrets=collect_env_secrets(env),
             roots={
                 "evaluation": directory,
-                "repository": repo_root(),
+                "repository": self.repository_root,
             },
         )
 
     @contextmanager
     def _creation_guard(self) -> Iterator[None]:
         thread_lock = _root_thread_lock(self.root)
-        with thread_lock, _locked_file(self.root / ".manager.lock"):
+        with thread_lock, _locked_file(self.root / ".service.lock"):
             yield
+
+    @staticmethod
+    def _validated_lease_id(lease_id: str) -> str:
+        lease = str(lease_id or "").strip().lower()
+        if len(lease) != 32 or any(character not in "0123456789abcdef" for character in lease):
+            raise ValueError("maintenance lease_id must be 32 lowercase hexadecimal characters")
+        return lease
+
+    def _read_maintenance_locked(self) -> dict[str, Any] | None:
+        self._verify_private_root()
+        path = self.root / MAINTENANCE_FILENAME
+        try:
+            exists = self._verify_artifact_file(path, required=False)
+        except (PermissionError, ValueError) as exc:
+            raise RuntimeError("Evaluation maintenance marker is unsafe") from exc
+        if not exists:
+            return None
+        try:
+            payload = _read_json(path)
+        except (PermissionError, ValueError) as exc:
+            raise RuntimeError("Evaluation maintenance marker is unsafe") from exc
+        lease_id = payload.get("lease_id")
+        if (
+            payload.get("maintenance") is not True
+            or payload.get("schema_version") != 1
+            or not isinstance(lease_id, str)
+        ):
+            raise RuntimeError("Evaluation maintenance marker is unreadable")
+        self._validated_lease_id(lease_id)
+        return payload
+
+    def _require_creation_allowed_locked(self) -> None:
+        if self._read_maintenance_locked() is not None:
+            raise RuntimeError("Evaluation maintenance is active; creation is disabled")
 
     def _active_for_bot_locked(
         self,
@@ -1160,9 +1543,7 @@ class EvaluationManager:
         if claim is not None:
             evaluation_id = str(claim.get("evaluation_id") or "")
             if not evaluation_id:
-                raise RuntimeError(
-                    f"Bot {bot_id} has an invalid evaluation activity claim"
-                )
+                raise RuntimeError(f"Bot {bot_id} has an invalid evaluation activity claim")
             directory = self._evaluation_dir(evaluation_id)
             state_path = directory / "state.json"
             self._verify_artifact_file(state_path, required=False)
@@ -1185,9 +1566,7 @@ class EvaluationManager:
 
         for item in self.list(bot_id=bot_id):
             evaluation_id = str(item.get("evaluation_id") or "")
-            state = _read_json(
-                self._evaluation_dir(evaluation_id) / "state.json"
-            )
+            state = _read_json(self._evaluation_dir(evaluation_id) / "state.json")
             if self._evaluation_is_live(
                 evaluation_id,
                 bot_id=bot_id,
@@ -1212,22 +1591,12 @@ class EvaluationManager:
         process = self._processes.get(evaluation_id)
         if process is not None and process.poll() is None:
             return True
-        directory = self._evaluation_dir(evaluation_id)
-        pid = state.get("pid")
-        if (
-            isinstance(pid, int)
-            and self._worker_pid_status(pid, directory) != "exited"
-        ):
-            return True
-        if bot_id:
-            claim = self._read_claim(bot_id)
-            if (
-                claim is not None
-                and claim.get("evaluation_id") == evaluation_id
-                and self._claim_is_live(claim, directory)
-            ):
-                return True
-        return False
+        worker_pid, identity_unknown = self._managed_worker_observation(
+            evaluation_id,
+            bot_id=bot_id,
+            state=state,
+        )
+        return worker_pid is not None or identity_unknown
 
     def _managed_worker_observation(
         self,
@@ -1242,15 +1611,9 @@ class EvaluationManager:
             candidates.append(state_pid)
         if bot_id:
             claim = self._read_claim(bot_id)
-            if (
-                claim is not None
-                and claim.get("evaluation_id") == evaluation_id
-            ):
+            if claim is not None and claim.get("evaluation_id") == evaluation_id:
                 worker_pid = claim.get("worker_pid")
-                if (
-                    isinstance(worker_pid, int)
-                    and worker_pid not in candidates
-                ):
+                if isinstance(worker_pid, int) and worker_pid not in candidates:
                     candidates.append(worker_pid)
         directory = self._evaluation_dir(evaluation_id)
         identity_unknown = False
@@ -1260,25 +1623,144 @@ class EvaluationManager:
                 return pid, False
             if status == "unknown":
                 identity_unknown = True
+        discovered = self._discover_worker_pids(directory)
+        if len(discovered) == 1:
+            return discovered[0], False
+        if len(discovered) > 1:
+            identity_unknown = True
         return None, identity_unknown
 
+    @classmethod
+    def _discover_worker_pids(cls, directory: Path) -> list[int]:
+        """Find same-user managed workers when startup PID persistence was interrupted."""
+
+        if os.name == "nt":
+            return []
+        proc = Path("/proc")
+        try:
+            entries = tuple(proc.iterdir())
+        except OSError:
+            return []
+        matches: list[int] = []
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            pid = int(entry.name)
+            if pid <= 0 or pid == os.getpid():
+                continue
+            try:
+                if entry.stat().st_uid != os.getuid():
+                    continue
+            except OSError:
+                continue
+            if cls._pid_matches_evaluation(pid, directory):
+                matches.append(pid)
+        return sorted(matches)
+
+    def _cancel_path(self, evaluation_id: str) -> Path:
+        return self._evaluation_dir(evaluation_id) / ".cancel-requested.json"
+
+    def _write_cancel_marker(self, evaluation_id: str) -> None:
+        _write_json(
+            self._cancel_path(evaluation_id),
+            {
+                "evaluation_id": evaluation_id,
+                "requested_at": _utc_now(),
+            },
+        )
+
+    def _cancel_requested(self, evaluation_id: str) -> bool:
+        path = self._cancel_path(evaluation_id)
+        if not self._verify_artifact_file(path, required=False):
+            return False
+        payload = _read_json(path)
+        if payload.get("evaluation_id") != evaluation_id:
+            raise ValueError("evaluation cancel marker identity mismatch")
+        return True
+
+    def _remove_cancel_marker(self, evaluation_id: str) -> None:
+        """Remove only the private marker inode whose identity was verified."""
+
+        path = self._cancel_path(evaluation_id)
+        flags = os.O_RDONLY
+        flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise ValueError("evaluation cancel marker cannot be opened safely") from exc
+
+        tombstone = path.with_name(f".{path.name}.{uuid.uuid4().hex}.delete")
+        moved = False
+        try:
+            metadata = os.fstat(descriptor)
+            _validate_private_file_metadata(
+                metadata,
+                path,
+                label="evaluation cancel marker",
+            )
+            with os.fdopen(os.dup(descriptor), "r", encoding="utf-8") as handle:
+                try:
+                    payload = json.load(handle)
+                except json.JSONDecodeError as exc:
+                    raise ValueError("evaluation cancel marker is not valid JSON") from exc
+            if not isinstance(payload, Mapping) or payload.get("evaluation_id") != evaluation_id:
+                raise ValueError("evaluation cancel marker identity mismatch")
+
+            os.rename(path, tombstone)
+            moved = True
+            moved_metadata = tombstone.lstat()
+            if (moved_metadata.st_dev, moved_metadata.st_ino) != (
+                metadata.st_dev,
+                metadata.st_ino,
+            ):
+                self._restore_replaced_cancel_marker(path, tombstone)
+                moved = False
+                raise ValueError("evaluation cancel marker changed before deletion")
+            _validate_private_file_metadata(
+                moved_metadata,
+                tombstone,
+                label="evaluation cancel marker",
+            )
+            tombstone.unlink()
+            moved = False
+        finally:
+            os.close(descriptor)
+            if moved:
+                self._restore_replaced_cancel_marker(path, tombstone)
+
+    @staticmethod
+    def _restore_replaced_cancel_marker(path: Path, tombstone: Path) -> None:
+        """Best-effort restore without deleting an unverified replacement inode."""
+
+        try:
+            os.link(tombstone, path, follow_symlinks=False)
+        except (FileExistsError, NotImplementedError, OSError):
+            return
+        tombstone.unlink(missing_ok=True)
+
     def _claim_path(self, bot_id: str) -> Path:
+        self._verify_private_root()
         digest = sha256(bot_id.encode("utf-8")).hexdigest()[:24]
         return self.root / f".active-{digest}.json"
 
     def _read_claim(self, bot_id: str) -> dict[str, Any] | None:
         path = self._claim_path(bot_id)
-        if path.is_symlink():
+        try:
+            exists = self._verify_artifact_file(path, required=False)
+        except (PermissionError, ValueError) as exc:
             raise RuntimeError(
-                f"Bot {bot_id} evaluation activity claim cannot be a symlink"
-            )
-        if not path.exists():
+                f"Bot {bot_id} evaluation activity claim cannot be a symlink or otherwise unsafe"
+            ) from exc
+        if not exists:
             return None
-        claim = _read_json(path)
+        try:
+            claim = _read_json(path)
+        except (PermissionError, ValueError) as exc:
+            raise RuntimeError(f"Bot {bot_id} has an unsafe evaluation activity claim") from exc
         if not claim or claim.get("bot_id") != bot_id:
-            raise RuntimeError(
-                f"Bot {bot_id} has an unreadable evaluation activity claim"
-            )
+            raise RuntimeError(f"Bot {bot_id} has an unreadable evaluation activity claim")
         return claim
 
     def _create_claim(self, bot_id: str, evaluation_id: str) -> None:
@@ -1290,23 +1772,24 @@ class EvaluationManager:
             "worker_pid": None,
             "created_at": _utc_now(),
         }
-        encoded = (
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-        ).encode("utf-8")
+        encoded = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         try:
             descriptor = os.open(
                 path,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
                 0o600,
             )
         except FileExistsError as exc:
-            raise RuntimeError(
-                f"Bot {bot_id} already has an evaluation activity claim"
-            ) from exc
+            raise RuntimeError(f"Bot {bot_id} already has an evaluation activity claim") from exc
         try:
             with os.fdopen(descriptor, "wb") as handle:
                 handle.write(encoded)
                 handle.flush()
+                os.fsync(handle.fileno())
         except Exception:
             path.unlink(missing_ok=True)
             raise
@@ -1320,9 +1803,7 @@ class EvaluationManager:
     ) -> None:
         claim = self._read_claim(bot_id)
         if claim is None or claim.get("evaluation_id") != evaluation_id:
-            raise RuntimeError(
-                f"Bot {bot_id} evaluation activity claim changed during startup"
-            )
+            raise RuntimeError(f"Bot {bot_id} evaluation activity claim changed during startup")
         claim["worker_pid"] = worker_pid
         _write_json(self._claim_path(bot_id), claim)
 
@@ -1344,71 +1825,29 @@ class EvaluationManager:
         return isinstance(owner_pid, int) and self._pid_exists(owner_pid)
 
     def _remove_stale_orphan_claims(self) -> None:
+        self._verify_private_root()
         for path in self.root.glob(".active-*.json"):
-            if path.is_symlink():
-                raise RuntimeError(
-                    f"evaluation activity claim cannot be a symlink: {path.name}"
-                )
+            self._verify_artifact_file(path, required=True)
             claim = _read_json(path)
             bot_id = str(claim.get("bot_id") or "")
             evaluation_id = str(claim.get("evaluation_id") or "")
             if not bot_id or not evaluation_id:
-                raise RuntimeError(
-                    f"unreadable evaluation activity claim: {path.name}"
-                )
+                raise RuntimeError(f"unreadable evaluation activity claim: {path.name}")
             expected = self._claim_path(bot_id)
             if expected != path:
-                raise RuntimeError(
-                    f"invalid evaluation activity claim: {path.name}"
-                )
+                raise RuntimeError(f"invalid evaluation activity claim: {path.name}")
             directory = self._evaluation_dir(evaluation_id)
             if not self._claim_is_live(claim, directory):
                 self._release_claim(bot_id, evaluation_id)
 
-    def _patch_report_status(
-        self,
-        evaluation_id: str,
-        status: str,
-        error: str,
-    ) -> None:
-        directory = self._evaluation_dir(evaluation_id)
-        result_path = directory / "result.json"
-        result = self._verified_result(
-            evaluation_id,
-            directory=directory,
-            required=False,
-        )
-        if result:
-            result["status"] = status
-            result["finished_at"] = _utc_now()
-            result["error"] = error
-            _write_json(result_path, result)
-        markdown_path = directory / "summary.md"
-        self._verify_artifact_file(markdown_path, required=False)
-        if markdown_path.is_file():
-            text = markdown_path.read_text(encoding="utf-8")
-            lines = text.splitlines()
-            for index, line in enumerate(lines):
-                if line.startswith(("- 状态：", "- status:")):
-                    separator = "状态：" if line.startswith("- 状态：") else "status:"
-                    lines[index] = f"- {separator} `{status}`"
-                    break
-            temporary = markdown_path.with_suffix(".md.tmp")
-            temporary.write_text(
-                "\n".join(lines) + "\n",
-                encoding="utf-8",
-            )
-            temporary.replace(markdown_path)
-
     def _state(self, evaluation_id: str) -> dict[str, Any]:
         directory = self._verified_evaluation_dir(evaluation_id)
-        state = _read_json(
-            directory / "state.json"
-        )
+        state = _read_json(directory / "state.json")
         return state
 
     def _verified_evaluation_dir(self, evaluation_id: str) -> Path:
         directory = self._evaluation_dir(evaluation_id)
+        self._verify_evaluation_directory(directory)
         request_path = directory / "request.json"
         state_path = directory / "state.json"
         self._verify_artifact_file(request_path, required=True)
@@ -1418,13 +1857,9 @@ class EvaluationManager:
         if not request or not state:
             raise KeyError(evaluation_id)
         if request.get("evaluation_id") != evaluation_id:
-            raise ValueError(
-                "evaluation_id does not match its request record"
-            )
+            raise ValueError("evaluation_id does not match its request record")
         if state.get("evaluation_id") != evaluation_id:
-            raise ValueError(
-                "evaluation_id does not match its state record"
-            )
+            raise ValueError("evaluation_id does not match its state record")
         return directory
 
     def _verified_result(
@@ -1443,38 +1878,58 @@ class EvaluationManager:
         if not result:
             raise ValueError("evaluation result is not valid JSON")
         if result.get("evaluation_id") != evaluation_id:
-            raise ValueError(
-                "evaluation_id does not match its result record"
-            )
+            raise ValueError("evaluation_id does not match its result record")
         return result
 
     @staticmethod
     def _verify_artifact_file(path: Path, *, required: bool) -> bool:
-        if path.is_symlink():
-            raise ValueError(
-                f"evaluation artifact cannot be a symlink: {path.name}"
-            )
-        if not path.exists():
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
             if required:
                 raise KeyError(path.name)
             return False
-        if not path.is_file():
-            raise ValueError(
-                f"evaluation artifact is not a regular file: {path.name}"
-            )
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError(f"evaluation artifact cannot be a symlink: {path.name}")
+        _validate_private_file_metadata(metadata, path)
         return True
 
+    @staticmethod
+    def _verify_evaluation_directory(directory: Path) -> None:
+        try:
+            metadata = directory.lstat()
+        except FileNotFoundError as exc:
+            raise KeyError(directory.name) from exc
+        _validate_private_directory_metadata(
+            metadata,
+            directory,
+            label="Evaluation directory",
+        )
+
     def _evaluation_dir(self, evaluation_id: str) -> Path:
-        if not evaluation_id or len(evaluation_id) > 128 or any(
-            char
-            not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
-            for char in evaluation_id
+        if (
+            not evaluation_id
+            or len(evaluation_id) > 128
+            or any(
+                char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+                for char in evaluation_id
+            )
         ):
             raise ValueError("invalid evaluation_id")
+        self._verify_private_root()
         path = self.root / evaluation_id
-        if path.is_symlink():
-            raise ValueError("evaluation directory cannot be a symlink")
         path.relative_to(self.root)
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            return path
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError("evaluation directory cannot be a symlink")
+        _validate_private_directory_metadata(
+            metadata,
+            path,
+            label="Evaluation directory",
+        )
         return path
 
     @staticmethod
@@ -1555,7 +2010,7 @@ class EvaluationManager:
                         "-Command",
                         (
                             f"(Get-CimInstance Win32_Process -Filter "
-                            f"\"ProcessId = {pid}\").CommandLine"
+                            f'"ProcessId = {pid}").CommandLine'
                         ),
                     ],
                     check=False,
@@ -1565,28 +2020,31 @@ class EvaluationManager:
                 )
             except (OSError, subprocess.SubprocessError):
                 return False
-            argv = EvaluationManager._split_windows_command_line(
-                completed.stdout.strip()
-            )
+            argv = EvaluationApplication._split_windows_command_line(completed.stdout.strip())
         else:
             try:
                 raw_argv = Path(f"/proc/{pid}/cmdline").read_bytes()
             except OSError:
                 return False
             argv = [
-                value.decode("utf-8", errors="replace")
-                for value in raw_argv.split(b"\0")
-                if value
+                value.decode("utf-8", errors="replace") for value in raw_argv.split(b"\0") if value
             ]
-        return EvaluationManager._argv_matches_evaluation(argv, directory)
+        return EvaluationApplication._argv_matches_evaluation(argv, directory)
 
     @staticmethod
     def _argv_matches_evaluation(
         argv: Sequence[str],
         directory: Path,
     ) -> bool:
-        normalized_tokens = {str(value).casefold() for value in argv}
-        if "chatcopilot" not in normalized_tokens or "evals" not in normalized_tokens:
+        normalized_tokens = [str(value).casefold() for value in argv]
+        managed_entries = [
+            index
+            for index, value in enumerate(normalized_tokens)
+            if value == "chatcopilot.evals.managed_worker"
+            and index > 0
+            and normalized_tokens[index - 1] == "-m"
+        ]
+        if len(managed_entries) != 1:
             return False
         output_values: list[str] = []
         index = 0
@@ -1639,11 +2097,7 @@ class EvaluationManager:
                         if slash_count % 2:
                             value.append('"')
                             index += 1
-                        elif (
-                            quoted
-                            and index + 1 < length
-                            and command_line[index + 1] == '"'
-                        ):
+                        elif quoted and index + 1 < length and command_line[index + 1] == '"':
                             value.append('"')
                             index += 2
                         else:
@@ -1653,11 +2107,7 @@ class EvaluationManager:
                     value.extend("\\" * slash_count)
                     continue
                 if char == '"':
-                    if (
-                        quoted
-                        and index + 1 < length
-                        and command_line[index + 1] == '"'
-                    ):
+                    if quoted and index + 1 < length and command_line[index + 1] == '"':
                         value.append('"')
                         index += 2
                     else:
@@ -1679,9 +2129,22 @@ class EvaluationManager:
     ) -> WorkerPidStatus:
         if cls._pid_matches_evaluation(pid, directory):
             return "matched"
+        if cls._pid_is_zombie(pid):
+            return "exited"
         if cls._pid_exists(pid):
             return "unknown"
         return "exited"
+
+    @staticmethod
+    def _pid_is_zombie(pid: int) -> bool:
+        if os.name == "nt" or pid <= 0:
+            return False
+        try:
+            value = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        except OSError:
+            return False
+        close = value.rfind(")")
+        return close >= 0 and value[close + 2 : close + 3] == "Z"
 
     @staticmethod
     def _pid_exists(pid: int) -> bool:
@@ -1723,7 +2186,22 @@ class EvaluationManager:
         return True
 
     @staticmethod
-    def _terminate_pid(pid: int) -> None:
+    def _request_pid_stop(pid: int) -> None:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            return
+
+    @staticmethod
+    def _kill_pid(pid: int) -> None:
         if os.name == "nt":
             subprocess.run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],
@@ -1733,7 +2211,7 @@ class EvaluationManager:
             )
             return
         try:
-            os.killpg(pid, signal.SIGTERM)
+            os.killpg(pid, signal.SIGKILL)
         except (ProcessLookupError, OSError):
             return
 
@@ -1753,9 +2231,7 @@ class EvaluationManager:
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired as exc:
-                raise RuntimeError(
-                    "evaluation process did not stop after termination"
-                ) from exc
+                raise RuntimeError("evaluation process did not stop after termination") from exc
             return
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -1765,20 +2241,16 @@ class EvaluationManager:
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired as exc:
-                raise RuntimeError(
-                    "evaluation process did not stop after termination"
-                ) from exc
+                raise RuntimeError("evaluation process did not stop after termination") from exc
         except ProcessLookupError:
             try:
                 process.wait(timeout=1)
             except subprocess.TimeoutExpired as exc:
-                raise RuntimeError(
-                    "evaluation process identity could not be confirmed"
-                ) from exc
+                raise RuntimeError("evaluation process identity could not be confirmed") from exc
 
 
 __all__ = [
     "ACTIVE_STATUSES",
     "EvaluationBlocked",
-    "EvaluationManager",
+    "EvaluationApplication",
 ]
