@@ -53,8 +53,9 @@ deploy / console / CLI
 - `platform` / `llm` / `workspace` / `deploy` / `access`：平台、模型、目录、部署与
   访问控制。
 
-BotSpec 只声明 tool-pack id。具体目录在 `tool_packs/catalog.py`，工具发现统一走
-`agent/tools/registry`，Console 通过 `component_catalog` 读取目录投影。
+BotSpec 只声明 tool-pack id。具体目录在 `tool_packs/catalog.py`，每个 module binding
+列出精确工具名；builtin 与 external 使用同一映射。工具发现统一走
+`agent/tools/registry`，Console 通过 `component_catalog` 读取同一目录投影。
 
 ## Agent backend
 

@@ -21,6 +21,9 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Pinned pull-request CI, dependency updates, and a manual signed-tag workflow
   that creates verified draft GitHub Releases.
 - Code of Conduct, support policy, and release runbook.
+- Project history centered on the initial design, problems encountered, and
+  resulting architecture changes, with a Mermaid overview from the November
+  2025 multi-repository incubation through the public baseline.
 - Reviewed public career providers for explicitly requested companies,
   including a bounded direct Tencent source, structured search fallbacks, and
   official job-detail URL validation while the default watchlist remains empty.

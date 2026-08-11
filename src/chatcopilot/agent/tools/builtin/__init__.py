@@ -1,21 +1,24 @@
-"""Agent built-in tool modules keyed by BotSpec tool pack."""
+"""Compatibility views of Agent built-in tool modules.
+
+The concrete pack-to-module mapping belongs to :mod:`chatcopilot.tool_packs.catalog`.
+This module derives the legacy views so Agent discovery has no second registry.
+"""
+
+from chatcopilot.tool_packs.catalog import get_tool_pack_entry, known_tool_pack_names
+
+
+_BUILTIN_MODULE_PREFIX = "chatcopilot.agent.tools.builtin."
+
 
 BUILTIN_TOOL_MODULES_BY_TOOL_PACK = {
-    "workspace.read_write": (
-        "chatcopilot.agent.tools.builtin.workspace_tools",
-    ),
-    "memory.chat": (
-        "chatcopilot.agent.tools.builtin.memory_tools",
-    ),
-    "persona.manage": (
-        "chatcopilot.agent.tools.builtin.persona_tools",
-    ),
-    "playbooks.reader": (
-        "chatcopilot.agent.tools.builtin.skill_tools",
-    ),
-    "mcp.admin": (
-        "chatcopilot.external_tools.mcp_admin.tools",
-    ),
+    name: tuple(
+        module
+        for module in entry.tool_modules
+        if module.startswith(_BUILTIN_MODULE_PREFIX)
+    )
+    for name in sorted(known_tool_pack_names())
+    if (entry := get_tool_pack_entry(name)) is not None
+    and any(module.startswith(_BUILTIN_MODULE_PREFIX) for module in entry.tool_modules)
 }
 
 BUILTIN_TOOL_MODULES = tuple(

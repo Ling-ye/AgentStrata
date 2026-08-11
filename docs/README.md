@@ -8,6 +8,7 @@
 | 我想要…… | 从这里开始 | 接着阅读 |
 | --- | --- | --- |
 | 了解项目定位与能力边界 | [`README.md`](../README.md) | [`architecture.md`](architecture.md)、[`runtime.md`](runtime.md) |
+| 了解公开前开发沿革与架构演进 | [`project-history.md`](project-history.md) | [`architecture.md`](architecture.md)、[`../specs/`](../specs/) |
 | 创建或配置机器人 | [`bot-spec.md`](bot-spec.md) | [`../bots/_template/README.md`](../bots/_template/README.md) |
 | 首次安装到 Linux / WSL | [`deployment.md`](deployment.md) | [`operations.md`](operations.md) |
 | 更新、重启、看日志或诊断 | [`operations.md`](operations.md) | [`../deploy/wsl/README_WSL.md`](../deploy/wsl/README_WSL.md) |
@@ -21,6 +22,8 @@
 ## 文档分层
 
 - **入口**：`README.md` 回答“这是什么、适合谁、如何开始”。
+- **沿革**：`project-history.md` 说明各阶段的初始设计、暴露问题、架构优化和结果，
+  并链接相关规格；不复制私有 Git 对象、仓库坐标或运行值。
 - **操作**：`operations.md` 是日常命令的唯一集中速查；安装设计归
   `deployment.md`，异常恢复归 `deploy/wsl/README_WSL.md`。
 - **参考**：架构、运行时、BotSpec、控制台和外部工具文档解释稳定契约与实现边界。

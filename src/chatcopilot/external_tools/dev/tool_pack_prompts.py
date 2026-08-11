@@ -11,7 +11,7 @@ def build_dev_files_pack() -> ToolPackPrompt:
             "## File operations\n\n"
             "Use read_file, edit_file, write_file, delete_file, list_directory, and "
             "search_content for direct project file work. Prefer edit_file for a focused "
-            "replacement and write_file for a new file or a deliberate full rewrite."
+            "replacement and write_file for a new file or a deliberate full rewrite.",
         ),
     )
 
@@ -22,7 +22,7 @@ def build_dev_shell_pack() -> ToolPackPrompt:
         prompt_fragments=(
             "## Shell execution\n\n"
             "Use run_command for tests, validation, and project CLI operations. Respect the "
-            "configured project root and command timeout."
+            "configured project root and command timeout.",
         ),
     )
 
@@ -41,6 +41,21 @@ def build_dev_code_tasks_pack() -> ToolPackPrompt:
             "For an external open-source adapter, first call prepare_adapter_source and "
             "show its exact envelope and digest to the Owner. Wait for explicit approval "
             "before calling approve_adapter_source. Only then call "
-            "forge_open_source_adapter with the unchanged one-shot approval."
+            "forge_open_source_adapter with the unchanged one-shot approval.",
         ),
     )
+
+
+TOOL_PACK_PROMPT_BUILDERS = {
+    "dev.files": build_dev_files_pack,
+    "dev.shell": build_dev_shell_pack,
+    "dev.code_tasks": build_dev_code_tasks_pack,
+}
+
+
+__all__ = [
+    "TOOL_PACK_PROMPT_BUILDERS",
+    "build_dev_code_tasks_pack",
+    "build_dev_files_pack",
+    "build_dev_shell_pack",
+]

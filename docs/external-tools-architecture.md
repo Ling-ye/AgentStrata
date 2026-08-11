@@ -27,11 +27,26 @@ external_tools/
 `tool_packs/catalog.py` 是静态 catalog。Entry 可以声明：
 
 - prompt manifest module 和 builder；
-- 一个或多个工具模块；
+- 一个或多个 `ToolModuleBinding`，每个 binding 同时声明模块与该 pack 精确暴露的
+  `ToolDef.name`；
 - 可选通用 HTTP route module。
 
 `contracts.tool_packs.ToolPackEntry` 不携带领域专用后端字段。BotSpec 只选择 pack id，
-Agent 工具发现统一走 `agent/tools/registry`。
+Agent 工具发现统一走 `agent/tools/registry`。builtin 与 external pack 使用同一张映射；
+模块被多个 pack 共享时，运行时只取各 binding 明确列出的工具。一个工具需要跨 pack
+共享时，必须在每个 binding 中显式声明，不能依赖模块级全量导出。
+
+Console 通过 `component_catalog.iter_tool_pack_tools()` 读取同一精确投影，不自行 import
+模块或维护第二张映射。新增或调整 pack 后运行：
+
+```bash
+python scripts/check_component_catalog.py --json
+```
+
+门禁会拒绝遗漏工具、幽灵工具、重复工具、跨模块冲突、无效 prompt manifest、权限或
+schema 异常，以及 MCP、subagent、workflow 之间的静态工具名冲突。仓库门禁严格读取
+packaged MCP catalog，拒绝运行时宽容读取会跳过的损坏记录或重复 ID；它不执行 handler，
+也不连接远端 MCP。
 
 ## 三入口分层
 
@@ -89,11 +104,12 @@ OpenAPI 响应检查与通用 GET 逃生门。源代码、示例和测试不得�
 ## 新增领域
 
 1. 在 `external_tools/<domain>/` 建立清晰的 spec/service/module 边界。
-2. 在 `tool_packs/catalog.py` 注册静态 entry。
+2. 在 `tool_packs/catalog.py` 注册静态 entry，并为每个模块列出精确工具名。
 3. 通过 `shared.tool_spec` 或 contracts 构造 ToolDef/HandlerResult。
 4. 在需要的 BotSpec 中显式选择 pack。
 5. 增加单元测试、架构检查和用户文档。
 6. 架构或公共契约变化先创建或更新 `specs/<id>/spec.md`。
+7. 运行 `scripts/check_component_catalog.py`，确认没有未分配或跨 surface 冲突。
 
 ## 验证
 
@@ -102,5 +118,6 @@ python -m pytest \
   tests/unit/test_external_tools_registry.py \
   tests/unit/test_feishu_tools.py \
   tests/unit/test_career_intelligence.py -q
+python scripts/check_component_catalog.py
 python scripts/check_architecture.py
 ```

@@ -4,35 +4,17 @@ import unittest
 
 from chatcopilot.botspec.registry import all_tool_modules, resolve_tool_modules
 from chatcopilot.agent.tools.registry import build_mcp_tools_schema, build_tools_schema, discover_tools
+from chatcopilot.component_catalog import iter_tool_packs
 from chatcopilot.external_tools.shared.tool_spec import ToolDef
 
 
 class ExternalToolsRegistryTests(unittest.TestCase):
     def test_default_discovery_uses_tool_pack_modules(self) -> None:
+        pack_names = tuple(name for name, _entry in iter_tool_packs())
+
         self.assertEqual(
-            all_tool_modules(),
-            resolve_tool_modules(
-                (
-                    "feishu.document",
-                    "feishu.sheet",
-                    "feishu.bitable",
-                    "feishu.wiki",
-                    "feishu.messaging",
-                    "filesystem.windows.read",
-                    "unity.codebase.read",
-                    "unity.skills",
-                    "codebase.read",
-                    "dev.files",
-                    "dev.shell",
-                    "dev.code_tasks",
-                    "career.intelligence",
-                    "wiki.knowledge",
-                    "web.fetch",
-                    "workspace.read_write",
-                    "memory.chat",
-                    "playbooks.reader",
-                )
-            ),
+            set(all_tool_modules()),
+            set(resolve_tool_modules(pack_names)),
         )
 
     def test_empty_tool_pack_selection_has_no_tools(self) -> None:

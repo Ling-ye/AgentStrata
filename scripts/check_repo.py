@@ -62,6 +62,7 @@ def _profiles() -> dict[str, tuple[Check, ...]]:
                 "src/chatcopilot/agent/session_protocol.py",
             ),
         ),
+        Check("component catalog", _python("scripts/check_component_catalog.py")),
     )
     fast = (
         *common,

@@ -10,7 +10,7 @@
 - 默认追求干净的当前设计；除非现有契约、测试或用户明确要求，不为了旧数据或旧实现牺牲结构。
 - 自动生成 commit 描述时用简短中文。
 - AI 不执行 `git commit` / `git push`；提交由用户完成。
-- 改完代码后尽量做快速验证，并同步更新受影响的 `README.md` 和 `AGENTS.md`。`README.md` 只做公开入口，`docs/operations.md` 集中日常命令，`docs/deployment.md` 只讲首次部署与边界，`deploy/wsl/README_WSL.md` 只讲异常排障；组件文档链接事实源，不复制运维流程。
+- 改完代码后尽量做快速验证，并同步更新受影响的 `README.md` 和 `AGENTS.md`。`README.md` 只做公开入口，`docs/project-history.md` 记录开发时间线、各阶段的初始设计、问题、架构优化和相关规格，禁止写入私有仓库坐标或运行值；`docs/operations.md` 集中日常命令，`docs/deployment.md` 只讲首次部署与边界，`deploy/wsl/README_WSL.md` 只讲异常排障；组件文档链接事实源，不复制运维流程。
 - 架构、公共契约、部署流程和数据迁移必须先引用或创建 `specs/<id>/spec.md`；普通修复与局部功能直接实现并测试。
 - `spec.md` frontmatter 只允许 `id/type/status/created`，正文固定为 `Summary/Design/Acceptance/Verification`；流程细则见 `docs/sdd.md`，结构检查跑 `python3 scripts/check_sdd_specs.py`。
 
@@ -58,7 +58,7 @@ deploy / console / CLI
 - **Contracts 层禁止 import**：`chatcopilot.agent.*` / `chatcopilot.middleware.*` / `chatcopilot.platforms.*` / `chatcopilot.botspec.*` / `chatcopilot.external_tools.*`。
 - **BotSpec 四面模型**：`prompts` 管机器人提示词，`tools` 管本地工具包/MCP/工具特性/隐藏工具，`agents` 管主 Agent backend（`native` / `langgraph` / `codex`）、角色访问模式、subagent 与搜索能力，`context` 管 RAG、可写私有 Wiki、记忆存储、代码仓库、playbooks 和 dev tools 配置（`context.dev`）。当前内置 workflow registry 为空，文档和配置示例不要写不存在的 `coding` / `research` workflow。
 - **LLM 三槽配置**：BotSpec 的 `llm.chat / llm.research / llm.code` 分别声明日常模型前缀、研究模型前缀和 Codex 路由策略；非密钥默认值进入版本库，secret 留在 `local.env`。research 只覆盖实际提供的字段，其余配置继承 chat；机器 env 仍是最高优先级。`llm.code.reasoning_effort` 与 `llm.code.profiles` 形成对话可选白名单，`/model` 只修改当前 ACP session 的主 Codex lane，不能改变共享 chat LLM 或独立 code-worker。启用 `dev.code_tasks` 的实例必须用 `llm.code.code_task_profile` 引用现有 profile；worker 启动时从实例前缀 env 解析该 profile，再内部派生 `CHATCOPILOT_CODE_MODEL` / `CHATCOPILOT_CODE_REASONING_EFFORT`，不得从 `local.env` 直接导入这两个全局变量。
-- **工具发现统一走 `agent/tools/registry`**；具体工具包 catalog 位于 `tool_packs/catalog.py`，`contracts.tool_packs` 只保留 DTO；控制台和控制面只读 `component_catalog`，不直接 import `agent.subagents.*` 或 `botspec.registry`；BotSpec 只声明 `tools.packs`，不让 Agent 层 import BotSpec 或中间件类型。
+- **工具发现统一走 `agent/tools/registry`**；具体工具包 catalog 位于 `tool_packs/catalog.py`，每个 `ToolModuleBinding` 必须声明模块和精确工具名，builtin 与 external 不得维护第二张 pack 映射。Agent 与 Console 消费同一投影；共享模块不能隐式暴露未声明工具。`scripts/check_component_catalog.py` 验证 pack、feature、MCP、subagent、workflow 和跨 surface 工具名一致性。`contracts.tool_packs` 只保留 DTO；控制台和控制面只读 `component_catalog`，不直接 import `agent.subagents.*` 或 `botspec.registry`；BotSpec 只声明 `tools.packs`，不让 Agent 层 import BotSpec 或中间件类型。
 - **职业情报 provider 不是关注列表**：[KNOWN][HIGH] `career.intelligence` 的默认 watchlist 必须为空；只有用户显式目标或 workspace-local watchlist 才能触发查询。[KNOWN][HIGH] 经过审阅的公开 provider 只作为能力目录：直接源仅读取公开招聘端点，失败时返回结构化 research fallback；已知公司 fallback 写入必须校验官方域名和职位详情页，禁止把稳定 tenant 招聘端点、个人目标或社区/搜索页固化为官方岗位。
 - **大模块保留 facade**：`agent/mcp/client.py`、`agent/tools/builtin/workspace_tools.py`、`agent/subagents/registry.py`、`agent/search/coordinator.py` 是稳定入口；新增职责放到同层子模块，不把 runner/stateless/serialization/workspace handler/subagent definition/delegate/workflow/search factory/circuit/result helper 逻辑塞回 facade。
 - **兼容层只做旧导出**：内部新代码和测试使用 canonical imports：`core.config` / `core.llm_client` / `core.concurrency`、`core.mcp_catalog`、`core.workspace_runtime`、`component_catalog`、`agent.search`；旧 `agent.config` / `agent.llm_client` / `agent.research` / `botspec.mcp_catalog` 等路径只允许外部兼容或 `tests/unit/test_compatibility_exports.py` 断言。旧 Codex turn routing 模块已删除，不得恢复第二套 route detector 或 code-job contract。
@@ -190,6 +190,9 @@ bash scripts/check_secrets.sh history
 
 # 统一入口；fast 包含 SDD、架构、requirements 漂移、Ruff、渐进 mypy 和核心测试
 .venv/bin/python scripts/check_repo.py fast
+
+# Component Catalog 精确投影与跨 surface 一致性
+.venv/bin/python scripts/check_component_catalog.py --json
 
 # 全量入口额外执行 pip check、wheel 构建不变性、完整 pytest 与控制台生产构建
 .venv/bin/python scripts/check_repo.py full

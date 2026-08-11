@@ -14,7 +14,7 @@
 - **运维总览**：调用 `/api/overview` 汇总机器人、基础设施服务和后台任务健康状态，展示摘要指标和「需要关注」问题队列。
 - **服务管理**：调用 `/api/infra` 展示共享 Docker MCP、平台网关等外部依赖，支持启停、重启、Pull、日志、登录和诊断。
 - **机器人实例**：展示每个 BotSpec 实例的部署、注册、运行、平台连接、日志、任务、更新和诊断入口。
-- **组件目录**：按 `tools` / `prompts` / `agents` / `context` 四个 surface 只读浏览工具包、运行特性、MCP 服务、提示词、Agent preset、workflow DTO 和上下文来源；数据只来自 `chatcopilot.component_catalog`，不直接读取 Agent/BotSpec 内部 registry。
+- **组件目录**：按 `tools` / `prompts` / `agents` / `context` 四个 surface 只读浏览工具包、运行特性、MCP 服务、提示词、Agent preset、workflow DTO 和上下文来源；数据只来自 `chatcopilot.component_catalog` 的精确 pack/tool 投影，不直接读取 Agent/BotSpec 内部 registry 或自行 import 工具模块。
 - [KNOWN][HIGH] **评测中心**：固定为「新建评测 / 评测记录 / 任务集」三个页签。Agent Profile 对比和 BFCL / GAIA / IFEval Suite 运行统一为 `Evaluation` 资源；记录页负责筛选、查看详情、取消、删除、重跑和导出，任务集页统一展示 Profile、Suite 数据准备状态与 Case coverage。报告统一保存在 `reports/evals/evaluations/<evaluation-id>/`。
 
 Console 后端的进程执行、YAML 投影和 job/task/log 可观测读取分别位于 `process_executor.py`、`yaml_io.py` 和 `observability.py`，`operations.py` 只保留控制面编排与兼容导出。前端路由按页面懒加载；Evals 的详情组件/展示函数位于 `features/evals/`，BotToolEditor 的模型与状态 hook 位于 `features/bots/tool-editor/`。

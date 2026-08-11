@@ -41,6 +41,7 @@ def test_validation_profiles_include_static_and_runtime_checks(
         "UTF-8 source normalization",
         "Ruff",
         "typed contracts",
+        "component catalog",
         "core tests",
     ]
     assert full_names[-4:] == [
