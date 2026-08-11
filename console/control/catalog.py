@@ -5,7 +5,6 @@ Read-only — no runtime Agent dependency.
 """
 from __future__ import annotations
 
-import importlib
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -99,34 +98,21 @@ def _cap_category(cap_id: str) -> str:
 # Tool pack collection
 # ---------------------------------------------------------------------------
 
-def _collect_tools_from_module(module_path: str) -> list[ToolBrief]:
-    """Import a tool module and extract TOOLS list without executing handlers."""
-    try:
-        mod = importlib.import_module(module_path)
-        raw_tools = getattr(mod, "TOOLS", [])
-        return [
-            ToolBrief(
-                name=getattr(t, "name", ""),
-                summary=getattr(t, "summary", ""),
-                category=getattr(t, "category", ""),
-                weight=getattr(t, "weight", "light"),
-                requires_role=getattr(t, "requires_role", None),
-            )
-            for t in raw_tools
-            if hasattr(t, "name")
-        ]
-    except Exception:
-        return []
-
-
 def _collect_tool_packs() -> list[CatalogItem]:
-    from chatcopilot.component_catalog import iter_tool_packs
+    from chatcopilot.component_catalog import iter_tool_pack_tools, iter_tool_packs
 
     items: list[CatalogItem] = []
     for pack_id, entry in iter_tool_packs():
-        tools: list[ToolBrief] = []
-        for mod_path in entry.tool_modules:
-            tools.extend(_collect_tools_from_module(mod_path))
+        tools = [
+            ToolBrief(
+                name=tool.name,
+                summary=tool.summary,
+                category=tool.category,
+                weight=tool.weight,
+                requires_role=tool.requires_role,
+            )
+            for tool in iter_tool_pack_tools(pack_id)
+        ]
 
         items.append(CatalogItem(
             id=f"tool_pack:{pack_id}",
@@ -135,7 +121,7 @@ def _collect_tool_packs() -> list[CatalogItem]:
             name=pack_id,
             description=entry.description,
             category=_cap_category(pack_id),
-            has_tools=bool(entry.tool_modules),
+            has_tools=bool(entry.tool_names),
             has_prompts=bool(entry.manifest_module),
             tools=tools,
         ))

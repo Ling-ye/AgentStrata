@@ -220,6 +220,8 @@ Run `.venv/bin/python scripts/check_repo.py full` before broad runtime,
 packaging, deployment, or Console changes. Architecture, public contracts,
 deployment workflows, and migrations use
 [SDD-lite](https://github.com/Ling-ye/AgentStrata/blob/main/docs/sdd.md).
+The fast profile also audits exact tool-pack membership and checks that Agent,
+Console, MCP, subagent, and workflow catalog projections cannot silently drift.
 
 ## Compatibility
 

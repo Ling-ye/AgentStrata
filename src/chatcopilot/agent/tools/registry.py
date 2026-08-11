@@ -10,8 +10,7 @@ import importlib
 import logging
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from chatcopilot.agent.tools.builtin import resolve_builtin_tool_modules
-from chatcopilot.tool_packs.catalog import all_tool_modules, resolve_tool_modules
+from chatcopilot.tool_packs.catalog import all_tool_bindings, resolve_tool_bindings
 from chatcopilot.external_tools.shared.tool_spec import (
     ToolDef,
     build_mcp_schema,
@@ -51,28 +50,23 @@ def discover_tools(
     seen: set[str] = set()
     excluded = set(exclude_tools or ())
 
-    # 1) builtin tools: selected by tool pack; None keeps MCP-compatible load-all.
-    for module_path in resolve_builtin_tool_modules(tool_packs):
-        for tool in _import_module_tools(module_path):
-            if tool.name in excluded or tool.name in seen:
-                continue
-            seen.add(tool.name)
-            out.append(tool)
-
-    # 2) external_tools（领域）：按 tool pack 解析
-    module_paths = (
-        resolve_tool_modules(tuple(tool_packs))
+    # 1) Static tools: built-in and domain tools share one exact catalog projection.
+    bindings = (
+        resolve_tool_bindings(tuple(tool_packs))
         if tool_packs is not None
-        else all_tool_modules()
+        else all_tool_bindings()
     )
-    for module_path in module_paths:
-        for tool in _import_module_tools(module_path):
+    for binding in bindings:
+        allowed_names = frozenset(binding.tool_names)
+        for tool in _import_module_tools(binding.module):
+            if tool.name not in allowed_names:
+                continue
             if tool.name in excluded or tool.name in seen:
                 continue
             seen.add(tool.name)
             out.append(tool)
 
-    # 3) MCP client tools are injected by AgentRuntime after BotSpec assembly.
+    # 2) MCP client tools are injected by AgentRuntime after BotSpec assembly.
     for tool in mcp_tools or ():
         if tool.name in excluded or tool.name in seen:
             continue

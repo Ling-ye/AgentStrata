@@ -83,7 +83,12 @@ from chatcopilot.contracts.runtime import (
     SubagentBudgetPlan,
     SubagentPlan,
 )
-from chatcopilot.contracts.tool_packs import ToolFeatureEntry, ToolPackEntry, ToolPackPrompt
+from chatcopilot.contracts.tool_packs import (
+    ToolFeatureEntry,
+    ToolModuleBinding,
+    ToolPackEntry,
+    ToolPackPrompt,
+)
 from chatcopilot.contracts.tools import (
     EXECUTION_GLOBAL_SERIAL_BACKGROUND,
     EXECUTION_SYNC,
@@ -155,6 +160,7 @@ __all__ = [
     "TextDelta",
     "ToolContext",
     "ToolFeatureEntry",
+    "ToolModuleBinding",
     "ToolPackEntry",
     "ToolPackPrompt",
     "ToolDef",

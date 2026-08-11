@@ -88,8 +88,8 @@ packaging:
 - `mcp.servers`：bot-local MCP binding 文件。
 - `hide`：按工具名隐藏运行时工具。
 
-具体目录由 `tool_packs/catalog.py` 管理；BotSpec 不直接指定可 import 的任意 Python
-模块。
+具体目录由 `tool_packs/catalog.py` 管理；每个 pack 用 module binding 声明精确工具名，
+Agent 与 Console 使用相同投影。BotSpec 不直接指定可 import 的任意 Python 模块。
 
 ### `agents`
 
@@ -144,6 +144,9 @@ project name。`~` 在部署边界展开；其他 shell 变量和命令替换不
 
 这些工具以 bot identity 工作，需要把目标资源授权给对应应用。公开模板不得包含真实
 tenant、文档 ID、账号或 endpoint。
+
+五个 Feishu pack 共享同一实现模块，但文档、表格、Bitable、Wiki 和消息工具按 pack
+精确隔离；只读 `feishu_api_get` 作为显式声明的公共逃生门随任一 Feishu pack 提供。
 
 ## 创建与校验
 

@@ -292,6 +292,32 @@ Profile 比较和 benchmark suite 保留各自执行语义，但共享一套生�
 [`public-capability-parity`](../specs/public-capability-parity/spec.md)、
 [`releasing.md`](releasing.md)。
 
+## 9. Component Catalog 收敛：从模块级发现到精确工具投影
+
+**初始问题**
+
+tool pack 只记录模块路径。多个 Feishu pack 复用同一 `spec` 模块时，选择任意一个
+pack 都会加载模块导出的全部工具；builtin pack 又由 Agent 内的第二张表维护，导致
+Console 无法展示其工具，静态 catalog 与运行时装配可能漂移。
+
+**结构调整**
+
+- `ToolModuleBinding` 同时声明模块和该 pack 精确拥有的工具名。
+- builtin 与 external pack 统一进入 `tool_packs.catalog`，兼容入口只派生视图。
+- Agent discovery 和 Console 读取同一个 binding resolver；共享工具必须显式列入每个
+  需要它的 pack。
+- `component_catalog.audit` 作为薄 facade，按 tool/module 与其他 catalog surface 拆分审计模块，
+  检查 pack、feature、MCP、subagent、workflow、prompt manifest、ToolDef schema 和跨 surface
+  名称冲突，并以稳定 JSON 接入仓库 fast gate。
+
+**结果**
+
+单个 pack 不再隐式获得同模块的其他领域工具，Console 与 Agent 的 pack 工具列表保持
+一致；缺失、未分配、冲突或无效声明在测试前失败。
+
+相关规格：
+[`component-catalog-consistency-gate`](../specs/component-catalog-consistency-gate/spec.md)。
+
 ## 当前架构的收敛结果
 
 | 关注点 | 当前做法 |

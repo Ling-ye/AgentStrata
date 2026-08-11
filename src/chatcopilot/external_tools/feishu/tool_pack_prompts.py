@@ -1,8 +1,8 @@
 """通用飞书 tool pack prompt 声明。
 
 每个 builder 只返回该 tool pack 在 system prompt 中追加的领域提示片段；
-工具列表由 ``agent.tools.registry`` 通过 ``tool_packs.catalog`` 的 ``tool_modules``
-直接发现，无需 tool pack prompt 重复描述。
+工具列表由 ``agent.tools.registry`` 通过 ``tool_packs.catalog`` 的精确 module binding
+发现，无需 tool pack prompt 重复描述。
 """
 from __future__ import annotations
 

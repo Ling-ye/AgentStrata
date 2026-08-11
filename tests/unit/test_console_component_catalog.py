@@ -35,6 +35,25 @@ def test_console_catalog_reads_mcp_entries_from_component_catalog() -> None:
     assert [tool.name for tool in tavily.tools] == ["tavily_search", "tavily_extract"]
 
 
+def test_console_catalog_projects_builtin_and_shared_module_tools_exactly() -> None:
+    from console.control import catalog
+
+    items = {item.id: item for item in catalog.full_catalog(use_cache=False)}
+
+    workspace = items["tool_pack:workspace.read_write"]
+    document = items["tool_pack:feishu.document"]
+    assert workspace.has_tools
+    assert {tool.name for tool in workspace.tools} >= {
+        "list_workspace",
+        "get_task_status",
+    }
+    assert {tool.name for tool in document.tools} == {
+        "feishu_doc_create",
+        "feishu_doc_append",
+        "feishu_api_get",
+    }
+
+
 def test_console_inventory_resolves_mcp_refs_from_component_catalog(tmp_path, monkeypatch) -> None:
     from console.control import inventory
 
@@ -104,3 +123,11 @@ def test_console_no_longer_reads_mcp_catalog_yaml_directly() -> None:
         text = (ROOT / rel).read_text(encoding="utf-8")
         assert "mcp_catalog.yaml" not in text
         assert "chatcopilot.botspec.mcp_catalog" not in text
+
+
+def test_console_does_not_own_tool_module_import_logic() -> None:
+    text = (ROOT / "console/control/catalog.py").read_text(encoding="utf-8")
+
+    assert "import importlib" not in text
+    assert "_collect_tools_from_module" not in text
+    assert "iter_tool_pack_tools" in text

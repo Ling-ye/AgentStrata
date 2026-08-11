@@ -40,21 +40,36 @@ class McpCatalogEntry:
         }
 
 
-def load_mcp_catalog() -> dict[str, McpCatalogEntry]:
-    """Load the built-in MCP catalog, optionally overridden by env for tests/dev."""
+def load_mcp_catalog(
+    *,
+    use_env_override: bool = True,
+    strict: bool = False,
+) -> dict[str, McpCatalogEntry]:
+    """Load the MCP catalog, optionally honoring the machine-local override."""
 
-    data = _load_catalog_yaml()
+    data = _load_catalog_yaml(
+        use_env_override=use_env_override,
+        strict=strict,
+    )
     raw_entries = data.get("servers", [])
     if not isinstance(raw_entries, list):
+        if strict:
+            raise ValueError("MCP catalog servers must be a list")
         return {}
     entries: dict[str, McpCatalogEntry] = {}
     for raw in raw_entries:
         if not isinstance(raw, dict):
+            if strict:
+                raise ValueError("MCP catalog entries must be mappings")
             continue
         entry_id = str(raw.get("id", "")).strip()
         server = raw.get("server", {})
         if not entry_id or not isinstance(server, dict):
+            if strict:
+                raise ValueError("MCP catalog entries require an id and server mapping")
             continue
+        if strict and entry_id in entries:
+            raise ValueError("MCP catalog entry ids must be unique")
         entries[entry_id] = McpCatalogEntry(
             id=entry_id,
             title=str(raw.get("title", "") or "").strip(),
@@ -94,19 +109,31 @@ def resolve_catalog_server(raw: dict[str, Any]) -> dict[str, Any] | None:
     return merged
 
 
-def _load_catalog_yaml() -> dict[str, Any]:
+def _load_catalog_yaml(*, use_env_override: bool, strict: bool = False) -> dict[str, Any]:
     import yaml
 
-    override = os.environ.get(f"{ENV_PREFIX}_MCP_CATALOG", "").strip()
+    override = (
+        os.environ.get(f"{ENV_PREFIX}_MCP_CATALOG", "").strip()
+        if use_env_override
+        else ""
+    )
     if override:
         path = Path(override).expanduser()
         if path.is_file():
             data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            return data if isinstance(data, dict) else {}
+            if isinstance(data, dict):
+                return data
+            if strict:
+                raise ValueError("MCP catalog root must be a mapping")
+            return {}
 
     resource = resources.files("chatcopilot.botspec").joinpath(_DEFAULT_CATALOG_RESOURCE)
     data = yaml.safe_load(resource.read_text(encoding="utf-8")) or {}
-    return data if isinstance(data, dict) else {}
+    if isinstance(data, dict):
+        return data
+    if strict:
+        raise ValueError("MCP catalog root must be a mapping")
+    return {}
 
 
 def _str_map(value: Any) -> dict[str, str]:
