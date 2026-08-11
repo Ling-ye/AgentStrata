@@ -23,6 +23,7 @@ class Check:
     name: str
     argv: tuple[str, ...]
     cwd: Path = ROOT
+    uses_repository_index: bool = False
 
 
 def _python(*args: str) -> tuple[str, ...]:
@@ -38,20 +39,33 @@ def _pytest_basetemp(profile: str) -> str:
     return f"--basetemp={root / f'chatcopilot-pytest-{profile}'}"
 
 
-def _check_env() -> dict[str, str]:
+def _check_env(*, uses_repository_index: bool = False) -> dict[str, str]:
     env = os.environ.copy()
     temp_root = str(Path(env.get("TMPDIR") or "/tmp").expanduser().resolve())
     env.update({"TMPDIR": temp_root, "TEMP": temp_root, "TMP": temp_root})
+    if uses_repository_index and env.get("GIT_INDEX_FILE"):
+        env["GIT_OPTIONAL_LOCKS"] = "0"
+    else:
+        env.pop("GIT_INDEX_FILE", None)
+        env.pop("GIT_OPTIONAL_LOCKS", None)
     return env
 
 
 def _profiles() -> dict[str, tuple[Check, ...]]:
     common = (
         Check("SDD metadata", _python("scripts/check_sdd_specs.py")),
-        Check("public repository boundary", _python("scripts/check_public_repo.py")),
+        Check(
+            "public repository boundary",
+            _python("scripts/check_public_repo.py"),
+            uses_repository_index=True,
+        ),
         Check("architecture boundaries", _python("scripts/check_architecture.py")),
         Check("requirements drift", _python("scripts/sync_requirements.py", "--check")),
-        Check("UTF-8 source normalization", _python("scripts/normalize_utf8.py")),
+        Check(
+            "UTF-8 source normalization",
+            _python("scripts/normalize_utf8.py"),
+            uses_repository_index=True,
+        ),
         Check("Ruff", _python("-m", "ruff", "check", "src", "tests", "scripts", "console")),
         Check(
             "typed contracts",
@@ -82,7 +96,11 @@ def _profiles() -> dict[str, tuple[Check, ...]]:
     full = (
         *common,
         Check("installed dependency consistency", _python("-m", "pip", "check")),
-        Check("Python wheel build smoke", _python("scripts/build_smoke.py")),
+        Check(
+            "Python wheel build smoke",
+            _python("scripts/build_smoke.py"),
+            uses_repository_index=True,
+        ),
         Check(
             "full Python tests",
             _python(
@@ -220,7 +238,9 @@ def main() -> int:
                 check.argv,
                 cwd=check.cwd,
                 check=False,
-                env=_check_env(),
+                env=_check_env(
+                    uses_repository_index=check.uses_repository_index
+                ),
             )
             combined_output = ""
         else:
@@ -228,7 +248,9 @@ def main() -> int:
                 check.argv,
                 cwd=check.cwd,
                 check=False,
-                env=_check_env(),
+                env=_check_env(
+                    uses_repository_index=check.uses_repository_index
+                ),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

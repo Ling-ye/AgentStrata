@@ -2,18 +2,35 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
+import os
+import socket
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 from chatcopilot.agent.search.relevance import filter_relevant_items
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
+from chatcopilot.contracts.subagents import SearchProviderSpec
 from chatcopilot.external_tools.shared.tool_spec import ToolDef
 
 _LOG = logging.getLogger(__name__)
 
 WEB_PROVIDER_PRIORITY = ("tavily", "brave", "searxng")
+DEFAULT_PROVIDER_ENDPOINTS = {
+    "tavily": "https://api.tavily.com/search",
+    "brave": "https://api.search.brave.com/res/v1/web/search",
+    "searxng": "http://127.0.0.1:18064",
+}
+DEFAULT_PROVIDER_CREDENTIAL_ENVS = {
+    "tavily": "TAVILY_API_KEY",
+    "brave": "BRAVE_API_KEY",
+    "searxng": "",
+}
 DIRECT_SEARCH_SERVERS: dict[str, tuple[str, ...]] = {
     "web": WEB_PROVIDER_PRIORITY,
     "experience": ("xiaohongshu",),
@@ -25,21 +42,243 @@ CIRCUIT_BREAKER_ERRORS = frozenset({
     "mcp_timeout",
     "mcp_busy",
     "xhs_login_required",
+    "search_authentication_failed",
+    "search_quota_exceeded",
+    "search_timeout",
+    "search_transport_error",
+    "search_invalid_response",
+    "search_invalid_configuration",
 })
 MAX_RESULT_ITEMS = 15
+_MAX_PROVIDER_RESPONSE_BYTES = 4 * 1024 * 1024
 _SEARCH_TEXT_FIELDS = ("query", "keyword", "q", "search", "term")
+_PROVIDER_BREAKER_ERRORS = {
+    "search_quota_exceeded": "mcp_quota_exceeded",
+    "search_timeout": "mcp_timeout",
+    "search_transport_error": "mcp_unavailable",
+    "search_invalid_response": "mcp_unavailable",
+    "search_authentication_failed": "mcp_unavailable",
+    "search_invalid_configuration": "mcp_unavailable",
+}
+
+
+class SearchProviderError(RuntimeError):
+    """Stable, non-secret failure raised by an in-process provider client."""
+
+    def __init__(self, error_code: str) -> None:
+        self.error_code = error_code
+        super().__init__(error_code)
+
+
+class HttpSearchProviderClient:
+    """Bounded stdlib HTTP client for one reviewed web-search API."""
+
+    __slots__ = ("_credential", "spec")
+
+    def __init__(self, spec: SearchProviderSpec, credential: str = "") -> None:
+        self.spec = spec
+        self._credential = credential
+
+    def search(self, query: str) -> dict[str, Any]:
+        request, disable_proxy = self._build_request(query)
+        try:
+            payload = _request_json(
+                request,
+                timeout_seconds=self.spec.timeout_seconds,
+                disable_proxy=disable_proxy,
+            )
+            return {"results": _normalize_provider_results(self.spec, payload)}
+        except SearchProviderError:
+            raise
+        except urllib.error.HTTPError as exc:
+            raise SearchProviderError(_http_error_code(exc.code)) from None
+        except (TimeoutError, socket.timeout):
+            raise SearchProviderError("search_timeout") from None
+        except (urllib.error.URLError, OSError):
+            raise SearchProviderError("search_transport_error") from None
+        except (UnicodeError, ValueError, TypeError):
+            raise SearchProviderError("search_invalid_response") from None
+
+    def _build_request(self, query: str) -> tuple[urllib.request.Request, bool]:
+        endpoint = _validated_provider_endpoint(self.spec)
+        bounded_query = str(query or "").strip()[:1000]
+        headers = {"Accept": "application/json", "User-Agent": "AgentStrata/1.0"}
+        if self.spec.kind == "tavily":
+            headers["Authorization"] = f"Bearer {self._credential}"
+            headers["Content-Type"] = "application/json"
+            body = json.dumps(
+                {
+                    "query": bounded_query,
+                    "search_depth": "basic",
+                    "max_results": self.spec.max_results,
+                    "include_answer": False,
+                    "include_raw_content": False,
+                }
+            ).encode("utf-8")
+            return urllib.request.Request(endpoint, data=body, headers=headers), False
+        if self.spec.kind == "brave":
+            headers["X-Subscription-Token"] = self._credential
+            url = _append_query(
+                endpoint,
+                {"q": bounded_query[:400], "count": self.spec.max_results},
+            )
+            return urllib.request.Request(url, headers=headers), False
+        if self._credential:
+            headers["Authorization"] = f"Bearer {self._credential}"
+        search_endpoint = (
+            endpoint
+            if endpoint.rstrip("/").endswith("/search")
+            else f"{endpoint.rstrip('/')}/search"
+        )
+        url = _append_query(
+            search_endpoint,
+            {
+                "q": bounded_query,
+                "format": "json",
+                "categories": "general",
+                "language": "auto",
+                "safesearch": 1,
+            },
+        )
+        return urllib.request.Request(url, headers=headers), True
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject redirects so credential headers never cross an origin boundary."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+def _request_json(
+    request: urllib.request.Request,
+    *,
+    timeout_seconds: float,
+    disable_proxy: bool,
+) -> dict[str, Any]:
+    handlers: list[Any] = [_NoRedirectHandler()]
+    if disable_proxy:
+        handlers.insert(0, urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(*handlers)
+    with opener.open(request, timeout=timeout_seconds) as response:
+        raw = response.read(_MAX_PROVIDER_RESPONSE_BYTES + 1)
+    if len(raw) > _MAX_PROVIDER_RESPONSE_BYTES:
+        raise SearchProviderError("search_invalid_response")
+    payload = json.loads(raw.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise SearchProviderError("search_invalid_response")
+    return payload
+
+
+def _append_query(endpoint: str, values: dict[str, Any]) -> str:
+    return f"{endpoint}?{urllib.parse.urlencode(values)}"
+
+
+def _validated_provider_endpoint(spec: SearchProviderSpec) -> str:
+    if not (1.0 <= spec.timeout_seconds <= 60.0) or not (
+        1 <= spec.max_results <= MAX_RESULT_ITEMS
+    ):
+        raise SearchProviderError("search_invalid_configuration")
+    endpoint = spec.endpoint or DEFAULT_PROVIDER_ENDPOINTS.get(spec.kind, "")
+    if spec.kind in {"tavily", "brave"}:
+        if endpoint != DEFAULT_PROVIDER_ENDPOINTS[spec.kind]:
+            raise SearchProviderError("search_invalid_configuration")
+        return endpoint
+    if spec.kind != "searxng":
+        raise SearchProviderError("search_invalid_configuration")
+    try:
+        parsed = urllib.parse.urlparse(endpoint)
+        _ = parsed.port
+    except ValueError:
+        raise SearchProviderError("search_invalid_configuration") from None
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or not _is_loopback_host(parsed.hostname)
+    ):
+        raise SearchProviderError("search_invalid_configuration")
+    return endpoint
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    if hostname.strip().lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _http_error_code(status: int) -> str:
+    if status in {401, 403}:
+        return "search_authentication_failed"
+    if status in {402, 429, 432, 433}:
+        return "search_quota_exceeded"
+    if status in {408, 504}:
+        return "search_timeout"
+    return "search_transport_error"
+
+
+def _normalize_provider_results(
+    spec: SearchProviderSpec,
+    payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    container = payload
+    if spec.kind == "brave":
+        web = payload.get("web")
+        if not isinstance(web, dict):
+            raise SearchProviderError("search_invalid_response")
+        container = web
+    raw_results = container.get("results")
+    if not isinstance(raw_results, list):
+        raise SearchProviderError("search_invalid_response")
+    results: list[dict[str, Any]] = []
+    for raw in raw_results[: spec.max_results]:
+        if not isinstance(raw, dict):
+            continue
+        url = str(raw.get("url") or raw.get("link") or "").strip()
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            continue
+        title = str(raw.get("title") or raw.get("name") or "").strip()[:500]
+        snippet = str(
+            raw.get("content")
+            or raw.get("description")
+            or raw.get("snippet")
+            or ""
+        ).strip()[:1000]
+        results.append({"title": title, "url": url, "snippet": snippet})
+    return results
 
 
 @dataclass(frozen=True)
 class SearchProviderRegistry:
     tools: dict[str, ToolDef]
     _raw_search: dict[str, list[ToolDef]] = field(default_factory=dict)
+    _in_process: dict[str, HttpSearchProviderClient] = field(default_factory=dict)
+    _provider_kinds: dict[str, str] = field(default_factory=dict)
+    _provider_order: tuple[str, ...] = ()
+    _unavailable: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_tools(
         cls,
         tools: Sequence[ToolDef],
         raw_mcp_tools: Sequence[ToolDef] = (),
+        provider_specs: Sequence[SearchProviderSpec] = (),
     ) -> "SearchProviderRegistry":
         tool_dict = {tool.name: tool for tool in tools}
         raw: dict[str, list[ToolDef]] = {}
@@ -49,7 +288,34 @@ class SearchProviderRegistry:
             search_only = list(tool.metadata.get("mcp_search_only_tools") or [])
             if server_id and remote and remote in search_only:
                 raw.setdefault(server_id, []).append(tool)
-        return cls(tool_dict, raw)
+        clients: dict[str, HttpSearchProviderClient] = {}
+        kinds: dict[str, str] = {}
+        unavailable: dict[str, str] = {}
+        order: list[str] = []
+        for spec in provider_specs:
+            if not spec.enabled:
+                continue
+            order.append(spec.id)
+            kinds[spec.id] = spec.kind
+            if spec.kind not in DEFAULT_PROVIDER_ENDPOINTS:
+                unavailable[spec.id] = "search_invalid_configuration"
+                continue
+            credential_env = spec.credential_env
+            if credential_env is None:
+                credential_env = DEFAULT_PROVIDER_CREDENTIAL_ENVS.get(spec.kind, "")
+            credential = os.environ.get(credential_env, "").strip() if credential_env else ""
+            if credential_env and not credential:
+                unavailable[spec.id] = "search_credential_missing"
+                continue
+            clients[spec.id] = HttpSearchProviderClient(spec, credential)
+        return cls(
+            tool_dict,
+            raw,
+            clients,
+            kinds,
+            tuple(order),
+            unavailable,
+        )
 
     def available_sources(self) -> tuple[str, ...]:
         out: list[str] = []
@@ -69,7 +335,33 @@ class SearchProviderRegistry:
         return tuple(out)
 
     def has_direct_source(self, source: str) -> bool:
-        return any(server_id in self._raw_search for server_id in DIRECT_SEARCH_SERVERS.get(source, ()))
+        if source == "web" and self._in_process:
+            return True
+        return any(
+            server_id in self._raw_search
+            for server_id in DIRECT_SEARCH_SERVERS.get(source, ())
+        )
+
+    def direct_server_ids(self, source: str) -> tuple[str, ...]:
+        if source != "web":
+            return DIRECT_SEARCH_SERVERS.get(source, ())
+        configured_kinds = {
+            self._provider_kinds[provider_id]
+            for provider_id in self._in_process
+            if provider_id in self._provider_kinds
+        }
+        legacy = (
+            server_id
+            for server_id in WEB_PROVIDER_PRIORITY
+            if server_id in self._raw_search and server_id not in configured_kinds
+        )
+        return tuple((*self._provider_order, *legacy))
+
+    def in_process_client(self, provider_id: str) -> HttpSearchProviderClient | None:
+        return self._in_process.get(provider_id)
+
+    def unavailable_reason(self, provider_id: str) -> str:
+        return self._unavailable.get(provider_id, "")
 
     def raw_search_tool(self, server_id: str) -> ToolDef | None:
         candidates = self._raw_search.get(server_id, [])
@@ -120,7 +412,7 @@ class DirectSearchProvider:
         query: str,
         exclude_servers: set[str] | None = None,
     ) -> dict[str, Any] | None:
-        server_ids = DIRECT_SEARCH_SERVERS.get(logical_source)
+        server_ids = self._registry.direct_server_ids(logical_source)
         if not server_ids:
             return None
         has_any_tool = False
@@ -128,19 +420,33 @@ class DirectSearchProvider:
         for server_id in server_ids:
             if exclude_servers and server_id in exclude_servers:
                 continue
-            tool = self._registry.raw_search_tool(server_id)
-            if tool is None:
-                attempts.append({"server": server_id, "status": "not_configured"})
+            client = self._registry.in_process_client(server_id)
+            tool = self._registry.raw_search_tool(server_id) if client is None else None
+            unavailable = self._registry.unavailable_reason(server_id)
+            if client is None and tool is None:
+                attempts.append(
+                    {
+                        "server": server_id,
+                        "status": "unavailable" if unavailable else "not_configured",
+                        **({"reason": unavailable} if unavailable else {}),
+                    }
+                )
                 continue
             has_any_tool = True
             block = self._circuit.blocked(server_id) if self._circuit is not None else None
             if block is not None:
                 attempts.append({"server": server_id, "status": "circuit_open", "reason": block})
                 continue
-            payload, outputs, error_code = self._call_tool(tool, query)
+            if client is not None:
+                payload, outputs, error_code = self._call_in_process(client, query)
+            else:
+                payload, outputs, error_code = self._call_tool(tool, query)
             if error_code:
                 if self._circuit is not None:
-                    self._circuit.record_failure(server_id, error_code)
+                    self._circuit.record_failure(
+                        server_id,
+                        _PROVIDER_BREAKER_ERRORS.get(error_code, error_code),
+                    )
                 attempts.append({"server": server_id, "status": "failed", "reason": error_code})
                 continue
             if self._circuit is not None:
@@ -173,6 +479,21 @@ class DirectSearchProvider:
             "error": "all_direct_search_sources_exhausted",
             "provider_attempts": attempts,
         }
+
+    @staticmethod
+    def _call_in_process(
+        client: HttpSearchProviderClient,
+        query: str,
+    ) -> tuple[dict[str, Any], list[Any], str]:
+        try:
+            return client.search(query), [], ""
+        except SearchProviderError as exc:
+            _LOG.debug(
+                "in-process search provider failed | provider=%s error_code=%s",
+                client.spec.id,
+                exc.error_code,
+            )
+            return {}, [], exc.error_code
 
     def _call_tool(
         self,
@@ -375,9 +696,13 @@ def _entry_snippet(entry: dict[str, Any]) -> str:
 
 __all__ = [
     "CIRCUIT_BREAKER_ERRORS",
+    "DEFAULT_PROVIDER_CREDENTIAL_ENVS",
+    "DEFAULT_PROVIDER_ENDPOINTS",
     "DIRECT_SEARCH_SERVERS",
     "DirectSearchProvider",
+    "HttpSearchProviderClient",
     "MAX_RESULT_ITEMS",
+    "SearchProviderError",
     "SearchProviderRegistry",
     "WEB_PROVIDER_PRIORITY",
 ]

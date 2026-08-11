@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -220,6 +221,100 @@ def _prepare(
         source_root=source,
     )
     return source, bare, job_dir, calls
+
+
+@pytest.mark.parametrize("change_kind", ["created", "deleted", "renamed"])
+def test_validation_index_projects_exact_candidate_without_touching_real_index(
+    tmp_path: Path,
+    change_kind: str,
+) -> None:
+    worktree, _bare = _repository(tmp_path)
+    job_dir = tmp_path / "job-validation-index"
+    job_dir.mkdir(mode=0o700)
+    real_index = worktree / ".git" / "index"
+    real_index_before = real_index.read_bytes()
+
+    if change_kind == "created":
+        (worktree / "src" / "new.py").write_text("VALUE = 2\n", encoding="utf-8")
+        changed_files = ["src/new.py"]
+        expected_present = {"src/app.py", "src/new.py"}
+    elif change_kind == "deleted":
+        (worktree / "src" / "app.py").unlink()
+        changed_files = ["src/app.py"]
+        expected_present = set()
+    else:
+        (worktree / "src" / "app.py").rename(worktree / "src" / "renamed.py")
+        changed_files = ["src/app.py", "src/renamed.py"]
+        expected_present = {"src/renamed.py"}
+
+    candidate, tree_sha = delivery.prepare_validation_index(
+        job_dir=job_dir,
+        worktree=worktree,
+        changed_files=changed_files,
+    )
+    try:
+        assert candidate.stat().st_mode & 0o777 == 0o600
+        candidate_env = {**os.environ, "GIT_INDEX_FILE": str(candidate)}
+        projected = {
+            path
+            for path in _git(worktree, "ls-files", "-z", env=candidate_env).split("\0")
+            if path.startswith("src/")
+        }
+        assert projected == expected_present
+        assert len(tree_sha) == 40
+        assert real_index.read_bytes() == real_index_before
+    finally:
+        delivery.cleanup_validation_index(job_dir)
+
+    assert not candidate.exists()
+    assert real_index.read_bytes() == real_index_before
+
+
+def test_validation_index_rejects_unrecorded_untracked_candidate(
+    tmp_path: Path,
+) -> None:
+    worktree, _bare = _repository(tmp_path)
+    job_dir = tmp_path / "job-validation-index"
+    job_dir.mkdir(mode=0o700)
+    real_index = worktree / ".git" / "index"
+    real_index_before = real_index.read_bytes()
+    (worktree / "src" / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
+    (worktree / "src" / "unrecorded.py").write_text("VALUE = 3\n", encoding="utf-8")
+
+    with pytest.raises(ToolHandlerError) as mismatch:
+        delivery.prepare_validation_index(
+            job_dir=job_dir,
+            worktree=worktree,
+            changed_files=["src/app.py"],
+        )
+
+    assert mismatch.value.error_code == "code_task_delivery_delta_mismatch"
+    assert not (job_dir / delivery.VALIDATION_INDEX_FILENAME).exists()
+    assert not (
+        job_dir / f"{delivery.VALIDATION_INDEX_FILENAME}.lock"
+    ).exists()
+    assert real_index.read_bytes() == real_index_before
+
+
+def test_validation_index_cleanup_fails_closed_without_exposing_path(
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / "job-validation-cleanup"
+    job_dir.mkdir(mode=0o700)
+    candidate = job_dir / delivery.VALIDATION_INDEX_FILENAME
+    candidate.write_bytes(b"candidate")
+    lock = job_dir / f"{delivery.VALIDATION_INDEX_FILENAME}.lock"
+    lock.mkdir()
+
+    with pytest.raises(ToolHandlerError) as failed:
+        delivery.cleanup_validation_index(job_dir)
+
+    assert failed.value.error_code == "code_task_validation_cleanup_failed"
+    assert failed.value.details == {"artifacts": ["lock"]}
+    assert str(job_dir) not in str(failed.value)
+    assert not candidate.exists()
+    assert lock.is_dir()
+    lock.rmdir()
 
 
 @pytest.mark.parametrize(

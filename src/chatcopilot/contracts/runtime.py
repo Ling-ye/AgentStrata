@@ -34,6 +34,7 @@ class McpServerConfig:
     preferred_domains: tuple[str, ...] = ()
     excluded_domains: tuple[str, ...] = ()
     search_domain_guidance: str = ""
+    catalog_ref: str = ""
 
 
 @dataclass(frozen=True)

@@ -124,11 +124,13 @@ bash deploy/wsl/qq_gateway.sh sync-token --instance lingye-copilot-qq
 bash deploy/wsl/qq_gateway.sh start --instance lingye-copilot-qq
 bash deploy/wsl/qq_gateway.sh status --instance lingye-copilot-qq
 
-# Docker MCP 服务
-cd deploy/docker && docker compose up -d
+# 共享 Docker 服务（desired state 来自启用的 BotSpec）
+bash deploy/docker/services.sh desired
+bash deploy/docker/services.sh start
 bash deploy/docker/services.sh status
 bash deploy/docker/services.sh doctor all
 bash deploy/docker/services.sh probe searxng --keyword "鸢一折纸 照片"
+bash deploy/docker/services.sh probe playwright
 bash deploy/docker/services.sh probe xhs --keyword "上海 二郎拉面"
 python -m chatcopilot.agent.search.probe --bot bots/lingye-copilot-qq/bot.yaml --server xiaohongshu --query "上海 二郎拉面 探店"
 ```
@@ -138,9 +140,9 @@ python -m chatcopilot.agent.search.probe --bot bots/lingye-copilot-qq/bot.yaml -
 - **主 Agent backend**：`agents.backend` 默认 `native`，也可设为 `langgraph` 或 `codex`；三个 backend 必须共享 `AgentTask` / `AgentEvent` / `AgentResult` 协议和现有工具注册/权限 hook。选择只发生在实例配置，不按回合自动切换。事件流、工具结果消息、生命周期 intent 和最终 `AgentResult` 属于 `agent/turn.py` 共享 turn runtime，不属于具体 backend 或平台层。
 - **Subagent**：主 Agent 是唯一对用户负责的交付者；subagent 只通过委托工具执行内部任务，并必须用 `submit_result` 返回 `{ok,summary,findings,evidence,changes,commands_run,outputs,risks,next_steps,confidence,cache_summary}`。
 - **Task pack**：新委托使用 `objective/user_intent/deliverable/constraints/inputs/resources/acceptance_criteria/evidence_required/write_scope/excluded_context/cache_key_hint`；旧 `task` 只作为兼容别名。
-- **按源搜索**：`risk: search` MCP 自动生成 `search_<server-id>` delegate，例如 `search_tavily`、`search_brave`、`search_searxng`、`search_xiaohongshu`、`search_taoke`。每个搜索 subagent 只能访问本 server 的 `search_only_tools`。
+- **按源搜索**：`risk: search` MCP 为账号态或垂直来源生成受限 `search_<server-id>` delegate，例如 `search_xiaohongshu`。每个搜索 subagent 只能访问本 server 的 `search_only_tools`；Tavily、Brave 与 SearXNG 不再用 MCP wrapper。
 - **统一搜索入口**：启用 `agents.unified_search.enabled` 后，主 Agent 只调用 `search_information`；`web_fetch_page` / `browse_dynamic_page` 仅供该入口内部使用。URL、显式来源、quick、standard 单实体和 thorough 单实体请求由脚本路由；只有 thorough 多实体比较调用路由 LLM。结果先由脚本做 canonical URL/标题去重、来源权重与时间稳定排序；只有 thorough 多来源结果调用 LLM 做语义冲突和事实合并。所有结果记录 `decision_source` / `decision_reason`。Web 源三级降级：Tavily → Brave → SearXNG。
- - **直接搜索执行**：搜索源（web / experience / commerce）默认通过 **直接 MCP tool 调用** 执行，完全跳过 subagent LLM 会话开销。`DirectSearchProvider` 对每个 server_id 按优先级尝试 raw MCP 工具，按远端 schema 选择 `query` / `keyword` 等搜索词字段，并解析 MCP wrapper 的 `structured` / `content[].text` 结果。支持 `SearchCircuitBreaker` 熔断、多源降级（tavily → brave → searxng）。URL 和搜索结果深读统一走 `PageReader`：先 `web_fetch_page`，遇到 JS shell、短内容或 HTTP 403/401/429 再升到 `browse_dynamic_page`。
+ - **直接搜索执行**：`agents.unified_search.providers` 按顺序声明 `id / kind / enabled / endpoint / credential_env / timeout_seconds / max_results`。Tavily、Brave 与 SearXNG 由有界进程内 HTTP client 执行，账号态或垂直来源继续直接调用 search-only MCP tool；两者都跳过 subagent LLM 并共享 `SearchCircuitBreaker`、deadline、结果归一化与多源降级。凭据 provider 只允许审核过的官方 HTTPS endpoint，SearXNG 只允许回环 endpoint，redirect 不得携带 credential。
  - **显式来源约束**：用户点名小红书 / XHS / Xiaohongshu 时，`ResearchRequest` 归一为 `source_hints=["experience"]`，router 只保留显式来源，避免静默回退到通用网页搜索。
  - **结果条目上限**：`_compact_results` 在字符长度截断基础上增加条目上限（`_MAX_RESULT_ITEMS = 15`），防止大量列表（如 47 条海报）撑爆 context。
   - **时间预算**：`SearchCoordinator` 接受 `max_wall_seconds`（有 `turn_timeout` 时取 `min(turn_timeout * 0.6, 180s)`，否则 fallback 到 180s 硬上限），所有步骤并行提交到 `ThreadPoolExecutor`，通过 `as_completed(timeout=remaining)` 统一 deadline；超时未完成的步骤标记 `time_budget_exhausted`；reranker 在 deadline 过后跳过。
@@ -151,12 +153,13 @@ python -m chatcopilot.agent.search.probe --bot bots/lingye-copilot-qq/bot.yaml -
   - **同 turn 不重复搜索**：accuracy prompt 指示主 Agent 不在同一轮重复调用 `search_information`，避免双倍时间开销。
  - **同轮搜索硬保护**：`AgentSession` 会在同一轮首个成功 `search_information` 后拦截后续重复搜索，把上一次搜索结果作为工具结果回灌，并要求模型基于已有证据作答。
   - **搜索 subagent 快速退出**：搜索 subagent prompt 指示在遇到 quota/unavailable 等基础设施错误时立即 `submit_result(ok=false)`，禁止盲猜 URL 或重试。
-- **MCP**：共享 catalog 文件在 `src/chatcopilot/botspec/mcp_catalog.yaml`，读取入口在 `chatcopilot.core.mcp_catalog`；bot 级绑定在 `bots/<bot-id>/mcp/servers.yaml`。外部共享服务统一由 `deploy/docker/docker-compose.yaml` 管理。小红书 MCP 使用固定 digest 的官方 `xpzouying/xiaohongshu-mcp:v1.2.6` 镜像；仓库不再维护其派生源码或补丁，Agent 端继续通过 `search_only_tools` 只暴露 `search_feeds`。
+- **MCP 与容器放置**：共享 catalog 文件在 `src/chatcopilot/botspec/mcp_catalog.yaml`，读取入口在 `chatcopilot.core.mcp_catalog`；bot 级绑定在 `bots/<bot-id>/mcp/servers.yaml`。只有浏览器、账号态或重量级共享引擎保留容器；`services.sh start` 必须先发现至少一个 BotSpec 并通过完整 BotSpec 校验，再只从 canonical `BotSpec` / `McpServerConfig` runtime DTO 对账 SearXNG engine、Playwright 与小红书，禁止另写 raw YAML enablement 解释器；发现或校验失败时禁止改变容器，缺省禁用或 `exposure: disabled` 不启动，`doctor all` 只检查 desired 服务。SearXNG / Playwright / 小红书宿主端口固定为 `18064 / 18066 / 18060`，Compose、MCP catalog、direct provider、Console 和探针必须一致；机器 env 或 Compose `.env` 端口覆盖一律在副作用前拒绝。小红书 MCP 使用固定 digest 的官方 `xpzouying/xiaohongshu-mcp:v1.2.6` 镜像，Agent 端继续通过 `search_only_tools` 只暴露 `search_feeds`。
 - **第三方能力安装**：[KNOWN][HIGH] 公开版不自动下载、安装或启用第三方 MCP/Skill。`discover_mcp_server` 只读查询内置 catalog 与官方 Registry；`approve_mcp_server` 只启用仓库内已审阅的 catalog 条目；`probe_mcp_server` 只对 BotSpec 中已经存在的 binding 执行 initialize + list_tools，不调用远端工具、不改配置。其他服务必须由维护者核实源码、许可证、运行命令、secret 引用和远端写行为后手工安装并添加 BotSpec binding。[KNOWN][HIGH] `adapter_forge` 是与 LPM 无关的 Owner-only、Codex-bound 源码适配 preset；Owner 必须先用 `prepare_adapter_source` 核对不可变公开源码 envelope，再显式调用 `approve_adapter_source` 写入 bot-local、Git 忽略、同一稳定 `user_id` 一次性消费的批准记录。forge 只通过 `start_code_task` 修改源码，不安装 marketplace 资源、不恢复旧插件生命周期。
 - **搜索 MCP 探针**：`python -m chatcopilot.agent.search.probe` 在机器人外直连 `risk: search` MCP server，逐个调用 `search_only_tools` 并报告参数、结果数、错误码；用于排除 router、cross-check、subagent 和 LLM 总结层干扰。
-- **SearXNG 命名**：catalog ref 是 `searxng-search`；server id 是 `searxng`；delegate 是 `search_searxng`；原始 `search_only_tools` 是 `search` / `image_search`；带 `tool_prefix: sx_` 后远端工具名是 `sx_search` / `sx_image_search`。
-- **Brave Search 命名**：catalog ref 是 `brave-search`；server id 是 `brave`；delegate 是 `search_brave`；原始 `search_only_tools` 是 `brave_web_search`；带 `tool_prefix: brave_` 后远端工具名是 `brave_brave_web_search`。
+- **直接 Web provider 边界**：Tavily / Brave 缺少有效 credential 时保持 unavailable，不得启动占位容器；SearXNG provider 的 loopback endpoint 需要 Docker 中的 SearXNG engine。Sequential Thinking 已删除；Taoke 在源码、镜像、远端配置和凭据行为完成独立审阅前不得重新进入 reviewed catalog。
 - **Codex mutation 与 PR 交付**：[KNOWN][HIGH] Lingye Owner 主会话不得获得 `edit_file` / `delete_file`、宿主 shell、直接写源码的 delegate 或管理型源码工具；所有源码 mutation 必须提交异步 `start_code_task`。唯一例外是显式配置的 `adapter_forge` dispatch delegate：它必须消费独立的一次性 Owner 批准记录，且 selector 只允许只读检查和 `start_code_task`，自身不能直接 mutation。[KNOWN][HIGH] code-worker 使用全局 FIFO、独立 transient cgroup、远端干净 clone 和 bwrap；changed paths 必须通过 `context.dev`，一次完整门禁通过后由沙箱外受信交付器生成中文 commit、非强制 push 并创建草稿 PR，`delivery.json` 记录分支、commit 与 PR 证据。[KNOWN][HIGH] Native/LangGraph 保持不 commit/push 的 `RepositoryTaskService`；Codex PR 不自动 merge、部署或重启。
+  - **验证工具链挂载**：bwrap 只把源仓 `.venv` 与经 manifest/父链校验的 `console/web/node_modules` 作为只读工具链映射到每条命令的临时候选树；前端构建仍在 `/workspace/console/web` 执行，任务不得改写宿主依赖。
+  - **候选索引验证边界**：full validation 使用 job-private、只读挂载的权威 Git index 表示 `HEAD + exact task delta`，宿主 materialize/verify 只操作 disposable index copy；quick 前真实 index 必须等于 `HEAD`，pytest 等会创建临时仓库的检查不得继承候选 `GIT_INDEX_FILE`。每条 quick/full 使用独立 exact-materialized tree、`0700` HOME、无 profile/rc Bash 和独立网络 namespace；clone ignored 内容不进入验证。tree/home/index-copy/lock 必须在成功、失败和 resume 路径严格清理，遗留 symlink、foreign owner 或 inode 类型异常时失败关闭且不跟随。Console 依赖只在 source/task 的 `package.json` 与 `package-lock.json` 完全一致、父链无 symlink 且 source `console/web/node_modules` 存在时挂载。
   - **实例隔离与恢复**：[KNOWN][HIGH] `start_code_task` request 必须在任务目录可见前持久化非空 `instance_id`；每个 systemd worker 使用 BotSpec 派生的实例专属 workspace，只恢复与当前实例完全匹配的 request，missing/foreign identity 一律 fail closed。
   - **取消与交付边界**：[KNOWN][HIGH] cancel 与进入 `delivering` 必须共享状态锁；进入交付后不可取消，普通后台任务不得依赖该 POSIX 锁。[KNOWN][HIGH] GitHub 返回的 PR `head.sha` 必须精确等于已验证 commit；远端分支恢复不得 force-push、改写 commit 或静默创建重复 PR。
   - **context.dev 接线**：`bot.yaml` 的 `context.dev` 段（`root_env`、`allowed_paths`、`denied_paths`、`shell`）在进程启动时由 `runtime_env.py` 注入 env（`CHATCOPILOT_SOURCE_ROOT`、`CHATCOPILOT_RUNTIME_ROOT`、`CHATCOPILOT_DEV_ROOT`、`CHATCOPILOT_DEV_ALLOWED_PATHS`、`CHATCOPILOT_DEV_DENIED_PATHS`、`CHATCOPILOT_DEV_SHELL_TIMEOUT_MAX`），`DevConfig.from_env()` 读取生效。`root_env` 命名间接引用的 env 变量；未显式设置 `CHATCOPILOT_DEV_ROOT` 时默认指向源仓根目录（`CHATCOPILOT_SOURCE_ROOT`），不是运行副本。[KNOWN][HIGH] code-worker 入口复用 `load_runtime_context()` 与 `apply_runtime_env()`，注册脚本不维护第二套 `context.dev` YAML 解析器。
@@ -234,7 +237,7 @@ Windows 上全量 pytest 可能被旧临时目录 ACL 干扰；优先 targeted t
 | BotSpec / MCP / RAG / codebase 配置 | `docs/bot-spec.md` |
 | Linux / WSL 首次部署 | `docs/deployment.md` |
 | 控制台 | `docs/console.md` |
-| Docker MCP 服务 | `deploy/docker/README.md` |
+| 共享 Docker 服务 | `deploy/docker/README.md` |
 | WSL 手动排障 | `deploy/wsl/README_WSL.md` |
 | 外部工具架构 | `docs/external-tools-architecture.md` |
 | AI 前端规则 | `docs/ai-frontend.md` |
@@ -254,7 +257,7 @@ Windows 上全量 pytest 可能被旧临时目录 ACL 干扰；优先 targeted t
 | 页面 | 功能 |
 | --- | --- |
 | 总览 | 实例状态汇总 |
-| 服务管理 | Docker MCP 等基础设施 |
+| 服务管理 | BotSpec desired-state Docker 与平台 gateway 等基础设施 |
 | 机器人实例 | 运行状态 / **能力与工具** / 任务 / 日志 |
 | 组件目录 | 按 tools / prompts / agents / context 四个 surface 统一浏览工具、提示词、Agent 和上下文组件（只读卡片） |
 | 质量评测 | 新建评测 / 评测记录 / 任务集 |

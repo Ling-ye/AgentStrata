@@ -14,6 +14,7 @@ from chatcopilot.contracts.subagents import (
     ContextPolicySpec as ContextPolicySpec,
     CustomSubagentSpec as CustomSubagentSpec,
     PromptLayerSpec as PromptLayerSpec,
+    SearchProviderSpec as SearchProviderSpec,
     SubagentBudgetSpec as SubagentBudgetSpec,
     SubagentSpec as SubagentSpec,
     ToolSelectorSpec as ToolSelectorSpec,

@@ -1,7 +1,7 @@
 # AgentStrata 运维手册
 
 这份手册是日常运维命令的唯一集中入口，覆盖安装后的状态检查、更新、重启、日志、
-平台网关、Codex 认证、Docker MCP、评测和诊断。首次安装的拓扑与安全设计见
+平台网关、Codex 认证、共享 Docker 服务、评测和诊断。首次安装的拓扑与安全设计见
 [`deployment.md`](deployment.md)；遇到 systemd user bus、cc-connect 或 WSL/Windows
 边界问题时再进入 [`../deploy/wsl/README_WSL.md`](../deploy/wsl/README_WSL.md)。
 
@@ -37,7 +37,7 @@ python -m chatcopilot bot doctor --bot bots/<id>/bot.yaml
 | 跟随实例日志 | `journalctl --user -u chatcopilot@<id>.service -f` |
 | 查看控制台 | `bash deploy/wsl/deploy_console.sh --status` |
 | 更新控制台 | `bash deploy/wsl/deploy_console.sh --update-only` |
-| 查看 Docker MCP | `bash deploy/docker/services.sh status` |
+| 查看共享 Docker 服务 | `bash deploy/docker/services.sh status` |
 | 收集诊断快照 | `bash deploy/wsl/dump.sh --instance <id> --mode quick` |
 
 ## 安装与启用
@@ -48,7 +48,7 @@ python -m chatcopilot bot doctor --bot bots/<id>/bot.yaml
 bash deploy/wsl/install_wsl_env.sh --with-console
 ```
 
-部署源仓环境、控制台、Docker MCP 和内置 Bot 实例：
+部署源仓环境、控制台、BotSpec 所需的共享 Docker 服务和内置 Bot 实例：
 
 ```bash
 bash deploy/wsl/deploy_all.sh
@@ -58,7 +58,7 @@ bash deploy/wsl/deploy_all.sh
 
 ```bash
 bash deploy/wsl/deploy_all.sh --dry-run
-bash deploy/wsl/deploy_all.sh --skip-docke
+bash deploy/wsl/deploy_all.sh --skip-docker
 bash deploy/wsl/deploy_all.sh --skip-bots
 ```
 
@@ -219,9 +219,10 @@ single-link mode `0600` worker 文件；transient task unit 只接收文件路�
 `O_NOFOLLOW` + `fstat` 从同一 fd 单次读取，Git askpass 使用任务期内的临时 `0600` 快照；
 Codex 进程、worker env、Git remote 与持久化诊断都不包含 token 明文。
 
-## Docker MCP
+## 共享 Docker 服务
 
 ```bash
+bash deploy/docker/services.sh desired
 bash deploy/docker/services.sh start
 bash deploy/docker/services.sh status
 bash deploy/docker/services.sh doctor all
@@ -232,6 +233,7 @@ bash deploy/docker/services.sh logs
 
 ```bash
 bash deploy/docker/services.sh probe searxng --keyword "上海 二郎拉面"
+bash deploy/docker/services.sh probe playwright
 bash deploy/docker/services.sh probe xhs --keyword "上海 二郎拉面"
 python -m chatcopilot.agent.search.probe \
   --bot bots/lingye-copilot-qq/bot.yaml \
@@ -239,8 +241,11 @@ python -m chatcopilot.agent.search.probe \
   --query "上海 二郎拉面 探店"
 ```
 
-`doctor` 只验证可达性和基础配置；quota、登录态和搜索质量仍以工具调用结果为准。
-服务清单和登录细节见 [`../deploy/docker/README.md`](../deploy/docker/README.md)。
+无参数 `start` 从启用的 BotSpec 解析 desired state：SearXNG provider 需要搜索引擎，
+Playwright / 小红书 binding 需要各自服务；禁用项会被停止。Tavily、Brave 和 SearXNG
+适配器不再各占一个 wrapper 容器。`doctor all` 只检查 desired 服务，功能可用性再由
+`probe` 验证；小红书还需单独确认登录态。服务清单和登录细节见
+[`../deploy/docker/README.md`](../deploy/docker/README.md)。
 
 ## 通用 HTTP API
 

@@ -286,10 +286,47 @@ def _mcp_services_status() -> list[dict[str, object]]:
     return results
 
 
+def _config_enabled(value: Any, *, default: bool) -> bool:
+    """Parse recognized BotSpec bool values; invalid values fail closed."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return False
+
+
+def _enabled_search_provider_kinds(bot_data: dict[str, Any]) -> set[str]:
+    """Return explicitly enabled direct-provider kinds from one BotSpec mapping."""
+    agents = bot_data.get("agents") if isinstance(bot_data.get("agents"), dict) else {}
+    unified = (
+        agents.get("unified_search")
+        if isinstance(agents.get("unified_search"), dict)
+        else {}
+    )
+    if not _config_enabled(unified.get("enabled"), default=False):
+        return set()
+    providers = unified.get("providers")
+    if not isinstance(providers, list):
+        return set()
+    return {
+        str(provider.get("kind") or "").strip().lower()
+        for provider in providers
+        if isinstance(provider, dict)
+        and _config_enabled(provider.get("enabled"), default=True)
+        if str(provider.get("kind") or "").strip()
+    }
+
+
 def bot_enabled_services(inst: BotInstance) -> list[dict[str, object]]:
     """Return services enabled by this bot's BotSpec and platform binding."""
     bot_data = _load_yaml_mapping(_bot_spec_path(inst))
     tool_packs = _bot_tool_pack_ids(bot_data)
+    search_provider_kinds = _enabled_search_provider_kinds(bot_data)
     status_by_id = {str(item.get("id")): item for item in services.all_services_status()}
     enabled: list[dict[str, object]] = []
 
@@ -301,6 +338,15 @@ def bot_enabled_services(inst: BotInstance) -> list[dict[str, object]]:
         if matched_mcp_refs:
             matched = True
             reasons.extend(f"MCP: {ref}" for ref in matched_mcp_refs)
+
+        matched_provider_kinds = [
+            kind for kind in svc.search_provider_kinds if kind in search_provider_kinds
+        ]
+        if matched_provider_kinds:
+            matched = True
+            reasons.extend(
+                f"Search provider: {kind}" for kind in matched_provider_kinds
+            )
 
         matched_tool_packs = [pack for pack in svc.tool_pack_ids if pack in tool_packs]
         if matched_tool_packs:
@@ -437,7 +483,7 @@ def instance_registered(inst: BotInstance) -> bool:
 # Shared Docker services: Xiaohongshu MCP login flow
 # ---------------------------------------------------------------------------
 def _xhs_mcp_url() -> str:
-    return f"http://localhost:{os.environ.get('XHS_MCP_PORT', '18060')}/mcp"
+    return "http://localhost:18060/mcp"
 
 
 def _is_xhs_mcp_connection_refused(exc: BaseException) -> bool:
@@ -1038,7 +1084,7 @@ def _bot_uses_mcp_ref(inst: BotInstance, ref: str) -> bool:
     for item in servers:
         if not isinstance(item, dict):
             continue
-        if item.get("enabled") is False:
+        if not _config_enabled(item.get("enabled"), default=True):
             continue
         if str(item.get("ref") or "").strip() == ref:
             return True

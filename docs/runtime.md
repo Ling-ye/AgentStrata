@@ -69,8 +69,10 @@ Worker 凭据、Codex auth 和 GitHub token 分离；原始 GitHub token不进�
 显式来源和大多数深度；仅复杂多实体比较需要路由模型。结果经过 URL 归一化、去重、
 来源权重和时间稳定排序。
 
-Web 来源按配置降级，直接 MCP 调用共享 circuit breaker 和 deadline。URL 深读先静态
-fetch，遇到 JS shell、短内容或可由浏览器处理的 HTTP 状态再升到动态浏览器。
+Web 来源按 BotSpec 中的顺序降级。Tavily、Brave 与 SearXNG 的薄适配器在 Agent
+进程内执行；账号态或垂直来源仍可使用 search-only MCP。两条路径共享 circuit
+breaker、deadline、结果归一化和相关性过滤。URL 深读先静态 fetch，遇到 JS shell、
+短内容或可由浏览器处理的 HTTP 状态再升到隔离的 Playwright 服务。
 
 ## 任务标识
 

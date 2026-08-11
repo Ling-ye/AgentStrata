@@ -13,26 +13,41 @@ def test_component_catalog_exposes_mcp_entries() -> None:
     from chatcopilot.component_catalog import get_mcp_catalog_entry, iter_mcp_catalog_entries
 
     entries = dict(iter_mcp_catalog_entries())
-    tavily = get_mcp_catalog_entry("tavily-search")
+    playwright = get_mcp_catalog_entry("playwright-browser")
 
-    assert "tavily-search" in entries
-    assert tavily is not None
-    assert tavily.server["id"] == "tavily"
-    assert tavily.server["transport"] == "streamable_http"
-    assert tavily.server["search_only_tools"] == ["tavily_search", "tavily_extract"]
-    assert sorted(tavily.env_examples) == ["TAVILY_API_KEY"]
+    assert {
+        "tavily-search",
+        "brave-search",
+        "searxng-search",
+        "sequential-thinking",
+        "taoke-shopping",
+    }.isdisjoint(entries)
+    assert {
+        "github-readonly",
+        "xiaohongshu-search",
+        "playwright-browser",
+        "git-local",
+    }.issubset(entries)
+    assert playwright is not None
+    assert playwright.server["id"] == "playwright"
+    assert playwright.server["transport"] == "streamable_http"
+    assert playwright.server["allowed_subagents"] == ["browser_reader"]
+    assert playwright.env_examples == {}
 
 
 def test_console_catalog_reads_mcp_entries_from_component_catalog() -> None:
     from console.control import catalog
 
     items = {item.id: item for item in catalog.full_catalog(use_cache=False)}
-    tavily = items["mcp:tavily-search"]
+    playwright = items["mcp:playwright-browser"]
 
-    assert tavily.name == "Tavily web search MCP"
-    assert tavily.infra_service_id == "tavily"
-    assert tavily.requires_env == ["TAVILY_API_KEY"]
-    assert [tool.name for tool in tavily.tools] == ["tavily_search", "tavily_extract"]
+    assert "mcp:tavily-search" not in items
+    assert "mcp:sequential-thinking" not in items
+    assert "mcp:taoke-shopping" not in items
+    assert playwright.name == "Playwright dynamic webpage reader"
+    assert playwright.infra_service_id == "playwright"
+    assert playwright.requires_env == []
+    assert playwright.tools == []
 
 
 def test_console_catalog_projects_builtin_and_shared_module_tools_exactly() -> None:
@@ -62,7 +77,7 @@ def test_console_inventory_resolves_mcp_refs_from_component_catalog(tmp_path, mo
     (bot_dir / "mcp" / "servers.yaml").write_text(
         textwrap.dedent(
             """            servers:
-              - ref: tavily-search
+              - ref: playwright-browser
                 enabled: true
             """
         ),
@@ -90,7 +105,7 @@ def test_console_inventory_resolves_mcp_refs_from_component_catalog(tmp_path, mo
     monkeypatch.setattr(
         inventory.services,
         "all_services_status",
-        lambda: [{"id": "tavily", "state": "running", "color": "green"}],
+        lambda: [{"id": "playwright", "state": "running", "color": "green"}],
     )
 
     result = inventory.bot_inventory(
@@ -104,14 +119,14 @@ def test_console_inventory_resolves_mcp_refs_from_component_catalog(tmp_path, mo
 
     assert result["mcp_services"] == [
         {
-            "ref": "tavily-search",
-            "title": "Tavily web search MCP",
+            "ref": "playwright-browser",
+            "title": "Playwright dynamic webpage reader",
             "enabled": True,
-            "risk": "search",
+            "risk": "interactive",
             "exposure": "subagent",
-            "allowed_subagents": [],
+            "allowed_subagents": ["browser_reader"],
             "transport": "streamable_http",
-            "infra_service_id": "tavily",
+            "infra_service_id": "playwright",
             "infra_state": "running",
             "infra_color": "green",
         }

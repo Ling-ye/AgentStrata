@@ -98,11 +98,17 @@ Agent 与 Console 使用相同投影。BotSpec 不直接指定可 import 的任�
   `mcp_query`。
 - budget/override/custom：限制 model turn、tool call、timeout、selector、context 和
   cache。
+- `unified_search.enabled`：为 Native / LangGraph 启用唯一的 `search_information` 入口。
+- `unified_search.providers`：按顺序声明进程内 Web provider；每项使用
+  `id / kind / enabled / endpoint / credential_env / timeout_seconds / max_results`。
+  BotSpec 只保存凭据环境变量名，不保存凭据值。Tavily 与 Brave 只接受审核过的官方
+  HTTPS endpoint；SearXNG 只接受回环 endpoint。
 - `codex.owner_access`：仅允许 `worktree`。
 - `codex.member_access`：仅允许 `workspace`。
 
-Codex 主 backend 不创建 Native/ LangGraph 的搜索 subagent。`risk: search` MCP binding
-由统一搜索机制直接执行或生成受限来源工具。
+Codex 主 backend 不创建 Native / LangGraph 的 `search_information`。Evaluation 可以在
+隔离进程把同一 BotSpec 投影为 Native target，但不得写回线上 backend。小红书等
+`risk: search` MCP binding 仍由统一搜索机制作为受限垂直来源执行。
 
 ### `context`
 

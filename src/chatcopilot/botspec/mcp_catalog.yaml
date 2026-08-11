@@ -1,28 +1,4 @@
 servers:
-  - id: tavily-search
-    title: Tavily web search MCP
-    source: curated
-    source_url: https://www.npmjs.com/package/tavily-mcp
-    risk: search
-    restart_required: true
-    server:
-      id: tavily
-      enabled: true
-      transport: streamable_http
-      url: http://localhost:18061/mcp
-      stateless_http: true
-      tool_prefix: web_
-      exposure: subagent
-      risk: search
-      search_summary: "Search the web for general information, facts, news, documentation, image pages, wallpapers, and direct image candidates."
-      search_domain_guidance: "General web source. For technical and game queries prefer official documentation, official announcements, primary project sites, and reputable wikis before community pages. For consumer queries use official specifications or professional reviews."
-      search_only_tools:
-        - tavily_search
-        - tavily_extract
-      timeout_seconds: 30
-      max_result_chars: 20000
-    env_examples:
-      TAVILY_API_KEY: tvly-... (set in deploy/docker/.env)
   - id: github-readonly
     title: GitHub remote MCP (read-only policy in AgentStrata)
     source: curated
@@ -45,69 +21,6 @@ servers:
       max_result_chars: 20000
     env_examples:
       GITHUB_MCP_AUTHORIZATION: Bearer <github-personal-access-token>
-  - id: sequential-thinking
-    title: Sequential Thinking MCP
-    source: curated
-    source_url: https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking
-    risk: readonly
-    restart_required: true
-    server:
-      id: sequential-thinking
-      enabled: true
-      transport: streamable_http
-      url: http://localhost:18062/mcp
-      stateless_http: true
-      exposure: subagent
-      allowed_subagents:
-        - mcp_query
-      risk: readonly
-      timeout_seconds: 60
-      max_result_chars: 20000
-  - id: searxng-search
-    title: SearXNG no-key web/image search MCP
-    source: curated
-    source_url: https://docs.searxng.org/dev/search_api.html
-    risk: search
-    restart_required: true
-    server:
-      id: searxng
-      enabled: true
-      transport: streamable_http
-      url: http://localhost:18065/mcp
-      stateless_http: true
-      tool_prefix: sx_
-      exposure: subagent
-      risk: search
-      search_summary: "Search the web and images through the local no-key SearXNG instance. Use as the fallback when Tavily quota is exhausted or unavailable."
-      search_domain_guidance: "General web fallback. Preserve the same official-source and target-site constraints supplied in the task pack."
-      timeout_seconds: 30
-      max_result_chars: 12000
-      search_only_tools:
-        - search
-        - image_search
-  - id: brave-search
-    title: Brave Search MCP (independent web index)
-    source: curated
-    source_url: https://github.com/brave/brave-search-mcp-server
-    risk: search
-    restart_required: true
-    server:
-      id: brave
-      enabled: true
-      transport: streamable_http
-      url: http://localhost:18067/mcp
-      stateless_http: true
-      tool_prefix: brave_
-      exposure: subagent
-      risk: search
-      search_summary: "Search the web using Brave Search's independent index. Complements Tavily with a different crawl and ranking."
-      search_domain_guidance: "Independent web index. Good for general queries, technical documentation, and news. Use the same official-source constraints as other web sources."
-      search_only_tools:
-        - brave_web_search
-      timeout_seconds: 30
-      max_result_chars: 16000
-    env_examples:
-      BRAVE_API_KEY: BSA-... (metered billing, $5 monthly credits at https://brave.com/search/api/)
   - id: xiaohongshu-search
     title: Xiaohongshu search-only MCP
     source: curated
@@ -147,31 +60,6 @@ servers:
       timeout_seconds: 30
       max_result_chars: 20000
       max_concurrency: 1
-  - id: taoke-shopping
-    title: Taoke multi-platform shopping MCP (Taobao/JD/Pinduoduo)
-    source: curated
-    source_url: https://github.com/liuliang520530/taoke-mcp
-    risk: search
-    restart_required: true
-    server:
-      id: taoke
-      enabled: true
-      transport: streamable_http
-      url: http://localhost:18063/mcp
-      tool_prefix: shop_
-      exposure: subagent
-      risk: search
-      search_summary: "Search Taobao, JD.com, and Pinduoduo for product listings, prices, and comparisons."
-      search_domain_guidance: "Consumer commerce source for current listings, prices, specifications, and product links; do not use it for general web or non-product image search."
-      timeout_seconds: 30
-      max_result_chars: 6000
-      search_only_tools:
-        - taobao.searchMaterial
-        - pdd.goods.search
-    env_examples:
-      TAOBAO_PID: "alimama.com affiliate PID"
-      JD_KEY: "union.jd.com API key"
-      PDD_PID: "jinbao.pinduoduo.com PID"
   - id: git-local
     title: Local Git repository operations (mcp-server-git)
     source: official

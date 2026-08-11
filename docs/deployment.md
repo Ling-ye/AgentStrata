@@ -11,7 +11,7 @@ AgentStrata 源仓
   -> 唯一应提交的工作区；BotSpec、prompt、代码、部署脚本
 
 共享基础设施
-  -> Console、Docker MCP、平台 gateway
+  -> Console、BotSpec 所需的隔离 Docker 服务、平台 gateway
 
 实例副本（deploy.wsl_home）
   -> 实例 venv、渲染 env、cc-connect、ACP runtime、systemd user service
@@ -29,7 +29,8 @@ AgentStrata 源仓
 
 - Linux，或启用了 systemd 的 WSL 发行版。
 - Python 3.10–3.13、Git、可用的模型与聊天平台账号。
-- 使用 Console 时需要 Node/npm；使用共享 MCP 时需要 Docker。
+- 使用 Console 时需要 Node/npm；使用 SearXNG、Playwright、小红书或平台 gateway 等
+  隔离服务时需要 Docker。Tavily / Brave 等薄 Web API provider 不要求独立容器。
 - 所有项目命令在 Linux/WSL 源仓中运行，不从 `\\wsl.localhost\...` 作为 Windows
   进程当前目录启动。
 
@@ -44,7 +45,7 @@ Python 依赖以根目录 `pyproject.toml` 为事实源。分层 `requirements.t
 bash deploy/wsl/install_wsl_env.sh --with-console
 ```
 
-一键部署 Console、Docker MCP 和内置实例：
+一键部署 Console、按 BotSpec 对账的共享 Docker 服务和内置实例：
 
 ```bash
 bash deploy/wsl/deploy_all.sh
@@ -54,7 +55,7 @@ bash deploy/wsl/deploy_all.sh
 
 ```bash
 bash deploy/wsl/deploy_all.sh --dry-run
-bash deploy/wsl/deploy_all.sh --skip-docke
+bash deploy/wsl/deploy_all.sh --skip-docker
 bash deploy/wsl/deploy_all.sh --skip-bots
 bash deploy/wsl/deploy_all.sh --docker-timeout 60
 ```

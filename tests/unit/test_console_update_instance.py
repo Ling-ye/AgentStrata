@@ -586,6 +586,12 @@ def test_register_script_fails_when_daemon_reload_fails(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     home = tmp_path / "home"
     home.mkdir()
+    credential_dir = home / ".config" / "chatcopilot-console"
+    credential_dir.mkdir(parents=True, mode=0o700)
+    credential_dir.chmod(0o700)
+    token_file = credential_dir / "lingye-copilot-qq-code-worker-github.token"
+    token_file.write_text("fixture-" + "x" * 32 + "\n", encoding="utf-8")
+    token_file.chmod(0o600)
     _write_executable(
         fake_bin / "systemctl",
         "#!/usr/bin/env bash\n"

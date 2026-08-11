@@ -883,3 +883,18 @@ def test_pypi_host_allowlist_is_exact() -> None:
         path="candidate.txt",
     )
     assert {finding.rule for finding in findings} == {"url-host-not-allowlisted"}
+
+
+def test_reviewed_search_api_host_allowlist_is_exact() -> None:
+    checker = _load_checker()
+    assert checker.scan_text(
+        "https://api.tavily.com/search\n"
+        "https://api.search.brave.com/res/v1/web/search",
+        path="candidate.txt",
+    ) == []
+    disallowed_subdomain = "private." + "api.search.brave.com"
+    findings = checker.scan_text(
+        f"https://{disallowed_subdomain}/res/v1/web/search",
+        path="candidate.txt",
+    )
+    assert {finding.rule for finding in findings} == {"url-host-not-allowlisted"}

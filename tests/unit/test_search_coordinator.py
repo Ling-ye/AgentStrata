@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from chatcopilot.core.llm_client import ChatResult
+from chatcopilot.agent.search import tool as search_tool_module
 from chatcopilot.agent.search.tool import build_search_tool
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.agent.tools.executor import ToolExecutor
@@ -116,6 +119,36 @@ def _router_for_web(query: str = "package release") -> _FakeLLM:
             }
         )
     )
+
+
+@pytest.mark.parametrize(
+    ("turn_timeout", "expected_wall"),
+    [(100.0, 60.0), (1000.0, 180.0), (None, 180.0)],
+)
+def test_search_wall_budget_is_sixty_percent_with_180_second_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    turn_timeout: float | None,
+    expected_wall: float,
+) -> None:
+    captured: list[float] = []
+
+    class _Coordinator:
+        def __init__(self, **kwargs):
+            captured.append(kwargs["max_wall_seconds"])
+
+    monkeypatch.setattr(search_tool_module, "SearchCoordinator", _Coordinator)
+    raw = _raw_search("searxng", {"results": []}, [])
+
+    search = build_search_tool(
+        main_llm=_router_for_web(),
+        budget=SubagentBudgetSpec(),
+        tools=(),
+        raw_mcp_tools=(raw,),
+        turn_timeout_seconds=turn_timeout,
+    )
+
+    assert search is not None
+    assert captured == [expected_wall]
 
 
 def test_search_information_skips_tavily_quota_and_uses_brave() -> None:

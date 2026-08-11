@@ -34,7 +34,6 @@ class LingyeBotSpecSmokeTests(unittest.TestCase):
 
     def test_assemble_runtime_context_smoke(self) -> None:
         test_env = {
-            "TAVILY_API_KEY": "tvly-test",
             "GITHUB_MCP_AUTHORIZATION": "Bearer github-test",
         }
         previous = {key: os.environ.get(key) for key in test_env}
@@ -60,11 +59,28 @@ class LingyeBotSpecSmokeTests(unittest.TestCase):
         self.assertIn("filesystem.windows.read", runtime.tool_packs)
         self.assertEqual(
             [server.id for server in runtime.mcp_servers],
-            ["tavily", "searxng", "xiaohongshu", "playwright", "github", "taoke", "git"],
+            ["playwright", "github", "git"],
         )
-        prefixes = {server.id: server.tool_prefix for server in runtime.mcp_servers}
-        self.assertEqual(prefixes["tavily"], "web_")
-        self.assertEqual(prefixes["searxng"], "sx_")
+        servers = {server.id: server for server in runtime.mcp_servers}
+        self.assertNotIn("xiaohongshu", servers)
+        self.assertEqual(servers["playwright"].timeout_seconds, 30)
+        self.assertEqual(servers["github"].timeout_seconds, 30)
+        self.assertEqual(servers["git"].timeout_seconds, 30)
+        providers = runtime.subagents.search_providers
+        self.assertEqual(
+            [(provider.id, provider.kind, provider.enabled) for provider in providers],
+            [
+                ("tavily", "tavily", True),
+                ("brave", "brave", False),
+                ("searxng", "searxng", True),
+            ],
+        )
+        self.assertEqual(providers[0].credential_env, "TAVILY_API_KEY")
+        self.assertEqual(providers[1].credential_env, "BRAVE_API_KEY")
+        self.assertIsNone(providers[2].credential_env)
+        self.assertEqual(providers[2].endpoint, "http://127.0.0.1:18064")
+        self.assertEqual(providers[2].timeout_seconds, 20)
+        self.assertEqual(providers[2].max_results, 10)
         self.assertEqual(
             [skill.id for skill in runtime.skills],
             ["ai-career-intelligence", "ai-jd-analysis"],
@@ -79,8 +95,9 @@ class LingyeBotSpecSmokeTests(unittest.TestCase):
         self.assertNotIn("codebase.read", spec.tools.packs)
         self.assertNotIn("codebase.change", spec.tools.packs)
         self.assertNotIn("web.fetch", spec.tools.packs)
+        self.assertEqual(spec.agents.backend, "codex")
         self.assertEqual(spec.agents.include, ())
-        self.assertFalse(spec.agents.research_enabled)
+        self.assertTrue(spec.agents.research_enabled)
         self.assertEqual(spec.agents.codex.owner_access, "worktree")
         self.assertEqual(spec.agents.codex.member_access, "workspace")
         self.assertEqual(spec.llm.code.allowed_roles, ("owner",))

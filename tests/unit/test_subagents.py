@@ -123,7 +123,7 @@ class SubagentTests(unittest.TestCase):
         self.assertTrue(_allowed_for_subagent(_mcp_tool("tavily_extract"), "search_tavily"))
         self.assertFalse(_allowed_for_subagent(_mcp_tool("tavily_research"), "search_tavily"))
 
-    def test_lingye_codex_does_not_configure_search_subagents(self) -> None:
+    def test_lingye_codex_declares_providers_without_search_subagents(self) -> None:
         spec = load_botspec(Path("bots/lingye-copilot-qq/bot.yaml"))
         errors = [issue for issue in validate_botspec(spec) if issue.level == "error"]
 
@@ -131,7 +131,11 @@ class SubagentTests(unittest.TestCase):
         self.assertEqual(spec.agents.backend, "codex")
         self.assertEqual(spec.agents.include, ())
         self.assertEqual(spec.agents.agents, {})
-        self.assertFalse(spec.agents.research_enabled)
+        self.assertTrue(spec.agents.research_enabled)
+        self.assertEqual(
+            [provider.id for provider in spec.agents.search_providers],
+            ["tavily", "brave", "searxng"],
+        )
         self.assertEqual(spec.agents.codex.owner_access, "worktree")
         self.assertEqual(spec.agents.codex.member_access, "workspace")
 

@@ -94,14 +94,22 @@ class LlmRuntimeConfigTests(unittest.TestCase):
 
 
 class LingyeDirectCodexConfigTests(unittest.TestCase):
-    def test_lingye_uses_direct_role_aware_codex_without_search_subagents(self) -> None:
+    def test_lingye_uses_direct_codex_with_inprocess_search_providers(self) -> None:
         spec = load_botspec(_REPO_ROOT / "bots/lingye-copilot-qq/bot.yaml")
 
         self.assertEqual(spec.agents.backend, "codex")
         self.assertEqual(spec.agents.codex.owner_access, "worktree")
         self.assertEqual(spec.agents.codex.member_access, "workspace")
         self.assertEqual(spec.agents.include, ())
-        self.assertFalse(spec.agents.research_enabled)
+        self.assertTrue(spec.agents.research_enabled)
+        self.assertEqual(
+            [provider.kind for provider in spec.agents.search_providers],
+            ["tavily", "brave", "searxng"],
+        )
+        self.assertEqual(
+            [provider.kind for provider in spec.agents.search_providers if provider.enabled],
+            ["tavily", "searxng"],
+        )
         self.assertIsNone(spec.context.codebases.registry)
         self.assertNotIn("web.fetch", spec.tools.packs)
         self.assertNotIn("codebase.read", spec.tools.packs)

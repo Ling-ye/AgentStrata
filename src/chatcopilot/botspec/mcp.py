@@ -31,12 +31,17 @@ def load_mcp_server_configs(spec: BotSpec) -> tuple[McpServerConfig, ...]:
     for item in servers:
         if not isinstance(item, dict):
             continue
+        catalog_ref = str(item.get("ref", "") or "").strip()
         resolved = resolve_catalog_server(item)
         if resolved is None:
             continue
         if _has_missing_env_refs(resolved.get("env", {})) or _has_missing_env_refs(resolved.get("headers", {})):
             continue
-        cfg = _parse_server(resolved, resolve_env=True)
+        cfg = _parse_server(
+            resolved,
+            resolve_env=True,
+            catalog_ref=catalog_ref,
+        )
         if cfg is not None and cfg.enabled and cfg.exposure != "disabled":
             out.append(cfg)
     return tuple(out)
@@ -64,12 +69,29 @@ def validate_mcp_servers(spec: BotSpec) -> list[ValidationIssue]:
         if not isinstance(item, dict):
             issues.append(ValidationIssue("error", "每个 MCP server 必须是 mapping", field))
             continue
+        if "catalog_ref" in item:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "catalog_ref 是 runtime 保留字段，只能由 ref 解析产生",
+                    f"{field}.catalog_ref",
+                )
+            )
         ref = str(item.get("ref", "") or "").strip()
         resolved = resolve_catalog_server(item)
         if ref and resolved is None:
             issues.append(ValidationIssue("error", f"未知 MCP catalog ref: {ref}", f"{field}.ref"))
             continue
         check_item = resolved or item
+
+        if "enabled" in check_item and not _is_boolean_value(check_item.get("enabled")):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "enabled 必须是 boolean",
+                    f"{field}.enabled",
+                )
+            )
 
         server_id = str(check_item.get("id", "")).strip()
         if not server_id:
@@ -220,11 +242,12 @@ def validate_mcp_servers(spec: BotSpec) -> list[ValidationIssue]:
     return issues
 
 
-def _parse_server(raw: dict[str, Any], *, resolve_env: bool) -> McpServerConfig | None:
-    resolved = resolve_catalog_server(raw)
-    if resolved is None:
-        return None
-    raw = resolved
+def _parse_server(
+    raw: dict[str, Any],
+    *,
+    resolve_env: bool,
+    catalog_ref: str = "",
+) -> McpServerConfig | None:
     server_id = str(raw.get("id", "")).strip()
     if not server_id:
         return None
@@ -238,6 +261,7 @@ def _parse_server(raw: dict[str, Any], *, resolve_env: bool) -> McpServerConfig 
     headers = _mapping_from_env_refs(raw.get("headers", {}), resolve_env=resolve_env)
     return McpServerConfig(
         id=server_id,
+        catalog_ref=catalog_ref,
         transport=transport,
         enabled=enabled,
         command=_optional_str(raw.get("command")),
@@ -339,6 +363,21 @@ def _as_bool(value: Any, *, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_boolean_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return True
+    return str(value).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+        "0",
+        "false",
+        "no",
+        "off",
+    }
 
 
 def _as_float(value: Any, *, default: float) -> float:

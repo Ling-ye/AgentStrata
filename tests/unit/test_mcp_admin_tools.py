@@ -60,26 +60,26 @@ def _executor() -> ToolExecutor:
     return ToolExecutor(tools=list(TOOLS))
 
 
-def test_discover_and_approve_sequential_thinking_curated_proposal(tmp_path: Path) -> None:
+def test_discover_and_approve_playwright_curated_proposal(tmp_path: Path) -> None:
     bot_yaml = _write_bot(tmp_path)
 
     empty_registry = mcp_admin._RegistryDiscoveryResult(pagination_exhausted=True)
     with mock.patch.object(mcp_admin, "_registry_matches", return_value=empty_registry):
-        discovered = _executor().execute("discover_mcp_server", {"query": "Sequential Thinking"})
+        discovered = _executor().execute("discover_mcp_server", {"query": "Playwright"})
     payload = json.loads(discovered.summary)
     ids = {item["proposal_id"] for item in payload["proposals"]}
 
-    assert "sequential-thinking" in ids
+    assert "playwright-browser" in ids
 
     approved = _executor().execute(
         "approve_mcp_server",
-        {"proposal_id": "sequential-thinking", "bot": str(bot_yaml)},
+        {"proposal_id": "playwright-browser", "bot": str(bot_yaml)},
     )
     result = json.loads(approved.summary)
     data = yaml.safe_load((bot_yaml.parent / "mcp" / "servers.yaml").read_text(encoding="utf-8"))
 
     assert result["ok"] is True
-    assert data["servers"] == [{"ref": "sequential-thinking", "enabled": True}]
+    assert data["servers"] == [{"ref": "playwright-browser", "enabled": True}]
 
 
 def test_manual_approval_requires_reviewed_catalog_entry(tmp_path: Path) -> None:
@@ -114,14 +114,14 @@ def test_approval_prefers_source_bot_spec_env(tmp_path: Path, monkeypatch) -> No
 
     approved = _executor().execute(
         "approve_mcp_server",
-        {"proposal_id": "sequential-thinking"},
+        {"proposal_id": "playwright-browser"},
     )
     result = json.loads(approved.summary)
     source_data = yaml.safe_load((source_bot.parent / "mcp" / "servers.yaml").read_text(encoding="utf-8"))
     runtime_data = yaml.safe_load((runtime_bot.parent / "mcp" / "servers.yaml").read_text(encoding="utf-8"))
 
     assert result["ok"] is True
-    assert [item["ref"] for item in source_data["servers"]] == ["sequential-thinking"]
+    assert [item["ref"] for item in source_data["servers"]] == ["playwright-browser"]
     assert runtime_data["servers"] == []
 
 
@@ -131,7 +131,7 @@ def test_list_mcp_servers_resolves_catalog_binding(tmp_path: Path) -> None:
         textwrap.dedent(
             """\
             servers:
-              - ref: sequential-thinking
+              - ref: playwright-browser
                 enabled: true
             """
         ),
@@ -143,15 +143,15 @@ def test_list_mcp_servers_resolves_catalog_binding(tmp_path: Path) -> None:
 
     assert payload["servers"] == [
         {
-            "ref": "sequential-thinking",
-            "id": "sequential-thinking",
+            "ref": "playwright-browser",
+            "id": "playwright",
             "enabled": True,
             "transport": "streamable_http",
             "exposure": "subagent",
-            "allowed_subagents": ["mcp_query"],
+            "allowed_subagents": ["browser_reader"],
             "allowed_tools": [],
             "denied_tools": [],
-            "risk": "readonly",
+            "risk": "interactive",
             "tool_prefix": "",
         }
     ]

@@ -1,7 +1,7 @@
 """基础设施服务管理：声明式 catalog + 按 service_type 分组的纯函数。
 
 支持两类外部服务：
-- compose: docker-compose 管理（小红书 / Tavily / Sequential Thinking MCP）
+- compose: docker-compose 管理（SearXNG engine / 小红书 / Playwright MCP）
 - standalone: 独立 docker 容器（NapCat QQ Gateway）
 
 Bot 级内嵌工具包（Feishu Tools / workspace 等）不在此 catalog，
@@ -73,6 +73,7 @@ class ServiceDef:
     has_login: bool = False
     has_doctor: bool = False
     mcp_refs: tuple[str, ...] = ()
+    search_provider_kinds: tuple[str, ...] = ()
     platforms: tuple[str, ...] = ()
     tool_pack_ids: tuple[str, ...] = ()
     extra: dict = field(default_factory=dict)
@@ -93,49 +94,26 @@ SERVICES: tuple[ServiceDef, ...] = (
         extra={"login_type": "qrcode"},
     ),
     ServiceDef(
-        id="tavily",
-        display_name="Tavily Web Search",
-        service_type="compose",
-        container="chatcopilot-tavily-mcp",
-        compose_service="tavily-mcp",
-        compose_file="deploy/docker/docker-compose.yaml",
-        actions=("start", "stop", "restart", "pull"),
-        has_doctor=True,
-        env_key="TAVILY_API_KEY",
-        mcp_refs=("tavily-search",),
-    ),
-    ServiceDef(
-        id="sequential-thinking",
-        display_name="Sequential Thinking MCP",
-        service_type="compose",
-        container="chatcopilot-sequential-thinking-mcp",
-        compose_service="sequential-thinking-mcp",
-        compose_file="deploy/docker/docker-compose.yaml",
-        actions=("start", "stop", "restart", "pull"),
-        has_doctor=True,
-        mcp_refs=("sequential-thinking",),
-    ),
-    ServiceDef(
         id="searxng",
-        display_name="SearXNG No-Key Search",
+        display_name="SearXNG Search Engine",
         service_type="compose",
-        container="chatcopilot-searxng-mcp",
-        compose_service="searxng-mcp",
+        container="chatcopilot-searxng",
+        compose_service="searxng",
         compose_file="deploy/docker/docker-compose.yaml",
         actions=("start", "stop", "restart", "pull"),
         has_doctor=True,
-        mcp_refs=("searxng-search",),
+        search_provider_kinds=("searxng",),
     ),
     ServiceDef(
-        id="taoke",
-        display_name="Taoke Shopping MCP",
+        id="playwright",
+        display_name="Playwright Browser MCP",
         service_type="compose",
-        container="chatcopilot-taoke-mcp",
-        compose_service="taoke-mcp",
+        container="chatcopilot-playwright-mcp",
+        compose_service="playwright-mcp",
         compose_file="deploy/docker/docker-compose.yaml",
         actions=("start", "stop", "restart", "pull"),
-        has_doctor=False,
-        mcp_refs=("taoke-shopping",),
+        has_doctor=True,
+        mcp_refs=("playwright-browser",),
     ),
     ServiceDef(
         id="napcat",
@@ -287,21 +265,24 @@ def compose_status(svc: ServiceDef) -> dict[str, Any]:
 
 
 def compose_up_all() -> dict[str, Any]:
-    """Run `docker compose up -d` for all compose services at once."""
-    compose_files = {svc.compose_file for svc in SERVICES if svc.service_type == "compose" and svc.compose_file}
-    if not compose_files:
-        return {"ok": False, "error": "no compose services configured"}
-    results: list[dict[str, Any]] = []
-    for cf in sorted(compose_files):
-        path = str(repo_root() / cf)
-        results.append(_compose_run(path, ["up", "-d"]))
-    all_ok = all(r.get("ok") for r in results)
+    """Reconcile shared Compose services to enabled BotSpec desired state."""
+    script = repo_root() / "deploy" / "docker" / "services.sh"
+    if not script.is_file():
+        return {"ok": False, "error": f"shared service manager not found: {script}"}
+    try:
+        cp = subprocess.run(
+            ["bash", str(script), "start"],
+            capture_output=True,
+            text=True,
+            timeout=300.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": str(exc)}
     invalidate_status_cache()
     return {
-        "ok": all_ok,
-        "results": results,
-        "stdout": "\n".join(r.get("stdout", "") for r in results).strip(),
-        "stderr": "\n".join(r.get("stderr", "") for r in results).strip(),
+        "ok": cp.returncode == 0,
+        "stdout": (cp.stdout or "").strip(),
+        "stderr": (cp.stderr or "").strip(),
     }
 
 
@@ -333,9 +314,8 @@ def _compose_run(compose_file: str, args: list[str]) -> dict[str, Any]:
 
 _DOCTOR_TARGETS: dict[str, str] = {
     "xiaohongshu": "xhs",
-    "tavily": "tavily",
-    "sequential-thinking": "sequential-thinking",
     "searxng": "searxng",
+    "playwright": "playwright",
 }
 
 
@@ -697,6 +677,7 @@ def _base_status(svc: ServiceDef, *, state: str, color: str) -> dict[str, Any]:
         "login_state": get_cached_login_state(svc.id) if svc.has_login else None,
         "login_type": svc.extra.get("login_type") if svc.has_login else None,
         "mcp_refs": list(svc.mcp_refs),
+        "search_provider_kinds": list(svc.search_provider_kinds),
         "platforms": list(svc.platforms),
         "tool_pack_ids": list(svc.tool_pack_ids),
         "extra": dict(svc.extra),

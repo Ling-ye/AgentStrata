@@ -232,6 +232,24 @@ class SubagentBudgetSpec:
 
 
 @dataclass(frozen=True)
+class SearchProviderSpec:
+    """Non-secret policy for one in-process unified-search provider.
+
+    ``credential_env`` names a machine environment variable; its value is never
+    part of the BotSpec contract.  ``endpoint`` may be omitted to use the
+    reviewed default for the selected provider kind.
+    """
+
+    id: str
+    kind: str
+    enabled: bool = True
+    endpoint: str | None = None
+    credential_env: str | None = None
+    timeout_seconds: float = 15.0
+    max_results: int = 10
+
+
+@dataclass(frozen=True)
 class CustomSubagentSpec:
     """A BotSpec-declared custom subagent, resolved before Agent runtime use."""
 
@@ -264,6 +282,7 @@ class SubagentSpec:
     search_budget: SubagentBudgetSpec = field(default_factory=SubagentBudgetSpec)
     research_enabled: bool = False
     research_budget: SubagentBudgetSpec = field(default_factory=SubagentBudgetSpec)
+    search_providers: tuple[SearchProviderSpec, ...] = ()
     agents: dict[str, SubagentBudgetSpec] = field(default_factory=dict)
     overrides: dict[str, CustomSubagentSpec] = field(default_factory=dict)
     custom: tuple[CustomSubagentSpec, ...] = ()
@@ -291,6 +310,7 @@ __all__ = [
     "CodexMainSessionPolicy",
     "ContextPolicySpec",
     "PromptLayerSpec",
+    "SearchProviderSpec",
     "CustomSubagentSpec",
     "SubagentBudgetSpec",
     "SubagentSpec",

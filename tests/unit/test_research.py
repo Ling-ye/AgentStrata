@@ -13,6 +13,7 @@ from chatcopilot.agent.research.runtime import build_research_tool
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.model import SubagentBudgetSpec, SubagentSpec
+from chatcopilot.contracts.subagents import SearchProviderSpec
 from chatcopilot.external_tools.shared.tool_spec import ToolDef
 
 
@@ -390,6 +391,34 @@ def test_runtime_hides_internal_information_tools_when_research_enabled() -> Non
     assert "`search_information`" in session.system_baseline
 
 
+@pytest.mark.parametrize("backend", ["native", "langgraph"])
+def test_native_and_langgraph_expose_search_information_for_direct_provider(
+    backend: str,
+) -> None:
+    provider = SearchProviderSpec(
+        id="searxng",
+        kind="searxng",
+        endpoint="http://127.0.0.1:18064",
+    )
+    runtime = AgentRuntime(
+        llm=_FakeLLM("{}"),
+        tools=(_tool("normal_tool"),),
+        tools_schema=(),
+        runtime_config=ChatConfig(),
+        subagents=SubagentSpec(
+            research_enabled=True,
+            research_budget=SubagentBudgetSpec(),
+            search_providers=(provider,),
+        ),
+        agent_backend=backend,
+    )
+
+    with patch("chatcopilot.agent.runtime.build_subagent_tools", return_value=()):
+        session = runtime.new_session(session_id=f"sid-{backend}", system_baseline="base")
+
+    assert "search_information" in session.capabilities.tool_names
+
+
 def test_codex_backend_does_not_construct_chatcopilot_search_or_delegate_agents() -> None:
     from chatcopilot.contracts.agent_backend import (
         BackendCapabilities,
@@ -413,6 +442,9 @@ def test_codex_backend_does_not_construct_chatcopilot_search_or_delegate_agents(
             include=("browser_reader",),
             research_enabled=True,
             research_budget=SubagentBudgetSpec(),
+            search_providers=(
+                SearchProviderSpec(id="searxng", kind="searxng"),
+            ),
         ),
         agent_backend="codex",
     )

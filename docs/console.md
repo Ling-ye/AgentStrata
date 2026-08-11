@@ -12,7 +12,9 @@
 ## 主要页面
 
 - **运维总览**：调用 `/api/overview` 汇总机器人、基础设施服务和后台任务健康状态，展示摘要指标和「需要关注」问题队列。
-- **服务管理**：调用 `/api/infra` 展示共享 Docker MCP、平台网关等外部依赖，支持启停、重启、Pull、日志、登录和诊断。
+- **服务管理**：调用 `/api/infra` 展示 BotSpec 所需的共享 Docker 服务、平台网关等
+  外部依赖，支持启停、重启、Pull、日志、登录和诊断。无参数“全部启动”委托
+  `services.sh start` 做 desired-state reconcile，不会启动已禁用服务。
 - **机器人实例**：展示每个 BotSpec 实例的部署、注册、运行、平台连接、日志、任务、更新和诊断入口。
 - **组件目录**：按 `tools` / `prompts` / `agents` / `context` 四个 surface 只读浏览工具包、运行特性、MCP 服务、提示词、Agent preset、workflow DTO 和上下文来源；数据只来自 `chatcopilot.component_catalog` 的精确 pack/tool 投影，不直接读取 Agent/BotSpec 内部 registry 或自行 import 工具模块。
 - [KNOWN][HIGH] **评测中心**：固定为「新建评测 / 评测记录 / 任务集」三个页签。Agent Profile 对比和 BFCL / GAIA / IFEval Suite 运行统一为 `Evaluation` 资源；记录页负责筛选、查看详情、取消、删除、重跑和导出，任务集页统一展示 Profile、Suite 数据准备状态与 Case coverage。报告统一保存在 `reports/evals/evaluations/<evaluation-id>/`。
@@ -144,12 +146,15 @@ CLI 的 prepare、validate 和 run 命令统一见 [`operations.md#evaluation`](
   "tools": {
     "packs": ["workspace.read_write"],
     "features": ["chat.file_uploads"],
-    "hide": ["dangerous_tool"],
-    "mcp": { "servers": [{ "ref": "searxng-search", "enabled": true }] }
+    "hide": ["dangerous_tool"]
   },
   "agents": {
     "presets": ["mcp_query"],
-    "workflows": []
+    "workflows": [],
+    "unified_search": {
+      "enabled": true,
+      "providers": [{ "id": "searxng", "kind": "searxng", "enabled": true }]
+    }
   }
 }
 ```

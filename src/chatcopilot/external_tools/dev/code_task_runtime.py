@@ -4,11 +4,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import selectors
 import shutil
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,10 +36,13 @@ from chatcopilot.external_tools.codex_cli.credentials import (
     validate_auth_root_path,
 )
 from chatcopilot.external_tools.dev.code_task_delivery import (
+    VALIDATION_INDEX_FILENAME,
+    cleanup_validation_index,
     compute_delivery_tree,
     deliver_pull_request,
     delivery_retry_pending,
     prepare_delivery_worktree,
+    prepare_validation_index,
     validate_delivery_paths,
 )
 from chatcopilot.project import ENV_PREFIX
@@ -53,6 +59,9 @@ _HEAVY_RETAINED_NAMES = frozenset(
         "validation-home",
         "worktree",
     }
+)
+_VALIDATION_RESIDUE_PATTERN = re.compile(
+    r"^validation-(?:quick|full)-(home|tree|index)-[a-z0-9_]+(?P<lock>\.lock)?$"
 )
 
 @dataclass(frozen=True)
@@ -388,6 +397,9 @@ def build_bwrap_command(
     *,
     include_codex: bool,
     root: Path | None = None,
+    validation_index: Path | None = None,
+    sandbox_home: Path | None = None,
+    git_metadata_root: Path | None = None,
 ) -> list[str]:
     bwrap = shutil.which("bwrap")
     if not bwrap:
@@ -396,17 +408,53 @@ def build_bwrap_command(
             error_code="code_task_bwrap_missing",
             stage="preparing",
         )
-    mounted_root = (root or paths.worktree).resolve()
-    home = paths.task_home if include_codex else paths.validation_home
-    home.mkdir(parents=True, exist_ok=True)
-    home.chmod(0o700)
+    if not include_codex and (
+        root is None or sandbox_home is None or git_metadata_root is None
+    ):
+        raise ToolHandlerError(
+            "validation requires an explicit private tree, home, and Git metadata root",
+            error_code="code_task_validation_sandbox_invalid",
+            stage="validating",
+        )
+    mounted_root = (root or paths.worktree).absolute()
+    if include_codex and sandbox_home is not None:
+        raise ToolHandlerError(
+            "validation home cannot enter the Codex sandbox",
+            error_code="code_task_validation_home_invalid",
+            stage="preparing",
+        )
+    home = paths.task_home if include_codex else sandbox_home
+    assert home is not None
+    if sandbox_home is None:
+        home.mkdir(parents=True, exist_ok=True)
+        home.chmod(0o700)
+    else:
+        _validate_private_validation_directory(
+            paths,
+            home,
+            marker="-home-",
+            error_code="code_task_validation_home_invalid",
+        )
+        _validate_private_validation_directory(
+            paths,
+            mounted_root,
+            marker="-tree-",
+            error_code="code_task_validation_tree_invalid",
+        )
+        if home.samefile(mounted_root):
+            raise ToolHandlerError(
+                "validation tree and home must be distinct private directories",
+                error_code="code_task_validation_sandbox_invalid",
+                stage="validating",
+            )
+        assert git_metadata_root is not None
+        _validate_task_git_metadata_root(paths, git_metadata_root)
 
     argv = [
         bwrap,
         "--die-with-parent",
         "--new-session",
         "--unshare-all",
-        "--share-net",
         "--clearenv",
         "--proc",
         "/proc",
@@ -433,6 +481,8 @@ def build_bwrap_command(
         "--chdir",
         "/workspace",
     ]
+    if include_codex:
+        argv.insert(argv.index("--clearenv"), "--share-net")
     for system_path in ("/usr", "/bin", "/lib", "/lib64"):
         if Path(system_path).exists():
             argv.extend(["--ro-bind", system_path, system_path])
@@ -453,19 +503,61 @@ def build_bwrap_command(
     toolchain = paths.source_root / ".venv"
     if toolchain.is_dir():
         argv.extend(["--dir", "/toolchain", "--ro-bind", str(toolchain), "/toolchain/venv"])
-    node_modules = paths.source_root / "console" / "node_modules"
-    if node_modules.is_dir() and (mounted_root / "console").is_dir():
+    node_modules = _console_dependency_mount(
+        paths=paths,
+        mounted_root=mounted_root,
+        stage="preparing" if include_codex else "validating",
+    )
+    if node_modules is not None:
         argv.extend(
             [
                 "--ro-bind",
                 str(node_modules),
-                "/workspace/console/node_modules",
+                "/workspace/console/web/node_modules",
             ]
         )
 
-    git_metadata = mounted_root / ".git"
+    git_metadata = (git_metadata_root or mounted_root) / ".git"
     if git_metadata.is_dir():
         argv.extend(["--ro-bind", str(git_metadata), "/workspace/.git"])
+
+    if validation_index is not None:
+        if include_codex:
+            raise ToolHandlerError(
+                "validation Git index cannot enter the Codex sandbox",
+                error_code="code_task_validation_index_invalid",
+                stage="validating",
+            )
+        expected = paths.job_dir / VALIDATION_INDEX_FILENAME
+        try:
+            info = validation_index.lstat()
+        except OSError as exc:
+            raise ToolHandlerError(
+                "validation Git index is unavailable",
+                error_code="code_task_validation_index_invalid",
+                stage="validating",
+            ) from exc
+        if (
+            validation_index != expected
+            or not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise ToolHandlerError(
+                "validation Git index must be the private job-owned candidate",
+                error_code="code_task_validation_index_invalid",
+                stage="validating",
+            )
+        argv.extend(
+            [
+                "--dir",
+                "/validation",
+                "--ro-bind",
+                str(validation_index),
+                "/validation/index",
+            ]
+        )
 
     path_entries = ["/usr/local/bin", "/usr/bin", "/bin"]
     if toolchain.is_dir():
@@ -496,7 +588,11 @@ def build_bwrap_command(
         "PYTHONUNBUFFERED": "1",
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_ATTR_NOSYSTEM": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
     }
+    if validation_index is not None:
+        env["GIT_INDEX_FILE"] = "/validation/index"
     if include_codex:
         env["CODEX_HOME"] = "/sandbox-home/agent/.codex"
     for name, value in env.items():
@@ -504,6 +600,152 @@ def build_bwrap_command(
     argv.append("--")
     argv.extend(command)
     return argv
+
+
+def _validate_private_validation_directory(
+    paths: CodeTaskPaths,
+    candidate: Path,
+    *,
+    marker: str,
+    error_code: str,
+) -> None:
+    try:
+        info = candidate.lstat()
+    except OSError as exc:
+        raise ToolHandlerError(
+            "private validation directory is unavailable",
+            error_code=error_code,
+            stage="validating",
+        ) from exc
+    if (
+        not _is_private_job_directory(paths.job_dir)
+        or candidate.parent.absolute() != paths.job_dir.absolute()
+        or marker not in candidate.name
+        or not candidate.name.startswith("validation-")
+        or not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) != 0o700
+        or _path_has_symlink_component(candidate)
+    ):
+        raise ToolHandlerError(
+            "private validation directory must be a direct job-owned 0700 directory",
+            error_code=error_code,
+            stage="validating",
+        )
+
+
+def _validate_task_git_metadata_root(
+    paths: CodeTaskPaths,
+    git_metadata_root: Path,
+) -> None:
+    expected = paths.worktree.absolute()
+    candidate = git_metadata_root.absolute()
+    git_dir = candidate / ".git"
+    try:
+        worktree_info = candidate.lstat()
+        git_info = git_dir.lstat()
+        index_info = (git_dir / "index").lstat()
+    except OSError as exc:
+        raise ToolHandlerError(
+            "task Git metadata is unavailable for validation",
+            error_code="code_task_validation_git_metadata_invalid",
+            stage="validating",
+        ) from exc
+    if (
+        candidate != expected
+        or candidate.parent.absolute() != paths.job_dir.absolute()
+        or not stat.S_ISDIR(worktree_info.st_mode)
+        or stat.S_ISLNK(worktree_info.st_mode)
+        or worktree_info.st_uid != os.getuid()
+        or not stat.S_ISDIR(git_info.st_mode)
+        or stat.S_ISLNK(git_info.st_mode)
+        or git_info.st_uid != os.getuid()
+        or not stat.S_ISREG(index_info.st_mode)
+        or stat.S_ISLNK(index_info.st_mode)
+        or index_info.st_uid != os.getuid()
+        or _path_has_symlink_component(git_dir)
+    ):
+        raise ToolHandlerError(
+            "task Git metadata must be the real job-owned clone directory",
+            error_code="code_task_validation_git_metadata_invalid",
+            stage="validating",
+        )
+
+
+def _path_has_symlink_component(path: Path) -> bool:
+    absolute = path.absolute()
+    for candidate in (*reversed(absolute.parents), absolute):
+        try:
+            if stat.S_ISLNK(candidate.lstat().st_mode):
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _is_private_job_directory(job_dir: Path) -> bool:
+    try:
+        info = job_dir.lstat()
+    except (OSError, RecursionError):
+        return False
+    return (
+        stat.S_ISDIR(info.st_mode)
+        and not stat.S_ISLNK(info.st_mode)
+        and info.st_uid == os.getuid()
+        and stat.S_IMODE(info.st_mode) == 0o700
+        and not _path_has_symlink_component(job_dir)
+    )
+
+
+def _console_dependency_mount(
+    *,
+    paths: CodeTaskPaths,
+    mounted_root: Path,
+    stage: str,
+) -> Path | None:
+    source_web = paths.source_root / "console" / "web"
+    candidate_web = mounted_root / "console" / "web"
+    manifest_names = ("package.json", "package-lock.json")
+    candidate_manifests = tuple(candidate_web / name for name in manifest_names)
+    if not any(path.exists() or path.is_symlink() for path in candidate_manifests):
+        return None
+
+    source_manifests = tuple(source_web / name for name in manifest_names)
+    manifests = (*source_manifests, *candidate_manifests)
+    if any(
+        _path_has_symlink_component(path)
+        or path.is_symlink()
+        or not path.is_file()
+        for path in manifests
+    ):
+        raise ToolHandlerError(
+            "Console dependency manifests must be regular files in both source and task clone",
+            error_code="code_task_node_toolchain_drift",
+            stage=stage,
+        )
+    if any(
+        _hash_path(source) != _hash_path(candidate)
+        for source, candidate in zip(source_manifests, candidate_manifests, strict=True)
+    ):
+        raise ToolHandlerError(
+            "Console dependency manifests differ between source and task clone",
+            error_code="code_task_node_toolchain_drift",
+            stage=stage,
+        )
+
+    node_modules = source_web / "node_modules"
+    if (
+        _path_has_symlink_component(node_modules)
+        or node_modules.is_symlink()
+        or not node_modules.is_dir()
+    ):
+        raise ToolHandlerError(
+            "Console node_modules toolchain is missing from the source checkout",
+            error_code="code_task_node_toolchain_missing",
+            stage=stage,
+        )
+    return node_modules
 
 
 def _prepare_task(paths: CodeTaskPaths) -> None:
@@ -718,6 +960,7 @@ def _validate_task(
     *,
     limits: CodeTaskLimits,
 ) -> list[str]:
+    _cleanup_stale_validation_artifacts(paths)
     if not changes:
         payload = {"checks": [], "status": "passed", "reason": "no source changes"}
         write_json_atomic(paths.job_dir / VALIDATION_FILENAME, payload)
@@ -729,17 +972,43 @@ def _validate_task(
         f"{ENV_PREFIX}_CODE_TASK_FULL_COMMAND",
         "/toolchain/venv/bin/python scripts/check_repo.py full",
     ).strip()
+    _assert_real_index_matches_head(paths)
+    validation_index, validation_tree_sha = prepare_validation_index(
+        job_dir=paths.job_dir,
+        worktree=paths.worktree,
+        changed_files=[change.path for change in changes],
+    )
+    candidate_bytes = validation_index.read_bytes()
     checks: list[str] = []
-    for name, command in (("quick", quick), ("full", full)):
-        _check_cancel(paths)
-        _run_validation_command(
-            paths,
-            root=paths.worktree,
-            name=name,
-            command=command,
-            timeout_seconds=limits.timeout_seconds,
-        )
-        checks.append(name)
+    try:
+        for name, command in (("quick", quick), ("full", full)):
+            _check_cancel(paths)
+            _assert_validation_candidate_unchanged(
+                paths,
+                candidate_index=validation_index,
+                expected_bytes=candidate_bytes,
+                expected_tree_sha=validation_tree_sha,
+                name=name,
+            )
+            _run_validation_command(
+                paths,
+                root=paths.worktree,
+                name=name,
+                command=command,
+                timeout_seconds=limits.timeout_seconds,
+                candidate_index=validation_index,
+                validation_index=(validation_index if name == "full" else None),
+            )
+            _assert_validation_candidate_unchanged(
+                paths,
+                candidate_index=validation_index,
+                expected_bytes=candidate_bytes,
+                expected_tree_sha=validation_tree_sha,
+                name=name,
+            )
+            checks.append(name)
+    finally:
+        cleanup_validation_index(paths.job_dir)
     write_json_atomic(
         paths.job_dir / VALIDATION_FILENAME,
         {
@@ -752,6 +1021,181 @@ def _validate_task(
     return checks
 
 
+def _cleanup_stale_validation_artifacts(paths: CodeTaskPaths) -> None:
+    if not _is_private_job_directory(paths.job_dir):
+        raise ToolHandlerError(
+            "private validation job directory is unavailable",
+            error_code="code_task_validation_cleanup_failed",
+            stage="validating",
+            details={"artifacts": ["job_directory"]},
+        )
+    try:
+        entries = tuple(paths.job_dir.iterdir())
+    except OSError as exc:
+        raise ToolHandlerError(
+            "private validation artifacts could not be inspected",
+            error_code="code_task_validation_cleanup_failed",
+            stage="validating",
+            details={"artifacts": ["stale_validation"]},
+        ) from exc
+
+    for entry in entries:
+        if entry.name in {VALIDATION_INDEX_FILENAME, f"{VALIDATION_INDEX_FILENAME}.lock"}:
+            label = (
+                "stale_candidate_lock"
+                if entry.name.endswith(".lock")
+                else "stale_candidate_index"
+            )
+            _cleanup_validation_paths(
+                paths,
+                name="startup",
+                files={label: entry},
+            )
+            continue
+        match = _VALIDATION_RESIDUE_PATTERN.fullmatch(entry.name)
+        if match is None:
+            continue
+        kind = match.group(1)
+        is_lock = bool(match.group("lock"))
+        if kind in {"home", "tree"} and not is_lock:
+            _cleanup_validation_paths(
+                paths,
+                name="startup",
+                directories={f"stale_{kind}": entry},
+            )
+        elif kind == "index":
+            label = "stale_index_lock" if is_lock else "stale_index"
+            _cleanup_validation_paths(
+                paths,
+                name="startup",
+                files={label: entry},
+            )
+
+
+def _assert_real_index_matches_head(paths: CodeTaskPaths) -> None:
+    _validate_task_git_metadata_root(paths, paths.worktree)
+    env = _validation_git_env(
+        paths,
+        validation_root=paths.worktree,
+        candidate_index=paths.worktree / ".git" / "index",
+    )
+    try:
+        result = subprocess.run(
+            [
+                _validation_git_binary(),
+                "diff-index",
+                "--cached",
+                "--quiet",
+                "HEAD",
+                "--",
+            ],
+            cwd=str(paths.worktree),
+            env=env,
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ToolHandlerError(
+            "unable to verify the task clone Git index",
+            error_code="code_task_validation_git_metadata_invalid",
+            stage="validating",
+            details={"check": "quick"},
+        ) from exc
+    if result.returncode == 1:
+        raise ToolHandlerError(
+            "task clone Git index must match HEAD before validation",
+            error_code="code_task_validation_real_index_dirty",
+            stage="validating",
+            details={"check": "quick"},
+        )
+    if result.returncode != 0:
+        raise ToolHandlerError(
+            "unable to verify the task clone Git index",
+            error_code="code_task_validation_git_metadata_invalid",
+            stage="validating",
+            details={"check": "quick"},
+        )
+
+
+def _assert_validation_candidate_unchanged(
+    paths: CodeTaskPaths,
+    *,
+    candidate_index: Path,
+    expected_bytes: bytes,
+    expected_tree_sha: str,
+    name: str,
+) -> None:
+    try:
+        info = candidate_index.lstat()
+        content = candidate_index.read_bytes()
+    except OSError as exc:
+        raise ToolHandlerError(
+            "validation Git index evidence is unavailable",
+            error_code="code_task_validation_index_invalid",
+            stage="validating",
+            details={"check": name},
+        ) from exc
+    if (
+        candidate_index != paths.job_dir / VALIDATION_INDEX_FILENAME
+        or not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_nlink != 1
+        or stat.S_IMODE(info.st_mode) != 0o600
+        or content != expected_bytes
+    ):
+        raise ToolHandlerError(
+            "validation Git index evidence changed",
+            error_code="code_task_validation_index_invalid",
+            stage="validating",
+            details={"check": name},
+        )
+
+    projection = _copy_validation_index(
+        paths,
+        candidate_index=candidate_index,
+        name=name,
+    )
+    try:
+        env = _validation_git_env(
+            paths,
+            validation_root=paths.worktree,
+            candidate_index=projection,
+        )
+        try:
+            result = subprocess.run(
+                [_validation_git_binary(), "write-tree"],
+                cwd=str(paths.worktree),
+                env=env,
+                capture_output=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ToolHandlerError(
+                "unable to verify validation Git index evidence",
+                error_code="code_task_validation_index_invalid",
+                stage="validating",
+                details={"check": name},
+            ) from exc
+        tree_sha = result.stdout.decode("ascii", errors="replace").strip()
+        if result.returncode != 0 or tree_sha != expected_tree_sha:
+            raise ToolHandlerError(
+                "validation Git index tree evidence changed",
+                error_code="code_task_validation_index_invalid",
+                stage="validating",
+                details={"check": name},
+            )
+    finally:
+        _cleanup_validation_paths(
+            paths,
+            name=name,
+            files={
+                "index": projection,
+                "index_lock": projection.with_name(f"{projection.name}.lock"),
+            },
+        )
+
+
 def _run_validation_command(
     paths: CodeTaskPaths,
     *,
@@ -759,6 +1203,8 @@ def _run_validation_command(
     name: str,
     command: str,
     timeout_seconds: int,
+    candidate_index: Path,
+    validation_index: Path | None = None,
 ) -> None:
     if not command:
         raise ToolHandlerError(
@@ -766,39 +1212,457 @@ def _run_validation_command(
             error_code="code_task_validation_config",
             stage="validating",
         )
-    argv = build_bwrap_command(
-        paths,
-        ["/bin/bash", "-lc", command],
-        include_codex=False,
-        root=root,
-    )
     output = paths.job_dir / f"validation-{name}.log"
-    started = time.monotonic()
-    with output.open("a", encoding="utf-8") as stream:
-        process = subprocess.Popen(  # noqa: S603 - configured validation command
-            argv,
-            cwd=str(paths.source_root),
-            stdout=stream,
-            stderr=subprocess.STDOUT,
-            text=True,
-            start_new_session=True,
+    sandbox_home = _create_private_validation_directory(
+        paths,
+        name=name,
+        kind="home",
+    )
+    validation_root: Path | None = None
+    projection_index: Path | None = None
+    try:
+        projection_index = _copy_validation_index(
+            paths,
+            candidate_index=candidate_index,
+            name=name,
         )
-        while process.poll() is None:
-            _check_cancel(paths, process=process, limits=code_task_limits())
-            if time.monotonic() - started > timeout_seconds:
-                _terminate_process_group(process, code_task_limits().cancel_grace_seconds)
-                raise ToolHandlerError(
-                    f"{name} validation timed out",
-                    error_code="code_task_validation_timeout",
-                    stage="validating",
+        validation_root = _materialize_validation_tree(
+            paths,
+            candidate_index=projection_index,
+            name=name,
+        )
+        argv = build_bwrap_command(
+            paths,
+            ["/bin/bash", "--noprofile", "--norc", "-c", command],
+            include_codex=False,
+            root=validation_root,
+            validation_index=validation_index,
+            sandbox_home=sandbox_home,
+            git_metadata_root=root,
+        )
+        started = time.monotonic()
+        with output.open("a", encoding="utf-8") as stream:
+            try:
+                process = subprocess.Popen(  # noqa: S603 - configured validation command
+                    argv,
+                    cwd=str(paths.source_root),
+                    stdout=stream,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    start_new_session=True,
                 )
-            time.sleep(0.5)
-    if process.returncode != 0:
+            except OSError as exc:
+                raise ToolHandlerError(
+                    f"{name} validation could not start",
+                    error_code="code_task_validation_start_failed",
+                    stage="validating",
+                    details={"check": name},
+                ) from exc
+            while process.poll() is None:
+                _check_cancel(paths, process=process, limits=code_task_limits())
+                if time.monotonic() - started > timeout_seconds:
+                    _terminate_process_group(process, code_task_limits().cancel_grace_seconds)
+                    raise ToolHandlerError(
+                        f"{name} validation timed out",
+                        error_code="code_task_validation_timeout",
+                        stage="validating",
+                        details={"check": name},
+                    )
+                time.sleep(0.5)
+        if process.returncode != 0:
+            raise ToolHandlerError(
+                f"{name} validation failed; inspect the private validation log",
+                error_code="code_task_validation_failed",
+                stage="validating",
+                details={
+                    "check": name,
+                    "diagnostic": output.name,
+                },
+            )
+        _verify_validation_tree_unchanged(
+            paths,
+            validation_root=validation_root,
+            candidate_index=projection_index,
+            name=name,
+        )
+    finally:
+        cleanup_directories = {"home": sandbox_home}
+        if validation_root is not None:
+            cleanup_directories["tree"] = validation_root
+        cleanup_files: dict[str, Path] = {}
+        if projection_index is not None:
+            cleanup_files["index"] = projection_index
+            cleanup_files["index_lock"] = projection_index.with_name(
+                f"{projection_index.name}.lock"
+            )
+        _cleanup_validation_paths(
+            paths,
+            name=name,
+            directories=cleanup_directories,
+            files=cleanup_files,
+        )
+
+
+def _cleanup_validation_paths(
+    paths: CodeTaskPaths,
+    *,
+    name: str,
+    directories: Mapping[str, Path] | None = None,
+    files: Mapping[str, Path] | None = None,
+) -> None:
+    failed: list[str] = []
+    for label, path in (directories or {}).items():
+        if not _remove_private_validation_path(
+            paths,
+            path,
+            expect_directory=True,
+        ):
+            failed.append(label)
+    for label, path in (files or {}).items():
+        if not _remove_private_validation_path(
+            paths,
+            path,
+            expect_directory=False,
+        ):
+            failed.append(label)
+    if failed:
         raise ToolHandlerError(
-            f"{name} validation failed: {_tail_text(output)}",
-            error_code="code_task_validation_failed",
+            "private validation artifacts could not be removed",
+            error_code="code_task_validation_cleanup_failed",
             stage="validating",
-            details={"check": command},
+            details={"check": name, "artifacts": sorted(failed)},
+        )
+
+
+def _remove_private_validation_path(
+    paths: CodeTaskPaths,
+    path: Path,
+    *,
+    expect_directory: bool,
+) -> bool:
+    if (
+        path.parent.absolute() != paths.job_dir.absolute()
+        or not _is_private_job_directory(paths.job_dir)
+    ):
+        return False
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    try:
+        if info.st_uid != os.getuid() or stat.S_ISLNK(info.st_mode):
+            return False
+        is_directory = stat.S_ISDIR(info.st_mode)
+        if is_directory != expect_directory:
+            return False
+        if not is_directory:
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                return False
+            path.unlink()
+            return not path.exists() and not path.is_symlink()
+        path.chmod(0o700, follow_symlinks=False)
+        for current, directories, _files in os.walk(
+            path,
+            topdown=True,
+            followlinks=False,
+        ):
+            current_path = Path(current)
+            current_path.chmod(0o700, follow_symlinks=False)
+            for directory in directories:
+                child = current_path / directory
+                if not child.is_symlink():
+                    child.chmod(0o700, follow_symlinks=False)
+        shutil.rmtree(path)
+    except (OSError, RecursionError):
+        return False
+    return not path.exists() and not path.is_symlink()
+
+
+def _create_private_validation_directory(
+    paths: CodeTaskPaths,
+    *,
+    name: str,
+    kind: str,
+) -> Path:
+    candidate: Path | None = None
+    try:
+        candidate = Path(
+            tempfile.mkdtemp(
+                prefix=f"validation-{name}-{kind}-",
+                dir=paths.job_dir,
+            )
+        )
+        candidate.chmod(0o700)
+        _validate_private_validation_directory(
+            paths,
+            candidate,
+            marker=f"-{kind}-",
+            error_code=f"code_task_validation_{kind}_invalid",
+        )
+        return candidate
+    except ToolHandlerError:
+        if candidate is not None:
+            _cleanup_validation_paths(
+                paths,
+                name=name,
+                directories={kind: candidate},
+            )
+        raise
+    except OSError as exc:
+        if candidate is not None:
+            _cleanup_validation_paths(
+                paths,
+                name=name,
+                directories={kind: candidate},
+            )
+        raise ToolHandlerError(
+            "unable to create a private validation directory",
+            error_code=f"code_task_validation_{kind}_invalid",
+            stage="validating",
+            details={"check": name},
+        ) from exc
+
+
+def _copy_validation_index(
+    paths: CodeTaskPaths,
+    *,
+    candidate_index: Path,
+    name: str,
+) -> Path:
+    expected = paths.job_dir / VALIDATION_INDEX_FILENAME
+    try:
+        info = candidate_index.lstat()
+    except OSError as exc:
+        raise ToolHandlerError(
+            "validation Git index is unavailable",
+            error_code="code_task_validation_index_invalid",
+            stage="validating",
+            details={"check": name},
+        ) from exc
+    if (
+        candidate_index != expected
+        or not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_nlink != 1
+        or stat.S_IMODE(info.st_mode) != 0o600
+    ):
+        raise ToolHandlerError(
+            "validation Git index must be the private job-owned candidate",
+            error_code="code_task_validation_index_invalid",
+            stage="validating",
+            details={"check": name},
+        )
+
+    descriptor = -1
+    projection: Path | None = None
+    try:
+        descriptor, raw_path = tempfile.mkstemp(
+            prefix=f"validation-{name}-index-",
+            dir=paths.job_dir,
+        )
+        projection = Path(raw_path)
+        os.fchmod(descriptor, 0o600)
+        with (
+            candidate_index.open("rb") as source,
+            os.fdopen(descriptor, "wb", closefd=True) as target,
+        ):
+            descriptor = -1
+            shutil.copyfileobj(source, target, length=1024 * 1024)
+            target.flush()
+            os.fsync(target.fileno())
+        copied = projection.lstat()
+        if (
+            not stat.S_ISREG(copied.st_mode)
+            or copied.st_uid != os.getuid()
+            or copied.st_nlink != 1
+            or stat.S_IMODE(copied.st_mode) != 0o600
+        ):
+            raise OSError("private validation index has invalid metadata")
+        return projection
+    except OSError as exc:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if projection is not None:
+            _cleanup_validation_paths(
+                paths,
+                name=name,
+                files={
+                    "index": projection,
+                    "index_lock": projection.with_name(f"{projection.name}.lock"),
+                },
+            )
+        raise ToolHandlerError(
+            "unable to create the private validation index projection",
+            error_code="code_task_validation_index_invalid",
+            stage="validating",
+            details={"check": name},
+        ) from exc
+
+
+def _materialize_validation_tree(
+    paths: CodeTaskPaths,
+    *,
+    candidate_index: Path,
+    name: str,
+) -> Path:
+    validation_root = _create_private_validation_directory(
+        paths,
+        name=name,
+        kind="tree",
+    )
+    env = _validation_git_env(
+        paths,
+        validation_root=validation_root,
+        candidate_index=candidate_index,
+    )
+    try:
+        result = subprocess.run(
+            [
+                _validation_git_binary(),
+                "checkout-index",
+                "--all",
+                f"--prefix={validation_root}{os.sep}",
+            ],
+            cwd=str(paths.worktree),
+            env=env,
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _cleanup_validation_paths(
+            paths,
+            name=name,
+            directories={"tree": validation_root},
+        )
+        raise ToolHandlerError(
+            "unable to materialize the private validation tree",
+            error_code="code_task_validation_tree_failed",
+            stage="validating",
+            details={"check": name},
+        ) from exc
+    if result.returncode != 0:
+        _cleanup_validation_paths(
+            paths,
+            name=name,
+            directories={"tree": validation_root},
+        )
+        raise ToolHandlerError(
+            "unable to materialize the private validation tree",
+            error_code="code_task_validation_tree_failed",
+            stage="validating",
+            details={"check": name},
+        )
+    return validation_root
+
+
+def _validation_git_env(
+    paths: CodeTaskPaths,
+    *,
+    validation_root: Path,
+    candidate_index: Path,
+) -> dict[str, str]:
+    return {
+        "GIT_ATTR_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_DIR": str(paths.worktree / ".git"),
+        "GIT_INDEX_FILE": str(candidate_index),
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_WORK_TREE": str(validation_root),
+        "HOME": "/nonexistent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+    }
+
+
+def _validation_git_binary() -> str:
+    for candidate in (
+        Path("/usr/local/bin/git"),
+        Path("/usr/bin/git"),
+        Path("/bin/git"),
+    ):
+        try:
+            resolved = candidate.resolve(strict=True)
+            info = resolved.lstat()
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode) and os.access(resolved, os.X_OK):
+            return str(resolved)
+    raise ToolHandlerError(
+        "the trusted Git validation toolchain is unavailable",
+        error_code="code_task_git_toolchain_missing",
+        stage="validating",
+    )
+
+
+def _verify_validation_tree_unchanged(
+    paths: CodeTaskPaths,
+    *,
+    validation_root: Path,
+    candidate_index: Path,
+    name: str,
+) -> None:
+    env = _validation_git_env(
+        paths,
+        validation_root=validation_root,
+        candidate_index=candidate_index,
+    )
+    try:
+        changed = subprocess.run(
+            [
+                _validation_git_binary(),
+                "diff",
+                "--quiet",
+                "--no-ext-diff",
+                "--",
+            ],
+            cwd=str(validation_root),
+            env=env,
+            capture_output=True,
+            timeout=60,
+        )
+        untracked = subprocess.run(
+            [
+                _validation_git_binary(),
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ],
+            cwd=str(validation_root),
+            env=env,
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ToolHandlerError(
+            "unable to verify the private validation tree",
+            error_code="code_task_validation_tree_failed",
+            stage="validating",
+            details={"check": name},
+        ) from exc
+    if changed.returncode not in {0, 1} or untracked.returncode != 0:
+        raise ToolHandlerError(
+            "unable to verify the private validation tree",
+            error_code="code_task_validation_tree_failed",
+            stage="validating",
+            details={"check": name},
+        )
+    untracked_count = sum(1 for raw in untracked.stdout.split(b"\0") if raw)
+    if changed.returncode == 1 or untracked_count:
+        raise ToolHandlerError(
+            "validation changed its private source projection",
+            error_code="code_task_validation_mutated_projection",
+            stage="validating",
+            details={
+                "check": name,
+                "tracked_changes": changed.returncode == 1,
+                "untracked_entry_count": untracked_count,
+            },
         )
 
 
@@ -843,6 +1707,7 @@ def _task_changes(paths: CodeTaskPaths) -> tuple[CodeTaskChange, ...]:
             before = _git_output(paths.worktree, ["rev-parse", f"HEAD:{rel}"])
         changes.append(CodeTaskChange(rel, kind, before, after))
     return tuple(changes)
+
 
 def _consume_codex_event(paths: CodeTaskPaths, line: str) -> dict[str, Any] | None:
     try:

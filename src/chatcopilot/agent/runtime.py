@@ -188,6 +188,7 @@ class AgentRuntime:
                     *accessible_delegate_tools,
                 ),
                 raw_mcp_tools=raw_mcp_search_tools,
+                provider_specs=self.subagents.search_providers,
                 turn_timeout_seconds=(
                     self.runtime_config.runtime.turn_timeout_seconds
                 ),

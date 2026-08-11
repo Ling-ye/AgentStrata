@@ -1,15 +1,18 @@
 """Load and validate BotSpec files."""
 from __future__ import annotations
 
+import ipaddress
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from chatcopilot.contracts.subagents import (
     CachePolicySpec,
     CodexMainSessionPolicy,
     ContextPolicySpec,
     PromptLayerSpec,
+    SearchProviderSpec,
     ToolMatchRule,
     ToolSelectorSpec,
 )
@@ -53,6 +56,27 @@ _ENV_PREFIX_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _SUPPORTED_DEPLOY_TARGETS = {"wsl", "wsl2"}
 _SUBAGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 _CODE_MODEL_PROFILE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+_SEARCH_PROVIDER_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+_SEARCH_PROVIDER_KINDS = frozenset({"tavily", "brave", "searxng"})
+_SEARCH_PROVIDER_FIELDS = frozenset(
+    {
+        "id",
+        "kind",
+        "enabled",
+        "endpoint",
+        "credential_env",
+        "timeout_seconds",
+        "max_results",
+    }
+)
+_SEARCH_PROVIDER_TIMEOUT_MIN = 1.0
+_SEARCH_PROVIDER_TIMEOUT_MAX = 60.0
+_SEARCH_PROVIDER_RESULTS_MIN = 1
+_SEARCH_PROVIDER_RESULTS_MAX = 15
+_SEARCH_PROVIDER_OFFICIAL_ENDPOINTS = {
+    "tavily": "https://api.tavily.com/search",
+    "brave": "https://api.search.brave.com/res/v1/web/search",
+}
 _SUBAGENT_BUDGET_FIELDS = {
     "model_env_prefix",
     "max_model_turns",
@@ -551,6 +575,34 @@ def _strict_bool(value: Any, field: str, default: bool) -> bool:
     raise ValueError(f"{field} 必须是 boolean")
 
 
+def _strict_string(value: Any, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    return value.strip()
+
+
+def _strict_optional_string(value: Any, field: str) -> str | None:
+    if value is None:
+        return None
+    return _strict_string(value, field) or None
+
+
+def _strict_number(value: Any, field: str, default: float) -> float:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be a number")
+    return float(value)
+
+
+def _strict_integer(value: Any, field: str, default: int) -> int:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} must be an integer")
+    return value
+
+
 def _strict_positive_int(value: Any, field: str, default: int) -> int:
     if value is None or value == "":
         return default
@@ -659,20 +711,74 @@ def _parse_subagents(
         research_router,
         _with_model_env_prefix(defaults, research_env_prefix),
     )
+    search_providers = _parse_search_providers(
+        research_router.get("providers", []),
+        field_prefix=f"{field_prefix}.unified_search.providers",
+    )
     return SubagentSpec(
         backend=str(raw.get("backend", "native")).strip().lower() or "native",
         codex=_parse_codex_main_session_policy(raw, field_prefix=field_prefix),
         include=include,
         defaults=defaults,
         search_budget=search_budget,
-        research_enabled=_as_bool(research_router.get("enabled")),
+        research_enabled=_strict_bool(
+            research_router.get("enabled"),
+            f"{field_prefix}.unified_search.enabled",
+            False,
+        ),
         research_budget=research_budget,
+        search_providers=search_providers,
         agents=agents,
         overrides=preset_overrides,
         custom=custom,
         workflows=tuple(_str_list(raw.get("workflows", []))),
         max_workflow_depth=_as_int(raw.get("max_workflow_depth"), 2),
     )
+
+
+def _parse_search_providers(
+    raw: Any,
+    *,
+    field_prefix: str,
+) -> tuple[SearchProviderSpec, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError(f"{field_prefix} must be a YAML list")
+    providers: list[SearchProviderSpec] = []
+    for index, value in enumerate(raw):
+        field = f"{field_prefix}[{index}]"
+        item = _mapping(value, field)
+        unknown = sorted(set(item).difference(_SEARCH_PROVIDER_FIELDS))
+        if unknown:
+            raise ValueError(
+                f"{field} contains unsupported field(s): {', '.join(unknown)}"
+            )
+        endpoint = _strict_optional_string(item.get("endpoint"), f"{field}.endpoint")
+        credential_env = _strict_optional_string(
+            item.get("credential_env"),
+            f"{field}.credential_env",
+        )
+        providers.append(
+            SearchProviderSpec(
+                id=_strict_string(item.get("id"), f"{field}.id"),
+                kind=_strict_string(item.get("kind"), f"{field}.kind").lower(),
+                enabled=_strict_bool(item.get("enabled"), f"{field}.enabled", True),
+                endpoint=endpoint,
+                credential_env=credential_env,
+                timeout_seconds=_strict_number(
+                    item.get("timeout_seconds"),
+                    f"{field}.timeout_seconds",
+                    15.0,
+                ),
+                max_results=_strict_integer(
+                    item.get("max_results"),
+                    f"{field}.max_results",
+                    10,
+                ),
+            )
+        )
+    return tuple(providers)
 
 
 def _parse_codex_main_session_policy(
@@ -858,6 +964,114 @@ def _as_int(value: Any, fallback: int) -> int:
         return -1
 
 
+def _validate_search_providers(
+    providers: tuple[SearchProviderSpec, ...],
+    issues: list[ValidationIssue],
+) -> None:
+    seen: set[str] = set()
+    for index, provider in enumerate(providers):
+        field = f"agents.unified_search.providers[{index}]"
+        if not _SEARCH_PROVIDER_ID_RE.fullmatch(provider.id):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "provider id must be kebab-case and start with a lowercase letter",
+                    f"{field}.id",
+                )
+            )
+        elif provider.id in seen:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    f"duplicate unified-search provider id: {provider.id}",
+                    f"{field}.id",
+                )
+            )
+        seen.add(provider.id)
+        if provider.kind not in _SEARCH_PROVIDER_KINDS:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "provider kind must be one of: brave, searxng, tavily",
+                    f"{field}.kind",
+                )
+            )
+        if provider.credential_env and not _ENV_PREFIX_RE.fullmatch(
+            provider.credential_env
+        ):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "credential_env must be an uppercase environment-variable name",
+                    f"{field}.credential_env",
+                )
+            )
+        if not (
+            _SEARCH_PROVIDER_TIMEOUT_MIN
+            <= provider.timeout_seconds
+            <= _SEARCH_PROVIDER_TIMEOUT_MAX
+        ):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "timeout_seconds must be between 1 and 60",
+                    f"{field}.timeout_seconds",
+                )
+            )
+        if not (
+            _SEARCH_PROVIDER_RESULTS_MIN
+            <= provider.max_results
+            <= _SEARCH_PROVIDER_RESULTS_MAX
+        ):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "max_results must be between 1 and 15",
+                    f"{field}.max_results",
+                )
+            )
+        endpoint_error = _search_provider_endpoint_error(provider)
+        if endpoint_error:
+            issues.append(
+                ValidationIssue("error", endpoint_error, f"{field}.endpoint")
+            )
+
+
+def _search_provider_endpoint_error(provider: SearchProviderSpec) -> str:
+    if provider.endpoint is None:
+        return ""
+    try:
+        parsed = urlparse(provider.endpoint)
+        _ = parsed.port
+    except ValueError:
+        return "provider endpoint has an invalid port"
+    if not parsed.hostname or parsed.username or parsed.password:
+        return "provider endpoint must have a host and must not contain credentials"
+    if parsed.params or parsed.query or parsed.fragment:
+        return "provider endpoint must not contain params, a query, or a fragment"
+    if provider.kind in {"tavily", "brave"}:
+        expected = _SEARCH_PROVIDER_OFFICIAL_ENDPOINTS[provider.kind]
+        if provider.endpoint != expected:
+            return f"{provider.kind} endpoint must be exactly {expected}"
+        return ""
+    if provider.kind == "searxng":
+        if parsed.scheme not in {"http", "https"}:
+            return "SearXNG provider endpoint must use HTTP or HTTPS"
+        if not _is_loopback_host(parsed.hostname):
+            return "SearXNG provider endpoint must use a literal loopback host or localhost"
+    return ""
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    normalized = hostname.strip().lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
     from chatcopilot.contracts.subagents import (
         BUILTIN_SUBAGENT_PRESET_NAMES,
@@ -942,6 +1156,7 @@ def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
             "agents.unified_search",
             issues,
         )
+    _validate_search_providers(spec.agents.search_providers, issues)
 
     tool_names: set[str] = set()  # 仅在 custom subagent 之间检测 delegate 工具名冲突
     for index, custom in enumerate(spec.agents.custom):

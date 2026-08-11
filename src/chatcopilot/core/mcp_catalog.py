@@ -97,13 +97,15 @@ def resolve_catalog_server(raw: dict[str, Any]) -> dict[str, Any] | None:
 
     ref = str(raw.get("ref", "") or "").strip()
     if not ref:
-        return dict(raw)
+        resolved = dict(raw)
+        resolved.pop("catalog_ref", None)
+        return resolved
     entry = resolve_mcp_catalog_ref(ref)
     if entry is None:
         return None
     merged = dict(entry.server)
     for key, value in raw.items():
-        if key != "ref":
+        if key not in {"ref", "catalog_ref"}:
             merged[key] = value
     merged["catalog_ref"] = ref
     return merged

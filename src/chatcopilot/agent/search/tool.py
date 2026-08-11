@@ -16,11 +16,11 @@ from chatcopilot.agent.search.providers import (
 from chatcopilot.agent.search.router import SearchRouter
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.core.llm_client import LLMClient
-from chatcopilot.contracts.subagents import SubagentBudgetSpec
+from chatcopilot.contracts.subagents import SearchProviderSpec, SubagentBudgetSpec
 from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
 
-_MAX_SEARCH_WALL_SECONDS = 3600.0
-_SEARCH_BUDGET_RATIO = 1.0
+_MAX_SEARCH_WALL_SECONDS = 180.0
+_SEARCH_BUDGET_RATIO = 0.6
 _MAX_PAGE_SUMMARY_CHARS = 12000
 
 
@@ -30,10 +30,15 @@ def build_search_tool(
     budget: SubagentBudgetSpec,
     tools: Sequence[ToolDef],
     raw_mcp_tools: Sequence[ToolDef] = (),
+    provider_specs: Sequence[SearchProviderSpec] = (),
     turn_timeout_seconds: float | None = None,
     circuit: SearchCircuitBreaker | None = None,
 ) -> ToolDef | None:
-    registry = SearchProviderRegistry.from_tools(tools, raw_mcp_tools=raw_mcp_tools)
+    registry = SearchProviderRegistry.from_tools(
+        tools,
+        raw_mcp_tools=raw_mcp_tools,
+        provider_specs=provider_specs,
+    )
     if not registry.available_sources():
         return None
     max_wall = (

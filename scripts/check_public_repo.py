@@ -30,6 +30,7 @@ PUBLIC_URL_HOSTS = frozenset(
         "api.github.com",
         "api.githubcopilot.com",
         "api.openai.com",
+        "api.search.brave.com",
         "api.tavily.com",
         "brave.com",
         "careers.tencent.com",

@@ -2,7 +2,7 @@
 # deploy_all.sh - WSL-first full deployment entry for AgentStrata.
 #
 # This script is intended to run from the WSL source checkout. It prepares the
-# source environment, starts shared Docker MCP services, updates both bundled
+# source environment, reconciles shared Docker services, updates both bundled
 # bundled bot instance, registers its user systemd unit, starts it, and prints
 # final status checks.
 set -euo pipefail
@@ -28,10 +28,10 @@ Usage:
   bash deploy/wsl/deploy_all.sh [--skip-docker] [--skip-bots] [--docker-timeout SECONDS] [--dry-run]
 
 Options:
-  --skip-docker   Do not start shared Docker MCP services.
+  --skip-docker   Do not reconcile shared Docker services.
   --skip-bots     Do not update/register/start bundled bot instances.
   --docker-timeout SECONDS
-                  Limit Docker MCP startup; timeout is non-fatal (default: 180).
+                  Limit shared Docker service startup; timeout is non-fatal (default: 180).
   --dry-run, -n   Print commands without changing the system.
   -h, --help      Show this help.
 EOF
@@ -76,16 +76,16 @@ run_docker_start() {
         err "invalid Docker timeout: $DOCKER_START_TIMEOUT"
         return 1
     fi
-    info "Docker MCP startup timeout: ${DOCKER_START_TIMEOUT}s"
+    info "Docker shared-service startup timeout: ${DOCKER_START_TIMEOUT}s"
     timeout "${DOCKER_START_TIMEOUT}s" bash "$REPO_ROOT/deploy/docker/services.sh" start
     local rc=$?
     if [ "$rc" -eq 0 ]; then
         return 0
     fi
     if [ "$rc" -eq 124 ]; then
-        warn "Docker MCP startup timed out after ${DOCKER_START_TIMEOUT}s; continuing with bot deployment."
+        warn "Docker shared-service startup timed out after ${DOCKER_START_TIMEOUT}s; continuing with bot deployment."
     else
-        warn "Docker MCP startup failed with exit code $rc; continuing with bot deployment."
+        warn "Docker shared-service startup failed with exit code $rc; continuing with bot deployment."
     fi
     warn "Run 'bash deploy/docker/services.sh status' and 'bash deploy/docker/services.sh doctor all' after fixing Docker/network/login dependencies."
     FAILURES=1
@@ -162,10 +162,10 @@ info "step 1/5: prepare WSL source environment and Console"
 run bash "$REPO_ROOT/deploy/wsl/install_wsl_env.sh" --with-console
 
 if [ "$SKIP_DOCKER" -eq 0 ]; then
-    info "step 2/5: start shared Docker MCP services"
+    info "step 2/5: reconcile shared Docker services"
     run_docker_start
 else
-    warn "step 2/5 skipped: Docker MCP services"
+    warn "step 2/5 skipped: shared Docker services"
 fi
 
 UPDATED_BOTS=()

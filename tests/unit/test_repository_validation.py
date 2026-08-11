@@ -54,6 +54,16 @@ def test_validation_profiles_include_static_and_runtime_checks(
     full_pytest = profiles["full"][-2]
     assert f"--basetemp={tmp_path / 'chatcopilot-pytest-fast'}" in fast_pytest.argv
     assert f"--basetemp={tmp_path / 'chatcopilot-pytest-full'}" in full_pytest.argv
+    indexed_checks = {
+        check.name
+        for check in profiles["full"]
+        if check.uses_repository_index
+    }
+    assert indexed_checks == {
+        "public repository boundary",
+        "UTF-8 source normalization",
+        "Python wheel build smoke",
+    }
 
 
 def test_validation_subprocesses_use_one_wsl_temp_root(
@@ -70,6 +80,24 @@ def test_validation_subprocesses_use_one_wsl_temp_root(
     assert env["TMPDIR"] == str(tmp_path)
     assert env["TEMP"] == str(tmp_path)
     assert env["TMP"] == str(tmp_path)
+
+
+def test_validation_candidate_index_does_not_leak_into_test_subprocesses(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    check_repo = _load_script("check_repo.py")
+    candidate = tmp_path / "candidate-index"
+    monkeypatch.setenv("GIT_INDEX_FILE", str(candidate))
+    monkeypatch.setenv("GIT_OPTIONAL_LOCKS", "1")
+
+    ordinary = check_repo._check_env()
+    projected = check_repo._check_env(uses_repository_index=True)
+
+    assert "GIT_INDEX_FILE" not in ordinary
+    assert "GIT_OPTIONAL_LOCKS" not in ordinary
+    assert projected["GIT_INDEX_FILE"] == str(candidate)
+    assert projected["GIT_OPTIONAL_LOCKS"] == "0"
 
 
 def test_build_smoke_detects_tracked_file_changes(tmp_path: Path) -> None:

@@ -15,7 +15,7 @@
 | 管理控制台或运行评测 | [`console.md`](console.md) | [`evaluation-glossary.md`](evaluation-glossary.md) |
 | 准备后续 GitHub Release | [`releasing.md`](releasing.md) | [`../CHANGELOG.md`](../CHANGELOG.md) |
 | 获取社区支持 | [`../SUPPORT.md`](../SUPPORT.md) | [`../SECURITY.md`](../SECURITY.md) |
-| 管理 Docker MCP 服务 | [`../deploy/docker/README.md`](../deploy/docker/README.md) | [`operations.md`](operations.md) |
+| 管理共享 Docker 服务 | [`../deploy/docker/README.md`](../deploy/docker/README.md) | [`operations.md`](operations.md) |
 | 接入或修改外部工具 | [`external-tools-architecture.md`](external-tools-architecture.md) | [`architecture.md`](architecture.md) |
 | 参与开发 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | [`sdd.md`](sdd.md)、[`ai-debugging.md`](ai-debugging.md) |
 

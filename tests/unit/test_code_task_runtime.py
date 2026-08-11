@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import json
 import os
 import shutil
+import stat
 import subprocess
 import threading
 from pathlib import Path
@@ -45,7 +46,10 @@ def _repository(tmp_path: Path) -> Path:
     _git(source, "init")
     _git(source, "config", "user.email", "code-task@example.invalid")
     _git(source, "config", "user.name", "Code Task Test")
-    (source / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
+    (source / ".gitignore").write_text(
+        "ignored.txt\n.env\nnode_modules/\nbuild/\ndist/\n*.egg-info/\n",
+        encoding="utf-8",
+    )
     (source / "tracked.txt").write_text("tracked baseline\n", encoding="utf-8")
     _git(source, "add", ".gitignore", "tracked.txt")
     _git(source, "commit", "-m", "baseline")
@@ -56,6 +60,37 @@ def _paths(tmp_path: Path, source: Path) -> runtime.CodeTaskPaths:
     job_dir = tmp_path / "job"
     job_dir.mkdir(mode=0o700)
     return runtime.CodeTaskPaths.build(job_dir=job_dir, source_root=source)
+
+
+def _write_console_manifests(root: Path, *, version: str = "1.0.0") -> None:
+    web = root / "console" / "web"
+    web.mkdir(parents=True, exist_ok=True)
+    (web / "package.json").write_text(
+        json.dumps({"name": "console-test", "version": version}) + "\n",
+        encoding="utf-8",
+    )
+    (web / "package-lock.json").write_text(
+        json.dumps({"name": "console-test", "version": version, "lockfileVersion": 3})
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _validation_mounts(paths: runtime.CodeTaskPaths) -> dict[str, Path]:
+    root = paths.job_dir / "validation-test-tree-fixture"
+    shutil.copytree(
+        paths.worktree,
+        root,
+        ignore=shutil.ignore_patterns(".git"),
+    )
+    root.chmod(0o700)
+    home = paths.job_dir / "validation-test-home-fixture"
+    home.mkdir(mode=0o700)
+    return {
+        "root": root,
+        "sandbox_home": home,
+        "git_metadata_root": paths.worktree,
+    }
 
 
 class _JobContext:
@@ -528,6 +563,12 @@ def test_bwrap_probe_exposes_only_worktree_and_clears_host_environment(
     source = _repository(tmp_path)
     paths = _paths(tmp_path, source)
     shutil.copytree(source, paths.worktree)
+    dependency = source / "console" / "web" / "node_modules" / "package" / "marker"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("available\n", encoding="utf-8")
+    _write_console_manifests(source)
+    _write_console_manifests(paths.worktree)
+    mounts = _validation_mounts(paths)
     secret = "platform-secret-must-not-cross-boundary"
     monkeypatch.setenv("FEISHU_APP_SECRET", secret)
     source_file = source / "tracked.txt"
@@ -540,20 +581,697 @@ def test_bwrap_probe_exposes_only_worktree_and_clears_host_environment(
             'test ! -e "$HOME/.ssh"',
             "test ! -S /run/docker.sock",
             'test -z "${FEISHU_APP_SECRET:-}"',
+            "test -r /workspace/console/web/node_modules/package/marker",
+            "! touch /workspace/console/web/node_modules/forbidden 2>/dev/null",
             "git status --short >/dev/null",
             "readlink /proc/self/ns/net",
         ]
     )
     command = runtime.build_bwrap_command(
         paths,
-        ["/bin/bash", "-lc", probe],
+        ["/bin/bash", "--noprofile", "--norc", "-c", probe],
         include_codex=False,
+        **mounts,
+    )
+
+    assert "--share-net" not in command
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() != os.readlink("/proc/self/ns/net")
+
+
+def test_bwrap_mounts_console_web_dependencies_read_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    (source / "console" / "web" / "node_modules").mkdir(parents=True)
+    _write_console_manifests(source)
+    _write_console_manifests(paths.worktree)
+    mounts = _validation_mounts(paths)
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/usr/bin/bwrap")
+
+    command = runtime.build_bwrap_command(
+        paths,
+        ["/bin/true"],
+        include_codex=False,
+        **mounts,
+    )
+
+    dependency_mount = [
+        "--ro-bind",
+        str(source / "console" / "web" / "node_modules"),
+        "/workspace/console/web/node_modules",
+    ]
+    mount_index = command.index(str(source / "console" / "web" / "node_modules")) - 1
+    assert command[mount_index : mount_index + 3] == dependency_mount
+    assert "/workspace/console/node_modules" not in command
+
+
+def test_bwrap_rejects_missing_or_drifted_console_toolchain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    _write_console_manifests(source)
+    _write_console_manifests(paths.worktree)
+    mounts = _validation_mounts(paths)
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/usr/bin/bwrap")
+
+    with pytest.raises(ToolHandlerError) as missing:
+        runtime.build_bwrap_command(
+            paths,
+            ["/bin/true"],
+            include_codex=False,
+            **mounts,
+        )
+    assert missing.value.error_code == "code_task_node_toolchain_missing"
+
+    (source / "console" / "web" / "node_modules").mkdir()
+    _write_console_manifests(mounts["root"], version="2.0.0")
+    with pytest.raises(ToolHandlerError) as drift:
+        runtime.build_bwrap_command(
+            paths,
+            ["/bin/true"],
+            include_codex=False,
+            **mounts,
+        )
+    assert drift.value.error_code == "code_task_node_toolchain_drift"
+
+
+def test_bwrap_rejects_validation_home_outside_job_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    mounts = _validation_mounts(paths)
+    outside = tmp_path / "outside-validation-home"
+    outside.mkdir(mode=0o700)
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/usr/bin/bwrap")
+
+    with pytest.raises(ToolHandlerError) as invalid:
+        runtime.build_bwrap_command(
+            paths,
+            ["/bin/true"],
+            include_codex=False,
+            root=mounts["root"],
+            sandbox_home=outside,
+            git_metadata_root=paths.worktree,
+        )
+
+    assert invalid.value.error_code == "code_task_validation_home_invalid"
+
+
+def test_bwrap_validation_rejects_implicit_persistent_fallbacks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/usr/bin/bwrap")
+
+    with pytest.raises(ToolHandlerError) as invalid:
+        runtime.build_bwrap_command(
+            paths,
+            ["/bin/true"],
+            include_codex=False,
+        )
+
+    assert invalid.value.error_code == "code_task_validation_sandbox_invalid"
+    assert not paths.validation_home.exists()
+
+
+def test_bwrap_codex_keeps_network_namespace_shared(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    monkeypatch.setenv("CHATCOPILOT_CODEX_BIN", str(_fake_codex(tmp_path)))
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/usr/bin/bwrap")
+
+    command = runtime.build_bwrap_command(
+        paths,
+        ["/bin/true"],
+        include_codex=True,
     )
 
     assert "--share-net" in command
-    result = subprocess.run(command, capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == os.readlink("/proc/self/ns/net")
+
+
+def test_bwrap_rejects_symlinked_task_git_metadata_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    real_worktree = tmp_path / "real-worktree"
+    shutil.copytree(source, real_worktree)
+    paths.worktree.symlink_to(real_worktree, target_is_directory=True)
+    root = paths.job_dir / "validation-test-tree-fixture"
+    shutil.copytree(source, root, ignore=shutil.ignore_patterns(".git"))
+    root.chmod(0o700)
+    home = paths.job_dir / "validation-test-home-fixture"
+    home.mkdir(mode=0o700)
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/usr/bin/bwrap")
+
+    with pytest.raises(ToolHandlerError) as invalid:
+        runtime.build_bwrap_command(
+            paths,
+            ["/bin/true"],
+            include_codex=False,
+            root=root,
+            sandbox_home=home,
+            git_metadata_root=paths.worktree,
+        )
+
+    assert invalid.value.error_code == "code_task_validation_git_metadata_invalid"
+
+
+def test_bwrap_rejects_symlinked_console_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    _write_console_manifests(source)
+    _write_console_manifests(paths.worktree)
+    (source / "console" / "web" / "node_modules").mkdir(parents=True)
+    mounts = _validation_mounts(paths)
+    candidate_console = mounts["root"] / "console"
+    shutil.rmtree(candidate_console)
+    candidate_console.symlink_to(source / "console", target_is_directory=True)
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/usr/bin/bwrap")
+
+    with pytest.raises(ToolHandlerError) as invalid:
+        runtime.build_bwrap_command(
+            paths,
+            ["/bin/true"],
+            include_codex=False,
+            **mounts,
+        )
+
+    assert invalid.value.error_code == "code_task_node_toolchain_drift"
+
+
+@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap is not installed")
+def test_bwrap_mounts_candidate_index_read_only_without_mutating_real_index(
+    tmp_path: Path,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    added = paths.worktree / "new.py"
+    added.write_text("VALUE = 1\n", encoding="utf-8")
+    real_index = paths.worktree / ".git" / "index"
+    real_index_before = real_index.read_bytes()
+    candidate, _tree_sha = runtime.prepare_validation_index(
+        job_dir=paths.job_dir,
+        worktree=paths.worktree,
+        changed_files=["new.py"],
+    )
+    mounts = _validation_mounts(paths)
+    probe = " && ".join(
+        [
+            'test "$GIT_INDEX_FILE" = /validation/index',
+            "git ls-files --error-unmatch new.py >/dev/null",
+            "! /bin/sh -c 'printf x >> /validation/index' 2>/dev/null",
+            f"test ! -e {candidate}",
+        ]
+    )
+    command = runtime.build_bwrap_command(
+        paths,
+        ["/bin/bash", "-lc", probe],
+        include_codex=False,
+        validation_index=candidate,
+        **mounts,
+    )
+
+    try:
+        result = subprocess.run(command, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert real_index.read_bytes() == real_index_before
+    finally:
+        runtime.cleanup_validation_index(paths.job_dir)
+
+    assert not candidate.exists()
+    assert real_index.read_bytes() == real_index_before
+
+
+def test_validation_tree_materializes_exact_candidate_modes_and_symlinks(
+    tmp_path: Path,
+) -> None:
+    source = _repository(tmp_path)
+    for name in ("delete.txt", "rename.txt"):
+        (source / name).write_text(name + "\n", encoding="utf-8")
+    _git(source, "add", "delete.txt", "rename.txt")
+    _git(source, "commit", "-m", "validation fixtures")
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    real_index = paths.worktree / ".git" / "index"
+    (paths.worktree / "delete.txt").unlink()
+    (paths.worktree / "rename.txt").rename(paths.worktree / "renamed.sh")
+    (paths.worktree / "renamed.sh").chmod(0o755)
+    (paths.worktree / "new.txt").write_text("new\n", encoding="utf-8")
+    (paths.worktree / "link.txt").symlink_to("renamed.sh")
+    changes = runtime._task_changes(paths)
+    real_index_before = real_index.read_bytes()
+    candidate, _tree_sha = runtime.prepare_validation_index(
+        job_dir=paths.job_dir,
+        worktree=paths.worktree,
+        changed_files=[change.path for change in changes],
+    )
+    validation_root: Path | None = None
+
+    try:
+        validation_root = runtime._materialize_validation_tree(
+            paths,
+            candidate_index=candidate,
+            name="projection",
+        )
+        assert not (validation_root / "delete.txt").exists()
+        assert not (validation_root / "rename.txt").exists()
+        assert (validation_root / "renamed.sh").read_text(encoding="utf-8") == (
+            "rename.txt\n"
+        )
+        assert (validation_root / "renamed.sh").stat().st_mode & 0o111
+        assert (validation_root / "new.txt").read_text(encoding="utf-8") == "new\n"
+        assert (validation_root / "link.txt").is_symlink()
+        assert os.readlink(validation_root / "link.txt") == "renamed.sh"
+        assert real_index.read_bytes() == real_index_before
+    finally:
+        if validation_root is not None:
+            shutil.rmtree(validation_root)
+        runtime.cleanup_validation_index(paths.job_dir)
+
+    assert not tuple(paths.job_dir.glob("validation-projection-tree-*"))
+    assert real_index.read_bytes() == real_index_before
+
+
+def test_validation_rejects_cached_delta_before_starting_quick_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    (paths.worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    _git(paths.worktree, "add", "tracked.txt")
+    changes = runtime._task_changes(paths)
+    started = False
+
+    def reject_start(*_args: object, **_kwargs: object) -> None:
+        nonlocal started
+        started = True
+
+    monkeypatch.setattr(runtime, "_run_validation_command", reject_start)
+
+    with pytest.raises(ToolHandlerError) as rejected:
+        runtime._validate_task(paths, changes, limits=runtime.CodeTaskLimits())
+
+    assert rejected.value.error_code == "code_task_validation_real_index_dirty"
+    assert rejected.value.details == {"check": "quick"}
+    assert started is False
+    assert not (paths.job_dir / runtime.VALIDATION_INDEX_FILENAME).exists()
+
+
+def test_validation_startup_recovers_only_owned_stale_artifacts(
+    tmp_path: Path,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    stale_home = paths.job_dir / "validation-quick-home-deadbeef"
+    stale_home.mkdir(mode=0o700)
+    (stale_home / "cache").write_text("stale\n", encoding="utf-8")
+    stale_home.chmod(0o000)
+    stale_index = paths.job_dir / "validation-full-index-deadbeef"
+    stale_index.write_bytes(b"stale")
+    stale_index.chmod(0o600)
+    stale_candidate = paths.job_dir / runtime.VALIDATION_INDEX_FILENAME
+    stale_candidate.write_bytes(b"stale")
+    stale_candidate.chmod(0o600)
+    unrelated = paths.job_dir / "validation-user-home-keep"
+    unrelated.write_text("keep\n", encoding="utf-8")
+
+    assert runtime._validate_task(
+        paths,
+        (),
+        limits=runtime.CodeTaskLimits(),
+    ) == []
+
+    assert not stale_home.exists()
+    assert not stale_index.exists()
+    assert not stale_candidate.exists()
+    assert unrelated.read_text(encoding="utf-8") == "keep\n"
+
+
+def test_validation_startup_rejects_stale_symlink_without_following_it(
+    tmp_path: Path,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    outside = tmp_path / "outside-stale-target"
+    outside.mkdir()
+    marker = outside / "marker"
+    marker.write_text("keep\n", encoding="utf-8")
+    stale = paths.job_dir / "validation-quick-home-deadbeef"
+    stale.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ToolHandlerError) as rejected:
+        runtime._validate_task(paths, (), limits=runtime.CodeTaskLimits())
+
+    assert rejected.value.error_code == "code_task_validation_cleanup_failed"
+    assert rejected.value.details == {
+        "check": "startup",
+        "artifacts": ["stale_home"],
+    }
+    assert stale.is_symlink()
+    assert marker.read_text(encoding="utf-8") == "keep\n"
+
+
+@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap is not installed")
+def test_quick_validation_rejects_tracked_trailing_whitespace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    (paths.worktree / "tracked.txt").write_text("trailing whitespace \n", encoding="utf-8")
+    changes = runtime._task_changes(paths)
+    monkeypatch.setenv("CHATCOPILOT_CODE_TASK_QUICK_COMMAND", "git diff --check")
+    monkeypatch.setenv("CHATCOPILOT_CODE_TASK_FULL_COMMAND", "true")
+
+    with pytest.raises(ToolHandlerError) as rejected:
+        runtime._validate_task(paths, changes, limits=runtime.CodeTaskLimits())
+
+    assert rejected.value.error_code == "code_task_validation_failed"
+    assert rejected.value.details == {
+        "check": "quick",
+        "diagnostic": "validation-quick.log",
+    }
+    assert not tuple(paths.job_dir.glob("validation-quick-home-*"))
+    assert not tuple(paths.job_dir.glob("validation-quick-tree-*"))
+    assert not tuple(paths.job_dir.glob("validation-quick-index-*"))
+    assert not (paths.job_dir / runtime.VALIDATION_INDEX_FILENAME).exists()
+
+
+@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap is not installed")
+def test_validation_tree_excludes_clone_ignored_entries_and_mounts_host_node_modules(
+    tmp_path: Path,
+) -> None:
+    source = _repository(tmp_path)
+    _write_console_manifests(source)
+    _git(source, "add", "console/web/package.json", "console/web/package-lock.json")
+    _git(source, "commit", "-m", "console manifests")
+    host_marker = source / "console" / "web" / "node_modules" / "host" / "marker"
+    host_marker.parent.mkdir(parents=True)
+    host_marker.write_text("host-reviewed\n", encoding="utf-8")
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    shutil.rmtree(paths.worktree / "console" / "web" / "node_modules")
+    malicious_console = (
+        paths.worktree
+        / "console"
+        / "web"
+        / "node_modules"
+        / "task-malicious"
+        / "marker"
+    )
+    malicious_console.parent.mkdir(parents=True)
+    malicious_console.write_text("task-only\n", encoding="utf-8")
+    (paths.worktree / "ignored.txt").write_text("ignored\n", encoding="utf-8")
+    (paths.worktree / ".env").write_text("SECRET=hidden\n", encoding="utf-8")
+    malicious_root = paths.worktree / "node_modules" / "task-malicious" / "marker"
+    malicious_root.parent.mkdir(parents=True)
+    malicious_root.write_text("task-only\n", encoding="utf-8")
+    (paths.worktree / "tracked.txt").write_text("candidate-visible\n", encoding="utf-8")
+    (paths.worktree / "new.py").write_text("VALUE = 1\n", encoding="utf-8")
+    changes = runtime._task_changes(paths)
+    candidate, _tree_sha = runtime.prepare_validation_index(
+        job_dir=paths.job_dir,
+        worktree=paths.worktree,
+        changed_files=[change.path for change in changes],
+    )
+    command = " && ".join(
+        [
+            "test ! -e /workspace/ignored.txt",
+            "test ! -e /workspace/.env",
+            "test ! -e /workspace/node_modules/task-malicious/marker",
+            "test ! -e /workspace/console/web/node_modules/task-malicious/marker",
+            "test -r /workspace/console/web/node_modules/host/marker",
+            "grep -q candidate-visible /workspace/tracked.txt",
+            "test -r /workspace/new.py",
+        ]
+    )
+
+    try:
+        runtime._run_validation_command(
+            paths,
+            root=paths.worktree,
+            name="full",
+            command=command,
+            timeout_seconds=30,
+            candidate_index=candidate,
+            validation_index=candidate,
+        )
+    finally:
+        runtime.cleanup_validation_index(paths.job_dir)
+
+    assert malicious_console.read_text(encoding="utf-8") == "task-only\n"
+    assert malicious_root.read_text(encoding="utf-8") == "task-only\n"
+    assert not tuple(paths.job_dir.glob("validation-full-home-*"))
+    assert not tuple(paths.job_dir.glob("validation-full-tree-*"))
+
+
+@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap is not installed")
+def test_failed_validation_profile_cannot_make_retry_false_pass(
+    tmp_path: Path,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    (paths.worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    changes = runtime._task_changes(paths)
+    candidate, _tree_sha = runtime.prepare_validation_index(
+        job_dir=paths.job_dir,
+        worktree=paths.worktree,
+        changed_files=[change.path for change in changes],
+    )
+    poison = "printf 'false() { return 0; }\\n' > \"$HOME/.bash_profile\"; exit 1"
+
+    try:
+        with pytest.raises(ToolHandlerError) as first:
+            runtime._run_validation_command(
+                paths,
+                root=paths.worktree,
+                name="full",
+                command=poison,
+                timeout_seconds=30,
+                candidate_index=candidate,
+                validation_index=candidate,
+            )
+        with pytest.raises(ToolHandlerError) as retry:
+            runtime._run_validation_command(
+                paths,
+                root=paths.worktree,
+                name="full",
+                command="false",
+                timeout_seconds=30,
+                candidate_index=candidate,
+                validation_index=candidate,
+            )
+    finally:
+        runtime.cleanup_validation_index(paths.job_dir)
+
+    assert first.value.error_code == "code_task_validation_failed"
+    assert retry.value.error_code == "code_task_validation_failed"
+    assert first.value.details == {
+        "check": "full",
+        "diagnostic": "validation-full.log",
+    }
+    assert not tuple(paths.job_dir.glob("validation-full-home-*"))
+    assert not tuple(paths.job_dir.glob("validation-full-tree-*"))
+
+
+@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap is not installed")
+def test_quick_home_and_ignored_artifacts_do_not_enter_full_validation(
+    tmp_path: Path,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    (paths.worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    changes = runtime._task_changes(paths)
+    candidate, _tree_sha = runtime.prepare_validation_index(
+        job_dir=paths.job_dir,
+        worktree=paths.worktree,
+        changed_files=[change.path for change in changes],
+    )
+    candidate_before = candidate.read_bytes()
+    quick = (
+        "printf 'false() { return 0; }\\n' > \"$HOME/.bash_profile\"; "
+        "printf hidden > /workspace/.env"
+    )
+
+    try:
+        runtime._run_validation_command(
+            paths,
+            root=paths.worktree,
+            name="quick",
+            command=quick,
+            timeout_seconds=30,
+            candidate_index=candidate,
+        )
+        assert candidate.read_bytes() == candidate_before
+        assert stat.S_IMODE(candidate.stat().st_mode) == 0o600
+        runtime._run_validation_command(
+            paths,
+            root=paths.worktree,
+            name="full",
+            command="test ! -e /workspace/.env",
+            timeout_seconds=30,
+            candidate_index=candidate,
+            validation_index=candidate,
+        )
+        assert candidate.read_bytes() == candidate_before
+        assert stat.S_IMODE(candidate.stat().st_mode) == 0o600
+        with pytest.raises(ToolHandlerError) as rejected:
+            runtime._run_validation_command(
+                paths,
+                root=paths.worktree,
+                name="full",
+                command="false",
+                timeout_seconds=30,
+                candidate_index=candidate,
+                validation_index=candidate,
+            )
+    finally:
+        runtime.cleanup_validation_index(paths.job_dir)
+
+    assert rejected.value.error_code == "code_task_validation_failed"
+    assert not tuple(paths.job_dir.glob("validation-quick-home-*"))
+    assert not tuple(paths.job_dir.glob("validation-quick-tree-*"))
+    assert not tuple(paths.job_dir.glob("validation-full-home-*"))
+    assert not tuple(paths.job_dir.glob("validation-full-tree-*"))
+
+
+@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap is not installed")
+def test_validation_cleanup_removes_private_readonly_home_and_tree(
+    tmp_path: Path,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    (paths.worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    changes = runtime._task_changes(paths)
+    candidate, _tree_sha = runtime.prepare_validation_index(
+        job_dir=paths.job_dir,
+        worktree=paths.worktree,
+        changed_files=[change.path for change in changes],
+    )
+    command = (
+        "mkdir -p /workspace/build/locked; "
+        "printf retained > /workspace/build/locked/artifact; "
+        "chmod 000 /workspace/build/locked; "
+        "chmod 000 \"$HOME\""
+    )
+
+    try:
+        runtime._run_validation_command(
+            paths,
+            root=paths.worktree,
+            name="full",
+            command=command,
+            timeout_seconds=30,
+            candidate_index=candidate,
+            validation_index=candidate,
+        )
+    finally:
+        runtime.cleanup_validation_index(paths.job_dir)
+
+    assert not tuple(paths.job_dir.glob("validation-full-home-*"))
+    assert not tuple(paths.job_dir.glob("validation-full-tree-*"))
+
+
+def test_validation_cleanup_failure_exposes_only_artifact_label(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_home = tmp_path / "private-validation-home"
+    private_home.mkdir(mode=0o700)
+
+    def fail_remove(_path: object) -> None:
+        raise OSError("private path must not escape")
+
+    monkeypatch.setattr(runtime.shutil, "rmtree", fail_remove)
+
+    with pytest.raises(ToolHandlerError) as failed:
+        runtime._cleanup_validation_paths(
+            runtime.CodeTaskPaths.build(job_dir=tmp_path, source_root=tmp_path),
+            name="full",
+            directories={"home": private_home},
+        )
+
+    assert failed.value.error_code == "code_task_validation_cleanup_failed"
+    assert failed.value.details == {"check": "full", "artifacts": ["home"]}
+    serialized = json.dumps(
+        {"message": str(failed.value), "details": failed.value.details},
+        ensure_ascii=False,
+    )
+    assert str(private_home) not in serialized
+    assert "private path must not escape" not in serialized
+    private_home.rmdir()
+
+
+def test_validation_index_is_scoped_to_full_check_and_always_cleaned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _repository(tmp_path)
+    paths = _paths(tmp_path, source)
+    shutil.copytree(source, paths.worktree)
+    (paths.worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    changes = runtime._task_changes(paths)
+    calls: list[tuple[str, Path | None]] = []
+
+    def record_validation(
+        _paths: runtime.CodeTaskPaths,
+        *,
+        root: Path,
+        name: str,
+        command: str,
+        timeout_seconds: int,
+        candidate_index: Path,
+        validation_index: Path | None = None,
+    ) -> None:
+        del root, command, timeout_seconds
+        assert candidate_index.is_file()
+        if validation_index is not None:
+            assert validation_index.is_file()
+        calls.append((name, validation_index))
+
+    monkeypatch.setenv("CHATCOPILOT_CODE_TASK_QUICK_COMMAND", "git diff --check")
+    monkeypatch.setenv("CHATCOPILOT_CODE_TASK_FULL_COMMAND", "true")
+    monkeypatch.setattr(runtime, "_run_validation_command", record_validation)
+
+    assert runtime._validate_task(paths, changes, limits=runtime.CodeTaskLimits()) == [
+        "quick",
+        "full",
+    ]
+    assert calls[0] == ("quick", None)
+    assert calls[1][0] == "full"
+    assert calls[1][1] == paths.job_dir / runtime.VALIDATION_INDEX_FILENAME
+    assert not (paths.job_dir / runtime.VALIDATION_INDEX_FILENAME).exists()
 
 
 def test_recovery_dispatches_queue_and_interrupts_stale_running_task(

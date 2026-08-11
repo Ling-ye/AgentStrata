@@ -214,17 +214,25 @@ fallback 分散在 research/search 路径中。
 搜索统一到 `search_information` 和 `SearchCoordinator`：
 
 - 常见路由由确定性逻辑完成，只有复杂比较进入路由 LLM。
-- `DirectSearchProvider` 优先直接调用 MCP 工具，跳过不必要的 subagent 会话。
+- `DirectSearchProvider` 跳过不必要的 subagent 会话；薄 Web API provider 在进程内
+  调用，账号态和垂直来源保留 search-only MCP。
 - 显式来源、canonical URL、去重、来源优先级和结果上限统一处理。
 - Deadline、同源步骤上限、circuit breaker 和递增 quota TTL 进入协调层。
 - 页面读取先走静态抓取，必要时升级到浏览器渲染。
 - 同一 turn 的重复搜索由 runtime 拦截。
+- BotSpec 成为搜索 provider 与共享服务启用状态的唯一事实源；服务管理器只启动
+  SearXNG engine、Playwright、小红书等确实需要隔离的组件。
+- 删除 Tavily / Brave / SearXNG MCP wrapper、Sequential Thinking 和未完成独立审阅
+  的 Taoke 部署；保留容器固定 digest、回环端口和有界资源。
 
 **结果**
 
-搜索源仍可独立扩展，但路由、容错、时间预算和结果整理只维护一套行为。
+搜索源仍可独立扩展，但路由、容错、时间预算和结果整理只维护一套行为。Native 与
+LangGraph 共享这条路径，线上 Lingye 实例继续使用 Codex backend；Native 可用性通过
+隔离 override 验证，不修改部署配置。
 
-相关文档：[`runtime.md`](runtime.md)。
+相关文档：[`runtime.md`](runtime.md)；规格：
+[`mcp-runtime-placement-policy`](../specs/mcp-runtime-placement-policy/spec.md)。
 
 ## 7. Evaluation 统一：合并比较评测与 benchmark suite
 

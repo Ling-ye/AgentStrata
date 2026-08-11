@@ -1,183 +1,102 @@
-# AgentStrata external MCP services (shared infrastructure).
+# AgentStrata shared infrastructure that requires a container boundary.
 #
-# These services run alongside AgentStrata (which itself runs on WSL, not Docker).
-# Each service exposes its port to localhost so AgentStrata can connect via
-# the URL configured through the MCP catalog and bot-level ref bindings.
-#
-# All stdio-based MCP servers are wrapped via supergateway (streamable HTTP)
-# so that multiple bot processes share a single server instance instead of
-# each bot spawning its own subprocess.
-#
-# Usage:
-#   cd deploy/docker && docker compose up -d
-#   docker compose ps
-#   docker compose logs -f xiaohongshu-mcp
-#
-# To add a new shared service, define it below, add a matching MCP catalog
-# entry, then bind that catalog ref from each bot that should use it.
+# Thin stateless search adapters run in the AgentStrata process.  Compose keeps
+# only substantial shared engines, browser-backed services, and account state.
+# Every service is behind a profile, so a bare `docker compose up` starts none;
+# deploy/docker/services.sh resolves enabled BotSpecs and reconciles desired state.
 
 services:
-  # ---------- Tavily web search (quota proxy → official MCP) -----------------
-  tavily-mcp:
-    image: node:22-alpine
-    container_name: chatcopilot-tavily-mcp
-    init: true
-    command: ["node", "/app/proxy.mjs"]
-    volumes:
-      - ./tavily_mcp_proxy:/app:ro
-    environment:
-      TAVILY_API_KEY: "${TAVILY_API_KEY}"
-      TAVILY_USAGE_AVAILABLE_TTL_SECONDS: "${TAVILY_USAGE_AVAILABLE_TTL_SECONDS:-300}"
-      TAVILY_USAGE_EXHAUSTED_TTL_SECONDS: "${TAVILY_USAGE_EXHAUSTED_TTL_SECONDS:-1800}"
-      TAVILY_USAGE_FAILURE_TTL_SECONDS: "${TAVILY_USAGE_FAILURE_TTL_SECONDS:-30}"
-      TAVILY_USAGE_TIMEOUT_SECONDS: "${TAVILY_USAGE_TIMEOUT_SECONDS:-5}"
-    ports:
-      - "127.0.0.1:${TAVILY_MCP_PORT:-18061}:8001"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8001/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    mem_limit: 256m
-    cpus: 0.5
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-
-  # ---------- Sequential Thinking (stdio → streamable HTTP via supergateway) -
-  sequential-thinking-mcp:
-    image: supercorp/supergateway
-    container_name: chatcopilot-sequential-thinking-mcp
-    command: >
-      --stdio "npx -y @modelcontextprotocol/server-sequential-thinking"
-      --outputTransport streamableHttp
-      --port 8002
-      --streamableHttpPath /mcp
-    ports:
-      - "127.0.0.1:${SEQ_THINKING_MCP_PORT:-18062}:8002"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:8002/mcp').then(r=>{process.exit(r.status<500?0:1)}).catch(()=>process.exit(1))"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    mem_limit: 256m
-    cpus: 0.5
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-
-  # ---------- SearXNG no-key web/image search -------------------------------
+  # ---------- SearXNG no-key web/image search engine -------------------------
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng:latest@sha256:f4c8e59de166ed71f6380c0847c312ca51f0d41996e31d0559163b6b09ecde52
     container_name: chatcopilot-searxng
+    profiles: [search]
+    init: true
     restart: unless-stopped
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
       - searxng-data:/var/cache/searxng
     environment:
-      SEARXNG_BASE_URL: "http://localhost:${SEARXNG_PORT:-18064}/"
+      SEARXNG_BASE_URL: "http://localhost:18064/"
     ports:
-      - "127.0.0.1:${SEARXNG_PORT:-18064}:8080"
+      - "127.0.0.1:18064:8080"
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 0.5
+    networks: [searxng-egress]
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
       interval: 60s
       timeout: 10s
       retries: 3
       start_period: 30s
-    mem_limit: 512m
-    cpus: 0.5
     logging:
       driver: json-file
       options:
         max-size: "20m"
         max-file: "3"
 
-  searxng-mcp:
-    image: python:3.13-alpine
-    container_name: chatcopilot-searxng-mcp
-    command: ["python", "/app/server.py"]
-    restart: unless-stopped
-    depends_on:
-      searxng:
-        condition: service_started
-    volumes:
-      - ./searxng_mcp:/app:ro
-    environment:
-      SEARXNG_URL: "http://searxng:8080"
-      SEARXNG_MCP_PORT: "8003"
-      NO_PROXY: "localhost,127.0.0.1,searxng"
-      no_proxy: "localhost,127.0.0.1,searxng"
-    ports:
-      - "127.0.0.1:${SEARXNG_MCP_PORT:-18065}:8003"
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - "HTTP_PROXY= HTTPS_PROXY= http_proxy= https_proxy= wget -q --spider http://127.0.0.1:8003/health"
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    mem_limit: 128m
-    cpus: 0.25
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-
-  # ---------- Xiaohongshu (browser-backed, single-concurrency) ---------------
+  # ---------- Xiaohongshu (browser-backed, account state, single concurrency)
   xiaohongshu-mcp:
     image: xpzouying/xiaohongshu-mcp:v1.2.6@sha256:59fa30292e0c994cb2267c2d16b4ec119af800287a735c7386de1cd9c755bc6d
     container_name: chatcopilot-xiaohongshu-mcp
+    profiles: [experience]
     init: true
     tty: true
+    restart: unless-stopped
     ports:
-      - "127.0.0.1:${XHS_MCP_PORT:-18060}:18060"
+      - "127.0.0.1:18060:18060"
     volumes:
       - xiaohongshu-data:/app/data
       - xiaohongshu-cookies:/app/cookies
       - xiaohongshu-images:/app/images
     environment:
-      - COOKIES_PATH=/app/data/cookies.json
-      - HOME=/app/data/home
-      - XDG_CACHE_HOME=/app/data/cache
-      - XDG_CONFIG_HOME=/app/data/config
-      - XHS_PROXY=${XHS_PROXY:-}
-    restart: unless-stopped
+      COOKIES_PATH: /app/data/cookies.json
+      HOME: /app/data/home
+      XDG_CACHE_HOME: /app/data/cache
+      XDG_CONFIG_HOME: /app/data/config
+      XHS_PROXY: "${XHS_PROXY:-}"
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=512m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 1.0
+    networks: [xiaohongshu-egress]
     healthcheck:
-      test: ["CMD-SHELL", "code=$$(curl -sS -o /dev/null -w '%{http_code}' http://localhost:18060/mcp || true); echo \"$$code\" | grep -Eq '^(200|202|400|405)$'"]
+      test: ["CMD-SHELL", "code=$$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18060/mcp || true); echo \"$$code\" | grep -Eq '^(200|202|400|405)$'"]
       interval: 60s
       timeout: 10s
       retries: 3
       start_period: 30s
-    mem_limit: 2g
-    cpus: 1.0
     logging:
       driver: json-file
       options:
         max-size: "50m"
         max-file: "3"
 
-  # ---------- Playwright dynamic webpage reader (single-concurrency) ---------
+  # ---------- Playwright isolated dynamic-page reader ------------------------
   playwright-mcp:
-    image: mcr.microsoft.com/playwright/mcp:v0.0.76
+    image: mcr.microsoft.com/playwright/mcp:v0.0.76@sha256:3108dac789720d5236ee1869ad65c8f32fbbfe9d7eea8a5eb89920ab35a665d6
     container_name: chatcopilot-playwright-mcp
+    profiles: [browser]
     init: true
+    user: "1000:1000"
+    environment:
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/playwright-cache
+      XDG_CONFIG_HOME: /tmp/playwright-config
     entrypoint: ["node"]
     command:
       - /app/cli.js
       - --headless
       - --browser
       - chromium
-      - --no-sandbox
       - --isolated
       - --block-service-workers
       - --image-responses
@@ -193,82 +112,35 @@ services:
       - --host
       - 0.0.0.0
       - --allowed-hosts
-      - "*"
+      - "127.0.0.1,localhost,127.0.0.1:18066,localhost:18066"
     ports:
-      - "127.0.0.1:${PLAYWRIGHT_MCP_PORT:-18066}:8931"
+      - "127.0.0.1:18066:8931"
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=512m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+    networks: [playwright-egress]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8931/mcp').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8931/mcp',{headers:{Host:'localhost'}}).then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
       interval: 60s
       timeout: 10s
       retries: 3
       start_period: 30s
-    mem_limit: 1g
-    cpus: 1.0
     logging:
       driver: json-file
       options:
         max-size: "30m"
         max-file: "3"
 
-  # ---------- Brave Search (native HTTP transport, no supergateway needed) -----
-  brave-search-mcp:
-    image: node:22-alpine
-    container_name: chatcopilot-brave-search-mcp
-    init: true
-    command: ["npx", "-y", "@brave/brave-search-mcp-server", "--transport", "http"]
-    environment:
-      BRAVE_API_KEY: "${BRAVE_API_KEY}"
-      PORT: "8004"
-    ports:
-      - "127.0.0.1:${BRAVE_MCP_PORT:-18067}:8004"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8004/mcp').then(r=>{process.exit(r.status<500?0:1)}).catch(()=>process.exit(1))"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    mem_limit: 256m
-    cpus: 0.5
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-
-  # ---------- Taoke shopping (Taobao/JD/Pinduoduo affiliate API) ---------------
-  taoke-mcp:
-    image: liuliang520500/taoke-mcp:latest
-    container_name: chatcopilot-taoke-mcp
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${TAOKE_MCP_PORT:-18063}:8081"
-    environment:
-      ENV_URL: "https://config.sinataoke.cn/api/mcp/secret"
-      ENV_SECRET: "url:mcp.sinataoke.cn"
-      ENV_OVERRIDE: "false"
-      TAOBAO_PID: "${TAOBAO_PID:-}"
-      TAOBAO_SESSION: "${TAOBAO_SESSION:-}"
-      JD_KEY: "${JD_KEY:-}"
-      JD_PID: "${JD_PID:-}"
-      PDD_PID: "${PDD_PID:-}"
-      PDD_SESSION_TOKEN: "${PDD_SESSION_TOKEN:-}"
-    healthcheck:
-      # The image has Node.js but no curl. A bare MCP GET may return 4xx while
-      # the endpoint is healthy, so only connection failures and 5xx fail.
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/mcp').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    mem_limit: 512m
-    cpus: 0.5
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
+networks:
+  searxng-egress:
+  xiaohongshu-egress:
+  playwright-egress:
 
 volumes:
   searxng-data:

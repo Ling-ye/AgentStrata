@@ -51,6 +51,29 @@ agents:
   codex:
     owner_access: worktree
     member_access: workspace
+  unified_search:
+    enabled: true
+    providers:
+      - id: tavily
+        kind: tavily
+        enabled: true
+        endpoint: https://api.tavily.com/search
+        credential_env: TAVILY_API_KEY
+        timeout_seconds: 15
+        max_results: 10
+      - id: brave
+        kind: brave
+        enabled: false
+        endpoint: https://api.search.brave.com/res/v1/web/search
+        credential_env: BRAVE_API_KEY
+        timeout_seconds: 15
+        max_results: 10
+      - id: searxng
+        kind: searxng
+        enabled: true
+        endpoint: http://127.0.0.1:18064
+        timeout_seconds: 20
+        max_results: 10
 context:
   wiki:
     enabled: true

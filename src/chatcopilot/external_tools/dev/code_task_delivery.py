@@ -26,6 +26,7 @@ from chatcopilot.external_tools.dev.path_guard import (
 from chatcopilot.project import ENV_PREFIX
 
 DELIVERY_FILENAME = "delivery.json"
+VALIDATION_INDEX_FILENAME = ".validation-index"
 
 _REPOSITORY_ENV = f"{ENV_PREFIX}_CODE_TASK_GITHUB_REPOSITORY"
 _TOKEN_FILE_ENV = f"{ENV_PREFIX}_CODE_TASK_GITHUB_TOKEN_FILE"
@@ -515,6 +516,71 @@ def compute_delivery_tree(
     changed_files: Sequence[str],
     stage: str,
 ) -> str:
+    index = job_dir / ".delivery-index"
+    try:
+        return _populate_candidate_index(
+            index=index,
+            job_dir=job_dir,
+            worktree=worktree,
+            changed_files=changed_files,
+            stage=stage,
+        )
+    finally:
+        _cleanup_candidate_index(index, stage=stage)
+
+
+def prepare_validation_index(
+    *,
+    job_dir: Path,
+    worktree: Path,
+    changed_files: Sequence[str],
+    stage: str = "validating",
+) -> tuple[Path, str]:
+    """Build and retain the exact candidate index used by repository checks."""
+    index = job_dir / VALIDATION_INDEX_FILENAME
+    try:
+        tree_sha = _populate_candidate_index(
+            index=index,
+            job_dir=job_dir,
+            worktree=worktree,
+            changed_files=changed_files,
+            stage=stage,
+        )
+        index.chmod(0o600)
+        info = index.lstat()
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise ToolHandlerError(
+                "validation Git index must be a private regular file",
+                error_code="code_task_validation_index_invalid",
+                stage=stage,
+            )
+        return index, tree_sha
+    except Exception:
+        _cleanup_candidate_index(index, stage=stage)
+        raise
+
+
+def cleanup_validation_index(job_dir: Path) -> None:
+    """Remove the retained validation index and any abandoned lock file."""
+    _cleanup_candidate_index(
+        job_dir / VALIDATION_INDEX_FILENAME,
+        stage="validating",
+    )
+
+
+def _populate_candidate_index(
+    *,
+    index: Path,
+    job_dir: Path,
+    worktree: Path,
+    changed_files: Sequence[str],
+    stage: str,
+) -> str:
     paths = tuple(
         dict.fromkeys(str(path) for path in changed_files if str(path))
     )
@@ -524,47 +590,78 @@ def compute_delivery_tree(
             error_code="code_task_validation_evidence_missing",
             stage=stage,
         )
-    index = job_dir / ".delivery-index"
-    index_lock = job_dir / ".delivery-index.lock"
-    index.unlink(missing_ok=True)
-    index_lock.unlink(missing_ok=True)
+    if index.parent.resolve() != job_dir.resolve():
+        raise ToolHandlerError(
+            "candidate Git index escaped the code-task job directory",
+            error_code="code_task_validation_index_invalid",
+            stage=stage,
+        )
+    _cleanup_candidate_index(index, stage=stage)
     env = _local_git_environment(job_dir)
     env["GIT_INDEX_FILE"] = str(index)
-    try:
-        _run_git(
-            ["read-tree", "HEAD"],
-            cwd=worktree,
-            env=env,
+    _run_git(
+        ["read-tree", "HEAD"],
+        cwd=worktree,
+        env=env,
+        stage=stage,
+    )
+    _run_git(
+        ["add", "--all", "--", "."],
+        cwd=worktree,
+        env=env,
+        stage=stage,
+    )
+    staged = _git_output(
+        ["diff", "--cached", "--name-only", "--no-renames", "-z", "HEAD", "--"],
+        cwd=worktree,
+        env=env,
+        stage=stage,
+    )
+    staged_paths = {item for item in staged.split("\0") if item}
+    if staged_paths != set(paths):
+        raise ToolHandlerError(
+            "working tree paths differ from validation evidence",
+            error_code="code_task_delivery_delta_mismatch",
             stage=stage,
         )
-        _run_git(
-            ["add", "--all", "--", "."],
-            cwd=worktree,
-            env=env,
+    return _git_output(
+        ["write-tree"],
+        cwd=worktree,
+        env=env,
+        stage=stage,
+    )
+
+
+def _cleanup_candidate_index(index: Path, *, stage: str) -> None:
+    failed: list[str] = []
+    for label, candidate in (
+        ("index", index),
+        ("lock", index.with_name(f"{index.name}.lock")),
+    ):
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            failed.append(label)
+            continue
+        if stat.S_ISDIR(info.st_mode):
+            failed.append(label)
+            continue
+        try:
+            candidate.unlink()
+        except OSError:
+            failed.append(label)
+            continue
+        if candidate.exists() or candidate.is_symlink():
+            failed.append(label)
+    if failed:
+        raise ToolHandlerError(
+            "candidate Git index artifacts could not be removed",
+            error_code="code_task_validation_cleanup_failed",
             stage=stage,
+            details={"artifacts": sorted(set(failed))},
         )
-        staged = _git_output(
-            ["diff", "--cached", "--name-only", "--no-renames", "-z", "HEAD", "--"],
-            cwd=worktree,
-            env=env,
-            stage=stage,
-        )
-        staged_paths = {item for item in staged.split("\0") if item}
-        if staged_paths != set(paths):
-            raise ToolHandlerError(
-                "working tree paths differ from validation evidence",
-                error_code="code_task_delivery_delta_mismatch",
-                stage=stage,
-            )
-        return _git_output(
-            ["write-tree"],
-            cwd=worktree,
-            env=env,
-            stage=stage,
-        )
-    finally:
-        index.unlink(missing_ok=True)
-        index_lock.unlink(missing_ok=True)
 
 
 def _recover_unrecorded_commit(
@@ -1243,11 +1340,14 @@ def _redact_git_detail(
 
 __all__ = [
     "DELIVERY_FILENAME",
+    "VALIDATION_INDEX_FILENAME",
     "GitHubDeliveryConfig",
+    "cleanup_validation_index",
     "compute_delivery_tree",
     "deliver_pull_request",
     "delivery_retry_pending",
     "load_delivery_config",
     "prepare_delivery_worktree",
+    "prepare_validation_index",
     "validate_delivery_paths",
 ]

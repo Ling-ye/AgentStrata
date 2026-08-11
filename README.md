@@ -32,6 +32,10 @@ resulting system structure.
   to the bot that selects them.
 - **Backend choice per bot.** Native, LangGraph, and Codex implement common
   task, event, and result contracts.
+- **Purpose-built runtime boundaries.** Thin web-search providers run in the
+  Agent process; browser-backed, account-bound, and shared search-engine
+  components remain isolated and are started only when an enabled BotSpec
+  requires them.
 - **Platform adapters.** QQ / OneBot and Feishu remain outside Agent logic and
   inject identity, files, notifications, and permissions through contracts.
 - **Controlled development.** Codex-backed owner sessions dispatch repository
@@ -155,9 +159,9 @@ and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.m
 | Platforms | Feishu; QQ through NapCat / OneBot |
 | Agent backends | Native; LangGraph; Codex |
 | Models | OpenAI-compatible chat/research APIs; Codex CLI device authentication |
-| Capabilities | Local tool packs; reviewed MCP bindings; RAG; memory; private Wiki |
+| Capabilities | Local tool packs; in-process web search; reviewed MCP bindings; RAG; memory; private Wiki |
 | Operations | React/FastAPI Console; diagnostics; task status; logs |
-| Deployment | Linux / WSL; systemd user services; Docker MCP infrastructure |
+| Deployment | Linux / WSL; systemd user services; desired-state Docker infrastructure |
 | Evaluation | Profile comparisons; BFCL; GAIA; IFEval |
 
 Third-party MCP servers and Skills are not downloaded, installed, or enabled
@@ -220,8 +224,20 @@ Run `.venv/bin/python scripts/check_repo.py full` before broad runtime,
 packaging, deployment, or Console changes. Architecture, public contracts,
 deployment workflows, and migrations use
 [SDD-lite](https://github.com/Ling-ye/AgentStrata/blob/main/docs/sdd.md).
+<<<<<<< Updated upstream
 The fast profile also audits exact tool-pack membership and checks that Agent,
 Console, MCP, subagent, and workflow catalog projections cannot silently drift.
+=======
+Isolated code-task validation reuses the source checkout's `.venv` and
+`console/web/node_modules` as read-only toolchains, so install both Python and
+Console development dependencies in the source checkout before starting the
+worker. Full validation also receives a read-only candidate Git index containing
+the exact task delta; the worker leaves the clone's real index unchanged and does
+not pass that candidate index into tests that create their own repositories.
+Each quick/full command runs offline in a newly materialized exact candidate tree
+with a fresh private home, so clone-local ignored files, shell profiles, and
+artifacts from earlier validation attempts cannot enter the next check.
+>>>>>>> Stashed changes
 
 ## Compatibility
 

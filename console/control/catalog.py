@@ -67,14 +67,9 @@ _CATEGORY_MAP: dict[str, str] = {
 }
 
 _MCP_CATEGORY_MAP: dict[str, str] = {
-    "tavily-search": "搜索",
-    "brave-search": "搜索",
-    "searxng-search": "搜索",
     "xiaohongshu-search": "搜索",
-    "taoke-shopping": "搜索",
     "github-readonly": "代码",
     "playwright-browser": "浏览器",
-    "sequential-thinking": "推理",
 }
 
 _SUBAGENT_CATEGORY_MAP: dict[str, str] = {

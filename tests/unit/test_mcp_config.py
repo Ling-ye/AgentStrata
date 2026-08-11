@@ -52,6 +52,31 @@ def _write_bot(base: Path, servers_yaml: str) -> Path:
 
 
 class McpConfigTests(unittest.TestCase):
+    def test_rejects_bot_authored_catalog_provenance(self) -> None:
+        with _scratch_dir() as tmp:
+            spec = load_botspec(
+                _write_bot(
+                    tmp,
+                    textwrap.dedent(
+                        """\
+                        servers:
+                          - id: custom-browser
+                            catalog_ref: playwright-browser
+                            enabled: true
+                            transport: streamable_http
+                            url: http://127.0.0.1:19066/mcp
+                            exposure: subagent
+                            risk: interactive
+                        """
+                    ),
+                )
+            )
+
+            messages = [issue.message for issue in validate_botspec(spec)]
+
+            self.assertTrue(any("catalog_ref 是 runtime 保留字段" in item for item in messages))
+            self.assertEqual(load_mcp_server_configs(spec)[0].catalog_ref, "")
+
     def test_loads_enabled_stdio_server_with_resolved_env(self) -> None:
         with _scratch_dir() as tmp:
             os.environ["TEST_MCP_KEY"] = "secret-value"
@@ -106,7 +131,7 @@ class McpConfigTests(unittest.TestCase):
                     textwrap.dedent(
                         """\
                         servers:
-                          - ref: tavily-search
+                          - ref: playwright-browser
                             enabled: true
                             timeout_seconds: 7
                         """
@@ -117,15 +142,15 @@ class McpConfigTests(unittest.TestCase):
             configs = load_mcp_server_configs(spec)
 
             self.assertEqual(len(configs), 1)
-            self.assertEqual(configs[0].id, "tavily")
+            self.assertEqual(configs[0].id, "playwright")
+            self.assertEqual(configs[0].catalog_ref, "playwright-browser")
             self.assertEqual(configs[0].transport, "streamable_http")
-            self.assertEqual(configs[0].url, "http://localhost:18061/mcp")
-            self.assertTrue(configs[0].stateless_http)
-            self.assertEqual(configs[0].search_only_tools, ("tavily_search", "tavily_extract"))
-            self.assertIn("official documentation", configs[0].search_domain_guidance)
+            self.assertEqual(configs[0].url, "http://localhost:18066/mcp")
+            self.assertEqual(configs[0].risk, "interactive")
+            self.assertEqual(configs[0].allowed_subagents, ("browser_reader",))
             self.assertEqual(configs[0].timeout_seconds, 7)
 
-    def test_loads_searxng_catalog_ref(self) -> None:
+    def test_loads_xiaohongshu_catalog_ref(self) -> None:
         with _scratch_dir() as tmp:
             spec = load_botspec(
                 _write_bot(
@@ -133,7 +158,7 @@ class McpConfigTests(unittest.TestCase):
                     textwrap.dedent(
                         """\
                         servers:
-                          - ref: searxng-search
+                          - ref: xiaohongshu-search
                             enabled: true
                         """
                     ),
@@ -143,13 +168,14 @@ class McpConfigTests(unittest.TestCase):
             configs = load_mcp_server_configs(spec)
 
             self.assertEqual(len(configs), 1)
-            self.assertEqual(configs[0].id, "searxng")
+            self.assertEqual(configs[0].id, "xiaohongshu")
+            self.assertEqual(configs[0].catalog_ref, "xiaohongshu-search")
             self.assertEqual(configs[0].transport, "streamable_http")
-            self.assertEqual(configs[0].url, "http://localhost:18065/mcp")
-            self.assertTrue(configs[0].stateless_http)
-            self.assertEqual(configs[0].tool_prefix, "sx_")
+            self.assertEqual(configs[0].url, "http://localhost:18060/mcp")
+            self.assertEqual(configs[0].tool_prefix, "xhs_")
             self.assertEqual(configs[0].risk, "search")
-            self.assertEqual(configs[0].search_only_tools, ("search", "image_search"))
+            self.assertEqual(configs[0].search_only_tools, ("search_feeds",))
+            self.assertEqual(configs[0].max_concurrency, 1)
 
     def test_loads_playwright_interactive_catalog_ref(self) -> None:
         with _scratch_dir() as tmp:
