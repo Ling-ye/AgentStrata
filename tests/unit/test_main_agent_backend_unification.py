@@ -746,9 +746,13 @@ class CodexBackendPolicyTests(TestCase):
 
     def test_default_policy_uses_isolated_member_workspace(self) -> None:
         with TemporaryDirectory() as tmp:
-            command, prompt = self._command_and_prompt(Path(tmp))
+            root = Path(tmp).resolve()
+            command, prompt = self._command_and_prompt(root)
 
         self.assertIn("workspace-write", command)
+        self.assertIn("--skip-git-repo-check", command)
+        self.assertEqual(command[command.index("--cd") + 1], str(root))
+        self.assertTrue(any(f'HOME = "{root}"' in item for item in command))
         self.assertIn("sandbox_workspace_write.network_access=true", command)
         self.assertIn('web_search="live"', command)
         self.assertIn("features.network_proxy.enabled=true", command)
@@ -769,6 +773,7 @@ class CodexBackendPolicyTests(TestCase):
             )
 
         self.assertIn("read-only", command)
+        self.assertNotIn("--skip-git-repo-check", command)
         self.assertIn("--ignore-user-config", command)
         self.assertIn("mcp_servers={}", command)
         self.assertTrue(

@@ -463,6 +463,53 @@ def test_codex_backend_does_not_construct_chatcopilot_search_or_delegate_agents(
     assert session.capabilities.tool_names == frozenset({"normal_tool"})
 
 
+def test_codex_backend_uses_current_personal_workspace_root(tmp_path) -> None:
+    from chatcopilot.contracts.agent_backend import (
+        BackendCapabilities,
+        BackendSessionRef,
+        CAPABILITY_CHAT,
+        CAPABILITY_TOOLS,
+    )
+
+    instance_root = tmp_path / "instance"
+    personal_root = instance_root / "p2p_123"
+    personal_root.mkdir(parents=True)
+    workspace = Mock(root=personal_root)
+    workspace_service = Mock()
+    workspace_service.resolve_workspace.return_value = workspace
+    workspace_service.resolve_workspace_root.return_value = instance_root
+    backend = Mock()
+    backend.capabilities = BackendCapabilities(
+        names=frozenset({CAPABILITY_CHAT, CAPABILITY_TOOLS}),
+        tool_names=frozenset({"normal_tool"}),
+    )
+    backend.open_session.return_value = BackendSessionRef("codex", "native-session")
+    runtime = AgentRuntime(
+        llm=_FakeLLM("{}"),
+        tools=(_tool("normal_tool"),),
+        tools_schema=(),
+        runtime_config=ChatConfig(),
+        agent_backend="codex",
+    )
+
+    with patch("chatcopilot.agent.runtime.build_subagent_tools", return_value=()), patch(
+        "chatcopilot.agent.runtime.build_backend", return_value=backend
+    ):
+        runtime.new_session(
+            session_id="sid-personal-workspace",
+            system_baseline="base",
+            workspace_service=workspace_service,
+        )
+
+    request = backend.open_session.call_args.args[0]
+    assert request.options["workspace_root"] == personal_root.resolve()
+    assert request.options["backend_state_root"] == (
+        personal_root.resolve() / ".backend-sessions"
+    )
+    workspace_service.resolve_workspace.assert_called_once_with(create=True)
+    workspace_service.resolve_workspace_root.assert_not_called()
+
+
 def test_runtime_permission_filter_prevents_url_read_bypass() -> None:
     fetch_calls: list[dict] = []
     web_fetch = ToolDef(

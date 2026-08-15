@@ -23,6 +23,7 @@ class CodexCommandTests(TestCase):
                 workdir=Path("/tmp/work"),
                 network_access=True,
                 web_search_mode="live",
+                skip_git_repo_check=True,
                 ephemeral=False,
                 extra_config=("mcp_servers={}",),
             )
@@ -30,6 +31,7 @@ class CodexCommandTests(TestCase):
         self.assertEqual(command[:4], ["/usr/bin/codex", "exec", "--model", "gpt-test"])
         self.assertIn("--ignore-user-config", command)
         self.assertIn("workspace-write", command)
+        self.assertIn("--skip-git-repo-check", command)
         self.assertIn("sandbox_workspace_write.network_access=true", command)
         self.assertIn('web_search="live"', command)
         self.assertIn('shell_environment_policy.inherit="none"', command)

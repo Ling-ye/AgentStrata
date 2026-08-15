@@ -34,6 +34,14 @@ session read-only and routes every repository mutation through
 `start/get/cancel/resume_code_task`. No Codex main session inherits the personal
 shell, personal Codex home, or personal MCP configuration.
 
+[KNOWN][HIGH] A member main Codex session uses the exact current chat-by-user
+`Workspace.root` for its process working directory, CLI `--cd`, isolated shell
+`HOME`, and backend state. The instance-wide workspace root is reserved for
+Owner inventory and is never a member sandbox boundary. Member workspaces are
+intentionally allowed to be non-Git directories, so only `workspace` access
+passes `--skip-git-repo-check`; Owner `worktree` access retains the Git-repository
+preflight and fails closed when its source root is not a checkout.
+
 [KNOWN][HIGH] `start_code_task` requires a concise public-safe title in addition
 to the private implementation prompt. The title is normalized to one line and is
 used for both the Git commit and draft pull request. The original prompt,
@@ -145,6 +153,10 @@ The canonical repository-task implementation remains behind
 
 - [KNOWN][HIGH] Lingye validates with `owner_access: worktree` and no
   `auto_publish` field.
+- [KNOWN][HIGH] A member session can start Codex from its non-Git personal
+  workspace, while its process cwd, CLI `--cd`, shell `HOME`, and backend state
+  never resolve to the instance-wide workspace root; Owner worktree sessions do
+  not bypass the Git-repository check.
 - [KNOWN][HIGH] `host`, `auto_publish`, direct source publication, deployment
   restart, publication backup, rollback states, and `publish_source_changes`
   lifecycle intents have no production entry.
@@ -197,9 +209,15 @@ The canonical repository-task implementation remains behind
 
 ## Verification
 
+[COMPUTED][HIGH] The member-workspace isolation regression suite passes 56 tests
+and 12 subtests. It proves that runtime routing uses the current personal
+`Workspace.root`, member commands include `--skip-git-repo-check` with matching
+`--cd` and shell `HOME`, and Owner worktree commands omit the bypass. Ruff, the
+standalone SDD checker, the Lingye BotSpec validator, and `git diff --check` pass.
+
 [COMPUTED][HIGH] `.venv/bin/python scripts/check_repo.py fast` passes SDD
 metadata, architecture boundaries, requirements drift, UTF-8 normalization, Ruff,
-typed contracts, and the core suite: 1195 tests passed, 38 subtests passed, one
+typed contracts, and the core suite: 1437 tests passed, 39 subtests passed, one
 test skipped, and no gate failed.
 
 [COMPUTED][HIGH] The focused code-delivery, compatibility-removal, background-job,

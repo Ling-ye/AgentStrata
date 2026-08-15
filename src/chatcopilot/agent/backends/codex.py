@@ -405,6 +405,7 @@ class CodexAgentBackend:
             network_access=True,
             sandbox_mode="read-only" if worktree_access else "workspace-write",
             web_search_mode="live",
+            skip_git_repo_check=not worktree_access,
             ephemeral=False,
             ignore_user_config=True,
             inherit_shell_environment=False,

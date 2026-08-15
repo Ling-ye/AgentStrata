@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
 
 from chatcopilot.core.config import ChatConfig
@@ -324,12 +325,13 @@ class AgentRuntime:
         if workspace_service is not None:
             try:
                 workspace = workspace_service.resolve_workspace(create=True)
-                workspace_root = workspace_service.resolve_workspace_root(workspace)
                 object_root = getattr(workspace, "root", None)
                 if object_root is not None:
-                    from pathlib import Path
-
-                    backend_state_root = Path(object_root) / ".backend-sessions"
+                    # The service-level resolver returns the aggregate instance root
+                    # used by Owner inventory tools. A member Codex sandbox must stay
+                    # inside the current chat/user workspace instead.
+                    workspace_root = Path(object_root).expanduser().resolve()
+                    backend_state_root = workspace_root / ".backend-sessions"
             except Exception:  # noqa: BLE001
                 workspace_root = None
                 backend_state_root = None
