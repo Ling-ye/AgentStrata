@@ -190,6 +190,7 @@ allowed = {
     "CHATCOPILOT_CODEX_BIN",
     "CHATCOPILOT_CODEX_BOT_HOME",
     "CHATCOPILOT_CODE_TASK_GITHUB_REPOSITORY",
+    "CHATCOPILOT_CODE_TASK_GITHUB_ACTOR",
     "CHATCOPILOT_CODE_TASK_GITHUB_TOKEN",
     "CHATCOPILOT_CODE_TASK_GIT_AUTHOR_NAME",
     "CHATCOPILOT_CODE_TASK_GIT_AUTHOR_EMAIL",
@@ -349,6 +350,7 @@ require_private_parent(target)
 
 delivery_fields = (
     "CHATCOPILOT_CODE_TASK_GITHUB_REPOSITORY",
+    "CHATCOPILOT_CODE_TASK_GITHUB_ACTOR",
     "CHATCOPILOT_CODE_TASK_GIT_AUTHOR_NAME",
     "CHATCOPILOT_CODE_TASK_GIT_AUTHOR_EMAIL",
 )
@@ -359,6 +361,9 @@ if delivery_configured:
         raise RuntimeError(
             "incomplete code-task GitHub configuration: " + ", ".join(missing)
         )
+    actor = values["CHATCOPILOT_CODE_TASK_GITHUB_ACTOR"]
+    if re.fullmatch(r"(?=.{1,39}\Z)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", actor) is None:
+        raise RuntimeError("CHATCOPILOT_CODE_TASK_GITHUB_ACTOR is malformed")
     if token:
         if not re.fullmatch(r"[A-Za-z0-9_-]{20,255}", token):
             raise RuntimeError("CHATCOPILOT_CODE_TASK_GITHUB_TOKEN is malformed")

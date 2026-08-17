@@ -44,16 +44,23 @@ preflight and fails closed when its source root is not a checkout.
 
 [KNOWN][HIGH] `start_code_task` requires a concise public-safe title in addition
 to the private implementation prompt. The title is normalized to one line and is
-used for both the Git commit and draft pull request. The original prompt,
-acceptance criteria, caller identity, credentials, local paths, and private
-diagnostics are never copied into Git or pull-request metadata.
+used as both the Git commit subject and draft pull-request title. The commit body
+adds canonical `Generated-by`, repository-owner, repository, and human-review
+provenance; the pull-request body starts with the same public AI-generation and
+human-review boundary. The original prompt, acceptance criteria, caller identity,
+credentials, local paths, changed-file paths, and private diagnostics are never
+copied into Git or pull-request metadata.
 
 [KNOWN][HIGH] Preparation validates the explicitly configured `owner/repository`
-against the source `origin`, resolves the default branch through the GitHub REST
-API, then creates a task-private clone at the latest remote default-branch
-revision. The task branch is `codex/<instance-id>/<task-id>`. Local tracked or
-untracked source changes are not copied into the clone, and the task does not
-share mutable Git metadata with the operator checkout.
+against the source `origin`, verifies through GitHub `/user` that the fine-grained
+PAT resolves to the explicitly configured expected actor, resolves the default
+branch through the GitHub REST API, then creates a task-private clone at the
+latest remote default-branch revision. The actor check repeats immediately before
+commit and remote delivery, and the canonical login is bound into delivery state;
+missing, invalid, mismatched, unavailable, or drifted identity fails closed. The
+task branch is `codex/<instance-id>/<task-id>`. Local tracked or untracked source
+changes are not copied into the clone, and the task does not share mutable Git
+metadata with the operator checkout.
 
 [KNOWN][HIGH] Every submitted request persists the current `instance_id` before
 its job directory becomes visible. Each systemd worker uses a BotSpec-derived,
@@ -72,6 +79,9 @@ runs the configured quick and full validation commands once against independent,
 exact candidate-tree projections. A change-free task succeeds without Git
 delivery. A changed task is staged, committed with hooks disabled, pushed without
 force, and submitted as a draft pull request against the recorded default branch.
+Git author and committer use the configured public automation identity. Recovery
+accepts an unrecorded commit only when its complete message, author, committer,
+changed paths, tree, and single-commit topology match the canonical delivery.
 
 Validation constructs a job-private candidate Git index from `HEAD` plus the
 exact changed-file manifest. The real clone index remains byte-for-byte
@@ -129,10 +139,10 @@ verify that remote branch and finish opening the draft pull request without
 rerunning Codex or changing the commit.
 
 [KNOWN][HIGH] `delivery.json` is the authoritative delivery artifact and records
-only repository, base branch, task branch, base SHA, validated tree SHA, commit
-SHA, draft state, pull request number, URL, and timestamps. Public task
-status exposes the branch, commit, and pull-request URL without exposing the
-GitHub token or raw command output.
+only repository, canonical GitHub actor, base branch, task branch, base SHA,
+validated tree SHA, commit SHA, draft state, pull request number, URL, and
+timestamps. Public task status exposes the branch, commit, and pull-request URL
+without exposing the actor lookup response, GitHub token, or raw command output.
 
 [KNOWN][HIGH] Deployment secures the per-instance configuration directory as
 mode `0700`, materializes the local `CHATCOPILOT_CODE_TASK_GITHUB_TOKEN` secret
@@ -169,15 +179,18 @@ The canonical repository-task implementation remains behind
   GitHub token, personal GitHub configuration, personal Codex configuration,
   platform credentials, host source, or runtime sockets.
 - [KNOWN][HIGH] A changed successful task produces one task branch, one commit,
-  one remote branch, and one draft pull request whose metadata excludes the
-  private prompt.
-- [KNOWN][HIGH] Missing repository, token file, Git author, remote, or default
-  branch fails before Codex starts and leaves the operator checkout unchanged.
+  one remote branch, and one draft pull request whose metadata identifies the
+  repository owner, AI coding identity, and required human review while excluding
+  the private prompt and task-local details.
+- [KNOWN][HIGH] Missing repository, expected actor, token file, Git author, remote,
+  or default branch fails before Codex starts and leaves the operator checkout
+  unchanged; actor mismatch or drift also fails before commit or push.
 - [KNOWN][HIGH] Registration rejects an untrusted configuration directory and
   delivery rejects token symlinks, hardlinks, foreign ownership, and any mode
   other than `0600`; Git receives only a cleaned-up ephemeral token snapshot.
 - [KNOWN][HIGH] Push or pull-request failure retains a resumable task; retry does
-  not force-push or create a duplicate open pull request.
+  not force-push or create a duplicate open pull request. A retained delivery
+  state without its canonical actor is rejected rather than guessed or migrated.
 - [KNOWN][HIGH] Cancellation is serialized against delivery and is refused after
   the task enters `delivering`; ordinary background jobs remain platform-neutral.
 - [KNOWN][HIGH] Every accepted draft pull request reports the exact validated
@@ -238,3 +251,13 @@ environment scoping; ignored-entry exclusion; independent homes and trees;
 profile-injection, retry, and quick-to-full isolation; offline network
 namespaces; strict crash-residue cleanup; symlinked Git and Console parents; and
 missing or drifted Console toolchains.
+
+[COMPUTED][HIGH] The 2026-08-17 AI-attribution delivery regression suite passes
+127 tests. It covers expected-actor configuration, case-insensitive `/user`
+matching with canonical-login persistence, invalid and unavailable responses,
+state drift, exact author/committer identity, complete commit provenance, crash
+recovery, draft PR provenance, and worker-environment projection. `bash -n`, the
+standalone SDD checker, the public-repository boundary, Ruff, and the Console
+production build pass. The repository fast profile passes 1811 tests, 51
+subtests, and one skip. The redacted live GitHub actor probe returned HTTP 503
+with `matched=false`, so live token-to-actor identity is not end-to-end verified.

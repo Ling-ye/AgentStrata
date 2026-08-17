@@ -1513,3 +1513,7 @@ def test_code_task_state_machine_rejects_terminal_or_skipped_transitions() -> No
         validate_code_task_transition("queued", "succeeded")
     with pytest.raises(ValueError, match="succeeded -> queued"):
         validate_code_task_transition("succeeded", "queued")
+
+
+def test_worker_environment_includes_expected_github_actor() -> None:
+    assert "CHATCOPILOT_CODE_TASK_GITHUB_ACTOR" in runtime._worker_environment_names()

@@ -241,20 +241,29 @@ refresh token；单条 lane 可独立重登。登录先写私有 staging home，
 
 ### 代码任务草稿 PR 凭据
 
-[KNOWN][HIGH] 在目标 bot 的 ignored `local.env` 中配置 GitHub repository、fine-grained
-token 和公开 Git author；不要把 token 写进 BotSpec、prompt 或仓库：
+[KNOWN][HIGH] 在目标 bot 的 ignored `local.env` 中配置 GitHub repository、预期 PR
+actor、fine-grained token 和公开 Git author；不要把 token 写进 BotSpec、prompt 或仓库。
+PR actor 是 token 对应的 GitHub 用户，Git author/committer 是公开的自动化提交身份，
+两者不能混为一谈：
 
 ```bash
 export CHATCOPILOT_CODE_TASK_GITHUB_REPOSITORY="Ling-ye/AgentStrata"
 export CHATCOPILOT_CODE_TASK_GITHUB_TOKEN="github_pat_xxxxxxxxxxxx"
-export CHATCOPILOT_CODE_TASK_GIT_AUTHOR_NAME="AgentStrata Bot"
-export CHATCOPILOT_CODE_TASK_GIT_AUTHOR_EMAIL="agentstrata-bot@local"
+export CHATCOPILOT_CODE_TASK_GITHUB_ACTOR="Ling-ye"
+export CHATCOPILOT_CODE_TASK_GIT_AUTHOR_NAME="AgentStrata AI Coding Bot"
+export CHATCOPILOT_CODE_TASK_GIT_AUTHOR_EMAIL="agentstrata-ai-coding-bot@automation.invalid"
 ```
 
 token 最小 repository permissions 是 `Contents: Read and write`、
 `Pull requests: Read and write` 与 `Metadata: Read`。当前 Lingye `context.dev` 不允许
 `.github/workflows/**`，因此不需要 `Workflows` 写权限；不要授予 admin、delete 或 force-push
 能力。
+
+[KNOWN][HIGH] worker 在创建 clone 前和正式交付前通过 GitHub `/user` 校验 token 的
+canonical login 与 `CHATCOPILOT_CODE_TASK_GITHUB_ACTOR` 一致，并把该 actor 绑定进
+`delivery.json`。缺失、非法、不匹配、漂移或无法验证时失败关闭。Commit 正文与 Draft PR
+顶部公开声明该变更由预期 actor 的 AgentStrata AI Coding Bot 生成，并继续要求人工审批；
+不会复制私有 prompt、caller identity、机器路径、changed-file 路径或凭据。
 
 修改后重新生成 worker 私有 env/credential file 并重启恢复 worker：
 

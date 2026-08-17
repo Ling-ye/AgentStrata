@@ -2019,6 +2019,7 @@ def _worker_environment_names() -> tuple[str, ...]:
         f"{ENV_PREFIX}_CODE_MODEL",
         f"{ENV_PREFIX}_CODE_REASONING_EFFORT",
         f"{ENV_PREFIX}_CODE_TASK_GITHUB_REPOSITORY",
+        f"{ENV_PREFIX}_CODE_TASK_GITHUB_ACTOR",
         f"{ENV_PREFIX}_CODE_TASK_GITHUB_TOKEN_FILE",
         f"{ENV_PREFIX}_CODE_TASK_GIT_AUTHOR_NAME",
         f"{ENV_PREFIX}_CODE_TASK_GIT_AUTHOR_EMAIL",

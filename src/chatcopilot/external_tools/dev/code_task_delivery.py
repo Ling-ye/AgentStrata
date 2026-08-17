@@ -30,6 +30,7 @@ VALIDATION_INDEX_FILENAME = ".validation-index"
 
 _REPOSITORY_ENV = f"{ENV_PREFIX}_CODE_TASK_GITHUB_REPOSITORY"
 _TOKEN_FILE_ENV = f"{ENV_PREFIX}_CODE_TASK_GITHUB_TOKEN_FILE"
+_ACTOR_ENV = f"{ENV_PREFIX}_CODE_TASK_GITHUB_ACTOR"
 _AUTHOR_NAME_ENV = f"{ENV_PREFIX}_CODE_TASK_GIT_AUTHOR_NAME"
 _AUTHOR_EMAIL_ENV = f"{ENV_PREFIX}_CODE_TASK_GIT_AUTHOR_EMAIL"
 _REPOSITORY_RE = re.compile(
@@ -38,12 +39,16 @@ _REPOSITORY_RE = re.compile(
 )
 _SAFE_REF_PART_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+_GITHUB_LOGIN_RE = re.compile(
+    r"(?=.{1,39}\Z)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*"
+)
 _GITHUB_API_ROOT = "https://api.github.com"
 _REMOTE_TIMEOUT_SECONDS = 120
 _API_TIMEOUT_SECONDS = 30
 _DELIVERY_STATE_KEYS = frozenset(
     {
         "repository",
+        "github_actor",
         "base_branch",
         "base_sha",
         "branch",
@@ -65,6 +70,7 @@ _DELIVERY_STATE_KEYS = frozenset(
 class GitHubDeliveryConfig:
     repository: str
     owner: str
+    actor: str
     token_file: Path
     token: str = field(repr=False)
     author_name: str
@@ -78,6 +84,13 @@ def load_delivery_config() -> GitHubDeliveryConfig:
         raise ToolHandlerError(
             f"{_REPOSITORY_ENV} must be owner/repository",
             error_code="code_task_github_repository_invalid",
+            stage="preparing",
+        )
+    actor = os.environ.get(_ACTOR_ENV, "").strip()
+    if _GITHUB_LOGIN_RE.fullmatch(actor) is None:
+        raise ToolHandlerError(
+            f"{_ACTOR_ENV} must be a valid GitHub login",
+            error_code="code_task_github_actor_invalid",
             stage="preparing",
         )
     token_file, token = _load_token_file(
@@ -105,6 +118,7 @@ def load_delivery_config() -> GitHubDeliveryConfig:
     return GitHubDeliveryConfig(
         repository=raw_repository,
         owner=match.group("owner"),
+        actor=actor,
         token_file=token_file,
         token=token,
         author_name=author_name,
@@ -126,6 +140,7 @@ def prepare_delivery_worktree(
         config,
         job_dir=job_dir,
     )
+    github_actor = _verify_github_actor(config, stage="preparing")
     state = _delivery_state(job_dir)
     if state:
         if not worktree.is_dir():
@@ -134,7 +149,12 @@ def prepare_delivery_worktree(
                 error_code="code_task_worktree_missing",
                 stage="preparing",
             )
-        _verify_state_target(state, config)
+        _verify_state_target(
+            state,
+            config,
+            github_actor=github_actor,
+            stage="preparing",
+        )
         return state
     if worktree.exists():
         if (
@@ -206,6 +226,7 @@ def prepare_delivery_worktree(
     now = time.time()
     state = {
         "repository": config.repository,
+        "github_actor": github_actor,
         "base_branch": base_branch,
         "base_sha": base_sha,
         "branch": branch,
@@ -313,6 +334,7 @@ def deliver_pull_request(
     """Commit validated changes, push a unique branch, and open a draft PR."""
     public_title = validate_code_task_title(title)
     config = load_delivery_config()
+    github_actor = _verify_github_actor(config, stage="delivering")
     state = _delivery_state(job_dir)
     if not state:
         raise ToolHandlerError(
@@ -320,7 +342,12 @@ def deliver_pull_request(
             error_code="code_task_delivery_state_missing",
             stage="delivering",
         )
-    _verify_state_target(state, config)
+    _verify_state_target(
+        state,
+        config,
+        github_actor=github_actor,
+        stage="delivering",
+    )
     paths = tuple(dict.fromkeys(str(path) for path in changed_files if str(path)))
     if not paths:
         return {**state, "delivered": False}
@@ -357,6 +384,11 @@ def deliver_pull_request(
         author_name=config.author_name,
         author_email=config.author_email,
     )
+    commit_message = _commit_message(
+        public_title,
+        config=config,
+        github_actor=github_actor,
+    )
     commit_sha = str(state.get("commit_sha") or "")
     if not commit_sha:
         if not worktree.is_dir():
@@ -373,13 +405,15 @@ def deliver_pull_request(
             stage="delivering",
         )
         if head_sha != base_sha:
-            commit_sha = _recover_unrecorded_commit(
+            commit_sha = _verify_delivery_commit(
                 worktree=worktree,
                 env=local_env,
                 base_sha=base_sha,
                 expected_paths=paths,
-                expected_message=public_title,
+                expected_message=commit_message,
                 expected_tree_sha=expected_tree,
+                expected_author_name=config.author_name,
+                expected_author_email=config.author_email,
             )
         else:
             current_tree = compute_delivery_tree(
@@ -439,30 +473,22 @@ def deliver_pull_request(
                     "--no-verify",
                     "--no-gpg-sign",
                     "-m",
-                    public_title,
+                    commit_message,
                 ],
                 cwd=worktree,
                 env=local_env,
                 stage="delivering",
             )
-            commit_sha = _git_output(
-                ["rev-parse", "HEAD"],
-                cwd=worktree,
+            commit_sha = _verify_delivery_commit(
+                worktree=worktree,
                 env=local_env,
-                stage="delivering",
+                base_sha=base_sha,
+                expected_paths=paths,
+                expected_message=commit_message,
+                expected_tree_sha=expected_tree,
+                expected_author_name=config.author_name,
+                expected_author_email=config.author_email,
             )
-            commit_tree = _git_output(
-                ["rev-parse", "HEAD^{tree}"],
-                cwd=worktree,
-                env=local_env,
-                stage="delivering",
-            )
-            if commit_tree != expected_tree:
-                raise ToolHandlerError(
-                    "committed Git tree differs from validation evidence",
-                    error_code="code_task_delivery_tree_mismatch",
-                    stage="delivering",
-                )
         state = {
             **state,
             "commit_sha": commit_sha,
@@ -482,6 +508,7 @@ def deliver_pull_request(
         job_dir=job_dir,
         state=state,
         title=public_title,
+        github_actor=github_actor,
         changed_files=paths,
         checks=checks,
     )
@@ -664,7 +691,7 @@ def _cleanup_candidate_index(index: Path, *, stage: str) -> None:
         )
 
 
-def _recover_unrecorded_commit(
+def _verify_delivery_commit(
     *,
     worktree: Path,
     env: Mapping[str, str],
@@ -672,6 +699,8 @@ def _recover_unrecorded_commit(
     expected_paths: Sequence[str],
     expected_message: str,
     expected_tree_sha: str,
+    expected_author_name: str,
+    expected_author_email: str,
 ) -> str:
     if not base_sha:
         raise ToolHandlerError(
@@ -697,12 +726,18 @@ def _recover_unrecorded_commit(
         env=env,
         stage="delivering",
     )
-    subject = _git_output(
-        ["log", "-1", "--format=%s"],
+    message = _git_output(
+        ["log", "-1", "--format=%B"],
         cwd=worktree,
         env=env,
         stage="delivering",
     )
+    identity = _git_output(
+        ["log", "-1", "--format=%an%x00%ae%x00%cn%x00%ce"],
+        cwd=worktree,
+        env=env,
+        stage="delivering",
+    ).split("\0")
     head_tree = _git_output(
         ["rev-parse", "HEAD^{tree}"],
         cwd=worktree,
@@ -714,7 +749,14 @@ def _recover_unrecorded_commit(
         status
         or count != "1"
         or delta_paths != set(expected_paths)
-        or subject != expected_message
+        or message != expected_message
+        or identity
+        != [
+            expected_author_name,
+            expected_author_email,
+            expected_author_name,
+            expected_author_email,
+        ]
         or head_tree != expected_tree_sha
     ):
         raise ToolHandlerError(
@@ -805,6 +847,7 @@ def _ensure_draft_pr(
     job_dir: Path,
     state: Mapping[str, Any],
     title: str,
+    github_actor: str,
     changed_files: Sequence[str],
     checks: Sequence[str],
 ) -> dict[str, Any]:
@@ -853,6 +896,8 @@ def _ensure_draft_pr(
                 "head": branch,
                 "base": base_branch,
                 "body": _pull_request_body(
+                    config=config,
+                    github_actor=github_actor,
                     changed_files=changed_files,
                     checks=checks,
                 ),
@@ -903,6 +948,8 @@ def _ensure_draft_pr(
 
 def _pull_request_body(
     *,
+    config: GitHubDeliveryConfig,
+    github_actor: str,
     changed_files: Sequence[str],
     checks: Sequence[str],
 ) -> str:
@@ -914,7 +961,16 @@ def _pull_request_body(
         verification = "- Passed checks: 0"
     else:
         verification += f"\n- Passed checks: {len(known_checks)}"
+    actor = _markdown_text(github_actor)
+    author_name = _markdown_text(config.author_name)
+    repository = _markdown_text(config.repository)
     return (
+        "> [!NOTE]\n"
+        "> The code changes in this Draft PR were generated by "
+        f"**{actor}'s {author_name}** for "
+        f"[`{repository}`](https://github.com/{config.repository}).\n"
+        f"> Human review and approval by **{actor}** are required before merge. "
+        "This workflow does not merge, deploy, or restart the project.\n\n"
         "## Problem\n\n"
         "Automated change prepared in an isolated code-task clone.\n\n"
         "## Changes\n\n"
@@ -925,6 +981,28 @@ def _pull_request_body(
         "## Release notes\n\n"
         "Draft PR created by the code-task worker; merge and deployment require human review.\n"
     )
+
+
+def _commit_message(
+    title: str,
+    *,
+    config: GitHubDeliveryConfig,
+    github_actor: str,
+) -> str:
+    return (
+        f"{title}\n\n"
+        f"AI-generated code produced by {github_actor}'s {config.author_name} "
+        f"for {config.repository}.\n\n"
+        f"Generated-by: {config.author_name}\n"
+        f"Repository-owner: {config.owner}\n"
+        f"Repository: {config.repository}\n"
+        "Human-review-required: true"
+    )
+
+
+def _markdown_text(value: str) -> str:
+    return re.sub(r"([\\`*_\[\]<>])", r"\\\1", value)
+
 
 def _github_request(
     config: GitHubDeliveryConfig,
@@ -1013,14 +1091,54 @@ def _write_delivery_state(job_dir: Path, payload: Mapping[str, Any]) -> None:
 def _verify_state_target(
     state: Mapping[str, Any],
     config: GitHubDeliveryConfig,
+    *,
+    github_actor: str,
+    stage: str,
 ) -> None:
-    if str(state.get("repository") or "") != config.repository:
+    recorded_actor = str(state.get("github_actor") or "")
+    if (
+        str(state.get("repository") or "") != config.repository
+        or not recorded_actor
+        or recorded_actor.casefold() != github_actor.casefold()
+        or github_actor.casefold() != config.actor.casefold()
+    ):
         raise ToolHandlerError(
-            "delivery repository changed after task preparation",
+            "delivery target changed after task preparation",
             error_code="code_task_delivery_target_drift",
-            stage="delivering",
+            stage=stage,
         )
 
+
+def _verify_github_actor(
+    config: GitHubDeliveryConfig,
+    *,
+    stage: str,
+) -> str:
+    payload = _github_request(config, "GET", "/user", stage=stage)
+    if not isinstance(payload, Mapping):
+        raise ToolHandlerError(
+            "GitHub actor lookup returned an invalid response",
+            error_code="code_task_github_response_invalid",
+            stage=stage,
+        )
+    login = payload.get("login")
+    if (
+        payload.get("type") != "User"
+        or not isinstance(login, str)
+        or _GITHUB_LOGIN_RE.fullmatch(login) is None
+    ):
+        raise ToolHandlerError(
+            "GitHub actor lookup returned an invalid response",
+            error_code="code_task_github_response_invalid",
+            stage=stage,
+        )
+    if login.casefold() != config.actor.casefold():
+        raise ToolHandlerError(
+            "authenticated GitHub actor does not match configured actor",
+            error_code="code_task_github_actor_mismatch",
+            stage=stage,
+        )
+    return login
 
 
 def _verify_source_origin(
