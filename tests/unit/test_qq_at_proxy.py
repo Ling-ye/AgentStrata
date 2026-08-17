@@ -63,6 +63,88 @@ class ShouldForwardTests(unittest.TestCase):
               "message": [{"type": "text", "data": {"text": "你是谁"}}]}
         self.assertTrue(should_forward(ev, BOT))
 
+    def test_private_requires_user_allowlist_when_proxy_enforces_access(self) -> None:
+        ev = {
+            "post_type": "message",
+            "message_type": "private",
+            "user_id": 40004,
+            "message": [{"type": "text", "data": {"text": "hi"}}],
+        }
+        self.assertFalse(
+            should_forward(
+                ev,
+                BOT,
+                user_ids=frozenset({"20002"}),
+                allow_all_users=False,
+            )
+        )
+
+    def test_group_allowlist_allows_non_allowlisted_sender_with_at(self) -> None:
+        ev = _group(
+            [{"type": "at", "data": {"qq": BOT}}],
+            group_id=30003,
+            user_id=40004,
+        )
+        self.assertTrue(
+            should_forward(
+                ev,
+                BOT,
+                user_ids=frozenset({"20002"}),
+                allow_all_users=False,
+                group_ids=frozenset({"30003"}),
+            )
+        )
+
+    def test_group_allowlist_does_not_grant_other_group_or_private(self) -> None:
+        group = _group(
+            [{"type": "at", "data": {"qq": BOT}}],
+            group_id=50005,
+            user_id=40004,
+        )
+        private = {
+            "post_type": "message",
+            "message_type": "private",
+            "user_id": 40004,
+            "message": "hi",
+        }
+        policy = {
+            "user_ids": frozenset({"20002"}),
+            "allow_all_users": False,
+            "group_ids": frozenset({"30003"}),
+        }
+        self.assertFalse(should_forward(group, BOT, **policy))
+        self.assertFalse(should_forward(private, BOT, **policy))
+
+    def test_group_allowlist_still_honours_mention_policy(self) -> None:
+        ev = _group(
+            [{"type": "text", "data": {"text": "hi"}}],
+            group_id=30003,
+            user_id=40004,
+        )
+        policy = {
+            "user_ids": frozenset({"20002"}),
+            "allow_all_users": False,
+            "group_ids": frozenset({"30003"}),
+        }
+        self.assertFalse(should_forward(ev, BOT, **policy))
+        self.assertTrue(should_forward(ev, BOT, require_at=False, **policy))
+
+    def test_allowlisted_user_retains_access_in_other_group(self) -> None:
+        ev = _group(
+            [{"type": "at", "data": {"qq": BOT}}],
+            group_id=50005,
+            user_id=20002,
+        )
+        self.assertTrue(
+            should_forward(
+                ev,
+                BOT,
+                user_ids=frozenset({"20002"}),
+                allow_all_users=False,
+                group_ids=frozenset({"30003"}),
+            )
+        )
+
     def test_meta_event_forwarded(self) -> None:
         self.assertTrue(should_forward({"post_type": "meta_event", "meta_event_type": "heartbeat"}, BOT))
 
@@ -88,10 +170,17 @@ class ProxyConfigTests(unittest.TestCase):
                 "QQ_ACCESS_TOKEN": "x" * 32,
                 "QQ_WS_URL": "ws://127.0.0.1:3001",
                 "QQ_AT_PROXY_URL": "ws://localhost:3002",
+                "QQ_ALLOW_FROM": "20002",
+                "QQ_ALLOW_GROUPS": "30003",
             },
             clear=True,
         ):
-            _validate_proxy_config(_ProxyConfig())
+            config = _ProxyConfig()
+            _validate_proxy_config(config)
+            self.assertEqual(config.user_ids, frozenset({"20002"}))
+            self.assertFalse(config.allow_all_users)
+            self.assertEqual(config.group_ids, frozenset({"30003"}))
+            self.assertFalse(config.allow_all_groups)
 
     def test_missing_account_weak_token_and_public_urls_are_rejected(self) -> None:
         cases = (

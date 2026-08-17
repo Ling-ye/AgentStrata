@@ -1,0 +1,28 @@
+schema: 1
+suite_id: gaia
+version: 1.0.0
+name: GAIA
+kind: agent
+status: implemented
+value: 真实世界多步任务，常需搜索、工具和综合推理，是 Agent 综合能力的标准标尺。
+recommendation: Agent 机制或工具改动后运行；先用 Level 1 小样本，再跑 balanced-100 固定集。
+cadence: weekly/release
+plugin_id: gaia
+driver_id: agent_configured
+requires_bot: true
+requires_external_data: true
+prepare_supported: true
+official_url: https://huggingface.co/datasets/gaia-benchmark/GAIA
+setup_hint: >-
+  设置 CHATCOPILOT_GAIA_DATA_PATH 指向官方 JSON/JSONL，可选
+  CHATCOPILOT_GAIA_FILES_DIR/LEVELS/MAX_CASES/CASE_PROFILE；先用 Level 1
+  小样本固定 search_information/Tavily 工具环境后再比较分数。
+options:
+  - name: dry_run
+    type: boolean
+    label: 仅校验，不调用模型
+    default: false
+  - name: llm_judge
+    type: boolean
+    label: 启用 LLM Judge
+    default: true

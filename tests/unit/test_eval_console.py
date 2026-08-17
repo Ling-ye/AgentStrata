@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from chatcopilot.evals.adapters import gaia
-from chatcopilot.evals.application.bots import temporary_eval_env
+from chatcopilot.evals.application.bots import evaluation_subprocess_env, temporary_eval_env
 from chatcopilot.evals.application.catalog import (
     list_case_summaries,
     list_profile_descriptors,
@@ -116,9 +116,7 @@ def test_dry_run_emits_case_progress_and_checkpoints() -> None:
             "case_completed",
             "suite_completed",
         ]
-        payload = json.loads(
-            (output / "result.json").read_text(encoding="utf-8")
-        )
+        payload = json.loads((output / "result.json").read_text(encoding="utf-8"))
         assert len(payload["cases"]) == 2
         assert payload["cases"][0]["started_at"]
         assert payload["cases"][0]["finished_at"]
@@ -141,9 +139,7 @@ def test_report_checkpoint_keeps_previous_json_when_replace_fails() -> None:
             with pytest.raises(OSError, match="replace failed"):
                 write_run_report(result, root)
 
-        assert (
-            root / "result.json"
-        ).read_text(encoding="utf-8") == previous
+        assert (root / "result.json").read_text(encoding="utf-8") == previous
         assert not list(root.glob(".*.tmp"))
 
 
@@ -163,6 +159,8 @@ def test_catalog_queries_are_generic_and_hide_answers(
 
     assert profiles[0]["profile_id"] == "agent-comparison-mvp"
     assert set(by_id) == {
+        "agentstrata-canary-self-update-v1",
+        "agentstrata-capabilities-v1",
         "gaia",
         "bfcl",
         "ifeval",
@@ -170,6 +168,15 @@ def test_catalog_queries_are_generic_and_hide_answers(
         "webarena",
     }
     assert by_id["ifeval"]["ready"] is True
+    assert by_id["agentstrata-canary-self-update-v1"]["status"] == "planned"
+    assert by_id["agentstrata-canary-self-update-v1"]["ready"] is False
+    assert by_id["agentstrata-capabilities-v1"]["case_count"] == 29
+    assert by_id["agentstrata-capabilities-v1"]["default_preset"] == "quick"
+    assert (
+        by_id["agentstrata-capabilities-v1"]["capability_status"]
+        == "image_generation:not_configured"
+    )
+    assert by_id["bfcl"]["execution_scope"] == "direct_llm/function_call_protocol"
     assert by_id["swe-bench-verified"]["implemented"] is False
     assert "balanced-100" in by_id["gaia"]["selection_policy"]
     assert "simple/relevance=Lv1" in by_id["bfcl"]["level_policy"]
@@ -183,9 +190,7 @@ def test_catalog_queries_are_generic_and_hide_answers(
 def test_agent_runtime_is_closed_when_case_execution_fails() -> None:
     case = get_cases("ifeval")[0]
     fake_agent_runtime = MagicMock()
-    fake_agent_runtime.new_session.side_effect = RuntimeError(
-        "session failed"
-    )
+    fake_agent_runtime.new_session.side_effect = RuntimeError("session failed")
     runtime = SimpleNamespace(
         source_path=Path("bots/test/bot.yaml"),
         instance_id="test-bot",
@@ -204,9 +209,7 @@ def test_agent_runtime_is_closed_when_case_execution_fails() -> None:
         rag_sources=(),
         mcp_servers=(),
         subagents=(),
-        spec=SimpleNamespace(
-            llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")
-        ),
+        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")),
     )
     with (
         _test_dir() as root,
@@ -268,9 +271,7 @@ def test_agent_runtime_is_closed_when_prompt_assembly_fails() -> None:
         rag_sources=(),
         mcp_servers=(),
         subagents=(),
-        spec=SimpleNamespace(
-            llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")
-        ),
+        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")),
     )
     with (
         patch(
@@ -309,38 +310,49 @@ def test_agent_runtime_is_closed_when_prompt_assembly_fails() -> None:
     fake_agent_runtime.close.assert_called_once_with()
 
 
-def test_bot_eval_env_overrides_and_restores_process_env(
+def test_machine_eval_env_overrides_bot_local_and_is_restored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     key = "CHATCOPILOT_IFEVAL_DATA_PATH"
     monkeypatch.setenv(key, "global-value")
 
     with temporary_eval_env({key: "bot-value"}):
-        assert os.environ[key] == "bot-value"
+        assert os.environ[key] == "global-value"
 
     assert os.environ[key] == "global-value"
+
+    missing_key = "CHATCOPILOT_EVAL_LOCAL_ONLY_FIXTURE"
+    monkeypatch.delenv(missing_key, raising=False)
+    with temporary_eval_env({missing_key: "bot-value"}):
+        assert os.environ[missing_key] == "bot-value"
+    assert missing_key not in os.environ
+
+
+def test_bot_private_runtime_env_has_identical_preflight_and_worker_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = "CHATCOPILOT_EVAL_QQ_GROUP_ID"
+    monkeypatch.setenv(key, "service-value")
+    values = {key: "bot-local-value"}
+
+    with temporary_eval_env(values):
+        assert os.environ[key] == "service-value"
+        worker = evaluation_subprocess_env(values)
+        assert worker[key] == "service-value"
+
+    assert os.environ[key] == "service-value"
 
 
 def test_windows_eval_paths_are_normalized_for_wsl() -> None:
     values = {
-        "CHATCOPILOT_GAIA_DATA_PATH": (
-            r"D:\datasets\gaia\metadata.jsonl"
-        ),
-        "CHATCOPILOT_GAIA_MANIFEST_PATH": (
-            "reports/evals/manifests/gaia.json"
-        ),
+        "CHATCOPILOT_GAIA_DATA_PATH": (r"D:\datasets\gaia\metadata.jsonl"),
+        "CHATCOPILOT_GAIA_MANIFEST_PATH": ("reports/evals/manifests/gaia.json"),
     }
     with patch("chatcopilot.evals.env.os.name", "posix"):
         normalized = normalize_eval_env(values)
 
-    assert (
-        normalized["CHATCOPILOT_GAIA_DATA_PATH"]
-        == "/mnt/d/datasets/gaia/metadata.jsonl"
-    )
-    assert (
-        normalized["CHATCOPILOT_GAIA_MANIFEST_PATH"]
-        == "reports/evals/manifests/gaia.json"
-    )
+    assert normalized["CHATCOPILOT_GAIA_DATA_PATH"] == "/mnt/d/datasets/gaia/metadata.jsonl"
+    assert normalized["CHATCOPILOT_GAIA_MANIFEST_PATH"] == "reports/evals/manifests/gaia.json"
 
 
 def test_eval_cli_local_env_uses_same_wsl_path_normalization(
@@ -438,9 +450,7 @@ def _write_bfcl_official_cache(root: Path) -> None:
                         [
                             {
                                 "role": "user",
-                                "content": (
-                                    f"Use {category} tool {index}."
-                                ),
+                                "content": (f"Use {category} tool {index}."),
                             }
                         ]
                     ],
@@ -450,18 +460,14 @@ def _write_bfcl_official_cache(root: Path) -> None:
                             "description": "test",
                             "parameters": {
                                 "type": "object",
-                                "properties": {
-                                    "value": {"type": "integer"}
-                                },
+                                "properties": {"value": {"type": "integer"}},
                             },
                         }
                     ],
                 }
             )
             ground_truth = (
-                []
-                if category == "relevance"
-                else [{f"{category}_tool": {"value": index}}]
+                [] if category == "relevance" else [{f"{category}_tool": {"value": index}}]
             )
             answers.append(
                 {
@@ -507,9 +513,6 @@ def _write_ifeval_official_cache(path: Path) -> None:
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "".join(
-            json.dumps(row, ensure_ascii=False) + "\n"
-            for row in rows
-        ),
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
         encoding="utf-8",
     )

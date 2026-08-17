@@ -13,6 +13,7 @@ per-user workspace 附件流水线，由 ``bots/<bot-id>/bot.yaml`` 的 ``tools.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
@@ -39,6 +40,20 @@ def _as_bool(value: str | None) -> bool:
     if not value:
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _qq_group_allowlist_configured(value: str | None) -> bool:
+    return bool((value or "").strip())
+
+
+def _validate_qq_group_allowlist(value: str | None) -> bool:
+    raw = (value or "").strip()
+    if not raw or raw == "*":
+        return True
+    return all(
+        re.fullmatch(r"[1-9][0-9]{4,19}", item.strip())
+        for item in raw.split(",")
+    )
 
 
 class QQAdapter(PlatformAdapter):
@@ -125,6 +140,12 @@ class QQAdapter(PlatformAdapter):
             ),
             SecretSpec("QQ_ALLOW_FROM", required=False, default="*", description="允许的来源白名单（默认全部）"),
             SecretSpec(
+                "QQ_ALLOW_GROUPS",
+                required=False,
+                default="",
+                description="允许整群访问的 QQ 群号（默认不额外放行群）",
+            ),
+            SecretSpec(
                 "QQ_REQUIRE_AT_IN_GROUP",
                 required=False,
                 default="true",
@@ -147,6 +168,10 @@ class QQAdapter(PlatformAdapter):
         if require_at not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
             errors.append(
                 "qq_require_at_invalid: QQ_REQUIRE_AT_IN_GROUP must be a boolean"
+            )
+        if not _validate_qq_group_allowlist(env.get("QQ_ALLOW_GROUPS")):
+            errors.append(
+                "qq_group_allowlist_invalid: QQ_ALLOW_GROUPS must be '*' or comma-separated numeric QQ group IDs"
             )
         try:
             require_access_token(env.get("QQ_ACCESS_TOKEN"))
@@ -198,17 +223,19 @@ class QQAdapter(PlatformAdapter):
             raise ValueError("; ".join(errors))
         napcat_url = env.get("QQ_WS_URL") or "ws://127.0.0.1:3001"
         token = require_access_token(env.get("QQ_ACCESS_TOKEN"))
-        allow_from = env.get("QQ_ALLOW_FROM") or "*"
-        # 群聊 @门禁：cc-connect 的 NapCat-QQ 适配器会丢弃 @ 段、且不判 @（源码 platform/qq/qq.go），
-        # 无配置可改。故启用时让 cc-connect 连我们的 OneBot @ 过滤代理（QQ_AT_PROXY_URL），由代理
-        # 在转发前丢弃"群聊未 @机器人"的事件；关闭时直连 NapCat（QQ_WS_URL）。
+        user_allow_from = env.get("QQ_ALLOW_FROM") or "*"
+        group_allow_from = env.get("QQ_ALLOW_GROUPS") or ""
+        # cc-connect 的 QQ allow_from 只识别用户号，无法表达整群授权。需要 @ 或群白名单
+        # 时统一让本机 OneBot 代理先执行用户/群/@门禁，再把已授权事件交给 cc-connect。
         require_at = _as_bool(env.get("QQ_REQUIRE_AT_IN_GROUP", "true"))
+        proxy_required = require_at or _qq_group_allowlist_configured(group_allow_from)
         proxy_url = env.get("QQ_AT_PROXY_URL") or "ws://127.0.0.1:3002"
-        ws_url = proxy_url if require_at else napcat_url
+        ws_url = proxy_url if proxy_required else napcat_url
+        allow_from = "*" if proxy_required else user_allow_from
         ws_comment = (
-            "# ws_url 指向本仓库的 OneBot @ 过滤代理（群聊必须 @机器人 才回）；代理上游连 NapCat。\n"
-            if require_at
-            else "# ws_url 直连 NapCat（未启用群聊 @门禁）。\n"
+            "# ws_url 指向本仓库的 OneBot 访问代理；代理先执行用户/群/@门禁，再上游连接 NapCat。\n"
+            if proxy_required
+            else "# ws_url 直连 NapCat（未启用群聊 @门禁或群级白名单）。\n"
         )
         return (
             "[[projects.platforms]]\n"

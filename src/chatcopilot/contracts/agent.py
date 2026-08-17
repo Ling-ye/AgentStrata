@@ -2,7 +2,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Mapping, Union
+from typing import Any, Callable, Literal, Mapping, TypeAlias, Union
+
+
+AgentStopReason: TypeAlias = Literal[
+    "end_turn",
+    "tool_failure_cap",
+    "iteration_cap",
+    "tool_call_cap",
+    "timeout_cap",
+    "llm_error",
+]
 
 
 @dataclass(frozen=True)
@@ -117,6 +127,26 @@ class LlmCallFinished:
 
 
 @dataclass(frozen=True)
+class InputResourceReceipt:
+    """Path-free identity for one image actually included in a backend request."""
+
+    sequence: int
+    media_type: str
+    size_bytes: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class InputResourcesDispatched:
+    """Evidence emitted only after the backend request carrying images returned."""
+
+    backend: str
+    turn_index: int
+    request_id: str
+    resources: tuple[InputResourceReceipt, ...]
+
+
+@dataclass(frozen=True)
 class TopicDecisionMade:
     decision: str
     context_kind: str
@@ -145,6 +175,7 @@ AgentEvent = Union[
     SpanFinished,
     LlmCallStarted,
     LlmCallFinished,
+    InputResourcesDispatched,
     TopicDecisionMade,
     TurnError,
 ]
@@ -162,14 +193,7 @@ class DeferredLifecycleIntent:
 @dataclass(frozen=True)
 class AgentResult:
     final_text: str
-    stop_reason: Literal[
-        "end_turn",
-        "tool_failure_cap",
-        "iteration_cap",
-        "tool_call_cap",
-        "timeout_cap",
-        "llm_error",
-    ]
+    stop_reason: AgentStopReason
     produced_resources: tuple[ResourceRef, ...] = ()
     message_count: int = 0
     quality_gate: Any = None
@@ -181,6 +205,7 @@ __all__ = [
     "ResourceRef",
     "AgentEvent",
     "AgentResult",
+    "AgentStopReason",
     "DeferredLifecycleIntent",
     "EventSink",
     "TextDelta",
@@ -191,6 +216,8 @@ __all__ = [
     "SpanFinished",
     "LlmCallStarted",
     "LlmCallFinished",
+    "InputResourceReceipt",
+    "InputResourcesDispatched",
     "TopicDecisionMade",
     "TurnError",
 ]

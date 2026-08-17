@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# _start_qq_proxy.sh — 启动【当前实例】的 QQ OneBot @ 过滤代理（群聊"必须@才回"）。
+# _start_qq_proxy.sh — 启动【当前实例】的 QQ OneBot 用户/群/@ 访问代理。
 #
-# 仅当实例 platform=qq 且 QQ_REQUIRE_AT_IN_GROUP!=false 时才启动；否则直接 no-op 退出 0。
+# 仅当实例 platform=qq 且启用群聊 @ 或群级白名单时启动；否则直接 no-op 退出 0。
 # 由 start.sh 在 `exec cc-connect` 之前调用：
 #   - 成功（或无需启动）→ 退出 0；
 #   - 应启动但起不来（端口占用 / 崩溃）→ 退出 3，阻止 QQ 实例启动；
@@ -30,15 +30,20 @@ PROXY_LOG="$PROXY_LOG_DIR/$(date +%F).log"
 log() { printf "[qq-at-proxy] %s\n" "$*" >&2; }
 
 # ---------- 是否需要启动 ----------
-# platform=qq 由已渲染的 config.toml 判定（最可靠）；require_at 由 env 控制（默认 true）。
+# platform=qq 由已渲染的 config.toml 判定（最可靠）；require_at 与群名单由 env 控制。
 if [ ! -f "$CC_CONFIG" ] || ! grep -q 'type = "qq"' "$CC_CONFIG" 2>/dev/null; then
     log "非 qq 实例（或 config 未渲染），跳过 @ 过滤代理"
     exit 0
 fi
 REQUIRE_AT="${QQ_REQUIRE_AT_IN_GROUP:-true}"
+GROUP_ALLOWLIST="${QQ_ALLOW_GROUPS:-}"
 case "$(printf '%s' "$REQUIRE_AT" | tr '[:upper:]' '[:lower:]')" in
     0|false|no|off)
-        START_PROXY=0
+        if [ -n "$(printf '%s' "$GROUP_ALLOWLIST" | tr -d '[:space:]')" ]; then
+            START_PROXY=1
+        else
+            START_PROXY=0
+        fi
         ;;
     *)
         START_PROXY=1
@@ -82,7 +87,7 @@ if [ "$_probe_rc" != "0" ]; then
 fi
 
 if [ "$START_PROXY" = "0" ]; then
-    log "QQ_REQUIRE_AT_IN_GROUP=$REQUIRE_AT；OneBot 双向认证已通过，跳过 @ 过滤代理"
+    log "未启用群聊 @ 或群级白名单；OneBot 双向认证已通过，跳过访问代理"
     exit 0
 fi
 

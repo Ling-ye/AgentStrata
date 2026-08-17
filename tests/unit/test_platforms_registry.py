@@ -83,6 +83,7 @@ class DeployRenderTests(unittest.TestCase):
         self.assertTrue(by_key["QQ_ACCOUNT"].required)
         self.assertTrue(by_key["QQ_ACCESS_TOKEN"].required)
         self.assertFalse(by_key["QQ_WS_URL"].required)
+        self.assertIn("QQ_ALLOW_GROUPS", by_key)
         self.assertIn("QQ_AT_PROXY_URL", by_key)
         self.assertIn("QQ_WEBUI_PORT", by_key)
         self.assertIn("QQ_IMAGE_MAX_BYTES", by_key)
@@ -128,6 +129,33 @@ class DeployRenderTests(unittest.TestCase):
         self.assertIn('ws_url = "ws://127.0.0.1:6700"', section)
         self.assertIn(f'token = "{token}"', section)
         self.assertIn('allow_from = "123,\\"456\\""', section)
+
+    def test_qq_group_allowlist_forces_access_proxy_and_defers_user_gate(self) -> None:
+        token = "safe_token-" + ("x" * 22)
+        section = registry.get_adapter("qq").render_cc_connect_section(
+            {
+                "QQ_WS_URL": "ws://127.0.0.1:6700",
+                "QQ_AT_PROXY_URL": "ws://127.0.0.1:6701",
+                "QQ_ACCESS_TOKEN": token,
+                "QQ_ALLOW_FROM": "20002",
+                "QQ_ALLOW_GROUPS": "30003",
+                "QQ_REQUIRE_AT_IN_GROUP": "false",
+            }
+        )
+        self.assertIn('ws_url = "ws://127.0.0.1:6701"', section)
+        self.assertIn('allow_from = "*"', section)
+        self.assertNotIn('allow_from = "20002"', section)
+
+    def test_qq_group_allowlist_validation_does_not_echo_private_value(self) -> None:
+        private_value = "invalid-private-group"
+        errors = registry.get_adapter("qq").validate_runtime_env(
+            {
+                "QQ_ACCESS_TOKEN": "x" * 32,
+                "QQ_ALLOW_GROUPS": private_value,
+            }
+        )
+        self.assertTrue(any("qq_group_allowlist_invalid" in item for item in errors))
+        self.assertNotIn(private_value, "\n".join(errors))
 
     def test_qq_render_rejects_missing_weak_token_and_non_loopback_url(self) -> None:
         adapter = registry.get_adapter("qq")

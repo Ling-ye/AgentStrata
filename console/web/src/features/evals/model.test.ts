@@ -3,18 +3,45 @@ import { describe, expect, it } from "vitest";
 import {
   acceptUniqueEvaluationEvent,
   buildComparisonRequest,
+  buildSuiteOptions,
   buildSuiteRequest,
   createRequestGeneration,
   isCurrentSelection,
+  isProductCapabilityEvaluation,
   normalizeCoverage,
   normalizeEvaluation,
   parseApiProblem,
+  productCapabilityResultView,
   retainAvailableSelection,
   shouldStopEvaluationStream,
+  suitePresetRequiresExternalWrite,
   suiteSupportsLlmJudge,
+  type EvaluationSuite,
 } from "./model";
 
 describe("evaluation request builders", () => {
+  const suiteFixture = (
+    overrides: Partial<EvaluationSuite>,
+  ): EvaluationSuite => ({
+    suite_id: "fixture-suite",
+    name: "Fixture Suite",
+    kind: "agent",
+    value: "",
+    recommendation: "",
+    cadence: "manual only",
+    requires_bot: true,
+    requires_external_data: false,
+    official_url: "",
+    setup_hint: "",
+    implemented: true,
+    ready: true,
+    case_count: 0,
+    unavailable_reason: "",
+    prepare_available: false,
+    parameters: [],
+    ...overrides,
+  });
+
   const comparison = {
     botId: "lingye-copilot-qq",
     profileId: "agent-comparison-mvp",
@@ -59,6 +86,12 @@ describe("evaluation request builders", () => {
       botId: "sample-bot",
       suiteId: "bfcl",
       caseIds: ["simple_1"],
+      preset: "custom",
+      repetitions: 1,
+      maxWallSeconds: 600,
+      seed: 17,
+      options: { dry_run: true },
+      confirmExternalWrite: false,
       dryRun: true,
       llmJudge: false,
     })).toEqual({
@@ -66,6 +99,32 @@ describe("evaluation request builders", () => {
       bot_id: "sample-bot",
       suite_id: "bfcl",
       case_ids: ["simple_1"],
+      preset: "custom",
+      repetitions: 1,
+      max_wall_seconds: 600,
+      seed: 17,
+      options: { dry_run: true },
+      confirm_external_write: false,
+      dry_run: true,
+      llm_judge: false,
+    });
+  });
+
+  it("only sends options declared by the selected suite manifest", () => {
+    const capabilitySuite = suiteFixture({
+      suite_id: "agentstrata-capabilities-v1",
+      parameters: [],
+    });
+    const gaiaSuite = suiteFixture({
+      suite_id: "gaia",
+      parameters: [
+        { name: "dry_run", type: "boolean", label: "dry", default: false },
+        { name: "llm_judge", type: "boolean", label: "judge", default: true },
+      ],
+    });
+
+    expect(buildSuiteOptions(capabilitySuite, { dryRun: false, llmJudge: false })).toEqual({});
+    expect(buildSuiteOptions(gaiaSuite, { dryRun: true, llmJudge: false })).toEqual({
       dry_run: true,
       llm_judge: false,
     });
@@ -101,6 +160,44 @@ describe("evaluation request builders", () => {
         default: false,
       }],
     })).toBe(true);
+  });
+
+  it("requires an explicit write confirmation only for live QQ presets", () => {
+    const capabilitySuite = {
+      suite_id: "agentstrata-capabilities-v1",
+      name: "AgentStrata Capabilities",
+      kind: "product",
+      value: "",
+      recommendation: "",
+      cadence: "",
+      requires_bot: true,
+      requires_external_data: false,
+      official_url: "",
+      setup_hint: "",
+      implemented: true,
+      ready: true,
+      case_count: 29,
+      unavailable_reason: "",
+      prepare_available: false,
+      parameters: [],
+    };
+    expect(suitePresetRequiresExternalWrite(capabilitySuite, "full")).toBe(true);
+    expect(suitePresetRequiresExternalWrite(capabilitySuite, "qq-live")).toBe(true);
+    expect(suitePresetRequiresExternalWrite(capabilitySuite, "quick")).toBe(false);
+    expect(
+      suitePresetRequiresExternalWrite(capabilitySuite, "custom", [
+        "qq-group-image-roundtrip",
+      ]),
+    ).toBe(true);
+    expect(
+      suitePresetRequiresExternalWrite(capabilitySuite, "custom", [
+        "dialogue-strict-json",
+      ]),
+    ).toBe(false);
+    expect(suitePresetRequiresExternalWrite({
+      ...capabilitySuite,
+      suite_id: "gaia",
+    }, "full")).toBe(false);
   });
 });
 
@@ -304,5 +401,89 @@ describe("Evaluation record adapter", () => {
       progress: { completed: 0, total: 1, percent: 0 },
       result: {},
     }).result).toBeNull();
+  });
+});
+
+describe("product capability result semantics", () => {
+  it("normalizes verdict, capability groups, notes, usage and cost without a score", () => {
+    const record = normalizeEvaluation({
+      evaluation_id: "eval_capability",
+      kind: "suite",
+      bot_id: "sample-bot",
+      status: "completed",
+      created_at: "2026-08-17T00:00:00Z",
+      request: {
+        kind: "suite",
+        suite_id: "agentstrata-capabilities-v1",
+        repetitions: 1,
+      },
+      result: {
+        suite: "agentstrata-capabilities-v1",
+        repetitions: 1,
+        summary: {
+          verdict: "failed",
+          critical_violations: 1,
+          infrastructure_errors: 0,
+          capabilities: {
+            image_understanding: {
+              total: 3,
+              passed: 2,
+              failed: 1,
+              errors: 0,
+              skipped: 0,
+            },
+          },
+          reliability_note: "Each Case ran once; reliability is not measured.",
+          score_scope: "product capability gates are not averaged into an intelligence score",
+          cost_estimates: {
+            provider_rmb: { estimated_rmb: 0.125 },
+          },
+        },
+        config_snapshot: {
+          model_version_note: "Provider immutable model id is unavailable.",
+        },
+        trials: [
+          { usage_totals: { input_tokens: 10, output_tokens: 3 } },
+          { usage_totals: { input_tokens: 7, output_tokens: 2 } },
+        ],
+      },
+    });
+
+    expect(isProductCapabilityEvaluation(record)).toBe(true);
+    expect(productCapabilityResultView(record)).toEqual({
+      verdict: "failed",
+      criticalViolations: 1,
+      infrastructureErrors: 0,
+      capabilities: [{
+        capability: "image_understanding",
+        total: 3,
+        passed: 2,
+        failed: 1,
+        errors: 0,
+        skipped: 0,
+      }],
+      reliabilityNote: "Each Case ran once; reliability is not measured.",
+      modelVersionNote: "Provider immutable model id is unavailable.",
+      scoreScope: "product capability gates are not averaged into an intelligence score",
+      usageTotals: { input_tokens: 17, output_tokens: 5 },
+      costEntries: [{
+        label: "cost_estimates.provider_rmb.estimated_rmb",
+        value: "0.125",
+      }],
+    });
+  });
+
+  it("does not classify official suites as product capability reports", () => {
+    const record = normalizeEvaluation({
+      evaluation_id: "eval_ifeval",
+      kind: "suite",
+      status: "completed",
+      created_at: "2026-08-17T00:00:00Z",
+      request: { kind: "suite", suite_id: "ifeval" },
+      result: { suite: "ifeval", summary: { score_ratio: 0.5 } },
+    });
+
+    expect(isProductCapabilityEvaluation(record)).toBe(false);
+    expect(productCapabilityResultView(record)).toBeNull();
   });
 });

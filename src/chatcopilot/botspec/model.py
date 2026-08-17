@@ -132,16 +132,19 @@ class AccessSpec:
     关闭——未声明 ``access`` 段的机器人行为完全不变（飞书等实例零影响）。
 
     - ``private_require_whitelist``：私聊仅白名单内用户可触发。
-    - ``group_require_whitelist``：群聊仅白名单内用户可触发。
+    - ``group_require_whitelist``：群聊仅用户或群聊白名单命中时可触发。
     - ``group_require_mention``：群聊还需 @机器人 才触发。
     - ``whitelist_env``：白名单来源 env 变量名（逗号分隔的平台用户标识，如 QQ 号）；
       具体名单值放进 ``local.env``，不进 git。``*`` 表示放行所有人。
+    - ``group_whitelist_env``：可选群聊白名单 env 变量名（逗号分隔的稳定 chat ID）；
+      空值不新增权限，``*`` 表示放行所有群聊。
     """
 
     private_require_whitelist: bool = False
     group_require_whitelist: bool = False
     group_require_mention: bool = False
     whitelist_env: str | None = None
+    group_whitelist_env: str | None = None
 
     @property
     def enabled(self) -> bool:

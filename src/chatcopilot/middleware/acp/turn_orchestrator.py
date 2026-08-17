@@ -125,6 +125,7 @@ class AcpTurnOrchestrator:
             access,
             platform_type=self._platform_type,
             chat_kind=turn.session.workspace.chat_kind,
+            chat_id=turn.session.workspace.chat_id,
             user_id=turn.session.workspace.user_id,
             text=turn.user_text,
             mention_name=mention_name,

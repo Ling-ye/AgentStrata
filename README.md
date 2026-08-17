@@ -41,10 +41,11 @@ resulting system structure.
 - **Controlled development.** Codex-backed owner sessions dispatch repository
   mutation to isolated code tasks that validate and prepare draft pull
   requests; they do not merge or deploy automatically.
-- **Unified evaluation.** Profile comparisons, BFCL, GAIA, and IFEval use one
-  Evaluation resource and one artifact layout. A same-version local Evaluation
-  service owns managed workers and lifecycle state; the Console is its UI/BFF
-  over a same-user Unix socket.
+- **Unified evaluation.** Profile comparisons, the manual 29-Case product
+  capability Suite, BFCL, GAIA, and IFEval use one Evaluation resource and one
+  artifact layout. Product presets are started manually; BFCL remains a
+  direct-LLM protocol calibration. The local service owns managed workers and
+  lifecycle state, while the Console is its UI/BFF over a same-user Unix socket.
 
 ## Quick start
 
@@ -164,7 +165,7 @@ and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.m
 | Capabilities | Local tool packs; in-process web search; reviewed MCP bindings; RAG; memory; private Wiki |
 | Operations | React/FastAPI Console BFF; diagnostics; task status; logs |
 | Deployment | Linux / WSL; Console and Evaluation systemd user services; desired-state Docker infrastructure |
-| Evaluation | Local lifecycle service; managed workers; Profile comparisons; BFCL; GAIA; IFEval |
+| Evaluation | Manual capability presets (`quick/full/security/qq-live/custom`, 29 Case × 1 by default); Profile comparisons; BFCL direct-LLM; GAIA; IFEval |
 
 Third-party MCP servers and Skills are not downloaded, installed, or enabled
 automatically. Review source, license, command, secret use, and remote write
@@ -180,6 +181,13 @@ never adopts a worker that already loaded an older release. The in-Console
 update action requires an independent `systemd-run --user` transient unit;
 if that unit cannot be created, it fails before running the update script or
 acquiring the maintenance lease.
+
+Image-understanding Cases are configured; image generation is reported as not
+configured. SWE-bench Verified, WebArena, and Canary self-update remain planned,
+not runnable capabilities. Repository tests do not claim real commercial-LLM,
+live-QQ, or Canary end-to-end validation; see the
+[operations runbook](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md#evaluation)
+for manual commands and evidence boundaries.
 
 ## Public-boundary checks
 

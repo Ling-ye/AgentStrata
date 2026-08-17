@@ -1,8 +1,8 @@
-"""OneBot v11 @ 过滤代理（QQ 群聊"必须 @机器人 才回"）。
+"""OneBot v11 访问代理（QQ 用户/群白名单与群聊 @ 门禁）。
 
 背景：cc-connect 的 NapCat-QQ 适配器在 ``platform/qq/qq.go`` 里把 OneBot 消息的
-``at`` 段硬编码丢弃（``case "at": // Ignore``），且群消息只过 ``allow_from`` 白名单、
-不判 @；也没有任何配置/hook 能改。结果群里白名单用户不 @机器人 也会触发。
+``at`` 段硬编码丢弃（``case "at": // Ignore``），且 ``allow_from`` 只识别用户号，
+不能表达群白名单或可靠判断 @。
 
 本代理插在 ``NapCat 正向 WS`` 与 ``cc-connect`` 之间：
 
@@ -10,11 +10,12 @@
 
 - 对 cc-connect 暴露一个 WS 服务端；每条 cc-connect 连接对上游 NapCat 开一条 WS。
 - ``cc-connect → NapCat`` 方向（API 调用 / echo）原样透传。
-- ``NapCat → cc-connect`` 方向按 :func:`should_forward` 过滤：**只有群消息里带
-  ``at`` 且 qq==机器人号 才放行**；私聊、API 响应、心跳、notice 等一律透传。
+- ``NapCat → cc-connect`` 方向按 :func:`should_forward` 过滤：私聊只认用户白名单；
+  群聊允许用户白名单或群白名单命中，并按实例策略继续要求 @机器人。
+- API 响应、心跳、notice 等非消息帧一律透传。
 
-配置边界 fail-closed：进程启动前强制校验机器人号、强 token 和回环地址。帧级过滤只对
-可识别的群消息执行；非 message 事件和 API 响应仍透传。
+配置边界 fail-closed：进程启动前强制校验机器人号、强 token 和回环地址。群名单缺失或
+为空不会授予群权限；只有显式 ``*`` 才允许所有群。
 """
 from __future__ import annotations
 
@@ -71,19 +72,52 @@ def _has_self_at(event: dict[str, Any], bot_qq: str, at_all_counts: bool) -> boo
     return False
 
 
-def should_forward(event: Any, bot_qq: str, at_all_counts: bool = False) -> bool:
+def _parse_allowlist(
+    raw: str | None, *, empty_means_all: bool
+) -> tuple[frozenset[str], bool]:
+    value = (raw or "").strip()
+    if not value:
+        return frozenset(), empty_means_all
+    items = frozenset(item.strip() for item in value.split(",") if item.strip())
+    if "*" in items:
+        return frozenset(), True
+    return items, False
+
+
+def should_forward(
+    event: Any,
+    bot_qq: str,
+    at_all_counts: bool = False,
+    *,
+    require_at: bool = True,
+    user_ids: frozenset[str] = frozenset(),
+    allow_all_users: bool = True,
+    group_ids: frozenset[str] = frozenset(),
+    allow_all_groups: bool = False,
+) -> bool:
     """是否把这条 NapCat→cc-connect 的帧转发给 cc-connect。
 
     - 非 dict / 非 ``message`` 事件（API 响应、meta_event、notice...）→ 透传。
-    - 私聊消息 → 透传。
-    - 群消息：仅当 @ 了本机器人才透传；否则丢弃。
+    - 私聊消息：仅用户白名单命中时透传。
+    - 群消息：用户或群白名单命中，并满足可选 @ 策略时透传。
     - ``bot_qq`` 为空（配置缺失）→ fail-open 透传 + 由调用方告警。
     """
     if not isinstance(event, dict):
         return True
     if event.get("post_type") != "message":
         return True
-    if event.get("message_type") != "group":
+    message_type = event.get("message_type")
+    user_id = str(event.get("user_id") or "").strip()
+    user_allowed = allow_all_users or (bool(user_id) and user_id in user_ids)
+    if message_type == "private":
+        return user_allowed
+    if message_type != "group":
+        return False
+    group_id = str(event.get("group_id") or "").strip()
+    group_allowed = allow_all_groups or (bool(group_id) and group_id in group_ids)
+    if not (user_allowed or group_allowed):
+        return False
+    if not require_at:
         return True
     if not bot_qq:
         return True
@@ -99,6 +133,15 @@ class _ProxyConfig:
         self.upstream_url = (os.environ.get("QQ_WS_URL") or _DEFAULT_UPSTREAM).strip()
         self.token = (os.environ.get("QQ_ACCESS_TOKEN") or "").strip()
         self.bot_qq = (os.environ.get("QQ_ACCOUNT") or "").strip()
+        self.require_at = (
+            os.environ.get("QQ_REQUIRE_AT_IN_GROUP") or "true"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        self.user_ids, self.allow_all_users = _parse_allowlist(
+            os.environ.get("QQ_ALLOW_FROM"), empty_means_all=True
+        )
+        self.group_ids, self.allow_all_groups = _parse_allowlist(
+            os.environ.get("QQ_ALLOW_GROUPS"), empty_means_all=False
+        )
         self.at_all_counts = (os.environ.get("QQ_AT_ALL_COUNTS") or "").strip().lower() in {
             "1",
             "true",
@@ -153,11 +196,20 @@ async def _pump_downstream(napcat_ws: Any, cc_ws: Any, cfg: "_ProxyConfig") -> N
         except (ValueError, TypeError):
             await cc_ws.send(raw)  # 非 JSON 原样透传
             continue
-        if should_forward(event, cfg.bot_qq, cfg.at_all_counts):
+        if should_forward(
+            event,
+            cfg.bot_qq,
+            cfg.at_all_counts,
+            require_at=cfg.require_at,
+            user_ids=cfg.user_ids,
+            allow_all_users=cfg.allow_all_users,
+            group_ids=cfg.group_ids,
+            allow_all_groups=cfg.allow_all_groups,
+        ):
             await cc_ws.send(raw)
         else:
             _LOGGER.info(
-                "drop group msg without self-@ | group=%s user=%s",
+                "drop QQ message by access proxy | group=%s user=%s",
                 event.get("group_id"),
                 event.get("user_id"),
             )
@@ -206,11 +258,13 @@ async def _amain(cfg: "_ProxyConfig") -> None:
         await _handle_cc_connection(cc_ws, cfg)
 
     _LOGGER.info(
-        "qq @-proxy listening on ws://%s:%d -> upstream %s (bot_qq=%s, at_all_counts=%s)",
+        "qq access proxy listening on ws://%s:%d -> upstream %s "
+        "(bot_qq=%s, require_at=%s, at_all_counts=%s)",
         host,
         port,
         cfg.upstream_url,
         cfg.bot_qq or "?",
+        cfg.require_at,
         cfg.at_all_counts,
     )
     async with websockets.serve(handler, host, port, max_size=None):

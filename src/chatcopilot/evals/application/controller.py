@@ -24,6 +24,7 @@ from chatcopilot.evals.application.bots import (
     EvaluationBotResolver,
     bot_env,
     bot_spec_path,
+    evaluation_subprocess_env,
     temporary_eval_env,
 )
 from chatcopilot.evals.redaction import collect_env_secrets, sanitize_text
@@ -220,7 +221,12 @@ def _open_private_text(
             os.close(descriptor)
 
 
-def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
+def _write_json(
+    path: Path,
+    payload: Mapping[str, Any],
+    *,
+    canonical: bool = False,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         existing = path.lstat()
@@ -240,7 +246,17 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     )
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(dict(payload), ensure_ascii=False, indent=2) + "\n")
+            if canonical:
+                encoded = json.dumps(
+                    dict(payload),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            else:
+                encoded = json.dumps(dict(payload), ensure_ascii=False, indent=2)
+            handle.write(encoded + "\n")
             handle.flush()
             os.fsync(handle.fileno())
         temporary.replace(path)
@@ -253,11 +269,19 @@ def _validate_request(
     bot: EvaluationBotRef,
     request: Mapping[str, Any],
     repository_root: Path,
+    *,
+    env_values: Mapping[str, str] | None = None,
 ) -> ValidationResult:
     from chatcopilot.evals.evaluations import validate_evaluation
 
-    with temporary_eval_env(bot_env(bot, repository_root)):
+    values = dict(env_values) if env_values is not None else bot_env(bot, repository_root)
+    with temporary_eval_env(values):
         return validate_evaluation(_core_request(bot, request, repository_root))
+
+
+def _bot_spec_sha256(bot: EvaluationBotRef, repository_root: Path) -> str:
+    path = bot_spec_path(bot, repository_root)
+    return sha256(path.read_bytes()).hexdigest()
 
 
 def _core_request(
@@ -268,7 +292,7 @@ def _core_request(
     evaluation_id: str | None = None,
 ) -> dict[str, Any]:
     kind = str(request.get("kind") or "")
-    common = {
+    common: dict[str, Any] = {
         "kind": kind,
         "bot": str(bot_spec_path(bot, repository_root)),
     }
@@ -296,8 +320,17 @@ def _core_request(
             **common,
             "suite": str(request.get("suite_id") or request.get("suite") or ""),
             "case_ids": list(request.get("case_ids") or ()),
-            "dry_run": bool(request.get("dry_run", False)),
-            "llm_judge": bool(request.get("llm_judge", False)),
+            "preset": str(request.get("preset") or ""),
+            "repetitions": request.get("repetitions", 1),
+            "max_wall_seconds": request.get("max_wall_seconds", 0),
+            "seed": request.get("seed", 0),
+            "options": dict(request.get("options") or {}),
+            # Preserve raw scalar types until the Core request parser applies
+            # strict booleans. In particular, bool("false") is True and must
+            # never satisfy a one-shot external-write confirmation.
+            "confirm_external_write": request.get("confirm_external_write", False),
+            "dry_run": request.get("dry_run", False),
+            "llm_judge": request.get("llm_judge", False),
         }
     raise ValueError(f"unsupported evaluation kind: {kind}")
 
@@ -336,6 +369,23 @@ def _stored_request(
             {
                 "suite_id": str(effective.get("suite") or request.get("suite_id") or ""),
                 "case_ids": list(effective.get("case_ids") or request.get("case_ids") or ()),
+                "preset": str(effective.get("preset") or request.get("preset") or ""),
+                "repetitions": effective.get(
+                    "repetitions",
+                    request.get("repetitions", 1),
+                ),
+                "max_wall_seconds": effective.get(
+                    "max_wall_seconds",
+                    request.get("max_wall_seconds", 0),
+                ),
+                "seed": effective.get("seed", request.get("seed", 0)),
+                "options": dict(effective.get("options") or request.get("options") or {}),
+                "confirm_external_write": bool(
+                    effective.get(
+                        "confirm_external_write",
+                        request.get("confirm_external_write", False),
+                    )
+                ),
                 "dry_run": bool(
                     effective.get(
                         "dry_run",
@@ -401,6 +451,7 @@ class EvaluationApplication:
         self._lock = threading.RLock()
         self._processes: dict[str, subprocess.Popen[Any]] = {}
         self._process_bot_ids: dict[str, str] = {}
+        self._spawn_env_snapshots: dict[str, dict[str, str]] = {}
         self._cancelled: set[str] = set()
         self._recover_interrupted()
 
@@ -427,6 +478,8 @@ class EvaluationApplication:
         evaluation_id: str | None = None,
     ) -> dict[str, Any]:
         bot = self._resolve_bot(bot_id)
+        effective_env = evaluation_subprocess_env(bot_env(bot, self.repository_root))
+        bot_spec_digest = _bot_spec_sha256(bot, self.repository_root)
         clean_request = dict(request)
         clean_request["bot_id"] = bot.instance_id
         request_fingerprint = _start_request_fingerprint(clean_request)
@@ -448,14 +501,36 @@ class EvaluationApplication:
                     f"{active['evaluation_id']}"
                 )
 
-        validation = dict(
-            self._validator(bot, clean_request)
-            if self._validator is not None
-            else _validate_request(bot, clean_request, self.repository_root)
-        )
+        with temporary_eval_env(effective_env):
+            validation = dict(
+                self._validator(bot, clean_request)
+                if self._validator is not None
+                else _validate_request(
+                    bot,
+                    clean_request,
+                    self.repository_root,
+                    env_values=effective_env,
+                )
+            )
+        if _bot_spec_sha256(bot, self.repository_root) != bot_spec_digest:
+            raise EvaluationBlocked(
+                {
+                    "code": "configuration_changed",
+                    "message": "BotSpec changed during Evaluation preflight; retry the manual run",
+                    "checks": [
+                        {
+                            "id": "bot_spec_snapshot",
+                            "label": "BotSpec immutable snapshot",
+                            "ok": False,
+                            "detail": "configuration changed during preflight",
+                            "remediation": "review the BotSpec change and start Evaluation again",
+                        }
+                    ],
+                }
+            )
         if not validation.get("ready"):
             payload = {
-                "code": "evaluation_blocked",
+                "code": str(validation.get("code") or "evaluation_blocked"),
                 "message": str(validation.get("message") or "评测条件未满足，未创建评测记录"),
                 "checks": list(validation.get("checks") or ()),
             }
@@ -505,6 +580,7 @@ class EvaluationApplication:
                 "bot_spec": str(
                     bot_spec_path(bot, self.repository_root).relative_to(self.repository_root)
                 ),
+                "bot_spec_sha256": bot_spec_digest,
                 "created_at": created_at,
             }
             core_request = _core_request(
@@ -535,12 +611,17 @@ class EvaluationApplication:
                 directory.mkdir(parents=True, mode=0o700)
                 _write_json(directory / "request.json", stored_request)
                 _write_json(directory / "state.json", state)
-                self._spawn(evaluation_id, bot)
+                self._spawn_env_snapshots[evaluation_id] = dict(effective_env)
+                try:
+                    self._spawn(evaluation_id, bot)
+                finally:
+                    self._spawn_env_snapshots.pop(evaluation_id, None)
             except Exception as exc:
                 safe_error = self._sanitize_startup_error(
                     bot,
                     directory,
                     exc,
+                    env_values=effective_env,
                 )
                 state.update(
                     {
@@ -723,14 +804,19 @@ class EvaluationApplication:
         *,
         include_result: bool = True,
     ) -> dict[str, Any]:
-        directory = self._verified_evaluation_dir(evaluation_id)
-        state = _read_json(directory / "state.json")
-        request = _read_json(directory / "request.json")
-        result = self._verified_result(
-            evaluation_id,
-            directory=directory,
-            required=False,
-        )
+        # The worker finalizer writes terminal state and releases the Bot claim
+        # under this same lock.  Read that boundary atomically so callers never
+        # observe "completed" while the activity claim still blocks the next
+        # manually requested Evaluation.
+        with self._lock:
+            directory = self._verified_evaluation_dir(evaluation_id)
+            state = _read_json(directory / "state.json")
+            request = _read_json(directory / "request.json")
+            result = self._verified_result(
+                evaluation_id,
+                directory=directory,
+                required=False,
+            )
         trials = result.get("trials")
         trial_values = trials if isinstance(trials, list) else []
         targets = result.get("targets")
@@ -1105,7 +1191,8 @@ class EvaluationApplication:
                         if isinstance(payload, dict):
                             yield payload
                     position = handle.tell()
-            state = _read_json(directory / "state.json")
+            with self._lock:
+                state = _read_json(directory / "state.json")
             if state.get("status") not in ACTIVE_STATUSES:
                 yield {
                     "event": "evaluation_status",
@@ -1143,8 +1230,10 @@ class EvaluationApplication:
             str(startup_reader),
         ]
 
-        env = os.environ.copy()
-        env.update(bot_env(bot, self.repository_root))
+        snapshot = self._spawn_env_snapshots.get(evaluation_id)
+        env = evaluation_subprocess_env(
+            dict(snapshot) if snapshot is not None else bot_env(bot, self.repository_root)
+        )
         src = str(self.repository_root / "src")
         env["PYTHONPATH"] = os.pathsep.join(
             [
@@ -1152,7 +1241,11 @@ class EvaluationApplication:
                 *[item for item in env.get("PYTHONPATH", "").split(os.pathsep) if item],
             ]
         )
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        flags = (
+            int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+            if os.name == "nt"
+            else 0
+        )
         popen_options: dict[str, Any]
         if os.name == "nt":
             popen_options = {"close_fds": False}
@@ -1480,12 +1573,16 @@ class EvaluationApplication:
         bot: EvaluationBotRef,
         directory: Path,
         exc: Exception,
+        *,
+        env_values: Mapping[str, str] | None = None,
     ) -> str:
-        env = os.environ.copy()
         try:
-            env.update(bot_env(bot, self.repository_root))
+            values = (
+                dict(env_values) if env_values is not None else bot_env(bot, self.repository_root)
+            )
+            env = evaluation_subprocess_env(values)
         except Exception:
-            pass
+            env = os.environ.copy()
         return sanitize_text(
             f"{type(exc).__name__}: {exc}",
             secrets=collect_env_secrets(env),
@@ -1631,7 +1728,7 @@ class EvaluationApplication:
         return None, identity_unknown
 
     @classmethod
-    def _discover_worker_pids(cls, directory: Path) -> list[int]:
+    def _discover_worker_pids(cls, directory: Path) -> Sequence[int]:
         """Find same-user managed workers when startup PID persistence was interrupted."""
 
         if os.name == "nt":
@@ -1667,6 +1764,7 @@ class EvaluationApplication:
                 "evaluation_id": evaluation_id,
                 "requested_at": _utc_now(),
             },
+            canonical=True,
         )
 
     def _cancel_requested(self, evaluation_id: str) -> bool:
@@ -1804,6 +1902,8 @@ class EvaluationApplication:
         claim = self._read_claim(bot_id)
         if claim is None or claim.get("evaluation_id") != evaluation_id:
             raise RuntimeError(f"Bot {bot_id} evaluation activity claim changed during startup")
+        if claim.get("worker_pid") == worker_pid:
+            return
         claim["worker_pid"] = worker_pid
         _write_json(self._claim_path(bot_id), claim)
 
@@ -1947,6 +2047,7 @@ class EvaluationApplication:
         return {
             "kind": "suite",
             "id": str(request.get("suite_id") or ""),
+            "preset": str(request.get("preset") or ""),
             "case_count": len(cases),
         }
 
@@ -1965,7 +2066,7 @@ class EvaluationApplication:
                 * int(request.get("repetitions") or 1)
                 * len(request.get("target_ids") or request.get("targets") or ())
             )
-        return len(request.get("case_ids") or ())
+        return len(request.get("case_ids") or ()) * int(request.get("repetitions") or 1)
 
     @staticmethod
     def _clone_request(stored: Mapping[str, Any]) -> dict[str, Any]:
@@ -1992,6 +2093,16 @@ class EvaluationApplication:
             "bot_id": str(stored.get("bot_id") or ""),
             "suite_id": str(stored.get("suite_id") or ""),
             "case_ids": list(stored.get("case_ids") or ()),
+            "preset": str(stored.get("preset") or ""),
+            "repetitions": int(stored.get("repetitions") or 1),
+            "max_wall_seconds": float(stored.get("max_wall_seconds") or 0),
+            "seed": int(stored.get("seed") or 0),
+            "options": dict(stored.get("options") or {}),
+            # External-write approval is scoped to one manual start. A rerun is
+            # a new Evaluation and must never inherit the previous approval;
+            # product-suite preflight will reject external-write Cases until the
+            # operator starts them again through the confirmed form/CLI path.
+            "confirm_external_write": False,
             "dry_run": bool(stored.get("dry_run", False)),
             "llm_judge": bool(stored.get("llm_judge", False)),
         }
@@ -2000,7 +2111,7 @@ class EvaluationApplication:
     def _pid_matches_evaluation(pid: int, directory: Path) -> bool:
         if pid <= 0:
             return False
-        argv: list[str]
+        argv: Sequence[str]
         if os.name == "nt":
             try:
                 completed = subprocess.run(
@@ -2072,7 +2183,7 @@ class EvaluationApplication:
         return actual == expected
 
     @staticmethod
-    def _split_windows_command_line(command_line: str) -> list[str]:
+    def _split_windows_command_line(command_line: str) -> Sequence[str]:
         argv: list[str] = []
         length = len(command_line)
         index = 0
@@ -2196,7 +2307,11 @@ class EvaluationApplication:
             )
             return
         try:
-            os.killpg(pid, signal.SIGTERM)
+            # Cooperative cancellation targets only the managed Core.  It owns
+            # the active Trial supervisor and must let that subreaper prove all
+            # descendants are gone.  Signalling the worker's whole session can
+            # kill a just-spawned supervisor before its cleanup-ready handshake.
+            os.kill(pid, signal.SIGTERM)
         except (ProcessLookupError, OSError):
             return
 

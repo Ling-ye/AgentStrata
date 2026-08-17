@@ -1,0 +1,23 @@
+schema: 1
+suite_id: ifeval
+version: 1.0.0
+name: IFEval
+kind: safety
+status: implemented
+value: 指令遵循评测，检测格式、约束、角色和输出要求是否被正确执行。
+recommendation: 每次改系统 prompt 后运行；外部数据默认 balanced-100，未配置时使用内置 smoke 子集。
+cadence: daily/regression
+plugin_id: ifeval
+driver_id: agent_configured
+requires_bot: true
+requires_external_data: false
+prepare_supported: true
+official_url: https://github.com/google-research/google-research/tree/master/instruction_following_eval
+setup_hint: >-
+  可选：设置 CHATCOPILOT_IFEVAL_DATA_PATH 指向官方 input_data.jsonl；
+  默认按指令复杂度映射 Level 并选 100 题。
+options:
+  - name: dry_run
+    type: boolean
+    label: 仅校验，不调用模型
+    default: false

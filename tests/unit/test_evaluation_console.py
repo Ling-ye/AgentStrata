@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import signal
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -16,6 +18,7 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from chatcopilot.evals import managed_worker as managed_worker_module
 from chatcopilot.evals.application import (
     EvaluationApplication,
     EvaluationBlocked,
@@ -489,6 +492,43 @@ def test_blocking_validation_has_no_record_or_process_side_effect(
         )
 
 
+@pytest.mark.parametrize("raw_confirmation", ["false", "true", "yes", 1])
+def test_application_rejects_non_boolean_external_write_confirmation_before_creation(
+    tmp_path: Path,
+    raw_confirmation: object,
+) -> None:
+    manager = EvaluationApplication(tmp_path / "evaluations")
+
+    with patch.object(manager, "_spawn") as spawn, pytest.raises(EvaluationBlocked) as caught:
+        manager.start(
+            bot_id=_instance().instance_id,
+            request={
+                "kind": "suite",
+                "suite_id": "agentstrata-capabilities-v1",
+                "preset": "qq-live",
+                "case_ids": [],
+                "repetitions": 1,
+                "max_wall_seconds": 0,
+                "seed": 0,
+                "options": {},
+                "confirm_external_write": raw_confirmation,
+                "dry_run": False,
+                "llm_judge": False,
+            },
+        )
+
+    assert caught.value.payload["code"] == "preflight_failed"
+    failed_checks = [item for item in caught.value.payload["checks"] if not item.get("ok")]
+    assert any(
+        item.get("code") == "request"
+        and "confirm_external_write must be a boolean" in str(item.get("detail") or "")
+        for item in failed_checks
+    )
+    assert not _evaluation_directories(manager.root)
+    assert not list(manager.root.glob(".active-*.json"))
+    spawn.assert_not_called()
+
+
 def test_startup_failure_is_sanitized_before_any_error_is_persisted(
     tmp_path: Path,
 ) -> None:
@@ -534,6 +574,45 @@ def test_startup_failure_is_sanitized_before_any_error_is_persisted(
             assert secret not in persisted
             assert str(repo_root()) not in persisted
     assert not list(root.glob(".active-*.json"))
+
+
+def test_start_reuses_one_machine_first_env_snapshot_for_preflight_and_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = "CHATCOPILOT_EVAL_SNAPSHOT_TEST"
+    monkeypatch.setenv(key, "service-value")
+    observed: list[str] = []
+
+    def validator(_bot: BotInstance, _request: Mapping[str, Any]) -> Mapping[str, Any]:
+        observed.append(os.environ[key])
+        return _ready_validator()(_bot, _request)
+
+    manager = EvaluationApplication(tmp_path / "evaluations", validator=validator)
+
+    def capture_spawn(evaluation_id: str, _bot: BotInstance) -> None:
+        observed.append(manager._spawn_env_snapshots[evaluation_id][key])
+
+    with (
+        patch(
+            "chatcopilot.evals.application.controller.bot_env",
+            return_value={key: "captured-value"},
+        ) as load_env,
+        patch.object(manager, "_spawn", side_effect=capture_spawn),
+    ):
+        manager.start(
+            bot_id=_instance().instance_id,
+            request={
+                "kind": "comparison",
+                "profile_id": "agent-comparison-mvp",
+                "preset": "quick",
+            },
+        )
+
+    assert observed == ["service-value", "service-value"]
+    assert os.environ[key] == "service-value"
+    load_env.assert_called_once()
+    assert manager._spawn_env_snapshots == {}
 
 
 def test_same_bot_allows_only_one_active_evaluation(
@@ -1261,6 +1340,137 @@ def test_recovery_adopts_worker_discovered_after_pid_persistence_gap(
     start_watch.assert_called_once()
 
 
+def test_recovery_does_not_rewrite_an_already_matching_live_claim(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "evaluations"
+    evaluation_id = "eval-matching-live-claim"
+    bot_id = _instance().instance_id
+    bootstrap = EvaluationApplication(root, validator=_ready_validator())
+    _persist_evaluation(
+        root,
+        evaluation_id=evaluation_id,
+        lifecycle_status="running",
+    )
+    state_path = root / evaluation_id / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update({"status": "running", "pid": 4321, "started_at": "2026-08-17T00:00:00Z"})
+    _write_json(state_path, state)
+    with bootstrap._creation_guard(), bootstrap._lock:
+        bootstrap._create_claim(bot_id, evaluation_id)
+        bootstrap._update_claim(bot_id, evaluation_id, worker_pid=4321)
+    claim_path = bootstrap._claim_path(bot_id)
+    before = claim_path.lstat()
+    before_bytes = claim_path.read_bytes()
+
+    with (
+        patch.object(EvaluationApplication, "_worker_pid_status", return_value="matched"),
+        patch("chatcopilot.evals.application.controller.threading.Thread.start"),
+    ):
+        EvaluationApplication(root, validator=_ready_validator())
+
+    after = claim_path.lstat()
+    assert claim_path.read_bytes() == before_bytes
+    assert (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns) == (
+        before.st_dev,
+        before.st_ino,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+
+
+@pytest.mark.parametrize(
+    ("claim_overrides", "state_overrides"),
+    (
+        ({"worker_pid": 1}, {}),
+        ({"evaluation_id": "eval-foreign"}, {}),
+        ({"bot_id": "foreign-bot"}, {}),
+        ({"unexpected": True}, {}),
+        ({}, {"status": "queued"}),
+        ({}, {"pid": 1}),
+        ({}, {"evaluation_id": "eval-foreign"}),
+        ({}, {"kind": "comparison"}),
+    ),
+)
+def test_managed_worker_requires_current_pid_in_state_and_claim(
+    tmp_path: Path,
+    claim_overrides: dict[str, Any],
+    state_overrides: dict[str, Any],
+) -> None:
+    root = tmp_path / "evaluations"
+    application = EvaluationApplication(root, validator=_ready_validator())
+    evaluation_id = "eval-managed-startup-identity"
+    bot_id = _instance().instance_id
+    output = root / evaluation_id
+    output.mkdir(mode=0o700)
+    claim_path = application._claim_path(bot_id)
+    _write_json(
+        claim_path,
+        {
+            "bot_id": bot_id,
+            "evaluation_id": evaluation_id,
+            "owner_pid": os.getpid(),
+            "worker_pid": os.getpid(),
+            "created_at": "2026-08-17T00:00:00Z",
+            **claim_overrides,
+        },
+    )
+    _write_json(
+        output / "state.json",
+        {
+            "evaluation_id": evaluation_id,
+            "kind": "suite",
+            "status": "running",
+            "pid": os.getpid(),
+            "started_at": "2026-08-17T00:00:00Z",
+            **state_overrides,
+        },
+    )
+
+    with pytest.raises(ValueError, match="claim|state"):
+        managed_worker_module._managed_claim_path(
+            output,
+            {"bot_id": bot_id, "kind": "suite"},
+        )
+
+
+def test_managed_worker_accepts_matching_current_pid_state_and_claim(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "evaluations"
+    application = EvaluationApplication(root, validator=_ready_validator())
+    evaluation_id = "eval-managed-startup-identity"
+    bot_id = _instance().instance_id
+    output = root / evaluation_id
+    output.mkdir(mode=0o700)
+    claim_path = application._claim_path(bot_id)
+    _write_json(
+        claim_path,
+        {
+            "bot_id": bot_id,
+            "evaluation_id": evaluation_id,
+            "owner_pid": os.getpid(),
+            "worker_pid": os.getpid(),
+            "created_at": "2026-08-17T00:00:00Z",
+        },
+    )
+    _write_json(
+        output / "state.json",
+        {
+            "evaluation_id": evaluation_id,
+            "kind": "suite",
+            "status": "running",
+            "pid": os.getpid(),
+            "started_at": "2026-08-17T00:00:00Z",
+        },
+    )
+
+    assert managed_worker_module._managed_claim_path(
+        output,
+        {"bot_id": bot_id, "kind": "suite"},
+    ) == claim_path
+
+
 def test_spawn_publish_failure_closes_gate_before_core_artifact_writes(
     tmp_path: Path,
 ) -> None:
@@ -1419,6 +1629,18 @@ def test_new_manager_cancels_only_verified_inherited_worker(
     assert not list(root.glob(".active-*.json"))
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX cooperative signal boundary")
+def test_cooperative_cancel_signals_only_the_managed_worker_pid() -> None:
+    with (
+        patch("chatcopilot.evals.application.controller.os.kill") as kill,
+        patch("chatcopilot.evals.application.controller.os.killpg") as kill_group,
+    ):
+        EvaluationApplication._request_pid_stop(4321)
+
+    kill.assert_called_once_with(4321, signal.SIGTERM)
+    kill_group.assert_not_called()
+
+
 @pytest.mark.parametrize("pid_source", ["state", "claim"])
 def test_cancel_fails_closed_for_unverified_live_inherited_pid(
     tmp_path: Path,
@@ -1556,6 +1778,21 @@ def test_rerun_quick_revalidates_without_resolved_overrides(
         "preset",
     }
     assert response.json()["evaluation_id"] != "eval-rerun-source"
+
+
+def test_suite_rerun_does_not_reuse_external_write_confirmation() -> None:
+    cloned = EvaluationApplication._clone_request(
+        {
+            "kind": "suite",
+            "bot_id": "lingye-copilot-qq",
+            "suite_id": "agentstrata-capabilities-v1",
+            "preset": "qq-live",
+            "case_ids": ["qq-private-text-roundtrip"],
+            "confirm_external_write": True,
+        }
+    )
+
+    assert cloned["confirm_external_write"] is False
 
 
 def test_terminal_state_with_live_claim_blocks_delete_rerun_and_new_start(
@@ -1986,6 +2223,86 @@ def test_worker_finalizer_does_not_delete_replaced_cancel_marker_inode(
     assert list(root.glob(".active-*.json"))
     assert evaluation_id in manager._cancelled
     assert "terminal cleanup failed; activity claim retained" in caplog.text
+
+
+def test_cancel_marker_writer_uses_canonical_json_for_trial_guard(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "evaluations"
+    evaluation_id = "eval-canonical-cancel-marker"
+    manager = EvaluationApplication(root, validator=_ready_validator())
+    directory = root / evaluation_id
+    directory.mkdir(mode=0o700)
+
+    manager._write_cancel_marker(evaluation_id)
+
+    marker = directory / ".cancel-requested.json"
+    raw = marker.read_text(encoding="utf-8")
+    payload = json.loads(raw)
+    expected = (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    assert raw == expected
+    if os.name != "nt":
+        assert marker.stat().st_mode & 0o777 == 0o600
+
+
+def test_get_does_not_expose_terminal_state_before_claim_release(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "evaluations"
+    evaluation_id = "eval-terminal-claim-boundary"
+    bot_id = _instance().instance_id
+    manager = EvaluationApplication(root, validator=_ready_validator())
+    _persist_evaluation(
+        root,
+        evaluation_id=evaluation_id,
+        lifecycle_status="completed",
+    )
+    state_path = root / evaluation_id / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update({"status": "running", "pid": 4321, "finished_at": None})
+    _write_json(state_path, state)
+    with manager._creation_guard(), manager._lock:
+        manager._create_claim(bot_id, evaluation_id)
+        manager._update_claim(bot_id, evaluation_id, worker_pid=4321)
+
+    release_entered = threading.Event()
+    allow_release = threading.Event()
+    original_release = manager._release_claim
+
+    def blocking_release(claim_bot_id: str, claim_evaluation_id: str) -> None:
+        release_entered.set()
+        assert allow_release.wait(timeout=5)
+        original_release(claim_bot_id, claim_evaluation_id)
+
+    with (
+        patch.object(manager, "_release_claim", side_effect=blocking_release),
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        finalizing = executor.submit(
+            manager._finalize_worker_exit,
+            evaluation_id,
+            bot_id=bot_id,
+            exit_code=0,
+        )
+        assert release_entered.wait(timeout=5)
+        reading = executor.submit(manager.get, evaluation_id)
+        time.sleep(0.05)
+        assert not reading.done()
+        allow_release.set()
+        finalizing.result(timeout=5)
+        detail = reading.result(timeout=5)
+
+    assert detail["status"] == "completed"
+    assert not list(root.glob(".active-*.json"))
 
 
 def test_application_exposes_no_console_shutdown_hook(

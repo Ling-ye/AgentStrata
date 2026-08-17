@@ -548,6 +548,7 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
             group_require_whitelist=_as_bool(access.get("group_require_whitelist")),
             group_require_mention=_as_bool(access.get("group_require_mention")),
             whitelist_env=_optional_str(access.get("whitelist_env")),
+            group_whitelist_env=_optional_str(access.get("group_whitelist_env")),
         ),
         agents=agents,
         raw=dict(data),
@@ -1110,9 +1111,20 @@ def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
     raw_agents = spec.raw.get("agents") if isinstance(spec.raw, dict) else None
     raw_codex = raw_agents.get("codex") if isinstance(raw_agents, dict) else None
     removed_keys = (
-        {"auto_publish", "sandbox", "web_search", "command_network"}.intersection(
-            raw_codex
-        )
+        {
+            "auto_publish",
+            "sandbox",
+            "web_search",
+            "command_network",
+            # These are trusted code-only Evaluation confinement controls, not
+            # BotSpec knobs. Production Bot declarations remain limited to the
+            # two role access fields above.
+            "network_access",
+            "web_search_mode",
+            "sandbox_mode",
+            "allow_delegate_tools",
+            "allow_unified_search_tool",
+        }.intersection(raw_codex)
         if isinstance(raw_codex, dict)
         else set()
     )

@@ -1,4 +1,5 @@
 """Authenticated backend relay from a stdio MCP adapter to the live ToolExecutor."""
+
 from __future__ import annotations
 
 import json
@@ -14,6 +15,7 @@ from chatcopilot.external_tools.shared.tool_spec import ToolDef
 
 
 _MAX_REQUEST_BYTES = 8 * 1024 * 1024
+_MAX_BUFFERED_TOOL_EVENTS = 1024
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,9 @@ class SessionToolRelay:
         self._tools = {tool.name: tool for tool in tools}
         self._executor = executor
         self._token = secrets.token_urlsafe(32)
+        self._event_lock = threading.Lock()
+        self._events: list[dict[str, Any]] = []
+        self._reserved_finishes = 0
         relay = self
 
         class Handler(socketserver.StreamRequestHandler):
@@ -57,9 +62,7 @@ class SessionToolRelay:
                 self._write(response)
 
             def _write(self, payload: dict[str, Any]) -> None:
-                self.wfile.write(
-                    json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n"
-                )
+                self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
 
         self._server = _RelayServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(
@@ -70,13 +73,65 @@ class SessionToolRelay:
 
     def start(self) -> RelayEndpoint:
         self._thread.start()
-        host, port = self._server.server_address
+        address = self._server.server_address
+        host, port = address[0], address[1]
         return RelayEndpoint(str(host), int(port), self._token)
 
     def close(self) -> None:
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=2.0)
+
+    def drain_tool_events(self) -> tuple[dict[str, Any], ...]:
+        """Return one complete, bounded relay audit batch and clear the buffer."""
+
+        with self._event_lock:
+            if self._reserved_finishes:
+                raise RuntimeError("session relay still has an active tool call")
+            events = tuple(dict(item) for item in self._events)
+            self._events.clear()
+            return events
+
+    def _record_tool_started(self, *, call_id: str, name: str, arguments: dict[str, Any]) -> None:
+        with self._event_lock:
+            required_slots = len(self._events) + self._reserved_finishes + 2
+            if required_slots > _MAX_BUFFERED_TOOL_EVENTS:
+                raise RuntimeError("session relay tool audit buffer is full")
+            self._events.append(
+                {
+                    "type": "tool_started",
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": dict(arguments),
+                }
+            )
+            self._reserved_finishes += 1
+
+    def _record_tool_finished(
+        self,
+        *,
+        call_id: str,
+        name: str,
+        ok: bool,
+        summary: str,
+        error: str | None,
+        data: dict[str, Any] | None,
+    ) -> None:
+        with self._event_lock:
+            if self._reserved_finishes <= 0:
+                raise RuntimeError("session relay tool audit completion is unpaired")
+            self._events.append(
+                {
+                    "type": "tool_finished",
+                    "call_id": call_id,
+                    "name": name,
+                    "ok": ok,
+                    "summary": summary,
+                    "error": error,
+                    "data": dict(data) if data is not None else None,
+                }
+            )
+            self._reserved_finishes -= 1
 
     def _dispatch(self, request: Any) -> dict[str, Any]:
         if not isinstance(request, dict):
@@ -109,8 +164,30 @@ class SessionToolRelay:
         arguments = request.get("arguments")
         if not isinstance(arguments, dict):
             return {"ok": False, "error": "tool arguments must be an object"}
-        result = self._executor.execute(name, arguments)
-        return {"ok": True, "result": {"tool": name, **result.to_llm_payload()}}
+        call_id = secrets.token_hex(16)
+        self._record_tool_started(call_id=call_id, name=name, arguments=arguments)
+        try:
+            result = self._executor.execute(name, arguments)
+        except Exception as exc:
+            self._record_tool_finished(
+                call_id=call_id,
+                name=name,
+                ok=False,
+                summary="",
+                error=f"{type(exc).__name__}: {exc}",
+                data=None,
+            )
+            raise
+        result_payload = result.to_llm_payload()
+        self._record_tool_finished(
+            call_id=call_id,
+            name=name,
+            ok=result.ok,
+            summary=result.summary,
+            error=None if result.ok else (result.error or "tool execution failed"),
+            data=result_payload,
+        )
+        return {"ok": True, "result": {"tool": name, **result_payload}}
 
 
 def call_session_relay(

@@ -5,7 +5,7 @@ from typing import Annotated, Any, Iterator, Literal
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from chatcopilot.evals.service import EvaluationServiceError
 from console.backend.routes.common import (
@@ -58,9 +58,28 @@ class SuiteEvaluationRequest(BaseModel):
     kind: Literal["suite"]
     bot_id: str = Field(min_length=1)
     suite_id: str = Field(min_length=1)
-    case_ids: list[str] = Field(min_length=1)
-    dry_run: bool = False
-    llm_judge: bool = False
+    case_ids: list[str] = Field(default_factory=list)
+    preset: Literal["quick", "full", "security", "qq-live", "custom"] = "custom"
+    repetitions: int = Field(default=1, ge=1, le=10)
+    max_wall_seconds: int = Field(default=0, ge=0, le=21600)
+    seed: int = 0
+    options: dict[str, Any] = Field(default_factory=dict)
+    confirm_external_write: StrictBool = False
+    dry_run: StrictBool = False
+    llm_judge: StrictBool = False
+
+    @model_validator(mode="after")
+    def validate_manual_selection(self) -> SuiteEvaluationRequest:
+        if self.preset == "custom" and not self.case_ids:
+            raise ValueError("custom preset requires case_ids")
+        if self.preset != "custom" and self.case_ids:
+            raise ValueError("case_ids are only accepted with preset=custom")
+        requires_external_write = self.preset == "qq-live" or (
+            self.suite_id == "agentstrata-capabilities-v1" and self.preset == "full"
+        )
+        if requires_external_write and not self.confirm_external_write:
+            raise ValueError(f"{self.preset} preset requires confirm_external_write=true")
+        return self
 
 
 EvaluationCreateRequest = Annotated[

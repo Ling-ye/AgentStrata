@@ -22,7 +22,7 @@ from chatcopilot.evals.report import render_summary_markdown
 from chatcopilot.evals.runner import _load_local_env
 from chatcopilot.evals.runner import _summarize
 from chatcopilot.evals.runner import run_suite
-from chatcopilot.evals.suite_loader import _parse_case
+from chatcopilot.evals.suite_loader import _parse_legacy_case
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +36,15 @@ class EvalRegistryTests(unittest.TestCase):
         suite_ids = {standard.suite_id for standard in list_standards()}
 
         self.assertEqual(
-            {"gaia", "bfcl", "ifeval", "swe-bench-verified", "webarena"},
+            {
+                "agentstrata-canary-self-update-v1",
+                "agentstrata-capabilities-v1",
+                "gaia",
+                "bfcl",
+                "ifeval",
+                "swe-bench-verified",
+                "webarena",
+            },
             suite_ids,
         )
 
@@ -56,6 +64,39 @@ class EvalRegistryTests(unittest.TestCase):
             self.assertEqual(get_cases("gaia"), ())
             self.assertIn("CHATCOPILOT_GAIA_DATA_PATH", standard.setup_hint)
 
+    def test_cli_marks_planned_suites_unavailable(self) -> None:
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        output = StringIO()
+        with redirect_stdout(output):
+            exit_code = evals_cli_main(["list"])
+
+        self.assertEqual(exit_code, 0)
+        lines = output.getvalue().splitlines()
+        self.assertIn(
+            "agentstrata-canary-self-update-v1\tproduct\tplanned/unavailable\t"
+            "AgentStrata Canary 自更新 v1",
+            lines,
+        )
+        self.assertIn(
+            "swe-bench-verified\tcode\tplanned/unavailable\tSWE-bench Verified",
+            lines,
+        )
+
+    def test_cli_describe_exposes_planned_status(self) -> None:
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        output = StringIO()
+        with redirect_stdout(output):
+            exit_code = evals_cli_main(["describe", "--suite", "agentstrata-canary-self-update-v1"])
+
+        self.assertEqual(exit_code, 0)
+        rendered = output.getvalue()
+        self.assertIn("status: planned\n", rendered)
+        self.assertIn("availability: unavailable\n", rendered)
+
     def test_ifeval_has_builtin_smoke_cases(self) -> None:
         standard = get_standard("ifeval")
         cases = get_cases("ifeval")
@@ -67,7 +108,7 @@ class EvalRegistryTests(unittest.TestCase):
 
     def test_yaml_loader_rejects_non_list_rule_fields(self) -> None:
         with self.assertRaisesRegex(ValueError, "must_have 必须是 list"):
-            _parse_case(
+            _parse_legacy_case(
                 "test-suite",
                 1,
                 {
@@ -231,15 +272,24 @@ class EvalRunnerTests(unittest.TestCase):
             root = Path(tmp)
             data = root / "validation.jsonl"
             rows = [
-                _gaia_row(f"l1-{index}", level=1, question=f"What is item {index}?", answer=str(index))
+                _gaia_row(
+                    f"l1-{index}", level=1, question=f"What is item {index}?", answer=str(index)
+                )
                 for index in range(60)
             ]
             rows.extend(
-                _gaia_row(f"l2-{index}", level=2, question=f"Who is subject {index}?", answer=f"Subject {index}")
+                _gaia_row(
+                    f"l2-{index}",
+                    level=2,
+                    question=f"Who is subject {index}?",
+                    answer=f"Subject {index}",
+                )
                 for index in range(12)
             )
             rows.extend(
-                _gaia_row(f"l3-{index}", level=3, question=f"Compare several sources {index}", answer="x")
+                _gaia_row(
+                    f"l3-{index}", level=3, question=f"Compare several sources {index}", answer="x"
+                )
                 for index in range(5)
             )
             _write_gaia_rows(data, rows)
@@ -286,11 +336,18 @@ class EvalRunnerTests(unittest.TestCase):
             root = Path(tmp)
             data = root / "validation.jsonl"
             rows = [
-                _gaia_row(f"l1-{index}", level=1, question=f"What is item {index}?", answer=str(index))
+                _gaia_row(
+                    f"l1-{index}", level=1, question=f"What is item {index}?", answer=str(index)
+                )
                 for index in range(60)
             ]
             rows.extend(
-                _gaia_row(f"l2-{index}", level=2, question=f"Who is subject {index}?", answer=f"Subject {index}")
+                _gaia_row(
+                    f"l2-{index}",
+                    level=2,
+                    question=f"Who is subject {index}?",
+                    answer=f"Subject {index}",
+                )
                 for index in range(12)
             )
             _write_gaia_rows(data, rows)
@@ -429,7 +486,10 @@ class EvalRunnerTests(unittest.TestCase):
 
         self.assertEqual(len(selected), 100)
         self.assertEqual(
-            {level: sum(1 for case in selected if case.metadata["level"] == level) for level in ("1", "2", "3")},
+            {
+                level: sum(1 for case in selected if case.metadata["level"] == level)
+                for level in ("1", "2", "3")
+            },
             {"1": 34, "2": 33, "3": 33},
         )
         categories = {category for case in selected for category in ifeval._case_categories(case)}
@@ -462,13 +522,18 @@ class EvalRunnerTests(unittest.TestCase):
                         "target_id": "configured",
                         "executor": "agent_configured",
                         "backend": "native",
-                        "fingerprint": "old-model-fingerprint",
+                        "fingerprint": "same-target-fingerprint",
                     }
                 ],
                 "selected_cases": ["ifeval:ifeval-json-format"],
                 "config_snapshot": {
                     "case_hash": "same-case-hash",
                     "judge": "suite-or-profile-defined",
+                    "target_fingerprints": {
+                        "configured": "same-target-fingerprint",
+                    },
+                    "definition_fingerprint": "same-definition-fingerprint",
+                    "private_runtime_configuration": {},
                 },
                 "trials": [trial],
                 "summary": {"score_ratio": 1.0},
@@ -476,14 +541,6 @@ class EvalRunnerTests(unittest.TestCase):
             new_payload = {
                 **base_payload,
                 "evaluation_id": "eval-new",
-                "targets": [
-                    {
-                        "target_id": "configured",
-                        "executor": "agent_configured",
-                        "backend": "native",
-                        "fingerprint": "new-model-fingerprint",
-                    }
-                ],
                 "trials": [{**trial, "outcome": "failed", "score": 0.0}],
                 "summary": {"score_ratio": 0.0},
             }
@@ -516,6 +573,11 @@ class EvalRunnerTests(unittest.TestCase):
             "config_snapshot": {
                 "case_hash": "same-case-hash",
                 "judge": "suite-or-profile-defined",
+                "target_fingerprints": {
+                    "configured": "same-target-fingerprint",
+                },
+                "definition_fingerprint": "same-definition-fingerprint",
+                "private_runtime_configuration": {},
             },
             "trials": [],
             "summary": {"score_ratio": 0.0},
@@ -584,6 +646,11 @@ class EvalRunnerTests(unittest.TestCase):
             "config_snapshot": {
                 "case_hash": "same-case-hash",
                 "judge": "suite-or-profile-defined",
+                "target_fingerprints": {
+                    "configured": "same-target-fingerprint",
+                },
+                "definition_fingerprint": "same-definition-fingerprint",
+                "private_runtime_configuration": {},
             },
             "trials": [trial],
             "summary": {"score_ratio": 1.0},
@@ -749,15 +816,21 @@ class BFCLAdapterTests(unittest.TestCase):
         self.assertEqual(result.score, 0.0)
 
     def test_judge_relevance_no_calls_passes(self) -> None:
-        relevance_cases = [c for c in bfcl.load_cases() if c.metadata["bfcl_category"] == "relevance"]
+        relevance_cases = [
+            c for c in bfcl.load_cases() if c.metadata["bfcl_category"] == "relevance"
+        ]
         self.assertTrue(len(relevance_cases) > 0)
         result = bfcl.judge(relevance_cases[0], [])
 
         self.assertTrue(result.passed)
 
     def test_judge_relevance_with_calls_fails(self) -> None:
-        relevance_cases = [c for c in bfcl.load_cases() if c.metadata["bfcl_category"] == "relevance"]
-        result = bfcl.judge(relevance_cases[0], [{"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}])
+        relevance_cases = [
+            c for c in bfcl.load_cases() if c.metadata["bfcl_category"] == "relevance"
+        ]
+        result = bfcl.judge(
+            relevance_cases[0], [{"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}]
+        )
 
         self.assertFalse(result.passed)
 
@@ -822,11 +895,18 @@ class BFCLAdapterTests(unittest.TestCase):
 
         self.assertEqual(len(selected), 100)
         self.assertEqual(
-            {level: sum(1 for case in selected if case.metadata["level"] == level) for level in ("1", "2", "3")},
+            {
+                level: sum(1 for case in selected if case.metadata["level"] == level)
+                for level in ("1", "2", "3")
+            },
             {"1": 34, "2": 33, "3": 33},
         )
         categories = {category for case in selected for category in bfcl._case_categories(case)}
-        self.assertTrue({"simple", "relevance", "multiple", "parallel", "parallel multiple"}.issubset(categories))
+        self.assertTrue(
+            {"simple", "relevance", "multiple", "parallel", "parallel multiple"}.issubset(
+                categories
+            )
+        )
 
 
 class LLMJudgeTests(unittest.TestCase):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import signal
@@ -70,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         if core_request.get("evaluation_id") != evaluation_id:
             raise ValueError("managed core_request evaluation_id does not match output")
         _await_startup(args.startup_fd)
+        _verify_bot_spec_snapshot(outer_request)
+        claim_path = _managed_claim_path(output, outer_request)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         sys.stderr.write(f"managed Evaluation bootstrap failed: {exc}\n")
         return 2
@@ -99,8 +102,33 @@ def main(argv: list[str] | None = None) -> int:
                 core_request,
                 output=output,
                 cancel_path=cancel_path,
+                claim_path=claim_path,
                 evaluation_id=evaluation_id,
             )
+
+
+def _verify_bot_spec_snapshot(request: dict[str, Any]) -> None:
+    relative = str(request.get("bot_spec") or "").strip()
+    expected = str(request.get("bot_spec_sha256") or "").strip().lower()
+    if not relative or Path(relative).is_absolute() or "\\" in relative:
+        raise ValueError("managed request has an invalid BotSpec snapshot path")
+    if len(expected) != 64 or any(
+        character not in "0123456789abcdef" for character in expected
+    ):
+        raise ValueError("managed request has an invalid BotSpec snapshot digest")
+    repository = Path.cwd().resolve()
+    candidate = repository.joinpath(*Path(relative).parts)
+    resolved = candidate.resolve(strict=True)
+    try:
+        resolved.relative_to(repository)
+    except ValueError as exc:
+        raise ValueError("managed BotSpec snapshot escapes repository") from exc
+    metadata = resolved.stat(follow_symlinks=False)
+    if not stat.S_ISREG(metadata.st_mode) or resolved.is_symlink():
+        raise ValueError("managed BotSpec snapshot is not a regular file")
+    actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    if actual != expected:
+        raise ValueError("BotSpec changed after Evaluation preflight")
 
 
 def _run_managed(
@@ -108,6 +136,7 @@ def _run_managed(
     *,
     output: Path,
     cancel_path: Path,
+    claim_path: Path,
     evaluation_id: str,
 ) -> int:
     configure_logging("INFO", "CHATCOPILOT_EVAL_LOG_LEVEL")
@@ -158,6 +187,7 @@ def _run_managed(
             progress_callback=progress,
             cancel_check=cancel_check,
             managed=True,
+            authority_claim_path=claim_path,
         )
     except EvaluationValidationError as exc:
         print(json.dumps(exc.to_dict(), ensure_ascii=False), file=sys.stderr)
@@ -166,6 +196,55 @@ def _run_managed(
         print(f"managed Evaluation failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     return 0 if result.status in {"completed", "cancelled"} else 1
+
+
+def _managed_claim_path(output: Path, request: dict[str, Any]) -> Path:
+    """Prove the startup gate persisted this worker in state and claim."""
+
+    bot_id = str(request.get("bot_id") or "").strip()
+    if not bot_id:
+        raise ValueError("managed request has no bot_id for its activity claim")
+    digest = hashlib.sha256(bot_id.encode("utf-8")).hexdigest()[:24]
+    path = output.parent / f".active-{digest}.json"
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("managed Evaluation activity claim is unavailable or unsafe")
+    claim = _read_private_json_object(path, label="managed activity claim")
+    expected_claim_fields = {
+        "bot_id",
+        "evaluation_id",
+        "owner_pid",
+        "worker_pid",
+        "created_at",
+    }
+    if set(claim) != expected_claim_fields:
+        raise ValueError("managed Evaluation activity claim fields are invalid")
+    if (
+        claim.get("bot_id") != bot_id
+        or claim.get("evaluation_id") != output.name
+        or isinstance(claim.get("worker_pid"), bool)
+        or not isinstance(claim.get("worker_pid"), int)
+        or claim.get("worker_pid") != os.getpid()
+        or isinstance(claim.get("owner_pid"), bool)
+        or not isinstance(claim.get("owner_pid"), int)
+        or int(claim["owner_pid"]) <= 0
+        or not isinstance(claim.get("created_at"), str)
+        or not str(claim["created_at"]).strip()
+    ):
+        raise ValueError("managed Evaluation activity claim identity is invalid")
+
+    state = _read_private_json_object(output / "state.json", label="managed state")
+    if (
+        state.get("evaluation_id") != output.name
+        or state.get("kind") != request.get("kind")
+        or state.get("status") != "running"
+        or isinstance(state.get("pid"), bool)
+        or not isinstance(state.get("pid"), int)
+        or state.get("pid") != os.getpid()
+        or not isinstance(state.get("started_at"), str)
+        or not str(state["started_at"]).strip()
+    ):
+        raise ValueError("managed Evaluation state does not prove the current worker identity")
+    return path
 
 
 def _await_startup(descriptor: int) -> None:
@@ -219,19 +298,23 @@ def _validated_paths(args: argparse.Namespace) -> tuple[Path, Path, Path, Path]:
 
 
 def _read_request(path: Path) -> dict[str, Any]:
+    return _read_private_json_object(path, label="managed request")
+
+
+def _read_private_json_object(path: Path, *, label: str) -> dict[str, Any]:
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
-        raise ValueError("managed request cannot be opened safely") from exc
+        raise ValueError(f"{label} cannot be opened safely") from exc
     with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
         metadata = os.fstat(handle.fileno())
-        _validate_private_file(metadata, path, label="managed request")
+        _validate_private_file(metadata, path, label=label)
         payload = json.load(handle)
     if not isinstance(payload, dict):
-        raise ValueError("managed request must be a JSON object")
+        raise ValueError(f"{label} must be a JSON object")
     return {str(key): value for key, value in payload.items()}
 
 

@@ -138,9 +138,20 @@ class AgentRuntime:
         effective_retriever = retriever_override or self.retriever
         backend_id = (self.agent_backend or "native").strip().lower()
         direct_codex = backend_id == "codex"
+        codex_policy = self.subagents.codex
+        allow_codex_delegate_tools = (
+            direct_codex and codex_policy.allow_delegate_tools
+        )
+        allow_codex_unified_search = (
+            direct_codex and codex_policy.allow_unified_search_tool
+        )
 
         delegate_tools = ()
-        if not direct_codex or "adapter_forge" in self.subagents.include:
+        if (
+            not direct_codex
+            or allow_codex_delegate_tools
+            or "adapter_forge" in self.subagents.include
+        ):
             delegate_tools = build_subagent_tools(
                 session_id=session_id,
                 subagents=self.subagents,
@@ -156,7 +167,7 @@ class AgentRuntime:
                 retriever=effective_retriever,
                 search_circuit=self.search_circuit,
             )
-            if direct_codex:
+            if direct_codex and not allow_codex_delegate_tools:
                 delegate_tools = tuple(
                     tool
                     for tool in delegate_tools
@@ -169,7 +180,9 @@ class AgentRuntime:
             if permission_filter is None or permission_filter(tool) is None
         )
         search_tool = None
-        if self.subagents.research_enabled and not direct_codex:
+        if self.subagents.research_enabled and (
+            not direct_codex or allow_codex_unified_search
+        ):
             accessible_base_tools = tuple(
                 tool
                 for tool in self.tools
@@ -203,7 +216,9 @@ class AgentRuntime:
         # temporary MCP unavailability doesn't change the system prompt text.
         # Permission filtering is NOT applied here because the routing policy is
         # informational; denied tools simply won't appear in the schema.
-        if self.subagents.research_enabled and not direct_codex:
+        if self.subagents.research_enabled and (
+            not direct_codex or allow_codex_unified_search
+        ):
             routing_tool_names: tuple[str, ...] = ("search_information",)
         else:
             declared_search_names = tuple(

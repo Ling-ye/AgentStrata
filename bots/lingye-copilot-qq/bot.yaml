@@ -134,3 +134,4 @@ access:
   group_require_whitelist: true
   group_require_mention: true
   whitelist_env: QQ_ALLOW_FROM
+  group_whitelist_env: QQ_ALLOW_GROUPS

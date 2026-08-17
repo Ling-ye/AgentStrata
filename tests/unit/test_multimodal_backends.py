@@ -10,7 +10,11 @@ from unittest import mock
 from chatcopilot.agent.backends.codex import CodexAgentBackend
 from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.contracts.agent import AgentTask, ResourceRef
+from chatcopilot.contracts.agent import (
+    AgentTask,
+    InputResourcesDispatched,
+    ResourceRef,
+)
 from chatcopilot.core.llm_client import LLMClient
 
 
@@ -73,10 +77,15 @@ def test_native_expands_image_only_at_request_boundary(tmp_path: Path) -> None:
         system_baseline="system",
         stream_first_turn=False,
     )
+    events: list[object] = []
 
     result = session.run_task(
-        AgentTask(text="describe this image", resources=(resource,)),
-        on_event=lambda _event: None,
+        AgentTask(
+            text="describe this image",
+            resources=(resource,),
+            metadata={"eval_turn": 3},
+        ),
+        on_event=events.append,
     )
 
     assert result.final_text == "image received"
@@ -94,6 +103,14 @@ def test_native_expands_image_only_at_request_boundary(tmp_path: Path) -> None:
     assert str(image_path) in transcript
     assert "data:image" not in transcript
     assert "base64," not in transcript
+    dispatch = next(event for event in events if isinstance(event, InputResourcesDispatched))
+    assert dispatch.backend == "native"
+    assert dispatch.turn_index == 3
+    assert dispatch.request_id
+    assert dispatch.resources[0].sequence == 0
+    assert dispatch.resources[0].media_type == "image/png"
+    assert dispatch.resources[0].size_bytes == len(_PNG_BYTES)
+    assert dispatch.resources[0].sha256 == hashlib.sha256(_PNG_BYTES).hexdigest()
 
 
 def test_codex_new_and_resume_commands_attach_images(tmp_path: Path) -> None:

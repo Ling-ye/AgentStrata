@@ -17,11 +17,14 @@ from chatcopilot.evals.application.bots import (
 )
 from chatcopilot.evals.models import EvalCase, to_jsonable
 from chatcopilot.evals.official_data import suite_data_status
+from chatcopilot.evals.plugins import get_evaluation_plugin
 from chatcopilot.evals.profiles import profile_descriptors
-from chatcopilot.evals.registry import get_cases, list_standards, normalize_suite_id
-
-IMPLEMENTED_SUITES = {"gaia", "bfcl", "ifeval"}
-
+from chatcopilot.evals.registry import (
+    get_cases,
+    get_manifest,
+    list_standards,
+    normalize_suite_id,
+)
 
 def _repo(repository_root: Path | None) -> Path:
     return (repository_root or Path.cwd()).expanduser().resolve()
@@ -51,11 +54,17 @@ def list_suite_descriptors(
     descriptors: list[dict[str, Any]] = []
     with temporary_eval_env(values):
         for standard in list_standards():
-            implemented = standard.suite_id in IMPLEMENTED_SUITES
+            manifest = get_manifest(standard.suite_id)
+            implemented = manifest.status == "implemented"
             cases: tuple[EvalCase, ...] = ()
             error = ""
             if implemented:
                 try:
+                    plugin = get_evaluation_plugin(manifest.plugin_id)
+                    if manifest.driver_id not in plugin.allowed_drivers:
+                        raise ValueError(
+                            f"plugin {manifest.plugin_id} does not allow {manifest.driver_id}"
+                        )
                     cases = get_cases(standard.suite_id, auto_prepare=False)
                 except Exception as exc:  # noqa: BLE001
                     error = f"{type(exc).__name__}: {exc}"
@@ -70,29 +79,31 @@ def list_suite_descriptors(
             data_status = suite_data_status(standard.suite_id)
             parameters = [
                 {
-                    "name": "dry_run",
-                    "type": "boolean",
-                    "label": "仅校验，不调用模型",
-                    "default": False,
+                    "name": option.name,
+                    "type": option.type,
+                    "label": option.label,
+                    "default": option.default,
                 }
+                for option in manifest.options
             ]
-            if standard.suite_id == "gaia":
-                parameters.append(
-                    {
-                        "name": "llm_judge",
-                        "type": "boolean",
-                        "label": "启用 LLM Judge",
-                        "default": True,
-                    }
-                )
             descriptors.append(
                 {
                     **to_jsonable(standard),
+                    "version": manifest.version,
+                    "status": manifest.status,
+                    "plugin_id": manifest.plugin_id,
+                    "driver_id": manifest.driver_id,
+                    "driver": manifest.driver_id,
+                    "execution_scope": _suite_execution_scope(manifest.suite_id),
+                    "capability_status": _suite_capability_status(manifest.suite_id),
+                    "default_preset": manifest.default_preset,
+                    "presets": [to_jsonable(item) for item in manifest.presets],
                     "implemented": implemented,
                     "ready": ready,
                     "case_count": len(cases),
                     "unavailable_reason": reason,
                     "prepare_available": _suite_prepare_available(
+                        manifest.prepare_supported,
                         standard.suite_id,
                         data_status,
                     ),
@@ -108,10 +119,27 @@ def list_suite_descriptors(
     return descriptors
 
 
+def _suite_execution_scope(suite_id: str) -> str:
+    if suite_id == "bfcl":
+        return "direct_llm/function_call_protocol"
+    if suite_id == "agentstrata-capabilities-v1":
+        return "product_agent_mixed_drivers"
+    return "agent_runtime" if suite_id in {"gaia", "ifeval"} else "unavailable"
+
+
+def _suite_capability_status(suite_id: str) -> str:
+    if suite_id == "agentstrata-capabilities-v1":
+        return "image_generation:not_configured"
+    return "configured"
+
+
 def _suite_prepare_available(
+    prepare_supported: bool,
     suite_id: str,
     data_status: dict[str, Any],
 ) -> bool:
+    if not prepare_supported:
+        return False
     if suite_id in {"bfcl", "ifeval"}:
         return data_status.get("source") in {"builtin_smoke", "unavailable"}
     if suite_id == "gaia":
@@ -248,7 +276,8 @@ def stream_prepare_suite(
     repository_root: Path | None = None,
 ) -> Iterator[str]:
     normalized = normalize_suite_id(suite_id)
-    if normalized not in IMPLEMENTED_SUITES:
+    manifest = get_manifest(normalized)
+    if manifest.status != "implemented" or not manifest.prepare_supported:
         raise ValueError(f"{normalized} does not support backend data preparation")
     yield f"[evals] 开始准备 {normalized.upper()} 官方数据。"
     repository = _repo(repository_root)

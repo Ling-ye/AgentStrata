@@ -34,6 +34,7 @@ from chatcopilot.contracts.agent_backend import (
     BackendSessionRef,
     CAPABILITY_CHAT,
     CAPABILITY_TOOLS,
+    CodexMainSessionPolicy,
 )
 from chatcopilot.core.adapter_approval import AdapterApprovalStore
 from chatcopilot.external_tools.shared.tool_spec import ToolDef
@@ -477,6 +478,57 @@ class SubagentTests(unittest.TestCase):
 
         self.assertIn("forge_open_source_adapter", captured_tool_names)
         self.assertNotIn("query_approved_sources", captured_tool_names)
+
+    def test_codex_eval_policy_exposes_all_configured_delegate_tools(self) -> None:
+        captured_tool_names: set[str] = set()
+
+        class Backend:
+            capabilities = BackendCapabilities(
+                names=frozenset({CAPABILITY_CHAT, CAPABILITY_TOOLS}),
+                tool_names=frozenset(
+                    {
+                        "forge_open_source_adapter",
+                        "query_approved_sources",
+                        "start_code_task",
+                    }
+                ),
+            )
+
+            def open_session(self, request):
+                captured_tool_names.update(request.allowed_tool_names)
+                return BackendSessionRef("codex", "session")
+
+        runtime = AgentRuntime(
+            llm=_FakeLLM(ChatResult(content="done")),
+            tools=(_tool("start_code_task", category="development.task.write"),),
+            tools_schema=(),
+            runtime_config=ChatConfig(),
+            subagents=SubagentSpec(
+                include=("adapter_forge", "mcp_query"),
+                agents={
+                    "adapter_forge": SubagentBudgetSpec(
+                        max_model_turns=1,
+                        max_tool_calls=1,
+                    ),
+                    "mcp_query": SubagentBudgetSpec(
+                        max_model_turns=1,
+                        max_tool_calls=1,
+                    ),
+                },
+                codex=CodexMainSessionPolicy(allow_delegate_tools=True),
+            ),
+            agent_backend="codex",
+        )
+
+        with mock.patch("chatcopilot.agent.runtime.build_backend", return_value=Backend()):
+            runtime.new_session(
+                session_id="sid-eval-delegates",
+                system_baseline="baseline",
+                permission_filter=lambda _tool: None,
+            )
+
+        self.assertIn("forge_open_source_adapter", captured_tool_names)
+        self.assertIn("query_approved_sources", captured_tool_names)
 
     def test_botspec_allows_write_risk_but_rejects_empty_selector_custom(self) -> None:
         spec = load_botspec(Path("bots/lingye-copilot-qq/bot.yaml"))

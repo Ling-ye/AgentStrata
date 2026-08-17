@@ -1,0 +1,24 @@
+schema: 1
+suite_id: bfcl
+version: 1.0.0
+name: BFCL
+kind: tool
+status: implemented
+value: 函数调用与参数构造评测，直接对应工具选择、schema 遵循和调用准确性。
+recommendation: 改工具注册、selector、payload filter 或 tool prompt 后运行；外部数据默认 balanced-100。
+cadence: weekly/regression
+plugin_id: bfcl
+driver_id: direct_llm
+requires_bot: true
+requires_external_data: false
+prepare_supported: true
+official_url: https://gorilla.cs.berkeley.edu/leaderboard.html
+setup_hint: >-
+  内置 smoke 子集可直接运行；完整评测需下载
+  gorilla-llm/Berkeley-Function-Calling-Leaderboard 并设置
+  CHATCOPILOT_BFCL_DATA_DIR 指向数据目录；默认按调用复杂度映射 Level 并选 100 题。
+options:
+  - name: dry_run
+    type: boolean
+    label: 仅校验，不调用模型
+    default: false

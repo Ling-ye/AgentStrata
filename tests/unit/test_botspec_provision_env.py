@@ -157,6 +157,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                     export QQ_ACCESS_TOKEN="{token}"
                     export QQ_WS_URL="ws://127.0.0.1:3001"
                     export QQ_AT_PROXY_URL="ws://localhost:3002"
+                    export QQ_ALLOW_GROUPS="30003"
                     """
                 ),
             )
@@ -164,10 +165,32 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
 
             self.assertEqual(code, 0)
-            self.assertIn(
-                f"export QQ_ACCESS_TOKEN={token}",
-                runtime_env.read_text(encoding="utf-8"),
+            rendered = runtime_env.read_text(encoding="utf-8")
+            self.assertIn(f"export QQ_ACCESS_TOKEN={token}", rendered)
+            self.assertIn("export QQ_ALLOW_GROUPS=30003", rendered)
+
+    def test_qq_provision_rejects_invalid_group_allowlist_without_echoing_it(self) -> None:
+        with TemporaryDirectory() as tmp:
+            private_value = "invalid-private-group"
+            bot_yaml, runtime_env = self._write_qq_bot(
+                Path(tmp),
+                textwrap.dedent(
+                    f"""\
+                    export CHATCOPILOT_CHAT_API_KEY="sk-test"
+                    export QQ_ACCOUNT="10001"
+                    export QQ_ACCESS_TOKEN="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                    export QQ_ALLOW_GROUPS="{private_value}"
+                    """
+                ),
             )
+            output = StringIO()
+            with redirect_stdout(output):
+                code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
+
+            self.assertEqual(code, 1)
+            self.assertFalse(runtime_env.exists())
+            self.assertIn("qq_group_allowlist_invalid", output.getvalue())
+            self.assertNotIn(private_value, output.getvalue())
 
     def test_qq_provision_rejects_group_mention_policy_mismatch(self) -> None:
         with TemporaryDirectory() as tmp:

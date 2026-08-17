@@ -1,0 +1,15 @@
+schema: 1
+suite_id: agentstrata-canary-self-update-v1
+version: "0.1.0"
+name: AgentStrata Canary 自更新 v1
+kind: product
+status: planned
+value: 在一次性隔离目标中验证代码修改、测试、事务性重启、黑盒行为与 baseline 恢复。
+recommendation: 仅在完成临时 Canary target、外部 observer、部署 lease、代际 receipt 和失败回滚原语后手动启用。
+cadence: manual only
+requires_bot: true
+requires_external_data: false
+prepare_supported: false
+setup_hint: >-
+  第二阶段预留：当前只提供契约和本地原语单元测试，不存在可运行
+  Suite 插件、不会更改或重启任何生产 Bot。

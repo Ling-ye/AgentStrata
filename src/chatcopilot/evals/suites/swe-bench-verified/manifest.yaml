@@ -1,0 +1,16 @@
+schema: 1
+suite_id: swe-bench-verified
+version: 0.1.0
+name: SWE-bench Verified
+kind: code
+status: planned
+value: 真实 GitHub issue 修复，最接近工程 Agent 端到端代码修改能力。
+recommendation: 仅在代码 Agent 机制大改后低频运行。
+cadence: major-change
+requires_bot: true
+requires_external_data: true
+prepare_supported: false
+official_url: https://www.swebench.com/
+setup_hint: >-
+  需要 Docker 沙箱基础设施：clone repo → worktree → Agent 修改 → Docker
+  内运行测试套件。设置 CHATCOPILOT_SWEBENCH_DATA_PATH 指向官方 JSONL。

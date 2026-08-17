@@ -21,8 +21,9 @@ flowchart LR
     F["统一搜索<br/>direct providers · deadlines · circuits"]
     G["统一 Evaluation<br/>lifecycle · claims · artifacts"]
     H["公开基线<br/>public boundary · capability parity"]
+    I["插件化能力评测<br/>trusted cases · supervised trials"]
 
-    A --> B --> C --> D --> E --> F --> G --> H
+    A --> B --> C --> D --> E --> F --> G --> H --> I
 ```
 
 这些阶段按主要架构变化划分，实际开发时间存在重叠。
@@ -326,6 +327,41 @@ Console 无法展示其工具，静态 catalog 与运行时装配可能漂移。
 相关规格：
 [`component-catalog-consistency-gate`](../specs/component-catalog-consistency-gate/spec.md)。
 
+## 10. Evaluation 插件化：从少量 benchmark 路径到产品能力 Case
+
+**初始问题**
+
+统一 Evaluation 已解决生命周期、claim、artifact 和 Console 所有权，但 Suite 的 Case
+覆盖仍以少量公开 benchmark 和 Runner 内的固定路径为主，不能回答白名单、工具副作用、
+图片输入、代码恢复或真实 QQ 正向链路是否按产品契约工作。公开 benchmark 也不能替代
+这些部署相关能力的验收。
+
+**结构调整**
+
+- Suite manifest、Case、fixture 和 verifier 使用仓库内版本化声明；Python 执行只允许
+  静态 catalog 中的受信插件，不开放任意第三方模块加载。
+- `agentstrata-capabilities-v1` 固定 29 个产品 Case，提供仅手动启动的
+  `quick/full/security/qq-live/custom`；MVP 默认每 Case 1 次，不把单次结果描述为重复
+  可靠性。
+- 图片理解的 3 个 Case 已配置；图片生成保持 `not_configured`。BFCL 明确保留为
+  direct-LLM 协议校准；SWE-bench Verified、WebArena 和 Canary 自更新保持
+  `planned/unavailable`。
+- 创建前先做无副作用预检；配置阻断不创建 Evaluation、artifact 或进程，也不调用模型
+  或发送 QQ。真实 QQ 写入还要求本次人工确认和 env 固定目标。
+- 正式 Trial 在独立 spawn 子进程运行，期限取 Case timeout 与剩余 max-wall 的最小值；
+  取消和预算终止进程组，Linux/WSL 使用父死保护。只有完整 Target 组进入 checkpoint，
+  中断的不完整组不参与恢复和结果聚合。
+
+**结果与证据边界**
+
+产品能力、公开校准与生命周期继续使用同一个 Evaluation Core 和报告根，同时 Case 定义、
+执行插件和环境条件可以独立演进。仓库自动化覆盖 manifest、插件 parity、预检、进程隔离、
+预算、取消和 artifact 契约；这些 fixture/mock/dry-run 结果不构成真实商用 LLM、真实 QQ
+或 Canary 自更新 E2E 通过的声明，实际结论仍须由维护者手动运行并检查 Trial 证据。
+
+相关规格：
+[`evaluation-plugin-capabilities`](../specs/evaluation-plugin-capabilities/spec.md)。
+
 ## 当前架构的收敛结果
 
 | 关注点 | 当前做法 |
@@ -337,7 +373,7 @@ Console 无法展示其工具，静态 catalog 与运行时装配可能漂移。
 | 主 Agent | Native、LangGraph、Codex 共享 task/event/result 与 turn lifecycle |
 | 源码修改 | 主会话只读，异步 worker 隔离执行，验证后交付 Draft PR |
 | 搜索 | 统一入口、直接 provider、统一 deadline/circuit/result policy |
-| 评测 | Comparison 与 Suite 统一为 Evaluation |
+| 评测 | Comparison 与插件化 Suite 统一为 Evaluation；产品能力只手动启动并按完整 Target 组留证 |
 | 公开维护 | 公开仓库是源码、规格和发布流程的唯一事实源 |
 
 进一步的组件关系、依赖方向和运行时细节分别见

@@ -1,4 +1,5 @@
 """Codex CLI main-agent backend with native resume and a scoped MCP gateway."""
+
 from __future__ import annotations
 
 import hashlib
@@ -11,13 +12,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from chatcopilot.agent.context import frame_task_message
+from chatcopilot.agent.context import (
+    frame_task_message,
+    validated_image_resource_receipts,
+)
 from chatcopilot.contracts.agent import (
     AgentResult,
     AgentTask,
     EventSink,
     FinalText,
+    InputResourcesDispatched,
     TextDelta,
+    ToolFinished,
+    ToolStarted,
     TurnError,
 )
 from chatcopilot.contracts.agent_backend import (
@@ -142,10 +149,11 @@ class CodexAgentBackend:
             workdir = self._resolve_source_workdir(options.get("source_root"))
         else:
             workdir = self._resolve_workspace_workdir(options.get("workspace_root"))
-        state_root = Path(
-            options.get("backend_state_root")
-            or workdir / ".chatcopilot" / "backend-sessions"
-        ).expanduser().resolve()
+        state_root = (
+            Path(options.get("backend_state_root") or workdir / ".chatcopilot" / "backend-sessions")
+            .expanduser()
+            .resolve()
+        )
         state_root.mkdir(parents=True, exist_ok=True)
         try:
             state_root.chmod(0o700)
@@ -160,9 +168,7 @@ class CodexAgentBackend:
             policy_fingerprint=policy_fingerprint,
         )
         allowed_tool_names = request.allowed_tool_names & self._tool_names
-        selected_tools = tuple(
-            tool for tool in self._tools if tool.name in allowed_tool_names
-        )
+        selected_tools = tuple(tool for tool in self._tools if tool.name in allowed_tool_names)
         executor = self._tool_executor or ToolExecutor(
             tools=list(selected_tools),
             caller_role_hint=role_hint,
@@ -257,6 +263,9 @@ class CodexAgentBackend:
     ) -> AgentResult:
         framed_task = frame_task_message(task)
         state.messages.append({"role": "user", "content": framed_task})
+        stale_tool_events = state.relay.drain_tool_events()
+        if stale_tool_events:
+            raise RuntimeError("Codex session relay retained tool evidence from a prior turn")
         try:
             selection = validate_frozen_code_model_selection(
                 self._runtime_config.routing,
@@ -278,10 +287,11 @@ class CodexAgentBackend:
                 message_count=len(state.messages),
             )
         try:
+            image_paths = self._image_paths(task)
             command = self._command(
                 state,
                 selection=selection,
-                image_paths=self._image_paths(task),
+                image_paths=image_paths,
             )
             completed = run_codex_process(
                 command,
@@ -290,13 +300,15 @@ class CodexAgentBackend:
                 timeout_seconds=self._runtime_config.routing.code_timeout_seconds,
                 env=self._subprocess_env(state, command[0]),
             )
+            image_receipts = validated_image_resource_receipts(task)
         except Exception as exc:  # noqa: BLE001
+            audit_error = self._emit_relay_tool_events(state, on_event)
             detail = f"Codex backend failed: {type(exc).__name__}: {exc}"
+            if audit_error:
+                detail = f"{detail}; relay audit failed: {audit_error}"
             message = self._safe_cli_failure(detail)
             error_code = (
-                "codex_auth_invalid"
-                if self._is_auth_failure(detail)
-                else "codex_backend_failed"
+                "codex_auth_invalid" if self._is_auth_failure(detail) else "codex_backend_failed"
             )
             on_event(TurnError(code=error_code, message=detail[-4000:]))
             on_event(FinalText(message))
@@ -305,6 +317,33 @@ class CodexAgentBackend:
                 final_text=message,
                 stop_reason="llm_error",
                 message_count=len(state.messages),
+            )
+
+        audit_error = self._emit_relay_tool_events(state, on_event)
+        if audit_error:
+            detail = f"Codex relay audit failed: {audit_error}"
+            on_event(TurnError(code="codex_tool_audit_failed", message=detail[-4000:]))
+            final_text = "The Codex tool evidence channel failed; task success is unverified."
+            state.messages.append({"role": "assistant", "content": final_text})
+            on_event(FinalText(final_text))
+            return AgentResult(
+                final_text=final_text,
+                stop_reason="llm_error",
+                message_count=len(state.messages),
+            )
+
+        if image_receipts:
+            raw_turn = task.metadata.get("eval_turn", 0)
+            turn_index = raw_turn if isinstance(raw_turn, int) and raw_turn >= 0 else 0
+            on_event(
+                InputResourcesDispatched(
+                    backend="codex",
+                    turn_index=turn_index,
+                    request_id=hashlib.sha256(
+                        (state.acp_session_id + "\0" + str(len(state.messages))).encode("utf-8")
+                    ).hexdigest()[:32],
+                    resources=image_receipts,
+                )
             )
 
         final_text = self._consume_events(
@@ -336,6 +375,52 @@ class CodexAgentBackend:
             stop_reason="end_turn" if completed.returncode == 0 else "llm_error",
             message_count=len(state.messages),
         )
+
+    @staticmethod
+    def _emit_relay_tool_events(state: _CodexSession, on_event: EventSink) -> str:
+        """Project trusted in-process relay receipts onto the shared Agent event protocol."""
+
+        try:
+            events = state.relay.drain_tool_events()
+        except Exception as exc:  # noqa: BLE001 - evidence failure is returned fail-closed
+            return f"{type(exc).__name__}: {exc}"
+        for event in events:
+            call_id = str(event.get("call_id") or "").strip()
+            name = str(event.get("name") or "").strip()
+            event_type = str(event.get("type") or "")
+            if not call_id or not name:
+                return "relay returned an event without call identity"
+            if event_type == "tool_started":
+                arguments = event.get("arguments")
+                if not isinstance(arguments, dict):
+                    return "relay returned malformed tool arguments"
+                on_event(
+                    ToolStarted(
+                        name=name,
+                        arguments=dict(arguments),
+                        trace_id=call_id,
+                        span_id=call_id,
+                    )
+                )
+                continue
+            if event_type != "tool_finished":
+                return f"relay returned unknown tool event {event_type!r}"
+            data = event.get("data")
+            if data is not None and not isinstance(data, dict):
+                return "relay returned malformed tool result data"
+            ok = event.get("ok") is True
+            on_event(
+                ToolFinished(
+                    name=name,
+                    ok=ok,
+                    summary=str(event.get("summary") or ""),
+                    error=None if ok else str(event.get("error") or "tool execution failed"),
+                    trace_id=call_id,
+                    span_id=call_id,
+                    data=dict(data) if isinstance(data, dict) else None,
+                )
+            )
+        return ""
 
     def close_session(self, session: BackendSessionRef) -> None:
         stable = self._stable_key(session)
@@ -391,20 +476,25 @@ class CodexAgentBackend:
             ensure_ascii=False,
         )
         worktree_access = state.access_mode == CODEX_ACCESS_WORKTREE
+        default_sandbox_mode = "read-only" if worktree_access else "workspace-write"
+        sandbox_mode = self._policy.sandbox_mode or default_sandbox_mode
+        if worktree_access and sandbox_mode != "read-only":
+            raise ValueError("worktree Codex access cannot use a writable sandbox")
         extra_config = [
             "mcp_servers={}",
-            f'mcp_servers.chatcopilot.command={json.dumps(sys.executable)}',
+            f"mcp_servers.chatcopilot.command={json.dumps(sys.executable)}",
             f"mcp_servers.chatcopilot.args={gateway_args}",
-            *self._workspace_network_proxy_config(),
         ]
+        if self._policy.network_access:
+            extra_config.extend(self._workspace_network_proxy_config())
         command = build_codex_command(
             template=routing.code_command,
             model=effective_selection.model,
             workdir=state.workdir,
             reasoning_effort=effective_selection.reasoning_effort,
-            network_access=True,
-            sandbox_mode="read-only" if worktree_access else "workspace-write",
-            web_search_mode="live",
+            network_access=self._policy.network_access,
+            sandbox_mode=sandbox_mode,
+            web_search_mode=self._policy.web_search_mode,
             skip_git_repo_check=not worktree_access,
             ephemeral=False,
             ignore_user_config=True,
@@ -445,10 +535,7 @@ class CodexAgentBackend:
         paths: list[str] = []
         for resource in task.resources:
             media_type = normalize_image_media_type(resource.media_type)
-            if (
-                resource.kind != "file"
-                or media_type not in SUPPORTED_IMAGE_MEDIA_TYPES
-            ):
+            if resource.kind != "file" or media_type not in SUPPORTED_IMAGE_MEDIA_TYPES:
                 continue
             validate_image_file(
                 resource.path,
@@ -458,7 +545,6 @@ class CodexAgentBackend:
             )
             paths.append(resource.path)
         return tuple(paths)
-
 
     @staticmethod
     def _workspace_network_proxy_config() -> tuple[str, ...]:
@@ -470,8 +556,7 @@ class CodexAgentBackend:
             "features.network_proxy.dangerously_allow_all_unix_sockets=false",
         )
 
-    @staticmethod
-    def _execution_policy_prompt(state: _CodexSession) -> str:
+    def _execution_policy_prompt(self, state: _CodexSession) -> str:
         if state.access_mode == CODEX_ACCESS_WORKTREE:
             boundary = (
                 "This Owner main session may inspect the source repository but is read-only. "
@@ -484,8 +569,13 @@ class CodexAgentBackend:
                 "This member workspace session may write only its personal workspace and "
                 "must not modify AgentStrata source, bot design, or deployment files."
             )
-        return (
+        search_boundary = (
             "Codex native web search is live. "
+            if self._policy.web_search_mode == "live"
+            else "Codex native web search is disabled by this execution policy. "
+        )
+        return (
+            search_boundary
             + boundary
             + " Git commit and git push are allowed only when the current user request "
             "explicitly asks for them. Never expose secret values or credentials."
@@ -508,15 +598,10 @@ class CodexAgentBackend:
             event_type = str(event.get("type") or "")
             if event_type in {"thread.started", "thread_started"}:
                 native_id = str(
-                    event.get("thread_id")
-                    or event.get("threadId")
-                    or event.get("id")
-                    or ""
+                    event.get("thread_id") or event.get("threadId") or event.get("id") or ""
                 ).strip()
                 if native_id:
-                    stable = next(
-                        key for key, value in self._sessions.items() if value is state
-                    )
+                    stable = next(key for key, value in self._sessions.items() if value is state)
                     state.native_session_id = native_id
                     self._aliases[native_id] = stable
                     self._persist_session_state(state)
@@ -535,9 +620,7 @@ class CodexAgentBackend:
         return "\n".join(final_parts).strip()
 
     def _resolve_source_workdir(self, source_root: Any) -> Path:
-        configured = os.environ.get(
-            self._runtime_config.routing.code_workdir_env, ""
-        ).strip()
+        configured = os.environ.get(self._runtime_config.routing.code_workdir_env, "").strip()
         candidate = str(source_root or "").strip() or configured
         if not candidate:
             raise RuntimeError("worktree Codex access requires a configured source root")
@@ -563,15 +646,22 @@ class CodexAgentBackend:
         caller_user_id: str,
     ) -> str:
         caller_digest = (
-            hashlib.sha256(caller_user_id.encode("utf-8")).hexdigest()
-            if caller_user_id
-            else ""
+            hashlib.sha256(caller_user_id.encode("utf-8")).hexdigest() if caller_user_id else ""
         )
         payload = json.dumps(
             {
                 "role": role_hint,
                 "access": access_mode,
                 "caller_id_digest": caller_digest,
+                "command_confinement": {
+                    "network_access": self._policy.network_access,
+                    "sandbox_mode": self._policy.sandbox_mode,
+                    "web_search_mode": self._policy.web_search_mode,
+                },
+                "tool_surface": {
+                    "allow_delegate_tools": self._policy.allow_delegate_tools,
+                    "allow_unified_search_tool": (self._policy.allow_unified_search_tool),
+                },
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -606,11 +696,7 @@ class CodexAgentBackend:
         if str(payload.get("policy_fingerprint") or "") != policy_fingerprint:
             return "", 0
         generation = payload.get("credential_generation", 0)
-        if (
-            not isinstance(generation, int)
-            or isinstance(generation, bool)
-            or generation < 0
-        ):
+        if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
             return "", 0
         return str(payload.get("native_session_id") or "").strip(), generation
 
@@ -670,8 +756,7 @@ class CodexAgentBackend:
         if (
             len(state.messages) >= 2
             and state.messages[-1].get("role") == "assistant"
-            and state.messages[-2]
-            == {"role": "user", "content": framed_task}
+            and state.messages[-2] == {"role": "user", "content": framed_task}
         ):
             state.messages[-1] = {"role": "assistant", "content": message}
         elif state.messages and state.messages[-1] == {

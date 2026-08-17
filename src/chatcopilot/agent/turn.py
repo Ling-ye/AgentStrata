@@ -13,7 +13,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from chatcopilot.agent.context import frame_task_content, frame_task_message
+from chatcopilot.agent.context import (
+    frame_task_content,
+    frame_task_message,
+    validated_image_resource_receipts,
+)
 from chatcopilot.agent.context.token_estimator import (
     estimate_prompt_tokens,
 )
@@ -25,10 +29,12 @@ from chatcopilot.agent.lifecycle import (
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.agent.protocol import (
     AgentResult,
+    AgentStopReason,
     AgentTask,
     DeferredLifecycleIntent,
     EventSink,
     FinalText,
+    InputResourcesDispatched,
     LlmCallStarted,
     LlmCallFinished,
     SpanFinished,
@@ -82,7 +88,7 @@ class TurnState:
     topic_decision: TopicDecision | None = None
     llm_view: list[dict[str, Any]] | None = None
     final_text: str = ""
-    stop_reason: str = "end_turn"
+    stop_reason: AgentStopReason = "end_turn"
     consecutive_failures: int = 0
     tool_calls_used: int = 0
     produced_paths: list[tuple[str, str]] = field(default_factory=list)
@@ -184,6 +190,9 @@ class TurnOps:
         iteration = state.iteration
         model = getattr(self.session.llm, "model", "")
         call_span_id = new_span_id()
+        image_receipts = (
+            validated_image_resource_receipts(self.task) if iteration == 0 else ()
+        )
         prompt_estimate = estimate_prompt_tokens(call_messages, self.session.tools_schema)
         self.emit(
             LlmCallStarted(
@@ -231,6 +240,18 @@ class TurnOps:
             self.emit(TurnError(code=type(exc).__name__, message=str(exc)))
             self.finish_text(state, err_text, stop_reason="llm_error")
             return None
+
+        if image_receipts:
+            raw_turn = self.task.metadata.get("eval_turn", 0)
+            turn_index = raw_turn if isinstance(raw_turn, int) and raw_turn >= 0 else 0
+            self.emit(
+                InputResourcesDispatched(
+                    backend=str(getattr(self.session, "backend_name", "native")),
+                    turn_index=turn_index,
+                    request_id=call_span_id,
+                    resources=image_receipts,
+                )
+            )
 
         self.emit(
             LlmCallFinished(
@@ -376,7 +397,13 @@ class TurnOps:
             stop_reason="tool_call_cap",
         )
 
-    def finish_text(self, state: TurnState, text: str, *, stop_reason: str) -> None:
+    def finish_text(
+        self,
+        state: TurnState,
+        text: str,
+        *,
+        stop_reason: AgentStopReason,
+    ) -> None:
         self.emit(FinalText(text=text))
         self.session._messages.append({"role": "assistant", "content": text})
         if state.llm_view is not None and state.llm_view is not self.session._messages:

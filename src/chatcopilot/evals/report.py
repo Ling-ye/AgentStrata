@@ -166,8 +166,9 @@ def compare_reports(base: Path, new: Path) -> dict[str, Any]:
     base_payload = _load_result(base)
     new_payload = _load_result(new)
     _require_comparable_evaluations(base_payload, new_payload)
-    base_ratio = _evaluation_score_ratio(base_payload)
-    new_ratio = _evaluation_score_ratio(new_payload)
+    product_capability_report = _is_product_capability_report(base_payload)
+    base_ratio = None if product_capability_report else _evaluation_score_ratio(base_payload)
+    new_ratio = None if product_capability_report else _evaluation_score_ratio(new_payload)
 
     base_cases = _comparison_trials(base_payload)
     new_cases = _comparison_trials(new_payload)
@@ -203,7 +204,13 @@ def compare_reports(base: Path, new: Path) -> dict[str, Any]:
         "new_suite": new_payload.get("suite"),
         "base_score_ratio": base_ratio,
         "new_score_ratio": new_ratio,
-        "score_delta": new_ratio - base_ratio,
+        "score_delta": (
+            new_ratio - base_ratio
+            if new_ratio is not None and base_ratio is not None
+            else None
+        ),
+        "base_verdict": (base_payload.get("summary") or {}).get("verdict"),
+        "new_verdict": (new_payload.get("summary") or {}).get("verdict"),
         "regressions": regressions,
         "improvements": improvements,
     }
@@ -241,12 +248,20 @@ def _require_comparable_evaluations(
     new_snapshot = new.get("config_snapshot")
     if not isinstance(base_snapshot, dict) or not isinstance(new_snapshot, dict):
         raise ValueError("Evaluation config_snapshot is required for comparison")
-    for field_name in ("case_hash", "judge"):
+    for field_name in ("case_hash", "judge", "target_fingerprints"):
         if (
             not base_snapshot.get(field_name)
             or base_snapshot.get(field_name) != new_snapshot.get(field_name)
         ):
             raise ValueError(f"Evaluation {field_name} is not comparable")
+    if base_kind == "suite":
+        for field_name in ("definition_fingerprint", "private_runtime_configuration"):
+            if (
+                field_name not in base_snapshot
+                or field_name not in new_snapshot
+                or base_snapshot.get(field_name) != new_snapshot.get(field_name)
+            ):
+                raise ValueError(f"Evaluation {field_name} is not comparable")
     base_targets = _comparable_targets(base)
     new_targets = _comparable_targets(new)
     if base_targets != new_targets:
@@ -304,14 +319,29 @@ def _trial_sample_keys(payload: dict[str, Any]) -> frozenset[tuple[str, str, int
 
 
 def render_compare_markdown(payload: dict[str, Any]) -> str:
+    base_ratio = payload.get("base_score_ratio")
+    new_ratio = payload.get("new_score_ratio")
+    score_delta = payload.get("score_delta")
     lines = [
         "# Eval Compare",
         "",
         f"- base_suite: `{payload.get('base_suite')}`",
         f"- new_suite: `{payload.get('new_suite')}`",
-        f"- base_score_ratio: `{payload.get('base_score_ratio', 0):.3f}`",
-        f"- new_score_ratio: `{payload.get('new_score_ratio', 0):.3f}`",
-        f"- score_delta: `{payload.get('score_delta', 0):+.3f}`",
+        (
+            f"- base_score_ratio: `{float(base_ratio):.3f}`"
+            if isinstance(base_ratio, (int, float))
+            else f"- base_verdict: `{payload.get('base_verdict')}`"
+        ),
+        (
+            f"- new_score_ratio: `{float(new_ratio):.3f}`"
+            if isinstance(new_ratio, (int, float))
+            else f"- new_verdict: `{payload.get('new_verdict')}`"
+        ),
+        (
+            f"- score_delta: `{float(score_delta):+.3f}`"
+            if isinstance(score_delta, (int, float))
+            else "- score_delta: `not_applicable`"
+        ),
         "",
         "## Regressions",
         "",
@@ -333,6 +363,13 @@ def render_compare_markdown(payload: dict[str, Any]) -> str:
         for item in improvements:
             lines.append(f"- `{item['case_ref']}`: delta={item['score_delta']:+.3f}")
     return "\n".join(lines) + "\n"
+
+
+def _is_product_capability_report(payload: dict[str, Any]) -> bool:
+    summary = payload.get("summary")
+    return isinstance(summary, dict) and summary.get("score_scope") == (
+        "product capability gates are not averaged into an intelligence score"
+    )
 
 
 def _load_result(path: Path) -> dict[str, Any]:

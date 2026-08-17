@@ -52,6 +52,7 @@ class AccessSpecLoaderTests(unittest.TestCase):
               group_require_whitelist: true
               group_require_mention: true
               whitelist_env: QQ_ALLOW_FROM
+              group_whitelist_env: QQ_ALLOW_GROUPS
             """
         )
         with TemporaryDirectory() as tmp:
@@ -60,6 +61,7 @@ class AccessSpecLoaderTests(unittest.TestCase):
         self.assertTrue(spec.access.group_require_whitelist)
         self.assertTrue(spec.access.group_require_mention)
         self.assertEqual(spec.access.whitelist_env, "QQ_ALLOW_FROM")
+        self.assertEqual(spec.access.group_whitelist_env, "QQ_ALLOW_GROUPS")
         self.assertTrue(spec.access.enabled)
 
     def test_missing_access_defaults_disabled(self) -> None:
@@ -67,6 +69,7 @@ class AccessSpecLoaderTests(unittest.TestCase):
             spec = load_botspec(_write_bot_with_access(Path(tmp), ""))
         self.assertFalse(spec.access.enabled)
         self.assertIsNone(spec.access.whitelist_env)
+        self.assertIsNone(spec.access.group_whitelist_env)
 
 
 class RoleResolutionTests(unittest.TestCase):
@@ -125,13 +128,23 @@ class AccessGateEvaluateTests(unittest.TestCase):
         group_require_whitelist=True,
         group_require_mention=True,
         whitelist_env="QQ_ALLOW_FROM",
+        group_whitelist_env="QQ_ALLOW_GROUPS",
     )
 
-    def _eval(self, *, chat_kind: str, user_id: str, text: str, env: dict[str, str]):
+    def _eval(
+        self,
+        *,
+        chat_kind: str,
+        user_id: str,
+        text: str,
+        env: dict[str, str],
+        chat_id: str = "20001",
+    ):
         return access_gate.evaluate(
             self.ENABLED,
             platform_type="qq",
             chat_kind=chat_kind,
+            chat_id=chat_id,
             user_id=user_id,
             text=text,
             env=env,
@@ -177,6 +190,60 @@ class AccessGateEvaluateTests(unittest.TestCase):
             chat_kind="group", user_id="30003", text="[CQ:at,qq=10001] hi", env=env
         )
         self.assertFalse(decision.allowed)
+
+    def test_group_allowlist_allows_non_allowlisted_sender(self) -> None:
+        env = {
+            "QQ_ALLOW_FROM": "20002",
+            "QQ_ALLOW_GROUPS": "30003",
+            "QQ_ACCOUNT": "10001",
+        }
+        decision = self._eval(
+            chat_kind="group",
+            chat_id="30003",
+            user_id="40004",
+            text="[CQ:at,qq=10001] hi",
+            env=env,
+        )
+        self.assertTrue(decision.allowed)
+
+    def test_group_allowlist_does_not_grant_private_access(self) -> None:
+        env = {"QQ_ALLOW_FROM": "20002", "QQ_ALLOW_GROUPS": "30003"}
+        decision = self._eval(
+            chat_kind="p2p",
+            user_id="40004",
+            text="hi",
+            env=env,
+        )
+        self.assertFalse(decision.allowed)
+
+    def test_empty_group_allowlist_grants_no_additional_access(self) -> None:
+        env = {"QQ_ALLOW_FROM": "20002", "QQ_ALLOW_GROUPS": ""}
+        decision = self._eval(
+            chat_kind="group",
+            chat_id="30003",
+            user_id="40004",
+            text="hi",
+            env=env,
+        )
+        self.assertFalse(decision.allowed)
+
+    def test_group_wildcard_allows_any_group_but_not_private(self) -> None:
+        env = {"QQ_ALLOW_FROM": "20002", "QQ_ALLOW_GROUPS": "*"}
+        group = self._eval(
+            chat_kind="group",
+            chat_id="30003",
+            user_id="40004",
+            text="hi",
+            env=env,
+        )
+        private = self._eval(
+            chat_kind="p2p",
+            user_id="40004",
+            text="hi",
+            env=env,
+        )
+        self.assertTrue(group.allowed)
+        self.assertFalse(private.allowed)
 
     def test_group_mention_undetermined_passes_with_warning_reason(self) -> None:
         # 缺 QQ_ACCOUNT → 无法判定 @ → 放行（fail-open）

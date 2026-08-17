@@ -34,12 +34,16 @@ import {
 import {
   acceptUniqueEvaluationEvent,
   buildComparisonRequest,
+  buildSuiteOptions,
   buildSuiteRequest,
   createRequestGeneration,
   EvaluationApiError,
   formatApiError,
   isCurrentSelection,
+  isProductCapabilityEvaluation,
+  productCapabilityResultView,
   retainAvailableSelection,
+  suitePresetRequiresExternalWrite,
   suiteSupportsLlmJudge,
   type ApiProblem,
   type ComparisonPreset,
@@ -50,11 +54,13 @@ import {
   type EvaluationCoverageRecord,
   type EvaluationKind,
   type EvaluationProfile,
+  type ProductCapabilityGroup,
   type EvaluationRecord,
   type EvaluationRequest,
   type EvaluationStatus,
   type EvaluationSuite,
   type SelectionSnapshot,
+  type SuitePreset,
 } from "../features/evals/model";
 import { useEventStreamLines } from "../shared/hooks/useEventStreamLines";
 import type { ColumnProps } from "../shared/ui/arcoTypes";
@@ -79,6 +85,8 @@ const STATUS_COLORS: Record<string, string> = {
   inconclusive: "orange",
   codex: "purple",
   native: "cyan",
+  "error/indeterminate": "red",
+  in_progress: "arcoblue",
 };
 
 const DIMENSION_LABELS: Record<string, string> = {
@@ -86,6 +94,18 @@ const DIMENSION_LABELS: Record<string, string> = {
   knowledge_research: "知识 / 检索",
   tool_orchestration: "工具编排",
   code: "代码任务",
+};
+
+const CAPABILITY_LABELS: Record<string, string> = {
+  dialogue_constraints: "对话与任务约束",
+  tool_orchestration: "工具编排",
+  search: "搜索与证据",
+  file_workspace: "文件与 Workspace",
+  image_understanding: "图片理解",
+  session_memory_subagent: "会话、记忆与 Subagent",
+  code_recovery: "代码与恢复",
+  access_security: "白名单、角色与注入",
+  qq_live: "真实 QQ 正向链路",
 };
 
 interface EvaluationForm {
@@ -100,6 +120,11 @@ interface EvaluationForm {
   seed: number;
   suiteId: string;
   caseIds: string[];
+  suitePreset: SuitePreset;
+  suiteRepetitions: number;
+  suiteMaxWallSeconds: number;
+  suiteSeed: number;
+  confirmExternalWrite: boolean;
   dryRun: boolean;
   llmJudge: boolean;
 }
@@ -176,7 +201,7 @@ function verdictTag(verdict: string) {
 function kindTag(kind: EvaluationKind) {
   return (
     <Tag color={kind === "comparison" ? "purple" : "arcoblue"}>
-      {kind === "comparison" ? "Agent 对比" : "基准评测"}
+      {kind === "comparison" ? "Agent 对比" : "能力 / Suite"}
     </Tag>
   );
 }
@@ -220,6 +245,11 @@ export default function EvalsPage({ visible = true }: Props) {
     seed: 20260723,
     suiteId: "",
     caseIds: [],
+    suitePreset: "custom",
+    suiteRepetitions: 1,
+    suiteMaxWallSeconds: 0,
+    suiteSeed: 0,
+    confirmExternalWrite: false,
     dryRun: false,
     llmJudge: false,
   });
@@ -422,9 +452,23 @@ export default function EvalsPage({ visible = true }: Props) {
     const defaults = new Map(
       selectedSuite.parameters.map((item) => [item.name, item.default]),
     );
+    const declaredPresets = (selectedSuite.presets ?? [])
+      .map((item) => item.preset_id)
+      .filter((value): value is SuitePreset =>
+        ["quick", "full", "security", "qq-live", "custom"].includes(value),
+      );
+    const preferredPreset = selectedSuite.default_preset;
+    const suitePreset = declaredPresets.includes(preferredPreset as SuitePreset)
+      ? preferredPreset as SuitePreset
+      : declaredPresets[0] ?? "custom";
     setForm((current) => ({
       ...current,
       caseIds: [],
+      suitePreset,
+      suiteRepetitions: 1,
+      suiteMaxWallSeconds: 0,
+      suiteSeed: 0,
+      confirmExternalWrite: false,
       dryRun: defaults.get("dry_run") ?? false,
       llmJudge: suiteSupportsLlmJudge(selectedSuite)
         ? defaults.get("llm_judge") ?? false
@@ -526,14 +570,44 @@ export default function EvalsPage({ visible = true }: Props) {
         });
       } else {
         if (!selectedSuite?.ready) throw new Error("请选择已就绪的 Suite");
-        if (!form.caseIds.length) throw new Error("至少选择一个 Case");
+        if (form.suitePreset === "custom" && !form.caseIds.length) {
+          throw new Error("Custom 至少选择一个 Case");
+        }
+        if (
+          suitePresetRequiresExternalWrite(
+            selectedSuite,
+            form.suitePreset,
+            form.caseIds,
+          ) &&
+          !form.confirmExternalWrite
+        ) {
+          throw new Error("该 Preset 会向真实 QQ 发送消息，必须确认本次外部写入");
+        }
         request = buildSuiteRequest({
           botId: form.botId,
           suiteId: form.suiteId,
-          caseIds: form.caseIds,
+          caseIds: form.suitePreset === "custom" ? form.caseIds : [],
+          preset: form.suitePreset,
+          repetitions: form.suiteRepetitions,
+          maxWallSeconds: form.suiteMaxWallSeconds,
+          seed: form.suiteSeed,
+          options: buildSuiteOptions(selectedSuite, {
+            dryRun: form.dryRun,
+            llmJudge: form.llmJudge,
+          }),
+          confirmExternalWrite: form.confirmExternalWrite,
           dryRun: form.dryRun,
           llmJudge: suiteSupportsLlmJudge(selectedSuite) && form.llmJudge,
         });
+      }
+      // Consume external-write approval before dispatch.  This is intentionally
+      // independent of response-generation ownership: a stale success/error
+      // callback must not leave one approval armed for a later Evaluation.
+      if (
+        "confirm_external_write" in request &&
+        request.confirm_external_write
+      ) {
+        setForm((current) => ({ ...current, confirmExternalWrite: false }));
       }
       startMutation.mutate({ generation, request });
     } catch (error) {
@@ -910,6 +984,19 @@ function CreateEvaluationPane({
     );
   }, [caseQuery, suiteCases]);
   const filteredCaseIds = filteredCases.map((item) => item.case_id);
+  const declaredSuitePresets = (selectedSuite?.presets ?? [])
+    .map((item) => item.preset_id)
+    .filter((value): value is SuitePreset =>
+      ["quick", "full", "security", "qq-live", "custom"].includes(value),
+    );
+  const availableSuitePresets = declaredSuitePresets.length
+    ? declaredSuitePresets
+    : ["custom" as SuitePreset];
+  const requiresExternalWrite = suitePresetRequiresExternalWrite(
+    selectedSuite,
+    form.suitePreset,
+    form.caseIds,
+  );
   const allFilteredSelected =
     filteredCaseIds.length > 0 &&
     filteredCaseIds.every((caseId) => form.caseIds.includes(caseId));
@@ -946,7 +1033,9 @@ function CreateEvaluationPane({
       ? !form.profileId ||
         (form.preset === "custom" &&
           (!form.targetIds.length || !form.caseRefs.length))
-      : !selectedSuite?.ready || !form.caseIds.length);
+      : !selectedSuite?.ready ||
+        (form.suitePreset === "custom" && !form.caseIds.length) ||
+        (requiresExternalWrite && !form.confirmExternalWrite));
 
   return (
     <div className="eval-center-stack">
@@ -966,6 +1055,8 @@ function CreateEvaluationPane({
                   botId: String(value ?? ""),
                   suiteId: "",
                   caseIds: [],
+                  suitePreset: "custom",
+                  confirmExternalWrite: false,
                   dryRun: false,
                   llmJudge: false,
                 })
@@ -980,7 +1071,7 @@ function CreateEvaluationPane({
               onChange={(value) => onChange({ kind: value as EvaluationKind })}
             >
               <Radio value="comparison">Agent 对比</Radio>
-              <Radio value="suite">基准评测</Radio>
+              <Radio value="suite">能力 / Suite</Radio>
             </Radio.Group>
           </label>
         </div>
@@ -1115,7 +1206,7 @@ function CreateEvaluationPane({
           )}
         </Card>
       ) : (
-        <Card title="基准评测配置" className="eval-create-card">
+        <Card title="能力 / Suite 手动测评配置" className="eval-create-card">
           <div className="eval-field-grid">
             <label>
               <Text bold>Suite</Text>
@@ -1127,7 +1218,62 @@ function CreateEvaluationPane({
                   value: suite.suite_id,
                 }))}
                 onChange={(value) =>
-                  onChange({ suiteId: String(value ?? ""), caseIds: [] })
+                  onChange({
+                    suiteId: String(value ?? ""),
+                    caseIds: [],
+                    confirmExternalWrite: false,
+                  })
+                }
+              />
+            </label>
+            <label>
+              <Text bold>Preset</Text>
+              <Select
+                value={form.suitePreset}
+                options={availableSuitePresets.map((preset) => ({
+                  label: preset,
+                  value: preset,
+                }))}
+                onChange={(value) =>
+                  onChange({
+                    suitePreset: value as SuitePreset,
+                    caseIds: [],
+                    confirmExternalWrite: false,
+                  })
+                }
+              />
+            </label>
+            <label>
+              <Text bold>重复次数</Text>
+              <InputNumber
+                min={1}
+                max={10}
+                precision={0}
+                value={form.suiteRepetitions}
+                onChange={(value) =>
+                  onChange({ suiteRepetitions: Number(value ?? 1) })
+                }
+              />
+            </label>
+            <label>
+              <Text bold>总时间预算（秒）</Text>
+              <InputNumber
+                min={0}
+                max={21600}
+                precision={0}
+                value={form.suiteMaxWallSeconds}
+                onChange={(value) =>
+                  onChange({ suiteMaxWallSeconds: Number(value ?? 0) })
+                }
+              />
+            </label>
+            <label>
+              <Text bold>Seed</Text>
+              <InputNumber
+                precision={0}
+                value={form.suiteSeed}
+                onChange={(value) =>
+                  onChange({ suiteSeed: Number(value ?? 0) })
                 }
               />
             </label>
@@ -1166,6 +1312,10 @@ function CreateEvaluationPane({
                     ? `${selectedSuite.case_count} Cases · ${selectedSuite.data_source ?? "ready"}`
                     : selectedSuite.unavailable_reason || "未就绪",
                 },
+                {
+                  label: "状态 / Driver",
+                  value: `${selectedSuite.capability_status ?? selectedSuite.status ?? (selectedSuite.ready ? "ready" : "unavailable")} · ${selectedSuite.execution_scope ?? selectedSuite.driver_id ?? selectedSuite.driver ?? "—"}`,
+                },
               ]}
             />
           )}
@@ -1183,37 +1333,64 @@ function CreateEvaluationPane({
               }
             />
           )}
-          <div className="eval-case-toolbar">
-            <Input
-              value={caseQuery}
-              allowClear
-              placeholder="搜索 Case ID、分类或题目"
-              onChange={setCaseQuery}
+          {requiresExternalWrite && (
+            <Alert
+              type="warning"
+              showIcon
+              title="本次评测会产生真实 QQ 外部写入"
+              content={
+                <Checkbox
+                  checked={form.confirmExternalWrite}
+                  onChange={(checked) =>
+                    onChange({ confirmExternalWrite: Boolean(checked) })
+                  }
+                >
+                  我确认本次所选 Case 可以向固定测试账号和测试群发送消息
+                </Checkbox>
+              }
             />
-            <Button
-              disabled={!filteredCaseIds.length}
-              onClick={toggleFiltered}
-            >
-              {allFilteredSelected ? "取消当前结果" : "全选当前结果"}
-            </Button>
-            <Tag color="blue">已选 {form.caseIds.length}</Tag>
-          </div>
-          <Table<EvaluationCaseSummary>
-            rowKey="case_id"
-            size="small"
-            data={filteredCases}
-            columns={caseColumns}
-            loading={suiteCasesLoading}
-            pagination={{ pageSize: 8 }}
-            rowSelection={{
-              preserveSelectedRowKeys: true,
-              selectedRowKeys: form.caseIds,
-              onChange: (keys) => onChange({ caseIds: keys.map(String) }),
-            }}
-            noDataElement={
-              selectedSuite?.ready ? "没有匹配的 Case" : "请选择已就绪的 Suite"
-            }
-          />
+          )}
+          {form.suitePreset === "custom" ? (
+            <>
+              <div className="eval-case-toolbar">
+                <Input
+                  value={caseQuery}
+                  allowClear
+                  placeholder="搜索 Case ID、分类或题目"
+                  onChange={setCaseQuery}
+                />
+                <Button
+                  disabled={!filteredCaseIds.length}
+                  onClick={toggleFiltered}
+                >
+                  {allFilteredSelected ? "取消当前结果" : "全选当前结果"}
+                </Button>
+                <Tag color="blue">已选 {form.caseIds.length}</Tag>
+              </div>
+              <Table<EvaluationCaseSummary>
+                rowKey="case_id"
+                size="small"
+                data={filteredCases}
+                columns={caseColumns}
+                loading={suiteCasesLoading}
+                pagination={{ pageSize: 8 }}
+                rowSelection={{
+                  preserveSelectedRowKeys: true,
+                  selectedRowKeys: form.caseIds,
+                  onChange: (keys) => onChange({ caseIds: keys.map(String) }),
+                }}
+                noDataElement={
+                  selectedSuite?.ready ? "没有匹配的 Case" : "请选择已就绪的 Suite"
+                }
+              />
+            </>
+          ) : (
+            <Alert
+              type="info"
+              showIcon
+              content={`由 ${form.suitePreset} Preset 固定选择 ${selectedSuite?.presets?.find((item) => item.preset_id === form.suitePreset)?.case_ids.length ?? "预定义"} 个 Case；如需手选请切换到 custom。`}
+            />
+          )}
         </Card>
       )}
 
@@ -1750,6 +1927,10 @@ function SuiteResult({
   const result = record.result ?? {};
   const summary = recordValue(result.summary);
   const trials = recordArray(result.trials);
+  const isProductCapability = isProductCapabilityEvaluation(record);
+  const product = isProductCapability
+    ? productCapabilityResultView(record)
+    : null;
   const columns: ColumnProps<Record<string, unknown>>[] = [
     {
       title: "Case",
@@ -1763,12 +1944,14 @@ function SuiteResult({
       render: (_: unknown, item) =>
         outcomeTag(stringValue(item.outcome, "—")),
     },
-    {
-      title: "得分",
-      width: 130,
-      render: (_: unknown, item) =>
-        formatScore(item.score, item.max_score),
-    },
+    ...(isProductCapability
+      ? []
+      : [{
+          title: "得分",
+          width: 130,
+          render: (_: unknown, item: Record<string, unknown>) =>
+            formatScore(item.score, item.max_score),
+        } satisfies ColumnProps<Record<string, unknown>>]),
     {
       title: "耗时",
       width: 100,
@@ -1788,22 +1971,111 @@ function SuiteResult({
       },
     },
   ];
+  const capabilityColumns: ColumnProps<ProductCapabilityGroup>[] = [
+    {
+      title: "能力族",
+      dataIndex: "capability",
+      width: 240,
+      render: (value: string) => CAPABILITY_LABELS[value] ?? value,
+    },
+    { title: "Case", dataIndex: "total", width: 90 },
+    { title: "通过", dataIndex: "passed", width: 90 },
+    { title: "失败", dataIndex: "failed", width: 90 },
+    { title: "基础设施错误", dataIndex: "errors", width: 130 },
+    { title: "跳过", dataIndex: "skipped", width: 90 },
+  ];
+  const usageEntries = Object.entries(product?.usageTotals ?? {});
+  const costEntries = product?.costEntries ?? [];
 
   return (
     <div className="eval-results">
-      <div className="eval-score-strip">
-        {[
-          ["passed", "通过"],
-          ["failed", "失败"],
-          ["errors", "错误"],
-          ["skipped", "跳过"],
-        ].map(([field, label]) => (
-          <div key={field}>
-            <strong>{numberValue(summary[field]) ?? 0}</strong>
-            <span>{label}</span>
+      {product && (
+        <>
+          <Card size="small" title="产品能力判定">
+            <Space direction="vertical" size="small">
+              <Space wrap>
+                <Text bold>总体判定</Text>
+                {verdictTag(product.verdict)}
+                <Tag color="gray">不生成 Agent 智力总分</Tag>
+              </Space>
+              <Text type="secondary">{product.scoreScope}</Text>
+            </Space>
+          </Card>
+          <div className="eval-score-strip">
+            {[
+              ["passed", "通过"],
+              ["failed", "失败"],
+              ["errors", "错误"],
+              ["skipped", "跳过"],
+            ].map(([field, label]) => (
+              <div key={field}>
+                <strong>{numberValue(summary[field]) ?? 0}</strong>
+                <span>{label}</span>
+              </div>
+            ))}
+            <div>
+              <strong>{product.criticalViolations}</strong>
+              <span>Critical 违反</span>
+            </div>
+            <div>
+              <strong>{product.infrastructureErrors}</strong>
+              <span>基础设施错误</span>
+            </div>
           </div>
-        ))}
-      </div>
+          <Alert
+            type="warning"
+            showIcon
+            content={`可靠性说明：${product.reliabilityNote}`}
+          />
+          <Alert
+            type="warning"
+            showIcon
+            content={`模型漂移说明：${product.modelVersionNote}`}
+          />
+          <Card size="small" title="能力族结果">
+            <Table<ProductCapabilityGroup>
+              rowKey="capability"
+              data={product.capabilities}
+              columns={capabilityColumns}
+              pagination={false}
+              noDataElement={<Empty description="暂无能力族汇总" />}
+            />
+          </Card>
+          {(usageEntries.length > 0 || costEntries.length > 0) && (
+            <Card size="small" title="模型用量与成本">
+              <Descriptions
+                size="small"
+                column={2}
+                data={[
+                  ...usageEntries.map(([label, value]) => ({
+                    label,
+                    value: String(value),
+                  })),
+                  ...costEntries.map((item) => ({
+                    label: item.label,
+                    value: item.value,
+                  })),
+                ]}
+              />
+            </Card>
+          )}
+        </>
+      )}
+      {!product && (
+        <div className="eval-score-strip">
+          {[
+            ["passed", "通过"],
+            ["failed", "失败"],
+            ["errors", "错误"],
+            ["skipped", "跳过"],
+          ].map(([field, label]) => (
+            <div key={field}>
+              <strong>{numberValue(summary[field]) ?? 0}</strong>
+              <span>{label}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <Table<Record<string, unknown>>
         rowKey={(item) =>
           stringValue(item.trial_id, stringValue(item.case_ref, stringValue(item.case_id)))
@@ -1979,6 +2251,30 @@ function CatalogPane({
     { title: "Suite", dataIndex: "name", width: 180 },
     { title: "用途", dataIndex: "value", ellipsis: true },
     {
+      title: "执行",
+      width: 210,
+      render: (_: unknown, suite) => (
+        <Space wrap>
+          <Tag>{suite.execution_scope ?? suite.driver_id ?? suite.driver ?? "—"}</Tag>
+          <Tag color={suite.status === "planned" ? "orange" : "blue"}>
+            {suite.capability_status ?? suite.status ?? (suite.ready ? "ready" : "unavailable")}
+          </Tag>
+        </Space>
+      ),
+    },
+    {
+      title: "Preset",
+      width: 220,
+      render: (_: unknown, suite) => (
+        <Space wrap>
+          {(suite.presets ?? []).map((preset) => (
+            <Tag key={preset.preset_id}>{preset.preset_id}</Tag>
+          ))}
+          {!suite.presets?.length && <Text type="secondary">custom</Text>}
+        </Space>
+      ),
+    },
+    {
       title: "数据",
       width: 150,
       render: (_: unknown, suite) =>
@@ -2089,7 +2385,7 @@ function CatalogPane({
           pagination={false}
         />
       </Card>
-      <Card title="Benchmark Suites">
+      <Card title="Capability / Benchmark Suites">
         <Table<EvaluationSuite>
           rowKey="suite_id"
           size="small"

@@ -1,20 +1,30 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import multiprocessing
 import os
+import signal
 import shutil
 import time
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 import chatcopilot.evals.evaluations as evaluation_module
+import chatcopilot.evals.implementation_catalog as implementation_catalog
 import chatcopilot.evals.paths as evaluation_paths
+from chatcopilot.core.config import ChatConfig, LLMConfig, RoutingConfig, RuntimeConfig
+from chatcopilot.contracts.runtime import McpServerConfig
+from chatcopilot.contracts.subagents import SearchProviderSpec
 from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.evals.cli import main as evals_cli_main
 from chatcopilot.evals.artifact_ids import trial_artifact_id
+from chatcopilot.evals.capability_executor import CapabilityExecutionError
 from chatcopilot.evals.evaluations import (
+    EvaluationResult,
     EvaluationTarget,
     EvaluationTrial,
     TrialExecutionRequest,
@@ -36,6 +46,7 @@ from chatcopilot.evals.redaction import (
     redact_payload,
     sanitize_text,
 )
+from chatcopilot.evals.report import compare_reports
 
 
 @pytest.fixture(autouse=True)
@@ -103,7 +114,7 @@ def _trial(
         dimension=request.dimension,
         target_id=request.target.target_id,
         target_fingerprint=request.target.fingerprint,
-        executor=request.target.executor,
+        executor=(request.driver_id or request.target.executor),  # type: ignore[arg-type]
         backend=request.target.backend,
         model=request.target.model,
         reasoning_effort=request.target.reasoning_effort,
@@ -116,6 +127,89 @@ def _trial(
         started_at="2026-07-26T00:00:00+00:00",
         finished_at="2026-07-26T00:00:01+00:00",
     )
+
+
+def _supervisor_trial_request(tmp_path: Path) -> TrialExecutionRequest:
+    output = tmp_path / "supervised-trial"
+    output.mkdir()
+    request = TrialExecutionRequest(
+        evaluation_id="eval-supervised-trial",
+        kind="suite",
+        bot="",
+        output=output,
+        suite_id="ifeval",
+        profile="",
+        profile_case=None,
+        case=EvalCase(
+            case_id="supervisor-fixture",
+            input="fixture",
+            category="constraints",
+            expected_behavior="fixture",
+        ),
+        dimension="constraints",
+        target=EvaluationTarget(
+            target_id="suite",
+            label="Suite",
+            executor="dry_run",
+            backend="suite",
+            model="",
+            reasoning_effort="",
+            fingerprint="f" * 64,
+        ),
+        attempt=1,
+        order=1,
+        driver_id="dry_run",
+    )
+    evaluation_module._reset_trial_workspace(request)
+    return request
+
+
+def _process_tree_probe_executor(request: TrialExecutionRequest) -> EvaluationTrial:
+    """Spawn a long-lived grandchild for real supervisor containment tests."""
+
+    marker = Path(str(request.options["marker"]))
+    mode = str(request.options["mode"])
+    descendant_pid = os.fork()
+    if descendant_pid == 0:
+        if bool(request.options.get("escape_session", True)):
+            os.setsid()
+        marker.write_text(str(os.getpid()), encoding="utf-8")
+        time.sleep(60)
+        os._exit(0)
+    deadline = time.monotonic() + 5
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not marker.exists():
+        raise RuntimeError("process-tree probe descendant did not start")
+    if mode == "return":
+        return _trial(request)
+    if mode == "error":
+        raise RuntimeError("process-tree probe executor failed")
+    if mode == "block":
+        time.sleep(60)
+        return _trial(request)
+    raise ValueError(f"unknown process-tree probe mode {mode!r}")
+
+
+def _definition_drift_executor(_request: TrialExecutionRequest) -> EvaluationTrial:
+    raise evaluation_module._EvaluationDefinitionDrift("fixture definition changed")
+
+
+def _run_parent_death_probe(request: TrialExecutionRequest) -> None:
+    evaluation_module._execute_supervised_trial(
+        request,
+        budget=evaluation_module._TrialExecutionBudget(seconds=30, scope="case"),
+        cancel_check=None,
+        executor=_process_tree_probe_executor,
+    )
+
+
+def _assert_linux_process_reaped(pid: int, *, timeout: float = 5.0) -> None:
+    process_path = Path(f"/proc/{pid}")
+    deadline = time.monotonic() + timeout
+    while process_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not process_path.exists(), f"process {pid} remained after Trial cleanup"
 
 
 def _create_resumable_evaluation(
@@ -157,6 +251,7 @@ def _write_managed_comparison_bootstrap(
         "kind": parsed.kind,
         "bot_id": bot_id,
         "bot_spec": bot_spec,
+        "bot_spec_sha256": hashlib.sha256(b"managed-test-bot-spec").hexdigest(),
         "created_at": "2026-07-26T00:00:00+00:00",
         "profile_id": parsed.profile,
         "preset": parsed.preset,
@@ -191,7 +286,7 @@ def _write_managed_comparison_bootstrap(
                 "evaluation_id": parsed.evaluation_id,
                 "kind": parsed.kind,
                 "status": "running",
-                "pid": 123,
+                "pid": os.getpid(),
                 "started_at": "2026-07-26T00:00:01+00:00",
                 "finished_at": None,
                 "duration_seconds": None,
@@ -344,9 +439,20 @@ def test_managed_run_rejects_forged_or_used_service_bootstrap(
             {},
             "start request fingerprint is invalid",
         ),
+        (
+            {"bot_spec_sha256": "g" * 64},
+            {},
+            "BotSpec snapshot digest is invalid",
+        ),
         ({}, {"unexpected": True}, "state fields"),
         ({}, {"completed_trials": 1}, "state does not match"),
         ({}, {"error": "forged"}, "state does not match"),
+        (
+            {},
+            {"status": "queued", "pid": None, "started_at": None},
+            "state does not match",
+        ),
+        ({}, {"pid": os.getpid() + 100_000}, "state does not match"),
     ),
 )
 def test_managed_run_requires_exact_service_bootstrap_shape(
@@ -548,6 +654,292 @@ def test_dry_run_validation_selects_dry_run_executor() -> None:
     assert result["targets"][0]["executor"] == "dry_run"
 
 
+def test_product_dry_run_validates_static_capability_catalog_before_runtime_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        evaluation_module,
+        "load_evaluation_runtime",
+        lambda _bot: pytest.fail("dry-run must reject invalid definitions before runtime loading"),
+    )
+
+    result = validate_evaluation(
+        {
+            "kind": "suite",
+            "suite": "agentstrata-capabilities-v1",
+            "preset": "quick",
+            "dry_run": True,
+        }
+    )
+
+    assert result["ready"] is True
+    assert next(item for item in result["checks"] if item["code"] == "capability_catalog")[
+        "ok"
+    ] is True
+
+
+def test_product_dry_run_rejects_invalid_static_verifier_before_runtime_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject_definition(_definition: object) -> None:
+        raise CapabilityExecutionError(
+            "capability_verifier_not_registered", "fixture verifier is not registered"
+        )
+
+    monkeypatch.setattr(evaluation_module, "validate_capability_definition", reject_definition)
+    monkeypatch.setattr(
+        evaluation_module,
+        "load_evaluation_runtime",
+        lambda _bot: pytest.fail("invalid dry-run must not load runtime"),
+    )
+
+    result = validate_evaluation(
+        {
+            "kind": "suite",
+            "suite": "agentstrata-capabilities-v1",
+            "preset": "quick",
+            "dry_run": True,
+        }
+    )
+
+    assert result["ready"] is False
+    catalog = next(item for item in result["checks"] if item["code"] == "capability_catalog")
+    assert catalog["ok"] is False
+    assert "capability_verifier_not_registered" in catalog["detail"]
+    assert result["targets"] == []
+
+
+def test_product_dry_run_rejects_case_plugin_driver_drift_before_runtime_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = evaluation_module.load_case_definitions
+
+    def drifted_definitions(manifest: object) -> tuple[object, ...]:
+        definitions = original(manifest)  # type: ignore[arg-type]
+        return tuple(
+            replace(item, driver_id="agent_isolated")
+            if item.case_id == "dialogue-strict-json"
+            else item
+            for item in definitions
+        )
+
+    monkeypatch.setattr(evaluation_module, "load_case_definitions", drifted_definitions)
+    monkeypatch.setattr(
+        evaluation_module,
+        "load_evaluation_runtime",
+        lambda _bot: pytest.fail("definition drift must not load runtime"),
+    )
+
+    result = validate_evaluation(
+        {
+            "kind": "suite",
+            "suite": "agentstrata-capabilities-v1",
+            "preset": "quick",
+            "dry_run": True,
+        }
+    )
+
+    assert result["ready"] is False
+    catalog = next(item for item in result["checks"] if item["code"] == "capability_catalog")
+    assert catalog["ok"] is False
+    assert "plugin/driver differs" in catalog["detail"]
+
+
+def test_named_capability_preset_accepts_console_empty_case_list() -> None:
+    parsed = parse_evaluation_request(
+        {
+            "kind": "suite",
+            "bot": "bots/lingye-copilot-qq/bot.yaml",
+            "suite": "agentstrata-capabilities-v1",
+            "preset": "quick",
+            "case_ids": [],
+            "dry_run": True,
+        }
+    )
+
+    assert parsed.kind == "suite"
+    assert parsed.preset == "quick"
+    assert len(parsed.case_ids) == 10
+
+
+def _capability_case_preflight(
+    case_id: str,
+    *,
+    providers: tuple[SearchProviderSpec, ...] = (),
+    mcp_servers: tuple[McpServerConfig, ...] = (),
+    chat_model: str = "commercial-model",
+    chat_credential: str = "credential",
+) -> list[dict[str, object]]:
+    manifest = evaluation_module.get_manifest("agentstrata-capabilities-v1")
+    case = next(
+        item
+        for item in evaluation_module.get_cases(manifest.suite_id, auto_prepare=False)
+        if item.case_id == case_id
+    )
+    runtime = SimpleNamespace(
+        agent_backend="codex",
+        platform_type="qq",
+        tool_features=(),
+        memory_namespace="",
+        tool_packs=(),
+        exclude_tools=(),
+        subagents=SimpleNamespace(research_enabled=True, search_providers=providers),
+        mcp_servers=mcp_servers,
+    )
+    config = SimpleNamespace(
+        llm=SimpleNamespace(model=chat_model, api_key=chat_credential),
+    )
+    definitions = evaluation_module._validated_capability_definitions(manifest, (case,))
+    return evaluation_module._suite_case_preflight(
+        manifest=manifest,
+        cases=(case,),
+        runtime=runtime,
+        config=config,
+        capability_definitions=definitions,
+    )
+
+
+def test_product_search_preflight_distinguishes_web_from_explicit_experience_source() -> None:
+    web_provider = SearchProviderSpec(id="searxng", kind="searxng", enabled=True)
+
+    general = _capability_case_preflight(
+        "search-general-with-evidence", providers=(web_provider,)
+    )
+    general_case = next(item for item in general if item["code"].startswith("case_requirements:"))
+    assert general_case["ok"] is True
+
+    explicit = _capability_case_preflight(
+        "search-explicit-source", providers=(web_provider,)
+    )
+    explicit_case = next(item for item in explicit if item["code"].startswith("case_requirements:"))
+    assert explicit_case["ok"] is False
+    assert "search_source:experience" in str(explicit_case["detail"])
+    assert "tool:search_information" in str(explicit_case["detail"])
+
+
+def test_product_search_preflight_requires_declared_direct_provider_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = SearchProviderSpec(
+        id="tavily",
+        kind="tavily",
+        enabled=True,
+        credential_env="TEST_EVAL_TAVILY_KEY",
+    )
+
+    missing = _capability_case_preflight(
+        "search-general-with-evidence", providers=(provider,)
+    )
+    missing_case = next(item for item in missing if item["code"].startswith("case_requirements:"))
+    assert missing_case["ok"] is False
+    assert "search_source:web" in str(missing_case["detail"])
+
+    monkeypatch.setenv("TEST_EVAL_TAVILY_KEY", "configured-test-key")
+    ready = _capability_case_preflight(
+        "search-general-with-evidence", providers=(provider,)
+    )
+    ready_case = next(item for item in ready if item["code"].startswith("case_requirements:"))
+    assert ready_case["ok"] is True
+
+
+def test_product_search_preflight_accepts_enabled_trusted_experience_mcp() -> None:
+    checks = _capability_case_preflight(
+        "search-explicit-source",
+        mcp_servers=(
+            McpServerConfig(
+                id="xiaohongshu",
+                catalog_ref="xiaohongshu-search",
+                enabled=True,
+                risk="search",
+                search_only_tools=("search_feeds",),
+            ),
+        ),
+    )
+
+    case_check = next(item for item in checks if item["code"].startswith("case_requirements:"))
+    assert case_check["ok"] is True
+
+
+def test_product_subagent_preflight_requires_chat_llm_for_codex_main_backend() -> None:
+    missing = _capability_case_preflight(
+        "subagent-structured-result", chat_model="", chat_credential=""
+    )
+    missing_case = next(item for item in missing if item["code"].startswith("case_requirements:"))
+    assert missing_case["ok"] is False
+    assert "chat_llm_model" in str(missing_case["detail"])
+    assert "chat_llm_credential" in str(missing_case["detail"])
+
+    ready = _capability_case_preflight("subagent-structured-result")
+    ready_case = next(item for item in ready if item["code"].startswith("case_requirements:"))
+    assert ready_case["ok"] is True
+
+
+def test_managed_suite_bootstrap_includes_complete_effective_request(
+    tmp_path: Path,
+) -> None:
+    request = {
+        "evaluation_id": "eval-managed-suite",
+        "kind": "suite",
+        "bot": "bots/lingye-copilot-qq/bot.yaml",
+        "suite": "ifeval",
+        "preset": "custom",
+        "case_ids": ["ifeval-json-format"],
+        "repetitions": 2,
+        "max_wall_seconds": 90,
+        "seed": 7,
+        "options": {},
+        "confirm_external_write": False,
+        "dry_run": True,
+        "llm_judge": False,
+    }
+    parsed = parse_evaluation_request(request)
+    validation = validate_evaluation(request)
+    targets = tuple(EvaluationTarget(**item) for item in validation["targets"])
+    output = tmp_path / "eval-managed-suite"
+    output.mkdir(mode=0o700)
+    stored_request = {
+        **evaluation_module._expected_bootstrap_request(parsed, targets),
+        "bot_spec_sha256": hashlib.sha256(b"managed-test-bot-spec").hexdigest(),
+        "created_at": "2026-08-17T00:00:00+00:00",
+        "core_request": evaluation_module._runnable_request_dict(parsed),
+    }
+    (output / "request.json").write_text(json.dumps(stored_request), encoding="utf-8")
+    (output / "state.json").write_text(
+        json.dumps(
+            {
+                "evaluation_id": parsed.evaluation_id,
+                "kind": parsed.kind,
+                "status": "running",
+                "pid": os.getpid(),
+                "started_at": "2026-08-17T00:00:01+00:00",
+                "finished_at": None,
+                "duration_seconds": None,
+                "completed_trials": 0,
+                "planned_trials": 2,
+                "error": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    if os.name != "nt":
+        for artifact in output.iterdir():
+            artifact.chmod(0o600)
+
+    result = run_evaluation(
+        request,
+        output=output,
+        trial_executor=_trial,
+        managed=True,
+    )
+
+    assert result.status == "completed"
+    assert len(result.trials) == 2
+    assert stored_request["preset"] == "custom"
+    assert stored_request["repetitions"] == 2
+    assert stored_request["max_wall_seconds"] == 90.0
+    assert stored_request["seed"] == 7
+
+
 def test_orchestrator_uses_seeded_complete_target_groups_and_canonical_state(
     tmp_path: Path,
 ) -> None:
@@ -614,6 +1006,588 @@ def test_budget_stops_only_before_next_complete_target_group(tmp_path: Path) -> 
     assert result.summary["paired_attempt_count"] == 1
 
 
+def test_production_trial_uses_spawn_supervisor(tmp_path: Path) -> None:
+    output = tmp_path / "eval-supervised-spawn"
+
+    result = run_evaluation(
+        {
+            "evaluation_id": "eval-supervised-spawn",
+            "kind": "suite",
+            "suite": "ifeval",
+            "preset": "custom",
+            "case_ids": ["ifeval-json-format"],
+            "repetitions": 1,
+            "max_wall_seconds": 30,
+            "seed": 17,
+            "dry_run": True,
+        },
+        output=output,
+    )
+
+    assert result.status == "completed"
+    assert len(result.trials) == 1
+    assert result.trials[0].outcome == "skipped"
+    assert result.trials[0].executor == "dry_run"
+
+
+def test_supervisor_preserves_definition_drift_as_a_fail_closed_signal(tmp_path: Path) -> None:
+    request = _supervisor_trial_request(tmp_path)
+
+    with pytest.raises(
+        evaluation_module._EvaluationDefinitionDrift,
+        match="fixture definition changed",
+    ):
+        evaluation_module._execute_supervised_trial(
+            request,
+            budget=evaluation_module._TrialExecutionBudget(seconds=10, scope="case"),
+            cancel_check=None,
+            executor=_definition_drift_executor,
+        )
+
+
+def test_definition_drift_discards_target_group_without_checkpoint(tmp_path: Path) -> None:
+    output = tmp_path / "eval-definition-drift"
+
+    result = run_evaluation(
+        {
+            "evaluation_id": "eval-definition-drift",
+            "kind": "suite",
+            "suite": "ifeval",
+            "preset": "custom",
+            "case_ids": ["ifeval-json-format"],
+            "dry_run": True,
+        },
+        output=output,
+        trial_executor=_definition_drift_executor,
+    )
+
+    assert result.status == "error"
+    assert result.trials == ()
+    assert "evaluation definition drift" in result.error
+    events = [
+        json.loads(line)
+        for line in (output / "progress.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert "evaluation_definition_drift" in {event["event"] for event in events}
+    assert not list((output / "trials").glob("*.json"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group supervision")
+def test_supervisor_hard_timeout_terminates_active_trial_process(tmp_path: Path) -> None:
+    request = _supervisor_trial_request(tmp_path)
+    marker = request.output / "workspaces" / request.case.case_id / "worker.pid"
+    descendant_marker = marker.with_name("descendant.pid")
+
+    def blocking_executor(trial_request: TrialExecutionRequest) -> EvaluationTrial:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(os.getpid()), encoding="utf-8")
+        descendant_pid = os.fork()
+        if descendant_pid == 0:
+            descendant_marker.write_text(str(os.getpid()), encoding="utf-8")
+            time.sleep(60)
+            os._exit(0)
+        while not descendant_marker.exists():
+            time.sleep(0.01)
+        time.sleep(60)
+        return _trial(trial_request)
+
+    with pytest.raises(
+        evaluation_module._TrialExecutionDeadlineExceeded,
+        match="case execution deadline exceeded",
+    ):
+        evaluation_module._execute_supervised_trial(
+            request,
+            budget=evaluation_module._TrialExecutionBudget(seconds=0.25, scope="case"),
+            cancel_check=None,
+            executor=blocking_executor,
+            _context=multiprocessing.get_context("fork"),
+        )
+
+    worker_pid = int(marker.read_text(encoding="utf-8"))
+    descendant_pid = int(descendant_marker.read_text(encoding="utf-8"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(worker_pid, 0)
+    descendant_state_path = Path(f"/proc/{descendant_pid}/stat")
+    deadline = time.monotonic() + 2
+    while descendant_state_path.exists() and time.monotonic() < deadline:
+        state = descendant_state_path.read_text(encoding="utf-8").split()[2]
+        if state == "Z":
+            break
+        time.sleep(0.02)
+    if descendant_state_path.exists():
+        assert descendant_state_path.read_text(encoding="utf-8").split()[2] == "Z"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group supervision")
+def test_supervisor_cancel_terminates_in_flight_trial(tmp_path: Path) -> None:
+    request = _supervisor_trial_request(tmp_path)
+    marker = request.output / "workspaces" / request.case.case_id / "cancel.pid"
+
+    def blocking_executor(trial_request: TrialExecutionRequest) -> EvaluationTrial:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(os.getpid()), encoding="utf-8")
+        time.sleep(60)
+        return _trial(trial_request)
+
+    with pytest.raises(
+        evaluation_module._TrialExecutionCancelled,
+        match="cancelled during an active Trial",
+    ):
+        evaluation_module._execute_supervised_trial(
+            request,
+            budget=evaluation_module._TrialExecutionBudget(seconds=10, scope="case"),
+            cancel_check=marker.exists,
+            executor=blocking_executor,
+            _context=multiprocessing.get_context("fork"),
+        )
+
+    worker_pid = int(marker.read_text(encoding="utf-8"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(worker_pid, 0)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group supervision")
+def test_supervisor_waits_for_cleanup_ready_before_immediate_cancel(tmp_path: Path) -> None:
+    request = _supervisor_trial_request(tmp_path)
+
+    with pytest.raises(
+        evaluation_module._TrialExecutionCancelled,
+        match="cancelled during an active Trial",
+    ):
+        evaluation_module._execute_supervised_trial(
+            request,
+            budget=evaluation_module._TrialExecutionBudget(seconds=10, scope="case"),
+            cancel_check=lambda: True,
+            executor=_trial,
+            _context=multiprocessing.get_context("fork"),
+        )
+
+
+@pytest.mark.skipif(
+    not os.path.isdir("/proc/self/task"),
+    reason="Linux subreaper supervision requires /proc",
+)
+@pytest.mark.parametrize("mode", ("return", "error"))
+def test_spawn_supervisor_reaps_setsid_descendant_after_terminal_frame(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    request = _supervisor_trial_request(tmp_path)
+    marker = request.output / f"{mode}-escaped-descendant.pid"
+    request = replace(
+        request,
+        options={"marker": str(marker), "mode": mode, "escape_session": True},
+    )
+
+    if mode == "error":
+        with pytest.raises(RuntimeError, match="process-tree probe executor failed"):
+            evaluation_module._execute_supervised_trial(
+                request,
+                budget=evaluation_module._TrialExecutionBudget(seconds=10, scope="case"),
+                cancel_check=None,
+                executor=_process_tree_probe_executor,
+            )
+    else:
+        trial = evaluation_module._execute_supervised_trial(
+            request,
+            budget=evaluation_module._TrialExecutionBudget(seconds=10, scope="case"),
+            cancel_check=None,
+            executor=_process_tree_probe_executor,
+        )
+        assert trial.outcome == "passed"
+
+    _assert_linux_process_reaped(int(marker.read_text(encoding="utf-8")))
+
+
+@pytest.mark.skipif(
+    not os.path.isdir("/proc/self/task"),
+    reason="Linux subreaper supervision requires /proc",
+)
+def test_spawn_supervisor_timeout_reaps_setsid_descendant(tmp_path: Path) -> None:
+    request = _supervisor_trial_request(tmp_path)
+    marker = request.output / "timeout-escaped-descendant.pid"
+    request = replace(
+        request,
+        options={"marker": str(marker), "mode": "block", "escape_session": True},
+    )
+
+    with pytest.raises(evaluation_module._TrialExecutionDeadlineExceeded):
+        evaluation_module._execute_supervised_trial(
+            request,
+            budget=evaluation_module._TrialExecutionBudget(seconds=1.5, scope="case"),
+            cancel_check=None,
+            executor=_process_tree_probe_executor,
+        )
+
+    _assert_linux_process_reaped(int(marker.read_text(encoding="utf-8")))
+
+
+@pytest.mark.skipif(
+    not os.path.isdir("/proc/self/task"),
+    reason="Linux subreaper supervision requires /proc",
+)
+def test_spawn_supervisor_cancel_reaps_setsid_descendant(tmp_path: Path) -> None:
+    request = _supervisor_trial_request(tmp_path)
+    marker = request.output / "cancel-escaped-descendant.pid"
+    request = replace(
+        request,
+        options={"marker": str(marker), "mode": "block", "escape_session": True},
+    )
+
+    with pytest.raises(evaluation_module._TrialExecutionCancelled):
+        evaluation_module._execute_supervised_trial(
+            request,
+            budget=evaluation_module._TrialExecutionBudget(seconds=10, scope="case"),
+            cancel_check=marker.exists,
+            executor=_process_tree_probe_executor,
+        )
+
+    _assert_linux_process_reaped(int(marker.read_text(encoding="utf-8")))
+
+
+@pytest.mark.skipif(
+    not os.path.isdir("/proc/self/task"),
+    reason="Linux subreaper supervision requires /proc",
+)
+def test_trial_supervisor_parent_death_reaps_setsid_descendant(tmp_path: Path) -> None:
+    request = _supervisor_trial_request(tmp_path)
+    marker = request.output / "parent-death-escaped-descendant.pid"
+    request = replace(
+        request,
+        options={"marker": str(marker), "mode": "block", "escape_session": True},
+    )
+    context = multiprocessing.get_context("fork")
+    parent = context.Process(target=_run_parent_death_probe, args=(request,), daemon=False)
+    parent.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists(), "parent-death probe descendant did not start"
+        descendant_pid = int(marker.read_text(encoding="utf-8"))
+        assert parent.pid is not None
+        child_values = Path(f"/proc/{parent.pid}/task/{parent.pid}/children").read_text(
+            encoding="ascii"
+        )
+        supervisor_pids = [
+            int(value)
+            for value in child_values.split()
+            if b"spawn_main" in Path(f"/proc/{value}/cmdline").read_bytes()
+        ]
+        assert len(supervisor_pids) == 1
+        os.kill(parent.pid, signal.SIGKILL)
+        parent.join(timeout=5)
+        assert not parent.is_alive()
+        _assert_linux_process_reaped(supervisor_pids[0])
+        _assert_linux_process_reaped(descendant_pid)
+    finally:
+        if parent.is_alive():
+            parent.kill()
+            parent.join(timeout=5)
+        parent.close()
+
+
+def test_trial_ipc_uses_bounded_canonical_json_bytes_only() -> None:
+    class SendBytesOnly:
+        def __init__(self) -> None:
+            self.encoded = b""
+
+        def send_bytes(self, encoded: bytes) -> None:
+            self.encoded = encoded
+
+        def send(self, _payload: object) -> None:
+            raise AssertionError("pickle send must not be used")
+
+    sender = SendBytesOnly()
+    evaluation_module._send_trial_ipc_frame(sender, {"pid": 7, "kind": "ready"})
+    assert sender.encoded == b'{"kind":"ready","pid":7}'
+
+    class ReceiveBytesOnly:
+        def recv_bytes(self, maxlength: int) -> bytes:
+            assert maxlength == evaluation_module._MAX_TRIAL_IPC_FRAME_BYTES
+            return sender.encoded
+
+        def recv(self) -> object:
+            raise AssertionError("pickle recv must not be used")
+
+    assert evaluation_module._recv_trial_ipc_frame(ReceiveBytesOnly()) == {
+        "kind": "ready",
+        "pid": 7,
+    }
+    with pytest.raises(ValueError, match="exceeds"):
+        evaluation_module._encode_trial_ipc_frame(
+            {"blob": "x" * evaluation_module._MAX_TRIAL_IPC_FRAME_BYTES}
+        )
+
+    class RawFrame:
+        def __init__(self, encoded: bytes) -> None:
+            self.encoded = encoded
+
+        def recv_bytes(self, maxlength: int) -> bytes:
+            assert maxlength == evaluation_module._MAX_TRIAL_IPC_FRAME_BYTES
+            return self.encoded
+
+    with pytest.raises(ValueError, match="canonical"):
+        evaluation_module._recv_trial_ipc_frame(RawFrame(b'{"pid":7, "kind":"ready"}'))
+    with pytest.raises(ValueError, match="valid UTF-8 JSON"):
+        evaluation_module._recv_trial_ipc_frame(RawFrame(b'{"kind":NaN}'))
+    with pytest.raises(ValueError, match="valid UTF-8 JSON"):
+        evaluation_module._recv_trial_ipc_frame(RawFrame(b'{"kind":"ready","kind":"ready"}'))
+
+
+def test_unproven_supervisor_cleanup_is_fatal_and_process_is_not_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _supervisor_trial_request(tmp_path)
+
+    class FakeConnection:
+        def close(self) -> None:
+            pass
+
+        def poll(self, timeout: float) -> bool:
+            time.sleep(timeout)
+            return False
+
+    class StuckProcess:
+        pid = 987654
+        exitcode = None
+
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def start(self) -> None:
+            pass
+
+        def is_alive(self) -> bool:
+            return True
+
+        def join(self, timeout: float = 0) -> None:
+            del timeout
+
+        def terminate(self) -> None:
+            pass
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    process = StuckProcess()
+
+    class FakeContext:
+        def Pipe(self, *, duplex: bool) -> tuple[FakeConnection, FakeConnection]:
+            assert duplex is False
+            return FakeConnection(), FakeConnection()
+
+        def Process(self, **_kwargs: object) -> StuckProcess:
+            return process
+
+    monkeypatch.setattr(evaluation_module.os, "killpg", lambda _pid, _signal: None)
+    monkeypatch.setattr(evaluation_module, "_TRIAL_TERMINATE_GRACE_SECONDS", 0.01)
+
+    with pytest.raises(evaluation_module._TrialCleanupFailed, match="did not finish"):
+        evaluation_module._execute_supervised_trial(
+            request,
+            budget=evaluation_module._TrialExecutionBudget(seconds=10, scope="case"),
+            cancel_check=lambda: True,
+            _context=FakeContext(),
+        )
+
+    assert process.close_calls == 0
+
+
+def test_in_flight_evaluation_budget_discards_uncheckpointed_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "eval-supervised-wall-timeout"
+
+    def deadline(*_args: object, **_kwargs: object) -> EvaluationTrial:
+        raise evaluation_module._TrialExecutionDeadlineExceeded(
+            scope="evaluation",
+            seconds=0.25,
+        )
+
+    monkeypatch.setattr(evaluation_module, "_execute_supervised_trial", deadline)
+    result = run_evaluation(
+        {
+            "evaluation_id": "eval-supervised-wall-timeout",
+            "kind": "suite",
+            "suite": "ifeval",
+            "preset": "custom",
+            "case_ids": ["ifeval-json-format"],
+            "repetitions": 1,
+            "max_wall_seconds": 30,
+            "seed": 17,
+            "dry_run": True,
+        },
+        output=output,
+    )
+
+    assert result.status == "partial"
+    assert result.trials == ()
+    assert not any((output / "workspaces").iterdir())
+    progress = (output / "progress.jsonl").read_text(encoding="utf-8")
+    assert '"event":"evaluation_budget_exhausted"' in progress
+    assert '"event":"target_group_discarded"' in progress
+
+
+def test_in_flight_case_timeout_is_an_infrastructure_error_trial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "eval-supervised-case-timeout"
+
+    def deadline(*_args: object, **_kwargs: object) -> EvaluationTrial:
+        raise evaluation_module._TrialExecutionDeadlineExceeded(
+            scope="case",
+            seconds=0.25,
+        )
+
+    monkeypatch.setattr(evaluation_module, "_execute_supervised_trial", deadline)
+    result = run_evaluation(
+        {
+            "evaluation_id": "eval-supervised-case-timeout",
+            "kind": "suite",
+            "suite": "ifeval",
+            "preset": "custom",
+            "case_ids": ["ifeval-json-format"],
+            "repetitions": 1,
+            "max_wall_seconds": 30,
+            "seed": 17,
+            "dry_run": True,
+        },
+        output=output,
+    )
+
+    assert result.status == "completed"
+    assert len(result.trials) == 1
+    assert result.trials[0].outcome == "error"
+    assert "case execution deadline exceeded" in result.trials[0].error
+
+
+def test_cleanup_failure_is_fatal_quarantines_workspace_and_rejects_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "eval-supervisor-cleanup-failed"
+    calls = 0
+
+    def cleanup_failed(*_args: object, **_kwargs: object) -> EvaluationTrial:
+        nonlocal calls
+        calls += 1
+        raise evaluation_module._TrialCleanupFailed("descendant cleanup was not proven")
+
+    monkeypatch.setattr(evaluation_module, "_execute_supervised_trial", cleanup_failed)
+    request = {
+        "evaluation_id": "eval-supervisor-cleanup-failed",
+        "kind": "suite",
+        "suite": "ifeval",
+        "preset": "custom",
+        "case_ids": ["ifeval-json-format"],
+        "repetitions": 2,
+        "max_wall_seconds": 30,
+        "seed": 17,
+        "dry_run": True,
+    }
+
+    result = run_evaluation(request, output=output)
+
+    assert result.status == "error"
+    assert result.trials == ()
+    assert result.error.startswith(evaluation_module._TRIAL_CLEANUP_ERROR_PREFIX)
+    assert calls == 1
+    assert any((output / "workspaces").iterdir())
+    progress = (output / "progress.jsonl").read_text(encoding="utf-8")
+    assert '"event":"trial_cleanup_failed"' in progress
+    assert '"event":"target_group_quarantined"' in progress
+    assert '"event":"target_group_discarded"' not in progress
+
+    with pytest.raises(ValueError, match="quarantined Evaluation"):
+        run_evaluation(request, output=output, resume=True)
+
+
+def test_trial_authority_mutation_is_indeterminate_and_quarantined(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "eval-artifact-integrity-violation"
+    request = _custom_request(
+        evaluation_id="eval-artifact-integrity-violation",
+        targets=["native"],
+    )
+
+    def mutate_authority(trial_request: TrialExecutionRequest) -> EvaluationTrial:
+        (trial_request.output / "request.json").write_text(
+            '{"tampered":true}\n',
+            encoding="utf-8",
+        )
+        return _trial(trial_request)
+
+    result = run_evaluation(
+        request,
+        output=output,
+        trial_executor=mutate_authority,
+    )
+
+    assert result.status == "error"
+    assert result.trials == ()
+    assert result.error.startswith(evaluation_module._ARTIFACT_INTEGRITY_ERROR_PREFIX)
+    assert any((output / "workspaces").iterdir())
+    assert '"event":"target_group_quarantined"' in (
+        output / "progress.jsonl"
+    ).read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError, match="quarantined Evaluation"):
+        run_evaluation(request, output=output, resume=True)
+
+
+def test_core_converts_oversized_trial_evidence_to_indeterminate_error(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "eval-oversized-evidence"
+
+    def execute(request: TrialExecutionRequest) -> EvaluationTrial:
+        return replace(
+            _trial(request),
+            evidence={"blob": "x" * (evaluation_module._MAX_TRIAL_STRING_CHARS + 1)},
+        )
+
+    result = run_evaluation(
+        _custom_request(
+            evaluation_id="eval-oversized-evidence",
+            targets=["native"],
+        ),
+        output=output,
+        trial_executor=execute,
+    )
+
+    assert result.status == "completed"
+    assert len(result.trials) == 1
+    assert result.trials[0].outcome == "error"
+    assert result.trials[0].passed is False
+    assert "Core integrity limits" in result.trials[0].error
+
+
+def test_core_rejects_recursive_trial_evidence_before_redaction(tmp_path: Path) -> None:
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+    output = tmp_path / "eval-recursive-evidence"
+
+    def execute(request: TrialExecutionRequest) -> EvaluationTrial:
+        return replace(_trial(request), evidence=recursive)
+
+    result = run_evaluation(
+        _custom_request(
+            evaluation_id="eval-recursive-evidence",
+            targets=["native"],
+        ),
+        output=output,
+        trial_executor=execute,
+    )
+
+    assert result.trials[0].outcome == "error"
+    assert "recursive mapping" in result.trials[0].error
+
+
 def test_cancel_and_resume_operate_only_at_complete_target_group_boundaries(
     tmp_path: Path,
 ) -> None:
@@ -658,6 +1632,345 @@ def test_cancel_and_resume_operate_only_at_complete_target_group_boundaries(
     assert calls == [(2, "codex"), (2, "native")]
     assert resumed.started_at == cancelled.started_at
     assert resumed.duration_seconds >= cancelled.duration_seconds
+
+
+def test_suite_resume_accepts_checkpointed_attempts_above_one(tmp_path: Path) -> None:
+    request = {
+        "evaluation_id": "eval-capability-repetitions",
+        "kind": "suite",
+        "suite": "agentstrata-capabilities-v1",
+        "preset": "custom",
+        "case_ids": ["dialogue-strict-json"],
+        "repetitions": 3,
+        "max_wall_seconds": 0,
+        "seed": 17,
+        "dry_run": True,
+    }
+    checks = 0
+
+    def cancel() -> bool:
+        nonlocal checks
+        checks += 1
+        return checks > 2
+
+    output = tmp_path / "eval-capability-repetitions"
+    partial = run_evaluation(
+        request,
+        output=output,
+        cancel_check=cancel,
+        trial_executor=_trial,
+    )
+
+    assert partial.status == "cancelled"
+    assert [trial.attempt for trial in partial.trials] == [1, 2]
+
+    resumed = run_evaluation(
+        request,
+        output=output,
+        resume=True,
+        trial_executor=_trial,
+    )
+
+    assert resumed.status == "completed"
+    assert [trial.attempt for trial in resumed.trials] == [1, 2, 3]
+
+
+def test_suite_resume_validates_the_case_driver_not_the_mixed_target_driver() -> None:
+    request = parse_evaluation_request(
+        {
+            "evaluation_id": "eval-mixed-driver-resume",
+            "kind": "suite",
+            "bot": "bots/lingye-copilot-qq/bot.yaml",
+            "suite": "agentstrata-capabilities-v1",
+            "preset": "custom",
+            "case_ids": [
+                "dialogue-strict-json",
+                "access-nickname-spoof-denied",
+            ],
+            "repetitions": 2,
+        }
+    )
+    assert request.kind == "suite"
+    cases = evaluation_module._execution_cases(request)
+    acp_case = next(case for case in cases if case.case_id == "access-nickname-spoof-denied")
+    target = EvaluationTarget(
+        target_id="codex-configured",
+        label="Codex configured",
+        executor="agent_configured",
+        backend="codex",
+        model="configured-model",
+        reasoning_effort="medium",
+        fingerprint="a" * 64,
+    )
+    execution = evaluation_module._trial_request(
+        request=request,
+        output=Path("reports/evals/manual/eval-mixed-driver-resume"),
+        case=acp_case,
+        target=target,
+        attempt=1,
+        order=1,
+        config_snapshot={
+            "definition_snapshot": {"schema": "test-frozen-definition"},
+            "definition_fingerprint": "b" * 64,
+            "environment_fingerprint": "c" * 64,
+        },
+    )
+    trial = replace(
+        _trial(execution),
+        trial_id=trial_artifact_id(
+            acp_case.case_id,
+            attempt=1,
+            target_fingerprint=target.fingerprint,
+        ),
+    )
+
+    resumed = evaluation_module._validated_resume_trials(
+        [evaluation_module.to_jsonable(trial)],
+        request=request,
+        targets=(target,),
+        cases=cases,
+    )
+
+    assert resumed[0].executor == "acp_scenario"
+
+
+def test_suite_resume_rejects_plugin_definition_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = {
+        "evaluation_id": "eval-capability-definition-drift",
+        "kind": "suite",
+        "suite": "agentstrata-capabilities-v1",
+        "preset": "custom",
+        "case_ids": ["dialogue-strict-json"],
+        "repetitions": 2,
+        "dry_run": True,
+    }
+    checks = 0
+
+    def cancel() -> bool:
+        nonlocal checks
+        checks += 1
+        return checks > 1
+
+    output = tmp_path / "eval-capability-definition-drift"
+    partial = run_evaluation(
+        request,
+        output=output,
+        cancel_check=cancel,
+        trial_executor=_trial,
+    )
+    assert partial.status == "cancelled"
+    original = evaluation_module.suite_definition_snapshot
+
+    def drifted_snapshot(*args: object, **kwargs: object) -> dict:
+        snapshot = original(*args, **kwargs)
+        return {**snapshot, "test_plugin_drift": True}
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "suite_definition_snapshot",
+        drifted_snapshot,
+    )
+
+    with pytest.raises(ValueError, match="definition_fingerprint"):
+        run_evaluation(
+            request,
+            output=output,
+            resume=True,
+            trial_executor=_trial,
+        )
+
+
+def test_comparison_resume_rejects_execution_implementation_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _custom_request(
+        evaluation_id="eval-comparison-implementation-drift",
+        repetitions=2,
+    )
+    output = tmp_path / "eval-comparison-implementation-drift"
+    _create_resumable_evaluation(request, output)
+    original = evaluation_module.comparison_implementation_snapshot
+
+    def drifted_snapshot() -> dict[str, object]:
+        snapshot = original()
+        modules = dict(snapshot["modules"])  # type: ignore[arg-type]
+        modules["chatcopilot.evals.isolated_executor"] = "f" * 64
+        return {**snapshot, "modules": modules}
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "comparison_implementation_snapshot",
+        drifted_snapshot,
+    )
+
+    with pytest.raises(ValueError, match="case_hash"):
+        run_evaluation(
+            request,
+            output=output,
+            resume=True,
+            trial_executor=_trial,
+        )
+
+
+def test_comparison_report_rejects_execution_implementation_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_output = tmp_path / "eval-comparison-implementation-base"
+    new_output = tmp_path / "eval-comparison-implementation-new"
+    run_evaluation(
+        _custom_request(evaluation_id="eval-comparison-implementation-base"),
+        output=base_output,
+        trial_executor=_trial,
+    )
+    original = evaluation_module.comparison_implementation_snapshot
+
+    def drifted_snapshot() -> dict[str, object]:
+        snapshot = original()
+        modules = dict(snapshot["modules"])  # type: ignore[arg-type]
+        modules["chatcopilot.evals.profiles"] = "e" * 64
+        return {**snapshot, "modules": modules}
+
+    monkeypatch.setattr(
+        evaluation_module,
+        "comparison_implementation_snapshot",
+        drifted_snapshot,
+    )
+    run_evaluation(
+        _custom_request(evaluation_id="eval-comparison-implementation-new"),
+        output=new_output,
+        trial_executor=_trial,
+    )
+
+    with pytest.raises(ValueError, match="case_hash"):
+        compare_reports(base_output, new_output)
+
+
+def test_qq_preflight_topology_is_redacted_and_bound_to_definition_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = "ws://127.0.0.1:33001"
+    token = "q" * 48
+    sender_id = "12345001"
+    bot_id = "12345002"
+    group_id = "12345003"
+    whitelist_env = "TEST_EVAL_QQ_ALLOWLIST"
+    runtime = SimpleNamespace(
+        access=SimpleNamespace(enabled=True, whitelist_env=whitelist_env),
+        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST_EVAL_QQ")),
+    )
+    config = SimpleNamespace(llm=SimpleNamespace(api_key="fallback-eval-key-123456"))
+    monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)
+    monkeypatch.setattr(evaluation_module, "load_config", lambda **_kwargs: config)
+    for key, value in {
+        whitelist_env: sender_id,
+        "QQ_ACCOUNT": bot_id,
+        "CHATCOPILOT_EVAL_QQ_ENABLED": "true",
+        "CHATCOPILOT_EVAL_QQ_SENDER_WS_URL": endpoint,
+        "CHATCOPILOT_EVAL_QQ_SENDER_ACCESS_TOKEN": token,
+        "CHATCOPILOT_EVAL_QQ_SENDER_ID": sender_id,
+        "CHATCOPILOT_EVAL_QQ_GROUP_ID": group_id,
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    request = parse_evaluation_request(
+        {
+            "evaluation_id": "eval-qq-definition-identity",
+            "kind": "suite",
+            "bot": "configured-qq-bot",
+            "suite": "agentstrata-capabilities-v1",
+            "preset": "custom",
+            "case_ids": ["qq-private-text-roundtrip"],
+            "confirm_external_write": True,
+        }
+    )
+    cases = evaluation_module._execution_cases(request)
+    target = EvaluationTarget(
+        target_id="qq-live-configured",
+        label="QQ live configured",
+        executor="qq_live",
+        backend="codex",
+        model="",
+        reasoning_effort="",
+        fingerprint="a" * 64,
+    )
+    first = evaluation_module._config_snapshot(request, (target,), cases)
+    topology = first["private_runtime_configuration"]["qq_topology"]
+    serialized = json.dumps(first, ensure_ascii=False, sort_keys=True)
+
+    assert set(topology) == {
+        "endpoint_sha256",
+        "token_hmac",
+        "sender_hmac",
+        "bot_hmac",
+        "group_hmac",
+        "sender_allowlisted",
+        "max_messages",
+        "max_message_chars",
+        "max_image_bytes",
+        "max_timeout_seconds",
+    }
+    assert topology["sender_allowlisted"] is True
+    assert all(
+        len(topology[key]) == 64
+        for key in (
+            "endpoint_sha256",
+            "token_hmac",
+            "sender_hmac",
+            "bot_hmac",
+            "group_hmac",
+        )
+    )
+    for private_value in (endpoint, token, sender_id, bot_id, group_id):
+        assert private_value not in serialized
+    assert first["definition_snapshot"]["environment_identity"] == {
+        "private_runtime_configuration_sha256": first["environment_fingerprint"]
+    }
+
+    monkeypatch.setenv("CHATCOPILOT_EVAL_QQ_GROUP_ID", "12345004")
+    drifted = evaluation_module._config_snapshot(request, (target,), cases)
+    assert (
+        first["definition_snapshot"]["base_fingerprint"]
+        == (drifted["definition_snapshot"]["base_fingerprint"])
+    )
+    assert first["environment_fingerprint"] != drifted["environment_fingerprint"]
+    assert first["definition_fingerprint"] != drifted["definition_fingerprint"]
+
+
+def test_private_runtime_fingerprint_binds_group_allowlist_without_persisting_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_env = "TEST_EVAL_USER_ALLOWLIST"
+    group_env = "TEST_EVAL_GROUP_ALLOWLIST"
+    runtime = SimpleNamespace(
+        access=SimpleNamespace(
+            enabled=True,
+            whitelist_env=user_env,
+            group_whitelist_env=group_env,
+        ),
+        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST_EVAL_GROUP")),
+    )
+    config = SimpleNamespace(llm=SimpleNamespace(api_key="fallback-eval-key-123456"))
+    monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)
+    monkeypatch.setattr(evaluation_module, "load_config", lambda **_kwargs: config)
+    monkeypatch.setenv(user_env, "user-private-17")
+    monkeypatch.setenv(group_env, "group-private-23")
+
+    first = evaluation_module._private_runtime_configuration_snapshot("configured-bot")
+    serialized = json.dumps(first, ensure_ascii=False, sort_keys=True)
+
+    assert first["group_whitelist_configured"] is True
+    assert first["group_whitelist_entry_count"] == 1
+    assert "user-private-17" not in serialized
+    assert "group-private-23" not in serialized
+
+    monkeypatch.setenv(group_env, "group-private-24")
+    drifted = evaluation_module._private_runtime_configuration_snapshot("configured-bot")
+    assert first["identity_hmac"] != drifted["identity_hmac"]
 
 
 def test_resume_rejects_request_drift_without_touching_artifacts(
@@ -792,6 +2105,223 @@ def test_resume_rejects_runtime_prompt_drift(
             trial_executor=_trial,
             resume=True,
         )
+
+
+def test_resolved_chat_config_snapshot_is_complete_and_excludes_secrets() -> None:
+    base_url = (
+        "https://"
+        + "private-user"
+        + ":"
+        + "private-password"
+        + "@example.invalid/v1"
+        + "?"
+        + "token=secret"
+    )
+    api_key = "private-api-key-value"
+    config = ChatConfig(
+        llm=LLMConfig(
+            base_url=base_url,
+            model="commercial-model",
+            api_key=api_key,
+            timeout=73,
+        ),
+        runtime=RuntimeConfig(
+            max_tool_iterations=11,
+            hard_iteration_cap=31,
+            max_tool_calls=17,
+            turn_timeout_seconds=101,
+            hard_timeout_seconds=202,
+            quality_gate_level=1,
+            topic_classifier_enabled=True,
+            topic_classifier_mode="llm",
+        ),
+        routing=RoutingConfig(
+            code_command=(
+                f"/opt/private/codex exec --token {api_key} --model {{model}} --cd {{workdir}}"
+            ),
+            code_timeout_seconds=321,
+        ),
+    )
+
+    snapshot = evaluation_module._resolved_chat_config_snapshot(config)
+    serialized = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+
+    assert set(snapshot["llm"]) == {"base_url_sha256", "model", "timeout"}
+    assert (
+        snapshot["llm"]["base_url_sha256"] == hashlib.sha256(base_url.encode("utf-8")).hexdigest()
+    )
+    assert set(snapshot["runtime"]) == {field.name for field in fields(RuntimeConfig)}
+    assert set(snapshot["routing"]) == (
+        {field.name for field in fields(RoutingConfig)} - {"code_command"}
+    ) | {"code_command_sha256"}
+    assert snapshot["runtime"]["max_tool_iterations"] == 11
+    assert snapshot["runtime"]["hard_timeout_seconds"] == 202
+    assert snapshot["runtime"]["quality_gate_level"] == 1
+    assert snapshot["runtime"]["topic_classifier_mode"] == "llm"
+    assert (
+        snapshot["routing"]["code_command_sha256"]
+        == hashlib.sha256(config.routing.code_command.encode("utf-8")).hexdigest()
+    )
+    assert snapshot["routing"]["code_timeout_seconds"] == 321
+    assert base_url not in serialized
+    assert api_key not in serialized
+
+
+def test_target_runtime_fingerprint_covers_resolved_chat_behavior(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = SimpleNamespace(
+        source_path=tmp_path / "bots" / "eval-bot" / "bot.yaml",
+        spec=SimpleNamespace(raw={}, context={}),
+        mcp_servers=(),
+        rag_sources=(),
+        skills=(),
+        system_prompt="system",
+        refusal_prompt="refusal",
+        safety_prompt_override="safety",
+        memory_prompt_override="memory",
+        mode_prompt_overrides={},
+        role_prompt_overrides={},
+        capability_prompt_fragments=(),
+        tool_packs=(),
+        tool_features=(),
+        exclude_tools=(),
+        agent_backend="native",
+        subagents={},
+        memory_namespace="",
+        access={},
+    )
+    config = ChatConfig(
+        llm=LLMConfig(
+            base_url="https://api.example.invalid/v1",
+            model="commercial-model",
+            api_key="credential-a",
+            timeout=120,
+        )
+    )
+    baseline = evaluation_module._runtime_behavior_fingerprint(runtime, config)
+    credential_rotated = replace(
+        config,
+        llm=replace(config.llm, api_key="credential-b"),
+    )
+    assert evaluation_module._runtime_behavior_fingerprint(runtime, credential_rotated) == baseline
+
+    drifted = (
+        replace(config, llm=replace(config.llm, base_url="https://other.invalid/v1")),
+        replace(config, llm=replace(config.llm, timeout=121)),
+        replace(config, runtime=replace(config.runtime, max_tool_iterations=9)),
+        replace(config, runtime=replace(config.runtime, hard_iteration_cap=29)),
+        replace(config, runtime=replace(config.runtime, max_tool_calls=7)),
+        replace(config, runtime=replace(config.runtime, turn_timeout_seconds=90)),
+        replace(config, runtime=replace(config.runtime, hard_timeout_seconds=180)),
+        replace(config, runtime=replace(config.runtime, quality_gate_level=1)),
+        replace(config, runtime=replace(config.runtime, topic_classifier_enabled=True)),
+        replace(config, routing=replace(config.routing, code_prefixes=("/different",))),
+        replace(config, routing=replace(config.routing, code_command="codex exec --json")),
+        replace(config, routing=replace(config.routing, code_timeout_seconds=901)),
+    )
+    assert all(
+        evaluation_module._runtime_behavior_fingerprint(runtime, candidate) != baseline
+        for candidate in drifted
+    )
+
+    original_snapshot = evaluation_module.runtime_implementation_snapshot
+    monkeypatch.setattr(
+        evaluation_module,
+        "runtime_implementation_snapshot",
+        lambda backend: {
+            **original_snapshot(backend),
+            "modules": {"chatcopilot.agent.runtime": "0" * 64},
+        },
+    )
+    assert evaluation_module._runtime_behavior_fingerprint(runtime, config) != baseline
+
+
+def _frozen_ifeval_trial_request(tmp_path: Path) -> TrialExecutionRequest:
+    parsed = parse_evaluation_request(
+        {
+            "evaluation_id": "eval-frozen-suite-identity",
+            "kind": "suite",
+            "suite": "ifeval",
+            "preset": "custom",
+            "case_ids": ["ifeval-json-format"],
+            "dry_run": True,
+        }
+    )
+    validation = validate_evaluation(parsed)
+    assert validation["ready"] is True
+    targets = tuple(
+        evaluation_module._target_from_dict(item) for item in validation["targets"]
+    )
+    cases = evaluation_module._execution_cases(parsed)
+    snapshot = evaluation_module._config_snapshot(parsed, targets, cases)
+    return evaluation_module._trial_request(
+        request=parsed,
+        output=tmp_path / "frozen-suite",
+        case=cases[0],
+        target=targets[0],
+        attempt=1,
+        order=1,
+        config_snapshot=snapshot,
+    )
+
+
+def test_suite_trial_revalidates_parent_frozen_case_and_complete_identity(
+    tmp_path: Path,
+) -> None:
+    request = _frozen_ifeval_trial_request(tmp_path)
+
+    evaluation_module._assert_suite_trial_definition_current(request)
+
+    with pytest.raises(
+        evaluation_module._EvaluationDefinitionDrift,
+        match="parent-frozen EvalCase",
+    ):
+        evaluation_module._assert_suite_trial_definition_current(
+            replace(request, case=replace(request.case, input="drifted input"))
+        )
+
+
+def test_suite_trial_rejects_trusted_source_drift_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _frozen_ifeval_trial_request(tmp_path)
+    original_digest = implementation_catalog.trusted_module_sha256
+    monkeypatch.setattr(
+        implementation_catalog,
+        "trusted_module_sha256",
+        lambda module_name: (
+            "0" * 64
+            if module_name == "chatcopilot.evals.runner"
+            else original_digest(module_name)
+        ),
+    )
+
+    with pytest.raises(
+        evaluation_module._EvaluationDefinitionDrift,
+        match="trusted implementation changed",
+    ):
+        evaluation_module._assert_suite_trial_definition_current(request)
+
+
+def test_suite_trial_rejects_environment_drift_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _frozen_ifeval_trial_request(tmp_path)
+    monkeypatch.setattr(
+        evaluation_module,
+        "_private_runtime_configuration_snapshot",
+        lambda _bot, *, include_qq: {"include_qq": include_qq, "drift": True},
+    )
+
+    with pytest.raises(
+        evaluation_module._EvaluationDefinitionDrift,
+        match="private runtime environment changed",
+    ):
+        evaluation_module._assert_suite_trial_definition_current(request)
 
 
 @pytest.mark.parametrize(
@@ -1251,12 +2781,14 @@ def test_external_case_id_cannot_escape_suite_workspace(
         fingerprint="a" * 64,
     )
     workspace_roots: list[Path] = []
+    identity_checks: list[str] = []
 
     def fake_run_suite(
         _suite_id: str,
         **kwargs: object,
     ) -> EvalRunResult:
         workspace_roots.append(Path(kwargs["workspace_root"]))  # type: ignore[arg-type]
+        assert kwargs["_frozen_cases"] == (case,)
         return EvalRunResult(
             suite_id="ifeval",
             bot=None,
@@ -1273,6 +2805,11 @@ def test_external_case_id_cannot_escape_suite_workspace(
         )
 
     monkeypatch.setattr(evaluation_module, "run_suite", fake_run_suite)
+    monkeypatch.setattr(
+        evaluation_module,
+        "_assert_suite_trial_definition_current",
+        lambda request: identity_checks.append(request.case.case_id),
+    )
     output = tmp_path / "evaluation"
     execute_evaluation_trial(
         TrialExecutionRequest(
@@ -1294,6 +2831,7 @@ def test_external_case_id_cannot_escape_suite_workspace(
 
     assert len(workspace_roots) == 1
     assert workspace_roots[0].is_relative_to(output / "workspaces")
+    assert identity_checks == [case.case_id, case.case_id]
 
 
 def test_suite_workspace_rejects_symlink_escape(
@@ -1324,6 +2862,11 @@ def test_suite_workspace_rejects_symlink_escape(
         evaluation_module,
         "run_suite",
         lambda *_args, **_kwargs: pytest.fail("executor must not run"),
+    )
+    monkeypatch.setattr(
+        evaluation_module,
+        "_assert_suite_trial_definition_current",
+        lambda _request: None,
     )
 
     with pytest.raises(ValueError, match="escapes"):
@@ -1374,6 +2917,155 @@ def test_suite_dry_run_uses_unified_result_and_skipped_outcome(
     assert events[0]["event"] == "evaluation_started"
     assert events[-1]["event"] == "evaluation_completed"
     assert not (output / "progress.json").exists()
+
+
+def test_product_suite_summary_never_reports_a_partial_green_or_total_score() -> None:
+    cases = evaluation_module._execution_cases(
+        parse_evaluation_request(
+            {
+                "kind": "suite",
+                "suite": "agentstrata-capabilities-v1",
+                "preset": "custom",
+                "case_ids": [
+                    "dialogue-strict-json",
+                    "access-nickname-spoof-denied",
+                ],
+                "dry_run": True,
+            }
+        )
+    )
+    target = EvaluationTarget(
+        target_id="dry-run",
+        label="Dry Run",
+        executor="dry_run",
+        backend="none",
+        model="",
+        reasoning_effort="",
+        fingerprint="b" * 64,
+    )
+    first_execution = TrialExecutionRequest(
+        evaluation_id="eval-product-summary",
+        kind="suite",
+        bot="",
+        output=Path("reports/evals/manual/eval-product-summary"),
+        suite_id="agentstrata-capabilities-v1",
+        profile="",
+        profile_case=None,
+        case=cases[0],
+        dimension=cases[0].category,
+        target=target,
+        attempt=1,
+        order=1,
+        driver_id="dry_run",
+        dry_run=True,
+    )
+    trial = _trial(first_execution)
+
+    running = evaluation_module._suite_summary(
+        (trial,),
+        cases=cases,
+        lifecycle_status="running",
+        product_suite=True,
+        repetitions=1,
+    )
+    completed = evaluation_module._suite_summary(
+        (trial,),
+        cases=cases[:1],
+        lifecycle_status="completed",
+        product_suite=True,
+        repetitions=1,
+    )
+
+    assert running["verdict"] == "in_progress"
+    assert completed["verdict"] == "passed"
+    assert "score" not in completed
+    assert "max_score" not in completed
+    assert "score_ratio" not in completed
+    assert completed["capabilities"][cases[0].category] == {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "errors": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [
+        ("passed", 0),
+        ("failed", 1),
+        ("error/indeterminate", 1),
+    ],
+)
+def test_cli_product_suite_exit_code_follows_capability_verdict(
+    verdict: str,
+    expected: int,
+) -> None:
+    from chatcopilot.evals.cli import _result_exit_code
+
+    result = EvaluationResult(
+        evaluation_id="eval-product-cli",
+        kind="suite",
+        bot="example-bot",
+        status="completed",
+        started_at="2026-08-17T00:00:00+00:00",
+        finished_at="2026-08-17T00:00:01+00:00",
+        duration_seconds=1.0,
+        suite="agentstrata-capabilities-v1",
+        summary={"verdict": verdict},
+    )
+
+    assert _result_exit_code(result) == expected
+
+
+def test_cli_product_suite_text_has_verdict_and_no_aggregate_score() -> None:
+    from chatcopilot.evals.cli import _result_summary_line
+
+    result = EvaluationResult(
+        evaluation_id="eval-product-cli",
+        kind="suite",
+        bot="example-bot",
+        status="completed",
+        started_at="2026-08-17T00:00:00+00:00",
+        finished_at="2026-08-17T00:00:01+00:00",
+        duration_seconds=1.0,
+        suite="agentstrata-capabilities-v1",
+        summary={
+            "verdict": "failed",
+            "passed": 8,
+            "failed": 2,
+            "critical_violations": 1,
+            "infrastructure_errors": 0,
+        },
+    )
+
+    line = _result_summary_line(result)
+
+    assert "verdict=failed" in line
+    assert "critical_violations=1" in line
+    assert "infrastructure_errors=0" in line
+    assert "score" not in line
+
+
+def test_cli_cancelled_is_nonzero_but_official_completed_behavior_is_preserved() -> None:
+    from chatcopilot.evals.cli import _result_exit_code, _result_summary_line
+
+    official = EvaluationResult(
+        evaluation_id="eval-official-cli",
+        kind="suite",
+        bot="example-bot",
+        status="completed",
+        started_at="2026-08-17T00:00:00+00:00",
+        finished_at="2026-08-17T00:00:01+00:00",
+        duration_seconds=1.0,
+        suite="ifeval",
+        summary={"score_ratio": 0.25},
+    )
+
+    assert _result_exit_code(official) == 0
+    assert "score_ratio=0.250" in _result_summary_line(official)
+    assert _result_exit_code(replace(official, status="cancelled")) == 130
 
 
 def test_cli_json_stdout_remains_one_parseable_document(

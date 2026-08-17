@@ -4,6 +4,7 @@ from chatcopilot.agent.context.prompt_builder import build_system_prompt
 from chatcopilot.agent.context.task_framing import (
     frame_task_content,
     frame_task_message,
+    validated_image_resource_receipts,
 )
 from chatcopilot.agent.context.token_estimator import estimate_tokens
 
@@ -13,4 +14,5 @@ __all__ = [
     "estimate_tokens",
     "frame_task_content",
     "frame_task_message",
+    "validated_image_resource_receipts",
 ]

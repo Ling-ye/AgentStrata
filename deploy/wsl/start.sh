@@ -91,13 +91,13 @@ if [ -d "$CC_CONFIG_DIR/sessions" ]; then
     echo "    [OK] 已清理 cc-connect sessions 缓存"
 fi
 
-# ---------- QQ 群聊 @门禁：启动 OneBot @ 过滤代理 ----------
-# 仅 qq + QQ_REQUIRE_AT_IN_GROUP 实例生效（helper 内部自判，其它实例 no-op）。
-# 代理或 OneBot 安全边界不可用时 fail-closed，禁止直连 NapCat 绕过群聊 @ 策略。
+# ---------- QQ 用户/群/@门禁：启动 OneBot 访问代理 ----------
+# 仅 qq 且启用 QQ_REQUIRE_AT_IN_GROUP 或 QQ_ALLOW_GROUPS 时生效。
+# 代理或 OneBot 安全边界不可用时 fail-closed，禁止直连 NapCat 绕过访问策略。
 QQ_PROXY_HELPER="$MT_HOME/deploy/wsl/_start_qq_proxy.sh"
 if [ -f "$QQ_PROXY_HELPER" ]; then
     if ! bash "$QQ_PROXY_HELPER"; then
-        err "QQ @ 过滤代理或 OneBot 安全边界不可用；拒绝启动 cc-connect"
+        err "QQ 访问代理或 OneBot 安全边界不可用；拒绝启动 cc-connect"
         exit 1
     fi
 fi

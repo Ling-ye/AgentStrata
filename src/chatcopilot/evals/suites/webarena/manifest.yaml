@@ -1,0 +1,16 @@
+schema: 1
+suite_id: webarena
+version: 0.1.0
+name: WebArena
+kind: web
+status: planned
+value: 浏览器/Web 环境操作任务，衡量网页理解、点击、表单和多步操作能力。
+recommendation: 需要 Agent 具备浏览器工具能力后再运行。
+cadence: major-change
+requires_bot: true
+requires_external_data: true
+prepare_supported: false
+official_url: https://webarena.dev/
+setup_hint: >-
+  需要 Agent 浏览器操作工具 + 自建 WebArena Web 应用集群
+  （Reddit/GitLab/Shopping Docker）。当前 Agent 无浏览器能力，此 benchmark 暂不可用。

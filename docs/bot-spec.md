@@ -61,6 +61,12 @@ packaging:
 平台技术能力由 adapter 声明，实例开关位于 `tools.features`。QQ Owner/Admin 只按
 稳定 `user_id` 授权；Feishu 保留 adapter 的显示名兜底。
 
+`access.whitelist_env` 声明用户白名单变量；可选的
+`access.group_whitelist_env` 声明稳定群聊 ID 白名单变量。启用群聊门禁时，发送者命中
+用户白名单或当前 `chat_id` 命中群聊白名单均可进入群聊，但群聊白名单不会授予私聊
+权限。群聊变量缺失或为空时不新增权限，只有显式 `*` 才允许所有群聊。QQ 实例使用
+`QQ_ALLOW_FROM` 与 `QQ_ALLOW_GROUPS`，真实 ID 只放在 `local.env`。
+
 ### `llm`
 
 - `llm.chat`：日常对话模型，`env_prefix` 决定 API key/base URL/model 的变量前缀。

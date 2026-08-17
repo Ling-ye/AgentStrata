@@ -33,6 +33,8 @@ def get_evaluation_client(request: Request) -> EvaluationServiceClient:
 def raise_evaluation_service_error(exc: EvaluationServiceError) -> None:
     status_by_code = {
         "evaluation_blocked": 422,
+        "preflight_failed": 422,
+        "configuration_invalid": 422,
         "not_found": 404,
         "conflict": 409,
         "invalid_request": 400,
@@ -42,7 +44,7 @@ def raise_evaluation_service_error(exc: EvaluationServiceError) -> None:
     }
     status_code = status_by_code.get(exc.code, 502)
     detail: object
-    if exc.code == "evaluation_blocked":
+    if exc.code in {"evaluation_blocked", "preflight_failed", "configuration_invalid"}:
         detail = {
             "code": exc.code,
             "message": exc.message,

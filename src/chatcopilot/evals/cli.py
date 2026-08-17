@@ -10,6 +10,7 @@ from typing import Any
 
 from chatcopilot.core.logging import configure_logging
 from chatcopilot.evals.adapters import gaia
+from chatcopilot.evals.advisor import advise_capability_evaluation
 from chatcopilot.evals.evaluations import (
     EvaluationValidationError,
     evaluation_result_to_dict,
@@ -18,7 +19,7 @@ from chatcopilot.evals.evaluations import (
 )
 from chatcopilot.evals.official_data import prepare_official_data
 from chatcopilot.evals.paths import is_managed_evaluation_output
-from chatcopilot.evals.registry import get_standard, list_standards
+from chatcopilot.evals.registry import get_manifest, get_standard, list_standards
 from chatcopilot.evals.report import compare_reports, render_compare_markdown
 
 
@@ -48,8 +49,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--bot", help="Bot id or path to bot.yaml.")
     run.add_argument(
         "--preset",
-        choices=("quick", "standard", "custom"),
-        help="Comparison preset (defaults to quick).",
+        help=(
+            "Comparison preset (quick/standard/custom) or a Suite-defined "
+            "preset such as quick/full/security/qq-live/custom."
+        ),
     )
     run.add_argument("--target", action="append", dest="targets")
     run.add_argument(
@@ -61,6 +64,18 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--repetitions", type=int)
     run.add_argument("--max-wall-seconds", type=float)
     run.add_argument("--seed", type=int)
+    run.add_argument(
+        "--option",
+        action="append",
+        dest="options",
+        metavar="NAME=JSON",
+        help="Suite option; repeatable. Values use JSON syntax.",
+    )
+    run.add_argument(
+        "--confirm-external-write",
+        action="store_true",
+        help="Confirm this one manual run may perform the Suite's bounded external writes.",
+    )
     run.add_argument("--dry-run", action="store_true")
     run.add_argument("--llm-judge", action="store_true")
     run.add_argument(
@@ -94,6 +109,19 @@ def main(argv: list[str] | None = None) -> int:
     prepare.add_argument("--suite", choices=("gaia", "bfcl", "ifeval"), required=True)
     prepare.add_argument("--json", action="store_true")
 
+    advise = sub.add_parser(
+        "advise",
+        help="Suggest capability Cases for changed paths without starting an Evaluation.",
+    )
+    advise.add_argument(
+        "--changed-path",
+        action="append",
+        dest="changed_paths",
+        required=True,
+        help="Repository-relative changed path; repeatable.",
+    )
+    advise.add_argument("--json", action="store_true")
+
     args = parser.parse_args(argv)
     if args.command == "list":
         return _cmd_list()
@@ -107,8 +135,47 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_compare(args)
     if args.command == "prepare":
         return _cmd_prepare(args)
+    if args.command == "advise":
+        return _cmd_advise(args)
     parser.error(f"unknown command: {args.command}")
     return 2
+
+
+def _cmd_advise(args: argparse.Namespace) -> int:
+    try:
+        advice = advise_capability_evaluation(args.changed_paths)
+    except ValueError as exc:
+        print(
+            json.dumps(
+                {
+                    "code": "invalid_changed_paths",
+                    "message": str(exc),
+                    "checks": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    payload = {
+        "changed_paths": list(advice.changed_paths),
+        "categories": list(advice.categories),
+        "reason": advice.reason,
+        "case_ids": list(advice.case_ids),
+        "recommended_preset": advice.recommended_preset,
+        "manual_only": True,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(
+            f"recommended preset: {advice.recommended_preset}\n"
+            f"cases: {', '.join(advice.case_ids)}\n"
+            f"reason: {advice.reason}\n"
+            "No Evaluation was started."
+        )
+    return 0
 
 
 def _cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -141,7 +208,7 @@ def _cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if not validation["ready"]:
         failed = [item for item in validation["checks"] if not item.get("ok")]
         payload = {
-            "code": "evaluation_validation_failed",
+            "code": str(validation.get("code") or "evaluation_validation_failed"),
             "message": "; ".join(str(item.get("detail", "")) for item in failed),
             "checks": validation["checks"],
         }
@@ -240,16 +307,49 @@ def _cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        summary = result.summary
-        print(
-            f"{result.evaluation_id}: kind={result.kind} status={result.status} "
-            f"trials={len(result.trials)} "
-            f"score_ratio={float(summary.get('score_ratio', 0)):.3f}"
-        )
+        print(_result_summary_line(result))
         print(f"report: {output}")
-    if result.status == "interrupted":
+    return _result_exit_code(result)
+
+
+def _is_product_capability_result(result: Any) -> bool:
+    summary = result.summary if isinstance(result.summary, dict) else {}
+    return bool(
+        result.kind == "suite"
+        and (
+            result.suite == "agentstrata-capabilities-v1"
+            or summary.get("score_scope")
+            == "product capability gates are not averaged into an intelligence score"
+        )
+    )
+
+
+def _result_summary_line(result: Any) -> str:
+    summary = result.summary if isinstance(result.summary, dict) else {}
+    prefix = (
+        f"{result.evaluation_id}: kind={result.kind} status={result.status} "
+        f"trials={len(result.trials)}"
+    )
+    if _is_product_capability_result(result):
+        return (
+            f"{prefix} verdict={summary.get('verdict', 'error/indeterminate')} "
+            f"passed={int(summary.get('passed', 0))} "
+            f"failed={int(summary.get('failed', 0))} "
+            f"critical_violations={int(summary.get('critical_violations', 0))} "
+            f"infrastructure_errors={int(summary.get('infrastructure_errors', 0))}"
+        )
+    return f"{prefix} score_ratio={float(summary.get('score_ratio', 0)):.3f}"
+
+
+def _result_exit_code(result: Any) -> int:
+    if result.status in {"interrupted", "cancelled"}:
         return 130
-    return 0 if result.status in {"completed", "cancelled"} else 1
+    if result.status != "completed":
+        return 1
+    if _is_product_capability_result(result):
+        summary = result.summary if isinstance(result.summary, dict) else {}
+        return 0 if summary.get("verdict") == "passed" else 1
+    return 0
 
 
 def _load_request_argument(raw: str) -> dict[str, Any]:
@@ -296,6 +396,15 @@ def _load_request_argument(raw: str) -> dict[str, Any]:
         core.update(
             {
                 "suite": str(payload.get("suite") or payload.get("suite_id") or ""),
+                "preset": str(payload.get("preset") or ""),
+                "repetitions": payload.get("repetitions", 1),
+                "max_wall_seconds": payload.get("max_wall_seconds", 0),
+                "seed": payload.get("seed", 0),
+                "options": payload.get("options", {}),
+                "confirm_external_write": payload.get(
+                    "confirm_external_write",
+                    False,
+                ),
                 "dry_run": payload.get("dry_run", False),
                 "llm_judge": payload.get("llm_judge", False),
             }
@@ -333,12 +442,20 @@ def _request_from_args(
             request["seed"] = args.seed
         if args.dry_run or args.llm_judge:
             raise ValueError("--dry-run and --llm-judge apply only to Suite Evaluations")
+        if args.options or args.confirm_external_write:
+            raise ValueError("--option and --confirm-external-write apply only to Suites")
         return request
 
     request = {
         "kind": "suite",
         "bot": args.bot or "",
         "suite": args.suite,
+        "preset": args.preset or "",
+        "repetitions": args.repetitions if args.repetitions is not None else 1,
+        "max_wall_seconds": (args.max_wall_seconds if args.max_wall_seconds is not None else 0),
+        "seed": args.seed if args.seed is not None else 0,
+        "options": _parse_suite_options(args.options),
+        "confirm_external_write": bool(args.confirm_external_write),
         "dry_run": bool(args.dry_run),
         "llm_judge": bool(args.llm_judge),
     }
@@ -346,18 +463,25 @@ def _request_from_args(
         request["evaluation_id"] = args.evaluation_id
     if args.case_ids is not None:
         request["case_ids"] = args.case_ids
-    if any(
-        value is not None
-        for value in (
-            args.preset,
-            args.targets,
-            args.repetitions,
-            args.max_wall_seconds,
-            args.seed,
-        )
-    ):
-        raise ValueError("comparison options cannot be used with --suite")
+    if args.targets is not None:
+        raise ValueError("--target applies only to comparison Evaluations")
     return request
+
+
+def _parse_suite_options(values: list[str] | None) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for raw in values or ():
+        key, separator, encoded = str(raw).partition("=")
+        key = key.strip()
+        if not separator or not key:
+            raise ValueError("--option must use NAME=JSON")
+        if key in result:
+            raise ValueError(f"duplicate Suite option: {key}")
+        try:
+            result[key] = json.loads(encoded)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON for Suite option {key}") from exc
+    return result
 
 
 def _cmd_gaia_manifest(args: argparse.Namespace) -> int:
@@ -420,16 +544,27 @@ def _configure_eval_logging() -> None:
 
 def _cmd_list() -> int:
     for standard in list_standards():
-        external = "external-data" if standard.requires_external_data else "built-in"
-        print(f"{standard.suite_id}\t{standard.kind}\t{external}\t{standard.name}")
+        manifest = get_manifest(standard.suite_id)
+        availability = (
+            "planned/unavailable"
+            if manifest.status == "planned"
+            else "external-data"
+            if standard.requires_external_data
+            else "built-in"
+        )
+        print(f"{standard.suite_id}\t{standard.kind}\t{availability}\t{standard.name}")
     return 0
 
 
 def _cmd_describe(suite_id: str) -> int:
     standard = get_standard(suite_id)
+    manifest = get_manifest(suite_id)
     print(f"id: {standard.suite_id}")
     print(f"name: {standard.name}")
     print(f"kind: {standard.kind}")
+    print(f"status: {manifest.status}")
+    if manifest.status == "planned":
+        print("availability: unavailable")
     print(f"value: {standard.value}")
     print(f"recommendation: {standard.recommendation}")
     print(f"cadence: {standard.cadence}")

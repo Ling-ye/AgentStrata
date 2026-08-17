@@ -210,6 +210,12 @@ bash deploy/wsl/qq_gateway.sh logs --instance lingye-copilot-qq
 `start`、`restart` 和 `status` 都必须通过无 token 拒绝、带 token 可执行 OneBot
 动作的双向探针；只完成 WebSocket 握手不算认证成功。
 
+QQ 访问名单只在 `bots/<bot-id>/local.env` 中维护：`QQ_ALLOW_FROM` 是发送者 QQ
+号，`QQ_ALLOW_GROUPS` 是允许整群使用的群号，两者均为逗号分隔。群名单中的成员只在
+该群获得访问权，不因此获得私聊权限；群聊仍服从 `QQ_REQUIRE_AT_IN_GROUP`。群名单为空
+表示不额外放行任何群，`*` 会放行全部群，生产环境应避免使用。修改后运行
+`update_instance.sh` 重新供应 runtime env、渲染 cc-connect 配置并重启实例。
+
 ## Codex main / worker 认证
 
 [KNOWN][HIGH] managed `worktree` / `workspace` 使用
@@ -356,6 +362,107 @@ python -m chatcopilot evals run \
   --output reports/evals/manual/bfcl-smoke
 ```
 
+### 手动产品能力与真实 QQ 测评
+
+`agentstrata-capabilities-v1` 只能从 Console 的“新建评测”按钮或下面的 CLI
+命令手动启动；它不接 Git hook、CI、文件监听、部署回调或 Bot 重启回调。
+`quick` 选择 10 个无真实 QQ 外部写 Case，`full` 包含全部 29 个 Case，`security`
+选择 5 个权限/白名单/注入 Case，`qq-live` 只包含 3 个真实 QQ 正向 Case；`custom`
+要求用一个或多个 `--case-id` 显式选择 Case。MVP 默认 `repetitions=1`，因此完整运行是
+29 Case × 1；这只能说明本次执行结果，不能作为重复可靠性结论。
+
+代码修改后可先用只读 Advisor 获取建议；它只做 changed-path 到 Preset/Case 的确定性
+映射，不读取 Git diff、不创建 Evaluation，也不会自动启动模型或外部服务：
+
+```bash
+python -m chatcopilot evals advise \
+  --changed-path src/chatcopilot/agent/search/router.py \
+  --changed-path src/chatcopilot/middleware/acp/access_gate.py
+```
+
+不执行真实 QQ 外部写的 quick/security standalone 示例：
+
+```bash
+python -m chatcopilot evals run \
+  --suite agentstrata-capabilities-v1 \
+  --preset quick \
+  --repetitions 1 \
+  --bot bots/lingye-copilot-qq/bot.yaml \
+  --output reports/evals/manual/capabilities-quick
+
+python -m chatcopilot evals run \
+  --suite agentstrata-capabilities-v1 \
+  --preset security \
+  --repetitions 1 \
+  --bot bots/lingye-copilot-qq/bot.yaml \
+  --output reports/evals/manual/capabilities-security
+```
+
+图片理解已有 3 个配置化 Case 和合成图片 fixture；图片生成尚未配置，能力目录显示
+`image_generation:not_configured`，它不属于失败 Case。GAIA 与 IFEval 使用 Agent
+runtime；BFCL 明确是 `direct_llm/function_call_protocol` 校准，不进入产品 Agent 能力
+通过率。SWE-bench Verified、WebArena 和 `agentstrata-canary-self-update-v1` 当前均为
+`planned/unavailable`，不能从 Console 或 CLI 启动正式 Trial。
+
+真实 QQ Case 使用一个独立自动发送 QQ、它自己的 NapCat/OneBot endpoint 和一个
+专用测试群。在目标 Bot 的 ignored `bots/<id>/local.env` 中配置以下五项；公开示例
+见 `bots/lingye-copilot-qq/local.env.example`：
+
+```bash
+CHATCOPILOT_EVAL_QQ_ENABLED
+CHATCOPILOT_EVAL_QQ_SENDER_WS_URL
+CHATCOPILOT_EVAL_QQ_SENDER_ACCESS_TOKEN
+CHATCOPILOT_EVAL_QQ_SENDER_ID
+CHATCOPILOT_EVAL_QQ_GROUP_ID
+```
+
+[KNOWN][HIGH] sender endpoint 必须是审核后的本机回环 `ws://` / `wss://` 地址并带
+显式端口；sender access token 必须是独立的 32–128 位 URL-safe 强 token。
+`CHATCOPILOT_EVAL_QQ_SENDER_ID` 必须在被测 Bot 的 `QQ_ALLOW_FROM` 中，且不能与
+被测 Bot 的 `QQ_ACCOUNT` 相同。预检从所选 Bot 和上述私有配置锁定 sender、bot、
+group，Case、prompt 或模型都不能覆盖目标。
+
+从 Console 选择 `full` 或 `qq-live` 时，必须在本次创建表单中确认外部写。CLI
+使用一次性的 `--confirm-external-write`；该参数不保存为长期授权：
+
+```bash
+python -m chatcopilot evals run \
+  --suite agentstrata-capabilities-v1 \
+  --preset qq-live \
+  --repetitions 1 \
+  --bot bots/lingye-copilot-qq/bot.yaml \
+  --confirm-external-write \
+  --output reports/evals/manual/capabilities-qq-live
+
+python -m chatcopilot evals run \
+  --suite agentstrata-capabilities-v1 \
+  --preset full \
+  --repetitions 1 \
+  --bot bots/lingye-copilot-qq/bot.yaml \
+  --confirm-external-write \
+  --output reports/evals/manual/capabilities-full
+```
+
+启动顺序是无副作用预检优先。任一 required 配置缺失、格式非法、sender 不在白名单、
+endpoint 非回环，或本次未确认外部写时，返回结构化
+`preflight_failed/configuration_invalid`；不会创建 Evaluation 或报告目录，不调用商用
+模型，也不会连接 OneBot 或发送 QQ 消息。这属于配置问题，不计作 Agent 能力失败。
+
+通过预检后，每条消息携带随机 Evaluation nonce，并受消息数、文本长度、图片大小和
+等待时间硬限制。持久化 artifact 只保存配置存在性、不可逆 HMAC/digest、脱敏 OneBot
+message ID 摘要和有界状态，不保存 sender/bot/group 原始 ID、access token 或回复正文。
+真实拒绝用户、昵称冒充、伪造 user ID、无 `@` 和权限绕过等负例只在隔离 ACP/OneBot
+环境中执行，不使用真实 QQ 账号尝试越权。
+
+正式 Trial 由 Core 在独立 `spawn` 子进程中执行，不在 Evaluation service/Core 主进程
+内直接运行模型与工具。有效期限取 Case policy 的 `timeout_seconds` 和本次 Evaluation
+剩余 `max_wall_seconds` 的最小值：Case 期限耗尽记录为基础设施错误 Trial；Evaluation
+总预算耗尽则终止当前执行并保留 `partial`。取消或期限耗尽会先终止并回收 Trial
+进程组及其模型/工具后代；Linux/WSL 还使用父死保护，Core 意外退出时不会留下继续执行
+的 Trial 进程组。只有同一 Case/attempt 的完整 Target 组才会进入 checkpoint；取消或
+总预算在组内触发时，未完成组的 Trial 和 workspace 会被丢弃，不能参与 resume、比较
+或通过率。
+
 `reports/evals/evaluations/` 保留给受管 service。Standalone CLI 使用显式
 `--output`，并将记录放在 `reports/evals/manual/`。CLI 会拒绝缺失 `--output`
 或指向受管根目录的执行请求，不能覆盖、resume 或修改 service 正在管理的目录；
@@ -366,8 +473,18 @@ python -m chatcopilot evals run \
 证据；managed worker 写脱敏 `run.log`；Console 不写 Evaluation artifact。
 手工修改这些文件会破坏 ID、fingerprint、checkpoint 和恢复校验。
 
+Core 会在每个 Trial 前后冻结并核对权威 artifact 与当前 Bot claim 的
+inode、owner、mode、link、时间和内容摘要；持久化漂移会使整次 Evaluation 进入
+`error/indeterminate`、保留隔离 workspace 且禁止 resume。第一阶段插件仍限定为仓库内
+静态受信实现，并与 Core 使用同一 OS 用户；该 guard 不能证明恶意代码没有“短暂修改后
+原样恢复”。若将来开放第三方插件，必须先增加只读 authority mount 等 OS 级隔离。
+
 当前服务只运行 AgentStrata 原生 Evaluation Core，不会安装或启用外部
 评测引擎、实验追踪平台、remote evaluator 或 exporter。
+
+仓库自动化测试验证上述选择、判分、预检、隔离、预算、取消和 artifact 契约，但其中
+的 fixture、mock、dry-run 与隔离 transport 不是实际外部服务验收。除非维护者手动运行
+并检查相应 Trial 证据，不得宣称真实商用 LLM、真实 QQ 或 Canary 自更新 E2E 已通过。
 
 统一资源名与状态口径见 [`evaluation-glossary.md`](evaluation-glossary.md)，控制台和
 API 见 [`console.md`](console.md)。

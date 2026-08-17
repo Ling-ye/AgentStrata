@@ -102,6 +102,8 @@ journalctl --user -u chatcopilot@lingye-copilot-qq.service -n 120 --no-page
   执行 `sync-token`，不要手工拼接 token 同步命令。
 - `access.group_require_mention` 与 `QQ_REQUIRE_AT_IN_GROUP` 不一致：同时修正 BotSpec 和
   私有 env，再更新实例。
+- 配置群号后仍只有个别用户可用：确认群号写在私有 `QQ_ALLOW_GROUPS`，没有误写到只
+  接受发送者 QQ 号的 `QQ_ALLOW_FROM`，再更新实例并检查访问代理日志。
 - gateway 健康但 Bot service 失败：检查主 service 日志中的 ACP、模型和 cc-connect
   错误。健康链路通常包含 `qq: connected to OneBot`、`qq: logged in` 和
   `cc-connect is running`。

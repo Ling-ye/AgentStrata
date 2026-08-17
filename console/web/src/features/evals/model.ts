@@ -10,6 +10,7 @@ export type EvaluationStatus =
   | "error";
 
 export type ComparisonPreset = "quick" | "standard" | "custom";
+export type SuitePreset = "quick" | "full" | "security" | "qq-live" | "custom";
 
 export type EvaluationOutcome = "passed" | "failed" | "skipped" | "error";
 
@@ -44,6 +45,12 @@ export interface SuiteEvaluationRequest {
   bot_id: string;
   suite_id: string;
   case_ids: string[];
+  preset: SuitePreset;
+  repetitions: number;
+  max_wall_seconds: number;
+  seed: number;
+  options: Record<string, unknown>;
+  confirm_external_write: boolean;
   dry_run: boolean;
   llm_judge: boolean;
 }
@@ -67,6 +74,12 @@ export interface SuiteFormValues {
   botId: string;
   suiteId: string;
   caseIds: string[];
+  preset: SuitePreset;
+  repetitions: number;
+  maxWallSeconds: number;
+  seed: number;
+  options: Record<string, unknown>;
+  confirmExternalWrite: boolean;
   dryRun: boolean;
   llmJudge: boolean;
 }
@@ -178,6 +191,27 @@ export interface EvaluationRecord {
   error: string;
 }
 
+export interface ProductCapabilityGroup {
+  capability: string;
+  total: number;
+  passed: number;
+  failed: number;
+  errors: number;
+  skipped: number;
+}
+
+export interface ProductCapabilityResultView {
+  verdict: string;
+  criticalViolations: number;
+  infrastructureErrors: number;
+  capabilities: ProductCapabilityGroup[];
+  reliabilityNote: string;
+  modelVersionNote: string;
+  scoreScope: string;
+  usageTotals: Record<string, number>;
+  costEntries: Array<{ label: string; value: string }>;
+}
+
 export interface ProfileCase {
   ref: string;
   suite_id: string;
@@ -222,6 +256,19 @@ export interface EvaluationSuite {
   unavailable_reason: string;
   prepare_available: boolean;
   parameters: EvaluationParameter[];
+  version?: string;
+  status?: "implemented" | "planned" | string;
+  plugin_id?: string;
+  driver_id?: string;
+  driver?: string;
+  execution_scope?: string;
+  capability_status?: string;
+  default_preset?: string;
+  presets?: Array<{
+    preset_id: string;
+    case_ids: string[];
+    description: string;
+  }>;
   selection_policy?: string;
   level_policy?: string;
   category_policy?: string;
@@ -335,6 +382,123 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function asNullableNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function metricCount(value: unknown): number {
+  const parsed = asNullableNumber(value);
+  return parsed == null ? 0 : parsed;
+}
+
+function finiteMetricRecord(value: unknown): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(asRecord(value)).flatMap(([key, item]) => {
+      const parsed = asNullableNumber(item);
+      return parsed == null ? [] : [[key, parsed]];
+    }),
+  );
+}
+
+function aggregateTrialUsage(result: Record<string, unknown>): Record<string, number> {
+  const totals: Record<string, number> = {};
+  const trials = Array.isArray(result.trials) ? result.trials : [];
+  for (const rawTrial of trials) {
+    const trial = asRecord(rawTrial);
+    for (const [key, value] of Object.entries(finiteMetricRecord(trial.usage_totals))) {
+      totals[key] = (totals[key] ?? 0) + value;
+    }
+  }
+  return totals;
+}
+
+function costDisplayValue(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized && normalized.toLowerCase() !== "unknown" ? normalized : null;
+}
+
+function flattenCostEntries(
+  value: unknown,
+  prefix = "",
+): Array<{ label: string; value: string }> {
+  if (!isRecord(value)) {
+    const display = costDisplayValue(value);
+    return display && prefix ? [{ label: prefix, value: display }] : [];
+  }
+  return Object.entries(value).flatMap(([key, item]) => {
+    const label = prefix ? `${prefix}.${key}` : key;
+    if (isRecord(item)) return flattenCostEntries(item, label);
+    const display = costDisplayValue(item);
+    return display == null ? [] : [{ label, value: display }];
+  });
+}
+
+export function isProductCapabilityEvaluation(record: EvaluationRecord): boolean {
+  if (record.kind !== "suite") return false;
+  const result = asRecord(record.result);
+  const summary = asRecord(result.summary);
+  const suiteId = asString(
+    record.request.suite_id,
+    asString(result.suite, asString(record.selection.id)),
+  );
+  return suiteId === "agentstrata-capabilities-v1" ||
+    summary.score_scope ===
+      "product capability gates are not averaged into an intelligence score";
+}
+
+export function productCapabilityResultView(
+  record: EvaluationRecord,
+): ProductCapabilityResultView | null {
+  if (!isProductCapabilityEvaluation(record)) return null;
+  const result = asRecord(record.result);
+  const summary = asRecord(result.summary);
+  const capabilities = Object.entries(asRecord(summary.capabilities))
+    .map(([capability, raw]): ProductCapabilityGroup => {
+      const item = asRecord(raw);
+      return {
+        capability,
+        total: metricCount(item.total),
+        passed: metricCount(item.passed),
+        failed: metricCount(item.failed),
+        errors: metricCount(item.errors),
+        skipped: metricCount(item.skipped),
+      };
+    })
+    .sort((left, right) => left.capability.localeCompare(right.capability));
+  const summaryUsage = finiteMetricRecord(summary.usage_totals);
+  const usageTotals = Object.keys(summaryUsage).length > 0
+    ? summaryUsage
+    : aggregateTrialUsage(result);
+  const repetitions = metricCount(
+    result.repetitions ?? record.request.repetitions,
+  );
+  const configSnapshot = asRecord(result.config_snapshot);
+  const costEntries = [
+    ...flattenCostEntries(summary.cost_estimates, "cost_estimates"),
+    ...flattenCostEntries(summary.cost, "cost"),
+  ];
+  return {
+    verdict: asString(summary.verdict, "error/indeterminate"),
+    criticalViolations: metricCount(summary.critical_violations),
+    infrastructureErrors: metricCount(summary.infrastructure_errors),
+    capabilities,
+    reliabilityNote: asString(
+      summary.reliability_note,
+      repetitions === 1
+        ? "MVP 每个 Case 只运行 1 次；当前结果未测量重复可靠性。"
+        : "该 artifact 未记录重复可靠性说明。",
+    ),
+    modelVersionNote: asString(
+      configSnapshot.model_version_note,
+      "该 artifact 未记录供应商不可变模型版本；跨运行比较时应按可能存在模型侧漂移处理。",
+    ),
+    scoreScope: asString(
+      summary.score_scope,
+      "产品能力门禁不汇总为 Agent 智力总分。",
+    ),
+    usageTotals,
+    costEntries,
+  };
 }
 
 function normalizeCheck(value: unknown, index: number): ApiCheck {
@@ -460,9 +624,47 @@ export function buildSuiteRequest(values: SuiteFormValues): SuiteEvaluationReque
     bot_id: values.botId,
     suite_id: values.suiteId,
     case_ids: [...values.caseIds],
+    preset: values.preset,
+    repetitions: values.repetitions,
+    max_wall_seconds: values.maxWallSeconds,
+    seed: values.seed,
+    options: { ...values.options },
+    confirm_external_write: values.confirmExternalWrite,
     dry_run: values.dryRun,
     llm_judge: values.llmJudge,
   };
+}
+
+export function buildSuiteOptions(
+  suite: EvaluationSuite | null,
+  values: { dryRun: boolean; llmJudge: boolean },
+): Record<string, unknown> {
+  const declared = new Set(
+    (suite?.parameters ?? []).map((parameter) => parameter.name),
+  );
+  return {
+    ...(declared.has("dry_run") ? { dry_run: values.dryRun } : {}),
+    ...(declared.has("llm_judge") ? { llm_judge: values.llmJudge } : {}),
+  };
+}
+
+export function suitePresetRequiresExternalWrite(
+  suite: EvaluationSuite | null,
+  preset: SuitePreset,
+  selectedCaseIds: string[] = [],
+): boolean {
+  if (preset === "qq-live") return true;
+  if (suite?.suite_id !== "agentstrata-capabilities-v1") return false;
+  if (preset === "full") return true;
+  if (preset !== "custom") return false;
+  const qqPreset = suite.presets?.find((item) => item.preset_id === "qq-live");
+  const qqCases = new Set(qqPreset?.case_ids ?? []);
+  // The catalog is authoritative when present.  The product Suite's reserved
+  // `qq-` namespace is a fail-safe for an older or partially loaded catalog so
+  // the form never hides the one-shot confirmation that Core will require.
+  return selectedCaseIds.some(
+    (caseId) => qqCases.has(caseId) || caseId.startsWith("qq-"),
+  );
 }
 
 function normalizeTarget(value: unknown, index: number): EvaluationTarget {

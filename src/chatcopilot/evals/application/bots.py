@@ -13,6 +13,10 @@ from chatcopilot.botspec.loader import load_botspec
 from chatcopilot.evals.env import normalize_eval_env
 
 
+_ENV_LOCK = threading.RLock()
+_EVAL_ENV_SNAPSHOT_MARKER = "CHATCOPILOT_EVALUATION_ENV_SNAPSHOT"
+
+
 @dataclass(frozen=True)
 class EvaluationBotRef:
     """Minimal immutable Bot identity required by the Evaluation service."""
@@ -59,27 +63,6 @@ class EvaluationBotResolver:
         return matches[0]
 
 
-_ENV_LOCK = threading.RLock()
-_EVAL_ENV_KEYS = {
-    "CHATCOPILOT_GAIA_DATA_PATH",
-    "CHATCOPILOT_GAIA_FILES_DIR",
-    "CHATCOPILOT_GAIA_LEVELS",
-    "CHATCOPILOT_GAIA_MANIFEST_PATH",
-    "CHATCOPILOT_GAIA_MAX_CASES",
-    "CHATCOPILOT_GAIA_CASE_PROFILE",
-    "CHATCOPILOT_GAIA_SMOKE",
-    "CHATCOPILOT_BFCL_DATA_DIR",
-    "CHATCOPILOT_BFCL_MAX_CASES",
-    "CHATCOPILOT_BFCL_CATEGORY",
-    "CHATCOPILOT_BFCL_CASE_PROFILE",
-    "CHATCOPILOT_IFEVAL_DATA_PATH",
-    "CHATCOPILOT_IFEVAL_MAX_CASES",
-    "CHATCOPILOT_IFEVAL_CASE_PROFILE",
-    "CHATCOPILOT_EVALS_DATA_DIR",
-    "CHATCOPILOT_HF_TOKEN",
-}
-
-
 def bot_spec_path(bot: EvaluationBotRef, repository_root: Path) -> Path:
     repository = repository_root.expanduser().resolve()
     raw = Path(bot.bot_spec)
@@ -95,39 +78,50 @@ def bot_spec_path(bot: EvaluationBotRef, repository_root: Path) -> Path:
 
 
 def bot_env(bot: EvaluationBotRef, repository_root: Path) -> dict[str, str]:
-    return normalize_eval_env(
+    local_values = normalize_eval_env(
         _load_env_values(bot_spec_path(bot, repository_root).parent / "local.env")
     )
+    return _effective_environment_snapshot(local_values)
+
+
+def _effective_environment_snapshot(values: dict[str, str]) -> dict[str, str]:
+    """Capture machine-first runtime precedence exactly once.
+
+    A value set by the service/machine environment is authoritative. Bot-local
+    values only fill missing keys, matching normal runtime loading. A mapping
+    that already carries the private marker is an immutable captured snapshot
+    and must not be merged with later process-environment changes.
+    """
+
+    with _ENV_LOCK:
+        if values.get(_EVAL_ENV_SNAPSHOT_MARKER) == "1":
+            return dict(values)
+        environment = dict(values)
+        environment.update(os.environ)
+        environment[_EVAL_ENV_SNAPSHOT_MARKER] = "1"
+        return environment
 
 
 @contextmanager
 def temporary_eval_env(values: dict[str, str]) -> Iterator[None]:
-    """Apply bot-owned evaluation settings for one serialized operation."""
+    """Apply one immutable effective environment for preflight/fingerprint."""
 
     with _ENV_LOCK:
-        old = {key: os.environ.get(key) for key in _EVAL_ENV_KEYS}
-        for key, value in values.items():
-            if key in _EVAL_ENV_KEYS:
-                os.environ[key] = value
+        effective = _effective_environment_snapshot(values)
+        old = dict(os.environ)
+        os.environ.clear()
+        os.environ.update(effective)
         try:
             yield
         finally:
-            for key, value in old.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+            os.environ.clear()
+            os.environ.update(old)
 
 
 def evaluation_subprocess_env(values: dict[str, str]) -> dict[str, str]:
-    """Build a private child environment without exposing temporary bot values."""
+    """Build the same immutable effective environment used by preflight."""
 
-    with _ENV_LOCK:
-        environment = os.environ.copy()
-        for key, value in values.items():
-            if key in _EVAL_ENV_KEYS:
-                environment[key] = value
-        return environment
+    return _effective_environment_snapshot(values)
 
 
 def _load_env_values(path: Path) -> dict[str, str]:

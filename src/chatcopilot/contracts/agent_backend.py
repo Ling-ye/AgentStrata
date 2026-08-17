@@ -15,14 +15,47 @@ CAPABILITY_REPOSITORY_MUTATION = "repository_mutation"
 CODEX_ACCESS_WORKSPACE = "workspace"
 CODEX_ACCESS_WORKTREE = "worktree"
 CODEX_ACCESS_MODES = frozenset({CODEX_ACCESS_WORKSPACE, CODEX_ACCESS_WORKTREE})
+CODEX_COMMAND_SANDBOX_MODES = frozenset({"read-only", "workspace-write"})
+CODEX_WEB_SEARCH_MODES = frozenset({"disabled", "live"})
 
 
 @dataclass(frozen=True)
 class CodexMainSessionPolicy:
-    """Role-level access modes for the Codex main-agent backend."""
+    """Code-owned access and command confinement for the Codex main agent.
+
+    BotSpec only projects ``owner_access`` and ``member_access``. Evaluation and
+    other trusted assembly code may further restrict a session command without
+    exposing those controls as deployment configuration.
+    """
 
     owner_access: str = CODEX_ACCESS_WORKSPACE
     member_access: str = CODEX_ACCESS_WORKSPACE
+    network_access: bool = True
+    web_search_mode: str = "live"
+    sandbox_mode: str | None = None
+    allow_delegate_tools: bool = False
+    allow_unified_search_tool: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.network_access, bool):
+            raise TypeError("Codex command network_access must be a boolean")
+        if not isinstance(self.allow_delegate_tools, bool):
+            raise TypeError("Codex allow_delegate_tools must be a boolean")
+        if not isinstance(self.allow_unified_search_tool, bool):
+            raise TypeError("Codex allow_unified_search_tool must be a boolean")
+        if self.web_search_mode not in CODEX_WEB_SEARCH_MODES:
+            raise ValueError(
+                "Codex command web_search_mode must be one of: "
+                + ", ".join(sorted(CODEX_WEB_SEARCH_MODES))
+            )
+        if (
+            self.sandbox_mode is not None
+            and self.sandbox_mode not in CODEX_COMMAND_SANDBOX_MODES
+        ):
+            raise ValueError(
+                "Codex command sandbox_mode must be one of: "
+                + ", ".join(sorted(CODEX_COMMAND_SANDBOX_MODES))
+            )
 
     def access_for_role(self, role_hint: str) -> str:
         return (
@@ -125,6 +158,8 @@ __all__ = [
     "CODEX_ACCESS_MODES",
     "CODEX_ACCESS_WORKSPACE",
     "CODEX_ACCESS_WORKTREE",
+    "CODEX_COMMAND_SANDBOX_MODES",
+    "CODEX_WEB_SEARCH_MODES",
     "CodexMainSessionPolicy",
     "require_backend_capabilities",
 ]

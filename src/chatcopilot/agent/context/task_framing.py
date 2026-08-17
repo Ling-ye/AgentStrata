@@ -7,10 +7,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from chatcopilot.agent.protocol import AgentTask, ResourceRef
+from chatcopilot.agent.protocol import AgentTask, InputResourceReceipt, ResourceRef
 from chatcopilot.core.image_content import (
     SUPPORTED_IMAGE_MEDIA_TYPES,
     normalize_image_media_type,
+    validate_image_file,
 )
 
 
@@ -76,4 +77,35 @@ def _local_image_block(resource: ResourceRef) -> dict[str, Any] | None:
     }
 
 
-__all__ = ["frame_task_content", "frame_task_message"]
+def validated_image_resource_receipts(
+    task: AgentTask,
+) -> tuple[InputResourceReceipt, ...]:
+    """Validate image bytes and return only path-free ordered identities."""
+
+    receipts: list[InputResourceReceipt] = []
+    for resource in task.resources:
+        media_type = normalize_image_media_type(resource.media_type)
+        if resource.kind != "file" or media_type not in SUPPORTED_IMAGE_MEDIA_TYPES:
+            continue
+        validated = validate_image_file(
+            resource.path,
+            declared_media_type=media_type,
+            expected_size_bytes=resource.size_bytes,
+            expected_sha256=resource.sha256,
+        )
+        receipts.append(
+            InputResourceReceipt(
+                sequence=len(receipts),
+                media_type=validated.media_type,
+                size_bytes=validated.size_bytes,
+                sha256=validated.sha256,
+            )
+        )
+    return tuple(receipts)
+
+
+__all__ = [
+    "frame_task_content",
+    "frame_task_message",
+    "validated_image_resource_receipts",
+]

@@ -1,8 +1,9 @@
 """会话访问门禁：私聊/群聊白名单 + 群聊 @机器人 要求。
 
 平台中立：门禁**策略**来自 ``BotSpec.access``（``bot.yaml``），**名单**来自 env
-（``access.whitelist_env`` 指向的变量，值放 ``local.env`` 不进 git）。中间件 ACP
-server 在进入任何业务逻辑前调用 :func:`evaluate`；未命中则静默忽略该消息。
+（``access.whitelist_env`` / ``access.group_whitelist_env`` 指向的变量，值放
+``local.env`` 不进 git）。中间件 ACP server 在进入任何业务逻辑前调用
+:func:`evaluate`；未命中则静默忽略该消息。
 
 判断"是否被 @"委托给平台 adapter 的 ``detect_self_mention``（经 ``platforms.router``），
 本模块不感知任何具体平台的 @ 形态。
@@ -28,16 +29,22 @@ class AccessDecision:
 
 
 def _parse_whitelist(
-    env_name: str | None, env: Mapping[str, str]
+    env_name: str | None,
+    env: Mapping[str, str],
+    *,
+    empty_means_all: bool = True,
 ) -> tuple[set[str], bool]:
     """解析白名单 env，返回 ``(名单集合, 是否放行所有人)``。
 
-    env 未配置 / 为空 / 为 ``*`` 时按"放行所有人"处理（白名单维度不拦）。
+    ``*`` 始终表示放行全部。用户白名单为兼容现有部署，缺失或空值时默认放行；
+    群聊白名单使用 ``empty_means_all=False``，缺失或空值不授予任何权限。
     """
     if not env_name:
-        return set(), True
+        return set(), empty_means_all
     raw = (env.get(env_name) or "").strip()
-    if not raw or raw == "*":
+    if not raw:
+        return set(), empty_means_all
+    if raw == "*":
         return set(), True
     ids = {token.strip() for token in raw.split(",") if token.strip()}
     if not ids or "*" in ids:
@@ -50,6 +57,7 @@ def evaluate(
     *,
     platform_type: str,
     chat_kind: str | None,
+    chat_id: str | None = None,
     user_id: str | None,
     text: str,
     mention_name: str | None = None,
@@ -67,6 +75,7 @@ def evaluate(
     kind = normalize_chat_kind(chat_kind, None) or "p2p"
     allow_ids, allow_all = _parse_whitelist(access.whitelist_env, resolved_env)
     uid = (user_id or "").strip()
+    cid = (chat_id or "").strip()
 
     def in_whitelist() -> bool:
         if allow_all:
@@ -74,8 +83,16 @@ def evaluate(
         return bool(uid) and uid in allow_ids
 
     if kind == "group":
-        if access.group_require_whitelist and not in_whitelist():
-            return AccessDecision(False, f"group-not-in-whitelist uid={uid or '?'}")
+        group_ids, all_groups = _parse_whitelist(
+            access.group_whitelist_env,
+            resolved_env,
+            empty_means_all=False,
+        )
+        group_allowed = bool(access.group_whitelist_env) and (
+            all_groups or (bool(cid) and cid in group_ids)
+        )
+        if access.group_require_whitelist and not (in_whitelist() or group_allowed):
+            return AccessDecision(False, "group-not-in-whitelist")
         if access.group_require_mention:
             mentioned = _platform_router.detect_self_mention(
                 platform_type,

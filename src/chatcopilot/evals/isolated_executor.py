@@ -269,6 +269,9 @@ def _isolated_subagents(value: SubagentSpec) -> SubagentSpec:
         codex=CodexMainSessionPolicy(
             owner_access="workspace",
             member_access="workspace",
+            network_access=False,
+            web_search_mode="disabled",
+            sandbox_mode="read-only",
         ),
     )
 

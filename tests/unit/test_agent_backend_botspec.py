@@ -109,6 +109,26 @@ class AgentBackendBotSpecTests(unittest.TestCase):
                 "backend: codex\ncodex:\n  sandbox: workspace-write",
                 "agents.codex",
             ),
+            "internal evaluation network policy rejected": (
+                "backend: codex\ncodex:\n  network_access: false",
+                "agents.codex",
+            ),
+            "internal evaluation web policy rejected": (
+                "backend: codex\ncodex:\n  web_search_mode: disabled",
+                "agents.codex",
+            ),
+            "internal evaluation sandbox policy rejected": (
+                "backend: codex\ncodex:\n  sandbox_mode: read-only",
+                "agents.codex",
+            ),
+            "internal evaluation delegate policy rejected": (
+                "backend: codex\ncodex:\n  allow_delegate_tools: true",
+                "agents.codex",
+            ),
+            "internal evaluation unified search policy rejected": (
+                "backend: codex\ncodex:\n  allow_unified_search_tool: true",
+                "agents.codex",
+            ),
             "cross backend policy rejected": (
                 "backend: native\ncodex:\n  owner_access: worktree",
                 "agents.codex",

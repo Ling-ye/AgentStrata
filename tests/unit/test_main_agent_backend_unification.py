@@ -12,7 +12,13 @@ from chatcopilot.agent.backends.codex import CodexAgentBackend
 from chatcopilot.agent.backends.registry import backend_ids, build_backend
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.backend_state import prepare_backend_deployment
-from chatcopilot.contracts.agent import AgentTask, FinalText, TurnError
+from chatcopilot.contracts.agent import (
+    AgentTask,
+    FinalText,
+    ToolFinished,
+    ToolStarted,
+    TurnError,
+)
 from chatcopilot.contracts.agent_backend import (
     BackendCapabilityError,
     BackendOpenRequest,
@@ -109,23 +115,25 @@ class BackendRegistryTests(TestCase):
 
 class CodexBackendResumeTests(TestCase):
     def test_main_credential_root_rejects_default_personal_home(self) -> None:
-        with mock.patch.dict(
-            os.environ,
-            {"CHATCOPILOT_CODEX_BOT_HOME": str(Path("~").expanduser() / ".codex")},
-            clear=True,
-        ), self.assertRaisesRegex(CredentialError, "auth_root_personal_forbidden"):
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"CHATCOPILOT_CODEX_BOT_HOME": str(Path("~").expanduser() / ".codex")},
+                clear=True,
+            ),
+            self.assertRaisesRegex(CredentialError, "auth_root_personal_forbidden"),
+        ):
             CodexAgentBackend._bot_credential_root()
 
     def test_main_credential_root_rejects_personal_home_descendant(self) -> None:
-        with mock.patch.dict(
-            os.environ,
-            {
-                "CHATCOPILOT_CODEX_BOT_HOME": str(
-                    Path("~").expanduser() / ".codex" / "bot-auth"
-                )
-            },
-            clear=True,
-        ), self.assertRaisesRegex(CredentialError, "auth_root_personal_forbidden"):
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"CHATCOPILOT_CODEX_BOT_HOME": str(Path("~").expanduser() / ".codex" / "bot-auth")},
+                clear=True,
+            ),
+            self.assertRaisesRegex(CredentialError, "auth_root_personal_forbidden"),
+        ):
             CodexAgentBackend._bot_credential_root()
 
     def test_codex_native_session_id_is_reused_for_second_turn(self) -> None:
@@ -161,9 +169,7 @@ class CodexBackendResumeTests(TestCase):
                 0,
                 "\n".join(
                     [
-                        json.dumps(
-                            {"type": "thread.started", "thread_id": "thread-native-1"}
-                        ),
+                        json.dumps({"type": "thread.started", "thread_id": "thread-native-1"}),
                         json.dumps(
                             {
                                 "type": "item.completed",
@@ -185,25 +191,28 @@ class CodexBackendResumeTests(TestCase):
                 ),
                 "",
             )
-            with mock.patch.dict(
-                os.environ,
-                {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
-                clear=False,
-            ), mock.patch(
-                "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                return_value="/usr/bin/codex",
-            ), mock.patch(
-                "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
-                return_value={},
-            ), mock.patch(
-                "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                side_effect=[first, second],
-            ) as run:
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
+                    clear=False,
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.command._resolve_executable",
+                    return_value="/usr/bin/codex",
+                ),
+                mock.patch(
+                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                    return_value={},
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
+                    side_effect=[first, second],
+                ) as run,
+            ):
                 result1 = backend.stream_turn(ref, AgentTask("one"), on_event=lambda _: None)
                 native_ref = backend.current_session_ref(ref)
-                result2 = backend.stream_turn(
-                    native_ref, AgentTask("two"), on_event=lambda _: None
-                )
+                result2 = backend.stream_turn(native_ref, AgentTask("two"), on_event=lambda _: None)
 
             self.assertEqual(result1.final_text, "first")
             self.assertEqual(result2.final_text, "second")
@@ -217,12 +226,96 @@ class CodexBackendResumeTests(TestCase):
             for option in ("--sandbox", "--cd", "--json"):
                 self.assertLess(resume_command.index(option), resume_index)
             gateway = json.loads(
-                backend.native_session(native_ref).gateway_config.read_text(
-                    encoding="utf-8"
-                )
+                backend.native_session(native_ref).gateway_config.read_text(encoding="utf-8")
             )
             self.assertEqual(gateway["allowed_tools"], ["dynamic_echo"])
             backend.close_session(native_ref)
+
+    def test_session_relay_tool_receipts_are_emitted_as_agent_events(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            auth_root = _main_auth_root(root)
+            routing = SimpleNamespace(
+                code_command="codex exec --model {model} --cd {workdir}",
+                code_model="gpt-test",
+                code_reasoning_effort="medium",
+                code_timeout_seconds=30,
+                code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
+            )
+            backend = CodexAgentBackend(
+                tool_names={"dynamic_echo"},
+                runtime_config=SimpleNamespace(routing=routing),
+                tools=(_dynamic_tool(),),
+            )
+            ref = backend.open_session(
+                BackendOpenRequest(
+                    session_id="relay-evidence",
+                    system_baseline="system",
+                    allowed_tool_names=frozenset({"dynamic_echo"}),
+                    options={
+                        "workspace_root": root,
+                        "backend_state_root": root / "state",
+                        "role_hint": "owner",
+                    },
+                )
+            )
+            events: list[object] = []
+
+            def run_with_relay(*_args, **_kwargs):
+                gateway = json.loads(
+                    backend.native_session(ref).gateway_config.read_text(encoding="utf-8")
+                )
+                response = call_session_relay(
+                    gateway["relay"],
+                    {
+                        "action": "call_tool",
+                        "name": "dynamic_echo",
+                        "arguments": {"value": "bridge-evidence"},
+                    },
+                )
+                self.assertTrue(response["result"]["ok"])
+                return subprocess.CompletedProcess(
+                    ["codex"],
+                    0,
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {"type": "agent_message", "text": "done"},
+                        }
+                    ),
+                    "",
+                )
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
+                    clear=False,
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.command._resolve_executable",
+                    return_value="/usr/bin/codex",
+                ),
+                mock.patch(
+                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                    return_value={},
+                ),
+                mock.patch(
+                    "chatcopilot.agent.backends.codex.run_codex_process",
+                    side_effect=run_with_relay,
+                ),
+            ):
+                result = backend.stream_turn(ref, AgentTask("use the tool"), on_event=events.append)
+
+            started = next(event for event in events if isinstance(event, ToolStarted))
+            finished = next(event for event in events if isinstance(event, ToolFinished))
+            self.assertEqual(started.name, "dynamic_echo")
+            self.assertEqual(started.arguments, {"value": "bridge-evidence"})
+            self.assertEqual(started.trace_id, finished.trace_id)
+            self.assertTrue(finished.ok)
+            self.assertEqual(finished.data["summary"], "dynamic:bridge-evidence")
+            self.assertEqual(result.final_text, "done")
+            backend.close_session(ref)
 
     def test_task_metadata_selects_model_without_mutating_runtime_default(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -297,9 +390,7 @@ class CodexBackendResumeTests(TestCase):
                     ref,
                     AgentTask(
                         "use selected model",
-                        metadata={
-                            CODE_MODEL_SELECTION_METADATA_KEY: selection.to_payload()
-                        },
+                        metadata={CODE_MODEL_SELECTION_METADATA_KEY: selection.to_payload()},
                     ),
                     on_event=lambda _: None,
                 )
@@ -345,24 +436,27 @@ class CodexBackendResumeTests(TestCase):
             completed = subprocess.CompletedProcess(
                 ["codex"],
                 0,
-                json.dumps(
-                    {"type": "thread.started", "thread_id": "persisted-native-id"}
-                ),
+                json.dumps({"type": "thread.started", "thread_id": "persisted-native-id"}),
                 "",
             )
-            with mock.patch.dict(
-                os.environ,
-                {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
-                clear=False,
-            ), mock.patch(
-                "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                return_value="/usr/bin/codex",
-            ), mock.patch(
-                "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
-                return_value={},
-            ), mock.patch(
-                "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                return_value=completed,
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
+                    clear=False,
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.command._resolve_executable",
+                    return_value="/usr/bin/codex",
+                ),
+                mock.patch(
+                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                    return_value={},
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
+                    return_value=completed,
+                ),
             ):
                 backend.stream_turn(ref, AgentTask("one"), on_event=lambda _: None)
             native_ref = backend.current_session_ref(ref)
@@ -375,9 +469,7 @@ class CodexBackendResumeTests(TestCase):
                 "chatcopilot.external_tools.codex_cli.command._resolve_executable",
                 return_value="/usr/bin/codex",
             ):
-                command = reconstructed._command(
-                    reconstructed.native_session(restored_ref)
-                )
+                command = reconstructed._command(reconstructed.native_session(restored_ref))
             resume_index = command.index("resume")
             self.assertEqual(
                 command[resume_index:],
@@ -515,30 +607,30 @@ class CodexBackendResumeTests(TestCase):
             first = subprocess.CompletedProcess(
                 ["codex"],
                 0,
-                json.dumps(
-                    {"type": "thread.started", "thread_id": "old-account-thread"}
-                ),
+                json.dumps({"type": "thread.started", "thread_id": "old-account-thread"}),
                 "",
             )
             second = subprocess.CompletedProcess(
                 ["codex"],
                 0,
-                json.dumps(
-                    {"type": "thread.started", "thread_id": "new-account-thread"}
-                ),
+                json.dumps({"type": "thread.started", "thread_id": "new-account-thread"}),
                 "",
             )
-            with mock.patch.dict(
-                os.environ,
-                {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
-                clear=False,
-            ), mock.patch(
-                "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                return_value="/usr/bin/codex",
-            ), mock.patch(
-                "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                side_effect=[first, second],
-            ) as run:
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
+                    clear=False,
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.command._resolve_executable",
+                    return_value="/usr/bin/codex",
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
+                    side_effect=[first, second],
+                ) as run,
+            ):
                 backend.stream_turn(ref, AgentTask("first"), on_event=lambda _: None)
                 old_ref = backend.current_session_ref(ref)
                 self.assertEqual(old_ref.value, "old-account-thread")
@@ -555,9 +647,7 @@ class CodexBackendResumeTests(TestCase):
                 backend.current_session_ref(old_ref).value,
                 "new-account-thread",
             )
-            state = backend.native_session(
-                BackendSessionRef("codex", "new-account-thread")
-            )
+            state = backend.native_session(BackendSessionRef("codex", "new-account-thread"))
             self.assertEqual(state.credential_generation, 2)
             self.assertEqual(state.native_session_id, "new-account-thread")
             backend.close_session(BackendSessionRef("codex", "new-account-thread"))
@@ -588,8 +678,7 @@ class CodexBackendResumeTests(TestCase):
                 )
             )
             raw_error = (
-                "401 Unauthorized: refresh token already used; "
-                "secret-token-must-stay-private"
+                "401 Unauthorized: refresh token already used; secret-token-must-stay-private"
             )
 
             def failed_with_refresh(*_args, **kwargs):
@@ -602,16 +691,20 @@ class CodexBackendResumeTests(TestCase):
                 return subprocess.CompletedProcess(["codex"], 1, "", raw_error)
 
             events: list[object] = []
-            with mock.patch.dict(
-                os.environ,
-                {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
-                clear=False,
-            ), mock.patch(
-                "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                return_value="/usr/bin/codex",
-            ), mock.patch(
-                "chatcopilot.agent.backends.codex.run_codex_process",
-                side_effect=failed_with_refresh,
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
+                    clear=False,
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.command._resolve_executable",
+                    return_value="/usr/bin/codex",
+                ),
+                mock.patch(
+                    "chatcopilot.agent.backends.codex.run_codex_process",
+                    side_effect=failed_with_refresh,
+                ),
             ):
                 result = backend.stream_turn(
                     ref,
@@ -666,16 +759,20 @@ class CodexBackendResumeTests(TestCase):
                 "",
                 "private warning should not be a reply",
             )
-            with mock.patch.dict(
-                os.environ,
-                {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
-                clear=False,
-            ), mock.patch(
-                "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                return_value="/usr/bin/codex",
-            ), mock.patch(
-                "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                return_value=completed,
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
+                    clear=False,
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.command._resolve_executable",
+                    return_value="/usr/bin/codex",
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
+                    return_value=completed,
+                ),
             ):
                 result = backend.stream_turn(
                     ref,
@@ -722,9 +819,7 @@ class CodexBackendPolicyTests(TestCase):
                 system_baseline="system",
                 allowed_tool_names=frozenset({"dynamic_echo"}),
                 caller_identity=(
-                    SessionIdentity(user_id=caller_user_id)
-                    if caller_user_id is not None
-                    else None
+                    SessionIdentity(user_id=caller_user_id) if caller_user_id is not None else None
                 ),
                 options={
                     "workspace_root": root,
@@ -736,13 +831,25 @@ class CodexBackendPolicyTests(TestCase):
         )
         state = backend.native_session(ref)
         with mock.patch(
-                "chatcopilot.external_tools.codex_cli.command._resolve_executable",
+            "chatcopilot.external_tools.codex_cli.command._resolve_executable",
             return_value="/usr/bin/codex",
         ):
             command = backend._command(state)
         prompt = backend._prompt(state, AgentTask("do work"))
         backend.close_session(ref)
         return command, prompt
+
+    def _policy_fingerprint(self, policy: CodexMainSessionPolicy) -> str:
+        backend = CodexAgentBackend(
+            tool_names=set(),
+            runtime_config=SimpleNamespace(routing=self._routing()),
+            backend_policy=policy,
+        )
+        return backend._policy_fingerprint(
+            "user",
+            "workspace",
+            caller_user_id="123",
+        )
 
     def test_default_policy_uses_isolated_member_workspace(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -768,21 +875,75 @@ class CodexBackendPolicyTests(TestCase):
             member_access="workspace",
         )
         with TemporaryDirectory() as tmp:
-            command, prompt = self._command_and_prompt(
-                Path(tmp), policy, role_hint="owner"
-            )
+            command, prompt = self._command_and_prompt(Path(tmp), policy, role_hint="owner")
 
         self.assertIn("read-only", command)
         self.assertNotIn("--skip-git-repo-check", command)
         self.assertIn("--ignore-user-config", command)
         self.assertIn("mcp_servers={}", command)
-        self.assertTrue(
-            any("mcp_servers.chatcopilot.command" in item for item in command)
-        )
+        self.assertTrue(any("mcp_servers.chatcopilot.command" in item for item in command))
         self.assertIn('shell_environment_policy.inherit="none"', command)
         self.assertIn("read-only", prompt)
         self.assertIn("start_code_task", prompt)
 
+    def test_eval_confinement_disables_command_network_and_web_search(self) -> None:
+        policy = CodexMainSessionPolicy(
+            network_access=False,
+            web_search_mode="disabled",
+            sandbox_mode="read-only",
+        )
+        with TemporaryDirectory() as tmp:
+            command, prompt = self._command_and_prompt(Path(tmp), policy)
+
+        self.assertIn("read-only", command)
+        self.assertIn("sandbox_workspace_write.network_access=false", command)
+        self.assertIn('web_search="disabled"', command)
+        self.assertNotIn("features.network_proxy.enabled=true", command)
+        self.assertNotIn('features.network_proxy.domains={ "*" = "allow" }', command)
+        self.assertIn("web search is disabled", prompt)
+
+    def test_command_confinement_changes_policy_fingerprint(self) -> None:
+        baseline = self._policy_fingerprint(CodexMainSessionPolicy())
+
+        variants = (
+            CodexMainSessionPolicy(network_access=False),
+            CodexMainSessionPolicy(web_search_mode="disabled"),
+            CodexMainSessionPolicy(sandbox_mode="read-only"),
+            CodexMainSessionPolicy(allow_delegate_tools=True),
+            CodexMainSessionPolicy(allow_unified_search_tool=True),
+        )
+
+        for policy in variants:
+            with self.subTest(policy=policy):
+                self.assertNotEqual(self._policy_fingerprint(policy), baseline)
+
+    def test_eval_tool_surface_policy_requires_strict_booleans(self) -> None:
+        for field_name in (
+            "allow_delegate_tools",
+            "allow_unified_search_tool",
+        ):
+            with (
+                self.subTest(field=field_name),
+                self.assertRaisesRegex(
+                    TypeError,
+                    field_name,
+                ),
+            ):
+                CodexMainSessionPolicy(**{field_name: 1})
+
+    def test_worktree_policy_cannot_override_read_only_with_writable_sandbox(self) -> None:
+        policy = CodexMainSessionPolicy(
+            owner_access="worktree",
+            sandbox_mode="workspace-write",
+        )
+        with (
+            TemporaryDirectory() as tmp,
+            self.assertRaisesRegex(
+                ValueError,
+                "cannot use a writable sandbox",
+            ),
+        ):
+            self._command_and_prompt(Path(tmp), policy, role_hint="owner")
 
 
 class SessionToolRelayTests(TestCase):
@@ -795,9 +956,7 @@ class SessionToolRelayTests(TestCase):
         )
         endpoint = relay.start()
         try:
-            listed = call_session_relay(
-                endpoint.to_dict(), {"action": "list_tools"}
-            )
+            listed = call_session_relay(endpoint.to_dict(), {"action": "list_tools"})
             called = call_session_relay(
                 endpoint.to_dict(),
                 {
@@ -815,6 +974,12 @@ class SessionToolRelayTests(TestCase):
         self.assertEqual([tool["name"] for tool in listed["tools"]], ["dynamic_echo"])
         self.assertTrue(called["result"]["ok"])
         self.assertEqual(calls, ["same-executor"])
+        events = relay.drain_tool_events()
+        self.assertEqual([event["type"] for event in events], ["tool_started", "tool_finished"])
+        self.assertEqual(events[0]["arguments"], {"value": "same-executor"})
+        self.assertEqual(events[0]["call_id"], events[1]["call_id"])
+        self.assertTrue(events[1]["ok"])
+        self.assertEqual(events[1]["data"]["summary"], "dynamic:same-executor")
         self.assertFalse(denied["ok"])
         self.assertIn("authentication", denied["error"])
 
@@ -843,18 +1008,14 @@ class BackendStateTransitionTests(TestCase):
             self.assertTrue(transition.state_deleted)
             self.assertFalse(transcript.exists())
             self.assertFalse(backend_state.exists())
-            marker = json.loads(
-                (root / ".agent-backend.json").read_text(encoding="utf-8")
-            )
+            marker = json.loads((root / ".agent-backend.json").read_text(encoding="utf-8"))
             self.assertEqual(marker["backend"], "codex")
             events = [
                 json.loads(line)["event"]
                 for line in transition.audit_path.read_text(encoding="utf-8").splitlines()
             ]
             switch_events = events[-2:]
-            self.assertEqual(
-                switch_events, ["state_deleted", "target_deploy_started"]
-            )
+            self.assertEqual(switch_events, ["state_deleted", "target_deploy_started"])
 
     def test_unchanged_backend_preserves_histories(self) -> None:
         with TemporaryDirectory() as tmp:

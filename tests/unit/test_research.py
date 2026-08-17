@@ -13,6 +13,7 @@ from chatcopilot.agent.research.runtime import build_research_tool
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.model import SubagentBudgetSpec, SubagentSpec
+from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
 from chatcopilot.contracts.subagents import SearchProviderSpec
 from chatcopilot.external_tools.shared.tool_spec import ToolDef
 
@@ -461,6 +462,61 @@ def test_codex_backend_does_not_construct_chatcopilot_search_or_delegate_agents(
     request = backend.open_session.call_args.args[0]
     assert request.allowed_tool_names == frozenset({"normal_tool"})
     assert session.capabilities.tool_names == frozenset({"normal_tool"})
+
+
+def test_codex_eval_policy_exposes_real_unified_search_tool() -> None:
+    from chatcopilot.contracts.agent_backend import (
+        BackendCapabilities,
+        BackendSessionRef,
+        CAPABILITY_CHAT,
+        CAPABILITY_TOOLS,
+    )
+
+    backend = Mock()
+    backend.capabilities = BackendCapabilities(
+        names=frozenset({CAPABILITY_CHAT, CAPABILITY_TOOLS}),
+        tool_names=frozenset({"normal_tool", "search_information"}),
+    )
+    backend.open_session.return_value = BackendSessionRef("codex", "native-session")
+    runtime = AgentRuntime(
+        llm=_FakeLLM("{}"),
+        tools=(_tool("normal_tool"),),
+        tools_schema=(),
+        runtime_config=ChatConfig(),
+        subagents=SubagentSpec(
+            research_enabled=True,
+            research_budget=SubagentBudgetSpec(),
+            search_providers=(
+                SearchProviderSpec(
+                    id="searxng",
+                    kind="searxng",
+                    endpoint="http://127.0.0.1:18064",
+                ),
+            ),
+            codex=CodexMainSessionPolicy(allow_unified_search_tool=True),
+        ),
+        agent_backend="codex",
+    )
+
+    with patch(
+        "chatcopilot.agent.runtime.build_subagent_tools",
+        return_value=(),
+    ), patch(
+        "chatcopilot.agent.runtime.build_backend",
+        return_value=backend,
+    ):
+        session = runtime.new_session(
+            session_id="sid-codex-eval-search",
+            system_baseline="base",
+        )
+
+    request = backend.open_session.call_args.args[0]
+    assert request.allowed_tool_names == frozenset(
+        {"normal_tool", "search_information"}
+    )
+    assert session.capabilities.tool_names == frozenset(
+        {"normal_tool", "search_information"}
+    )
 
 
 def test_codex_backend_uses_current_personal_workspace_root(tmp_path) -> None:
