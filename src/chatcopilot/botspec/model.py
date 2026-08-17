@@ -138,6 +138,9 @@ class AccessSpec:
       具体名单值放进 ``local.env``，不进 git。``*`` 表示放行所有人。
     - ``group_whitelist_env``：可选群聊白名单 env 变量名（逗号分隔的稳定 chat ID）；
       空值不新增权限，``*`` 表示放行所有群聊。
+    - ``owner_only_project_access``：白名单仅授予会话访问；项目、主机、机器人配置、
+      内部 playbook 与跨用户隐私能力只向 Owner 暴露。普通用户仅保留显式标记的
+      公开能力和自己的私人空间，未知工具默认拒绝。
     """
 
     private_require_whitelist: bool = False
@@ -145,6 +148,7 @@ class AccessSpec:
     group_require_mention: bool = False
     whitelist_env: str | None = None
     group_whitelist_env: str | None = None
+    owner_only_project_access: bool = False
 
     @property
     def enabled(self) -> bool:

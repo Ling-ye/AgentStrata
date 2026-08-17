@@ -26,7 +26,7 @@ from chatcopilot.agent.tools.executor import PermissionFilter, ToolResult
 from chatcopilot.agent.tools.file_delivery import FileDeliveryResult, FileSender
 from chatcopilot.botspec import BotRuntimeContext
 from chatcopilot.botspec.wiki import resolve_wiki_root
-from chatcopilot.contracts import role_ge, role_value
+from chatcopilot.contracts import Role, role_ge, role_value
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.core.wiki import WikiStore
 from chatcopilot.middleware.access_control import (
@@ -51,6 +51,21 @@ from chatcopilot.platforms.base import PlatformAdapter
 from chatcopilot.project import ENV_PREFIX
 
 _LOGGER = logging.getLogger("chatcopilot.middleware.acp.agent_bridge")
+
+_MEMBER_SAFE_TOOL_CATEGORIES = frozenset(
+    {
+        "agent.workspace",
+        "agent.memory",
+        "agent.persona",
+        "agent.search",
+        "agent.research",
+        "career.intelligence",
+    }
+)
+_MEMBER_PROJECT_ACCESS_DENIED = (
+    "当前角色仅可使用公开信息查询和自己的私人空间能力；"
+    "项目、主机、机器人配置、内部资料及管理能力仅限 Owner 私聊。"
+)
 
 _TEXTIFIED_ATTACHMENT_SENDER_RE = re.compile(
     r"^\s*(?:回复\s+)?(?P<sender>[^\r\n:：]{1,80})[:：]\s*(?:\r?\n)+\s*(?:\[文件\]|\bfile[:：]|\battachment[:：])",
@@ -287,11 +302,16 @@ def _make_file_sender(adapter: PlatformAdapter) -> FileSender:
 # ----------------------------------------------------------------------------
 # Persona injection（分层 PERSONA.md → system prompt，平台中立）
 # ----------------------------------------------------------------------------
-def _extract_persona_snippet(ws: Workspace) -> str:
-    """提取分层 persona 快照（全局 → 群 → 个人）为独立片段。
+def _extract_persona_snippet(
+    runtime: Any,
+    role: Any,
+    ws: Workspace,
+) -> str:
+    """提取当前权限可见的 persona 快照为独立片段。
 
-    persona 文件是 owner 通过 persona_* 工具写出的人格设定；此处只读不写，
-    注入失败时（缺目录 / 体积超限）静默返回空串，绝不阻断会话。
+    Owner 私聊可合并全局、群和个人层；启用 Owner-only 项目边界后，普通用户、
+    Admin 和 Owner 群聊只注入自己的 user 层，避免共享 persona 内容通过 system
+    prompt 进入受限会话。注入失败时静默返回空串，绝不阻断会话。
 
     返回值作为 session_dynamic_tail 传给 build_system_prompt，被放在
     system prompt 的 dynamic tail 区段（skills 之后、date 之前），不破坏
@@ -305,6 +325,10 @@ def _extract_persona_snippet(ws: Workspace) -> str:
             chat_kind=ws.chat_kind,
             chat_id=ws.chat_id,
         )
+        if _owner_only_project_access(runtime) and not _owner_private_project_access(
+            role, ws
+        ):
+            specs = [spec for spec in specs if spec[0] == "user"]
         merged = merge_persona_layers(specs)
     except Exception:  # noqa: BLE001 - persona 注入是尽力而为
         return ""
@@ -325,8 +349,15 @@ def _make_permission_filter(
     ws: Workspace | None = None,
     *,
     agent_backend: str = "native",
+    owner_only_project_access: bool = False,
 ) -> PermissionFilter:
     def _filter(tool) -> Optional[str]:
+        if (
+            owner_only_project_access
+            and not _member_safe_tool(tool)
+            and not _owner_private_project_access(role, ws)
+        ):
+            return _MEMBER_PROJECT_ACCESS_DENIED
         if (
             str(getattr(tool, "metadata", {}).get("execution_boundary") or "") == "codex"
             and agent_backend != "codex"
@@ -350,6 +381,49 @@ def _make_permission_filter(
         return None
 
     return _filter
+
+
+def _member_safe_tool(tool: Any) -> bool:
+    if getattr(tool, "requires_role", None) is not None:
+        return False
+    category = str(getattr(tool, "category", "") or "").strip().lower()
+    if category in _MEMBER_SAFE_TOOL_CATEGORIES:
+        return True
+    metadata = getattr(tool, "metadata", {}) or {}
+    return category == "mcp" and str(metadata.get("mcp_risk") or "").lower() == "search"
+
+
+def _owner_only_project_access(runtime: Any) -> bool:
+    access = getattr(runtime, "access", None)
+    if access is None:
+        access = getattr(getattr(runtime, "spec", None), "access", None)
+    return bool(getattr(access, "owner_only_project_access", False))
+
+
+def _owner_private_project_access(role: Any, ws: Workspace | None) -> bool:
+    if role_value(role) != "owner" or ws is None:
+        return False
+    return normalize_chat_kind(ws.chat_kind, ws.chat_id) == "p2p"
+
+
+def _effective_project_role(runtime: Any, role: Any, ws: Workspace) -> Any:
+    if _owner_only_project_access(runtime) and not _owner_private_project_access(
+        role, ws
+    ):
+        return Role.USER
+    return role
+
+
+def _prompt_projection(
+    runtime: Any,
+    role: Any,
+    ws: Workspace,
+) -> tuple[tuple, tuple]:
+    if _owner_only_project_access(runtime) and not _owner_private_project_access(
+        role, ws
+    ):
+        return (), ()
+    return tuple(runtime.capability_prompt_fragments), tuple(runtime.skills)
 
 
 def _authorized_wiki_retriever(
@@ -419,6 +493,8 @@ def _build_session_for_workspace(
         )
     state_ref: Dict[str, SessionState] = {}
 
+    effective_role = _effective_project_role(runtime, role, ws)
+    capability_fragments, visible_skills = _prompt_projection(runtime, role, ws)
     system_baseline = build_system_prompt(
         platform_type=platform_type,
         workspace=ws,
@@ -426,15 +502,16 @@ def _build_session_for_workspace(
         assistant_mode=assistant_mode,
         bot_system_prompt=runtime.system_prompt,
         bot_refusal_prompt=runtime.refusal_prompt,
-        capability_prompt_fragments=runtime.capability_prompt_fragments,
-        skill_index=runtime.skills,
+        capability_prompt_fragments=capability_fragments,
+        skill_index=visible_skills,
         mode_prompts=runtime.mode_prompt_overrides,
         role_prompts=runtime.role_prompt_overrides,
         safety_prompt=runtime.safety_prompt_override,
         memory_prompt=runtime.memory_prompt_override,
         llm_model=llm_model,
+        owner_only_project_access=_owner_only_project_access(runtime),
     )
-    persona_snippet = _extract_persona_snippet(ws)
+    persona_snippet = _extract_persona_snippet(runtime, role, ws)
     wiki_retriever = _authorized_wiki_retriever(runtime=runtime, role=role, ws=ws)
     retrievers = [item for item in (agent_runtime.retriever, wiki_retriever) if item is not None]
     session_retriever = (
@@ -454,16 +531,18 @@ def _build_session_for_workspace(
         system_baseline=system_baseline,
         session_dynamic_tail=persona_snippet,
         extra_tools=extra_tools,
-        payload_filter=make_payload_sanitizer(role, ws),
+        payload_filter=make_payload_sanitizer(effective_role, ws),
         permission_filter=_make_permission_filter(
             role,
             ws,
             agent_backend=getattr(agent_runtime, "agent_backend", "native"),
+            owner_only_project_access=_owner_only_project_access(runtime),
         ),
+        skill_index_override=visible_skills,
         background_submitter=background_submitter,
         file_sender=_make_file_sender(adapter),
         workspace_service=MiddlewareWorkspaceService(),
-        caller_role_hint=role_value(role),
+        caller_role_hint=role_value(effective_role),
         caller_identity=SessionIdentity(
             user_id=ws.user_id,
             user_name=ws.user_name,
@@ -504,6 +583,10 @@ def _materialize_session_for_workspace(
 
     runtime = state.runtime
     adapter = _platform_router.get_adapter(runtime.platform_type)
+    effective_role = _effective_project_role(runtime, state.role, state.workspace)
+    capability_fragments, visible_skills = _prompt_projection(
+        runtime, state.role, state.workspace
+    )
     system_baseline = build_system_prompt(
         platform_type=runtime.platform_type,
         workspace=state.workspace,
@@ -511,15 +594,18 @@ def _materialize_session_for_workspace(
         assistant_mode=state.assistant_mode,
         bot_system_prompt=runtime.system_prompt,
         bot_refusal_prompt=runtime.refusal_prompt,
-        capability_prompt_fragments=runtime.capability_prompt_fragments,
-        skill_index=runtime.skills,
+        capability_prompt_fragments=capability_fragments,
+        skill_index=visible_skills,
         mode_prompts=runtime.mode_prompt_overrides,
         role_prompts=runtime.role_prompt_overrides,
         safety_prompt=runtime.safety_prompt_override,
         memory_prompt=runtime.memory_prompt_override,
         llm_model=state.llm_model,
+        owner_only_project_access=_owner_only_project_access(runtime),
     )
-    persona_snippet = _extract_persona_snippet(state.workspace)
+    persona_snippet = _extract_persona_snippet(
+        runtime, state.role, state.workspace
+    )
     wiki_retriever = _authorized_wiki_retriever(
         runtime=runtime,
         role=state.role,
@@ -547,16 +633,18 @@ def _materialize_session_for_workspace(
         system_baseline=system_baseline,
         session_dynamic_tail=persona_snippet,
         extra_tools=extra_tools,
-        payload_filter=make_payload_sanitizer(state.role, state.workspace),
+        payload_filter=make_payload_sanitizer(effective_role, state.workspace),
         permission_filter=_make_permission_filter(
             state.role,
             state.workspace,
             agent_backend=getattr(agent_runtime, "agent_backend", "native"),
+            owner_only_project_access=_owner_only_project_access(runtime),
         ),
+        skill_index_override=visible_skills,
         background_submitter=background_submitter,
         file_sender=_make_file_sender(adapter),
         workspace_service=MiddlewareWorkspaceService(),
-        caller_role_hint=role_value(state.role),
+        caller_role_hint=role_value(effective_role),
         caller_identity=SessionIdentity(
             user_id=state.workspace.user_id,
             user_name=state.workspace.user_name,
@@ -572,6 +660,9 @@ def _materialize_session_for_workspace(
 def _refresh_session_system_prompt(session: SessionState) -> None:
     """刷新运行时 workspace 状态，避免附件上传后沿用会话创建时的旧计数。"""
     platform_type = getattr(session.runtime, "platform_type", "feishu")
+    capability_fragments, visible_skills = _prompt_projection(
+        session.runtime, session.role, session.workspace
+    )
     baseline = build_system_prompt(
         platform_type=platform_type,
         workspace=session.workspace,
@@ -579,15 +670,18 @@ def _refresh_session_system_prompt(session: SessionState) -> None:
         assistant_mode=session.assistant_mode,
         bot_system_prompt=session.bot_system_prompt,
         bot_refusal_prompt=session.bot_refusal_prompt,
-        capability_prompt_fragments=session.capability_prompt_fragments,
-        skill_index=session.skill_index,
+        capability_prompt_fragments=capability_fragments,
+        skill_index=visible_skills,
         mode_prompts=session.mode_prompt_overrides,
         role_prompts=session.role_prompt_overrides,
         safety_prompt=session.safety_prompt_override,
         memory_prompt=session.memory_prompt_override,
         llm_model=session.llm_model,
+        owner_only_project_access=_owner_only_project_access(session.runtime),
     )
-    persona_snippet = _extract_persona_snippet(session.workspace)
+    persona_snippet = _extract_persona_snippet(
+        session.runtime, session.role, session.workspace
+    )
     session.set_assistant_mode(
         session.assistant_mode,
         baseline,

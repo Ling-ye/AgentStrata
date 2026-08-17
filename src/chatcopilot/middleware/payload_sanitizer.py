@@ -13,13 +13,14 @@ agent 完全不感知 Role；本模块是策略的唯一落点。
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from chatcopilot.middleware.access_control import Role
 from chatcopilot.middleware.runtime.workspace import Workspace
 
-_USER_STRIP_FIELDS = ("console_tail", "doc_links")
+_USER_STRIP_FIELDS = ("console_tail", "doc_links", "details", "stage")
 
 
 PayloadSanitizer = Callable[[Dict[str, Any]], Dict[str, Any]]
@@ -41,15 +42,15 @@ def sanitize_tool_payload_for_role(
 ) -> Dict[str, Any]:
     """按角色裁剪 ``ToolResult.to_llm_payload()`` 的输出。
 
-    - OWNER / ADMIN: 原样返回（payload 拷贝）。
-    - USER: 抹掉绝对路径（outputs 退化为相对路径或 basename），删除可能泄漏
+    - OWNER: 原样返回（payload 拷贝）。
+    - ADMIN / USER: 抹掉绝对路径（outputs 退化为相对路径或 basename），删除可能泄漏
       内部细节的字段，error 截短到第一行（去掉 traceback）。
     """
     if not isinstance(payload, dict):
         return payload
 
     out = dict(payload)
-    if role in (Role.OWNER, Role.ADMIN):
+    if role == Role.OWNER:
         return out
 
     for key in _USER_STRIP_FIELDS:
@@ -62,10 +63,14 @@ def sanitize_tool_payload_for_role(
             for p in outputs
         ]
 
+    summary = out.get("summary")
+    if isinstance(summary, str) and summary:
+        out["summary"] = _redact_workspace_context(summary, workspace)
+
     err = out.get("error")
     if isinstance(err, str) and err:
         first_line = err.splitlines()[0] if err.splitlines() else err
-        out["error"] = first_line.strip()
+        out["error"] = _redact_workspace_context(first_line.strip(), workspace)
 
     return out
 
@@ -90,6 +95,18 @@ def _workspace_relative_or_basename(path: str, workspace: Optional[Workspace]) -
         return str(rel).replace("\\", "/")
     except (OSError, ValueError):
         return _basename_only(path)
+
+
+def _redact_workspace_context(text: str, workspace: Optional[Workspace]) -> str:
+    redacted = text
+    if workspace is not None:
+        redacted = redacted.replace(str(workspace.root), "private-space")
+    redacted = re.sub(
+        r"(?<!\w)(?:workspace|chat|user|name)=[^\s\r\n]+",
+        "private-context",
+        redacted,
+    )
+    return redacted
 
 
 __all__ = ["PayloadSanitizer", "make_payload_sanitizer", "sanitize_tool_payload_for_role"]

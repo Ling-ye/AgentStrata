@@ -1,10 +1,9 @@
 """个性（persona）工具：persona_show / persona_set / persona_append / persona_clear。
 
 分层落盘到当前会话的 ``PERSONA.md``（全局 / 群 / 个人三层），由
-``MarkdownPersonaProvider`` + ``agent.persona.layers`` 负责定位与合并。读操作
-对所有人开放；写操作对所有白名单用户开放（user/group scope），global scope
-仅 owner 可写——通过 ``_require_scope_permission`` 在 handler 内检查
-``get_caller_role_hint()`` 实现。
+``MarkdownPersonaProvider`` + ``agent.persona.layers`` 负责定位与合并。Owner 可读写
+全部层；普通用户只可读取和修改自己的 user 层，不能获取或改变共享 group/global
+配置。权限在 handler 内通过 ``get_caller_role_hint()`` 强制执行。
 """
 from __future__ import annotations
 
@@ -53,6 +52,8 @@ def _target_path(scope: str):
 
 
 def _default_scope_for_workspace() -> str:
+    if not _caller_is_owner():
+        return "user"
     ws = resolve_workspace(create=True)
     return "group" if (ws.chat_kind or "").strip().lower() == "group" and ws.chat_id else "user"
 
@@ -67,23 +68,34 @@ def _resolve_scope(args: Dict[str, Any]) -> str:
 def _require_scope_permission(scope: str) -> None:
     """Raise if the caller lacks write permission for the given scope.
 
-    global scope requires owner; group / user open to all whitelisted users.
+    Owner may write every scope; other callers may write only their own user scope.
     """
-    if scope == "global" and get_caller_role_hint() != "owner":
+    if scope != "user" and not _caller_is_owner():
         raise PermissionError(
-            "全局（global）层个性仅 owner 可修改；"
-            "你可以使用 scope=group（群级）或 scope=user（个人级）设定个性。"
+            "共享 group/global 个性配置仅限 Owner；"
+            "当前用户只能修改自己的 user 层偏好。"
         )
 
 
+def _caller_is_owner() -> bool:
+    return get_caller_role_hint() == "owner"
+
+
 def _handler_persona_show(args: Dict[str, Any]) -> HandlerResult:
+    if not _caller_is_owner():
+        _, path = _target_path("user")
+        content = MarkdownPersonaProvider(path).snapshot().strip()
+        if not content:
+            return ("你尚未设置个人偏好。", [], None)
+        return (f"你的个人偏好：\n----\n{content}", [], None)
+
     ws, _, specs = _layer_specs()
     merged = merge_persona_layers(specs)
     outputs = [str(path) for _, path in specs]
     if not merged:
         return (
             f"{describe_workspace(ws)}\n当前未设置任何个性（全局/群/个人三层均为空）。"
-            "白名单用户均可通过 persona_set 设定个性（global 层仅 owner 可改）。",
+            "Owner 可通过 persona_set 设定 global/group/user 层个性。",
             outputs,
             None,
         )
@@ -96,6 +108,8 @@ def _handler_persona_set(args: Dict[str, Any]) -> HandlerResult:
     _require_scope_permission(scope)
     ws, path = _target_path(scope)
     MarkdownPersonaProvider(path).set(text)
+    if not _caller_is_owner():
+        return ("已更新你的个人偏好。", [], None)
     return (f"已覆盖 {scope} 层个性：{ws.relpath(path)}", [str(path)], None)
 
 
@@ -105,6 +119,8 @@ def _handler_persona_append(args: Dict[str, Any]) -> HandlerResult:
     _require_scope_permission(scope)
     ws, path = _target_path(scope)
     MarkdownPersonaProvider(path).append(text)
+    if not _caller_is_owner():
+        return ("已补充你的个人偏好。", [], None)
     return (f"已追加到 {scope} 层个性：{ws.relpath(path)}", [str(path)], None)
 
 
@@ -116,6 +132,8 @@ def _handler_persona_clear(args: Dict[str, Any]) -> HandlerResult:
     _require_scope_permission(scope)
     ws, path = _target_path(scope)
     MarkdownPersonaProvider(path).clear()
+    if not _caller_is_owner():
+        return ("已清空你的个人偏好。", [], None)
     return (f"{scope} 层个性已重置：{ws.relpath(path)}", [str(path)], None)
 
 
@@ -135,8 +153,8 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         name="persona_show",
         summary=(
-            "查看当前对当前对象生效的个性设定（全局 → 群 → 个人三层合并后的人格/语气/风格）。"
-            "任何人都能查看；个性会自动注入到你的 system prompt，通常无需手动调用。"
+            "查看个性设定。Owner 可查看当前生效的 global/group/user 合并配置；"
+            "普通用户只能查看自己的 user 层偏好。"
         ),
         properties={},
         required=[],
@@ -150,7 +168,7 @@ TOOLS: List[ToolDef] = [
         name="persona_set",
         summary=(
             "覆盖式设定某一层个性（人格/语气/称呼/立场）。"
-            "白名单用户均可设定 group/user 层；global 层仅 owner 可用。"
+            "Owner 可设定任意层；普通用户只能设定自己的 user 层。"
             "当用户说'以后对我毒舌一点'、'在这个群里正式一些'、"
             "'你的基础人格设为……'时使用，把完整人格描述写进对应 scope 层。"
         ),
@@ -172,7 +190,7 @@ TOOLS: List[ToolDef] = [
         name="persona_append",
         summary=(
             "在某一层个性末尾追加一条补充设定（不覆盖原有）。"
-            "白名单用户均可追加 group/user 层；global 层仅 owner 可用。"
+            "Owner 可追加任意层；普通用户只能追加自己的 user 层。"
             "适合在已有个性上微调，如新增一条口头禅或偏好。"
         ),
         properties={
@@ -194,7 +212,7 @@ TOOLS: List[ToolDef] = [
         summary=(
             "清空某一层个性，重置为初始模板。**破坏性操作**，"
             "必须把 confirm 显式设为 true。"
-            "白名单用户可清空 group/user 层；global 层仅 owner 可用。"
+            "Owner 可清空任意层；普通用户只能清空自己的 user 层。"
         ),
         properties={
             "scope": _SCOPE_PROPERTY,

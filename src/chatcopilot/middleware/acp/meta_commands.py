@@ -66,9 +66,19 @@ _OWNER_GLOBAL_WORKSPACE_INTENT_RE = re.compile(
 )
 _OWNER_RUNTIME_ACCESS_INTENT_RE = re.compile(
     r"("
-    r"白名单|QQ_ALLOW_FROM|允许.{0,8}(谁|哪些|来源|用户|QQ|访问|使用)|"
+    r"白名单|群白名单|QQ_ALLOW_FROM|QQ_ALLOW_GROUPS|"
+    r"允许.{0,8}(谁|哪些|来源|用户|群|群号|QQ|访问|使用)|"
     r"(谁|哪些|什么人).{0,8}(能|可以|允许).{0,8}(访问|使用|用)"
     r")",
+    re.IGNORECASE,
+)
+_CURRENT_GROUP_ALLOWLIST_INTENT_RE = re.compile(
+    r"(此群|当前群|这个群|本群).{0,12}(白名单|允许|加白)|"
+    r"(白名单|允许|加白).{0,12}(此群|当前群|这个群|本群)",
+    re.IGNORECASE,
+)
+_ALLOWLIST_ENUMERATION_INTENT_RE = re.compile(
+    r"(都有谁|有哪些|列出|完整名单|全部名单|名单内容|显示.{0,6}名单|查看.{0,6}名单)",
     re.IGNORECASE,
 )
 _QQ_NUMBER_RE = re.compile(r"(?<!\d)([1-9]\d{4,11})(?!\d)")
@@ -370,10 +380,14 @@ def _handle_debug_command(session: SessionState, text: str) -> Optional[str]:
 # ----------------------------------------------------------------------------
 # Owner 运行时信息短路
 # ----------------------------------------------------------------------------
-def _parse_runtime_allowlist(raw: str | None) -> tuple[list[str], bool]:
+def _parse_runtime_allowlist(
+    raw: str | None, *, empty_means_all: bool = True
+) -> tuple[list[str], bool]:
     """解析访问白名单 env；返回 ``(成员列表, 是否放行所有人)``。"""
     value = (raw or "").strip().strip('"').strip("'")
-    if not value or value == "*":
+    if not value:
+        return [], empty_means_all
+    if value == "*":
         return [], True
     items: list[str] = []
     seen: set[str] = set()
@@ -386,7 +400,7 @@ def _parse_runtime_allowlist(raw: str | None) -> tuple[list[str], bool]:
         if item not in seen:
             seen.add(item)
             items.append(item)
-    return items, not items
+    return items, empty_means_all and not items
 
 
 def _is_owner_runtime_info_query(user_text: str) -> bool:
@@ -402,35 +416,79 @@ def _format_owner_access_allowlist_status(
 ) -> str:
     runtime = getattr(session, "runtime", None)
     access = getattr(runtime, "access", None)
-    env_name = getattr(access, "whitelist_env", None) or ""
-    if not env_name:
+    user_env_name = getattr(access, "whitelist_env", None) or ""
+    group_env_name = getattr(access, "group_whitelist_env", None) or ""
+    if not user_env_name and not group_env_name:
         return "当前 BotSpec 没有声明访问白名单 env，因此中间件不会按白名单限制来源。"
 
     resolved_env = env if env is not None else os.environ
-    raw_value = resolved_env.get(env_name)
-    allow_ids, allow_all = _parse_runtime_allowlist(raw_value)
+    user_ids, all_users = _parse_runtime_allowlist(
+        resolved_env.get(user_env_name) if user_env_name else None
+    )
+    group_ids, all_groups = _parse_runtime_allowlist(
+        resolved_env.get(group_env_name) if group_env_name else None,
+        empty_means_all=False,
+    )
     queried_ids = _QQ_NUMBER_RE.findall(user_text or "")
+    workspace = getattr(session, "workspace", None)
+    chat_kind = str(getattr(workspace, "chat_kind", "") or "").strip().lower()
+    chat_id = str(getattr(workspace, "chat_id", "") or "").strip()
+    is_group_chat = chat_kind == "group"
+    asks_current_group = bool(
+        _CURRENT_GROUP_ALLOWLIST_INTENT_RE.search(user_text or "")
+    )
+    asks_enumeration = bool(_ALLOWLIST_ENUMERATION_INTENT_RE.search(user_text or ""))
 
-    header = f"当前访问白名单来源：`{env_name}`。"
-    if allow_all:
-        body = f"`{env_name}` 当前为空或 `*`，按访问门禁逻辑等同于允许所有来源。"
-    else:
-        body = f"当前共有 {len(allow_ids)} 个允许来源：{', '.join(allow_ids)}。"
+    if is_group_chat and asks_enumeration:
+        return "为避免在群聊中暴露私有白名单，不能在这里列出完整名单。请由 Owner 私聊查询。"
 
-    checks: list[str] = []
+    if is_group_chat and asks_current_group and chat_id:
+        current_group_allowed = all_groups or chat_id in set(group_ids)
+        return "当前群在群聊白名单中。" if current_group_allowed else "当前群不在群聊白名单中。"
+
+    if is_group_chat:
+        return "为避免在群聊中暴露私有白名单，这里只支持查询当前群是否已加白；其他查询请由 Owner 私聊进行。"
+
     if queried_ids:
-        allow_set = set(allow_ids)
+        user_set = set(user_ids)
+        group_set = set(group_ids)
+        checks = ["查询结果："]
         for qq in queried_ids:
-            if allow_all:
-                checks.append(f"- `{qq}`：允许（当前白名单放行所有来源）")
-            elif qq in allow_set:
-                checks.append(f"- `{qq}`：在白名单中")
-            else:
-                checks.append(f"- `{qq}`：不在白名单中")
+            user_status = "在用户白名单中" if all_users or qq in user_set else "不在用户白名单中"
+            group_status = "在群聊白名单中" if all_groups or qq in group_set else "不在群聊白名单中"
+            checks.append(f"- `{qq}`：{user_status}；{group_status}")
+        return "\n".join(checks)
 
-    if checks:
-        return "\n".join([header, body, "查询结果：", *checks])
-    return "\n".join([header, body])
+    if not asks_enumeration:
+        return (
+            f"当前配置了 {len(user_ids)} 个用户白名单条目和 {len(group_ids)} 个群聊白名单条目。"
+            "如需完整名单，请明确要求列出。"
+        )
+
+    lines = ["当前访问白名单："]
+    if not user_env_name:
+        lines.append("- 用户白名单：BotSpec 未声明。")
+    elif all_users:
+        lines.append(
+            f"- 用户白名单来源：`{user_env_name}`；当前为空或 `*`，允许所有用户来源。"
+        )
+    else:
+        lines.append(
+            f"- 用户白名单来源：`{user_env_name}`；当前共有 {len(user_ids)} 个允许来源："
+            f"{', '.join(user_ids) if user_ids else '无'}。"
+        )
+
+    if not group_env_name:
+        lines.append("- 群聊白名单：BotSpec 未声明。")
+    elif all_groups:
+        lines.append(f"- 群聊白名单来源：`{group_env_name}`；显式 `*`，允许所有群聊。")
+    else:
+        lines.append(
+            f"- 群聊白名单来源：`{group_env_name}`；当前共有 {len(group_ids)} 个允许群聊："
+            f"{', '.join(group_ids) if group_ids else '无'}。"
+        )
+
+    return "\n".join(lines)
 
 
 def _handle_owner_runtime_info_query(

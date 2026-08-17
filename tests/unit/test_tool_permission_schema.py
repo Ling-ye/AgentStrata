@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.contracts import Role, role_ge, role_value
+from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.external_tools.shared.tool_spec import ToolDef, build_openai_schema
 
 
@@ -80,3 +82,25 @@ def test_runtime_passes_retriever_without_changing_tool_schema() -> None:
     schema_names = {entry["function"]["name"] for entry in session.tools_schema}
     assert schema_names == {"normal_tool"}
     assert session.retriever is retriever
+
+
+def test_session_can_explicitly_hide_bot_skill_index() -> None:
+    runtime = _runtime(_tool("normal_tool"))
+    runtime.skill_index = (
+        SkillIndexEntry(
+            id="internal-playbook",
+            name="Internal Playbook",
+            description="internal",
+            body_path=Path("/tmp/internal-playbook.md"),
+        ),
+    )
+
+    owner = runtime.new_session(session_id="owner", system_baseline="baseline")
+    member = runtime.new_session(
+        session_id="member",
+        system_baseline="baseline",
+        skill_index_override=(),
+    )
+
+    assert "internal-playbook" in owner.system_baseline
+    assert "internal-playbook" not in member.system_baseline

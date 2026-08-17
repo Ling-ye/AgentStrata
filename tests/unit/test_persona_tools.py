@@ -160,40 +160,68 @@ class PersonaToolHandlerTests(unittest.TestCase):
             root = Path(tmp)
             with bind_workspace_service(_p2p_service(root)), bind_caller_role("user"):
                 summary, _, _ = persona_tools._handler_persona_set({"text": "我的个性", "scope": "user"})
-            self.assertIn("已覆盖 user 层个性", summary)
+            self.assertEqual(summary, "已更新你的个人偏好。")
 
-    def test_non_owner_can_set_group_scope(self) -> None:
+    def test_non_owner_cannot_set_group_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with bind_workspace_service(_group_service(root)), bind_caller_role("user"):
-                summary, _, _ = persona_tools._handler_persona_set({"text": "群个性", "scope": "group"})
-            self.assertIn("已覆盖 group 层个性", summary)
+                with self.assertRaises(PermissionError):
+                    persona_tools._handler_persona_set({"text": "群个性", "scope": "group"})
+
+    def test_non_owner_show_does_not_disclose_shared_layers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with bind_workspace_service(_group_service(root)), bind_caller_role("owner"):
+                persona_tools._handler_persona_set({"text": "全局秘密设定", "scope": "global"})
+                persona_tools._handler_persona_set({"text": "群秘密设定", "scope": "group"})
+            with bind_workspace_service(_group_service(root)), bind_caller_role("user"):
+                persona_tools._handler_persona_set({"text": "我的偏好", "scope": "user"})
+                summary, outputs, _ = persona_tools._handler_persona_show({})
+
+            self.assertIn("我的偏好", summary)
+            self.assertNotIn("全局秘密设定", summary)
+            self.assertNotIn("群秘密设定", summary)
+            self.assertEqual(outputs, [])
 
     def test_group_scope_writes_group_layer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with bind_workspace_service(_group_service(root)):
+            with bind_workspace_service(_group_service(root)), bind_caller_role("owner"):
                 persona_tools._handler_persona_set({"text": "群里正式", "scope": "group"})
             self.assertTrue((root / "group_g1" / PERSONA_FILENAME).is_file())
 
-    def test_group_default_scope_writes_group_layer(self) -> None:
+    def test_owner_group_default_scope_writes_group_layer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with bind_workspace_service(_group_service(root)):
+            with bind_workspace_service(_group_service(root)), bind_caller_role("owner"):
                 summary, outputs, _ = persona_tools._handler_persona_set({"text": "我是卡提西亚"})
             self.assertIn("已覆盖 group 层个性", summary)
             self.assertTrue((root / "group_g1" / PERSONA_FILENAME).is_file())
             self.assertFalse((root / "group_g1" / "user_user-001" / PERSONA_FILENAME).is_file())
             self.assertIn(str(root / "group_g1" / PERSONA_FILENAME), outputs)
 
+    def test_non_owner_group_default_scope_writes_only_user_layer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with bind_workspace_service(_group_service(root)), bind_caller_role("user"):
+                summary, outputs, _ = persona_tools._handler_persona_set({"text": "我的群内偏好"})
+
+            self.assertEqual(summary, "已更新你的个人偏好。")
+            self.assertTrue(
+                (root / "group_g1" / "user_user-001" / PERSONA_FILENAME).is_file()
+            )
+            self.assertFalse((root / "group_g1" / PERSONA_FILENAME).is_file())
+            self.assertEqual(outputs, [])
+
     def test_p2p_default_scope_still_writes_user_layer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with bind_workspace_service(_p2p_service(root)):
                 summary, outputs, _ = persona_tools._handler_persona_set({"text": "说话简洁专业"})
-            self.assertIn("已覆盖 user 层个性", summary)
+            self.assertEqual(summary, "已更新你的个人偏好。")
             self.assertTrue((root / "p2p_user-001" / PERSONA_FILENAME).is_file())
-            self.assertIn(str(root / "p2p_user-001" / PERSONA_FILENAME), outputs)
+            self.assertEqual(outputs, [])
 
     def test_append_and_clear(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

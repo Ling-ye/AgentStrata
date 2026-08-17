@@ -549,6 +549,9 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
             group_require_mention=_as_bool(access.get("group_require_mention")),
             whitelist_env=_optional_str(access.get("whitelist_env")),
             group_whitelist_env=_optional_str(access.get("group_whitelist_env")),
+            owner_only_project_access=_as_bool(
+                access.get("owner_only_project_access")
+            ),
         ),
         agents=agents,
         raw=dict(data),

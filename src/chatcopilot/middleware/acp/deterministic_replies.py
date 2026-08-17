@@ -12,6 +12,7 @@ from chatcopilot.middleware.acp import attachment_pipeline as _attachment
 from chatcopilot.middleware.acp import meta_commands as _meta
 from chatcopilot.middleware.acp import model_commands as _model_commands
 from chatcopilot.middleware.acp import private_space as _private
+from chatcopilot.middleware.acp import project_access as _project_access
 from chatcopilot.middleware.acp.job_dispatch import (
     extract_code_task_command,
     extract_job_status_query,
@@ -52,6 +53,40 @@ async def handle_deterministic_replies(
     finish_turn_task: FinishTurnTask,
     make_text_update: MakeTextUpdate = update_agent_message_text,
 ) -> PromptResponse | None:
+    runtime_info_reply = _meta._handle_owner_runtime_info_query(session, user_text)
+    if runtime_info_reply is not None:
+        _LOGGER.info(
+            "session/prompt | sid=%s deterministic owner runtime info | user_text=%r",
+            session_id,
+            user_text,
+        )
+        await _send_text(conn, session_id, runtime_info_reply, make_text_update)
+        finish_turn_task(
+            turn_task,
+            progress="已完成 Owner 运行时信息查询。",
+            final_text=runtime_info_reply,
+            stop_reason="end_turn",
+        )
+        return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
+
+    restricted_reply = _project_access.restricted_project_request_reply(
+        session, user_text
+    )
+    if restricted_reply is not None:
+        _LOGGER.info(
+            "session/prompt | sid=%s deterministic project access denied",
+            session_id,
+        )
+        await _send_text(conn, session_id, restricted_reply, make_text_update)
+        session.record_exchange(user_text, restricted_reply)
+        finish_turn_task(
+            turn_task,
+            progress="已按 Owner-only 项目权限拒绝请求。",
+            final_text=restricted_reply,
+            stop_reason="end_turn",
+        )
+        return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
+
     code_task_command = extract_code_task_command(user_text)
     if code_task_command is not None:
         action, task_id = code_task_command
@@ -65,22 +100,6 @@ async def handle_deterministic_replies(
             turn_task,
             progress=f"已完成代码任务{action}操作。",
             final_text=text,
-            stop_reason="end_turn",
-        )
-        return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
-
-    runtime_info_reply = _meta._handle_owner_runtime_info_query(session, user_text)
-    if runtime_info_reply is not None:
-        _LOGGER.info(
-            "session/prompt | sid=%s deterministic owner runtime info | user_text=%r",
-            session_id,
-            user_text,
-        )
-        await _send_text(conn, session_id, runtime_info_reply, make_text_update)
-        finish_turn_task(
-            turn_task,
-            progress="已完成 Owner 运行时信息查询。",
-            final_text=runtime_info_reply,
             stop_reason="end_turn",
         )
         return PromptResponse(stop_reason="end_turn", user_message_id=message_id)

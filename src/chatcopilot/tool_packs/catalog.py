@@ -279,7 +279,10 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
                 "persona_clear",
             ),
         ),
-        description="Layered persona read (anyone) + owner-only write helpers (builtin).",
+        description=(
+            "Layered persona helpers: Owner manages all scopes; other users can read/write "
+            "only their own user scope."
+        ),
     ),
     "playbooks.reader": ToolPackEntry(
         name="playbooks.reader",

@@ -53,6 +53,7 @@ class AccessSpecLoaderTests(unittest.TestCase):
               group_require_mention: true
               whitelist_env: QQ_ALLOW_FROM
               group_whitelist_env: QQ_ALLOW_GROUPS
+              owner_only_project_access: true
             """
         )
         with TemporaryDirectory() as tmp:
@@ -62,6 +63,7 @@ class AccessSpecLoaderTests(unittest.TestCase):
         self.assertTrue(spec.access.group_require_mention)
         self.assertEqual(spec.access.whitelist_env, "QQ_ALLOW_FROM")
         self.assertEqual(spec.access.group_whitelist_env, "QQ_ALLOW_GROUPS")
+        self.assertTrue(spec.access.owner_only_project_access)
         self.assertTrue(spec.access.enabled)
 
     def test_missing_access_defaults_disabled(self) -> None:
@@ -70,6 +72,7 @@ class AccessSpecLoaderTests(unittest.TestCase):
         self.assertFalse(spec.access.enabled)
         self.assertIsNone(spec.access.whitelist_env)
         self.assertIsNone(spec.access.group_whitelist_env)
+        self.assertFalse(spec.access.owner_only_project_access)
 
 
 class RoleResolutionTests(unittest.TestCase):
@@ -107,6 +110,33 @@ class RoleResolutionTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {}, clear=True):
             self.assertEqual(
                 resolve_role(user_id="not-owner", user_name="Configured Owner"),
+                Role.USER,
+            )
+
+    def test_qq_allowlists_do_not_grant_owner_or_admin_role(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "CHATCOPILOT_ADD_OWNER_IDS": "owner-001",
+                "QQ_ALLOW_FROM": "allowlisted-user",
+                "QQ_ALLOW_GROUPS": "allowlisted-group",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                resolve_role(
+                    user_id="allowlisted-user",
+                    user_name="Owner-like nickname",
+                    allow_name_match=False,
+                ),
+                Role.USER,
+            )
+            self.assertEqual(
+                resolve_role(
+                    user_id="member-admitted-by-group",
+                    user_name="Admin-like nickname",
+                    allow_name_match=False,
+                ),
                 Role.USER,
             )
 
@@ -258,14 +288,22 @@ class AccessGateEvaluateTests(unittest.TestCase):
 
 
 class OwnerRuntimeInfoQueryTests(unittest.TestCase):
-    def _session(self, role: Role = Role.OWNER) -> SimpleNamespace:
+    def _session(
+        self,
+        role: Role = Role.OWNER,
+        *,
+        chat_kind: str = "group",
+        chat_id: str = "30003",
+    ) -> SimpleNamespace:
         return SimpleNamespace(
             role=role,
+            workspace=SimpleNamespace(chat_kind=chat_kind, chat_id=chat_id),
             runtime=SimpleNamespace(
                 access=AccessSpec(
                     private_require_whitelist=True,
                     group_require_whitelist=True,
                     whitelist_env="QQ_ALLOW_FROM",
+                    group_whitelist_env="QQ_ALLOW_GROUPS",
                 )
             ),
         )
@@ -277,48 +315,115 @@ class OwnerRuntimeInfoQueryTests(unittest.TestCase):
 
     def test_owner_can_query_allowlist_membership(self) -> None:
         reply = _handle_owner_runtime_info_query(
-            self._session(),
+            self._session(chat_kind="p2p", chat_id=""),
             "告诉我，当前白名单有没有10003？",
-            env={"QQ_ALLOW_FROM": "10002,10003"},
+            env={"QQ_ALLOW_FROM": "10002,10003", "QQ_ALLOW_GROUPS": "30003"},
         )
 
         self.assertIsNotNone(reply)
-        self.assertIn("QQ_ALLOW_FROM", reply or "")
         self.assertIn("10003", reply or "")
-        self.assertIn("在白名单中", reply or "")
+        self.assertIn("在用户白名单中", reply or "")
+        self.assertNotIn("10002", reply or "")
+        self.assertNotIn("30003", reply or "")
 
     def test_owner_can_list_allowlist(self) -> None:
         reply = _handle_owner_runtime_info_query(
-            self._session(),
+            self._session(chat_kind="p2p", chat_id=""),
             "白名单QQ_ALLOW_FROM都有谁？",
-            env={"QQ_ALLOW_FROM": "10002,10003"},
+            env={"QQ_ALLOW_FROM": "10002,10003", "QQ_ALLOW_GROUPS": "30003"},
         )
 
         self.assertIsNotNone(reply)
         self.assertIn("当前共有 2 个允许来源", reply or "")
         self.assertIn("10002", reply or "")
         self.assertIn("10003", reply or "")
+        self.assertIn("QQ_ALLOW_GROUPS", reply or "")
 
     def test_non_owner_does_not_get_runtime_info_shortcut(self) -> None:
         reply = _handle_owner_runtime_info_query(
             self._session(Role.USER),
             "白名单都有谁？",
-            env={"QQ_ALLOW_FROM": "10002"},
+            env={"QQ_ALLOW_FROM": "10002", "QQ_ALLOW_GROUPS": "30003"},
         )
 
         self.assertIsNone(reply)
 
     def test_star_allowlist_reports_allow_all(self) -> None:
         reply = _handle_owner_runtime_info_query(
-            self._session(),
+            self._session(chat_kind="p2p", chat_id=""),
             "白名单有没有10003？",
-            env={"QQ_ALLOW_FROM": "*"},
+            env={"QQ_ALLOW_FROM": "*", "QQ_ALLOW_GROUPS": "30003"},
         )
 
         self.assertIsNotNone(reply)
-        self.assertIn("允许所有来源", reply or "")
         self.assertIn("10003", reply or "")
-        self.assertIn("允许（当前白名单放行所有来源）", reply or "")
+        self.assertIn("在用户白名单中", reply or "")
+
+    def test_owner_can_query_current_group_membership(self) -> None:
+        reply = _handle_owner_runtime_info_query(
+            self._session(),
+            "告诉我，此群在白名单中吗？",
+            env={"QQ_ALLOW_FROM": "10002", "QQ_ALLOW_GROUPS": "30003"},
+        )
+
+        self.assertIsNotNone(reply)
+        self.assertEqual(reply, "当前群在群聊白名单中。")
+        self.assertNotIn("10002", reply or "")
+        self.assertNotIn("30003", reply or "")
+        self.assertNotIn("QQ_ALLOW_FROM", reply or "")
+        self.assertNotIn("QQ_ALLOW_GROUPS", reply or "")
+
+    def test_empty_group_allowlist_reports_current_group_denied(self) -> None:
+        reply = _handle_owner_runtime_info_query(
+            self._session(),
+            "此群在群白名单中吗？",
+            env={"QQ_ALLOW_FROM": "10002", "QQ_ALLOW_GROUPS": ""},
+        )
+
+        self.assertIsNotNone(reply)
+        self.assertEqual(reply, "当前群不在群聊白名单中。")
+        self.assertNotIn("10002", reply or "")
+        self.assertNotIn("30003", reply or "")
+
+    def test_group_chat_refuses_full_allowlist_enumeration(self) -> None:
+        reply = _handle_owner_runtime_info_query(
+            self._session(),
+            "白名单都有谁？",
+            env={"QQ_ALLOW_FROM": "10002,10003", "QQ_ALLOW_GROUPS": "30003"},
+        )
+
+        self.assertIsNotNone(reply)
+        self.assertIn("不能在这里列出完整名单", reply or "")
+        self.assertNotIn("10002", reply or "")
+        self.assertNotIn("10003", reply or "")
+        self.assertNotIn("30003", reply or "")
+
+    def test_group_chat_refuses_explicit_id_membership_query(self) -> None:
+        reply = _handle_owner_runtime_info_query(
+            self._session(),
+            "10003 在白名单中吗？",
+            env={"QQ_ALLOW_FROM": "10002,10003", "QQ_ALLOW_GROUPS": "30003"},
+        )
+
+        self.assertIsNotNone(reply)
+        self.assertIn("其他查询请由 Owner 私聊", reply or "")
+        self.assertNotIn("10002", reply or "")
+        self.assertNotIn("10003", reply or "")
+        self.assertNotIn("30003", reply or "")
+
+    def test_private_generic_query_reports_counts_without_identities(self) -> None:
+        reply = _handle_owner_runtime_info_query(
+            self._session(chat_kind="p2p", chat_id=""),
+            "当前白名单是什么状态？",
+            env={"QQ_ALLOW_FROM": "10002,10003", "QQ_ALLOW_GROUPS": "30003"},
+        )
+
+        self.assertIsNotNone(reply)
+        self.assertIn("2 个用户白名单条目", reply or "")
+        self.assertIn("1 个群聊白名单条目", reply or "")
+        self.assertNotIn("10002", reply or "")
+        self.assertNotIn("10003", reply or "")
+        self.assertNotIn("30003", reply or "")
 
 
 if __name__ == "__main__":

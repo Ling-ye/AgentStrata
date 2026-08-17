@@ -15,7 +15,7 @@ from chatcopilot.agent.context.builtin_prompts import (
 )
 from chatcopilot.contracts.skills import SkillIndexEntry, render_skill_index_section
 from chatcopilot.contracts.identity import AssistantMode, Role, role_value
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.middleware.runtime.workspace import Workspace, normalize_chat_kind
 
 
 def build_system_prompt(
@@ -33,6 +33,7 @@ def build_system_prompt(
     safety_prompt: str | None = None,
     memory_prompt: str | None = None,
     llm_model: str | None = None,
+    owner_only_project_access: bool = False,
 ) -> str:
     platform = (platform_type or "feishu").strip().lower()
     if platform == "qq":
@@ -46,6 +47,7 @@ def build_system_prompt(
             role_prompts=role_prompts,
             safety_prompt=safety_prompt,
             llm_model=llm_model,
+            owner_only_project_access=owner_only_project_access,
         )
     return _build_feishu_prompt(
         workspace,
@@ -215,14 +217,18 @@ def _build_feishu_prompt(
     return "\n".join(part for part in parts if part)
 
 
-def _format_qq_session_header(llm_model: str | None = None) -> str:
+def _format_qq_session_header(
+    llm_model: str | None = None,
+    *,
+    expose_model: bool = True,
+) -> str:
     lines = [
         "## 当前会话上下文（运行时注入）",
         "",
         "- 这是一次 QQ 会话；由 cc-connect OneBot 通道维护当前用户身份。",
     ]
     model = (llm_model or "").strip()
-    if model:
+    if model and expose_model:
         lines.append(f"- 当前 LLM 模型：`{model}`。当用户询问模型/API 时，可以直接引用该值。")
     return "\n".join(lines) + "\n"
 
@@ -238,19 +244,30 @@ def _build_qq_prompt(
     role_prompts: Mapping[str, str] | None,
     safety_prompt: str | None,
     llm_model: str | None,
+    owner_only_project_access: bool,
 ) -> str:
-    del workspace
     owner = _is_qq_owner_role(role)
-    parts: list[str] = [_format_qq_session_header(llm_model)]
+    owner_private = owner and normalize_chat_kind(
+        workspace.chat_kind, workspace.chat_id
+    ) == "p2p"
+    restricted_member = owner_only_project_access and not owner_private
+    authorized_owner = owner and not restricted_member
+    parts: list[str] = [
+        _format_qq_session_header(
+            llm_model,
+            expose_model=not restricted_member,
+        )
+    ]
     if bot_system_prompt:
         parts.append(bot_system_prompt.strip())
-    capability_section = _format_capability_prompt_fragments(capability_prompt_fragments)
-    if capability_section:
-        parts.append(capability_section)
-    skill_section = render_skill_index_section(skill_index)
-    if skill_section:
-        parts.append(skill_section)
-    if owner:
+    if not restricted_member:
+        capability_section = _format_capability_prompt_fragments(capability_prompt_fragments)
+        if capability_section:
+            parts.append(capability_section)
+        skill_section = render_skill_index_section(skill_index)
+        if skill_section:
+            parts.append(skill_section)
+    if authorized_owner:
         owner_prompt = (role_prompts or {}).get("owner", "")
         if owner_prompt:
             parts.append(owner_prompt.strip())

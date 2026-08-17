@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from chatcopilot.botspec.skills import SkillIndexEntry
+from chatcopilot.contracts.identity import Role
 from chatcopilot.middleware.runtime.workspace import Workspace
 from chatcopilot.middleware.acp.prompt_assembler import build_system_prompt as _build_system_prompt
 
@@ -25,6 +26,18 @@ def _fake_workspace() -> Workspace:
         chat_id=None,
         user_id="qq_user_test",
         user_name="测试用户",
+    )
+
+
+def _fake_group_workspace() -> Workspace:
+    tmp = Path(tempfile.gettempdir()) / "chatcopilot-qq-persona-group-test"
+    tmp.mkdir(parents=True, exist_ok=True)
+    return Workspace(
+        root=tmp,
+        chat_kind="group",
+        chat_id="group-test",
+        user_id="qq_owner_test",
+        user_name="测试 Owner",
     )
 
 
@@ -47,6 +60,78 @@ class QQPersonaTests(unittest.TestCase):
         )
         self.assertIn("当前 LLM 模型", text)
         self.assertIn("deepseek-v4-pro", text)
+
+    def test_restricted_member_prompt_hides_model_and_internal_catalog(self) -> None:
+        skills = (
+            SkillIndexEntry(
+                id="internal-playbook",
+                name="Internal Playbook",
+                description="internal",
+                body_path=Path("/tmp/internal.md"),
+            ),
+        )
+        text = build_system_prompt(
+            _fake_workspace(),
+            role=Role.USER,
+            bot_system_prompt="x",
+            capability_prompt_fragments=("internal capability",),
+            skill_index=skills,
+            llm_model="private-model",
+            owner_only_project_access=True,
+        )
+
+        self.assertNotIn("private-model", text)
+        self.assertNotIn("当前 LLM 模型", text)
+        self.assertNotIn("internal capability", text)
+        self.assertNotIn("internal-playbook", text)
+
+    def test_restricted_owner_prompt_keeps_authorized_internal_catalog(self) -> None:
+        skills = (
+            SkillIndexEntry(
+                id="internal-playbook",
+                name="Internal Playbook",
+                description="internal",
+                body_path=Path("/tmp/internal.md"),
+            ),
+        )
+        text = build_system_prompt(
+            _fake_workspace(),
+            role=Role.OWNER,
+            bot_system_prompt="x",
+            capability_prompt_fragments=("internal capability",),
+            skill_index=skills,
+            llm_model="private-model",
+            owner_only_project_access=True,
+        )
+
+        self.assertIn("private-model", text)
+        self.assertIn("internal capability", text)
+        self.assertIn("internal-playbook", text)
+
+    def test_restricted_owner_group_prompt_hides_internal_catalog(self) -> None:
+        skills = (
+            SkillIndexEntry(
+                id="internal-playbook",
+                name="Internal Playbook",
+                description="internal",
+                body_path=Path("/tmp/internal.md"),
+            ),
+        )
+        text = build_system_prompt(
+            _fake_group_workspace(),
+            role=Role.OWNER,
+            bot_system_prompt="x",
+            bot_refusal_prompt="restricted refusal",
+            capability_prompt_fragments=("internal capability",),
+            skill_index=skills,
+            llm_model="private-model",
+            owner_only_project_access=True,
+        )
+
+        self.assertNotIn("private-model", text)
+        self.assertNotIn("internal capability", text)
+        self.assertNotIn("internal-playbook", text)
+        self.assertIn("restricted refusal", text)
 
     def test_role_and_assistant_mode_inputs_are_ignored(self) -> None:
         # QQ does not use the Feishu role matrix, so these inputs should not change output.

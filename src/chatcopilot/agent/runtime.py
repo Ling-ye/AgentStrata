@@ -104,6 +104,7 @@ class AgentRuntime:
         caller_role_hint: Optional[str] = None,
         caller_identity: SessionIdentity | None = None,
         retriever_override: Optional[Retriever] = None,
+        skill_index_override: Sequence[SkillIndexEntry] | None = None,
     ) -> AgentSessionProtocol:
         """装配一个 AgentSession 实例。
 
@@ -123,6 +124,8 @@ class AgentRuntime:
             file_sender: 由 middleware 绑定当前平台 adapter 的文件回传回调，供
                 ``send_files_to_user`` 工具使用；agent 不直接 import 平台。
             caller_identity: 当前入站消息的稳定身份；后端不得从角色提示反推身份。
+            skill_index_override: 会话级 Skill 索引投影。``None`` 使用 Bot 级索引；
+                空序列明确隐藏索引，供受限角色会话使用。
         """
         memory_snippet = memory_snippet_override
         if memory_snippet is None and self.memory_factory is not None:
@@ -233,10 +236,16 @@ class AgentRuntime:
                 or tool.name == "query_approved_sources"
             )
 
+        session_skill_index = (
+            self.skill_index
+            if skill_index_override is None
+            else tuple(skill_index_override)
+        )
+
         def render_system_prompt(baseline: str) -> str:
             return build_system_prompt(
                 baseline=baseline,
-                skill_index=self.skill_index,
+                skill_index=session_skill_index,
                 memory_snippet=memory_snippet,
                 has_search_tools=has_search_tools,
                 search_tool_names=routing_tool_names,

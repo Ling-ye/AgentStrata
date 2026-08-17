@@ -6,27 +6,45 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from chatcopilot.botspec.model import BotSpec, ContextSpec, PlatformSpec, PromptSpec, WikiSpec
+from chatcopilot.botspec.model import (
+    AccessSpec,
+    BotSpec,
+    ContextSpec,
+    PlatformSpec,
+    PromptSpec,
+    WikiSpec,
+)
 from chatcopilot.contracts import Role
 from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.middleware.acp.agent_bridge import (
     _authorized_wiki_retriever,
     _build_session_for_workspace,
+    _effective_project_role,
+    _extract_persona_snippet,
     _make_permission_filter,
     _materialize_session_for_workspace,
+    _prompt_projection,
 )
 from chatcopilot.middleware.runtime.workspace import Workspace
 
 
-def _tool() -> ToolDef:
+def _tool(
+    *,
+    category: str = "wiki.knowledge",
+    requires_role: str | None = "owner",
+    metadata: dict | None = None,
+) -> ToolDef:
     return ToolDef(
         name="private_wiki_tool",
         summary="test",
         properties={},
         required=[],
         handler=lambda args: ("ok", [], None),
-        requires_role="owner",
-        metadata={"private_chat_only": True},
+        requires_role=requires_role,
+        category=category,
+        metadata=(
+            metadata if metadata is not None else {"private_chat_only": True}
+        ),
     )
 
 
@@ -60,6 +78,137 @@ def test_permission_filter_requires_owner_and_private_chat(tmp_path: Path) -> No
     assert _make_permission_filter(Role.OWNER, private_ws)(_tool()) is None
     assert "仅允许在私聊" in str(_make_permission_filter(Role.OWNER, group_ws)(_tool()))
     assert "需要 owner" in str(_make_permission_filter(Role.USER, private_ws)(_tool()))
+
+
+def test_owner_only_project_filter_is_fail_closed_outside_owner_private_chat(
+    tmp_path: Path,
+) -> None:
+    owner_private = _workspace(tmp_path, "p2p")
+    owner_group = _workspace(tmp_path, "group")
+    user_filter = _make_permission_filter(
+        Role.USER,
+        owner_private,
+        owner_only_project_access=True,
+    )
+    owner_private_filter = _make_permission_filter(
+        Role.OWNER,
+        owner_private,
+        owner_only_project_access=True,
+    )
+    owner_group_filter = _make_permission_filter(
+        Role.OWNER,
+        owner_group,
+        owner_only_project_access=True,
+    )
+
+    safe = _tool(
+        category="agent.search",
+        requires_role=None,
+        metadata={},
+    )
+    host = _tool(
+        category="filesystem.windows.read",
+        requires_role=None,
+        metadata={},
+    )
+    unknown = _tool(category="new.unclassified", requires_role=None, metadata={})
+    mcp_search = _tool(
+        category="mcp",
+        requires_role=None,
+        metadata={"mcp_risk": "search"},
+    )
+    mcp_readonly = _tool(
+        category="mcp",
+        requires_role=None,
+        metadata={"mcp_risk": "readonly"},
+    )
+
+    assert user_filter(safe) is None
+    assert user_filter(mcp_search) is None
+    assert "仅限 Owner" in str(user_filter(host))
+    assert "仅限 Owner" in str(user_filter(unknown))
+    assert "仅限 Owner" in str(user_filter(mcp_readonly))
+    assert owner_private_filter(host) is None
+    assert owner_private_filter(unknown) is None
+    assert "仅限 Owner" in str(owner_group_filter(host))
+    assert "仅限 Owner" in str(owner_group_filter(unknown))
+
+
+def test_restricted_prompt_projection_requires_owner_private_chat(
+    tmp_path: Path,
+) -> None:
+    runtime = SimpleNamespace(
+        access=AccessSpec(owner_only_project_access=True),
+        capability_prompt_fragments=("internal capability",),
+        skills=("internal skill",),
+    )
+
+    private_ws = _workspace(tmp_path, "p2p")
+    group_ws = _workspace(tmp_path, "group")
+
+    assert _prompt_projection(runtime, Role.USER, private_ws) == ((), ())
+    assert _prompt_projection(runtime, Role.ADMIN, private_ws) == ((), ())
+    assert _prompt_projection(runtime, Role.OWNER, group_ws) == ((), ())
+    assert _prompt_projection(runtime, Role.OWNER, private_ws) == (
+        ("internal capability",),
+        ("internal skill",),
+    )
+    assert _effective_project_role(runtime, Role.OWNER, private_ws) == Role.OWNER
+    assert _effective_project_role(runtime, Role.OWNER, group_ws) == Role.USER
+
+
+def test_restricted_persona_projection_exposes_only_current_user_layer(
+    tmp_path: Path,
+) -> None:
+    runtime = SimpleNamespace(access=AccessSpec(owner_only_project_access=True))
+    group_ws = Workspace(
+        root=tmp_path / "group_chat-1" / "user_owner-1",
+        chat_kind="group",
+        chat_id="chat-1",
+        user_id="owner-1",
+    ).ensure()
+    workspace_root = tmp_path
+    workspace_root.joinpath("PERSONA.md").write_text(
+        "private global persona", encoding="utf-8"
+    )
+    group_ws.root.parent.joinpath("PERSONA.md").write_text(
+        "private group persona", encoding="utf-8"
+    )
+    group_ws.root.joinpath("PERSONA.md").write_text(
+        "current user preference", encoding="utf-8"
+    )
+
+    user_prompt = _extract_persona_snippet(runtime, Role.USER, group_ws)
+    owner_group_prompt = _extract_persona_snippet(runtime, Role.OWNER, group_ws)
+
+    for prompt in (user_prompt, owner_group_prompt):
+        assert "current user preference" in prompt
+        assert "private global persona" not in prompt
+        assert "private group persona" not in prompt
+
+
+def test_restricted_persona_projection_allows_owner_private_layers(
+    tmp_path: Path,
+) -> None:
+    runtime = SimpleNamespace(access=AccessSpec(owner_only_project_access=True))
+    private_ws = Workspace(
+        root=tmp_path / "p2p_owner-1",
+        chat_kind="p2p",
+        chat_id="owner-1",
+        user_id="owner-1",
+    ).ensure()
+    workspace_root = private_ws.root.parent
+    workspace_root.joinpath("PERSONA.md").write_text(
+        "private global persona", encoding="utf-8"
+    )
+    private_ws.root.joinpath("PERSONA.md").write_text(
+        "owner preference", encoding="utf-8"
+    )
+
+    prompt = _extract_persona_snippet(runtime, Role.OWNER, private_ws)
+
+    assert "private global persona" in prompt
+    assert "owner preference" in prompt
 
 
 def test_wiki_retriever_is_only_created_for_owner_private_session(tmp_path: Path) -> None:

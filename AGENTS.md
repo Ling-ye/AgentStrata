@@ -66,7 +66,8 @@ deploy / console / CLI
 - **新增平台只写 adapter**：`platforms/<name>/adapter.py` 暴露 `ADAPTER`，由 `platforms/registry` 自动发现；不要在跨层文件写平台 `if` 分支。
 - **平台身份归 adapter**：`cc-connect` 的 `session_key` / hook 字段必须经 `parse_session_identity` 归一化为 `SessionIdentity`。
 - **群聊身份按消息刷新**：`message.received` 刷新 `/tmp/cc-sess-<SESSION_KEY>.env`；ACP prompt 边界发现 chat/user 变化时重建 `SessionState`。
-- **QQ 用户与群白名单分离**：[KNOWN][HIGH] `QQ_ALLOW_FROM` 只声明稳定发送者 QQ 号，`QQ_ALLOW_GROUPS` 只声明稳定群号，真实值只进入 bot-local `local.env`。私聊只认用户白名单；群聊由用户或群白名单任一命中，并继续服从 `QQ_REQUIRE_AT_IN_GROUP`。群名单缺失或为空不新增权限，只有显式 `*` 才允许所有群；群命中不得授予该发送者私聊权限。启用 @ 或群名单时必须由回环 OneBot 访问代理在 cc-connect 前执行同一策略，ACP 再做纵深校验。
+- **QQ 用户与群白名单分离**：[KNOWN][HIGH] `QQ_ALLOW_FROM` 只声明稳定发送者 QQ 号，`QQ_ALLOW_GROUPS` 只声明稳定群号，真实值只进入 bot-local `local.env`。私聊只认用户白名单；群聊由用户或群白名单任一命中，并继续服从 `QQ_REQUIRE_AT_IN_GROUP`。群名单缺失或为空不新增权限，只有显式 `*` 才允许所有群；群命中不得授予该发送者私聊权限。启用 @ 或群名单时必须由回环 OneBot 访问代理在 cc-connect 前执行同一策略，ACP 再做纵深校验。群聊内查询当前群只返回当前群的命中与否，不回显群号、名单内容、数量或 env；完整名单只允许 Owner 私聊显式查询。
+- **QQ 白名单不提升项目权限**：[KNOWN][HIGH] 白名单只授予会话准入，稳定发送者 ID 未独立命中 Owner 时始终是 User；群白名单不得把群成员提升为 Owner/Admin。`access.owner_only_project_access` 启用后，只有 Owner 私聊可读项目/主机文件、源码、BotSpec/部署/运行配置、内部 prompt/playbook/Skill、私有 Wiki、MCP 管理、白名单、其他用户数据、共享 persona 或调用代码/服务 mutation；Owner 群聊因回复对全群可见，必须降为普通用户的个人 workspace、工具、prompt 和 Codex access 投影。其它角色工具面默认拒绝，只保留公开搜索和当前用户自己的文件、记忆、职业情报与 user-scope 个性。未知工具类别失败关闭；Owner 群聊、Admin 与 User 的工具 payload 都必须脱敏。
 - **平台技术能力由 adapter 声明，实例开关由 BotSpec 声明**：例如 QQ gateway 属于 adapter setup action；`chat.file_uploads` / `chat.private_workspace` 属于 `tools.features`。
 - **纯文本附件兜底只识别本地文件引用**：匹配路径或文件名前先排除 `http://` / `https://` URL。
 - **不要写绝对路径到代码或 YAML**；机器路径走 env，secret 走 `bots/<id>/local.env` 或本机 credential store。
