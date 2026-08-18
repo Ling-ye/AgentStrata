@@ -48,7 +48,6 @@ _DRIVERS = {
     "agent_isolated",
     "agent_configured",
     "acp_scenario",
-    "qq_live",
     "direct_llm",
     "dry_run",
 }
@@ -408,11 +407,8 @@ def _parse_case_definition(value: Any, *, source: str, index: int) -> EvalCaseDe
     requirements = _parse_case_requirements(value.get("requirements"), source=source, field=field)
     policy = _parse_case_policy(value.get("policy"), source=source, field=field)
     judge_mode, assertions = _parse_case_assertions(value.get("judge"), source=source, field=field)
-    qq_live = plugin_id == "qq-live" and driver_id == "qq_live"
-    if (policy.side_effect == "external_write") != qq_live:
-        raise ValueError(f"{source}: {field} external_write is required exclusively for qq-live")
-    if qq_live and policy.network != "configured":
-        raise ValueError(f"{source}: {field} qq-live requires configured network policy")
+    if policy.side_effect == "external_write":
+        raise ValueError(f"{source}: {field} Agent Evaluation cases cannot use external_write")
     return EvalCaseDefinition(
         schema=schema,
         case_id=case_id,

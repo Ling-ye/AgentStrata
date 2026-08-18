@@ -6,6 +6,7 @@
 - ``bot list``            列出 ``bots/`` 实例与当前支持的平台类型。
 - ``bot new``             scaffold 一个新的 ``bots/<id>/``（bot.yaml + prompts/persona.md）。
 - ``bot doctor``          按平台 adapter 声明的 ``required_secrets`` 校验 env 是否齐全。
+- ``bot external-check``  在 Agent/Evaluation 外检查平台连接与受认证动作。
 - ``bot render-cc-config`` 从 env + bot.yaml 渲染完整 cc-connect ``config.toml``
                           （平台片段由 adapter 提供），替代部署脚本里的平台分支逻辑。
 - ``bot render-session-env`` 从 cc-connect hook/session key 解析当前会话身份 env。
@@ -269,6 +270,66 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         return 1
     print(f"[OK] platform.type={spec.platform.type} 凭据齐全")
     return 0
+
+
+def _cmd_external_check(args: argparse.Namespace) -> int:
+    spec = load_botspec(args.bot)
+    issues = validate_botspec(spec)
+    errors = [item for item in issues if item.level == "error"]
+    if errors:
+        for issue in errors:
+            print(f"[ERR] {issue.field}: {issue.message}")
+        return 1
+
+    local_env_path = (
+        Path(args.config).expanduser()
+        if args.config
+        else spec.base_dir / "local.env"
+    )
+    try:
+        local_env = _load_local_env(local_env_path) if local_env_path.is_file() else {}
+    except ValueError as exc:
+        print(f"[ERR] {exc}")
+        return 1
+    effective_env = dict(local_env)
+    effective_env.update(os.environ)
+
+    adapter = _registry.get_adapter(spec.platform.type)
+    report = adapter.run_external_checks(
+        effective_env,
+        bot_id=spec.deploy.instance_id or spec.id,
+        send_message=bool(args.send_message),
+        confirm_external_write=bool(args.confirm_external_write),
+    )
+    payload = report.to_dict()
+    if args.json:
+        import json
+
+        print(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+            )
+        )
+    else:
+        print(
+            f"scope={report.scope} platform={report.platform} "
+            f"agent_evaluation=false verdict={report.verdict}"
+        )
+        labels = {
+            "passed": "OK",
+            "failed": "ERR",
+            "error": "ERR",
+            "not_configured": "INFO",
+            "not_tested": "INFO",
+        }
+        for item in report.checks:
+            print(f"[{labels[item.status]}] {item.label}: {item.status} · {item.detail}")
+        for limitation in report.limitations:
+            print(f"[LIMIT] {limitation}")
+    return 0 if report.verdict == "passed" else 1
 
 
 # ---------------------------------------------------------------------------
@@ -1471,6 +1532,24 @@ def main(argv: list[str]) -> int:
     p_doctor.add_argument("--bot", required=True, help="bot.yaml 路径")
     p_doctor.add_argument("--config", default=None, help="可选 local.env 路径")
 
+    p_external_check = sub.add_parser(
+        "external-check",
+        help="在 Agent Evaluation 外检查平台连接",
+    )
+    p_external_check.add_argument("--bot", required=True, help="bot.yaml 路径")
+    p_external_check.add_argument("--config", default=None, help="可选 local.env 路径")
+    p_external_check.add_argument(
+        "--send-message",
+        action="store_true",
+        help="向固定 env 群发送一条受限 QQ nonce 探针",
+    )
+    p_external_check.add_argument(
+        "--confirm-external-write",
+        action="store_true",
+        help="确认本次允许发送一条固定外部消息",
+    )
+    p_external_check.add_argument("--json", action="store_true", help="输出安全 JSON")
+
     p_route = sub.add_parser("route-explain", help="解释一段文本将使用的路由与模型")
     p_route.add_argument("--bot", required=True, help="bot.yaml 路径")
     p_route.add_argument("--config", default=None, help="可选 local.env 路径")
@@ -1536,6 +1615,7 @@ def main(argv: list[str]) -> int:
         "list": _cmd_list,
         "new": _cmd_new,
         "doctor": _cmd_doctor,
+        "external-check": _cmd_external_check,
         "route-explain": _cmd_route_explain,
         "render-cc-config": _cmd_render_cc_config,
         "render-session-env": _cmd_render_session_env,

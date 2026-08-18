@@ -335,21 +335,24 @@ Console 无法展示其工具，静态 catalog 与运行时装配可能漂移。
 
 统一 Evaluation 已解决生命周期、claim、artifact 和 Console 所有权，但 Suite 的 Case
 覆盖仍以少量公开 benchmark 和 Runner 内的固定路径为主，不能回答白名单、工具副作用、
-图片输入、代码恢复或真实 QQ 正向链路是否按产品契约工作。公开 benchmark 也不能替代
-这些部署相关能力的验收。
+图片输入或代码恢复是否按产品契约工作。公开 benchmark 也不能替代这些产品能力的验收；
+QQ/NapCat/OneBot 连通性则属于部署与平台检查，不应混入 Agent 能力结论。
 
 **结构调整**
 
 - Suite manifest、Case、fixture 和 verifier 使用仓库内版本化声明；Python 执行只允许
   静态 catalog 中的受信插件，不开放任意第三方模块加载。
-- `agentstrata-capabilities-v1` 固定 29 个产品 Case，提供仅手动启动的
-  `quick/full/security/qq-live/custom`；MVP 默认每 Case 1 次，不把单次结果描述为重复
+- `agentstrata-capabilities-v1` 固定 26 个产品 Case，提供仅手动启动的
+  `quick/full/security/custom`；MVP 默认每 Case 1 次，不把单次结果描述为重复
   可靠性。
 - 图片理解的 3 个 Case 已配置；图片生成保持 `not_configured`。BFCL 明确保留为
   direct-LLM 协议校准；SWE-bench Verified、WebArena 和 Canary 自更新保持
   `planned/unavailable`。
-- 创建前先做无副作用预检；配置阻断不创建 Evaluation、artifact 或进程，也不调用模型
-  或发送 QQ。真实 QQ 写入还要求本次人工确认和 env 固定目标。
+- 创建前先做无副作用预检；配置阻断不创建 Evaluation、artifact 或进程，也不调用模型。
+- 真实 QQ 连通性移到 `external-platform-check/v1`：默认只读验证 OneBot 认证、登录身份与
+  可选群访问，并在随机回环端口用假 NapCat + 真实 access-proxy relay 验证合成帧正例
+  转发和负例丢弃，不创建 Evaluation 或调用模型。可选群消息动作要求双参数单次确认；
+  没有独立发送 QQ 时，真实入站 Agent 往返仍明确为 `not_tested`。
 - 正式 Trial 在独立 spawn 子进程运行，期限取 Case timeout 与剩余 max-wall 的最小值；
   取消和预算终止进程组，Linux/WSL 使用父死保护。只有完整 Target 组进入 checkpoint，
   中断的不完整组不参与恢复和结果聚合。
@@ -357,12 +360,15 @@ Console 无法展示其工具，静态 catalog 与运行时装配可能漂移。
 **结果与证据边界**
 
 产品能力、公开校准与生命周期继续使用同一个 Evaluation Core 和报告根，同时 Case 定义、
-执行插件和环境条件可以独立演进。仓库自动化覆盖 manifest、插件 parity、预检、进程隔离、
-预算、取消和 artifact 契约；这些 fixture/mock/dry-run 结果不构成真实商用 LLM、真实 QQ
-或 Canary 自更新 E2E 通过的声明，实际结论仍须由维护者手动运行并检查 Trial 证据。
+执行插件和环境条件可以独立演进。QQ 外部检查保持独立报告语义；hermetic 模拟 ingress
+只证明本地 gateway relay，不冒充真实 QQ 或 Agent E2E，避免平台可用性污染 Agent
+verdict。仓库自动化覆盖 manifest、插件 parity、预检、进程隔离、预算、取消和 artifact
+契约；这些 fixture/mock/dry-run 结果不构成真实商用 LLM、真实 QQ 或 Canary 自更新 E2E
+通过的声明，实际结论仍须由维护者手动执行对应检查并审阅证据。
 
 相关规格：
-[`evaluation-plugin-capabilities`](../specs/evaluation-plugin-capabilities/spec.md)。
+[`evaluation-plugin-capabilities`](../specs/evaluation-plugin-capabilities/spec.md)、
+[`qq-external-platform-check`](../specs/qq-external-platform-check/spec.md)。
 
 ## 11. 确认式开发请求：区分传输回执、方案与真实任务
 

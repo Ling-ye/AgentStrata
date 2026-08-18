@@ -60,11 +60,6 @@ from chatcopilot.evals.paths import is_managed_evaluation_output
 from chatcopilot.evals.profiles import ProfileCase, get_profile
 from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, sanitize_text
 from chatcopilot.evals.plugins import CaseLoadContext, get_evaluation_plugin, get_plugin_binding
-from chatcopilot.evals.qq_live_driver import (
-    MAX_MESSAGES_PER_RUN,
-    QQEvalDriverError,
-    preflight_qq_live,
-)
 from chatcopilot.evals.registry import get_cases, get_manifest, get_standard
 from chatcopilot.evals.runner import run_suite
 
@@ -84,7 +79,6 @@ TargetExecutor = Literal[
     "agent_configured",
     "agent_isolated",
     "acp_scenario",
-    "qq_live",
     "dry_run",
 ]
 ComparisonPreset = Literal["quick", "standard", "custom"]
@@ -1512,13 +1506,7 @@ def _assert_suite_trial_definition_current(request: TrialExecutionRequest) -> No
             target_fingerprint=current_target_material,
         )
         current["base_fingerprint"] = _hash_json(current)
-        private_runtime_configuration = _private_runtime_configuration_snapshot(
-            request.bot,
-            include_qq=any(
-                _case_plugin_driver(manifest, case)[1] == "qq_live"
-                for case in selected_cases
-            ),
-        )
+        private_runtime_configuration = _private_runtime_configuration_snapshot(request.bot)
         current_environment_fingerprint = _hash_json(private_runtime_configuration)
         current["environment_identity"] = {
             "private_runtime_configuration_sha256": current_environment_fingerprint,
@@ -1599,7 +1587,6 @@ def execute_evaluation_trial(request: TrialExecutionRequest) -> EvaluationTrial:
         "agent_configured",
         "agent_isolated",
         "acp_scenario",
-        "qq_live",
         "dry_run",
     }:
         raise ValueError(f"unsupported evaluation executor: {executor}")
@@ -1862,6 +1849,11 @@ def _parse_suite_request(request: Mapping[str, Any]) -> SuiteEvaluationRequest:
         request.get("confirm_external_write", False),
         "confirm_external_write",
     )
+    if confirm_external_write:
+        raise ValueError(
+            "Evaluation does not support external writes; use 'bot external-check' "
+            "for platform connectivity checks"
+        )
     bot = str(request.get("bot") or "").strip()
     if not dry_run and not bot:
         raise ValueError("bot is required unless dry_run is true")
@@ -2021,41 +2013,6 @@ def _validate_suite(
         )
         return ()
 
-    external_write_cases = [
-        case.case_id
-        for case in selected
-        if str((_case_definition(case).get("policy") or {}).get("side_effect")) == "external_write"
-    ]
-    external_write_count = len(external_write_cases) * request.repetitions
-    external_write_bounded = external_write_count <= MAX_MESSAGES_PER_RUN
-    checks.append(
-        _check(
-            "external_write_budget",
-            "外部写消息上限",
-            external_write_bounded,
-            f"planned={external_write_count}, max={MAX_MESSAGES_PER_RUN}",
-            "减少 QQ Case 或 repetitions；一次 Evaluation 最多发送 3 条外部消息",
-        )
-    )
-    if not external_write_bounded:
-        return ()
-    confirmed = not external_write_cases or request.confirm_external_write
-    checks.append(
-        _check(
-            "external_write_confirmation",
-            "本次外部写确认",
-            confirmed,
-            (
-                "not-required"
-                if not external_write_cases
-                else f"required_cases={len(external_write_cases)}, confirmed={confirmed}"
-            ),
-            "在 Console 勾选本次确认，或 CLI 添加 --confirm-external-write",
-        )
-    )
-    if not confirmed:
-        return ()
-
     if request.dry_run:
         target = _make_target(
             target_id="dry-run",
@@ -2135,21 +2092,17 @@ def _validate_suite(
                     ready = ready and credential_ready
                     detail += f", credential={'configured' if credential_ready else 'missing'}"
             else:
-                executor: TargetExecutor = (
-                    "qq_live" if selected_drivers == {"qq_live"} else "acp_scenario"
-                )
+                executor: TargetExecutor = "acp_scenario"
                 target = _make_target(
                     target_id=f"{executor}-configured",
-                    label=("QQ live configured" if executor == "qq_live" else "ACP scenario"),
+                    label="ACP scenario",
                     executor=executor,
                     backend=backend,
                     model="",
                     reasoning_effort="",
                     config_fingerprint=config_fingerprint,
                 )
-                ready = bool(selected_drivers) and selected_drivers.issubset(
-                    {"acp_scenario", "qq_live"}
-                )
+                ready = bool(selected_drivers) and selected_drivers == {"acp_scenario"}
                 detail = f"executor={executor}, drivers={','.join(sorted(selected_drivers))}"
             checks.append(
                 _check(
@@ -2340,7 +2293,6 @@ def _suite_case_preflight(
     configured_search_sources = _configured_search_sources(runtime)
 
     access_drivers: set[str] = set()
-    qq_selected = False
     for case in cases:
         definition = _case_definition(case)
         requirements = definition.get("requirements")
@@ -2348,7 +2300,6 @@ def _suite_case_preflight(
             requirements = {}
         plugin_id, driver_id = _case_plugin_driver(manifest, case)
         access_drivers.add(driver_id)
-        qq_selected = qq_selected or driver_id == "qq_live"
         missing: list[str] = []
         capability_definition = definitions.get(case.case_id)
         if definitions:
@@ -2418,15 +2369,8 @@ def _suite_case_preflight(
             )
         )
 
-    if access_drivers.intersection({"acp_scenario", "qq_live"}):
+    if "acp_scenario" in access_drivers:
         checks.extend(_access_configuration_checks(runtime=runtime, config=config))
-    if qq_selected:
-        checks.extend(
-            _qq_configuration_checks(
-                runtime=runtime,
-                confirm_external_write=True,
-            )
-        )
     return checks
 
 
@@ -2522,46 +2466,6 @@ def _access_configuration_checks(*, runtime: Any, config: Any) -> list[dict[str,
             )
         )
     return checks
-
-
-def _qq_configuration_checks(
-    *,
-    runtime: Any,
-    confirm_external_write: bool,
-) -> list[dict[str, Any]]:
-    """Reuse the side-effect-free live driver preflight as the only QQ validator."""
-
-    env = dict(os.environ)
-    whitelist_env = str(getattr(runtime.access, "whitelist_env", "") or "").strip()
-    whitelist = tuple(
-        value.strip() for value in str(env.get(whitelist_env, "")).split(",") if value.strip()
-    )
-    try:
-        receipt = preflight_qq_live(
-            bot_id=str(env.get("QQ_ACCOUNT", "")).strip(),
-            whitelist_ids=whitelist,
-            confirm_external_write=confirm_external_write,
-            env=env,
-        )
-    except QQEvalDriverError as exc:
-        ready = False
-        detail = f"{exc.failure_class}/{exc.code}: {exc}"
-    else:
-        ready = receipt.ok
-        detail = (
-            "configured=true, endpoint=loopback, "
-            f"endpoint_digest={receipt.endpoint_sha256[:16]}, "
-            f"sender_digest={receipt.sender_hmac[:16]}, bot_digest={receipt.bot_hmac[:16]}"
-        )
-    return [
-        _check(
-            "qq_live_configuration",
-            "QQ Live 固定拓扑",
-            ready,
-            detail,
-            "配置 CHATCOPILOT_EVAL_QQ_*，使用回环 endpoint、强 token 和白名单 sender",
-        )
-    ]
 
 
 def _private_configuration_digest(value: str, *, fallback_secret: str = "") -> str:
@@ -3708,12 +3612,7 @@ def _config_snapshot(
         # Hash the exact snapshot already inspected above. Re-reading source
         # modules here could mix two generations if code changes mid-snapshot.
         definition["base_fingerprint"] = _hash_json(definition)
-        private_runtime_configuration = _private_runtime_configuration_snapshot(
-            request.bot,
-            include_qq=any(
-                _case_plugin_driver(manifest, case)[1] == "qq_live" for case in suite_cases
-            ),
-        )
+        private_runtime_configuration = _private_runtime_configuration_snapshot(request.bot)
         environment_fingerprint = _hash_json(private_runtime_configuration)
         definition["environment_identity"] = {
             "private_runtime_configuration_sha256": environment_fingerprint,
@@ -3754,8 +3653,6 @@ def _config_snapshot(
 
 def _private_runtime_configuration_snapshot(
     bot: str,
-    *,
-    include_qq: bool = False,
 ) -> dict[str, Any]:
     """Return presence/count/digest evidence without persisting identities."""
 
@@ -3803,27 +3700,6 @@ def _private_runtime_configuration_snapshot(
                 fallback_secret=fallback_secret,
             ),
         }
-        if include_qq:
-            key = _private_configuration_key(fallback_secret=fallback_secret)
-            receipt = preflight_qq_live(
-                bot_id=str(os.environ.get("QQ_ACCOUNT", "")).strip(),
-                whitelist_ids=whitelist,
-                confirm_external_write=True,
-                env=dict(os.environ),
-                evidence_key=key,
-            )
-            snapshot["qq_topology"] = {
-                "endpoint_sha256": receipt.endpoint_sha256,
-                "token_hmac": receipt.token_hmac,
-                "sender_hmac": receipt.sender_hmac,
-                "bot_hmac": receipt.bot_hmac,
-                "group_hmac": receipt.group_hmac,
-                "sender_allowlisted": receipt.sender_allowlisted,
-                "max_messages": receipt.max_messages,
-                "max_message_chars": receipt.max_message_chars,
-                "max_image_bytes": receipt.max_image_bytes,
-                "max_timeout_seconds": receipt.max_timeout_seconds,
-            }
         return snapshot
 
 
@@ -3886,7 +3762,7 @@ def _validation_payload(
 ) -> dict[str, Any]:
     failed_codes = {str(item.get("code") or "") for item in checks if not bool(item.get("ok"))}
     configuration_failure = any(
-        code.startswith(("case_requirements:", "access_", "qq_live_"))
+        code.startswith(("case_requirements:", "access_"))
         or code == "external_write_confirmation"
         for code in failed_codes
     )

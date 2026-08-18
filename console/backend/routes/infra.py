@@ -65,14 +65,14 @@ def infra_pull(request: Request, service_id: str):
 
 @router.post("/{service_id}/doctor")
 def infra_doctor(request: Request, service_id: str):
-    svc = _resolve_infra(service_id)
+    svc, instance_id = _resolve_infra_with_instance(service_id)
     if not svc.has_doctor:
         raise HTTPException(status_code=400, detail="service does not support doctor")
     try:
         task = get_task_manager(request).start(
             f"infra:{svc.id}",
             "doctor",
-            lambda: services.compose_action_streaming(svc, "doctor"),
+            lambda: services.doctor_streaming(svc, instance_id),
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

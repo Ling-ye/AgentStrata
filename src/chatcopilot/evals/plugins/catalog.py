@@ -56,12 +56,6 @@ _BINDINGS: tuple[PluginBinding, ...] = (
         PLUGIN_API_VERSION,
         frozenset({"acp_scenario", "dry_run"}),
     ),
-    PluginBinding(
-        "qq-live",
-        f"{_TRUSTED_PREFIX}qq_live",
-        PLUGIN_API_VERSION,
-        frozenset({"qq_live", "dry_run"}),
-    ),
 )
 _BY_ID = {binding.plugin_id: binding for binding in _BINDINGS}
 

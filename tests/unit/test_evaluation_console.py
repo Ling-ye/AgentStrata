@@ -505,7 +505,7 @@ def test_application_rejects_non_boolean_external_write_confirmation_before_crea
             request={
                 "kind": "suite",
                 "suite_id": "agentstrata-capabilities-v1",
-                "preset": "qq-live",
+                "preset": "full",
                 "case_ids": [],
                 "repetitions": 1,
                 "max_wall_seconds": 0,
@@ -1780,14 +1780,14 @@ def test_rerun_quick_revalidates_without_resolved_overrides(
     assert response.json()["evaluation_id"] != "eval-rerun-source"
 
 
-def test_suite_rerun_does_not_reuse_external_write_confirmation() -> None:
+def test_suite_rerun_does_not_reuse_legacy_external_write_confirmation() -> None:
     cloned = EvaluationApplication._clone_request(
         {
             "kind": "suite",
             "bot_id": "lingye-copilot-qq",
             "suite_id": "agentstrata-capabilities-v1",
-            "preset": "qq-live",
-            "case_ids": ["qq-private-text-roundtrip"],
+            "preset": "full",
+            "case_ids": [],
             "confirm_external_write": True,
         }
     )

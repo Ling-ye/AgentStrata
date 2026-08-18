@@ -300,14 +300,14 @@ def test_capability_case_contract_is_strict_and_typed() -> None:
         .joinpath("cases.yaml")
     )
     definitions = parse_case_definitions(resource.read_bytes(), source="capability/cases.yaml")
-    assert len(definitions) == 29
+    assert len(definitions) == 26
     by_id = {item.case_id: item for item in definitions}
-    qq_case = by_id["qq-private-text-roundtrip"]
-    assert qq_case.plugin_id == "qq-live"
-    assert qq_case.driver_id == "qq_live"
-    assert qq_case.policy.side_effect == "external_write"
-    assert qq_case.policy.network == "configured"
-    assert qq_case.assertions[0].kind == "trusted_verifier"
+    acp_case = by_id["access-nickname-spoof-denied"]
+    assert acp_case.plugin_id == "acp-scenario"
+    assert acp_case.driver_id == "acp_scenario"
+    assert acp_case.policy.side_effect == "isolated_read"
+    assert acp_case.assertions[0].kind == "trusted_verifier"
+    assert all(item.policy.side_effect != "external_write" for item in definitions)
 
 
 @pytest.mark.parametrize("timeout", [".nan", ".inf", "-.inf"])
@@ -393,38 +393,12 @@ def test_case_turn_text_rejects_urls_absolute_paths_and_secret_values(
         )
 
 
-def test_external_write_is_exclusive_and_mandatory_for_qq_live() -> None:
-    with pytest.raises(ValueError, match="external_write is required exclusively"):
+def test_agent_evaluation_case_rejects_external_write() -> None:
+    with pytest.raises(ValueError, match="Agent Evaluation cases cannot use external_write"):
         parse_case_definitions(
             _case_text(side_effect="external_write", network="configured"),
             source="generic-external-write.yaml",
         )
-    with pytest.raises(ValueError, match="external_write is required exclusively"):
-        parse_case_definitions(
-            _case_text(plugin="qq-live", driver="qq_live"),
-            source="qq-without-write.yaml",
-        )
-    with pytest.raises(ValueError, match="qq-live requires configured network"):
-        parse_case_definitions(
-            _case_text(
-                plugin="qq-live",
-                driver="qq_live",
-                side_effect="external_write",
-                network="disabled",
-            ),
-            source="qq-without-network.yaml",
-        )
-
-    parsed = parse_case_definitions(
-        _case_text(
-            plugin="qq-live",
-            driver="qq_live",
-            side_effect="external_write",
-            network="configured",
-        ),
-        source="qq-valid.yaml",
-    )
-    assert parsed[0].policy.side_effect == "external_write"
 
 
 def test_case_schema_supports_backend_env_and_observational_severity() -> None:
@@ -469,7 +443,6 @@ def test_static_plugin_bindings_are_exact_and_loadable() -> None:
         "ifeval",
         "generic-agent",
         "acp-scenario",
-        "qq-live",
     }
     for binding in bindings:
         plugin = get_evaluation_plugin(binding.plugin_id)
@@ -958,7 +931,7 @@ def test_product_definition_snapshot_hashes_each_selected_execution_layer() -> N
     selected_ids = {
         "dialogue-strict-json",
         "access-nickname-spoof-denied",
-        "qq-private-text-roundtrip",
+        "attachment-remote-reference-not-local",
     }
     cases = tuple(case for case in get_cases(manifest.suite_id) if case.case_id in selected_ids)
 
@@ -971,12 +944,10 @@ def test_product_definition_snapshot_hashes_each_selected_execution_layer() -> N
         "chatcopilot.evals.capability_executor",
         "chatcopilot.evals.capability_verifiers",
         "chatcopilot.evals.capability_scenarios",
-        "chatcopilot.evals.qq_live_driver",
     }.issubset(modules)
     assert set(snapshot["case_plugin_bindings"]) == {
         "acp-scenario",
         "generic-agent",
-        "qq-live",
     }
 
 

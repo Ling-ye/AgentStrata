@@ -41,7 +41,7 @@ resulting system structure.
 - **Controlled development.** Codex-backed owner sessions dispatch repository
   mutation to isolated code tasks that validate and prepare draft pull
   requests; they do not merge or deploy automatically.
-- **Unified evaluation.** Profile comparisons, the manual 29-Case product
+- **Unified evaluation.** Profile comparisons, the manual 26-Case product
   capability Suite, BFCL, GAIA, and IFEval use one Evaluation resource and one
   artifact layout. Product presets are started manually; BFCL remains a
   direct-LLM protocol calibration. The local service owns managed workers and
@@ -165,7 +165,12 @@ and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.m
 | Capabilities | Local tool packs; in-process web search; reviewed MCP bindings; RAG; memory; private Wiki |
 | Operations | React/FastAPI Console BFF; diagnostics; task status; logs |
 | Deployment | Linux / WSL; Console and Evaluation systemd user services; desired-state Docker infrastructure |
-| Evaluation | Manual capability presets (`quick/full/security/qq-live/custom`, 29 Case × 1 by default); Profile comparisons; BFCL direct-LLM; GAIA; IFEval |
+| Evaluation | Manual capability presets (`quick/full/security/custom`, 26 Case × 1 by default); Profile comparisons; BFCL direct-LLM; GAIA; IFEval |
+
+QQ/NapCat/OneBot connectivity is a platform external check, not an Agent
+Evaluation. Its default read-only path combines authenticated OneBot actions
+with a hermetic, ephemeral fake-NapCat/access-proxy relay probe; synthetic
+ingress never counts as real QQ or Agent end-to-end evidence.
 
 Third-party MCP servers and Skills are not downloaded, installed, or enabled
 automatically. Review source, license, command, secret use, and remote write

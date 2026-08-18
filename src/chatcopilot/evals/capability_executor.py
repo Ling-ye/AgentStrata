@@ -58,7 +58,6 @@ from chatcopilot.evals.models import (
     RunStatus,
     TrialObservation,
 )
-from chatcopilot.evals.qq_live_driver import QQLiveReceipt, execute_qq_live_case
 from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, sanitize_text
 from chatcopilot.evals.registry import get_manifest
 from chatcopilot.middleware.acp.prompt_assembler import build_system_prompt
@@ -84,13 +83,6 @@ _SCENARIO_SUPPORTED = frozenset(
         "attachment-remote-reference-not-local",
         "access-member-owner-tool-denied",
         "access-nickname-spoof-denied",
-    }
-)
-_QQ_SUPPORTED = frozenset(
-    {
-        "qq-private-text-roundtrip",
-        "qq-group-mention-roundtrip",
-        "qq-group-image-roundtrip",
     }
 )
 _AGENT_SUPPORTED = frozenset(
@@ -274,7 +266,6 @@ def validate_capability_definition(definition: EvalCaseDefinition) -> None:
         "agent_isolated": "generic-agent",
         "agent_configured": "generic-agent",
         "acp_scenario": "acp-scenario",
-        "qq_live": "qq-live",
     }.get(definition.driver_id)
     if expected_binding is None or definition.plugin_id != expected_binding:
         raise CapabilityExecutionError(
@@ -284,7 +275,6 @@ def validate_capability_definition(definition: EvalCaseDefinition) -> None:
         )
     supported = {
         "acp_scenario": _SCENARIO_SUPPORTED,
-        "qq_live": _QQ_SUPPORTED,
         "agent_isolated": _AGENT_SUPPORTED,
         "agent_configured": _AGENT_SUPPORTED,
     }[definition.driver_id]
@@ -302,17 +292,10 @@ def validate_capability_definition(definition: EvalCaseDefinition) -> None:
                 f"trusted verifier is not registered: {assertion.assertion_id}",
             ) from exc
 
-    external = definition.policy.side_effect == "external_write"
-    qq_live = definition.plugin_id == "qq-live" and definition.driver_id == "qq_live"
-    if external != qq_live:
+    if definition.policy.side_effect == "external_write":
         raise CapabilityExecutionError(
             "capability_side_effect_policy_invalid",
-            "external_write is reserved exclusively for the trusted qq-live driver",
-        )
-    if qq_live and definition.policy.network != "configured":
-        raise CapabilityExecutionError(
-            "capability_side_effect_policy_invalid",
-            "qq-live requires configured network policy",
+            "Agent Evaluation cases cannot perform external writes",
         )
 
 
@@ -325,12 +308,6 @@ def _preflight_definition(definition: EvalCaseDefinition, *, bot: str) -> None:
         if not str(bot or "").strip():
             raise CapabilityExecutionError(
                 "capability_bot_required", "ACP capability Case requires a selected Bot"
-            )
-        return
-    if definition.driver_id == "qq_live":
-        if not str(bot or "").strip():
-            raise CapabilityExecutionError(
-                "capability_bot_required", "QQ capability Case requires a selected Bot"
             )
         return
     if definition.driver_id in {"agent_isolated", "agent_configured"}:
@@ -2927,67 +2904,6 @@ def _execute_agent_definition(
     )
 
 
-def _execute_qq_live_case_call(**kwargs: Any) -> QQLiveReceipt:
-    return execute_qq_live_case(**kwargs)
-
-
-def _execute_qq_definition(
-    definition: EvalCaseDefinition,
-    *,
-    bot: str,
-    resources_by_id: Mapping[str, ResourceRef],
-    resource_evidence: tuple[dict[str, Any], ...],
-    confirm_external_write: bool,
-) -> TrialObservation:
-    if definition.case_id not in _QQ_SUPPORTED:
-        raise CapabilityExecutionError(
-            "capability_case_not_implemented",
-            f"QQ execution is not implemented for Case {definition.case_id}",
-        )
-    runtime = load_evaluation_runtime(bot)
-    env = dict(os.environ)
-    bot_id = str(env.get("QQ_ACCOUNT") or "").strip()
-    whitelist_env = str(getattr(runtime.access, "whitelist_env", "") or "QQ_ALLOW_FROM")
-    whitelist_ids = tuple(
-        item.strip() for item in str(env.get(whitelist_env) or "").split(",") if item.strip()
-    )
-    assertion = definition.assertions[0]
-    if definition.case_id == "qq-private-text-roundtrip":
-        scenario = "private_text"
-    elif definition.case_id == "qq-group-mention-roundtrip":
-        scenario = "group_at_text"
-    else:
-        scenario = "group_image"
-    image = b""
-    media_type = ""
-    if scenario == "group_image":
-        resource_id = definition.turns[0].resources[0]
-        reference = resources_by_id[resource_id]
-        image = Path(reference.path).read_bytes()
-        media_type = str(reference.media_type or "")
-    expected = str(assertion.arguments.get("expected") or "") if scenario == "group_image" else ""
-    receipt = _execute_qq_live_case_call(
-        scenario=scenario,
-        bot_id=bot_id,
-        whitelist_ids=whitelist_ids,
-        confirm_external_write=confirm_external_write,
-        env=env,
-        prompt=definition.turns[0].text,
-        expected_text=expected,
-        image=image,
-        media_type=media_type,
-        timeout_seconds=min(float(definition.policy.timeout_seconds), 30.0),
-    )
-    receipt_payload = asdict(receipt)
-    receipt_payload.update(
-        {
-            "kind": "qq_live_receipt",
-            "message_count": 1,
-        }
-    )
-    return TrialObservation(evidence=(*resource_evidence, receipt_payload))
-
-
 def _error_result(
     *,
     case: EvalCase,
@@ -3044,14 +2960,6 @@ def execute_capability_case(
                     owners=tuple(get_owners()),
                     admins=tuple(get_admins()),
                 ),
-            )
-        elif definition.driver_id == "qq_live":
-            observation = _execute_qq_definition(
-                definition,
-                bot=bot,
-                resources_by_id=resources_by_id,
-                resource_evidence=resource_evidence,
-                confirm_external_write=confirm_external_write,
             )
         elif definition.driver_id in {"agent_isolated", "agent_configured"}:
             observation = _execute_agent_definition(

@@ -371,14 +371,15 @@ python -m chatcopilot evals run \
   --output reports/evals/manual/bfcl-smoke
 ```
 
-### 手动产品能力与真实 QQ 测评
+### 手动产品能力测评
 
 `agentstrata-capabilities-v1` 只能从 Console 的“新建评测”按钮或下面的 CLI
 命令手动启动；它不接 Git hook、CI、文件监听、部署回调或 Bot 重启回调。
-`quick` 选择 10 个无真实 QQ 外部写 Case，`full` 包含全部 29 个 Case，`security`
-选择 5 个权限/白名单/注入 Case，`qq-live` 只包含 3 个真实 QQ 正向 Case；`custom`
-要求用一个或多个 `--case-id` 显式选择 Case。MVP 默认 `repetitions=1`，因此完整运行是
-29 Case × 1；这只能说明本次执行结果，不能作为重复可靠性结论。
+`quick` 选择 10 个代表性 Case，`full` 包含全部 26 个 Agent Case，`security`
+选择 5 个权限/白名单/注入 Case；`custom` 要求用一个或多个 `--case-id` 显式选择
+Case。MVP 默认 `repetitions=1`，因此完整运行是 26 Case × 1；这只能说明本次执行
+结果，不能作为重复可靠性结论。产品能力 Suite 不发送 QQ 消息，也不检查 OneBot
+连通性。
 
 代码修改后可先用只读 Advisor 获取建议；它只做 changed-path 到 Preset/Case 的确定性
 映射，不读取 Git diff、不创建 Evaluation，也不会自动启动模型或外部服务：
@@ -389,7 +390,7 @@ python -m chatcopilot evals advise \
   --changed-path src/chatcopilot/middleware/acp/access_gate.py
 ```
 
-不执行真实 QQ 外部写的 quick/security standalone 示例：
+quick/security/full standalone 示例：
 
 ```bash
 python -m chatcopilot evals run \
@@ -405,6 +406,13 @@ python -m chatcopilot evals run \
   --repetitions 1 \
   --bot bots/lingye-copilot-qq/bot.yaml \
   --output reports/evals/manual/capabilities-security
+
+python -m chatcopilot evals run \
+  --suite agentstrata-capabilities-v1 \
+  --preset full \
+  --repetitions 1 \
+  --bot bots/lingye-copilot-qq/bot.yaml \
+  --output reports/evals/manual/capabilities-full
 ```
 
 图片理解已有 3 个配置化 Case 和合成图片 fixture；图片生成尚未配置，能力目录显示
@@ -413,55 +421,52 @@ runtime；BFCL 明确是 `direct_llm/function_call_protocol` 校准，不进入�
 通过率。SWE-bench Verified、WebArena 和 `agentstrata-canary-self-update-v1` 当前均为
 `planned/unavailable`，不能从 Console 或 CLI 启动正式 Trial。
 
-真实 QQ Case 使用一个独立自动发送 QQ、它自己的 NapCat/OneBot endpoint 和一个
-专用测试群。在目标 Bot 的 ignored `bots/<id>/local.env` 中配置以下五项；公开示例
-见 `bots/lingye-copilot-qq/local.env.example`：
+### QQ 外部平台检查
+
+QQ/NapCat/OneBot 连通性属于平台与部署检查，不属于 Agent 能力 Evaluation。它不调用
+商用 LLM、不创建 Evaluation、Trial 或 Evaluation 报告，也不影响 Agent verdict。
+默认命令只执行读操作：验证回环 OneBot URL、强 token、未认证拒绝、认证
+`get_status`、`get_login_info` 与配置的 `QQ_ACCOUNT` 一致；配置检查群时再验证 Bot
+可以读取该群信息。随后它会在随机回环端口上临时启动假 NapCat 与真实 QQ access
+proxy relay，发送一条应丢弃和一条应转发的合成 OneBot 帧，验证 JSON 解析、当前
+白名单策略形状/@策略与 WebSocket 下游转发。Bot/user/group/token 全部为本次随机
+合成值，不复用 bot-local 私有身份。该 hermetic probe 不连接真实 QQ、cc-connect、
+ACP 或模型，结束后销毁全部临时 listener：
 
 ```bash
-CHATCOPILOT_EVAL_QQ_ENABLED
-CHATCOPILOT_EVAL_QQ_SENDER_WS_URL
-CHATCOPILOT_EVAL_QQ_SENDER_ACCESS_TOKEN
-CHATCOPILOT_EVAL_QQ_SENDER_ID
-CHATCOPILOT_EVAL_QQ_GROUP_ID
+export CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID="YOUR_EXTERNAL_CHECK_GROUP_ID"
+
+python -m chatcopilot bot external-check \
+  --bot bots/lingye-copilot-qq/bot.yaml \
+  --json
 ```
 
-[KNOWN][HIGH] sender endpoint 必须是审核后的本机回环 `ws://` / `wss://` 地址并带
-显式端口；sender access token 必须是独立的 32–128 位 URL-safe 强 token。
-`CHATCOPILOT_EVAL_QQ_SENDER_ID` 必须在被测 Bot 的 `QQ_ALLOW_FROM` 中，且不能与
-被测 Bot 的 `QQ_ACCOUNT` 相同。预检从所选 Bot 和上述私有配置锁定 sender、bot、
-group，Case、prompt 或模型都不能覆盖目标。
+[KNOWN][HIGH] 外部检查复用目标 Bot 已有的 `QQ_WS_URL`、`QQ_ACCESS_TOKEN` 和
+`QQ_ACCOUNT`；WebSocket endpoint 仍必须是带显式端口的本机回环地址，token 仍必须是
+32–128 位 URL-safe 强 token。检查群只能来自 ignored `local.env` 的固定
+`CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID`，不能由模型或 Evaluation Case 覆盖。
 
-从 Console 选择 `full` 或 `qq-live` 时，必须在本次创建表单中确认外部写。CLI
-使用一次性的 `--confirm-external-write`；该参数不保存为长期授权：
+如需验证 OneBot 是否接受群消息动作，必须为单次命令同时提供两个显式参数。发送内容
+只有固定前缀与随机 nonce，目标只能是上述固定检查群：
 
 ```bash
-python -m chatcopilot evals run \
-  --suite agentstrata-capabilities-v1 \
-  --preset qq-live \
-  --repetitions 1 \
+python -m chatcopilot bot external-check \
   --bot bots/lingye-copilot-qq/bot.yaml \
+  --send-message \
   --confirm-external-write \
-  --output reports/evals/manual/capabilities-qq-live
-
-python -m chatcopilot evals run \
-  --suite agentstrata-capabilities-v1 \
-  --preset full \
-  --repetitions 1 \
-  --bot bots/lingye-copilot-qq/bot.yaml \
-  --confirm-external-write \
-  --output reports/evals/manual/capabilities-full
+  --json
 ```
 
-启动顺序是无副作用预检优先。任一 required 配置缺失、格式非法、sender 不在白名单、
-endpoint 非回环，或本次未确认外部写时，返回结构化
-`preflight_failed/configuration_invalid`；不会创建 Evaluation 或报告目录，不调用商用
-模型，也不会连接 OneBot 或发送 QQ 消息。这属于配置问题，不计作 Agent 能力失败。
+缺少独立发送 QQ 时，外部用户入站、Agent 处理和 QQ 回复的完整往返无法被自动验证，
+报告必须显示 `qq_inbound_agent_roundtrip:not_tested`。即使可选发送动作拿到 OneBot
+message ID，也只证明 OneBot 接受了动作，不证明群成员看到消息。JSON 输出不包含原始
+QQ 号、群号、token、昵称、群名或 message ID，只保留 HMAC/digest 和结构化状态。
+Console 的 NapCat“诊断”按钮运行同一个默认只读检查。
 
-通过预检后，每条消息携带随机 Evaluation nonce，并受消息数、文本长度、图片大小和
-等待时间硬限制。持久化 artifact 只保存配置存在性、不可逆 HMAC/digest、脱敏 OneBot
-message ID 摘要和有界状态，不保存 sender/bot/group 原始 ID、access token 或回复正文。
-真实拒绝用户、昵称冒充、伪造 user ID、无 `@` 和权限绕过等负例只在隔离 ACP/OneBot
-环境中执行，不使用真实 QQ 账号尝试越权。
+`qq_simulated_gateway_ingress:passed` 只证明当前安装源码中的 access-proxy 能在隔离回环
+拓扑中携带认证连接上游、丢弃负例并把正例逐字节转发给临时下游。它不证明运行中的
+NapCat 产生过该事件，也不证明 cc-connect、ACP 或 Agent 已收到消息；这两种证据不能
+互相替代。
 
 正式 Trial 由 Core 在独立 `spawn` 子进程中执行，不在 Evaluation service/Core 主进程
 内直接运行模型与工具。有效期限取 Case policy 的 `timeout_seconds` 和本次 Evaluation

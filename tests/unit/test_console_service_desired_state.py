@@ -24,11 +24,34 @@ def test_service_catalog_matches_retained_runtime_boundaries() -> None:
     assert by_id["playwright"].container == "chatcopilot-playwright-mcp"
     assert by_id["playwright"].compose_service == "playwright-mcp"
     assert by_id["playwright"].mcp_refs == ("playwright-browser",)
+    assert by_id["napcat"].has_doctor is True
     assert services._DOCTOR_TARGETS == {
         "xiaohongshu": "xhs",
         "searxng": "searxng",
         "playwright": "playwright",
     }
+
+
+def test_napcat_doctor_runs_external_platform_check_via_gateway_status(
+    monkeypatch,
+) -> None:
+    napcat = services.find_service("napcat")
+    assert napcat is not None
+    captured: dict[str, object] = {}
+
+    def command(args: list[str], *, intro: str):
+        captured["args"] = args
+        captured["intro"] = intro
+        yield "external-check fixture"
+        yield "__EXIT__ 0"
+
+    monkeypatch.setattr(services, "_command_streaming", command)
+
+    output = list(services.doctor_streaming(napcat, "example-instance"))
+
+    assert captured["args"][-3:] == ["status", "--instance", "example-instance"]
+    assert captured["intro"] == "[external-check] NapCat QQ Gateway: example-instance"
+    assert output == ["external-check fixture", "__EXIT__ 0"]
 
 
 def test_compose_up_all_delegates_to_desired_state_reconcile(

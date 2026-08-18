@@ -15,7 +15,6 @@ DriverId = Literal[
     "agent_isolated",
     "agent_configured",
     "acp_scenario",
-    "qq_live",
     "direct_llm",
     "dry_run",
 ]

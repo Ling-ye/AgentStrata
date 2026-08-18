@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         "--preset",
         help=(
             "Comparison preset (quick/standard/custom) or a Suite-defined "
-            "preset such as quick/full/security/qq-live/custom."
+            "preset such as quick/full/security/custom."
         ),
     )
     run.add_argument("--target", action="append", dest="targets")
@@ -170,14 +170,16 @@ def _cmd_advise(args: argparse.Namespace) -> int:
         "reason": advice.reason,
         "case_ids": list(advice.case_ids),
         "recommended_preset": advice.recommended_preset,
+        "external_checks": list(advice.external_checks),
         "manual_only": True,
     }
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(
-            f"recommended preset: {advice.recommended_preset}\n"
+            f"recommended preset: {advice.recommended_preset or 'none'}\n"
             f"cases: {', '.join(advice.case_ids)}\n"
+            f"external checks: {', '.join(advice.external_checks)}\n"
             f"reason: {advice.reason}\n"
             "No Evaluation was started."
         )

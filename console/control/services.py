@@ -123,6 +123,7 @@ SERVICES: tuple[ServiceDef, ...] = (
         bound_instance_ids=("lingye-copilot-qq",),
         actions=("start", "stop", "restart"),
         has_login=True,
+        has_doctor=True,
         platforms=("qq",),
         extra={"login_type": "webui_link"},
     ),
@@ -333,7 +334,29 @@ def compose_action_streaming(svc: ServiceDef, verb: str) -> Iterator[str]:
         yield "__EXIT__ 2"
         return
 
-    yield f"[infra] {svc.display_name}: {verb}"
+    yield from _command_streaming(args, intro=f"[infra] {svc.display_name}: {verb}")
+
+
+def doctor_streaming(svc: ServiceDef, instance_id: str | None = None) -> Iterator[str]:
+    """Run a service doctor without entering the Agent Evaluation lifecycle."""
+
+    if svc.service_type == "compose":
+        yield from compose_action_streaming(svc, "doctor")
+        return
+    if svc.service_type == "standalone" and svc.id == "napcat" and instance_id:
+        script = repo_root() / "deploy" / "wsl" / "qq_gateway.sh"
+        args = ["bash", str(script), "status", "--instance", instance_id]
+        yield from _command_streaming(
+            args,
+            intro=f"[external-check] {svc.display_name}: {instance_id}",
+        )
+        return
+    yield f"[ERR] 服务不支持外部诊断：{svc.id}"
+    yield "__EXIT__ 2"
+
+
+def _command_streaming(args: list[str], *, intro: str) -> Iterator[str]:
+    yield intro
     env = dict(os.environ)
     uid = os.getuid()
     env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{uid}")

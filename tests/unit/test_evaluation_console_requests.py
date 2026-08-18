@@ -48,24 +48,33 @@ def test_named_suite_preset_owns_case_selection() -> None:
         )
 
 
-@pytest.mark.parametrize("preset", ["full", "qq-live"])
-def test_live_qq_presets_require_per_request_write_confirmation(preset: str) -> None:
-    with pytest.raises(ValidationError, match="confirm_external_write=true"):
-        SuiteEvaluationRequest(
-            kind="suite",
-            bot_id="sample-bot",
-            suite_id="agentstrata-capabilities-v1",
-            preset=preset,
-        )
-
+def test_full_capability_preset_has_no_external_write_confirmation() -> None:
     request = SuiteEvaluationRequest(
         kind="suite",
         bot_id="sample-bot",
         suite_id="agentstrata-capabilities-v1",
-        preset=preset,
+        preset="full",
+    )
+    assert request.confirm_external_write is False
+
+    # BFF retains the strict field for wire compatibility; Core rejects a true
+    # value because platform writes now use `bot external-check`.
+    legacy = SuiteEvaluationRequest(
+        kind="suite",
+        bot_id="sample-bot",
+        suite_id="agentstrata-capabilities-v1",
+        preset="full",
         confirm_external_write=True,
     )
-    assert request.confirm_external_write is True
+    assert legacy.confirm_external_write is True
+
+    with pytest.raises(ValidationError, match="preset"):
+        SuiteEvaluationRequest(
+            kind="suite",
+            bot_id="sample-bot",
+            suite_id="agentstrata-capabilities-v1",
+            preset="qq-live",
+        )
 
 
 @pytest.mark.parametrize(

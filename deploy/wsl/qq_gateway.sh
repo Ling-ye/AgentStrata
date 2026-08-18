@@ -140,6 +140,14 @@ probe_boundary() {
         probe --url "$QQ_WS_URL" --url-env-key QQ_WS_URL
 }
 
+run_external_check() {
+    CHATCOPILOT_HOME="$REPO_ROOT" \
+        PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+        "$BOUNDARY_PY" -m chatcopilot bot external-check \
+        --bot "$CHATCOPILOT_BOT_SPEC" \
+        --config "$LOCAL_CONFIG"
+}
+
 probe_boundary_with_retry() {
     local attempt probe_output
     for attempt in $(seq 1 10); do
@@ -414,8 +422,8 @@ case "$ACTION" in
                 status_rc=1
             fi
             if container_running; then
-                if ! probe_boundary; then
-                    err "QQ OneBot 双向认证探针失败。"
+                if ! run_external_check; then
+                    err "QQ 外部平台检查失败。"
                     status_rc=1
                 fi
             else

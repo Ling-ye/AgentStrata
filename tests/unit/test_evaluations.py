@@ -876,6 +876,20 @@ def test_product_subagent_preflight_requires_chat_llm_for_codex_main_backend() -
     assert ready_case["ok"] is True
 
 
+def test_suite_request_rejects_legacy_external_write_authority() -> None:
+    with pytest.raises(ValueError, match="Evaluation does not support external writes"):
+        parse_evaluation_request(
+            {
+                "evaluation_id": "eval-no-external-write",
+                "kind": "suite",
+                "bot": "bots/lingye-copilot-qq/bot.yaml",
+                "suite": "agentstrata-capabilities-v1",
+                "preset": "quick",
+                "confirm_external_write": True,
+            }
+        )
+
+
 def test_managed_suite_bootstrap_includes_complete_effective_request(
     tmp_path: Path,
 ) -> None:
@@ -1852,97 +1866,6 @@ def test_comparison_report_rejects_execution_implementation_drift(
         compare_reports(base_output, new_output)
 
 
-def test_qq_preflight_topology_is_redacted_and_bound_to_definition_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    endpoint = "ws://127.0.0.1:33001"
-    token = "q" * 48
-    sender_id = "12345001"
-    bot_id = "12345002"
-    group_id = "12345003"
-    whitelist_env = "TEST_EVAL_QQ_ALLOWLIST"
-    runtime = SimpleNamespace(
-        access=SimpleNamespace(enabled=True, whitelist_env=whitelist_env),
-        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST_EVAL_QQ")),
-    )
-    config = SimpleNamespace(llm=SimpleNamespace(api_key="fallback-eval-key-123456"))
-    monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)
-    monkeypatch.setattr(evaluation_module, "load_config", lambda **_kwargs: config)
-    for key, value in {
-        whitelist_env: sender_id,
-        "QQ_ACCOUNT": bot_id,
-        "CHATCOPILOT_EVAL_QQ_ENABLED": "true",
-        "CHATCOPILOT_EVAL_QQ_SENDER_WS_URL": endpoint,
-        "CHATCOPILOT_EVAL_QQ_SENDER_ACCESS_TOKEN": token,
-        "CHATCOPILOT_EVAL_QQ_SENDER_ID": sender_id,
-        "CHATCOPILOT_EVAL_QQ_GROUP_ID": group_id,
-    }.items():
-        monkeypatch.setenv(key, value)
-
-    request = parse_evaluation_request(
-        {
-            "evaluation_id": "eval-qq-definition-identity",
-            "kind": "suite",
-            "bot": "configured-qq-bot",
-            "suite": "agentstrata-capabilities-v1",
-            "preset": "custom",
-            "case_ids": ["qq-private-text-roundtrip"],
-            "confirm_external_write": True,
-        }
-    )
-    cases = evaluation_module._execution_cases(request)
-    target = EvaluationTarget(
-        target_id="qq-live-configured",
-        label="QQ live configured",
-        executor="qq_live",
-        backend="codex",
-        model="",
-        reasoning_effort="",
-        fingerprint="a" * 64,
-    )
-    first = evaluation_module._config_snapshot(request, (target,), cases)
-    topology = first["private_runtime_configuration"]["qq_topology"]
-    serialized = json.dumps(first, ensure_ascii=False, sort_keys=True)
-
-    assert set(topology) == {
-        "endpoint_sha256",
-        "token_hmac",
-        "sender_hmac",
-        "bot_hmac",
-        "group_hmac",
-        "sender_allowlisted",
-        "max_messages",
-        "max_message_chars",
-        "max_image_bytes",
-        "max_timeout_seconds",
-    }
-    assert topology["sender_allowlisted"] is True
-    assert all(
-        len(topology[key]) == 64
-        for key in (
-            "endpoint_sha256",
-            "token_hmac",
-            "sender_hmac",
-            "bot_hmac",
-            "group_hmac",
-        )
-    )
-    for private_value in (endpoint, token, sender_id, bot_id, group_id):
-        assert private_value not in serialized
-    assert first["definition_snapshot"]["environment_identity"] == {
-        "private_runtime_configuration_sha256": first["environment_fingerprint"]
-    }
-
-    monkeypatch.setenv("CHATCOPILOT_EVAL_QQ_GROUP_ID", "12345004")
-    drifted = evaluation_module._config_snapshot(request, (target,), cases)
-    assert (
-        first["definition_snapshot"]["base_fingerprint"]
-        == (drifted["definition_snapshot"]["base_fingerprint"])
-    )
-    assert first["environment_fingerprint"] != drifted["environment_fingerprint"]
-    assert first["definition_fingerprint"] != drifted["definition_fingerprint"]
-
-
 def test_private_runtime_fingerprint_binds_group_allowlist_without_persisting_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2316,7 +2239,7 @@ def test_suite_trial_rejects_environment_drift_before_execution(
     monkeypatch.setattr(
         evaluation_module,
         "_private_runtime_configuration_snapshot",
-        lambda _bot, *, include_qq: {"include_qq": include_qq, "drift": True},
+        lambda _bot: {"drift": True},
     )
 
     with pytest.raises(

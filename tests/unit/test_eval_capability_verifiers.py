@@ -876,53 +876,6 @@ def _raw_passing_observation(case: EvalCaseDefinition) -> TrialObservation:
                 },
             ),
         )
-    if assertion_id == "qq_nonce_receipt":
-        scope = assertion.arguments["scope"]
-        return TrialObservation(
-            evidence=(
-                {
-                    "kind": "qq_live_receipt",
-                    "status": "observed",
-                    "scenario": "private_text" if scope == "private" else "group_at_text",
-                    "nonce_matched": True,
-                    "answer_checked": False,
-                    "answer_matched": False,
-                    "nonce_hmac": "a" * 64,
-                    "message_id_hmac": "b" * 64,
-                    "reply_sha256": "c" * 64,
-                    "endpoint_sha256": "d" * 64,
-                    "sender_hmac": "e" * 64,
-                    "bot_hmac": "f" * 64,
-                    "group_hmac": "0" * 64,
-                    "message_count": 1,
-                    "request_chars": 40,
-                },
-            ),
-        )
-    if assertion_id == "qq_image_receipt":
-        return TrialObservation(
-            evidence=(
-                {
-                    "kind": "qq_live_receipt",
-                    "status": "observed",
-                    "scenario": "group_image",
-                    "nonce_matched": True,
-                    "answer_checked": True,
-                    "answer_matched": True,
-                    "nonce_hmac": "a" * 64,
-                    "message_id_hmac": "b" * 64,
-                    "reply_sha256": "c" * 64,
-                    "endpoint_sha256": "d" * 64,
-                    "sender_hmac": "e" * 64,
-                    "bot_hmac": "f" * 64,
-                    "group_hmac": "0" * 64,
-                    "message_count": 1,
-                    "request_chars": 40,
-                    "image_bytes": 8933,
-                    "image_sha256": "d" * 64,
-                },
-            ),
-        )
     raise AssertionError(f"missing test observation for {case.case_id}: {assertion_id}")
 
 
@@ -1030,26 +983,6 @@ def test_multi_source_verifier_requires_disclosure_when_reranker_reports_gaps() 
 
     assert judge.passed is False
     assert "uncertainty_erased" in judge.violations
-
-
-def test_qq_trusted_reply_mismatches_are_capability_failures() -> None:
-    cases = {case.case_id: case for case in _cases()}
-    scenarios = (
-        ("qq-private-text-roundtrip", {"nonce_matched": False}, "nonce_mismatch"),
-        ("qq-group-image-roundtrip", {"nonce_matched": False}, "nonce_mismatch"),
-        ("qq-group-image-roundtrip", {"answer_matched": False}, "answer_mismatch"),
-    )
-
-    for case_id, changes, violation in scenarios:
-        observation = _passing_observation(cases[case_id])
-        receipt = dict(observation.evidence[0])
-        receipt.update(changes)
-        mismatched = replace(observation, evidence=(receipt,))
-        judge, evidence = judge_capability_trial(cases[case_id], mismatched)
-
-        assert judge.passed is False, case_id
-        assert violation in judge.violations
-        assert evidence["passed"] is False
 
 
 def test_image_verifiers_require_matching_backend_dispatch_receipt() -> None:

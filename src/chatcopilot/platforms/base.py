@@ -24,7 +24,7 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 from chatcopilot.contracts.identity import SessionIdentity
 
@@ -80,6 +80,68 @@ class SetupActionSpec:
     description: str = ""
     command: tuple[str, ...] = ()
     allowed_verbs: tuple[str, ...] = ("start",)
+
+
+ExternalCheckStatus = Literal[
+    "passed",
+    "failed",
+    "error",
+    "not_configured",
+    "not_tested",
+]
+ExternalCheckVerdict = Literal["passed", "failed", "error", "unavailable"]
+
+
+@dataclass(frozen=True)
+class ExternalCheckItem:
+    """One secret-free platform/infrastructure observation."""
+
+    check_id: str
+    label: str
+    status: ExternalCheckStatus
+    required: bool
+    detail: str = ""
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "check_id": self.check_id,
+            "label": self.label,
+            "status": self.status,
+            "required": self.required,
+            "detail": self.detail,
+            "evidence": dict(self.evidence),
+        }
+
+
+@dataclass(frozen=True)
+class ExternalCheckReport:
+    """Platform check result kept deliberately outside Agent Evaluation."""
+
+    platform: str
+    bot_id: str
+    verdict: ExternalCheckVerdict
+    checks: tuple[ExternalCheckItem, ...]
+    external_write_attempted: bool = False
+    external_write_performed: bool = False
+    limitations: tuple[str, ...] = ()
+    schema: str = "external-platform-check/v1"
+    scope: str = "external_platform"
+    agent_evaluation: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "scope": self.scope,
+            "platform": self.platform,
+            "bot_id": self.bot_id,
+            "verdict": self.verdict,
+            "agent_evaluation": self.agent_evaluation,
+            "external_write_attempted": self.external_write_attempted,
+            "external_write_performed": self.external_write_performed,
+            "checks": [item.to_dict() for item in self.checks],
+            "limitations": list(self.limitations),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +287,33 @@ class PlatformAdapter(abc.ABC):
         """Optional platform setup actions for deployment consoles."""
         return ()
 
+    def run_external_checks(
+        self,
+        env: Mapping[str, str],
+        *,
+        bot_id: str,
+        send_message: bool = False,
+        confirm_external_write: bool = False,
+    ) -> ExternalCheckReport:
+        """Run platform checks without invoking an Agent or Evaluation."""
+
+        del env, send_message, confirm_external_write
+        return ExternalCheckReport(
+            platform=self.name,
+            bot_id=bot_id,
+            verdict="unavailable",
+            checks=(
+                ExternalCheckItem(
+                    check_id="platform_external_check",
+                    label="平台外部检查",
+                    status="not_configured",
+                    required=False,
+                    detail=f"platform={self.name} 未配置外部检查",
+                ),
+            ),
+            limitations=("该平台尚未提供外部检查实现。",),
+        )
+
     @abc.abstractmethod
     def render_cc_connect_section(self, env: Mapping[str, str]) -> str:
         """渲染 cc-connect ``[[projects.platforms]]`` 配置片段（含末尾空行）。"""
@@ -239,6 +328,10 @@ class PlatformAdapter(abc.ABC):
 
 __all__ = [
     "InboundMessage",
+    "ExternalCheckItem",
+    "ExternalCheckReport",
+    "ExternalCheckStatus",
+    "ExternalCheckVerdict",
     "OutboundMessage",
     "PlatformAdapter",
     "SecretSpec",

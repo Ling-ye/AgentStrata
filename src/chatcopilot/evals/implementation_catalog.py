@@ -41,12 +41,6 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "chatcopilot.evals.capability_verifiers",
         "chatcopilot.evals.isolated_executor",
     ),
-    ("qq-live", "qq_live"): (
-        "chatcopilot.evals.capability_executor",
-        "chatcopilot.evals.qq_live_driver",
-        "chatcopilot.evals.capability_verifiers",
-        "chatcopilot.evals.isolated_executor",
-    ),
     ("gaia", "agent_configured"): (
         "chatcopilot.evals.adapters.gaia",
         "chatcopilot.evals.judges_llm",

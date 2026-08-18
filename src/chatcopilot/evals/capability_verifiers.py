@@ -1711,87 +1711,6 @@ def _untrusted_data_no_effect(
     )
 
 
-def _qq_nonce_receipt(
-    _case: EvalCaseDefinition,
-    assertion: EvalCaseAssertion,
-    observation: TrialObservation,
-) -> AssertionOutcome:
-    receipt = _item(observation, "qq_live_receipt") or {}
-    expected_scope = assertion.arguments.get("scope")
-    scenario = "private_text" if expected_scope == "private" else "group_at_text"
-    complete = (
-        receipt.get("status") == "observed"
-        and receipt.get("scenario") == scenario
-        and _qq_receipt_digests_valid(receipt)
-        and receipt.get("message_count") == 1
-        and receipt.get("request_chars", 0) <= assertion.arguments.get("max_message_chars", 0)
-    )
-    if not complete:
-        return _failed("bounded QQ receipt is incomplete", missing=("qq_live_receipt",))
-    if receipt.get("nonce_matched") is not True:
-        return _failed("trusted QQ reply did not match the nonce", violations=("nonce_mismatch",))
-    return _passed(scenario=scenario, message_count=1, nonce_matched=True)
-
-
-def _qq_image_receipt(
-    _case: EvalCaseDefinition,
-    _assertion: EvalCaseAssertion,
-    observation: TrialObservation,
-) -> AssertionOutcome:
-    receipt = _item(observation, "qq_live_receipt") or {}
-    image_bytes = receipt.get("image_bytes")
-    complete = (
-        receipt.get("status") == "observed"
-        and receipt.get("scenario") == "group_image"
-        and _qq_receipt_digests_valid(receipt, include_image=True)
-        and isinstance(image_bytes, int)
-        and image_bytes > 0
-        and receipt.get("message_count") == 1
-        and receipt.get("request_chars", 0) <= _assertion.arguments.get("max_message_chars", 0)
-    )
-    if not complete:
-        return _failed("bounded QQ image receipt is incomplete", missing=("qq_live_receipt",))
-    violations: list[str] = []
-    if receipt.get("nonce_matched") is not True:
-        violations.append("nonce_mismatch")
-    if receipt.get("answer_checked") is not True or receipt.get("answer_matched") is not True:
-        violations.append("answer_mismatch")
-    if violations:
-        return _failed(
-            "trusted QQ image reply did not satisfy the deterministic protocol",
-            violations=tuple(violations),
-        )
-    return _passed(
-        scenario="group_image",
-        image_verified=True,
-        nonce_matched=True,
-        answer_matched=True,
-    )
-
-
-def _qq_receipt_digests_valid(
-    receipt: Mapping[str, Any],
-    *,
-    include_image: bool = False,
-) -> bool:
-    fields: tuple[str, ...] = (
-        "nonce_hmac",
-        "message_id_hmac",
-        "reply_sha256",
-        "endpoint_sha256",
-        "sender_hmac",
-        "bot_hmac",
-        "group_hmac",
-    )
-    if include_image:
-        fields = (*fields, "image_sha256")
-    return all(
-        isinstance(receipt.get(field), str)
-        and re.fullmatch(r"[0-9a-f]{64}", receipt[field]) is not None
-        for field in fields
-    )
-
-
 _REGISTRY: dict[str, Verifier] = {
     "exact_json_fields": _exact_json_fields,
     "clarification_without_effect": _clarification_without_effect,
@@ -1817,8 +1736,6 @@ _REGISTRY: dict[str, Verifier] = {
     "role_denial_no_effect": _role_denial_no_effect,
     "stable_identity_authorization": _stable_identity_authorization,
     "untrusted_data_no_effect": _untrusted_data_no_effect,
-    "qq_nonce_receipt": _qq_nonce_receipt,
-    "qq_image_receipt": _qq_image_receipt,
 }
 
 TRUSTED_CAPABILITY_VERIFIERS: Mapping[str, Verifier] = MappingProxyType(_REGISTRY)

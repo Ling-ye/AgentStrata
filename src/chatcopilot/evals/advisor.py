@@ -23,7 +23,8 @@ class EvaluationAdvice:
     categories: tuple[str, ...]
     reason: str
     case_ids: tuple[str, ...]
-    recommended_preset: str
+    recommended_preset: str | None
+    external_checks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,16 @@ class _PathRule:
     contains: tuple[str, ...]
     case_ids: tuple[str, ...]
     preset: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class _ExternalCheckRule:
+    category: str
+    prefixes: tuple[str, ...]
+    exact_paths: tuple[str, ...]
+    contains: tuple[str, ...]
+    check_id: str
     reason: str
 
 
@@ -89,22 +100,6 @@ _RULES: tuple[_PathRule, ...] = (
         ),
         preset="security",
         reason="角色、白名单或权限门禁变化需要完整 security 负例覆盖。",
-    ),
-    _PathRule(
-        category="qq",
-        prefixes=("src/chatcopilot/platforms/qq/",),
-        exact_paths=(
-            "deploy/wsl/qq_gateway.sh",
-            "src/chatcopilot/evals/qq_live_driver.py",
-        ),
-        contains=("/qq_gateway", "/onebot", "/napcat"),
-        case_ids=(
-            "qq-private-text-roundtrip",
-            "qq-group-mention-roundtrip",
-            "qq-group-image-roundtrip",
-        ),
-        preset="qq-live",
-        reason="QQ/OneBot 链路变化建议人工确认后运行受限真实 QQ 正向链路。",
     ),
     _PathRule(
         category="code-task",
@@ -228,6 +223,20 @@ _RULES: tuple[_PathRule, ...] = (
     ),
 )
 
+_EXTERNAL_CHECK_RULES: tuple[_ExternalCheckRule, ...] = (
+    _ExternalCheckRule(
+        category="qq",
+        prefixes=("src/chatcopilot/platforms/qq/",),
+        exact_paths=("deploy/wsl/qq_gateway.sh",),
+        contains=("/qq_gateway", "/onebot", "/napcat"),
+        check_id="qq",
+        reason=(
+            "QQ/OneBot 链路变化建议手动运行 QQ 外部平台检查；"
+            "它不属于 Agent Evaluation。"
+        ),
+    ),
+)
+
 
 def advise_capability_evaluation(changed_paths: Iterable[str]) -> EvaluationAdvice:
     """Return a validated recommendation without starting an Evaluation."""
@@ -237,25 +246,39 @@ def advise_capability_evaluation(changed_paths: Iterable[str]) -> EvaluationAdvi
     _validate_rules(ordered_case_ids, presets)
 
     matched: list[_PathRule] = []
+    matched_external: list[_ExternalCheckRule] = []
     unknown_paths: list[str] = []
     for path in paths:
-        rule = next((candidate for candidate in _RULES if _matches(candidate, path)), None)
-        if rule is None:
+        path_rule = next((candidate for candidate in _RULES if _matches(candidate, path)), None)
+        external_rule = next(
+            (candidate for candidate in _EXTERNAL_CHECK_RULES if _matches(candidate, path)),
+            None,
+        )
+        if path_rule is None and external_rule is None:
             unknown_paths.append(path)
-        elif rule not in matched:
-            matched.append(rule)
+        elif path_rule is not None and path_rule not in matched:
+            matched.append(path_rule)
+        if external_rule is not None and external_rule not in matched_external:
+            matched_external.append(external_rule)
 
     selected: set[str] = set()
     reasons: list[str] = []
     presets_requested: list[str] = []
     categories: list[str] = []
-    for rule in _RULES:
-        if rule not in matched:
+    for matched_rule in _RULES:
+        if matched_rule not in matched:
             continue
-        categories.append(rule.category)
-        reasons.append(rule.reason)
-        presets_requested.append(rule.preset)
-        selected.update(rule.case_ids or presets["quick"])
+        categories.append(matched_rule.category)
+        reasons.append(matched_rule.reason)
+        presets_requested.append(matched_rule.preset)
+        selected.update(matched_rule.case_ids or presets["quick"])
+    external_checks: list[str] = []
+    for external in _EXTERNAL_CHECK_RULES:
+        if external not in matched_external:
+            continue
+        categories.append(external.category)
+        reasons.append(external.reason)
+        external_checks.append(external.check_id)
     if unknown_paths:
         categories.append("unknown")
         presets_requested.append("quick")
@@ -273,15 +296,18 @@ def advise_capability_evaluation(changed_paths: Iterable[str]) -> EvaluationAdvi
             raise RuntimeError(f"Advisor rule references unknown capability preset: {preset}")
 
     case_ids = tuple(case_id for case_id in ordered_case_ids if case_id in selected)
-    recommended_preset = (
-        presets_requested[0] if presets_requested and len(set(presets_requested)) == 1 else "custom"
-    )
+    recommended_preset = None
+    if presets_requested:
+        recommended_preset = (
+            presets_requested[0] if len(set(presets_requested)) == 1 else "custom"
+        )
     return EvaluationAdvice(
         changed_paths=paths,
         categories=tuple(categories),
         reason=" ".join(reasons),
         case_ids=case_ids,
         recommended_preset=recommended_preset,
+        external_checks=tuple(external_checks),
     )
 
 
@@ -295,7 +321,7 @@ def _capability_contract() -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]
     definitions = load_case_definitions(manifest)
     ordered_case_ids = tuple(item.case_id for item in definitions)
     presets = {item.preset_id: item.case_ids for item in manifest.presets}
-    for required in ("quick", "full", "security", "qq-live"):
+    for required in ("quick", "full", "security"):
         if required not in presets:
             raise RuntimeError(f"capability Suite is missing required preset: {required}")
     return ordered_case_ids, presets
@@ -341,7 +367,7 @@ def _normalize_paths(changed_paths: Iterable[str]) -> tuple[str, ...]:
     return tuple(sorted(normalized))
 
 
-def _matches(rule: _PathRule, path: str) -> bool:
+def _matches(rule: _PathRule | _ExternalCheckRule, path: str) -> bool:
     return (
         path in rule.exact_paths
         or any(path.startswith(prefix) for prefix in rule.prefixes)

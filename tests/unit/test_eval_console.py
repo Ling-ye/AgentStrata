@@ -175,7 +175,7 @@ def test_catalog_queries_are_generic_and_hide_answers(
     assert by_id["ifeval"]["ready"] is True
     assert by_id["agentstrata-canary-self-update-v1"]["status"] == "planned"
     assert by_id["agentstrata-canary-self-update-v1"]["ready"] is False
-    assert by_id["agentstrata-capabilities-v1"]["case_count"] == 29
+    assert by_id["agentstrata-capabilities-v1"]["case_count"] == 26
     assert by_id["agentstrata-capabilities-v1"]["default_preset"] == "quick"
     assert (
         by_id["agentstrata-capabilities-v1"]["capability_status"]
@@ -365,7 +365,7 @@ def test_bot_local_snapshot_marker_cannot_bypass_machine_precedence(
 def test_bot_private_runtime_env_has_identical_preflight_and_worker_precedence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    key = "CHATCOPILOT_EVAL_QQ_GROUP_ID"
+    key = "CHATCOPILOT_GAIA_DATA_PATH"
     monkeypatch.setenv(key, "service-value")
     values = {key: "bot-local-value"}
 

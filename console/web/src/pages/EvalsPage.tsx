@@ -43,7 +43,6 @@ import {
   isProductCapabilityEvaluation,
   productCapabilityResultView,
   retainAvailableSelection,
-  suitePresetRequiresExternalWrite,
   suiteSupportsLlmJudge,
   type ApiProblem,
   type ComparisonPreset,
@@ -105,7 +104,6 @@ const CAPABILITY_LABELS: Record<string, string> = {
   session_memory_subagent: "会话、记忆与 Subagent",
   code_recovery: "代码与恢复",
   access_security: "白名单、角色与注入",
-  qq_live: "真实 QQ 正向链路",
 };
 
 interface EvaluationForm {
@@ -455,7 +453,7 @@ export default function EvalsPage({ visible = true }: Props) {
     const declaredPresets = (selectedSuite.presets ?? [])
       .map((item) => item.preset_id)
       .filter((value): value is SuitePreset =>
-        ["quick", "full", "security", "qq-live", "custom"].includes(value),
+        ["quick", "full", "security", "custom"].includes(value),
       );
     const preferredPreset = selectedSuite.default_preset;
     const suitePreset = declaredPresets.includes(preferredPreset as SuitePreset)
@@ -573,16 +571,6 @@ export default function EvalsPage({ visible = true }: Props) {
         if (form.suitePreset === "custom" && !form.caseIds.length) {
           throw new Error("Custom 至少选择一个 Case");
         }
-        if (
-          suitePresetRequiresExternalWrite(
-            selectedSuite,
-            form.suitePreset,
-            form.caseIds,
-          ) &&
-          !form.confirmExternalWrite
-        ) {
-          throw new Error("该 Preset 会向真实 QQ 发送消息，必须确认本次外部写入");
-        }
         request = buildSuiteRequest({
           botId: form.botId,
           suiteId: form.suiteId,
@@ -595,7 +583,7 @@ export default function EvalsPage({ visible = true }: Props) {
             dryRun: form.dryRun,
             llmJudge: form.llmJudge,
           }),
-          confirmExternalWrite: form.confirmExternalWrite,
+          confirmExternalWrite: false,
           dryRun: form.dryRun,
           llmJudge: suiteSupportsLlmJudge(selectedSuite) && form.llmJudge,
         });
@@ -987,16 +975,11 @@ function CreateEvaluationPane({
   const declaredSuitePresets = (selectedSuite?.presets ?? [])
     .map((item) => item.preset_id)
     .filter((value): value is SuitePreset =>
-      ["quick", "full", "security", "qq-live", "custom"].includes(value),
+      ["quick", "full", "security", "custom"].includes(value),
     );
   const availableSuitePresets = declaredSuitePresets.length
     ? declaredSuitePresets
     : ["custom" as SuitePreset];
-  const requiresExternalWrite = suitePresetRequiresExternalWrite(
-    selectedSuite,
-    form.suitePreset,
-    form.caseIds,
-  );
   const allFilteredSelected =
     filteredCaseIds.length > 0 &&
     filteredCaseIds.every((caseId) => form.caseIds.includes(caseId));
@@ -1034,8 +1017,7 @@ function CreateEvaluationPane({
         (form.preset === "custom" &&
           (!form.targetIds.length || !form.caseRefs.length))
       : !selectedSuite?.ready ||
-        (form.suitePreset === "custom" && !form.caseIds.length) ||
-        (requiresExternalWrite && !form.confirmExternalWrite));
+        (form.suitePreset === "custom" && !form.caseIds.length));
 
   return (
     <div className="eval-center-stack">
@@ -1330,23 +1312,6 @@ function CreateEvaluationPane({
                     准备数据
                   </Button>
                 ) : undefined
-              }
-            />
-          )}
-          {requiresExternalWrite && (
-            <Alert
-              type="warning"
-              showIcon
-              title="本次评测会产生真实 QQ 外部写入"
-              content={
-                <Checkbox
-                  checked={form.confirmExternalWrite}
-                  onChange={(checked) =>
-                    onChange({ confirmExternalWrite: Boolean(checked) })
-                  }
-                >
-                  我确认本次所选 Case 可以向固定测试账号和测试群发送消息
-                </Checkbox>
               }
             />
           )}

@@ -1,19 +1,17 @@
-"""Trusted declarative-case binding for Core-owned bounded QQ live execution."""
+"""Removed QQ live Evaluation plugin.
 
-from chatcopilot.evals.plugins.base import CaseLoadContext, EvaluationPlugin, PLUGIN_API_VERSION
-from chatcopilot.evals.plugins.generic_agent import load_declarative_cases
+The tracked module path remains as a packaging tombstone so an unstaged source
+tree is still complete.  It is intentionally absent from the trusted plugin
+catalog and exports no ``PLUGIN`` object.  QQ connectivity now belongs to the
+platform external-check command.
+"""
+
+from __future__ import annotations
 
 
-def _load_cases(context: CaseLoadContext):
-    return load_declarative_cases(context, plugin_id="qq-live")
-
-
-PLUGIN = EvaluationPlugin(
-    plugin_id="qq-live",
-    api_version=PLUGIN_API_VERSION,
-    implementation_module=__name__,
-    allowed_drivers=frozenset({"qq_live", "dry_run"}),
-    load_cases=_load_cases,
+REMOVAL_MESSAGE = (
+    "QQ live Evaluation support was removed; use 'chatcopilot bot external-check'"
 )
 
-__all__ = ["PLUGIN"]
+
+__all__ = ["REMOVAL_MESSAGE"]

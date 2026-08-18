@@ -10,7 +10,7 @@ export type EvaluationStatus =
   | "error";
 
 export type ComparisonPreset = "quick" | "standard" | "custom";
-export type SuitePreset = "quick" | "full" | "security" | "qq-live" | "custom";
+export type SuitePreset = "quick" | "full" | "security" | "custom";
 
 export type EvaluationOutcome = "passed" | "failed" | "skipped" | "error";
 
@@ -646,25 +646,6 @@ export function buildSuiteOptions(
     ...(declared.has("dry_run") ? { dry_run: values.dryRun } : {}),
     ...(declared.has("llm_judge") ? { llm_judge: values.llmJudge } : {}),
   };
-}
-
-export function suitePresetRequiresExternalWrite(
-  suite: EvaluationSuite | null,
-  preset: SuitePreset,
-  selectedCaseIds: string[] = [],
-): boolean {
-  if (preset === "qq-live") return true;
-  if (suite?.suite_id !== "agentstrata-capabilities-v1") return false;
-  if (preset === "full") return true;
-  if (preset !== "custom") return false;
-  const qqPreset = suite.presets?.find((item) => item.preset_id === "qq-live");
-  const qqCases = new Set(qqPreset?.case_ids ?? []);
-  // The catalog is authoritative when present.  The product Suite's reserved
-  // `qq-` namespace is a fail-safe for an older or partially loaded catalog so
-  // the form never hides the one-shot confirmation that Core will require.
-  return selectedCaseIds.some(
-    (caseId) => qqCases.has(caseId) || caseId.startsWith("qq-"),
-  );
 }
 
 function normalizeTarget(value: unknown, index: number): EvaluationTarget {

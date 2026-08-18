@@ -59,7 +59,7 @@ class SuiteEvaluationRequest(BaseModel):
     bot_id: str = Field(min_length=1)
     suite_id: str = Field(min_length=1)
     case_ids: list[str] = Field(default_factory=list)
-    preset: Literal["quick", "full", "security", "qq-live", "custom"] = "custom"
+    preset: Literal["quick", "full", "security", "custom"] = "custom"
     repetitions: int = Field(default=1, ge=1, le=10)
     max_wall_seconds: int = Field(default=0, ge=0, le=21600)
     seed: int = 0
@@ -74,11 +74,6 @@ class SuiteEvaluationRequest(BaseModel):
             raise ValueError("custom preset requires case_ids")
         if self.preset != "custom" and self.case_ids:
             raise ValueError("case_ids are only accepted with preset=custom")
-        requires_external_write = self.preset == "qq-live" or (
-            self.suite_id == "agentstrata-capabilities-v1" and self.preset == "full"
-        )
-        if requires_external_write and not self.confirm_external_write:
-            raise ValueError(f"{self.preset} preset requires confirm_external_write=true")
         return self
 
 

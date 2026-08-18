@@ -24,7 +24,7 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from chatcopilot.core.logging import configure_logging
@@ -128,21 +128,22 @@ def should_forward(
 # 配置
 # ---------------------------------------------------------------------------
 class _ProxyConfig:
-    def __init__(self) -> None:
-        self.listen_url = (os.environ.get("QQ_AT_PROXY_URL") or _DEFAULT_LISTEN).strip()
-        self.upstream_url = (os.environ.get("QQ_WS_URL") or _DEFAULT_UPSTREAM).strip()
-        self.token = (os.environ.get("QQ_ACCESS_TOKEN") or "").strip()
-        self.bot_qq = (os.environ.get("QQ_ACCOUNT") or "").strip()
+    def __init__(self, env: Mapping[str, str] | None = None) -> None:
+        values = os.environ if env is None else env
+        self.listen_url = (values.get("QQ_AT_PROXY_URL") or _DEFAULT_LISTEN).strip()
+        self.upstream_url = (values.get("QQ_WS_URL") or _DEFAULT_UPSTREAM).strip()
+        self.token = (values.get("QQ_ACCESS_TOKEN") or "").strip()
+        self.bot_qq = (values.get("QQ_ACCOUNT") or "").strip()
         self.require_at = (
-            os.environ.get("QQ_REQUIRE_AT_IN_GROUP") or "true"
+            values.get("QQ_REQUIRE_AT_IN_GROUP") or "true"
         ).strip().lower() in {"1", "true", "yes", "on"}
         self.user_ids, self.allow_all_users = _parse_allowlist(
-            os.environ.get("QQ_ALLOW_FROM"), empty_means_all=True
+            values.get("QQ_ALLOW_FROM"), empty_means_all=True
         )
         self.group_ids, self.allow_all_groups = _parse_allowlist(
-            os.environ.get("QQ_ALLOW_GROUPS"), empty_means_all=False
+            values.get("QQ_ALLOW_GROUPS"), empty_means_all=False
         )
-        self.at_all_counts = (os.environ.get("QQ_AT_ALL_COUNTS") or "").strip().lower() in {
+        self.at_all_counts = (values.get("QQ_AT_ALL_COUNTS") or "").strip().lower() in {
             "1",
             "true",
             "yes",

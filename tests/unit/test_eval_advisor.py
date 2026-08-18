@@ -70,8 +70,8 @@ _MACHINE_ABSOLUTE_PATH = "/" + "/".join(
         (
             "src/chatcopilot/platforms/qq/adapter.py",
             "qq",
-            "qq-live",
-            "qq-group-mention-roundtrip",
+            None,
+            None,
         ),
         (
             "src/chatcopilot/external_tools/dev/code_task_service.py",
@@ -96,8 +96,8 @@ _MACHINE_ABSOLUTE_PATH = "/" + "/".join(
 def test_changed_path_maps_to_validated_capability_advice(
     path: str,
     category: str,
-    preset: str,
-    expected_case: str,
+    preset: str | None,
+    expected_case: str | None,
 ) -> None:
     result = advise_capability_evaluation((path,))
 
@@ -105,7 +105,11 @@ def test_changed_path_maps_to_validated_capability_advice(
     assert result.changed_paths == (path,)
     assert result.categories == (category,)
     assert result.recommended_preset == preset
-    assert expected_case in result.case_ids
+    if expected_case is None:
+        assert result.case_ids == ()
+        assert result.external_checks == ("qq",)
+    else:
+        assert expected_case in result.case_ids
     assert result.reason
 
 
@@ -135,9 +139,9 @@ def test_multiple_categories_are_order_independent_and_recommend_custom() -> Non
 
     assert first == second
     assert first.categories == ("search", "qq")
-    assert first.recommended_preset == "custom"
+    assert first.recommended_preset == "full"
     assert "search-explicit-source" in first.case_ids
-    assert "qq-private-text-roundtrip" in first.case_ids
+    assert first.external_checks == ("qq",)
 
 
 @pytest.mark.parametrize(
@@ -197,7 +201,27 @@ def test_cli_advisor_is_read_only_and_returns_manual_recommendation(
     payload = json.loads(capsys.readouterr().out)
     assert code == 0
     assert payload["recommended_preset"] == "security"
+    assert payload["external_checks"] == []
     assert payload["manual_only"] is True
+
+
+def test_cli_advisor_reports_qq_as_external_check_not_agent_case(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = evals_cli_main(
+        [
+            "advise",
+            "--changed-path",
+            "src/chatcopilot/platforms/qq/gateway_health.py",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["recommended_preset"] is None
+    assert payload["case_ids"] == []
+    assert payload["external_checks"] == ["qq"]
 
 
 def test_cli_advisor_rejects_unsafe_path(

@@ -4,8 +4,8 @@ version: "1"
 name: AgentStrata 产品能力 v1
 kind: product
 status: implemented
-value: 验证 AgentStrata 上层 Agent 的核心产品行为、安全边界和真实 QQ 链路，不将通用模型能力分数作为硬门禁。
-recommendation: 手动按需运行 quick、full、security 或 qq-live；变更前后使用相同 Target fingerprint 比较，多次重复运行才能用于可靠性结论。
+value: 验证 AgentStrata 上层 Agent 的核心产品行为和安全边界；真实平台连通性由独立外部检查承担。
+recommendation: 手动按需运行 quick、full 或 security；变更前后使用相同 Target fingerprint 比较，多次重复运行才能用于可靠性结论。
 cadence: manual only
 plugin_id: generic-agent
 driver_id: agent_configured
@@ -14,7 +14,7 @@ files:
   - path: cases.yaml
     role: cases
     media_type: application/yaml
-    sha256: 634c1d578aa363871d8fdd62c4e56768f686d87de36a8e386f7c5959c4adc1c6
+    sha256: f2f8c0196254bde37e72662c7405c00c430c7cbf42fac72fad8f529f0df1e048
   - path: fixtures/order-card.png
     role: fixture
     resource_id: order-card
@@ -60,7 +60,7 @@ presets:
       - access-member-owner-tool-denied
       - injection-untrusted-search-contained
   full:
-    description: 全部 29 个 Case，其中 QQ Case 仍需显式外部写确认。
+    description: 全部 26 个 Agent Case；不执行真实平台外部检查或写入。
     case_ids:
       - dialogue-strict-json
       - dialogue-clarify-before-action
@@ -88,9 +88,6 @@ presets:
       - access-forbidden-tool-no-effect
       - injection-untrusted-search-contained
       - injection-untrusted-attachment-contained
-      - qq-private-text-roundtrip
-      - qq-group-mention-roundtrip
-      - qq-group-image-roundtrip
   security:
     description: 5 个白名单、角色和间接注入安全 Case。
     case_ids:
@@ -99,10 +96,4 @@ presets:
       - access-forbidden-tool-no-effect
       - injection-untrusted-search-contained
       - injection-untrusted-attachment-contained
-  qq-live:
-    description: 3 个需显式确认的真实 QQ 正向链路 Case。
-    case_ids:
-      - qq-private-text-roundtrip
-      - qq-group-mention-roundtrip
-      - qq-group-image-roundtrip
 default_preset: quick

@@ -12,12 +12,14 @@ per-user workspace 附件流水线，由 ``bots/<bot-id>/bot.yaml`` 的 ``tools.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from chatcopilot.platforms.base import (
+    ExternalCheckReport,
     PlatformAdapter,
     SecretSpec,
     SessionIdentity,
@@ -29,6 +31,7 @@ from chatcopilot.platforms.qq.gateway_health import (
     QQBoundaryError,
     require_access_token,
     require_loopback_websocket_url,
+    run_qq_external_checks,
 )
 
 if TYPE_CHECKING:
@@ -245,6 +248,23 @@ class QQAdapter(PlatformAdapter):
                     "logs",
                 ),
             ),
+        )
+
+    def run_external_checks(
+        self,
+        env: Mapping[str, str],
+        *,
+        bot_id: str,
+        send_message: bool = False,
+        confirm_external_write: bool = False,
+    ) -> ExternalCheckReport:
+        return asyncio.run(
+            run_qq_external_checks(
+                env,
+                bot_id=bot_id,
+                send_message=send_message,
+                confirm_external_write=confirm_external_write,
+            )
         )
 
     def render_cc_connect_section(self, env: Mapping[str, str]) -> str:

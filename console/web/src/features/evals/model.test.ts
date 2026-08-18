@@ -14,7 +14,6 @@ import {
   productCapabilityResultView,
   retainAvailableSelection,
   shouldStopEvaluationStream,
-  suitePresetRequiresExternalWrite,
   suiteSupportsLlmJudge,
   type EvaluationSuite,
 } from "./model";
@@ -162,43 +161,6 @@ describe("evaluation request builders", () => {
     })).toBe(true);
   });
 
-  it("requires an explicit write confirmation only for live QQ presets", () => {
-    const capabilitySuite = {
-      suite_id: "agentstrata-capabilities-v1",
-      name: "AgentStrata Capabilities",
-      kind: "product",
-      value: "",
-      recommendation: "",
-      cadence: "",
-      requires_bot: true,
-      requires_external_data: false,
-      official_url: "",
-      setup_hint: "",
-      implemented: true,
-      ready: true,
-      case_count: 29,
-      unavailable_reason: "",
-      prepare_available: false,
-      parameters: [],
-    };
-    expect(suitePresetRequiresExternalWrite(capabilitySuite, "full")).toBe(true);
-    expect(suitePresetRequiresExternalWrite(capabilitySuite, "qq-live")).toBe(true);
-    expect(suitePresetRequiresExternalWrite(capabilitySuite, "quick")).toBe(false);
-    expect(
-      suitePresetRequiresExternalWrite(capabilitySuite, "custom", [
-        "qq-group-image-roundtrip",
-      ]),
-    ).toBe(true);
-    expect(
-      suitePresetRequiresExternalWrite(capabilitySuite, "custom", [
-        "dialogue-strict-json",
-      ]),
-    ).toBe(false);
-    expect(suitePresetRequiresExternalWrite({
-      ...capabilitySuite,
-      suite_id: "gaia",
-    }, "full")).toBe(false);
-  });
 });
 
 describe("API problem formatting", () => {

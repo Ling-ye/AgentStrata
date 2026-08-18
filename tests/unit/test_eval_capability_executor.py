@@ -23,7 +23,6 @@ from chatcopilot.core.config import ChatConfig
 from chatcopilot.evals import capability_executor as executor
 from chatcopilot.evals.manifest import load_case_definitions
 from chatcopilot.evals.models import EvalCase, EvalCaseTurn, TrialObservation
-from chatcopilot.evals.qq_live_driver import QQLiveReceipt
 from chatcopilot.evals.registry import get_cases, get_manifest
 
 
@@ -1387,124 +1386,6 @@ def test_infrastructure_exception_is_structured_error(
     assert result.status == "error"
     assert result.metadata["error"]["code"] == "capability_infrastructure_error"
     assert "ConnectionError" in result.error
-
-
-def test_qq_receipt_is_normalized_without_real_transport(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("QQ_ACCOUNT", "10001")
-    monkeypatch.setenv("QQ_ALLOW_FROM", "20002")
-    monkeypatch.setattr(
-        executor,
-        "load_evaluation_runtime",
-        lambda _bot: SimpleNamespace(access=SimpleNamespace(whitelist_env="QQ_ALLOW_FROM")),
-    )
-    captured: dict[str, Any] = {}
-
-    def fake_qq(**kwargs: Any) -> QQLiveReceipt:
-        captured.update(kwargs)
-        return QQLiveReceipt(
-            scenario="private_text",
-            status="observed",
-            nonce_matched=True,
-            answer_checked=False,
-            answer_matched=False,
-            nonce_hmac="a" * 64,
-            message_id_hmac="b" * 64,
-            reply_sha256="c" * 64,
-            endpoint_sha256="d" * 64,
-            sender_hmac="e" * 64,
-            bot_hmac="f" * 64,
-            group_hmac="0" * 64,
-            request_chars=120,
-            image_bytes=0,
-            image_sha256="",
-            elapsed_ms=5,
-        )
-
-    monkeypatch.setattr(executor, "_execute_qq_live_case_call", fake_qq)
-    result = executor.execute_capability_case(
-        _case("qq-private-text-roundtrip"),
-        suite_id=SUITE_ID,
-        bot="selected-bot",
-        workspace_root=tmp_path,
-        options={},
-        confirm_external_write=True,
-    )
-
-    assert result.status == "passed"
-    assert captured["confirm_external_write"] is True
-    assert captured["whitelist_ids"] == ("20002",)
-    assert captured["bot_id"] == "10001"
-    receipt = result.metadata["observation_evidence"][0]
-    assert receipt["kind"] == "qq_live_receipt"
-    assert receipt["message_count"] == 1
-    assert receipt["nonce_matched"] is True
-    assert "expected_answer" not in receipt
-
-
-@pytest.mark.parametrize(
-    ("case_id", "scenario", "nonce_matched", "answer_checked", "answer_matched"),
-    (
-        ("qq-private-text-roundtrip", "private_text", False, False, False),
-        ("qq-group-image-roundtrip", "group_image", True, True, False),
-    ),
-)
-def test_qq_trusted_reply_mismatch_is_failed_not_error(
-    case_id: str,
-    scenario: str,
-    nonce_matched: bool,
-    answer_checked: bool,
-    answer_matched: bool,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("QQ_ACCOUNT", "10001")
-    monkeypatch.setenv("QQ_ALLOW_FROM", "20002")
-    monkeypatch.setattr(
-        executor,
-        "load_evaluation_runtime",
-        lambda _bot: SimpleNamespace(access=SimpleNamespace(whitelist_env="QQ_ALLOW_FROM")),
-    )
-
-    def fake_qq(**_kwargs: Any) -> QQLiveReceipt:
-        return QQLiveReceipt(
-            scenario=scenario,  # type: ignore[arg-type]
-            status="observed",
-            nonce_matched=nonce_matched,
-            answer_checked=answer_checked,
-            answer_matched=answer_matched,
-            nonce_hmac="a" * 64,
-            message_id_hmac="b" * 64,
-            reply_sha256="c" * 64,
-            endpoint_sha256="d" * 64,
-            sender_hmac="e" * 64,
-            bot_hmac="f" * 64,
-            group_hmac="0" * 64,
-            request_chars=120,
-            image_bytes=100 if scenario == "group_image" else 0,
-            image_sha256="1" * 64 if scenario == "group_image" else "",
-            elapsed_ms=5,
-        )
-
-    monkeypatch.setattr(executor, "_execute_qq_live_case_call", fake_qq)
-    result = executor.execute_capability_case(
-        _case(case_id),
-        suite_id=SUITE_ID,
-        bot="selected-bot",
-        workspace_root=tmp_path,
-        options={},
-        confirm_external_write=True,
-    )
-
-    assert result.status == "failed"
-    assert result.error == ""
-    assert result.judge is not None
-    expected_violation = "nonce_mismatch" if not nonce_matched else "answer_mismatch"
-    assert expected_violation in result.judge.violations
-    receipt = result.metadata["observation_evidence"][0]
-    assert "expected_answer" not in receipt
 
 
 def test_multiple_turns_reuse_one_agent_session(

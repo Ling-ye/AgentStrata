@@ -66,6 +66,7 @@ def _print_help() -> None:
         "  agentstrata bot list\n"
         "  agentstrata bot new <id> --platform feishu\n"
         "  agentstrata bot doctor --bot bots/<bot-id>/bot.yaml\n"
+        "  agentstrata bot external-check --bot bots/<bot-id>/bot.yaml --json\n"
         "  agentstrata bot codex-auth login --bot bots/<bot-id>/bot.yaml --lane all\n"
         "  agentstrata bot codex-auth status --bot bots/<bot-id>/bot.yaml --lane all --json\n"
         "  agentstrata bot route-explain --bot bots/<bot-id>/bot.yaml \"modify Dockerfile\"\n"
