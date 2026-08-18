@@ -204,7 +204,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
         error={jobsModal.error}
         workspaceRoot={jobsModal.workspaceRoot}
         workspaceExists={jobsModal.workspaceExists}
-        onRefresh={(bot, opts) => void jobsModal.load(bot, opts)}
+        onRefresh={(bot, opts) => jobsModal.load(bot, opts)}
         onClose={jobsModal.close}
       />
 

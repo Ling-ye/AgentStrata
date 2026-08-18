@@ -28,7 +28,7 @@ def make_workflow_tool(
             task = replace(
                 task,
                 inputs=(*task.inputs, *markers),
-                write_scope=(*task.write_scope, f"registered_repository:{repository}"),
+                write_scope=task.write_scope,
             )
         result = workflow_runner.run(
             session_id=session_id,

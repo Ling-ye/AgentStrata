@@ -57,14 +57,18 @@ class WorkflowRunner:
         parent = current_trace()
         depth = (parent.depth if parent is not None else 0) + 1
         if depth >= workflow.max_depth:
-            payload = {
+            rejection_payload = {
                 "ok": False,
                 "summary": f"workflow_depth_limit: {workflow.name} rejected at depth {depth}",
                 "steps": [],
                 "outputs": [],
                 "risks": ["workflow nesting is limited to main -> workflow -> subagent"],
             }
-            return WorkflowRunResult(ok=False, summary=json.dumps(payload, ensure_ascii=False), outputs=())
+            return WorkflowRunResult(
+                ok=False,
+                summary=json.dumps(rejection_payload, ensure_ascii=False),
+                outputs=(),
+            )
 
         step_results: list[WorkflowStepResult] = []
         prior_summaries: list[str] = []

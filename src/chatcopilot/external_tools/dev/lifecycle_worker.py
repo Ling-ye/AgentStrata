@@ -12,7 +12,10 @@ def main(argv: list[str] | None = None) -> int:
     if len(args) != 1:
         print("usage: python -m chatcopilot.external_tools.dev.lifecycle_worker <job_dir>", file=sys.stderr)
         return 2
-    return run_detached_job(Path(args[0]).expanduser().resolve())
+    # Preserve path components for the worker's openat/O_NOFOLLOW validation;
+    # resolving here would erase evidence that a job-directory ancestor was
+    # replaced with a symlink after scheduling.
+    return run_detached_job(Path(args[0]).expanduser().absolute())
 
 
 if __name__ == "__main__":

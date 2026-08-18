@@ -4,11 +4,11 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from console.backend.routes.common import get_instance, start_task
 from console.backend.sse import sse
-from console.control import catalog, inventory, operations
+from console.control import catalog, inventory, observability, operations
 from console.control.discovery import discover_instances, repo_root
 
 router = APIRouter(prefix="/api/bots", tags=["bots"])
@@ -51,13 +51,42 @@ def bot_task_detail(instance_id: str, task_id: str):
 
 
 @router.get("/{instance_id}/tasks/{task_id}/events")
-def bot_task_events(instance_id: str, task_id: str):
+def bot_task_events(
+    instance_id: str,
+    task_id: str,
+    response: Response,
+    limit: int = 500,
+):
     try:
-        result = operations.task_events(get_instance(instance_id), task_id)
+        result = operations.task_events(get_instance(instance_id), task_id, limit=limit)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=404, detail="task not found")
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@router.get("/{instance_id}/tasks/{task_id}/contexts/{snapshot_id}")
+def bot_task_context(
+    instance_id: str,
+    task_id: str,
+    snapshot_id: str,
+    response: Response,
+):
+    try:
+        result = observability.context_snapshot(
+            get_instance(instance_id),
+            task_id,
+            snapshot_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except observability.UnsafeContextSnapshotError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="context snapshot not found")
+    response.headers["Cache-Control"] = "no-store"
     return result
 
 

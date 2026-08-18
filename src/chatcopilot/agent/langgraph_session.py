@@ -6,7 +6,7 @@ semantics such as event emission, tool-result messages, lifecycle intents, and
 """
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 from chatcopilot.agent.protocol import AgentResult, AgentTask, EventSink
 from chatcopilot.agent.session import AgentSession
@@ -62,15 +62,15 @@ class LangGraphAgentSession(AgentSession):
         def route_after_llm(graph_state: _GraphState) -> Literal["tools", "__end__"]:
             state = graph_state["turn"]
             if state.done:
-                return END
-            return "tools" if ops.last_assistant_tool_calls() else END
+                return "__end__"
+            return "tools" if ops.last_assistant_tool_calls() else "__end__"
 
         def route_after_tools(graph_state: _GraphState) -> Literal["llm", "__end__"]:
-            return END if graph_state["turn"].done else "llm"
+            return "__end__" if graph_state["turn"].done else "llm"
 
         builder = StateGraph(_GraphState)
-        builder.add_node("llm", llm_node)
-        builder.add_node("tools", tool_node)
+        builder.add_node("llm", cast(Any, llm_node))
+        builder.add_node("tools", cast(Any, tool_node))
         builder.add_edge(START, "llm")
         builder.add_conditional_edges("llm", route_after_llm, {"tools": "tools", END: END})
         builder.add_conditional_edges("tools", route_after_tools, {"llm": "llm", END: END})

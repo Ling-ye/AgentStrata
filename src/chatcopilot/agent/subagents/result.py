@@ -232,7 +232,14 @@ def validate_output(payload: Dict[str, Any], schema: Dict[str, Any] | None) -> L
         if key not in payload:
             warnings.append(f"output_schema: missing required key '{key}'")
 
-    type_map = {"string": str, "integer": int, "number": (int, float), "boolean": bool, "array": list, "object": dict}
+    type_map: dict[str, type[Any] | tuple[type[Any], ...]] = {
+        "string": str,
+        "integer": int,
+        "number": (int, float),
+        "boolean": bool,
+        "array": list,
+        "object": dict,
+    }
     for key, spec in properties.items():
         if key not in payload:
             continue

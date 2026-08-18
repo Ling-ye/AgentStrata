@@ -32,6 +32,11 @@ resulting system structure.
   to the bot that selects them.
 - **Backend choice per bot.** Native, LangGraph, and Codex implement common
   task, event, and result contracts.
+- **Backend-neutral context observability.** The Console shows the
+  AgentStrata-known conversation and each main-agent or subagent turn call's
+  effective, redacted context. Binary/private omissions and provider-managed
+  state that cannot be inspected are labelled partial or opaque instead of
+  being presented as complete.
 - **Purpose-built runtime boundaries.** Thin web-search providers run in the
   Agent process; browser-backed, account-bound, and shared search-engine
   components remain isolated and are started only when an enabled BotSpec
@@ -163,7 +168,7 @@ and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.m
 | Agent backends | Native; LangGraph; Codex |
 | Models | OpenAI-compatible chat/research APIs; Codex CLI device authentication |
 | Capabilities | Local tool packs; in-process web search; reviewed MCP bindings; RAG; memory; private Wiki |
-| Operations | React/FastAPI Console BFF; diagnostics; task status; logs |
+| Operations | React/FastAPI Console BFF; diagnostics; task/context observability; logs |
 | Deployment | Linux / WSL; Console and Evaluation systemd user services; desired-state Docker infrastructure |
 | Evaluation | Manual capability presets (`quick/full/security/custom`, 26 Case × 1 by default); Profile comparisons; BFCL direct-LLM; GAIA; IFEval |
 

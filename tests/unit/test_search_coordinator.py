@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
+from unittest import mock
 
 import pytest
 
 from chatcopilot.core.llm_client import ChatResult
+from chatcopilot.agent.search.coordinator import SearchCoordinator
+from chatcopilot.agent.search.models import SearchAction, SearchRequest
 from chatcopilot.agent.search import tool as search_tool_module
 from chatcopilot.agent.search.tool import build_search_tool
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.agent.tools.executor import ToolExecutor
+from chatcopilot.agent.trace import TraceContext, current_trace, reset_trace, set_trace
 from chatcopilot.botspec.model import SubagentBudgetSpec
+from chatcopilot.contracts.agent import ContextSnapshotPrepared, LlmCallStarted, SpanFinished
 from chatcopilot.external_tools.shared.tool_spec import ToolDef
 
 
@@ -149,6 +156,197 @@ def test_search_wall_budget_is_sixty_percent_with_180_second_cap(
 
     assert search is not None
     assert captured == [expected_wall]
+
+
+def test_parallel_search_steps_replay_nested_trace_events_serially_in_plan_order() -> None:
+    coordinator = object.__new__(SearchCoordinator)
+    barrier = threading.Barrier(2)
+    observed_contexts: list[tuple[str, object, int]] = []
+    observation_lock = threading.Lock()
+
+    def execute_step(
+        step: SearchAction,
+        *,
+        request: SearchRequest,
+        cross_check: bool,
+    ) -> dict:
+        del request, cross_check
+        trace = current_trace()
+        with observation_lock:
+            observed_contexts.append((step.source, trace, threading.get_ident()))
+        barrier.wait(timeout=2)
+        if step.source == "web":
+            time.sleep(0.05)
+        if trace is not None and trace.sink is not None:
+            span_id = f"span_search_{step.source}"
+            snapshot_id = f"ctx_search_{step.source}"
+            trace.sink(
+                ContextSnapshotPrepared(
+                    snapshot_id=snapshot_id,
+                    backend=f"search-step-{step.source}",
+                    model="nested-search-model",
+                    iteration=0,
+                    session_messages=(),
+                    effective_messages=(),
+                    trace_id=trace.trace_id,
+                    span_id=span_id,
+                    parent_span_id=trace.span_id,
+                    depth=trace.depth + 1,
+                )
+            )
+            trace.sink(
+                LlmCallStarted(
+                    model="nested-search-model",
+                    iteration=0,
+                    backend=f"search-step-{step.source}",
+                    trace_id=trace.trace_id,
+                    span_id=span_id,
+                    parent_span_id=trace.span_id,
+                    depth=trace.depth + 1,
+                    context_snapshot_id=snapshot_id,
+                )
+            )
+        return {"ok": True, "logical_source": step.source}
+
+    coordinator._execute_with_reflection = execute_step
+    replayed: list[object] = []
+    replay_threads: list[int] = []
+    caller_thread = threading.get_ident()
+
+    def replay(event: object) -> None:
+        replay_threads.append(threading.get_ident())
+        replayed.append(event)
+
+    token = set_trace(
+        TraceContext(
+            trace_id="trace_parallel_search",
+            span_id="span_search_information",
+            depth=0,
+            sink=replay,
+        )
+    )
+    try:
+        results = coordinator._execute_steps(
+            (
+                SearchAction(source="web", query="one"),
+                SearchAction(source="github", query="two"),
+            ),
+            request=SearchRequest(objective="compare one and two"),
+            cross_check=False,
+            deadline=None,
+        )
+    finally:
+        reset_trace(token)
+
+    assert [result["logical_source"] for result in results] == ["web", "github"]
+    assert {source for source, _, _ in observed_contexts} == {"web", "github"}
+    worker_contexts = [trace for _, trace, _ in observed_contexts]
+    assert all(trace is not None for trace in worker_contexts)
+    assert len({id(trace) for trace in worker_contexts}) == 2
+    assert all(trace.trace_id == "trace_parallel_search" for trace in worker_contexts)
+    assert all(trace.span_id == "span_search_information" for trace in worker_contexts)
+    assert all(worker_thread != caller_thread for _, _, worker_thread in observed_contexts)
+    assert replay_threads == [caller_thread] * 4
+    assert [event.backend for event in replayed] == [
+        "search-step-web",
+        "search-step-web",
+        "search-step-github",
+        "search-step-github",
+    ]
+    assert all(event.trace_id == "trace_parallel_search" for event in replayed)
+    assert all(event.parent_span_id == "span_search_information" for event in replayed)
+    assert isinstance(replayed[0], ContextSnapshotPrepared)
+    assert isinstance(replayed[1], LlmCallStarted)
+    assert isinstance(replayed[2], ContextSnapshotPrepared)
+    assert isinstance(replayed[3], LlmCallStarted)
+
+
+def test_parallel_search_event_overflow_and_sink_failure_preserve_success() -> None:
+    coordinator = object.__new__(SearchCoordinator)
+
+    def execute_step(
+        step: SearchAction,
+        *,
+        request: SearchRequest,
+        cross_check: bool,
+    ) -> dict:
+        del request, cross_check
+        trace = current_trace()
+        if step.source == "web" and trace is not None and trace.sink is not None:
+            for index in range(1027):
+                trace.sink(
+                    LlmCallStarted(
+                        model="overflow-search-model",
+                        iteration=index,
+                        backend="overflow-search-step",
+                        trace_id=trace.trace_id,
+                        span_id=f"span_overflow_search_{index}",
+                        parent_span_id=trace.span_id,
+                        depth=trace.depth + 1,
+                    )
+                )
+        return {"ok": True, "logical_source": step.source}
+
+    coordinator._execute_with_reflection = execute_step
+    replayed: list[object] = []
+    replay_threads: list[int] = []
+    sink_calls = 0
+    caller_thread = threading.get_ident()
+
+    def intermittently_failing_sink(event: object) -> None:
+        nonlocal sink_calls
+        sink_calls += 1
+        replay_threads.append(threading.get_ident())
+        replayed.append(event)
+        if sink_calls == 2:
+            raise RuntimeError("recorder unavailable once")
+
+    token = set_trace(
+        TraceContext(
+            trace_id="trace_search_overflow",
+            span_id="span_search_information",
+            depth=0,
+            sink=intermittently_failing_sink,
+        )
+    )
+    try:
+        with mock.patch("chatcopilot.agent.turn_support.LOGGER.exception") as logged:
+            results = coordinator._execute_steps(
+                (
+                    SearchAction(source="web", query="overflow"),
+                    SearchAction(source="github", query="control"),
+                ),
+                request=SearchRequest(objective="overflow telemetry without failing search"),
+                cross_check=False,
+                deadline=None,
+            )
+    finally:
+        reset_trace(token)
+
+    assert results == [
+        {"ok": True, "logical_source": "web"},
+        {"ok": True, "logical_source": "github"},
+    ]
+    logged.assert_called_once()
+    retained = [
+        event
+        for event in replayed
+        if isinstance(event, LlmCallStarted) and event.backend == "overflow-search-step"
+    ]
+    assert len(retained) == 1024
+    omissions = [
+        event
+        for event in replayed
+        if isinstance(event, SpanFinished)
+        and event.kind == "provider_omission"
+        and event.data.get("reason") == "search_step_event_buffer_limit"
+    ]
+    assert len(omissions) == 1
+    assert omissions[0].trace_id == "trace_search_overflow"
+    assert omissions[0].parent_span_id == "span_search_information"
+    assert omissions[0].data.get("omitted_count") == 3
+    assert omissions[0].data.get("projected_event_limit") == 1024
+    assert replay_threads == [caller_thread] * 1025
 
 
 def test_search_information_skips_tavily_quota_and_uses_brave() -> None:

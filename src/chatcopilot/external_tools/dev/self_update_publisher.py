@@ -309,8 +309,9 @@ def _prepare_changed_files_overlay(
     files: list[str],
     expected_hashes: Mapping[str, str | None] | None = None,
 ) -> tuple[Path, Path]:
+    job_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
     overlay = job_dir / "source-overlay"
-    overlay.mkdir(parents=True, exist_ok=False)
+    overlay.mkdir(mode=0o700)
     for rel in files:
         candidate = source_root / rel
         if candidate.is_symlink():

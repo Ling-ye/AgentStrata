@@ -317,7 +317,7 @@ class LLMClient:
             raise _StreamUnsupported(str(exc))
         finally:
             try:
-                stream.close()  # type: ignore[union-attr]
+                stream.close()
             except Exception:
                 pass
 

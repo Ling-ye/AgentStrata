@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextvars
 import dataclasses
+import hashlib
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -27,11 +29,16 @@ from chatcopilot.agent.search.results import (
     _successful_actual_sources,
     _summary_for,
 )
+from chatcopilot.agent.trace import TraceContext, current_trace, reset_trace, set_trace
+from chatcopilot.agent.turn_support import safe_emit
+from chatcopilot.contracts.agent import AgentEvent, SpanFinished
 from chatcopilot.external_tools.shared.tool_spec import ToolDef
 
 _MAX_PAGE_SUMMARY_CHARS = 12000
 _MAX_URLS_PER_STEP = 5
 _MAX_DEEP_READ_URLS = 2
+_MAX_BUFFERED_STEP_EVENTS = 1024
+_MAX_OMITTED_EVENT_COUNT = (1 << 63) - 1
 
 
 class SearchCoordinator:
@@ -137,28 +144,113 @@ class SearchCoordinator:
                 for step in steps
             ]
         results: list[dict[str, Any]] = [{} for _ in steps]
-        remaining = deadline - time.monotonic() if deadline is not None else None
-        with ThreadPoolExecutor(max_workers=min(3, len(steps))) as pool:
-            futures = {
-                pool.submit(
-                    self._execute_with_reflection,
+        event_batches: list[tuple[AgentEvent, ...]] = [() for _ in steps]
+        dropped_event_counts = [0 for _ in steps]
+        parent_trace = current_trace()
+        replay_sink = parent_trace.sink if parent_trace is not None else None
+
+        def execute_step(
+            step: SearchAction,
+        ) -> tuple[dict[str, Any], tuple[AgentEvent, ...], int]:
+            buffered_events: list[AgentEvent] = []
+            dropped_events = 0
+
+            def collect_event(event: AgentEvent) -> None:
+                nonlocal dropped_events
+                if len(buffered_events) >= _MAX_BUFFERED_STEP_EVENTS:
+                    dropped_events = min(_MAX_OMITTED_EVENT_COUNT, dropped_events + 1)
+                    return
+                buffered_events.append(event)
+
+            trace_token = None
+            if parent_trace is not None:
+                trace_token = set_trace(
+                    TraceContext(
+                        trace_id=parent_trace.trace_id,
+                        span_id=parent_trace.span_id,
+                        depth=parent_trace.depth,
+                        sink=collect_event if replay_sink is not None else None,
+                    )
+                )
+            try:
+                result = self._execute_with_reflection(
                     step,
                     request=request,
                     cross_check=cross_check,
-                ): idx
+                )
+            except Exception as exc:  # noqa: BLE001
+                result = _failed(step.source, f"search_step_error: {exc}")
+            finally:
+                if trace_token is not None:
+                    reset_trace(trace_token)
+            return result, tuple(buffered_events), dropped_events
+
+        remaining = deadline - time.monotonic() if deadline is not None else None
+        step_contexts = [contextvars.copy_context() for _ in steps]
+        with ThreadPoolExecutor(max_workers=min(3, len(steps))) as pool:
+            futures = {
+                pool.submit(step_contexts[idx].run, execute_step, step): idx
                 for idx, step in enumerate(steps)
             }
             try:
                 for future in as_completed(futures, timeout=remaining):
                     idx = futures[future]
                     try:
-                        results[idx] = future.result()
+                        (
+                            results[idx],
+                            event_batches[idx],
+                            dropped_event_counts[idx],
+                        ) = future.result()
                     except Exception as exc:  # noqa: BLE001
                         results[idx] = _failed(steps[idx].source, f"search_step_error: {exc}")
             except TimeoutError:
                 for future, idx in futures.items():
                     if not future.done():
                         results[idx] = _failed(steps[idx].source, "time_budget_exhausted")
+        for future, idx in futures.items():
+            if event_batches[idx] or not future.done():
+                continue
+            try:
+                _, event_batches[idx], dropped_event_counts[idx] = future.result()
+            except Exception:  # noqa: BLE001 - result already carries the step failure
+                continue
+        if replay_sink is not None and parent_trace is not None:
+            for idx, event_batch in enumerate(event_batches):
+                for event in event_batch:
+                    safe_emit(replay_sink, event)
+                omitted_count = dropped_event_counts[idx]
+                if omitted_count:
+                    omission_key = (
+                        f"{parent_trace.trace_id}\0{parent_trace.span_id}\0{idx}\0"
+                        "search-step-event-buffer-limit"
+                    )
+                    safe_emit(
+                        replay_sink,
+                        SpanFinished(
+                            name="Search step telemetry omitted by buffer limit",
+                            kind="provider_omission",
+                            ok=False,
+                            summary=(
+                                "Additional nested search events exceeded the bounded "
+                                "worker telemetry buffer."
+                            ),
+                            trace_id=parent_trace.trace_id,
+                            span_id=(
+                                "span_"
+                                + hashlib.sha256(omission_key.encode("utf-8")).hexdigest()[:12]
+                            ),
+                            parent_span_id=parent_trace.span_id,
+                            depth=parent_trace.depth + 1,
+                            data={
+                                "status": "truncated",
+                                "reason": "search_step_event_buffer_limit",
+                                "omitted_count": omitted_count,
+                                "projected_event_limit": _MAX_BUFFERED_STEP_EVENTS,
+                                "step_index": idx,
+                                "source": steps[idx].source,
+                            },
+                        ),
+                    )
         return results
 
     def _execute_with_reflection(

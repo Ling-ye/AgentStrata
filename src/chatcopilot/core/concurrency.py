@@ -8,14 +8,14 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional, cast
 
 from chatcopilot.project import ENV_PREFIX, LIMIT_DIRNAME
 
 
 def _coerce_int(raw: object, fallback: int, *, minimum: int = 1) -> int:
     try:
-        value = int(raw)  # type: ignore[arg-type]
+        value = int(cast(Any, raw))
     except (TypeError, ValueError):
         return fallback
     return max(minimum, value)
@@ -23,7 +23,7 @@ def _coerce_int(raw: object, fallback: int, *, minimum: int = 1) -> int:
 
 def _coerce_float(raw: object, fallback: float, *, minimum: float = 0.1) -> float:
     try:
-        value = float(raw)  # type: ignore[arg-type]
+        value = float(cast(Any, raw))
     except (TypeError, ValueError):
         return fallback
     return max(minimum, value)

@@ -3,6 +3,7 @@ import type {
   BotInventory,
   BotStatus,
   BotTaskDetail,
+  ContextSnapshot,
   BotToolConfig,
   CatalogItem,
   InfraService,
@@ -54,9 +55,13 @@ export const api = {
   tasks: (id: string) => req<TasksResponse>(`/api/bots/${id}/tasks?limit=50`),
   taskDetail: (id: string, taskId: string) =>
     req<BotTaskDetail>(`/api/bots/${id}/tasks/${encodeURIComponent(taskId)}`),
-  taskEvents: (id: string, taskId: string) =>
+  taskEvents: (id: string, taskId: string, limit = 500) =>
     req<TaskEventsResponse>(
-      `/api/bots/${id}/tasks/${encodeURIComponent(taskId)}/events`,
+      `/api/bots/${id}/tasks/${encodeURIComponent(taskId)}/events?limit=${limit}`,
+    ),
+  taskContext: (id: string, taskId: string, snapshotId: string) =>
+    req<ContextSnapshot>(
+      `/api/bots/${id}/tasks/${encodeURIComponent(taskId)}/contexts/${encodeURIComponent(snapshotId)}`,
     ),
 
   control: (id: string, verb: "start" | "stop" | "restart") =>

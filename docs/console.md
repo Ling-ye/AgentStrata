@@ -26,9 +26,9 @@ Console 后端的进程执行、YAML 投影和 job/task/log 可观测读取分�
 
 机器人实例的“任务”入口使用主从工作台，不再展示横向 13 列表格。左侧只加载最近
 50 个 `schema_version=2` 任务，按“运行中 / 需要关注 / 最近完成”分组并在浏览器内
-搜索；旧任务不迁移，也不会进入该列表。右侧按 Span 层级展示路由、模型、工具、
-subagent 和后台 Job 阶段。列表和选中任务每 3 秒轮询，运行中的墙钟耗时由浏览器
-每秒刷新；此链路不使用 SSE。
+搜索；旧任务不迁移，也不会进入该列表。右侧先展示每次模型调用的上下文快照，再按
+Span 层级展示路由、模型、工具、Codex activity、subagent 和后台 Job 阶段。列表和
+选中任务每 3 秒轮询，运行中的墙钟耗时由浏览器每秒刷新；此链路不使用 SSE。
 
 只读 API：
 
@@ -36,7 +36,41 @@ subagent 和后台 Job 阶段。列表和选中任务每 3 秒轮询，运行中
 - `GET /api/bots/{instance_id}/tasks/{task_id}`：步骤树、分类耗时、固定预测、实际累计
   Token、Job 状态和本地价格表计算的实际用量费用估算。
 - `GET /api/bots/{instance_id}/tasks/{task_id}/events`：按需读取任务执行事件与关联
-  Job 阶段事件。损坏的 JSON/JSONL 记录被跳过，非法或越界 ID 被拒绝。
+  Job 阶段事件。每次最多返回 1000 条、每个 JSONL 文件最多读取 512 KiB 尾部；较早
+  事件被裁剪时响应和页面都会明确标记。只有展开运行中步骤后才持续刷新；请求串行化，
+  任务由运行态进入终态后会再取一次权威尾部，避免漏掉最终事件。损坏的 JSON/JSONL
+  记录被跳过，非法或越界 ID 被拒绝。事件文件可被 group/other 写入、尾行半写或损坏、
+  或同一 source 的 sequence 不连续时，响应另返回 `integrity_gap=true`，页面不会把剩余
+  尾部误称为完整记录。
+- `GET /api/bots/{instance_id}/tasks/{task_id}/contexts/{snapshot_id}`：按需读取一份
+  已脱敏的模型上下文 artifact；snapshot ID、task identity、containment、owner、普通
+  文件、非符号链接、单硬链接和 8 MiB 上限均在返回前校验。Context 与 event tail 都从
+  已验证并持续持有的 task/job directory descriptor 通过 `openat` 读取，祖先目录不能在
+  检查与读取之间通过 symlink 竞态重定向正文。
+
+上下文卡片分开显示“AgentStrata 会话历史”和“实际模型输入”。
+`exact_model_input` 表示 AgentStrata 能证明 Native/LangGraph 的纯文本最终请求；
+`partial` 表示文本与工具上下文已确认，但图片二进制或私有推理等受限字段只保留安全
+回执和明确 omission；
+`adapter_visible` 表示 Codex adapter 能证明 stdin prompt、工具投影和资源，但 provider
+原生 resume 历史或内部 instructions 仍不可见。页面会显式显示 redacted、truncated、
+partial 与 provider-opaque 状态，不展示或声称捕获隐藏 chain-of-thought。正文只在展开
+对应卡片时加载，任务摘要和轮询接口不复制大块 prompt。
+如果安全持久化失败，卡片保留与模型 span 关联的 `unavailable` 摘要，不请求不存在的
+正文，也不会把观测失败误显示成“没有上下文”。
+上下文摘要达到上限时保留最新模型调用，并在区块顶部显示 retained/total；如果
+`task.json` 为满足总量上限只保留了最小索引，页面会明确提示正文仍按 snapshot ID
+懒加载，不能把保留子集误解为完整历史。
+模型跨度与 Codex activity span 允许嵌套或并行，分类耗时用于解释时间线，不能相加后
+当作墙钟耗时。
+密集 provider activity 在 `task.json` 中最多保留 500 条结构化摘要；工具/步骤序列化
+视图另有 1000 条硬上限，页面会显示总数、保留数和裁剪状态。每条脱敏 raw event 最多
+64 KiB，超限参数/结果替换为包含关联 ID、原始字节数和 digest 的 manifest，避免单条大
+payload 挤掉整个 512 KiB 事件尾部。`task.json` / `turn.json` 也有 8 MiB 总上限；超大
+后台子任务结果按字段、条数和 digest 生成显式裁剪摘要，不能阻断后续终态写入。任务、
+Job 及其祖先目录不接受 symlink 重定向；request/status/result/notification JSON 使用
+私有、无符号链接、8 MiB 有界读写。任务列表不再重复传输 tool arguments/results
+或完整 LLM call 数组。
 
 Token 口径：
 
@@ -52,10 +86,17 @@ Token 口径：
 - 费用是基于已发生调用和本地模型价格表的估算，不是供应商账单；没有价格的模型
   明确显示未配置，不推导预计费用。
 
-原始事件保留工具参数、精简结果和错误，不保存文本流增量或供应商私有
-`reasoning_content`。它沿用每实例 30 天 / 1 GiB 的诊断清理策略。控制台仍匿名监听
-`0.0.0.0:8910`，本次没有新增认证或原始事件访问门禁：任何能够访问该端口的人都能
-读取这些事件，部署方必须用主机网络边界控制暴露范围。
+事件和上下文 artifact 在首次落盘前统一过滤 secret-bearing 字段和动态 key、当前环境
+secret、Authorization/Cookie、URI userinfo、Bearer/inline credential、私钥/JWT 与机器
+根路径；原始事件仍可保留脱敏后的工具参数、精简结果
+和错误，但不保存文本流增量或供应商私有 `reasoning_content`。后台 Job 阶段事件同样在
+写入前脱敏并限制为 64 KiB，Console 对历史 task/job 事件与状态再次做读取侧脱敏。共享
+脱敏器限制 node/item/聚合字符串总量，JSON reader 在 materialize 前检查结构预算；触发
+上限时 API 返回显式 truncated/integrity 状态，不把剩余内容标成完整。它沿用每实例 30 天 /
+1 GiB 的诊断清理策略。安装的 systemd unit 默认只监听 `127.0.0.1:8910`，避免新增上下文
+正文被匿名暴露到全部网卡；Console 仍没有 HTTP operator 认证，本机可达进程仍可读取
+脱敏后的事件和上下文。显式改成非回环监听时，部署方必须另行提供可信代理认证和网络
+边界。HTTP operator 认证仍属于独立的控制面安全变更。
 
 ## NapCat WebUI 登录
 

@@ -20,7 +20,7 @@ import threading
 import time
 import urllib.request
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field, is_dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path, PurePosixPath
@@ -49,6 +49,7 @@ from chatcopilot.evals.capability_scenarios import (
 )
 from chatcopilot.evals.capability_verifiers import judge_capability_trial
 from chatcopilot.evals.capability_verifiers import get_trusted_capability_verifier
+from chatcopilot.evals.event_projection import project_evaluation_event
 from chatcopilot.evals.isolated_executor import load_evaluation_runtime, permission_filter
 from chatcopilot.evals.manifest import load_case_definitions
 from chatcopilot.evals.models import (
@@ -378,13 +379,7 @@ def _stage_resources(
 
 
 def _event_dict(event: object) -> dict[str, Any]:
-    if isinstance(event, dict):
-        return dict(event)
-    if is_dataclass(event):
-        value = asdict(event)  # type: ignore[arg-type]
-        value["type"] = type(event).__name__
-        return value
-    return {"type": type(event).__name__}
+    return project_evaluation_event(event)
 
 
 def _input_resource_dispatch_evidence(

@@ -1,12 +1,133 @@
 from __future__ import annotations
 
-import unittest
+import json
 import os
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from chatcopilot.middleware.runtime.jobs.worker import _build_background_executor
+from chatcopilot.middleware.runtime.jobs.worker import (
+    _build_background_executor,
+    run_worker,
+)
+
+
+def _request_payload(job_id: str) -> str:
+    return (
+        '{"job_id":"'
+        + job_id
+        + '","queue_name":"default","execution_policy":"background",'
+        + '"tool_name":"external_diff","args":{},"workspace":{}}'
+    )
+
+
+def test_background_worker_rejects_symlinked_request_without_execution(
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / "jobs" / "job_symlinked_request"
+    job_dir.mkdir(parents=True)
+    private = tmp_path / "private-request.json"
+    private.write_text(_request_payload(job_dir.name), encoding="utf-8")
+    (job_dir / "request.json").symlink_to(private)
+
+    with mock.patch(
+        "chatcopilot.middleware.runtime.jobs.worker._build_background_executor"
+    ) as build_executor:
+        result = run_worker(job_dir / "request.json")
+
+    assert result == 2
+    build_executor.assert_not_called()
+    assert not (job_dir / "result.json").exists()
+
+
+def test_background_worker_rejects_symlinked_job_ancestor_without_execution(
+    tmp_path: Path,
+) -> None:
+    jobs_root = tmp_path / "jobs"
+    jobs_root.mkdir()
+    external = tmp_path / "external-private-job"
+    external.mkdir()
+    request_path = external / "request.json"
+    request_path.write_text(
+        _request_payload("job_symlinked_ancestor"),
+        encoding="utf-8",
+    )
+    job_dir = jobs_root / "job_symlinked_ancestor"
+    job_dir.symlink_to(external, target_is_directory=True)
+
+    with mock.patch(
+        "chatcopilot.middleware.runtime.jobs.worker._build_background_executor"
+    ) as build_executor:
+        result = run_worker(job_dir / "request.json")
+
+    assert result == 2
+    build_executor.assert_not_called()
+    assert not (external / "result.json").exists()
+
+
+def test_generic_worker_uses_persisted_oversized_result_manifest_for_terminal_state(
+    tmp_path: Path,
+) -> None:
+    job_id = "job_20260818_010000_deadbeef"
+    job_dir = tmp_path / "jobs" / job_id
+    job_dir.mkdir(parents=True, mode=0o700)
+    request_path = job_dir / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "job_id": job_id,
+                "queue_name": "default",
+                "execution_policy": "background",
+                "tool_name": "external_diff",
+                "args": {},
+                "workspace": {},
+                "attempts": [{"number": 1, "status": "running"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    request_path.chmod(0o600)
+    executor = mock.Mock()
+    executor.execute.return_value = SimpleNamespace(
+        ok=True,
+        summary="x" * (8 * 1024 * 1024),
+        outputs=[],
+        console="",
+        error=None,
+        error_code="",
+        details={},
+        stage="",
+    )
+
+    with (
+        mock.patch(
+            "chatcopilot.middleware.runtime.jobs.worker._build_background_executor",
+            return_value=(executor, None),
+        ),
+        mock.patch(
+            "chatcopilot.middleware.runtime.jobs.worker.FileQueueSlot",
+            return_value=mock.MagicMock(),
+        ),
+        # The production worker owns a short-lived process and intentionally
+        # marks that process as a background worker.  Keep the in-process unit
+        # fixture from leaking that process-scoped flag into later tests.
+        mock.patch.dict(os.environ, {}, clear=False),
+    ):
+        exit_code = run_worker(request_path)
+
+    assert exit_code == 1
+    result = json.loads((job_dir / "result.json").read_text(encoding="utf-8"))
+    status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    assert result["ok"] is False
+    assert result["stage"] == "failed"
+    assert result["error_code"] == "result_artifact_too_large"
+    assert status["status"] == "failed"
+    assert status["stage"] == "failed"
+    assert status["error_code"] == "result_artifact_too_large"
+    assert request["attempts"][0]["status"] == "failed"
+    assert request["attempts"][0]["error_code"] == "result_artifact_too_large"
 
 
 class BackgroundCodingWorkerTests(unittest.TestCase):

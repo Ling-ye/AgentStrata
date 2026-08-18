@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Message } from "@arco-design/web-react";
 import { api } from "../../api";
 import type { BotInstance, BotTask } from "../../types";
@@ -33,30 +33,44 @@ export function useJobsModal() {
   const [error, setError] = useState<string | null>(null);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspaceExists, setWorkspaceExists] = useState<boolean | null>(null);
+  const requestIdRef = useRef(0);
+  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
 
-  const load = useCallback(async (targetBot: BotInstance, opts?: { clear?: boolean }) => {
+  const load = useCallback((targetBot: BotInstance, opts?: { clear?: boolean }): Promise<void> => {
     if (opts?.clear) {
       setJobs([]);
       setUpdatedAt(null);
     }
-    setLoading(true);
-    setError(null);
-    try {
-      const resp = await api.tasks(targetBot.instance_id);
-      const sorted = [...resp.tasks].sort(
-        (a, b) => (Number(b.sort_time) || 0) - (Number(a.sort_time) || 0),
-      );
-      setJobs(sorted);
-      setWorkspaceRoot(resp.workspace_root);
-      setWorkspaceExists(resp.workspace_exists);
-      setUpdatedAt(Date.now());
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setError(message);
-      Message.error(message);
-    } finally {
-      setLoading(false);
-    }
+    const requestKey = targetBot.instance_id;
+    if (inFlightRef.current?.key === requestKey) return inFlightRef.current.promise;
+    const requestId = ++requestIdRef.current;
+    const request = (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const resp = await api.tasks(targetBot.instance_id);
+        if (requestIdRef.current !== requestId) return;
+        const sorted = [...resp.tasks].sort(
+          (a, b) => (Number(b.sort_time) || 0) - (Number(a.sort_time) || 0),
+        );
+        setJobs(sorted);
+        setWorkspaceRoot(resp.workspace_root);
+        setWorkspaceExists(resp.workspace_exists);
+        setUpdatedAt(Date.now());
+      } catch (e) {
+        if (requestIdRef.current !== requestId) return;
+        const message = e instanceof Error ? e.message : String(e);
+        setError(message);
+        Message.error(message);
+      } finally {
+        if (requestIdRef.current === requestId) {
+          setLoading(false);
+          inFlightRef.current = null;
+        }
+      }
+    })();
+    inFlightRef.current = { key: requestKey, promise: request };
+    return request;
   }, []);
 
   const show = useCallback(

@@ -199,6 +199,7 @@ class WikiStore:
                 index_generation=generation,
             )
 
+        assert target is not None
         warnings: list[str] = []
         try:
             generation = self.refresh_index(force=True)

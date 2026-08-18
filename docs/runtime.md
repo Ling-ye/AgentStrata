@@ -20,9 +20,10 @@ transport；平台连接由 cc-connect 和对应 adapter 处理。
 
 ## Turn runtime
 
-Native、LangGraph 和 Codex backend 共享 `agent/turn.py` 的事件、工具结果、生命周期
-intent 和最终 `AgentResult` 语义。Backend 由 BotSpec 固定选择，不存在按消息文本切换
-backend 的第二套路由器。
+Native、LangGraph 和 Codex backend 共享 `AgentTask` / `AgentEvent` / `AgentResult`
+以及模型、工具、上下文和生命周期事件语义。Native 与 LangGraph 复用
+`agent/turn.py` 的 `TurnOps`；Codex adapter 把 Codex CLI 的公开 JSONL 事件投影为同一
+契约。Backend 由 BotSpec 固定选择，不存在按消息文本切换 backend 的第二套路由器。
 
 AgentSession 使用 soft cap、健康检查和 hard cap：
 
@@ -30,6 +31,70 @@ AgentSession 使用 soft cap、健康检查和 hard cap：
 - hard iteration cap 无条件停止。
 - soft timeout 到达后检查最近工具活跃；hard timeout 无条件停止。
 - 缺失 tool result 的 orphan tool call 会在下次模型调用或截断前补成结构化错误。
+
+## 统一上下文可观测性
+
+每次主 Agent 或 subagent 的 turn 模型调用前都会发出 `ContextSnapshotPrepared`：
+
+- `session_messages` 是 AgentStrata 已知的完整会话 ledger；
+- `effective_messages` 是 AgentStrata 在该次调用边界实际提交的输入；
+- `tool_schemas` 与 path-free resource receipts 说明该次请求的工具面和多模态输入；
+- backend、model、iteration、trace/span、上下文策略、token 粗估和模型选择元数据用于
+  把快照与模型步骤关联。
+
+Native 与 LangGraph 的 effective context 在 `LLMClient.chat` 前、完成上下文窗口选择、
+工具结果摘要和预算提示后捕获；纯文本调用标记为 `exact_model_input`，含本地图片时
+标记为 `partial`，正文不落盘二进制或路径，只保留每次模型迭代的 path-free receipt。
+Codex 捕获 AgentStrata
+实际写入 `codex exec` stdin 的 prompt envelope、已批准 MCP 工具面和资源 receipts，
+标记为 `adapter_visible`；Codex 原生线程保存的历史、内部 instructions 和隐藏推理不由
+AgentStrata 控制，必须显示为 `provider_opaque`，不能把空白当作完整上下文。
+
+任务摘要只保存快照索引。正文先过滤 secret-bearing 字段、当前环境中的 secret 值、
+Bearer/inline credential 与机器根路径，再原子写入
+`tasks/<task-id>/contexts/<snapshot-id>.json`；目录和文件分别收紧为 `0700` / `0600`。
+超出 8 MiB 的快照降为带 digest 和计数的显式 truncated manifest。隐藏
+chain-of-thought 不持久化；Codex reasoning activity 只记录公开生命周期和状态。脱敏、
+私有推理剔除和资源路径替换共享 node/item/聚合字符串预算；JSON 在 `loads` 前先检查
+字节、深度、结构数量、字符串总量和异常长数字，预算耗尽时降为明确的 `partial` /
+`truncated`，不会先无界复制或解析。
+
+`events.jsonl` 同样在首次落盘前脱敏，并为每个任务分配单调 `sequence` 与稳定
+`event_id`。事件 writer 先用 `O_DIRECTORY|O_NOFOLLOW`、owner、inode 和 containment
+校验任务目录，再通过 `dir_fd` 打开私有 lock、sequence sidecar 与 JSONL；sequence 限制
+为 int64，崩溃导致 sidecar 落后时以最后一条完整 JSONL 记录为准恢复。私有 sidecar 让
+正常追加不必反复扫描增长中的 JSONL；密集 provider activity 只节流重写任务摘要，终态
+会刷入保留范围内的最终状态和明确裁剪计数。上下文正文写入失败时 recorder
+留下与 LLM span 关联的 `unavailable` 摘要；即使未来 backend 漏发快照，LLM start 也会
+投影同类缺口。观测写入失败由 recorder 和安全事件 sink 隔离，不能改变主 Agent 的用户
+结果。
+
+为防止 provider 事件洪泛放大任务摘要，`task.json` 最多保留 500 条 provider activity
+摘要，并对工具/步骤投影设置 1000 条硬上限；裁剪计数进入 `activity_summary` 和
+`summary_limits`。LLM 调用、上下文快照和输入资源索引也分别有上限，达到上限时保留
+最新调用，并返回 total/retained/truncated；总量降级仍优先保留不含路径的快照索引。
+`events.jsonl` 每条记录最多 64 KiB，超大参数或结果改写为带 digest、
+字节数和 trace/span 关联字段的 manifest。事件正文仍按 append-only 方式持久化，Console
+只读取有界尾部。后台 Job 阶段事件使用相同的首次落盘脱敏、单事件上限和私有文件
+约束，Console 对遗留事件再做一次读取侧脱敏。`task.json` / `turn.json` 本身也有 8 MiB
+总上限；后台子任务的 summary、error 和 outputs 先按字段与条数收敛，超出内容以 digest
+和 omission manifest 表示，不能让后续子任务终态因旧摘要过大而无法写入。task/job 的
+目录及祖先均从可信 descriptor 逐级 `openat`，任何 symlink 都不能把可观测 artifact
+重定向到 workspace 外；Console 读取 event tail 和 context 时也保持同一 descriptor 链，
+不在校验后退回 path-based open。Job 的 request/status/result/notification JSON 统一使用私有、
+无符号链接、8 MiB 有界读写；worker 在创建 executor 或启动更新子进程前验证 request
+envelope，损坏或超限的终态 result 以不含正文的完整性 manifest 结束，并以实际持久化
+manifest 决定 status、error code 和进程退出码。
+
+后台子任务完成与 recorder 写 task/turn 共用 private completion lock。快速 child 在主 turn
+关闭 job 注册边界前只合并结果，不能提前把任务标成终态；边界关闭后等待已注册 child
+全部结束并只发一次 `task_finished`。主 turn 已失败时，迟到的成功 child 不会覆盖失败
+provenance，任务保持可轮询直到最后一个 child 收口后以 failed 结束。
+
+本版本不为 topic classifier、quality gate、search router 和 reranker 等独立 helper-model
+调用保存完整上下文 artifact；它们继续使用既有 step/usage 观测。这里的“每次调用”仅指
+共享 turn runtime 管理的主 Agent 与 subagent 模型边界，不能解释为进程内所有
+`LLMClient.chat`。
 
 ## Session 与 workspace
 
@@ -113,6 +178,22 @@ Subagent 接收 TaskPack，使用受限 selector 和预算，最后必须调用 
 - code-worker 从远端默认分支创建任务私有 clone，在隔离环境验证。
 - 验证通过后，受信交付器生成任务分支提交、非强制 push 并创建草稿 PR。
 - 不自动 merge、部署、重启或修改操作者 checkout。
+
+Codex CLI 以 `--json` 模式运行。公开的 turn/item 生命周期与 usage 被增量归一化为
+共享 LLM/span 事件，因而 Console 不读取 Codex 私有目录或直接依赖 provider-specific
+日志。MCP relay receipt 仍是 AgentStrata 工具执行结果的权威证据，并在 Codex 运行期间
+由主等待循环实时投影权威开始/结束时间；provider activity span 只用于解释 Codex 侧
+进度。Provider JSONL 与 relay callback 通过有界串行队列投影，独立 deadline 监督不会被
+慢 callback 阻塞。超时后已经进入 in-process executor 的工具无法强制取消；原 trace 会
+记录 `outcome_unknown_late_completion`，旧 relay generation 随即退休，迟到结果不会归入
+下一轮。子进程输出只保留有界诊断尾部，超大单行 activity 会显示 omission；只要后续完整
+final message 可解析就不改变成功结果，无法保留完整 final 时明确失败。
+
+Codex relay 以 turn generation 绑定主 LLM trace；handler 执行委托工具时把 relay call
+span 设为 nested subagent 的父级，只写线程本地有界事件队列，主等待循环再串行投影到
+recorder。并行搜索的 delegate 同样继承父 trace、在 worker 内缓冲，并由 coordinator
+按计划顺序回放。缓冲上限只产生带计数的 observability omission，不得改变原本成功的
+工具或搜索结果，也不得让 worker 线程并发改写 task summary。
 
 Worker 凭据、Codex auth 和 GitHub token 分离；原始 GitHub token不进入 Codex sandbox
 或 Git remote。

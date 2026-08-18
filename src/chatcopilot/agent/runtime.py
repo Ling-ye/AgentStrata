@@ -14,13 +14,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Sequence
+from typing import Any, Callable, Dict, Optional, Sequence, cast
 
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.agent.context.manager import ContextManager
 from chatcopilot.agent.context.prompt_builder import build_system_prompt
 from chatcopilot.agent.quality_gate import build_quality_gate
-from chatcopilot.agent.context.topic import TopicPolicy, TopicRelevanceClassifier
+from chatcopilot.agent.context.topic import TopicLlm, TopicPolicy, TopicRelevanceClassifier
 from chatcopilot.core.llm_client import LLMClient
 from chatcopilot.agent.memory.provider import MemoryProvider
 from chatcopilot.agent.mcp.client import McpToolProvider
@@ -149,11 +149,11 @@ class AgentRuntime:
             payload_filter = self._payload_filter_factory()
         if background_submitter is None and self._background_submitter_factory is not None:
             background_submitter = self._background_submitter_factory(session_id)
-        effective_retriever = (
-            self.retriever
-            if retriever_override is _USE_DEFAULT_RETRIEVER
-            else retriever_override
-        )
+        effective_retriever: Retriever | None
+        if retriever_override is _USE_DEFAULT_RETRIEVER:
+            effective_retriever = self.retriever
+        else:
+            effective_retriever = cast(Retriever | None, retriever_override)
         backend_id = (self.agent_backend or "native").strip().lower()
         direct_codex = backend_id == "codex"
         codex_policy = self.subagents.codex
@@ -164,7 +164,7 @@ class AgentRuntime:
             direct_codex and codex_policy.allow_unified_search_tool
         )
 
-        delegate_tools = ()
+        delegate_tools: tuple[ToolDef, ...] = ()
         if (
             not direct_codex
             or allow_codex_delegate_tools
@@ -197,7 +197,7 @@ class AgentRuntime:
             for tool in delegate_tools
             if permission_filter is None or permission_filter(tool) is None
         )
-        search_tool = None
+        search_tool: ToolDef | None = None
         if self.subagents.research_enabled and (
             not direct_codex or allow_codex_unified_search
         ):
@@ -318,14 +318,16 @@ class AgentRuntime:
             decision_cache_ttl_seconds=getattr(rt, "topic_decision_cache_ttl_seconds", 300),
         )
         topic_classifier = (
-            TopicRelevanceClassifier(self.llm, topic_policy) if topic_policy.active else None
+            TopicRelevanceClassifier(cast(TopicLlm, self.llm), topic_policy)
+            if topic_policy.active
+            else None
         )
 
         gate_level = getattr(rt, "quality_gate_level", 0)
         quality_gate = build_quality_gate(level=gate_level, llm=self.llm)
 
         _defaults_rt = ChatConfig().runtime
-        session_cls = None
+        session_cls: type[AgentSession] | None = None
         if backend_id == "native":
             session_cls = AgentSession
         elif backend_id == "langgraph":
@@ -333,32 +335,6 @@ class AgentRuntime:
 
             session_cls = LangGraphAgentSession
 
-        session_kwargs = dict(
-            session_id=session_id,
-            llm=self.llm,
-            executor=executor,
-            tools_schema=merged_schema,
-            system_baseline=system_prompt,
-            system_prompt_renderer=render_system_prompt,
-            tool_payload_filter=payload_filter,
-            context_manager=ctx_mgr,
-            topic_classifier=topic_classifier,
-            max_tool_iterations=max(
-                1, getattr(rt, "max_tool_iterations", _defaults_rt.max_tool_iterations)
-            ),
-            hard_iteration_cap=max(
-                1, getattr(rt, "hard_iteration_cap", _defaults_rt.hard_iteration_cap)
-            ),
-            max_tool_calls=getattr(rt, "max_tool_calls", _defaults_rt.max_tool_calls),
-            timeout_seconds=getattr(rt, "turn_timeout_seconds", _defaults_rt.turn_timeout_seconds),
-            hard_timeout_seconds=getattr(rt, "hard_timeout_seconds", _defaults_rt.hard_timeout_seconds),
-            stall_window_seconds=max(
-                10, getattr(rt, "stall_window_seconds", _defaults_rt.stall_window_seconds)
-            ),
-            max_consecutive_tool_failures=max(1, rt.max_tool_retries),
-            retriever=effective_retriever,
-            quality_gate=quality_gate,
-        )
         workspace_root = None
         backend_state_root = None
         isolate_backend_state = False
@@ -439,7 +415,64 @@ class AgentRuntime:
             "role_hint": caller_role_hint or "user",
         }
         if session_cls is not None:
-            options["session_factory"] = lambda: session_cls(**session_kwargs)
+            selected_session_cls = session_cls
+
+            def session_factory() -> AgentSession:
+                return selected_session_cls(
+                    session_id=session_id,
+                    llm=self.llm,
+                    executor=executor,
+                    tools_schema=merged_schema,
+                    system_baseline=system_prompt,
+                    system_prompt_renderer=render_system_prompt,
+                    tool_payload_filter=payload_filter,
+                    context_manager=ctx_mgr,
+                    topic_classifier=topic_classifier,
+                    max_tool_iterations=max(
+                        1,
+                        getattr(
+                            rt,
+                            "max_tool_iterations",
+                            _defaults_rt.max_tool_iterations,
+                        ),
+                    ),
+                    hard_iteration_cap=max(
+                        1,
+                        getattr(
+                            rt,
+                            "hard_iteration_cap",
+                            _defaults_rt.hard_iteration_cap,
+                        ),
+                    ),
+                    max_tool_calls=getattr(
+                        rt,
+                        "max_tool_calls",
+                        _defaults_rt.max_tool_calls,
+                    ),
+                    timeout_seconds=getattr(
+                        rt,
+                        "turn_timeout_seconds",
+                        _defaults_rt.turn_timeout_seconds,
+                    ),
+                    hard_timeout_seconds=getattr(
+                        rt,
+                        "hard_timeout_seconds",
+                        _defaults_rt.hard_timeout_seconds,
+                    ),
+                    stall_window_seconds=max(
+                        10,
+                        getattr(
+                            rt,
+                            "stall_window_seconds",
+                            _defaults_rt.stall_window_seconds,
+                        ),
+                    ),
+                    max_consecutive_tool_failures=max(1, rt.max_tool_retries),
+                    retriever=effective_retriever,
+                    quality_gate=quality_gate,
+                )
+
+            options["session_factory"] = session_factory
         session_ref = backend.open_session(
             BackendOpenRequest(
                 session_id=session_id,

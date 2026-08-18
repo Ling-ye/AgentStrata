@@ -1,7 +1,6 @@
 """后台任务 worker 入口：``python -m chatcopilot.middleware.runtime.jobs.worker``。"""
 from __future__ import annotations
 
-import json
 import os
 import sys
 import time
@@ -10,7 +9,11 @@ from pathlib import Path
 from typing import Any, Dict
 
 from chatcopilot.contracts.code_tasks import CODE_TASK_TERMINAL_STATUSES, CODE_TASK_TOOL
-from chatcopilot.core.jobs import read_json_file as read_core_json
+from chatcopilot.core.jobs import (
+    BackgroundJob,
+    read_job_result,
+    read_json_file as read_core_json,
+)
 from chatcopilot.middleware.runtime.jobs.notification import write_json_atomic
 from chatcopilot.middleware.runtime.jobs.queue import FileQueueSlot
 from chatcopilot.middleware.runtime.jobs.submitter import (
@@ -25,8 +28,20 @@ _RESULT_FILENAME = "result.json"
 
 def run_worker(request_path: Path) -> int:
     """worker 入口：进入队列，执行一个工具，写出 result.json。"""
-    request = json.loads(request_path.read_text(encoding="utf-8"))
     job_dir = request_path.parent
+    if (
+        request_path.name != "request.json"
+        or job_dir.parent.name != "jobs"
+        or not job_dir.name.startswith("job_")
+    ):
+        return 2
+    request = read_core_json(request_path)
+    if (
+        not isinstance(request, dict)
+        or str(request.get("job_id") or "") != job_dir.name
+        or not str(request.get("tool_name") or "").strip()
+    ):
+        return 2
     job_id = str(request.get("job_id") or job_dir.name)
     queue_name = str(request.get("queue_name") or "default")
     policy = str(request.get("execution_policy") or "")
@@ -125,22 +140,49 @@ def run_worker(request_path: Path) -> int:
                 "finished_at": time.time(),
             }
             write_json_atomic(job_dir / _RESULT_FILENAME, payload)
+            persisted_result = read_job_result(
+                BackgroundJob(
+                    job_id=job_id,
+                    tool_name=tool_name,
+                    execution_policy=policy,
+                    job_dir=job_dir,
+                    request_path=request_path,
+                    result_path=job_dir / _RESULT_FILENAME,
+                )
+            )
+            if not isinstance(persisted_result, dict):
+                raise OSError("persisted job result could not be read")
+            persisted_ok = bool(persisted_result.get("ok"))
+            persisted_stage = str(
+                persisted_result.get("stage")
+                or ("succeeded" if persisted_ok else "failed")
+            )
+            persisted_error_code = str(persisted_result.get("error_code") or "")
+            persisted_error = str(persisted_result.get("error") or "")
+            persisted_summary = str(persisted_result.get("summary") or "")
+            persisted_details = (
+                dict(persisted_result.get("details") or {})
+                if isinstance(persisted_result.get("details"), dict)
+                else {}
+            )
             write_status(
                 job_dir,
-                final_stage,
-                result.summary if result.ok else (result.error or "Tool execution failed."),
-                stage=final_stage,
-                error_code=result.error_code,
-                details=result_details,
+                persisted_stage,
+                persisted_summary
+                if persisted_ok
+                else (persisted_error or "Tool execution failed."),
+                stage=persisted_stage,
+                error_code=persisted_error_code,
+                details=persisted_details,
             )
             _finish_attempt(
                 request_path,
                 attempt=int((read_core_json(job_dir / "status.json") or {}).get("attempt") or 1),
-                status=final_stage,
-                error_code=result.error_code,
-                error=result.error or "",
+                status=persisted_stage,
+                error_code=persisted_error_code,
+                error=persisted_error,
             )
-            return 0 if result.ok else 1
+            return 0 if persisted_ok else 1
     except Exception as exc:  # noqa: BLE001
         payload = {
             "job_id": job_id,

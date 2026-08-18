@@ -7,6 +7,7 @@ messages, lifecycle intents, produced resources, and ``AgentResult`` assembly.
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
@@ -27,17 +28,21 @@ from chatcopilot.agent.lifecycle import (
     set_lifecycle_intent_collector,
 )
 from chatcopilot.core.llm_client import ChatResult
+from chatcopilot.core.observability_redaction import (
+    omit_local_resource_paths,
+    omit_private_reasoning_messages,
+)
 from chatcopilot.agent.protocol import (
     AgentResult,
     AgentStopReason,
     AgentTask,
+    ContextSnapshotPrepared,
     DeferredLifecycleIntent,
     EventSink,
     FinalText,
     InputResourcesDispatched,
     LlmCallStarted,
     LlmCallFinished,
-    SpanFinished,
     TextDelta,
     ToolFinished,
     ToolStarted,
@@ -190,14 +195,63 @@ class TurnOps:
         iteration = state.iteration
         model = getattr(self.session.llm, "model", "")
         call_span_id = new_span_id()
-        image_receipts = (
-            validated_image_resource_receipts(self.task) if iteration == 0 else ()
-        )
+        image_receipts = validated_image_resource_receipts(self.task)
         prompt_estimate = estimate_prompt_tokens(call_messages, self.session.tools_schema)
+        snapshot_id = f"ctx_{call_span_id}"
+        safe_session = omit_private_reasoning_messages(self.session._messages)
+        safe_effective = omit_private_reasoning_messages(call_messages)
+        path_safe_session = omit_local_resource_paths(safe_session.messages)
+        path_safe_effective = omit_local_resource_paths(safe_effective.messages)
+        reasoning_omission_count = (
+            safe_session.omission_count + safe_effective.omission_count
+        )
+        resource_path_omission_count = (
+            path_safe_session.omission_count + path_safe_effective.omission_count
+        )
+        omitted: list[str] = []
+        if len(call_messages) < len(self.session._messages):
+            omitted.append("context_window_messages_excluded")
+        if call_messages != self.session._messages:
+            omitted.append("context_view_transformed")
+        if image_receipts:
+            omitted.append("binary_resource_payload_not_persisted")
+        if reasoning_omission_count:
+            omitted.append("provider_private_reasoning")
+        if resource_path_omission_count:
+            omitted.append("local_resource_paths")
+        partial_capture = bool(
+            image_receipts
+            or reasoning_omission_count
+            or resource_path_omission_count
+        )
+        self.emit(
+            ContextSnapshotPrepared(
+                snapshot_id=snapshot_id,
+                backend=str(getattr(self.session, "backend_name", "native")),
+                model=model,
+                iteration=iteration,
+                session_messages=path_safe_session.messages,
+                effective_messages=path_safe_effective.messages,
+                tool_schemas=tuple(copy.deepcopy(self.session.tools_schema)),
+                resources=image_receipts,
+                coverage="partial" if partial_capture else "exact_model_input",
+                omitted=tuple(omitted),
+                context_kind=state.context_kind,
+                trace_id=state.trace_id,
+                span_id=call_span_id,
+                parent_span_id=state.root_span,
+                depth=self.session.trace_depth,
+                estimated_tokens=int(prompt_estimate["tokens"]),
+                model_selection={"model": model},
+                private_reasoning_omission_count=reasoning_omission_count,
+                resource_path_omission_count=resource_path_omission_count,
+            )
+        )
         self.emit(
             LlmCallStarted(
                 model=model,
                 iteration=iteration,
+                backend=str(getattr(self.session, "backend_name", "native")),
                 trace_id=state.trace_id,
                 span_id=call_span_id,
                 parent_span_id=state.root_span,
@@ -209,6 +263,7 @@ class TurnOps:
                 tool_schema_estimated_tokens=int(prompt_estimate["tool_schema_tokens"]),
                 estimator_version=str(prompt_estimate["estimator_version"]),
                 context_kind=state.context_kind,
+                context_snapshot_id=snapshot_id,
             )
         )
         try:
@@ -226,15 +281,27 @@ class TurnOps:
             _LOGGER.exception("LLM 调用失败")
             err_text = f"（与模型通信失败：{type(exc).__name__}: {exc}；请稍后再试）"
             self.emit(
-                SpanFinished(
-                    name=model or "LLM",
-                    kind="llm",
+                LlmCallFinished(
+                    model=model,
+                    iteration=iteration,
+                    backend=str(getattr(self.session, "backend_name", "native")),
+                    finish_reason="failed",
+                    usage=None,
                     ok=False,
-                    summary=f"{type(exc).__name__}: {exc}",
                     trace_id=state.trace_id,
                     span_id=call_span_id,
                     parent_span_id=state.root_span,
                     depth=self.session.trace_depth,
+                    input_message_count=len(call_messages),
+                    input_estimated_tokens=int(prompt_estimate["tokens"]),
+                    system_estimated_tokens=int(prompt_estimate["system_tokens"]),
+                    tool_schema_count=len(self.session.tools_schema),
+                    tool_schema_estimated_tokens=int(
+                        prompt_estimate["tool_schema_tokens"]
+                    ),
+                    estimator_version=str(prompt_estimate["estimator_version"]),
+                    context_kind=state.context_kind,
+                    context_snapshot_id=snapshot_id,
                 )
             )
             self.emit(TurnError(code=type(exc).__name__, message=str(exc)))
@@ -257,6 +324,7 @@ class TurnOps:
             LlmCallFinished(
                 model=model,
                 iteration=iteration,
+                backend=str(getattr(self.session, "backend_name", "native")),
                 finish_reason=result.finish_reason,
                 usage=result.usage,
                 trace_id=state.trace_id,
@@ -270,6 +338,7 @@ class TurnOps:
                 tool_schema_estimated_tokens=int(prompt_estimate["tool_schema_tokens"]),
                 estimator_version=str(prompt_estimate["estimator_version"]),
                 context_kind=state.context_kind,
+                context_snapshot_id=snapshot_id,
             )
         )
 

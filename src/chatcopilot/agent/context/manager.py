@@ -130,22 +130,22 @@ class ContextManager:
         turns = _segment_turns(conversation)
 
         if not turns:
-            result = [system_msg] if system_msg else []
-            result.extend(conversation)
-            return result
+            unsegmented = [system_msg] if system_msg else []
+            unsegmented.extend(conversation)
+            return unsegmented
 
         topic_context = getattr(topic_decision, "context_kind", None)
         if topic_context == "unrelated":
             turns = turns[-1:]
-            result: List[Dict[str, Any]] = []
+            unrelated_result: List[Dict[str, Any]] = []
             if system_msg:
-                result.append(system_msg)
-            result.extend(turns[0].messages)
+                unrelated_result.append(system_msg)
+            unrelated_result.extend(turns[0].messages)
             _LOGGER.debug(
                 "context window | topic=unrelated turns_kept=1 turns_trimmed=%d",
                 max(0, len(_segment_turns(conversation)) - 1),
             )
-            return result
+            return unrelated_result
 
         window_boundary = max(0, len(turns) - self.sliding_window_turns)
         for turn in turns[:window_boundary]:
@@ -170,12 +170,12 @@ class ContextManager:
             conv_tokens -= estimate_messages_tokens(oldest.messages)
             trimmed_count += 1
 
-        result: List[Dict[str, Any]] = []
+        prepared: List[Dict[str, Any]] = []
         if system_msg:
-            result.append(system_msg)
+            prepared.append(system_msg)
 
         for turn in turns:
-            result.extend(turn.messages)
+            prepared.extend(turn.messages)
 
         if _LOGGER.isEnabledFor(logging.DEBUG):
             system_tokens = estimate_message_tokens(system_msg) if system_msg else 0
@@ -187,7 +187,7 @@ class ContextManager:
                 f" | topic={topic_context}" if topic_context else "",
             )
 
-        return result
+        return prepared
 
     @staticmethod
     def _split_system(

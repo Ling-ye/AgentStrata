@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import subprocess
 import sys
@@ -11,6 +10,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from chatcopilot.core.jobs import (
+    read_json_file as _read_core_json_file,
+    write_json_atomic as _write_core_json_atomic,
+)
 from chatcopilot.project import ENV_PREFIX
 
 JOBS_DIRNAME = "jobs"
@@ -28,10 +31,7 @@ def make_job_id() -> str:
 
 
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    _write_core_json_atomic(path, payload)
 
 
 def write_status(job_dir: Path, status: str, message: str) -> None:
@@ -150,11 +150,26 @@ def build_request_payload(
 
 def run_detached_job(job_dir: Path) -> int:
     started = time.time()
-    request = json.loads((job_dir / REQUEST_FILENAME).read_text(encoding="utf-8"))
+    if job_dir.parent.name != JOBS_DIRNAME or not job_dir.name.startswith("job_"):
+        return 2
+    request = _read_core_json_file(job_dir / REQUEST_FILENAME)
+    if not isinstance(request, dict):
+        return 2
+    if (
+        str(request.get("job_id") or "") != job_dir.name
+        or str(request.get("tool_name") or "") != "finalize_self_update"
+        or str(request.get("execution_policy") or "") != "detached_systemd"
+        or str(request.get("queue_name") or "") != "self_update"
+    ):
+        return 2
     args = request.get("args") if isinstance(request.get("args"), dict) else {}
-    source_root = Path(str(args.get("source_root") or "")).expanduser().resolve()
-    runtime_root = Path(str(args.get("runtime_root") or "")).expanduser().resolve()
+    source_root_raw = str(args.get("source_root") or "").strip()
+    runtime_root_raw = str(args.get("runtime_root") or "").strip()
     instance_id = str(args.get("instance_id") or "").strip()
+    if not source_root_raw or not runtime_root_raw or not instance_id:
+        return 2
+    source_root = Path(source_root_raw).expanduser().resolve()
+    runtime_root = Path(runtime_root_raw).expanduser().resolve()
     changed = [str(item) for item in (args.get("changed_files") or []) if str(item).strip()]
     sync_mode = str(args.get("sync_mode") or "full").strip()
     sync_root = Path(str(args.get("sync_root") or source_root)).expanduser().resolve()

@@ -41,6 +41,8 @@ def test_evaluation_unit_uses_private_unix_socket_and_preserves_workers() -> Non
 def test_console_unit_waits_for_but_does_not_own_evaluation_service() -> None:
     unit = _read("console/systemd/chatcopilot-console.service")
 
+    assert "Environment=CHATCOPILOT_CONSOLE_HOST=127.0.0.1" in unit
+    assert "Environment=CHATCOPILOT_CONSOLE_HOST=0.0.0.0" not in unit
     assert "Wants=chatcopilot-evaluation.service" in unit
     assert "After=default.target chatcopilot-evaluation.service" in unit
     assert (

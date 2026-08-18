@@ -1,30 +1,25 @@
 """后台任务通知状态的读写：负责 ACP 端把投递成功/失败的元数据持久化。"""
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from chatcopilot.core.jobs import (
+    read_json_file as _read_core_json_file,
+    write_json_atomic as _write_core_json_atomic,
+)
 
 
 NOTIFICATION_FILENAME = "notification.json"
 
 
 def write_json_atomic(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    _write_core_json_atomic(path, payload)
 
 
 def read_json_file(path: Path) -> Optional[Dict[str, Any]]:
-    if not path.is_file():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return payload if isinstance(payload, dict) else None
+    return _read_core_json_file(path)
 
 
 def notification_state_payload(

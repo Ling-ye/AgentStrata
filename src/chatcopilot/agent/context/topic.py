@@ -13,7 +13,7 @@ import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Protocol
+from typing import Any, Literal, Mapping, Protocol, cast
 
 from chatcopilot.core.llm_client import ChatResult
 
@@ -270,7 +270,7 @@ class TopicRelevanceClassifier:
         if raw_kind not in {"related", "unrelated", "uncertain"}:
             return self._fallback("classifier returned unknown decision", usage=result.usage)
 
-        kind = raw_kind  # type: ignore[assignment]
+        kind = cast(TopicDecisionKind, raw_kind)
         context_kind: TopicDecisionKind = kind
         if kind == "related" and confidence < self._policy.related_threshold:
             kind = "uncertain"

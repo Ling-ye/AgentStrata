@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from statistics import median
 from typing import Any, Iterable, Mapping
@@ -9,6 +10,8 @@ from typing import Any, Iterable, Mapping
 FORECAST_MIN_SAMPLES = 20
 FORECAST_MAX_SAMPLES = 200
 FORECAST_VERSION = "task-median-v1"
+_MAX_USAGE_TOKEN_COUNT = (1 << 63) - 1
+_MAX_HISTORY_TASK_BYTES = 8 * 1024 * 1024
 
 _USAGE_KEYS = (
     "prompt_tokens",
@@ -21,15 +24,29 @@ _USAGE_KEYS = (
 )
 
 
+def _nonnegative_usage_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        normalized = value
+    else:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        if not math.isfinite(numeric):
+            return 0
+        normalized = int(numeric)
+    if normalized < 0 or normalized > _MAX_USAGE_TOKEN_COUNT:
+        return 0
+    return normalized
+
+
 def normalize_usage(usage: Mapping[str, Any] | None) -> dict[str, int]:
     source = usage or {}
     normalized: dict[str, int] = {}
     for key in _USAGE_KEYS:
-        value = source.get(key, 0)
-        try:
-            normalized[key] = max(0, int(float(value)))
-        except (TypeError, ValueError):
-            normalized[key] = 0
+        normalized[key] = _nonnegative_usage_int(source.get(key, 0))
     prompt = normalized["prompt_tokens"]
     cached = min(
         prompt,
@@ -59,17 +76,29 @@ def load_task_history(root: Path | None) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for path in root.glob("**/tasks/*/task.json"):
         try:
+            if path.stat().st_size > _MAX_HISTORY_TASK_BYTES:
+                continue
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError, RecursionError):
             continue
         if not isinstance(payload, dict) or payload.get("schema_version") != 2:
             continue
         records.append(payload)
     records.sort(
-        key=lambda item: float(item.get("finished_at") or item.get("updated_at") or 0),
+        key=lambda item: _safe_history_timestamp(
+            item.get("finished_at") or item.get("updated_at") or 0
+        ),
         reverse=True,
     )
     return records
+
+
+def _safe_history_timestamp(value: Any) -> float:
+    try:
+        timestamp = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    return timestamp if math.isfinite(timestamp) and timestamp >= 0 else 0.0
 
 
 def forecast_llm_usage(

@@ -377,12 +377,12 @@ class SearchProviderRegistry:
                 if name in self.tools:
                     return self.tools[name]
             return None
-        name = {
+        delegate_name = {
             "experience": "search_xiaohongshu",
             "commerce": "search_taoke",
             "github": "query_approved_sources",
         }.get(source)
-        return self.tools.get(name or "")
+        return self.tools.get(delegate_name or "")
 
     def secondary_web_delegate(self, excluded_sources: set[str]) -> ToolDef | None:
         for name, source in (
@@ -440,6 +440,7 @@ class DirectSearchProvider:
             if client is not None:
                 payload, outputs, error_code = self._call_in_process(client, query)
             else:
+                assert tool is not None
                 payload, outputs, error_code = self._call_tool(tool, query)
             if error_code:
                 if self._circuit is not None:

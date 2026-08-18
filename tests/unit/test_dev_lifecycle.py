@@ -19,6 +19,7 @@ from chatcopilot.external_tools.dev.lifecycle_job import (
     STATUS_FILENAME,
     run_detached_job,
 )
+from chatcopilot.external_tools.dev.lifecycle_worker import main as lifecycle_worker_main
 from chatcopilot.external_tools.dev.lifecycle_tools import (
     execute_finalize_self_update_from_workspace,
 )
@@ -305,9 +306,9 @@ class DevLifecycleToolTests(unittest.TestCase):
             source = root / "source"
             runtime = root / "runtime"
             overlay = root / "overlay"
-            job_dir = root / "job"
+            job_dir = root / "workspace" / JOBS_DIRNAME / "job_test"
             for path in (source, runtime, overlay, job_dir):
-                path.mkdir()
+                path.mkdir(parents=True)
             update_script = source / "deploy" / "wsl" / "update_instance.sh"
             update_script.parent.mkdir(parents=True)
             update_script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
@@ -315,6 +316,9 @@ class DevLifecycleToolTests(unittest.TestCase):
             manifest.write_text("src/app.py\n", encoding="utf-8")
             request = {
                 "job_id": "job_test",
+                "tool_name": "finalize_self_update",
+                "execution_policy": "detached_systemd",
+                "queue_name": "self_update",
                 "args": {
                     "source_root": str(source),
                     "runtime_root": str(runtime),
@@ -344,6 +348,94 @@ class DevLifecycleToolTests(unittest.TestCase):
             self.assertIn(str(overlay), command)
             self.assertIn("--changed-files", command)
             self.assertIn(str(manifest), command)
+
+    def test_detached_job_rejects_unsafe_request_before_update_subprocess(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            jobs_root = root / "workspace" / JOBS_DIRNAME
+            job_dir = jobs_root / "job_unsafe_request"
+            job_dir.mkdir(parents=True)
+            private = root / "private-request.json"
+            private.write_text(
+                '{"job_id":"job_unsafe_request","tool_name":"finalize_self_update"}',
+                encoding="utf-8",
+            )
+            (job_dir / REQUEST_FILENAME).symlink_to(private)
+
+            with mock.patch(
+                "chatcopilot.external_tools.dev.lifecycle_job.subprocess.run"
+            ) as run:
+                self.assertEqual(run_detached_job(job_dir), 2)
+
+            run.assert_not_called()
+            self.assertFalse((job_dir / STATUS_FILENAME).exists())
+            self.assertFalse((job_dir / "result.json").exists())
+
+            request_path = job_dir / REQUEST_FILENAME
+            request_path.unlink()
+            request_path.write_text(
+                '{"job_id":"job_unsafe_request","tool_name":"finalize_self_update"}',
+                encoding="utf-8",
+            )
+            request_path.chmod(0o666)
+            with mock.patch(
+                "chatcopilot.external_tools.dev.lifecycle_job.subprocess.run"
+            ) as run:
+                self.assertEqual(run_detached_job(job_dir), 2)
+            run.assert_not_called()
+
+    def test_lifecycle_worker_preserves_and_rejects_symlinked_job_ancestor(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            jobs_root = root / "workspace" / JOBS_DIRNAME
+            jobs_root.mkdir(parents=True)
+            external = root / "external-private-job"
+            external.mkdir()
+            (external / REQUEST_FILENAME).write_text(
+                json.dumps(
+                    {
+                        "job_id": "job_symlinked_ancestor",
+                        "tool_name": "finalize_self_update",
+                        "execution_policy": "detached_systemd",
+                        "queue_name": "self_update",
+                        "args": {
+                            "source_root": str(root / "source"),
+                            "runtime_root": str(root / "runtime"),
+                            "instance_id": "demo",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            job_dir = jobs_root / "job_symlinked_ancestor"
+            job_dir.symlink_to(external, target_is_directory=True)
+
+            with mock.patch(
+                "chatcopilot.external_tools.dev.lifecycle_job.subprocess.run"
+            ) as run:
+                self.assertEqual(lifecycle_worker_main([str(job_dir)]), 2)
+
+            run.assert_not_called()
+            self.assertFalse((external / STATUS_FILENAME).exists())
+            self.assertFalse((external / "result.json").exists())
+
+    def test_detached_job_rejects_oversized_request_before_update_subprocess(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job_dir = root / "workspace" / JOBS_DIRNAME / "job_oversized_request"
+            job_dir.mkdir(parents=True)
+            (job_dir / REQUEST_FILENAME).write_bytes(
+                b'{"padding":"' + (b"x" * (8 * 1024 * 1024)) + b'"}'
+            )
+
+            with mock.patch(
+                "chatcopilot.external_tools.dev.lifecycle_job.subprocess.run"
+            ) as run:
+                self.assertEqual(run_detached_job(job_dir), 2)
+
+            run.assert_not_called()
+            self.assertFalse((job_dir / STATUS_FILENAME).exists())
+            self.assertFalse((job_dir / "result.json").exists())
 
     @unittest.skipUnless(shutil.which("rsync"), "rsync is required")
     def test_sync_script_updates_only_manifest_paths(self) -> None:

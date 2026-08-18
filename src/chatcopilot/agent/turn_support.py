@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from typing import Any
+from typing import Any, Literal, cast
 
 from chatcopilot.agent.protocol import AgentEvent, AgentTask, EventSink, ResourceRef
 from chatcopilot.agent.tools.executor import ToolResult
@@ -84,7 +84,11 @@ def paths_to_resources(paths: list[tuple[str, str]]) -> tuple[ResourceRef, ...]:
         if not path:
             continue
         name = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] or path
-        out.append(ResourceRef(name=name, path=path, kind=kind or "file"))
+        resource_kind = cast(
+            Literal["file", "directory", "url"],
+            kind if kind in {"file", "directory", "url"} else "file",
+        )
+        out.append(ResourceRef(name=name, path=path, kind=resource_kind))
     return tuple(out)
 
 

@@ -148,7 +148,8 @@ python -m chatcopilot.agent.search.probe --bot bots/lingye-copilot-qq/bot.yaml -
 
 ## 核心机制
 
-- **主 Agent backend**：`agents.backend` 默认 `native`，也可设为 `langgraph` 或 `codex`；三个 backend 必须共享 `AgentTask` / `AgentEvent` / `AgentResult` 协议和现有工具注册/权限 hook。选择只发生在实例配置，不按回合自动切换。事件流、工具结果消息、生命周期 intent 和最终 `AgentResult` 属于 `agent/turn.py` 共享 turn runtime，不属于具体 backend 或平台层。
+- **主 Agent backend**：`agents.backend` 默认 `native`，也可设为 `langgraph` 或 `codex`；三个 backend 必须共享 `AgentTask` / `AgentEvent` / `AgentResult` 协议和现有工具注册/权限 hook。选择只发生在实例配置，不按回合自动切换。Native/LangGraph 复用 `agent/turn.py` 的 `TurnOps`；Codex 必须把公开 CLI JSONL 投影为相同事件、工具结果、生命周期 intent 和最终 `AgentResult`，不得让 Console 解析 backend 私有日志。
+- **统一上下文可观测性**：[KNOWN][HIGH] 主 Agent 与 subagent 的每次 turn 模型调用前必须发 `ContextSnapshotPrepared`；Native/LangGraph 纯文本请求捕获最终提交的 `exact_model_input`，含本地二进制资源或受限字段时降为 `partial` 并只保留 path-free receipt，Codex 捕获 AgentStrata stdin/tool/resource envelope 并以 `adapter_visible` + `provider_opaque` 标明原生 resume/内部 instructions 等不可见状态。隐藏 chain-of-thought 不进入事件或 artifact。快照正文必须在首次落盘前脱敏，独立写入 private bounded artifact；`task.json` 只留摘要，Console 只通过 opaque snapshot ID 懒加载，不按 backend 分支。Topic classifier、quality gate、search router 与 reranker 等独立 helper-model 调用本版本只保留既有 step/usage，不得宣称已有完整 context artifact。
 - **Subagent**：主 Agent 是唯一对用户负责的交付者；subagent 只通过委托工具执行内部任务，并必须用 `submit_result` 返回 `{ok,summary,findings,evidence,changes,commands_run,outputs,risks,next_steps,confidence,cache_summary}`。
 - **Task pack**：新委托使用 `objective/user_intent/deliverable/constraints/inputs/resources/acceptance_criteria/evidence_required/write_scope/excluded_context/cache_key_hint`；旧 `task` 只作为兼容别名。
 - **按源搜索**：`risk: search` MCP 为账号态或垂直来源生成受限 `search_<server-id>` delegate，例如 `search_xiaohongshu`。每个搜索 subagent 只能访问本 server 的 `search_only_tools`；Tavily、Brave 与 SearXNG 不再用 MCP wrapper。

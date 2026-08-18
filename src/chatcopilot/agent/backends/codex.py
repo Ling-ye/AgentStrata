@@ -10,21 +10,30 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from chatcopilot.agent.backends.codex_events import CodexJsonlProjector
+from chatcopilot.agent.backends.session_relay import SessionToolRelay
 from chatcopilot.agent.context import (
     frame_task_message,
     validated_image_resource_receipts,
 )
+from chatcopilot.agent.context.token_estimator import estimate_prompt_tokens
+from chatcopilot.agent.tools.executor import ToolExecutor
+from chatcopilot.agent.turn_support import safe_emit
 from chatcopilot.contracts.agent import (
     AgentResult,
     AgentTask,
+    ContextSnapshotPrepared,
     EventSink,
     FinalText,
     InputResourcesDispatched,
+    LlmCallStarted,
+    SpanFinished,
     TextDelta,
     ToolFinished,
     ToolStarted,
@@ -44,6 +53,7 @@ from chatcopilot.contracts.agent_backend import (
     require_backend_capabilities,
 )
 from chatcopilot.contracts.model_selection import CodeModelSelection
+from chatcopilot.contracts.tools import ToolDef, build_mcp_schema
 from chatcopilot.core.image_content import (
     SUPPORTED_IMAGE_MEDIA_TYPES,
     normalize_image_media_type,
@@ -65,8 +75,6 @@ from chatcopilot.external_tools.codex_cli.credentials import (
 )
 from chatcopilot.external_tools.codex_cli.process_runner import run_codex_process
 from chatcopilot.external_tools.codex_cli import session_gateway as _standalone_gateway
-from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.agent.backends.session_relay import SessionToolRelay
 
 if TYPE_CHECKING:
     from chatcopilot.agent.session import ToolPayloadFilter
@@ -84,6 +92,8 @@ class _CodexSession:
     codex_home: Path
     session_state_path: Path
     relay: SessionToolRelay
+    relay_tools: tuple[ToolDef, ...]
+    relay_executor: ToolExecutor
     role_hint: str
     access_mode: str
     policy_fingerprint: str
@@ -287,6 +297,8 @@ class CodexAgentBackend:
             codex_home=codex_home,
             session_state_path=session_state_path,
             relay=relay,
+            relay_tools=selected_tools,
+            relay_executor=executor,
             role_hint=role_hint,
             access_mode=access_mode,
             policy_fingerprint=policy_fingerprint,
@@ -309,7 +321,23 @@ class CodexAgentBackend:
         on_event: EventSink,
     ) -> AgentResult:
         state = self._resolve(session)
-        buffered_events: list[Any] = []
+        buffered_delivery_events: list[Any] = []
+        event_lock = threading.RLock()
+
+        def safe_on_event(event: Any) -> None:
+            with event_lock:
+                safe_emit(on_event, event)
+
+        def emit_during_lease(event: Any) -> None:
+            # Context/trace events are safe to surface while Codex is running.
+            # User-visible output and diagnostics remain gated on successful
+            # credential copy-back, preserving the existing fail-closed lease.
+            with event_lock:
+                if isinstance(event, (TextDelta, FinalText, TurnError)):
+                    buffered_delivery_events.append(event)
+                    return
+                safe_emit(on_event, event)
+
         try:
             with credential_lease(
                 self._bot_credential_root(),
@@ -320,25 +348,25 @@ class CodexAgentBackend:
                 result = self._stream_turn(
                     state,
                     task,
-                    on_event=buffered_events.append,
+                    on_event=emit_during_lease,
                 )
         except CredentialError as exc:
             self._clear_native_session(state)
             diagnostic = "\n".join(
                 event.message
-                for event in buffered_events
+                for event in buffered_delivery_events
                 if isinstance(event, TurnError) and event.message
             )
             return self._credential_failure_result(
                 state,
                 task,
-                on_event=on_event,
+                on_event=safe_on_event,
                 code=exc.code,
                 diagnostic=diagnostic,
             )
 
-        for event in buffered_events:
-            on_event(event)
+        for event in buffered_delivery_events:
+            safe_on_event(event)
         return result
 
     def _stream_turn(
@@ -348,11 +376,22 @@ class CodexAgentBackend:
         *,
         on_event: EventSink,
     ) -> AgentResult:
-        framed_task = frame_task_message(task)
-        state.messages.append({"role": "user", "content": framed_task})
-        stale_tool_events = state.relay.drain_tool_events()
-        if stale_tool_events:
-            raise RuntimeError("Codex session relay retained tool evidence from a prior turn")
+        state.messages.append(
+            {"role": "user", "content": _safe_task_ledger_message(task)}
+        )
+        try:
+            self._ensure_clean_session_relay(state)
+        except Exception as exc:  # noqa: BLE001 - return a safe backend failure
+            detail = f"Codex session relay recovery failed: {type(exc).__name__}: {exc}"
+            message = self._safe_cli_failure(detail)
+            on_event(TurnError(code="codex_tool_audit_failed", message=detail[-4000:]))
+            on_event(FinalText(message))
+            state.messages.append({"role": "assistant", "content": message})
+            return AgentResult(
+                final_text=message,
+                stop_reason="llm_error",
+                message_count=len(state.messages),
+            )
         try:
             selection = validate_frozen_code_model_selection(
                 self._runtime_config.routing,
@@ -373,6 +412,11 @@ class CodexAgentBackend:
                 stop_reason="llm_error",
                 message_count=len(state.messages),
             )
+        projector: CodexJsonlProjector | None = None
+        trace_id = str(task.metadata.get("trace_id") or state.acp_session_id)
+        llm_span_id: str | None = None
+        turn_relay: SessionToolRelay | None = None
+        relay_generation: int | None = None
         try:
             image_paths = self._image_paths(task)
             command = self._command(
@@ -380,19 +424,191 @@ class CodexAgentBackend:
                 selection=selection,
                 image_paths=image_paths,
             )
+            subprocess_env = self._subprocess_env(state, command[0])
+            prompt = self._prompt(state, task)
+            image_receipts = validated_image_resource_receipts(task)
+            tool_schemas = self._context_tool_schemas(state)
+            effective_messages = ({"role": "user", "content": prompt},)
+            captured_messages, resource_path_omission_count = (
+                _replace_task_resource_paths(
+                    {
+                        "session": tuple(dict(message) for message in state.messages),
+                        "effective": effective_messages,
+                    },
+                    task,
+                )
+            )
+            prompt_estimate = estimate_prompt_tokens(effective_messages, tool_schemas)
+            trace_id, parent_span_id, llm_span_id, snapshot_id = self._turn_trace_ids(
+                state,
+                task,
+                prompt=prompt,
+            )
+            resumed = bool(state.native_session_id)
+            context_kind = "codex_native_resume" if resumed else "codex_exec"
+            omitted: tuple[str, ...] = ("provider_internal_instructions",)
+            if resumed:
+                omitted += ("provider_managed_resume_context",)
+            if image_receipts:
+                omitted += ("binary_resource_payload_not_persisted",)
+            if resource_path_omission_count:
+                omitted += ("local_resource_paths",)
+            on_event(
+                ContextSnapshotPrepared(
+                    snapshot_id=snapshot_id,
+                    backend=self.backend_id,
+                    model=selection.model,
+                    iteration=0,
+                    session_messages=tuple(captured_messages["session"]),
+                    effective_messages=tuple(captured_messages["effective"]),
+                    tool_schemas=tool_schemas,
+                    resources=image_receipts,
+                    coverage="adapter_visible",
+                    omitted=omitted,
+                    context_kind=context_kind,
+                    trace_id=trace_id,
+                    span_id=llm_span_id,
+                    parent_span_id=parent_span_id,
+                    depth=0,
+                    estimated_tokens=int(prompt_estimate["tokens"]),
+                    model_selection=selection.to_payload(),
+                    resource_path_omission_count=resource_path_omission_count,
+                )
+            )
+            on_event(
+                LlmCallStarted(
+                    model=selection.model,
+                    iteration=0,
+                    backend=self.backend_id,
+                    trace_id=trace_id,
+                    span_id=llm_span_id,
+                    parent_span_id=parent_span_id,
+                    depth=0,
+                    input_message_count=len(effective_messages),
+                    input_estimated_tokens=int(prompt_estimate["tokens"]),
+                    system_estimated_tokens=int(prompt_estimate["system_tokens"]),
+                    tool_schema_count=len(tool_schemas),
+                    tool_schema_estimated_tokens=int(
+                        prompt_estimate["tool_schema_tokens"]
+                    ),
+                    estimator_version=str(prompt_estimate["estimator_version"]),
+                    context_kind=context_kind,
+                    context_snapshot_id=snapshot_id,
+                )
+            )
+            turn_relay = state.relay
+            relay_generation = turn_relay.begin_turn(
+                trace_id=trace_id,
+                parent_span_id=llm_span_id,
+                depth=1,
+            )
+            projector = CodexJsonlProjector(
+                model=selection.model,
+                iteration=0,
+                trace_id=trace_id,
+                llm_span_id=llm_span_id,
+                parent_span_id=parent_span_id,
+                context_snapshot_id=snapshot_id,
+                on_event=on_event,
+                on_thread_started=lambda native_id: self._record_native_session_id(
+                    state, native_id
+                ),
+                input_message_count=len(effective_messages),
+                input_estimated_tokens=int(prompt_estimate["tokens"]),
+                system_estimated_tokens=int(prompt_estimate["system_tokens"]),
+                tool_schema_count=len(tool_schemas),
+                tool_schema_estimated_tokens=int(prompt_estimate["tool_schema_tokens"]),
+                estimator_version=str(prompt_estimate["estimator_version"]),
+                context_kind=context_kind,
+            )
+
+            def drain_live_relay_events() -> None:
+                relay_error = self._emit_relay_tool_events(
+                    turn_relay,
+                    on_event,
+                    generation=relay_generation,
+                    trace_id=trace_id,
+                    parent_span_id=llm_span_id,
+                    require_complete=False,
+                )
+                if relay_error:
+                    raise RuntimeError(f"Codex relay audit failed: {relay_error}")
+
             completed = run_codex_process(
                 command,
                 cwd=state.workdir,
-                prompt=self._prompt(state, task),
+                prompt=prompt,
                 timeout_seconds=self._runtime_config.routing.code_timeout_seconds,
-                env=self._subprocess_env(state, command[0]),
+                env=subprocess_env,
+                on_stdout_line=projector.consume_line,
+                on_poll=drain_live_relay_events,
             )
-            image_receipts = validated_image_resource_receipts(task)
+            audit_error = self._emit_relay_tool_events(
+                turn_relay,
+                on_event,
+                generation=relay_generation,
+                trace_id=trace_id,
+                parent_span_id=llm_span_id,
+                require_complete=True,
+            )
+            if audit_error:
+                raise RuntimeError(f"Codex relay audit failed: {audit_error}")
+            if projector.line_count == 0:
+                # Completion-based injected runners do not have to implement the
+                # optional callback. Keep their established contract intact.
+                projector.consume_text(completed.stdout)
+            if getattr(completed, "stdout_line_truncated", False):
+                if projector.stream_omission_count == 0:
+                    projector.mark_stream_line_omitted()
+                if not projector.has_complete_final_after_stream_omission:
+                    raise RuntimeError(
+                        "Codex CLI emitted a JSONL record above the streaming size limit "
+                        "and no complete final message followed that omission"
+                    )
+            if projector.final_text_truncated:
+                raise RuntimeError(
+                    "Codex CLI final response exceeded the bounded turn output limit"
+                )
+            projector.finish(returncode=completed.returncode)
         except Exception as exc:  # noqa: BLE001
-            audit_error = self._emit_relay_tool_events(state, on_event)
+            audit_error = ""
+            if turn_relay is not None and relay_generation is not None:
+                audit_error = self._emit_relay_tool_events(
+                    turn_relay,
+                    on_event,
+                    generation=relay_generation,
+                    trace_id=trace_id,
+                    parent_span_id=llm_span_id,
+                    require_complete=True,
+                )
+            relay_reset_error = ""
+            if audit_error and turn_relay is not None and relay_generation is not None:
+                unknown_error = self._emit_relay_tool_events(
+                    turn_relay,
+                    on_event,
+                    generation=relay_generation,
+                    trace_id=trace_id,
+                    parent_span_id=llm_span_id,
+                    require_complete=False,
+                    settle_unknown=True,
+                )
+                if unknown_error:
+                    audit_error = (
+                        f"{audit_error}; unknown-outcome audit failed: {unknown_error}"
+                    )
+                try:
+                    self._reset_session_relay(state)
+                except Exception as reset_exc:  # noqa: BLE001 - preserve primary failure
+                    relay_reset_error = (
+                        f"{type(reset_exc).__name__}: {reset_exc}"
+                    )
+            if projector is not None:
+                projector.fail(reason="codex_backend_failed")
             detail = f"Codex backend failed: {type(exc).__name__}: {exc}"
             if audit_error:
                 detail = f"{detail}; relay audit failed: {audit_error}"
+            if relay_reset_error:
+                detail = f"{detail}; relay reset failed: {relay_reset_error}"
             message = self._safe_cli_failure(detail)
             error_code = (
                 "codex_auth_invalid" if self._is_auth_failure(detail) else "codex_backend_failed"
@@ -405,19 +621,9 @@ class CodexAgentBackend:
                 stop_reason="llm_error",
                 message_count=len(state.messages),
             )
-
-        audit_error = self._emit_relay_tool_events(state, on_event)
-        if audit_error:
-            detail = f"Codex relay audit failed: {audit_error}"
-            on_event(TurnError(code="codex_tool_audit_failed", message=detail[-4000:]))
-            final_text = "The Codex tool evidence channel failed; task success is unverified."
-            state.messages.append({"role": "assistant", "content": final_text})
-            on_event(FinalText(final_text))
-            return AgentResult(
-                final_text=final_text,
-                stop_reason="llm_error",
-                message_count=len(state.messages),
-            )
+        finally:
+            if turn_relay is not None and relay_generation is not None:
+                turn_relay.end_turn(relay_generation)
 
         if image_receipts:
             raw_turn = task.metadata.get("eval_turn", 0)
@@ -426,21 +632,17 @@ class CodexAgentBackend:
                 InputResourcesDispatched(
                     backend="codex",
                     turn_index=turn_index,
-                    request_id=hashlib.sha256(
-                        (state.acp_session_id + "\0" + str(len(state.messages))).encode("utf-8")
-                    ).hexdigest()[:32],
+                    request_id=llm_span_id,
                     resources=image_receipts,
                 )
             )
 
-        final_text = self._consume_events(
-            state,
-            completed.stdout,
-            on_event,
-            emit_text=False,
-        )
-        if completed.returncode != 0:
-            detail = (completed.stderr or final_text or "Codex CLI failed").strip()[-4000:]
+        final_text = projector.final_text
+        codex_failed = completed.returncode != 0 or projector.provider_failed
+        if codex_failed:
+            detail = (
+                completed.stderr or final_text or "Codex CLI reported a failed turn"
+            ).strip()[-4000:]
             auth_failed = self._is_auth_failure(detail)
             on_event(
                 TurnError(
@@ -459,34 +661,121 @@ class CodexAgentBackend:
         on_event(FinalText(final_text))
         return AgentResult(
             final_text=final_text,
-            stop_reason="end_turn" if completed.returncode == 0 else "llm_error",
+            stop_reason="llm_error" if codex_failed else "end_turn",
             message_count=len(state.messages),
         )
 
     @staticmethod
-    def _emit_relay_tool_events(state: _CodexSession, on_event: EventSink) -> str:
+    def _emit_relay_tool_events(
+        relay: SessionToolRelay,
+        on_event: EventSink,
+        *,
+        generation: int,
+        trace_id: str,
+        parent_span_id: str | None,
+        require_complete: bool = True,
+        settle_unknown: bool = False,
+    ) -> str:
         """Project trusted in-process relay receipts onto the shared Agent event protocol."""
 
         try:
-            events = state.relay.drain_tool_events()
+            events = (
+                relay.drain_tool_events_with_unknown_active(generation=generation)
+                if settle_unknown
+                else relay.drain_tool_events(generation=generation)
+                if require_complete
+                else relay.drain_available_tool_events(generation=generation)
+            )
         except Exception as exc:  # noqa: BLE001 - evidence failure is returned fail-closed
             return f"{type(exc).__name__}: {exc}"
         for event in events:
+            if event.get("generation") != generation:
+                return "relay returned evidence from a different turn generation"
+            event_type = str(event.get("type") or "")
+            if event_type == "agent_event":
+                nested_event = event.get("event")
+                if nested_event is None:
+                    return "relay returned an empty nested agent event"
+                if (
+                    hasattr(nested_event, "trace_id")
+                    and getattr(nested_event, "trace_id") != trace_id
+                ):
+                    return "relay returned a nested event with mismatched trace identity"
+                safe_emit(on_event, nested_event)
+                continue
             call_id = str(event.get("call_id") or "").strip()
             name = str(event.get("name") or "").strip()
-            event_type = str(event.get("type") or "")
             if not call_id or not name:
                 return "relay returned an event without call identity"
+            if event.get("trace_id") != trace_id:
+                return "relay returned a tool event with mismatched trace identity"
+            if event.get("parent_span_id") != parent_span_id:
+                return "relay returned a tool event with mismatched parent span"
+            event_depth = event.get("depth")
+            if not isinstance(event_depth, int) or isinstance(event_depth, bool):
+                return "relay returned a tool event with malformed depth"
+            if event_type == "nested_event_omission":
+                omitted_count = event.get("omitted_count")
+                if (
+                    not isinstance(omitted_count, int)
+                    or isinstance(omitted_count, bool)
+                    or omitted_count <= 0
+                    or omitted_count > (1 << 63) - 1
+                ):
+                    return "relay returned a malformed nested event omission count"
+                buffer_limit = event.get("buffer_limit")
+                if (
+                    not isinstance(buffer_limit, int)
+                    or isinstance(buffer_limit, bool)
+                    or buffer_limit <= 0
+                ):
+                    return "relay returned a malformed nested event buffer limit"
+                omission_key = f"{trace_id}\0{call_id}\0nested-event-buffer-limit"
+                safe_emit(
+                    on_event,
+                    SpanFinished(
+                        name="Relay nested telemetry omitted by buffer limit",
+                        kind="provider_omission",
+                        ok=False,
+                        summary=(
+                            "Additional nested tool events exceeded the bounded relay "
+                            "telemetry buffer."
+                        ),
+                        trace_id=trace_id,
+                        span_id=(
+                            "span_"
+                            + hashlib.sha256(omission_key.encode("utf-8")).hexdigest()[:12]
+                        ),
+                        parent_span_id=call_id,
+                        depth=event_depth + 1,
+                        data={
+                            "status": "truncated",
+                            "reason": "relay_nested_event_buffer_limit",
+                            "omitted_count": omitted_count,
+                            "projected_event_limit": buffer_limit,
+                        },
+                    ),
+                )
+                continue
             if event_type == "tool_started":
                 arguments = event.get("arguments")
                 if not isinstance(arguments, dict):
                     return "relay returned malformed tool arguments"
-                on_event(
+                safe_emit(
+                    on_event,
                     ToolStarted(
                         name=name,
                         arguments=dict(arguments),
-                        trace_id=call_id,
+                        trace_id=trace_id,
                         span_id=call_id,
+                        parent_span_id=parent_span_id,
+                        depth=event_depth,
+                        started_at=(
+                            float(event["started_at"])
+                            if isinstance(event.get("started_at"), (int, float))
+                            and not isinstance(event.get("started_at"), bool)
+                            else None
+                        ),
                     )
                 )
                 continue
@@ -496,18 +785,62 @@ class CodexAgentBackend:
             if data is not None and not isinstance(data, dict):
                 return "relay returned malformed tool result data"
             ok = event.get("ok") is True
-            on_event(
+            safe_emit(
+                on_event,
                 ToolFinished(
                     name=name,
                     ok=ok,
                     summary=str(event.get("summary") or ""),
                     error=None if ok else str(event.get("error") or "tool execution failed"),
-                    trace_id=call_id,
+                    trace_id=trace_id,
                     span_id=call_id,
+                    parent_span_id=parent_span_id,
+                    depth=event_depth,
                     data=dict(data) if isinstance(data, dict) else None,
+                    finished_at=(
+                        float(event["finished_at"])
+                        if isinstance(event.get("finished_at"), (int, float))
+                        and not isinstance(event.get("finished_at"), bool)
+                        else None
+                    ),
                 )
             )
         return ""
+
+    def _ensure_clean_session_relay(self, state: _CodexSession) -> None:
+        try:
+            stale_events = state.relay.drain_tool_events()
+        except Exception:  # active or malformed previous-generation audit state
+            self._reset_session_relay(state)
+            return
+        if stale_events:
+            self._reset_session_relay(state)
+
+    def _reset_session_relay(self, state: _CodexSession) -> None:
+        replacement = SessionToolRelay(
+            tools=state.relay_tools,
+            executor=state.relay_executor,
+        )
+        endpoint = replacement.start()
+        try:
+            payload = json.loads(state.gateway_config.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Codex gateway config must contain an object")
+            payload["relay"] = endpoint.to_dict()
+            self._write_json_atomic(state.gateway_config, payload)
+            try:
+                state.gateway_config.chmod(0o600)
+            except OSError:
+                pass
+        except Exception:
+            replacement.close()
+            raise
+        retired = state.relay
+        state.relay = replacement
+        try:
+            retired.close()
+        except Exception:  # noqa: BLE001 - new generation is already authoritative
+            pass
 
     def close_session(self, session: BackendSessionRef) -> None:
         stable = self._stable_key(session)
@@ -847,6 +1180,64 @@ class CodexAgentBackend:
         ]
         return "\n\n".join(piece for piece in pieces if piece)
 
+    def _context_tool_schemas(
+        self,
+        state: _CodexSession,
+    ) -> tuple[dict[str, Any], ...]:
+        selected = sorted(
+            (tool for tool in self._tools if tool.name in state.allowed_tool_names),
+            key=lambda tool: tool.name,
+        )
+        return tuple(build_mcp_schema(tool) for tool in selected)
+
+    @staticmethod
+    def _turn_trace_ids(
+        state: _CodexSession,
+        task: AgentTask,
+        *,
+        prompt: str,
+    ) -> tuple[str, str, str, str]:
+        explicit_trace = str(task.metadata.get("trace_id") or "").strip()
+        if explicit_trace:
+            trace_id = explicit_trace
+        else:
+            trace_seed = "\0".join(
+                (
+                    state.acp_session_id,
+                    state.native_session_id,
+                    str(len(state.messages)),
+                    prompt,
+                )
+            )
+            trace_id = "trace_" + hashlib.sha256(
+                trace_seed.encode("utf-8")
+            ).hexdigest()[:16]
+        parent_span_id = "span_" + hashlib.sha256(
+            f"{trace_id}\0codex-root".encode("utf-8")
+        ).hexdigest()[:12]
+        llm_span_id = "span_" + hashlib.sha256(
+            f"{trace_id}\0codex-llm\00".encode("utf-8")
+        ).hexdigest()[:12]
+        snapshot_id = "ctx_" + hashlib.sha256(
+            f"{trace_id}\0{llm_span_id}\0{prompt}".encode("utf-8")
+        ).hexdigest()[:20]
+        return trace_id, parent_span_id, llm_span_id, snapshot_id
+
+    def _record_native_session_id(
+        self,
+        state: _CodexSession,
+        native_id: str,
+    ) -> None:
+        stable = next(
+            (key for key, value in self._sessions.items() if value is state),
+            "",
+        )
+        if not stable:
+            return
+        state.native_session_id = native_id
+        self._aliases[native_id] = stable
+        self._persist_session_state(state)
+
     @staticmethod
     def _image_paths(task: AgentTask) -> tuple[str, ...]:
         paths: list[str] = []
@@ -902,44 +1293,6 @@ class CodexAgentBackend:
             + boundary
             + "Never expose secret values or credentials."
         )
-
-    def _consume_events(
-        self,
-        state: _CodexSession,
-        stdout: str,
-        on_event: EventSink,
-        *,
-        emit_text: bool = True,
-    ) -> str:
-        final_parts: list[str] = []
-        for raw_line in (stdout or "").splitlines():
-            try:
-                event = json.loads(raw_line)
-            except json.JSONDecodeError:
-                continue
-            event_type = str(event.get("type") or "")
-            if event_type in {"thread.started", "thread_started"}:
-                native_id = str(
-                    event.get("thread_id") or event.get("threadId") or event.get("id") or ""
-                ).strip()
-                if native_id:
-                    stable = next(key for key, value in self._sessions.items() if value is state)
-                    state.native_session_id = native_id
-                    self._aliases[native_id] = stable
-                    self._persist_session_state(state)
-                continue
-            item = event.get("item") if isinstance(event.get("item"), dict) else event
-            item_type = str(item.get("type") or "")
-            if event_type in {"item.completed", "item_completed"} and item_type in {
-                "agent_message",
-                "message",
-            }:
-                text = str(item.get("text") or item.get("content") or "").strip()
-                if text:
-                    final_parts.append(text)
-                    if emit_text:
-                        on_event(TextDelta(text))
-        return "\n".join(final_parts).strip()
 
     def _resolve_source_workdir(self, source_root: Any) -> Path:
         configured = os.environ.get(self._runtime_config.routing.code_workdir_env, "").strip()
@@ -1071,7 +1424,7 @@ class CodexAgentBackend:
         detail = f"Codex main credential lease failed: {code}"
         if diagnostic:
             detail = f"{detail}\n{diagnostic}"[-4000:]
-        framed_task = frame_task_message(task)
+        framed_task = _safe_task_ledger_message(task)
         message = self._auth_remediation()
         on_event(TurnError(code="codex_auth_invalid", message=detail))
         on_event(FinalText(message))
@@ -1176,6 +1529,51 @@ def _sandbox_parent_dirs(path: Path) -> list[str]:
             continue
         arguments.extend(["--dir", str(parent)])
     return arguments
+
+
+def _replace_task_resource_paths(value: Any, task: AgentTask) -> tuple[Any, int]:
+    path_refs = {
+        str(resource.path): f"$RESOURCE_{str(resource.sha256 or '')[:12] or index}"
+        for index, resource in enumerate(task.resources)
+        if str(resource.path)
+    }
+
+    def replace(item: Any) -> tuple[Any, int]:
+        if isinstance(item, dict):
+            out: dict[str, Any] = {}
+            count = 0
+            for key, nested in item.items():
+                safe_nested, nested_count = replace(nested)
+                out[str(key)] = safe_nested
+                count += nested_count
+            return out, count
+        if isinstance(item, (list, tuple)):
+            out_items: list[Any] = []
+            count = 0
+            for nested in item:
+                safe_nested, nested_count = replace(nested)
+                out_items.append(safe_nested)
+                count += nested_count
+            return (tuple(out_items) if isinstance(item, tuple) else out_items), count
+        if isinstance(item, str):
+            result = item
+            count = 0
+            for path, reference in sorted(
+                path_refs.items(), key=lambda entry: len(entry[0]), reverse=True
+            ):
+                occurrences = result.count(path)
+                if occurrences:
+                    result = result.replace(path, reference)
+                    count += occurrences
+            return result, count
+        return item, 0
+
+    return replace(value)
+
+
+def _safe_task_ledger_message(task: AgentTask) -> str:
+    safe_message, _ = _replace_task_resource_paths(frame_task_message(task), task)
+    return str(safe_message)
 
 
 __all__ = ["CodexAgentBackend"]

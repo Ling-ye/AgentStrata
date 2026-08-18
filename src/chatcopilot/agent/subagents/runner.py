@@ -351,7 +351,9 @@ class SubagentRunner:
                 )
 
         produced = tuple(resource.path for resource in result.produced_resources)
-        outputs = tuple(dict.fromkeys([*payload.get("outputs", []), *produced]))
+        raw_outputs = payload.get("outputs")
+        existing_outputs = raw_outputs if isinstance(raw_outputs, (list, tuple)) else ()
+        outputs = tuple(dict.fromkeys([*existing_outputs, *produced]))
         payload["outputs"] = list(outputs)
         payload.setdefault("cache_summary", cache_status)
 

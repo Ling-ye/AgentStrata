@@ -12,10 +12,12 @@ from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.contracts.agent import (
     AgentTask,
+    ContextSnapshotPrepared,
     InputResourcesDispatched,
     ResourceRef,
 )
-from chatcopilot.core.llm_client import LLMClient
+from chatcopilot.core.llm_client import ChatResult, LLMClient
+from chatcopilot.external_tools.shared.tool_spec import ToolDef, build_openai_schema
 
 
 _PNG_BYTES = b"\x89PNG\r\n\x1a\nmultimodal-test"
@@ -40,6 +42,16 @@ class _Completions:
         )
         choice = SimpleNamespace(message=message, finish_reason="stop")
         return SimpleNamespace(choices=[choice], usage=None)
+
+
+class _ScriptedLLM:
+    model = "vision-test"
+
+    def __init__(self, results: list[ChatResult]) -> None:
+        self.results = list(results)
+
+    def chat(self, **_kwargs):
+        return self.results.pop(0)
 
 
 def _image_resource(path: Path) -> ResourceRef:
@@ -111,6 +123,65 @@ def test_native_expands_image_only_at_request_boundary(tmp_path: Path) -> None:
     assert dispatch.resources[0].media_type == "image/png"
     assert dispatch.resources[0].size_bytes == len(_PNG_BYTES)
     assert dispatch.resources[0].sha256 == hashlib.sha256(_PNG_BYTES).hexdigest()
+    context = next(event for event in events if isinstance(event, ContextSnapshotPrepared))
+    assert context.coverage == "partial"
+    assert context.resources == dispatch.resources
+    assert "binary_resource_payload_not_persisted" in context.omitted
+    assert "local_resource_paths" in context.omitted
+    assert str(image_path) not in json.dumps(
+        list(context.effective_messages), ensure_ascii=False
+    )
+    assert context.resource_path_omission_count > 0
+
+
+def test_native_tool_loop_keeps_resource_receipts_on_every_context_snapshot(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "input.png"
+    image_path.write_bytes(_PNG_BYTES)
+    resource = _image_resource(image_path)
+    ping = ToolDef(
+        name="ping",
+        summary="Ping once",
+        properties={},
+        required=[],
+        handler=lambda _args: ("pong", [], None),
+    )
+    tool_call = {
+        "id": "call-ping",
+        "type": "function",
+        "function": {"name": "ping", "arguments": "{}"},
+    }
+    session = AgentSession(
+        session_id="multimodal-tool-loop",
+        llm=_ScriptedLLM(
+            [
+                ChatResult(tool_calls=[tool_call], finish_reason="tool_calls"),
+                ChatResult(content="done", finish_reason="stop"),
+            ]
+        ),
+        executor=ToolExecutor(tools=[ping]),
+        tools_schema=[build_openai_schema(ping)],
+        system_baseline="system",
+        stream_first_turn=False,
+    )
+    events: list[object] = []
+
+    session.run_task(
+        AgentTask(text="inspect twice", resources=(resource,)),
+        on_event=events.append,
+    )
+
+    contexts = [
+        event for event in events if isinstance(event, ContextSnapshotPrepared)
+    ]
+    dispatches = [
+        event for event in events if isinstance(event, InputResourcesDispatched)
+    ]
+    assert len(contexts) == 2
+    assert len(dispatches) == 2
+    assert all(len(context.resources) == 1 for context in contexts)
+    assert all(context.coverage == "partial" for context in contexts)
 
 
 def test_codex_new_and_resume_commands_attach_images(tmp_path: Path) -> None:

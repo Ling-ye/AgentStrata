@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 import time
 import os
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -17,6 +16,7 @@ from chatcopilot.botspec import assemble_runtime_context, load_botspec, resolve_
 from chatcopilot.core.settings import load_local_env_values
 from chatcopilot.core.workspace import Workspace
 from chatcopilot.evals.env import normalize_eval_env_value
+from chatcopilot.evals.event_projection import project_evaluation_event
 from chatcopilot.evals.models import (
     EvalCase,
     EvalCaseResult,
@@ -724,9 +724,7 @@ def _case_appendix(case: EvalCase) -> str:
 
 
 def _event_to_dict(event: AgentEvent) -> dict[str, Any]:
-    data = asdict(event)
-    data["type"] = type(event).__name__
-    return data
+    return project_evaluation_event(event)
 
 
 def _usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:

@@ -69,6 +69,8 @@ from chatcopilot.core.config import load_config
 from chatcopilot.agent.protocol import (
     AgentEvent,
     AgentTask,
+    ContextSnapshotPrepared,
+    InputResourcesDispatched,
     LlmCallStarted,
     LlmCallFinished,
     SpanFinished,
@@ -1132,6 +1134,7 @@ class AcpChatAgent(Agent):
                     span_id=event.span_id,
                     parent_span_id=event.parent_span_id,
                     depth=event.depth,
+                    started_at=event.started_at,
                 )
             elif isinstance(event, ToolFinished):
                 recorder.tool_finished(
@@ -1142,6 +1145,7 @@ class AcpChatAgent(Agent):
                     span_id=event.span_id,
                     depth=event.depth,
                     data=dict(event.data) if event.data else None,
+                    finished_at=event.finished_at,
                 )
             elif isinstance(event, SpanStarted):
                 recorder.span_started(
@@ -1161,10 +1165,58 @@ class AcpChatAgent(Agent):
                     depth=event.depth,
                     data=dict(event.data) if event.data else None,
                 )
+            elif isinstance(event, ContextSnapshotPrepared):
+                recorder.context_snapshot(
+                    snapshot_id=event.snapshot_id,
+                    backend=event.backend,
+                    model=event.model,
+                    iteration=event.iteration,
+                    session_messages=[dict(item) for item in event.session_messages],
+                    effective_messages=[dict(item) for item in event.effective_messages],
+                    tool_schemas=[dict(item) for item in event.tool_schemas],
+                    resources=[
+                        {
+                            "sequence": item.sequence,
+                            "media_type": item.media_type,
+                            "size_bytes": item.size_bytes,
+                            "sha256": item.sha256,
+                        }
+                        for item in event.resources
+                    ],
+                    coverage=event.coverage,
+                    omitted=list(event.omitted),
+                    context_kind=event.context_kind,
+                    trace_id=event.trace_id,
+                    span_id=event.span_id,
+                    parent_span_id=event.parent_span_id,
+                    depth=event.depth,
+                    estimated_tokens=event.estimated_tokens,
+                    model_selection=dict(event.model_selection or {}),
+                    private_reasoning_omission_count=(
+                        event.private_reasoning_omission_count
+                    ),
+                    resource_path_omission_count=event.resource_path_omission_count,
+                )
+            elif isinstance(event, InputResourcesDispatched):
+                recorder.input_resources_dispatched(
+                    backend=event.backend,
+                    turn_index=event.turn_index,
+                    request_id=event.request_id,
+                    resources=[
+                        {
+                            "sequence": item.sequence,
+                            "media_type": item.media_type,
+                            "size_bytes": item.size_bytes,
+                            "sha256": item.sha256,
+                        }
+                        for item in event.resources
+                    ],
+                )
             elif isinstance(event, LlmCallStarted):
                 recorder.llm_call_started(
                     model=event.model,
                     iteration=event.iteration,
+                    backend=event.backend,
                     trace_id=event.trace_id,
                     span_id=event.span_id,
                     parent_span_id=event.parent_span_id,
@@ -1176,11 +1228,13 @@ class AcpChatAgent(Agent):
                     tool_schema_estimated_tokens=event.tool_schema_estimated_tokens,
                     estimator_version=event.estimator_version,
                     context_kind=event.context_kind,
+                    context_snapshot_id=event.context_snapshot_id,
                 )
             elif isinstance(event, LlmCallFinished):
                 recorder.llm_call_finished(
                     model=event.model,
                     iteration=event.iteration,
+                    backend=event.backend,
                     finish_reason=event.finish_reason,
                     usage=dict(event.usage) if event.usage else None,
                     trace_id=event.trace_id,
@@ -1194,6 +1248,8 @@ class AcpChatAgent(Agent):
                     tool_schema_estimated_tokens=event.tool_schema_estimated_tokens,
                     estimator_version=event.estimator_version,
                     context_kind=event.context_kind,
+                    context_snapshot_id=event.context_snapshot_id,
+                    ok=event.ok,
                 )
             elif isinstance(event, TopicDecisionMade):
                 recorder.topic_decision(

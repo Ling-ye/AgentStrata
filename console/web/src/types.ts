@@ -368,6 +368,7 @@ export interface Job {
   elapsed_s?: number | null;
   sort_time: number;
   progress_tail: string;
+  progress_tail_integrity_gap: boolean;
   stdout_age_s: number | null;
   path: string;
 }
@@ -377,6 +378,7 @@ export interface JobsResponse {
   workspace_root: string;
   workspace_exists: boolean;
   count: number;
+  integrity_gap: boolean;
   jobs: Job[];
 }
 
@@ -482,6 +484,43 @@ export interface BotTaskJobResult {
   finished_at?: number | null;
 }
 
+export interface ContextSnapshotSummary {
+  snapshot_id: string;
+  backend: string;
+  model: string;
+  iteration: number;
+  coverage: "exact_model_input" | "adapter_visible" | "provider_opaque" | string;
+  capture_status: string;
+  redacted: boolean;
+  truncated: boolean;
+  captured_at: number | null;
+  message_count: number;
+  effective_message_count: number;
+  tool_schema_count: number;
+  resource_count: number;
+  estimated_tokens: number;
+  reasoning_effort: string;
+  context_kind: string;
+  omitted: string[];
+  trace_id: string;
+  span_id: string;
+  parent_span_id: string;
+  depth: number;
+  role: "main" | "subagent";
+}
+
+export interface ContextSnapshot extends Partial<ContextSnapshotSummary> {
+  schema_version?: number;
+  snapshot_id: string;
+  task_id?: string;
+  session_messages?: Array<Record<string, unknown>>;
+  effective_messages?: Array<Record<string, unknown>>;
+  tool_schemas?: Array<Record<string, unknown>>;
+  resources?: unknown[];
+  model_selection?: Record<string, unknown>;
+  sanitization?: Record<string, unknown>;
+}
+
 export interface BotTask {
   schema_version?: 2;
   task_id: string;
@@ -502,6 +541,31 @@ export interface BotTask {
   forecast?: TaskForecastV2;
   primary_model?: string;
   context_kind?: string;
+  context_snapshots?: ContextSnapshotSummary[];
+  activity_summary?: {
+    provider_total: number;
+    provider_retained: number;
+    provider_dropped: number;
+    truncated: boolean;
+  };
+  summary_limits?: {
+    tools_total: number;
+    tools_retained: number;
+    steps_total: number;
+    steps_retained: number;
+    llm_calls_total: number;
+    llm_calls_retained: number;
+    llm_calls_truncated: boolean;
+    context_snapshots_total: number;
+    context_snapshots_retained: number;
+    context_snapshots_truncated: boolean;
+    context_snapshots_minimal: boolean;
+    input_resources_total: number;
+    input_resources_retained: number;
+    input_resources_truncated: boolean;
+    payload_truncated: boolean;
+    truncated: boolean;
+  };
   job_ids: string[];
   job_statuses?: BotTaskJobStatus[];
   job_results?: BotTaskJobResult[];
@@ -517,6 +581,7 @@ export interface BotTaskDetail extends BotTask {
   steps: TaskStepV2[];
   timing: {
     model_s: number;
+    activity_s: number;
     tool_s: number;
     background_s: number;
     routing_s: number;
@@ -542,6 +607,9 @@ export interface TaskRawEvent {
 export interface TaskEventsResponse {
   task_id: string;
   count: number;
+  limit: number;
+  truncated: boolean;
+  integrity_gap: boolean;
   events: TaskRawEvent[];
 }
 

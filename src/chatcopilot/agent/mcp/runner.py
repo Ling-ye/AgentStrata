@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 import re
@@ -62,7 +63,7 @@ class _McpServerRunner:
         self._tools: list[Any] = []
         self._error: str = ""
         self._thread: threading.Thread | None = None
-        self._inflight_future: asyncio.Future[Any] | None = None
+        self._inflight_future: concurrent.futures.Future[str] | None = None
 
     def start_and_list_tools(self) -> list[Any]:
         if self.config.stateless_http:

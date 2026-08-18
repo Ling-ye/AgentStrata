@@ -55,6 +55,8 @@ SystemPromptRenderer = Callable[[str], str]
 class AgentSession:
     """单次会话的状态容器与 chat loop 调度器。"""
 
+    backend_name = "native"
+
     session_id: str
     llm: LLMClient
     executor: ToolExecutor

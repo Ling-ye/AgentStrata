@@ -24,8 +24,9 @@ flowchart LR
     I["插件化能力评测<br/>trusted cases · supervised trials"]
     J["确认式开发请求<br/>plan first · explicit confirm · isolated evidence"]
     K["QQ 群级共享会话<br/>conversation scope · turn identity · actor-bound execution"]
+    L["统一上下文可观测性<br/>effective input · provider boundary · safe artifacts"]
 
-    A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K
+    A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L
 ```
 
 这些阶段按主要架构变化划分，实际开发时间存在重叠。
@@ -438,6 +439,52 @@ ingress 和隔离边界，真实两账号 QQ 群 ingress E2E 仍属于部署验�
 相关规格：
 [`qq-group-shared-conversation-context`](../specs/qq-group-shared-conversation-context/spec.md)。
 
+## 13. 上下文可观测性：从 Native 专属步骤到跨 backend 统一快照
+
+**暴露的问题**
+
+任务工作台已经能解释 Native/LangGraph 的模型、工具、Span 和 Token，但 Codex 主
+backend 绕过 `TurnOps`，并把 `codex exec --json` 全部缓冲到进程结束，只提取 thread ID
+和最终消息。线上 Codex 任务因此没有模型、步骤、usage 或上下文；即使 Native 有
+`context_kind` 和 token 粗估，也没有留下该次调用实际收到的消息与工具定义。
+
+**结构调整**
+
+- 共享 contracts 增加每次模型请求的 `ContextSnapshotPrepared`，统一关联 backend、
+  model、trace/span、完整 AgentStrata session ledger、effective messages、tool schemas、
+  path-free resources、token estimate 与 capture coverage。
+- Native/LangGraph 在最终 `LLMClient.chat` 边界记录纯文本 `exact_model_input`；含本地
+  二进制资源或受限字段时降为 `partial` 并只保留回执。Codex 记录实际 stdin prompt、
+  允许的 MCP 工具面与公开 JSONL activity/usage，并把 provider-native resume 历史和
+  内部 instructions 标为 `provider_opaque`。
+- 大块上下文不进入频繁轮询的 `task.json` 或 raw event。统一 recorder 在第一次落盘前
+  脱敏，将正文写到 private、bounded、lazy-loaded context artifact；事件获得 task-local
+  单调 sequence 与稳定 event ID，并通过已验证的 task-dir descriptor 安全追加；崩溃时
+  以最后一条完整 JSONL 记录校准 sequence sidecar。Codex 的权威 MCP relay receipt 在进程运行期间按真实
+  时间投影；relay 与并行搜索的 nested subagent 事件继承同一 trace、由主线程串行回放，
+  不让 worker 并发写 recorder。subprocess 输出、task/turn 总体、后台结果、单事件和
+  Console 读取尾部均有显式上限；JSON materialize 和脱敏遍历也有结构/字符串总预算。
+  task/job 及祖先 symlink 不能把 artifact 写出 workspace，Console 用同一 descriptor 链
+  读取 event/context，避免检查后的祖先替换竞态。
+- Console 使用同一摘要和 artifact API 渲染所有 backend，分别展示 AgentStrata 会话历史
+  和实际模型输入；不从 Codex 私有目录读取数据，也不保存隐藏 chain-of-thought。
+- Recorder 与后台完成 watcher 共享 completion lock 和主 turn 注册边界：快速 child 不能
+  提前结束仍可能继续注册 job 的任务，main failure 也不会被迟到的成功 child 覆盖；超大
+  result 降级后，worker status 与退出码以实际持久化 manifest 为准。
+
+**结果与边界**
+
+选择 Codex 不再让任务工作台退化为空时间线；后续 backend 只需适配共享事件契约。
+“完整”严格限定为 AgentStrata 可见且可证明的边界，provider 不公开的状态始终显式缺失。
+安装的 Console unit 改为只监听回环地址，并且只返回脱敏落盘内容；它仍没有独立 HTTP
+operator 认证，显式改成非回环地址前必须增加可信代理认证和网络边界。事件 cursor/SSE
+和外部 OTLP/Langfuse/Phoenix exporter 不在本次变化内。事件尾部存在权限异常、半写、
+损坏或 sequence 缺口时 Console 会显示 `integrity_gap`；Codex 超时后无法强制取消的在途
+工具以原 trace 的 unknown late-completion receipt 收口，不会污染下一轮。
+
+相关规格：
+[`unified-agent-context-observability`](../specs/unified-agent-context-observability/spec.md)。
+
 ## 当前架构的收敛结果
 
 | 关注点 | 当前做法 |
@@ -446,7 +493,7 @@ ingress 和隔离边界，真实两账号 QQ 群 ingress E2E 仍属于部署验�
 | 平台差异 | 由 adapter 实现，通过 registry 发现 |
 | 跨层类型 | 由 `chatcopilot.contracts` 统一拥有 |
 | 运行与控制面读取 | 通过 `core` 和 `component_catalog` 提供稳定入口 |
-| 主 Agent | Native、LangGraph、Codex 共享 task/event/result 与 turn lifecycle |
+| 主 Agent | Native、LangGraph、Codex 共享 task/event/result、模型上下文快照与 turn lifecycle |
 | 会话身份 | QQ 群共享 conversation/普通文件，journal 与 backend state 受保护，逐轮权限按 actor 绑定 |
 | 源码修改 | 主会话只读，异步 worker 隔离执行，验证后交付 Draft PR |
 | 搜索 | 统一入口、直接 provider、统一 deadline/circuit/result policy |

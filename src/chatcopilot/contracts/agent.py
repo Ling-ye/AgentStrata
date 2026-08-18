@@ -52,6 +52,7 @@ class ToolStarted:
     span_id: str | None = None
     parent_span_id: str | None = None
     depth: int = 0
+    started_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class ToolFinished:
     parent_span_id: str | None = None
     depth: int = 0
     data: Mapping[str, Any] | None = None
+    finished_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,8 @@ class LlmCallStarted:
     tool_schema_estimated_tokens: int = 0
     estimator_version: str = ""
     context_kind: str = ""
+    context_snapshot_id: str = ""
+    backend: str = ""
 
 
 @dataclass(frozen=True)
@@ -124,6 +128,9 @@ class LlmCallFinished:
     tool_schema_estimated_tokens: int = 0
     estimator_version: str = ""
     context_kind: str = ""
+    context_snapshot_id: str = ""
+    ok: bool = True
+    backend: str = ""
 
 
 @dataclass(frozen=True)
@@ -144,6 +151,38 @@ class InputResourcesDispatched:
     turn_index: int
     request_id: str
     resources: tuple[InputResourceReceipt, ...]
+
+
+@dataclass(frozen=True)
+class ContextSnapshotPrepared:
+    """AgentStrata-visible context captured at one model request boundary.
+
+    ``coverage`` describes what the backend can prove. Native and LangGraph
+    use ``exact_model_input`` for text-only calls and ``partial`` when private
+    reasoning or binary resource payloads are intentionally omitted. Adapters
+    around provider-managed sessions use ``adapter_visible`` and enumerate
+    opaque state in ``omitted``.
+    """
+
+    snapshot_id: str
+    backend: str
+    model: str
+    iteration: int
+    session_messages: tuple[Mapping[str, Any], ...]
+    effective_messages: tuple[Mapping[str, Any], ...]
+    tool_schemas: tuple[Mapping[str, Any], ...] = ()
+    resources: tuple[InputResourceReceipt, ...] = ()
+    coverage: str = "exact_model_input"
+    omitted: tuple[str, ...] = ()
+    context_kind: str = ""
+    trace_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
+    depth: int = 0
+    estimated_tokens: int = 0
+    model_selection: Mapping[str, Any] | None = None
+    private_reasoning_omission_count: int = 0
+    resource_path_omission_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -175,6 +214,7 @@ AgentEvent = Union[
     SpanFinished,
     LlmCallStarted,
     LlmCallFinished,
+    ContextSnapshotPrepared,
     InputResourcesDispatched,
     TopicDecisionMade,
     TurnError,
@@ -216,6 +256,7 @@ __all__ = [
     "SpanFinished",
     "LlmCallStarted",
     "LlmCallFinished",
+    "ContextSnapshotPrepared",
     "InputResourceReceipt",
     "InputResourcesDispatched",
     "TopicDecisionMade",

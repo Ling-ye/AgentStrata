@@ -785,6 +785,129 @@
   font-weight: 600;
 }
 
+.task-context-section {
+  margin-bottom: 24px;
+}
+
+.context-snapshot-list {
+  display: grid;
+  gap: 9px;
+}
+
+.context-snapshot {
+  border: 1px solid var(--color-border-2);
+  border-radius: 8px;
+  background: var(--color-bg-2);
+}
+
+.context-snapshot > summary {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.context-snapshot > summary::-webkit-details-marker {
+  display: none;
+}
+
+.context-snapshot > summary::before {
+  color: var(--color-text-3);
+  content: "\25B8";
+}
+
+.context-snapshot[open] > summary::before {
+  content: "\25BE";
+}
+
+.context-snapshot-main {
+  min-width: 0;
+}
+
+.context-snapshot-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.context-snapshot-subtitle {
+  display: block;
+  margin-top: 5px;
+  color: var(--color-text-3);
+  font-size: 12px;
+}
+
+.context-snapshot-facts {
+  display: grid;
+  grid-template-columns: 145px 145px minmax(180px, auto);
+  gap: 10px;
+  color: var(--color-text-3);
+  font-size: 12px;
+  text-align: right;
+}
+
+.context-snapshot-facts strong {
+  color: var(--color-text-1);
+}
+
+.context-snapshot-body {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-top: 1px solid var(--color-border-2);
+}
+
+.context-omitted {
+  padding: 9px 11px;
+  border-radius: 6px;
+  color: var(--color-text-2);
+  background: var(--color-fill-1);
+  font-size: 12px;
+}
+
+.context-payload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.context-payload-grid-secondary {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+}
+
+.context-payload {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border-2);
+  border-radius: 7px;
+  background: var(--color-fill-1);
+}
+
+.context-payload-title {
+  margin-bottom: 9px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-payload pre {
+  max-height: 360px;
+  margin: 0;
+  padding: 11px;
+  overflow: auto;
+  border-radius: 5px;
+  color: #d7dae0;
+  background: #17191d;
+  font-family: "Cascadia Code", "Consolas", "Menlo", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .task-step {
   position: relative;
   max-width: calc(100% - 8px);
@@ -940,6 +1063,25 @@
 
   .task-step {
     margin-left: 0 !important;
+  }
+
+  .context-snapshot > summary {
+    grid-template-columns: 14px minmax(0, 1fr);
+  }
+
+  .context-snapshot-facts {
+    grid-column: 2;
+    grid-template-columns: 1fr 1fr;
+    text-align: left;
+  }
+
+  .context-snapshot-facts span:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .context-payload-grid,
+  .context-payload-grid-secondary {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .task-step summary {
