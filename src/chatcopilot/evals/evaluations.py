@@ -1420,7 +1420,11 @@ def _current_suite_target(request: TrialExecutionRequest) -> EvaluationTarget:
                 backend=request.target.backend,
             )
     if current_config_fingerprint != request.target.config_fingerprint:
-        raise _EvaluationDefinitionDrift("Target runtime/config implementation changed")
+        raise _EvaluationDefinitionDrift(
+            "Target runtime/config implementation changed "
+            f"(expected={request.target.config_fingerprint[:12]}, "
+            f"actual={current_config_fingerprint[:12]})"
+        )
     current = _make_target(
         target_id=request.target.target_id,
         label=request.target.label,

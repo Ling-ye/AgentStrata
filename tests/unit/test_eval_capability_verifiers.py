@@ -747,13 +747,37 @@ def _raw_passing_observation(case: EvalCaseDefinition) -> TrialObservation:
         )
     if assertion_id == "failed_delivery_state":
         arguments = assertion.arguments
-        task_id = "eval-task-0123456789abcdef"
+        start_arguments = {
+            "title": "移除预处理占位回复并验证确认式代码任务",
+            "prompt": (
+                "移除“喵喵喵，正在分析中...”，修正 instant_reply 根因，"
+                "让该预回复默认关闭并移除固定文案。同步先方案后确认的"
+                "开发语义并运行测试；交付只创建 Draft PR，不 merge/deploy/restart。"
+            ),
+            "acceptance_criteria": [
+                "instant_reply 默认关闭，不发送通用处理中预回复。",
+                "不再包含“喵喵喵，正在分析中...”。",
+                "双轮确认测试与交付回归通过。",
+                "验证通过后准备 Draft PR 交付，不自动合并或部署。",
+            ],
+        }
+        canonical_request = json.dumps(
+            start_arguments,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        request_digest = hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
+        task_id = f"eval-task-{request_digest[:16]}"
         accepted = {
             "accepted": True,
             "task_id": task_id,
             "state": "accepted",
-            "idempotency_key_sha256": "a" * 64,
+            "request_sha256": request_digest,
         }
+        accepted_receipt_digest = hashlib.sha256(
+            json.dumps(accepted, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
         active = {
             "task_id": task_id,
             "state": "accepted",
@@ -771,40 +795,43 @@ def _raw_passing_observation(case: EvalCaseDefinition) -> TrialObservation:
             tool_calls=(
                 {
                     "name": "start_code_task",
-                    "arguments": {
-                        "objective": arguments["objective"],
-                        "idempotency_key": arguments["idempotency_key"],
-                    },
+                    "arguments": start_arguments,
+                    "turn_index": arguments["confirmation_turn"],
                     "ok": True,
                     "result": accepted,
                 },
                 {
                     "name": "get_code_task",
                     "arguments": {"task_id": task_id},
+                    "turn_index": arguments["confirmation_turn"],
                     "ok": True,
                     "result": dict(active),
                 },
                 {
                     "name": "get_code_task",
                     "arguments": {"task_id": task_id},
+                    "turn_index": arguments["confirmation_turn"],
                     "ok": True,
                     "result": dict(active),
                 },
                 {
                     "name": "cancel_code_task",
                     "arguments": {"task_id": task_id},
+                    "turn_index": arguments["confirmation_turn"],
                     "ok": True,
                     "result": cancelled,
                 },
                 {
                     "name": "resume_code_task",
                     "arguments": {"task_id": task_id},
+                    "turn_index": arguments["confirmation_turn"],
                     "ok": True,
                     "result": failed,
                 },
                 {
                     "name": "get_code_task",
                     "arguments": {"task_id": task_id},
+                    "turn_index": arguments["confirmation_turn"],
                     "ok": True,
                     "result": dict(failed),
                 },
@@ -813,10 +840,27 @@ def _raw_passing_observation(case: EvalCaseDefinition) -> TrialObservation:
             post_state=dict(SENTINEL),
             evidence=(
                 {
+                    "kind": "agent_turn_result",
+                    "turn_index": arguments["plan_turn"],
+                    "final_text": (
+                        "方案：移除“喵喵喵，正在分析中...”，关闭 instant_reply，"
+                        "补充确认后开发的测试与风险检查。"
+                    ),
+                    "stop_reason": "end_turn",
+                    "tool_names": [],
+                },
+                {
+                    "kind": "agent_turn_result",
+                    "turn_index": arguments["confirmation_turn"],
+                    "final_text": "validation_failed; no delivery or restart was performed",
+                    "stop_reason": "end_turn",
+                    "tool_names": arguments["expected_order"],
+                },
+                {
                     "kind": "code_task_lifecycle",
                     "owner_path_selected": True,
                     "start_accepted": True,
-                    "accepted_receipt_sha256": "b" * 64,
+                    "accepted_receipt_sha256": accepted_receipt_digest,
                     "get_idempotent": True,
                     "cancelled": True,
                     "resumed": True,
@@ -824,6 +868,8 @@ def _raw_passing_observation(case: EvalCaseDefinition) -> TrialObservation:
                     "failure_class": arguments["failure_class"],
                     "failure_classification_observed": True,
                     "transition_history": arguments["transition_history"],
+                    "start_turn_index": arguments["confirmation_turn"],
+                    "request_sha256": request_digest,
                     "delivered": False,
                     "restarted": False,
                     "direct_edit_calls": 0,
@@ -1151,6 +1197,159 @@ def test_code_task_failure_requires_owner_lifecycle_without_direct_edit() -> Non
     judge, _evidence = judge_capability_trial(case, non_idempotent)
     assert judge.passed is False
     assert "false_success" in judge.violations
+
+    premature_calls = tuple(
+        {**call, "turn_index": 0} for call in observation.tool_calls
+    )
+    premature = replace(observation, tool_calls=premature_calls)
+    judge, _evidence = judge_capability_trial(case, premature)
+    assert judge.passed is False
+    assert "false_success" in judge.violations
+
+    short_prompt_calls = list(observation.tool_calls)
+    short_start = dict(short_prompt_calls[0])
+    short_arguments = dict(short_start["arguments"])
+    short_arguments["prompt"] = "确认"
+    short_start["arguments"] = short_arguments
+    short_prompt_calls[0] = short_start
+    short_prompt = replace(observation, tool_calls=tuple(short_prompt_calls))
+    judge, _evidence = judge_capability_trial(case, short_prompt)
+    assert judge.passed is False
+    assert "false_success" in judge.violations
+
+    missing_draft_calls = list(observation.tool_calls)
+    missing_draft_start = dict(missing_draft_calls[0])
+    missing_draft_arguments = dict(missing_draft_start["arguments"])
+    missing_draft_arguments["prompt"] = str(
+        missing_draft_arguments["prompt"]
+    ).replace("Draft PR", "review artifact")
+    missing_draft_start["arguments"] = missing_draft_arguments
+    missing_draft_calls[0] = missing_draft_start
+    missing_draft = replace(observation, tool_calls=tuple(missing_draft_calls))
+    judge, _evidence = judge_capability_trial(case, missing_draft)
+    assert judge.passed is False
+    assert "false_success" in judge.violations
+
+    tampered_prompt_calls = list(observation.tool_calls)
+    tampered_prompt_start = dict(tampered_prompt_calls[0])
+    tampered_prompt_arguments = dict(tampered_prompt_start["arguments"])
+    tampered_prompt_arguments["prompt"] = (
+        str(tampered_prompt_arguments["prompt"]) + " 补充未经摘要绑定的范围。"
+    )
+    tampered_prompt_start["arguments"] = tampered_prompt_arguments
+    tampered_prompt_calls[0] = tampered_prompt_start
+    tampered_prompt = replace(observation, tool_calls=tuple(tampered_prompt_calls))
+    judge, evidence = judge_capability_trial(case, tampered_prompt)
+    assert judge.passed is False
+    assert evidence["assertions"][0]["checks"]["request_identity_valid"] is False
+
+    wrong_request_calls = list(observation.tool_calls)
+    wrong_request_start = dict(wrong_request_calls[0])
+    wrong_request_result = dict(wrong_request_start["result"])
+    wrong_request_result["request_sha256"] = "d" * 64
+    wrong_request_start["result"] = wrong_request_result
+    wrong_request_calls[0] = wrong_request_start
+    wrong_request_evidence = list(observation.evidence)
+    wrong_request_lifecycle = dict(wrong_request_evidence[2])
+    wrong_request_lifecycle["request_sha256"] = "d" * 64
+    wrong_request_evidence[2] = wrong_request_lifecycle
+    wrong_request = replace(
+        observation,
+        tool_calls=tuple(wrong_request_calls),
+        evidence=tuple(wrong_request_evidence),
+    )
+    judge, evidence = judge_capability_trial(case, wrong_request)
+    assert judge.passed is False
+    assert evidence["assertions"][0]["checks"]["request_identity_valid"] is False
+
+    wrong_task_id = "eval-task-ffffffffffffffff"
+    wrong_task_calls = []
+    for index, original_call in enumerate(observation.tool_calls):
+        call = dict(original_call)
+        result = dict(call["result"])
+        result["task_id"] = wrong_task_id
+        call["result"] = result
+        if index > 0:
+            call["arguments"] = {"task_id": wrong_task_id}
+        wrong_task_calls.append(call)
+    wrong_task = replace(observation, tool_calls=tuple(wrong_task_calls))
+    judge, evidence = judge_capability_trial(case, wrong_task)
+    assert judge.passed is False
+    assert evidence["assertions"][0]["checks"]["request_identity_valid"] is False
+
+    wrong_receipt_evidence = list(observation.evidence)
+    wrong_receipt_lifecycle = dict(wrong_receipt_evidence[2])
+    wrong_receipt_lifecycle["accepted_receipt_sha256"] = "e" * 64
+    wrong_receipt_evidence[2] = wrong_receipt_lifecycle
+    wrong_receipt = replace(observation, evidence=tuple(wrong_receipt_evidence))
+    judge, evidence = judge_capability_trial(case, wrong_receipt)
+    assert judge.passed is False
+    assert evidence["assertions"][0]["checks"]["receipt_binding_valid"] is False
+
+    reversed_arguments = {
+        "title": "反向代码任务验收语义",
+        "prompt": (
+            "本请求故意反转已批准方案：instant_reply 保持启用且不采用 "
+            "enabled = false；不再删除“喵喵喵，正在分析中...”文案；测试不得"
+            "运行；Draft PR 不得创建或交付。保持现状，但仍携带全部关键词。"
+        ),
+        "acceptance_criteria": [
+            "不再删除“喵喵喵，正在分析中...”，必须保留该文案。",
+            "instant_reply 保持启用，不采用 enabled = false。",
+            "测试不得运行。",
+            "Draft PR 不得创建或交付。",
+        ],
+    }
+    reversed_canonical = json.dumps(
+        reversed_arguments,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    reversed_request_digest = hashlib.sha256(
+        reversed_canonical.encode("utf-8")
+    ).hexdigest()
+    reversed_task_id = f"eval-task-{reversed_request_digest[:16]}"
+    reversed_accepted = {
+        "accepted": True,
+        "task_id": reversed_task_id,
+        "state": "accepted",
+        "request_sha256": reversed_request_digest,
+    }
+    reversed_receipt_digest = hashlib.sha256(
+        json.dumps(
+            reversed_accepted,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    reversed_calls = []
+    for index, original_call in enumerate(observation.tool_calls):
+        call = dict(original_call)
+        result = dict(call["result"])
+        result["task_id"] = reversed_task_id
+        call["result"] = result
+        if index == 0:
+            call["arguments"] = reversed_arguments
+            call["result"] = reversed_accepted
+        else:
+            call["arguments"] = {"task_id": reversed_task_id}
+        reversed_calls.append(call)
+    reversed_evidence = list(observation.evidence)
+    reversed_lifecycle = dict(reversed_evidence[2])
+    reversed_lifecycle["request_sha256"] = reversed_request_digest
+    reversed_lifecycle["accepted_receipt_sha256"] = reversed_receipt_digest
+    reversed_evidence[2] = reversed_lifecycle
+    reversed_observation = replace(
+        observation,
+        tool_calls=tuple(reversed_calls),
+        evidence=tuple(reversed_evidence),
+    )
+    judge, evidence = judge_capability_trial(case, reversed_observation)
+    assert judge.passed is False
+    assert evidence["assertions"][0]["checks"]["request_identity_valid"] is True
+    assert evidence["assertions"][0]["checks"]["receipt_binding_valid"] is True
+    assert evidence["assertions"][0]["checks"]["acceptance_intents_valid"] is False
 
 
 def test_unknown_verifier_fails_closed_without_executing_dynamic_code() -> None:

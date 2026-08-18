@@ -140,6 +140,10 @@ class PlatformSessionIdentityTests(unittest.TestCase):
         self.assertIn('command = "/opt/chatcopilot/deploy/wsl/_session_env.sh"', config)
         self.assertIn("async = false", config)
         self.assertIn('event = "session.started"', config)
+        instant_reply = config.split("[instant_reply]", 1)[1].split("\n[", 1)[0]
+        self.assertIn("enabled = false", instant_reply)
+        self.assertNotIn("content =", instant_reply)
+        self.assertNotIn("喵喵喵，正在分析中...", config)
 
     @unittest.skipUnless(shutil.which("bash"), "requires bash")
     def test_session_hook_uses_deploy_python_when_home_is_isolated(self) -> None:

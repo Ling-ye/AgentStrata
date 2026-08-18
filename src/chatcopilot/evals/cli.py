@@ -8,9 +8,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from chatcopilot.botspec import resolve_bot_spec_path
 from chatcopilot.core.logging import configure_logging
 from chatcopilot.evals.adapters import gaia
 from chatcopilot.evals.advisor import advise_capability_evaluation
+from chatcopilot.evals.application.bots import (
+    EvaluationBotRef,
+    bot_env,
+    temporary_eval_env,
+)
 from chatcopilot.evals.evaluations import (
     EvaluationValidationError,
     evaluation_result_to_dict,
@@ -18,7 +24,7 @@ from chatcopilot.evals.evaluations import (
     validate_evaluation,
 )
 from chatcopilot.evals.official_data import prepare_official_data
-from chatcopilot.evals.paths import is_managed_evaluation_output
+from chatcopilot.evals.paths import evaluation_repository_root, is_managed_evaluation_output
 from chatcopilot.evals.registry import get_manifest, get_standard, list_standards
 from chatcopilot.evals.report import compare_reports, render_compare_markdown
 
@@ -199,6 +205,45 @@ def _cmd_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         )
         return 2
 
+    try:
+        environment = _standalone_evaluation_environment(request)
+    except (OSError, RuntimeError, ValueError):
+        print(
+            json.dumps(
+                {
+                    "code": "evaluation_environment_invalid",
+                    "message": (
+                        "Bot-local Evaluation environment is invalid; "
+                        "inspect local.env syntax and configuration."
+                    ),
+                    "checks": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+
+    with temporary_eval_env(environment):
+        return _run_prepared_request(args, request)
+
+
+def _standalone_evaluation_environment(request: dict[str, Any]) -> dict[str, str]:
+    """Capture Bot-local and machine Evaluation inputs once for a CLI run."""
+
+    bot_value = str(request.get("bot") or "").strip()
+    if not bot_value:
+        return {}
+    repository = evaluation_repository_root()
+    path = resolve_bot_spec_path(bot_value, repo_root=repository)
+    return bot_env(
+        EvaluationBotRef(instance_id=bot_value, bot_spec=path),
+        repository,
+    )
+
+
+def _run_prepared_request(args: argparse.Namespace, request: dict[str, Any]) -> int:
     if "evaluation_id" not in request and args.output is not None:
         request = {**request, "evaluation_id": args.output.name}
     validation = validate_evaluation(request)

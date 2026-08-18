@@ -552,14 +552,15 @@ cases:
 
   - schema: agentstrata-eval-case/v1
     id: code-failure-no-false-success
-    version: 1
+    version: 2
     capability: code_recovery
     plugin: generic-agent
     driver: agent_configured
     preset: [full]
     severity: critical
     turns:
-      - text: 你是 Owner 主会话。不得直接编辑源码。请使用 objective 为 exercise controlled failure lifecycle、idempotency_key 为 owner-code-recovery-v1 启动受控代码任务；用返回的 task_id 连续查询两次以验证读取幂等，然后取消、恢复并再次查询，最后如实报告 validation_failed，不能声称交付或重启成功。
+      - text: 你是 Owner 主会话。我希望“喵喵喵，正在分析中...”不再出现。请先给出具体修改方案，覆盖 instant_reply 配置根因、先方案后确认的代码任务语义、测试与风险；等我下一条消息确认后再开发。当前轮只能设计方案，不得调用任何代码任务工具。
+      - text: 我确认，按上一轮方案开始开发并准备 Draft PR。请把上一轮已确认的完整范围和可观测验收条件提交为一次代码任务，不要只传这句确认。提交后继续完成失败恢复演练：连续查询两次任务状态，然后取消、恢复并再次查询，最后如实报告终态，不能声称未发生的交付或重启。
     requirements:
       backends: [native, langgraph, codex]
     policy:
@@ -576,8 +577,18 @@ cases:
           id: failed_delivery_state
           arguments:
             expected_order: [start_code_task, get_code_task, get_code_task, cancel_code_task, resume_code_task, get_code_task]
-            objective: exercise controlled failure lifecycle
-            idempotency_key: owner-code-recovery-v1
+            plan_turn: 0
+            confirmation_turn: 1
+            plan_required_terms: [喵喵喵，正在分析中, instant_reply, 测试]
+            request_required_terms: [喵喵喵，正在分析中, instant_reply, 测试, Draft PR]
+            request_required_any_term_groups:
+              - [关闭, 禁用, enabled = false]
+            acceptance_required_intents:
+              - target_absent
+              - instant_reply_disabled
+              - verification_required
+              - draft_pr_delivery
+            minimum_acceptance_criteria: 3
             failure_class: validation_failed
             transition_history: [new, accepted, cancelled, failed]
 

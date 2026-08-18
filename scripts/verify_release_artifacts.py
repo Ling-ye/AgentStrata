@@ -7,6 +7,7 @@ import base64
 import csv
 import hashlib
 import io
+import json
 import os
 import re
 import stat
@@ -52,8 +53,23 @@ REQUIRED_PACKAGE_RESOURCES = frozenset(
         "agent/context/builtin_prompts/search_first.md",
         "botspec/mcp_catalog.yaml",
         "evals/suites/agent-comparison/cases.yaml",
+        "evals/suites/agentstrata-canary-self-update-v1/manifest.yaml",
+        "evals/suites/agentstrata-capabilities-v1/README.md",
+        "evals/suites/agentstrata-capabilities-v1/cases.yaml",
+        "evals/suites/agentstrata-capabilities-v1/fixtures/order-card.png",
+        "evals/suites/agentstrata-capabilities-v1/fixtures/sequence-first.png",
+        "evals/suites/agentstrata-capabilities-v1/fixtures/sequence-second.png",
+        "evals/suites/agentstrata-capabilities-v1/fixtures/shape-layout.png",
+        "evals/suites/agentstrata-capabilities-v1/fixtures/untrusted-instructions.txt",
+        "evals/suites/agentstrata-capabilities-v1/fixtures/workspace-note.txt",
+        "evals/suites/agentstrata-capabilities-v1/manifest.yaml",
+        "evals/suites/bfcl/manifest.yaml",
+        "evals/suites/gaia/manifest.yaml",
+        "evals/suites/ifeval/manifest.yaml",
         "evals/suites/profiles.yaml",
         "evals/suites/profiles/agent-comparison-mvp/cases.yaml",
+        "evals/suites/swe-bench-verified/manifest.yaml",
+        "evals/suites/webarena/manifest.yaml",
         "external_tools/unity_codebase/projects.yaml",
         "external_tools/windows_fs/allowlist.yaml",
     }
@@ -103,30 +119,19 @@ from chatcopilot.__main__ import main
 assert main(["--help"]) == 0
 
 package_root = package_init.parent
-resource_paths = (
-    "agent/context/builtin_prompts/accuracy.md",
-    "agent/context/builtin_prompts/memory.md",
-    "agent/context/builtin_prompts/role_admin.md",
-    "agent/context/builtin_prompts/role_owner.md",
-    "agent/context/builtin_prompts/role_user.md",
-    "agent/context/builtin_prompts/safety.md",
-    "agent/context/builtin_prompts/search_first.md",
-    "botspec/mcp_catalog.yaml",
-    "evals/suites/agent-comparison/cases.yaml",
-    "evals/suites/profiles.yaml",
-    "evals/suites/profiles/agent-comparison-mvp/cases.yaml",
-    "external_tools/unity_codebase/projects.yaml",
-    "external_tools/windows_fs/allowlist.yaml",
-)
+resource_paths = json.loads(sys.argv[2])
+assert isinstance(resource_paths, list)
 for relative in resource_paths:
+    assert isinstance(relative, str) and relative
     resource = package_root / relative
     assert resource.is_file() and resource.stat().st_size > 0, relative
+    payload = resource.read_bytes()
     if resource.suffix == ".json":
-        json.loads(resource.read_text(encoding="utf-8"))
+        json.loads(payload.decode("utf-8"))
     elif resource.suffix == ".xml":
         ElementTree.parse(resource)
-    else:
-        assert resource.read_text(encoding="utf-8").strip()
+    elif resource.suffix in {".md", ".txt", ".yaml", ".yml"}:
+        assert payload.decode("utf-8").strip()
 
 print(f"self-contained wheel import verified: {package_init}")
 """
@@ -991,6 +996,7 @@ def install_and_probe_wheel(
                 "-c",
                 probe,
                 str(venv_root),
+                json.dumps(sorted(REQUIRED_PACKAGE_RESOURCES), separators=(",", ":")),
             ),
             cwd=outside_cwd,
             env=env,

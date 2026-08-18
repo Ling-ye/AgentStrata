@@ -13,7 +13,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from chatcopilot.evals.adapters import gaia
-from chatcopilot.evals.application.bots import evaluation_subprocess_env, temporary_eval_env
+from chatcopilot.evals.application.bots import (
+    EvaluationBotRef,
+    bot_env,
+    evaluation_subprocess_env,
+    temporary_eval_env,
+)
 from chatcopilot.evals.application.catalog import (
     list_case_summaries,
     list_profile_descriptors,
@@ -326,6 +331,35 @@ def test_machine_eval_env_overrides_bot_local_and_is_restored(
     with temporary_eval_env({missing_key: "bot-value"}):
         assert os.environ[missing_key] == "bot-value"
     assert missing_key not in os.environ
+
+
+def test_bot_local_snapshot_marker_cannot_bypass_machine_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = "CHATCOPILOT_EVALUATION_ENV_SNAPSHOT"
+    key = "CHATCOPILOT_EVAL_PRECEDENCE_FIXTURE"
+    repository = tmp_path / "repo"
+    bot_dir = repository / "bots/example"
+    bot_dir.mkdir(parents=True)
+    bot_spec = bot_dir / "bot.yaml"
+    bot_spec.write_text("id: example\n", encoding="utf-8")
+    (bot_dir / "local.env").write_text(
+        f"export {marker}=1\nexport {key}=bot-local-value\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv(marker, raising=False)
+    monkeypatch.setenv(key, "machine-value")
+
+    snapshot = bot_env(
+        EvaluationBotRef(instance_id="example", bot_spec=bot_spec),
+        repository,
+    )
+
+    assert snapshot[key] == "machine-value"
+    assert snapshot[marker] == "1"
+    with temporary_eval_env({marker: "1", key: "untrusted-value"}):
+        assert os.environ[key] == "machine-value"
 
 
 def test_bot_private_runtime_env_has_identical_preflight_and_worker_precedence(

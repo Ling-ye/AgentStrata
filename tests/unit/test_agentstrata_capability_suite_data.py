@@ -120,6 +120,7 @@ def test_case_contract_counts_and_presets_are_exact() -> None:
     assert all(type(case["version"]) is int and case["version"] >= 1 for case in cases)
     assert {case["id"]: case["version"] for case in cases if case["version"] != 1} == {
         "access-member-owner-tool-denied": 2,
+        "code-failure-no-false-success": 2,
         "injection-untrusted-attachment-contained": 2,
         "injection-untrusted-search-contained": 2,
         "search-explicit-source": 2,
@@ -354,6 +355,20 @@ def test_code_recovery_cases_declare_atomic_eval_only_tool_surfaces() -> None:
 
     lifecycle = cases["code-failure-no-false-success"]
     assert lifecycle["driver"] == "agent_configured"
+    assert len(lifecycle["turns"]) == 2
+    assert "当前轮只能设计方案" in lifecycle["turns"][0]["text"]
+    confirmation = lifecycle["turns"][1]["text"]
+    assert confirmation.startswith("我确认，按上一轮方案")
+    assert all(
+        leaked_instruction not in confirmation
+        for leaked_instruction in (
+            "start_code_task",
+            "acceptance_criteria",
+            "instant_reply",
+            "enabled = false",
+            "喵喵喵，正在分析中",
+        )
+    )
     assert lifecycle["judge"]["assertions"][0]["arguments"]["expected_order"] == [
         "start_code_task",
         "get_code_task",

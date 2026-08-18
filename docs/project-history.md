@@ -22,8 +22,9 @@ flowchart LR
     G["统一 Evaluation<br/>lifecycle · claims · artifacts"]
     H["公开基线<br/>public boundary · capability parity"]
     I["插件化能力评测<br/>trusted cases · supervised trials"]
+    J["确认式开发请求<br/>plan first · explicit confirm · isolated evidence"]
 
-    A --> B --> C --> D --> E --> F --> G --> H --> I
+    A --> B --> C --> D --> E --> F --> G --> H --> I --> J
 ```
 
 这些阶段按主要架构变化划分，实际开发时间存在重叠。
@@ -361,6 +362,38 @@ Console 无法展示其工具，静态 catalog 与运行时装配可能漂移。
 
 相关规格：
 [`evaluation-plugin-capabilities`](../specs/evaluation-plugin-capabilities/spec.md)。
+
+## 11. 确认式开发请求：区分传输回执、方案与真实任务
+
+**暴露的问题**
+
+cc-connect 在 Agent 处理消息前发送固定即时回复，容易被理解成模型已经开始分析；同时
+Owner 开发提示原先强调立即调用 `start_code_task`，与“先给方案、确认后开发”的请求
+存在竞争。既有产品能力 Case 只覆盖单轮代码任务生命周期，不能区分两轮工具时序。
+
+**结构调整**
+
+- 生成配置显式关闭 `instant_reply` 并删除固定内容，最终回复和真实工具进度仍由 ACP
+  事件链交付。
+- Owner、tool pack、工具说明与 Codex policy 统一 plan-first 契约：首轮只给方案，后续
+  明确确认后提交一次完整任务；提示投影同时保留直接实现请求不增加确认轮、孤立确认先
+  澄清的规则。本次配置模型运行只实测前述双轮主路径。
+- 现有代码恢复 Case 升级为同 session 双轮 Case，逐轮保存工具证据，并使用生产形状的
+  `title/prompt/acceptance_criteria` 假工具；该工具不创建真实 job 或 PR。
+- Codex 的 session MCP 只批准 AgentStrata 已筛选的精确工具白名单，不关闭全局沙箱；
+  standalone Evaluation 在预检前冻结 BotSpec、bot-local 与机器环境，并复用部署侧的
+  非执行式 `local.env` 和 home 路径语义。
+
+**结果与边界**
+
+配置模型的单次隔离两轮运行观察到它能够先给方案、等待明确确认，再提交完整代码任务；
+该证据不等于重复可靠性、线上 QQ、真实 code-worker 或 GitHub Draft PR 通过。当前方案
+仍是可评测的模型行为契约；若需要宿主层形式保证，应另行引入绑定 Owner/session/可信
+turn、内容 digest、过期时间和一次性消费的 proposal envelope，不能让模型自行声明
+`confirmed=true`。
+
+相关规格：
+[`code-plan-confirmation-flow`](../specs/code-plan-confirmation-flow/spec.md)。
 
 ## 当前架构的收敛结果
 

@@ -484,6 +484,12 @@ class CodexAgentBackend:
             "mcp_servers={}",
             f"mcp_servers.chatcopilot.command={json.dumps(sys.executable)}",
             f"mcp_servers.chatcopilot.args={gateway_args}",
+            "mcp_servers.chatcopilot.required=true",
+            (
+                "mcp_servers.chatcopilot.enabled_tools="
+                + json.dumps(sorted(state.allowed_tool_names), ensure_ascii=False)
+            ),
+            'mcp_servers.chatcopilot.default_tools_approval_mode="approve"',
         ]
         if self._policy.network_access:
             extra_config.extend(self._workspace_network_proxy_config())
@@ -562,7 +568,10 @@ class CodexAgentBackend:
                 "This Owner main session may inspect the source repository but is read-only. "
                 "For every repository mutation, call start_code_task and manage it with the "
                 "code-task lifecycle tools. Do not attempt direct source writes or shell "
-                "mutation. Do not run git commit or git push in this main session. "
+                "mutation. When the user explicitly requests a plan before later "
+                "confirmation, plan without calling start_code_task in that turn; after the "
+                "user confirms, submit the complete approved plan exactly once. Do not run "
+                "git commit or git push in this main session. "
             )
         else:
             boundary = (

@@ -419,6 +419,8 @@ def _prompt_projection(
     role: Any,
     ws: Workspace,
 ) -> tuple[tuple, tuple]:
+    if runtime is None:
+        return (), ()
     if _owner_only_project_access(runtime) and not _owner_private_project_access(
         role, ws
     ):

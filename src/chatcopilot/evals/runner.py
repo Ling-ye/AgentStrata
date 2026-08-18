@@ -14,6 +14,7 @@ from chatcopilot.core.config import ChatConfig, load_config
 from chatcopilot.agent.protocol import AgentEvent, AgentTask, LlmCallFinished
 from chatcopilot.agent.runtime import build_agent_runtime
 from chatcopilot.botspec import assemble_runtime_context, load_botspec, resolve_bot_spec_path
+from chatcopilot.core.settings import load_local_env_values
 from chatcopilot.core.workspace import Workspace
 from chatcopilot.evals.env import normalize_eval_env_value
 from chatcopilot.evals.models import (
@@ -929,26 +930,10 @@ def _load_local_env(path: Path) -> None:
 
     if os.environ.get("CHATCOPILOT_EVALUATION_ENV_SNAPSHOT") == "1":
         return
-    if not path.is_file():
-        return
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].strip()
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if not key or key in os.environ:
-            continue
-        parsed_value = _strip_env_quotes(value.strip())
-        os.environ[key] = normalize_eval_env_value(key, parsed_value)
-
-
-def _strip_env_quotes(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    return value
+    values = load_local_env_values(path, missing_ok=True, expand_home=True)
+    for key, value in values.items():
+        if key not in os.environ:
+            os.environ[key] = normalize_eval_env_value(key, value)
 
 
 class _EvalWorkspaceEnv:

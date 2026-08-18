@@ -882,9 +882,22 @@ class CodexBackendPolicyTests(TestCase):
         self.assertIn("--ignore-user-config", command)
         self.assertIn("mcp_servers={}", command)
         self.assertTrue(any("mcp_servers.chatcopilot.command" in item for item in command))
+        self.assertIn("mcp_servers.chatcopilot.required=true", command)
+        self.assertIn(
+            'mcp_servers.chatcopilot.default_tools_approval_mode="approve"',
+            command,
+        )
+        enabled_tools = next(
+            item
+            for item in command
+            if item.startswith("mcp_servers.chatcopilot.enabled_tools=")
+        )
+        self.assertIn('"dynamic_echo"', enabled_tools)
         self.assertIn('shell_environment_policy.inherit="none"', command)
         self.assertIn("read-only", prompt)
         self.assertIn("start_code_task", prompt)
+        self.assertIn("plan without calling start_code_task", prompt)
+        self.assertIn("submit the complete approved plan exactly once", prompt)
 
     def test_eval_confinement_disables_command_network_and_web_search(self) -> None:
         policy = CodexMainSessionPolicy(

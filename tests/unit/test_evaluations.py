@@ -13,9 +13,11 @@ from types import SimpleNamespace
 
 import pytest
 
+import chatcopilot.evals.cli as eval_cli_module
 import chatcopilot.evals.evaluations as evaluation_module
 import chatcopilot.evals.implementation_catalog as implementation_catalog
 import chatcopilot.evals.paths as evaluation_paths
+import chatcopilot.evals.runner as evaluation_runner
 from chatcopilot.core.config import ChatConfig, LLMConfig, RoutingConfig, RuntimeConfig
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.subagents import SearchProviderSpec
@@ -3113,6 +3115,114 @@ def test_cli_json_stdout_remains_one_parseable_document(
     assert rerun_code == 2
     assert json.loads(rerun.err)["code"] == "evaluation_resume_rejected"
     assert "completed Evaluation cannot be resumed" in rerun.err
+
+
+def test_cli_freezes_bot_environment_before_validation_and_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _write_repository_markers(tmp_path / "repo")
+    bot_dir = repository / "bots/example"
+    bot_dir.mkdir(parents=True)
+    (bot_dir / "bot.yaml").write_text(
+        "id: example\n"
+        "llm:\n"
+        "  chat:\n"
+        "    env_prefix: CHATCOPILOT_TESTBOT\n"
+        "  code:\n"
+        "    model: gpt-test-snapshot\n",
+        encoding="utf-8",
+    )
+    local_env = bot_dir / "local.env"
+    local_env.write_text(
+        "export CHATCOPILOT_TEST_SNAPSHOT=initial\n"
+        "export CHATCOPILOT_CODEX_BOT_HOME=$HOME/codex-bot\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CHATCOPILOT_SOURCE_ROOT", str(repository))
+    monkeypatch.delenv("CHATCOPILOT_TEST_SNAPSHOT", raising=False)
+    monkeypatch.delenv("CHATCOPILOT_EVALUATION_ENV_SNAPSHOT", raising=False)
+    observed: dict[str, str] = {}
+
+    def _run(_args: object, _request: dict[str, object]) -> int:
+        observed["before"] = os.environ["CHATCOPILOT_TEST_SNAPSHOT"]
+        observed["marker"] = os.environ["CHATCOPILOT_EVALUATION_ENV_SNAPSHOT"]
+        observed["model"] = os.environ["CHATCOPILOT_TESTBOT_CODE_MODEL"]
+        observed["auth_root"] = os.environ["CHATCOPILOT_CODEX_BOT_HOME"]
+        local_env.write_text(
+            "export CHATCOPILOT_TEST_SNAPSHOT=changed-after-preflight\n",
+            encoding="utf-8",
+        )
+        evaluation_runner._load_local_env(local_env)
+        observed["after"] = os.environ["CHATCOPILOT_TEST_SNAPSHOT"]
+        return 0
+
+    monkeypatch.setattr(eval_cli_module, "_run_prepared_request", _run)
+
+    assert (
+        evals_cli_main(
+            [
+                "run",
+                "--suite",
+                "ifeval",
+                "--bot",
+                "example",
+                "--validate-only",
+            ]
+        )
+        == 0
+    )
+    assert observed == {
+        "before": "initial",
+        "marker": "1",
+        "model": "gpt-test-snapshot",
+        "auth_root": str(Path.home() / "codex-bot"),
+        "after": "initial",
+    }
+    assert "CHATCOPILOT_TEST_SNAPSHOT" not in os.environ
+    assert "CHATCOPILOT_EVALUATION_ENV_SNAPSHOT" not in os.environ
+
+
+def test_cli_environment_error_does_not_echo_local_env_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repository = _write_repository_markers(tmp_path / "repo")
+    bot_dir = repository / "bots/example"
+    bot_dir.mkdir(parents=True)
+    (bot_dir / "bot.yaml").write_text("id: example\n", encoding="utf-8")
+    secret = "private-unclosed-local-env-value"
+    (bot_dir / "local.env").write_text(
+        f'export CHATCOPILOT_PRIVATE_FIXTURE="{secret}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CHATCOPILOT_SOURCE_ROOT", str(repository))
+
+    code = evals_cli_main(
+        [
+            "run",
+            "--suite",
+            "ifeval",
+            "--bot",
+            "example",
+            "--validate-only",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert code == 2
+    payload = json.loads(captured.err)
+    assert payload == {
+        "code": "evaluation_environment_invalid",
+        "message": (
+            "Bot-local Evaluation environment is invalid; "
+            "inspect local.env syntax and configuration."
+        ),
+        "checks": [],
+    }
+    assert secret not in captured.err
+    assert secret not in captured.out
 
 
 def test_cli_requires_explicit_output_outside_managed_service_root(

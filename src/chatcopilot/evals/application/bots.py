@@ -4,17 +4,27 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
 from chatcopilot.botspec.loader import load_botspec
+from chatcopilot.botspec.runtime_env import llm_runtime_env_defaults
+from chatcopilot.core.settings import load_local_env_values
 from chatcopilot.evals.env import normalize_eval_env
 
 
 _ENV_LOCK = threading.RLock()
 _EVAL_ENV_SNAPSHOT_MARKER = "CHATCOPILOT_EVALUATION_ENV_SNAPSHOT"
+
+
+class _EvaluationEnvironmentSnapshot(dict[str, str]):
+    """Process-local capability proving an environment was already captured."""
+
+    def copy(self) -> _EvaluationEnvironmentSnapshot:
+        return type(self)(self)
 
 
 @dataclass(frozen=True)
@@ -78,32 +88,45 @@ def bot_spec_path(bot: EvaluationBotRef, repository_root: Path) -> Path:
 
 
 def bot_env(bot: EvaluationBotRef, repository_root: Path) -> dict[str, str]:
-    local_values = normalize_eval_env(
-        _load_env_values(bot_spec_path(bot, repository_root).parent / "local.env")
+    spec_path = bot_spec_path(bot, repository_root)
+    spec = load_botspec(spec_path)
+    local_values = llm_runtime_env_defaults(spec.llm)
+    local_values.update(
+        load_local_env_values(
+            spec_path.parent / "local.env",
+            missing_ok=True,
+            expand_home=True,
+        )
     )
+    local_values = normalize_eval_env(local_values)
     return _effective_environment_snapshot(local_values)
 
 
-def _effective_environment_snapshot(values: dict[str, str]) -> dict[str, str]:
+def _effective_environment_snapshot(
+    values: Mapping[str, str],
+) -> _EvaluationEnvironmentSnapshot:
     """Capture machine-first runtime precedence exactly once.
 
     A value set by the service/machine environment is authoritative. Bot-local
-    values only fill missing keys, matching normal runtime loading. A mapping
-    that already carries the private marker is an immutable captured snapshot
-    and must not be merged with later process-environment changes.
+    values only fill missing keys, matching normal runtime loading. Only the
+    process-local snapshot type is trusted as already captured; the public
+    marker is runtime coordination metadata and cannot grant that trust.
     """
 
     with _ENV_LOCK:
-        if values.get(_EVAL_ENV_SNAPSHOT_MARKER) == "1":
-            return dict(values)
+        if isinstance(values, _EvaluationEnvironmentSnapshot):
+            return values.copy()
         environment = dict(values)
+        # A bot-local local.env must not be able to forge an immutable snapshot
+        # and bypass machine-first precedence.
+        environment.pop(_EVAL_ENV_SNAPSHOT_MARKER, None)
         environment.update(os.environ)
         environment[_EVAL_ENV_SNAPSHOT_MARKER] = "1"
-        return environment
+        return _EvaluationEnvironmentSnapshot(environment)
 
 
 @contextmanager
-def temporary_eval_env(values: dict[str, str]) -> Iterator[None]:
+def temporary_eval_env(values: Mapping[str, str]) -> Iterator[None]:
     """Apply one immutable effective environment for preflight/fingerprint."""
 
     with _ENV_LOCK:
@@ -118,30 +141,10 @@ def temporary_eval_env(values: dict[str, str]) -> Iterator[None]:
             os.environ.update(old)
 
 
-def evaluation_subprocess_env(values: dict[str, str]) -> dict[str, str]:
+def evaluation_subprocess_env(values: Mapping[str, str]) -> dict[str, str]:
     """Build the same immutable effective environment used by preflight."""
 
     return _effective_environment_snapshot(values)
-
-
-def _load_env_values(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not path.is_file():
-        return values
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].strip()
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        if key:
-            values[key] = value
-    return values
 
 
 __all__ = [

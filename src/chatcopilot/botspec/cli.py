@@ -32,6 +32,7 @@ from chatcopilot.botspec.runtime_env import llm_runtime_env_defaults
 from chatcopilot.core.config import load_config, load_llm_profile
 from chatcopilot.core.model_selection import code_task_model_selection
 from chatcopilot.core.mcp_catalog import resolve_catalog_server
+from chatcopilot.core.settings import expand_leading_home, load_local_env_values
 from chatcopilot.external_tools.codex_cli.auth_cli import (
     CodexAuthOperatorConfig,
     CodexAuthOperatorError,
@@ -370,8 +371,7 @@ def _render_cc_connect_config(spec_platform_type: str, env: Mapping[str, str]) -
         "max_chars = 2000\n"
         "\n"
         "[instant_reply]\n"
-        "enabled = true\n"
-        'content = "喵喵喵，正在分析中..."\n'
+        "enabled = false\n"
         "\n"
         "[[projects]]\n"
         f'name = "{project_name}"\n'
@@ -457,13 +457,7 @@ def _chmod_700(path: Path) -> None:
 
 
 def _expand_home_path(value: str) -> str:
-    home = str(Path.home())
-    for marker in ("~", "$HOME", "${HOME}"):
-        if value == marker:
-            return home
-        if value.startswith(f"{marker}/"):
-            return home + value[len(marker):]
-    return value
+    return expand_leading_home(value)
 
 
 def _expand_deploy_path(value: str | None) -> str:
@@ -484,32 +478,7 @@ def _cc_home_from_config_dir(config_dir: str) -> str:
 
 def _load_local_env(path: Path) -> dict[str, str]:
     """Read simple shell-style ``export KEY=value`` lines without executing them."""
-    if not path.is_file():
-        raise FileNotFoundError(f"本地配置不存在：{path}")
-
-    values: dict[str, str] = {}
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        try:
-            lexer = shlex.shlex(line, posix=True)
-            lexer.whitespace_split = True
-            lexer.commenters = "#"
-            parts = list(lexer)
-        except ValueError as exc:
-            raise ValueError(f"{path}:{lineno} 不是合法的 shell export 行：{exc}") from exc
-        assignments = parts[1:] if parts and parts[0] == "export" else parts
-        for item in assignments:
-            if "=" not in item:
-                raise ValueError(f"{path}:{lineno} 缺少 KEY=value：{raw}")
-            key, value = item.split("=", 1)
-            if not key or not (key[0].isalpha() or key[0] == "_") or not all(
-                ch.isalnum() or ch == "_" for ch in key
-            ):
-                raise ValueError(f"{path}:{lineno} 非法 env key：{key}")
-            values[key] = value
-    return values
+    return load_local_env_values(path)
 
 
 def _runtime_env_values(spec, local_env: Mapping[str, str]) -> dict[str, str]:

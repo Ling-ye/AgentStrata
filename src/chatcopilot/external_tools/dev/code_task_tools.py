@@ -216,7 +216,9 @@ TOOLS = [
             "Start an asynchronous isolated code-development task for this repository. "
             "Use for natural-language requests that require source, test, specification, "
             "documentation, BotSpec, adapter, dependency, or deployment changes. Return "
-            "the task id immediately; do not edit source in the main conversation."
+            "the task id immediately; do not edit source in the main conversation. When "
+            "the user requested a plan before later confirmation, do not call this tool "
+            "until that confirmation arrives, then submit the complete approved plan."
         ),
         properties={
             "prompt": schema_property(

@@ -131,6 +131,7 @@ def test_codex_new_and_resume_commands_attach_images(tmp_path: Path) -> None:
     )
     state = SimpleNamespace(
         gateway_config=tmp_path / "gateway.json",
+        allowed_tool_names=frozenset(),
         system_baseline="system",
         access_mode="workspace",
         workdir=tmp_path,

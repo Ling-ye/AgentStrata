@@ -19,6 +19,7 @@ from chatcopilot.contracts.agent import (
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.agent.tools.builtin.workspace_tools import TOOLS as WORKSPACE_TOOLS
 from chatcopilot.agent.tools.executor import ToolExecutor
+from chatcopilot.core.config import ChatConfig
 from chatcopilot.evals import capability_executor as executor
 from chatcopilot.evals.manifest import load_case_definitions
 from chatcopilot.evals.models import EvalCase, EvalCaseTurn, TrialObservation
@@ -38,6 +39,16 @@ def _definition(case_id: str):
     return next(
         item for item in load_case_definitions(get_manifest(SUITE_ID)) if item.case_id == case_id
     )
+
+
+def test_record_only_code_task_appendix_preserves_requested_draft_pr_scope() -> None:
+    definition = _definition("code-failure-no-false-success")
+
+    appendix = executor._case_appendix(definition, definition.policy.allowed_tools)
+
+    assert "record-only" in appendix
+    assert "Preserve the user's requested production Draft PR deliverable" in appendix
+    assert "never claiming" in appendix
 
 
 def _search_fixture(case_id: str) -> tuple[dict[str, Any], dict[str, Any], str]:
@@ -527,11 +538,30 @@ class _FakeSession:
             assert __import__("json").loads(probed)["value"] == "new"
             return AgentResult("隔离服务已测试、重启一次并确认新行为。", "end_turn")
         if case_id == "code-failure-no-false-success":
+            if int(task.metadata.get("eval_turn", 0)) == 0:
+                return AgentResult(
+                    "修改方案：关闭 instant_reply 并删除“喵喵喵，正在分析中...”；"
+                    "统一先给方案、用户确认后才启动代码任务的语义；"
+                    "补充配置、提示词和双轮测试，并检查异步交付风险。等待确认。",
+                    "end_turn",
+                )
             accepted, _paths, _error = self._call_tool(
                 "start_code_task",
                 {
-                    "objective": "exercise controlled failure lifecycle",
-                    "idempotency_key": "owner-code-recovery-v1",
+                    "title": "移除预处理占位回复并验证确认式代码任务",
+                    "prompt": (
+                        "移除“喵喵喵，正在分析中...”。根因是 cc-connect "
+                        "instant_reply 在 Agent 前发送固定内容。生成配置应显式设为 "
+                        "关闭（enabled = false）并删除 content。统一 Owner、tool pack 和 Codex "
+                        "的先方案后确认语义，增加双轮隔离测试与现有交付回归。"
+                        "交付只创建 Draft PR，不 merge/deploy/restart。"
+                    ),
+                    "acceptance_criteria": [
+                        "instant_reply 显式 enabled = false 且不再生成 content。",
+                        "生成配置不包含“喵喵喵，正在分析中...”。",
+                        "首轮只给方案且零次启动任务，确认轮恰好启动一次。",
+                        "所有定向测试通过，且只生成 Draft PR。",
+                    ],
                 },
                 on_event=on_event,
                 trace_id="trace-code-task-start",
@@ -862,6 +892,20 @@ def test_all_generic_agent_cases_execute_through_fake_selected_runtime(
             "resume_code_task",
             "get_code_task",
         ]
+        assert len(fake_agent) == 2
+        assert all(call["turn_index"] == 1 for call in result.metadata["tool_calls"])
+        start_arguments = result.metadata["tool_calls"][0]["arguments"]
+        assert set(start_arguments) == {"title", "prompt", "acceptance_criteria"}
+        assert "instant_reply" in start_arguments["prompt"]
+        assert len(start_arguments["acceptance_criteria"]) >= 3
+        turns = [
+            item
+            for item in result.metadata["observation_evidence"]
+            if item["kind"] == "agent_turn_result"
+        ]
+        assert [item["turn_index"] for item in turns] == [0, 1]
+        assert turns[0]["tool_names"] == []
+        assert turns[1]["tool_names"][0] == "start_code_task"
         lifecycle = next(
             item
             for item in result.metadata["observation_evidence"]
@@ -1135,6 +1179,94 @@ def test_isolated_agent_runtime_drops_configured_rag_mcp_and_research_subagents(
     assert captured["rag_sources"] == ()
     assert captured["mcp_servers"] == ()
     assert captured["subagents"].research_enabled is False
+
+
+def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chatcopilot.agent import runtime as agent_runtime_module
+
+    evaluation_workspace = (tmp_path / "evaluation-workspace").resolve()
+    live_source = (tmp_path / "live-source-sentinel").resolve()
+    evaluation_workspace.mkdir()
+    live_source.mkdir()
+    custom_workdir_env = "AGENTSTRATA_TEST_LIVE_CODE_ROOT"
+    monkeypatch.setenv(custom_workdir_env, str(live_source))
+
+    config = ChatConfig()
+    config.llm.api_key = "eval-local-placeholder"
+    config.routing.code_workdir_env = custom_workdir_env
+    runtime = SimpleNamespace(
+        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")),
+        tool_packs=(),
+        exclude_tools=(),
+        skills=(),
+        rag_sources=(),
+        mcp_servers=(),
+        subagents=SubagentSpec(),
+        agent_backend="codex",
+        platform_type="qq",
+        system_prompt="system",
+        refusal_prompt="",
+        capability_prompt_fragments=(),
+        mode_prompt_overrides={},
+        role_prompt_overrides={},
+        safety_prompt_override="",
+        memory_prompt_override="",
+    )
+    monkeypatch.setattr(executor, "load_evaluation_runtime", lambda _bot: runtime)
+    monkeypatch.setattr(executor, "load_config", lambda **_kwargs: config)
+    monkeypatch.setattr(executor, "build_system_prompt", lambda **_kwargs: "system")
+
+    original_build_backend = agent_runtime_module.build_backend
+    captured: dict[str, Any] = {}
+
+    def build_backend_probe(backend_id: str, **kwargs: Any) -> Any:
+        backend = original_build_backend(backend_id, **kwargs)
+        original_open_session = backend.open_session
+
+        def open_session_probe(request: Any) -> Any:
+            captured["request"] = request
+            session_ref = original_open_session(request)
+            captured["session_ref"] = session_ref
+            captured["workdir"] = backend.native_session(session_ref).workdir
+            return session_ref
+
+        backend.open_session = open_session_probe
+        backend.stream_turn = lambda _session, _task, *, on_event: AgentResult(
+            '{"name":"fixture","value":7}',
+            "end_turn",
+        )
+        captured["backend"] = backend
+        captured["policy"] = kwargs["backend_policy"]
+        return backend
+
+    monkeypatch.setattr(agent_runtime_module, "build_backend", build_backend_probe)
+    try:
+        observation = executor._execute_agent_definition(
+            _definition("dialogue-strict-json"),
+            suite_id=SUITE_ID,
+            bot="selected-bot",
+            workspace_path=evaluation_workspace,
+            resources_by_id={},
+            resource_evidence=(),
+        )
+    finally:
+        backend = captured.get("backend")
+        session_ref = captured.get("session_ref")
+        if backend is not None and session_ref is not None:
+            backend.close_session(session_ref)
+
+    request = captured["request"]
+    assert observation.final_text == '{"name":"fixture","value":7}'
+    assert captured["policy"].owner_access == "workspace"
+    assert request.options["workspace_root"] == evaluation_workspace
+    assert request.options["backend_state_root"] == (
+        evaluation_workspace / ".backend-sessions"
+    )
+    assert captured["workdir"] == evaluation_workspace
+    assert list(live_source.iterdir()) == []
 
 
 @pytest.mark.parametrize(

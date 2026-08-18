@@ -274,7 +274,7 @@ def _validate_request(
 ) -> ValidationResult:
     from chatcopilot.evals.evaluations import validate_evaluation
 
-    values = dict(env_values) if env_values is not None else bot_env(bot, repository_root)
+    values = env_values if env_values is not None else bot_env(bot, repository_root)
     with temporary_eval_env(values):
         return validate_evaluation(_core_request(bot, request, repository_root))
 
@@ -611,7 +611,7 @@ class EvaluationApplication:
                 directory.mkdir(parents=True, mode=0o700)
                 _write_json(directory / "request.json", stored_request)
                 _write_json(directory / "state.json", state)
-                self._spawn_env_snapshots[evaluation_id] = dict(effective_env)
+                self._spawn_env_snapshots[evaluation_id] = effective_env.copy()
                 try:
                     self._spawn(evaluation_id, bot)
                 finally:
@@ -1232,7 +1232,7 @@ class EvaluationApplication:
 
         snapshot = self._spawn_env_snapshots.get(evaluation_id)
         env = evaluation_subprocess_env(
-            dict(snapshot) if snapshot is not None else bot_env(bot, self.repository_root)
+            snapshot.copy() if snapshot is not None else bot_env(bot, self.repository_root)
         )
         src = str(self.repository_root / "src")
         env["PYTHONPATH"] = os.pathsep.join(
@@ -1578,7 +1578,7 @@ class EvaluationApplication:
     ) -> str:
         try:
             values = (
-                dict(env_values) if env_values is not None else bot_env(bot, self.repository_root)
+                env_values if env_values is not None else bot_env(bot, self.repository_root)
             )
             env = evaluation_subprocess_env(values)
         except Exception:

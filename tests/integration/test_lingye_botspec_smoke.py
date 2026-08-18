@@ -85,6 +85,17 @@ class LingyeBotSpecSmokeTests(unittest.TestCase):
             [skill.id for skill in runtime.skills],
             ["ai-career-intelligence", "ai-jd-analysis"],
         )
+        owner_prompt = runtime.role_prompt_overrides["owner"]
+        self.assertIn("当前轮只能给出具体、可审阅的只读方案", owner_prompt)
+        self.assertIn("只有同一会话中用户随后明确确认", owner_prompt)
+        self.assertIn("一次 `start_code_task`", owner_prompt)
+        self.assertIn("孤立的“确认”必须先", owner_prompt)
+        self.assertIn("当前消息中已经明确要求直接完成", owner_prompt)
+        capability_prompt = "\n".join(runtime.capability_prompt_fragments)
+        self.assertIn("do not call start_code_task yet", capability_prompt)
+        self.assertIn("call start_code_task exactly once", capability_prompt)
+        self.assertIn("A direct request to implement now", capability_prompt)
+        self.assertIn("an isolated confirmation", capability_prompt)
 
     def test_owner_isolated_development_surface(self) -> None:
         spec = load_botspec(_BOT_PATH)

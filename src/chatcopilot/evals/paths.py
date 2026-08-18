@@ -64,6 +64,12 @@ def _repository_root(repository_root: Path | None) -> Path:
     return _discover_repository_root()
 
 
+def evaluation_repository_root(repository_root: Path | None = None) -> Path:
+    """Return the validated repository root used by Evaluation entrypoints."""
+
+    return _repository_root(repository_root)
+
+
 def managed_evaluation_root(repository_root: Path | None = None) -> Path:
     """Return the configured service-owned artifact root."""
 
@@ -92,4 +98,8 @@ def is_managed_evaluation_output(
     return True
 
 
-__all__ = ["is_managed_evaluation_output", "managed_evaluation_root"]
+__all__ = [
+    "evaluation_repository_root",
+    "is_managed_evaluation_output",
+    "managed_evaluation_root",
+]

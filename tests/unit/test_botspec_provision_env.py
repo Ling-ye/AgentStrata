@@ -11,6 +11,63 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from chatcopilot.botspec.cli import main as bot_cli_main
+from chatcopilot.core.settings import load_local_env_values
+
+
+class LocalEnvParsingTests(unittest.TestCase):
+    def test_shell_escapes_and_windows_paths_are_both_preserved(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "local.env"
+            path.write_text(
+                "export DRIVE=" + r"C:\workspace\data" + "\n"
+                "export DRIVE_ESCAPED=" + r"C:\\workspace\\data" + "\n"
+                "export UNC=" + r"\\server\share\directory" + "\n"
+                "export UNC_ESCAPED=" + r"\\\\server\\share\\directory" + "\n"
+                'export QUOTED_UNC="' + r"\\server\share\directory" + '"\n'
+                'export QUOTED_UNC_ESCAPED="'
+                + r"\\\\server\\share\\directory"
+                + '"\n'
+                + "export DRIVE_ROOT=C:\\\n"
+                + "export DRIVE_TRAILING=C:\\temp\\\n"
+                + "export UNC_TRAILING=\\\\server\\share\\\n"
+                + 'export QUOTED_DRIVE_TRAILING="C:\\temp\\"\n'
+                + 'export QUOTED_UNC_TRAILING="\\\\server\\share\\"\n'
+                "export SPACE=hello\\ world\n"
+                "export HASH=hello\\#world\n"
+                'export QUOTE=hello\\"world\n',
+                encoding="utf-8",
+            )
+
+            values = load_local_env_values(path)
+
+            self.assertEqual(values["DRIVE"], r"C:\workspace\data")
+            self.assertEqual(values["DRIVE_ESCAPED"], r"C:\workspace\data")
+            self.assertEqual(values["UNC"], r"\\server\share\directory")
+            self.assertEqual(values["UNC_ESCAPED"], r"\\server\share\directory")
+            self.assertEqual(values["QUOTED_UNC"], r"\\server\share\directory")
+            self.assertEqual(values["QUOTED_UNC_ESCAPED"], r"\\server\share\directory")
+            self.assertEqual(values["DRIVE_ROOT"], "C:\\")
+            self.assertEqual(values["DRIVE_TRAILING"], "C:\\temp\\")
+            self.assertEqual(values["UNC_TRAILING"], "\\\\server\\share\\")
+            self.assertEqual(values["QUOTED_DRIVE_TRAILING"], "C:\\temp\\")
+            self.assertEqual(values["QUOTED_UNC_TRAILING"], "\\\\server\\share\\")
+            self.assertEqual(values["SPACE"], "hello world")
+            self.assertEqual(values["HASH"], "hello#world")
+            self.assertEqual(values["QUOTE"], 'hello"world')
+
+    def test_parse_errors_do_not_echo_the_source_line_or_value(self) -> None:
+        with TemporaryDirectory() as tmp:
+            secret = "private-local-env-value"
+            path = Path(tmp) / "local.env"
+            path.write_text(f"not-an-assignment {secret}\n", encoding="utf-8")
+
+            with self.assertRaises(ValueError) as raised:
+                load_local_env_values(path)
+
+            message = str(raised.exception)
+            self.assertIn(f"{path}:1", message)
+            self.assertIn("缺少 KEY=value", message)
+            self.assertNotIn(secret, message)
 
 
 class BotSpecProvisionEnvTests(unittest.TestCase):
