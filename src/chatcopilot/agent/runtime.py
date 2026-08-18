@@ -43,6 +43,13 @@ from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.external_tools.shared.tool_spec import ToolDef, build_openai_schema
 
 
+class _UseDefaultRetriever:
+    pass
+
+
+_USE_DEFAULT_RETRIEVER = _UseDefaultRetriever()
+
+
 @dataclass
 class AgentRuntime:
     """Agent 顶层入口：装配 LLM + tools schema + executor + skill/memory hooks。"""
@@ -103,7 +110,9 @@ class AgentRuntime:
         workspace_service: Optional[WorkspaceService] = None,
         caller_role_hint: Optional[str] = None,
         caller_identity: SessionIdentity | None = None,
-        retriever_override: Optional[Retriever] = None,
+        retriever_override: Retriever | None | _UseDefaultRetriever = (
+            _USE_DEFAULT_RETRIEVER
+        ),
         skill_index_override: Sequence[SkillIndexEntry] | None = None,
     ) -> AgentSessionProtocol:
         """装配一个 AgentSession 实例。
@@ -124,6 +133,8 @@ class AgentRuntime:
             file_sender: 由 middleware 绑定当前平台 adapter 的文件回传回调，供
                 ``send_files_to_user`` 工具使用；agent 不直接 import 平台。
             caller_identity: 当前入站消息的稳定身份；后端不得从角色提示反推身份。
+            retriever_override: 会话级 RAG 投影。省略时使用 Bot 级 retriever；
+                显式传 ``None`` 会关闭检索，供共享群等受限会话使用。
             skill_index_override: 会话级 Skill 索引投影。``None`` 使用 Bot 级索引；
                 空序列明确隐藏索引，供受限角色会话使用。
         """
@@ -138,7 +149,11 @@ class AgentRuntime:
             payload_filter = self._payload_filter_factory()
         if background_submitter is None and self._background_submitter_factory is not None:
             background_submitter = self._background_submitter_factory(session_id)
-        effective_retriever = retriever_override or self.retriever
+        effective_retriever = (
+            self.retriever
+            if retriever_override is _USE_DEFAULT_RETRIEVER
+            else retriever_override
+        )
         backend_id = (self.agent_backend or "native").strip().lower()
         direct_codex = backend_id == "codex"
         codex_policy = self.subagents.codex
@@ -346,30 +361,81 @@ class AgentRuntime:
         )
         workspace_root = None
         backend_state_root = None
+        isolate_backend_state = False
         if workspace_service is not None:
-            try:
+            requires_backend_state_isolation = getattr(
+                workspace_service,
+                "requires_backend_state_isolation",
+                None,
+            )
+            isolation_required = (
+                requires_backend_state_isolation() is True
+                if callable(requires_backend_state_isolation)
+                else False
+            )
+
+            def resolve_workspace_options() -> tuple[Path | None, Path | None]:
                 workspace = workspace_service.resolve_workspace(create=True)
                 object_root = getattr(workspace, "root", None)
-                if object_root is not None:
-                    # The service-level resolver returns the aggregate instance root
-                    # used by Owner inventory tools. A member Codex sandbox must stay
-                    # inside the current chat/user workspace instead.
-                    workspace_root = Path(object_root).expanduser().resolve()
-                    backend_state_root = workspace_root / ".backend-sessions"
-            except Exception:  # noqa: BLE001
-                workspace_root = None
-                backend_state_root = None
+                if object_root is None:
+                    return None, None
+                # The service-level resolver returns the aggregate instance root
+                # used by Owner inventory tools. A member Codex sandbox must stay
+                # inside the current chat/user workspace instead.
+                resolved_workspace_root = Path(object_root).expanduser().resolve()
+                resolve_backend_state_root = getattr(
+                    workspace_service,
+                    "resolve_backend_state_root",
+                    None,
+                )
+                protected_root = (
+                    resolve_backend_state_root()
+                    if callable(resolve_backend_state_root)
+                    else None
+                )
+                if not isinstance(protected_root, (str, Path)):
+                    protected_root = None
+                if protected_root is not None:
+                    resolved_state_root = Path(protected_root).expanduser().resolve()
+                elif isolation_required:
+                    resolved_state_root = None
+                else:
+                    resolved_state_root = resolved_workspace_root / ".backend-sessions"
+                return resolved_workspace_root, resolved_state_root
+
+            if isolation_required:
+                workspace_root, backend_state_root = resolve_workspace_options()
+                if workspace_root is None or backend_state_root is None:
+                    raise RuntimeError(
+                        "isolated backend requires exact workspace and state roots"
+                    )
+                isolate_backend_state = True
+            else:
+                try:
+                    workspace_root, backend_state_root = resolve_workspace_options()
+                except Exception:  # noqa: BLE001 - legacy non-isolated fallback
+                    workspace_root = None
+                    backend_state_root = None
         backend = build_backend(
             backend_id,
             tool_names={tool.name for tool in visible_tools},
             runtime_config=self.runtime_config,
             tools=tuple(visible_tools),
             tool_executor=executor,
+            tool_payload_filter=payload_filter,
             backend_policy=self.subagents.codex,
         )
         options: dict[str, Any] = {
             "workspace_root": workspace_root,
             "backend_state_root": backend_state_root,
+            "isolate_backend_state": isolate_backend_state,
+            # A shared-group actor cursor currently lives in the in-process
+            # SessionState.  Reusing a persisted native thread after eviction
+            # or process restart would therefore inject journal history from
+            # sequence zero into a thread that already contains it.  Keep live
+            # multi-turn resume, but start a fresh native thread whenever an
+            # isolated actor backend is materialized again.
+            "restore_persisted_native_session": not isolate_backend_state,
             "role_hint": caller_role_hint or "user",
         }
         if session_cls is not None:

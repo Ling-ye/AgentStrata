@@ -1,6 +1,7 @@
 """Identity and role contracts shared across layers."""
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -50,6 +51,57 @@ class SessionIdentity:
     user_name: str | None = None
 
 
+@dataclass(frozen=True)
+class ConversationIdentity:
+    """Stable conversation scope, independent from the current speaker."""
+
+    platform: str
+    chat_kind: str
+    chat_id: str
+
+
+@dataclass(frozen=True)
+class TurnIdentity:
+    """Authenticated source metadata for one inbound conversation turn."""
+
+    conversation: ConversationIdentity
+    sender_user_id: str
+    sender_user_name: str | None = None
+    message_id: str | None = None
+    source: str = "cc-connect"
+
+    @property
+    def actor_ref(self) -> str:
+        return stable_actor_ref(
+            self.conversation.platform,
+            self.sender_user_id,
+            conversation_id=(
+                f"{self.conversation.chat_kind}:{self.conversation.chat_id}"
+            ),
+        )
+
+
+def stable_actor_ref(
+    platform: str,
+    user_id: str,
+    *,
+    conversation_id: str = "",
+) -> str:
+    """Return a conversation-scoped pseudonym for display, never authorization."""
+
+    normalized_platform = (platform or "chat").strip().lower() or "chat"
+    normalized_user = (user_id or "").strip()
+    if not normalized_user:
+        return f"{normalized_platform}-actor-unknown"
+    normalized_conversation = (conversation_id or "").strip()
+    digest = hashlib.sha256(
+        f"{normalized_platform}\0{normalized_conversation}\0{normalized_user}".encode(
+            "utf-8"
+        )
+    ).hexdigest()[:12]
+    return f"{normalized_platform}-actor-{digest}"
+
+
 _ROLE_RANK = {
     Role.USER.value: 0,
     Role.ADMIN.value: 1,
@@ -70,9 +122,12 @@ def role_ge(current: object, required: object) -> bool:
 
 __all__ = [
     "AssistantMode",
+    "ConversationIdentity",
     "Identity",
     "Role",
     "SessionIdentity",
+    "TurnIdentity",
     "role_ge",
     "role_value",
+    "stable_actor_ref",
 ]

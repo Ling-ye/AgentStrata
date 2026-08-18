@@ -26,11 +26,14 @@ from chatcopilot.contracts.agent import (
 )
 from chatcopilot.contracts.identity import (
     AssistantMode,
+    ConversationIdentity,
     Identity,
     Role,
     SessionIdentity,
+    TurnIdentity,
     role_ge,
     role_value,
+    stable_actor_ref,
 )
 from chatcopilot.contracts.model_selection import (
     CODE_MODEL_LANE,
@@ -104,7 +107,12 @@ from chatcopilot.contracts.tools import (
     build_openai_schema,
     properties_from_argparse,
 )
-from chatcopilot.contracts.workspace import WorkspaceRef, WorkspaceView
+from chatcopilot.contracts.workspace import (
+    WORKSPACE_SCOPE_ACTOR,
+    WORKSPACE_SCOPE_GROUP_SHARED,
+    WorkspaceRef,
+    WorkspaceView,
+)
 
 __all__ = [
     "AgentEvent",
@@ -112,6 +120,7 @@ __all__ = [
     "AgentRuntimePlan",
     "AgentTask",
     "AssistantMode",
+    "ConversationIdentity",
     "BUILTIN_SUBAGENT_PRESET_NAMES",
     "BUILTIN_SUBAGENT_WORKFLOW_NAMES",
     "BUILTIN_SUBAGENT_WORKFLOWS",
@@ -150,6 +159,7 @@ __all__ = [
     "Role",
     "SearchProviderSpec",
     "SessionIdentity",
+    "TurnIdentity",
     "SpanFinished",
     "SpanStarted",
     "CustomSubagentSpec",
@@ -173,6 +183,8 @@ __all__ = [
     "TurnError",
     "WorkspaceRef",
     "WorkspaceView",
+    "WORKSPACE_SCOPE_ACTOR",
+    "WORKSPACE_SCOPE_GROUP_SHARED",
     "CachePolicySpec",
     "ContextPolicySpec",
     "PromptLayerSpec",
@@ -191,4 +203,5 @@ __all__ = [
     "properties_from_argparse",
     "role_ge",
     "role_value",
+    "stable_actor_ref",
 ]

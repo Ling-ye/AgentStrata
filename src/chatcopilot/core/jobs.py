@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import stat
 import tempfile
 import time
 from contextlib import contextmanager, nullcontext
@@ -17,6 +19,7 @@ from chatcopilot.contracts.code_tasks import (
     validate_code_task_transition,
 )
 from chatcopilot.core.workspace import Workspace
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.project import ENV_PREFIX, LIMIT_DIRNAME
 
 JOBS_DIRNAME = "jobs"
@@ -55,6 +58,63 @@ def safe_segment(value: object) -> str:
     text = str(value or "").strip()
     safe = "".join(ch if (ch.isalnum() or ch in "-_.@") else "_" for ch in text)
     return safe.strip("_") or "default"
+
+
+def job_storage_root(workspace: Workspace, *, create: bool = False) -> Path:
+    """Return the authoritative job-control root for the current actor.
+
+    Ordinary workspaces retain ``<workspace>/jobs``.  A shared-group workspace
+    is member-writable data, so its Owner job control plane lives under the
+    protected conversation sibling and is partitioned by the authenticated
+    stable actor.  The shared workspace remains the worker's data workspace.
+    """
+
+    if workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
+        root = workspace.root / JOBS_DIRNAME
+        if create:
+            root.mkdir(parents=True, exist_ok=True)
+        return root
+    if workspace.root.name != "shared" or not workspace.chat_id or not workspace.user_id:
+        raise ValueError("shared-group job storage requires stable chat and actor identities")
+    actor_digest = hashlib.sha256(
+        (
+            f"{workspace.chat_kind or 'group'}\0{workspace.chat_id}\0{workspace.user_id}"
+        ).encode("utf-8")
+    ).hexdigest()
+    state_root = workspace.root.parent / ".conversation-state"
+    jobs_root = state_root / JOBS_DIRNAME
+    actor_root = jobs_root / actor_digest
+    if create:
+        for path in (state_root, jobs_root, actor_root):
+            if path.is_symlink():
+                raise RuntimeError("protected group job directory must not be a symlink")
+            path.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if not path.is_dir() or path.is_symlink():
+                raise RuntimeError("protected group job path must be a real directory")
+            path.chmod(0o700)
+            info = path.stat()
+            if os.name == "posix" and (
+                info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700
+            ):
+                raise RuntimeError("protected group job directory must be owner-only")
+    return actor_root
+
+
+def iter_job_request_paths(workspace_root: Path) -> tuple[Path, ...]:
+    """List legacy and protected actor-scoped job requests below one instance."""
+
+    root = Path(workspace_root)
+    if not root.is_dir():
+        return ()
+    paths = {
+        path
+        for pattern in (
+            "**/jobs/job_*/request.json",
+            "**/.conversation-state/jobs/*/job_*/request.json",
+        )
+        for path in root.glob(pattern)
+    }
+    return tuple(sorted(paths))
 
 
 def queue_root() -> Path:
@@ -205,7 +265,7 @@ def find_job(workspace: Workspace, job_id: str) -> BackgroundJob | None:
     safe_job_id = safe_segment(job_id)
     if safe_job_id != job_id:
         return None
-    job_dir = workspace.root / JOBS_DIRNAME / safe_job_id
+    job_dir = job_storage_root(workspace) / safe_job_id
     if not job_dir.is_dir():
         return None
     return _job_from_dir(job_dir, workspace)
@@ -224,7 +284,7 @@ def latest_code_job(
     *,
     user_id: str | None = None,
 ) -> BackgroundJob | None:
-    jobs_root = workspace.root / JOBS_DIRNAME
+    jobs_root = job_storage_root(workspace)
     if not jobs_root.is_dir():
         return None
     dirs = sorted(
@@ -345,7 +405,7 @@ def list_unnotified_completed_jobs(
     session_id: str | None = None,
     limit: int = 20,
 ) -> list[BackgroundJob]:
-    jobs_root = workspace.root / JOBS_DIRNAME
+    jobs_root = job_storage_root(workspace)
     if not jobs_root.is_dir():
         return []
 
@@ -391,6 +451,7 @@ def job_notification_workspace(
         chat_id=str(notify.get("chat_id") or workspace_payload.get("chat_id") or "").strip() or None,
         user_id=str(notify.get("user_id") or workspace_payload.get("user_id") or job.user_id or "").strip() or None,
         user_name=str(notify.get("user_name") or workspace_payload.get("user_name") or "").strip() or None,
+        scope=str(notify.get("scope") or workspace_payload.get("scope") or "actor").strip() or "actor",
     )
 
 
@@ -428,6 +489,8 @@ __all__ = [
     "code_task_state_lock",
     "find_job",
     "is_job_completed",
+    "iter_job_request_paths",
+    "job_storage_root",
     "job_notification_workspace",
     "latest_code_job",
     "list_unnotified_completed_jobs",

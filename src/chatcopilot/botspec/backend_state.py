@@ -72,6 +72,11 @@ def _delete_backend_histories(root: Path) -> None:
     targets: list[Path] = []
     for pattern in ("transcripts", ".backend-sessions"):
         targets.extend(path for path in root.rglob(pattern) if path.is_dir())
+    targets.extend(
+        path
+        for path in root.glob("group_*/.conversation-state/backend-sessions")
+        if path.is_dir()
+    )
     for target in sorted(set(targets), key=lambda path: len(path.parts), reverse=True):
         resolved = target.resolve()
         try:

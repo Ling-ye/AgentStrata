@@ -13,7 +13,7 @@
 #   ├── _meta.json                    本次 dump 全局元信息（拍了哪些实例 / 选项 / 主机）
 #   └── <instance_id>/
 #       ├── configs/                  cc-connect.config.toml + .chatcopilot.env (+ .sanitized)
-#       │                             + 运行中的 /tmp/cc-sess-*.env
+#       │                             （不复制实例私有 session attestation state/lock）
 #       ├── memories/<user_dir>/      MEMORY.md（per-user）
 #       ├── transcripts/<user_dir>/   *.jsonl 对话历史（per-session，full 模式才拍）
 #       ├── prompts/                  persona.py 副本 + system prompt（full 模式才拍）
@@ -551,7 +551,6 @@ dump_one_instance() {
     local inst_out="$2"
     local mem_count=0
     local tr_count=0
-    local sess_count=0
     local qcount=0
 
     resolve_instance_paths "$instance"
@@ -568,9 +567,6 @@ dump_one_instance() {
         step "[$instance] dry-run 清单："
         echo "  configs/cc-connect.config.toml   <- $INST_CC_CONF"
         [ "$INCLUDE_ENV" = 1 ] && echo "  configs/.chatcopilot.env         <- $INST_ENV_FILE (+ .sanitized)"
-        ls -1 /tmp/cc-sess-*.env 2>/dev/null | while IFS= read -r f; do
-            echo "  configs/_session_envs/$(basename "$f") <- $f"
-        done
         echo "  logs/cc-connect/<date>.log       <- $INST_LOG_DIR/cc-connect/"
         echo "  logs/runtime/<date>.log          <- $INST_LOG_DIR/runtime/"
         echo "  logs/questions/<date>.log        <- $INST_LOG_DIR/"
@@ -591,7 +587,7 @@ dump_one_instance() {
     fi
 
     # ------- 建子目录 -------
-    mkdir -p "$inst_out"/{configs/_session_envs,logs/cc-connect,logs/runtime,logs/questions,logs/raw,runtime} \
+    mkdir -p "$inst_out"/{configs,logs/cc-connect,logs/runtime,logs/questions,logs/raw,runtime} \
         || { err "无法创建 $inst_out"; return 1; }
     if [ "$MODE" = "full" ]; then
         mkdir -p "$inst_out"/{memories,transcripts,prompts}
@@ -608,18 +604,6 @@ dump_one_instance() {
         cp "$INST_BOT_SPEC" "$inst_out/configs/bot.yaml"
         ok "[$instance] configs/bot.yaml"
     fi
-    for f in /tmp/cc-sess-*.env; do
-        [ -f "$f" ] || continue
-        local orig safe
-        orig="$(basename "$f")"
-        safe="$(echo "$orig" | tr ':' '_')"
-        {
-            echo "# original_session_key: $orig"
-            cat "$f"
-        } > "$inst_out/configs/_session_envs/$safe"
-        sess_count=$((sess_count + 1))
-    done
-    [ "$sess_count" -gt 0 ] && ok "[$instance] configs/_session_envs/ ($sess_count 个)"
     if [ "$INCLUDE_ENV" = 1 ] && [ -r "$INST_ENV_FILE" ]; then
         cp "$INST_ENV_FILE" "$inst_out/configs/.chatcopilot.env"
         chmod 600 "$inst_out/configs/.chatcopilot.env" 2>/dev/null || true

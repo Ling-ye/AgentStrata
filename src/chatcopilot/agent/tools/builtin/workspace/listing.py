@@ -4,10 +4,12 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from chatcopilot.agent.tools.workspace_context import describe_workspace, resolve_workspace
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.external_tools.shared.tool_spec import HandlerResult
 from chatcopilot.agent.tools.builtin.workspace.common import _silent_cleanup
 
 _VALID_SUBDIRS = ("downloads", "results", "uploads", "attachments", "jobs", "tasks")
+_GROUP_RESERVED_SUBDIRS = frozenset({"jobs", "tasks", "transcripts"})
 
 
 def _handler_list_workspace(args: Dict[str, Any]) -> HandlerResult:
@@ -21,6 +23,8 @@ def _handler_list_workspace(args: Dict[str, Any]) -> HandlerResult:
     if subdir:
         if subdir not in _VALID_SUBDIRS:
             raise ValueError("subdir 只能是 " + " / ".join(_VALID_SUBDIRS) + " / 留空")
+        if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED and subdir in _GROUP_RESERVED_SUBDIRS:
+            raise PermissionError("群共享空间不开放 jobs/tasks/transcripts 诊断目录")
         targets = [ws.resolve_subdir(subdir)]
     else:
         targets = [ws.root]
@@ -38,6 +42,10 @@ def _handler_list_workspace(args: Dict[str, Any]) -> HandlerResult:
     for target in existing_targets:
         iterator = target.rglob("*") if recursive else target.iterdir()
         for entry in iterator:
+            if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+                rel_parts = entry.relative_to(ws.root).parts
+                if rel_parts and rel_parts[0] in _GROUP_RESERVED_SUBDIRS:
+                    continue
             try:
                 stat = entry.stat()
             except OSError:

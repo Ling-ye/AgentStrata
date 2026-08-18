@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from chatcopilot.platforms import registry
 from chatcopilot.platforms.base import PlatformAdapter
@@ -48,6 +49,37 @@ class AdapterCapabilityTests(unittest.TestCase):
 
     def test_qq_resolve_user_display_name_defaults_none(self) -> None:
         self.assertIsNone(registry.get_adapter("qq").resolve_user_display_name("ou_x"))
+
+    def test_workspace_file_delivery_preserves_legacy_adapter_signature(self) -> None:
+        adapter = registry.get_adapter("feishu")
+        files = [Path("report.txt")]
+        with mock.patch.object(adapter, "send_files", return_value="sent") as legacy_send:
+            result = adapter.send_workspace_files(
+                mock.sentinel.workspace,
+                files,
+                message="done",
+            )
+        self.assertEqual(result, "sent")
+        legacy_send.assert_called_once_with(files, message="done")
+
+    def test_qq_workspace_file_delivery_receives_exact_workspace(self) -> None:
+        adapter = registry.get_adapter("qq")
+        files = [Path("report.txt")]
+        with mock.patch(
+            "chatcopilot.platforms.qq.adapter._sender.send_via_cc_connect",
+            return_value="sent",
+        ) as qq_send:
+            result = adapter.send_workspace_files(
+                mock.sentinel.workspace,
+                files,
+                message="done",
+            )
+        self.assertEqual(result, "sent")
+        qq_send.assert_called_once_with(
+            files,
+            message="done",
+            workspace=mock.sentinel.workspace,
+        )
 
 
 class DeployRenderTests(unittest.TestCase):

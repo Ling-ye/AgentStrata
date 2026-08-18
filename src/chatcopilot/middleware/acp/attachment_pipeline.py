@@ -1,7 +1,7 @@
 """User file storage capability for ACP/cc-connect uploads.
 
 本模块负责"file upload only"的确定性短路链：从 ACP prompt block 提取
-文本与资源引用、把 cc-connect transport 文件搬到当前私人空间、生成
+文本与资源引用、把 cc-connect transport 文件搬到当前会话空间、生成
 保存确认 / 占位文案。
 
 "一个 block 是不是真实文件附件"的判定**只在**
@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.middleware.acp.attachment_classifier import (
     ClassifiedResource,
     ResourceKind,
@@ -402,13 +403,20 @@ def transport_attachment_inbox(ws: Workspace) -> Path:
 
 def import_transport_attachments(ws: Workspace, resource_names: list[str]) -> list[str]:
     """Import current-turn cc-connect attachments into the user private workspace."""
+    # cc-connect v1.4 writes every project attachment to one static work_dir
+    # inbox using only its basename. That location carries neither the chat nor
+    # the message identity, so concurrent QQ groups can overwrite or claim one
+    # another's files. Existing files already present in the exact shared
+    # workspace remain usable; the ambiguous legacy inbox is fail-closed.
+    if getattr(ws, "scope", "actor") == WORKSPACE_SCOPE_GROUP_SHARED:
+        return []
     inbox = transport_attachment_inbox(ws)
     try:
         if inbox.resolve() == ws.attachments.resolve():
             return []
     except OSError:
         return []
-    if not inbox.is_dir():
+    if not inbox.is_dir() or inbox.is_symlink():
         return []
 
     requested = [resource_basename(name) for name in resource_names if name]
@@ -422,10 +430,19 @@ def import_transport_attachments(ws: Workspace, resource_names: list[str]) -> li
     for name in requested:
         if "/" in name or "\\" in name or name in {".", ".."}:
             continue
-        src = (inbox / name).resolve()
+        src_candidate = inbox / name
+        if src_candidate.is_symlink():
+            missing.append(name)
+            continue
+        src = src_candidate.resolve()
         dst = (ws.attachments / name).resolve()
         try:
-            if not src.is_file() or not ws.is_inside(dst):
+            inbox_root = inbox.resolve()
+            if (
+                not src.is_file()
+                or not src.is_relative_to(inbox_root)
+                or not ws.is_inside(dst)
+            ):
                 missing.append(name)
                 continue
             if src != dst:
@@ -445,6 +462,60 @@ def import_transport_attachments(ws: Workspace, resource_names: list[str]) -> li
             ",".join(missing),
         )
     return dedupe_resource_names(imported)
+
+
+def confirmed_transport_attachments(
+    ws: Workspace,
+    resource_names: list[str],
+    *,
+    imported_names: list[str] | None = None,
+) -> list[str]:
+    """Return files proven to belong to this transport turn.
+
+    A shared QQ group may already contain a same-named file from an earlier
+    actor.  A basename-only ACP resource is therefore not evidence that the
+    existing inode belongs to the current upload.  Until the transport exposes
+    a chat/message-bound path or token, group turns accept only names returned
+    by the current import operation (which the legacy static inbox deliberately
+    cannot provide).
+    """
+
+    requested = dedupe_resource_names(
+        [resource_basename(name) for name in resource_names if name]
+    )
+    if getattr(ws, "scope", "actor") == WORKSPACE_SCOPE_GROUP_SHARED:
+        imported = set(
+            dedupe_resource_names(
+                [resource_basename(name) for name in (imported_names or []) if name]
+            )
+        )
+        requested = [name for name in requested if name in imported]
+
+    confirmed: list[str] = []
+    for name in requested:
+        if not name or "/" in name or "\\" in name or name in {".", ".."}:
+            continue
+        candidate = ws.attachments / name
+        try:
+            if candidate.is_symlink():
+                continue
+            target = candidate.resolve(strict=True)
+            if target.is_file() and ws.is_inside(target):
+                confirmed.append(name)
+        except OSError:
+            continue
+    return dedupe_resource_names(confirmed)
+
+
+def format_group_attachment_binding_rejection(resource_names: list[str]) -> str:
+    names = "、".join(dedupe_resource_names([name for name in resource_names if name]))
+    subject = f"（{names}）" if names else ""
+    return (
+        f"已拒绝接收这次群附件{subject}：当前 QQ 接入只提供文件名，"
+        "不能把文件安全绑定到本群、本条消息和当前发送者，也不能据此复用群里同名旧文件。\n"
+        "如果文件已经在当前群共享空间，请改用文字让我列出共享文件后再指定处理；"
+        "新的群附件需等待接入层提供 message-bound 路径或令牌。"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +554,10 @@ def collect_attachment_references(
 # 文案生成（同步发给 cc-connect 的 receipt / ack）
 # ---------------------------------------------------------------------------
 
-def format_attachment_receipt(resource_names: list[str]) -> str:
+def format_attachment_receipt(
+    resource_names: list[str],
+    workspace: Workspace | None = None,
+) -> str:
     """生成纯文件上传命中短路后立即同步返回给 cc-connect 的占位文案。
 
     在 ``_schedule_attachment_ack`` 异步等文件落盘的这段时间里，ACP server
@@ -495,10 +569,16 @@ def format_attachment_receipt(resource_names: list[str]) -> str:
     if not safe:
         return "已收到文件消息，正在确认保存状态…"
     joined = "、".join(safe)
-    return f"已收到附件：{joined}。\n正在保存到你的私人空间，稍候我会再发一条确认。"
+    return (
+        f"已收到附件：{joined}。\n"
+        f"正在保存到{_workspace_space_label(workspace)}，稍候我会再发一条确认。"
+    )
 
 
-def format_attachment_deferred_receipt(resource_names: list[str]) -> str:
+def format_attachment_deferred_receipt(
+    resource_names: list[str],
+    workspace: Workspace | None = None,
+) -> str:
     """LLM 兜底路径上"文件还没落盘"时的占位文案（与短路 6 的 receipt 平行）。
 
     与 :func:`format_attachment_receipt` 区别只在最后一句：deferred 路径
@@ -507,14 +587,15 @@ def format_attachment_deferred_receipt(resource_names: list[str]) -> str:
     （:func:`_sanitize_display_names`），未来文案漂移只改这一文件。
     """
     safe = _sanitize_display_names(resource_names)
+    space = _workspace_space_label(workspace)
     if not safe:
         return (
-            "已收到附件，正在保存到你的私人空间。\n"
+            f"已收到附件，正在保存到{space}。\n"
             "保存完成后我会再发一条确认，再请你重新发起 diff / 对比请求。"
         )
     joined = "、".join(safe)
     return (
-        f"已收到附件：{joined}，正在保存到你的私人空间。\n"
+        f"已收到附件：{joined}，正在保存到{space}。\n"
         "保存完成后我会再发一条确认，再请你重新发起 diff / 对比请求。"
     )
 
@@ -561,14 +642,29 @@ def format_attachment_ack(ws: Workspace, resource_names: list[str]) -> str:
     current_paths = [f"attachments/{name}" for name in resource_names if name] or deduped_paths[:2]
     current = "、".join(current_paths)
     visible_paths = deduped_paths[:50]
-    lines = [f"文件已保存到你的私人空间：{current}。" if current else "文件已保存到你的私人空间。"]
+    space = _workspace_space_label(ws)
+    lines = [f"文件已保存到{space}：{current}。" if current else f"文件已保存到{space}。"]
     if visible_paths:
-        lines.append(f"你当前累计 {len(deduped_paths)} 个已保存文件：")
+        subject = (
+            "当前群"
+            if getattr(ws, "scope", "actor") == WORKSPACE_SCOPE_GROUP_SHARED
+            else "你当前"
+        )
+        lines.append(f"{subject}累计 {len(deduped_paths)} 个已保存文件：")
         lines.extend(f"- {display_path}" for display_path in visible_paths)
         if len(deduped_paths) > len(visible_paths):
             lines.append(f"- 还有 {len(deduped_paths) - len(visible_paths)} 个文件未展示")
     lines.extend(["", "请告诉我下一步要做什么。"])
     return "\n".join(lines)
+
+
+def _workspace_space_label(workspace: Workspace | None) -> str:
+    if (
+        workspace is not None
+        and getattr(workspace, "scope", "actor") == WORKSPACE_SCOPE_GROUP_SHARED
+    ):
+        return "当前群共享空间"
+    return "你的私人空间"
 
 
 __all__ = [
@@ -584,6 +680,8 @@ __all__ = [
     "format_attachment_deferred_receipt",
     "format_attachment_receipt",
     "format_feishu_file_size_limit_reply",
+    "format_group_attachment_binding_rejection",
+    "confirmed_transport_attachments",
     "has_task_verb",
     "has_text_attachment_reference",
     "import_transport_attachments",

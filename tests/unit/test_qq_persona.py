@@ -8,6 +8,7 @@ from pathlib import Path
 
 from chatcopilot.botspec.skills import SkillIndexEntry
 from chatcopilot.contracts.identity import Role
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.middleware.runtime.workspace import Workspace
 from chatcopilot.middleware.acp.prompt_assembler import build_system_prompt as _build_system_prompt
 
@@ -30,7 +31,11 @@ def _fake_workspace() -> Workspace:
 
 
 def _fake_group_workspace() -> Workspace:
-    tmp = Path(tempfile.gettempdir()) / "chatcopilot-qq-persona-group-test"
+    tmp = (
+        Path(tempfile.gettempdir())
+        / "chatcopilot-qq-persona-group-test"
+        / "shared"
+    )
     tmp.mkdir(parents=True, exist_ok=True)
     return Workspace(
         root=tmp,
@@ -38,6 +43,7 @@ def _fake_group_workspace() -> Workspace:
         chat_id="group-test",
         user_id="qq_owner_test",
         user_name="测试 Owner",
+        scope=WORKSPACE_SCOPE_GROUP_SHARED,
     )
 
 
@@ -108,7 +114,7 @@ class QQPersonaTests(unittest.TestCase):
         self.assertIn("internal capability", text)
         self.assertIn("internal-playbook", text)
 
-    def test_restricted_owner_group_prompt_hides_internal_catalog(self) -> None:
+    def test_restricted_owner_group_prompt_keeps_owner_catalog(self) -> None:
         skills = (
             SkillIndexEntry(
                 id="internal-playbook",
@@ -128,10 +134,32 @@ class QQPersonaTests(unittest.TestCase):
             owner_only_project_access=True,
         )
 
-        self.assertNotIn("private-model", text)
-        self.assertNotIn("internal capability", text)
-        self.assertNotIn("internal-playbook", text)
-        self.assertIn("restricted refusal", text)
+        self.assertIn("private-model", text)
+        self.assertIn("internal capability", text)
+        self.assertIn("internal-playbook", text)
+        self.assertNotIn("restricted refusal", text)
+
+    def test_owner_group_prompt_treats_style_persona_as_normal_mutation(self) -> None:
+        bot_prompt = Path(
+            "bots/lingye-copilot-qq/prompts/persona.md"
+        ).read_text(encoding="utf-8")
+        owner_prompt = Path(
+            "bots/lingye-copilot-qq/prompts/roles/owner.md"
+        ).read_text(encoding="utf-8")
+
+        text = build_system_prompt(
+            _fake_group_workspace(),
+            role=Role.OWNER,
+            bot_system_prompt=bot_prompt,
+            role_prompts={"owner": owner_prompt},
+            owner_only_project_access=True,
+        )
+
+        self.assertIn("不要把“不能逐字复刻或冒充”错误扩大成“不能设置人设”", text)
+        self.assertIn("persona_set", text)
+        self.assertIn("群聊未指定 scope 时默认 `group`", text)
+        self.assertIn("群共享本身不授予权限", text)
+        self.assertIn("仍按 Owner 角色执行", text)
 
     def test_role_and_assistant_mode_inputs_are_ignored(self) -> None:
         # QQ does not use the Feishu role matrix, so these inputs should not change output.

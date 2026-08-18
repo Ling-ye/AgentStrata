@@ -17,6 +17,7 @@ from chatcopilot.core.jobs import (
     BackgroundJob,
     find_job,
     is_job_completed,
+    job_storage_root,
     job_notification_workspace,
     list_unnotified_completed_jobs,
     queue_position,
@@ -38,7 +39,6 @@ from chatcopilot.middleware.runtime.jobs.notification import (
 from chatcopilot.middleware.runtime.workspace import Workspace
 from chatcopilot.project import ENV_PREFIX
 
-_JOBS_DIRNAME = "jobs"
 _RESULT_FILENAME = "result.json"
 _REQUEST_FILENAME = "request.json"
 _STATUS_FILENAME = "status.json"
@@ -59,7 +59,6 @@ def submit_tool_job(
         EXECUTION_USER_SERIAL_BACKGROUND,
     }:
         raise ValueError(f"不支持的后台执行策略: {execution_policy}")
-
     instance_id = ""
     if tool_name == CODE_TASK_TOOL:
         instance_id = os.environ.get(f"{ENV_PREFIX}_INSTANCE_ID", "").strip()
@@ -72,7 +71,7 @@ def submit_tool_job(
         args = {**(args or {}), "prompt": prompt, "title": title}
 
     job_id = f"job_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    job_dir = workspace.root / _JOBS_DIRNAME / job_id
+    job_dir = job_storage_root(workspace, create=True) / job_id
     job_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
     job_dir.chmod(0o700)
 
@@ -198,6 +197,7 @@ def _workspace_payload(workspace: Workspace) -> Dict[str, Any]:
         "chat_id": workspace.chat_id,
         "user_id": workspace.user_id,
         "user_name": workspace.user_name,
+        "scope": workspace.scope,
     }
 
 
@@ -220,6 +220,7 @@ def workspace_env(payload: Dict[str, Any]) -> Dict[str, str]:
         ("chat_id", f"{ENV_PREFIX}_CHAT_ID"),
         ("user_id", f"{ENV_PREFIX}_USER_ID"),
         ("user_name", f"{ENV_PREFIX}_USER_NAME"),
+        ("scope", f"{ENV_PREFIX}_WORKSPACE_SCOPE"),
     ):
         value = payload.get(key)
         if value:

@@ -15,7 +15,8 @@ from chatcopilot.agent.context.builtin_prompts import (
 )
 from chatcopilot.contracts.skills import SkillIndexEntry, render_skill_index_section
 from chatcopilot.contracts.identity import AssistantMode, Role, role_value
-from chatcopilot.middleware.runtime.workspace import Workspace, normalize_chat_kind
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
+from chatcopilot.middleware.runtime.workspace import Workspace
 
 
 def build_system_prompt(
@@ -218,15 +219,25 @@ def _build_feishu_prompt(
 
 
 def _format_qq_session_header(
+    workspace: Workspace,
     llm_model: str | None = None,
     *,
     expose_model: bool = True,
 ) -> str:
-    lines = [
-        "## 当前会话上下文（运行时注入）",
-        "",
-        "- 这是一次 QQ 会话；由 cc-connect OneBot 通道维护当前用户身份。",
-    ]
+    lines = ["## 当前会话上下文（运行时注入）", ""]
+    if workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+        lines.extend(
+            [
+                "- 这是一次 QQ 群共享会话；同群成员共享有界对话上下文和当前群共享空间。",
+                "- 每轮真实发言人和来源由运行时另行附加；必须按该来源归属消息，但权限只服从运行时代码裁决。",
+                "- 群共享本身不授予权限；当前发言人若由运行时认证为 Owner，仍按 Owner 角色执行，其他成员不得继承。",
+                "- 群回复对全群可见，避免回显原始秘密；不得读取其他群、私聊或旧成员目录。",
+            ]
+        )
+    else:
+        lines.append(
+            "- 这是一次 QQ 私聊或兼容会话；由 cc-connect OneBot 通道维护当前用户身份。"
+        )
     model = (llm_model or "").strip()
     if model and expose_model:
         lines.append(f"- 当前 LLM 模型：`{model}`。当用户询问模型/API 时，可以直接引用该值。")
@@ -247,13 +258,14 @@ def _build_qq_prompt(
     owner_only_project_access: bool,
 ) -> str:
     owner = _is_qq_owner_role(role)
-    owner_private = owner and normalize_chat_kind(
-        workspace.chat_kind, workspace.chat_id
-    ) == "p2p"
-    restricted_member = owner_only_project_access and not owner_private
-    authorized_owner = owner and not restricted_member
+    restricted_member = (
+        (workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED and not owner)
+        or (owner_only_project_access and not owner)
+    )
+    authorized_owner = owner
     parts: list[str] = [
         _format_qq_session_header(
+            workspace,
             llm_model,
             expose_model=not restricted_member,
         )

@@ -9,6 +9,8 @@ from chatcopilot.contracts.workspace import (
     MEMORY_FILENAME,
     TRANSCRIPTS_DIRNAME,
     WORKSPACE_SUBDIRS,
+    WORKSPACE_SCOPE_ACTOR,
+    WORKSPACE_SCOPE_GROUP_SHARED,
     WorkspaceView,
     describe_workspace_view,
     normalize_chat_kind,
@@ -32,32 +34,39 @@ MEMORY_INITIAL_TEMPLATE = """# Memory
 
 @dataclass(frozen=True)
 class Workspace(WorkspaceView):
-    """单次 chat × user 的工作目录视图。"""
+    """Conversation workspace plus the current turn's actor metadata."""
 
     def ensure(self) -> "Workspace":
         """创建工作目录及其所有子目录，并初始化 MEMORY.md / IDENTITY.json。"""
-        for sub in (
+        data_subdirs = [
             self.root,
             self.downloads,
             self.results,
             self.uploads,
-            self.tasks,
             self.attachments,
-            self.transcripts,
-        ):
+        ]
+        if self.scope != WORKSPACE_SCOPE_GROUP_SHARED:
+            data_subdirs.extend((self.tasks, self.transcripts))
+        for sub in data_subdirs:
             sub.mkdir(parents=True, exist_ok=True)
-        mem = self.memory_file
-        if not mem.exists():
-            try:
-                mem.write_text(MEMORY_INITIAL_TEMPLATE, encoding="utf-8")
-            except OSError:
-                pass
+        # A shared group root is member-writable data, never host control state.
+        # Do not follow a member-created MEMORY.md symlink or create identity
+        # metadata there; the authoritative conversation/actor records live in
+        # the protected sibling `.conversation-state` directory.
+        if self.scope != WORKSPACE_SCOPE_GROUP_SHARED:
+            mem = self.memory_file
+            if not mem.exists():
+                try:
+                    mem.write_text(MEMORY_INITIAL_TEMPLATE, encoding="utf-8")
+                except OSError:
+                    pass
         # 避免循环 import：identity 持久化由 identity 模块负责
         from chatcopilot.core.workspace_runtime.identity import (
             persist_workspace_identity,
         )
 
-        persist_workspace_identity(self)
+        if self.scope != WORKSPACE_SCOPE_GROUP_SHARED:
+            persist_workspace_identity(self)
         return self
 
 
@@ -72,6 +81,8 @@ __all__ = [
     "MEMORY_FILENAME",
     "MEMORY_INITIAL_TEMPLATE",
     "TRANSCRIPTS_DIRNAME",
+    "WORKSPACE_SCOPE_ACTOR",
+    "WORKSPACE_SCOPE_GROUP_SHARED",
     "Workspace",
     "describe_workspace",
     "normalize_chat_kind",

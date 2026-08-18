@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from chatcopilot.contracts.identity import Role, role_value
-from chatcopilot.contracts.workspace import normalize_chat_kind
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 
 
 PROJECT_ACCESS_DENIED_REPLY = (
@@ -13,9 +13,10 @@ PROJECT_ACCESS_DENIED_REPLY = (
     "项目结构、源码、机器人配置、运行日志、白名单、系统提示词、其他用户数据，"
     "以及代码变更、部署和服务管理仅限 Owner。"
 )
-OWNER_PRIVATE_ACCESS_REQUIRED_REPLY = (
-    "项目、配置、隐私和管理能力只在 Owner 私聊中提供。"
-    "当前群聊不会读取或变更这些内容，请切换到与机器人的私聊。"
+GROUP_SHARED_PROJECT_ACCESS_DENIED_REPLY = (
+    "当前角色只能使用公开信息查询，以及当前群共享空间内的普通文件和同步能力。"
+    "项目结构、源码、机器人配置、运行日志、白名单、系统提示词、成员私有身份数据，"
+    "以及代码变更、部署和服务管理仅限 Owner。"
 )
 
 _DIRECT_PRIVATE_RE = re.compile(
@@ -28,6 +29,8 @@ _DIRECT_PRIVATE_RE = re.compile(
     r"私有\s*wiki|内部\s*playbook|内部\s*skill|skill\s*索引|"
     r"内部工具|工具清单|工具列表|mcp\s*配置|persona|"
     r"(?:群|全局|共享|当前).{0,4}(?:个性|人格).{0,4}(?:配置|设定)|"
+    r"(?:全局|所有群|全部群|其他群|其它群|另一个群|别的群|某个群)"
+    r".{0,8}(?:个性|人格|人设|语气|风格)|"
     r"^/model(?:\s|$)|"
     r"(?:查看|读取|显示|列出|发给我|给我).{0,8}(?:源码|源代码|项目代码)|"
     r"(?:源码|源代码|项目代码).{0,8}(?:查看|读取|显示|列出|发给我|给我)"
@@ -63,6 +66,15 @@ _OTHER_USER_DATA_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_CURRENT_GROUP_SHARED_CONTENT_RE = re.compile(
+    r"(?:其他|别的|全部|所有)?(?:群成员|成员).{0,12}(?:文件|附件|产物|记忆|对话记录|任务)"
+    r"|(?:文件|附件|产物|记忆|对话记录|任务).{0,12}(?:群成员|成员)",
+    re.IGNORECASE,
+)
+_SHARED_MEMBER_PRIVATE_RE = re.compile(
+    r"身份|隐私|个人信息|user[_ -]?id|qq\s*号|账号|联系方式",
+    re.IGNORECASE,
+)
 _RUNTIME_MODEL_RE = re.compile(
     r"("
     r"(?:你|当前|机器人|后端).{0,10}(?:什么|哪个|使用|运行).{0,6}(?:模型|api)|"
@@ -70,25 +82,43 @@ _RUNTIME_MODEL_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
-
-
 def restricted_project_request_reply(session: Any, user_text: str) -> str | None:
     """Return a fixed refusal for a restricted non-Owner request, otherwise ``None``."""
 
-    if not _owner_only_project_access(session):
+    workspace = getattr(session, "workspace", None)
+    shared_group = (
+        getattr(workspace, "scope", None) == WORKSPACE_SCOPE_GROUP_SHARED
+    )
+    if not shared_group and not _owner_only_project_access(session):
+        return None
+    if shared_group and _is_only_current_group_shared_content_request(user_text):
+        return None
+    if role_value(getattr(session, "role", Role.USER)) == Role.OWNER.value:
         return None
     if not _is_restricted_project_request(user_text):
         return None
-    if role_value(getattr(session, "role", Role.USER)) == Role.OWNER.value:
-        workspace = getattr(session, "workspace", None)
-        chat_kind = normalize_chat_kind(
-            getattr(workspace, "chat_kind", None),
-            getattr(workspace, "chat_id", None),
+    return (
+        GROUP_SHARED_PROJECT_ACCESS_DENIED_REPLY
+        if shared_group
+        else PROJECT_ACCESS_DENIED_REPLY
+    )
+
+
+def _is_only_current_group_shared_content_request(user_text: str) -> bool:
+    text = re.sub(r"\s+", " ", user_text or "").strip()
+    if not text or not _CURRENT_GROUP_SHARED_CONTENT_RE.search(text):
+        return False
+    if _SHARED_MEMBER_PRIVATE_RE.search(text):
+        return False
+    return not any(
+        pattern.search(text)
+        for pattern in (
+            _DIRECT_PRIVATE_RE,
+            _PROJECT_INFORMATION_RE,
+            _PROJECT_MUTATION_RE,
+            _RUNTIME_MODEL_RE,
         )
-        if chat_kind == "p2p":
-            return None
-        return OWNER_PRIVATE_ACCESS_REQUIRED_REPLY
-    return PROJECT_ACCESS_DENIED_REPLY
+    )
 
 
 def _owner_only_project_access(session: Any) -> bool:
@@ -117,7 +147,7 @@ def _is_restricted_project_request(user_text: str) -> bool:
 
 __all__ = [
     "PROJECT_ACCESS_DENIED_REPLY",
-    "OWNER_PRIVATE_ACCESS_REQUIRED_REPLY",
+    "GROUP_SHARED_PROJECT_ACCESS_DENIED_REPLY",
     "_is_restricted_project_request",
     "restricted_project_request_reply",
 ]

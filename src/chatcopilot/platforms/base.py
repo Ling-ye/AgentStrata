@@ -106,6 +106,10 @@ class PlatformAdapter(abc.ABC):
     supports_background_jobs: bool = False
     #: 是否允许 Owner/Admin 角色按显示名兜底匹配。稳定 ID 平台应关闭。
     allow_role_name_match: bool = True
+    #: 群会话作用域。``actor`` 保持 chat × user；``chat`` 由群 ID 共享。
+    group_conversation_scope: str = "actor"
+    #: 共享群会话必须由 cc-connect 为每条消息注入与正文绑定的 sender envelope。
+    requires_sender_envelope: bool = False
 
     # Prompt assembly lives in middleware/application composition.
 
@@ -115,8 +119,24 @@ class PlatformAdapter(abc.ABC):
         """把入参文件名/路径规范化成当前工作区内的可发送绝对路径集合。"""
 
     @abc.abstractmethod
-    def send_files(self, files: Sequence[Path], *, message: str = "") -> str:
+    def send_files(
+        self,
+        files: Sequence[Path],
+        *,
+        message: str = "",
+    ) -> str:
         """把工作区文件回传到当前会话；返回下游通道的 stdout/状态摘要。"""
+
+    def send_workspace_files(
+        self,
+        workspace: "Workspace",
+        files: Sequence[Path],
+        *,
+        message: str = "",
+    ) -> str:
+        """回传已绑定 workspace 的文件；默认兼容既有 adapter 契约。"""
+
+        return self.send_files(files, message=message)
 
     # -- runtime: background notification ----------------------------------
     def resolve_delivery_target(self, workspace: "Workspace") -> Any:

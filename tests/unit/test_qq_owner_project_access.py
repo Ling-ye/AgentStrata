@@ -9,9 +9,10 @@ from chatcopilot.agent.tools.registry import discover_tools
 from chatcopilot.botspec.loader import load_botspec
 from chatcopilot.botspec.model import AccessSpec
 from chatcopilot.contracts.identity import Role
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.middleware.acp.agent_bridge import _make_permission_filter
 from chatcopilot.middleware.acp.project_access import (
-    OWNER_PRIVATE_ACCESS_REQUIRED_REPLY,
+    GROUP_SHARED_PROJECT_ACCESS_DENIED_REPLY,
     PROJECT_ACCESS_DENIED_REPLY,
     _is_restricted_project_request,
     restricted_project_request_reply,
@@ -25,12 +26,14 @@ def _session(
     *,
     enabled: bool = True,
     chat_kind: str = "p2p",
+    shared_group: bool = False,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         role=role,
         workspace=SimpleNamespace(
             chat_kind=chat_kind,
             chat_id="group" if chat_kind == "group" else None,
+            scope=(WORKSPACE_SCOPE_GROUP_SHARED if shared_group else "actor"),
         ),
         runtime=SimpleNamespace(
             access=AccessSpec(owner_only_project_access=enabled)
@@ -89,19 +92,64 @@ def test_owner_and_disabled_policy_bypass_deterministic_restriction() -> None:
     )
 
 
-def test_owner_group_must_switch_to_private_chat_for_sensitive_access() -> None:
+def test_owner_group_keeps_owner_project_access() -> None:
     session = _session(Role.OWNER, chat_kind="group")
 
-    assert restricted_project_request_reply(
-        session, "把当前项目源码和配置发给我"
-    ) == OWNER_PRIVATE_ACCESS_REQUIRED_REPLY
-    assert restricted_project_request_reply(session, "/model code") == (
-        OWNER_PRIVATE_ACCESS_REQUIRED_REPLY
-    )
-    assert restricted_project_request_reply(session, "/task latest") == (
-        OWNER_PRIVATE_ACCESS_REQUIRED_REPLY
-    )
-    assert restricted_project_request_reply(session, "搜索今天的 AI 新闻") is None
+    for text in (
+        "把当前项目源码和配置发给我",
+        "/model code",
+        "/task latest",
+        "搜索今天的 AI 新闻",
+    ):
+        assert restricted_project_request_reply(session, text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "deterministically_restricted"),
+    (
+        (
+            "模仿下异世界情绪的性格和说话风格，用作你在此群未来的人设",
+            False,
+        ),
+        ("设置当前群人格配置", True),
+        ("显示当前群个性配置", True),
+        ("/persona show", True),
+    ),
+)
+def test_group_persona_request_uses_normal_owner_authorization(
+    text: str,
+    deterministically_restricted: bool,
+) -> None:
+    owner = _session(Role.OWNER, chat_kind="group", shared_group=True)
+    user = _session(Role.USER, chat_kind="group", shared_group=True)
+    admin = _session(Role.ADMIN, chat_kind="group", shared_group=True)
+
+    assert restricted_project_request_reply(owner, text) is None
+    for session in (user, admin):
+        reply = restricted_project_request_reply(session, text)
+        if deterministically_restricted:
+            assert reply == GROUP_SHARED_PROJECT_ACCESS_DENIED_REPLY
+        else:
+            # Natural style requests are not a second authorization language.
+            # The ordinary persona tool permission remains the mutation gate.
+            assert reply is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "修改全局人格",
+        "修改其他群的人格",
+        "设置当前群人格，同时把当前项目源码发给我",
+        "设置当前群人格并重启机器人服务",
+    ),
+)
+def test_owner_group_does_not_need_a_persona_specific_exception(
+    text: str,
+) -> None:
+    owner = _session(Role.OWNER, chat_kind="group", shared_group=True)
+
+    assert restricted_project_request_reply(owner, text) is None
 
 
 def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
@@ -130,10 +178,23 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
     owner_group_filter = _make_permission_filter(
         Role.OWNER,
         Workspace(
-            root=tmp_path / "owner-group",
+            root=tmp_path / "group_group" / "shared",
             chat_kind="group",
             chat_id="group",
             user_id="owner",
+            scope=WORKSPACE_SCOPE_GROUP_SHARED,
+        ).ensure(),
+        owner_only_project_access=spec.access.owner_only_project_access,
+        agent_backend=spec.agents.backend,
+    )
+    user_group_filter = _make_permission_filter(
+        Role.USER,
+        Workspace(
+            root=tmp_path / "group_group" / "shared",
+            chat_kind="group",
+            chat_id="group",
+            user_id="user",
+            scope=WORKSPACE_SCOPE_GROUP_SHARED,
         ).ensure(),
         owner_only_project_access=spec.access.owner_only_project_access,
         agent_backend=spec.agents.backend,
@@ -142,6 +203,9 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
     owner_visible = {tool.name for tool in tools if owner_filter(tool) is None}
     owner_group_visible = {
         tool.name for tool in tools if owner_group_filter(tool) is None
+    }
+    user_group_visible = {
+        tool.name for tool in tools if user_group_filter(tool) is None
     }
 
     assert {
@@ -175,12 +239,22 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
     assert {
         "win_read_file",
         "read_bot_skill",
+        "list_mcp_servers",
+        "start_code_task",
+        "owner_list_workspaces",
+    }.issubset(owner_group_visible)
+    assert "wiki_search" not in owner_group_visible
+    assert {
+        "win_read_file",
+        "read_bot_skill",
         "wiki_search",
         "list_mcp_servers",
         "start_code_task",
         "owner_list_workspaces",
-    }.isdisjoint(owner_group_visible)
-    assert member_visible == owner_group_visible
+    }.isdisjoint(user_group_visible)
+    assert {"list_workspace", "read_text_head", "career_intel_query"}.issubset(
+        user_group_visible
+    )
 
 
 def test_admin_payload_is_sanitized_like_user(tmp_path: Path) -> None:

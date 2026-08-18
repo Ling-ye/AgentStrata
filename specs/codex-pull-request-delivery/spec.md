@@ -34,13 +34,31 @@ session read-only and routes every repository mutation through
 `start/get/cancel/resume_code_task`. No Codex main session inherits the personal
 shell, personal Codex home, or personal MCP configuration.
 
-[KNOWN][HIGH] A member main Codex session uses the exact current chat-by-user
-`Workspace.root` for its process working directory, CLI `--cd`, isolated shell
-`HOME`, and backend state. The instance-wide workspace root is reserved for
-Owner inventory and is never a member sandbox boundary. Member workspaces are
-intentionally allowed to be non-Git directories, so only `workspace` access
-passes `--skip-git-repo-check`; Owner `worktree` access retains the Git-repository
-preflight and fails closed when its source root is not a checkout.
+[KNOWN][HIGH] A member main Codex session uses the exact current conversation
+`Workspace.root` for its process working directory and CLI `--cd`. Private and
+actor-scoped group conversations retain their chat-by-user root and ordinary
+isolated backend home. A QQ shared group uses its dedicated
+`group_<chat>/shared` root, but stores the native resume, transcript, runtime home,
+and audit trail in an actor-specific subtree of the protected sibling
+`.conversation-state/`; bounded cross-actor chat context comes only from the
+protected group conversation journal. The instance-wide workspace root is
+reserved for Owner inventory and is never a member sandbox boundary. Member
+workspaces are intentionally allowed to be non-Git directories, so only
+`workspace` access passes `--skip-git-repo-check`; Owner `worktree` access retains
+the Git-repository preflight and fails closed when its source root is not a
+checkout.
+
+[KNOWN][HIGH] QQ shared-group Codex uses a dedicated fail-closed bubblewrap
+profile. The process sees the exact group shared root read-only, a cleared
+environment, hidden workspace `.codex` configuration/project instructions, the
+fixed Codex executable, one standalone Session Gateway, and only the current
+actor's protected state/audit paths. Direct shell, `apply_patch`, app/plugin, and
+other write-capable built-ins cannot modify the group tree. Every allowed file
+mutation returns through the actor-bound, workspace-scoped Session Gateway MCP,
+where the host repeats tool permission, payload, and path-containment checks.
+Missing bubblewrap support, unsafe roots, or non-unique gateway configuration
+fails before the backend session materializes and never falls back to a less
+isolated mode.
 
 [KNOWN][HIGH] `start_code_task` requires a concise public-safe title in addition
 to the private implementation prompt. The title is normalized to one line and is
@@ -163,10 +181,15 @@ The canonical repository-task implementation remains behind
 
 - [KNOWN][HIGH] Lingye validates with `owner_access: worktree` and no
   `auto_publish` field.
-- [KNOWN][HIGH] A member session can start Codex from its non-Git personal
-  workspace, while its process cwd, CLI `--cd`, shell `HOME`, and backend state
+- [KNOWN][HIGH] A member session can start Codex from its non-Git conversation
+  workspace, while its process cwd, CLI `--cd`, runtime home, and backend state
   never resolve to the instance-wide workspace root; Owner worktree sessions do
   not bypass the Git-repository check.
+- [KNOWN][HIGH] A QQ shared-group session keeps backend state/transcript under the
+  current actor's protected `.conversation-state` subtree, sees `shared/` only
+  through the read-only outer sandbox, and can mutate an allowed group file only
+  through the actor-bound scoped MCP. Direct builtin writes and isolation
+  fallback fail closed.
 - [KNOWN][HIGH] `host`, `auto_publish`, direct source publication, deployment
   restart, publication backup, rollback states, and `publish_source_changes`
   lifecycle intents have no production entry.
@@ -222,11 +245,15 @@ The canonical repository-task implementation remains behind
 
 ## Verification
 
-[COMPUTED][HIGH] The member-workspace isolation regression suite passes 56 tests
-and 12 subtests. It proves that runtime routing uses the current personal
-`Workspace.root`, member commands include `--skip-git-repo-check` with matching
-`--cd` and shell `HOME`, and Owner worktree commands omit the bypass. Ruff, the
-standalone SDD checker, the Lingye BotSpec validator, and `git diff --check` pass.
+[COMPUTED][HIGH] The pre-existing member-workspace isolation regression suite
+passes 56 tests and 12 subtests. It proves that private and actor-scoped routing
+uses the current conversation `Workspace.root`, member commands include
+`--skip-git-repo-check` with matching `--cd` and runtime home, and Owner worktree
+commands omit the bypass. Ruff, the standalone SDD checker, the Lingye BotSpec
+validator, and `git diff --check` pass. QQ shared-group Codex isolation is
+verified separately by the focused suite named in
+[`qq-group-shared-conversation-context`](../qq-group-shared-conversation-context/spec.md);
+these historical counts do not claim that extension or a real QQ ingress E2E.
 
 [COMPUTED][HIGH] `.venv/bin/python scripts/check_repo.py fast` passes SDD
 metadata, architecture boundaries, requirements drift, UTF-8 normalization, Ruff,

@@ -14,6 +14,7 @@ from chatcopilot.middleware.acp.attachment_pipeline import ExtractedPrompt
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder
 from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 
 _LOGGER = logging.getLogger("chatcopilot.middleware.acp.attachment_turns")
 
@@ -66,7 +67,7 @@ async def handle_upload_only_turn(
 
     if not session.workspace.user_id:
         text = (
-            "已收到附件，但当前会话没有绑定到用户身份，无法写入你的私人空间。\n"
+            "已收到附件，但当前会话没有绑定到稳定身份，无法写入会话空间。\n"
             "请重启机器人服务后重新上传文件；我不会自动分析这个文件。"
         )
         await _send_text(conn, session_id, text, make_text_update)
@@ -92,18 +93,51 @@ async def handle_upload_only_turn(
         if prompt_parts.has_resource
         else _attachment.extract_attachment_names_from_text(user_text)
     )
-    _attachment.import_transport_attachments(session.workspace, resource_names)
-    saved_now = [
-        name
-        for name in resource_names
-        if name and (session.workspace.attachments / name).is_file()
-    ]
+    if (
+        getattr(session.workspace, "scope", "actor")
+        == WORKSPACE_SCOPE_GROUP_SHARED
+    ):
+        text = _attachment.format_group_attachment_binding_rejection(resource_names)
+        await _send_text(conn, session_id, text, make_text_update)
+        resource_hint = "\n".join(
+            f"[资源引用: {name}]" for name in resource_names if name
+        )
+        accepted_text = "\n".join(
+            part for part in (user_text.strip(), resource_hint) if part
+        )
+        session.record_exchange(accepted_text or "[文件上传]", text)
+        cancel_attachment_ack(session_id)
+        finish_turn_task(
+            turn_task,
+            progress="已拒绝无法绑定到当前群消息的附件。",
+            final_text=text,
+            stop_reason="end_turn",
+        )
+        return AttachmentTurnResult(
+            response=PromptResponse(
+                stop_reason="end_turn",
+                user_message_id=message_id,
+            ),
+            session=session,
+        )
+    imported_names = _attachment.import_transport_attachments(
+        session.workspace,
+        resource_names,
+    )
+    saved_now = _attachment.confirmed_transport_attachments(
+        session.workspace,
+        resource_names,
+        imported_names=imported_names,
+    )
     cancel_attachment_ack(session_id)
     if saved_now:
         text = _attachment.format_attachment_ack(session.workspace, saved_now)
         ack_kind = "eager_final"
     else:
-        text = _attachment.format_attachment_receipt(resource_names)
+        text = _attachment.format_attachment_receipt(
+            resource_names,
+            session.workspace,
+        )
         ack_kind = "fallback_receipt"
     await _send_text(conn, session_id, text, make_text_update)
     session.record_exchange(user_text or "[文件上传]", text)

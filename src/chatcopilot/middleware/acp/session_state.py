@@ -19,10 +19,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+from uuid import uuid4
 
 from chatcopilot.agent.session_protocol import AgentSessionProtocol
 from chatcopilot.botspec import BotRuntimeContext
 from chatcopilot.contracts.agent import ResourceRef
+from chatcopilot.contracts.identity import TurnIdentity
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.contracts.model_selection import (
     CodeModelSelection,
     MODEL_SELECTION_SCOPE_ONCE,
@@ -34,6 +37,7 @@ from chatcopilot.middleware.runtime.workspace import Workspace
 
 if TYPE_CHECKING:
     from chatcopilot.core.config import RoutingConfig
+    from chatcopilot.middleware.acp.group_conversation import GroupConversationJournal
 
 _LOGGER = logging.getLogger("chatcopilot.middleware.acp.session_state")
 
@@ -54,6 +58,7 @@ class SessionState:
     session: AgentSessionProtocol | None = None
     llm_model: str | None = None
     routing_config: RoutingConfig | None = None
+    execution_session_id: str | None = None
     code_model_selection: CodeModelSelection | None = None
     code_model_once: CodeModelSelection | None = None
     debug_mode: bool = False
@@ -62,17 +67,52 @@ class SessionState:
         repr=False,
     )
     pending_image_names: tuple[str, ...] = field(default=(), repr=False)
+    turn_identity: TurnIdentity | None = field(default=None, repr=False)
+    conversation_journal: GroupConversationJournal | None = field(
+        default=None,
+        repr=False,
+    )
+    conversation_cursor: int = field(default=0, repr=False)
+    turn_system_appendix: str = field(default="", repr=False)
     _transcript_path: Optional[Path] = field(default=None, repr=False)
     _pending_exchanges: list[tuple[str, str]] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
+        # The conversation-level placeholder exists before a sender passes the
+        # access gate. It must not create actor diagnostics or protected state.
+        if (
+            self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+            and (not self.workspace.user_id or not self.execution_session_id)
+        ):
+            self._transcript_path = None
+            return
         if self._transcript_path is None:
             try:
-                self.workspace.transcripts.mkdir(parents=True, exist_ok=True)
+                transcript_root = self.workspace.transcripts
+                if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+                    state_root = self.workspace.root.parent / ".conversation-state"
+                    if state_root.is_symlink():
+                        raise RuntimeError(
+                            "shared-group conversation state must not be a symlink"
+                        )
+                    state_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    state_root.chmod(0o700)
+                    transcript_root = state_root / "transcripts"
+                    if transcript_root.is_symlink():
+                        raise RuntimeError(
+                            "shared-group transcript root must not be a symlink"
+                        )
+                    transcript_root.mkdir(mode=0o700, exist_ok=True)
+                    transcript_root.chmod(0o700)
+                else:
+                    transcript_root.mkdir(parents=True, exist_ok=True)
                 start_iso = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                fname = f"{_sanitize_session_id(self.session_id)}__{start_iso}.jsonl"
-                self._transcript_path = self.workspace.transcripts / fname
-            except OSError:
+                transcript_id = self.execution_session_id or self.session_id
+                if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+                    transcript_id = f"{self.session_id}.actor.{uuid4().hex}"
+                fname = f"{_sanitize_session_id(transcript_id)}__{start_iso}.jsonl"
+                self._transcript_path = transcript_root / fname
+            except (OSError, RuntimeError):
                 _LOGGER.exception("无法初始化 transcript 路径，本会话不落盘")
                 self._transcript_path = None
 
@@ -150,11 +190,81 @@ class SessionState:
 
     def record_exchange(self, user_text: str, assistant_text: str) -> None:
         """记录未进入 LLM 工具循环的确定性回复，并落 transcript。"""
+        group_sequence: int | None = None
+        if self.turn_identity is not None and self.conversation_journal is not None:
+            # Commit the protected conversation record before advancing this
+            # actor's backend. If the journal is unavailable, the backend stays
+            # untouched and the turn fails closed instead of forking history.
+            group_sequence = self.conversation_journal.append(
+                identity=self.turn_identity,
+                user_text=user_text,
+                assistant_text=assistant_text,
+            )
         if self.session is None:
             self._pending_exchanges.append((user_text, assistant_text))
         else:
-            self.session.record_exchange(user_text, assistant_text)
+            try:
+                self.session.record_exchange(user_text, assistant_text)
+            except Exception:
+                # The journal is authoritative and the cursor deliberately
+                # remains behind. Drop a potentially half-mutated native resume;
+                # after rematerialization the journal delta reconstructs the
+                # accepted deterministic exchange exactly once.
+                failed_session = self.session
+                self.session = None
+                discard = getattr(failed_session, "discard", None)
+                close = getattr(failed_session, "close", None)
+                action = discard if callable(discard) else close
+                if callable(action):
+                    try:
+                        action()
+                    except Exception:  # noqa: BLE001 - preserve original failure
+                        _LOGGER.exception("failed to discard inconsistent group backend")
+                raise
+        if group_sequence is not None:
+            # This deterministic exchange is now present in both the journal
+            # and this actor's backend. Advance so only newer actors' turns are
+            # injected on the next prompt.
+            self.conversation_cursor = group_sequence
         self.persist_transcript()
+
+    def bind_group_turn(
+        self,
+        *,
+        identity: TurnIdentity,
+        journal: "GroupConversationJournal",
+        system_appendix: str,
+    ) -> None:
+        self.turn_identity = identity
+        self.conversation_journal = journal
+        self.turn_system_appendix = system_appendix
+
+    def record_group_model_exchange(
+        self,
+        user_text: str,
+        assistant_text: str,
+    ) -> None:
+        """Persist one model turn without duplicating it in the backend history."""
+
+        self._append_group_exchange(user_text, assistant_text, advance_cursor=True)
+        self.persist_transcript()
+
+    def _append_group_exchange(
+        self,
+        user_text: str,
+        assistant_text: str,
+        *,
+        advance_cursor: bool,
+    ) -> None:
+        if self.turn_identity is None or self.conversation_journal is None:
+            return
+        sequence = self.conversation_journal.append(
+            identity=self.turn_identity,
+            user_text=user_text,
+            assistant_text=assistant_text,
+        )
+        if advance_cursor:
+            self.conversation_cursor = sequence
 
     def set_code_model_selection(self, selection: CodeModelSelection) -> None:
         """Store a session or one-shot Codex selection without touching the chat LLM."""
@@ -231,6 +341,7 @@ class SessionState:
         """把当前 messages 整体覆写到 transcript JSONL（每轮调用一次）。"""
         if self._transcript_path is None:
             return
+        shared_group = self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
         now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
         messages = (
             self.session.snapshot_messages()
@@ -240,7 +351,7 @@ class SessionState:
         meta = {
             "_meta": {
                 "session_id": self.session_id,
-                "role": self.role.value,
+                "role": None if shared_group else self.role.value,
                 "assistant_mode": self.assistant_mode.value,
                 "debug_mode": self.debug_mode,
                 "code_model_selection": (
@@ -253,23 +364,31 @@ class SessionState:
                     if self.code_model_once is not None
                     else None
                 ),
-                "user_id": self.workspace.user_id,
-                "user_name": self.workspace.user_name,
+                "user_id": None if shared_group else self.workspace.user_id,
+                "user_name": None if shared_group else self.workspace.user_name,
                 "chat_kind": self.workspace.chat_kind,
                 "chat_id": self.workspace.chat_id,
                 "message_count": len(messages),
-                "backend_session_ref": self._backend_session_payload(),
+                "backend_session_ref": (
+                    None if shared_group else self._backend_session_payload()
+                ),
+                "workspace_scope": self.workspace.scope,
+                "execution_session_id": None if shared_group else self.execution_session_id,
+                "turn_actor": self._turn_actor_payload(),
                 "logged_at": now_iso,
             }
         }
         try:
-            tmp = self._transcript_path.with_suffix(self._transcript_path.suffix + ".tmp")
-            with tmp.open("w", encoding="utf-8") as fh:
+            tmp = self._transcript_path.with_suffix(
+                self._transcript_path.suffix + f".{uuid4().hex}.tmp"
+            )
+            with tmp.open("x", encoding="utf-8") as fh:
                 fh.write(json.dumps(meta, ensure_ascii=False) + "\n")
                 for msg in messages:
                     line = dict(msg)
                     line["_logged_at"] = now_iso
                     fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+            tmp.chmod(0o600)
             tmp.replace(self._transcript_path)
         except OSError:
             _LOGGER.warning(
@@ -277,6 +396,25 @@ class SessionState:
                 self._transcript_path,
                 self.session_id,
             )
+
+    def _turn_actor_payload(self) -> dict[str, str | None] | None:
+        identity = self.turn_identity
+        if identity is None:
+            return None
+        payload = {
+            "platform": identity.conversation.platform,
+            "chat_kind": identity.conversation.chat_kind,
+            "chat_id": identity.conversation.chat_id,
+            "actor_ref": identity.actor_ref,
+            "sender_user_name": identity.sender_user_name,
+            "message_id": identity.message_id,
+            "source": identity.source,
+        }
+        # Shared-group transcripts and the raw stable ID remain in protected
+        # sibling state; model-visible attribution uses only the display ref.
+        if self.workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
+            payload["sender_user_id"] = identity.sender_user_id
+        return payload
 
     def _backend_session_payload(self) -> dict[str, str] | None:
         if self.session is None:

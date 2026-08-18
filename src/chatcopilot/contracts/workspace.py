@@ -10,6 +10,8 @@ MEMORY_FILENAME = "MEMORY.md"
 TRANSCRIPTS_DIRNAME = "transcripts"
 IDENTITY_FILENAME = "IDENTITY.json"
 WORKSPACE_SUBDIRS = ("downloads", "results", "uploads", "jobs", "tasks")
+WORKSPACE_SCOPE_ACTOR = "actor"
+WORKSPACE_SCOPE_GROUP_SHARED = "group_shared"
 
 
 def normalize_chat_kind(chat_kind: Optional[str], chat_id: Optional[str] = None) -> Optional[str]:
@@ -32,6 +34,7 @@ class WorkspaceRef:
     chat_id: Optional[str]
     user_id: Optional[str] = None
     user_name: Optional[str] = None
+    scope: str = WORKSPACE_SCOPE_ACTOR
 
 
 @dataclass(frozen=True)
@@ -96,11 +99,13 @@ class WorkspaceView(WorkspaceRef):
 
 def describe_workspace_view(ws: WorkspaceView) -> str:
     parts = [f"workspace={ws.root}"]
+    if ws.scope != WORKSPACE_SCOPE_ACTOR:
+        parts.append(f"scope={ws.scope}")
     if ws.chat_id:
         parts.append(f"chat={ws.chat_kind or 'chat'}/{ws.chat_id}")
-    if ws.user_id:
+    if ws.user_id and ws.scope != WORKSPACE_SCOPE_GROUP_SHARED:
         parts.append(f"user={ws.user_id}")
-    if ws.user_name:
+    if ws.user_name and ws.scope != WORKSPACE_SCOPE_GROUP_SHARED:
         parts.append(f"name={ws.user_name}")
     return " ".join(parts)
 
@@ -111,6 +116,8 @@ __all__ = [
     "MEMORY_FILENAME",
     "TRANSCRIPTS_DIRNAME",
     "WORKSPACE_SUBDIRS",
+    "WORKSPACE_SCOPE_ACTOR",
+    "WORKSPACE_SCOPE_GROUP_SHARED",
     "WorkspaceRef",
     "WorkspaceView",
     "describe_workspace_view",

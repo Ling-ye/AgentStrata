@@ -5,12 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import stat
+import subprocess
 import sys
 import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from chatcopilot.agent.context import (
     frame_task_message,
@@ -61,8 +64,12 @@ from chatcopilot.external_tools.codex_cli.credentials import (
     validate_auth_root_path,
 )
 from chatcopilot.external_tools.codex_cli.process_runner import run_codex_process
+from chatcopilot.external_tools.codex_cli import session_gateway as _standalone_gateway
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.backends.session_relay import SessionToolRelay
+
+if TYPE_CHECKING:
+    from chatcopilot.agent.session import ToolPayloadFilter
 
 
 @dataclass
@@ -71,6 +78,8 @@ class _CodexSession:
     system_baseline: str
     allowed_tool_names: frozenset[str]
     gateway_config: Path
+    audit_path: Path
+    state_root: Path
     workdir: Path
     codex_home: Path
     session_state_path: Path
@@ -78,9 +87,65 @@ class _CodexSession:
     role_hint: str
     access_mode: str
     policy_fingerprint: str
+    isolate_backend_state: bool = False
     native_session_id: str = ""
     credential_generation: int = 0
     messages: list[dict[str, Any]] = field(default_factory=list)
+
+
+_ISOLATED_GATEWAY_CONFIG = "/run/chatcopilot-gateway.json"
+_ISOLATED_CODEX_HOME = "/sandbox-home/agent/.codex"
+_ISOLATED_GATEWAY_VENV = "/opt/chatcopilot-gateway-venv"
+_ISOLATED_GATEWAY_SCRIPT = "/opt/chatcopilot-gateway/session_gateway.py"
+_ISOLATED_CODEX_BINARY = "/opt/chatcopilot-codex/codex"
+_BWRAP_PROBED: set[str] = set()
+_ISOLATED_DISABLED_FEATURES = (
+    "apps",
+    "artifact",
+    "auth_elicitation",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "chronicle",
+    "code_mode",
+    "code_mode_buffered_exec",
+    "code_mode_host",
+    "code_mode_only",
+    "computer_use",
+    "deferred_executor",
+    "deferred_tool_world_state",
+    "enable_mcp_apps",
+    "external_agent_memory_import",
+    "goals",
+    "guardian_approval",
+    "guardianv2",
+    "hooks",
+    "image_generation",
+    "in_app_browser",
+    "in_app_updates",
+    "js_repl",
+    "js_repl_tools_only",
+    "memories",
+    "mentions_v2",
+    "multi_agent",
+    "multi_agent_v2",
+    "network_proxy",
+    "plugin_sharing",
+    "plugins",
+    "recommended_plugins",
+    "remote_plugin",
+    "request_permissions_tool",
+    "shell_snapshot",
+    "shell_tool",
+    "shell_zsh_fork",
+    "skill_mcp_dependency_install",
+    "skill_search",
+    "tool_call_mcp_elicitation",
+    "tool_suggest",
+    "unified_exec",
+    "unified_exec_zsh_fork",
+    "workspace_dependencies",
+)
 
 
 class CodexAgentBackend:
@@ -93,6 +158,7 @@ class CodexAgentBackend:
         runtime_config: Any,
         tools: tuple[Any, ...] = (),
         tool_executor: ToolExecutor | None = None,
+        tool_payload_filter: ToolPayloadFilter | None = None,
         backend_policy: CodexMainSessionPolicy | None = None,
         **_: Any,
     ) -> None:
@@ -100,6 +166,7 @@ class CodexAgentBackend:
         self._tool_names = frozenset(tool_names)
         self._tools = tuple(tools)
         self._tool_executor = tool_executor
+        self._tool_payload_filter = tool_payload_filter
         self._policy = backend_policy or CodexMainSessionPolicy()
         self._capabilities = BackendCapabilities(
             names=frozenset(
@@ -154,26 +221,41 @@ class CodexAgentBackend:
             .expanduser()
             .resolve()
         )
+        isolate_backend_state = bool(options.get("isolate_backend_state"))
+        if isolate_backend_state:
+            self._require_isolated_main_codex_sandbox()
         state_root.mkdir(parents=True, exist_ok=True)
         try:
             state_root.chmod(0o700)
         except OSError:
             pass
+        if isolate_backend_state:
+            self._validate_isolated_roots(workdir=workdir, state_root=state_root)
         gateway_config = state_root / f"{stable_id}.gateway.json"
-        audit_path = state_root / f"{stable_id}.audit.jsonl"
+        audit_root = state_root / "audit"
+        audit_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        audit_root.chmod(0o700)
+        audit_path = audit_root / f"{stable_id}.audit.jsonl"
         session_state_path = state_root / f"{stable_id}.session.json"
-        native_session_id, credential_generation = self._load_native_session_state(
-            session_state_path,
-            acp_session_id=request.session_id,
-            policy_fingerprint=policy_fingerprint,
-        )
+        if bool(options.get("restore_persisted_native_session", True)):
+            native_session_id, credential_generation = self._load_native_session_state(
+                session_state_path,
+                acp_session_id=request.session_id,
+                policy_fingerprint=policy_fingerprint,
+            )
+        else:
+            native_session_id, credential_generation = "", 0
         allowed_tool_names = request.allowed_tool_names & self._tool_names
         selected_tools = tuple(tool for tool in self._tools if tool.name in allowed_tool_names)
         executor = self._tool_executor or ToolExecutor(
             tools=list(selected_tools),
             caller_role_hint=role_hint,
         )
-        relay = SessionToolRelay(tools=selected_tools, executor=executor)
+        relay = SessionToolRelay(
+            tools=selected_tools,
+            executor=executor,
+            payload_filter=self._tool_payload_filter,
+        )
         relay_endpoint = relay.start()
         payload = {
             "schema_version": 1,
@@ -182,7 +264,9 @@ class CodexAgentBackend:
             "role_hint": role_hint,
             "access_mode": access_mode,
             "policy_fingerprint": policy_fingerprint,
-            "audit_path": str(audit_path),
+            # The host relay is the authoritative group tool-event recorder.
+            # Do not expose a writable audit file inside the model namespace.
+            "audit_path": "" if isolate_backend_state else str(audit_path),
             "relay": relay_endpoint.to_dict(),
             "relay_timeout_seconds": self._runtime_config.routing.code_timeout_seconds,
         }
@@ -197,6 +281,8 @@ class CodexAgentBackend:
             system_baseline=request.system_baseline,
             allowed_tool_names=frozenset(tool.name for tool in selected_tools),
             gateway_config=gateway_config,
+            audit_path=audit_path,
+            state_root=state_root,
             workdir=workdir,
             codex_home=codex_home,
             session_state_path=session_state_path,
@@ -204,6 +290,7 @@ class CodexAgentBackend:
             role_hint=role_hint,
             access_mode=access_mode,
             policy_fingerprint=policy_fingerprint,
+            isolate_backend_state=isolate_backend_state,
             native_session_id=native_session_id,
             credential_generation=credential_generation,
         )
@@ -432,6 +519,13 @@ class CodexAgentBackend:
             state.relay.close()
             state.gateway_config.unlink(missing_ok=True)
 
+    def discard_session(self, session: BackendSessionRef) -> None:
+        """Invalidate native resume before closing a consistency-poisoned session."""
+
+        state = self._resolve(session)
+        self._clear_native_session(state)
+        self.close_session(session)
+
     def current_session_ref(self, session: BackendSessionRef) -> BackendSessionRef:
         state = self._resolve(session)
         value = state.native_session_id or self._stable_key(session)
@@ -466,23 +560,40 @@ class CodexAgentBackend:
     ) -> list[str]:
         routing = self._runtime_config.routing
         effective_selection = selection or default_code_model_selection(routing)
-        gateway_args = json.dumps(
-            [
+        isolate_backend_state = bool(
+            getattr(state, "isolate_backend_state", False)
+        )
+        if isolate_backend_state:
+            gateway_command = _ISOLATED_GATEWAY_VENV + "/bin/python"
+            gateway_argv = [
+                _ISOLATED_GATEWAY_SCRIPT,
+                _ISOLATED_GATEWAY_CONFIG,
+            ]
+        else:
+            gateway_command = sys.executable
+            gateway_argv = [
                 "-m",
                 "chatcopilot",
                 "mcp-session-gateway",
                 str(state.gateway_config),
-            ],
-            ensure_ascii=False,
-        )
+            ]
+        gateway_args = json.dumps(gateway_argv, ensure_ascii=False)
         worktree_access = state.access_mode == CODEX_ACCESS_WORKTREE
         default_sandbox_mode = "read-only" if worktree_access else "workspace-write"
-        sandbox_mode = self._policy.sandbox_mode or default_sandbox_mode
+        # Shared-group mutations must cross the actor-bound MCP relay, where
+        # workspace containment and payload policy are enforced. Codex builtin
+        # tools (including apply_patch, which cannot currently be disabled) get
+        # an OS read-only view instead of direct writes to the shared tree.
+        sandbox_mode = (
+            "read-only"
+            if isolate_backend_state
+            else (self._policy.sandbox_mode or default_sandbox_mode)
+        )
         if worktree_access and sandbox_mode != "read-only":
             raise ValueError("worktree Codex access cannot use a writable sandbox")
         extra_config = [
             "mcp_servers={}",
-            f"mcp_servers.chatcopilot.command={json.dumps(sys.executable)}",
+            f"mcp_servers.chatcopilot.command={json.dumps(gateway_command)}",
             f"mcp_servers.chatcopilot.args={gateway_args}",
             "mcp_servers.chatcopilot.required=true",
             (
@@ -491,6 +602,12 @@ class CodexAgentBackend:
             ),
             'mcp_servers.chatcopilot.default_tools_approval_mode="approve"',
         ]
+        if isolate_backend_state:
+            extra_config.append("project_doc_max_bytes=0")
+            extra_config.extend(
+                f"features.{feature}=false"
+                for feature in _ISOLATED_DISABLED_FEATURES
+            )
         if self._policy.network_access:
             extra_config.extend(self._workspace_network_proxy_config())
         command = build_codex_command(
@@ -505,8 +622,18 @@ class CodexAgentBackend:
             ephemeral=False,
             ignore_user_config=True,
             inherit_shell_environment=False,
+            shell_env_overrides=(
+                {
+                    "PATH": "/usr/local/bin:/usr/bin:/bin",
+                    "TMPDIR": "/tmp",
+                }
+                if isolate_backend_state
+                else None
+            ),
             extra_config=tuple(extra_config),
         )
+        if isolate_backend_state:
+            command[2:2] = ["--strict-config", "--ignore-rules"]
         command.append("--json")
         if state.native_session_id:
             command.extend(["resume", state.native_session_id])
@@ -516,6 +643,8 @@ class CodexAgentBackend:
         else:
             for image_path in image_paths:
                 command.extend(["--image", image_path])
+        if isolate_backend_state:
+            return self._wrap_isolated_command(state, command)
         return command
 
     @staticmethod
@@ -525,14 +654,196 @@ class CodexAgentBackend:
             runtime_home=state.codex_home,
         )
 
+    @staticmethod
+    def _require_isolated_main_codex_sandbox() -> None:
+        bwrap = shutil.which("bwrap")
+        if not bwrap:
+            raise RuntimeError("bubblewrap is required for shared-group Codex sessions")
+        resolved = str(Path(bwrap).resolve())
+        if resolved in _BWRAP_PROBED:
+            return
+        probe = subprocess.run(
+            [
+                resolved,
+                "--die-with-parent",
+                "--new-session",
+                "--unshare-pid",
+                "--ro-bind",
+                "/",
+                "/",
+                "--",
+                "/bin/true",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if probe.returncode != 0:
+            raise RuntimeError("bubblewrap cannot create the shared-group Codex sandbox")
+        _BWRAP_PROBED.add(resolved)
+
+    @staticmethod
+    def _validate_isolated_roots(*, workdir: Path, state_root: Path) -> None:
+        if not workdir.is_dir() or workdir.is_symlink():
+            raise RuntimeError("shared-group Codex workdir must be a real directory")
+        if state_root.is_symlink():
+            raise RuntimeError("shared-group Codex state root must not be a symlink")
+        try:
+            state_root.relative_to(workdir)
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError("shared-group Codex state must be outside the shared workdir")
+        try:
+            workdir.relative_to(state_root)
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError("shared-group Codex workdir must be outside backend state")
+
+    @staticmethod
+    def _wrap_isolated_command(state: _CodexSession, command: list[str]) -> list[str]:
+        bwrap = shutil.which("bwrap")
+        if not bwrap:
+            raise RuntimeError("bubblewrap is required for shared-group Codex sessions")
+        host_codex = Path(command[0]).expanduser().resolve()
+        gateway_venv = Path(sys.prefix).expanduser().resolve()
+        gateway_script = Path(_standalone_gateway.__file__).resolve()
+        for path, label in (
+            (host_codex, "Codex executable"),
+            (gateway_script, "session gateway"),
+        ):
+            if not path.is_file() or path.is_symlink():
+                raise RuntimeError(f"isolated {label} must be a real file")
+        if not gateway_venv.is_dir() or gateway_venv.is_symlink():
+            raise RuntimeError("isolated session gateway environment must be a real directory")
+        for path, label in (
+            (state.codex_home, "Codex runtime home"),
+        ):
+            if not path.is_dir() or path.is_symlink():
+                raise RuntimeError(f"isolated {label} must be a real directory")
+            info = path.stat()
+            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                raise RuntimeError(f"isolated {label} must be owner-only mode 0700")
+        if not state.gateway_config.is_file() or state.gateway_config.is_symlink():
+            raise RuntimeError("isolated session gateway config must be a real file")
+
+        wrapped = [
+            str(Path(bwrap).resolve()),
+            "--die-with-parent",
+            "--new-session",
+            "--clearenv",
+            "--unshare-pid",
+            "--unshare-ipc",
+            "--unshare-uts",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--tmpfs",
+            "/run",
+            "--dir",
+            "/etc",
+            "--dir",
+            "/opt",
+            "--dir",
+            "/opt/chatcopilot-codex",
+            "--dir",
+            "/opt/chatcopilot-gateway",
+            "--dir",
+            "/sandbox-home",
+            "--dir",
+            "/sandbox-home/agent",
+        ]
+        for system_path in ("/usr", "/bin", "/lib", "/lib64"):
+            if Path(system_path).exists():
+                wrapped.extend(["--ro-bind", system_path, system_path])
+        for system_path in (
+            "/etc/ca-certificates",
+            "/etc/group",
+            "/etc/hosts",
+            "/etc/ld.so.cache",
+            "/etc/localtime",
+            "/etc/nsswitch.conf",
+            "/etc/passwd",
+            "/etc/resolv.conf",
+            "/etc/ssl",
+        ):
+            if Path(system_path).exists():
+                wrapped.extend(["--ro-bind", system_path, system_path])
+        wrapped.extend(_sandbox_parent_dirs(state.workdir))
+        wrapped.extend(
+            [
+                "--ro-bind",
+                str(state.workdir),
+                str(state.workdir),
+                "--tmpfs",
+                str(state.workdir / ".codex"),
+                "--ro-bind",
+                str(host_codex),
+                _ISOLATED_CODEX_BINARY,
+                "--ro-bind",
+                str(gateway_venv),
+                _ISOLATED_GATEWAY_VENV,
+                "--ro-bind",
+                str(gateway_script),
+                _ISOLATED_GATEWAY_SCRIPT,
+                "--ro-bind",
+                str(state.gateway_config),
+                _ISOLATED_GATEWAY_CONFIG,
+                "--bind",
+                str(state.codex_home),
+                _ISOLATED_CODEX_HOME,
+                "--setenv",
+                "HOME",
+                "/sandbox-home/agent",
+                "--setenv",
+                "CODEX_HOME",
+                _ISOLATED_CODEX_HOME,
+                "--setenv",
+                "CODEX_SQLITE_HOME",
+                _ISOLATED_CODEX_HOME,
+                "--setenv",
+                "PATH",
+                "/opt/chatcopilot-codex:/usr/local/bin:/usr/bin:/bin",
+                "--setenv",
+                "TMPDIR",
+                "/tmp",
+                "--setenv",
+                "LANG",
+                "C.UTF-8",
+                "--setenv",
+                "LC_ALL",
+                "C.UTF-8",
+                "--setenv",
+                "USER",
+                "agentstrata",
+                "--setenv",
+                "LOGNAME",
+                "agentstrata",
+                "--chdir",
+                str(state.workdir),
+                "--",
+            ]
+        )
+        command = list(command)
+        command[0] = _ISOLATED_CODEX_BINARY
+        wrapped.extend(command)
+        return wrapped
+
     def _prompt(self, state: _CodexSession, task: AgentTask) -> str:
         baseline = state.system_baseline.strip()
         appendix = (task.system_appendix or "").strip()
         pieces = [
             baseline,
             self._execution_policy_prompt(state),
-            appendix,
             frame_task_message(task),
+            appendix,
         ]
         return "\n\n".join(piece for piece in pieces if piece)
 
@@ -829,6 +1140,8 @@ class CodexAgentBackend:
 
     @staticmethod
     def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+        if path.is_symlink():
+            raise RuntimeError("Codex backend state file must not be a symlink")
         temp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
         temp.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
@@ -839,6 +1152,30 @@ class CodexAgentBackend:
         except OSError:
             pass
         temp.replace(path)
+
+
+def _sandbox_parent_dirs(path: Path) -> list[str]:
+    """Create only the lexical parents needed for one exact workspace bind."""
+
+    target = path.expanduser().resolve()
+    precreated = {
+        Path("/bin"),
+        Path("/dev"),
+        Path("/etc"),
+        Path("/lib"),
+        Path("/lib64"),
+        Path("/opt"),
+        Path("/proc"),
+        Path("/run"),
+        Path("/tmp"),
+        Path("/usr"),
+    }
+    arguments: list[str] = []
+    for parent in reversed(target.parents):
+        if parent == Path("/") or parent in precreated:
+            continue
+        arguments.extend(["--dir", str(parent)])
+    return arguments
 
 
 __all__ = ["CodexAgentBackend"]

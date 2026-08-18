@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -9,12 +10,15 @@ from acp import PromptResponse
 
 from chatcopilot.middleware.acp import access_gate as _access_gate
 from chatcopilot.contracts.agent import ResourceRef
+from chatcopilot.contracts.identity import TurnIdentity
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.core.image_content import ImageContentError, is_supported_image_path
 from chatcopilot.middleware.acp import attachment_pipeline as _attachment
 from chatcopilot.middleware.acp import attachment_turns as _attachment_turns
 from chatcopilot.middleware.acp import deterministic_replies as _deterministic_replies
 from chatcopilot.middleware.acp import image_pipeline as _image
 from chatcopilot.middleware.acp.prompt_pipeline import build_topic_metadata
+from chatcopilot.middleware.acp.group_conversation import SenderEnvelopeError
 from chatcopilot.middleware.acp.turn_pipeline import (
     CallbackTurnHandler,
     OrderedTurnPipeline,
@@ -41,6 +45,11 @@ class AcpTurnOrchestrator:
         update_text: Callable[[str], Any],
         recover_workspace: Callable[..., Any],
         refresh_system_prompt: Callable[[Any], None],
+        prepare_turn_identity: Callable[
+            ..., tuple[Any, str, TurnIdentity | None]
+        ]
+        | None = None,
+        activate_turn_identity: Callable[..., Any] | None = None,
     ) -> None:
         self._host = host
         self._platform_type = platform_type
@@ -51,6 +60,12 @@ class AcpTurnOrchestrator:
         self._update_text = update_text
         self._recover_workspace = recover_workspace
         self._refresh_system_prompt = refresh_system_prompt
+        self._prepare_turn_identity = prepare_turn_identity or (
+            lambda **kwargs: (kwargs["session"], kwargs["user_text"], None)
+        )
+        self._activate_turn_identity = activate_turn_identity or (
+            lambda **kwargs: kwargs["session"]
+        )
 
     async def run(
         self,
@@ -87,17 +102,22 @@ class AcpTurnOrchestrator:
         return outcome.response
 
     async def _attachments(self, turn: TurnContext) -> TurnOutcome:
+        prompt_parts = _attachment.extract_prompt_parts(turn.metadata["raw_prompt"])
+        try:
+            turn.session, clean_text, turn_identity = self._prepare_turn_identity(
+                session=turn.session,
+                session_id=turn.session_id,
+                message_id=turn.message_id,
+                user_text=prompt_parts.text or "",
+            )
+        except SenderEnvelopeError as exc:
+            return await self._identity_rejection(turn, exc)
         prompt_parts = _attachment.normalize_cc_connect_wrapper(
-            _attachment.extract_prompt_parts(turn.metadata["raw_prompt"])
+            replace(prompt_parts, text=clean_text)
         )
         turn.metadata["prompt_parts"] = prompt_parts
+        turn.metadata["turn_identity"] = turn_identity
         turn.user_text = prompt_parts.text or ""
-        turn.turn_task = self._host._start_turn_task(
-            session=turn.session,
-            session_id=turn.session_id,
-            message_id=turn.message_id,
-            user_text=turn.user_text,
-        )
         _LOGGER.info(
             "session/prompt | sid=%s platform=%s msgs=%d user_text_len=%d "
             "resources=%d mode=%s debug=%s",
@@ -115,18 +135,35 @@ class AcpTurnOrchestrator:
         runtime = getattr(self._host, "_runtime", None)
         access = getattr(runtime, "access", None)
         if access is None or not access.enabled:
-            return TurnOutcome()
+            return await self._activate_allowed_identity(turn)
         mention_name = None
         spec = getattr(runtime, "spec", None)
         platform_spec = getattr(spec, "platform", None)
         if platform_spec is not None:
             mention_name = getattr(platform_spec, "mention_name", None)
+        turn_identity = turn.metadata.get("turn_identity")
+        workspace = turn.session.workspace
+        chat_kind = (
+            turn_identity.conversation.chat_kind
+            if turn_identity is not None
+            else workspace.chat_kind
+        )
+        chat_id = (
+            turn_identity.conversation.chat_id
+            if turn_identity is not None
+            else workspace.chat_id
+        )
+        user_id = (
+            turn_identity.sender_user_id
+            if turn_identity is not None
+            else workspace.user_id
+        )
         decision = _access_gate.evaluate(
             access,
             platform_type=self._platform_type,
-            chat_kind=turn.session.workspace.chat_kind,
-            chat_id=turn.session.workspace.chat_id,
-            user_id=turn.session.workspace.user_id,
+            chat_kind=chat_kind,
+            chat_id=chat_id,
+            user_id=user_id,
             text=turn.user_text,
             mention_name=mention_name,
         )
@@ -135,13 +172,13 @@ class AcpTurnOrchestrator:
             "reason=%s text=%r",
             turn.session_id,
             "passed" if decision.allowed else "IGNORED",
-            turn.session.workspace.chat_kind,
-            turn.session.workspace.user_id,
+            chat_kind,
+            user_id,
             decision.reason,
             turn.user_text[:120],
         )
         if decision.allowed:
-            return TurnOutcome()
+            return await self._activate_allowed_identity(turn)
         self._host._finish_turn_task(
             turn.turn_task,
             status="succeeded",
@@ -153,6 +190,51 @@ class AcpTurnOrchestrator:
             ),
             stop=True,
             reason="access_denied",
+        )
+
+    async def _activate_allowed_identity(self, turn: TurnContext) -> TurnOutcome:
+        try:
+            turn.session = self._activate_turn_identity(
+                session=turn.session,
+                session_id=turn.session_id,
+                identity=turn.metadata.get("turn_identity"),
+            )
+        except SenderEnvelopeError as exc:
+            return await self._identity_rejection(turn, exc)
+        self._start_turn_task(turn)
+        return TurnOutcome()
+
+    async def _identity_rejection(
+        self,
+        turn: TurnContext,
+        exc: SenderEnvelopeError,
+    ) -> TurnOutcome:
+        _LOGGER.warning(
+            "session/prompt | sid=%s rejected shared-group identity | code=%s",
+            turn.session_id,
+            exc.code,
+        )
+        await self._host._conn.session_update(
+            session_id=turn.session_id,
+            update=self._update_text(str(exc)),
+        )
+        return TurnOutcome(
+            response=PromptResponse(
+                stop_reason="end_turn",
+                user_message_id=turn.message_id,
+            ),
+            stop=True,
+            reason=exc.code,
+        )
+
+    def _start_turn_task(self, turn: TurnContext) -> None:
+        if turn.turn_task is not None:
+            return
+        turn.turn_task = self._host._start_turn_task(
+            session=turn.session,
+            session_id=turn.session_id,
+            message_id=turn.message_id,
+            user_text=turn.user_text,
         )
 
     async def _deterministic_shortcuts(self, turn: TurnContext) -> TurnOutcome:
@@ -168,7 +250,13 @@ class AcpTurnOrchestrator:
             has_private_space_inventory=self._has_private_space_inventory,
             pending_attachment_names=getattr(
                 self._host, "_attachment_ack_resource_names", {}
-            ).get(turn.session_id, []),
+            ).get(
+                self._host._attachment_ack_key(
+                    turn.session_id,
+                    turn.session,
+                ),
+                [],
+            ),
             send_task_status=self._host._send_task_status,
             send_job_status=self._host._send_job_status,
             send_unnotified_completed_jobs=(
@@ -203,17 +291,25 @@ class AcpTurnOrchestrator:
             if referenced
             else []
         )
-        available = [
-            name
-            for name in referenced
-            if name and (turn.session.workspace.attachments / name).is_file()
-        ]
+        available = _attachment.confirmed_transport_attachments(
+            turn.session.workspace,
+            referenced,
+            imported_names=imported,
+        )
         turn.metadata["attachment_import_summary"] = {
             "requested": referenced,
             "imported": imported,
             "available": available,
         }
         turn.metadata["task_resources"] = ()
+
+        if (
+            getattr(turn.session.workspace, "scope", "actor")
+            == WORKSPACE_SCOPE_GROUP_SHARED
+            and referenced
+            and len(available) < len(referenced)
+        ):
+            return await self._reject_unbound_group_attachment(turn, referenced)
 
         raw_prompt = turn.metadata["raw_prompt"]
         inline_images = _image.has_inline_images(raw_prompt)
@@ -348,7 +444,54 @@ class AcpTurnOrchestrator:
         turn.metadata["task_metadata"]["has_image"] = bool(
             turn.metadata["task_resources"]
         )
+        turn_identity = getattr(turn.session, "turn_identity", None)
+        if turn_identity is not None:
+            turn.metadata["task_metadata"].update(
+                {
+                    "conversation_platform": (
+                        turn_identity.conversation.platform
+                    ),
+                    "conversation_chat_kind": (
+                        turn_identity.conversation.chat_kind
+                    ),
+                    "turn_actor_ref": turn_identity.actor_ref,
+                    "turn_identity_source": turn_identity.source,
+                }
+            )
         return TurnOutcome()
+
+    async def _reject_unbound_group_attachment(
+        self,
+        turn: TurnContext,
+        referenced: list[str],
+    ) -> TurnOutcome:
+        text = _attachment.format_group_attachment_binding_rejection(referenced)
+        await self._host._conn.session_update(
+            session_id=turn.session_id,
+            update=self._update_text(text),
+        )
+        resource_hint = "\n".join(
+            f"[资源引用: {name}]" for name in referenced if name
+        )
+        accepted_text = "\n".join(
+            part for part in (turn.user_text.strip(), resource_hint) if part
+        )
+        turn.session.record_exchange(accepted_text or "[文件上传]", text)
+        self._host._cancel_attachment_ack(turn.session_id)
+        self._host._finish_turn_task(
+            turn.turn_task,
+            progress="已拒绝无法绑定到当前群消息的附件。",
+            final_text=text,
+            stop_reason="end_turn",
+        )
+        return TurnOutcome(
+            response=PromptResponse(
+                stop_reason="end_turn",
+                user_message_id=turn.message_id,
+            ),
+            stop=True,
+            reason="group_attachment_identity_unavailable",
+        )
 
     async def _prepare_image_resources(
         self,
@@ -369,15 +512,17 @@ class AcpTurnOrchestrator:
                 ]
             )
             if pending_names:
-                _attachment.import_transport_attachments(
+                imported_names = _attachment.import_transport_attachments(
                     turn.session.workspace,
                     pending_names,
                 )
-            available_names = [
-                name
-                for name in pending_names
-                if (turn.session.workspace.attachments / name).is_file()
-            ]
+            else:
+                imported_names = []
+            available_names = _attachment.confirmed_transport_attachments(
+                turn.session.workspace,
+                pending_names,
+                imported_names=imported_names,
+            )
             available_name_set = set(available_names)
             unresolved_names = [
                 name for name in pending_names if name not in available_name_set
@@ -425,6 +570,7 @@ class AcpTurnOrchestrator:
                     session_id=turn.session_id,
                     ws=turn.session.workspace,
                     resource_names=unresolved_names,
+                    session=turn.session,
                 )
                 return await self._finish_image_turn(
                     turn,
@@ -498,11 +644,28 @@ class AcpTurnOrchestrator:
             session_id=turn.session_id,
             ws=turn.session.workspace,
             resource_names=referenced,
+            session=turn.session,
         )
-        text = _attachment.format_attachment_deferred_receipt(referenced)
+        text = _attachment.format_attachment_deferred_receipt(
+            referenced,
+            turn.session.workspace,
+        )
         await self._host._conn.session_update(
             session_id=turn.session_id,
             update=self._update_text(text),
+        )
+        # Persist the accepted upload turn now, under the immutable identity
+        # bound to this locked prompt. The asynchronous final acknowledgement
+        # is delivery-only and may run after another message from this actor.
+        resource_hint = "\n".join(
+            f"[资源引用: {name}]" for name in referenced if name
+        )
+        accepted_text = "\n".join(
+            part for part in (turn.user_text.strip(), resource_hint) if part
+        )
+        turn.session.record_exchange(
+            accepted_text or "[文件上传]",
+            text,
         )
         _LOGGER.info(
             "session/prompt | sid=%s task deferred until attachments visible | "
@@ -534,6 +697,9 @@ class AcpTurnOrchestrator:
             turn.session.pending_image_names = ()
         run_kwargs: dict[str, Any] = {
             "task_metadata": turn.metadata["task_metadata"],
+            "task_system_appendix": (
+                getattr(turn.session, "turn_system_appendix", "") or None
+            ),
         }
         if task_resources:
             run_kwargs["task_resources"] = task_resources

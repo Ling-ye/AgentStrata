@@ -45,6 +45,19 @@ def supports_background_jobs(platform_type: str) -> bool:
     return get_adapter(platform_type).supports_background_jobs
 
 
+def group_conversation_scope(platform_type: str) -> str:
+    """Return ``actor`` or ``chat`` according to the selected adapter."""
+    scope = str(get_adapter(platform_type).group_conversation_scope or "actor").strip()
+    if scope not in {"actor", "chat"}:
+        raise ValueError(f"unsupported group conversation scope: {scope!r}")
+    return scope
+
+
+def requires_sender_envelope(platform_type: str) -> bool:
+    """Whether every shared-group prompt must carry a transport sender envelope."""
+    return bool(get_adapter(platform_type).requires_sender_envelope)
+
+
 # ---------------------------------------------------------------------------
 # Access gate helpers
 # ---------------------------------------------------------------------------
@@ -100,8 +113,10 @@ __all__ = [
     "get_adapter",
     "get_notifier",
     "get_sender",
+    "group_conversation_scope",
     "is_supported",
     "parse_session_identity",
+    "requires_sender_envelope",
     "supported_platform_types",
     "supports_background_jobs",
     "supports_role_matrix",

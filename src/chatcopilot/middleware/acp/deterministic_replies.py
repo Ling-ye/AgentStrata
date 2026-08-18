@@ -20,6 +20,8 @@ from chatcopilot.middleware.acp.job_dispatch import (
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.acp.task_dispatch import extract_task_status_query
 from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder
+from chatcopilot.contracts.identity import Role, role_value
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 
 _LOGGER = logging.getLogger("chatcopilot.middleware.acp.deterministic_replies")
 
@@ -53,6 +55,13 @@ async def handle_deterministic_replies(
     finish_turn_task: FinishTurnTask,
     make_text_update: MakeTextUpdate = update_agent_message_text,
 ) -> PromptResponse | None:
+    shared_group = (
+        getattr(session.workspace, "scope", "actor")
+        == WORKSPACE_SCOPE_GROUP_SHARED
+    )
+    owner_turn = (
+        role_value(getattr(session, "role", Role.USER)) == Role.OWNER.value
+    )
     runtime_info_reply = _meta._handle_owner_runtime_info_query(session, user_text)
     if runtime_info_reply is not None:
         _LOGGER.info(
@@ -89,6 +98,17 @@ async def handle_deterministic_replies(
 
     code_task_command = extract_code_task_command(user_text)
     if code_task_command is not None:
+        if shared_group and not owner_turn:
+            text = "代码任务管理仅限 Owner；群号加白不会授予任务控制权限。"
+            await _send_text(conn, session_id, text, make_text_update)
+            session.record_exchange(user_text, text)
+            finish_turn_task(
+                turn_task,
+                progress="已拒绝群聊代码任务控制。",
+                final_text=text,
+                stop_reason="end_turn",
+            )
+            return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
         action, task_id = code_task_command
         text = await handle_code_task_control(
             session_id,
@@ -123,6 +143,17 @@ async def handle_deterministic_replies(
 
     task_id = extract_task_status_query(user_text)
     if task_id:
+        if shared_group:
+            text = "QQ 群共享会话不保存成员可见的执行诊断，也不提供任务状态查询。"
+            await _send_text(conn, session_id, text, make_text_update)
+            session.record_exchange(user_text, text)
+            finish_turn_task(
+                turn_task,
+                progress="已拒绝群聊任务状态查询。",
+                final_text=text,
+                stop_reason="end_turn",
+            )
+            return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
         _LOGGER.info(
             "session/prompt | sid=%s deterministic task status query | task_id=%s",
             session_id,
@@ -139,6 +170,17 @@ async def handle_deterministic_replies(
 
     job_id = extract_job_status_query(user_text)
     if job_id:
+        if shared_group and not owner_turn:
+            text = "QQ 群普通成员不能启动或查询 Owner 后台任务。"
+            await _send_text(conn, session_id, text, make_text_update)
+            session.record_exchange(user_text, text)
+            finish_turn_task(
+                turn_task,
+                progress="已拒绝群聊后台任务查询。",
+                final_text=text,
+                stop_reason="end_turn",
+            )
+            return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
         _LOGGER.info(
             "session/prompt | sid=%s deterministic job status query | job_id=%s",
             session_id,
@@ -148,7 +190,24 @@ async def handle_deterministic_replies(
         finish_turn_task(turn_task, progress=f"已完成后台任务状态查询：{job_id}。")
         return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
 
-    await send_unnotified_completed_jobs(session_id, session)
+    if not shared_group or owner_turn:
+        await send_unnotified_completed_jobs(session_id, session)
+
+    if (
+        shared_group
+        and not owner_turn
+        and _model_commands._parse_request(user_text) is not None
+    ):
+        text = "Codex 开发模型查看与切换仅限 Owner；群号加白不会授予该权限。"
+        await _send_text(conn, session_id, text, make_text_update)
+        session.record_exchange(user_text, text)
+        finish_turn_task(
+            turn_task,
+            progress="已拒绝群聊 Codex 模型命令。",
+            final_text=text,
+            stop_reason="end_turn",
+        )
+        return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
 
     model_reply = _model_commands.handle_model_command(session, user_text)
     if model_reply is not None:
@@ -230,11 +289,11 @@ async def handle_deterministic_replies(
         imported_names = _attachment.import_transport_attachments(session.workspace, pending_names)
         if imported_names:
             pending_names = imported_names
-        saved_pending = [
-            name
-            for name in pending_names
-            if name and (session.workspace.attachments / name).is_file()
-        ]
+        saved_pending = _attachment.confirmed_transport_attachments(
+            session.workspace,
+            pending_names,
+            imported_names=imported_names,
+        )
         if saved_pending:
             ack_text = _attachment.format_attachment_ack(session.workspace, saved_pending)
             await _send_text(conn, session_id, ack_text, make_text_update)

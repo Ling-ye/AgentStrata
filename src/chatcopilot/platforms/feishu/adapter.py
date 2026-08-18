@@ -37,7 +37,12 @@ class FeishuAdapter(PlatformAdapter):
     def resolve_sendable_paths(self, workspace: "Workspace", files: Sequence[str]) -> list[Path]:
         return _sender.resolve_sendable_paths(workspace, files)
 
-    def send_files(self, files: Sequence[Path], *, message: str = "") -> str:
+    def send_files(
+        self,
+        files: Sequence[Path],
+        *,
+        message: str = "",
+    ) -> str:
         return _sender.send_via_cc_connect(files, message=message)
 
     # -- runtime: background notification ----------------------------------

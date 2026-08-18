@@ -33,7 +33,7 @@ deploy / console / CLI
 
 | 领域 | 模块 |
 | --- | --- |
-| 身份和角色 | `contracts/identity.py` |
+| 身份、角色与 conversation/turn 来源 | `contracts/identity.py` |
 | Workspace | `contracts/workspace.py` |
 | Agent task/event/result | `contracts/agent.py` |
 | 工具 | `contracts/tools.py` |
@@ -65,7 +65,10 @@ BotSpec 只声明 tool-pack id。具体目录在 `tool_packs/catalog.py`，每�
 - Native：内置模型/工具循环。
 - LangGraph：使用同一契约的图执行器。
 - Codex：实例主会话使用 Codex；Owner 源码写入通过独立 code-worker 与草稿 PR
-  交付，成员限制在个人 workspace。
+  交付。成员只获得当前 conversation workspace；QQ 私聊仍按用户隔离，QQ 群聊指向
+  当前群的共享 workspace。QQ 群 Codex 额外使用 fail-closed bubblewrap：只读暴露精确
+  shared root，禁用可直接写入的内建 shell/`apply_patch` 等路径，文件 mutation 只能通过
+  actor-bound、workspace-scoped Session Gateway MCP 执行。
 
 主 Agent 是唯一向用户交付结果的执行者。Subagent 只通过 delegate 工具运行并用
 `submit_result` 返回结构化结果。
@@ -82,9 +85,46 @@ MCP/Skill。`risk: search` 的 MCP binding 可产生只读搜索来源；统一�
 
 ## 平台与会话
 
-QQ 和 Feishu adapter 把平台身份归一化为 `SessionIdentity`。Middleware 在每轮 prompt
-边界组装角色、workspace、工具权限、文件发送器和后台通知 hook。群聊身份变化会重建
-会话状态，Agent 不读取平台帧或 adapter 类型。
+平台 adapter 负责声明群 conversation 是按 actor 还是按 chat 隔离，并把平台字段归一化。
+`ConversationIdentity` 只描述稳定的平台、会话类型和 chat ID；`TurnIdentity` 另行描述
+当前消息的发送者、消息 ID 与 transport 来源。Middleware 在每轮 prompt 边界据此组装
+角色、workspace、工具权限、文件发送器和后台通知 hook，Agent 不读取平台帧或 adapter
+类型。
+
+QQ adapter 使用 chat-scoped 群会话。同一群共享 `group_<safe-chat-id>/shared/` 和受保护、
+有界的 conversation journal；QQ 私聊、不同 QQ 群以及其它平台仍隔离。共享 session key
+只标识群，当前发送者必须由 cc-connect sender envelope 与同步 `message.received` hook 写入的
+实例私有、有界加锁 transport attestation 队列双重绑定。Middleware 先交叉校验 envelope 和
+attestation 的 actor/正文摘要并精确消费一条随机 ID 记录，再选择发送者绑定的执行 `SessionState`；群历史通过 journal 注入，不能
+通过复用另一成员的 executor、caller identity 或 backend resume state 来共享上下文。
+conversation journal、actor-scoped backend state 与 transcript 位于 shared root 的受保护兄弟
+目录 `.conversation-state/`，不能作为群成员的普通 workspace 文件读取。journal 与持久化
+epoch/sequence/摘要 metadata 成对验证；文件丢失、截断或旧快照会群级逐出 actor backend，
+不得静默重建为一条新的 sequence 1 历史。群 Codex 在同一 live actor session 内可 resume；
+actor cache 逐出或进程重启后从有界 journal 创建新 native thread，避免 process-local cursor
+回到零时把旧 journal 再次注入已含相同内容的持久 thread。
+
+授权始终按当前发送者计算，与群准入分离。稳定发送者是 Owner 时，私聊和 QQ 群都使用 Owner
+prompt、工具、Codex 与代码任务投影；其他群成员仍使用 member 投影。所有人的普通 workspace
+都是当前群的 shared root，但 executor、caller identity、backend state 和 Owner job 控制面按
+actor 隔离。群是公开输出场景，因此 Owner 工具 payload 仍脱敏，私有 memory/Wiki/RAG 不自动
+注入，标记 `private_chat_only` 的工具也不会因为 Owner 身份绕过频道限制。
+
+QQ 群不写共享 `MEMORY.md` 或 member-visible turn diagnostics。群人格没有额外 manager、grant
+或文件格式，而是复用通用 persona 的 group 层 `group_<id>/PERSONA.md`；Owner 调用现有
+`persona_*` 工具，User/Admin 无法读取或修改 group/global 层。Owner 后台 job 的 request/status/
+result/log 位于 `.conversation-state/jobs/<actor-digest>/`，普通成员不能从 shared root 发现或控制。
+
+cc-connect 的静态 `default/.cc-connect/attachments` inbox 只按 basename 落盘，不带 chat
+或 message 绑定，因而 QQ shared-group 不从该 legacy inbox 推断文件归属；已经位于当前
+shared root 的明确普通文件仍可经 workspace discovery 使用。basename-only 的新群附件会
+同步失败关闭，也不能用 shared attachments 中的同名旧文件冒充；该拒绝记录一次且不安排
+必然超时的异步 ack。只有 transport 提供 message-bound 路径或令牌后才可恢复群附件导入。
+
+上述逐轮 sender 绑定依赖部署渲染同时启用 cc-connect 的 shared-channel session、
+sender injection 与同步 message hook。实例私有 attestation state/lock 是非执行 JSON/锁文件，不能放在公共
+`/tmp` 或由 wrapper `source`。本地合成 prompt 可以验证解析和失败关闭，但不等于真实两账号 QQ ingress
+E2E。
 
 Feishu 保留通用文档、表格、多维表格、Wiki、消息和文件能力；QQ 通过本机
 NapCat / OneBot 网关接入。账号、群号、用户 ID、tenant 端点和凭据都属于部署环境。

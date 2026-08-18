@@ -10,7 +10,8 @@ from unittest import IsolatedAsyncioTestCase, TestCase, mock
 
 from chatcopilot.agent.backends.codex import CodexAgentBackend
 from chatcopilot.agent.backends.registry import backend_ids, build_backend
-from chatcopilot.agent.tools.executor import ToolExecutor
+from chatcopilot.agent.runtime import AgentRuntime
+from chatcopilot.agent.tools.executor import ToolExecutor, ToolResult
 from chatcopilot.botspec.backend_state import prepare_backend_deployment
 from chatcopilot.contracts.agent import (
     AgentTask,
@@ -21,8 +22,10 @@ from chatcopilot.contracts.agent import (
 )
 from chatcopilot.contracts.agent_backend import (
     BackendCapabilityError,
+    BackendCapabilities,
     BackendOpenRequest,
     BackendSessionRef,
+    CAPABILITY_CHAT,
     CAPABILITY_NATIVE_RESUME,
     CodexMainSessionPolicy,
 )
@@ -32,6 +35,7 @@ from chatcopilot.contracts.model_selection import (
     CodeModelSelection,
 )
 from chatcopilot.core.model_selection import CODE_MODEL_SELECTION_METADATA_KEY
+from chatcopilot.core.config import ChatConfig
 from chatcopilot.external_tools.shared.tool_spec import ToolDef
 from chatcopilot.external_tools.codex_cli.credentials import (
     CredentialError,
@@ -479,6 +483,76 @@ class CodexBackendResumeTests(TestCase):
             self.assertLess(command.index("--cd"), resume_index)
             self.assertLess(command.index("--json"), resume_index)
             reconstructed.close_session(restored_ref)
+
+    def test_disabled_persisted_resume_starts_fresh_after_reconstruction(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            auth_root = _main_auth_root(root)
+            routing = SimpleNamespace(
+                code_command="codex exec --model {model} --cd {workdir}",
+                code_model="gpt-test",
+                code_reasoning_effort="medium",
+                code_timeout_seconds=30,
+                code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
+            )
+            kwargs = {
+                "tool_names": {"dynamic_echo"},
+                "runtime_config": SimpleNamespace(routing=routing),
+                "tools": (_dynamic_tool(),),
+            }
+            request = BackendOpenRequest(
+                session_id="acp-no-persisted-resume",
+                system_baseline="system",
+                allowed_tool_names=frozenset({"dynamic_echo"}),
+                options={
+                    "workspace_root": root,
+                    "backend_state_root": root / "state",
+                    "restore_persisted_native_session": False,
+                },
+            )
+            backend = CodexAgentBackend(**kwargs)
+            ref = backend.open_session(request)
+            completed = subprocess.CompletedProcess(
+                ["codex"],
+                0,
+                json.dumps(
+                    {"type": "thread.started", "thread_id": "stale-group-thread"}
+                ),
+                "",
+            )
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
+                    clear=False,
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.command._resolve_executable",
+                    return_value="/usr/bin/codex",
+                ),
+                mock.patch(
+                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                    return_value={},
+                ),
+                mock.patch(
+                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
+                    return_value=completed,
+                ),
+            ):
+                backend.stream_turn(ref, AgentTask("one"), on_event=lambda _: None)
+            backend.close_session(backend.current_session_ref(ref))
+
+            reconstructed = CodexAgentBackend(**kwargs)
+            fresh_ref = reconstructed.open_session(request)
+            fresh_state = reconstructed.native_session(fresh_ref)
+            self.assertEqual(fresh_state.native_session_id, "")
+            with mock.patch(
+                "chatcopilot.external_tools.codex_cli.command._resolve_executable",
+                return_value="/usr/bin/codex",
+            ):
+                command = reconstructed._command(fresh_state)
+            self.assertNotIn("resume", command)
+            reconstructed.close_session(fresh_ref)
 
     def test_role_change_discards_persisted_native_resume_id(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -960,6 +1034,35 @@ class CodexBackendPolicyTests(TestCase):
 
 
 class SessionToolRelayTests(TestCase):
+    def test_agent_runtime_passes_session_payload_filter_to_codex_backend(self) -> None:
+        payload_filter = lambda payload: dict(payload)  # noqa: E731
+        runtime = AgentRuntime(
+            llm=mock.Mock(),
+            tools=(),
+            tools_schema=(),
+            runtime_config=ChatConfig(),
+            agent_backend="codex",
+        )
+        backend = mock.Mock()
+        backend.capabilities = BackendCapabilities(
+            names=frozenset({CAPABILITY_CHAT}),
+            tool_names=frozenset(),
+        )
+        backend.open_session.return_value = BackendSessionRef("codex", "relay-filter")
+
+        with mock.patch(
+            "chatcopilot.agent.runtime.build_backend",
+            return_value=backend,
+        ) as build:
+            session = runtime.new_session(
+                session_id="relay-filter",
+                system_baseline="system",
+                payload_filter=payload_filter,
+            )
+
+        self.assertIs(build.call_args.kwargs["tool_payload_filter"], payload_filter)
+        session.close()
+
     def test_dynamic_tool_uses_live_executor_and_wrong_token_fails_closed(self) -> None:
         calls: list[str] = []
         tool = _dynamic_tool(calls)
@@ -996,6 +1099,155 @@ class SessionToolRelayTests(TestCase):
         self.assertFalse(denied["ok"])
         self.assertIn("authentication", denied["error"])
 
+    def test_filtered_handler_result_is_used_for_response_and_audit_event(self) -> None:
+        private_path = str((Path.cwd() / "relay-sensitive" / "source.py").resolve())
+
+        def handler(_args):
+            raise RuntimeError(f"failed at {private_path}")
+
+        tool = ToolDef(
+            name="sensitive_tool",
+            summary="Sensitive failure.",
+            properties={},
+            required=[],
+            handler=handler,
+        )
+        seen: list[dict[str, object]] = []
+
+        def sanitize(payload):
+            seen.append(dict(payload))
+            return {
+                "ok": False,
+                "error": "request failed",
+                "error_code": "request_failed",
+            }
+
+        relay = SessionToolRelay(
+            tools=(tool,),
+            executor=ToolExecutor(tools=[tool]),
+            payload_filter=sanitize,
+        )
+        endpoint = relay.start()
+        try:
+            response = call_session_relay(
+                endpoint.to_dict(),
+                {"action": "call_tool", "name": "sensitive_tool", "arguments": {}},
+            )
+        finally:
+            relay.close()
+
+        events = relay.drain_tool_events()
+        serialized = json.dumps({"response": response, "events": events})
+        self.assertIn(private_path, str(seen[0]["error"]))
+        self.assertNotIn(private_path, serialized)
+        self.assertEqual(
+            response["result"],
+            {
+                "tool": "sensitive_tool",
+                "ok": False,
+                "error": "request failed",
+                "error_code": "request_failed",
+            },
+        )
+        self.assertEqual(events[1]["error"], "request failed")
+        expected_event_data = dict(response["result"])
+        expected_event_data.pop("tool")
+        self.assertEqual(events[1]["data"], expected_event_data)
+
+    def test_identity_filter_preserves_success_payload(self) -> None:
+        private_path = str((Path.cwd() / "relay-owner" / "report.txt").resolve())
+
+        class OwnerExecutor:
+            def execute(self, _name, _arguments):
+                return ToolResult(
+                    ok=True,
+                    summary=f"created {private_path}",
+                    outputs=[private_path],
+                    console=f"created {private_path}",
+                    doc_links=[],
+                )
+
+        tool = ToolDef(
+            name="owner_tool",
+            summary="Owner-only result.",
+            properties={},
+            required=[],
+            handler=lambda _args: ("", [], None),
+        )
+        relay = SessionToolRelay(
+            tools=(tool,),
+            executor=OwnerExecutor(),
+            payload_filter=lambda payload: dict(payload),
+        )
+        endpoint = relay.start()
+        try:
+            response = call_session_relay(
+                endpoint.to_dict(),
+                {"action": "call_tool", "name": "owner_tool", "arguments": {}},
+            )
+        finally:
+            relay.close()
+
+        events = relay.drain_tool_events()
+        self.assertEqual(response["result"]["outputs"], [private_path])
+        self.assertIn(private_path, response["result"]["summary"])
+        self.assertIn(private_path, response["result"]["console_tail"])
+        self.assertEqual(events[1]["data"]["outputs"], [private_path])
+
+    def test_executor_or_filter_exception_returns_only_generic_payload(self) -> None:
+        secret = str((Path.cwd() / "relay-private" / "traceback.py").resolve())
+        tool = _dynamic_tool()
+
+        class ExplodingExecutor:
+            def execute(self, _name, _arguments):
+                raise RuntimeError(f"traceback at {secret}")
+
+        def exploding_filter(_payload):
+            raise RuntimeError(f"filter failed at {secret}")
+
+        cases = (
+            (ExplodingExecutor(), None),
+            (ToolExecutor(tools=[tool]), exploding_filter),
+        )
+        for executor, payload_filter in cases:
+            with self.subTest(payload_filter=payload_filter is not None):
+                relay = SessionToolRelay(
+                    tools=(tool,),
+                    executor=executor,
+                    payload_filter=payload_filter,
+                )
+                endpoint = relay.start()
+                try:
+                    response = call_session_relay(
+                        endpoint.to_dict(),
+                        {
+                            "action": "call_tool",
+                            "name": "dynamic_echo",
+                            "arguments": {"value": "value"},
+                        },
+                    )
+                finally:
+                    relay.close()
+
+                events = relay.drain_tool_events()
+                serialized = json.dumps({"response": response, "events": events})
+                self.assertNotIn(secret, serialized)
+                self.assertNotIn("traceback", serialized.lower())
+                self.assertEqual(
+                    response["result"],
+                    {
+                        "tool": "dynamic_echo",
+                        "ok": False,
+                        "error": "tool execution failed",
+                        "error_code": "tool_execution_failed",
+                    },
+                )
+                self.assertEqual(events[1]["data"], {
+                    "ok": False,
+                    "error": "tool execution failed",
+                    "error_code": "tool_execution_failed",
+                })
+
 
 class BackendStateTransitionTests(TestCase):
     def test_switch_deletes_old_state_before_target_start_and_never_restores(self) -> None:
@@ -1006,8 +1258,23 @@ class BackendStateTransitionTests(TestCase):
             )
             transcript = root / "p2p_user" / "transcripts"
             backend_state = root / "p2p_user" / ".backend-sessions"
+            group_backend_state = (
+                root
+                / "group_demo"
+                / ".conversation-state"
+                / "backend-sessions"
+                / "actor-digest"
+            )
+            group_journal = (
+                root
+                / "group_demo"
+                / ".conversation-state"
+                / "group-conversation.jsonl"
+            )
             transcript.mkdir(parents=True)
             backend_state.mkdir(parents=True)
+            group_backend_state.mkdir(parents=True)
+            group_journal.write_text("shared history", encoding="utf-8")
             (transcript / "turn.jsonl").write_text("history", encoding="utf-8")
 
             transition = prepare_backend_deployment(
@@ -1021,6 +1288,8 @@ class BackendStateTransitionTests(TestCase):
             self.assertTrue(transition.state_deleted)
             self.assertFalse(transcript.exists())
             self.assertFalse(backend_state.exists())
+            self.assertFalse(group_backend_state.exists())
+            self.assertTrue(group_journal.is_file())
             marker = json.loads((root / ".agent-backend.json").read_text(encoding="utf-8"))
             self.assertEqual(marker["backend"], "codex")
             events = [

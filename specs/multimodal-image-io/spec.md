@@ -36,14 +36,24 @@ existing `llm.chat / llm.research / llm.code` three-slot design.
   metadata. The resource remains a `kind: file`; media metadata refines the file rather than
   adding a parallel image-only resource hierarchy.
 - ACP inline images are strict-base64 decoded, signature-checked, limited to at most four images,
-  5 MiB per image, and 20 MiB per turn, and stored under the current per-user workspace. Uploaded
-  image files pass the same validation after the existing transport import step. Supported vision
+  5 MiB per image, and 20 MiB per turn, and stored under the current conversation workspace. QQ
+  private chats retain a per-user workspace; an admitted QQ group stores images in the current
+  group's dedicated shared root under the [`qq-group-shared-conversation-context`](../qq-group-shared-conversation-context/spec.md)
+  contract and records the originating actor with the accepted turn. Uploaded image files that are
+  already bound to the current conversation workspace pass the same validation. The cc-connect
+  static `default/.cc-connect/attachments` inbox has no chat/message identity, so a QQ shared group
+  fails closed instead of importing an image from that ambiguous legacy location. Supported vision
   formats are JPEG, PNG, GIF, and WebP.
 - The middleware passes only validated workspace-local `ResourceRef` values to `AgentTask`.
   An image-only turn is stored safely and receives a deterministic acknowledgement without
   invoking a model. The next ordinary text instruction in the same session that enters the model
   consumes those pending images exactly once. An image and natural-language instruction received
   in the same turn are forwarded for immediate analysis.
+- If a private/actor-scoped transport attachment is referenced before a safely bound file is visible,
+  the accepted user turn and deterministic saving response are recorded synchronously; its debounced
+  acknowledgement is delivery-only. A QQ shared-group basename-only attachment is instead rejected
+  synchronously because neither the legacy inbox nor an existing same-named shared file proves its
+  chat/message origin; that rejection is recorded once and schedules no delayed acknowledgement.
 - Native and LangGraph sessions keep local-image descriptors in message history. The shared LLM
   request boundary revalidates the file identity and expands descriptors to OpenAI-compatible
   `image_url` data URLs only for the outbound request. Base64 image bytes are therefore not kept
@@ -62,11 +72,15 @@ existing `llm.chat / llm.research / llm.code` three-slot design.
 
 - An enabled instance can receive a valid PNG, JPEG, GIF, or WebP ACP image block and the selected
   backend receives the image together with the user's caption.
-- A supported uploaded image file follows the existing private-workspace import boundary and is
-  presented to the backend as an image rather than merely as a filename.
+- A supported image already bound to the current conversation workspace is presented to the backend
+  as an image rather than merely as a filename. A QQ shared group never claims an image from the
+  unbound static cc-connect inbox by basename alone.
 - Image-only turns are stored with a deterministic acknowledgement and are consumed exactly once
   by the next ordinary text instruction that enters the model; image-plus-text turns are analyzed
   immediately.
+- An actor-scoped pending attachment turn is recorded exactly once before the immediate saving
+  response, and its later acknowledgement cannot append under a different actor. A QQ shared-group
+  unbound attachment receives one deterministic rejection and no delayed acknowledgement.
 - Invalid base64, spoofed MIME/signature pairs, unsupported formats, excessive image counts, and
   oversized payloads fail closed with a concise user-facing error and do not invoke a model.
 - Native/LangGraph transcripts contain no image base64 payloads.
@@ -77,6 +91,12 @@ existing `llm.chat / llm.research / llm.code` three-slot design.
   remains compatible.
 
 ## Verification
+
+The original commands below cover multimodal validation and conversation-local storage. The QQ
+shared-group static-inbox rejection and delivery-only acknowledgement extension is additionally
+verified by the focused suite in
+[`qq-group-shared-conversation-context`](../qq-group-shared-conversation-context/spec.md); it does
+not claim a real QQ two-account ingress E2E.
 
 Run:
 

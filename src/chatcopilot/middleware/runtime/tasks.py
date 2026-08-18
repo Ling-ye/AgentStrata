@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from chatcopilot.contracts.identity import stable_actor_ref
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.middleware.runtime.jobs.notification import read_json_file, write_json_atomic
 from chatcopilot.middleware.runtime.task_forecast import (
     FORECAST_VERSION,
@@ -41,12 +43,22 @@ def describe_user_text(text: str, *, limit: int = 120) -> str:
 
 
 def _workspace_payload(workspace: Workspace) -> Dict[str, Any]:
+    shared_group = workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
     return {
         "root": str(workspace.root),
         "chat_kind": workspace.chat_kind,
         "chat_id": workspace.chat_id,
-        "user_id": workspace.user_id,
-        "user_name": workspace.user_name,
+        "user_id": None if shared_group else workspace.user_id,
+        "user_name": None if shared_group else workspace.user_name,
+        "actor_ref": (
+            stable_actor_ref(
+                "qq",
+                workspace.user_id or "",
+                conversation_id=f"{workspace.chat_kind or ''}:{workspace.chat_id or ''}",
+            )
+            if shared_group and workspace.user_id
+            else None
+        ),
     }
 
 
@@ -104,6 +116,8 @@ class TurnTaskRecorder:
     _log_context_token: Optional[contextvars.Token] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+            raise ValueError("shared-group turn diagnostics require protected storage")
         self._path = self.workspace.root / TASKS_DIRNAME / self.task_id / TASK_FILENAME
         self._forecast = {
             "status": "insufficient",
@@ -860,7 +874,17 @@ class TurnTaskRecorder:
             "description": describe_user_text(self.user_text),
             "progress": self._progress,
             "status": self._status,
-            "submitter": self.workspace.user_name or self.workspace.user_id or "",
+            "submitter": (
+                stable_actor_ref(
+                    "qq",
+                    self.workspace.user_id or "",
+                    conversation_id=(
+                        f"{self.workspace.chat_kind or ''}:{self.workspace.chat_id or ''}"
+                    ),
+                )
+                if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+                else self.workspace.user_name or self.workspace.user_id or ""
+            ),
             "asked_at": self.asked_at,
             "started_at": self.asked_at,
             "finished_at": finished_at,

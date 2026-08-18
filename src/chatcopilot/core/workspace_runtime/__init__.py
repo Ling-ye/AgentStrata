@@ -1,14 +1,15 @@
-"""per-session 用户私人空间：模型 + env 解析 + 清理 + 盘点 + 身份持久化。
+"""conversation workspace：模型 + env 解析 + 清理 + 盘点 + 身份持久化。
 
 cc-connect 为每个聊天会话 spawn AgentStrata agent 进程时，会把 chat 标识通过
-环境变量注入；我们映射到一个独立子目录，保证不同用户/不同群聊互不串。本包是
+环境变量注入；我们映射到独立的私聊/群会话子目录。本包是
 middleware 与 agent 工具共享的运行期上下文：
 
 - middleware 在 ``session/new`` 时调用 :func:`resolve_workspace` 创建实例
 - agent 工具（list_workspace / read_text_head / send_files_to_user / ...）在 handler
   内通过 :func:`resolve_workspace` 拿到当前会话的 ``Workspace``
 
-环境变量约定（由 cc-connect session.started hook + bot_wrapper.sh 注入）：
+环境变量约定（由同步 ``message.received`` hook 写入实例私有 JSON，再由
+``bot_wrapper.sh`` 经安全白名单 loader 注入；JSON 从不被 shell source）：
 
 - ``CHATCOPILOT_WORKSPACE_ROOT``: 工作目录根
 - ``CHATCOPILOT_CHAT_KIND``: ``p2p`` / ``group``
@@ -20,7 +21,8 @@ middleware 与 agent 工具共享的运行期上下文：
 路径策略：
 
 - ``p2p`` + ``user_id`` → ``<root>/p2p_<user_id>/``
-- ``group`` + ``chat_id`` + ``user_id`` → ``<root>/group_<chat_id>/user_<user_id>/``
+- actor-scoped ``group`` + ``chat_id`` + ``user_id`` → ``<root>/group_<chat_id>/user_<user_id>/``
+- chat-scoped QQ ``group`` + ``chat_id`` → ``<root>/group_<chat_id>/shared/``
 - 老兼容：``chat_id`` 在但 ``user_id`` 缺失 → ``<root>/<kind>_<chat_id>/``
 - 全部缺失 → ``<root>/default/``
 """
@@ -41,6 +43,8 @@ from chatcopilot.core.workspace_runtime.model import (
     ATTACHMENTS_RELPATH,
     MEMORY_FILENAME,
     TRANSCRIPTS_DIRNAME,
+    WORKSPACE_SCOPE_ACTOR,
+    WORKSPACE_SCOPE_GROUP_SHARED,
     Workspace,
     describe_workspace,
     normalize_chat_kind,
@@ -59,6 +63,8 @@ __all__ = [
     "MEMORY_FILENAME",
     "MiddlewareWorkspaceService",
     "TRANSCRIPTS_DIRNAME",
+    "WORKSPACE_SCOPE_ACTOR",
+    "WORKSPACE_SCOPE_GROUP_SHARED",
     "Workspace",
     "WorkspaceInventory",
     "cleanup_workspace",

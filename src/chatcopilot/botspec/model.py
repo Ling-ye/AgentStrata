@@ -140,7 +140,7 @@ class AccessSpec:
       空值不新增权限，``*`` 表示放行所有群聊。
     - ``owner_only_project_access``：白名单仅授予会话访问；项目、主机、机器人配置、
       内部 playbook 与跨用户隐私能力只向 Owner 暴露。普通用户仅保留显式标记的
-      公开能力和自己的私人空间，未知工具默认拒绝。
+      公开能力和当前会话空间（QQ 群内为当前群共享空间），未知工具默认拒绝。
     """
 
     private_require_whitelist: bool = False

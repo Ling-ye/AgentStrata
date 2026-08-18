@@ -54,6 +54,7 @@ def send_via_cc_connect(
     files: Iterable[Path],
     message: str = "",
     timeout: Optional[int] = None,
+    workspace: Workspace | None = None,
 ) -> str:
     """Send QQ files to the current conversation.
 
@@ -89,7 +90,14 @@ def send_via_cc_connect(
 
     summaries: list[str] = []
     if image_files:
-        summaries.append(_send_images_via_onebot(image_files, message=message, timeout=timeout))
+        summaries.append(
+            _send_images_via_onebot(
+                image_files,
+                message=message,
+                timeout=timeout,
+                workspace=workspace,
+            )
+        )
     if other_files:
         summaries.append(
             _feishu_send_via_cc_connect(
@@ -130,8 +138,13 @@ def _send_images_via_onebot(
     *,
     message: str = "",
     timeout: Optional[int] = None,
+    workspace: Workspace | None = None,
 ) -> str:
-    target = _delivery_target_from_env()
+    target = (
+        _delivery_target_from_workspace(workspace)
+        if workspace is not None
+        else _delivery_target_from_env()
+    )
     ws_url, token = _onebot_boundary_from_env()
     timeout_s = _image_send_timeout(timeout)
     _run_async(_send_images_async(ws_url, token, target, files, message, timeout_s))
@@ -183,6 +196,17 @@ def _delivery_target_from_env() -> _OneBotTarget:
     if not user_id:
         raise RuntimeError("QQ 私聊图片发送缺少 CHATCOPILOT_USER_ID")
     return _OneBotTarget("private", "user_id", user_id)
+
+
+def _delivery_target_from_workspace(workspace: Workspace) -> _OneBotTarget:
+    chat_kind = str(workspace.chat_kind or "").strip().lower()
+    if "group" in chat_kind:
+        if not workspace.chat_id:
+            raise RuntimeError("QQ 群聊图片发送缺少 workspace.chat_id")
+        return _OneBotTarget("group", "group_id", str(workspace.chat_id))
+    if not workspace.user_id:
+        raise RuntimeError("QQ 私聊图片发送缺少 workspace.user_id")
+    return _OneBotTarget("private", "user_id", str(workspace.user_id))
 
 
 async def _send_images_async(

@@ -1117,7 +1117,7 @@ class AttachmentGateTests(unittest.TestCase):
 
         asyncio.run(run_case())
 
-    def test_qq_group_attachment_only_imports_to_group_user_workspace(self) -> None:
+    def test_feishu_group_attachment_only_imports_to_group_user_workspace(self) -> None:
         async def run_case() -> None:
             original_update = acp_server.update_agent_message_text
             acp_server.update_agent_message_text = lambda text: text
@@ -1150,6 +1150,7 @@ class AttachmentGateTests(unittest.TestCase):
                     agent._attachment_ack_tasks = {}
                     agent._attachment_ack_resource_names = {}
                     agent._runtime = _runtime_context(
+                        platform_type="feishu",
                         tool_features=("chat.file_uploads", "chat.private_workspace")
                     )
 
@@ -1176,7 +1177,7 @@ class AttachmentGateTests(unittest.TestCase):
 
         asyncio.run(run_case())
 
-    def test_qq_without_user_files_capability_does_not_import_attachments(self) -> None:
+    def test_feishu_without_user_files_capability_does_not_import_attachments(self) -> None:
         async def run_case() -> None:
             original_update = acp_server.update_agent_message_text
             acp_server.update_agent_message_text = lambda text: text
@@ -1211,7 +1212,10 @@ class AttachmentGateTests(unittest.TestCase):
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
                     agent._attachment_ack_resource_names = {}
-                    agent._runtime = _runtime_context(tool_features=())
+                    agent._runtime = _runtime_context(
+                        platform_type="feishu",
+                        tool_features=(),
+                    )
 
                     await agent._prompt_locked(
                         [

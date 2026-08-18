@@ -13,17 +13,27 @@ from chatcopilot.agent.memory.markdown import (
     MarkdownMemoryProvider,
 )
 from chatcopilot.agent.tools.workspace_context import describe_workspace, resolve_workspace
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.external_tools.shared.spec_helpers import require_arg
 from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
 
 
 def _provider() -> MarkdownMemoryProvider:
     ws = resolve_workspace(create=True)
+    _require_actor_memory(ws)
     return MarkdownMemoryProvider(ws.memory_file)
+
+
+def _require_actor_memory(ws: Any) -> None:
+    if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+        raise PermissionError(
+            "QQ 群共享会话不开放 MEMORY.md；长期记忆只在身份隔离的私聊中使用。"
+        )
 
 
 def _handler_read_memory(args: Dict[str, Any]) -> HandlerResult:
     ws = resolve_workspace(create=True)
+    _require_actor_memory(ws)
     target = ws.memory_file
     if not target.is_file():
         return (
@@ -45,6 +55,7 @@ def _handler_append_memory(args: Dict[str, Any]) -> HandlerResult:
     text = require_arg(args, "text")
     section = (args.get("section") or "facts").strip() or "facts"
     ws = resolve_workspace(create=True)
+    _require_actor_memory(ws)
     provider = MarkdownMemoryProvider(ws.memory_file)
     provider.append(text=text, section=section)
     return (
@@ -59,6 +70,7 @@ def _handler_clear_memory(args: Dict[str, Any]) -> HandlerResult:
     if not confirm:
         raise ValueError("拒绝清空：clear_memory 需要 confirm=true 才会执行。")
     ws = resolve_workspace(create=True)
+    _require_actor_memory(ws)
     provider = MarkdownMemoryProvider(ws.memory_file)
     provider.clear()
     return (
@@ -72,9 +84,8 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         name="read_memory",
         summary=(
-            "读取当前用户工作目录下的 MEMORY.md 全文（长期记忆）。"
-            "每个新会话开局应主动调用一次，了解用户既有的偏好 / 默认参数 / 常用数据源。"
-            "记忆是 per-user 隔离的，不会泄漏给其他用户。"
+            "读取当前会话工作目录下的 MEMORY.md 全文（长期记忆）。"
+            "记忆按私聊用户隔离；QQ 群共享会话不开放 MEMORY.md。"
         ),
         properties={},
         required=[],
@@ -120,7 +131,7 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         name="clear_memory",
         summary=(
-            "清空当前用户的 MEMORY.md，重置为初始模板。"
+            "清空当前私聊用户的 MEMORY.md，重置为初始模板；QQ 群共享会话禁用此工具。"
             "**破坏性操作**：仅当用户明确说'清空记忆 / 忘掉之前的'时才用，且必须把 confirm 显式设为 true。"
         ),
         properties={

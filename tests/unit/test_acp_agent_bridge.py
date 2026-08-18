@@ -16,6 +16,7 @@ from chatcopilot.botspec.model import (
 )
 from chatcopilot.contracts import Role
 from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.middleware.acp.agent_bridge import (
     _authorized_wiki_retriever,
     _build_session_for_workspace,
@@ -49,6 +50,14 @@ def _tool(
 
 
 def _workspace(tmp_path: Path, kind: str) -> Workspace:
+    if kind == "group":
+        return Workspace(
+            root=tmp_path / "group_chat-1" / "shared",
+            chat_kind="group",
+            chat_id="chat-1",
+            user_id="owner-1",
+            scope=WORKSPACE_SCOPE_GROUP_SHARED,
+        ).ensure()
     return Workspace(
         root=tmp_path / kind,
         chat_kind=kind,
@@ -80,7 +89,7 @@ def test_permission_filter_requires_owner_and_private_chat(tmp_path: Path) -> No
     assert "需要 owner" in str(_make_permission_filter(Role.USER, private_ws)(_tool()))
 
 
-def test_owner_only_project_filter_is_fail_closed_outside_owner_private_chat(
+def test_owner_only_project_filter_preserves_owner_role_in_group_chat(
     tmp_path: Path,
 ) -> None:
     owner_private = _workspace(tmp_path, "p2p")
@@ -99,6 +108,11 @@ def test_owner_only_project_filter_is_fail_closed_outside_owner_private_chat(
         Role.OWNER,
         owner_group,
         owner_only_project_access=True,
+    )
+    group_user_filter = _make_permission_filter(
+        Role.USER,
+        owner_group,
+        owner_only_project_access=False,
     )
 
     safe = _tool(
@@ -130,11 +144,13 @@ def test_owner_only_project_filter_is_fail_closed_outside_owner_private_chat(
     assert "仅限 Owner" in str(user_filter(mcp_readonly))
     assert owner_private_filter(host) is None
     assert owner_private_filter(unknown) is None
-    assert "仅限 Owner" in str(owner_group_filter(host))
-    assert "仅限 Owner" in str(owner_group_filter(unknown))
+    assert owner_group_filter(host) is None
+    assert owner_group_filter(unknown) is None
+    assert "仅限 Owner" in str(group_user_filter(host))
+    assert "仅限 Owner" in str(group_user_filter(unknown))
 
 
-def test_restricted_prompt_projection_requires_owner_private_chat(
+def test_restricted_prompt_projection_preserves_owner_role_in_group_chat(
     tmp_path: Path,
 ) -> None:
     runtime = SimpleNamespace(
@@ -148,43 +164,47 @@ def test_restricted_prompt_projection_requires_owner_private_chat(
 
     assert _prompt_projection(runtime, Role.USER, private_ws) == ((), ())
     assert _prompt_projection(runtime, Role.ADMIN, private_ws) == ((), ())
-    assert _prompt_projection(runtime, Role.OWNER, group_ws) == ((), ())
+    assert _prompt_projection(runtime, Role.OWNER, group_ws) == (
+        ("internal capability",),
+        ("internal skill",),
+    )
     assert _prompt_projection(runtime, Role.OWNER, private_ws) == (
         ("internal capability",),
         ("internal skill",),
     )
     assert _effective_project_role(runtime, Role.OWNER, private_ws) == Role.OWNER
-    assert _effective_project_role(runtime, Role.OWNER, group_ws) == Role.USER
+    assert _effective_project_role(runtime, Role.OWNER, group_ws) == Role.OWNER
 
 
-def test_restricted_persona_projection_exposes_only_current_user_layer(
+def test_shared_group_persona_projection_exposes_only_group_layer(
     tmp_path: Path,
 ) -> None:
     runtime = SimpleNamespace(access=AccessSpec(owner_only_project_access=True))
     group_ws = Workspace(
-        root=tmp_path / "group_chat-1" / "user_owner-1",
+        root=tmp_path / "group_chat-1" / "shared",
         chat_kind="group",
         chat_id="chat-1",
         user_id="owner-1",
+        scope=WORKSPACE_SCOPE_GROUP_SHARED,
     ).ensure()
     workspace_root = tmp_path
     workspace_root.joinpath("PERSONA.md").write_text(
         "private global persona", encoding="utf-8"
     )
     group_ws.root.parent.joinpath("PERSONA.md").write_text(
-        "private group persona", encoding="utf-8"
+        "current group persona", encoding="utf-8"
     )
     group_ws.root.joinpath("PERSONA.md").write_text(
-        "current user preference", encoding="utf-8"
+        "untrusted shared file", encoding="utf-8"
     )
 
     user_prompt = _extract_persona_snippet(runtime, Role.USER, group_ws)
     owner_group_prompt = _extract_persona_snippet(runtime, Role.OWNER, group_ws)
 
     for prompt in (user_prompt, owner_group_prompt):
-        assert "current user preference" in prompt
+        assert "current group persona" in prompt
         assert "private global persona" not in prompt
-        assert "private group persona" not in prompt
+        assert "untrusted shared file" not in prompt
 
 
 def test_restricted_persona_projection_allows_owner_private_layers(

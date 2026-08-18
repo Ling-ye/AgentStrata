@@ -34,6 +34,7 @@ def _layer_specs():
         user_root=ws.root,
         chat_kind=ws.chat_kind,
         chat_id=ws.chat_id,
+        workspace_scope=ws.scope,
     )
     return ws, workspace_root, specs
 
@@ -47,6 +48,7 @@ def _target_path(scope: str):
         user_root=ws.root,
         chat_kind=ws.chat_kind,
         chat_id=ws.chat_id,
+        workspace_scope=ws.scope,
     )
     return ws, path
 

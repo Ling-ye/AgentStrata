@@ -23,8 +23,9 @@ flowchart LR
     H["公开基线<br/>public boundary · capability parity"]
     I["插件化能力评测<br/>trusted cases · supervised trials"]
     J["确认式开发请求<br/>plan first · explicit confirm · isolated evidence"]
+    K["QQ 群级共享会话<br/>conversation scope · turn identity · actor-bound execution"]
 
-    A --> B --> C --> D --> E --> F --> G --> H --> I --> J
+    A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K
 ```
 
 这些阶段按主要架构变化划分，实际开发时间存在重叠。
@@ -395,6 +396,42 @@ turn、内容 digest、过期时间和一次性消费的 proposal envelope，不
 相关规格：
 [`code-plan-confirmation-flow`](../specs/code-plan-confirmation-flow/spec.md)。
 
+## 12. QQ 群级共享会话：共享上下文，不共享权限会话
+
+早期 QQ 群目录和 `SessionState` 同时按群成员切分，导致同一群里的不同用户无法延续群
+对话或使用同一组普通文件；如果直接复用单一 session，又会把 Owner 权限、工具 hook 和
+backend 状态带给下一位说话人。
+
+运行时因此把稳定 `ConversationIdentity` 与逐轮 `TurnIdentity` 分开：QQ 群按群号共享
+workspace 和有界 journal，当前发送者则由 cc-connect sender envelope 与同步 message hook
+写入的实例私有、有界加锁 attestation 队列在每轮 prompt 边界双重绑定。Middleware 先交叉验证
+transport actor 与正文摘要并精确消费一条随机 ID attestation，再选择 actor-bound 执行 session；
+角色继续只按稳定发送者解析，Owner 在私聊和群聊都保持 Owner，其他成员保持各自普通角色；
+QQ 私聊、不同群、旧成员目录和其它平台
+保持隔离。
+
+共享范围覆盖普通群文件和 conversation history；权限则按 actor 保持。journal、actor backend
+state 与 transcript 收进受保护的 `.conversation-state/`；群 Codex 外层只读暴露 shared root，
+文件 mutation 只经 actor-bound scoped MCP。Owner 后台 job 控制面也按 actor 放在保护目录，
+普通成员不能发现或控制；turn diagnostics 与共享 memory 仍不进入群目录。无法绑定 chat/message
+的 cc-connect legacy attachment inbox import 在 shared-group 中失败关闭，shared attachments 中
+的同名旧文件也不能作为本次上传证明。
+
+Owner 群聊不再被特判降为 User：它复用完整的通用角色解析、prompt、工具和 Codex 路由；
+User/Admin 的 member 投影保持不变。群人格也不再引入专项 manager、intent grant 或新文件格式，
+而是复用现有 Markdown persona provider 的 `group` 层和 `persona_*` 工具。公开群场景仍统一
+脱敏 Owner payload，不自动投影 private memory/Wiki/RAG，显式 `private_chat_only` 工具继续拒绝群聊。
+
+journal 同时写入受保护的 epoch/sequence/内容摘要 metadata；删除、合法截断或恢复旧快照都会
+群级逐出 actor backend 并失败关闭，不允许缓存 cursor 与新 journal 世代静默分叉。跨进程身份
+handoff 也从公共 `/tmp` shell env 改为实例私有 `0700/0600` JSON，wrapper 只加载白名单字段。
+
+部署配置同时启用 cc-connect 的群共享 session 与 sender injection；当前验证覆盖本地合成
+ingress 和隔离边界，真实两账号 QQ 群 ingress E2E 仍属于部署验收，不能由单元测试代替。
+
+相关规格：
+[`qq-group-shared-conversation-context`](../specs/qq-group-shared-conversation-context/spec.md)。
+
 ## 当前架构的收敛结果
 
 | 关注点 | 当前做法 |
@@ -404,6 +441,7 @@ turn、内容 digest、过期时间和一次性消费的 proposal envelope，不
 | 跨层类型 | 由 `chatcopilot.contracts` 统一拥有 |
 | 运行与控制面读取 | 通过 `core` 和 `component_catalog` 提供稳定入口 |
 | 主 Agent | Native、LangGraph、Codex 共享 task/event/result 与 turn lifecycle |
+| 会话身份 | QQ 群共享 conversation/普通文件，journal 与 backend state 受保护，逐轮权限按 actor 绑定 |
 | 源码修改 | 主会话只读，异步 worker 隔离执行，验证后交付 Draft PR |
 | 搜索 | 统一入口、直接 provider、统一 deadline/circuit/result policy |
 | 评测 | Comparison 与插件化 Suite 统一为 Evaluation；产品能力只手动启动并按完整 Target 组留证 |

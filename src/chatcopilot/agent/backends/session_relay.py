@@ -8,14 +8,22 @@ import socket
 import socketserver
 import threading
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.external_tools.shared.tool_spec import ToolDef
 
+if TYPE_CHECKING:
+    from chatcopilot.agent.session import ToolPayloadFilter
+
 
 _MAX_REQUEST_BYTES = 8 * 1024 * 1024
 _MAX_BUFFERED_TOOL_EVENTS = 1024
+_GENERIC_TOOL_FAILURE = {
+    "ok": False,
+    "error": "tool execution failed",
+    "error_code": "tool_execution_failed",
+}
 
 
 @dataclass(frozen=True)
@@ -36,9 +44,16 @@ class _RelayServer(socketserver.ThreadingTCPServer):
 class SessionToolRelay:
     """Expose one session's already-filtered tools over loopback only."""
 
-    def __init__(self, *, tools: Sequence[ToolDef], executor: ToolExecutor) -> None:
+    def __init__(
+        self,
+        *,
+        tools: Sequence[ToolDef],
+        executor: ToolExecutor,
+        payload_filter: ToolPayloadFilter | None = None,
+    ) -> None:
         self._tools = {tool.name: tool for tool in tools}
         self._executor = executor
+        self._payload_filter = payload_filter
         self._token = secrets.token_urlsafe(32)
         self._event_lock = threading.Lock()
         self._events: list[dict[str, Any]] = []
@@ -54,10 +69,11 @@ class SessionToolRelay:
                 try:
                     request = json.loads(raw.decode("utf-8"))
                     response = relay._dispatch(request)
-                except Exception as exc:  # noqa: BLE001
+                except Exception:  # noqa: BLE001 - never expose relay internals
                     response = {
                         "ok": False,
-                        "error": f"relay request failed: {type(exc).__name__}: {exc}",
+                        "error": "relay request failed",
+                        "error_code": "relay_failed",
                     }
                 self._write(response)
 
@@ -168,23 +184,27 @@ class SessionToolRelay:
         self._record_tool_started(call_id=call_id, name=name, arguments=arguments)
         try:
             result = self._executor.execute(name, arguments)
-        except Exception as exc:
-            self._record_tool_finished(
-                call_id=call_id,
-                name=name,
-                ok=False,
-                summary="",
-                error=f"{type(exc).__name__}: {exc}",
-                data=None,
-            )
-            raise
-        result_payload = result.to_llm_payload()
+            result_payload = result.to_llm_payload()
+            if self._payload_filter is not None:
+                result_payload = self._payload_filter(dict(result_payload))
+            if not isinstance(result_payload, dict):
+                raise TypeError("tool payload filter must return an object")
+            # Fail here, before the payload reaches either output channel, when a
+            # trusted filter accidentally returns a non-JSON value.
+            json.dumps(result_payload, ensure_ascii=False, allow_nan=False)
+        except Exception:  # noqa: BLE001 - relay failures are deliberately opaque
+            result_payload = dict(_GENERIC_TOOL_FAILURE)
+        result_ok = result_payload.get("ok") is True
+        summary = str(result_payload.get("summary") or "") if result_ok else ""
+        error = None if result_ok else str(
+            result_payload.get("error") or _GENERIC_TOOL_FAILURE["error"]
+        )
         self._record_tool_finished(
             call_id=call_id,
             name=name,
-            ok=result.ok,
-            summary=result.summary,
-            error=None if result.ok else (result.error or "tool execution failed"),
+            ok=result_ok,
+            summary=summary,
+            error=error,
             data=result_payload,
         )
         return {"ok": True, "result": {"tool": name, **result_payload}}

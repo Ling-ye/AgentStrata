@@ -25,6 +25,7 @@ from chatcopilot.contracts.model_selection import CODEX_REASONING_EFFORTS
 from chatcopilot.contracts.tools import HandlerResult, ToolContext, ToolHandlerError
 from chatcopilot.core.jobs import (
     code_task_state_lock,
+    iter_job_request_paths,
     read_json_file,
     write_job_status,
     write_json_atomic,
@@ -2126,7 +2127,7 @@ def _code_task_job_dirs(workspace_root: Path) -> list[Path]:
     jobs: list[Path] = []
     if not workspace_root.is_dir():
         return jobs
-    for request_path in workspace_root.glob("**/jobs/job_*/request.json"):
+    for request_path in iter_job_request_paths(workspace_root):
         request = read_json_file(request_path) or {}
         if str(request.get("tool_name") or "") == "start_code_task":
             jobs.append(request_path.parent)

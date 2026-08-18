@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Optional
 
 from chatcopilot.core.workspace_runtime.model import (
+    WORKSPACE_SCOPE_ACTOR,
+    WORKSPACE_SCOPE_GROUP_SHARED,
     Workspace,
     normalize_chat_kind,
 )
@@ -17,7 +19,11 @@ def _sanitize_segment(value: str) -> str:
     return safe.strip("_") or "unknown"
 
 
-def resolve_workspace(create: bool = True) -> Workspace:
+def resolve_workspace(
+    create: bool = True,
+    *,
+    group_scope: str | None = None,
+) -> Workspace:
     """根据环境变量解析当前会话工作目录。
 
     优先级（高到低）：
@@ -27,6 +33,11 @@ def resolve_workspace(create: bool = True) -> Workspace:
     """
     explicit = os.environ.get(f"{ENV_PREFIX}_WORKSPACE", "").strip()
     user_name = (os.environ.get(f"{ENV_PREFIX}_USER_NAME") or "").strip() or None
+    configured_group_scope = _normalize_group_scope(
+        group_scope
+        or os.environ.get(f"{ENV_PREFIX}_GROUP_CONVERSATION_SCOPE")
+        or "actor"
+    )
     if explicit:
         raw_chat_id = os.environ.get(f"{ENV_PREFIX}_CHAT_ID") or None
         chat_kind = normalize_chat_kind(os.environ.get(f"{ENV_PREFIX}_CHAT_KIND"), raw_chat_id)
@@ -36,6 +47,10 @@ def resolve_workspace(create: bool = True) -> Workspace:
             chat_id=raw_chat_id,
             user_id=os.environ.get(f"{ENV_PREFIX}_USER_ID") or None,
             user_name=user_name,
+            scope=(
+                os.environ.get(f"{ENV_PREFIX}_WORKSPACE_SCOPE")
+                or _workspace_scope(chat_kind, configured_group_scope)
+            ),
         )
         return ws.ensure() if create else ws
 
@@ -49,7 +64,13 @@ def resolve_workspace(create: bool = True) -> Workspace:
 
     if root_dir:
         root_path = Path(root_dir).expanduser().resolve()
-        target = _compose_target(root_path, chat_kind, chat_id, user_id)
+        target = _compose_target(
+            root_path,
+            chat_kind,
+            chat_id,
+            user_id,
+            group_scope=configured_group_scope,
+        )
         if target is not None:
             ws = Workspace(
                 root=target,
@@ -57,6 +78,7 @@ def resolve_workspace(create: bool = True) -> Workspace:
                 chat_id=chat_id or None,
                 user_id=user_id or None,
                 user_name=user_name,
+                scope=_workspace_scope(chat_kind, configured_group_scope),
             )
             return ws.ensure() if create else ws
 
@@ -75,10 +97,14 @@ def _compose_target(
     chat_kind: str,
     chat_id: str,
     user_id: str,
+    *,
+    group_scope: str = "actor",
 ) -> Optional[Path]:
     """按租户身份算出工作目录子树。无法决策时返回 None 让上层走 fallback。"""
     if chat_kind == "p2p" and user_id:
         return root / f"p2p_{_sanitize_segment(user_id)}"
+    if chat_kind == "group" and chat_id and group_scope == "chat":
+        return root / f"group_{_sanitize_segment(chat_id)}" / "shared"
     if chat_kind == "group" and chat_id and user_id:
         return (
             root
@@ -89,6 +115,17 @@ def _compose_target(
         segment_kind = _sanitize_segment(chat_kind) if chat_kind else "chat"
         return root / f"{segment_kind}_{_sanitize_segment(chat_id)}"
     return root / "default"
+
+
+def _normalize_group_scope(value: str | None) -> str:
+    normalized = (value or "actor").strip().lower()
+    return normalized if normalized in {"actor", "chat"} else "actor"
+
+
+def _workspace_scope(chat_kind: str | None, group_scope: str) -> str:
+    if chat_kind == "group" and group_scope == "chat":
+        return WORKSPACE_SCOPE_GROUP_SHARED
+    return WORKSPACE_SCOPE_ACTOR
 
 
 def resolve_workspace_root(current: Optional[Workspace] = None) -> Path:
@@ -104,7 +141,9 @@ def _infer_workspace_root(path: Path) -> Path:
     root = path.expanduser().resolve()
     name = root.name
     parent_name = root.parent.name
-    if parent_name.startswith("group_") and name.startswith("user_"):
+    if parent_name.startswith("group_") and (
+        name.startswith("user_") or name == "shared"
+    ):
         return root.parent.parent
     if name.startswith("p2p_") or name == "default":
         return root.parent

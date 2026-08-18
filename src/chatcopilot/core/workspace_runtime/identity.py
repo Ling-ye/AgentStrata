@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from chatcopilot.core.workspace_runtime.model import IDENTITY_FILENAME, Workspace
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 
 _LOGGER = logging.getLogger("chatcopilot.core.workspace_runtime.identity")
 
@@ -17,9 +18,14 @@ def persist_workspace_identity(ws: Workspace) -> None:
 
     任意 user_id / user_name / chat 信息存在时才写。失败只记日志，不阻断主流程。
     """
+    if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+        return
+    shared_group = False
     payload = {
-        "user_id": ws.user_id,
-        "user_name": ws.user_name,
+        "schema_version": 2,
+        "scope": ws.scope,
+        "user_id": None if shared_group else ws.user_id,
+        "user_name": None if shared_group else ws.user_name,
         "chat_kind": ws.chat_kind,
         "chat_id": ws.chat_id,
         "updated_at": time.time(),
@@ -46,7 +52,7 @@ def read_workspace_identity(root: Path) -> Dict[str, Optional[str]]:
     if not isinstance(data, dict):
         return {}
     out: Dict[str, Optional[str]] = {}
-    for key in ("user_id", "user_name", "chat_kind", "chat_id"):
+    for key in ("scope", "user_id", "user_name", "chat_kind", "chat_id"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():
             out[key] = value.strip()

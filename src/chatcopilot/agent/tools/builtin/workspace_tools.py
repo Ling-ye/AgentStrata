@@ -94,7 +94,7 @@ TOOLS: List[ToolDef] = [
             "列出当前 chat 工作目录里的文件（默认按 mtime 倒序）。"
             "处理飞书附件时一定先调本工具看 'attachments' 子目录，了解用户已上传哪些文件。"
             "调用其他工具产生新文件后，也先用本工具确认实际产物路径，再据此构造下一步参数。"
-            "工作目录是 per-chat 隔离的，不同聊天看不到彼此的文件。"
+            "工作目录按 conversation 隔离：私聊按用户隔离，QQ 群内由同群成员共享，跨群不共享。"
             "本工具调用末尾会顺带触发后台清理（attachments/downloads 1 天 1GB，results 7 天 2GB）。"
         ),
         properties={
@@ -246,7 +246,7 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         name="send_files_to_user",
         summary=(
-            "把当前用户工作区内的文件回传到当前会话（聊天框）。"
+            "把当前会话工作区内的文件回传到当前会话（聊天框）；QQ 群文件会发回当前群。"
             "调用前确认这些路径来自其它工具响应的 outputs 字段，或 list_workspace 展示的当前工作区文件，不要手拼。"
             "不限制单次文件数量或单文件大小；工作区外路径一律不允许发送。"
             "工具会把文件直接发到用户的聊天框；"
@@ -258,7 +258,7 @@ TOOLS: List[ToolDef] = [
                 "items": {"type": "string"},
                 "description": (
                     "要发送的文件路径数组，可以是绝对路径或相对工作区根的相对路径，"
-                    "必须落在当前用户工作区内。"
+                    "必须落在当前会话工作区内。"
                 ),
                 "minItems": 1,
             },
@@ -280,7 +280,7 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         name="download_image_urls",
         summary=(
-            "下载公网图片 URL 到当前用户工作区 downloads/images/，用于用户要求“搜索图片/发图/找图”后，"
+            "下载公网图片 URL 到当前会话工作区 downloads/images/，用于用户要求“搜索图片/发图/找图”后，"
             "把搜索 subagent 返回的 image_candidates 或 outputs 里的图片 URL 转成本地文件。"
             "默认最多下载 3 张，随后应立即调用 send_files_to_user 把成功下载的图片发给用户。"
             "只接受 http/https 公网图片，拒绝 localhost、内网、保留地址、非图片响应和超大响应。"

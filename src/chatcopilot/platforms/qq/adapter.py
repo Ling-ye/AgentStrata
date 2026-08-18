@@ -66,6 +66,8 @@ class QQAdapter(PlatformAdapter):
     supports_user_files_pipeline = False
     supports_background_jobs = True
     allow_role_name_match = False
+    group_conversation_scope = "chat"
+    requires_sender_envelope = True
 
     # -- runtime: identity --------------------------------------------------
     def parse_session_identity(
@@ -86,7 +88,16 @@ class QQAdapter(PlatformAdapter):
         if parts and parts[0] == self.name:
             parts = parts[1:]
 
-        if len(parts) >= 2:
+        if len(parts) >= 2 and parts[0] == "g":
+            # The shared session key is the authoritative conversation scope.
+            # Hook fields describe an event and may be missing or stale.
+            chat_id = parts[1]
+            chat_kind = "group"
+            # Shared session identity is the conversation, never the hook actor.
+            # Per-turn actor identity comes from the sender envelope bound to the prompt.
+            user_id = ""
+            user_name = ""
+        elif len(parts) >= 2:
             if not chat_id:
                 chat_id = parts[0]
             if not user_id:
@@ -113,8 +124,27 @@ class QQAdapter(PlatformAdapter):
     def resolve_sendable_paths(self, workspace: "Workspace", files: Sequence[str]) -> list[Path]:
         return _sender.resolve_sendable_paths(workspace, files)
 
-    def send_files(self, files: Sequence[Path], *, message: str = "") -> str:
-        return _sender.send_via_cc_connect(files, message=message)
+    def send_files(
+        self,
+        files: Sequence[Path],
+        *,
+        message: str = "",
+        workspace: "Workspace | None" = None,
+    ) -> str:
+        return _sender.send_via_cc_connect(
+            files,
+            message=message,
+            workspace=workspace,
+        )
+
+    def send_workspace_files(
+        self,
+        workspace: "Workspace",
+        files: Sequence[Path],
+        *,
+        message: str = "",
+    ) -> str:
+        return self.send_files(files, message=message, workspace=workspace)
 
     # -- runtime: background notification ----------------------------------
     def resolve_delivery_target(self, workspace: "Workspace") -> Any:
@@ -249,6 +279,7 @@ class QQAdapter(PlatformAdapter):
             + f"ws_url = {json.dumps(ws_url, ensure_ascii=False)}\n"
             f"token = {json.dumps(token, ensure_ascii=False)}\n"
             f"allow_from = {json.dumps(allow_from, ensure_ascii=False)}\n"
+            "share_session_in_channel = true\n"
             "\n"
         )
 

@@ -4,7 +4,8 @@
 
 - 全局：``{workspace_root}/PERSONA.md``
 - 群级：``{group_dir}/PERSONA.md``（即 ``user_root.parent``，仅群聊存在）
-- 个人：``{user_root}/PERSONA.md``（``p2p_<uid>/`` 或 ``group_<cid>/user_<uid>/``）
+- 个人：``{user_root}/PERSONA.md``（``p2p_<uid>/`` 或 actor-scoped
+  ``group_<cid>/user_<uid>/``）；QQ 群共享 workspace 不建立成员 persona 层
 
 合并顺序：全局 → 群 → 个人（越具体越靠后）。本模块不 import ``Workspace``，
 保持 agent 层平台中立；调用方传入原始路径即可。
@@ -16,6 +17,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from chatcopilot.agent.persona.markdown import MarkdownPersonaProvider
 from chatcopilot.agent.persona.provider import PERSONA_FILENAME
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 
 # 合法的 scope 取值，供工具参数校验复用。
 PERSONA_SCOPES: Tuple[str, ...] = ("global", "group", "user")
@@ -33,6 +35,7 @@ def persona_layer_specs(
     user_root: Path,
     chat_kind: Optional[str],
     chat_id: Optional[str],
+    workspace_scope: str = "actor",
 ) -> List[Tuple[str, Path]]:
     """返回有序的 ``[(scope, path)]``：全局 → 群 → 个人，按解析路径去重。"""
     workspace_root = Path(workspace_root)
@@ -51,7 +54,8 @@ def persona_layer_specs(
     _add("global", workspace_root / PERSONA_FILENAME)
     if (chat_kind or "").strip().lower() == "group" and chat_id:
         _add("group", user_root.parent / PERSONA_FILENAME)
-    _add("user", user_root / PERSONA_FILENAME)
+    if workspace_scope != WORKSPACE_SCOPE_GROUP_SHARED:
+        _add("user", user_root / PERSONA_FILENAME)
     return ordered
 
 
@@ -62,6 +66,7 @@ def persona_path_for_scope(
     user_root: Path,
     chat_kind: Optional[str],
     chat_id: Optional[str],
+    workspace_scope: str = "actor",
 ) -> Path:
     """把 scope 映射到单层 persona 文件路径，供写操作定位目标。"""
     normalized = (scope or "user").strip().lower()
@@ -73,6 +78,8 @@ def persona_path_for_scope(
         if (chat_kind or "").strip().lower() != "group" or not chat_id:
             raise ValueError("当前不在群聊，无法设置 group 级个性；请用 scope=user 或 global。")
         return Path(user_root).parent / PERSONA_FILENAME
+    if workspace_scope == WORKSPACE_SCOPE_GROUP_SHARED:
+        raise PermissionError("QQ 群共享会话没有可由成员修改的 user persona 层。")
     return Path(user_root) / PERSONA_FILENAME
 
 

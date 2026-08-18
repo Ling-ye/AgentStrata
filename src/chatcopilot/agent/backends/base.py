@@ -48,6 +48,15 @@ class BackendAgentSession:
     def close(self) -> None:
         self.backend.close_session(self._session_ref)
 
+    def discard(self) -> None:
+        """Close a session after an external consistency failure and drop resume state."""
+
+        discard_session = getattr(self.backend, "discard_session", None)
+        if callable(discard_session):
+            discard_session(self._session_ref)
+            return
+        self.close()
+
     def set_system_baseline(self, baseline: str) -> None:
         getattr(self.backend, "set_system_baseline")(self._session_ref, baseline)
 

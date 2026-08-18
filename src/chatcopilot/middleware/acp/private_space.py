@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.middleware.runtime.workspace import Workspace
 
 _WORKSPACE_INVENTORY_INTENT_RE = re.compile(
@@ -71,10 +72,15 @@ def format_workspace_inventory(ws: Workspace, *, per_category_limit: int = 20) -
         total += count
         category_rows.append((label, count, names))
 
+    label = (
+        "当前群共享空间"
+        if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED
+        else "你的私人空间"
+    )
     if total == 0:
-        lines = ["你的私人空间目前全部为空："]
+        lines = [f"{label}目前全部为空："]
     else:
-        lines = [f"你的私人空间目前共有 {total} 个文件："]
+        lines = [f"{label}目前共有 {total} 个文件："]
 
     for label, count, names in category_rows:
         lines.append(f"{label}：{count} 个文件")

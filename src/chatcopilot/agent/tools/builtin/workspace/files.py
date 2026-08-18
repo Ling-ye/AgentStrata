@@ -6,11 +6,15 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from chatcopilot.agent.tools.workspace_context import resolve_workspace
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.external_tools.shared.tool_spec import HandlerResult
 from chatcopilot.agent.tools.builtin.workspace.common import _is_unsafe_member, _require
 
 _UNZIP_MAX_TOTAL_BYTES = 2 * 1024 ** 3
 _UNZIP_SUFFIXES = (".zip", ".tar.gz", ".tgz", ".tar")
+_GROUP_RESERVED_PATHS = frozenset(
+    {"jobs", "tasks", "transcripts", ".backend-sessions", ".conversation-state"}
+)
 
 
 def _handler_read_text_head(args: Dict[str, Any]) -> HandlerResult:
@@ -27,6 +31,10 @@ def _handler_read_text_head(args: Dict[str, Any]) -> HandlerResult:
 
     if not ws.is_inside(target):
         raise PermissionError(f"路径越出工作目录范围: {target}; workspace={ws.root}")
+    if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+        rel_parts = target.relative_to(ws.root.resolve()).parts
+        if rel_parts and rel_parts[0] in _GROUP_RESERVED_PATHS:
+            raise PermissionError("群共享空间不开放后台任务、单轮任务或会话诊断文件")
     if target.is_dir():
         # 历史教训：LLM 把 "jobs/<job_id>" 这种目录路径当作 stdout.log 入口传进来，
         # 旧版直接 FileNotFoundError，LLM 误读为"任务不存在 / 还在队列里"。

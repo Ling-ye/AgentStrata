@@ -70,7 +70,10 @@ def list_workspace_inventories(root: Optional[Path] = None) -> list[WorkspaceInv
             user_children = [p for p in entry.iterdir() if p.is_dir() and p.name.startswith("user_")]
             for child in sorted(user_children, key=lambda p: p.name):
                 add(child, "group", chat_id, child.name[len("user_"):], "group_user")
-            if not user_children and _looks_like_workspace(entry):
+            shared = entry / "shared"
+            if shared.is_dir():
+                add(shared, "group", chat_id, None, "group_shared")
+            if not user_children and not shared.is_dir() and _looks_like_workspace(entry):
                 add(entry, "group", chat_id, None, "legacy_chat")
             continue
         if name == "default":

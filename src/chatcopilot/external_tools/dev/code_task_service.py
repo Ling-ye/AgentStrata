@@ -12,7 +12,12 @@ from chatcopilot.contracts.code_tasks import (
     CODE_TASK_ACTIVE_STATUSES,
     CODE_TASK_TOOL,
 )
-from chatcopilot.core.jobs import read_json_file, write_job_status, write_json_atomic
+from chatcopilot.core.jobs import (
+    iter_job_request_paths,
+    read_json_file,
+    write_job_status,
+    write_json_atomic,
+)
 from chatcopilot.external_tools.dev import code_task_runtime as runtime
 from chatcopilot.project import ENV_PREFIX
 
@@ -31,7 +36,7 @@ def recover_code_tasks_once(workspace_root: Path) -> dict[str, int]:
         "cancelled": 0,
         "errors": 0,
     }
-    for request_path in sorted(workspace_root.glob("**/jobs/job_*/request.json")):
+    for request_path in iter_job_request_paths(workspace_root):
         request = read_json_file(request_path) or {}
         if str(request.get("tool_name") or "") != CODE_TASK_TOOL:
             continue
