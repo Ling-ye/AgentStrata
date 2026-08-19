@@ -292,6 +292,114 @@ def test_deploy_failure_path_releases_acquired_maintenance(
     assert calls.index("maintenance enter") < calls.index("maintenance leave")
 
 
+def _prepare_default_deploy_bots(
+    script: Path,
+    environment: dict[str, str],
+    *,
+    fail_instance: str = "",
+) -> None:
+    repository = script.parents[2]
+    fake_bin = Path(environment["PATH"].split(":", 1)[0])
+    for directory, instance_id in (
+        ("alpha-source", "alpha-runtime"),
+        ("beta-source", "beta-runtime"),
+        ("gamma-source", "gamma-runtime"),
+    ):
+        bot_dir = repository / "bots" / directory
+        bot_dir.mkdir(parents=True)
+        (bot_dir / "bot.yaml").write_text(
+            f"id: {directory}\ndeploy:\n  instance_id: {instance_id}\n",
+            encoding="utf-8",
+        )
+    _write_executable(
+        fake_bin / "python3",
+        """#!/usr/bin/env bash
+printf 'python3 %s\n' "$*" >> "$CALL_LOG"
+if [ "$1" = "-" ] && [ "${3:-}" = "instance_id" ]; then
+  sed -n 's/^  instance_id:[[:space:]]*//p' "$2"
+fi
+exit 0
+""",
+    )
+    _write_executable(
+        repository / "console/setup_console.sh",
+        """#!/usr/bin/env bash
+printf 'setup-console %s\n' "$*" >> "$CALL_LOG"
+exit 0
+""",
+    )
+    _write_executable(
+        repository / "deploy/wsl/update_instance.sh",
+        f"""#!/usr/bin/env bash
+printf 'update-instance %s\n' "$*" >> "$CALL_LOG"
+case "$*" in
+  *"--instance {fail_instance} "*) exit 7 ;;
+esac
+exit 0
+""",
+    )
+
+
+def test_deploy_default_updates_every_discovered_bot(
+    tmp_path: Path,
+) -> None:
+    script, environment, call_log = _deploy_harness(tmp_path)
+    _prepare_default_deploy_bots(script, environment)
+
+    completed = subprocess.run(
+        ["bash", str(script), "--skip-web"],
+        cwd=script.parents[2],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    calls = call_log.read_text(encoding="utf-8")
+    assert "setup-console --skip-web" in calls
+    for instance in ("alpha-runtime", "beta-runtime", "gamma-runtime"):
+        assert f"update-instance --instance {instance} " in calls
+
+
+def test_environment_installer_uses_console_only_nested_deploy() -> None:
+    script = _read("deploy/wsl/install_wsl_env.sh")
+    install_console = script.split("install_console() {", maxsplit=1)[1].split(
+        "\n}", maxsplit=1
+    )[0]
+
+    assert "args+=(--skip-bots)" in install_console
+    assert 'deploy/wsl/deploy_console.sh" "${args[@]}"' in install_console
+
+
+def test_deploy_default_continues_after_one_bot_update_failure(
+    tmp_path: Path,
+) -> None:
+    script, environment, call_log = _deploy_harness(tmp_path)
+    _prepare_default_deploy_bots(
+        script,
+        environment,
+        fail_instance="beta-runtime",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(script), "--skip-web"],
+        cwd=script.parents[2],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    calls = call_log.read_text(encoding="utf-8")
+    assert calls.index("--instance alpha-runtime") < calls.index("--instance beta-runtime")
+    assert calls.index("--instance beta-runtime") < calls.index("--instance gamma-runtime")
+    assert "1 of 3 bot update(s) failed: beta-runtime" in completed.stderr
+
+
 def _console_update_harness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

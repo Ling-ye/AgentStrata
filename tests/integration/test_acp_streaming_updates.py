@@ -107,7 +107,12 @@ class _FakeSession:
 
 
 class StreamingUpdateTests(unittest.TestCase):
-    def _run_prompt(self, session: _FakeSession) -> list[Any]:
+    def _run_prompt(
+        self,
+        session: _FakeSession,
+        *,
+        tracking_available: bool = True,
+    ) -> list[Any]:
         async def run_case() -> list[Any]:
             original_update = acp_server.update_agent_message_text
             original_refresh = acp_server._refresh_session_system_prompt
@@ -119,7 +124,11 @@ class StreamingUpdateTests(unittest.TestCase):
                 agent = AcpChatAgent.__new__(AcpChatAgent)
                 agent._sessions = {"sid": session}
                 agent._conn = _FakeConn()
-                agent._start_turn_task = lambda **_kwargs: None
+                agent._start_turn_task = (
+                    (lambda **_kwargs: SimpleNamespace(task_id="task_test"))
+                    if tracking_available
+                    else (lambda **_kwargs: None)
+                )
                 agent._finish_turn_task = lambda *_args, **_kwargs: None
                 agent._record_turn_event = lambda *_args, **_kwargs: None
                 if session.lifecycle_barrier is not None:
@@ -152,6 +161,16 @@ class StreamingUpdateTests(unittest.TestCase):
         updates = self._run_prompt(_FakeSession(debug_mode=True))
 
         self.assertEqual(updates, [("sid", "你好")])
+
+    def test_task_tracking_failure_refuses_agent_execution(self) -> None:
+        session = _FakeSession(debug_mode=False)
+
+        updates = self._run_prompt(session, tracking_available=False)
+
+        self.assertEqual(
+            updates,
+            [("sid", "任务跟踪不可用，消息未交给 Agent 处理；请让维护者检查任务存储。")],
+        )
 
     def test_debug_tool_progress_keeps_final_text_update(self) -> None:
         updates = self._run_prompt(

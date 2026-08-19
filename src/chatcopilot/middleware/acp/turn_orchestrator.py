@@ -96,9 +96,43 @@ class AcpTurnOrchestrator:
                 CallbackTurnHandler("finish", self._finish),
             )
         )
-        outcome = await pipeline.run(context)
-        if outcome.response is None:
-            raise RuntimeError("ACP turn pipeline completed without a response")
+        try:
+            outcome = await pipeline.run(context)
+            if outcome.response is None:
+                raise RuntimeError("ACP turn pipeline completed without a response")
+        except Exception as exc:  # noqa: BLE001 - persist and fail closed at ingress
+            _LOGGER.exception(
+                "session/prompt | sid=%s inbound pipeline failed",
+                session_id,
+            )
+            if context.turn_task is None:
+                tracked = self._start_turn_task(
+                    context,
+                    user_text="（入站消息内容未保存：处理管线异常）",
+                    unauthenticated_intake=True,
+                )
+                if not tracked:
+                    unavailable = await self._tracking_unavailable(context)
+                    if unavailable.response is None:
+                        raise RuntimeError("tracking failure produced no ACP response")
+                    return unavailable.response
+            self._host._finish_turn_task(
+                context.turn_task,
+                status="failed",
+                progress="入站消息处理失败。",
+                stop_reason="inbound_pipeline_error",
+                error=type(exc).__name__,
+            )
+            await self._host._conn.session_update(
+                session_id=session_id,
+                update=self._update_text(
+                    "消息处理失败，请让维护者查看控制台任务记录。"
+                ),
+            )
+            return PromptResponse(
+                stop_reason="end_turn",
+                user_message_id=message_id,
+            )
         return outcome.response
 
     async def _attachments(self, turn: TurnContext) -> TurnOutcome:
@@ -118,6 +152,15 @@ class AcpTurnOrchestrator:
         turn.metadata["prompt_parts"] = prompt_parts
         turn.metadata["turn_identity"] = turn_identity
         turn.user_text = prompt_parts.text or ""
+        task_workspace = turn.session.workspace
+        if turn_identity is not None:
+            task_workspace = replace(
+                task_workspace,
+                user_id=turn_identity.sender_user_id,
+                user_name=turn_identity.sender_user_name,
+            )
+        if not self._start_turn_task(turn, workspace=task_workspace):
+            return await self._tracking_unavailable(turn)
         _LOGGER.info(
             "session/prompt | sid=%s platform=%s msgs=%d user_text_len=%d "
             "resources=%d mode=%s debug=%s",
@@ -183,6 +226,7 @@ class AcpTurnOrchestrator:
             turn.turn_task,
             status="succeeded",
             progress="已按访问策略忽略该消息。",
+            stop_reason="access_denied",
         )
         return TurnOutcome(
             response=PromptResponse(
@@ -201,7 +245,6 @@ class AcpTurnOrchestrator:
             )
         except SenderEnvelopeError as exc:
             return await self._identity_rejection(turn, exc)
-        self._start_turn_task(turn)
         return TurnOutcome()
 
     async def _identity_rejection(
@@ -213,6 +256,21 @@ class AcpTurnOrchestrator:
             "session/prompt | sid=%s rejected shared-group identity | code=%s",
             turn.session_id,
             exc.code,
+        )
+        if turn.turn_task is None:
+            tracked = self._start_turn_task(
+                turn,
+                user_text="（入站消息内容未保存：身份校验失败）",
+                unauthenticated_intake=True,
+            )
+            if not tracked:
+                return await self._tracking_unavailable(turn)
+        self._host._finish_turn_task(
+            turn.turn_task,
+            status="failed",
+            progress="已拒绝缺少可信身份的入站消息。",
+            stop_reason=exc.code,
+            error=exc.code,
         )
         await self._host._conn.session_update(
             session_id=turn.session_id,
@@ -227,14 +285,46 @@ class AcpTurnOrchestrator:
             reason=exc.code,
         )
 
-    def _start_turn_task(self, turn: TurnContext) -> None:
+    def _start_turn_task(
+        self,
+        turn: TurnContext,
+        *,
+        workspace: Any | None = None,
+        user_text: str | None = None,
+        unauthenticated_intake: bool = False,
+    ) -> bool:
         if turn.turn_task is not None:
-            return
+            return True
         turn.turn_task = self._host._start_turn_task(
             session=turn.session,
             session_id=turn.session_id,
             message_id=turn.message_id,
-            user_text=turn.user_text,
+            user_text=turn.user_text if user_text is None else user_text,
+            workspace=workspace,
+            unauthenticated_intake=unauthenticated_intake,
+        )
+        return turn.turn_task is not None
+
+    async def _tracking_unavailable(self, turn: TurnContext) -> TurnOutcome:
+        """Fail closed when an inbound message cannot obtain a task record."""
+
+        _LOGGER.error(
+            "session/prompt | sid=%s task tracking unavailable; Agent execution refused",
+            turn.session_id,
+        )
+        await self._host._conn.session_update(
+            session_id=turn.session_id,
+            update=self._update_text(
+                "任务跟踪不可用，消息未交给 Agent 处理；请让维护者检查任务存储。"
+            ),
+        )
+        return TurnOutcome(
+            response=PromptResponse(
+                stop_reason="end_turn",
+                user_message_id=turn.message_id,
+            ),
+            stop=True,
+            reason="task_tracking_unavailable",
         )
 
     async def _deterministic_shortcuts(self, turn: TurnContext) -> TurnOutcome:

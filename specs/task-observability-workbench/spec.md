@@ -25,6 +25,15 @@ change to the console's anonymous `0.0.0.0:8910` listener.
 ### Runtime contracts
 
 - Persist `schema_version=2` in each new `task.json`.
+- Every message that reaches the ACP Agent turn boundary must create a task
+  before admission, attachment, model, or tool side effects. If safe task
+  persistence is unavailable, the turn fails closed instead of becoming an
+  untracked Agent execution.
+- An authenticated QQ shared-group actor uses the protected actor partition
+  even when admission is denied; denial does not materialize an execution
+  session. Identity-invalid group input uses a protected intake partition and
+  persists only a generic failure summary, never raw input, sender envelope,
+  or platform actor ID.
 - Persist a `TaskStepV2` collection. Each step records a stable ID, type,
   optional parent, depth, status, title, start/end timestamps, elapsed time,
   model/tool/job-stage metadata, estimated and actual token/cache usage,
@@ -101,6 +110,10 @@ to reach the anonymous console listener can read the exposed raw events.
 
 - New tasks are recorded as schema v2 and contain paired, nested execution
   steps with valid live/final timings.
+- Accepted, access-denied, identity-rejected, deterministic-shortcut, and
+  pipeline-error inbound turns are visible in the Console. Identity-rejected
+  records reveal neither raw input nor a platform actor, and a task-storage
+  failure prevents Agent execution.
 - Failed LLM calls close their steps, job stages are nested without heartbeat
   noise, and parent/task token totals do not double count children or cache.
 - Forecasts respect the 20-sample threshold, 200-sample cap, model/context/role

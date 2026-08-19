@@ -5,9 +5,10 @@
 # console service on http://localhost:8910.
 #
 # Usage:
-#   bash deploy/wsl/deploy_console.sh                 # install/repair console
+#   bash deploy/wsl/deploy_console.sh                 # install/repair console + update every bot
 #   bash deploy/wsl/deploy_console.sh --update-only   # rebuild web + restart Evaluation / Console
 #   bash deploy/wsl/deploy_console.sh --skip-web      # skip web build
+#   bash deploy/wsl/deploy_console.sh --skip-bots     # install/repair console only
 #   bash deploy/wsl/deploy_console.sh --restart-only  # only restart service
 #   bash deploy/wsl/deploy_console.sh --status        # health check only
 #   bash deploy/wsl/deploy_console.sh --dry-run
@@ -25,8 +26,11 @@ RESTART_ONLY=0
 STATUS_ONLY=0
 UPDATE_ONLY=0
 DRY_RUN=0
+SKIP_BOTS=0
 MAINTENANCE_HELD=0
 MAINTENANCE_LEASE_ID=""
+BOT_UPDATE_COUNT=0
+BOT_UPDATE_FAILURES=()
 
 usage() {
     sed -n '2,18p' "$0"
@@ -38,6 +42,7 @@ for arg in "$@"; do
         --restart-only) RESTART_ONLY=1 ;;
         --status) STATUS_ONLY=1 ;;
         --update-only) UPDATE_ONLY=1 ;;
+        --skip-bots) SKIP_BOTS=1 ;;
         --dry-run|-n) DRY_RUN=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "[ERR] unknown argument: $arg" >&2; usage >&2; exit 2 ;;
@@ -50,6 +55,10 @@ if [ "$STATUS_ONLY" -eq 1 ] && { [ "$RESTART_ONLY" -eq 1 ] || [ "$UPDATE_ONLY" -
 fi
 if [ "$RESTART_ONLY" -eq 1 ] && [ "$UPDATE_ONLY" -eq 1 ]; then
     echo "[ERR] --restart-only and --update-only are mutually exclusive" >&2
+    exit 2
+fi
+if [ "$SKIP_BOTS" -eq 1 ] && { [ "$STATUS_ONLY" -eq 1 ] || [ "$RESTART_ONLY" -eq 1 ] || [ "$UPDATE_ONLY" -eq 1 ]; }; then
+    echo "[ERR] --skip-bots is only valid for the default full deploy mode" >&2
     exit 2
 fi
 
@@ -336,6 +345,95 @@ install_or_repair_console() {
     run_or_print bash "$REPO_ROOT/console/setup_console.sh" "${args[@]}" || return $?
 }
 
+read_deploy_value() {
+    local bot="$1" name="$2"
+    python3 - "$bot" "$name" <<'PY'
+import sys
+from pathlib import Path
+
+bot = Path(sys.argv[1])
+want = sys.argv[2]
+section = ""
+for raw in bot.read_text(encoding="utf-8", errors="replace").splitlines():
+    line = raw.split("#", 1)[0].rstrip()
+    if not line.strip():
+        continue
+    if not raw[:1].isspace() and ":" in line:
+        section = line.split(":", 1)[0].strip()
+        continue
+    if section == "deploy" and raw[:1].isspace() and ":" in line:
+        key, value = line.split(":", 1)
+        if key.strip() == want:
+            print(value.strip().strip('"').strip("'"))
+            break
+PY
+}
+
+update_all_bots() {
+    local bot instance rc index
+    local -A seen_instances=()
+    local -a bot_files=()
+    local -a instances=()
+    while IFS= read -r -d '' bot; do
+        bot_files+=("$bot")
+    done < <(
+        find "$REPO_ROOT/bots" -mindepth 2 -maxdepth 2 -name bot.yaml \
+            -type f -print0 2>/dev/null | sort -z
+    )
+    if [ "${#bot_files[@]}" -eq 0 ]; then
+        err "no BotSpecs found under $REPO_ROOT/bots/*/bot.yaml"
+        return 1
+    fi
+
+    BOT_UPDATE_COUNT="${#bot_files[@]}"
+    info "validating all $BOT_UPDATE_COUNT discovered bot deployment(s) ..."
+    for bot in "${bot_files[@]}"; do
+        if ! instance="$(read_deploy_value "$bot" instance_id)"; then
+            err "cannot read deploy.instance_id from $bot"
+            BOT_UPDATE_FAILURES+=("${bot#"$REPO_ROOT"/}")
+            continue
+        fi
+        [ -z "$instance" ] && instance="$(basename "$(dirname "$bot")")"
+        if [[ ! "$instance" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]]; then
+            err "invalid deploy.instance_id in $bot"
+            BOT_UPDATE_FAILURES+=("${bot#"$REPO_ROOT"/}")
+            continue
+        fi
+        if [ -n "${seen_instances[$instance]:-}" ]; then
+            err "duplicate deploy.instance_id '$instance': $bot"
+            BOT_UPDATE_FAILURES+=("$instance")
+            continue
+        fi
+        seen_instances["$instance"]="$bot"
+        instances+=("$instance")
+    done
+    if [ "${#BOT_UPDATE_FAILURES[@]}" -gt 0 ]; then
+        err "bot inventory validation failed: ${BOT_UPDATE_FAILURES[*]}"
+        return 1
+    fi
+
+    info "updating all $BOT_UPDATE_COUNT validated bot instance(s) ..."
+    for index in "${!bot_files[@]}"; do
+        bot="${bot_files[$index]}"
+        instance="${instances[$index]}"
+        info "updating bot $instance from ${bot#"$REPO_ROOT"/} ..."
+        if run_or_print bash "$REPO_ROOT/deploy/wsl/update_instance.sh" \
+            --instance "$instance" --src "$REPO_ROOT" --bot "$bot"; then
+            ok "bot $instance updated and verified"
+        else
+            rc=$?
+            err "bot $instance update failed (exit $rc); continuing with remaining bots"
+            BOT_UPDATE_FAILURES+=("$instance")
+        fi
+    done
+
+    if [ "${#BOT_UPDATE_FAILURES[@]}" -gt 0 ]; then
+        err "${#BOT_UPDATE_FAILURES[@]} of $BOT_UPDATE_COUNT bot update(s) failed: ${BOT_UPDATE_FAILURES[*]}"
+        return 1
+    fi
+    ok "all $BOT_UPDATE_COUNT bot instance(s) updated"
+}
+
 restart_console() {
     info "restarting $UNIT_NAME ..."
     run_or_print systemctl --user restart "$UNIT_NAME" || return $?
@@ -389,15 +487,29 @@ elif [ "$UPDATE_ONLY" -eq 1 ]; then
 else
     info "installing/repairing Console service ..."
     install_or_repair_console || exit $?
+    if [ "$SKIP_BOTS" -eq 1 ]; then
+        warn "--skip-bots set; bot runtimes will not be updated"
+    else
+        update_all_bots || BOT_UPDATE_RESULT=$?
+    fi
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
     echo
+    if [ "${BOT_UPDATE_RESULT:-0}" -ne 0 ]; then
+        err "dry-run found one or more invalid bot deployment entries"
+        exit "$BOT_UPDATE_RESULT"
+    fi
     ok "dry-run completed; no system changes were made"
     exit 0
 fi
 
 check_status || exit $?
+
+if [ "${BOT_UPDATE_RESULT:-0}" -ne 0 ]; then
+    err "Console is healthy, but one or more bot updates failed"
+    exit "$BOT_UPDATE_RESULT"
+fi
 
 echo
 ok "done. Open http://localhost:8910"

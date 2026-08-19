@@ -19,6 +19,7 @@ from chatcopilot.platforms import router
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSION_ENV_HOOK = REPO_ROOT / "deploy" / "wsl" / "_session_env.sh"
+WSL_ENV_LOADER = REPO_ROOT / "deploy" / "wsl" / "_load_env.sh"
 LINGYE_BOT_SPEC = REPO_ROOT / "bots" / "lingye-copilot-qq" / "bot.yaml"
 
 
@@ -211,6 +212,68 @@ class PlatformSessionIdentityTests(unittest.TestCase):
         self.assertIn("enabled = false", instant_reply)
         self.assertNotIn("content =", instant_reply)
         self.assertNotIn("喵喵喵，正在分析中...", config)
+
+    @unittest.skipUnless(shutil.which("bash"), "requires bash")
+    def test_deploy_paths_ignore_cc_connect_isolated_home(self) -> None:
+        import pwd
+
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            isolated_home = base / "cc-home"
+            isolated_home.mkdir()
+            bot_yaml = base / "bot.yaml"
+            bot_yaml.write_text(
+                textwrap.dedent(
+                    """\
+                    id: qq-bot
+                    display_name: QQ Bot
+                    deploy:
+                      target: wsl2
+                      instance_id: qq-bot
+                      wsl_home: ~/ChatCopilot-qq-bot
+                      workspace_root: ~/chatcopilot-workspaces/qq-bot
+                      env_file: ~/.chatcopilot-qq-bot.env
+                      cc_connect_config_dir: ~/.chatcopilot-runtime/qq-bot/.cc-connect
+                    """
+                ),
+                encoding="utf-8",
+            )
+            env = {
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "HOME": str(isolated_home),
+                "CHATCOPILOT_INSTANCE_ID": "qq-bot",
+                "CHATCOPILOT_BOT_SPEC": str(bot_yaml),
+            }
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; ccp_apply_bot_deploy_config; '
+                    'printf "%s\\n%s\\n%s\\n" "$CHATCOPILOT_HOME" '
+                    '"$CHATCOPILOT_WORKSPACE_ROOT" "$CHATCOPILOT_CC_HOME"',
+                    "bash",
+                    str(WSL_ENV_LOADER),
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            account_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+            self.assertEqual(
+                result.stdout.splitlines(),
+                [
+                    str(account_home / "ChatCopilot-qq-bot"),
+                    str(account_home / "chatcopilot-workspaces/qq-bot"),
+                    str(account_home / ".chatcopilot-runtime/qq-bot"),
+                ],
+            )
+            self.assertNotIn(str(isolated_home), result.stdout)
 
     @unittest.skipUnless(shutil.which("bash"), "requires bash")
     def test_session_hook_uses_deploy_python_when_home_is_isolated(self) -> None:

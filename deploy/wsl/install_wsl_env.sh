@@ -302,6 +302,9 @@ install_console() {
     fi
     local args=()
     [ "$SKIP_WEB" -eq 1 ] && args+=(--skip-web)
+    # Environment installation owns only Console setup. Bot deployment is a
+    # separate stage in deploy_all.sh; avoid running every instance twice.
+    args+=(--skip-bots)
     info "installing/repairing Console"
     run bash "$REPO_ROOT/deploy/wsl/deploy_console.sh" "${args[@]}"
 }

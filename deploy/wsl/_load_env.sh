@@ -148,6 +148,7 @@ ccp_apply_bot_deploy_config() {
     _tmp="$(mktemp 2>/dev/null)" || return 0
     python3 - "$_bot" <<'PY' > "$_tmp" 2>/dev/null || true
 import os
+import pwd
 import shlex
 import sys
 from pathlib import Path
@@ -171,7 +172,13 @@ for raw in bot.read_text(encoding="utf-8", errors="replace").splitlines():
         key, value = line.split(":", 1)
         deploy[key.strip()] = value.strip().strip("\"'")
 
-home = Path.home()
+# cc-connect intentionally starts with HOME set to its per-instance runtime
+# directory.  BotSpec ``~/...`` paths still belong to the deployment account,
+# so resolve them from passwd instead of the mutable process environment.
+home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+if not home.is_absolute():
+    raise SystemExit("deployment account home is not absolute")
+
 def expand(value: str) -> str:
     value = (value or "").strip()
     if not value:
