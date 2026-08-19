@@ -10,7 +10,7 @@ Type=simple
 EnvironmentFile=%h/.config/chatcopilot-console/%i.env
 # start.sh 本身就是「前台 exec cc-connect」，会从所在目录名自动推导 instance，
 # 因此直接复用，无需为 systemd 另写启动逻辑。
-ExecStart=/usr/bin/env bash ${CCP_WSL_HOME}/deploy/wsl/start.sh
+ExecStart=/usr/bin/env bash ${CCP_WSL_HOME}/deploy/wsl/start.sh --apply-config
 Restart=on-failure
 RestartSec=5
 # cc-connect 自身的业务日志仍按 start.sh 的逻辑落到 ~/chatcopilot-logs/<id>/；

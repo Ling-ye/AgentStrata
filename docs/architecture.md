@@ -110,7 +110,11 @@ prompt、工具、Codex 与代码任务投影；其他群成员仍使用 member 
 actor 隔离。群是公开输出场景，因此 Owner 工具 payload 仍脱敏，私有 memory/Wiki/RAG 不自动
 注入，标记 `private_chat_only` 的工具也不会因为 Owner 身份绕过频道限制。
 
-QQ 群不写共享 `MEMORY.md` 或 member-visible turn diagnostics。群人格没有额外 manager、grant
+QQ 群不写共享 `MEMORY.md` 或 member-visible turn diagnostics；已接受回合的 Console task
+记录按真实 actor 写在 `.conversation-state/task-actors/<actor-digest>/tasks/`，群任务与 workspace
+工具均不能读取。准入拒绝保留同一 actor 分区的终态 task，但不激活执行 session；身份无效
+只写入 `.conversation-state/task-intake/tasks/` 的脱敏失败记录。任何入站消息无法先建立 task
+记录时失败关闭，不进入 Agent、附件或工具阶段。群人格没有额外 manager、grant
 或文件格式，而是复用通用 persona 的 group 层 `group_<id>/PERSONA.md`；Owner 调用现有
 `persona_*` 工具，User/Admin 无法读取或修改 group/global 层。Owner 后台 job 的 request/status/
 result/log 位于 `.conversation-state/jobs/<actor-digest>/`，普通成员不能从 shared root 发现或控制。

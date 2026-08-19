@@ -75,8 +75,9 @@ bash console/systemd/register.sh --enable lingye-copilot-qq
 bash console/scripts/ctl.sh start lingye-copilot-qq
 ```
 
-Bot 是否自启由 `systemctl --user enable chatcopilot@<id>` 决定。一键脚本或 installe
-失败后不要跳过失败阶段继续；按输出修复后重跑相同入口。
+Bot 是否自启由 `systemctl --user enable chatcopilot@<id>` 决定。托管 unit 每次启动或重启都会
+先通过 `start.sh --apply-config` 从当前 BotSpec 重渲染运行时配置，渲染失败则不启动旧配置。
+一键脚本或 installer 失败后不要跳过失败阶段继续；按输出修复后重跑相同入口。
 
 ## 平台上线边界
 
@@ -122,6 +123,10 @@ owner。Console 只通过 UDS client 提供 UI/BFF；重启或更新 Console 不
 `reports/evals/evaluations/` 作为默认 root，不在代码或 BotSpec 中写机器
 绝对路径。日常状态、日志和显式重启命令见
 [`operations.md#evaluation`](operations.md#evaluation)。
+
+不带参数的 `deploy_console.sh` 先安装/修复 Console，再发现全部 `bots/*/bot.yaml`，按
+`deploy.instance_id` 逐个调用统一实例更新入口。单个 Bot 更新失败不会阻断后续 Bot，最终
+汇总失败并返回非零；`--skip-bots` 可显式执行 Console-only 安装修复。
 
 `deploy_console.sh --restart-only` 只重启 Console。`--update-only` 和已安装环境的
 安装修复先通过 UDS 原子获取 maintenance lease：service 在与创建 Evaluation

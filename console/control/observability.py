@@ -630,7 +630,17 @@ def _find_job_dir(task_dir: Path, job_id: str) -> Path | None:
     if not _JOB_ID_RE.fullmatch(job_id):
         return None
     workspace_dir = task_dir.parent.parent
-    candidate = workspace_dir / "jobs" / job_id
+    candidates = [workspace_dir / "jobs" / job_id]
+    protected_state = next(
+        (parent for parent in task_dir.parents if parent.name == ".conversation-state"),
+        None,
+    )
+    if protected_state is not None and workspace_dir.parent.name == "task-actors":
+        candidates.insert(
+            0,
+            protected_state / "jobs" / workspace_dir.name / job_id,
+        )
+    candidate = next((path for path in candidates if path.is_dir()), candidates[0])
     try:
         expected = candidate.lstat()
         if (

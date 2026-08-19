@@ -27,6 +27,15 @@ def test_code_worker_unit_keeps_wsl_compatible_hardening() -> None:
         assert directive in unit
 
 
+def test_bot_unit_renders_runtime_config_before_every_start() -> None:
+    unit = _read("console/systemd/chatcopilot@.service")
+
+    assert (
+        "ExecStart=/usr/bin/env bash ${CCP_WSL_HOME}/deploy/wsl/start.sh "
+        "--apply-config"
+    ) in unit
+
+
 def test_registration_accepts_exported_worker_values_and_pins_main_instance() -> None:
     script = _read("console/systemd/register.sh")
 

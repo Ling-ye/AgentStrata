@@ -1067,28 +1067,27 @@ class AcpChatAgent(Agent):
         session_id: str,
         message_id: str | None,
         user_text: str,
+        workspace: Workspace | None = None,
+        unauthenticated_intake: bool = False,
     ) -> Optional[TurnTaskRecorder]:
         # Turn traces include tool arguments, results and host paths. They are
-        # diagnostic state, not collaborative group data, so never place them
-        # below a member-writable shared root.
-        if (
-            getattr(session.workspace, "scope", "actor")
-            == WORKSPACE_SCOPE_GROUP_SHARED
-        ):
-            return None
+        # diagnostic state, not collaborative group data.  Shared-group turns
+        # therefore use TurnTaskRecorder's protected actor root rather than the
+        # member-writable shared workspace.
         try:
             return TurnTaskRecorder(
-                workspace=session.workspace,
+                workspace=workspace or session.workspace,
                 session_id=session_id,
                 message_id=message_id,
                 user_text=user_text,
+                unauthenticated_intake=unauthenticated_intake,
                 history_root=(
                     Path(os.environ["CHATCOPILOT_WORKSPACE_ROOT"]).expanduser()
                     if os.environ.get("CHATCOPILOT_WORKSPACE_ROOT")
                     else None
                 ),
             )
-        except Exception:  # noqa: BLE001 - 任务进展记录不能影响机器人主链路
+        except Exception:  # noqa: BLE001 - caller fails closed before Agent execution
             _LOGGER.exception("turn task record init failed | sid=%s", session_id)
             return None
 

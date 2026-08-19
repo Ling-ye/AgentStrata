@@ -45,6 +45,8 @@ EVENT_SEQUENCE_FILENAME = ".events.sequence"
 COMPLETION_LOCK_FILENAME = ".completion.lock"
 TURN_FILENAME = "turn.json"
 CONTEXTS_DIRNAME = "contexts"
+GROUP_TASK_ACTORS_DIRNAME = "task-actors"
+GROUP_TASK_INTAKE_DIRNAME = "task-intake"
 MAX_CONTEXT_ARTIFACT_BYTES = 8 * 1024 * 1024
 ACTIVITY_SUMMARY_WRITE_INTERVAL_SECONDS = 0.25
 MAX_PROVIDER_ACTIVITY_SUMMARIES = 500
@@ -96,6 +98,91 @@ def describe_user_text(text: str, *, limit: int = 120) -> str:
     if not first_line:
         return "（空消息）"
     return first_line if len(first_line) <= limit else first_line[: limit - 1] + "…"
+
+
+def group_task_actor_root(workspace: Workspace, *, create: bool = False) -> Path:
+    """Return the protected per-actor observability root for a shared group.
+
+    The shared workspace is intentionally member-writable.  Turn diagnostics
+    can contain tool summaries, model metadata and host-path receipts, so they
+    must live in the protected conversation sibling and remain partitioned by
+    the authenticated transport actor.  The raw actor ID never becomes a path
+    segment.
+    """
+
+    if workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
+        return workspace.root
+    if workspace.root.name != "shared" or not workspace.chat_id or not workspace.user_id:
+        raise ValueError(
+            "shared-group task storage requires stable chat and actor identities"
+        )
+    actor_digest = hashlib.sha256(
+        (
+            f"{workspace.chat_kind or 'group'}\0{workspace.chat_id}\0"
+            f"{workspace.user_id}"
+        ).encode("utf-8")
+    ).hexdigest()
+    state_root = workspace.root.parent / ".conversation-state"
+    actors_root = state_root / GROUP_TASK_ACTORS_DIRNAME
+    actor_root = actors_root / actor_digest
+    if create:
+        for path in (state_root, actors_root, actor_root):
+            if path.is_symlink():
+                raise RuntimeError(
+                    "protected group task directory must not be a symlink"
+                )
+            path.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if not path.is_dir() or path.is_symlink():
+                raise RuntimeError(
+                    "protected group task path must be a real directory"
+                )
+            path.chmod(0o700)
+            info = path.stat()
+            if os.name == "posix" and (
+                info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o700
+            ):
+                raise RuntimeError(
+                    "protected group task directory must be owner-only"
+                )
+    return actor_root
+
+
+def group_task_intake_root(workspace: Workspace, *, create: bool = False) -> Path:
+    """Return protected storage for a shared-group message without trusted actor ID.
+
+    Identity-rejected inbound messages still need an auditable Console task, but
+    their untrusted sender envelope must never choose an actor partition.  This
+    group-level intake root stores only a generic, redacted rejection record.
+    """
+
+    if workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
+        return workspace.root
+    if workspace.root.name != "shared" or not workspace.chat_id:
+        raise ValueError("shared-group intake storage requires a stable chat identity")
+    state_root = workspace.root.parent / ".conversation-state"
+    intake_root = state_root / GROUP_TASK_INTAKE_DIRNAME
+    if create:
+        for path in (state_root, intake_root):
+            if path.is_symlink():
+                raise RuntimeError(
+                    "protected group intake directory must not be a symlink"
+                )
+            path.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if not path.is_dir() or path.is_symlink():
+                raise RuntimeError(
+                    "protected group intake path must be a real directory"
+                )
+            path.chmod(0o700)
+            info = path.stat()
+            if os.name == "posix" and (
+                info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o700
+            ):
+                raise RuntimeError(
+                    "protected group intake directory must be owner-only"
+                )
+    return intake_root
 
 
 def _workspace_payload(workspace: Workspace) -> Dict[str, Any]:
@@ -395,6 +482,7 @@ class TurnTaskRecorder:
     task_id: str = field(default_factory=make_task_id)
     asked_at: float = field(default_factory=time.time)
     history_root: Optional[Path] = None
+    unauthenticated_intake: bool = False
     _path: Path = field(init=False, repr=False)
     _tools: List[Dict[str, Any]] = field(default_factory=list, init=False, repr=False)
     _llm_calls: List[Dict[str, Any]] = field(default_factory=list, init=False, repr=False)
@@ -419,9 +507,17 @@ class TurnTaskRecorder:
     _provider_omission_event_written: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
-            raise ValueError("shared-group turn diagnostics require protected storage")
-        self._path = self.workspace.root / TASKS_DIRNAME / self.task_id / TASK_FILENAME
+        if (
+            self.unauthenticated_intake
+            and self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+        ):
+            storage_root = group_task_intake_root(self.workspace, create=True)
+        else:
+            storage_root = group_task_actor_root(
+                self.workspace,
+                create=self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED,
+            )
+        self._path = storage_root / TASKS_DIRNAME / self.task_id / TASK_FILENAME
         self._forecast = {
             "status": "insufficient",
             "model": "",
@@ -1883,11 +1979,16 @@ class TurnTaskRecorder:
             "submitter": (
                 stable_actor_ref(
                     "qq",
-                    self.workspace.user_id or "",
+                    self.workspace.user_id,
                     conversation_id=(
                         f"{self.workspace.chat_kind or ''}:{self.workspace.chat_id or ''}"
                     ),
                 )
+                if (
+                    self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+                    and self.workspace.user_id
+                )
+                else "未验证来源"
                 if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
                 else self.workspace.user_name or self.workspace.user_id or ""
             ),
@@ -2564,7 +2665,11 @@ def complete_delegated_task(
 
     if not str(task_id or "").startswith("task_") or "/" in task_id or "\\" in task_id:
         return None
-    task_dir = workspace.root / TASKS_DIRNAME / task_id
+    try:
+        storage_root = group_task_actor_root(workspace, create=False)
+    except ValueError:
+        return None
+    task_dir = storage_root / TASKS_DIRNAME / task_id
     try:
         with _task_completion_lock(task_dir):
             completion = _merge_delegated_task_completion(
@@ -3441,5 +3546,7 @@ __all__ = [
     "TurnTaskRecorder",
     "complete_delegated_task",
     "describe_user_text",
+    "group_task_actor_root",
+    "group_task_intake_root",
     "make_task_id",
 ]

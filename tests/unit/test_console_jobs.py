@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import os
@@ -423,6 +424,132 @@ def test_tasks_scan_p2p_and_group_workspaces_sorted_by_latest_update(tmp_path: P
     assert resp["tasks"][0]["usage_totals"]["cached_tokens"] == 400
     assert "llm_calls" not in resp["tasks"][0]
     assert resp["tasks"][0]["job_ids"] == ["job_20260605_120000_deadbeef"]
+
+
+def test_tasks_scan_protected_group_actor_records_and_link_protected_jobs(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspaces"
+    group_id = "30003"
+    user_id = "20002"
+    actor_digest = hashlib.sha256(
+        f"group\0{group_id}\0{user_id}".encode("utf-8")
+    ).hexdigest()
+    state_root = root / f"group_{group_id}" / ".conversation-state"
+    task_id = "task_group_protected"
+    job_id = "job_20260818_221500_deadbeef"
+    task_dir = (
+        state_root
+        / "task-actors"
+        / actor_digest
+        / "tasks"
+        / task_id
+    )
+    _write_json(
+        task_dir / "task.json",
+        {
+            "schema_version": 2,
+            "task_id": task_id,
+            "description": "group persona request",
+            "status": "running",
+            "asked_at": 100,
+            "updated_at": 110,
+            "steps": [],
+            "job_ids": [job_id],
+            "workspace": {
+                "chat_kind": "group",
+                "chat_id": group_id,
+                "user_id": None,
+                "actor_ref": "qq:actor:test",
+            },
+        },
+    )
+    (task_dir / "events.jsonl").write_text(
+        json.dumps(
+            {"event": "task_started", "sequence": 1, "recorded_at": 100}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    job_dir = state_root / "jobs" / actor_digest / job_id
+    _write_json(job_dir / "request.json", {"job_id": job_id})
+    _write_json(
+        job_dir / "status.json",
+        {
+            "status": "running",
+            "stage": "testing",
+            "message": "tests",
+            "created_at": 101,
+            "updated_at": 105,
+        },
+    )
+
+    listing = operations.tasks(_inst(root))
+    detail = operations.task_detail(_inst(root), task_id)
+    events = operations.task_events(_inst(root), task_id)
+
+    assert listing["count"] == 1
+    assert listing["tasks"][0]["task_id"] == task_id
+    assert detail is not None
+    assert [step["type"] for step in detail["steps"]] == ["background_job"]
+    assert detail["job_statuses"] == [
+        {
+            "job_id": job_id,
+            "status": "running",
+            "stage": "testing",
+            "message": "tests",
+            "error_code": "",
+        }
+    ]
+    assert events is not None
+    assert [event["event"] for event in events["events"]] == ["task_started"]
+
+
+def test_tasks_scan_redacted_group_identity_intake_records(tmp_path: Path) -> None:
+    root = tmp_path / "workspaces"
+    task_id = "task_group_identity_rejected"
+    task_dir = (
+        root
+        / "group_30003"
+        / ".conversation-state"
+        / "task-intake"
+        / "tasks"
+        / task_id
+    )
+    _write_json(
+        task_dir / "task.json",
+        {
+            "schema_version": 2,
+            "task_id": task_id,
+            "description": "（入站消息内容未保存：身份校验失败）",
+            "progress": "已拒绝缺少可信身份的入站消息。",
+            "status": "failed",
+            "submitter": "未验证来源",
+            "asked_at": 100,
+            "updated_at": 101,
+            "steps": [],
+            "job_ids": [],
+        },
+    )
+    _write_json(
+        task_dir / "turn.json",
+        {
+            "task_id": task_id,
+            "status": "failed",
+            "stop_reason": "qq_sender_envelope_missing",
+            "error": "qq_sender_envelope_missing",
+        },
+    )
+
+    listing = operations.tasks(_inst(root))
+    detail = operations.task_detail(_inst(root), task_id)
+
+    assert listing["count"] == 1
+    assert listing["tasks"][0]["submitter"] == "未验证来源"
+    assert listing["tasks"][0]["description"] == "（入站消息内容未保存：身份校验失败）"
+    assert detail is not None
+    assert detail["task_id"] == task_id
+    assert detail["status"] == "failed"
 
 
 def test_tasks_include_corrupt_json_without_crashing(tmp_path: Path) -> None:

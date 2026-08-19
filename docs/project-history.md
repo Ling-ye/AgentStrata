@@ -419,8 +419,9 @@ QQ 私聊、不同群、旧成员目录和其它平台
 
 共享范围覆盖普通群文件和 conversation history；权限则按 actor 保持。journal、actor backend
 state 与 transcript 收进受保护的 `.conversation-state/`；群 Codex 外层只读暴露 shared root，
-文件 mutation 只经 actor-bound scoped MCP。Owner 后台 job 控制面也按 actor 放在保护目录，
-普通成员不能发现或控制；turn diagnostics 与共享 memory 仍不进入群目录。无法绑定 chat/message
+文件 mutation 只经 actor-bound scoped MCP。Owner 后台 job 控制面也按 actor 放在保护目录；
+已接受回合的 turn diagnostics 按 actor 写入保护目录供 Console 读取，但不进入 member-writable
+shared root，普通成员不能发现或控制；共享 memory 仍禁用。无法绑定 chat/message
 的 cc-connect legacy attachment inbox import 在 shared-group 中失败关闭，shared attachments 中
 的同名旧文件也不能作为本次上传证明。
 
@@ -484,6 +485,39 @@ operator 认证，显式改成非回环地址前必须增加可信代理认证�
 
 相关规格：
 [`unified-agent-context-observability`](../specs/unified-agent-context-observability/spec.md)。
+
+## 14. 入站追踪与机器级更新：消除控制台盲区和逐实例手工操作
+
+**暴露的问题**
+
+ACP 过去只在身份校验、白名单和 actor session 激活之后创建 `task_...`。因此身份见证失败、
+群白名单拒绝以及处理管线早期异常都不会出现在 Console，操作者只能从聊天回复或 service
+日志推断发生过什么。同时，`deploy_console.sh` 的默认模式只修复 Console；机器上有多个
+BotSpec 时仍需手工逐个运行 `update_instance.sh`，容易漏更新某个运行副本。
+
+**结构调整**
+
+- 可信身份一旦解析完成，就在访问策略前创建 actor-scoped task；白名单拒绝只结束该 task，
+  不激活 actor execution session。
+- 身份无法可信绑定时，在群保护状态的 `task-intake` 分区写通用失败记录；不落盘原始正文、
+  sender envelope 或发送者账号。任何任务存储初始化失败都在附件、模型与工具执行前失败关闭。
+- Console 继续通过统一 task discovery 读取普通 workspace、`task-actors` 与 `task-intake`，
+  不给群 workspace 工具新增读取面。
+- 不带参数的 `deploy_console.sh` 在 Console 安装/修复后发现全部 BotSpec，并复用唯一的
+  `update_instance.sh` 逐个更新运行副本。失败实例不会阻断后续实例，最终统一汇总并返回非零；
+  `--skip-bots` 提供显式 Console-only 路径，页面自更新继续使用 `--update-only`。
+
+**结果与边界**
+
+Console 现在能区分已接受、准入拒绝和身份拒绝的入站消息，而不以观测需求削弱 QQ 身份
+边界。机器级更新入口覆盖仓库中全部已声明机器人，并通过 canonical updater 修复 systemd
+注册配置和重启服务；它不自动启动共享 Docker 服务、不启用新的开机自启，也不执行 Git 或
+发布操作。首次部署仍使用专用首次部署流程。
+
+相关规格：
+[`task-observability-workbench`](../specs/task-observability-workbench/spec.md)、
+[`qq-group-shared-conversation-context`](../specs/qq-group-shared-conversation-context/spec.md)、
+[`all-bot-console-deploy-entrypoint`](../specs/all-bot-console-deploy-entrypoint/spec.md)。
 
 ## 当前架构的收敛结果
 

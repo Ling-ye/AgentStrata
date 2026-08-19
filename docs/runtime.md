@@ -115,7 +115,8 @@ session-env 目录，按 exact session key 的 SHA-256 命名且自身为 `0600`
 caller identity 或 Codex resume state 跨成员复用。群 actor 在同一 live execution session 内
 保留 Codex resume；LRU 逐出或进程重启后不恢复旧 native thread，而是从有界 journal 建立新线程，
 避免内存 cursor 归零后重复注入旧历史。部署必须同时渲染 cc-connect 的
-shared-channel session、sender injection 与同步 hook；本地合成 ingress 测试只覆盖本机边界，不代表
+shared-channel session、sender injection 与同步 hook；systemd 托管实例每次启动前必须从当前
+BotSpec 重新渲染配置，避免 cc-connect 在重启后继续读取旧 hook 集。本地合成 ingress 测试只覆盖本机边界，不代表
 真实两账号 QQ ingress E2E。
 
 Workspace 与 conversation scope 一致：
@@ -134,7 +135,13 @@ conversation-scoped actor reference、明确标为不可信的有界历史与运
 actor-scoped backend state 和 transcript 也位于该保护目录。拒绝准入或身份无效的消息不写入。
 成员可写的 shared root 不保存权威 `IDENTITY.json`；群 scope 与逐轮 actor 只存在于 runtime
 contract 和受保护状态中，不会被最后一个说话人或同名符号链接改写。QQ 群禁用共享
-`MEMORY.md` 和 member-visible `task_...` diagnostics。普通成员不能启动后台 job；Owner 的后台
+`MEMORY.md` 和 member-visible `task_...` diagnostics；已接受回合的 Console task 记录按 actor
+写入 `.conversation-state/task-actors/<actor-digest>/tasks/`，原始 actor ID 不形成路径段，群内
+`get_task_status` 与 workspace 工具均不能读取。准入拒绝的消息仍在该 actor 分区写终态 task，
+但不会创建 actor 执行 session；身份无效的消息只在 `.conversation-state/task-intake/tasks/`
+写入不含原始正文、sender envelope 或发送者账号的脱敏失败 task。ACP 在准入、附件、模型和工具
+副作用前要求任务记录创建成功；存储不可用时失败关闭。
+普通成员不能启动后台 job；Owner 的后台
 job 控制面按 actor 写入 `.conversation-state/jobs/`，不会暴露到 `shared/jobs`。当前群交流风格
 直接复用现有 persona 分层：`group_<id>/PERSONA.md` 是普通 group 层，由真实 Owner 通过现有
 `persona_show/set/append/clear` 管理，群聊默认 `scope=group`；User/Admin 不能读取或修改

@@ -29,6 +29,12 @@ Console 后端的进程执行、YAML 投影和 job/task/log 可观测读取分�
 搜索；旧任务不迁移，也不会进入该列表。右侧先展示每次模型调用的上下文快照，再按
 Span 层级展示路由、模型、工具、Codex activity、subagent 和后台 Job 阶段。列表和
 选中任务每 3 秒轮询，运行中的墙钟耗时由浏览器每秒刷新；此链路不使用 SSE。
+普通会话任务位于 workspace 的 `tasks/`；已接受 QQ shared-group 回合位于受保护的
+`.conversation-state/task-actors/<actor-digest>/tasks/`，Console 统一发现。后者不位于成员可写
+shared root，群内任务与 workspace 工具均不能读取。准入拒绝的消息仍按已认证 actor 留下
+终态记录，但不会激活 actor 执行 session；身份校验失败的消息写入受保护的
+`.conversation-state/task-intake/tasks/`，只显示“未验证来源”和通用失败原因，不保存原始正文、
+sender envelope 或发送者账号。任务记录无法安全创建时，入站管线失败关闭且不调用 Agent。
 
 只读 API：
 
@@ -154,6 +160,11 @@ Evaluation 目录的写入权按文件固定分配：application service 写 `re
 创建该 unit 时明确失败，不使用仍留在 Console service cgroup 内的
 `setsid` / `nohup` fallback，也不会先获取 Evaluation maintenance lease。
 
+WSL 终端直接运行不带参数的 `bash deploy/wsl/deploy_console.sh` 是全量机器更新入口：
+先安装/修复 Console，再发现全部 `bots/*/bot.yaml` 并依次执行实例更新。单实例失败不会
+阻断后续实例，脚本最终汇总失败并返回非零；`--skip-bots` 仅用于显式的 Console-only
+安装/修复，`--update-only` 仍只更新 Console 与 Evaluation。
+
 [KNOWN][HIGH] 「能力与工具」Tab 以 `tools` / `prompts` / `agents` / `context`
 四面展示当前配置。可编辑项写回 WSL 源仓中的 `bots/<id>/bot.yaml` 和
 `bots/<id>/mcp/servers.yaml`；“保存并重启”复用统一实例更新入口，通常走不重复安装
@@ -220,6 +231,7 @@ Evaluation 目录的写入权按文件固定分配：application service 写 `re
 | 注册服务（仅未注册实例显示） | `bash console/systemd/register.sh <id>` |
 | 启动 / 停止 / 重启 | `bash console/scripts/ctl.sh <verb> <id>` |
 | 更新并重启 / 工具配置“保存并重启” | [KNOWN][HIGH] `bash deploy/wsl/update_instance.sh --instance <id>`；默认快路径，依赖或安装脚本变化、实例 venv 缺失时完整 bootstrap |
+| 更新 Console 与全部机器人 | `bash deploy/wsl/deploy_console.sh`；失败实例汇总后返回非零 |
 | 更新控制台 | `bash deploy/wsl/deploy_console.sh --update-only` |
 | 实例日志 | `/api/bots/{id}/logs/stream` SSE |
 | 控制台日志 | `/api/console/logs/stream` SSE |

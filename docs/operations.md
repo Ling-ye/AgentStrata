@@ -29,6 +29,7 @@ python -m chatcopilot bot doctor --bot bots/<id>/bot.yaml
 | 目标 | 命令 |
 | --- | --- |
 | 查看全部实例 | `python -m console.control list --json` |
+| 更新 Console 与全部机器人 | `bash deploy/wsl/deploy_console.sh` |
 | 查看实例状态 | `python -m console.control status --instance <id> --json` |
 | 预览实例更新 | `bash deploy/wsl/update_instance.sh --instance <id> --dry-run` |
 | 更新并重启实例 | `bash deploy/wsl/update_instance.sh --instance <id>` |
@@ -124,6 +125,11 @@ Console。`--update-only` 原子获取 Evaluation maintenance lease；service �
 健康检查前拒绝新建 Evaluation。活动记录、未知 lifecycle、遗留 claim、身份不明
 worker 或 service 不可达都会在构建和重启前失败关闭。
 
+不带参数的 `bash deploy/wsl/deploy_console.sh` 是日常全量机器更新入口：它先安装或修复
+Console，再按 `bots/*/bot.yaml` 的 `deploy.instance_id` 更新并重启全部机器人。实例按稳定
+路径顺序执行；某个实例失败时继续其余实例，最后汇总失败并返回非零。仅修复 Console 时
+显式加 `--skip-bots`；页面“更新控制台”继续使用 `--update-only`，不会隐式重启机器人。
+
 控制台页面中的“更新控制台”只通过 `systemd-run --user` 创建独立 transient
 unit，再由该 unit 执行同一个 `deploy_console.sh --update-only`。`setsid` 和
 `nohup` 不会脱离 `chatcopilot-console.service` 的 cgroup，因此不作为降级路径。
@@ -131,6 +137,7 @@ unit，再由该 unit 执行同一个 `deploy_console.sh --update-only`。`setsi
 明确错误；此时在 WSL 终端手工执行下面的 `--update-only` 命令。
 
 ```bash
+bash deploy/wsl/deploy_console.sh
 bash deploy/wsl/deploy_console.sh --status
 bash deploy/wsl/deploy_console.sh --update-only
 bash deploy/wsl/deploy_console.sh --restart-only
@@ -215,6 +222,9 @@ QQ 访问名单只在 `bots/<bot-id>/local.env` 中维护：`QQ_ALLOW_FROM` 是�
 该群获得访问权，不因此获得私聊权限；群聊仍服从 `QQ_REQUIRE_AT_IN_GROUP`。群名单为空
 表示不额外放行任何群，`*` 会放行全部群，生产环境应避免使用。修改后运行
 `update_instance.sh` 重新供应 runtime env、渲染 cc-connect 配置并重启实例。
+systemd 托管实例的每次 start/restart 也会先执行 `start.sh --apply-config`，确保当前
+BotSpec 的 shared-session、sender injection 与同步身份见证 hook 在 cc-connect 载入配置前
+同时落盘；渲染失败时实例启动失败关闭。
 
 ## Codex main / worker 认证
 
