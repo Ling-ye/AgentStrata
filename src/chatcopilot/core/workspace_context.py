@@ -13,6 +13,7 @@ class WorkspaceService(Protocol):
     def cleanup_workspace(self, workspace: Any) -> None: ...
     def describe_workspace(self, workspace: Any) -> str: ...
     def list_workspace_inventories(self, root: Path) -> list[Any]: ...
+    def resolve_persistent_state(self) -> Any: ...
 
 
 _CURRENT_WORKSPACE_SERVICE: ContextVar[WorkspaceService | None] = ContextVar(
@@ -65,6 +66,10 @@ def list_workspace_inventories(root: Path) -> list[Any]:
     return get_current_workspace_service().list_workspace_inventories(root)
 
 
+def resolve_persistent_state() -> Any:
+    return get_current_workspace_service().resolve_persistent_state()
+
+
 __all__ = [
     "WorkspaceService",
     "bind_workspace_service",
@@ -73,6 +78,7 @@ __all__ = [
     "get_current_workspace_service",
     "list_workspace_inventories",
     "reset_current_workspace_service",
+    "resolve_persistent_state",
     "resolve_workspace",
     "resolve_workspace_root",
     "set_current_workspace_service",

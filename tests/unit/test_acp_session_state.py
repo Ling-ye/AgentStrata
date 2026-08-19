@@ -85,9 +85,12 @@ def test_control_plane_mode_change_applies_when_session_materializes(tmp_path: P
         AssistantMode.PERFORMANCE,
         "materialized baseline",
         session_dynamic_tail="persona",
+        memory_snippet="memory",
     )
 
-    assert agent_session.system_baseline == "materialized baseline\n\npersona"
+    assert agent_session.system_baseline == "materialized baseline\n\npersona\n\nmemory"
+    state.set_assistant_mode(AssistantMode.GENERAL, "mode-only baseline")
+    assert agent_session.system_baseline == "mode-only baseline\n\npersona\n\nmemory"
 
 
 def test_one_shot_code_model_is_consumed_only_by_matching_selection(tmp_path: Path) -> None:

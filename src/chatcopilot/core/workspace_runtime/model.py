@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from chatcopilot.contracts.persistent_state import MEMORY_INITIAL_TEMPLATE
+
 from chatcopilot.contracts.workspace import (
     ATTACHMENTS_RELPATH,
     IDENTITY_FILENAME,
@@ -19,25 +21,12 @@ from chatcopilot.contracts.workspace import (
 # 工作区可被 list_workspace 直接列举的逻辑子目录名（attachments 走单独 property）。
 _SUBDIRS = WORKSPACE_SUBDIRS
 
-MEMORY_INITIAL_TEMPLATE = """# Memory
-
-> 长期记忆。仅在用户告知**可复用**的偏好、默认参数、数据源、决策时写入。
-> 临时对话内容不要写进来；体积过大请用 clear_memory 重置。
-
-## facts
-<!-- 用户告知的可复用事实，如默认阈值、习惯口径、常用数据源 URL -->
-
-## decisions
-<!-- 重要的处理决策与工作流偏好，如"先趋势再 diff" -->
-"""
-
-
 @dataclass(frozen=True)
 class Workspace(WorkspaceView):
     """Conversation workspace plus the current turn's actor metadata."""
 
     def ensure(self) -> "Workspace":
-        """创建工作目录及其所有子目录，并初始化 MEMORY.md / IDENTITY.json。"""
+        """创建成员可见工作目录；权威 persona/memory 位于保护状态域。"""
         data_subdirs = [
             self.root,
             self.downloads,
@@ -49,17 +38,8 @@ class Workspace(WorkspaceView):
             data_subdirs.extend((self.tasks, self.transcripts))
         for sub in data_subdirs:
             sub.mkdir(parents=True, exist_ok=True)
-        # A shared group root is member-writable data, never host control state.
-        # Do not follow a member-created MEMORY.md symlink or create identity
-        # metadata there; the authoritative conversation/actor records live in
-        # the protected sibling `.conversation-state` directory.
-        if self.scope != WORKSPACE_SCOPE_GROUP_SHARED:
-            mem = self.memory_file
-            if not mem.exists():
-                try:
-                    mem.write_text(MEMORY_INITIAL_TEMPLATE, encoding="utf-8")
-                except OSError:
-                    pass
+        # MEMORY.md is now only a legacy migration locator.  Never create a new
+        # authoritative memory file inside a member-writable workspace.
         # 避免循环 import：identity 持久化由 identity 模块负责
         from chatcopilot.core.workspace_runtime.identity import (
             persist_workspace_identity,

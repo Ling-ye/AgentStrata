@@ -118,7 +118,8 @@ Codex 主 backend 不创建 Native / LangGraph 的 `search_information`。Evalua
 
 ### `context`
 
-- `memory_store`：长期记忆 provider、namespace 和 schema。
+- `memory_store`：长期记忆 provider、namespace 和 schema。运行时目标不由模型或 workspace
+  路径参数选择：私聊绑定当前稳定发送者，群聊绑定当前稳定群；`memory.chat` pack 名称保持兼容。
 - `wiki`：私有 Markdown Wiki 的 `root_env`、读取角色和私聊限制。
 - `playbooks.manifest`：bot-local Skill manifest。
 - `rag`：只读知识源。

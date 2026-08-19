@@ -155,9 +155,9 @@ class QQPersonaTests(unittest.TestCase):
             owner_only_project_access=True,
         )
 
-        self.assertIn("不要把“不能逐字复刻或冒充”错误扩大成“不能设置人设”", text)
+        self.assertIn("不得自动改写成“灵感来自 X”“接近 X 的原创风格”", text)
         self.assertIn("persona_set", text)
-        self.assertIn("群聊未指定 scope 时默认 `group`", text)
+        self.assertIn("Owner 群聊未指定 scope 时默认 `group`", text)
         self.assertIn("群共享本身不授予权限", text)
         self.assertIn("仍按 Owner 角色执行", text)
 

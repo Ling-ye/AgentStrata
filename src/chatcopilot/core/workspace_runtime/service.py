@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+from chatcopilot.core.persistent_state import FilesystemPersistentConversationState
 
 from chatcopilot.core.workspace_runtime.cleanup import cleanup_workspace
 from chatcopilot.core.workspace_runtime.inventory import (
@@ -24,6 +27,8 @@ class MiddlewareWorkspaceService:
     workspace_root: Path | None = None
     backend_state_root: Path | None = None
     isolate_backend_state: bool = False
+    platform_type: str = "unknown"
+    persistent_state: Any = None
 
     def resolve_workspace(self, *, create: bool = True) -> Workspace:
         if self.workspace is not None:
@@ -53,6 +58,16 @@ class MiddlewareWorkspaceService:
 
     def list_workspace_inventories(self, root: Path) -> list[WorkspaceInventory]:
         return list_workspace_inventories(root)
+
+    def resolve_persistent_state(self) -> Any:
+        if self.persistent_state is None:
+            workspace = self.resolve_workspace(create=True)
+            self.persistent_state = FilesystemPersistentConversationState(
+                workspace_root=self.resolve_workspace_root(workspace),
+                workspace=workspace,
+                platform=self.platform_type,
+            )
+        return self.persistent_state
 
 
 __all__ = ["MiddlewareWorkspaceService"]

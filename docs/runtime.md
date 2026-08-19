@@ -134,8 +134,8 @@ journal 记录授权/审计使用的原始稳定 actor 与 transport source；�
 conversation-scoped actor reference、明确标为不可信的有界历史与运行时生成的当前来源附录。
 actor-scoped backend state 和 transcript 也位于该保护目录。拒绝准入或身份无效的消息不写入。
 成员可写的 shared root 不保存权威 `IDENTITY.json`；群 scope 与逐轮 actor 只存在于 runtime
-contract 和受保护状态中，不会被最后一个说话人或同名符号链接改写。QQ 群禁用共享
-`MEMORY.md` 和 member-visible `task_...` diagnostics；已接受回合的 Console task 记录按 actor
+contract 和受保护状态中，不会被最后一个说话人或同名符号链接改写。QQ 群不在 member-writable
+shared root 创建 `MEMORY.md`，而是按稳定群身份使用 `.conversation-state/persistent/memory/group/<digest>/MEMORY.md`；所有准入成员可读写，只有 Owner 可整份清空。member-visible `task_...` diagnostics 仍禁用；已接受回合的 Console task 记录按 actor
 写入 `.conversation-state/task-actors/<actor-digest>/tasks/`，原始 actor ID 不形成路径段，群内
 `get_task_status` 与 workspace 工具均不能读取。准入拒绝的消息仍在该 actor 分区写终态 task，
 但不会创建 actor 执行 session；身份无效的消息只在 `.conversation-state/task-intake/tasks/`
@@ -143,10 +143,11 @@ contract 和受保护状态中，不会被最后一个说话人或同名符号�
 副作用前要求任务记录创建成功；存储不可用时失败关闭。
 普通成员不能启动后台 job；Owner 的后台
 job 控制面按 actor 写入 `.conversation-state/jobs/`，不会暴露到 `shared/jobs`。当前群交流风格
-直接复用现有 persona 分层：`group_<id>/PERSONA.md` 是普通 group 层，由真实 Owner 通过现有
-`persona_show/set/append/clear` 管理，群聊默认 `scope=group`；User/Admin 不能读取或修改
-group/global 层。所有同群成员的后续 prompt 都获得该 group 层，但不会自动获得 global/user
-persona、私有 memory 或私有 Wiki/RAG。
+使用 `.conversation-state/persistent/persona/global/PERSONA.md` 与 `persona/group/<digest>/PERSONA.md`
+保护层，由真实 Owner 通过现有 `persona_show/set/append/clear` 管理，群聊默认 `scope=group`；
+User/Admin 既看不到工具 schema，也不能直接执行。所有同群成员的后续 prompt 都按
+`global → group` 获得最新人格，并获得当前群 memory，但不会获得任何 actor 的私聊 memory、
+user persona 或私有 Wiki/RAG。
 
 纯文本附件兜底只识别本地文件引用，先排除 `http://` 和 `https://` URL。文件回传、
 后台通知、payload 过滤和任务提交都通过 hook 注入 Agent。

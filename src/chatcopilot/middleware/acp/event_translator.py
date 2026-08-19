@@ -93,6 +93,18 @@ class EventTranslator:
     def last_text(self) -> str:
         return self._last_text_cache["text"]
 
+    def reset_text_cache(self) -> None:
+        """Discard one unflushed attempt before a bounded runtime retry."""
+
+        self._last_text_cache["text"] = ""
+        self._stream_text_cache["text"] = ""
+
+    def replace_final_text(self, text: str) -> None:
+        """Install a deterministic runtime-verified final response."""
+
+        self._stream_text_cache["text"] = ""
+        self._last_text_cache["text"] = text
+
     async def await_pending(self) -> None:
         """等待之前调度的 session_update 全部完成；debug 模式下避免最终文本被进度消息插队覆盖。"""
         if not self._pending_pushes:

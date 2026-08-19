@@ -266,7 +266,10 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
                 "clear_memory",
             ),
         ),
-        description="Chat-local memory read/write helpers (builtin).",
+        description=(
+            "Trusted conversation-scoped memory helpers: admitted users read/append; "
+            "private users clear self and only Owner clears group memory."
+        ),
     ),
     "persona.manage": ToolPackEntry(
         name="persona.manage",
@@ -280,8 +283,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
             ),
         ),
         description=(
-            "Layered persona helpers: Owner manages all scopes; other users can read/write "
-            "only their own user scope."
+            "Owner-only layered assistant persona helpers for global, current group, and "
+            "current private-user scopes."
         ),
     ),
     "playbooks.reader": ToolPackEntry(

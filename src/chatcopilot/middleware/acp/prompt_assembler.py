@@ -169,10 +169,10 @@ def _format_feishu_workspace_context(ws: Workspace, role: Any, llm_model: str | 
     model = (llm_model or "").strip()
     if model:
         parts.append(f"- 当前 LLM 模型：`{model}`。当用户询问模型/API 时，可以直接引用该值。")
-    if ws.memory_file.is_file() and ws.memory_file.stat().st_size > 64:
-        parts.append("- 该用户**已有记事本**（长期偏好记录）。会话开局应主动调一次 `read_memory` 读它。")
-    else:
-        parts.append("- 该用户**还没有记事本内容**（首次见面或已被清空）。不要主动写入，只在用户告知可复用偏好时才考虑写。")
+    parts.append(
+        "- 当前作用域的非空长期记忆由运行时逐轮自动注入；不要在会话开局主动调用 "
+        "`read_memory`。只有明确记忆请求或经确认的稳定可复用信息才写入。"
+    )
     return "## 当前会话上下文（运行时注入）\n\n" + "\n".join(parts) + "\n"
 
 

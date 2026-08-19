@@ -421,13 +421,13 @@ QQ 私聊、不同群、旧成员目录和其它平台
 state 与 transcript 收进受保护的 `.conversation-state/`；群 Codex 外层只读暴露 shared root，
 文件 mutation 只经 actor-bound scoped MCP。Owner 后台 job 控制面也按 actor 放在保护目录；
 已接受回合的 turn diagnostics 按 actor 写入保护目录供 Console 读取，但不进入 member-writable
-shared root，普通成员不能发现或控制；共享 memory 仍禁用。无法绑定 chat/message
+shared root，普通成员不能发现或控制；该阶段的共享 memory 仍禁用。无法绑定 chat/message
 的 cc-connect legacy attachment inbox import 在 shared-group 中失败关闭，shared attachments 中
 的同名旧文件也不能作为本次上传证明。
 
 Owner 群聊不再被特判降为 User：它复用完整的通用角色解析、prompt、工具和 Codex 路由；
 User/Admin 的 member 投影保持不变。群人格也不再引入专项 manager、intent grant 或新文件格式，
-而是复用现有 Markdown persona provider 的 `group` 层和 `persona_*` 工具。公开群场景仍统一
+而是复用当时的 Markdown persona provider `group` 层和 `persona_*` 工具。公开群场景仍统一
 脱敏 Owner payload，不自动投影 private memory/Wiki/RAG，显式 `private_chat_only` 工具继续拒绝群聊。
 
 journal 同时写入受保护的 epoch/sequence/内容摘要 metadata；删除、合法截断或恢复旧快照都会
@@ -437,8 +437,15 @@ handoff 也从公共 `/tmp` shell env 改为实例私有 `0700/0600` JSON，wrap
 部署配置同时启用 cc-connect 的群共享 session 与 sender injection；当前验证覆盖本地合成
 ingress 和隔离边界，真实两账号 QQ 群 ingress E2E 仍属于部署验收，不能由单元测试代替。
 
+随后的人格与会话记忆授权重构把权威状态移入 workspace 根的
+`.conversation-state/persistent/` 保护域：persona 全部改为 Owner-only，群按
+`global → group`、私聊按 `global → user` 逐轮加载；群 memory 改为按稳定群身份共享，准入成员
+可 read/append、只有 Owner 可 clear，且不再投影任何 actor 的私聊 memory。旧 p2p memory 只做
+一对一迁移，旧群 actor/shared memory 不合并，成员可写 persona 不提升为权威配置。
+
 相关规格：
-[`qq-group-shared-conversation-context`](../specs/qq-group-shared-conversation-context/spec.md)。
+[`qq-group-shared-conversation-context`](../specs/qq-group-shared-conversation-context/spec.md)、
+[`persona-and-conversation-memory-authorization`](../specs/persona-and-conversation-memory-authorization/spec.md)。
 
 ## 13. 上下文可观测性：从 Native 专属步骤到跨 backend 统一快照
 

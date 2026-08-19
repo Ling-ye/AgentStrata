@@ -106,6 +106,26 @@ class AgentSession:
             return
         self._messages.insert(0, {"role": "system", "content": rendered})
 
+    def set_system_context(
+        self,
+        baseline: str,
+        *,
+        session_dynamic_tail: str | None = None,
+        memory_snippet: str | None = None,
+    ) -> None:
+        """Compatibility context refresh for a directly constructed session."""
+
+        parts = [str(baseline or "").strip()]
+        parts.extend(
+            text
+            for text in (
+                str(session_dynamic_tail or "").strip(),
+                str(memory_snippet or "").strip(),
+            )
+            if text
+        )
+        self.set_system_baseline("\n\n".join(part for part in parts if part))
+
     def record_exchange(self, user_text: str, assistant_text: str) -> None:
         """记录没有进入 LLM 工具循环的确定性回复，让后续轮次能看到真实上下文。"""
         self._messages.append({"role": "user", "content": user_text})

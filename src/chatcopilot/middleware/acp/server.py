@@ -104,6 +104,9 @@ from chatcopilot.middleware.acp.group_conversation import (
     render_turn_identity_appendix,
 )
 from chatcopilot.middleware.acp.lifecycle_barrier import LifecycleBarrierExecutor
+from chatcopilot.middleware.acp.persistence_receipt import (
+    classify_persistence_requirement,
+)
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.acp.turn_orchestrator import AcpTurnOrchestrator
 from chatcopilot.middleware.runtime.workspace import (
@@ -1375,11 +1378,14 @@ class AcpChatAgent(Agent):
             update_agent_message_text=update_agent_message_text,
         )
         last_turn_error: TurnError | None = None
+        successful_tools: set[str] = set()
 
         def dispatch(event: AgentEvent) -> None:
             nonlocal last_turn_error
             if isinstance(event, TurnError):
                 last_turn_error = event
+            elif isinstance(event, ToolFinished) and event.ok:
+                successful_tools.add(event.name)
             self._record_turn_event(turn_task, event)
             translator.dispatch(event)
 
@@ -1392,6 +1398,16 @@ class AcpChatAgent(Agent):
             code_model_selection = session.effective_code_model_selection(default_selection)
             task_metadata[CODE_MODEL_SELECTION_METADATA_KEY] = code_model_selection.to_payload()
         try:
+            role_object = getattr(session, "role", "user")
+            receipt_requirement = classify_persistence_requirement(
+                user_text,
+                caller_role=getattr(role_object, "value", str(role_object)),
+                is_group=(
+                    getattr(session.workspace, "scope", "actor")
+                    == WORKSPACE_SCOPE_GROUP_SHARED
+                ),
+            )
+
             def run_agent_turn():
                 from chatcopilot.core.log_context import bind_log_context
 
@@ -1401,7 +1417,7 @@ class AcpChatAgent(Agent):
                     trace_id=task_id,
                     session_id=session_id,
                 ):
-                    return session.require_session().run_task(
+                    result = session.require_session().run_task(
                         AgentTask(
                             text=user_text,
                             resources=task_resources,
@@ -1411,7 +1427,59 @@ class AcpChatAgent(Agent):
                         on_event=dispatch,
                     )
 
+                    if (
+                        receipt_requirement is not None
+                        and receipt_requirement.retry_allowed
+                        and successful_tools.isdisjoint(
+                            receipt_requirement.successful_tools
+                        )
+                    ):
+                        translator.reset_text_cache()
+                        retry_metadata = dict(task_metadata)
+                        retry_metadata["persistence_receipt_retry"] = True
+                        retry_appendix = "\n\n".join(
+                            part
+                            for part in (
+                                str(task_system_appendix or "").strip(),
+                                receipt_requirement.retry_appendix,
+                            )
+                            if part
+                        )
+                        result = session.require_session().run_task(
+                            AgentTask(
+                                text=user_text,
+                                resources=(),
+                                system_appendix=retry_appendix,
+                                metadata=retry_metadata,
+                            ),
+                            on_event=dispatch,
+                        )
+                    return result
+
             result = await asyncio.to_thread(run_agent_turn)
+            if (
+                receipt_requirement is not None
+                and successful_tools.isdisjoint(receipt_requirement.successful_tools)
+            ):
+                failure_text = receipt_requirement.failure_text
+                try:
+                    session.require_session().record_exchange(
+                        "[运行时持久化回执校验]",
+                        failure_text,
+                    )
+                except Exception:  # noqa: BLE001 - final response still must be truthful
+                    _LOGGER.exception(
+                        "failed to record persistence receipt correction | sid=%s",
+                        session_id,
+                    )
+                result = replace(
+                    result,
+                    final_text=failure_text,
+                    stop_reason="end_turn",
+                    produced_resources=(),
+                    lifecycle_intents=(),
+                )
+                translator.replace_final_text(failure_text)
             if code_model_selection is not None:
                 session.consume_code_model_once(code_model_selection)
             if (

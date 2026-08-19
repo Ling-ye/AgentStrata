@@ -90,6 +90,32 @@ class CurrentDatePromptTests(unittest.TestCase):
             session.system_baseline.removesuffix("2026-06-23。"),
         )
 
+    def test_runtime_refresh_replaces_persona_and_memory_without_duplication(self) -> None:
+        runtime = AgentRuntime(
+            llm=_FakeLLM(), tools=(), tools_schema=(), runtime_config=ChatConfig()
+        )
+        session = runtime.new_session(
+            session_id="sid-dynamic",
+            system_baseline="stable",
+            session_dynamic_tail="old persona",
+            memory_snippet_override="old memory",
+        )
+
+        session.set_system_context(
+            "stable-v2",
+            session_dynamic_tail="new persona",
+            memory_snippet="new memory",
+        )
+        rendered = session.system_baseline
+
+        self.assertIn("stable-v2", rendered)
+        self.assertIn("new persona", rendered)
+        self.assertIn("new memory", rendered)
+        self.assertNotIn("old persona", rendered)
+        self.assertNotIn("old memory", rendered)
+        self.assertEqual(rendered.count("new persona"), 1)
+        self.assertEqual(rendered.count("new memory"), 1)
+
 
 class SearchFallbackTests(unittest.TestCase):
     def test_search_cache_hint_changes_across_dates(self) -> None:

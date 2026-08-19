@@ -274,6 +274,7 @@ class ToolExecutor:
     def _build_tool_context(self) -> ToolContext:
         workspace = None
         workspace_root = None
+        persistent_state = None
         if self._workspace_service is not None:
             try:
                 workspace = self._workspace_service.resolve_workspace(create=True)
@@ -281,6 +282,16 @@ class ToolExecutor:
             except Exception:  # noqa: BLE001 - context is best effort for legacy tools
                 workspace = None
                 workspace_root = None
+            resolve_persistent_state = getattr(
+                self._workspace_service,
+                "resolve_persistent_state",
+                None,
+            )
+            if callable(resolve_persistent_state):
+                try:
+                    persistent_state = resolve_persistent_state()
+                except Exception:  # noqa: BLE001 - persistent tools fail closed without the port
+                    persistent_state = None
         return ToolContext(
             workspace=workspace,
             workspace_root=workspace_root,
@@ -288,6 +299,7 @@ class ToolExecutor:
             background_submitter=self._background_submitter,
             caller_role=self._caller_role_hint,
             job=self._job_context,
+            persistent_state=persistent_state,
         )
 
     def _should_submit_background(self, tool: ToolDef) -> bool:

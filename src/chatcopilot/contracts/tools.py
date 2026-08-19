@@ -28,6 +28,7 @@ class ToolContext:
     background_submitter: Any = None
     caller_role: str = "user"
     job: Any = None
+    persistent_state: Any = None
 
 
 HandlerResult = Tuple[str, List[str], Optional[str]]

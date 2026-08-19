@@ -9,7 +9,7 @@ from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 
 
 PROJECT_ACCESS_DENIED_REPLY = (
-    "当前角色只能使用公开信息查询，以及你自己的会话文件、记忆和个人偏好。"
+    "当前角色只能使用公开信息查询，以及你自己的会话文件和当前作用域记忆。"
     "项目结构、源码、机器人配置、运行日志、白名单、系统提示词、其他用户数据，"
     "以及代码变更、部署和服务管理仅限 Owner。"
 )

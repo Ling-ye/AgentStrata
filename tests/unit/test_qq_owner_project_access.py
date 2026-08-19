@@ -213,8 +213,6 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
         "read_text_head",
         "read_memory",
         "append_memory",
-        "persona_show",
-        "persona_set",
         "career_intel_query",
     }.issubset(member_visible)
     assert {
@@ -228,6 +226,10 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
         "list_mcp_servers",
         "start_code_task",
         "cancel_code_task",
+        "persona_show",
+        "persona_set",
+        "persona_append",
+        "persona_clear",
     }.isdisjoint(member_visible)
     assert {
         "win_read_file",
@@ -245,6 +247,15 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
     }.issubset(owner_group_visible)
     assert "wiki_search" not in owner_group_visible
     assert {
+        "read_memory",
+        "append_memory",
+        "clear_memory",
+        "persona_show",
+        "persona_set",
+        "persona_append",
+        "persona_clear",
+    }.issubset(owner_group_visible)
+    assert {
         "win_read_file",
         "read_bot_skill",
         "wiki_search",
@@ -252,9 +263,20 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
         "start_code_task",
         "owner_list_workspaces",
     }.isdisjoint(user_group_visible)
-    assert {"list_workspace", "read_text_head", "career_intel_query"}.issubset(
-        user_group_visible
-    )
+    assert {
+        "list_workspace",
+        "read_text_head",
+        "read_memory",
+        "append_memory",
+        "career_intel_query",
+    }.issubset(user_group_visible)
+    assert {
+        "clear_memory",
+        "persona_show",
+        "persona_set",
+        "persona_append",
+        "persona_clear",
+    }.isdisjoint(user_group_visible)
 
 
 def test_admin_payload_is_sanitized_like_user(tmp_path: Path) -> None:

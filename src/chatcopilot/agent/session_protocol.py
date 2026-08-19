@@ -27,6 +27,15 @@ class AgentSessionProtocol(Protocol):
     def set_system_baseline(self, baseline: str) -> None:
         """Replace the session system baseline."""
 
+    def set_system_context(
+        self,
+        baseline: str,
+        *,
+        session_dynamic_tail: str | None = None,
+        memory_snippet: str | None = None,
+    ) -> None:
+        """Replace the baseline plus current persona and memory snapshots."""
+
     def record_exchange(self, user_text: str, assistant_text: str) -> None:
         """Record a deterministic exchange that did not enter the agent loop."""
 

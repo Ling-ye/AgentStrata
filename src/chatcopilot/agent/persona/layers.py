@@ -1,13 +1,13 @@
-"""个性分层路径解析 + 合并（纯路径逻辑，仅依赖 pathlib）。
+"""Legacy persona-path compatibility helpers.
 
-分层落在现有 workspace 目录结构上，不引入新机制：
+这些路径只用于迁移检查；权威运行路径使用 middleware 注入的 protected-state port。
+旧路径的逻辑层级为：
 
 - 全局：``{workspace_root}/PERSONA.md``
 - 群级：``{group_dir}/PERSONA.md``（即 ``user_root.parent``，仅群聊存在）
-- 个人：``{user_root}/PERSONA.md``（``p2p_<uid>/`` 或 actor-scoped
-  ``group_<cid>/user_<uid>/``）；QQ 群共享 workspace 不建立成员 persona 层
+- 个人：仅私聊 ``{user_root}/PERSONA.md``；群聊不建立 actor persona 层
 
-合并顺序：全局 → 群 → 个人（越具体越靠后）。本模块不 import ``Workspace``，
+合并顺序：群聊为全局 → 群，私聊为全局 → 个人。本模块不 import ``Workspace``，
 保持 agent 层平台中立；调用方传入原始路径即可。
 """
 from __future__ import annotations
@@ -17,10 +17,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from chatcopilot.agent.persona.markdown import MarkdownPersonaProvider
 from chatcopilot.agent.persona.provider import PERSONA_FILENAME
-from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
-
-# 合法的 scope 取值，供工具参数校验复用。
-PERSONA_SCOPES: Tuple[str, ...] = ("global", "group", "user")
+from chatcopilot.contracts.persistent_state import PERSONA_SCOPES
 
 _SCOPE_LABELS = {
     "global": "全局",
@@ -37,7 +34,7 @@ def persona_layer_specs(
     chat_id: Optional[str],
     workspace_scope: str = "actor",
 ) -> List[Tuple[str, Path]]:
-    """返回有序的 ``[(scope, path)]``：全局 → 群 → 个人，按解析路径去重。"""
+    """返回旧数据迁移定位层，不用于新写入。"""
     workspace_root = Path(workspace_root)
     user_root = Path(user_root)
 
@@ -52,9 +49,10 @@ def persona_layer_specs(
         ordered.append((scope, path))
 
     _add("global", workspace_root / PERSONA_FILENAME)
-    if (chat_kind or "").strip().lower() == "group" and chat_id:
+    is_group = (chat_kind or "").strip().lower() == "group" and bool(chat_id)
+    if is_group:
         _add("group", user_root.parent / PERSONA_FILENAME)
-    if workspace_scope != WORKSPACE_SCOPE_GROUP_SHARED:
+    else:
         _add("user", user_root / PERSONA_FILENAME)
     return ordered
 
@@ -78,8 +76,8 @@ def persona_path_for_scope(
         if (chat_kind or "").strip().lower() != "group" or not chat_id:
             raise ValueError("当前不在群聊，无法设置 group 级个性；请用 scope=user 或 global。")
         return Path(user_root).parent / PERSONA_FILENAME
-    if workspace_scope == WORKSPACE_SCOPE_GROUP_SHARED:
-        raise PermissionError("QQ 群共享会话没有可由成员修改的 user persona 层。")
+    if (chat_kind or "").strip().lower() == "group":
+        raise ValueError("群聊不提供 user 人格层；请使用 group 或 global。")
     return Path(user_root) / PERSONA_FILENAME
 
 

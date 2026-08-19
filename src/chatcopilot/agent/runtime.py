@@ -257,17 +257,25 @@ class AgentRuntime:
             else tuple(skill_index_override)
         )
 
-        def render_system_prompt(baseline: str) -> str:
+        def render_system_prompt(
+            baseline: str,
+            dynamic_tail: str | None,
+            current_memory: str | None,
+        ) -> str:
             return build_system_prompt(
                 baseline=baseline,
                 skill_index=session_skill_index,
-                memory_snippet=memory_snippet,
+                memory_snippet=current_memory,
                 has_search_tools=has_search_tools,
                 search_tool_names=routing_tool_names,
-                session_dynamic_tail=session_dynamic_tail,
+                session_dynamic_tail=dynamic_tail,
             )
 
-        system_prompt = render_system_prompt(system_baseline)
+        system_prompt = render_system_prompt(
+            system_baseline,
+            session_dynamic_tail,
+            memory_snippet,
+        )
 
         merged_tools = [
             *self.tools,
@@ -424,7 +432,6 @@ class AgentRuntime:
                     executor=executor,
                     tools_schema=merged_schema,
                     system_baseline=system_prompt,
-                    system_prompt_renderer=render_system_prompt,
                     tool_payload_filter=payload_filter,
                     context_manager=ctx_mgr,
                     topic_classifier=topic_classifier,
@@ -486,6 +493,9 @@ class AgentRuntime:
             backend,
             session_ref,
             allowed_tool_names=frozenset(tool.name for tool in visible_tools),
+            system_prompt_renderer=render_system_prompt,
+            session_dynamic_tail=session_dynamic_tail,
+            memory_snippet=memory_snippet,
         )
 
 

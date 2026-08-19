@@ -107,16 +107,19 @@ actor cache 逐出或进程重启后从有界 journal 创建新 native thread，
 授权始终按当前发送者计算，与群准入分离。稳定发送者是 Owner 时，私聊和 QQ 群都使用 Owner
 prompt、工具、Codex 与代码任务投影；其他群成员仍使用 member 投影。所有人的普通 workspace
 都是当前群的 shared root，但 executor、caller identity、backend state 和 Owner job 控制面按
-actor 隔离。群是公开输出场景，因此 Owner 工具 payload 仍脱敏，私有 memory/Wiki/RAG 不自动
-注入，标记 `private_chat_only` 的工具也不会因为 Owner 身份绕过频道限制。
+actor 隔离。群是公开输出场景，因此 Owner 工具 payload 仍脱敏；当前群的 protected memory
+作为不可信历史数据自动注入，但任何 actor 的私聊 memory 与私有 Wiki/RAG 不自动注入，标记
+`private_chat_only` 的工具也不会因为 Owner 身份绕过频道限制。
 
-QQ 群不写共享 `MEMORY.md` 或 member-visible turn diagnostics；已接受回合的 Console task
+QQ 群不在 member-writable shared root 写 `MEMORY.md`，而是按稳定群身份使用
+`.conversation-state/persistent/memory/group/<digest>/MEMORY.md`。准入成员可 read/append，只有
+Owner 可 clear；member-visible turn diagnostics 仍禁用。已接受回合的 Console task
 记录按真实 actor 写在 `.conversation-state/task-actors/<actor-digest>/tasks/`，群任务与 workspace
 工具均不能读取。准入拒绝保留同一 actor 分区的终态 task，但不激活执行 session；身份无效
 只写入 `.conversation-state/task-intake/tasks/` 的脱敏失败记录。任何入站消息无法先建立 task
-记录时失败关闭，不进入 Agent、附件或工具阶段。群人格没有额外 manager、grant
-或文件格式，而是复用通用 persona 的 group 层 `group_<id>/PERSONA.md`；Owner 调用现有
-`persona_*` 工具，User/Admin 无法读取或修改 group/global 层。Owner 后台 job 的 request/status/
+记录时失败关闭，不进入 Agent、附件或工具阶段。群人格使用通用 protected persona port 的
+`global → group` 层；Owner 调用现有 `persona_*` 工具，User/Admin 无法读取或修改任何层。
+Owner 后台 job 的 request/status/
 result/log 位于 `.conversation-state/jobs/<actor-digest>/`，普通成员不能从 shared root 发现或控制。
 
 cc-connect 的静态 `default/.cc-connect/attachments` inbox 只按 basename 落盘，不带 chat

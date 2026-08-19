@@ -176,7 +176,7 @@ def test_restricted_prompt_projection_preserves_owner_role_in_group_chat(
     assert _effective_project_role(runtime, Role.OWNER, group_ws) == Role.OWNER
 
 
-def test_shared_group_persona_projection_exposes_only_group_layer(
+def test_shared_group_persona_projection_merges_global_then_group(
     tmp_path: Path,
 ) -> None:
     runtime = SimpleNamespace(access=AccessSpec(owner_only_project_access=True))
@@ -203,11 +203,14 @@ def test_shared_group_persona_projection_exposes_only_group_layer(
 
     for prompt in (user_prompt, owner_group_prompt):
         assert "current group persona" in prompt
-        assert "private global persona" not in prompt
+        assert "private global persona" in prompt
+        assert prompt.index("private global persona") < prompt.index(
+            "current group persona"
+        )
         assert "untrusted shared file" not in prompt
 
 
-def test_restricted_persona_projection_allows_owner_private_layers(
+def test_restricted_persona_projection_does_not_promote_legacy_private_persona(
     tmp_path: Path,
 ) -> None:
     runtime = SimpleNamespace(access=AccessSpec(owner_only_project_access=True))
@@ -228,7 +231,9 @@ def test_restricted_persona_projection_allows_owner_private_layers(
     prompt = _extract_persona_snippet(runtime, Role.OWNER, private_ws)
 
     assert "private global persona" in prompt
-    assert "owner preference" in prompt
+    assert "owner preference" not in prompt
+    report = workspace_root / ".conversation-state/persistent/migration/REPORT.md"
+    assert "ignored_untrusted_persona" in report.read_text(encoding="utf-8")
 
 
 def test_wiki_retriever_is_only_created_for_owner_private_session(tmp_path: Path) -> None:

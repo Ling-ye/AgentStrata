@@ -1,7 +1,7 @@
 """Session adapter shared by all main-agent backends."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
 from chatcopilot.contracts.agent_backend import (
@@ -20,10 +20,16 @@ class BackendAgentSession:
         session_ref: BackendSessionRef,
         *,
         allowed_tool_names: frozenset[str] = frozenset(),
+        system_prompt_renderer: Callable[[str, str | None, str | None], str] | None = None,
+        session_dynamic_tail: str | None = None,
+        memory_snippet: str | None = None,
     ) -> None:
         self.backend = backend
         self._session_ref = session_ref
         self._capabilities = backend.capabilities.intersect_tools(allowed_tool_names)
+        self._system_prompt_renderer = system_prompt_renderer
+        self._session_dynamic_tail = session_dynamic_tail
+        self._memory_snippet = memory_snippet
 
     @property
     def capabilities(self) -> BackendCapabilities:
@@ -58,7 +64,29 @@ class BackendAgentSession:
         self.close()
 
     def set_system_baseline(self, baseline: str) -> None:
-        getattr(self.backend, "set_system_baseline")(self._session_ref, baseline)
+        rendered = (
+            self._system_prompt_renderer(
+                baseline,
+                self._session_dynamic_tail,
+                self._memory_snippet,
+            )
+            if self._system_prompt_renderer is not None
+            else baseline
+        )
+        getattr(self.backend, "set_system_baseline")(self._session_ref, rendered)
+
+    def set_system_context(
+        self,
+        baseline: str,
+        *,
+        session_dynamic_tail: str | None = None,
+        memory_snippet: str | None = None,
+    ) -> None:
+        """Replace the stable baseline and both per-turn persistent snapshots."""
+
+        self._session_dynamic_tail = session_dynamic_tail
+        self._memory_snippet = memory_snippet
+        self.set_system_baseline(baseline)
 
     def record_exchange(self, user_text: str, assistant_text: str) -> None:
         getattr(self.backend, "record_exchange")(

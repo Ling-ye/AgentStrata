@@ -10,10 +10,11 @@ import time
 from pathlib import Path
 
 from chatcopilot.agent.memory.provider import MEMORY_INITIAL_TEMPLATE, MemoryProvider
-
-MEMORY_MAX_BYTES = 32 * 1024
-MEMORY_MAX_ITEM_CHARS = 1000
-MEMORY_SECTIONS: tuple[str, ...] = ("facts", "decisions", "sources")
+from chatcopilot.contracts.persistent_state import (
+    MEMORY_MAX_BYTES,
+    MEMORY_MAX_ITEM_CHARS,
+    MEMORY_SECTIONS,
+)
 
 
 class MarkdownMemoryProvider(MemoryProvider):

@@ -74,6 +74,8 @@ class SessionState:
     )
     conversation_cursor: int = field(default=0, repr=False)
     turn_system_appendix: str = field(default="", repr=False)
+    _session_dynamic_tail: str = field(default="", repr=False)
+    _memory_snippet: str = field(default="", repr=False)
     _transcript_path: Optional[Path] = field(default=None, repr=False)
     _pending_exchanges: list[tuple[str, str]] = field(default_factory=list, repr=False)
 
@@ -299,21 +301,52 @@ class SessionState:
         self.code_model_once = other.code_model_once
         self.persist_transcript()
 
-    def set_assistant_mode(self, mode: AssistantMode, system_prompt: str, *, session_dynamic_tail: str = "") -> None:
+    def set_prompt_snapshots(self, *, persona: str, memory: str) -> None:
+        """Remember the latest dynamic snapshots across mode-only prompt changes."""
+
+        self._session_dynamic_tail = persona or ""
+        self._memory_snippet = memory or ""
+
+    def set_assistant_mode(
+        self,
+        mode: AssistantMode,
+        system_prompt: str,
+        *,
+        session_dynamic_tail: str | None = None,
+        memory_snippet: str | None = None,
+    ) -> None:
         """切换业务模式：同步更新本 state + AgentSession 的 system baseline。
 
-        ``session_dynamic_tail`` 仅在 refresh 路径使用，追加到 baseline 末尾再经
-        renderer 处理。初始 session 创建时 persona 通过 renderer 闭包中独立的
-        ``session_dynamic_tail`` 参数控制位置。
+        每轮 refresh 同时传入当前 persona 与 memory 快照；BackendAgentSession
+        通过统一 renderer 把它们放回稳定 prompt 后缀，Native/LangGraph/Codex
+        不各自维护第二套拼装逻辑。
         """
         self.assistant_mode = mode
-        effective = system_prompt
-        tail = (session_dynamic_tail or "").strip()
-        if tail:
-            base = (system_prompt or "").strip()
-            effective = f"{base}\n\n{tail}" if base else tail
+        if session_dynamic_tail is not None:
+            self._session_dynamic_tail = session_dynamic_tail
+        if memory_snippet is not None:
+            self._memory_snippet = memory_snippet
         if self.session is not None:
-            self.session.set_system_baseline(effective)
+            setter = getattr(self.session, "set_system_context", None)
+            if callable(setter):
+                setter(
+                    system_prompt,
+                    session_dynamic_tail=self._session_dynamic_tail,
+                    memory_snippet=self._memory_snippet,
+                )
+            else:
+                parts = [str(system_prompt or "").strip()]
+                parts.extend(
+                    text
+                    for text in (
+                        self._session_dynamic_tail.strip(),
+                        self._memory_snippet.strip(),
+                    )
+                    if text
+                )
+                self.session.set_system_baseline(
+                    "\n\n".join(part for part in parts if part)
+                )
 
     @property
     def _messages(self) -> list:

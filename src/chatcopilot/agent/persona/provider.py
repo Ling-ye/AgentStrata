@@ -9,21 +9,14 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from chatcopilot.contracts.persistent_state import (
+    PERSONA_INITIAL_TEMPLATE,
+    PERSONA_MAX_BYTES,
+    PERSONA_MAX_ITEM_CHARS,
+)
+
 
 PERSONA_FILENAME = "PERSONA.md"
-
-# 单层 persona 文件体积上限。persona 应当精简（人格设定而非长文），故远小于 memory。
-PERSONA_MAX_BYTES = 8 * 1024
-# 单次 append 内容上限。
-PERSONA_MAX_ITEM_CHARS = 2000
-
-PERSONA_INITIAL_TEMPLATE = """# Persona
-
-> 机器人对当前对象的人格设定（语气 / 风格 / 称呼 / 立场）。
-> 仅 owner 可通过对话修改；普通用户只能查看。
-> 分层生效：全局 → 群 → 个人，越具体的层优先级越高。
-
-"""
 
 
 class PersonaProvider(Protocol):
