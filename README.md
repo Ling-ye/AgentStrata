@@ -37,6 +37,11 @@ resulting system structure.
   effective, redacted context. Binary/private omissions and provider-managed
   state that cannot be inspected are labelled partial or opaque instead of
   being presented as complete.
+- **Evidence-labelled task flow.** Bot operations project platform ingress,
+  middleware decisions, Agent/model/capability activity, and the strongest
+  observed reply boundary into one backend-owned flow. Missing transport
+  evidence and hidden provider reasoning remain explicit gaps rather than
+  inferred success.
 - **Purpose-built runtime boundaries.** Thin web-search providers run in the
   Agent process; browser-backed, account-bound, and shared search-engine
   components remain isolated and are started only when an enabled BotSpec

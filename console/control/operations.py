@@ -33,6 +33,7 @@ from console.control.observability import (
     tail_log,
     task_detail,
     task_events,
+    task_flow,
     tasks,
 )
 from console.control.process_executor import run_capture
@@ -50,6 +51,7 @@ __all__ = [
     "tail_log",
     "task_detail",
     "task_events",
+    "task_flow",
     "tasks",
 ]
 

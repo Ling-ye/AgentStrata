@@ -8,6 +8,8 @@ from unittest import mock
 from chatcopilot.platforms.qq.at_proxy import (
     _ProxyConfig,
     _validate_proxy_config,
+    evaluate_forward,
+    normalized_onebot_text,
     should_forward,
 )
 from chatcopilot.platforms.qq.gateway_health import QQBoundaryError
@@ -27,6 +29,45 @@ class ShouldForwardTests(unittest.TestCase):
     def test_group_at_bot_array_forwarded(self) -> None:
         ev = _group([{"type": "at", "data": {"qq": BOT}}, {"type": "text", "data": {"text": " 你好"}}])
         self.assertTrue(should_forward(ev, BOT))
+
+    def test_group_decision_explains_forward_without_exposing_allowlists(self) -> None:
+        ev = _group(
+            [
+                {"type": "at", "data": {"qq": BOT}},
+                {"type": "text", "data": {"text": " 你是谁"}},
+            ]
+        )
+
+        decision = evaluate_forward(ev, BOT)
+
+        self.assertTrue(decision.forward)
+        self.assertEqual(decision.code, "group_mention_matched")
+        self.assertTrue(decision.mention_required)
+        self.assertTrue(decision.mention_satisfied)
+        self.assertNotIn("user_ids", decision.receipt_payload())
+        self.assertNotIn("group_ids", decision.receipt_payload())
+
+    def test_onebot_text_normalization_is_lossless_or_declines_correlation(self) -> None:
+        pure = _group(
+            [
+                {"type": "at", "data": {"qq": BOT}},
+                {"type": "text", "data": {"text": " 你是谁"}},
+            ]
+        )
+        image = _group(
+            [
+                {"type": "at", "data": {"qq": BOT}},
+                {"type": "image", "data": {"file": "private-name.jpg"}},
+            ]
+        )
+
+        self.assertEqual(normalized_onebot_text(pure), ("你是谁", 2))
+        self.assertIsNone(normalized_onebot_text(image))
+        self.assertIsNone(
+            normalized_onebot_text(
+                _group("[CQ:at,qq=10001] 你是谁", raw_message="[CQ:at,qq=10001] 你是谁")
+            )
+        )
 
     def test_group_at_bot_qq_as_int_forwarded(self) -> None:
         ev = _group([{"type": "at", "data": {"qq": 10001}}])

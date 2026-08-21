@@ -155,9 +155,27 @@ def test_llm_error_keeps_raw_diagnostic_private_and_delivers_safe_text(
     assert outbound == [safe_text]
     assert raw_error not in "\n".join(outbound)
     assert recorder.progress == ["执行失败（错误代码：codex_cli_failed）。"]
-    assert recorder.events == [
-        ("turn_error", {"code": "codex_cli_failed", "message": raw_error})
-    ]
+    assert recorder.events[0] == (
+        "turn_error",
+        {"code": "codex_cli_failed", "message": raw_error},
+    )
+    assert recorder.events[1] == (
+        "flow_transition",
+        {
+            "kind": "delivery.session_update",
+            "source_layer": "delivery",
+            "target_layer": "transport",
+            "status": "succeeded",
+            "evidence_level": "observed",
+            "title": "ACP 已发出最终 session_update",
+            "summary": "该边界不证明 QQ 客户端已显示或用户已读取。",
+            "decision": {
+                "code": "session_update_emitted",
+                "authoritative": False,
+            },
+            "payload": {"text_length": len(safe_text)},
+        },
+    )
     assert recorder.finished is not None
     assert recorder.finished["final_text"] == safe_text
     assert recorder.finished["error"] == raw_error

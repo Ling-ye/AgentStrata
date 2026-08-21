@@ -613,10 +613,92 @@ export interface TaskEventsResponse {
   events: TaskRawEvent[];
 }
 
+export type TaskFlowLayerId =
+  | "channel"
+  | "transport"
+  | "gateway"
+  | "middleware"
+  | "agent"
+  | "model"
+  | "capability"
+  | "delivery";
+
+export type TaskFlowEvidenceLevel =
+  | "observed"
+  | "correlated"
+  | "declared"
+  | "provider_opaque"
+  | "missing";
+
+export interface TaskFlowEvidence {
+  source: "task" | "job";
+  event_type: string;
+  event_id?: string;
+  sequence: number;
+  job_id?: string;
+  snapshot_id?: string;
+}
+
+export interface TaskFlowTransition {
+  id: string;
+  sequence: number;
+  kind: string;
+  source_layer: TaskFlowLayerId;
+  target_layer: TaskFlowLayerId;
+  status: string;
+  evidence_level: TaskFlowEvidenceLevel;
+  title: string;
+  summary: string;
+  occurred_at: number | null;
+  duration_ms: number | null;
+  decision: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  evidence: TaskFlowEvidence[];
+}
+
+export interface TaskFlowLayer {
+  id: TaskFlowLayerId;
+  label: string;
+  coverage: TaskFlowEvidenceLevel;
+  status: string;
+  transition_count: number;
+}
+
+export interface TaskFlowResponse {
+  schema_version: 1;
+  instance_id: string;
+  task_id: string;
+  status: string;
+  layers: TaskFlowLayer[];
+  transitions: TaskFlowTransition[];
+  coverage: {
+    observed: number;
+    correlated: number;
+    declared: number;
+    provider_opaque: number;
+    missing: number;
+    events_truncated: boolean;
+    integrity_gap: boolean;
+  };
+  omissions: Array<{ code: string; layer: TaskFlowLayerId; message: string }>;
+  delivery_claim: {
+    boundary: "transport_acknowledged" | "acp_session_update" | "agent_result" | "unverified";
+    qq_client_displayed: false;
+    user_read: false;
+    message: string;
+  };
+}
+
 export interface TasksResponse {
   instance_id: string;
   workspace_root: string;
   workspace_exists: boolean;
   count: number;
+  total_count: number;
+  summary: {
+    active_count: number;
+    failed_recent_count: number;
+    last_activity_at: number | null;
+  };
   tasks: BotTask[];
 }

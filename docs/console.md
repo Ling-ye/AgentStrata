@@ -24,11 +24,24 @@ Console 后端的进程执行、YAML 投影和 job/task/log 可观测读取分�
 
 ## 任务可观测工作台
 
-机器人实例的“任务”入口使用主从工作台，不再展示横向 13 列表格。左侧只加载最近
-50 个 `schema_version=2` 任务，按“运行中 / 需要关注 / 最近完成”分组并在浏览器内
-搜索；旧任务不迁移，也不会进入该列表。右侧先展示每次模型调用的上下文快照，再按
-Span 层级展示路由、模型、工具、Codex activity、subagent 和后台 Job 阶段。列表和
-选中任务每 3 秒轮询，运行中的墙钟耗时由浏览器每秒刷新；此链路不使用 SSE。
+机器人实例页使用“实例列表 + 实例详情”的主从工作台。实例列表消费后端提供的活动任务数、
+最近 24 小时失败数和最后活动时间，不在前端扫描任务推导运行状态。实例详情默认打开
+“任务流”，可直接选择任务并查看外部渠道、NapCat/OneBot/cc-connect、接入网关、ACP
+中间件、主 Agent、模型、工具/子 Agent/流程和回复交付八层证据；原有运行操作、日志、
+更新和工具配置保留在详情头部及“运行与能力”页签。
+
+任务流中的每次转换均来自后端稳定投影，并标记为 `observed`、`correlated`、`declared`、
+`provider_opaque` 或 `missing`。连续工具/子 Agent/流程调用可在前端折叠，但展开后仍显示
+每个脱敏事件。旧任务不迁移、不补造历史网关证据，而是显示缺口。Agent 形成结果、ACP
+发出 `session_update` 和外部客户端实际显示/阅读是不同边界；没有外部回执时，页面只声明
+已经观测到的最强边界。隐藏 chain-of-thought、provider 内部 instructions 和原始平台身份
+不会被采集、重建或展示。
+
+“完整任务证据”仍使用既有任务主从工作台：左侧只加载最近 50 个
+`schema_version=2` 任务，按“运行中 / 需要关注 / 最近完成”分组并在浏览器内搜索；旧任务
+不会进入该列表。右侧先展示每次模型调用的上下文快照，再按 Span 层级展示路由、模型、
+工具、Codex activity、subagent 和后台 Job 阶段。列表和选中任务每 3 秒轮询，运行中的
+墙钟耗时由浏览器每秒刷新；此链路不使用 SSE。
 普通会话任务位于 workspace 的 `tasks/`；已接受 QQ shared-group 回合位于受保护的
 `.conversation-state/task-actors/<actor-digest>/tasks/`，Console 统一发现。后者不位于成员可写
 shared root，群内任务与 workspace 工具均不能读取。准入拒绝的消息仍按已认证 actor 留下
@@ -38,7 +51,11 @@ sender envelope 或发送者账号。任务记录无法安全创建时，入站�
 
 只读 API：
 
-- `GET /api/bots/{instance_id}/tasks?limit=50`：v2 任务摘要，服务端硬限制最多 50 条。
+- `GET /api/bots/{instance_id}/tasks?limit=50`：v2 任务摘要，服务端硬限制最多 50 条；
+  同时返回服务端计算的活动数、最近 24 小时失败数和最后活动时间。
+- `GET /api/bots/{instance_id}/tasks/{task_id}/flow`：版本化、最多 300 条转换的八层任务流
+  投影，包含证据等级、结构化决策、覆盖情况、明确缺口和最强回复交付声明。前端不解析
+  runtime 私有事件名，也不从原始 OneBot 帧重新推导准入或身份。
 - `GET /api/bots/{instance_id}/tasks/{task_id}`：步骤树、分类耗时、固定预测、实际累计
   Token、Job 状态和本地价格表计算的实际用量费用估算。
 - `GET /api/bots/{instance_id}/tasks/{task_id}/events`：按需读取任务执行事件与关联
@@ -103,6 +120,11 @@ secret、Authorization/Cookie、URI userinfo、Bearer/inline credential、私钥
 正文被匿名暴露到全部网卡；Console 仍没有 HTTP operator 认证，本机可达进程仍可读取
 脱敏后的事件和上下文。显式改成非回环监听时，部署方必须另行提供可信代理认证和网络
 边界。HTTP operator 认证仍属于独立的控制面安全变更。
+
+QQ 回环接入代理可为无损纯文本转发写入短期私有 ingress receipt，内容仅含会话、actor、
+正文的摘要和安全决策码。ACP 只有在既有 sender envelope 与 transport attestation 已经
+完成权威身份校验后，才会精确消费一条匹配 receipt 作为 `correlated` 可观测证据；歧义、
+过期、非文本或持久化失败只降低任务流覆盖率，不改变准入、角色、授权或消息处理结果。
 
 ## NapCat WebUI 登录
 

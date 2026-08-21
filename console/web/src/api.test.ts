@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { streamTask } from "./api";
+import { api, streamTask } from "./api";
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -32,7 +32,25 @@ const originalEventSource = globalThis.EventSource;
 afterEach(() => {
   MockEventSource.instances = [];
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   globalThis.EventSource = originalEventSource;
+});
+
+describe("task flow API", () => {
+  it("uses the instance-scoped encoded flow endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ schema_version: 1, transitions: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.taskFlow("qq-bot", "task/with space");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/bots/qq-bot/tasks/task%2Fwith%20space/flow",
+      undefined,
+    );
+  });
 });
 
 describe("streamTask", () => {

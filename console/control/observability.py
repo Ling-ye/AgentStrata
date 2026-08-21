@@ -15,6 +15,7 @@ from typing import Dict, Iterator, List, Optional
 
 from console.control import systemd
 from console.control.instances import BotInstance
+from console.control.task_flow import project_task_flow
 from chatcopilot.core.observability_redaction import (
     collect_observability_secrets,
     default_observability_roots,
@@ -33,6 +34,9 @@ _DEFAULT_TASK_EVENT_LIMIT = 500
 _MAX_TASK_EVENT_LIMIT = 1000
 _MAX_EVENT_FILE_TAIL_BYTES = 512 * 1024
 _MAX_SAFE_COUNT = (1 << 63) - 1
+_ACTIVE_TASK_STATUSES = {"queued", "running", "delegated", "cancel_requested"}
+_FAILED_TASK_STATUSES = {"failed", "error", "cancelled"}
+_RECENT_FAILURE_WINDOW_S = 24 * 60 * 60
 
 
 class UnsafeContextSnapshotError(RuntimeError):
@@ -468,11 +472,29 @@ def tasks(inst: BotInstance, *, limit: int = 50) -> Dict[str, object]:
                 continue
             out.append(_task_summary(data, task_file.parent))
     out.sort(key=lambda item: float(item.get("sort_time") or 0), reverse=True)
+    now = time.time()
+    active_count = sum(
+        1 for item in out if str(item.get("status") or "") in _ACTIVE_TASK_STATUSES
+    )
+    failed_recent_count = sum(
+        1
+        for item in out
+        if str(item.get("status") or "") in _FAILED_TASK_STATUSES
+        and 0 <= now - float(item.get("sort_time") or 0) <= _RECENT_FAILURE_WINDOW_S
+    )
     return {
         "instance_id": inst.instance_id,
         "workspace_root": str(ws) if ws else "",
         "workspace_exists": workspace_exists,
         "count": min(len(out), safe_limit),
+        "total_count": len(out),
+        "summary": {
+            "active_count": active_count,
+            "failed_recent_count": failed_recent_count,
+            "last_activity_at": (
+                _coerce_epoch(out[0].get("sort_time")) if out else None
+            ),
+        },
         "tasks": out[:safe_limit],
     }
 
@@ -948,6 +970,26 @@ def task_events(
         "integrity_gap": integrity_gap,
         "events": safe_events,
     }
+
+
+def task_flow(inst: BotInstance, task_id: str) -> Dict[str, object] | None:
+    """Return the versioned backend-owned flow projection for one task."""
+
+    detail = task_detail(inst, task_id)
+    if detail is None:
+        return None
+    event_result = task_events(inst, task_id, limit=_MAX_TASK_EVENT_LIMIT)
+    if event_result is None:
+        return None
+    raw_events = event_result.get("events")
+    events = raw_events if isinstance(raw_events, list) else []
+    return project_task_flow(
+        instance_id=inst.instance_id,
+        task=detail,
+        events=(item for item in events if isinstance(item, dict)),
+        events_truncated=bool(event_result.get("truncated")),
+        integrity_gap=bool(event_result.get("integrity_gap")),
+    )
 
 
 def _event_sort_key(item: Dict[str, object]) -> tuple[float, int, str]:

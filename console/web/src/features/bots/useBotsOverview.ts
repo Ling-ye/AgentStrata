@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
-import type { BotInstance, BotInventory, BotStatus } from "../../types";
+import type { BotInstance, BotInventory, BotStatus, TasksResponse } from "../../types";
 
 export function useBotsOverview(visible = true) {
   const botsQuery = useQuery({
@@ -29,6 +29,15 @@ export function useBotsOverview(visible = true) {
     })),
   });
 
+  const taskQueries = useQueries({
+    queries: bots.map((bot) => ({
+      queryKey: ["bot-tasks", bot.instance_id],
+      queryFn: () => api.tasks(bot.instance_id),
+      enabled: visible,
+      refetchInterval: visible ? 10_000 : false,
+    })),
+  });
+
   const statuses = useMemo(() => {
     const next: Record<string, BotStatus> = {};
     statusQueries.forEach((query, index) => {
@@ -46,6 +55,15 @@ export function useBotsOverview(visible = true) {
     });
     return next;
   }, [bots, inventoryQueries]);
+
+  const activityMap = useMemo(() => {
+    const next: Record<string, TasksResponse["summary"]> = {};
+    taskQueries.forEach((query, index) => {
+      const bot = bots[index];
+      if (bot && query.data) next[bot.instance_id] = query.data.summary;
+    });
+    return next;
+  }, [bots, taskQueries]);
 
   const refreshStatuses = useCallback(async (_list?: BotInstance[]) => {
     await Promise.all(statusQueries.map((query) => query.refetch()));
@@ -71,6 +89,7 @@ export function useBotsOverview(visible = true) {
     bots,
     statuses,
     inventoryMap,
+    activityMap,
     loading,
     runningBotCount,
     deployedBotCount,

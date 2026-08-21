@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
 import os
@@ -28,6 +29,11 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from chatcopilot.core.logging import configure_logging
+from chatcopilot.core.ingress_receipts import (
+    IngressReceiptError,
+    append_ingress_receipt,
+    receipt_root_from_env,
+)
 from chatcopilot.platforms.qq.gateway_health import (
     QQBoundaryError,
     require_access_token,
@@ -44,6 +50,28 @@ _DEFAULT_UPSTREAM = "ws://127.0.0.1:3001"
 # ---------------------------------------------------------------------------
 # 过滤纯函数（可单测，与 IO 解耦）
 # ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ForwardDecision:
+    forward: bool
+    code: str
+    message_event: bool
+    chat_kind: str = ""
+    user_allowed: bool = False
+    group_allowed: bool = False
+    mention_required: bool = False
+    mention_satisfied: bool = False
+
+    def receipt_payload(self) -> dict[str, object]:
+        return {
+            "code": self.code,
+            "outcome": "forward" if self.forward else "drop",
+            "user_allowed": self.user_allowed,
+            "group_allowed": self.group_allowed,
+            "mention_required": self.mention_required,
+            "mention_satisfied": self.mention_satisfied,
+        }
+
+
 def _has_self_at(event: dict[str, Any], bot_qq: str, at_all_counts: bool) -> bool:
     """事件的 message 里是否 @ 了本机器人。"""
     message = event.get("message")
@@ -84,6 +112,94 @@ def _parse_allowlist(
     return items, False
 
 
+def evaluate_forward(
+    event: Any,
+    bot_qq: str,
+    at_all_counts: bool = False,
+    *,
+    require_at: bool = True,
+    user_ids: frozenset[str] = frozenset(),
+    allow_all_users: bool = True,
+    group_ids: frozenset[str] = frozenset(),
+    allow_all_groups: bool = False,
+) -> ForwardDecision:
+    """Return the structured proxy decision without exposing allowlist contents.
+
+    - 非 dict / 非 ``message`` 事件（API 响应、meta_event、notice...）→ 透传。
+    - 私聊消息：仅用户白名单命中时透传。
+    - 群消息：用户或群白名单命中，并满足可选 @ 策略时透传。
+    - ``bot_qq`` 为空（配置缺失）→ fail-open 透传 + 由调用方告警。
+    """
+    if not isinstance(event, dict):
+        return ForwardDecision(True, "non_object_passthrough", False)
+    if event.get("post_type") != "message":
+        return ForwardDecision(True, "non_message_passthrough", False)
+    message_type = event.get("message_type")
+    user_id = str(event.get("user_id") or "").strip()
+    user_allowed = allow_all_users or (bool(user_id) and user_id in user_ids)
+    if message_type == "private":
+        return ForwardDecision(
+            user_allowed,
+            "private_user_allowed" if user_allowed else "private_user_denied",
+            True,
+            chat_kind="p2p",
+            user_allowed=user_allowed,
+            mention_satisfied=True,
+        )
+    if message_type != "group":
+        return ForwardDecision(
+            False,
+            "unsupported_message_type",
+            True,
+            chat_kind=str(message_type or "unknown")[:40],
+            user_allowed=user_allowed,
+        )
+    group_id = str(event.get("group_id") or "").strip()
+    group_allowed = allow_all_groups or (bool(group_id) and group_id in group_ids)
+    if not (user_allowed or group_allowed):
+        return ForwardDecision(
+            False,
+            "group_not_allowed",
+            True,
+            chat_kind="group",
+            user_allowed=user_allowed,
+            group_allowed=group_allowed,
+            mention_required=require_at,
+        )
+    if not require_at:
+        return ForwardDecision(
+            True,
+            "group_allowed_without_mention",
+            True,
+            chat_kind="group",
+            user_allowed=user_allowed,
+            group_allowed=group_allowed,
+            mention_satisfied=True,
+        )
+    if not bot_qq:
+        return ForwardDecision(
+            True,
+            "bot_identity_missing_compatibility",
+            True,
+            chat_kind="group",
+            user_allowed=user_allowed,
+            group_allowed=group_allowed,
+            mention_required=True,
+            mention_satisfied=False,
+        )
+    mention_satisfied = _has_self_at(event, bot_qq, at_all_counts)
+    return ForwardDecision(
+        mention_satisfied,
+        "group_mention_matched" if mention_satisfied else "group_mention_missing",
+        True,
+        chat_kind="group",
+        user_allowed=user_allowed,
+        group_allowed=group_allowed,
+        mention_required=True,
+        mention_satisfied=mention_satisfied,
+    )
+
+
 def should_forward(
     event: Any,
     bot_qq: str,
@@ -95,33 +211,45 @@ def should_forward(
     group_ids: frozenset[str] = frozenset(),
     allow_all_groups: bool = False,
 ) -> bool:
-    """是否把这条 NapCat→cc-connect 的帧转发给 cc-connect。
+    """Compatibility wrapper for the existing boolean filtering contract."""
 
-    - 非 dict / 非 ``message`` 事件（API 响应、meta_event、notice...）→ 透传。
-    - 私聊消息：仅用户白名单命中时透传。
-    - 群消息：用户或群白名单命中，并满足可选 @ 策略时透传。
-    - ``bot_qq`` 为空（配置缺失）→ fail-open 透传 + 由调用方告警。
-    """
-    if not isinstance(event, dict):
-        return True
-    if event.get("post_type") != "message":
-        return True
-    message_type = event.get("message_type")
-    user_id = str(event.get("user_id") or "").strip()
-    user_allowed = allow_all_users or (bool(user_id) and user_id in user_ids)
-    if message_type == "private":
-        return user_allowed
-    if message_type != "group":
-        return False
-    group_id = str(event.get("group_id") or "").strip()
-    group_allowed = allow_all_groups or (bool(group_id) and group_id in group_ids)
-    if not (user_allowed or group_allowed):
-        return False
-    if not require_at:
-        return True
-    if not bot_qq:
-        return True
-    return _has_self_at(event, bot_qq, at_all_counts)
+    return evaluate_forward(
+        event,
+        bot_qq,
+        at_all_counts,
+        require_at=require_at,
+        user_ids=user_ids,
+        allow_all_users=allow_all_users,
+        group_ids=group_ids,
+        allow_all_groups=allow_all_groups,
+    ).forward
+
+
+def normalized_onebot_text(event: Mapping[str, object]) -> tuple[str, int] | None:
+    """Return lossless cc-connect-visible text, excluding only supported @ segments."""
+
+    message = event.get("message")
+    if isinstance(message, list):
+        pieces: list[str] = []
+        for segment in message:
+            if not isinstance(segment, dict):
+                return None
+            segment_type = segment.get("type")
+            data = segment.get("data")
+            if not isinstance(data, dict):
+                return None
+            if segment_type == "at":
+                continue
+            if segment_type != "text" or not isinstance(data.get("text"), str):
+                return None
+            pieces.append(str(data["text"]))
+        return "".join(pieces).strip(), len(message)
+    if isinstance(message, str) and "[CQ:" not in message:
+        return message.strip(), 1
+    raw = event.get("raw_message")
+    if isinstance(raw, str) and "[CQ:" not in raw:
+        return raw.strip(), 1
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +277,12 @@ class _ProxyConfig:
             "yes",
             "on",
         }
+        try:
+            self.receipt_root = receipt_root_from_env(values)
+            self.receipt_root_error = ""
+        except IngressReceiptError as exc:
+            self.receipt_root = None
+            self.receipt_root_error = str(exc)
 
     @property
     def listen_host_port(self) -> tuple[str, int]:
@@ -197,7 +331,7 @@ async def _pump_downstream(napcat_ws: Any, cc_ws: Any, cfg: "_ProxyConfig") -> N
         except (ValueError, TypeError):
             await cc_ws.send(raw)  # 非 JSON 原样透传
             continue
-        if should_forward(
+        decision = evaluate_forward(
             event,
             cfg.bot_qq,
             cfg.at_all_counts,
@@ -206,14 +340,59 @@ async def _pump_downstream(napcat_ws: Any, cc_ws: Any, cfg: "_ProxyConfig") -> N
             allow_all_users=cfg.allow_all_users,
             group_ids=cfg.group_ids,
             allow_all_groups=cfg.allow_all_groups,
-        ):
+        )
+        if decision.forward:
             await cc_ws.send(raw)
+            _record_forward_receipt(event, decision, cfg)
         else:
             _LOGGER.info(
-                "drop QQ message by access proxy | group=%s user=%s",
-                event.get("group_id"),
-                event.get("user_id"),
+                "drop QQ message by access proxy | kind=%s reason=%s",
+                decision.chat_kind or "unknown",
+                decision.code,
             )
+
+
+def _record_forward_receipt(
+    event: Mapping[str, object],
+    decision: ForwardDecision,
+    cfg: "_ProxyConfig",
+) -> None:
+    """Persist optional digest-only evidence after downstream forwarding succeeds."""
+
+    if not decision.message_event or cfg.receipt_root is None:
+        return
+    normalized = normalized_onebot_text(event)
+    if normalized is None:
+        _LOGGER.info(
+            "QQ ingress receipt omitted | kind=%s reason=non_text_or_lossy",
+            decision.chat_kind or "unknown",
+        )
+        return
+    content, segment_count = normalized
+    user_id = str(event.get("user_id") or "").strip()
+    conversation_id = (
+        str(event.get("group_id") or "").strip()
+        if decision.chat_kind == "group"
+        else user_id
+    )
+    try:
+        append_ingress_receipt(
+            cfg.receipt_root,
+            platform="qq",
+            chat_kind=decision.chat_kind,
+            chat_id=conversation_id,
+            actor_id=user_id,
+            content=content,
+            message_id=event.get("message_id"),
+            message_kind="text",
+            segment_count=segment_count,
+            decision=decision.receipt_payload(),
+        )
+    except IngressReceiptError as exc:
+        _LOGGER.warning(
+            "QQ ingress receipt unavailable; forwarding is unchanged | reason=%s",
+            exc,
+        )
 
 
 async def _pump_upstream(cc_ws: Any, napcat_ws: Any) -> None:
@@ -260,14 +439,19 @@ async def _amain(cfg: "_ProxyConfig") -> None:
 
     _LOGGER.info(
         "qq access proxy listening on ws://%s:%d -> upstream %s "
-        "(bot_qq=%s, require_at=%s, at_all_counts=%s)",
+        "(bot_identity_configured=%s, require_at=%s, at_all_counts=%s)",
         host,
         port,
         cfg.upstream_url,
-        cfg.bot_qq or "?",
+        bool(cfg.bot_qq),
         cfg.require_at,
         cfg.at_all_counts,
     )
+    if cfg.receipt_root_error:
+        _LOGGER.warning(
+            "QQ ingress receipts disabled; forwarding is unchanged | reason=%s",
+            cfg.receipt_root_error,
+        )
     async with websockets.serve(handler, host, port, max_size=None):
         await asyncio.Future()  # run forever
 
@@ -294,4 +478,12 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["_ProxyConfig", "_validate_proxy_config", "should_forward", "main"]
+__all__ = [
+    "ForwardDecision",
+    "_ProxyConfig",
+    "_validate_proxy_config",
+    "evaluate_forward",
+    "normalized_onebot_text",
+    "should_forward",
+    "main",
+]

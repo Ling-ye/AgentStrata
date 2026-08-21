@@ -14,6 +14,7 @@ import type {
   ProvisionSchema,
   Task,
   TaskEventsResponse,
+  TaskFlowResponse,
   TasksResponse,
   ToolUpdateResult,
   XhsLoginQrcode,
@@ -58,6 +59,10 @@ export const api = {
   taskEvents: (id: string, taskId: string, limit = 500) =>
     req<TaskEventsResponse>(
       `/api/bots/${id}/tasks/${encodeURIComponent(taskId)}/events?limit=${limit}`,
+    ),
+  taskFlow: (id: string, taskId: string) =>
+    req<TaskFlowResponse>(
+      `/api/bots/${id}/tasks/${encodeURIComponent(taskId)}/flow`,
     ),
   taskContext: (id: string, taskId: string, snapshotId: string) =>
     req<ContextSnapshot>(

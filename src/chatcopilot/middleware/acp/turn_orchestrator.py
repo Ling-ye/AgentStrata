@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Mapping
 
 from acp import PromptResponse
 
@@ -12,6 +12,11 @@ from chatcopilot.middleware.acp import access_gate as _access_gate
 from chatcopilot.contracts.agent import ResourceRef
 from chatcopilot.contracts.identity import TurnIdentity
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
+from chatcopilot.core.ingress_receipts import (
+    IngressReceiptError,
+    consume_ingress_receipt,
+    receipt_root_from_env,
+)
 from chatcopilot.core.image_content import ImageContentError, is_supported_image_path
 from chatcopilot.middleware.acp import attachment_pipeline as _attachment
 from chatcopilot.middleware.acp import attachment_turns as _attachment_turns
@@ -118,6 +123,16 @@ class AcpTurnOrchestrator:
                     if unavailable.response is None:
                         raise RuntimeError("tracking failure produced no ACP response")
                     return unavailable.response
+            self._record_flow_transition(
+                context,
+                kind="middleware.pipeline_failed",
+                source_layer="middleware",
+                target_layer="delivery",
+                status="failed",
+                title="ACP 入站管线失败",
+                summary="失败发生在 Agent 执行前；详细错误按任务脱敏策略保留。",
+                decision={"code": "inbound_pipeline_error", "authoritative": True},
+            )
             self._host._finish_turn_task(
                 context.turn_task,
                 status="failed",
@@ -163,6 +178,40 @@ class AcpTurnOrchestrator:
             )
         if not self._start_turn_task(turn, workspace=task_workspace):
             return await self._tracking_unavailable(turn)
+        self._record_ingress_receipt(
+            turn,
+            workspace=task_workspace,
+            turn_identity=turn_identity,
+        )
+        identity_source = (
+            str(getattr(turn_identity, "source", "") or "transport_attestation")
+            if turn_identity is not None
+            else "session_identity"
+        )
+        self._record_flow_transition(
+            turn,
+            kind="middleware.identity_validated",
+            source_layer="gateway",
+            target_layer="middleware",
+            status="succeeded",
+            title="入站身份已绑定到当前回合",
+            summary=(
+                "共享会话已通过发送者 envelope 与独立 transport attestation 绑定。"
+                if turn_identity is not None
+                else "当前平台会话身份已解析；该证据不包含上游网关的具体准入判断。"
+            ),
+            decision={
+                "code": identity_source,
+                "allowed": True,
+                "authoritative": True,
+            },
+            payload={
+                "adapter": self._platform_type,
+                "chat_kind": str(getattr(task_workspace, "chat_kind", "") or ""),
+                "message_kind": "resource" if prompt_parts.resource_names else "text",
+                "text_length": len(turn.user_text),
+            },
+        )
         _LOGGER.info(
             "session/prompt | sid=%s platform=%s msgs=%d user_text_len=%d "
             "resources=%d mode=%s debug=%s",
@@ -195,6 +244,20 @@ class AcpTurnOrchestrator:
         runtime = getattr(self._host, "_runtime", None)
         access = getattr(runtime, "access", None)
         if access is None or not access.enabled:
+            self._record_flow_transition(
+                turn,
+                kind="middleware.access_decision",
+                source_layer="middleware",
+                target_layer="middleware",
+                status="succeeded",
+                title="ACP 访问策略允许继续",
+                summary="实例未启用额外访问矩阵；身份激活仍服从既有平台契约。",
+                decision={
+                    "code": "access_policy_disabled",
+                    "allowed": True,
+                    "authoritative": True,
+                },
+            )
             return await self._activate_allowed_identity(turn)
         mention_name = None
         spec = getattr(runtime, "spec", None)
@@ -238,7 +301,37 @@ class AcpTurnOrchestrator:
             turn.user_text[:120],
         )
         if decision.allowed:
+            self._record_flow_transition(
+                turn,
+                kind="middleware.access_decision",
+                source_layer="middleware",
+                target_layer="middleware",
+                status="succeeded",
+                title="ACP 访问策略允许继续",
+                summary="仅记录决定代码，不公开准入名单或稳定平台身份。",
+                decision={
+                    "code": decision.reason,
+                    "allowed": True,
+                    "authoritative": True,
+                },
+                payload={"chat_kind": str(chat_kind or "")},
+            )
             return await self._activate_allowed_identity(turn)
+        self._record_flow_transition(
+            turn,
+            kind="middleware.access_decision",
+            source_layer="middleware",
+            target_layer="delivery",
+            status="skipped",
+            title="ACP 访问策略忽略消息",
+            summary="消息未进入 Agent；准入名单和稳定身份不会写入任务流。",
+            decision={
+                "code": decision.reason,
+                "allowed": False,
+                "authoritative": True,
+            },
+            payload={"chat_kind": str(chat_kind or "")},
+        )
         self._host._finish_turn_task(
             turn.turn_task,
             status="succeeded",
@@ -262,6 +355,16 @@ class AcpTurnOrchestrator:
             )
         except SenderEnvelopeError as exc:
             return await self._identity_rejection(turn, exc)
+        self._record_flow_transition(
+            turn,
+            kind="middleware.identity_activated",
+            source_layer="middleware",
+            target_layer="middleware",
+            status="succeeded",
+            title="可信调用者身份已激活",
+            summary="角色、工作区和能力边界由宿主可信状态解析。",
+            decision={"code": "identity_activated", "authoritative": True},
+        )
         return TurnOutcome()
 
     async def _identity_rejection(
@@ -282,6 +385,20 @@ class AcpTurnOrchestrator:
             )
             if not tracked:
                 return await self._tracking_unavailable(turn)
+        self._record_flow_transition(
+            turn,
+            kind="middleware.identity_rejected",
+            source_layer="gateway",
+            target_layer="delivery",
+            status="failed",
+            title="入站身份校验失败",
+            summary="任务记录已脱敏，消息正文和未验证发送者未被保存。",
+            decision={
+                "code": exc.code,
+                "allowed": False,
+                "authoritative": True,
+            },
+        )
         self._host._finish_turn_task(
             turn.turn_task,
             status="failed",
@@ -342,6 +459,154 @@ class AcpTurnOrchestrator:
             ),
             stop=True,
             reason="task_tracking_unavailable",
+        )
+
+    def _record_flow_transition(
+        self,
+        turn: TurnContext,
+        *,
+        kind: str,
+        source_layer: str,
+        target_layer: str,
+        status: str,
+        title: str,
+        summary: str = "",
+        evidence_level: str = "observed",
+        decision: dict[str, object] | None = None,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        """Record supplemental flow evidence without changing turn authority or outcome."""
+
+        recorder = turn.turn_task
+        if recorder is None:
+            return
+        try:
+            recorder.record_event(
+                "flow_transition",
+                {
+                    "kind": kind,
+                    "source_layer": source_layer,
+                    "target_layer": target_layer,
+                    "status": status,
+                    "evidence_level": evidence_level,
+                    "title": title,
+                    "summary": summary,
+                    "decision": dict(decision or {}),
+                    "payload": dict(payload or {}),
+                },
+            )
+        except Exception:  # noqa: BLE001 - observability must not change message behavior
+            _LOGGER.exception(
+                "task flow event record failed | stage=%s task=%s",
+                kind,
+                getattr(recorder, "task_id", ""),
+            )
+
+    def _record_ingress_receipt(
+        self,
+        turn: TurnContext,
+        *,
+        workspace: Any,
+        turn_identity: TurnIdentity | None,
+    ) -> None:
+        """Correlate optional QQ gateway evidence only after trusted identity parsing."""
+
+        if self._platform_type != "qq":
+            return
+        chat_kind = "group" if str(getattr(workspace, "chat_kind", "")) == "group" else "p2p"
+        actor_id = str(
+            getattr(turn_identity, "sender_user_id", "")
+            or getattr(workspace, "user_id", "")
+            or ""
+        )
+        chat_id = str(getattr(workspace, "chat_id", "") or "")
+        if chat_kind == "p2p" and not chat_id:
+            chat_id = actor_id
+        evidence_level = "missing"
+        status = "unknown"
+        title = "未关联到 QQ 接入网关收据"
+        summary = "该缺口不影响既有身份与访问控制，也不会由任务内容反推。"
+        decision: dict[str, object] = {
+            "code": "ingress_receipt_unavailable",
+            "authoritative": False,
+        }
+        try:
+            root = receipt_root_from_env()
+            if root is None:
+                match = None
+                decision["code"] = "receipt_store_not_configured"
+            else:
+                match = consume_ingress_receipt(
+                    root,
+                    platform="qq",
+                    chat_kind=chat_kind,
+                    chat_id=chat_id,
+                    actor_id=actor_id,
+                    content=turn.user_text,
+                )
+            if match is not None and match.status == "matched" and match.receipt is not None:
+                receipt_decision = match.receipt.get("decision")
+                safe_decision = (
+                    dict(receipt_decision)
+                    if isinstance(receipt_decision, Mapping)
+                    else {}
+                )
+                decision = {
+                    "code": str(safe_decision.get("code") or "forwarded"),
+                    "outcome": "forward",
+                    "allowed": True,
+                    "authoritative": False,
+                }
+                evidence_level = "correlated"
+                status = "succeeded"
+                title = "QQ 接入网关允许并转发消息"
+                summary = (
+                    "通过会话、发送者和纯文本摘要精确关联；该收据仅用于观测，不参与授权。"
+                )
+            elif match is not None:
+                decision["code"] = match.reason or match.status
+        except (IngressReceiptError, OSError, ValueError) as exc:
+            decision["code"] = "receipt_store_unavailable"
+            _LOGGER.warning(
+                "QQ ingress receipt correlation unavailable; authorization is unchanged | reason=%s",
+                exc,
+            )
+        if evidence_level == "correlated":
+            self._record_flow_transition(
+                turn,
+                kind="transport.onebot_message_received",
+                source_layer="channel",
+                target_layer="transport",
+                status="succeeded",
+                title="OneBot 入站消息已关联",
+                summary="NapCat/OneBot 纯文本事件与当前可信回合摘要匹配。",
+                evidence_level="correlated",
+                decision={
+                    "code": "onebot_text_correlated",
+                    "authoritative": False,
+                },
+                payload={
+                    "adapter": "qq",
+                    "chat_kind": chat_kind,
+                    "message_kind": "text",
+                },
+            )
+        self._record_flow_transition(
+            turn,
+            kind="gateway.access_decision",
+            source_layer="transport",
+            target_layer="gateway",
+            status=status,
+            title=title,
+            summary=summary,
+            evidence_level=evidence_level,
+            decision=decision,
+            payload={
+                "adapter": "qq",
+                "chat_kind": chat_kind,
+                "message_kind": "text",
+                "correlation": evidence_level,
+            },
         )
 
     async def _deterministic_shortcuts(self, turn: TurnContext) -> TurnOutcome:
@@ -565,6 +830,22 @@ class AcpTurnOrchestrator:
                     "turn_identity_source": turn_identity.source,
                 }
             )
+        self._record_flow_transition(
+            turn,
+            kind="middleware.session_materialized",
+            source_layer="middleware",
+            target_layer="agent",
+            status="succeeded",
+            title="会话与输入已准备",
+            summary="附件、上下文和本轮身份已在宿主边界完成处理。",
+            payload={
+                "adapter": self._platform_type,
+                "chat_kind": str(turn.session.workspace.chat_kind or ""),
+                "message_kind": "resource" if turn.metadata["task_resources"] else "text",
+                "resource_count": len(turn.metadata["task_resources"]),
+                "text_length": len(turn.user_text),
+            },
+        )
         return TurnOutcome()
 
     async def _reject_unbound_group_attachment(
@@ -814,6 +1095,20 @@ class AcpTurnOrchestrator:
             run_kwargs["final_text_prefix"] = turn.metadata["persona_final_prefix"]
         if turn.metadata.get("journal_user_text"):
             run_kwargs["journal_user_text"] = turn.metadata["journal_user_text"]
+        runtime = getattr(self._host, "_runtime", None)
+        self._record_flow_transition(
+            turn,
+            kind="agent.task_submitted",
+            source_layer="middleware",
+            target_layer="agent",
+            status="succeeded",
+            title="任务已交给主 Agent",
+            summary="后续模型、工具、子 Agent 和流程活动由统一 AgentEvent 契约记录。",
+            payload={
+                "backend": str(getattr(runtime, "agent_backend", "") or "unknown"),
+                "resource_count": len(task_resources),
+            },
+        )
         turn.metadata["response"] = await self._host._run_agent_turn(
             turn.session,
             turn.session_id,

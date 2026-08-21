@@ -67,6 +67,22 @@ def bot_task_events(
     return result
 
 
+@router.get("/{instance_id}/tasks/{task_id}/flow")
+def bot_task_flow(
+    instance_id: str,
+    task_id: str,
+    response: Response,
+):
+    try:
+        result = operations.task_flow(get_instance(instance_id), task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
 @router.get("/{instance_id}/tasks/{task_id}/contexts/{snapshot_id}")
 def bot_task_context(
     instance_id: str,

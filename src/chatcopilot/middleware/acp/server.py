@@ -1518,6 +1518,38 @@ class AcpChatAgent(Agent):
             session.persist_transcript()
             pushed = await translator.flush_final(fallback_text=result.final_text)
             final_text_delivered = bool(pushed)
+            if turn_task is not None:
+                try:
+                    turn_task.record_event(
+                        "flow_transition",
+                        {
+                            "kind": "delivery.session_update",
+                            "source_layer": "delivery",
+                            "target_layer": "transport",
+                            "status": "succeeded" if pushed else "skipped",
+                            "evidence_level": "observed",
+                            "title": (
+                                "ACP 已发出最终 session_update"
+                                if pushed
+                                else "Agent 未产生可发送的最终文本"
+                            ),
+                            "summary": (
+                                "该边界不证明 QQ 客户端已显示或用户已读取。"
+                                if pushed
+                                else "后续兜底消息若成功发出，将成为本轮最强交付边界。"
+                            ),
+                            "decision": {
+                                "code": "session_update_emitted" if pushed else "empty_final_text",
+                                "authoritative": False,
+                            },
+                            "payload": {"text_length": len(pushed)},
+                        },
+                    )
+                except Exception:  # noqa: BLE001 - supplemental evidence is non-authoritative
+                    _LOGGER.exception(
+                        "task flow delivery event record failed | task=%s",
+                        turn_task.task_id,
+                    )
             if not pushed:
                 _LOGGER.warning(
                     "prompt produced no outbound text | sid=%s user_text_len=%d",
