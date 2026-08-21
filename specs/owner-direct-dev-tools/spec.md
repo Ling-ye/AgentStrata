@@ -11,15 +11,15 @@ created: 2026-07-17
 
 ### Background
 
-[KNOWN][HIGH] \`write_file\`, \`run_command\`, and \`finalize_self_update\` currently declare \`execution_boundary=codex\`, so middleware removes them from every ordinary Agent schema, including Owner sessions.
+ \`write_file\`, \`run_command\`, and \`finalize_self_update\` currently declare \`execution_boundary=codex\`, so middleware removes them from every ordinary Agent schema, including Owner sessions.
 
-[KNOWN][HIGH] The Lingye BotSpec enables \`dev.files\` but not \`dev.shell\` or \`dev.lifecycle\`; unified search also hides \`web_fetch_page\`, whose URL validator rejects private, loopback, link-local, and reserved destinations.
+ The Lingye BotSpec enables \`dev.files\` but not \`dev.shell\` or \`dev.lifecycle\`; unified search also hides \`web_fetch_page\`, whose URL validator rejects private, loopback, link-local, and reserved destinations.
 
 ### Goal
 
-[INFERRED][HIGH] Let the Lingye QQ Owner directly invoke \`write_file\`, \`run_command\`, and the deferred \`finalize_self_update\` flow when the request explicitly names the direct tool.
+ Let the Lingye QQ Owner directly invoke \`write_file\`, \`run_command\`, and the deferred \`finalize_self_update\` flow when the request explicitly names the direct tool.
 
-[INFERRED][HIGH] Keep \`web_fetch_page\` visible to the Owner and allow HTTP(S) access to public, private, and loopback destinations.
+ Keep \`web_fetch_page\` visible to the Owner and allow HTTP(S) access to public, private, and loopback destinations.
 
 ### Non-goals
 
@@ -30,11 +30,11 @@ created: 2026-07-17
 
 ### Design
 
-[INFERRED][HIGH] The affected ToolDefs retain \`requires_role="owner"\` but remove only their Codex execution boundary. Lingye enables \`dev.shell\` and \`dev.lifecycle\`, completing the direct write-to-deferred-publication sequence.
+ The affected ToolDefs retain \`requires_role="owner"\` but remove only their Codex execution boundary. Lingye enables \`dev.shell\` and \`dev.lifecycle\`, completing the direct write-to-deferred-publication sequence.
 
-[INFERRED][HIGH] The deterministic router sends an explicitly named \`write_file\` or \`run_command\` request to chat before generic mutation classification. An explicit code prefix such as \`/codex\` has higher priority and continues to force a Codex job.
+ The deterministic router sends an explicitly named \`write_file\` or \`run_command\` request to chat before generic mutation classification. An explicit code prefix such as \`/codex\` has higher priority and continues to force a Codex job.
 
-[INFERRED][HIGH] \`web_fetch_page\` remains Owner-only and validates a hostname plus HTTP(S), but no longer rejects destinations by resolved IP class. Unified search no longer removes this direct URL reader from the schema.
+ \`web_fetch_page\` remains Owner-only and validates a hostname plus HTTP(S), but no longer rejects destinations by resolved IP class. Unified search no longer removes this direct URL reader from the schema.
 
 ### Failure Modes
 
@@ -107,14 +107,14 @@ validation_commands:
 
 # Acceptance Criteria
 
-- [INFERRED][HIGH] \`write_file\`, \`run_command\`, and \`finalize_self_update\` are visible and executable only in Owner sessions without \`execution_boundary=codex\`.
-- [INFERRED][HIGH] \`edit_file\` and \`delete_file\` remain Codex-only.
-- [INFERRED][HIGH] Requests explicitly naming \`write_file\` or \`run_command\` stay on chat; \`/codex\` and ordinary mutation requests retain Codex routing.
-- [INFERRED][HIGH] Lingye BotSpec enables \`dev.files\`, \`dev.shell\`, and \`dev.lifecycle\`.
-- [INFERRED][HIGH] A direct \`write_file\` can complete the existing deferred self-update sequence.
-- [INFERRED][HIGH] \`web_fetch_page\` remains visible when unified search is enabled and is denied to non-Owner roles.
-- [INFERRED][HIGH] \`web_fetch_page\` accepts public, loopback, and private HTTP(S) destinations while rejecting non-HTTP schemes and missing hosts.
-- [INFERRED][HIGH] Tests, BotSpec validation, architecture checks, documentation, and live deployment cover the delivered behavior.
+-  \`write_file\`, \`run_command\`, and \`finalize_self_update\` are visible and executable only in Owner sessions without \`execution_boundary=codex\`.
+-  \`edit_file\` and \`delete_file\` remain Codex-only.
+-  Requests explicitly naming \`write_file\` or \`run_command\` stay on chat; \`/codex\` and ordinary mutation requests retain Codex routing.
+-  Lingye BotSpec enables \`dev.files\`, \`dev.shell\`, and \`dev.lifecycle\`.
+-  A direct \`write_file\` can complete the existing deferred self-update sequence.
+-  \`web_fetch_page\` remains visible when unified search is enabled and is denied to non-Owner roles.
+-  \`web_fetch_page\` accepts public, loopback, and private HTTP(S) destinations while rejecting non-HTTP schemes and missing hosts.
+-  Tests, BotSpec validation, architecture checks, documentation, and live deployment cover the delivered behavior.
 
 ## Verification
 
@@ -122,7 +122,7 @@ validation_commands:
 
 Status: superseded by `baseline-safety-and-validation` and `main-agent-backend-unification`; Native development capability remains, while direct `web_fetch_page` and cross-backend routing were removed.
 
-[INFERRED][HIGH] Run structural, focused behavior, BotSpec, architecture, compilation, and whitespace checks:
+ Run structural, focused behavior, BotSpec, architecture, compilation, and whitespace checks:
 
 \`\`\`bash
 python3 scripts/check_sdd_specs.py
@@ -136,7 +136,7 @@ python3 scripts/check_sdd_specs.py
 git diff --check
 \`\`\`
 
-[COMPUTED][HIGH] Verification completed on 2026-07-17:
+ Verification completed on 2026-07-17:
 
 - Focused routing, permission, fetch, ACP, registry, and BotSpec suite -> `87 passed, 7 subtests passed`.
 - `python3 scripts/check_sdd_specs.py` -> `OK: SDD specs`.

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.prompt_plan_fixture import prompt_input, prompt_plan
+
 import json
 import os
 import subprocess
@@ -118,7 +120,7 @@ class BackendRegistryTests(TestCase):
             backend.open_session(
                 BackendOpenRequest(
                     session_id="sid",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     required_capabilities=frozenset({CAPABILITY_NATIVE_RESUME}),
                 )
             )
@@ -168,7 +170,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="acp-1",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     allowed_tool_names=frozenset({"dynamic_echo"}),
                     options={
                         "workspace_root": root,
@@ -342,7 +344,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="relay-evidence",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     allowed_tool_names=frozenset({"dynamic_echo"}),
                     options={
                         "workspace_root": root,
@@ -483,7 +485,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="failing-event-sink",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
                         "backend_state_root": root / "state",
@@ -599,7 +601,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="relay-timeout-recovery",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     allowed_tool_names=frozenset({"blocked_tool"}),
                     options={
                         "workspace_root": root / "workspace",
@@ -760,7 +762,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="observable-codex",
-                    system_baseline="system baseline",
+                    prompt_plan=prompt_plan("system baseline"),
                     allowed_tool_names=frozenset({"dynamic_echo"}),
                     options={
                         "workspace_root": root / "workspace",
@@ -956,7 +958,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="resume-context",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
                         "backend_state_root": root / "state",
@@ -1057,7 +1059,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="live-observability",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
                         "backend_state_root": root / "state",
@@ -1178,7 +1180,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="oversized-jsonl",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
                         "backend_state_root": root / "state",
@@ -1593,7 +1595,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="model-selection",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
                         "backend_state_root": root / "state",
@@ -1676,7 +1678,7 @@ class CodexBackendResumeTests(TestCase):
             }
             request = BackendOpenRequest(
                 session_id="acp-persisted",
-                system_baseline="system",
+                prompt_plan=prompt_plan("system", backend="codex"),
                 allowed_tool_names=frozenset({"dynamic_echo"}),
                 options={
                     "workspace_root": root,
@@ -1750,7 +1752,7 @@ class CodexBackendResumeTests(TestCase):
             }
             request = BackendOpenRequest(
                 session_id="acp-no-persisted-resume",
-                system_baseline="system",
+                prompt_plan=prompt_plan("system", backend="codex"),
                 allowed_tool_names=frozenset({"dynamic_echo"}),
                 options={
                     "workspace_root": root,
@@ -1818,7 +1820,7 @@ class CodexBackendResumeTests(TestCase):
             }
             user_request = BackendOpenRequest(
                 session_id="role-change",
-                system_baseline="system",
+                prompt_plan=prompt_plan("system"),
                 options={
                     "workspace_root": root,
                     "backend_state_root": root / "state",
@@ -1834,7 +1836,7 @@ class CodexBackendResumeTests(TestCase):
 
             owner_request = BackendOpenRequest(
                 session_id="role-change",
-                system_baseline="system",
+                prompt_plan=prompt_plan("system"),
                 options={
                     "workspace_root": root,
                     "backend_state_root": root / "state",
@@ -1867,7 +1869,7 @@ class CodexBackendResumeTests(TestCase):
             }
             request = BackendOpenRequest(
                 session_id="identity-change",
-                system_baseline="system",
+                prompt_plan=prompt_plan("system"),
                 caller_identity=SessionIdentity(user_id="caller-a"),
                 options={
                     "workspace_root": root,
@@ -1885,7 +1887,7 @@ class CodexBackendResumeTests(TestCase):
             restored_ref = reconstructed.open_session(
                 BackendOpenRequest(
                     session_id="identity-change",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     caller_identity=SessionIdentity(user_id="caller-b"),
                     options={
                         "workspace_root": root,
@@ -1919,7 +1921,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="generation-change",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
                         "backend_state_root": root / "state",
@@ -1992,7 +1994,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="auth-error",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
                         "backend_state_root": root / "state",
@@ -2068,7 +2070,7 @@ class CodexBackendResumeTests(TestCase):
             ref = backend.open_session(
                 BackendOpenRequest(
                     session_id="empty-success",
-                    system_baseline="system",
+                    prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
                         "backend_state_root": root / "state",
@@ -2138,7 +2140,7 @@ class CodexBackendPolicyTests(TestCase):
         ref = backend.open_session(
             BackendOpenRequest(
                 session_id="policy-session",
-                system_baseline="system",
+                prompt_plan=prompt_plan("system"),
                 allowed_tool_names=frozenset({"dynamic_echo"}),
                 caller_identity=(
                     SessionIdentity(user_id=caller_user_id) if caller_user_id is not None else None
@@ -2304,7 +2306,7 @@ class SessionToolRelayTests(TestCase):
         ) as build:
             session = runtime.new_session(
                 session_id="relay-filter",
-                system_baseline="system",
+                prompt_input=prompt_input("system", backend="codex"),
                 payload_filter=payload_filter,
             )
 

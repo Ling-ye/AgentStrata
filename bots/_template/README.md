@@ -13,7 +13,7 @@
    - `__DISPLAY_NAME__`：机器人展示名，例如 `MyBot`
    - `__MENTION_NAME__`：平台群聊中的 @ 名称
    - `__WHITELIST_ENV__`：白名单环境变量名，QQ 默认可用 `QQ_ALLOW_FROM`
-4. 按实际需要编辑 `prompts/persona.md`、`prompts/refusal.md`、`tools.packs`、`tools.features` 和 `mcp/servers.yaml` 中的 MCP catalog `ref` 绑定。
+4. 按实际需要编辑 `prompts/identity.md`、`prompts/response-style.md`、`prompts/refusal-style.md`、`tools.packs`、`tools.features` 和 `mcp/servers.yaml` 中的 MCP catalog `ref` 绑定。
 5. 复制 `local.env.example` 为 `local.env`，填入真实凭证。`local.env` 不应提交到 git。
 6. 校验配置：
 
@@ -28,7 +28,7 @@ python -m chatcopilot bot doctor --bot bots/my-bot/bot.yaml
 
 - `workspace.read_write`
 - `memory.chat`
-- `persona.manage`
+- `agents.persona_control.enabled`（宿主直接管理人格，不向主 Agent 暴露写工具）
 - `mcp.admin`
 - `chat.file_uploads`
 - `chat.private_workspace`
@@ -51,6 +51,7 @@ bots/<bot-id>/
 ├── mcp/servers.yaml
 ├── memory/schema.yaml
 └── prompts/
-    ├── persona.md
-    └── refusal.md
+    ├── identity.md
+    ├── response-style.md
+    └── refusal-style.md
 ```

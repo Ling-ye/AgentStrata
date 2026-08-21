@@ -1,6 +1,12 @@
-"""Agent 上下文工程：system prompt 装配 + AgentTask → user message 翻译 + 上下文窗口管理。"""
+"""Agent context framing, prompt planning, and window management."""
 from chatcopilot.agent.context.manager import ContextManager
-from chatcopilot.agent.context.prompt_builder import build_system_prompt
+from chatcopilot.agent.context.prompt_plan import (
+    PromptBuildInput,
+    PromptPlanBuilder,
+    render_codex_prompt,
+    render_native_prefix,
+    render_receipt,
+)
 from chatcopilot.agent.context.task_framing import (
     frame_task_content,
     frame_task_message,
@@ -10,9 +16,13 @@ from chatcopilot.agent.context.token_estimator import estimate_tokens
 
 __all__ = [
     "ContextManager",
-    "build_system_prompt",
+    "PromptBuildInput",
+    "PromptPlanBuilder",
     "estimate_tokens",
     "frame_task_content",
     "frame_task_message",
+    "render_codex_prompt",
+    "render_native_prefix",
+    "render_receipt",
     "validated_image_resource_receipts",
 ]

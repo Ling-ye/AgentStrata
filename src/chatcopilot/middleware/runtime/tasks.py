@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
 from chatcopilot.contracts.identity import stable_actor_ref
+from chatcopilot.contracts.persona_control import PersonaDraftResult
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.core.jobs import read_json_file, write_json_atomic
 from chatcopilot.core.observability_redaction import (
@@ -499,6 +500,7 @@ class TurnTaskRecorder:
     _primary_model: str = field(default="", init=False, repr=False)
     _context_kind: str = field(default="", init=False, repr=False)
     _forecast: Dict[str, Any] = field(default_factory=dict, init=False, repr=False)
+    _persona_outcome: Dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _log_context_token: Optional[contextvars.Token] = field(default=None, init=False, repr=False)
     _event_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _last_summary_write_at: float = field(default=0.0, init=False, repr=False)
@@ -1747,6 +1749,169 @@ class TurnTaskRecorder:
             )
         )
 
+    def persona_decision(
+        self,
+        *,
+        operation: str,
+        confidence: str,
+        scope: str,
+        reason: str,
+        source: str,
+        model: str = "",
+        usage: Optional[Dict[str, Any]] = None,
+        error_code: str = "",
+        started_at: Optional[float] = None,
+        finished_at: Optional[float] = None,
+    ) -> None:
+        """Record the trusted host's semantic persona routing decision."""
+
+        ended = finished_at if finished_at is not None else time.time()
+        started = started_at if started_at is not None else ended
+        ok = not bool(error_code)
+        step = self._start_step(
+            step_id=f"persona_{uuid.uuid4().hex[:12]}",
+            step_type="persona_control",
+            title="人格意图判定",
+            parent_step_id=None,
+            depth=0,
+            started_at=started,
+            metadata={
+                "operation": operation,
+                "confidence": confidence,
+                "scope": scope,
+                "source": source,
+                "model": model,
+                "error_code": error_code,
+            },
+            raw_event="persona_decision",
+        )
+        self._finish_step(
+            step,
+            ok=ok,
+            summary=reason,
+            error=error_code or None,
+            finished_at=ended,
+            actual_usage=usage,
+            raw_event="persona_decision",
+        )
+        if usage:
+            normalized = _normalize_usage_payload(usage)
+            self._llm_calls.append(
+                {
+                    "kind": "persona_control",
+                    "model": model,
+                    "iteration": -1,
+                    "finish_reason": "decision" if ok else "failed",
+                    "usage": normalized,
+                    "role": "helper",
+                    "recorded_at": ended,
+                    "context_kind": "persona_control",
+                    "span_id": step["step_id"],
+                }
+            )
+            self._accumulate_usage(normalized)
+        self._append_event(
+            "persona_decision",
+            {
+                "operation": operation,
+                "confidence": confidence,
+                "scope": scope,
+                "reason": reason,
+                "source": source,
+                "model": model,
+                "usage": usage or {},
+                "error_code": error_code,
+                "started_at": started,
+                "finished_at": ended,
+                "step_id": step["step_id"],
+            },
+        )
+        self.write(
+            progress=(
+                f"人格意图判定：{operation} / {confidence}。"
+                if ok
+                else f"人格意图判定失败：{error_code}。"
+            )
+        )
+
+    def persona_draft(self, *, result: PersonaDraftResult) -> None:
+        """Record the complete persona-draft Agent run and its real calls."""
+
+        ended = time.time()
+        started = ended - max(0, result.elapsed_ms) / 1000.0
+        step = self._start_step(
+            step_id=f"persona_draft_{uuid.uuid4().hex[:12]}",
+            step_type="persona_control",
+            title="人格草案生成",
+            parent_step_id=None,
+            depth=0,
+            started_at=started,
+            metadata={
+                "model": result.model,
+                "model_calls": len(result.calls),
+                "search_calls": result.search_calls,
+                "source_count": len(result.source_urls),
+                "observed_source_count": len(result.observed_source_urls),
+                "error_code": result.error_code,
+                "error_kind": result.error_kind,
+            },
+            raw_event="persona_draft",
+        )
+        for call in result.calls:
+            normalized = _normalize_usage_payload(dict(call.usage or {}))
+            call_summary = {
+                "kind": "persona_draft",
+                "model": call.model,
+                "iteration": call.iteration,
+                "finish_reason": call.finish_reason or call.error_code,
+                "usage": normalized,
+                "role": "helper",
+                "recorded_at": ended,
+                "context_kind": "persona_draft",
+                "span_id": step["step_id"],
+                "ok": call.ok,
+                "elapsed_ms": call.elapsed_ms,
+                "error_code": call.error_code,
+                "error_kind": call.error_kind,
+            }
+            self._llm_calls.append(call_summary)
+            self._accumulate_usage(normalized)
+        payload = {
+            "ok": result.ok,
+            "model": result.model,
+            "model_calls": len(result.calls),
+            "search_calls": result.search_calls,
+            "source_urls": list(result.source_urls),
+            "source_count": len(result.source_urls),
+            "observed_source_count": len(result.observed_source_urls),
+            "elapsed_ms": result.elapsed_ms,
+            "error_code": result.error_code,
+            "error_kind": result.error_kind,
+            "markdown_sha256": (
+                hashlib.sha256(result.markdown.encode("utf-8")).hexdigest()
+                if result.markdown
+                else ""
+            ),
+            "step_id": step["step_id"],
+        }
+        self._finish_step(
+            step,
+            ok=result.ok,
+            summary="人格草案已生成" if result.ok else "人格草案生成失败",
+            error=result.error_code or None,
+            finished_at=ended,
+            actual_usage=dict(result.usage),
+            raw_event="persona_draft",
+        )
+        self._append_event("persona_draft", payload)
+        self.write(
+            progress=(
+                "人格草案已生成。"
+                if result.ok
+                else f"人格草案生成失败：{result.error_code or 'unknown'}。"
+            )
+        )
+
     def _persist_subagent_transcript(
         self, span_id: str, name: str, data: Dict[str, Any]
     ) -> Optional[Path]:
@@ -1943,6 +2108,16 @@ class TurnTaskRecorder:
     def record_event(self, event_type: str, payload: Dict[str, Any]) -> None:
         self._append_event(event_type, payload)
 
+    def set_persona_outcome(self, *, outcome: str, error_code: str = "") -> None:
+        """Persist the structured persona terminal alongside task summary state."""
+
+        self._persona_outcome = {
+            "outcome": str(outcome or "")[:80],
+            "error_code": str(error_code or "")[:120],
+        }
+        self._append_event("persona_outcome", dict(self._persona_outcome))
+        self.write()
+
     def _append_provider_activity_omission_event(self) -> None:
         if self._provider_omission_event_written:
             return
@@ -2027,6 +2202,7 @@ class TurnTaskRecorder:
             "forecast": dict(self._forecast),
             "primary_model": self._primary_model,
             "context_kind": self._context_kind,
+            "persona_outcome": dict(self._persona_outcome),
             "job_ids": self._job_ids,
             "job_results": self._job_results,
             "session_id": self.session_id,
@@ -2390,6 +2566,7 @@ def _bounded_task_document(payload: Dict[str, Any]) -> Dict[str, Any]:
         "forecast",
         "primary_model",
         "context_kind",
+        "persona_outcome",
         "job_ids",
         "job_results",
         "session_id",
@@ -2434,6 +2611,14 @@ def _bounded_task_document(payload: Dict[str, Any]) -> Dict[str, Any]:
         if key in bounded:
             bounded[key] = _bounded_observed_number(bounded.get(key))
     bounded["workspace"] = _bounded_mapping(bounded.get("workspace"))
+    raw_persona_outcome = bounded.get("persona_outcome")
+    persona_outcome = (
+        raw_persona_outcome if isinstance(raw_persona_outcome, dict) else {}
+    )
+    bounded["persona_outcome"] = {
+        "outcome": _bounded_text(persona_outcome.get("outcome"), 80),
+        "error_code": _bounded_text(persona_outcome.get("error_code"), 120),
+    }
     bounded["usage_totals"] = _task_usage_summary(bounded.get("usage_totals"))
     bounded["forecast"] = _task_forecast_summary(bounded.get("forecast"))
     raw_activity = bounded.get("activity_summary")

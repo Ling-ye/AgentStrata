@@ -97,6 +97,9 @@ class LLMClient:
             base_url=self._cfg.base_url,
             api_key=self._cfg.api_key,
             timeout=self._cfg.timeout,
+            # AgentStrata owns retries in ``chat`` so call-site budgets and
+            # task telemetry match the actual number of provider attempts.
+            max_retries=0,
         )
 
     def chat(

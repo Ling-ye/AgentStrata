@@ -106,11 +106,11 @@ secret、Authorization/Cookie、URI userinfo、Bearer/inline credential、私钥
 
 ## NapCat WebUI 登录
 
-- [KNOWN][HIGH] 服务管理中的“WebUI 登录”调用 `POST /api/infra/napcat:<instance>/webui-session`；后端通过 `qq_gateway.sh bootstrap` 幂等启动或修正回环容器，等待 `localhost:6099` 就绪后返回含 WebUI 管理 token 的登录链接。
-- [KNOWN][HIGH] WebUI 管理 token 来自 NapCat 容器日志，只用于进入管理面板，不是正向 OneBot WebSocket 的 `QQ_ACCESS_TOKEN`；相关响应带 `Cache-Control: no-store`。
-- [KNOWN][HIGH] 已停止容器仍可通过 `GET /api/infra/napcat:<instance>/webui-token` 恢复历史 WebUI token；容器不存在或日志尚未产生 token 时返回明确错误。
-- [KNOWN][HIGH] NapCat 的正式“启动/重启”继续要求合法 `QQ_ACCESS_TOKEN` 并通过双向 OneBot 探针；WebUI bootstrap 不启动 QQ Bot service，也不降低该门禁。
-- [KNOWN][HIGH] 缺失或错配 OneBot token 时先在 WSL 执行 `bash deploy/wsl/qq_gateway.sh sync-token --instance <id>`，再运行实例更新；控制台的 gateway 输出会移除 ANSI 控制序列，启动等待期的临时探针错误不会混入成功响应。
+-  服务管理中的“WebUI 登录”调用 `POST /api/infra/napcat:<instance>/webui-session`；后端通过 `qq_gateway.sh bootstrap` 幂等启动或修正回环容器，等待 `localhost:6099` 就绪后返回含 WebUI 管理 token 的登录链接。
+-  WebUI 管理 token 来自 NapCat 容器日志，只用于进入管理面板，不是正向 OneBot WebSocket 的 `QQ_ACCESS_TOKEN`；相关响应带 `Cache-Control: no-store`。
+-  已停止容器仍可通过 `GET /api/infra/napcat:<instance>/webui-token` 恢复历史 WebUI token；容器不存在或日志尚未产生 token 时返回明确错误。
+-  NapCat 的正式“启动/重启”继续要求合法 `QQ_ACCESS_TOKEN` 并通过双向 OneBot 探针；WebUI bootstrap 不启动 QQ Bot service，也不降低该门禁。
+-  缺失或错配 OneBot token 时先在 WSL 执行 `bash deploy/wsl/qq_gateway.sh sync-token --instance <id>`，再运行实例更新；控制台的 gateway 输出会移除 ANSI 控制序列，启动等待期的临时探针错误不会混入成功响应。
 
 ## Evaluation 评测中心
 
@@ -165,12 +165,12 @@ WSL 终端直接运行不带参数的 `bash deploy/wsl/deploy_console.sh` 是全
 阻断后续实例，脚本最终汇总失败并返回非零；`--skip-bots` 仅用于显式的 Console-only
 安装/修复，`--update-only` 仍只更新 Console 与 Evaluation。
 
-[KNOWN][HIGH] 「能力与工具」Tab 以 `tools` / `prompts` / `agents` / `context`
+ 「能力与工具」Tab 以 `tools` / `prompts` / `agents` / `context`
 四面展示当前配置。可编辑项写回 WSL 源仓中的 `bots/<id>/bot.yaml` 和
 `bots/<id>/mcp/servers.yaml`；“保存并重启”复用统一实例更新入口，通常走不重复安装
 依赖的快速路径，Git 提交仍由操作者在源仓完成。
 
-[KNOWN][HIGH] 工具配置“保存并重启”先取得同实例 TaskManager 串行资格，再在任务内写配置和调用统一更新；已有活动任务时返回 409 且不得修改配置。机器人更新 SSE 只有收到服务端 `end` 事件才读取最终 Task：成功后才清除编辑器未保存状态、刷新配置并关闭任务抽屉，失败时保留当前草稿、标红并显示最后错误；传输断线只显示重连提示并由 EventSource 自动重连，不得伪装成任务终止。更新脚本只即时检查主 systemd 服务 active，不把 QQ、飞书等平台通道连接作为任务成功条件。
+ 工具配置“保存并重启”先取得同实例 TaskManager 串行资格，再在任务内写配置和调用统一更新；已有活动任务时返回 409 且不得修改配置。机器人更新 SSE 只有收到服务端 `end` 事件才读取最终 Task：成功后才清除编辑器未保存状态、刷新配置并关闭任务抽屉，失败时保留当前草稿、标红并显示最后错误；传输断线只显示重连提示并由 EventSource 自动重连，不得伪装成任务终止。更新脚本只即时检查主 systemd 服务 active，不把 QQ、飞书等平台通道连接作为任务成功条件。
 
 机器人实例的运行操作区只在状态明确为“未注册”时显示“注册服务”；已注册实例不提供“重注册”按钮。需要修复 systemd 注册配置时，使用下表对应的底层脚本。
 
@@ -230,7 +230,7 @@ WSL 终端直接运行不带参数的 `bash deploy/wsl/deploy_console.sh` 是全
 | 首次部署 | 写 `bots/<id>/local.env`，再执行平台准备、同步、重建、注册、启动 |
 | 注册服务（仅未注册实例显示） | `bash console/systemd/register.sh <id>` |
 | 启动 / 停止 / 重启 | `bash console/scripts/ctl.sh <verb> <id>` |
-| 更新并重启 / 工具配置“保存并重启” | [KNOWN][HIGH] `bash deploy/wsl/update_instance.sh --instance <id>`；默认快路径，依赖或安装脚本变化、实例 venv 缺失时完整 bootstrap |
+| 更新并重启 / 工具配置“保存并重启” |  `bash deploy/wsl/update_instance.sh --instance <id>`；默认快路径，依赖或安装脚本变化、实例 venv 缺失时完整 bootstrap |
 | 更新 Console 与全部机器人 | `bash deploy/wsl/deploy_console.sh`；失败实例汇总后返回非零 |
 | 更新控制台 | `bash deploy/wsl/deploy_console.sh --update-only` |
 | 实例日志 | `/api/bots/{id}/logs/stream` SSE |

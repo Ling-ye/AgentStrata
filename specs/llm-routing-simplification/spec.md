@@ -11,25 +11,25 @@ created: 2026-07-16
 
 ### Background
 
-[KNOWN][HIGH] The current turn router has two execution destinations: the ordinary chat Agent and the Codex CLI mutation boundary.
+ The current turn router has two execution destinations: the ordinary chat Agent and the Codex CLI mutation boundary.
 
-[KNOWN][HIGH] Search routers and selected subagents may use a separate environment prefix, but their credentials currently must be repeated and model selection is spread across BotSpec and machine-local environment variables.
+ Search routers and selected subagents may use a separate environment prefix, but their credentials currently must be repeated and model selection is spread across BotSpec and machine-local environment variables.
 
-[COMPUTED][HIGH] The current mutation rules miss common dependency, deployment, BotSpec, adapter, Dockerfile, and build-file requests.
+ The current mutation rules miss common dependency, deployment, BotSpec, adapter, Dockerfile, and build-file requests.
 
-[COMPUTED][HIGH] Treating the standalone word `失败` as an engineering signal creates false positives for ordinary writing requests.
+ Treating the standalone word `失败` as an engineering signal creates false positives for ordinary writing requests.
 
 ### Goal
 
-[INFERRED][HIGH] Keep the router deterministic and cheap while making its task taxonomy, configuration, and diagnostics understandable to a maintainer without reading the implementation.
+ Keep the router deterministic and cheap while making its task taxonomy, configuration, and diagnostics understandable to a maintainer without reading the implementation.
 
-[INFERRED][HIGH] Expose three configuration slots:
+ Expose three configuration slots:
 
 - `llm.chat`: ordinary Agent environment prefix.
 - `llm.research`: optional search/subagent environment prefix that inherits missing credentials and endpoint settings from chat.
 - `llm.code`: Codex route policy and model.
 
-[INFERRED][HIGH] Classify persistent mutations as `code`, `dependency`, `deployment`, `botspec`, `plugin`, or `adapter`; only `plugin` changes the Codex network policy.
+ Classify persistent mutations as `code`, `dependency`, `deployment`, `botspec`, `plugin`, or `adapter`; only `plugin` changes the Codex network policy.
 
 ### Non-goals
 
@@ -40,27 +40,27 @@ created: 2026-07-16
 
 ### Design
 
-[INFERRED][HIGH] BotSpec becomes the source of non-secret routing defaults. Provisioning and direct runtime assembly translate those declarations into the existing environment-based runtime configuration.
+ BotSpec becomes the source of non-secret routing defaults. Provisioning and direct runtime assembly translate those declarations into the existing environment-based runtime configuration.
 
-[INFERRED][HIGH] Research model resolution overlays only explicitly configured research values on the main chat LLM config. A research model may therefore override only `{PREFIX}_MODEL` while reusing the chat API key and base URL.
+ Research model resolution overlays only explicitly configured research values on the main chat LLM config. A research model may therefore override only `{PREFIX}_MODEL` while reusing the chat API key and base URL.
 
-[INFERRED][HIGH] Mutation detection uses ordered task-specific rules before the generic action-plus-engineering-signal rule. Failure words count only in code-specific phrases or test/build/CI contexts.
+ Mutation detection uses ordered task-specific rules before the generic action-plus-engineering-signal rule. Failure words count only in code-specific phrases or test/build/CI contexts.
 
-[INFERRED][HIGH] Prefix matching requires a boundary for slash commands so `/codexxxx` does not act as `/codex`.
+ Prefix matching requires a boundary for slash commands so `/codexxxx` does not act as `/codex`.
 
-[INFERRED][HIGH] `bot route-explain` loads BotSpec defaults plus optional local env overrides and prints the resolved route, reason, task type, and non-secret model selections.
+ `bot route-explain` loads BotSpec defaults plus optional local env overrides and prints the resolved route, reason, task type, and non-secret model selections.
 
-[INFERRED][HIGH] Every non-default decision is logged and recorded with `task_type`, including mandatory mutation decisions when the optional router is disabled.
+ Every non-default decision is logged and recorded with `task_type`, including mandatory mutation decisions when the optional router is disabled.
 
-[INFERRED][HIGH] Invalid routing enum values, booleans, or non-positive timeout values fail configuration loading instead of silently reverting.
+ Invalid routing enum values, booleans, or non-positive timeout values fail configuration loading instead of silently reverting.
 
 ### Alternatives
 
-[INFERRED][HIGH] An LLM classifier was rejected because it adds latency, cost, and a new availability dependency without fixing configuration fragmentation.
+ An LLM classifier was rejected because it adds latency, cost, and a new availability dependency without fixing configuration fragmentation.
 
-[INFERRED][HIGH] A user-defined rule DSL was rejected because the current task taxonomy is small and security-sensitive; unrestricted rule ordering would make fail-closed behavior harder to audit.
+ A user-defined rule DSL was rejected because the current task taxonomy is small and security-sensitive; unrestricted rule ordering would make fail-closed behavior harder to audit.
 
-[INFERRED][HIGH] Keeping all routing policy in `local.env` was rejected because model names, prefixes, roles, and timeout policy are not secrets and should be versioned with the bot.
+ Keeping all routing policy in `local.env` was rejected because model names, prefixes, roles, and timeout policy are not secrets and should be versioned with the bot.
 
 ### Failure Modes
 
@@ -151,18 +151,18 @@ validation_commands:
 
 # Acceptance Criteria
 
-- [INFERRED][HIGH] `安装 numpy`, `uv add httpx`, deployment changes, BotSpec changes, adapter implementation, Dockerfile changes, and common build-file changes route to Codex with a specific task type.
-- [INFERRED][HIGH] `帮我修改失败后的复盘文案` and read-only code explanations remain on chat.
-- [INFERRED][HIGH] Mixed requests such as `review and fix src/foo.py` route to Codex.
-- [INFERRED][HIGH] `/codexxxx` and `/chatgpt` do not match configured slash prefixes.
-- [INFERRED][HIGH] BotSpec declares chat, research, and code slots without storing secrets.
-- [INFERRED][HIGH] A research model override can reuse the chat key and base URL.
-- [INFERRED][HIGH] Environment variables continue to override BotSpec routing defaults.
-- [INFERRED][HIGH] Invalid routing mode, route, provider, boolean, or timeout configuration fails visibly.
-- [INFERRED][HIGH] `bot route-explain` reports route, reason, task type, and resolved non-secret model configuration.
-- [INFERRED][HIGH] Non-default route telemetry includes task type even when optional routing is disabled.
-- [INFERRED][HIGH] Existing Codex plugin-only network behavior remains unchanged.
-- [INFERRED][HIGH] Documentation and built-in BotSpecs describe the delivered configuration.
+-  `安装 numpy`, `uv add httpx`, deployment changes, BotSpec changes, adapter implementation, Dockerfile changes, and common build-file changes route to Codex with a specific task type.
+-  `帮我修改失败后的复盘文案` and read-only code explanations remain on chat.
+-  Mixed requests such as `review and fix src/foo.py` route to Codex.
+-  `/codexxxx` and `/chatgpt` do not match configured slash prefixes.
+-  BotSpec declares chat, research, and code slots without storing secrets.
+-  A research model override can reuse the chat key and base URL.
+-  Environment variables continue to override BotSpec routing defaults.
+-  Invalid routing mode, route, provider, boolean, or timeout configuration fails visibly.
+-  `bot route-explain` reports route, reason, task type, and resolved non-secret model configuration.
+-  Non-default route telemetry includes task type even when optional routing is disabled.
+-  Existing Codex plugin-only network behavior remains unchanged.
+-  Documentation and built-in BotSpecs describe the delivered configuration.
 
 ## Verification
 
@@ -188,9 +188,9 @@ The route tests must contain both positive mutation examples and nearby negative
 
 ### Latest execution
 
-- [KNOWN][HIGH] The focused routing, research, subagent, BotSpec, event, and Codex tests passed: `85 passed, 5 subtests passed`.
-- [KNOWN][HIGH] Both built-in BotSpecs validated successfully.
-- [KNOWN][HIGH] Source compilation, architecture boundaries, SDD structure, and `git diff --check` passed.
-- [KNOWN][HIGH] `route-explain` classified `uv add httpx` as `dependency` on the Codex route and kept `explain failure report` on chat without printing credentials.
-- [KNOWN][HIGH] A full unit audit reached `780 passed, 1 skipped, 18 failed`; the newly exposed legacy `llm.code` mock compatibility issue was fixed.
-- [INFERRED][HIGH] The remaining full-suite failures are outside this specification's delivered behavior: missing local `rg` / `python` commands, DNS behavior, QQ text encoding, pre-existing deployment-script assertions, and a legacy runtime mock without `context.wiki`.
+-  The focused routing, research, subagent, BotSpec, event, and Codex tests passed: `85 passed, 5 subtests passed`.
+-  Both built-in BotSpecs validated successfully.
+-  Source compilation, architecture boundaries, SDD structure, and `git diff --check` passed.
+-  `route-explain` classified `uv add httpx` as `dependency` on the Codex route and kept `explain failure report` on chat without printing credentials.
+-  A full unit audit reached `780 passed, 1 skipped, 18 failed`; the newly exposed legacy `llm.code` mock compatibility issue was fixed.
+-  The remaining full-suite failures are outside this specification's delivered behavior: missing local `rg` / `python` commands, DNS behavior, QQ text encoding, pre-existing deployment-script assertions, and a legacy runtime mock without `context.wiki`.

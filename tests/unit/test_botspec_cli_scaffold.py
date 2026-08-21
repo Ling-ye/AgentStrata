@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import yaml
 
-from chatcopilot.botspec.cli import _SYSTEM_PROMPT_TEMPLATE, _render_bot_yaml
+from chatcopilot.botspec.cli import _IDENTITY_PROMPT_TEMPLATE, _render_bot_yaml
 from chatcopilot.platforms import registry
 
 
@@ -18,5 +18,9 @@ def test_bot_scaffold_uses_current_llm_slots_and_backend() -> None:
 
     assert payload["llm"] == {"chat": {"env_prefix": "CHATCOPILOT_CHAT"}}
     assert payload["agents"]["backend"] == "native"
-    assert "capabilities" not in _SYSTEM_PROMPT_TEMPLATE
-    assert "prompts / tools /" in _SYSTEM_PROMPT_TEMPLATE
+    assert payload["prompts"] == {
+        "schema_version": 2,
+        "identity": "prompts/identity.md",
+        "response_style": "prompts/response-style.md",
+    }
+    assert "权限" in _IDENTITY_PROMPT_TEMPLATE

@@ -13,6 +13,9 @@ from unittest.mock import patch
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.agent.protocol import AgentTask
 from chatcopilot.agent.session import AgentSession
+from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder, render_native_prefix
+from chatcopilot.contracts.prompt import BotPromptProfile
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.runtime.workspace import (
@@ -34,12 +37,39 @@ from chatcopilot.middleware.acp.meta_commands import (
     _handle_debug_command,
     _parse_debug_command,
 )
-from chatcopilot.middleware.acp.prompt_assembler import build_system_prompt as _build_system_prompt
 from chatcopilot.external_tools.shared.tool_spec import build_openai_schema
 
 
-def build_system_prompt(workspace: Workspace, **kwargs) -> str:
-    return _build_system_prompt(platform_type="feishu", workspace=workspace, **kwargs)
+def _test_prompt_plan(workspace: Workspace, **kwargs):
+    role = kwargs.get("role", Role.USER)
+    mode = kwargs.get("assistant_mode", AssistantMode.PERFORMANCE)
+    mode_prompts = kwargs.get("mode_prompts", {})
+    return PromptPlanBuilder().build(
+        PromptBuildInput(
+            profile=BotPromptProfile(
+                identity=kwargs.get("bot_system_prompt") or "Test assistant",
+                response_style="Return concise test responses.",
+                mode_styles={
+                    key.value if hasattr(key, "value") else str(key): value
+                    for key, value in mode_prompts.items()
+                },
+            ),
+            backend="native",
+            model=None,
+            role=role.value if hasattr(role, "value") else str(role),
+            channel_kind=(
+                "group"
+                if workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+                else "private"
+            ),
+            session_policy=f"当前可信角色：{role.value}。",
+            mode=mode.value if hasattr(mode, "value") else str(mode),
+        )
+    )
+
+
+def render_test_prompt(workspace: Workspace, **kwargs) -> str:
+    return render_native_prefix(_test_prompt_plan(workspace, **kwargs))[0]["content"]
 
 
 class _FakeLLM:
@@ -260,6 +290,11 @@ class DebugModeAccessTests(unittest.TestCase):
             ),
             user_id=f"ou_{role.value}",
             user_name=role.value,
+            scope=(
+                WORKSPACE_SCOPE_GROUP_SHARED
+                if normalize_chat_kind(chat_kind, chat_id) == "group"
+                else "actor"
+            ),
         ).ensure()
         state_ref: dict = {}
         mode_tool = _build_set_assistant_mode_tool(lambda: state_ref["session"])
@@ -270,12 +305,15 @@ class DebugModeAccessTests(unittest.TestCase):
             llm=_FakeLLM(llm_results),
             executor=ToolExecutor(tools=tools),
             tools_schema=[build_openai_schema(tool) for tool in tools],
-            system_baseline=build_system_prompt(
+            prompt_plan=_test_prompt_plan(
                 ws,
                 role=role,
                 assistant_mode=assistant_mode,
                 mode_prompts=_MODE_PROMPTS,
             ),
+        )
+        agent_session.capabilities = SimpleNamespace(  # type: ignore[attr-defined]
+            tool_names=frozenset(tool.name for tool in tools)
         )
         state = SessionState(
             session_id="sid",
@@ -283,13 +321,16 @@ class DebugModeAccessTests(unittest.TestCase):
             role=role,
             assistant_mode=assistant_mode,
             runtime=SimpleNamespace(
-                system_prompt="",
-                refusal_prompt=None,
-                safety_prompt_override=None,
-                memory_prompt_override=None,
-                mode_prompt_overrides=_MODE_PROMPTS,
-                role_prompt_overrides={},
-                capability_prompt_fragments=(),
+                agent_backend="native",
+                prompt_profile=BotPromptProfile(
+                    identity="Test assistant",
+                    response_style="Return concise test responses.",
+                    mode_styles={
+                        key.value if hasattr(key, "value") else str(key): value
+                        for key, value in _MODE_PROMPTS.items()
+                    },
+                ),
+                capability_policies=(),
                 skills=(),
             ),  # type: ignore[arg-type]
             session=agent_session,
@@ -487,13 +528,13 @@ class DebugModeAccessTests(unittest.TestCase):
                 user_name="owner",
             ).ensure()
 
-            performance_prompt = build_system_prompt(
+            performance_prompt = render_test_prompt(
                 ws,
                 role=Role.OWNER,
                 assistant_mode=AssistantMode.PERFORMANCE,
                 mode_prompts=_MODE_PROMPTS,
             )
-            general_prompt = build_system_prompt(
+            general_prompt = render_test_prompt(
                 ws,
                 role=Role.OWNER,
                 assistant_mode=AssistantMode.GENERAL,
@@ -506,7 +547,7 @@ class DebugModeAccessTests(unittest.TestCase):
         self.assertIn("SampleGame 通用模式", general_prompt)
         self.assertIn("飞书文档总结、周报整理", general_prompt)
         self.assertIn("外部网站搜索", general_prompt)
-        self.assertIn("当前用户权限：Owner", general_prompt)
+        self.assertIn("当前可信角色：owner", general_prompt)
 
 
 if __name__ == "__main__":

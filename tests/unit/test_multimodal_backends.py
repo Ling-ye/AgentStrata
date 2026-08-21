@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.prompt_plan_fixture import prompt_plan
+
 import hashlib
 import json
 from contextlib import contextmanager
@@ -86,7 +88,7 @@ def test_native_expands_image_only_at_request_boundary(tmp_path: Path) -> None:
         llm=_llm_client(completions),
         executor=ToolExecutor(tools=[]),
         tools_schema=[],
-        system_baseline="system",
+        prompt_plan=prompt_plan("system"),
         stream_first_turn=False,
     )
     events: list[object] = []
@@ -162,7 +164,7 @@ def test_native_tool_loop_keeps_resource_receipts_on_every_context_snapshot(
         ),
         executor=ToolExecutor(tools=[ping]),
         tools_schema=[build_openai_schema(ping)],
-        system_baseline="system",
+        prompt_plan=prompt_plan("system"),
         stream_first_turn=False,
     )
     events: list[object] = []
@@ -203,7 +205,7 @@ def test_codex_new_and_resume_commands_attach_images(tmp_path: Path) -> None:
     state = SimpleNamespace(
         gateway_config=tmp_path / "gateway.json",
         allowed_tool_names=frozenset(),
-        system_baseline="system",
+        prompt_plan=prompt_plan("system"),
         access_mode="workspace",
         workdir=tmp_path,
         native_session_id="",

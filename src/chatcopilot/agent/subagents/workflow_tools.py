@@ -18,16 +18,20 @@ def make_workflow_tool(
     module_name: str = __name__,
 ) -> ToolDef:
     def _handler(args: dict):
-        task = parse_task_pack(args)
+        task_args = dict(args)
+        extension_inputs: list[str] = []
         if workflow.name == "coding":
-            repository = str(args.get("repository") or "").strip()
-            change_id = str(args.get("change_id") or "").strip()
+            repository = str(task_args.pop("repository", "") or "").strip()
+            change_id = str(task_args.pop("change_id", "") or "").strip()
             markers = [f"repository={repository}"]
             if change_id:
                 markers.append(f"change_id={change_id}")
+            extension_inputs.extend(markers)
+        task = parse_task_pack(task_args)
+        if extension_inputs:
             task = replace(
                 task,
-                inputs=(*task.inputs, *markers),
+                inputs=(*task.inputs, *extension_inputs),
                 write_scope=task.write_scope,
             )
         result = workflow_runner.run(

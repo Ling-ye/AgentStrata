@@ -10,6 +10,7 @@ from acp import PromptResponse
 TURN_STAGE_ORDER = (
     "attachments",
     "permissions",
+    "persona_control",
     "deterministic_shortcuts",
     "session_materialization",
     "execution",

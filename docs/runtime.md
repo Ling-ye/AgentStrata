@@ -91,8 +91,9 @@ manifest 决定 status、error code 和进程退出码。
 全部结束并只发一次 `task_finished`。主 turn 已失败时，迟到的成功 child 不会覆盖失败
 provenance，任务保持可轮询直到最后一个 child 收口后以 failed 结束。
 
-本版本不为 topic classifier、quality gate、search router 和 reranker 等独立 helper-model
-调用保存完整上下文 artifact；它们继续使用既有 step/usage 观测。这里的“每次调用”仅指
+本版本不为 topic classifier、search router 和 reranker 等独立 helper-model 调用保存完整
+上下文 artifact；它们继续使用既有 step/usage 观测。`ResponseIntegrityCheck` 是确定性检查，
+不产生模型调用。这里的“每次调用”仅指
 共享 turn runtime 管理的主 Agent 与 subagent 模型边界，不能解释为进程内所有
 `LLMClient.chat`。
 
@@ -144,8 +145,14 @@ shared root 创建 `MEMORY.md`，而是按稳定群身份使用 `.conversation-s
 普通成员不能启动后台 job；Owner 的后台
 job 控制面按 actor 写入 `.conversation-state/jobs/`，不会暴露到 `shared/jobs`。当前群交流风格
 使用 `.conversation-state/persistent/persona/global/PERSONA.md` 与 `persona/group/<digest>/PERSONA.md`
-保护层，由真实 Owner 通过现有 `persona_show/set/append/clear` 管理，群聊默认 `scope=group`；
-User/Admin 既看不到工具 schema，也不能直接执行。所有同群成员的后续 prompt 都按
+保护层。启用 `agents.persona_control` 时，真实 Owner 的自然语言人格要求在主 Agent 前由
+零模型 detector 分流：普通消息不调用人格模型，明确要求直接编译，只有歧义要求使用一次
+`llm.chat` 严格解释。命名人物/角色先经统一搜索 registry 完成消歧、证据提取和完整草案，再执行
+一次原子写；搜索、来源或草案失败时旧人格不变。`/persona` 可直接紧跟自然语言，也支持
+`show/set/append/research/refresh/clear/confirm/cancel`；clear 只建立 actor-bound 提案，随后精确
+`/persona confirm` 才能清空。主 Agent 不获得人格写工具。群聊默认 `scope=group`；User/Admin
+不能执行，群聊 show 只返回层级和哈希。
+所有同群成员的后续 prompt 都按
 `global → group` 获得最新人格，并获得当前群 memory，但不会获得任何 actor 的私聊 memory、
 user persona 或私有 Wiki/RAG。
 

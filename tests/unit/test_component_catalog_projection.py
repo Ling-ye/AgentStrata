@@ -77,7 +77,6 @@ def test_component_catalog_and_agent_use_the_same_pack_projection() -> None:
     for pack in (
         "workspace.read_write",
         "memory.chat",
-        "persona.manage",
         "mcp.admin",
         "career.intelligence",
         "feishu.sheet",

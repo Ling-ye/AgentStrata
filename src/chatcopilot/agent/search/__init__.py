@@ -5,11 +5,12 @@ from chatcopilot.agent.search.models import (
     SearchPlan,
     SearchRequest,
 )
-from chatcopilot.agent.search.tool import build_search_tool
+from chatcopilot.agent.search.tool import build_search_coordinator, build_search_tool
 
 __all__ = [
     "SearchAction",
     "SearchPlan",
     "SearchRequest",
+    "build_search_coordinator",
     "build_search_tool",
 ]

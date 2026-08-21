@@ -83,6 +83,7 @@ from chatcopilot.agent.protocol import (
 from chatcopilot.agent.runtime import build_agent_runtime
 from chatcopilot.agent.skills.index import set_skill_index as _set_bot_skill_index
 from chatcopilot.botspec import BotRuntimeContext, load_runtime_context
+from chatcopilot.botspec.runtime_env import load_research_llm_config
 from chatcopilot.contracts.agent import ResourceRef
 from chatcopilot.contracts.identity import ConversationIdentity, TurnIdentity
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
@@ -101,11 +102,11 @@ from chatcopilot.middleware.acp.group_conversation import (
     GroupConversationJournalError,
     SenderEnvelopeError,
     parse_sender_envelope,
-    render_turn_identity_appendix,
+    render_turn_identity_context,
 )
 from chatcopilot.middleware.acp.lifecycle_barrier import LifecycleBarrierExecutor
-from chatcopilot.middleware.acp.persistence_receipt import (
-    classify_persistence_requirement,
+from chatcopilot.middleware.acp.memory_receipt import (
+    classify_memory_receipt_requirement,
 )
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.acp.turn_orchestrator import AcpTurnOrchestrator
@@ -167,7 +168,7 @@ _fallback_p2p_workspace_from_sender = _agent_bridge._fallback_p2p_workspace_from
 _build_session_for_workspace = _agent_bridge._build_session_for_workspace
 _materialize_session_for_workspace = _agent_bridge._materialize_session_for_workspace
 _latest_workspace_from_session_env = _agent_bridge._latest_workspace_from_session_env
-_refresh_session_system_prompt = _agent_bridge._refresh_session_system_prompt
+_refresh_session_prompt_plan = _agent_bridge._refresh_session_prompt_plan
 
 _FEATURE_IMAGE_INPUTS = "chat.image_inputs"
 _FEATURE_FILE_UPLOADS = "chat.file_uploads"
@@ -211,6 +212,10 @@ class AcpChatAgent(Agent):
         _set_bot_skill_index(self._runtime.skills)
         # 启动期间一次性加载 LLM 配置；env 改了需要重启 ACP server 才会生效。
         self._chat_config = load_config(env_prefix=self._runtime.spec.llm.env_prefix)
+        self._research_llm_config = load_research_llm_config(
+            self._runtime.spec.llm,
+            fallback=self._chat_config.llm,
+        )
         # 一次性装配 AgentRuntime；所有 ACP session 共享同一个 runtime
         # （LLMClient + tools schema 复用），per-session 仅在 new_session 时
         # 注入 extra_tools + payload sanitizer + workspace。
@@ -431,11 +436,11 @@ class AcpChatAgent(Agent):
                 "qq_group_journal_unavailable",
                 "当前群共享上下文无法安全打开，已拒绝处理；请让维护者检查工作区权限。",
             ) from exc
-        identity_appendix = render_turn_identity_appendix(actor, history)
+        identity_context = render_turn_identity_context(actor, history)
         actor_session.bind_group_turn(
             identity=actor,
             journal=journal,
-            system_appendix=identity_appendix,
+            turn_context=identity_context,
         )
         self._store_session(session_id, actor_session)
         return actor_session
@@ -558,6 +563,7 @@ class AcpChatAgent(Agent):
             if runtime is None:
                 runtime = build_agent_runtime(
                     chat_config=self._chat_config,
+                    research_llm_config=self._research_llm_config,
                     tool_packs=self._runtime.tool_packs,
                     exclude_tools=self._runtime.exclude_tools,
                     skill_index=self._runtime.skills,
@@ -1343,7 +1349,7 @@ class AcpChatAgent(Agent):
             has_private_space_inventory=has_private_space_inventory,
             update_text=update_agent_message_text,
             recover_workspace=_fallback_p2p_workspace_from_sender,
-            refresh_system_prompt=_refresh_session_system_prompt,
+            refresh_prompt_plan=_refresh_session_prompt_plan,
             prepare_turn_identity=self._prepare_turn_identity,
             activate_turn_identity=self._activate_turn_identity,
         )
@@ -1366,7 +1372,9 @@ class AcpChatAgent(Agent):
         turn_task: Optional[TurnTaskRecorder] = None,
         task_metadata: Optional[dict[str, Any]] = None,
         task_resources: tuple[ResourceRef, ...] = (),
-        task_system_appendix: str | None = None,
+        task_turn_context: str | None = None,
+        final_text_prefix: str = "",
+        journal_user_text: str | None = None,
     ) -> PromptResponse:
         loop = asyncio.get_running_loop()
         self._loop = loop
@@ -1379,6 +1387,7 @@ class AcpChatAgent(Agent):
         )
         last_turn_error: TurnError | None = None
         successful_tools: set[str] = set()
+        memory_receipt_failed = False
 
         def dispatch(event: AgentEvent) -> None:
             nonlocal last_turn_error
@@ -1399,7 +1408,7 @@ class AcpChatAgent(Agent):
             task_metadata[CODE_MODEL_SELECTION_METADATA_KEY] = code_model_selection.to_payload()
         try:
             role_object = getattr(session, "role", "user")
-            receipt_requirement = classify_persistence_requirement(
+            receipt_requirement = classify_memory_receipt_requirement(
                 user_text,
                 caller_role=getattr(role_object, "value", str(role_object)),
                 is_group=(
@@ -1421,7 +1430,7 @@ class AcpChatAgent(Agent):
                         AgentTask(
                             text=user_text,
                             resources=task_resources,
-                            system_appendix=task_system_appendix,
+                            turn_context=task_turn_context,
                             metadata=task_metadata,
                         ),
                         on_event=dispatch,
@@ -1436,12 +1445,12 @@ class AcpChatAgent(Agent):
                     ):
                         translator.reset_text_cache()
                         retry_metadata = dict(task_metadata)
-                        retry_metadata["persistence_receipt_retry"] = True
-                        retry_appendix = "\n\n".join(
+                        retry_metadata["memory_receipt_retry"] = True
+                        retry_context = "\n\n".join(
                             part
                             for part in (
-                                str(task_system_appendix or "").strip(),
-                                receipt_requirement.retry_appendix,
+                                str(task_turn_context or "").strip(),
+                                receipt_requirement.retry_context,
                             )
                             if part
                         )
@@ -1449,7 +1458,7 @@ class AcpChatAgent(Agent):
                             AgentTask(
                                 text=user_text,
                                 resources=(),
-                                system_appendix=retry_appendix,
+                                turn_context=retry_context,
                                 metadata=retry_metadata,
                             ),
                             on_event=dispatch,
@@ -1461,6 +1470,7 @@ class AcpChatAgent(Agent):
                 receipt_requirement is not None
                 and successful_tools.isdisjoint(receipt_requirement.successful_tools)
             ):
+                memory_receipt_failed = True
                 failure_text = receipt_requirement.failure_text
                 try:
                     session.require_session().record_exchange(
@@ -1469,7 +1479,7 @@ class AcpChatAgent(Agent):
                     )
                 except Exception:  # noqa: BLE001 - final response still must be truthful
                     _LOGGER.exception(
-                        "failed to record persistence receipt correction | sid=%s",
+                        "failed to record memory receipt correction | sid=%s",
                         session_id,
                     )
                 result = replace(
@@ -1480,6 +1490,14 @@ class AcpChatAgent(Agent):
                     lifecycle_intents=(),
                 )
                 translator.replace_final_text(failure_text)
+            if final_text_prefix:
+                combined_text = "\n\n".join(
+                    part.strip()
+                    for part in (final_text_prefix, result.final_text)
+                    if part and part.strip()
+                )
+                result = replace(result, final_text=combined_text)
+                translator.replace_final_text(combined_text)
             if code_model_selection is not None:
                 session.consume_code_model_once(code_model_selection)
             if (
@@ -1487,7 +1505,10 @@ class AcpChatAgent(Agent):
                 == WORKSPACE_SCOPE_GROUP_SHARED
             ):
                 try:
-                    session.record_group_model_exchange(user_text, result.final_text)
+                    session.record_group_model_exchange(
+                        journal_user_text or user_text,
+                        result.final_text,
+                    )
                 except Exception:  # noqa: BLE001 - backend advanced but journal did not
                     self._invalidate_group_actor_session(
                         session_id=session_id,
@@ -1548,7 +1569,18 @@ class AcpChatAgent(Agent):
                         )
                     except Exception:  # noqa: BLE001
                         _LOGGER.exception("lifecycle receipt dispatch failed | sid=%s", session_id)
-            if result.stop_reason == "llm_error":
+            if memory_receipt_failed:
+                self._finish_turn_task(
+                    turn_task,
+                    status="failed",
+                    progress="持久化回执缺失，本轮未完成要求的写入。",
+                    final_text=result.final_text,
+                    stop_reason="memory_receipt_missing",
+                    error="memory_receipt_missing",
+                    produced_resources=[],
+                    lifecycle=lifecycle_record,
+                )
+            elif result.stop_reason == "llm_error":
                 self._finish_turn_task(
                     turn_task,
                     status="failed",

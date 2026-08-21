@@ -893,7 +893,7 @@ class GroupConversationJournal:
             )
 
 
-def render_turn_identity_appendix(identity: TurnIdentity, history: str) -> str:
+def render_turn_identity_context(identity: TurnIdentity, history: str) -> str:
     """Frame model-visible attribution without exposing the stable QQ sender ID."""
 
     current = {
@@ -1011,5 +1011,5 @@ __all__ = [
     "ParsedSenderEnvelope",
     "SenderEnvelopeError",
     "parse_sender_envelope",
-    "render_turn_identity_appendix",
+    "render_turn_identity_context",
 ]

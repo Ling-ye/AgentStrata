@@ -130,8 +130,8 @@ def test_group_persona_request_uses_normal_owner_authorization(
         if deterministically_restricted:
             assert reply == GROUP_SHARED_PROJECT_ACCESS_DENIED_REPLY
         else:
-            # Natural style requests are not a second authorization language.
-            # The ordinary persona tool permission remains the mutation gate.
+            # Natural style requests are not project-access requests. The host
+            # persona-control stage owns the separate mutation boundary.
             assert reply is None
 
 
@@ -250,10 +250,6 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
         "read_memory",
         "append_memory",
         "clear_memory",
-        "persona_show",
-        "persona_set",
-        "persona_append",
-        "persona_clear",
     }.issubset(owner_group_visible)
     assert {
         "win_read_file",

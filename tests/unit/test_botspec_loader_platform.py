@@ -27,7 +27,9 @@ def _write_bot(
           type: {platform_type}
           adapter: {platform_adapter}
         prompts:
-          persona: system.md
+          schema_version: 2
+          identity: system.md
+          response_style: system.md
         tools:
           packs: []
         deploy:

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from chatcopilot.botspec.model import LLMSpec
 from chatcopilot.botspec.runtime import BotRuntimeContext
+from chatcopilot.core.config import LLMConfig, load_llm_profile
 from chatcopilot.project import ENV_PREFIX
 
 _SOURCE_ROOT_ENV = f"{ENV_PREFIX}_SOURCE_ROOT"
@@ -85,6 +86,19 @@ def llm_runtime_env_defaults(llm: LLMSpec) -> dict[str, str]:
     if code.code_task_profile:
         values[f"{prefix}_CODE_TASK_PROFILE"] = code.code_task_profile
     return values
+
+
+def load_research_llm_config(llm: LLMSpec, *, fallback: LLMConfig) -> LLMConfig:
+    """Resolve the versioned research model default, then apply machine overrides."""
+
+    configured = LLMConfig(
+        base_url=fallback.base_url,
+        model=getattr(llm, "research_model", None) or fallback.model,
+        api_key=fallback.api_key,
+        timeout=fallback.timeout,
+    )
+    prefix = getattr(llm, "research_env_prefix", None)
+    return load_llm_profile(prefix, fallback=configured) if prefix else configured
 
 
 def _source_root(source_path: Path) -> Path:

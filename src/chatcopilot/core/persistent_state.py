@@ -28,7 +28,6 @@ from chatcopilot.contracts.persistent_state import (
 )
 from chatcopilot.contracts.workspace import (
     MEMORY_FILENAME,
-    WORKSPACE_SCOPE_GROUP_SHARED,
     WorkspaceView,
     normalize_chat_kind,
 )
@@ -36,7 +35,6 @@ from chatcopilot.contracts.workspace import (
 
 _LOGGER = logging.getLogger("chatcopilot.core.persistent_state")
 _STATE_RELPATH = (".conversation-state", "persistent")
-_MIGRATION_REPORT_MAX_BYTES = 1024 * 1024
 _TIMESTAMPED_MEMORY_RE = re.compile(r"^- \d{4}-\d{2}-\d{2} \d{2}:\d{2} (.*)$")
 
 
@@ -64,7 +62,6 @@ class FilesystemPersistentConversationState:
         return "group" if self._is_group() else "user"
 
     def persona_layers(self) -> tuple[tuple[str, str], ...]:
-        self._report_untrusted_actor_persona()
         scopes = ("global", "group") if self._is_group() else ("global", "user")
         layers: list[tuple[str, str]] = []
         for scope in scopes:
@@ -74,10 +71,7 @@ class FilesystemPersistentConversationState:
         return tuple(layers)
 
     def persona_snapshot(self, scope: str) -> str:
-        if (scope or "").strip().lower() == "user":
-            self._report_untrusted_actor_persona()
         path = self._persona_path(scope)
-        self._migrate_trusted_persona(scope, path)
         return self._read_protected(path, max_bytes=PERSONA_MAX_BYTES)
 
     def persona_set(self, scope: str, text: str) -> None:
@@ -87,19 +81,6 @@ class FilesystemPersistentConversationState:
             body if body.endswith("\n") else body + "\n",
             max_bytes=PERSONA_MAX_BYTES,
         )
-
-    def persona_append(self, scope: str, text: str) -> None:
-        addition = self._normalize_persona(text)
-        path = self._persona_path(scope)
-
-        def update(current: str) -> str:
-            body = current or PERSONA_INITIAL_TEMPLATE
-            if body and not body.endswith("\n"):
-                body += "\n"
-            body += addition if addition.endswith("\n") else addition + "\n"
-            return body
-
-        self._update_protected(path, update, max_bytes=PERSONA_MAX_BYTES)
 
     def persona_clear(self, scope: str) -> None:
         self._write_protected(
@@ -205,61 +186,6 @@ class FilesystemPersistentConversationState:
                 f"text 长度 {len(stripped)} 超过上限 {PERSONA_MAX_ITEM_CHARS}，请精简后再写。"
             )
         return stripped.replace("\r\n", "\n").replace("\r", "\n")
-
-    def _migrate_trusted_persona(self, scope: str, target: Path) -> None:
-        if target.exists() or target.is_symlink() or scope == "user":
-            return
-        legacy: Path | None = None
-        if scope == "global":
-            legacy = self.workspace_root / "PERSONA.md"
-        elif scope == "group" and self._is_group():
-            if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
-                legacy = self.workspace.root.parent / "PERSONA.md"
-            elif self.workspace.root.parent.name.startswith("group_"):
-                legacy = self.workspace.root.parent / "PERSONA.md"
-        if legacy is None:
-            return
-        body = self._read_legacy(legacy, max_bytes=PERSONA_MAX_BYTES)
-        if has_meaningful_persona(body):
-            self._write_protected(target, body, max_bytes=PERSONA_MAX_BYTES)
-            _LOGGER.info("migrated trusted legacy persona | scope=%s", scope)
-
-    def _report_untrusted_actor_persona(self) -> None:
-        if self._is_group():
-            safe_user = _sanitize_legacy_segment(str(self.workspace.user_id or ""))
-            legacy = self.workspace.root.parent / f"user_{safe_user}" / "PERSONA.md"
-        else:
-            legacy = self.workspace.root / "PERSONA.md"
-        body = self._read_legacy(legacy, max_bytes=PERSONA_MAX_BYTES)
-        if not has_meaningful_persona(body):
-            return
-        identity_digest = self._identity_digest("user")
-        report_path = self.state_root / "migration" / "REPORT.md"
-        report_line = (
-            "- ignored_untrusted_persona "
-            f"identity={identity_digest} reason=owner_explicit_reset_required"
-        )
-        if report_line in self._read_protected(
-            report_path, max_bytes=_MIGRATION_REPORT_MAX_BYTES
-        ).splitlines():
-            return
-
-        def update(current: str) -> str:
-            body = current or (
-                "# Persistent state migration report\n\n"
-                "> This protected report contains no raw platform IDs or source paths.\n\n"
-            )
-            if report_line in body.splitlines():
-                return body
-            if body and not body.endswith("\n"):
-                body += "\n"
-            return body + report_line + "\n"
-
-        self._update_protected(
-            report_path,
-            update,
-            max_bytes=_MIGRATION_REPORT_MAX_BYTES,
-        )
 
     def _migrate_private_memory(self, target: Path) -> None:
         if self.memory_scope != "user" or target.exists() or target.is_symlink():
@@ -505,11 +431,6 @@ def _insert_line_under_section(body: str, header: str, new_line: str) -> str:
         lines.insert(insert_at, new_line)
     result = "\n".join(lines)
     return result if result.endswith("\n") else result + "\n"
-
-
-def _sanitize_legacy_segment(value: str) -> str:
-    safe = "".join(ch if (ch.isalnum() or ch in "-_.@") else "_" for ch in value)
-    return safe.strip("_") or "unknown"
 
 
 __all__ = [

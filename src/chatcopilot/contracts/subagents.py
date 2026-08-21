@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
+from chatcopilot.contracts.persona_control import PersonaControlSpec
 
 
 TASK_PACK_FIELDS: tuple[str, ...] = (
@@ -109,52 +110,6 @@ class ToolSelectorSpec:
 
 
 @dataclass(frozen=True)
-class PromptLayerSpec:
-    """Cache-friendly prompt layers for one subagent.
-
-    Stable layers should stay before dynamic task-specific text so model-side
-    prompt caching can reuse the longest common prefix across calls.
-    """
-
-    framework_base: str = (
-        "You are an internal AgentStrata subagent. The main agent owns all user "
-        "interaction, final delivery, and task accountability. Return only "
-        "structured results through submit_result.\n\n"
-        "## Execution Protocol\n\n"
-        "1. Parse the task pack (objective, constraints, acceptance_criteria).\n"
-        "2. Use allowed tools iteratively to gather evidence or perform actions.\n"
-        "3. When done (or budget nearly exhausted), call submit_result with:\n"
-        "   - ok: bool — whether objective was met\n"
-        "   - summary: concise answer in natural language (required)\n"
-        "   - findings: list of key facts or observations\n"
-        "   - evidence: list of {claim, source} pairs\n"
-        "   - changes: list of mutations made (file writes, commits)\n"
-        "   - outputs: list of artifact paths produced\n"
-        "   - risks: anything the main agent should know\n"
-        "   - next_steps: suggested follow-ups if incomplete\n"
-        "   - confidence: low / medium / high\n\n"
-        "## Tool Constraints\n\n"
-        "- Only call tools listed in your schema; never fabricate tool names.\n"
-        "- Respect write_scope boundaries; read-only tasks must not mutate state.\n"
-        "- If a tool fails, retry once with adjusted params, then report in risks.\n"
-        "- Never produce user-facing output directly; all communication goes via "
-        "submit_result summary."
-    )
-    role: str = ""
-    bot_override: str = ""
-    task_focus: str = (
-        "Use only the provided task pack, allowed tools, and explicitly referenced "
-        "resources. Treat excluded_context as information that must not influence "
-        "the answer."
-    )
-    safety_tail: str = (
-        "Do not call user-facing tools. Stay within the write_scope if one is "
-        "provided. If the task cannot be completed safely, return ok=false with "
-        "risks and next_steps."
-    )
-
-
-@dataclass(frozen=True)
 class ContextPolicySpec:
     """Rules for building the short subagent context pack."""
 
@@ -199,17 +154,16 @@ class WorkflowDef:
 class SubagentDef:
     """A fully resolved subagent ready to be wrapped as a delegate tool.
 
-    ``system_prompt`` is inline text (preset) or already-resolved from a BotSpec
-    pointer. ``selector`` is compiled into a predicate by ``selector.py``.
+    ``role_prompt`` describes only the role. Runtime boundaries come from the
+    shared PromptPlan builder and ``selector`` is compiled separately.
     """
 
     name: str
     tool_name: str
     summary: str
-    system_prompt: str
+    role_prompt: str
     kind: str = "domain"
     version: str = "1"
-    prompt_layers: PromptLayerSpec = field(default_factory=PromptLayerSpec)
     selector: ToolSelectorSpec = field(default_factory=ToolSelectorSpec)
     input_schema: dict[str, Any] = field(default_factory=dict)
     output_schema: dict[str, Any] = field(default_factory=dict)
@@ -258,11 +212,10 @@ class CustomSubagentSpec:
     summary: str
     selector: ToolSelectorSpec
     budget: SubagentBudgetSpec = field(default_factory=SubagentBudgetSpec)
-    prompt_path: str | None = None
-    system_prompt: str = ""
+    role_prompt_path: str | None = None
+    role_prompt: str = ""
     kind: str = "domain"
     version: str = "1"
-    prompt_layers: PromptLayerSpec = field(default_factory=PromptLayerSpec)
     input_schema: dict[str, Any] = field(default_factory=dict)
     output_schema: dict[str, Any] = field(default_factory=dict)
     context_policy: ContextPolicySpec = field(default_factory=ContextPolicySpec)
@@ -289,6 +242,7 @@ class SubagentSpec:
     workflows: tuple[str, ...] = ()
     max_workflow_depth: int = 2
     codex: CodexMainSessionPolicy = field(default_factory=CodexMainSessionPolicy)
+    persona_control: PersonaControlSpec = field(default_factory=PersonaControlSpec)
 
 
 BUILTIN_SUBAGENT_PRESET_NAMES: frozenset[str] = frozenset((
@@ -309,7 +263,7 @@ __all__ = [
     "CachePolicySpec",
     "CodexMainSessionPolicy",
     "ContextPolicySpec",
-    "PromptLayerSpec",
+    "PersonaControlSpec",
     "SearchProviderSpec",
     "CustomSubagentSpec",
     "SubagentBudgetSpec",

@@ -4,7 +4,7 @@ ContextManager 是纯函数式的视图生成器：接收完整 _messages，返�
 副本供 LLM 调用，**绝不修改**原始列表。
 
 裁剪流水线（prepare_messages 内部顺序）：
-1. 分离 system prompt（永远保留，不做任何修改以最大化 prefix cache）
+1. 保留 renderer 生成的可信 PromptPlan 前缀，不修改其内容
 2. _segment_turns 按 user message 边界分割轮次
 3. 延迟摘要化：窗口外的 tool 消息截断为 summary
 4. 可选：summarize_prior_tool_results 对窗口内前轮工具结果摘要化

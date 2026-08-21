@@ -6,7 +6,7 @@ from chatcopilot.agent.tools.registry import build_tools_schema
 from chatcopilot.botspec.registry import (
     get_tool_pack_entry,
     known_tool_pack_names,
-    load_tool_pack_prompt,
+    load_tool_pack_policies,
     resolve_tool_modules,
 )
 
@@ -44,12 +44,11 @@ class UnityCodebaseRegistryIntegrationTests(unittest.TestCase):
             ),
         )
 
-    def test_tool_packs_carry_prompt_fragments(self) -> None:
+    def test_tool_packs_carry_structured_policies(self) -> None:
         for pack_name in ("filesystem.windows.read", "unity.codebase.read", "unity.skills"):
-            pack = load_tool_pack_prompt(pack_name)
-            self.assertIsNotNone(pack, f"tool pack missing manifest: {pack_name}")
-            self.assertEqual(pack.name, pack_name)
-            self.assertTrue(pack.prompt_fragments, f"empty prompt_fragments for {pack_name}")
+            policies = load_tool_pack_policies(pack_name)
+            self.assertTrue(policies, f"tool pack missing policies: {pack_name}")
+            self.assertTrue(all(policy.id.startswith(pack_name + ".") for policy in policies))
 
     def test_tools_appear_in_openai_schema_when_tool_packs_enabled(self) -> None:
         schema, index = build_tools_schema(

@@ -23,7 +23,6 @@ from chatcopilot.middleware.access_control import (
     can_toggle_debug,
     normalize_chat_kind,
 )
-from chatcopilot.middleware.acp.prompt_assembler import build_system_prompt
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.runtime.workspace import (
     Workspace,
@@ -136,22 +135,15 @@ def _debug_toggle_hint(session: SessionState) -> str:
 def _force_performance_mode(session: SessionState) -> None:
     if session.assistant_mode == AssistantMode.PERFORMANCE:
         return
-    system_prompt = build_system_prompt(
-        platform_type=getattr(session.runtime, "platform_type", "feishu"),
-        workspace=session.workspace,
-        role=session.role,
-        assistant_mode=AssistantMode.PERFORMANCE,
-        bot_system_prompt=session.bot_system_prompt,
-        bot_refusal_prompt=session.bot_refusal_prompt,
-        capability_prompt_fragments=session.capability_prompt_fragments,
-        skill_index=session.skill_index,
-        mode_prompts=session.mode_prompt_overrides,
-        role_prompts=session.role_prompt_overrides,
-        safety_prompt=session.safety_prompt_override,
-        memory_prompt=session.memory_prompt_override,
-        llm_model=session.llm_model,
-    )
-    session.set_assistant_mode(AssistantMode.PERFORMANCE, system_prompt)
+    _set_mode_and_refresh(session, AssistantMode.PERFORMANCE)
+
+
+def _set_mode_and_refresh(session: SessionState, mode: AssistantMode) -> None:
+    session.set_assistant_mode(mode)
+    if session.is_materialized:
+        from chatcopilot.middleware.acp.agent_bridge import _refresh_session_prompt_plan
+
+        _refresh_session_prompt_plan(session)
 
 
 # ----------------------------------------------------------------------------
@@ -179,22 +171,7 @@ def _build_set_assistant_mode_tool(session_getter: Callable[[], SessionState]) -
                 None,
             )
 
-        system_prompt = build_system_prompt(
-            platform_type=getattr(session.runtime, "platform_type", "feishu"),
-            workspace=session.workspace,
-            role=session.role,
-            assistant_mode=desired,
-            bot_system_prompt=session.bot_system_prompt,
-            bot_refusal_prompt=session.bot_refusal_prompt,
-            capability_prompt_fragments=session.capability_prompt_fragments,
-            skill_index=session.skill_index,
-            mode_prompts=session.mode_prompt_overrides,
-            role_prompts=session.role_prompt_overrides,
-            safety_prompt=session.safety_prompt_override,
-            memory_prompt=session.memory_prompt_override,
-            llm_model=session.llm_model,
-        )
-        session.set_assistant_mode(desired, system_prompt)
+        _set_mode_and_refresh(session, desired)
         return (
             f"已切换到{_assistant_mode_label(desired)}。",
             [],
@@ -323,22 +300,7 @@ def _handle_assistant_mode_command(session: SessionState, text: str) -> Optional
     if session.assistant_mode == desired:
         return f"当前已经是{_assistant_mode_label(desired)}，无需切换。"
 
-    system_prompt = build_system_prompt(
-        platform_type=getattr(session.runtime, "platform_type", "feishu"),
-        workspace=session.workspace,
-        role=session.role,
-        assistant_mode=desired,
-        bot_system_prompt=session.bot_system_prompt,
-        bot_refusal_prompt=session.bot_refusal_prompt,
-        capability_prompt_fragments=session.capability_prompt_fragments,
-        skill_index=session.skill_index,
-        mode_prompts=session.mode_prompt_overrides,
-        role_prompts=session.role_prompt_overrides,
-        safety_prompt=session.safety_prompt_override,
-        memory_prompt=session.memory_prompt_override,
-        llm_model=session.llm_model,
-    )
-    session.set_assistant_mode(desired, system_prompt)
+    _set_mode_and_refresh(session, desired)
     return f"已切换到{_assistant_mode_label(desired)}。"
 
 

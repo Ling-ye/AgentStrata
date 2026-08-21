@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from chatcopilot.agent.protocol import AgentResult, AgentTask, EventSink
+from chatcopilot.contracts.prompt import PromptPlan
 
 
 class AgentSessionProtocol(Protocol):
@@ -24,17 +25,8 @@ class AgentSessionProtocol(Protocol):
     def run_task(self, task: AgentTask, *, on_event: EventSink) -> AgentResult:
         """Run one user task and return the final structured result."""
 
-    def set_system_baseline(self, baseline: str) -> None:
-        """Replace the session system baseline."""
-
-    def set_system_context(
-        self,
-        baseline: str,
-        *,
-        session_dynamic_tail: str | None = None,
-        memory_snippet: str | None = None,
-    ) -> None:
-        """Replace the baseline plus current persona and memory snapshots."""
+    def set_prompt_plan(self, plan: PromptPlan) -> None:
+        """Replace the session prompt plan."""
 
     def record_exchange(self, user_text: str, assistant_text: str) -> None:
         """Record a deterministic exchange that did not enter the agent loop."""

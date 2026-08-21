@@ -41,8 +41,8 @@ Every concrete specification becomes a single `spec.md` with frontmatter keys `i
 
 ## Verification
 
-[COMPUTED][HIGH] Focused policy, backend, lifecycle, publisher, routing-removal, and SDD validation passed with 66 tests and 12 subtests.
+ Focused policy, backend, lifecycle, publisher, routing-removal, and SDD validation passed with 66 tests and 12 subtests.
 
-[COMPUTED][HIGH] Lingye BotSpec validation, the SDD-lite checker, and `git diff --check` passed.
+ Lingye BotSpec validation, the SDD-lite checker, and `git diff --check` passed.
 
-[COMPUTED][HIGH] `.venv/bin/python scripts/check_repo.py full` passed: 996 Python tests passed, 1 skipped, 29 subtests passed, and the Console production build completed.
+ `.venv/bin/python scripts/check_repo.py full` passed: 996 Python tests passed, 1 skipped, 29 subtests passed, and the Console production build completed.

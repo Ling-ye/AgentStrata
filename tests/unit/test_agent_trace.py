@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.prompt_plan_fixture import prompt_plan
+
 import json
 import unittest
 
@@ -79,7 +81,7 @@ class AgentTraceTests(unittest.TestCase):
                     llm=_ScriptedLLM([ChatResult(content="完成")]),
                     executor=ToolExecutor(tools=[]),
                     tools_schema=[],
-                    system_baseline="baseline",
+                    prompt_plan=prompt_plan("baseline"),
                 )
                 events: list[object] = []
 
@@ -117,7 +119,7 @@ class AgentTraceTests(unittest.TestCase):
                     llm=_FailingLLM(),
                     executor=ToolExecutor(tools=[]),
                     tools_schema=[],
-                    system_baseline="baseline",
+                    prompt_plan=prompt_plan("baseline"),
                 )
                 events: list[object] = []
 
@@ -162,7 +164,7 @@ class AgentTraceTests(unittest.TestCase):
             llm=_ScriptedLLM([first, ChatResult(content="完成")]),
             executor=ToolExecutor(tools=[ping]),
             tools_schema=[build_openai_schema(ping)],
-            system_baseline="baseline",
+            prompt_plan=prompt_plan("baseline"),
         )
         events: list[object] = []
 
@@ -191,7 +193,7 @@ class AgentTraceTests(unittest.TestCase):
             llm=llm,
             executor=ToolExecutor(tools=[ping]),
             tools_schema=[build_openai_schema(ping)],
-            system_baseline="baseline",
+            prompt_plan=prompt_plan("baseline"),
         )
         events = []
         session.run_task(AgentTask(text="go", metadata={"trace_id": "trace_fixed"}), on_event=events.append)
@@ -213,7 +215,7 @@ class AgentTraceTests(unittest.TestCase):
         self.assertEqual(contexts[0].span_id, llm_starts[0].span_id)
         self.assertEqual(contexts[0].snapshot_id, llm_starts[0].context_snapshot_id)
         self.assertEqual(contexts[0].effective_messages[0]["role"], "system")
-        self.assertEqual(contexts[0].effective_messages[0]["content"], "baseline")
+        self.assertIn("baseline", contexts[0].effective_messages[0]["content"])
         self.assertEqual(len(contexts[0].tool_schemas), 1)
         self.assertEqual(llm_starts[0].span_id, llm_calls[0].span_id)
         self.assertGreater(llm_calls[0].input_message_count, 0)
@@ -247,7 +249,7 @@ class AgentTraceTests(unittest.TestCase):
             [
                 _call(
                     delegate.name,
-                    {"task": "看趋势", "write_scope": ["tests"]},
+                    {"objective": "看趋势", "write_scope": "tests"},
                     "call_deleg",
                 ),
                 ChatResult(content="已总结"),
@@ -258,7 +260,7 @@ class AgentTraceTests(unittest.TestCase):
             llm=main_llm,
             executor=ToolExecutor(tools=[delegate]),
             tools_schema=[build_openai_schema(delegate)],
-            system_baseline="baseline",
+            prompt_plan=prompt_plan("baseline"),
         )
         events = []
         session.run_task(AgentTask(text="go", metadata={"trace_id": "T"}), on_event=events.append)

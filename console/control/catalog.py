@@ -117,7 +117,7 @@ def _collect_tool_packs() -> list[CatalogItem]:
             description=entry.description,
             category=_cap_category(pack_id),
             has_tools=bool(entry.tool_names),
-            has_prompts=bool(entry.manifest_module),
+            has_prompts=bool(entry.policy_module),
             tools=tools,
         ))
     return items

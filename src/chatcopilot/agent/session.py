@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from chatcopilot.agent.context.manager import ContextManager
+from chatcopilot.agent.context.prompt_plan import render_native_prefix
 from chatcopilot.agent.context.topic import TopicRelevanceClassifier
 from chatcopilot.core.llm_client import LLMClient
 from chatcopilot.agent.protocol import (
@@ -35,7 +36,11 @@ from chatcopilot.agent.protocol import (
     FinalText,
     TextDelta,
 )
-from chatcopilot.agent.quality_gate import GateResult, QualityGate
+from chatcopilot.agent.response_integrity import (
+    ResponseIntegrityCheck,
+    ResponseIntegrityResult,
+)
+from chatcopilot.contracts.prompt import PromptPlan
 from chatcopilot.agent.rag.provider import Retriever, render_rag_snippet
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.turn import TurnOps
@@ -48,9 +53,6 @@ from chatcopilot.agent.turn_support import (
 _LOGGER = logging.getLogger("chatcopilot.agent.session")
 
 ToolPayloadFilter = Callable[[Dict[str, Any]], Dict[str, Any]]
-SystemPromptRenderer = Callable[[str], str]
-
-
 @dataclass
 class AgentSession:
     """单次会话的状态容器与 chat loop 调度器。"""
@@ -61,8 +63,7 @@ class AgentSession:
     llm: LLMClient
     executor: ToolExecutor
     tools_schema: List[Dict[str, Any]]
-    system_baseline: str
-    system_prompt_renderer: Optional[SystemPromptRenderer] = None
+    prompt_plan: PromptPlan
     tool_payload_filter: Optional[ToolPayloadFilter] = None
     context_manager: Optional[ContextManager] = None
     topic_classifier: Optional[TopicRelevanceClassifier] = None
@@ -77,7 +78,7 @@ class AgentSession:
     stall_window_seconds: int = 60               # no-progress window for soft timeout
     stream_first_turn: bool = True
     retriever: Optional[Retriever] = None
-    quality_gate: Optional[QualityGate] = None
+    response_integrity: ResponseIntegrityCheck = field(default_factory=ResponseIntegrityCheck)
     # 链路追踪：主会话留空（自动生成 trace_id + root span）；嵌套 subagent 由 runner
     # 注入父 trace_id 与父 span（让内部工具 span 挂到主调用树上）。
     trace_id: Optional[str] = None
@@ -87,44 +88,18 @@ class AgentSession:
 
     def __post_init__(self) -> None:
         if not self._messages:
-            self._messages.append(
-                {
-                    "role": "system",
-                    "content": self.system_baseline,
-                }
-            )
+            self._messages.extend(render_native_prefix(self.prompt_plan))
 
     # ------------------------------------------------------------------
     # 公共状态控制
     # ------------------------------------------------------------------
-    def set_system_baseline(self, baseline: str) -> None:
-        """替换首条 system message，保留 Agent 层追加的稳定 prompt 后缀。"""
-        rendered = self.system_prompt_renderer(baseline) if self.system_prompt_renderer else baseline
-        self.system_baseline = rendered
-        if self._messages and self._messages[0].get("role") == "system":
-            self._messages[0] = {"role": "system", "content": rendered}
-            return
-        self._messages.insert(0, {"role": "system", "content": rendered})
+    def set_prompt_plan(self, plan: PromptPlan) -> None:
+        """Replace the immutable prompt plan while preserving conversation turns."""
 
-    def set_system_context(
-        self,
-        baseline: str,
-        *,
-        session_dynamic_tail: str | None = None,
-        memory_snippet: str | None = None,
-    ) -> None:
-        """Compatibility context refresh for a directly constructed session."""
-
-        parts = [str(baseline or "").strip()]
-        parts.extend(
-            text
-            for text in (
-                str(session_dynamic_tail or "").strip(),
-                str(memory_snippet or "").strip(),
-            )
-            if text
-        )
-        self.set_system_baseline("\n\n".join(part for part in parts if part))
+        old_prefix = render_native_prefix(self.prompt_plan)
+        self.prompt_plan = plan
+        del self._messages[: len(old_prefix)]
+        self._messages[0:0] = render_native_prefix(plan)
 
     def record_exchange(self, user_text: str, assistant_text: str) -> None:
         """记录没有进入 LLM 工具循环的确定性回复，让后续轮次能看到真实上下文。"""
@@ -247,15 +222,24 @@ class AgentSession:
         ops.finish_text(state, cap_text, stop_reason="iteration_cap")
         return ops.result_from_state(state)
 
-    def _run_quality_gate(self, final_text: str) -> GateResult | None:
-        """Run quality gate if configured; return result or None."""
-        if self.quality_gate is None:
-            return None
+    def _run_response_integrity(
+        self,
+        final_text: str,
+        *,
+        successful_operations: tuple[str, ...] = (),
+    ) -> ResponseIntegrityResult:
+        """Run deterministic advisory integrity checks."""
         try:
-            return self.quality_gate.check(final_text)
+            return self.response_integrity.check(
+                final_text,
+                successful_operations=successful_operations,
+            )
         except Exception:  # noqa: BLE001
-            _LOGGER.debug("quality gate raised, ignored | sid=%s", self.session_id)
-            return None
+            _LOGGER.exception("response integrity check failed | sid=%s", self.session_id)
+            return ResponseIntegrityResult(
+                ok=False,
+                issues=("integrity_check_failed",),
+            )
 
     def _retrieve_context(self, query: str) -> str:
         if self.retriever is None:

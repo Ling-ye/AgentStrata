@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -16,6 +17,8 @@ from chatcopilot.botspec.model import (
 )
 from chatcopilot.contracts import Role
 from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.prompt import BotPromptProfile
+from chatcopilot.contracts.tool_packs import ToolPackPolicy
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.middleware.acp.agent_bridge import (
     _authorized_wiki_retriever,
@@ -26,7 +29,10 @@ from chatcopilot.middleware.acp.agent_bridge import (
     _materialize_session_for_workspace,
     _prompt_projection,
 )
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.middleware.runtime.workspace import (
+    MiddlewareWorkspaceService,
+    Workspace,
+)
 
 
 def _tool(
@@ -72,7 +78,7 @@ def _runtime(tmp_path: Path):
         display_name="Wiki Bot",
         source_path=tmp_path / "bot.yaml",
         platform=PlatformSpec(type="qq", adapter="qq_acp"),
-        prompts=PromptSpec(persona="persona.md"),
+        prompts=PromptSpec(schema_version=2, identity="persona.md", response_style="persona.md"),
         context=ContextSpec(
             wiki=WikiSpec(enabled=True, read_role="owner", private_chat_only=True)
         ),
@@ -155,7 +161,7 @@ def test_restricted_prompt_projection_preserves_owner_role_in_group_chat(
 ) -> None:
     runtime = SimpleNamespace(
         access=AccessSpec(owner_only_project_access=True),
-        capability_prompt_fragments=("internal capability",),
+        capability_policies=(ToolPackPolicy(id="internal", content="internal capability"),),
         skills=("internal skill",),
     )
 
@@ -165,11 +171,11 @@ def test_restricted_prompt_projection_preserves_owner_role_in_group_chat(
     assert _prompt_projection(runtime, Role.USER, private_ws) == ((), ())
     assert _prompt_projection(runtime, Role.ADMIN, private_ws) == ((), ())
     assert _prompt_projection(runtime, Role.OWNER, group_ws) == (
-        ("internal capability",),
+        (ToolPackPolicy(id="internal", content="internal capability"),),
         ("internal skill",),
     )
     assert _prompt_projection(runtime, Role.OWNER, private_ws) == (
-        ("internal capability",),
+        (ToolPackPolicy(id="internal", content="internal capability"),),
         ("internal skill",),
     )
     assert _effective_project_role(runtime, Role.OWNER, private_ws) == Role.OWNER
@@ -179,7 +185,10 @@ def test_restricted_prompt_projection_preserves_owner_role_in_group_chat(
 def test_shared_group_persona_projection_merges_global_then_group(
     tmp_path: Path,
 ) -> None:
-    runtime = SimpleNamespace(access=AccessSpec(owner_only_project_access=True))
+    runtime = SimpleNamespace(
+        access=AccessSpec(owner_only_project_access=True),
+        platform_type="qq",
+    )
     group_ws = Workspace(
         root=tmp_path / "group_chat-1" / "shared",
         chat_kind="group",
@@ -187,16 +196,22 @@ def test_shared_group_persona_projection_merges_global_then_group(
         user_id="owner-1",
         scope=WORKSPACE_SCOPE_GROUP_SHARED,
     ).ensure()
-    workspace_root = tmp_path
-    workspace_root.joinpath("PERSONA.md").write_text(
-        "private global persona", encoding="utf-8"
+    tmp_path.joinpath("PERSONA.md").write_text(
+        "ignored legacy global persona", encoding="utf-8"
     )
     group_ws.root.parent.joinpath("PERSONA.md").write_text(
-        "current group persona", encoding="utf-8"
+        "ignored legacy group persona", encoding="utf-8"
     )
     group_ws.root.joinpath("PERSONA.md").write_text(
         "untrusted shared file", encoding="utf-8"
     )
+    state = MiddlewareWorkspaceService(
+        workspace=group_ws,
+        workspace_root=tmp_path,
+        platform_type="qq",
+    ).resolve_persistent_state()
+    state.persona_set("global", "private global persona")
+    state.persona_set("group", "current group persona")
 
     user_prompt = _extract_persona_snippet(runtime, Role.USER, group_ws)
     owner_group_prompt = _extract_persona_snippet(runtime, Role.OWNER, group_ws)
@@ -208,12 +223,16 @@ def test_shared_group_persona_projection_merges_global_then_group(
             "current group persona"
         )
         assert "untrusted shared file" not in prompt
+        assert "ignored legacy" not in prompt
 
 
-def test_restricted_persona_projection_does_not_promote_legacy_private_persona(
+def test_private_persona_projection_uses_only_protected_state(
     tmp_path: Path,
 ) -> None:
-    runtime = SimpleNamespace(access=AccessSpec(owner_only_project_access=True))
+    runtime = SimpleNamespace(
+        access=AccessSpec(owner_only_project_access=True),
+        platform_type="qq",
+    )
     private_ws = Workspace(
         root=tmp_path / "p2p_owner-1",
         chat_kind="p2p",
@@ -227,13 +246,17 @@ def test_restricted_persona_projection_does_not_promote_legacy_private_persona(
     private_ws.root.joinpath("PERSONA.md").write_text(
         "owner preference", encoding="utf-8"
     )
+    state = MiddlewareWorkspaceService(
+        workspace=private_ws,
+        workspace_root=workspace_root,
+        platform_type="qq",
+    ).resolve_persistent_state()
+    state.persona_set("global", "private global persona")
 
     prompt = _extract_persona_snippet(runtime, Role.OWNER, private_ws)
 
     assert "private global persona" in prompt
     assert "owner preference" not in prompt
-    report = workspace_root / ".conversation-state/persistent/migration/REPORT.md"
-    assert "ignored_untrusted_persona" in report.read_text(encoding="utf-8")
 
 
 def test_wiki_retriever_is_only_created_for_owner_private_session(tmp_path: Path) -> None:
@@ -262,20 +285,16 @@ def test_control_session_materialization_replays_buffered_exchange(tmp_path: Pat
         display_name="Lazy Bot",
         source_path=tmp_path / "bot.yaml",
         platform=PlatformSpec(type="qq", adapter="qq_acp"),
-        prompts=PromptSpec(persona="persona.md"),
+        prompts=PromptSpec(schema_version=2, identity="persona.md", response_style="persona.md"),
         context=ContextSpec(wiki=WikiSpec(enabled=False)),
     )
     runtime = SimpleNamespace(
         spec=spec,
         platform_type="qq",
-        system_prompt="system",
-        refusal_prompt=None,
-        capability_prompt_fragments=(),
+        prompt_profile=BotPromptProfile(identity="system", response_style="concise"),
+        capability_policies=(),
         skills=(),
-        mode_prompt_overrides={},
-        role_prompt_overrides={},
-        safety_prompt_override=None,
-        memory_prompt_override=None,
+        agent_backend="native",
     )
     workspace = replace(_workspace(tmp_path, "p2p"), user_name="Example User")
     state = _build_session_for_workspace(
@@ -297,7 +316,7 @@ def test_control_session_materialization_replays_buffered_exchange(tmp_path: Pat
         ],
         message_count=2,
         _messages=[],
-        set_system_baseline=lambda _value: None,
+        set_prompt_plan=lambda _value: None,
     )
     agent_runtime = SimpleNamespace(
         retriever=None,

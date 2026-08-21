@@ -9,7 +9,7 @@ from chatcopilot.tool_packs.catalog import (
     get_tool_pack_entry,
     known_tool_feature_names,
     known_tool_pack_names,
-    load_tool_pack_prompt,
+    load_tool_pack_policies,
     resolve_tool_bindings,
     resolve_tool_modules,
 )
@@ -23,7 +23,7 @@ __all__ = [
     "get_tool_pack_entry",
     "known_tool_feature_names",
     "known_tool_pack_names",
-    "load_tool_pack_prompt",
+    "load_tool_pack_policies",
     "resolve_tool_bindings",
     "resolve_tool_modules",
 ]

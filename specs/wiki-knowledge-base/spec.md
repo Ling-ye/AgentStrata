@@ -11,65 +11,65 @@ created: 2026-07-10
 
 ### Background
 
-[KNOWN] AgentStrata already supports BotSpec-declared local RAG sources and owner-gated tools.
+ AgentStrata already supports BotSpec-declared local RAG sources and owner-gated tools.
 
-[KNOWN] The existing local retriever caches its first load for the lifetime of the runtime and does not attach stable page or heading identities to hits.
+ The existing local retriever caches its first load for the lifetime of the runtime and does not attach stable page or heading identities to hits.
 
-[INFERRED] A writable Wiki needs stronger storage, provenance, refresh, and access contracts than a static RAG directory.
+ A writable Wiki needs stronger storage, provenance, refresh, and access contracts than a static RAG directory.
 
 ### Goal
 
-[FRAME] V1 lets the owner capture text or Markdown in a private chat, turn it into a deterministic structured Markdown page, and answer later questions from the Wiki with page and heading citations.
+ V1 lets the owner capture text or Markdown in a private chat, turn it into a deterministic structured Markdown page, and answer later questions from the Wiki with page and heading citations.
 
-[FRAME] Markdown pages are the editable source of truth; source snapshots are immutable evidence; the SQLite index is derived and rebuildable.
+ Markdown pages are the editable source of truth; source snapshots are immutable evidence; the SQLite index is derived and rebuildable.
 
-[FRAME] The Wiki root is machine-private configuration selected through `context.wiki.root_env` and bridged to `CHATCOPILOT_WIKI_ROOT` at runtime.
+ The Wiki root is machine-private configuration selected through `context.wiki.root_env` and bridged to `CHATCOPILOT_WIKI_ROOT` at runtime.
 
 ### Non-goals
 
-[FRAME] V1 does not parse PDF or DOCX attachments.
+ V1 does not parse PDF or DOCX attachments.
 
-[FRAME] V1 does not import from or publish to Feishu.
+ V1 does not import from or publish to Feishu.
 
-[FRAME] V1 does not run `git commit` or `git push`.
+ V1 does not run `git commit` or `git push`.
 
-[FRAME] V1 does not require embeddings, a vector database, or an external RAG framework.
+ V1 does not require embeddings, a vector database, or an external RAG framework.
 
 ### Design
 
-[FRAME] The Wiki layout is `pages/`, `sources/`, `assets/`, and `.index/wiki.db` under the configured root.
+ The Wiki layout is `pages/`, `sources/`, `assets/`, and `.index/wiki.db` under the configured root.
 
-[FRAME] `wiki_upsert_page` accepts the raw source plus structured summary, facts, procedures, open questions, and tags; code owns frontmatter, path validation, IDs, timestamps, hashes, snapshots, and Markdown rendering.
+ `wiki_upsert_page` accepts the raw source plus structured summary, facts, procedures, open questions, and tags; code owns frontmatter, path validation, IDs, timestamps, hashes, snapshots, and Markdown rendering.
 
-[FRAME] Equal source hashes are idempotent no-ops; a changed source with the same explicit source reference updates its existing page; merging a different source requires an explicit target page.
+ Equal source hashes are idempotent no-ops; a changed source with the same explicit source reference updates its existing page; merging a different source requires an explicit target page.
 
-[FRAME] Page and source writes use same-directory temporary files plus atomic replacement while a process/file lock serializes writers.
+ Page and source writes use same-directory temporary files plus atomic replacement while a process/file lock serializes writers.
 
-[FRAME] `WikiStore` refreshes its derived SQLite chunk index when the page signature changes and can rebuild it entirely from Markdown.
+ `WikiStore` refreshes its derived SQLite chunk index when the page signature changes and can rebuild it entirely from Markdown.
 
-[FRAME] `WikiRetriever` adapts Wiki hits to the existing Agent RAG interface; generic local RAG also invalidates cached chunks when source signatures change.
+ `WikiRetriever` adapts Wiki hits to the existing Agent RAG interface; generic local RAG also invalidates cached chunks when source signatures change.
 
-[FRAME] Wiki tools declare `requires_role=owner` and `private_chat_only` metadata.
+ Wiki tools declare `requires_role=owner` and `private_chat_only` metadata.
 
-[FRAME] ACP middleware removes Wiki tools and the Wiki retriever unless the caller satisfies both `read_role` and private-chat policy; Agent sessions receive only an already-authorized Retriever.
+ ACP middleware removes Wiki tools and the Wiki retriever unless the caller satisfies both `read_role` and private-chat policy; Agent sessions receive only an already-authorized Retriever.
 
 ### Failure Modes
 
-[INFERRED] A missing Wiki root disables automatic Wiki retrieval and makes Wiki tools return a configuration error without affecting other bot capabilities.
+ A missing Wiki root disables automatic Wiki retrieval and makes Wiki tools return a configuration error without affecting other bot capabilities.
 
-[INFERRED] A corrupt derived database is replaceable because refresh can rebuild it from Markdown pages.
+ A corrupt derived database is replaceable because refresh can rebuild it from Markdown pages.
 
-[INFERRED] A failed index refresh after a successful page write leaves the Markdown page authoritative and reports an index warning.
+ A failed index refresh after a successful page write leaves the Markdown page authoritative and reports an index warning.
 
-[INFERRED] Group-chat and non-owner sessions cannot see or execute Wiki tools and do not receive Wiki snippets.
+ Group-chat and non-owner sessions cannot see or execute Wiki tools and do not receive Wiki snippets.
 
 ### Alternatives
 
-[INFERRED] Using Feishu as the primary store would simplify collaborative editing but couples availability, export fidelity, and permissions to a remote API.
+ Using Feishu as the primary store would simplify collaborative editing but couples availability, export fidelity, and permissions to a remote API.
 
-[INFERRED] Using JSONL as a second authoritative manifest would create stale and duplicate state after edits or deletions.
+ Using JSONL as a second authoritative manifest would create stale and duplicate state after edits or deletions.
 
-[INFERRED] Introducing an external RAG framework in V1 would add dependencies before retrieval quality has been measured against a local evaluation set.
+ Introducing an external RAG framework in V1 would add dependencies before retrieval quality has been measured against a local evaluation set.
 
 ## Design
 
@@ -148,18 +148,18 @@ validation_commands:
 
 # Acceptance Criteria
 
-- [COMPUTED] `context.wiki` parses and validates without requiring the machine-private root to exist during BotSpec validation.
-- [COMPUTED] Runtime env setup bridges a configured root env into `CHATCOPILOT_WIKI_ROOT`.
-- [COMPUTED] Wiki upsert creates deterministic Markdown structure, immutable source snapshots, stable page IDs, and a derived SQLite index.
-- [COMPUTED] Re-ingesting the same source hash is a no-op and does not rewrite the page.
-- [COMPUTED] Re-ingesting a changed source with the same source reference updates the existing page.
-- [COMPUTED] Absolute paths and traversal outside `pages/` are rejected.
-- [COMPUTED] New or externally edited pages are searchable without restarting the runtime.
-- [COMPUTED] Wiki retrieval hits include stable page path and heading citations.
-- [COMPUTED] Non-owner and group-chat sessions cannot see Wiki tools and receive no Wiki retriever.
-- [COMPUTED] Owner private-chat sessions receive Wiki tools and the Wiki retriever.
-- [COMPUTED] Deleting the derived index and searching rebuilds it from Markdown pages.
-- [COMPUTED] The enabled QQ bot validates with `wiki.knowledge` and `context.wiki`.
+-  `context.wiki` parses and validates without requiring the machine-private root to exist during BotSpec validation.
+-  Runtime env setup bridges a configured root env into `CHATCOPILOT_WIKI_ROOT`.
+-  Wiki upsert creates deterministic Markdown structure, immutable source snapshots, stable page IDs, and a derived SQLite index.
+-  Re-ingesting the same source hash is a no-op and does not rewrite the page.
+-  Re-ingesting a changed source with the same source reference updates the existing page.
+-  Absolute paths and traversal outside `pages/` are rejected.
+-  New or externally edited pages are searchable without restarting the runtime.
+-  Wiki retrieval hits include stable page path and heading citations.
+-  Non-owner and group-chat sessions cannot see Wiki tools and receive no Wiki retriever.
+-  Owner private-chat sessions receive Wiki tools and the Wiki retriever.
+-  Deleting the derived index and searching rebuilds it from Markdown pages.
+-  The enabled QQ bot validates with `wiki.knowledge` and `context.wiki`.
 
 ## Verification
 
@@ -179,12 +179,12 @@ python3 scripts/check_sdd_specs.py
 git diff --check
 ```
 
-[COMPUTED] The required Wiki test command passed with 27 tests.
+ The required Wiki test command passed with 27 tests.
 
-[COMPUTED] Shared Agent session, LangGraph, subagent, and permission regression tests passed with 65 tests and 1 pre-existing conditional skip.
+ Shared Agent session, LangGraph, subagent, and permission regression tests passed with 65 tests and 1 pre-existing conditional skip.
 
-[COMPUTED] External tool registry and console component catalog tests passed with 11 tests.
+ External tool registry and console component catalog tests passed with 11 tests.
 
-[COMPUTED] SDD structure, architecture boundaries, compileall, both shipped BotSpec validations, and `git diff --check` passed.
+ SDD structure, architecture boundaries, compileall, both shipped BotSpec validations, and `git diff --check` passed.
 
-[COMPUTED] A full `tests/unit` run was also attempted; its first failure was the QQ nickname-mention assertion in `test_access_gate.py`, which is outside this spec's modified paths. The run later stopped producing progress and was interrupted, so the complete suite was not counted as a Wiki acceptance result.
+ A full `tests/unit` run was also attempted; its first failure was the QQ nickname-mention assertion in `test_access_gate.py`, which is outside this spec's modified paths. The run later stopped producing progress and was interrupted, so the complete suite was not counted as a Wiki acceptance result.

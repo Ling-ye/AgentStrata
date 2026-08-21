@@ -50,8 +50,9 @@ def apply_override(definition: SubagentDef, custom: CustomSubagentSpec) -> Subag
     fields = set(custom.override_fields)
     return replace(
         definition,
-        system_prompt=custom.system_prompt if "prompt" in fields and custom.system_prompt else definition.system_prompt,
-        prompt_layers=custom.prompt_layers if "prompt_layers" in fields else definition.prompt_layers,
+        role_prompt=custom.role_prompt
+        if "prompt" in fields and custom.role_prompt
+        else definition.role_prompt,
         selector=custom.selector if "selector" in fields and not custom.selector.is_empty else definition.selector,
         context_policy=custom.context_policy if "context_policy" in fields else definition.context_policy,
         cache_policy=custom.cache_policy if "cache_policy" in fields else definition.cache_policy,
@@ -67,10 +68,9 @@ def custom_to_definition(custom: CustomSubagentSpec) -> SubagentDef:
         name=custom.name,
         tool_name=custom.tool_name,
         summary=custom.summary,
-        system_prompt=custom.system_prompt,
+        role_prompt=custom.role_prompt,
         kind=custom.kind,
         version=custom.version,
-        prompt_layers=custom.prompt_layers,
         selector=custom.selector,
         input_schema=custom.input_schema,
         output_schema=custom.output_schema,

@@ -7,7 +7,7 @@ created: 2026-07-23
 
 # Agent 能力对比与统一评测中心 MVP
 
-[KNOWN][HIGH] 本规格已由 `evaluation-center-unification` 取代；以下内容仅保留为历史设计记录。
+ 本规格已由 `evaluation-center-unification` 取代；以下内容仅保留为历史设计记录。
 
 ## Summary
 

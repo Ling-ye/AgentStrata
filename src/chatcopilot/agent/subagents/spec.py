@@ -1,14 +1,9 @@
-"""Compatibility re-export for subagent contracts.
-
-Canonical definitions live in :mod:`chatcopilot.contracts.subagents` so BotSpec
-and Agent can share DTOs without BotSpec importing Agent internals.
-"""
+"""Canonical subagent contract imports used by the Agent layer."""
 from __future__ import annotations
 
 from chatcopilot.contracts.subagents import (
     CachePolicySpec,
     ContextPolicySpec,
-    PromptLayerSpec,
     SubagentDef,
     SUBAGENT_RESULT_FIELDS,
     TASK_PACK_FIELDS,
@@ -20,7 +15,6 @@ from chatcopilot.contracts.subagents import (
 __all__ = [
     "CachePolicySpec",
     "ContextPolicySpec",
-    "PromptLayerSpec",
     "SubagentDef",
     "SUBAGENT_RESULT_FIELDS",
     "TASK_PACK_FIELDS",

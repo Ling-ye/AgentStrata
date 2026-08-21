@@ -11,17 +11,17 @@ created: 2026-07-16
 
 ### Background
 
-[KNOWN][HIGH] AgentStrata currently routes persistent code mutations to one Codex tool that assumes every result is a patch for the AgentStrata source repository.
+ AgentStrata currently routes persistent code mutations to one Codex tool that assumes every result is a patch for the AgentStrata source repository.
 
-[COMPUTED][HIGH] A request to create a local lyrics-download script was submitted as a repository mutation. Codex spent several minutes producing `scripts/download_isekai_lyrics.py`, then the post-execution path guard rejected that file because the BotSpec write policy did not include `scripts/**`.
+ A request to create a local lyrics-download script was submitted as a repository mutation. Codex spent several minutes producing `scripts/download_isekai_lyrics.py`, then the post-execution path guard rejected that file because the BotSpec write policy did not include `scripts/**`.
 
-[COMPUTED][HIGH] The parent turn task was marked `succeeded` as soon as the background job was submitted, while the child job later failed and the parent task retained no explicit job identifier.
+ The parent turn task was marked `succeeded` as soon as the background job was submitted, while the child job later failed and the parent task retained no explicit job identifier.
 
 ### Goal
 
-[INFERRED][HIGH] Separate repository mutations from user workspace artifacts before a job is queued, bind every queued job to an immutable execution contract, and make parent task status follow required child jobs through terminal completion.
+ Separate repository mutations from user workspace artifacts before a job is queued, bind every queued job to an immutable execution contract, and make parent task status follow required child jobs through terminal completion.
 
-[INFERRED][HIGH] Preserve candidate files, Codex output, validation evidence, structured failure details, and the current execution stage even when publishing or path validation fails.
+ Preserve candidate files, Codex output, validation evidence, structured failure details, and the current execution stage even when publishing or path validation fails.
 
 ### Non-goals
 
@@ -32,19 +32,19 @@ created: 2026-07-16
 
 ### Design
 
-[INFERRED][HIGH] `TurnRouteDecision` gains `execution_target` and `required_input`. Repository-specific signals select `repository`; local script/export/download requests without repository signals select `workspace_artifact`; conflicting or underspecified network-artifact requests select `needs_input`.
+ `TurnRouteDecision` gains `execution_target` and `required_input`. Repository-specific signals select `repository`; local script/export/download requests without repository signals select `workspace_artifact`; conflicting or underspecified network-artifact requests select `needs_input`.
 
-[INFERRED][HIGH] `CodeJobContract` records the execution target, task type, working root, allowed and denied paths, network policy, and publish mode. The contract is persisted in `request.json`, injected into the Codex prompt, and interpreted as `repository` when absent from historical jobs.
+ `CodeJobContract` records the execution target, task type, working root, allowed and denied paths, network policy, and publish mode. The contract is persisted in `request.json`, injected into the Codex prompt, and interpreted as `repository` when absent from historical jobs.
 
-[INFERRED][HIGH] `run_codex_coding_task` remains the repository mutation boundary. `run_codex_workspace_artifact` generates candidates in the job worktree, validates them, and atomically publishes them under `results/code_jobs/<job_id>/` without Git patch application, self-update, or restart.
+ `run_codex_coding_task` remains the repository mutation boundary. `run_codex_workspace_artifact` generates candidates in the job worktree, validates them, and atomically publishes them under `results/code_jobs/<job_id>/` without Git patch application, self-update, or restart.
 
-[INFERRED][HIGH] Repository paths are checked before Codex starts when the request names concrete paths and again against every produced change before patch application. Scope failures return `scope_violation` with violating files and candidate summaries.
+ Repository paths are checked before Codex starts when the request names concrete paths and again against every produced change before patch application. Scope failures return `scope_violation` with violating files and candidate summaries.
 
-[INFERRED][HIGH] Background status exposes `queued`, `preparing`, `executing`, `validating`, `applying`, `publishing`, and terminal stages. Tool results carry structured `error_code` and `details`.
+ Background status exposes `queued`, `preparing`, `executing`, `validating`, `applying`, `publishing`, and terminal stages. Tool results carry structured `error_code` and `details`.
 
-[INFERRED][HIGH] Parent turn tasks enter `delegated` after explicit `record_job_submitted(job_id)`. Dispatch completion merges each child result into the parent before user notification and only then sets the parent terminal status and `finished_at`.
+ Parent turn tasks enter `delegated` after explicit `record_job_submitted(job_id)`. Dispatch completion merges each child result into the parent before user notification and only then sets the parent terminal status and `finished_at`.
 
-[INFERRED][HIGH] BotSpec write policy explicitly lists repository directory roots and necessary root files instead of relying on broad basename patterns.
+ BotSpec write policy explicitly lists repository directory roots and necessary root files instead of relying on broad basename patterns.
 
 ### Prior Art
 
@@ -56,11 +56,11 @@ created: 2026-07-16
 
 ### Alternatives
 
-[INFERRED][HIGH] Adding only `scripts/**` to the BotSpec policy was rejected because it would not distinguish repository scripts from user-requested standalone artifacts and would preserve the split parent/child lifecycle.
+ Adding only `scripts/**` to the BotSpec policy was rejected because it would not distinguish repository scripts from user-requested standalone artifacts and would preserve the split parent/child lifecycle.
 
-[INFERRED][HIGH] Publishing workspace artifacts directly into the source checkout was rejected because it mixes user outputs with product source, Git state, and restart semantics.
+ Publishing workspace artifacts directly into the source checkout was rejected because it mixes user outputs with product source, Git state, and restart semantics.
 
-[INFERRED][HIGH] Parsing job identifiers from human-readable tool output was rejected because lifecycle correctness must not depend on summary wording.
+ Parsing job identifiers from human-readable tool output was rejected because lifecycle correctness must not depend on summary wording.
 
 ### Failure Modes
 

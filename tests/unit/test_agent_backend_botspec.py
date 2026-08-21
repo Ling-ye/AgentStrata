@@ -21,7 +21,9 @@ def _write_bot(base: Path, agents_block: str = "") -> Path:
         "  type: feishu",
         "  adapter: feishu_acp",
         "prompts:",
-        "  persona: persona.md",
+        "  schema_version: 2",
+        "  identity: persona.md",
+        "  response_style: persona.md",
         "tools:",
         "  packs: []",
     ]

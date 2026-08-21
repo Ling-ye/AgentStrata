@@ -4,7 +4,7 @@
 复用同一套函数，避免逻辑分裂：
 
 - ``bot list``            列出 ``bots/`` 实例与当前支持的平台类型。
-- ``bot new``             scaffold 一个新的 ``bots/<id>/``（bot.yaml + prompts/persona.md）。
+- ``bot new``             scaffold 一个新的 ``bots/<id>/``（BotSpec + prompts v2）。
 - ``bot doctor``          按平台 adapter 声明的 ``required_secrets`` 校验 env 是否齐全。
 - ``bot external-check``  在 Agent/Evaluation 外检查平台连接与受认证动作。
 - ``bot render-cc-config`` 从 env + bot.yaml 渲染完整 cc-connect ``config.toml``
@@ -34,8 +34,11 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from chatcopilot.botspec.loader import load_botspec, validate_botspec
-from chatcopilot.botspec.runtime_env import llm_runtime_env_defaults
-from chatcopilot.core.config import load_config, load_llm_profile
+from chatcopilot.botspec.runtime_env import (
+    llm_runtime_env_defaults,
+    load_research_llm_config,
+)
+from chatcopilot.core.config import load_config
 from chatcopilot.core.model_selection import code_task_model_selection
 from chatcopilot.core.mcp_catalog import resolve_catalog_server
 from chatcopilot.core.settings import expand_leading_home, load_local_env_values
@@ -126,11 +129,15 @@ def _cmd_list(_args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # bot new
 # ---------------------------------------------------------------------------
-_SYSTEM_PROMPT_TEMPLATE = """你是 {display_name}。
+_IDENTITY_PROMPT_TEMPLATE = """# {display_name}
 
-在此填写机器人的角色定位、能力边界与回答风格。BotSpec 使用 prompts / tools /
-agents / context 声明提示词、能力、主 Agent/委托和上下文，平台接入通过
-platform.type 选择。
+你是 {display_name}。在此填写机器人的身份、产品定位和长期职责；不要在这里声明
+安全、权限、工具操作或持久化规则。
+"""
+
+_RESPONSE_STYLE_PROMPT_TEMPLATE = """# 回复风格
+
+在此填写默认语言、语气、节奏、篇幅和排版；不要在这里声明权限或工具能力。
 """
 
 
@@ -158,14 +165,19 @@ def _cmd_new(args: argparse.Namespace) -> int:
         _render_bot_yaml(bot_id, platform_type, adapter, display_name),
         encoding="utf-8",
     )
-    (target / "prompts" / "persona.md").write_text(
-        _SYSTEM_PROMPT_TEMPLATE.format(display_name=display_name),
+    (target / "prompts" / "identity.md").write_text(
+        _IDENTITY_PROMPT_TEMPLATE.format(display_name=display_name),
+        encoding="utf-8",
+    )
+    (target / "prompts" / "response-style.md").write_text(
+        _RESPONSE_STYLE_PROMPT_TEMPLATE,
         encoding="utf-8",
     )
 
     print(f"[OK] 已生成机器人骨架：{target}")
     print(f"     bot.yaml      {bot_yaml}")
-    print("     prompts/persona.md")
+    print("     prompts/identity.md")
+    print("     prompts/response-style.md")
     secrets = adapter.required_secrets()
     if secrets:
         print("\n下一步：在该实例的 env 文件里配置平台凭据：")
@@ -193,7 +205,9 @@ def _render_bot_yaml(
         "    env_prefix: CHATCOPILOT_CHAT\n"
         "\n"
         "prompts:\n"
-        "  persona: prompts/persona.md\n"
+        "  schema_version: 2\n"
+        "  identity: prompts/identity.md\n"
+        "  response_style: prompts/response-style.md\n"
         "\n"
         "tools:\n"
         "  packs: []\n"
@@ -367,11 +381,7 @@ def _cmd_route_explain(args: argparse.Namespace) -> int:
 
     with _temporary_environment(effective_env):
         config = load_config(env_prefix=spec.llm.env_prefix)
-        research_config = (
-            load_llm_profile(spec.llm.research_env_prefix, fallback=config.llm)
-            if spec.llm.research_env_prefix
-            else config.llm
-        )
+        research_config = load_research_llm_config(spec.llm, fallback=config.llm)
 
     research_agent_source = (
         spec.llm.research_env_prefix

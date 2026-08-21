@@ -3,7 +3,7 @@
 每个机器人的 ``skills/manifest.yaml`` 列举其启用的 skill id；每个 id 对应同目录
 下 ``<id>/SKILL.md``，文件以 YAML frontmatter（``name`` + ``description``）起始。
 本模块负责把 manifest 解析成有序的 ``SkillIndexEntry`` 列表，并提供按需读取 body
-与渲染 system prompt 索引片段的能力。
+与生成唯一 ``capability.skills`` PromptLayer 的能力。
 
 设计：
 - 解析放在 botspec/（配置态），运行时注册表与 ``read_bot_skill`` 工具放在 agent/。

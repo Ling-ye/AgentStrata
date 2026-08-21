@@ -58,6 +58,14 @@ from chatcopilot.contracts.persistent_state import (
     MemoryAppendReceipt,
     PersistentConversationState,
 )
+from chatcopilot.contracts.persona_control import (
+    PersonaControlSpec,
+    PersonaDraftCall,
+    PersonaDraftResult,
+    PersonaDirective,
+    PersonaMutationReceipt,
+    PersonaMutationRequest,
+)
 from chatcopilot.contracts.development import (
     DevelopmentTaskScope,
     current_development_task_scope,
@@ -81,7 +89,6 @@ from chatcopilot.contracts.subagents import (
     CachePolicySpec,
     ContextPolicySpec,
     CustomSubagentSpec,
-    PromptLayerSpec,
     SearchProviderSpec,
     SubagentBudgetSpec,
     SubagentDef,
@@ -104,7 +111,8 @@ from chatcopilot.contracts.tool_packs import (
     ToolFeatureEntry,
     ToolModuleBinding,
     ToolPackEntry,
-    ToolPackPrompt,
+    ToolPackPolicy,
+    tool_pack_policies,
 )
 from chatcopilot.contracts.tools import (
     EXECUTION_GLOBAL_SERIAL_BACKGROUND,
@@ -177,6 +185,12 @@ __all__ = [
     "PERSONA_MAX_BYTES",
     "PERSONA_MAX_ITEM_CHARS",
     "PERSONA_SCOPES",
+    "PersonaControlSpec",
+    "PersonaDraftCall",
+    "PersonaDraftResult",
+    "PersonaDirective",
+    "PersonaMutationReceipt",
+    "PersonaMutationRequest",
     "PersistentConversationState",
     "RagSourcePlan",
     "ResourceRef",
@@ -198,7 +212,8 @@ __all__ = [
     "ToolFeatureEntry",
     "ToolModuleBinding",
     "ToolPackEntry",
-    "ToolPackPrompt",
+    "ToolPackPolicy",
+    "tool_pack_policies",
     "ToolDef",
     "ToolHandlerError",
     "ToolFinished",
@@ -211,7 +226,6 @@ __all__ = [
     "WORKSPACE_SCOPE_GROUP_SHARED",
     "CachePolicySpec",
     "ContextPolicySpec",
-    "PromptLayerSpec",
     "SkillIndexEntry",
     "SubagentDef",
     "ToolMatchRule",

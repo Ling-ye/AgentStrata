@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.prompt_plan_fixture import prompt_input, prompt_plan
+
 import importlib.util
 import json
 import unittest
@@ -73,7 +75,7 @@ class LangGraphRuntimeTests(unittest.TestCase):
             agent_backend="langgraph",
         )
 
-        session = runtime.new_session(session_id="sid", system_baseline="system")
+        session = runtime.new_session(session_id="sid", prompt_input=prompt_input("system"))
 
         self.assertIsInstance(session, BackendAgentSession)
         self.assertEqual(session.backend_id, "langgraph")
@@ -95,7 +97,7 @@ class LangGraphSessionTests(unittest.TestCase):
             llm=llm,  # type: ignore[arg-type]
             executor=ToolExecutor(tools=[tool]),
             tools_schema=[build_openai_schema(tool)],
-            system_baseline="system",
+            prompt_plan=prompt_plan("system"),
         )
         events: list[object] = []
 

@@ -9,13 +9,13 @@ created: 2026-07-29
 
 ## Summary
 
-[KNOWN][HIGH] AgentStrata needs one public landing page and one canonical
+ AgentStrata needs one public landing page and one canonical
 operations runbook before the repository becomes public. The current reference
 documents remain useful, but installation, routine operations, authentication,
 and troubleshooting commands are repeated across the README, deployment guide,
 Console guide, and WSL notes.
 
-[KNOWN][HIGH] This specification is governed by
+ This specification is governed by
 `fresh-public-repository-bootstrap`. AgentStrata is the public product name.
 The `chatcopilot` Python namespace,
 `CHATCOPILOT_*` environment variables, systemd unit names, and

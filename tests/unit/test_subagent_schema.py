@@ -4,41 +4,37 @@ from __future__ import annotations
 
 import unittest
 
+import pytest
+
 from chatcopilot.agent.subagents.result import validate_output
-from chatcopilot.agent.subagents.task_pack import TaskPack, parse_task_pack, task_pack_schema
+from chatcopilot.agent.subagents.task_pack import parse_task_pack, task_pack_schema
 
 
 class InputSchemaTests(unittest.TestCase):
-    def test_parse_collects_extra_fields(self):
-        pack = parse_task_pack({
-            "objective": "test",
-            "custom_field": "custom_value",
-            "another": 42,
-        })
-        self.assertEqual(pack.objective, "test")
-        self.assertEqual(pack.extra["custom_field"], "custom_value")
-        self.assertEqual(pack.extra["another"], 42)
+    def test_unknown_fields_are_rejected(self):
+        with pytest.raises(ValueError, match="unsupported TaskPack"):
+            parse_task_pack({"objective": "test", "custom_field": "custom_value"})
 
-    def test_extra_fields_in_to_dict(self):
-        pack = TaskPack(objective="goal", extra={"region": "us-west"})
-        d = pack.to_dict()
-        self.assertEqual(d["objective"], "goal")
-        self.assertEqual(d["region"], "us-west")
-
-    def test_known_keys_not_in_extra(self):
+    def test_declared_fields_round_trip(self):
         pack = parse_task_pack({
             "objective": "test",
             "user_intent": "help",
             "write_scope": "src/",
         })
-        self.assertEqual(pack.extra, {})
+        self.assertEqual(pack.to_dict()["objective"], "test")
+        self.assertEqual(pack.to_dict()["write_scope"], "src/")
 
-    def test_workflow_depth_excluded_from_extra(self):
-        pack = parse_task_pack({
-            "objective": "test",
-            "workflow_depth": 2,
-        })
-        self.assertNotIn("workflow_depth", pack.extra)
+    def test_removed_task_alias_and_workflow_depth_are_rejected(self):
+        with pytest.raises(ValueError, match="task"):
+            parse_task_pack({"task": "test"})
+        with pytest.raises(ValueError, match="workflow_depth"):
+            parse_task_pack({"objective": "test", "workflow_depth": 2})
+
+    def test_objective_is_required_and_typed(self):
+        with pytest.raises(ValueError, match="objective cannot be empty"):
+            parse_task_pack({})
+        with pytest.raises(TypeError, match="objective must be a string"):
+            parse_task_pack({"objective": 42})
 
     def test_search_fields_are_structured_and_known(self):
         pack = parse_task_pack({
@@ -55,7 +51,6 @@ class InputSchemaTests(unittest.TestCase):
         self.assertEqual(pack.time_window, "latest as of 2026-06-25")
         self.assertEqual(pack.required_fields[-1], "version")
         self.assertTrue(pack.cross_check)
-        self.assertEqual(pack.extra, {})
 
     def test_search_fields_do_not_pollute_generic_task_pack_schema(self):
         schema = task_pack_schema()

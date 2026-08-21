@@ -17,6 +17,7 @@ from chatcopilot.contracts.agent import (
     ToolStarted,
 )
 from chatcopilot.contracts.subagents import SubagentSpec
+from chatcopilot.contracts.prompt import BotPromptProfile
 from chatcopilot.agent.tools.builtin.workspace_tools import TOOLS as WORKSPACE_TOOLS
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.core.config import ChatConfig
@@ -40,14 +41,14 @@ def _definition(case_id: str):
     )
 
 
-def test_record_only_code_task_appendix_preserves_requested_draft_pr_scope() -> None:
+def test_record_only_code_task_context_preserves_requested_draft_pr_scope() -> None:
     definition = _definition("code-failure-no-false-success")
 
-    appendix = executor._case_appendix(definition, definition.policy.allowed_tools)
+    context = executor._case_context(definition, definition.policy.allowed_tools)
 
-    assert "record-only" in appendix
-    assert "Preserve the user's requested production Draft PR deliverable" in appendix
-    assert "never claiming" in appendix
+    assert "record-only" in context
+    assert "Preserve the user's requested production Draft PR deliverable" in context
+    assert "never claiming" in context
 
 
 def _search_fixture(case_id: str) -> tuple[dict[str, Any], dict[str, Any], str]:
@@ -658,21 +659,13 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
         subagents=SubagentSpec(),
         agent_backend="native",
         platform_type="qq",
-        system_prompt="system",
-        refusal_prompt="",
-        capability_prompt_fragments=(),
-        mode_prompt_overrides={},
-        role_prompt_overrides={},
-        safety_prompt_override="",
-        memory_prompt_override="",
+        prompt_profile=BotPromptProfile(identity="system", response_style="concise"),
+        capability_policies=(),
     )
     monkeypatch.setattr(executor, "load_evaluation_runtime", lambda _bot: runtime)
-    monkeypatch.setattr(
-        executor,
-        "load_config",
-        lambda **_kwargs: SimpleNamespace(llm=SimpleNamespace(model="fake-model")),
-    )
-    monkeypatch.setattr(executor, "build_system_prompt", lambda **_kwargs: "system")
+    config = ChatConfig()
+    config.llm.model = "fake-model"
+    monkeypatch.setattr(executor, "load_config", lambda **_kwargs: config)
 
     def build_runtime(**kwargs: Any) -> _FakeAgentRuntime:
         if kwargs["agent_backend"] != "native":
@@ -1206,17 +1199,11 @@ def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
         subagents=SubagentSpec(),
         agent_backend="codex",
         platform_type="qq",
-        system_prompt="system",
-        refusal_prompt="",
-        capability_prompt_fragments=(),
-        mode_prompt_overrides={},
-        role_prompt_overrides={},
-        safety_prompt_override="",
-        memory_prompt_override="",
+        prompt_profile=BotPromptProfile(identity="system", response_style="concise"),
+        capability_policies=(),
     )
     monkeypatch.setattr(executor, "load_evaluation_runtime", lambda _bot: runtime)
     monkeypatch.setattr(executor, "load_config", lambda **_kwargs: config)
-    monkeypatch.setattr(executor, "build_system_prompt", lambda **_kwargs: "system")
 
     original_build_backend = agent_runtime_module.build_backend
     captured: dict[str, Any] = {}

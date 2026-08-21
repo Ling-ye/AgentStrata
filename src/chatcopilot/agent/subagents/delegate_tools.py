@@ -153,15 +153,25 @@ def make_delegate_tool(
                     }
                     return json.dumps(payload, ensure_ascii=False), [], None
 
-        task = parse_task_pack(args)
+        task_args = dict(args)
+        extension_inputs: list[str] = []
+        for key in definition.input_schema:
+            if key == "_required" or key not in task_args:
+                continue
+            value = task_args.pop(key)
+            extension_inputs.append(
+                f"{key}=" + json.dumps(value, ensure_ascii=False, sort_keys=True)
+            )
+        task = parse_task_pack(task_args)
+        if extension_inputs:
+            task = replace(task, inputs=(*task.inputs, *extension_inputs))
         if definition.kind == "search" and date_annotator is not None:
             task = date_annotator(task)
         result = runner.run(
             session_id=session_id,
             subagent_name=definition.name,
             task=task,
-            system_prompt=definition.system_prompt,
-            prompt_layers=definition.prompt_layers,
+            role_prompt=definition.role_prompt,
             version=definition.version,
             context_policy=definition.context_policy,
             cache_policy=definition.cache_policy,

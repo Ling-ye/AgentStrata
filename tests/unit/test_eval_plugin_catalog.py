@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 import chatcopilot.evals.implementation_catalog as implementation_catalog
-import chatcopilot.evals.manifest as manifest_module
+import chatcopilot.evals.manifest as policy_module
 import chatcopilot.evals.runner as runner_module
 from chatcopilot.evals.adapters import bfcl, gaia, ifeval
 from chatcopilot.evals.application.catalog import list_suite_descriptors
@@ -241,7 +241,7 @@ def test_manifest_loader_rejects_toctou_replacement_during_read(
     manifest_path = suite_dir / "manifest.yaml"
     original = _manifest_text()
     manifest_path.write_bytes(original)
-    real_read = manifest_module.os.read
+    real_read = policy_module.os.read
     replaced = False
 
     def racing_read(descriptor: int, size: int) -> bytes:
@@ -254,7 +254,7 @@ def test_manifest_loader_rejects_toctou_replacement_during_read(
             replacement.replace(manifest_path)
         return payload
 
-    monkeypatch.setattr(manifest_module.os, "read", racing_read)
+    monkeypatch.setattr(policy_module.os, "read", racing_read)
 
     with pytest.raises(ValueError, match="changed while it was being read"):
         discover_suite_manifests(suites_root)
@@ -271,7 +271,7 @@ def test_manifest_loader_rejects_same_inode_timestamp_drift_during_read(
     original = _manifest_text()
     manifest_path.write_bytes(original)
     initial = manifest_path.stat(follow_symlinks=False)
-    real_read = manifest_module.os.read
+    real_read = policy_module.os.read
     modified = False
 
     def racing_read(descriptor: int, size: int) -> bytes:
@@ -286,7 +286,7 @@ def test_manifest_loader_rejects_same_inode_timestamp_drift_during_read(
             )
         return payload
 
-    monkeypatch.setattr(manifest_module.os, "read", racing_read)
+    monkeypatch.setattr(policy_module.os, "read", racing_read)
 
     with pytest.raises(ValueError, match="changed while it was being read"):
         discover_suite_manifests(suites_root)

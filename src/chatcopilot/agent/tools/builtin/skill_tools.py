@@ -31,13 +31,13 @@ TOOLS: List[ToolDef] = [
         name="read_bot_skill",
         summary=(
             "按需读取 BotSpec 注册的某个 skill 完整流程文档。"
-            "system prompt 末尾的 “可用 Skills” 索引列出了 id 与触发条件；"
+            "PromptPlan 的可用 Skills 索引列出了 id 与触发条件；"
             "命中触发条件时先调用本工具读取详细规则，再按规则执行；同会话同 skill 只读一次。"
         ),
         properties={
             "skill_id": schema_property(
                 type="string",
-                description="目标 skill 的 id（必须来自 system prompt 中的 Skills 索引）。",
+                description="目标 skill 的 id（必须来自 PromptPlan 的 Skills 索引）。",
             ),
         },
         required=["skill_id"],

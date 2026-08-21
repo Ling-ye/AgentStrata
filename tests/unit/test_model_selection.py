@@ -259,7 +259,9 @@ def test_botspec_validation_rejects_invalid_code_profiles() -> None:
                     "        model: gpt-5.6-sol",
                     "        reasoning_effort: impossible",
                     "prompts:",
-                    "  persona: persona.md",
+                    "  schema_version: 2",
+                    "  identity: persona.md",
+                    "  response_style: persona.md",
                     "tools:",
                     "  packs: []",
                 ]
@@ -292,7 +294,9 @@ def test_botspec_validation_requires_code_task_profile_for_dev_code_tasks() -> N
                     "  type: qq",
                     "  adapter: qq_acp",
                     "prompts:",
-                    "  persona: persona.md",
+                    "  schema_version: 2",
+                    "  identity: persona.md",
+                    "  response_style: persona.md",
                     "tools:",
                     "  packs: [dev.code_tasks]",
                 ]

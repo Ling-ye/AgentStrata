@@ -1,7 +1,7 @@
 """Session adapter shared by all main-agent backends."""
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
 from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
 from chatcopilot.contracts.agent_backend import (
@@ -9,10 +9,11 @@ from chatcopilot.contracts.agent_backend import (
     BackendCapabilities,
     BackendSessionRef,
 )
+from chatcopilot.contracts.prompt import PromptPlan
 
 
 class BackendAgentSession:
-    """Compatibility session surface backed by an opaque backend reference."""
+    """Session surface backed by one opaque backend reference."""
 
     def __init__(
         self,
@@ -20,16 +21,10 @@ class BackendAgentSession:
         session_ref: BackendSessionRef,
         *,
         allowed_tool_names: frozenset[str] = frozenset(),
-        system_prompt_renderer: Callable[[str, str | None, str | None], str] | None = None,
-        session_dynamic_tail: str | None = None,
-        memory_snippet: str | None = None,
     ) -> None:
         self.backend = backend
         self._session_ref = session_ref
         self._capabilities = backend.capabilities.intersect_tools(allowed_tool_names)
-        self._system_prompt_renderer = system_prompt_renderer
-        self._session_dynamic_tail = session_dynamic_tail
-        self._memory_snippet = memory_snippet
 
     @property
     def capabilities(self) -> BackendCapabilities:
@@ -63,30 +58,25 @@ class BackendAgentSession:
             return
         self.close()
 
-    def set_system_baseline(self, baseline: str) -> None:
-        rendered = (
-            self._system_prompt_renderer(
-                baseline,
-                self._session_dynamic_tail,
-                self._memory_snippet,
-            )
-            if self._system_prompt_renderer is not None
-            else baseline
-        )
-        getattr(self.backend, "set_system_baseline")(self._session_ref, rendered)
+    def set_prompt_plan(self, plan: PromptPlan) -> None:
+        getattr(self.backend, "set_prompt_plan")(self._session_ref, plan)
 
-    def set_system_context(
-        self,
-        baseline: str,
-        *,
-        session_dynamic_tail: str | None = None,
-        memory_snippet: str | None = None,
-    ) -> None:
-        """Replace the stable baseline and both per-turn persistent snapshots."""
+    @property
+    def tool_executor(self) -> Any:
+        """Return the executor owned by this concrete session.
 
-        self._session_dynamic_tail = session_dynamic_tail
-        self._memory_snippet = memory_snippet
-        self.set_system_baseline(baseline)
+        Background jobs use the same projected tool surface as the session but do
+        not run a model turn.  This explicit property avoids leaking backend-private
+        session objects or relying on attribute forwarding.
+        """
+
+        concrete = getattr(self.backend, "native_session")(self._session_ref)
+        executor = getattr(concrete, "executor", None)
+        if executor is None:
+            executor = getattr(concrete, "relay_executor", None)
+        if executor is None:
+            raise RuntimeError("backend session has no tool executor")
+        return executor
 
     def record_exchange(self, user_text: str, assistant_text: str) -> None:
         getattr(self.backend, "record_exchange")(
@@ -103,14 +93,5 @@ class BackendAgentSession:
     @property
     def _messages(self) -> list[dict[str, Any]]:
         return self.snapshot_messages()
-
-    def __getattr__(self, name: str) -> Any:
-        """Keep concrete-session diagnostics compatible during the migration."""
-
-        resolver = getattr(self.backend, "native_session", None)
-        if callable(resolver):
-            return getattr(resolver(self._session_ref), name)
-        raise AttributeError(name)
-
 
 __all__ = ["BackendAgentSession"]

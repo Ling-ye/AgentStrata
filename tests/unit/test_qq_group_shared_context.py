@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.prompt_plan_fixture import prompt_input
+
 import asyncio
 import hashlib
 import json
@@ -28,6 +30,8 @@ from chatcopilot.contracts.agent_backend import (
     CAPABILITY_CHAT,
 )
 from chatcopilot.contracts.identity import ConversationIdentity, TurnIdentity
+from chatcopilot.contracts.prompt import BotPromptProfile
+from chatcopilot.contracts.tool_packs import ToolPackPolicy
 from chatcopilot.contracts.tools import (
     EXECUTION_USER_SERIAL_BACKGROUND,
     ToolDef,
@@ -673,7 +677,7 @@ def test_group_backend_state_is_outside_member_visible_shared_root(
     with mock.patch("chatcopilot.agent.runtime.build_backend", return_value=_Backend()):
         session = runtime.new_session(
             session_id="actor-session",
-            system_baseline="baseline",
+            prompt_input=prompt_input("baseline", backend="codex"),
             workspace_service=service,
         )
 
@@ -810,7 +814,7 @@ def test_access_denied_sender_is_tracked_without_activating_actor_execution(
         has_private_space_inventory=False,
         update_text=lambda text: {"text": text},
         recover_workspace=lambda *_args: None,
-        refresh_system_prompt=lambda _session: None,
+        refresh_prompt_plan=lambda _session: None,
         prepare_turn_identity=agent._prepare_turn_identity,
         activate_turn_identity=activate,
     )
@@ -891,7 +895,7 @@ def test_identity_rejected_group_message_creates_redacted_intake_task(
         has_private_space_inventory=False,
         update_text=lambda text: {"text": text},
         recover_workspace=lambda *_args: None,
-        refresh_system_prompt=lambda _session: None,
+        refresh_prompt_plan=lambda _session: None,
         prepare_turn_identity=agent._prepare_turn_identity,
         activate_turn_identity=agent._activate_turn_identity,
     )
@@ -1080,7 +1084,7 @@ def test_deterministic_exchange_advances_actor_journal_cursor_once(
         assistant_mode=AssistantMode.PERFORMANCE,
         runtime=SimpleNamespace(),
     )
-    state.bind_group_turn(identity=owner, journal=journal, system_appendix="")
+    state.bind_group_turn(identity=owner, journal=journal, turn_context="")
     state.record_exchange("owner-only-record", "owner-only-reply")
     member = TurnIdentity(
         conversation=_conversation(),
@@ -1141,7 +1145,7 @@ def test_group_deterministic_exchange_does_not_advance_backend_when_journal_fail
     )
     journal = mock.Mock()
     journal.append.side_effect = OSError("protected journal unavailable")
-    state.bind_group_turn(identity=identity, journal=journal, system_appendix="")
+    state.bind_group_turn(identity=identity, journal=journal, turn_context="")
 
     with pytest.raises(OSError, match="journal unavailable"):
         state.record_exchange("must-not-enter-backend", "reply")
@@ -1359,7 +1363,7 @@ def test_group_owner_deterministic_controls_keep_owner_permissions(
             message_id="control-message",
         ),
         journal=GroupConversationJournal(workspace, _conversation()),
-        system_appendix="",
+        turn_context="",
     )
     updates: list[str] = []
 
@@ -1491,7 +1495,7 @@ def test_group_same_named_transport_attachment_is_rejected_not_reused(
         sender_user_id=_MEMBER_ID,
         message_id="new-upload",
     )
-    state.bind_group_turn(identity=identity, journal=journal, system_appendix="")
+    state.bind_group_turn(identity=identity, journal=journal, turn_context="")
     updates: list[str] = []
     cancelled: list[str] = []
 
@@ -1560,14 +1564,10 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
     runtime = SimpleNamespace(
         platform_type="qq",
         access=SimpleNamespace(owner_only_project_access=False),
-        system_prompt="bot baseline",
-        refusal_prompt=None,
-        capability_prompt_fragments=("PRIVATE CAPABILITY",),
+        prompt_profile=BotPromptProfile(identity="bot baseline", response_style="concise"),
+        capability_policies=(ToolPackPolicy(id="private", content="PRIVATE CAPABILITY"),),
         skills=("PRIVATE SKILL",),
-        mode_prompt_overrides={},
-        role_prompt_overrides={},
-        safety_prompt_override=None,
-        memory_prompt_override=None,
+        agent_backend="native",
     )
     captures: list[dict[str, object]] = []
 
@@ -1590,7 +1590,7 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
                 ]
             )
 
-        def set_system_baseline(self, _baseline: str) -> None:
+        def set_prompt_plan(self, _plan) -> None:
             return None
 
     def new_session(**kwargs: object) -> _AgentSession:
@@ -1602,15 +1602,7 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
         retriever=canary_retriever,
         agent_backend="native",
         new_session=new_session,
-        tools=tuple(
-            SimpleNamespace(name=name)
-            for name in (
-                "persona_show",
-                "persona_set",
-                "persona_append",
-                "persona_clear",
-            )
-        ),
+        tools=(),
     )
     adapter = SimpleNamespace(
         allow_role_name_match=False,
@@ -1619,10 +1611,6 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
         send_files=lambda *_args, **_kwargs: None,
     )
     patches = (
-        mock.patch(
-            "chatcopilot.middleware.acp.agent_bridge.build_system_prompt",
-            return_value="member baseline",
-        ),
         mock.patch(
             "chatcopilot.middleware.acp.agent_bridge._extract_persona_snippet",
             return_value="",
@@ -1636,7 +1624,7 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
             return_value=adapter,
         ),
     )
-    with patches[0], patches[1], patches[2], patches[3]:
+    with patches[0], patches[1], patches[2]:
         eager = _build_session_for_workspace(
             session_id="eager",
             execution_session_id="eager.actor.owner",
@@ -1661,8 +1649,8 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
     assert len(captures) == 2
     for captured in captures:
         assert captured["retriever_override"] is None
-        assert captured["memory_snippet_override"] == ""
-        assert captured["skill_index_override"] == ("PRIVATE SKILL",)
+        assert captured["prompt_input"].memory == ""
+        assert captured["prompt_input"].skill_index == ("PRIVATE SKILL",)
         assert captured["caller_role_hint"] == "owner"
         assert captured["extra_tools"] == ()
         owner_only_tool = ToolDef(
@@ -1689,26 +1677,22 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
 
 
 def test_agent_runtime_none_retriever_override_is_explicit_disable() -> None:
-    memory_factory = mock.Mock(side_effect=AssertionError("memory must stay hidden"))
     runtime = AgentRuntime(
         llm=mock.Mock(),
         tools=(),
         tools_schema=(),
         runtime_config=ChatConfig(),
-        memory_factory=memory_factory,
         retriever=mock.Mock(),
     )
 
     session = runtime.new_session(
         session_id="group-projection",
-        system_baseline="baseline",
-        memory_snippet_override="",
+        prompt_input=prompt_input("baseline"),
         retriever_override=None,
-        skill_index_override=(),
     )
 
-    assert getattr(session, "retriever") is None
-    memory_factory.assert_not_called()
+    concrete = session.backend.native_session(session.backend_session_ref)
+    assert concrete.retriever is None
 
 
 def test_group_codex_command_has_read_only_namespace_and_strict_config(

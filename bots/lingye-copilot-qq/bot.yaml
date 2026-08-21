@@ -9,6 +9,9 @@ platform:
 llm:
   chat:
     env_prefix: CHATCOPILOT_LINGYE
+  research:
+    env_prefix: CHATCOPILOT_LINGYE_RESEARCH
+    model: gpt-5.6-terra
   code:
     enabled: true
     mode: rules
@@ -23,16 +26,17 @@ llm:
     allowed_roles: [owner]
 
 prompts:
-  persona: prompts/persona.md
-  refusal: prompts/refusal.md
-  roles:
+  schema_version: 2
+  identity: prompts/identity.md
+  response_style: prompts/response-style.md
+  refusal_style: prompts/refusal-style.md
+  role_styles:
     owner: prompts/roles/owner.md
 
 tools:
   packs:
   - workspace.read_write
   - memory.chat
-  - persona.manage
   - playbooks.reader
   - mcp.admin
   - career.intelligence
@@ -51,6 +55,8 @@ agents:
   codex:
     owner_access: worktree
     member_access: workspace
+  persona_control:
+    enabled: true
   unified_search:
     enabled: true
     providers:

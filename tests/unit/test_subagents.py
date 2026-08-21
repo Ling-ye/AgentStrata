@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.prompt_plan_fixture import prompt_input
+
 from dataclasses import replace
 import json
 from tempfile import TemporaryDirectory
@@ -200,13 +202,13 @@ class SubagentTests(unittest.TestCase):
             )
         )
 
-        self.assertIn("official/primary sources", prompt.task_focus)
-        self.assertIn("site:hostname", prompt.task_focus)
-        self.assertIn("-site:hostname", prompt.task_focus)
-        self.assertIn("rewrite the query once", prompt.task_focus)
-        self.assertIn("published/updated date", prompt.task_focus)
-        self.assertIn("xiaohongshu.com", prompt.role)
-        self.assertIn("spam.example", prompt.role)
+        self.assertIn("official/primary sources", prompt)
+        self.assertIn("site:hostname", prompt)
+        self.assertIn("-site:hostname", prompt)
+        self.assertIn("rewrite the query once", prompt)
+        self.assertIn("published/updated date", prompt)
+        self.assertIn("xiaohongshu.com", prompt)
+        self.assertIn("spam.example", prompt)
 
     def test_invalid_search_task_pack_is_rejected_before_runner(self) -> None:
         calls: list[dict] = []
@@ -222,7 +224,7 @@ class SubagentTests(unittest.TestCase):
                 name="search_test",
                 tool_name="search_test",
                 summary="test",
-                system_prompt="test",
+                role_prompt="test",
                 kind="search",
             ),
             Runner(),
@@ -267,7 +269,7 @@ class SubagentTests(unittest.TestCase):
                 any=(ToolMatchRule(categories=("mcp",), mcp_risk=("readonly",)),)
             ),
             budget=SubagentBudgetSpec(),
-            prompt_path="prompts/persona.md",  # 复用现有文件，仅校验指针存在
+            role_prompt_path="prompts/identity.md",
         )
         bot = replace(spec, agents=replace(spec.agents, custom=(custom,)))
 
@@ -472,7 +474,7 @@ class SubagentTests(unittest.TestCase):
         with mock.patch("chatcopilot.agent.runtime.build_backend", return_value=Backend()):
             runtime.new_session(
                 session_id="sid",
-                system_baseline="baseline",
+                prompt_input=prompt_input("baseline"),
                 permission_filter=lambda _tool: None,
             )
 
@@ -523,7 +525,7 @@ class SubagentTests(unittest.TestCase):
         with mock.patch("chatcopilot.agent.runtime.build_backend", return_value=Backend()):
             runtime.new_session(
                 session_id="sid-eval-delegates",
-                system_baseline="baseline",
+                prompt_input=prompt_input("baseline"),
                 permission_filter=lambda _tool: None,
             )
 
@@ -537,14 +539,14 @@ class SubagentTests(unittest.TestCase):
             tool_name="write_jira",
             summary="写 Jira",
             selector=ToolSelectorSpec(any=(ToolMatchRule(categories=("mcp",), mcp_risk=("write",)),)),
-            prompt_path="prompts/persona.md",
+            role_prompt_path="prompts/identity.md",
         )
         empty_custom = CustomSubagentSpec(
             name="empty_one",
             tool_name="noop",
             summary="空 selector",
             selector=ToolSelectorSpec(),
-            prompt_path="prompts/persona.md",
+            role_prompt_path="prompts/identity.md",
         )
         write_bot = replace(spec, agents=replace(spec.agents, custom=(write_custom,)))
         self.assertEqual(
@@ -578,7 +580,7 @@ class SubagentTests(unittest.TestCase):
 
         result = ToolExecutor(tools=list(tools)).execute(
             "delegate_development",
-            {"task": "检查代码", "write_scope": ["tests"]},
+            {"objective": "检查代码", "write_scope": "tests"},
         )
         payload = json.loads(result.summary)
 
@@ -614,7 +616,7 @@ class SubagentTests(unittest.TestCase):
         )
 
         result = ToolExecutor(tools=list(tools)).execute(
-            "delegate_development", {"task": "检查代码", "write_scope": ["tests"]}
+            "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
         payload = json.loads(result.summary)
 
@@ -639,7 +641,7 @@ class SubagentTests(unittest.TestCase):
         )
 
         result = ToolExecutor(tools=list(tools)).execute(
-            "delegate_development", {"task": "检查代码", "write_scope": ["tests"]}
+            "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
         payload = json.loads(result.summary)
 
@@ -704,7 +706,7 @@ class SubagentTests(unittest.TestCase):
         )
 
         ToolExecutor(tools=list(tools)).execute(
-            "delegate_development", {"task": "整理产物", "write_scope": ["tests"]}
+            "delegate_development", {"objective": "整理产物", "write_scope": "tests"}
         )
 
         self.assertIn("read_file", fake_llm.seen_tools)
@@ -740,14 +742,15 @@ class SubagentTests(unittest.TestCase):
             subagent_tools=(normal, github),
         )
 
-        session = runtime.new_session(session_id="sid", system_baseline="baseline")
-        schema_names = {entry["function"]["name"] for entry in session.tools_schema}
+        session = runtime.new_session(session_id="sid", prompt_input=prompt_input("baseline"))
+        concrete = session.backend.native_session(session.backend_session_ref)
+        schema_names = {entry["function"]["name"] for entry in concrete.tools_schema}
 
         self.assertIn("normal_tool", schema_names)
         self.assertIn("query_approved_sources", schema_names)
         self.assertNotIn("github_search_repositories", schema_names)
 
-        result = session.executor.execute("query_approved_sources", {"task": "查 repo"})
+        result = session.tool_executor.execute("query_approved_sources", {"objective": "查 repo"})
         payload = json.loads(result.summary)
 
         self.assertTrue(payload["ok"])
@@ -794,7 +797,7 @@ class SubagentTests(unittest.TestCase):
         )
 
         result = ToolExecutor(tools=list(tools)).execute(
-            "delegate_development", {"task": "检查代码", "write_scope": ["tests"]}
+            "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
         payload = json.loads(result.summary)
 
@@ -838,7 +841,7 @@ class SubagentTests(unittest.TestCase):
         )
 
         result = ToolExecutor(tools=list(tools)).execute(
-            "delegate_development", {"task": "检查代码", "write_scope": ["tests"]}
+            "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
         payload = json.loads(result.summary)
 

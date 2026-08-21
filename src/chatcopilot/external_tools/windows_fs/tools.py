@@ -188,35 +188,35 @@ def _handler_win_glob(args: Dict[str, Any]) -> HandlerResult:
 _PROPS_READ: Dict[str, Dict[str, Any]] = {
     "path": schema_property(
         type="string",
-        description="Absolute path of the file to read. Must lie under configured windows_fs allowed_roots.",
+        description="Allowed absolute file path.",
     ),
     "start_line": schema_property(
         type="integer",
-        description="Optional 1-based start line, inclusive. Omit to start at line 1.",
+        description="Optional inclusive 1-based start line.",
     ),
     "end_line": schema_property(
         type="integer",
-        description="Optional 1-based end line, inclusive. Omit to read until EOF.",
+        description="Optional inclusive 1-based end line.",
     ),
 }
 
 _PROPS_GREP: Dict[str, Dict[str, Any]] = {
     "query": schema_property(
         type="string",
-        description="Regular expression / fixed string to search for (ripgrep syntax).",
+        description="Ripgrep pattern.",
     ),
     "path": schema_property(
         type="string",
-        description="Absolute directory under which to search. Must lie under windows_fs allowed_roots.",
+        description="Allowed absolute directory.",
     ),
     "file_glob": schema_property(
         type="string",
-        description="Optional ripgrep -g pattern to limit by filename (e.g. '*.cs').",
+        description="Optional ripgrep file glob.",
         default="",
     ),
     "max_count": schema_property(
         type="integer",
-        description="Cap total hits returned. Default 200.",
+        description="Maximum hits; default 200.",
         default=200,
     ),
 }
@@ -224,15 +224,15 @@ _PROPS_GREP: Dict[str, Dict[str, Any]] = {
 _PROPS_GLOB: Dict[str, Dict[str, Any]] = {
     "pattern": schema_property(
         type="string",
-        description="Ripgrep -g pattern (e.g. '**/Mission*.cs') for file name matching.",
+        description="Ripgrep file glob.",
     ),
     "path": schema_property(
         type="string",
-        description="Absolute directory under which to list matching files.",
+        description="Allowed absolute directory.",
     ),
     "limit": schema_property(
         type="integer",
-        description="Maximum number of files to return. Default 200.",
+        description="Maximum files; default 200.",
         default=200,
     ),
 }
@@ -241,11 +241,7 @@ _PROPS_GLOB: Dict[str, Dict[str, Any]] = {
 TOOLS: List[ToolDef] = [
     _win_tool(
         name="win_read_file",
-        summary=(
-            "Read a text file by absolute path from the Windows file system (works in WSL via /mnt/f/...). "
-            "Supports an optional line range. Subject to the windows_fs allow-list and a max_read_bytes cap. "
-            "Prefer unity_project_read when the file lives inside a registered Unity project."
-        ),
+        summary="Read a bounded text range from an allowed absolute Windows/WSL path.",
         properties=_PROPS_READ,
         required=["path"],
         handler=_handler_win_read_file,
@@ -253,10 +249,7 @@ TOOLS: List[ToolDef] = [
     ),
     _win_tool(
         name="win_grep",
-        summary=(
-            "ripgrep over a Windows / WSL directory by absolute path. Filters by file_glob and the global allow-list. "
-            "Prefer unity_project_search inside Unity projects; this tool is for one-off probes outside any registered project."
-        ),
+        summary="Search an allowed absolute Windows/WSL directory with ripgrep.",
         properties=_PROPS_GREP,
         required=["query", "path"],
         handler=_handler_win_grep,
@@ -264,10 +257,7 @@ TOOLS: List[ToolDef] = [
     ),
     _win_tool(
         name="win_glob",
-        summary=(
-            "List files matching a ripgrep -g pattern under an absolute Windows / WSL directory, "
-            "honoring the windows_fs allow-list and deny patterns."
-        ),
+        summary="List files matching a glob under an allowed absolute Windows/WSL directory.",
         properties=_PROPS_GLOB,
         required=["pattern", "path"],
         handler=_handler_win_glob,

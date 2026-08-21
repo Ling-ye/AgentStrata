@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.prompt_plan_fixture import prompt_input
+
 import json
 from unittest.mock import Mock, patch
 
@@ -379,9 +381,10 @@ def test_runtime_hides_internal_information_tools_when_research_enabled() -> Non
         "chatcopilot.agent.runtime.build_subagent_tools",
         return_value=delegates,
     ):
-        session = runtime.new_session(session_id="sid", system_baseline="base")
+        session = runtime.new_session(session_id="sid", prompt_input=prompt_input("base"))
 
-    names = {entry["function"]["name"] for entry in session.tools_schema}
+    concrete = session.backend.native_session(session.backend_session_ref)
+    names = {entry["function"]["name"] for entry in concrete.tools_schema}
     assert "search_information" in names
     assert "normal_tool" in names
     assert "search_tavily" not in names
@@ -389,7 +392,7 @@ def test_runtime_hides_internal_information_tools_when_research_enabled() -> Non
     assert "query_approved_sources" not in names
     assert "web_fetch_page" not in names
     assert "browse_dynamic_page" not in names
-    assert "`search_information`" in session.system_baseline
+    assert concrete.prompt_plan.tool_projection_digest
 
 
 @pytest.mark.parametrize("backend", ["native", "langgraph"])
@@ -415,7 +418,7 @@ def test_native_and_langgraph_expose_search_information_for_direct_provider(
     )
 
     with patch("chatcopilot.agent.runtime.build_subagent_tools", return_value=()):
-        session = runtime.new_session(session_id=f"sid-{backend}", system_baseline="base")
+        session = runtime.new_session(session_id=f"sid-{backend}", prompt_input=prompt_input("base"))
 
     assert "search_information" in session.capabilities.tool_names
 
@@ -455,7 +458,7 @@ def test_codex_backend_does_not_construct_chatcopilot_search_or_delegate_agents(
     ) as search, patch(
         "chatcopilot.agent.runtime.build_backend", return_value=backend
     ):
-        session = runtime.new_session(session_id="sid-codex", system_baseline="base")
+        session = runtime.new_session(session_id="sid-codex", prompt_input=prompt_input("base"))
 
     delegates.assert_not_called()
     search.assert_not_called()
@@ -507,7 +510,7 @@ def test_codex_eval_policy_exposes_real_unified_search_tool() -> None:
     ):
         session = runtime.new_session(
             session_id="sid-codex-eval-search",
-            system_baseline="base",
+            prompt_input=prompt_input("base"),
         )
 
     request = backend.open_session.call_args.args[0]
@@ -553,7 +556,7 @@ def test_codex_backend_uses_current_personal_workspace_root(tmp_path) -> None:
     ):
         runtime.new_session(
             session_id="sid-personal-workspace",
-            system_baseline="base",
+            prompt_input=prompt_input("base"),
             workspace_service=workspace_service,
         )
 
@@ -593,13 +596,13 @@ def test_runtime_permission_filter_prevents_url_read_bypass() -> None:
     ):
         session = runtime.new_session(
             session_id="sid",
-            system_baseline="base",
+            prompt_input=prompt_input("base"),
             permission_filter=lambda tool: (
                 "denied" if tool.name == "web_fetch_page" else None
             ),
         )
 
-    result = session.executor.execute(
+    result = session.tool_executor.execute(
         "search_information",
         {
             "objective": "read this page",

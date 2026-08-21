@@ -34,33 +34,17 @@ def build_search_tool(
     turn_timeout_seconds: float | None = None,
     circuit: SearchCircuitBreaker | None = None,
 ) -> ToolDef | None:
-    registry = SearchProviderRegistry.from_tools(
-        tools,
+    coordinator = build_search_coordinator(
+        main_llm=main_llm,
+        budget=budget,
+        tools=tools,
         raw_mcp_tools=raw_mcp_tools,
         provider_specs=provider_specs,
+        turn_timeout_seconds=turn_timeout_seconds,
+        circuit=circuit,
     )
-    if not registry.available_sources():
+    if coordinator is None:
         return None
-    max_wall = (
-        min(turn_timeout_seconds * _SEARCH_BUDGET_RATIO, _MAX_SEARCH_WALL_SECONDS)
-        if turn_timeout_seconds is not None
-        else _MAX_SEARCH_WALL_SECONDS
-    )
-    router = SearchRouter(main_llm=main_llm, budget=budget)
-    provider = DirectSearchProvider(registry=registry, circuit=circuit)
-    page_reader = PageReader(
-        web_fetch=registry.tools.get("web_fetch_page"),
-        dynamic_browser=registry.tools.get("browse_dynamic_page"),
-        max_chars=_MAX_PAGE_SUMMARY_CHARS,
-    )
-    coordinator = SearchCoordinator(
-        router=router,
-        registry=registry,
-        provider=provider,
-        page_reader=page_reader,
-        reranker=ResultReranker(router.resolve_llm()),
-        max_wall_seconds=max_wall,
-    )
 
     def _handler(args: dict[str, Any]) -> HandlerResult:
         try:
@@ -148,4 +132,49 @@ def build_search_tool(
     )
 
 
-__all__ = ["build_search_tool"]
+def build_search_coordinator(
+    *,
+    main_llm: LLMClient,
+    budget: SubagentBudgetSpec,
+    tools: Sequence[ToolDef],
+    raw_mcp_tools: Sequence[ToolDef] = (),
+    provider_specs: Sequence[SearchProviderSpec] = (),
+    turn_timeout_seconds: float | None = None,
+    max_wall_seconds: float | None = None,
+    circuit: SearchCircuitBreaker | None = None,
+    semantic_rerank: bool = True,
+) -> SearchCoordinator | None:
+    """Build the canonical coordinator for tools and trusted host workflows."""
+
+    registry = SearchProviderRegistry.from_tools(
+        tools,
+        raw_mcp_tools=raw_mcp_tools,
+        provider_specs=provider_specs,
+    )
+    if not registry.available_sources():
+        return None
+    if max_wall_seconds is not None:
+        max_wall = max(1.0, min(float(max_wall_seconds), _MAX_SEARCH_WALL_SECONDS))
+    else:
+        max_wall = (
+            min(turn_timeout_seconds * _SEARCH_BUDGET_RATIO, _MAX_SEARCH_WALL_SECONDS)
+            if turn_timeout_seconds is not None
+            else _MAX_SEARCH_WALL_SECONDS
+        )
+    router = SearchRouter(main_llm=main_llm, budget=budget)
+    provider = DirectSearchProvider(registry=registry, circuit=circuit)
+    page_reader = PageReader(
+        web_fetch=registry.tools.get("web_fetch_page"),
+        dynamic_browser=registry.tools.get("browse_dynamic_page"),
+        max_chars=_MAX_PAGE_SUMMARY_CHARS,
+    )
+    return SearchCoordinator(
+        router=router,
+        registry=registry,
+        provider=provider,
+        page_reader=page_reader,
+        reranker=ResultReranker(router.resolve_llm()) if semantic_rerank else None,
+        max_wall_seconds=max_wall,
+    )
+
+__all__ = ["build_search_coordinator", "build_search_tool"]

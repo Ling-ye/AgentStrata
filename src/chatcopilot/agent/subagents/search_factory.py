@@ -8,7 +8,6 @@ from chatcopilot.agent.search_policy import SEARCH_TASK_PROPERTIES, SEARCH_TASK_
 from chatcopilot.agent.subagents.runner import SubagentRuntimeConfig
 from chatcopilot.agent.subagents.spec import (
     CachePolicySpec,
-    PromptLayerSpec,
     SubagentDef,
     ToolMatchRule,
     ToolSelectorSpec,
@@ -25,7 +24,7 @@ _SEARCH_PROMPT_TAIL = (
 )
 
 
-def build_search_prompt(config: McpServerConfig) -> PromptLayerSpec:
+def build_search_prompt(config: McpServerConfig) -> str:
     server_id = config.id
     role = (
         f"You are the search subagent for '{server_id}'. "
@@ -110,7 +109,7 @@ def build_search_prompt(config: McpServerConfig) -> PromptLayerSpec:
         "as a workaround when the search tool itself is down.\n"
         "- Do NOT retry the search tool after an infrastructure error — it will fail again."
     )
-    return PromptLayerSpec(role=role, task_focus=task_focus)
+    return role + "\n\n" + task_focus
 
 
 def build_search_subagent(
@@ -123,10 +122,9 @@ def build_search_subagent(
         name=name,
         tool_name=name,
         summary=f"Delegate search to {server_id}. {summary}",
-        system_prompt=f"You are the {server_id} search subagent.",
+        role_prompt=build_search_prompt(source_config),
         kind="search",
         version="2",
-        prompt_layers=build_search_prompt(source_config),
         selector=ToolSelectorSpec(
             any=(
                 ToolMatchRule(categories=("mcp",), owners=(server_id,)),

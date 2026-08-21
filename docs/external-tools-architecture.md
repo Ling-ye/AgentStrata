@@ -26,7 +26,7 @@ external_tools/
 
 `tool_packs/catalog.py` 是静态 catalog。Entry 可以声明：
 
-- prompt manifest module 和 builder；
+- structured policy module 和 builder；
 - 一个或多个 `ToolModuleBinding`，每个 binding 同时声明模块与该 pack 精确暴露的
   `ToolDef.name`；
 - 可选通用 HTTP route module。
@@ -43,7 +43,7 @@ Console 通过 `component_catalog.iter_tool_pack_tools()` 读取同一精确投�
 python scripts/check_component_catalog.py --json
 ```
 
-门禁会拒绝遗漏工具、幽灵工具、重复工具、跨模块冲突、无效 prompt manifest、权限或
+门禁会拒绝遗漏工具、幽灵工具、重复工具、跨模块冲突、无效 tool-pack policy、权限或
 schema 异常，以及 MCP、subagent、workflow 之间的静态工具名冲突。仓库门禁严格读取
 packaged MCP catalog，拒绝运行时宽容读取会跳过的损坏记录或重复 ID；它不执行 handler，
 也不连接远端 MCP。

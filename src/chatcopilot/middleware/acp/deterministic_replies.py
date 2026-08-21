@@ -13,7 +13,6 @@ from chatcopilot.middleware.acp import meta_commands as _meta
 from chatcopilot.middleware.acp import model_commands as _model_commands
 from chatcopilot.middleware.acp import private_space as _private
 from chatcopilot.middleware.acp import project_access as _project_access
-from chatcopilot.middleware.acp.persona_access import non_owner_persona_request_reply
 from chatcopilot.middleware.acp.job_dispatch import (
     extract_code_task_command,
     extract_job_status_query,
@@ -75,22 +74,6 @@ async def handle_deterministic_replies(
             turn_task,
             progress="已完成 Owner 运行时信息查询。",
             final_text=runtime_info_reply,
-            stop_reason="end_turn",
-        )
-        return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
-
-    persona_reply = non_owner_persona_request_reply(session, user_text)
-    if persona_reply is not None:
-        _LOGGER.info(
-            "session/prompt | sid=%s deterministic non-owner persona change denied",
-            session_id,
-        )
-        await _send_text(conn, session_id, persona_reply, make_text_update)
-        session.record_exchange(user_text, persona_reply)
-        finish_turn_task(
-            turn_task,
-            progress="已拒绝非 Owner 修改机器人自身人格。",
-            final_text=persona_reply,
             stop_reason="end_turn",
         )
         return PromptResponse(stop_reason="end_turn", user_message_id=message_id)

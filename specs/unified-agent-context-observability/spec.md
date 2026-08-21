@@ -143,11 +143,13 @@ never an empty value presented as complete telemetry.
   failed even if every late child succeeds.
 - Existing task schema v2 remains readable. No historical migration or
   provider-thread reconstruction is attempted.
-- Independent helper-model calls made by the topic classifier, quality gate,
-  search router, or reranker retain their existing step/usage telemetry but do
+- Independent helper-model calls made by the topic classifier, search router,
+  or reranker retain their existing step/usage telemetry but do
   not gain full context artifacts in this version. Extending the observer below
   the turn runtime is a separate contract change; this scope must not be
   described as every process-wide `LLMClient.chat` call.
+- The deterministic `ResponseIntegrityCheck` records bounded diagnostics and
+  receipts but does not create a model-call context artifact.
 
 ### Console projection
 

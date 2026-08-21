@@ -107,8 +107,7 @@ class WorkflowRunner:
                 session_id=session_id,
                 subagent_name=definition.name,
                 task=step_task,
-                system_prompt=definition.system_prompt,
-                prompt_layers=definition.prompt_layers,
+                role_prompt=definition.role_prompt,
                 version=definition.version,
                 context_policy=definition.context_policy,
                 cache_policy=definition.cache_policy,
@@ -211,7 +210,6 @@ def _with_prior(task: TaskPack, *, workflow_name: str, step_name: str, prior: li
         write_scope=task.write_scope,
         excluded_context=task.excluded_context,
         cache_key_hint=task.cache_key_hint,
-        legacy_task=task.legacy_task,
     )
 
 

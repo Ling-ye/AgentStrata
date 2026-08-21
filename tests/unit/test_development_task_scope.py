@@ -73,7 +73,7 @@ class DevelopmentTaskScopeTests(unittest.TestCase):
             name="dev",
             tool_name="delegate_dev",
             summary="dev",
-            system_prompt="dev",
+            role_prompt="dev",
             selector=ToolSelectorSpec(
                 any=(ToolMatchRule(category_prefixes=("dev.",)),)
             ),
@@ -82,7 +82,7 @@ class DevelopmentTaskScopeTests(unittest.TestCase):
             name="writer",
             tool_name="delegate_writer",
             summary="writer",
-            system_prompt="writer",
+            role_prompt="writer",
             selector=ToolSelectorSpec(
                 any=(ToolMatchRule(categories=("mcp",), mcp_risk=("write",)),)
             ),
@@ -91,7 +91,7 @@ class DevelopmentTaskScopeTests(unittest.TestCase):
             name="reader",
             tool_name="delegate_reader",
             summary="reader",
-            system_prompt="reader",
+            role_prompt="reader",
             selector=ToolSelectorSpec(
                 any=(ToolMatchRule(categories=("mcp",), mcp_risk=("readonly",)),)
             ),

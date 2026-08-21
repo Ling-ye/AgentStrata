@@ -66,8 +66,8 @@ class InProcessAgentBackend:
         self.native_session(session)
         return session
 
-    def set_system_baseline(self, session: BackendSessionRef, baseline: str) -> None:
-        self.native_session(session).set_system_baseline(baseline)
+    def set_prompt_plan(self, session: BackendSessionRef, plan: Any) -> None:
+        self.native_session(session).set_prompt_plan(plan)
 
     def record_exchange(
         self, session: BackendSessionRef, user_text: str, assistant_text: str

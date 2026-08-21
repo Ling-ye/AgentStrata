@@ -51,7 +51,12 @@ class AcpTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.reason, "matched")
         self.assertEqual(
             seen,
-            ["attachments", "permissions", "deterministic_shortcuts"],
+            [
+                "attachments",
+                "permissions",
+                "persona_control",
+                "deterministic_shortcuts",
+            ],
         )
         self.assertEqual(context.completed_stages, seen)
 

@@ -31,7 +31,9 @@ def _write_bot_with_access(base: Path, access_block: str) -> Path:
           type: qq
           adapter: qq_acp
         prompts:
-          persona: system.md
+          schema_version: 2
+          identity: system.md
+          response_style: system.md
         tools:
           packs: []
         deploy:

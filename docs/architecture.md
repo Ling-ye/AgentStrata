@@ -75,8 +75,8 @@ BotSpec 只声明 tool-pack id。具体目录在 `tool_packs/catalog.py`，每�
 
 ## 工具、MCP 与搜索
 
-Tool pack 通过 manifest 贡献 prompt fragment 和工具模块。通用公开 tool pack 包括
-workspace、memory、persona、playbook、MCP 管理、Feishu、Wiki、职业情报、网页读取、
+Tool pack 通过 component catalog 贡献精确工具绑定和结构化跨工具 policy。通用公开 tool pack 包括
+workspace、memory、playbook、MCP 管理、Feishu、Wiki、职业情报、网页读取、
 Windows/Unity 只读能力与受控开发工具。
 
 MCP catalog 是经过审阅的静态目录。公开运行时不会自动下载、安装或启用第三方

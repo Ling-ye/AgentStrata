@@ -17,12 +17,39 @@ from chatcopilot.botspec.model import (
     WikiSpec,
 )
 from chatcopilot.botspec.runtime import BotRuntimeContext
-from chatcopilot.botspec.runtime_env import apply_runtime_env
+from chatcopilot.botspec.runtime_env import apply_runtime_env, load_research_llm_config
 from chatcopilot.contracts.model_selection import CodeModelProfile
+from chatcopilot.contracts.prompt import BotPromptProfile
+from chatcopilot.core.config import LLMConfig
 from chatcopilot.external_tools.codebase.config import load_registry, reset_cache
 
 
 class BotSpecRuntimeEnvTests(unittest.TestCase):
+    def test_research_model_uses_botspec_default_then_machine_override(self) -> None:
+        fallback = LLMConfig(
+            base_url="https://chat.example/v1",
+            model="chat-model",
+            api_key="test-key",
+            timeout=60,
+        )
+        spec = LLMSpec(
+            research_env_prefix="CHATCOPILOT_TEST_RESEARCH",
+            research_model="botspec-research",
+        )
+        with mock.patch.dict(os.environ, {}, clear=True):
+            configured = load_research_llm_config(spec, fallback=fallback)
+        self.assertEqual(configured.model, "botspec-research")
+        self.assertEqual(configured.base_url, fallback.base_url)
+        self.assertEqual(configured.api_key, fallback.api_key)
+
+        with mock.patch.dict(
+            os.environ,
+            {"CHATCOPILOT_TEST_RESEARCH_MODEL": "machine-research"},
+            clear=True,
+        ):
+            overridden = load_research_llm_config(spec, fallback=fallback)
+        self.assertEqual(overridden.model, "machine-research")
+
     def test_apply_runtime_env_anchors_codebase_root_to_source_repo(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -270,7 +297,7 @@ def _runtime(
         display_name="Demo",
         source_path=source_path,
         platform=PlatformSpec(type="qq", adapter="qq_acp"),
-        prompts=PromptSpec(persona="persona.md"),
+        prompts=PromptSpec(schema_version=2, identity="persona.md", response_style="persona.md"),
         llm=llm or LLMSpec(),
         context=ContextSpec(
             codebases=CodebaseSpec(registry=registry),
@@ -284,13 +311,8 @@ def _runtime(
         display_name="Demo",
         platform_type="qq",
         platform_adapter="qq_acp",
-        system_prompt="system",
-        refusal_prompt=None,
-        safety_prompt_override=None,
-        memory_prompt_override=None,
-        mode_prompt_overrides={},
-        role_prompt_overrides={},
-        capability_prompt_fragments=(),
+        prompt_profile=BotPromptProfile(identity="system", response_style="concise"),
+        capability_policies=(),
         tool_packs=(),
         tool_features=(),
         exclude_tools=(),

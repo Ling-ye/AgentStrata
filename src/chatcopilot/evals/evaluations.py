@@ -3383,7 +3383,6 @@ _RUNTIME_CONFIG_FINGERPRINT_FIELDS = (
     "topic_current_max_chars",
     "topic_previous_user_max_chars",
     "topic_previous_assistant_max_chars",
-    "quality_gate_level",
 )
 _ROUTING_CONFIG_FINGERPRINT_FIELDS = (
     "enabled",
@@ -3480,13 +3479,13 @@ def _runtime_behavior_fingerprint(
         # cannot collapse to the same redacted value.
         "resolved_chat_config_sha256": _hash_json(_resolved_chat_config_snapshot(config)),
         "prompts": {
-            "system": runtime.system_prompt,
-            "refusal": runtime.refusal_prompt,
-            "safety": runtime.safety_prompt_override,
-            "memory": runtime.memory_prompt_override,
-            "modes": runtime.mode_prompt_overrides,
-            "roles": runtime.role_prompt_overrides,
-            "capability_fragments": list(runtime.capability_prompt_fragments),
+            "schema_version": 2,
+            "identity": runtime.prompt_profile.identity,
+            "response_style": runtime.prompt_profile.response_style,
+            "refusal_style": runtime.prompt_profile.refusal_style,
+            "mode_styles": runtime.prompt_profile.mode_styles,
+            "role_styles": runtime.prompt_profile.role_styles,
+            "capability_policies": list(runtime.capability_policies),
         },
         "tools": {
             "packs": list(runtime.tool_packs),

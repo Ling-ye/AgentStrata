@@ -11,30 +11,30 @@ created: 2026-07-16
 
 ### Background
 
-[KNOWN][HIGH] ACP session construction currently builds the ordinary Agent runtime and connects configured MCP servers before deterministic routing decides whether the turn is chat or code.
+ ACP session construction currently builds the ordinary Agent runtime and connects configured MCP servers before deterministic routing decides whether the turn is chat or code.
 
-[COMPUTED][HIGH] A code-route request can therefore pay ordinary Agent and MCP cold-start cost even though it only needs authorization, routing, task recording, and background job submission.
+ A code-route request can therefore pay ordinary Agent and MCP cold-start cost even though it only needs authorization, routing, task recording, and background job submission.
 
 ### Goal
 
-[INFERRED][HIGH] Split ACP control-plane session state from the ordinary Agent session so deterministic replies and code routes can complete without constructing `AgentRuntime` or connecting MCP servers.
+ Split ACP control-plane session state from the ordinary Agent session so deterministic replies and code routes can complete without constructing `AgentRuntime` or connecting MCP servers.
 
 ### Non-goals
 
 - Agent model initialization internals are not redesigned.
 - MCP connection retry policy is not changed.
-- Chat-route behavior, transcript order, role resolution, and system prompt content remain compatible.
+- Transcript order, role resolution, and lazy materialization remain unchanged by this scope.
 - Multi-process runtime pooling is not introduced.
 
 ### Design
 
-[INFERRED][HIGH] `AcpChatAgent` stores no ordinary runtime at construction. A lock-protected lazy accessor builds it only when a turn reaches the chat execution path.
+ `AcpChatAgent` stores no ordinary runtime at construction. A lock-protected lazy accessor builds it only when a turn reaches the chat execution path.
 
-[INFERRED][HIGH] `SessionState` can exist as a control-plane session without an attached Agent session. Deterministic exchanges are buffered and persisted normally, and are replayed into the Agent session when materialized.
+ `SessionState` can exist as a control-plane session without an attached Agent session. Deterministic exchanges are buffered and persisted normally, and are replayed into the Agent session when materialized.
 
-[INFERRED][HIGH] Session creation still resolves identity, workspace, role, routing, mode, and access control. After routing, only chat execution materializes the Agent session, refreshes its system prompt, and runs the model.
+ Session creation still resolves identity, workspace, role, routing, mode, and access control. After routing, only chat execution materializes the Agent session, builds or refreshes its PromptPlan, and runs the model.
 
-[INFERRED][HIGH] Concurrent first chat turns share one runtime construction through the initialization lock.
+ Concurrent first chat turns share one runtime construction through the initialization lock.
 
 ### Prior Art
 
@@ -45,9 +45,9 @@ created: 2026-07-16
 
 ### Alternatives
 
-[INFERRED][HIGH] Eagerly constructing the runtime in a background thread was rejected because it still consumes resources for code-only processes and can obscure startup failures unrelated to the chosen route.
+ Eagerly constructing the runtime in a background thread was rejected because it still consumes resources for code-only processes and can obscure startup failures unrelated to the chosen route.
 
-[INFERRED][HIGH] Creating a second ACP server dedicated to code routes was rejected because it duplicates identity, authorization, task recording, and client protocol state.
+ Creating a second ACP server dedicated to code routes was rejected because it duplicates identity, authorization, task recording, and client protocol state.
 
 ### Failure Modes
 

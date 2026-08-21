@@ -239,14 +239,19 @@ def _build_background_executor(
 
     from chatcopilot.core.config import load_config
     from chatcopilot.agent.runtime import build_agent_runtime
+    from chatcopilot.agent.context.prompt_plan import PromptBuildInput
     from chatcopilot.botspec.runtime import load_runtime_context
-    from chatcopilot.botspec.runtime_env import apply_runtime_env
+    from chatcopilot.botspec.runtime_env import apply_runtime_env, load_research_llm_config
 
     runtime_context = load_runtime_context()
     apply_runtime_env(runtime_context)
     chat_config = load_config(env_prefix=runtime_context.spec.llm.env_prefix)
     agent_runtime = build_agent_runtime(
         chat_config=chat_config,
+        research_llm_config=load_research_llm_config(
+            runtime_context.spec.llm,
+            fallback=chat_config.llm,
+        ),
         tool_packs=runtime_context.tool_packs,
         exclude_tools=runtime_context.exclude_tools,
         skill_index=runtime_context.skills,
@@ -257,11 +262,20 @@ def _build_background_executor(
     )
     session = agent_runtime.new_session(
         session_id=f"background-{job_id}",
-        system_baseline=runtime_context.system_prompt,
+        prompt_input=PromptBuildInput(
+            profile=runtime_context.prompt_profile,
+            backend=runtime_context.agent_backend,
+            model=None,
+            role="owner",
+            channel_kind="private",
+            session_policy="这是受保护的后台工具任务会话；只执行已持久化的当前任务。",
+            capability_policies=runtime_context.capability_policies,
+            skill_index=runtime_context.skills,
+        ),
         workspace_service=workspace_service,
         caller_role_hint="owner",
     )
-    return session.executor, agent_runtime
+    return session.tool_executor, agent_runtime
 
 
 def _finish_attempt(

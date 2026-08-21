@@ -18,6 +18,7 @@ import chatcopilot.evals.evaluations as evaluation_module
 import chatcopilot.evals.implementation_catalog as implementation_catalog
 import chatcopilot.evals.paths as evaluation_paths
 import chatcopilot.evals.runner as evaluation_runner
+from chatcopilot.botspec.runtime import BotPromptProfile
 from chatcopilot.core.config import ChatConfig, LLMConfig, RoutingConfig, RuntimeConfig
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.subagents import SearchProviderSpec
@@ -2014,7 +2015,11 @@ def test_resume_rejects_runtime_prompt_drift(
         runtime = original(bot)
         return replace(
             runtime,
-            system_prompt=runtime.system_prompt + "\nchanged evaluation behavior",
+            prompt_profile=replace(
+                runtime.prompt_profile,
+                identity=runtime.prompt_profile.identity
+                + "\nchanged evaluation behavior",
+            ),
         )
 
     monkeypatch.setattr(
@@ -2056,7 +2061,6 @@ def test_resolved_chat_config_snapshot_is_complete_and_excludes_secrets() -> Non
             max_tool_calls=17,
             turn_timeout_seconds=101,
             hard_timeout_seconds=202,
-            quality_gate_level=1,
             topic_classifier_enabled=True,
             topic_classifier_mode="llm",
         ),
@@ -2081,7 +2085,6 @@ def test_resolved_chat_config_snapshot_is_complete_and_excludes_secrets() -> Non
     ) | {"code_command_sha256"}
     assert snapshot["runtime"]["max_tool_iterations"] == 11
     assert snapshot["runtime"]["hard_timeout_seconds"] == 202
-    assert snapshot["runtime"]["quality_gate_level"] == 1
     assert snapshot["runtime"]["topic_classifier_mode"] == "llm"
     assert (
         snapshot["routing"]["code_command_sha256"]
@@ -2102,13 +2105,12 @@ def test_target_runtime_fingerprint_covers_resolved_chat_behavior(
         mcp_servers=(),
         rag_sources=(),
         skills=(),
-        system_prompt="system",
-        refusal_prompt="refusal",
-        safety_prompt_override="safety",
-        memory_prompt_override="memory",
-        mode_prompt_overrides={},
-        role_prompt_overrides={},
-        capability_prompt_fragments=(),
+        prompt_profile=BotPromptProfile(
+            identity="system",
+            response_style="concise",
+            refusal_style="refusal",
+        ),
+        capability_policies=(),
         tool_packs=(),
         tool_features=(),
         exclude_tools=(),
@@ -2140,7 +2142,6 @@ def test_target_runtime_fingerprint_covers_resolved_chat_behavior(
         replace(config, runtime=replace(config.runtime, max_tool_calls=7)),
         replace(config, runtime=replace(config.runtime, turn_timeout_seconds=90)),
         replace(config, runtime=replace(config.runtime, hard_timeout_seconds=180)),
-        replace(config, runtime=replace(config.runtime, quality_gate_level=1)),
         replace(config, runtime=replace(config.runtime, topic_classifier_enabled=True)),
         replace(config, routing=replace(config.routing, code_prefixes=("/different",))),
         replace(config, routing=replace(config.routing, code_command="codex exec --json")),

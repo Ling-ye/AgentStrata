@@ -443,6 +443,26 @@ ingress 和隔离边界，真实两账号 QQ 群 ingress E2E 仍属于部署验�
 可 read/append、只有 Owner 可 clear，且不再投影任何 actor 的私聊 memory。旧 p2p memory 只做
 一对一迁移，旧群 actor/shared memory 不合并，成员可写 persona 不提升为权威配置。
 
+2026-08-20 的 QQ 失败任务先暴露出工具 schema 投影并不能证明 Codex provider 内部实际看见或
+调用了人格工具；随后第一版宿主前置实现又把分类 JSON、URL/短摘录证据和研究草案全部设成保存前
+硬门禁，结果真实消息继续分别失败在证据校验和意图判定，`/persona` 后不加空格也无法识别。
+
+2026-08-21 的破坏式提示词重构进一步删除所有双轨入口：BotSpec 只接受 prompts schema v2，
+main Agent、subagent、middleware、backend 与 Evaluation 统一使用不可变 PromptPlan；旧 assembler、
+旧字段、subagent 平行 prompt、TaskPack 别名、自由文本 capability fragment 和两级质量门禁全部移除。
+人格流程同步改为零模型候选 detector、仅歧义调用的严格 interpreter、研究完成后的单次原子写。
+命名实体研究或草案失败时不再保留部分写入；中可信要求与 clear 使用 actor-bound 十分钟提案，只有
+精确 `/persona confirm` 能落盘。纯人格回合不启动 Codex，复合回合仍只把经过连续子串校验的剩余
+任务交给主 Agent。
+
+随后真实 QQ 请求失败在 `enrichment_model_failed`。复核发现旧实现用完整 Owner 原文构造一次固定
+搜索，再仅以 URL 数量判断来源充分性；它把日常 chat 模型用于研究合成，OpenAI SDK 默认隐藏重试
+又把一次 30 秒调用放大为三次尝试，最终异常类型和实际模型调用没有进入 task artifact。修复删除
+`PersonaEnricher` 和“原文 + 资料补充”的拼装路径，改为独立 `PersonaDraftAgent` 在研究模型槽中自行
+选择最多三个搜索请求并输出整份严格 JSON Markdown。`set`、`append`、`research`、`refresh` 最终都只
+执行一次宿主原子 `set`；SDK 重试关闭，由框架显式拥有预算，任务记录模型、调用、搜索、来源和稳定
+错误类。人格控制不再维护歌词专用契约。
+
 相关规格：
 [`qq-group-shared-conversation-context`](../specs/qq-group-shared-conversation-context/spec.md)、
 [`persona-and-conversation-memory-authorization`](../specs/persona-and-conversation-memory-authorization/spec.md)。

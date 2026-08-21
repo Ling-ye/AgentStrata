@@ -186,7 +186,7 @@ python -m chatcopilot.evals.service maintenance leave --lease-id <lease-id>
 
 ## QQ / NapCat
 
-[KNOWN][HIGH] OneBot `3001` 和 WebUI `6099` 只允许绑定回环地址。WebUI 管理
+ OneBot `3001` 和 WebUI `6099` 只允许绑定回环地址。WebUI 管理
 token 只用于登录管理面板，不是 `QQ_ACCESS_TOKEN`。
 
 首次登录或修复回环容器：
@@ -212,7 +212,7 @@ bash deploy/wsl/qq_gateway.sh restart --instance lingye-copilot-qq
 bash deploy/wsl/qq_gateway.sh logs --instance lingye-copilot-qq
 ```
 
-[KNOWN][HIGH] `sync-token` 只原子更新 Bot 私有 `local.env` 中的
+ `sync-token` 只原子更新 Bot 私有 `local.env` 中的
 `QQ_ACCESS_TOKEN`，保留其他键，并同步运行时 env 与 NapCat `3001` 配置。
 `start`、`restart` 和 `status` 都必须通过无 token 拒绝、带 token 可执行 OneBot
 动作的双向探针；只完成 WebSocket 握手不算认证成功。
@@ -226,9 +226,34 @@ systemd 托管实例的每次 start/restart 也会先执行 `start.sh --apply-co
 BotSpec 的 shared-session、sender injection 与同步身份见证 hook 在 cc-connect 载入配置前
 同时落盘；渲染失败时实例启动失败关闭。
 
+Owner 可直接使用自然语言提出持续人格要求。普通消息先经零模型候选检测；明确要求直接进入专用
+`PersonaDraftAgent`，含糊要求才调用一次严格解释器。人格正文完全由该 Agent 生成；宿主只校验真实
+Owner、scope、严格输出、来源和大小，然后执行唯一一次原子替换。命名人物、角色、歌手或组织形象
+要求 Agent 先通过统一搜索完成公开资料消歧。任一步骤失败都保持旧人格不变。也可使用
+以下完全不依赖主 Agent 的入口，`/persona` 后允许不加空格直接写自然语言：
+
+```text
+/persona show [global|group|user]
+/persona set [global|group|user] <人格要求>
+/persona append [global|group|user] <补充要求>
+/persona research [global|group|user] <自然语言要求>
+/persona refresh [global|group|user]
+/persona clear [global|group|user]
+/persona confirm
+/persona cancel
+/persona<自然语言人格要求>
+```
+
+未指定 scope 时群聊固定为 `group`、私聊固定为 `user`；群聊不能选 `user`，私聊不能选
+`group`。`set` 从要求生成完整文档；`append` 把当前层人格与补充要求交给 Agent，并整体替换为
+一份合并后的完整文档；`research` 强制搜索后生成；`refresh` 用当前权威人格重新研究并整体替换。
+这条链路没有歌词专用字段或回复装饰器，任何持续结尾风格都只是普通人格要求。依赖前文的中可信要求和 `clear` 都只建立与 actor/chat/scope/hash
+及十分钟 TTL 绑定的受保护提案，只有精确 `/persona confirm` 可以落盘；`/persona cancel` 取消。
+普通“确认”不会触发。群聊 `show` 不输出底层人格正文。
+
 ## Codex main / worker 认证
 
-[KNOWN][HIGH] managed `worktree` / `workspace` 使用
+ managed `worktree` / `workspace` 使用
 `CHATCOPILOT_CODEX_BOT_HOME` 作为实例认证根。main 的权威凭据是根
 `auth.json`，worker 的权威凭据是 `worker/auth.json`；即使使用同一账号，也必须
 完成两次独立 device auth。
@@ -245,13 +270,13 @@ python -m chatcopilot bot codex-auth status \
 refresh token；单条 lane 可独立重登。登录先写私有 staging home，校验成功后原子
 安装，失败不会覆盖已有可用凭据。`status --json` 只返回安全状态和非秘密错误码。
 
-[KNOWN][HIGH] 缺失或非法凭据时运行时 fail closed。managed runtime 不得发现、
+ 缺失或非法凭据时运行时 fail closed。managed runtime 不得发现、
 导入或回退桌面/个人 `.codex`；已退役的
 `deploy/wsl/import_codex_desktop_auth.sh` 只会指向上述命令。
 
 ### 代码任务草稿 PR 凭据
 
-[KNOWN][HIGH] 在目标 bot 的 ignored `local.env` 中配置 GitHub repository、预期 PR
+ 在目标 bot 的 ignored `local.env` 中配置 GitHub repository、预期 PR
 actor、fine-grained token 和公开 Git author；不要把 token 写进 BotSpec、prompt 或仓库。
 PR actor 是 token 对应的 GitHub 用户，Git author/committer 是公开的自动化提交身份，
 两者不能混为一谈：
@@ -269,7 +294,7 @@ token 最小 repository permissions 是 `Contents: Read and write`、
 `.github/workflows/**`，因此不需要 `Workflows` 写权限；不要授予 admin、delete 或 force-push
 能力。
 
-[KNOWN][HIGH] worker 在创建 clone 前和正式交付前通过 GitHub `/user` 校验 token 的
+ worker 在创建 clone 前和正式交付前通过 GitHub `/user` 校验 token 的
 canonical login 与 `CHATCOPILOT_CODE_TASK_GITHUB_ACTOR` 一致，并把该 actor 绑定进
 `delivery.json`。缺失、非法、不匹配、漂移或无法验证时失败关闭。Commit 正文与 Draft PR
 顶部公开声明该变更由预期 actor 的 AgentStrata AI Coding Bot 生成，并继续要求人工审批；
@@ -282,11 +307,11 @@ bash console/systemd/register.sh --enable lingye-copilot-qq
 systemctl --user restart chatcopilot-code-worker@lingye-copilot-qq.service
 ```
 
-[KNOWN][HIGH] 注册时每个 worker 使用 BotSpec 的 `deploy.workspace_root`；缺省值也包含
+ 注册时每个 worker 使用 BotSpec 的 `deploy.workspace_root`；缺省值也包含
 `instance_id`。worker 启动复用 canonical BotSpec runtime env，恢复任务时只接受 request 中完全匹配的
 `instance_id`，不会跨实例消费任务。
 
-[KNOWN][HIGH] `register.sh` 把实例配置目录收紧为 mode `0700`，并把 token 原子物化为
+ `register.sh` 把实例配置目录收紧为 mode `0700`，并把 token 原子物化为
 single-link mode `0600` worker 文件；transient task unit 只接收文件路径。交付进程通过
 `O_NOFOLLOW` + `fstat` 从同一 fd 单次读取，Git askpass 使用任务期内的临时 `0600` 快照；
 Codex 进程、worker env、Git remote 与持久化诊断都不包含 token 明文。
@@ -451,7 +476,7 @@ python -m chatcopilot bot external-check \
   --json
 ```
 
-[KNOWN][HIGH] 外部检查复用目标 Bot 已有的 `QQ_WS_URL`、`QQ_ACCESS_TOKEN` 和
+ 外部检查复用目标 Bot 已有的 `QQ_WS_URL`、`QQ_ACCESS_TOKEN` 和
 `QQ_ACCOUNT`；WebSocket endpoint 仍必须是带显式端口的本机回环地址，token 仍必须是
 32–128 位 URL-safe 强 token。检查群只能来自 ignored `local.env` 的固定
 `CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID`，不能由模型或 Evaluation Case 覆盖。

@@ -127,7 +127,7 @@ def _bot_tool_packs(bot_data: dict[str, Any]) -> tuple[list[dict[str, Any]], lis
             "label": _NAMESPACE_LABELS.get(ns, ns),
             "description": str(entry.description) if entry else "",
             "has_tools": bool(entry and entry.tool_modules),
-            "has_prompts": bool(entry and entry.manifest_module),
+            "has_prompts": bool(entry and entry.policy_module),
         })
 
     excluded = [str(t).strip() for t in (exclude if isinstance(exclude, list) else []) if str(t).strip()]

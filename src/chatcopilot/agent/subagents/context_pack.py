@@ -74,7 +74,6 @@ class ContextPackBuilder:
             write_scope=str(task_data.get("write_scope") or ""),
             excluded_context=tuple(task_data.get("excluded_context") or ()),
             cache_key_hint=str(task_data.get("cache_key_hint") or ""),
-            legacy_task=task.legacy_task,
         )
         summaries = tuple(_tool_summary(tool) for tool in tools)
         trimmed_summaries = _trim_summaries(summaries, policy.max_context_tokens)

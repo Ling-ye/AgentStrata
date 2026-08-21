@@ -123,7 +123,7 @@ def test_memory_append_is_idempotent_and_concurrent(tmp_path: Path) -> None:
     assert all(item in snapshot for item in entries)
 
 
-def test_legacy_migration_is_narrow_and_non_destructive(tmp_path: Path) -> None:
+def test_only_private_memory_migrates_and_all_legacy_persona_is_ignored(tmp_path: Path) -> None:
     private = _state(tmp_path, user_id="u1")
     private.workspace.memory_file.write_text(
         "# Memory\n\n## facts\n- 2026-08-19 12:00 私聊稳定偏好\n",
@@ -136,9 +136,6 @@ def test_legacy_migration_is_narrow_and_non_destructive(tmp_path: Path) -> None:
     assert "私聊稳定偏好" in private.memory_snapshot()
     assert private.workspace.memory_file.exists()
     assert private.persona_snapshot("user") == ""
-    report = tmp_path / ".conversation-state/persistent/migration/REPORT.md"
-    assert "ignored_untrusted_persona" in report.read_text(encoding="utf-8")
-    assert "u1" not in report.read_text(encoding="utf-8")
     assert private.workspace.root.joinpath("PERSONA.md").exists()
 
     group = _state(tmp_path, group_id="g1")
@@ -155,7 +152,7 @@ def test_legacy_migration_is_narrow_and_non_destructive(tmp_path: Path) -> None:
         "# Memory\n- 2026-08-19 12:02 旧 actor 私有内容\n",
         encoding="utf-8",
     )
-    assert group.persona_snapshot("group").strip() == "可信旧群人格"
+    assert group.persona_snapshot("group") == ""
     assert not has_meaningful_memory(group.memory_snapshot())
     assert group.workspace.root.parent.joinpath("PERSONA.md").exists()
 
@@ -201,10 +198,10 @@ def test_template_only_legacy_memory_is_skipped(tmp_path: Path) -> None:
     )
 
 
-def test_legacy_empty_persona_template_is_not_migrated(tmp_path: Path) -> None:
+def test_legacy_global_persona_is_never_migrated(tmp_path: Path) -> None:
     state = _state(tmp_path)
     tmp_path.joinpath("PERSONA.md").write_text(
-        "# Persona\n\n> 机器人旧人格模板。\n> 仅 Owner 管理。\n",
+        "旧全局人格正文",
         encoding="utf-8",
     )
     assert state.persona_snapshot("global") == ""

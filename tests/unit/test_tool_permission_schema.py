@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from tests.prompt_plan_fixture import prompt_input
+
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 from chatcopilot.agent.runtime import AgentRuntime
+from chatcopilot.agent.context.prompt_plan import render_native_prefix
 from chatcopilot.contracts import Role, role_ge, role_value
 from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.external_tools.shared.tool_spec import ToolDef, build_openai_schema
@@ -41,18 +45,23 @@ def _runtime(*tools: ToolDef) -> AgentRuntime:
     )
 
 
+def _native(session):
+    return session.backend.native_session(session.backend_session_ref)
+
+
 def test_user_session_cannot_see_or_call_owner_only_tool() -> None:
     runtime = _runtime(_tool("normal_tool"), _tool("owner_tool", requires_role="owner"))
     session = runtime.new_session(
         session_id="s1",
-        system_baseline="baseline",
+        prompt_input=prompt_input("baseline"),
         permission_filter=_permission_filter(Role.USER),
     )
 
-    schema_names = {entry["function"]["name"] for entry in session.tools_schema}
+    concrete = _native(session)
+    schema_names = {entry["function"]["name"] for entry in concrete.tools_schema}
     assert schema_names == {"normal_tool"}
 
-    result = session.executor.execute("owner_tool", {})
+    result = session.tool_executor.execute("owner_tool", {})
     assert result.ok is False
     assert "需要 owner" in (result.error or "")
 
@@ -61,14 +70,15 @@ def test_owner_session_can_see_and_call_owner_only_tool() -> None:
     runtime = _runtime(_tool("normal_tool"), _tool("owner_tool", requires_role="owner"))
     session = runtime.new_session(
         session_id="s1",
-        system_baseline="baseline",
+        prompt_input=prompt_input("baseline"),
         permission_filter=_permission_filter(Role.OWNER),
     )
 
-    schema_names = {entry["function"]["name"] for entry in session.tools_schema}
+    concrete = _native(session)
+    schema_names = {entry["function"]["name"] for entry in concrete.tools_schema}
     assert schema_names == {"normal_tool", "owner_tool"}
 
-    result = session.executor.execute("owner_tool", {})
+    result = session.tool_executor.execute("owner_tool", {})
     assert result.ok is True
 
 
@@ -77,11 +87,12 @@ def test_runtime_passes_retriever_without_changing_tool_schema() -> None:
     runtime = _runtime(_tool("normal_tool"))
     runtime.retriever = retriever
 
-    session = runtime.new_session(session_id="s1", system_baseline="baseline")
+    session = runtime.new_session(session_id="s1", prompt_input=prompt_input("baseline"))
 
-    schema_names = {entry["function"]["name"] for entry in session.tools_schema}
+    concrete = _native(session)
+    schema_names = {entry["function"]["name"] for entry in concrete.tools_schema}
     assert schema_names == {"normal_tool"}
-    assert session.retriever is retriever
+    assert concrete.retriever is retriever
 
 
 def test_session_can_explicitly_hide_bot_skill_index() -> None:
@@ -95,12 +106,14 @@ def test_session_can_explicitly_hide_bot_skill_index() -> None:
         ),
     )
 
-    owner = runtime.new_session(session_id="owner", system_baseline="baseline")
+    owner_input = replace(prompt_input("baseline"), skill_index=runtime.skill_index)
+    owner = runtime.new_session(session_id="owner", prompt_input=owner_input)
     member = runtime.new_session(
         session_id="member",
-        system_baseline="baseline",
-        skill_index_override=(),
+        prompt_input=prompt_input("baseline"),
     )
 
-    assert "internal-playbook" in owner.system_baseline
-    assert "internal-playbook" not in member.system_baseline
+    owner_text = render_native_prefix(_native(owner).prompt_plan)[0]["content"]
+    member_text = render_native_prefix(_native(member).prompt_plan)[0]["content"]
+    assert "internal-playbook" in owner_text
+    assert "internal-playbook" not in member_text

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import stat
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -11,7 +12,6 @@ from chatcopilot.contracts.subagents import (
     CachePolicySpec,
     CodexMainSessionPolicy,
     ContextPolicySpec,
-    PromptLayerSpec,
     SearchProviderSpec,
     ToolMatchRule,
     ToolSelectorSpec,
@@ -20,6 +20,7 @@ from chatcopilot.contracts.model_selection import (
     CODEX_REASONING_EFFORTS,
     CodeModelProfile,
 )
+from chatcopilot.contracts.persona_control import PersonaControlSpec
 from chatcopilot.botspec.model import (
     AccessSpec,
     BotSpec,
@@ -84,6 +85,7 @@ _SUBAGENT_BUDGET_FIELDS = {
     "timeout_seconds",
     "max_output_chars",
 }
+_PERSONA_CONTROL_FIELDS = frozenset({"enabled"})
 
 
 def load_botspec(path: str | Path) -> BotSpec:
@@ -125,18 +127,59 @@ def validate_botspec(spec: BotSpec) -> list[ValidationIssue]:
             )
     if not spec.platform.adapter.strip():
         issues.append(ValidationIssue("error", "platform.adapter 不能为空", "platform.adapter"))
-    if not spec.prompts.persona.strip():
-        issues.append(ValidationIssue("error", "prompts.persona 不能为空", "prompts.persona"))
+    prompt_raw = spec.raw.get("prompts", {}) if isinstance(spec.raw, dict) else {}
+    prompt_keys = set(prompt_raw) if isinstance(prompt_raw, dict) else set()
+    allowed_prompt_keys = {
+        "schema_version",
+        "identity",
+        "response_style",
+        "refusal_style",
+        "role_styles",
+        "mode_styles",
+    }
+    unknown_prompt_keys = sorted(prompt_keys - allowed_prompt_keys)
+    if unknown_prompt_keys:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "prompts 只接受 schema v2 字段；未知字段: "
+                + ", ".join(unknown_prompt_keys),
+                "prompts",
+            )
+        )
+    if spec.prompts.schema_version != 2:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "prompts.schema_version 必须为 2",
+                "prompts.schema_version",
+            )
+        )
+    if not spec.prompts.identity.strip():
+        issues.append(ValidationIssue("error", "prompts.identity 不能为空", "prompts.identity"))
+    if not spec.prompts.response_style.strip():
+        issues.append(
+            ValidationIssue(
+                "error",
+                "prompts.response_style 不能为空",
+                "prompts.response_style",
+            )
+        )
     _validate_llm_spec(spec, issues)
 
-    _check_file_exists(spec, spec.prompts.persona, "prompts.persona", issues)
-    _check_file_exists(spec, spec.prompts.refusal, "prompts.refusal", issues, required=False)
-    _check_file_exists(spec, spec.prompts.safety, "prompts.safety", issues, required=False)
-    _check_file_exists(spec, spec.prompts.memory_rules, "prompts.memory_rules", issues, required=False)
-    for key, value in spec.prompts.modes.items():
-        _check_file_exists(spec, value, f"prompts.modes.{key}", issues, required=False)
-    for key, value in spec.prompts.roles.items():
-        _check_file_exists(spec, value, f"prompts.roles.{key}", issues, required=False)
+    _check_prompt_file(spec, spec.prompts.identity, "prompts.identity", issues)
+    _check_prompt_file(spec, spec.prompts.response_style, "prompts.response_style", issues)
+    _check_prompt_file(
+        spec,
+        spec.prompts.refusal_style,
+        "prompts.refusal_style",
+        issues,
+        required=False,
+    )
+    for key, value in spec.prompts.mode_styles.items():
+        _check_prompt_file(spec, value, f"prompts.mode_styles.{key}", issues, required=False)
+    for key, value in spec.prompts.role_styles.items():
+        _check_prompt_file(spec, value, f"prompts.role_styles.{key}", issues, required=False)
     _check_file_exists(spec, spec.tools.mcp.servers, "tools.mcp.servers", issues, required=False)
     _check_file_exists(spec, spec.context.rag.sources, "context.rag.sources", issues, required=False)
     _check_file_exists(spec, spec.context.codebases.registry, "context.codebases.registry", issues, required=False)
@@ -419,6 +462,7 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         llm=LLMSpec(
             env_prefix=chat_env_prefix,
             research_env_prefix=research_env_prefix,
+            research_model=_optional_str(llm_research.get("model")),
             research_execution=str(
                 llm_research.get("execution", "agent")
             ).strip().lower()
@@ -481,12 +525,12 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
             ),
         ),
         prompts=PromptSpec(
-            persona=str(prompts.get("persona", "")).strip(),
-            refusal=_optional_str(prompts.get("refusal")),
-            safety=_optional_str(prompts.get("safety")),
-            memory_rules=_optional_str(prompts.get("memory_rules")),
-            modes=_str_map(prompts.get("modes")),
-            roles=_str_map(prompts.get("roles")),
+            schema_version=_as_int(prompts.get("schema_version"), 0),
+            identity=str(prompts.get("identity", "")).strip(),
+            response_style=str(prompts.get("response_style", "")).strip(),
+            refusal_style=_optional_str(prompts.get("refusal_style")),
+            mode_styles=_str_map(prompts.get("mode_styles")),
+            role_styles=_str_map(prompts.get("role_styles")),
         ),
         tools=ToolSpec(
             packs=tuple(_str_list(tools.get("packs", []))),
@@ -719,6 +763,10 @@ def _parse_subagents(
         research_router.get("providers", []),
         field_prefix=f"{field_prefix}.unified_search.providers",
     )
+    persona_control = _parse_persona_control(
+        raw.get("persona_control", {}),
+        field_prefix=f"{field_prefix}.persona_control",
+    )
     return SubagentSpec(
         backend=str(raw.get("backend", "native")).strip().lower() or "native",
         codex=_parse_codex_main_session_policy(raw, field_prefix=field_prefix),
@@ -737,6 +785,27 @@ def _parse_subagents(
         custom=custom,
         workflows=tuple(_str_list(raw.get("workflows", []))),
         max_workflow_depth=_as_int(raw.get("max_workflow_depth"), 2),
+        persona_control=persona_control,
+    )
+
+
+def _parse_persona_control(
+    raw: Any,
+    *,
+    field_prefix: str,
+) -> PersonaControlSpec:
+    block = _mapping(raw, field_prefix)
+    unknown = sorted(set(block).difference(_PERSONA_CONTROL_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"{field_prefix} contains unsupported field(s): {', '.join(unknown)}"
+        )
+    return PersonaControlSpec(
+        enabled=_strict_bool(
+            block.get("enabled"),
+            f"{field_prefix}.enabled",
+            False,
+        ),
     )
 
 
@@ -835,10 +904,12 @@ def _parse_custom_subagents(
                     _mapping(entry.get("budget", {}), f"{field_prefix}.custom[{index}].budget"),
                     defaults,
                 ),
-                prompt_path=_optional_str(entry.get("prompt")),
+                role_prompt_path=_parse_subagent_role_path(
+                    entry.get("prompt"),
+                    f"{field_prefix}.custom[{index}].prompt",
+                ),
                 kind=str(entry.get("kind", "domain")).strip() or "domain",
                 version=str(entry.get("version", "1")).strip() or "1",
-                prompt_layers=_parse_prompt_layers(entry.get("prompt_layers")),
                 input_schema=_mapping(entry.get("input_schema", {}), f"{field_prefix}.custom[{index}].input_schema"),
                 output_schema=_mapping(entry.get("output_schema", {}), f"{field_prefix}.custom[{index}].output_schema"),
                 context_policy=_parse_context_policy(entry.get("context_policy")),
@@ -860,10 +931,12 @@ def _parse_subagent_override(
         summary=str(raw.get("summary", "")).strip(),
         selector=_parse_selector(raw.get("selector")),
         budget=_parse_subagent_budget(raw, defaults),
-        prompt_path=_optional_str(raw.get("prompt")),
+        role_prompt_path=_parse_subagent_role_path(
+            raw.get("prompt"),
+            f"subagents.{name}.prompt",
+        ),
         kind=str(raw.get("kind", "")).strip(),
         version=str(raw.get("version", "")).strip() or "1",
-        prompt_layers=_parse_prompt_layers(raw.get("prompt_layers")),
         input_schema=_mapping(raw.get("input_schema", {}), f"subagents.{name}.input_schema"),
         output_schema=_mapping(raw.get("output_schema", {}), f"subagents.{name}.output_schema"),
         context_policy=_parse_context_policy(raw.get("context_policy")),
@@ -914,16 +987,12 @@ def _parse_subagent_budget(raw: dict[str, Any], base: SubagentBudgetSpec) -> Sub
     )
 
 
-def _parse_prompt_layers(raw: Any) -> PromptLayerSpec:
-    mapping = _mapping(raw or {}, "prompt_layers")
-    base = PromptLayerSpec()
-    return PromptLayerSpec(
-        framework_base=str(mapping.get("framework_base", base.framework_base) or "").strip(),
-        role=str(mapping.get("role", base.role) or "").strip(),
-        bot_override=str(mapping.get("bot_override", base.bot_override) or "").strip(),
-        task_focus=str(mapping.get("task_focus", base.task_focus) or "").strip(),
-        safety_tail=str(mapping.get("safety_tail", base.safety_tail) or "").strip(),
-    )
+def _parse_subagent_role_path(raw: Any, field: str) -> str | None:
+    mapping = _mapping(raw or {}, field)
+    unknown = sorted(set(mapping) - {"role"})
+    if unknown:
+        raise ValueError(f"{field} contains unsupported field(s): {', '.join(unknown)}")
+    return _optional_str(mapping.get("role"))
 
 
 def _parse_context_policy(raw: Any) -> ContextPolicySpec:
@@ -1208,12 +1277,12 @@ def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
         tool_names.add(custom.tool_name)
         if not custom.summary.strip():
             issues.append(ValidationIssue("error", "summary 不能为空", f"{field_prefix}.summary"))
-        if not custom.prompt_path:
+        if not custom.role_prompt_path:
             issues.append(
                 ValidationIssue("error", "custom subagent 必须声明 prompt 指针", f"{field_prefix}.prompt")
             )
         else:
-            _check_file_exists(spec, custom.prompt_path, f"{field_prefix}.prompt", issues)
+            _check_file_exists(spec, custom.role_prompt_path, f"{field_prefix}.prompt.role", issues)
         if custom.selector.is_empty:
             issues.append(
                 ValidationIssue(
@@ -1286,6 +1355,38 @@ def _check_file_exists(
         return
     if not path.is_file():
         issues.append(ValidationIssue("error", f"{field} 指向的文件不存在: {path}", field))
+
+
+def _check_prompt_file(
+    spec: BotSpec,
+    value: str | None,
+    field: str,
+    issues: list[ValidationIssue],
+    *,
+    required: bool = True,
+) -> None:
+    path = spec.resolve_path(value)
+    if path is None:
+        if required:
+            issues.append(ValidationIssue("error", f"{field} 不能为空", field))
+        return
+    try:
+        metadata = path.lstat()
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(spec.base_dir.resolve(strict=True))
+    except FileNotFoundError:
+        issues.append(ValidationIssue("error", f"{field} 指向的文件不存在: {path}", field))
+        return
+    except (OSError, ValueError):
+        issues.append(ValidationIssue("error", f"{field} 必须位于 BotSpec 根目录内", field))
+        return
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        issues.append(ValidationIssue("error", f"{field} 必须指向普通非符号链接文件", field))
+        return
+    try:
+        path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        issues.append(ValidationIssue("error", f"{field} 必须是可读 UTF-8 文件", field))
 
 
 def _validate_skills_manifest(spec: BotSpec, issues: list[ValidationIssue]) -> None:

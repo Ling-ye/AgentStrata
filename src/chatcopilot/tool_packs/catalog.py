@@ -8,7 +8,7 @@ from chatcopilot.contracts.tool_packs import (
     ToolFeatureEntry,
     ToolModuleBinding,
     ToolPackEntry,
-    ToolPackPrompt,
+    ToolPackPolicy,
 )
 
 
@@ -19,8 +19,8 @@ def _binding(module: str, *tool_names: str) -> ToolModuleBinding:
 _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     "feishu.document": ToolPackEntry(
         name="feishu.document",
-        manifest_module="chatcopilot.external_tools.feishu.tool_pack_prompts",
-        manifest_builder="build_docs_pack",
+        policy_module="chatcopilot.external_tools.feishu.tool_pack_policies",
+        policy_builder="build_docs_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.feishu.spec",
@@ -33,8 +33,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "feishu.sheet": ToolPackEntry(
         name="feishu.sheet",
-        manifest_module="chatcopilot.external_tools.feishu.tool_pack_prompts",
-        manifest_builder="build_sheets_pack",
+        policy_module="chatcopilot.external_tools.feishu.tool_pack_policies",
+        policy_builder="build_sheets_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.feishu.spec",
@@ -48,8 +48,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "feishu.bitable": ToolPackEntry(
         name="feishu.bitable",
-        manifest_module="chatcopilot.external_tools.feishu.tool_pack_prompts",
-        manifest_builder="build_bitable_pack",
+        policy_module="chatcopilot.external_tools.feishu.tool_pack_policies",
+        policy_builder="build_bitable_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.feishu.spec",
@@ -63,8 +63,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "feishu.wiki": ToolPackEntry(
         name="feishu.wiki",
-        manifest_module="chatcopilot.external_tools.feishu.tool_pack_prompts",
-        manifest_builder="build_wiki_pack",
+        policy_module="chatcopilot.external_tools.feishu.tool_pack_policies",
+        policy_builder="build_wiki_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.feishu.spec",
@@ -77,8 +77,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "feishu.messaging": ToolPackEntry(
         name="feishu.messaging",
-        manifest_module="chatcopilot.external_tools.feishu.tool_pack_prompts",
-        manifest_builder="build_im_pack",
+        policy_module="chatcopilot.external_tools.feishu.tool_pack_policies",
+        policy_builder="build_im_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.feishu.spec",
@@ -90,8 +90,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "filesystem.windows.read": ToolPackEntry(
         name="filesystem.windows.read",
-        manifest_module="chatcopilot.external_tools.windows_fs.tool_pack_prompts",
-        manifest_builder="build_windows_fs_read_pack",
+        policy_module="chatcopilot.external_tools.windows_fs.tool_pack_policies",
+        policy_builder="build_windows_fs_read_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.windows_fs.tools",
@@ -104,8 +104,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "unity.codebase.read": ToolPackEntry(
         name="unity.codebase.read",
-        manifest_module="chatcopilot.external_tools.unity_codebase.tool_pack_prompts",
-        manifest_builder="build_unity_codebase_read_pack",
+        policy_module="chatcopilot.external_tools.unity_codebase.tool_pack_policies",
+        policy_builder="build_unity_codebase_read_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.unity_codebase.read_tools",
@@ -119,8 +119,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "unity.skills": ToolPackEntry(
         name="unity.skills",
-        manifest_module="chatcopilot.external_tools.unity_codebase.tool_pack_prompts",
-        manifest_builder="build_unity_codebase_skills_pack",
+        policy_module="chatcopilot.external_tools.unity_codebase.tool_pack_policies",
+        policy_builder="build_unity_codebase_skills_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.unity_codebase.skill_tools",
@@ -131,8 +131,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "codebase.read": ToolPackEntry(
         name="codebase.read",
-        manifest_module="chatcopilot.external_tools.codebase.tool_pack_prompts",
-        manifest_builder="build_codebase_read_pack",
+        policy_module="chatcopilot.external_tools.codebase.tool_pack_policies",
+        policy_builder="build_codebase_read_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.codebase.tools",
@@ -150,8 +150,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "dev.files": ToolPackEntry(
         name="dev.files",
-        manifest_module="chatcopilot.external_tools.dev.tool_pack_prompts",
-        manifest_builder="build_dev_files_pack",
+        policy_module="chatcopilot.external_tools.dev.tool_pack_policies",
+        policy_builder="build_dev_files_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.dev.file_tools",
@@ -167,8 +167,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "dev.shell": ToolPackEntry(
         name="dev.shell",
-        manifest_module="chatcopilot.external_tools.dev.tool_pack_prompts",
-        manifest_builder="build_dev_shell_pack",
+        policy_module="chatcopilot.external_tools.dev.tool_pack_policies",
+        policy_builder="build_dev_shell_pack",
         tool_bindings=(
             _binding("chatcopilot.external_tools.dev.shell_tools", "run_command"),
         ),
@@ -176,8 +176,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "dev.code_tasks": ToolPackEntry(
         name="dev.code_tasks",
-        manifest_module="chatcopilot.external_tools.dev.tool_pack_prompts",
-        manifest_builder="build_dev_code_tasks_pack",
+        policy_module="chatcopilot.external_tools.dev.tool_pack_policies",
+        policy_builder="build_dev_code_tasks_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.dev.code_task_tools",
@@ -199,8 +199,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "career.intelligence": ToolPackEntry(
         name="career.intelligence",
-        manifest_module="chatcopilot.external_tools.career.tool_pack_prompts",
-        manifest_builder="build_career_intelligence_pack",
+        policy_module="chatcopilot.external_tools.career.tool_pack_policies",
+        policy_builder="build_career_intelligence_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.career.spec",
@@ -216,8 +216,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "wiki.knowledge": ToolPackEntry(
         name="wiki.knowledge",
-        manifest_module="chatcopilot.external_tools.wiki.tool_pack_prompts",
-        manifest_builder="build_wiki_knowledge_pack",
+        policy_module="chatcopilot.external_tools.wiki.tool_pack_policies",
+        policy_builder="build_wiki_knowledge_pack",
         tool_bindings=(
             _binding(
                 "chatcopilot.external_tools.wiki.spec",
@@ -231,8 +231,8 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
     ),
     "web.fetch": ToolPackEntry(
         name="web.fetch",
-        manifest_module="chatcopilot.external_tools.web_fetch.tool_pack_prompts",
-        manifest_builder="build_web_fetch_pack",
+        policy_module="chatcopilot.external_tools.web_fetch.tool_pack_policies",
+        policy_builder="build_web_fetch_pack",
         tool_bindings=(
             _binding("chatcopilot.external_tools.web_fetch.tools", "web_fetch_page"),
         ),
@@ -269,22 +269,6 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
         description=(
             "Trusted conversation-scoped memory helpers: admitted users read/append; "
             "private users clear self and only Owner clears group memory."
-        ),
-    ),
-    "persona.manage": ToolPackEntry(
-        name="persona.manage",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.agent.tools.builtin.persona_tools",
-                "persona_show",
-                "persona_set",
-                "persona_append",
-                "persona_clear",
-            ),
-        ),
-        description=(
-            "Owner-only layered assistant persona helpers for global, current group, and "
-            "current private-user scopes."
         ),
     ),
     "playbooks.reader": ToolPackEntry(
@@ -388,22 +372,24 @@ def all_tool_modules() -> tuple[str, ...]:
     return tuple(binding.module for binding in all_tool_bindings())
 
 
-def load_tool_pack_prompt(name: str) -> ToolPackPrompt | None:
-    """Load a tool pack prompt guide when it has a Python manifest module."""
+def load_tool_pack_policies(name: str) -> tuple[ToolPackPolicy, ...]:
+    """Load stable cross-tool policies declared by one catalog entry."""
 
     entry = get_tool_pack_entry(name)
-    if entry is None or entry.manifest_module is None:
-        return None
-    module = importlib.import_module(entry.manifest_module)
-    build_manifest: Callable[[], ToolPackPrompt] = getattr(module, entry.manifest_builder)
-    return build_manifest()
+    if entry is None or entry.policy_module is None:
+        return ()
+    module = importlib.import_module(entry.policy_module)
+    build_policy: Callable[[], tuple[ToolPackPolicy, ...]] = getattr(
+        module, entry.policy_builder
+    )
+    return build_policy()
 
 
 __all__ = [
     "ToolFeatureEntry",
     "ToolModuleBinding",
     "ToolPackEntry",
-    "ToolPackPrompt",
+    "ToolPackPolicy",
     "_BUILTIN_TOOL_FEATURES",
     "_BUILTIN_TOOL_PACKS",
     "all_tool_bindings",
@@ -412,7 +398,7 @@ __all__ = [
     "get_tool_pack_entry",
     "known_tool_feature_names",
     "known_tool_pack_names",
-    "load_tool_pack_prompt",
+    "load_tool_pack_policies",
     "resolve_tool_bindings",
     "resolve_tool_modules",
 ]

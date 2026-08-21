@@ -23,6 +23,7 @@ from chatcopilot.agent.context import (
     validated_image_resource_receipts,
 )
 from chatcopilot.agent.context.token_estimator import estimate_prompt_tokens
+from chatcopilot.agent.response_integrity import ResponseIntegrityCheck
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.turn_support import safe_emit
 from chatcopilot.contracts.agent import (
@@ -64,6 +65,8 @@ from chatcopilot.core.model_selection import (
     default_code_model_selection,
     validate_frozen_code_model_selection,
 )
+from chatcopilot.contracts.prompt import PromptPlan
+from chatcopilot.agent.context.prompt_plan import render_codex_prompt
 from chatcopilot.external_tools.codex_cli.command import (
     build_codex_command,
     build_codex_subprocess_env,
@@ -83,7 +86,7 @@ if TYPE_CHECKING:
 @dataclass
 class _CodexSession:
     acp_session_id: str
-    system_baseline: str
+    prompt_plan: PromptPlan
     allowed_tool_names: frozenset[str]
     gateway_config: Path
     audit_path: Path
@@ -288,7 +291,7 @@ class CodexAgentBackend:
         codex_home = state_root / f"{stable_id}.codex-home"
         session = _CodexSession(
             acp_session_id=request.session_id,
-            system_baseline=request.system_baseline,
+            prompt_plan=request.prompt_plan,
             allowed_tool_names=frozenset(tool.name for tool in selected_tools),
             gateway_config=gateway_config,
             audit_path=audit_path,
@@ -417,6 +420,7 @@ class CodexAgentBackend:
         llm_span_id: str | None = None
         turn_relay: SessionToolRelay | None = None
         relay_generation: int | None = None
+        successful_operations: list[str] = []
         try:
             image_paths = self._image_paths(task)
             command = self._command(
@@ -530,6 +534,7 @@ class CodexAgentBackend:
                     trace_id=trace_id,
                     parent_span_id=llm_span_id,
                     require_complete=False,
+                    successful_operations=successful_operations,
                 )
                 if relay_error:
                     raise RuntimeError(f"Codex relay audit failed: {relay_error}")
@@ -550,6 +555,7 @@ class CodexAgentBackend:
                 trace_id=trace_id,
                 parent_span_id=llm_span_id,
                 require_complete=True,
+                successful_operations=successful_operations,
             )
             if audit_error:
                 raise RuntimeError(f"Codex relay audit failed: {audit_error}")
@@ -580,6 +586,7 @@ class CodexAgentBackend:
                     trace_id=trace_id,
                     parent_span_id=llm_span_id,
                     require_complete=True,
+                    successful_operations=successful_operations,
                 )
             relay_reset_error = ""
             if audit_error and turn_relay is not None and relay_generation is not None:
@@ -591,6 +598,7 @@ class CodexAgentBackend:
                     parent_span_id=llm_span_id,
                     require_complete=False,
                     settle_unknown=True,
+                    successful_operations=successful_operations,
                 )
                 if unknown_error:
                     audit_error = (
@@ -656,6 +664,12 @@ class CodexAgentBackend:
                 final_text = self._generic_cli_failure()
         if not final_text:
             final_text = "Codex completed without a final message."
+        integrity = ResponseIntegrityCheck().check(
+            final_text,
+            successful_operations=tuple(successful_operations),
+        )
+        if any(issue.startswith("missing_receipt:") for issue in integrity.issues):
+            final_text = "未能确认该操作已完成：本轮缺少相应的可信成功回执。"
         state.messages.append({"role": "assistant", "content": final_text})
         on_event(TextDelta(final_text))
         on_event(FinalText(final_text))
@@ -663,6 +677,7 @@ class CodexAgentBackend:
             final_text=final_text,
             stop_reason="llm_error" if codex_failed else "end_turn",
             message_count=len(state.messages),
+            response_integrity=integrity,
         )
 
     @staticmethod
@@ -675,6 +690,7 @@ class CodexAgentBackend:
         parent_span_id: str | None,
         require_complete: bool = True,
         settle_unknown: bool = False,
+        successful_operations: list[str] | None = None,
     ) -> str:
         """Project trusted in-process relay receipts onto the shared Agent event protocol."""
 
@@ -785,6 +801,8 @@ class CodexAgentBackend:
             if data is not None and not isinstance(data, dict):
                 return "relay returned malformed tool result data"
             ok = event.get("ok") is True
+            if ok and successful_operations is not None:
+                successful_operations.append(name)
             safe_emit(
                 on_event,
                 ToolFinished(
@@ -864,8 +882,8 @@ class CodexAgentBackend:
         value = state.native_session_id or self._stable_key(session)
         return BackendSessionRef(self.backend_id, value)
 
-    def set_system_baseline(self, session: BackendSessionRef, baseline: str) -> None:
-        self._resolve(session).system_baseline = baseline
+    def set_prompt_plan(self, session: BackendSessionRef, plan: PromptPlan) -> None:
+        self._resolve(session).prompt_plan = plan
 
     def record_exchange(
         self, session: BackendSessionRef, user_text: str, assistant_text: str
@@ -1170,15 +1188,12 @@ class CodexAgentBackend:
         return wrapped
 
     def _prompt(self, state: _CodexSession, task: AgentTask) -> str:
-        baseline = state.system_baseline.strip()
-        appendix = (task.system_appendix or "").strip()
-        pieces = [
-            baseline,
-            self._execution_policy_prompt(state),
-            frame_task_message(task),
-            appendix,
-        ]
-        return "\n\n".join(piece for piece in pieces if piece)
+        return render_codex_prompt(
+            state.prompt_plan,
+            user_message=frame_task_message(task),
+            execution_policy=self._execution_policy_prompt(state),
+            turn_context=task.turn_context,
+        )
 
     def _context_tool_schemas(
         self,

@@ -11,14 +11,15 @@ llm:
     env_prefix: CHATCOPILOT_CHAT
 
 prompts:
-  persona: prompts/persona.md
-  refusal: prompts/refusal.md
+  schema_version: 2
+  identity: prompts/identity.md
+  response_style: prompts/response-style.md
+  refusal_style: prompts/refusal-style.md
 
 tools:
   packs:
     - workspace.read_write
     - memory.chat
-    - persona.manage
     - mcp.admin
   features:
     - chat.file_uploads
@@ -28,6 +29,8 @@ tools:
 
 agents:
   backend: native
+  persona_control:
+    enabled: true
   presets:
     - mcp_query
 

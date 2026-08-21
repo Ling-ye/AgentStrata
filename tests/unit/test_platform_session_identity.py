@@ -156,7 +156,9 @@ class PlatformSessionIdentityTests(unittest.TestCase):
                       type: qq
                       adapter: qq_acp
                     prompts:
-                      persona: persona.md
+                      schema_version: 2
+                      identity: persona.md
+                      response_style: persona.md
                     tools:
                       packs: []
                     deploy:

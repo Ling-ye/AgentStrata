@@ -17,6 +17,7 @@ from chatcopilot.middleware.acp import attachment_pipeline as _attachment
 from chatcopilot.middleware.acp import attachment_turns as _attachment_turns
 from chatcopilot.middleware.acp import deterministic_replies as _deterministic_replies
 from chatcopilot.middleware.acp import image_pipeline as _image
+from chatcopilot.middleware.acp import persona_control as _persona_control
 from chatcopilot.middleware.acp.prompt_pipeline import build_topic_metadata
 from chatcopilot.middleware.acp.group_conversation import SenderEnvelopeError
 from chatcopilot.middleware.acp.turn_pipeline import (
@@ -31,7 +32,7 @@ _LOGGER = logging.getLogger("chatcopilot.middleware.acp.turn_orchestrator")
 
 
 class AcpTurnOrchestrator:
-    """Own all six ACP stages while delegating transport operations to the host."""
+    """Own the ordered ACP stages while delegating transport operations to the host."""
 
     def __init__(
         self,
@@ -44,7 +45,7 @@ class AcpTurnOrchestrator:
         has_private_space_inventory: bool,
         update_text: Callable[[str], Any],
         recover_workspace: Callable[..., Any],
-        refresh_system_prompt: Callable[[Any], None],
+        refresh_prompt_plan: Callable[[Any], None],
         prepare_turn_identity: Callable[
             ..., tuple[Any, str, TurnIdentity | None]
         ]
@@ -59,7 +60,7 @@ class AcpTurnOrchestrator:
         self._has_private_space_inventory = has_private_space_inventory
         self._update_text = update_text
         self._recover_workspace = recover_workspace
-        self._refresh_system_prompt = refresh_system_prompt
+        self._refresh_prompt_plan = refresh_prompt_plan
         self._prepare_turn_identity = prepare_turn_identity or (
             lambda **kwargs: (kwargs["session"], kwargs["user_text"], None)
         )
@@ -86,6 +87,7 @@ class AcpTurnOrchestrator:
             (
                 CallbackTurnHandler("attachments", self._attachments),
                 CallbackTurnHandler("permissions", self._permissions),
+                CallbackTurnHandler("persona_control", self._persona_control),
                 CallbackTurnHandler(
                     "deterministic_shortcuts", self._deterministic_shortcuts
                 ),
@@ -173,6 +175,21 @@ class AcpTurnOrchestrator:
             turn.session.debug_mode,
         )
         return TurnOutcome()
+
+    async def _persona_control(self, turn: TurnContext) -> TurnOutcome:
+        response = await _persona_control.handle_persona_control(
+            host=self._host,
+            turn=turn,
+            update_text=self._update_text,
+            refresh_prompt_plan=self._refresh_prompt_plan,
+        )
+        if response is None:
+            return TurnOutcome()
+        return TurnOutcome(
+            response=response,
+            stop=True,
+            reason="persona_control",
+        )
 
     async def _permissions(self, turn: TurnContext) -> TurnOutcome:
         runtime = getattr(self._host, "_runtime", None)
@@ -524,7 +541,7 @@ class AcpTurnOrchestrator:
         turn.session = await self._host._ensure_agent_session(
             turn.session_id, turn.session
         )
-        self._refresh_system_prompt(turn.session)
+        self._refresh_prompt_plan(turn.session)
         turn.metadata["task_metadata"] = build_topic_metadata(
             user_text=turn.user_text,
             chat_kind=turn.session.workspace.chat_kind,
@@ -787,12 +804,16 @@ class AcpTurnOrchestrator:
             turn.session.pending_image_names = ()
         run_kwargs: dict[str, Any] = {
             "task_metadata": turn.metadata["task_metadata"],
-            "task_system_appendix": (
-                getattr(turn.session, "turn_system_appendix", "") or None
+            "task_turn_context": (
+                getattr(turn.session, "turn_context", "") or None
             ),
         }
         if task_resources:
             run_kwargs["task_resources"] = task_resources
+        if turn.metadata.get("persona_final_prefix"):
+            run_kwargs["final_text_prefix"] = turn.metadata["persona_final_prefix"]
+        if turn.metadata.get("journal_user_text"):
+            run_kwargs["journal_user_text"] = turn.metadata["journal_user_text"]
         turn.metadata["response"] = await self._host._run_agent_turn(
             turn.session,
             turn.session_id,

@@ -270,13 +270,13 @@ def _audit_subagents_and_workflows(
         if (
             not isinstance(raw_entry.summary, str)
             or not raw_entry.summary.strip()
-            or not isinstance(raw_entry.system_prompt, str)
-            or not raw_entry.system_prompt.strip()
+            or not isinstance(raw_entry.role_prompt, str)
+            or not raw_entry.role_prompt.strip()
         ):
             _append(
                 issues,
                 "subagent.text_invalid",
-                "Subagent summary and system_prompt must be non-empty.",
+                "Subagent summary and role_prompt must be non-empty.",
                 surface="subagent",
                 component=component,
             )

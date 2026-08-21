@@ -19,7 +19,9 @@ llm:
     env_prefix: MY_BOT
 
 prompts:
-  persona: prompts/persona.md
+  schema_version: 2
+  identity: prompts/identity.md
+  response_style: prompts/response-style.md
 
 tools:
   packs:
@@ -70,7 +72,9 @@ packaging:
 ### `llm`
 
 - `llm.chat`：日常对话模型，`env_prefix` 决定 API key/base URL/model 的变量前缀。
-- `llm.research`：研究模型覆盖；未提供字段继承 chat。
+- `llm.research`：研究模型槽；`model` 是纳入版本管理的默认模型，`env_prefix` 指向机器覆盖配置；
+  未提供的 base URL、API key 和 timeout 继承 `chat`。统一搜索路由和 `PersonaDraftAgent` 使用该槽，
+  不能误用主 Codex 模型名或日常模型槽。
 - `llm.code`：Codex lane 的模型、reasoning effort、profile 白名单、任务 profile、
   超时和允许角色。
 
@@ -79,11 +83,14 @@ packaging:
 
 ### `prompts`
 
-- `persona` 必填。
-- `refusal` 可选。
-- `roles.<role>` 和 `modes.<mode>` 可按实例覆盖。
+- `schema_version` 必须为 `2`。
+- `identity` 与 `response_style` 必填。
+- `refusal_style`、`role_styles.<role>` 和 `mode_styles.<mode>` 可选。
 
-所有路径相对于 bot 目录解析。不要在 YAML 写机器绝对路径或 secret。
+所有值都是相对于 BotSpec 目录的 UTF-8 普通文件，不能越界或使用符号链接。Bot prompt
+只描述机器人身份和表达风格；安全、角色授权、记忆、人格式持久化、搜索触发、工具可见性
+和成功事实由可信运行时生成，BotSpec 不能覆盖。旧字段不会自动转换或发出兼容警告，校验会
+直接失败。不要在 YAML 写机器绝对路径或 secret。
 
 ### `tools`
 
@@ -109,6 +116,11 @@ Agent 与 Console 使用相同投影。BotSpec 不直接指定可 import 的任�
   `id / kind / enabled / endpoint / credential_env / timeout_seconds / max_results`。
   BotSpec 只保存凭据环境变量名，不保存凭据值。Tavily 与 Brave 只接受审核过的官方
   HTTPS endpoint；SearXNG 只接受回环 endpoint。
+- `persona_control.enabled`：显式启用宿主人格控制；默认关闭，也是该 block 唯一字段。
+  启用后，普通消息先经零模型候选检测：`none` 直接进入主 Agent，明确要求直接进入
+  `PersonaDraftAgent`，只有含糊要求调用一次严格解释器。所有非清空操作均由该 Agent 生成完整
+  Markdown；`append` 也形成一次整体替换。命名人物由 Agent 通过统一搜索自行查询、消歧和选择
+  实际使用来源，再执行唯一一次宿主原子写。失败不会产生部分写入，人格写操作不向主 Agent 暴露为工具。
 - `codex.owner_access`：仅允许 `worktree`。
 - `codex.member_access`：仅允许 `workspace`。
 

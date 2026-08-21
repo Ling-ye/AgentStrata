@@ -69,7 +69,7 @@ def test_journal_generation_failure_discards_every_cached_group_actor(
             runtime=SimpleNamespace(platform_type="qq"),
             session=backend,  # type: ignore[arg-type]
         )
-        state.bind_group_turn(identity=identity, journal=journal, system_appendix="")
+        state.bind_group_turn(identity=identity, journal=journal, turn_context="")
         states.append(state)
         identities.append(identity)
         backends.append(backend)

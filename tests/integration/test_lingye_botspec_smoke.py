@@ -51,8 +51,8 @@ class LingyeBotSpecSmokeTests(unittest.TestCase):
         self.assertEqual(runtime.bot_id, "lingye-copilot-qq")
         self.assertEqual(runtime.platform_type, "qq")
         self.assertEqual(runtime.platform_adapter, "qq_acp")
-        self.assertTrue(runtime.system_prompt, msg="system_prompt should not be empty")
-        self.assertIn("Lingye的AI助手", runtime.system_prompt)
+        self.assertTrue(runtime.prompt_profile.identity, msg="identity should not be empty")
+        self.assertIn("Lingye 的 AI 助手", runtime.prompt_profile.identity)
         self.assertIn("workspace.read_write", runtime.tool_packs)
         self.assertIn("memory.chat", runtime.tool_packs)
         self.assertNotIn("unity.codebase.read", runtime.tool_packs)
@@ -85,17 +85,12 @@ class LingyeBotSpecSmokeTests(unittest.TestCase):
             [skill.id for skill in runtime.skills],
             ["ai-career-intelligence", "ai-jd-analysis"],
         )
-        owner_prompt = runtime.role_prompt_overrides["owner"]
-        self.assertIn("当前轮只能给出具体、可审阅的只读方案", owner_prompt)
-        self.assertIn("只有同一会话中用户随后明确确认", owner_prompt)
-        self.assertIn("一次 `start_code_task`", owner_prompt)
-        self.assertIn("孤立的“确认”必须先", owner_prompt)
-        self.assertIn("当前消息中已经明确要求直接完成", owner_prompt)
-        capability_prompt = "\n".join(runtime.capability_prompt_fragments)
-        self.assertIn("do not call start_code_task yet", capability_prompt)
-        self.assertIn("call start_code_task exactly once", capability_prompt)
-        self.assertIn("A direct request to implement now", capability_prompt)
-        self.assertIn("an isolated confirmation", capability_prompt)
+        owner_style = runtime.prompt_profile.role_styles["owner"]
+        self.assertIn("技术细节", owner_style)
+        capability_prompt = "\n".join(policy.content for policy in runtime.capability_policies)
+        self.assertIn("isolated code task", capability_prompt)
+        self.assertIn("entire approved plan exactly once", capability_prompt)
+        self.assertIn("one-shot Owner approval", capability_prompt)
 
     def test_owner_isolated_development_surface(self) -> None:
         spec = load_botspec(_BOT_PATH)
@@ -109,6 +104,10 @@ class LingyeBotSpecSmokeTests(unittest.TestCase):
         self.assertEqual(spec.agents.backend, "codex")
         self.assertEqual(spec.agents.include, ())
         self.assertTrue(spec.agents.research_enabled)
+        self.assertTrue(spec.agents.persona_control.enabled)
+        self.assertEqual(spec.llm.research_env_prefix, "CHATCOPILOT_LINGYE_RESEARCH")
+        self.assertEqual(spec.llm.research_model, "gpt-5.6-terra")
+        self.assertNotIn("persona.manage", spec.tools.packs)
         self.assertEqual(spec.agents.codex.owner_access, "worktree")
         self.assertEqual(spec.agents.codex.member_access, "workspace")
         self.assertEqual(spec.llm.code.allowed_roles, ("owner",))

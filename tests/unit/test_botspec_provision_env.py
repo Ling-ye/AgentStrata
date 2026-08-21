@@ -97,7 +97,9 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                       type: feishu
                       adapter: feishu_acp
                     prompts:
-                      persona: persona.md
+                      schema_version: 2
+                      identity: persona.md
+                      response_style: persona.md
                     tools:
                       packs: []
                     """
@@ -142,7 +144,9 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                   type: qq
                   adapter: qq_acp
                 prompts:
-                  persona: persona.md
+                  schema_version: 2
+                  identity: persona.md
+                  response_style: persona.md
                 tools:
                   packs: []
                 access:
@@ -328,7 +332,9 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                       type: feishu
                       adapter: feishu_acp
                     prompts:
-                      persona: persona.md
+                      schema_version: 2
+                      identity: persona.md
+                      response_style: persona.md
                     tools:
                       packs: []
                     deploy:
@@ -399,7 +405,9 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                       type: feishu
                       adapter: feishu_acp
                     prompts:
-                      persona: persona.md
+                      schema_version: 2
+                      identity: persona.md
+                      response_style: persona.md
                     tools:
                       packs:
                         - workspace.read_write
@@ -454,7 +462,9 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                       type: feishu
                       adapter: feishu_acp
                     prompts:
-                      persona: persona.md
+                      schema_version: 2
+                      identity: persona.md
+                      response_style: persona.md
                     tools:
                       packs:
                         - workspace.read_write
@@ -524,7 +534,9 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                         code_task_profile: sol-high
                         allowed_roles: [owner]
                     prompts:
-                      persona: persona.md
+                      schema_version: 2
+                      identity: persona.md
+                      response_style: persona.md
                     tools:
                       packs: []
                     deploy:

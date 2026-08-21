@@ -105,7 +105,9 @@ llm:
     env_prefix: MY_BOT
 
 prompts:
-  persona: prompts/persona.md
+  schema_version: 2
+  identity: prompts/identity.md
+  response_style: prompts/response-style.md
 
 tools:
   packs:

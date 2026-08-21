@@ -115,10 +115,10 @@ class StreamingUpdateTests(unittest.TestCase):
     ) -> list[Any]:
         async def run_case() -> list[Any]:
             original_update = acp_server.update_agent_message_text
-            original_refresh = acp_server._refresh_session_system_prompt
+            original_refresh = acp_server._refresh_session_prompt_plan
             original_latest_workspace = acp_server._latest_workspace_from_session_env
             acp_server.update_agent_message_text = lambda text: text
-            acp_server._refresh_session_system_prompt = lambda _session: None
+            acp_server._refresh_session_prompt_plan = lambda _session: None
             acp_server._latest_workspace_from_session_env = lambda _workspace, *, platform_type: None
             try:
                 agent = AcpChatAgent.__new__(AcpChatAgent)
@@ -147,7 +147,7 @@ class StreamingUpdateTests(unittest.TestCase):
                 return agent._conn.updates
             finally:
                 acp_server.update_agent_message_text = original_update
-                acp_server._refresh_session_system_prompt = original_refresh
+                acp_server._refresh_session_prompt_plan = original_refresh
                 acp_server._latest_workspace_from_session_env = original_latest_workspace
 
         return asyncio.run(run_case())

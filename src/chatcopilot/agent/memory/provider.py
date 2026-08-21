@@ -1,7 +1,7 @@
 """Agent 长期记忆 provider 接口。
 
 agent 只依赖该 Protocol；具体存储方式（markdown / database / KV 等）由实现类
-决定。AgentRuntime 在 ``new_session`` 时拿 provider.snapshot() 注入到 system prompt。
+决定。快照只能作为 PromptPlan 的 ``untrusted_context`` 输入，不能形成策略层。
 """
 from __future__ import annotations
 

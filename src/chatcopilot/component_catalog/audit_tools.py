@@ -1,4 +1,4 @@
-"""Tool-pack, module, ToolDef, and prompt-manifest catalog audits."""
+"""Tool-pack, module, ToolDef, and prompt-policy catalog audits."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from chatcopilot.component_catalog.audit_models import (
 from chatcopilot.contracts.tool_packs import (
     ToolModuleBinding,
     ToolPackEntry,
-    ToolPackPrompt,
+    ToolPackPolicy,
 )
 from chatcopilot.contracts.tools import (
     EXECUTION_GLOBAL_SERIAL_BACKGROUND,
@@ -41,7 +41,7 @@ _MODULE_RE = re.compile(
     r"agent\.tools\.builtin(?:\.[A-Za-z_][A-Za-z0-9_]*)+"
     r")$"
 )
-_MANIFEST_MODULE_RE = re.compile(
+_POLICY_MODULE_RE = re.compile(
     r"^chatcopilot\.external_tools(?:\.[A-Za-z_][A-Za-z0-9_]*)+$"
 )
 _ROLES = frozenset({None, "user", "admin", "owner"})
@@ -302,32 +302,32 @@ def _validate_tool(
     return name if valid_name else None
 
 
-def _audit_manifest(
+def _audit_policy(
     pack: str,
     entry: ToolPackEntry,
     *,
     modules: _ModuleCache,
     issues: list[CatalogAuditIssue],
 ) -> None:
-    module_name = entry.manifest_module
+    module_name = entry.policy_module
     if module_name is None:
         return
-    if not isinstance(module_name, str) or _MANIFEST_MODULE_RE.fullmatch(module_name) is None:
+    if not isinstance(module_name, str) or _POLICY_MODULE_RE.fullmatch(module_name) is None:
         _append(
             issues,
-            "manifest.module_invalid",
-            "Prompt manifest modules must be inside chatcopilot.external_tools.",
+            "policy.module_invalid",
+            "Prompt policy modules must be inside chatcopilot.external_tools.",
             surface="tool_pack",
             component=pack,
             module=module_name if isinstance(module_name, str) else "",
         )
         return
-    builder_name = entry.manifest_builder
+    builder_name = entry.policy_builder
     if not isinstance(builder_name, str) or not builder_name.strip() or builder_name != builder_name.strip():
         _append(
             issues,
-            "manifest.builder_invalid",
-            "Prompt manifest builder names must be non-empty trimmed strings.",
+            "policy.builder_invalid",
+            "Prompt policy builder names must be non-empty trimmed strings.",
             surface="tool_pack",
             component=pack,
             module=module_name,
@@ -338,8 +338,8 @@ def _audit_manifest(
     except Exception as exc:  # noqa: BLE001
         _append(
             issues,
-            "manifest.import_failed",
-            f"Prompt manifest import failed: {type(exc).__name__}.",
+            "policy.import_failed",
+            f"Prompt policy import failed: {type(exc).__name__}.",
             surface="tool_pack",
             component=pack,
             module=module_name,
@@ -349,63 +349,54 @@ def _audit_manifest(
     if not callable(builder_value):
         _append(
             issues,
-            "manifest.builder_missing",
-            "Prompt manifest builder is missing or not callable.",
+            "policy.builder_missing",
+            "Prompt policy builder is missing or not callable.",
             surface="tool_pack",
             component=pack,
             module=module_name,
         )
         return
     builder = cast(Callable[[], object], builder_value)
-    mapping = getattr(module, "TOOL_PACK_PROMPT_BUILDERS", None)
+    mapping = getattr(module, "TOOL_PACK_POLICY_BUILDERS", None)
     if not isinstance(mapping, dict) or mapping.get(pack) is not builder:
         _append(
             issues,
-            "manifest.mapping_mismatch",
-            "TOOL_PACK_PROMPT_BUILDERS must map the pack id to its declared builder.",
+            "policy.mapping_mismatch",
+            "TOOL_PACK_POLICY_BUILDERS must map the pack id to its declared builder.",
             surface="tool_pack",
             component=pack,
             module=module_name,
         )
     try:
-        prompt = builder()
+        policies = builder()
     except Exception as exc:  # noqa: BLE001
         _append(
             issues,
-            "manifest.build_failed",
-            f"Prompt manifest builder failed: {type(exc).__name__}.",
+            "policy.build_failed",
+            f"Prompt policy builder failed: {type(exc).__name__}.",
             surface="tool_pack",
             component=pack,
             module=module_name,
         )
         return
-    if not isinstance(prompt, ToolPackPrompt):
-        _append(
-            issues,
-            "manifest.result_invalid",
-            "Prompt manifest builder must return ToolPackPrompt.",
-            surface="tool_pack",
-            component=pack,
-            module=module_name,
-        )
-        return
-    if prompt.name != pack:
-        _append(
-            issues,
-            "manifest.name_mismatch",
-            "ToolPackPrompt.name must match the catalog pack id.",
-            surface="tool_pack",
-            component=pack,
-            module=module_name,
-        )
-    if not isinstance(prompt.prompt_fragments, tuple) or not prompt.prompt_fragments or any(
-        not isinstance(fragment, str) or not fragment.strip()
-        for fragment in prompt.prompt_fragments
+    if not isinstance(policies, tuple) or not policies or any(
+        not isinstance(policy, ToolPackPolicy) for policy in policies
     ):
         _append(
             issues,
-            "manifest.fragments_invalid",
-            "ToolPackPrompt.prompt_fragments must be a non-empty tuple of text.",
+            "policy.result_invalid",
+            "Policy builder must return a non-empty tuple of ToolPackPolicy.",
+            surface="tool_pack",
+            component=pack,
+            module=module_name,
+        )
+        return
+    policy_ids = tuple(policy.id for policy in policies)
+    if len(policy_ids) != len(set(policy_ids)):
+        _append(
+            issues,
+            "policy.ids_duplicate",
+            "Tool pack policy ids must be unique within one pack.",
             surface="tool_pack",
             component=pack,
             module=module_name,
@@ -537,7 +528,7 @@ def _audit_tool_packs(
                     )
                 bindings_by_module[module_path].append((pack, binding))
         if not isinstance(entry.http_route_modules, tuple) or any(
-            not isinstance(module, str) or _MANIFEST_MODULE_RE.fullmatch(module) is None
+            not isinstance(module, str) or _POLICY_MODULE_RE.fullmatch(module) is None
             for module in entry.http_route_modules
         ):
             _append(
@@ -547,7 +538,7 @@ def _audit_tool_packs(
                 surface="tool_pack",
                 component=pack,
             )
-        _audit_manifest(pack, entry, modules=modules, issues=issues)
+        _audit_policy(pack, entry, modules=modules, issues=issues)
 
     for pack, counts in sorted(pack_name_counts.items()):
         for name, count in sorted(counts.items()):

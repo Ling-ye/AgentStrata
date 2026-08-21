@@ -12,7 +12,9 @@ from typing import Any, Callable
 from chatcopilot.core.config import ChatConfig, load_config
 from chatcopilot.agent.protocol import AgentEvent, AgentTask, LlmCallFinished
 from chatcopilot.agent.runtime import build_agent_runtime
+from chatcopilot.agent.context.prompt_plan import PromptBuildInput
 from chatcopilot.botspec import assemble_runtime_context, load_botspec, resolve_bot_spec_path
+from chatcopilot.botspec.runtime_env import load_research_llm_config
 from chatcopilot.core.settings import load_local_env_values
 from chatcopilot.core.workspace import Workspace
 from chatcopilot.evals.env import normalize_eval_env_value
@@ -27,7 +29,6 @@ from chatcopilot.evals.models import (
 from chatcopilot.evals.plugins import CaseLoadContext, EvaluationPlugin, get_evaluation_plugin
 from chatcopilot.evals.registry import get_manifest, get_standard
 from chatcopilot.middleware.runtime.workspace import MiddlewareWorkspaceService
-from chatcopilot.middleware.acp.prompt_assembler import build_system_prompt
 from chatcopilot.project import ENV_PREFIX
 
 ProgressCallback = Callable[[dict[str, Any]], None]
@@ -410,6 +411,10 @@ def _run_agent_cases(
     chat_config = load_config(env_prefix=runtime.spec.llm.env_prefix)
     agent_runtime = build_agent_runtime(
         chat_config=chat_config,
+        research_llm_config=load_research_llm_config(
+            runtime.spec.llm,
+            fallback=chat_config.llm,
+        ),
         tool_packs=runtime.tool_packs,
         exclude_tools=runtime.exclude_tools,
         skill_index=runtime.skills,
@@ -434,25 +439,21 @@ def _run_agent_cases(
         env_guard = _EvalWorkspaceEnv(workspace)
         total = len(cases)
         with env_guard:
-            system_baseline = build_system_prompt(
-                platform_type=runtime.platform_type,
-                workspace=workspace,
-                bot_system_prompt=runtime.system_prompt,
-                bot_refusal_prompt=runtime.refusal_prompt,
-                capability_prompt_fragments=runtime.capability_prompt_fragments,
-                skill_index=runtime.skills,
-                mode_prompts=runtime.mode_prompt_overrides,
-                role_prompts=runtime.role_prompt_overrides,
-                safety_prompt=runtime.safety_prompt_override,
-                memory_prompt=runtime.memory_prompt_override,
-                llm_model=chat_config.llm.model,
-            )
             results: list[EvalCaseResult] = []
             for index, case in enumerate(cases, start=1):
                 _case_started(progress_callback, index=index, total=total, case=case)
                 session = agent_runtime.new_session(
                     session_id=f"eval-{suite_id}-{case.case_id}-{index}",
-                    system_baseline=system_baseline,
+                    prompt_input=PromptBuildInput(
+                        profile=runtime.prompt_profile,
+                        backend=runtime.agent_backend,
+                        model=None,
+                        role="owner",
+                        channel_kind="private",
+                        session_policy="这是隔离 Evaluation 会话；只处理当前评测 Case。",
+                        capability_policies=runtime.capability_policies,
+                        skill_index=runtime.skills,
+                    ),
                     workspace_service=MiddlewareWorkspaceService(),
                 )
                 events: list[dict[str, Any]] = []
@@ -704,12 +705,12 @@ def _prepare_task(
         return task
     return AgentTask(
         text=case.input,
-        system_appendix=_case_appendix(case),
+        turn_context=_case_context(case),
         metadata={"eval_suite": suite_id, "eval_case": case.case_id},
     )
 
 
-def _case_appendix(case: EvalCase) -> str:
+def _case_context(case: EvalCase) -> str:
     parts = [
         "## Eval Case Context",
         f"case_id: {case.case_id}",

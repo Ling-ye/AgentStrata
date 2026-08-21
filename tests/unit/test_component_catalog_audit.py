@@ -10,7 +10,6 @@ from chatcopilot.contracts.subagents import SubagentDef, WorkflowDef
 from chatcopilot.contracts.tool_packs import (
     ToolModuleBinding,
     ToolPackEntry,
-    ToolPackPrompt,
 )
 from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.core.mcp_catalog import McpCatalogEntry
@@ -42,14 +41,14 @@ def _pack(
     name: str,
     module: str,
     *tool_names: str,
-    manifest_module: str | None = None,
-    manifest_builder: str = "build_manifest",
+    policy_module: str | None = None,
+    policy_builder: str = "build_policy",
 ) -> ToolPackEntry:
     return ToolPackEntry(
         name=name,
         description=f"Catalog test pack {name}.",
-        manifest_module=manifest_module,
-        manifest_builder=manifest_builder,
+        policy_module=policy_module,
+        policy_builder=policy_builder,
         tool_bindings=(ToolModuleBinding(module, tuple(tool_names)),),
     )
 
@@ -174,19 +173,16 @@ def test_cross_module_tool_name_conflict_is_rejected() -> None:
     assert second_name in conflicts[0].module
 
 
-def test_manifest_mapping_and_fragment_type_are_checked() -> None:
+def test_policy_mapping_and_policy_result_type_are_checked() -> None:
     tools_name = "chatcopilot.external_tools.tests.prompt_tools"
-    manifest_name = "chatcopilot.external_tools.tests.prompt_manifest"
-    builder = lambda: ToolPackPrompt(  # noqa: E731
-        name="tests.prompt",
-        prompt_fragments="not-a-tuple",  # type: ignore[arg-type]
-    )
+    policy_name = "chatcopilot.external_tools.tests.prompt_policy"
+    builder = lambda: ("not-a-policy",)  # noqa: E731
     modules = {
         tools_name: _module(tools_name, TOOLS=[_tool()]),
-        manifest_name: _module(
-            manifest_name,
-            build_manifest=builder,
-            TOOL_PACK_PROMPT_BUILDERS={},
+        policy_name: _module(
+            policy_name,
+            build_policy=builder,
+            TOOL_PACK_POLICY_BUILDERS={},
         ),
     }
     report = _audit(
@@ -195,15 +191,15 @@ def test_manifest_mapping_and_fragment_type_are_checked() -> None:
                 "tests.prompt",
                 tools_name,
                 "demo_tool",
-                manifest_module=manifest_name,
+                policy_module=policy_name,
             )
         },
         modules,
     )
 
     assert {issue.code for issue in report.issues} >= {
-        "manifest.mapping_mismatch",
-        "manifest.fragments_invalid",
+        "policy.mapping_mismatch",
+        "policy.result_invalid",
     }
 
 
@@ -328,7 +324,7 @@ def test_cross_surface_delegate_name_and_workflow_references_are_checked() -> No
         name="demo_agent",
         tool_name="delegate_demo",
         summary="Delegate a catalog test.",
-        system_prompt="Return a structured result.",
+        role_prompt="Return a structured result.",
     )
     workflow = WorkflowDef(
         name="demo_flow",

@@ -94,7 +94,7 @@ class SubagentV2Tests(unittest.TestCase):
                 "max_workflow_depth": 2,
                 "web_research": {
                     "max_model_turns": 2,
-                    "prompt_layers": {"role": "custom research role"},
+                    "prompt": {"role": "prompts/subagents/research.md"},
                     "context_policy": {"allowed_task_fields": ["objective", "resources"]},
                     "cache_policy": {"enabled": True, "ttl_seconds": 30, "namespace": "test"},
                 },
@@ -104,10 +104,13 @@ class SubagentV2Tests(unittest.TestCase):
         self.assertEqual(spec.workflows, ("research",))
         self.assertEqual(spec.max_workflow_depth, 2)
         self.assertEqual(spec.agents["web_research"].max_model_turns, 2)
-        self.assertEqual(spec.overrides["web_research"].prompt_layers.role, "custom research role")
+        self.assertEqual(
+            spec.overrides["web_research"].role_prompt_path,
+            "prompts/subagents/research.md",
+        )
         self.assertEqual(spec.overrides["web_research"].context_policy.allowed_task_fields, ("objective", "resources"))
         self.assertEqual(spec.overrides["web_research"].cache_policy.namespace, "test")
-        self.assertIn("prompt_layers", spec.overrides["web_research"].override_fields)
+        self.assertIn("prompt", spec.overrides["web_research"].override_fields)
         self.assertIn("cache_policy", spec.overrides["web_research"].override_fields)
         self.assertNotIn("selector", spec.overrides["web_research"].override_fields)
 
@@ -180,8 +183,7 @@ class SubagentV2Tests(unittest.TestCase):
             summary="A cacheable helper for testing",
             selector=ToolSelectorSpec(any=(ToolMatchRule(categories=("dev.files",)),)),
             budget=SubagentBudgetSpec(max_model_turns=2, max_tool_calls=2),
-            prompt_path=None,
-            system_prompt="helper",
+            role_prompt="helper",
             cache_policy=CachePolicySpec(enabled=True, ttl_seconds=300),
         )
         tools = build_subagent_tools(
@@ -215,8 +217,7 @@ class SubagentV2Tests(unittest.TestCase):
                     summary="writer",
                     selector=ToolSelectorSpec(any=(ToolMatchRule(categories=("mcp",), mcp_risk=("write",)),)),
                     budget=SubagentBudgetSpec(max_model_turns=2, max_tool_calls=2),
-                    prompt_path="prompts/persona.md",
-                    system_prompt="writer",
+                    role_prompt="writer",
                 ),
             )
         )

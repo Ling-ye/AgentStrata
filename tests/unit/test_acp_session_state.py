@@ -17,7 +17,7 @@ from chatcopilot.middleware.runtime.workspace import Workspace
 class _FakeAgentSession:
     def __init__(self) -> None:
         self._messages: list[dict[str, str]] = []
-        self.system_baseline = ""
+        self.prompt_plan = None
 
     @property
     def message_count(self) -> int:
@@ -34,8 +34,8 @@ class _FakeAgentSession:
     def snapshot_messages(self) -> list[dict[str, str]]:
         return [dict(item) for item in self._messages]
 
-    def set_system_baseline(self, value: str) -> None:
-        self.system_baseline = value
+    def set_prompt_plan(self, value) -> None:
+        self.prompt_plan = value
 
 
 def _state(tmp_path: Path) -> SessionState:
@@ -76,21 +76,14 @@ def test_control_plane_session_buffers_and_replays_exchanges(tmp_path: Path) -> 
 
 def test_control_plane_mode_change_applies_when_session_materializes(tmp_path: Path) -> None:
     state = _state(tmp_path)
-    state.set_assistant_mode(AssistantMode.PERFORMANCE, "control baseline")
+    state.set_assistant_mode(AssistantMode.PERFORMANCE)
     assert state.assistant_mode == AssistantMode.PERFORMANCE
 
     agent_session = _FakeAgentSession()
     state.attach_session(agent_session)
-    state.set_assistant_mode(
-        AssistantMode.PERFORMANCE,
-        "materialized baseline",
-        session_dynamic_tail="persona",
-        memory_snippet="memory",
-    )
-
-    assert agent_session.system_baseline == "materialized baseline\n\npersona\n\nmemory"
-    state.set_assistant_mode(AssistantMode.GENERAL, "mode-only baseline")
-    assert agent_session.system_baseline == "mode-only baseline\n\npersona\n\nmemory"
+    state.set_assistant_mode(AssistantMode.GENERAL)
+    assert state.assistant_mode == AssistantMode.GENERAL
+    assert agent_session.prompt_plan is None
 
 
 def test_one_shot_code_model_is_consumed_only_by_matching_selection(tmp_path: Path) -> None:

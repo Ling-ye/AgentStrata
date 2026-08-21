@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from chatcopilot.contracts.agent import AgentResult, FinalText, ToolFinished, TurnError
+from chatcopilot.contracts.agent import AgentResult, FinalText, TurnError
 from chatcopilot.contracts.model_selection import CodeModelSelection
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.model_selection import CODE_MODEL_SELECTION_METADATA_KEY
@@ -261,86 +261,6 @@ def test_once_model_selection_is_consumed_only_after_run_task_returns(
     )
 
     assert failed_session.consumed == []
-
-
-def test_explicit_persona_persistence_retries_once_and_never_false_reports(
-    tmp_path: Path,
-) -> None:
-    class _Conn:
-        def __init__(self) -> None:
-            self.updates = []
-
-        async def session_update(self, *, session_id, update) -> None:
-            self.updates.append(update.content.text)
-
-    class _Backend:
-        def __init__(self, *, persist_on_attempt: int | None) -> None:
-            self.persist_on_attempt = persist_on_attempt
-            self.tasks = []
-            self.corrections = []
-
-        def run_task(self, task, *, on_event):
-            self.tasks.append(task)
-            attempt = len(self.tasks)
-            if self.persist_on_attempt == attempt:
-                on_event(
-                    ToolFinished(
-                        name="persona_set",
-                        ok=True,
-                        summary="已覆盖 group 层人格。",
-                    )
-                )
-                text = "人格已经保存。"
-            else:
-                text = "好的，已经保存。"
-            on_event(FinalText(text))
-            return AgentResult(final_text=text, stop_reason="end_turn")
-
-        def record_exchange(self, user_text, assistant_text) -> None:
-            self.corrections.append((user_text, assistant_text))
-
-    class _State:
-        debug_mode = False
-        role = SimpleNamespace(value="owner")
-
-        def __init__(self, backend) -> None:
-            self.backend = backend
-            self.workspace = Workspace(
-                    root=tmp_path / "p2p_owner",
-                    chat_kind="p2p",
-                    chat_id=None,
-                    user_id="owner",
-            ).ensure()
-
-        def require_session(self):
-            return self.backend
-
-        def persist_transcript(self) -> None:
-            return None
-
-    for persist_on_attempt, expected, expected_attempts in (
-        (2, "人格已经保存。", 2),
-        (None, "未能保存人格修改", 2),
-    ):
-        backend = _Backend(persist_on_attempt=persist_on_attempt)
-        state = _State(backend)
-        agent = AcpChatAgent.__new__(AcpChatAgent)
-        agent._conn = _Conn()
-        asyncio.run(
-            agent._run_agent_turn(
-                state,
-                f"sid-{persist_on_attempt}",
-                "设置你的人格是鸣潮的莫宁",
-                "message-persona",
-            )
-        )
-
-        assert len(backend.tasks) == expected_attempts
-        assert expected in agent._conn.updates[-1]
-        assert backend.tasks[-1].metadata.get("persistence_receipt_retry") is True
-        if persist_on_attempt is None:
-            assert backend.corrections
-            assert "未能保存人格修改" in backend.corrections[-1][1]
 
 
 def test_rejected_explicit_memory_never_retries_or_false_reports(

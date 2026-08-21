@@ -127,7 +127,7 @@ _RULES: tuple[_PathRule, ...] = (
         exact_paths=(
             "src/chatcopilot/contracts/tools.py",
             "src/chatcopilot/contracts/tool_packs.py",
-            "src/chatcopilot/botspec/tool_pack_prompt.py",
+            "src/chatcopilot/agent/context/prompt_plan.py",
         ),
         contains=("/tools/", "/tool_packs/"),
         case_ids=(

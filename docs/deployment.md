@@ -22,7 +22,7 @@ AgentStrata 源仓
 `bots/<id>/local.env` 与 BotSpec 生成；不要手工修改实例副本或
 `~/.chatcopilot-<id>.env`。`local.env` 是机器私有文件，不进入 Git。
 
-[KNOWN][HIGH] `chatcopilot` namespace、`CHATCOPILOT_*` 环境变量、systemd unit 名
+ `chatcopilot` namespace、`CHATCOPILOT_*` 环境变量、systemd unit 名
 与默认 `~/ChatCopilot*` 实例路径是兼容契约。它们不是当前产品品牌，不能为了统一
 文案直接重命名。
 
@@ -83,7 +83,7 @@ Bot 是否自启由 `systemctl --user enable chatcopilot@<id>` 决定。托管 u
 
 ### QQ / OneBot
 
-[KNOWN][HIGH] OneBot `3001` 和 NapCat WebUI `6099` 只绑定 `127.0.0.1`。
+ OneBot `3001` 和 NapCat WebUI `6099` 只绑定 `127.0.0.1`。
 `QQ_ACCESS_TOKEN` 必须是 32–128 位 URL-safe 强 token；WebUI 管理 token 是另一个
 凭据，只用于登录 localhost 管理面板。
 
@@ -95,14 +95,14 @@ NapCat 或认证失败时 fail closed，不能先停止健康服务再尝试修�
 
 ### Codex backend
 
-[KNOWN][HIGH] managed `worktree` / `workspace` 使用实例私有的
+ managed `worktree` / `workspace` 使用实例私有的
 `CHATCOPILOT_CODEX_BOT_HOME`。main 和 worker 拥有不同的权威 `auth.json`，必须分别
 完成 device auth；不得导入或回退桌面/个人 `.codex`。Owner `worktree` 还必须在 ignored
 `local.env` 配置 GitHub repository、fine-grained token 与 Git author，并重新执行
 `console/systemd/register.sh`，让部署流程把 token 物化为 worker 专用 mode `0600` 文件。
 完整登录、token 权限与重注册命令见
 [`operations.md#codex-main--worker-认证`](operations.md#codex-main--worker-认证)。
-[KNOWN][HIGH] `host` 与 `auto_publish` 已删除；code-worker 只从远端干净基线交付草稿 PR，不覆盖源仓、不 merge、不部署或重启。角色、credential generation 或 caller 策略变化会使旧 resume ID 失效。
+ `host` 与 `auto_publish` 已删除；code-worker 只从远端干净基线交付草稿 PR，不覆盖源仓、不 merge、不部署或重启。角色、credential generation 或 caller 策略变化会使旧 resume ID 失效。
 
 ### Evaluation service
 
@@ -139,7 +139,7 @@ worker、service 不可达或已安装 unit 未运行时都在任何依赖与构
 
 ## Windows 冷启动唤醒 WSL
 
-[KNOWN][HIGH] WSL 内的 systemd、user linger 和 Docker restart policy 不会唤醒尚未
+ WSL 内的 systemd、user linger 和 Docker restart policy 不会唤醒尚未
 启动的发行版。installer 在当前用户的 HKCU Run 下注册隐藏 PowerShell launcher；它只
 执行 `wsl.exe -d Ubuntu-22.04 --exec /bin/true`，不保存密码、不使用 SYSTEM/最高权限，
 也不直接启动某个 Bot。

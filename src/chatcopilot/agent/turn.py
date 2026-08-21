@@ -49,7 +49,7 @@ from chatcopilot.agent.protocol import (
     TopicDecisionMade,
     TurnError,
 )
-from chatcopilot.agent.quality_gate import GateResult
+from chatcopilot.agent.response_integrity import ResponseIntegrityResult
 from chatcopilot.agent.turn_support import (
     DEV_WRITE_TOOLS as _DEV_WRITE_TOOLS,
     EMPTY_MODEL_REPLY_TEXT as _EMPTY_MODEL_REPLY_TEXT,
@@ -100,11 +100,12 @@ class TurnState:
     last_successful_tool_summary: str = ""
     last_successful_search_summary: str = ""
     recent_tool_fingerprints: list[str] = field(default_factory=list)
+    successful_operations: list[str] = field(default_factory=list)
     lifecycle_intents: list[DeferredLifecycleIntent] = field(default_factory=list)
     self_update_required: bool = False
     iteration: int = 0
     done: bool = False
-    quality_gate: GateResult | None = None
+    response_integrity: ResponseIntegrityResult | None = None
     last_tool_finish_time: float = 0.0
     wrapup_injected: bool = False
     wrapup_remaining: int = 0
@@ -120,9 +121,9 @@ class TurnOps:
 
     def initial_state(self) -> TurnState:
         user_text = frame_task_message(self.task)
-        appendix = (self.task.system_appendix or "").strip()
-        if appendix:
-            user_text = f"{user_text}\n\n{appendix}".strip()
+        context = (self.task.turn_context or "").strip()
+        if context:
+            user_text = f"{user_text}\n\n{context}".strip()
         rag_snippet = self.session._retrieve_context(self.task.text)
         if rag_snippet:
             user_text = f"{user_text}\n\n{rag_snippet}".strip()
@@ -418,6 +419,7 @@ class TurnOps:
             return
 
         state.consecutive_failures = 0
+        state.successful_operations.append(name)
         if name in _DEV_WRITE_TOOLS:
             state.self_update_required = True
         elif name == _FINALIZE_SELF_UPDATE_TOOL:
@@ -448,7 +450,18 @@ class TurnOps:
                 self.session.session_id,
             )
         state.final_text = final_text
-        state.quality_gate = self.session._run_quality_gate(final_text)
+        state.response_integrity = self.session._run_response_integrity(
+            final_text,
+            successful_operations=tuple(state.successful_operations),
+        )
+        if any(
+            issue.startswith("missing_receipt:")
+            for issue in state.response_integrity.issues
+        ):
+            final_text = "未能确认该操作已完成：本轮缺少相应的可信成功回执。"
+            self.emit(FinalText(text=final_text))
+            self._patch_last_assistant_content(final_text, state)
+            state.final_text = final_text
         state.done = True
 
     def finish_timeout(self, state: TurnState, *, hard: bool = False) -> None:
@@ -496,7 +509,7 @@ class TurnOps:
             stop_reason=state.stop_reason,
             produced_resources=_paths_to_resources(state.produced_paths),
             message_count=len(self.session._messages),
-            quality_gate=state.quality_gate,
+            response_integrity=state.response_integrity,
             lifecycle_intents=tuple(state.lifecycle_intents),
         )
 

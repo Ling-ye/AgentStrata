@@ -18,7 +18,9 @@ platform:
   adapter: feishu_acp
 
 prompts:
-  persona: prompts/persona.md
+  schema_version: 2
+  identity: prompts/persona.md
+  response_style: prompts/persona.md
 
 tools:
   packs:

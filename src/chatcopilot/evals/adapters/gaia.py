@@ -174,7 +174,7 @@ def prepare_task(case: EvalCase, workspace: Workspace) -> AgentTask:
     return AgentTask(
         text=case.input,
         resources=resources,
-        system_appendix=_case_appendix(case),
+        turn_context=_case_context(case),
         metadata={"eval_suite": "gaia", "eval_case": case.case_id},
     )
 
@@ -745,7 +745,7 @@ def _resolve_source_file(files_dir: Path, raw_name: str) -> Path:
     return source
 
 
-def _case_appendix(case: EvalCase) -> str:
+def _case_context(case: EvalCase) -> str:
     parts = [
         "## Eval Case Context",
         f"case_id: {case.case_id}",

@@ -126,7 +126,7 @@ class CompositeRetriever:
 
 
 def render_rag_snippet(hits: Sequence[RagHit]) -> str:
-    """Render retrieval hits as a compact prompt appendix."""
+    """Render retrieval hits as a compact prompt context."""
 
     if not hits:
         return ""

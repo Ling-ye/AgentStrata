@@ -15,7 +15,9 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from chatcopilot.agent.protocol import AgentTask
 from chatcopilot.agent.runtime import build_agent_runtime
+from chatcopilot.agent.context.prompt_plan import PromptBuildInput
 from chatcopilot.botspec import assemble_runtime_context, load_botspec, resolve_bot_spec_path
+from chatcopilot.botspec.runtime_env import load_research_llm_config
 from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.tools import ToolDef
@@ -27,7 +29,6 @@ from chatcopilot.evals.models import EvalCase, JudgeResult
 from chatcopilot.evals.profiles import ProfileCase
 from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, sanitize_text
 from chatcopilot.evals.runner import _event_to_dict, _load_local_env, _usage_summary
-from chatcopilot.middleware.acp.prompt_assembler import build_system_prompt
 from chatcopilot.middleware.runtime.workspace import MiddlewareWorkspaceService
 
 
@@ -123,6 +124,10 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
         with _trial_environment(workspace, workspace_root):
             agent_runtime = build_agent_runtime(
                 chat_config=chat_config,
+                research_llm_config=load_research_llm_config(
+                    runtime.spec.llm,
+                    fallback=chat_config.llm,
+                ),
                 tool_packs=runtime.tool_packs,
                 exclude_tools=runtime.exclude_tools,
                 extra_tools=extra_tools,
@@ -132,26 +137,21 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
                 subagents=subagents,
                 agent_backend=request.target.backend,
             )
-            system_baseline = build_system_prompt(
-                platform_type=runtime.platform_type,
-                workspace=workspace,
-                bot_system_prompt=runtime.system_prompt,
-                bot_refusal_prompt=runtime.refusal_prompt,
-                capability_prompt_fragments=runtime.capability_prompt_fragments,
-                skill_index=runtime.skills,
-                mode_prompts=runtime.mode_prompt_overrides,
-                role_prompts=runtime.role_prompt_overrides,
-                safety_prompt=runtime.safety_prompt_override,
-                memory_prompt=runtime.memory_prompt_override,
-                llm_model=chat_config.llm.model,
-            )
             session = agent_runtime.new_session(
                 session_id=f"eval-{request.evaluation_id}-{trial_id}",
-                system_baseline=system_baseline,
+                prompt_input=PromptBuildInput(
+                    profile=runtime.prompt_profile,
+                    backend=request.target.backend,
+                    model=None,
+                    role="owner",
+                    channel_kind="private",
+                    session_policy="这是隔离 Evaluation Trial；只处理当前冻结 Case。",
+                    capability_policies=runtime.capability_policies,
+                    skill_index=runtime.skills,
+                ),
                 workspace_service=MiddlewareWorkspaceService(),
                 permission_filter=permission_filter(allowed_tools),
                 caller_role_hint="owner",
-                memory_snippet_override="",
             )
             result = session.run_task(
                 _prepare_task(request.profile_case, workspace),
@@ -319,7 +319,7 @@ def _prepare_task(item: ProfileCase, workspace: Workspace) -> AgentTask:
         ", ".join(str(value) for value in item.case.metadata.get("allowed_tools", []))
         or "none"
     )
-    appendix = "\n".join(
+    context = "\n".join(
         (
             "## Evaluation isolation policy",
             f"case_id: {item.case_id}",
@@ -330,12 +330,12 @@ def _prepare_task(item: ProfileCase, workspace: Workspace) -> AgentTask:
             item.case.expected_behavior,
         )
     )
-    if base.system_appendix:
-        appendix = f"{base.system_appendix}\n\n{appendix}"
+    if base.turn_context:
+        context = f"{base.turn_context}\n\n{context}"
     return AgentTask(
         text=base.text,
         resources=base.resources,
-        system_appendix=appendix,
+        turn_context=context,
         metadata={
             "eval_profile": "agent-comparison-mvp",
             "eval_suite": item.suite_id,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable, Sequence
 
@@ -12,6 +13,7 @@ from chatcopilot.contracts.development import (
     parse_write_scope,
 )
 from chatcopilot.agent.context.manager import ContextManager
+from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder
 from chatcopilot.agent.lifecycle import defer_lifecycle_intent
 from chatcopilot.core.llm_client import LLMClient
 from chatcopilot.agent.protocol import (
@@ -23,7 +25,6 @@ from chatcopilot.agent.protocol import (
 from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.subagents.cache import GLOBAL_SUBAGENT_CACHE, build_cache_key
 from chatcopilot.agent.subagents.context_pack import ContextPackBuilder
-from chatcopilot.agent.subagents.prompt_layers import compose_prompt, prompt_fingerprint
 from chatcopilot.agent.subagents.result import (
     SubagentResultHolder,
     build_result_payload,
@@ -31,13 +32,14 @@ from chatcopilot.agent.subagents.result import (
     dump_payload,
     validate_output,
 )
-from chatcopilot.agent.subagents.spec import CachePolicySpec, ContextPolicySpec, PromptLayerSpec
+from chatcopilot.agent.subagents.spec import CachePolicySpec, ContextPolicySpec
 from chatcopilot.agent.subagents.task_pack import TaskPack
 from chatcopilot.agent.tools.executor import BackgroundSubmitter, PermissionFilter, ToolExecutor
 from chatcopilot.agent.tools.file_delivery import FileSender
 from chatcopilot.agent.tools.workspace_context import WorkspaceService
 from chatcopilot.agent.trace import current_trace, new_span_id, new_trace_id
 from chatcopilot.external_tools.shared.tool_spec import ToolDef, build_openai_schema
+from chatcopilot.contracts.prompt import BotPromptProfile
 
 if TYPE_CHECKING:
     from chatcopilot.agent.rag.provider import Retriever
@@ -99,11 +101,10 @@ class SubagentRunner:
         *,
         session_id: str,
         subagent_name: str,
-        task: TaskPack | str,
-        system_prompt: str,
+        task: TaskPack,
+        role_prompt: str,
         allow_tool: Callable[[ToolDef], bool],
         config: SubagentRuntimeConfig,
-        prompt_layers: PromptLayerSpec | None = None,
         version: str = "1",
         context_policy: ContextPolicySpec | None = None,
         cache_policy: CachePolicySpec | None = None,
@@ -111,7 +112,9 @@ class SubagentRunner:
         unavailable_message: str | None = None,
         output_schema: dict | None = None,
     ) -> SubagentRunResult:
-        task_pack = task if isinstance(task, TaskPack) else TaskPack(objective=str(task).strip())
+        if not isinstance(task, TaskPack):
+            raise TypeError("subagent task must be a TaskPack")
+        task_pack = task
         context_policy = context_policy or ContextPolicySpec()
         cache_policy = cache_policy or CachePolicySpec()
         try:
@@ -170,9 +173,7 @@ class SubagentRunner:
         submit_tool = build_submit_result_tool(holder)
         allowed_tools = [submit_tool, *work_tools]
 
-        layers = prompt_layers or PromptLayerSpec(role=system_prompt)
-        composed_prompt = compose_prompt(legacy_system_prompt=system_prompt, layers=layers)
-        pfp = prompt_fingerprint(legacy_system_prompt=system_prompt, layers=layers)
+        pfp = hashlib.sha256(role_prompt.encode("utf-8")).hexdigest()[:16]
         llm = self._resolve_llm(config.model_env_prefix)
         main_llm_config = getattr(self._main_config, "llm", None)
         model_name = (
@@ -229,6 +230,22 @@ class SubagentRunner:
             (build_openai_schema(tool) for tool in allowed_tools),
             key=lambda entry: str((entry.get("function") or {}).get("name") or ""),
         )
+        prompt_plan = PromptPlanBuilder().build(
+            PromptBuildInput(
+                profile=BotPromptProfile(
+                    identity=role_prompt,
+                    response_style="Return the final result only through submit_result.",
+                ),
+                backend="native",
+                model=model_name,
+                role="owner",
+                channel_kind="private",
+                session_policy="Use only the supplied TaskPack and allowed tools.",
+                memory=self._memory_snapshot or "",
+                tool_names=tuple(tool.name for tool in allowed_tools),
+                is_subagent=True,
+            )
+        )
         soft_iters = max(1, config.max_model_turns)
         soft_timeout = max(1, config.timeout_seconds)
         session = AgentSession(
@@ -242,7 +259,7 @@ class SubagentRunner:
                 workspace_service=self._workspace_service,
             ),
             tools_schema=tools_schema,
-            system_baseline=composed_prompt,
+            prompt_plan=prompt_plan,
             context_manager=ContextManager(
                 max_context_tokens=min(
                     self._main_config.runtime.max_context_tokens,

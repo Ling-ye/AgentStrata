@@ -15,11 +15,13 @@ from chatcopilot.botspec.loader import load_botspec, validate_botspec
 from chatcopilot.botspec.model import AccessSpec, BotSpec, CustomSubagentSpec, SubagentSpec
 from chatcopilot.botspec.mcp import McpServerConfig, load_mcp_server_configs
 from chatcopilot.botspec.rag import RagSourceConfig, load_rag_source_configs
-from chatcopilot.botspec.registry import load_tool_pack_prompt, resolve_bot_spec_path
+from chatcopilot.botspec.registry import load_tool_pack_policies, resolve_bot_spec_path
 from chatcopilot.botspec.skills import SkillIndexEntry, load_skill_index
 from chatcopilot.core.errors import RuntimeAssemblyError
 from chatcopilot.core.settings import get_bot_spec_env
 from chatcopilot.project import ENV_PREFIX
+from chatcopilot.contracts.prompt import BotPromptProfile
+from chatcopilot.contracts.tool_packs import ToolPackPolicy
 
 
 @dataclass(frozen=True)
@@ -32,13 +34,8 @@ class BotRuntimeContext:
     display_name: str
     platform_type: str
     platform_adapter: str
-    system_prompt: str
-    refusal_prompt: str | None
-    safety_prompt_override: str | None
-    memory_prompt_override: str | None
-    mode_prompt_overrides: dict[str, str]
-    role_prompt_overrides: dict[str, str]
-    capability_prompt_fragments: tuple[str, ...]
+    prompt_profile: BotPromptProfile
+    capability_policies: tuple[ToolPackPolicy, ...]
     tool_packs: tuple[str, ...]
     tool_features: tuple[str, ...]
     exclude_tools: tuple[str, ...]
@@ -77,13 +74,18 @@ def assemble_runtime_context(spec: BotSpec) -> BotRuntimeContext:
         detail = "; ".join(f"{issue.field}: {issue.message}" for issue in errors)
         raise RuntimeAssemblyError(f"BotSpec 校验失败: {detail}")
 
-    system_prompt = _read_required_text(spec, spec.prompts.persona, "prompts.persona")
-    refusal_prompt = _read_optional_text(spec, spec.prompts.refusal)
-    safety_prompt_override = _read_optional_text(spec, spec.prompts.safety)
-    memory_prompt_override = _read_optional_text(spec, spec.prompts.memory_rules)
-    mode_prompt_overrides = _read_prompt_map(spec, spec.prompts.modes)
-    role_prompt_overrides = _read_prompt_map(spec, spec.prompts.roles)
-    capability_prompt_fragments = _load_tool_pack_prompt_fragments(spec.tools.packs)
+    prompt_profile = BotPromptProfile(
+        identity=_read_required_text(spec, spec.prompts.identity, "prompts.identity"),
+        response_style=_read_required_text(
+            spec,
+            spec.prompts.response_style,
+            "prompts.response_style",
+        ),
+        refusal_style=_read_optional_text(spec, spec.prompts.refusal_style) or "",
+        mode_styles=_read_prompt_map(spec, spec.prompts.mode_styles),
+        role_styles=_read_prompt_map(spec, spec.prompts.role_styles),
+    )
+    capability_policies = _load_tool_pack_policies(spec.tools.packs)
     skills = _load_skills(spec)
     instance_id = spec.deploy.instance_id or spec.id
     return BotRuntimeContext(
@@ -93,13 +95,8 @@ def assemble_runtime_context(spec: BotSpec) -> BotRuntimeContext:
         display_name=spec.display_name,
         platform_type=spec.platform.type,
         platform_adapter=spec.platform.adapter,
-        system_prompt=system_prompt,
-        refusal_prompt=refusal_prompt,
-        safety_prompt_override=safety_prompt_override,
-        memory_prompt_override=memory_prompt_override,
-        mode_prompt_overrides=mode_prompt_overrides,
-        role_prompt_overrides=role_prompt_overrides,
-        capability_prompt_fragments=capability_prompt_fragments,
+        prompt_profile=prompt_profile,
+        capability_policies=capability_policies,
         tool_packs=spec.tools.packs,
         tool_features=spec.tools.features,
         exclude_tools=spec.tools.hide,
@@ -117,21 +114,27 @@ def assemble_runtime_context(spec: BotSpec) -> BotRuntimeContext:
 
 
 def _resolve_subagents(spec: BotSpec) -> SubagentSpec:
-    """Resolve custom subagent prompt pointers into inline ``system_prompt`` text."""
+    """Resolve the single role-prompt pointer for each custom subagent."""
     if not spec.agents.custom and not spec.agents.overrides:
         return spec.agents
     resolved: list[CustomSubagentSpec] = []
     for custom in spec.agents.custom:
         prompt_text = _read_required_text(
-            spec, custom.prompt_path, f"agents.custom.{custom.name}.prompt"
+            spec,
+            custom.role_prompt_path,
+            f"agents.custom.{custom.name}.prompt.role",
         )
-        resolved.append(replace(custom, system_prompt=prompt_text))
+        resolved.append(replace(custom, role_prompt=prompt_text))
     overrides: dict[str, CustomSubagentSpec] = {}
     for name, override in spec.agents.overrides.items():
-        prompt_text = override.system_prompt
-        if override.prompt_path:
-            prompt_text = _read_required_text(spec, override.prompt_path, f"agents.{name}.prompt")
-        overrides[name] = replace(override, system_prompt=prompt_text)
+        prompt_text = override.role_prompt
+        if override.role_prompt_path:
+            prompt_text = _read_required_text(
+                spec,
+                override.role_prompt_path,
+                f"agents.{name}.prompt.role",
+            )
+        overrides[name] = replace(override, role_prompt=prompt_text)
     return replace(spec.agents, custom=tuple(resolved), overrides=overrides)
 
 
@@ -171,17 +174,15 @@ def _load_skills(spec: BotSpec) -> tuple[SkillIndexEntry, ...]:
     return load_skill_index(manifest_path)
 
 
-def _load_tool_pack_prompt_fragments(tool_pack_names: tuple[str, ...]) -> tuple[str, ...]:
-    fragments: list[str] = []
-    seen: set[str] = set()
+def _load_tool_pack_policies(
+    tool_pack_names: tuple[str, ...],
+) -> tuple[ToolPackPolicy, ...]:
+    policies: list[ToolPackPolicy] = []
+    seen_ids: set[str] = set()
     for name in tool_pack_names:
-        pack = load_tool_pack_prompt(name)
-        if pack is None:
-            continue
-        for fragment in pack.prompt_fragments:
-            text = str(fragment).strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            fragments.append(text)
-    return tuple(fragments)
+        for policy in load_tool_pack_policies(name):
+            if policy.id in seen_ids:
+                raise RuntimeAssemblyError(f"duplicate tool pack policy id: {policy.id}")
+            seen_ids.add(policy.id)
+            policies.append(policy)
+    return tuple(policies)

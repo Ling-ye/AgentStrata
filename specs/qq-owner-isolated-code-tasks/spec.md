@@ -21,7 +21,7 @@ The design replaces the Owner host-flow contract in
 compatibility mode, while `worktree` is the Lingye default. Only the Owner can
 submit, inspect, cancel, or resume source code tasks. The workflow never commits,
 pushes, creates pull requests, or automatically falls back to a personal Codex
-home. [KNOWN][HIGH] Under the `codex-independent-auth-lanes` contract, the main
+home.  Under the `codex-independent-auth-lanes` contract, the main
 backend and code worker use separate device-authorized credential lineages;
 desktop credential import is forbidden.
 
@@ -60,12 +60,12 @@ personal home, mounted Windows trees, runtime sockets, Docker sockets, and
 platform credentials are absent. Command networking remains unrestricted by
 policy, including public, loopback, and private endpoints.
 
-[KNOWN][HIGH] `CHATCOPILOT_CODEX_BOT_HOME` is the instance authentication root:
+ `CHATCOPILOT_CODEX_BOT_HOME` is the instance authentication root:
 the main lane owns `auth.json` and the worker lane owns `worker/auth.json`.
-[KNOWN][HIGH] Each lane receives its own device authorization and cross-process
+ Each lane receives its own device authorization and cross-process
 credential lease; a task receives a private runtime copy, and a valid Codex
 refresh is validated and atomically copied back before the lease is released.
-[KNOWN][HIGH] Missing or invalid worker credentials fail closed, and desktop or
+ Missing or invalid worker credentials fail closed, and desktop or
 personal-home discovery is forbidden. Limits are two hours, three GiB memory,
 four CPU cores, 256 processes, and five GiB of active task storage.
 
@@ -97,11 +97,11 @@ values.
 - A task can write its worktree but cannot access host source, personal Codex
   state, SSH material, Docker sockets, platform credentials, or the AgentStrata
   session gateway.
-- [KNOWN][HIGH] Missing dedicated worker credentials fail before Codex starts
+-  Missing dedicated worker credentials fail before Codex starts
   and never fall back to the main lane, desktop state, or personal credentials.
-- [KNOWN][HIGH] Main and worker credential leases are independent; worker
+-  Main and worker credential leases are independent; worker
   execution can rotate only `worker/auth.json` and does not block main chat.
-- [KNOWN][HIGH] Reauthorizing the worker preserves its retained worktree and
+-  Reauthorizing the worker preserves its retained worktree and
   attempt history but invalidates the old native Codex resume ID.
 - JSONL progress is consumed while Codex runs; heartbeat, stage, cancellation,
   resource-limit, and resume behavior are observable and idempotent.
@@ -139,9 +139,9 @@ failure, retained-worktree resume, and native session reuse through real
 bubblewrap. The boundary probe verifies worktree writes, host-source and secret
 isolation, empty MCP configuration, and the shared network namespace.
 
-[KNOWN][HIGH] Operational rollout, the real Codex smoke cases, Owner QQ canary,
+ Operational rollout, the real Codex smoke cases, Owner QQ canary,
 and WSL cold start remain blocked until the instance provides a fixed
 `CHATCOPILOT_CODEX_BIN`, an isolated `CHATCOPILOT_CODEX_BOT_HOME`, and separate
-ready credentials for both lanes. [KNOWN][HIGH] Runtime execution must not
+ready credentials for both lanes.  Runtime execution must not
 discover, import, or fall back to desktop or personal Codex state; rollout uses
 the CLI-only device-login flow defined by `codex-independent-auth-lanes`.

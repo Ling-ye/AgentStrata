@@ -30,7 +30,7 @@ class ResourceRef:
 class AgentTask:
     text: str
     resources: tuple[ResourceRef, ...] = ()
-    system_appendix: str | None = None
+    turn_context: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -236,7 +236,7 @@ class AgentResult:
     stop_reason: AgentStopReason
     produced_resources: tuple[ResourceRef, ...] = ()
     message_count: int = 0
-    quality_gate: Any = None
+    response_integrity: Any = None
     lifecycle_intents: tuple[DeferredLifecycleIntent, ...] = ()
 
 

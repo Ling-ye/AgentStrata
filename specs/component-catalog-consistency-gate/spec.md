@@ -21,7 +21,7 @@ The new gate makes the catalog projection explicit and executable. Every tool pa
 declares one or more module bindings with the exact tool names that belong to that
 pack. Agent discovery and the read-only Component Catalog API consume the same
 binding resolver. A deterministic audit validates the declared records, imported
-modules, prompt manifests, runtime tool schemas, MCP entries, subagent/workflow
+modules, structured tool-pack policies, runtime tool schemas, MCP entries, subagent/workflow
 identity, and cross-surface tool-name uniqueness before tests run.
 
 This change does not discover arbitrary Python modules from the filesystem, probe
@@ -38,8 +38,8 @@ derived `tool_modules` and `tool_names` properties for read-only callers.
 `tool_packs.catalog` is the single mapping from pack id to runtime modules and tool
 names, including built-in Agent tools. Its resolver merges bindings in requested
 pack order, deduplicates only identical module/name pairs, and does not import the
-modules. The compatibility helpers under `agent.tools.builtin` derive their values
-from this catalog instead of maintaining a second table.
+modules. Agent discovery derives its values from this catalog instead of maintaining
+a second table.
 
 `agent.tools.registry` imports only the resolved bindings and filters each module's
 `TOOLS` export by the declared names. Runtime discovery continues to apply the
@@ -54,12 +54,12 @@ one declared membership model.
 
 `component_catalog.audit` is a thin public facade returning a structured report with
 deterministic issue ordering and aggregate counts. Report models and shared helpers
-live in `audit_models`; tool/module/manifest checks live in `audit_tools`; feature,
+live in `audit_models`; tool/module/policy checks live in `audit_tools`; feature,
 MCP, subagent, and workflow checks live in `audit_surfaces`. It validates:
 
 - tool-pack keys, entry identity, descriptions, module bindings, exact declared
   membership, module export shape, orphan exports, and cross-module name conflicts;
-- prompt manifest module/builder mappings and the resulting `ToolPackPrompt`;
+- policy module/builder mappings and the resulting tuple of `ToolPackPolicy` values;
 - `ToolDef` names, summaries, properties, required fields, handlers, permission
   roles, execution policies, aliases, and JSON-serializable OpenAI/MCP schemas;
 - tool-feature identity and descriptions;

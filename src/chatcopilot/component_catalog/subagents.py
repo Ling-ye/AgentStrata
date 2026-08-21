@@ -6,24 +6,10 @@ from chatcopilot.contracts.subagents import BUILTIN_SUBAGENT_PRESET_NAMES
 from chatcopilot.contracts.subagents import (
     CachePolicySpec,
     ContextPolicySpec,
-    PromptLayerSpec,
     SubagentDef,
     ToolMatchRule,
     ToolSelectorSpec,
 )
-
-_STRUCTURED_TAIL = (
-    "Always finish by calling submit_result. Include evidence, changes, commands_run, "
-    "risks, next_steps, confidence, and outputs when they are relevant."
-)
-
-
-def _layers(role: str, *, task_focus: str = "") -> PromptLayerSpec:
-    return PromptLayerSpec(
-        role=f"{role}\n\n{_STRUCTURED_TAIL}",
-        task_focus=task_focus or PromptLayerSpec().task_focus,
-    )
-
 
 _NO_TOOLS = ToolSelectorSpec()
 _BROWSER_READ = ToolSelectorSpec(
@@ -54,10 +40,9 @@ BUILTIN_SUBAGENTS: dict[str, SubagentDef] = {
             "repository-native AgentStrata external-tool adapter with SDD, tests, docs, "
             "static catalog registration, and focused verification."
         ),
-        system_prompt="You are the AgentStrata open-source adapter forge.",
         kind="workflow",
         version="3",
-        prompt_layers=_layers(
+        role_prompt=(
             "You are the adapter forge. Convert one explicitly approved public "
             "open-source repository into maintained AgentStrata source code; never "
             "dynamically load arbitrary upstream Python into the main process.\n\n"
@@ -124,10 +109,9 @@ BUILTIN_SUBAGENTS: dict[str, SubagentDef] = {
             "Jira, or reasoning helpers. Use when the task needs non-search external "
             "system context. Returns query results without mutating remote state."
         ),
-        system_prompt="You are the approved MCP source-query subagent.",
         kind="external",
         version="2",
-        prompt_layers=_layers(
+        role_prompt=(
             "You are the mcp_query subagent. Query only approved readonly MCP tools. "
             "Search MCP tools belong to dedicated search subagents, not to this subagent. Never write, "
             "create, update, delete, send messages, or mutate remote "
@@ -151,10 +135,9 @@ BUILTIN_SUBAGENTS: dict[str, SubagentDef] = {
             "implement changes, verify correctness, and prepare a handoff. "
             "Use for multi-file changes or tasks requiring testing."
         ),
-        system_prompt="You are a software development agent operating directly on the working directory.",
         kind="workflow",
         version="1",
-        prompt_layers=_layers(
+        role_prompt=(
             "You are an autonomous software developer. You operate directly on the working "
             "directory.\n\n"
             "## Adaptive Development Protocol\n\n"
@@ -206,10 +189,9 @@ BUILTIN_SUBAGENTS: dict[str, SubagentDef] = {
             "Read a JavaScript-rendered webpage with limited browser interaction. "
             "Use only after static URL fetching is insufficient."
         ),
-        system_prompt="You are the dynamic webpage reading subagent.",
         kind="external",
         version="1",
-        prompt_layers=_layers(
+        role_prompt=(
             "Open the concrete URL from the task resources or inputs. Read the rendered "
             "page using accessibility snapshots. You may click links or expanders, hover, "
             "scroll with PageDown/PageUp/Home/End, wait briefly, and manage existing tabs. "

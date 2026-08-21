@@ -94,7 +94,7 @@ class MultimodalTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
             has_private_space_inventory=False,
             update_text=_text_update,
             recover_workspace=lambda *_args: None,
-            refresh_system_prompt=lambda _session: None,
+            refresh_prompt_plan=lambda _session: None,
         )
 
     def tearDown(self) -> None:
@@ -185,7 +185,7 @@ class MultimodalTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
             has_private_space_inventory=False,
             update_text=_text_update,
             recover_workspace=lambda *_args: None,
-            refresh_system_prompt=lambda _session: None,
+            refresh_prompt_plan=lambda _session: None,
         )
         turn = self._turn(
             user_text="分析图片",

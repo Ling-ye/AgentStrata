@@ -6,6 +6,7 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 
 from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
 from chatcopilot.contracts.identity import SessionIdentity
+from chatcopilot.contracts.prompt import PromptPlan
 
 
 CAPABILITY_CHAT = "chat"
@@ -91,7 +92,7 @@ class BackendSessionRef:
 @dataclass(frozen=True)
 class BackendOpenRequest:
     session_id: str
-    system_baseline: str
+    prompt_plan: PromptPlan
     allowed_tool_names: frozenset[str] = frozenset()
     required_capabilities: frozenset[str] = frozenset({CAPABILITY_CHAT})
     caller_identity: SessionIdentity | None = None

@@ -13,7 +13,6 @@ from chatcopilot.contracts.subagents import (
     CachePolicySpec as CachePolicySpec,
     ContextPolicySpec as ContextPolicySpec,
     CustomSubagentSpec as CustomSubagentSpec,
-    PromptLayerSpec as PromptLayerSpec,
     SearchProviderSpec as SearchProviderSpec,
     SubagentBudgetSpec as SubagentBudgetSpec,
     SubagentSpec as SubagentSpec,
@@ -57,10 +56,11 @@ class CodeLLMSpec:
 
 @dataclass(frozen=True)
 class LLMSpec:
-    """Three model slots while retaining ``env_prefix`` compatibility."""
+    """Versioned chat, research, and code model slots."""
 
     env_prefix: str = "CHATCOPILOT_CHAT"
     research_env_prefix: str | None = None
+    research_model: str | None = None
     research_execution: str = "agent"
     research_prefixes: tuple[str, ...] = ("/research", "/deep-research", "/调研")
     research_web_search: str = "live"
@@ -170,14 +170,14 @@ class SkillsSpec:
 
 @dataclass(frozen=True)
 class PromptSpec:
-    """Bot prompt file pointers."""
+    """Bot-authored presentation files; runtime policy is not configurable here."""
 
-    persona: str
-    refusal: str | None = None
-    safety: str | None = None
-    memory_rules: str | None = None
-    modes: dict[str, str] = field(default_factory=dict)
-    roles: dict[str, str] = field(default_factory=dict)
+    schema_version: int
+    identity: str
+    response_style: str
+    refusal_style: str | None = None
+    role_styles: dict[str, str] = field(default_factory=dict)
+    mode_styles: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

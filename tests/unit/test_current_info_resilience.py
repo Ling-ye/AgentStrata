@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.prompt_plan_fixture import prompt_input, prompt_plan
+
 import json
 import unittest
 from datetime import date
@@ -8,6 +10,7 @@ from unittest.mock import patch
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.agent.runtime import AgentRuntime
+from chatcopilot.agent.context.prompt_plan import PromptPlanBuilder, render_native_prefix
 from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.subagents.registry import (
     SearchCircuitBreaker,
@@ -50,63 +53,42 @@ def _delegate(name: str, payloads: list[dict], calls: list[str]) -> ToolDef:
 
 
 class CurrentDatePromptTests(unittest.TestCase):
-    def test_runtime_prompt_renderer_preserves_date_after_baseline_refresh(self) -> None:
+    def test_runtime_prompt_plan_preserves_date_after_plan_refresh(self) -> None:
         runtime = AgentRuntime(
             llm=_FakeLLM(),
             tools=(),
             tools_schema=(),
             runtime_config=ChatConfig(),
         )
-        with patch("chatcopilot.agent.context.prompt_builder.date") as mocked_date:
+        with patch("chatcopilot.agent.context.prompt_plan.date") as mocked_date:
             mocked_date.today.return_value = date(2026, 6, 22)
-            session = runtime.new_session(session_id="sid", system_baseline="platform-v1")
-            first = session.system_baseline
-            session.set_system_baseline("platform-v2")
-            second = session.system_baseline
+            first_input = prompt_input("platform-v1")
+            session = runtime.new_session(session_id="sid", prompt_input=first_input)
+            concrete = session.backend.native_session(session.backend_session_ref)
+            first = render_native_prefix(concrete.prompt_plan)[0]["content"]
+            session.set_prompt_plan(PromptPlanBuilder().build(prompt_input("platform-v2")))
+            second = render_native_prefix(concrete.prompt_plan)[0]["content"]
 
-        self.assertIn("准确性与抗迎合规则", first)
-        self.assertIn("每个事实性断言都要打标签", first)
+        self.assertIn("准确性与搜索", first)
+        self.assertNotIn("每个事实性断言都要打标签", first)
         self.assertIn("今天是 2026-06-22", first)
         self.assertIn("platform-v2", second)
-        self.assertIn("准确性与抗迎合规则", second)
+        self.assertIn("准确性与搜索", second)
         self.assertIn("今天是 2026-06-22", second)
         self.assertEqual(second, session.snapshot_messages()[0]["content"])
-
-    def test_same_date_is_stable_and_next_date_only_changes_tail(self) -> None:
-        runtime = AgentRuntime(
-            llm=_FakeLLM(), tools=(), tools_schema=(), runtime_config=ChatConfig()
-        )
-        with patch("chatcopilot.agent.context.prompt_builder.date") as mocked_date:
-            mocked_date.today.return_value = date(2026, 6, 22)
-            session = runtime.new_session(session_id="sid", system_baseline="stable")
-            same_day = session.system_baseline
-            session.set_system_baseline("stable")
-            self.assertEqual(same_day, session.system_baseline)
-            mocked_date.today.return_value = date(2026, 6, 23)
-            session.set_system_baseline("stable")
-
-        self.assertEqual(
-            same_day.removesuffix("2026-06-22。"),
-            session.system_baseline.removesuffix("2026-06-23。"),
-        )
 
     def test_runtime_refresh_replaces_persona_and_memory_without_duplication(self) -> None:
         runtime = AgentRuntime(
             llm=_FakeLLM(), tools=(), tools_schema=(), runtime_config=ChatConfig()
         )
-        session = runtime.new_session(
-            session_id="sid-dynamic",
-            system_baseline="stable",
-            session_dynamic_tail="old persona",
-            memory_snippet_override="old memory",
-        )
-
-        session.set_system_context(
-            "stable-v2",
-            session_dynamic_tail="new persona",
-            memory_snippet="new memory",
-        )
-        rendered = session.system_baseline
+        old_input = prompt_input("stable")
+        old_input = old_input.__class__(**{**old_input.__dict__, "dynamic_persona": "old persona", "memory": "old memory"})
+        session = runtime.new_session(session_id="sid-dynamic", prompt_input=old_input)
+        new_input = prompt_input("stable-v2")
+        new_input = new_input.__class__(**{**new_input.__dict__, "dynamic_persona": "new persona", "memory": "new memory"})
+        session.set_prompt_plan(PromptPlanBuilder().build(new_input))
+        concrete = session.backend.native_session(session.backend_session_ref)
+        rendered = "\n".join(message["content"] for message in render_native_prefix(concrete.prompt_plan))
 
         self.assertIn("stable-v2", rendered)
         self.assertIn("new persona", rendered)
@@ -198,7 +180,7 @@ class SearchFallbackTests(unittest.TestCase):
             llm=_FakeLLM(),
             executor=ToolExecutor(tools=[]),
             tools_schema=[],
-            system_baseline="system",
+            prompt_plan=prompt_plan("system"),
         )
         session._messages.append(
             {"role": "tool", "content": json.dumps(nested, ensure_ascii=False)}
@@ -221,7 +203,7 @@ class SearchDelegateTurnTests(unittest.TestCase):
                 name="search_test",
                 tool_name="search_test",
                 summary="test",
-                system_prompt="test",
+                role_prompt="test",
                 kind="search",
             ),
             Runner(),

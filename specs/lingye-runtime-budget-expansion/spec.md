@@ -11,7 +11,7 @@ created: 2026-07-16
 
 ### Goal
 
-[INFERRED][HIGH] Increase the Lingye bot's execution budgets while preserving explicit absolute limits:
+ Increase the Lingye bot's execution budgets while preserving explicit absolute limits:
 
 - Main DeepSeek turn: at most 3600 seconds.
 - Codex CLI task: at most 21600 seconds.
@@ -20,13 +20,13 @@ created: 2026-07-16
 
 ### Design
 
-[COMPUTED][HIGH] Main Agent soft timeout is 3000 seconds and hard timeout is 3600 seconds.
+ Main Agent soft timeout is 3000 seconds and hard timeout is 3600 seconds.
 
-[COMPUTED][HIGH] Subagent soft timeout is 1200 seconds because its generated hard timeout is three times the soft timeout.
+ Subagent soft timeout is 1200 seconds because its generated hard timeout is three times the soft timeout.
 
-[INFERRED][HIGH] Enabled MCP servers receive an instance-level 3600-second call timeout.
+ Enabled MCP servers receive an instance-level 3600-second call timeout.
 
-[INFERRED][HIGH] Unified search wall time is capped at 3600 seconds and remains bounded by the parent turn.
+ Unified search wall time is capped at 3600 seconds and remains bounded by the parent turn.
 
 ## Design
 
@@ -76,12 +76,12 @@ validation_commands:
 
 # Acceptance Criteria
 
-- [INFERRED][HIGH] Main Agent hard timeout is 3600 seconds or less.
-- [INFERRED][HIGH] Codex CLI timeout is 21600 seconds.
-- [INFERRED][HIGH] Every enabled Lingye MCP server timeout is 3600 seconds or less.
-- [INFERRED][HIGH] Every configured Lingye subagent generated hard timeout is 3600 seconds or less.
-- [INFERRED][HIGH] Main and subagent model/tool turn budgets are higher than their previous values.
-- [INFERRED][HIGH] BotSpec validation and focused routing tests pass.
+-  Main Agent hard timeout is 3600 seconds or less.
+-  Codex CLI timeout is 21600 seconds.
+-  Every enabled Lingye MCP server timeout is 3600 seconds or less.
+-  Every configured Lingye subagent generated hard timeout is 3600 seconds or less.
+-  Main and subagent model/tool turn budgets are higher than their previous values.
+-  BotSpec validation and focused routing tests pass.
 
 ## Verification
 
@@ -108,7 +108,7 @@ git diff --check
 
 ### Latest execution
 
-- [KNOWN][HIGH] Focused runtime, routing, subagent, MCP, and search tests passed: `82 passed, 5 subtests passed`.
-- [KNOWN][HIGH] BotSpec validation, architecture boundaries, SDD validation, compilation, and `git diff --check` passed.
-- [KNOWN][HIGH] The generated runtime env contains main soft/hard timeouts `3000/3600`, iteration caps `32/96`, tool-call cap `128`, and Codex timeout `21600`.
-- [KNOWN][HIGH] The deployed instance was synchronized and restarted successfully; its user service is active.
+-  Focused runtime, routing, subagent, MCP, and search tests passed: `82 passed, 5 subtests passed`.
+-  BotSpec validation, architecture boundaries, SDD validation, compilation, and `git diff --check` passed.
+-  The generated runtime env contains main soft/hard timeouts `3000/3600`, iteration caps `32/96`, tool-call cap `128`, and Codex timeout `21600`.
+-  The deployed instance was synchronized and restarted successfully; its user service is active.

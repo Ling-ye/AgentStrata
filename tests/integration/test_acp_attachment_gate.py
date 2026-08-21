@@ -11,6 +11,9 @@ from typing import Any
 from unittest import mock
 
 from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder
+from chatcopilot.contracts.prompt import BotPromptProfile
+from chatcopilot.contracts.tool_packs import ToolPackPolicy
 from chatcopilot.middleware.acp.session_state import _make_test_session_state
 from chatcopilot.middleware.acp import server as acp_server
 from chatcopilot.agent.protocol import AgentResult as _AgentResult, FinalText as _FinalText
@@ -38,13 +41,12 @@ from chatcopilot.middleware.acp.attachment_pipeline import (
     normalize_cc_connect_wrapper,
     should_short_circuit_attachment_only,
 )
-from chatcopilot.middleware.acp.server import AcpChatAgent, _refresh_session_system_prompt
+from chatcopilot.middleware.acp.server import AcpChatAgent, _refresh_session_prompt_plan
 from chatcopilot.middleware.acp.server import _fallback_p2p_workspace_from_sender
-from chatcopilot.middleware.acp.prompt_assembler import build_system_prompt as _build_system_prompt
 
 
-def build_system_prompt(workspace: Workspace, **kwargs) -> str:
-    return _build_system_prompt(platform_type="feishu", workspace=workspace, **kwargs)
+def render_test_prompt(workspace: Workspace, **kwargs) -> str:
+    return str(kwargs.get("bot_system_prompt") or "Test assistant")
 
 
 class _FakeConn:
@@ -243,7 +245,7 @@ class AttachmentGateTests(unittest.TestCase):
                     session = _make_test_session_state(
                         session_id="sid",
                         workspace=user_ws,
-                        system_prompt=build_system_prompt(user_ws),
+                        identity=render_test_prompt(user_ws),
                     )
 
                     def fail_run_task(task, **kwargs) -> None:
@@ -300,7 +302,7 @@ class AttachmentGateTests(unittest.TestCase):
                     session = _make_test_session_state(
                         session_id="sid",
                         workspace=user_ws,
-                        system_prompt=build_system_prompt(user_ws),
+                        identity=render_test_prompt(user_ws),
                     )
 
                     def fail_run_task(task, **kwargs) -> None:
@@ -649,9 +651,9 @@ class AttachmentGateTests(unittest.TestCase):
 
         async def run_case() -> None:
             original_update = acp_server.update_agent_message_text
-            original_refresh = acp_server._refresh_session_system_prompt
+            original_refresh = acp_server._refresh_session_prompt_plan
             acp_server.update_agent_message_text = lambda text: text
-            acp_server._refresh_session_system_prompt = lambda _session: None
+            acp_server._refresh_session_prompt_plan = lambda _session: None
             try:
                 with tempfile.TemporaryDirectory() as tmp:
                     user_ws = Workspace(
@@ -664,7 +666,7 @@ class AttachmentGateTests(unittest.TestCase):
                     session = _make_test_session_state(
                         session_id="sid",
                         workspace=user_ws,
-                        system_prompt=build_system_prompt(user_ws),
+                        identity=render_test_prompt(user_ws),
                     )
 
                     captured: list[Any] = []
@@ -705,7 +707,7 @@ class AttachmentGateTests(unittest.TestCase):
                     self.assertEqual(agent._conn.messages, [])
             finally:
                 acp_server.update_agent_message_text = original_update
-                acp_server._refresh_session_system_prompt = original_refresh
+                acp_server._refresh_session_prompt_plan = original_refresh
 
         asyncio.run(run_case())
 
@@ -762,23 +764,30 @@ class AttachmentGateTests(unittest.TestCase):
         self.assertIn("分析产物：0 个文件", text)
         self.assertNotIn("全部为空", text)
 
-    def test_capability_prompt_fragments_are_injected(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = Workspace(
-                root=Path(tmp),
-                chat_kind="p2p",
-                chat_id=None,
-                user_id="ou_test",
-                user_name="tester",
-            ).ensure()
-
-            prompt = build_system_prompt(
-                ws,
-                capability_prompt_fragments=("同步数据到示例目标时使用 long_running_export。",),
+    def test_structured_capability_policy_is_a_single_prompt_layer(self) -> None:
+        plan = PromptPlanBuilder().build(
+            PromptBuildInput(
+                profile=BotPromptProfile(
+                    identity="Test assistant",
+                    response_style="简洁回复。",
+                ),
+                backend="native",
+                model=None,
+                role="owner",
+                channel_kind="private",
+                session_policy="可信测试会话。",
+                capability_policies=(
+                    ToolPackPolicy(
+                        id="export.receipt",
+                        content="同步数据后必须使用成功回执确认结果。",
+                    ),
+                ),
             )
+        )
 
-        self.assertIn("当前可用能力", prompt)
-        self.assertIn("同步数据到示例目标", prompt)
+        layers = [layer for layer in plan.layers if layer.id == "capability.export.receipt"]
+        self.assertEqual(len(layers), 1)
+        self.assertIn("成功回执", layers[0].content)
 
     def test_extracts_filename_from_text_attachment_hint(self) -> None:
         names = extract_attachment_names_from_text(
@@ -924,7 +933,7 @@ class AttachmentGateTests(unittest.TestCase):
                     filename = "MemoryReport_MobilePlayer_1.2.0-102-1-v1d0_2026_01_03_04_05_06.csv"
                     (default_ws.attachments / filename).write_text("frame,cost\n1,2", encoding="utf-8")
 
-                    session = _make_test_session_state(session_id="sid", workspace=default_ws, system_prompt=build_system_prompt(default_ws),)
+                    session = _make_test_session_state(session_id="sid", workspace=default_ws, identity=render_test_prompt(default_ws),)
 
                     def fail_run_task(task, **kwargs) -> None:
                         raise AssertionError(f"run_task should not be called: {task}")
@@ -932,7 +941,7 @@ class AttachmentGateTests(unittest.TestCase):
                     session.session.run_task = fail_run_task  # type: ignore[method-assign]
 
                     def fake_build_session(**kwargs: Any):
-                        rebuilt = _make_test_session_state(session_id=kwargs["session_id"], workspace=kwargs["ws"], system_prompt=build_system_prompt(kwargs["ws"]),)
+                        rebuilt = _make_test_session_state(session_id=kwargs["session_id"], workspace=kwargs["ws"], identity=render_test_prompt(kwargs["ws"]),)
                         rebuilt.session.run_task = fail_run_task  # type: ignore[method-assign]
                         return rebuilt
 
@@ -1008,7 +1017,7 @@ class AttachmentGateTests(unittest.TestCase):
                     ).ensure()
                     (default_ws.attachments / "MemoryReport.csv").write_text("x", encoding="utf-8")
 
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, system_prompt=build_system_prompt(user_ws),)
+                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
 
                     def fail_run_task(task, **kwargs) -> None:
                         raise AssertionError(f"run_task should not be called: {task}")
@@ -1080,7 +1089,7 @@ class AttachmentGateTests(unittest.TestCase):
                     session = _make_test_session_state(
                         session_id="sid",
                         workspace=user_ws,
-                        system_prompt=build_system_prompt(user_ws),
+                        identity=render_test_prompt(user_ws),
                     )
 
                     def fail_run_task(task, **kwargs) -> None:
@@ -1138,7 +1147,7 @@ class AttachmentGateTests(unittest.TestCase):
                     ).ensure()
                     filename = "d91761343ad3ca61d1eddd92ee0971cc.jpg"
                     (default_ws.attachments / filename).write_bytes(b"fake-jpg")
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, system_prompt=build_system_prompt(user_ws),)
+                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
 
                     def fail_run_task(task, **kwargs) -> None:
                         raise AssertionError(f"run_task should not be called: {task}")
@@ -1198,7 +1207,7 @@ class AttachmentGateTests(unittest.TestCase):
                     ).ensure()
                     filename = "d91761343ad3ca61d1eddd92ee0971cc.jpg"
                     (default_ws.attachments / filename).write_bytes(b"fake-jpg")
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, system_prompt=build_system_prompt(user_ws),)
+                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
                     seen_user_text: list[str] = []
 
                     def fake_run_task(task, *, on_event, **kwargs):
@@ -1264,7 +1273,7 @@ class AttachmentGateTests(unittest.TestCase):
                     (default_ws.attachments / "v3-sample_scene.moduleAlloc").write_text("old", encoding="utf-8")
                     (default_ws.attachments / "v4-sample_scene.moduleAlloc").write_text("new", encoding="utf-8")
 
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, system_prompt=build_system_prompt(user_ws),)
+                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
                     seen_user_text: list[str] = []
 
                     def fake_run_task(task, *, on_event, **kwargs):
@@ -1338,7 +1347,7 @@ class AttachmentGateTests(unittest.TestCase):
                     (default_ws.attachments / filename_a).write_text("old", encoding="utf-8")
                     (default_ws.attachments / filename_b).write_text("new", encoding="utf-8")
 
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, system_prompt=build_system_prompt(user_ws),)
+                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
                     seen_user_text: list[str] = []
 
                     def fake_run_task(task, *, on_event, **kwargs):
@@ -1407,7 +1416,7 @@ class AttachmentGateTests(unittest.TestCase):
                     ).ensure()
                     filename = "MemoryReport_pending.csv"
 
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, system_prompt=build_system_prompt(user_ws),)
+                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
 
                     def fail_run_task(task, **kwargs) -> None:
                         raise AssertionError(f"run_task should not be called: {task}")
@@ -1507,7 +1516,7 @@ class AttachmentGateTests(unittest.TestCase):
 
         asyncio.run(run_case())
 
-    def test_refresh_system_prompt_sees_files_saved_after_session_creation(self) -> None:
+    def test_refresh_prompt_plan_rebuilds_from_current_runtime_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ws = Workspace(
                 root=Path(tmp),
@@ -1516,15 +1525,16 @@ class AttachmentGateTests(unittest.TestCase):
                 user_id="ou_test",
                 user_name="tester",
             ).ensure()
-            session = _make_test_session_state(session_id="sid", workspace=ws, system_prompt=build_system_prompt(ws),)
-            self.assertIn("附件 0 项", session._messages[0]["content"])
+            session = _make_test_session_state(session_id="sid", workspace=ws, identity=render_test_prompt(ws),)
+            self.assertNotIn("更新后的表达风格", session._messages[0]["content"])
+            session.runtime.prompt_profile = BotPromptProfile(
+                identity="Test assistant",
+                response_style="更新后的表达风格。",
+            )
 
-            (ws.attachments / "file_a.csv").write_text("a", encoding="utf-8")
-            (ws.attachments / "file_b.csv").write_text("b", encoding="utf-8")
+            _refresh_session_prompt_plan(session)
 
-            _refresh_session_system_prompt(session)
-
-        self.assertIn("附件 2 项", session._messages[0]["content"])
+        self.assertIn("更新后的表达风格", session._messages[0]["content"])
 
     def test_attachment_ack_records_context_for_next_turn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1535,7 +1545,7 @@ class AttachmentGateTests(unittest.TestCase):
                 user_id="ou_test",
                 user_name="tester",
             ).ensure()
-            session = _make_test_session_state(session_id="sid", workspace=ws, system_prompt=build_system_prompt(ws),)
+            session = _make_test_session_state(session_id="sid", workspace=ws, identity=render_test_prompt(ws),)
             (ws.attachments / "file_a.csv").write_text("a", encoding="utf-8")
             ack = format_attachment_ack(ws, ["file_a.csv"])
 
@@ -1564,7 +1574,7 @@ class AttachmentGateTests(unittest.TestCase):
                         user_id="ou_test",
                         user_name="tester",
                     ).ensure()
-                    session = _make_test_session_state(session_id="sid", workspace=ws, system_prompt=build_system_prompt(ws),)
+                    session = _make_test_session_state(session_id="sid", workspace=ws, identity=render_test_prompt(ws),)
                     agent = AcpChatAgent.__new__(AcpChatAgent)
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
@@ -1701,7 +1711,7 @@ class AttachmentGateTests(unittest.TestCase):
                     ).ensure()
                     (default_ws.attachments / "v3-sample_scene.moduleAlloc").write_text("x", encoding="utf-8")
 
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, system_prompt=build_system_prompt(user_ws),)
+                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
                     agent = AcpChatAgent.__new__(AcpChatAgent)
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()

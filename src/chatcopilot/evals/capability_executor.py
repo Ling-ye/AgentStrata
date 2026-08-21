@@ -28,8 +28,10 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from chatcopilot.agent.protocol import AgentTask, ResourceRef
 from chatcopilot.agent.runtime import build_agent_runtime
+from chatcopilot.agent.context.prompt_plan import PromptBuildInput
 from chatcopilot.agent.tools.file_delivery import FileDeliveryResult
 from chatcopilot.agent.tools.executor import ToolExecutor
+from chatcopilot.botspec.runtime_env import load_research_llm_config
 from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
 from chatcopilot.contracts.code_tasks import validate_code_task_title
 from chatcopilot.contracts.identity import SessionIdentity
@@ -61,7 +63,6 @@ from chatcopilot.evals.models import (
 )
 from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, sanitize_text
 from chatcopilot.evals.registry import get_manifest
-from chatcopilot.middleware.acp.prompt_assembler import build_system_prompt
 from chatcopilot.middleware.runtime.workspace import MiddlewareWorkspaceService
 
 
@@ -568,7 +569,7 @@ def _evaluation_subagents(
                     timeout_seconds=min(120, max(1, int(definition.policy.timeout_seconds))),
                     max_output_chars=6000,
                 ),
-                system_prompt=(
+                role_prompt=(
                     "This is an isolated AgentStrata evaluation. Use no external tools. "
                     "Return a truthful read-only result exclusively through submit_result, "
                     "including every required result-contract field. Set summary exactly to "
@@ -2008,7 +2009,7 @@ class _EvaluationWorkspaceService(MiddlewareWorkspaceService):
         return self._workspace.root.expanduser().resolve()
 
 
-def _case_appendix(definition: EvalCaseDefinition, allowed_tools: Sequence[str]) -> str:
+def _case_context(definition: EvalCaseDefinition, allowed_tools: Sequence[str]) -> str:
     lines = [
         "## Deterministic capability evaluation policy",
         f"case_id: {definition.case_id}",
@@ -2585,6 +2586,10 @@ def _execute_agent_definition(
     search_case = definition.case_id in _SEARCH_CASES
     agent_runtime = build_agent_runtime(
         chat_config=chat_config,
+        research_llm_config=load_research_llm_config(
+            runtime.spec.llm,
+            fallback=chat_config.llm,
+        ),
         # Code/recovery Cases expose only their evaluation-owned atomic tools.
         # In particular, the lifecycle Case deliberately shadows production
         # code-task names without initializing the real repository worker.
@@ -2616,19 +2621,6 @@ def _execute_agent_definition(
         ).ensure()
 
     def open_session(workspace: Workspace, *, session_id: str) -> Any:
-        system_baseline = build_system_prompt(
-            platform_type=runtime.platform_type,
-            workspace=workspace,
-            bot_system_prompt=runtime.system_prompt,
-            bot_refusal_prompt=runtime.refusal_prompt,
-            capability_prompt_fragments=runtime.capability_prompt_fragments,
-            skill_index=runtime.skills,
-            mode_prompts=runtime.mode_prompt_overrides,
-            role_prompts=runtime.role_prompt_overrides,
-            safety_prompt=runtime.safety_prompt_override,
-            memory_prompt=runtime.memory_prompt_override,
-            llm_model=chat_config.llm.model,
-        )
         # Session construction resolves the backend workdir and state root. Pin its
         # WorkspaceService so AgentRuntime writes an explicit evaluation-owned
         # workspace_root into BackendOpenRequest.options. The environment binding is
@@ -2638,7 +2630,16 @@ def _execute_agent_definition(
         with _workspace_environment(workspace):
             session = agent_runtime.new_session(
                 session_id=session_id,
-                system_baseline=system_baseline,
+                prompt_input=PromptBuildInput(
+                    profile=runtime.prompt_profile,
+                    backend=runtime.agent_backend,
+                    model=None,
+                    role="owner",
+                    channel_kind="private",
+                    session_policy="这是隔离能力 Evaluation Trial；只执行当前声明式 Case。",
+                    capability_policies=runtime.capability_policies,
+                    skill_index=runtime.skills,
+                ),
                 workspace_service=workspace_service,
                 permission_filter=case_permission_filter,
                 caller_role_hint="owner",
@@ -2653,7 +2654,6 @@ def _execute_agent_definition(
                     if definition.case_id == "workspace-write-contained"
                     else None
                 ),
-                memory_snippet_override="",
             )
         forbidden_tool_name = _EXECUTION_DENIAL_TOOLS.get(definition.case_id)
         if forbidden_tool_name is not None:
@@ -2689,7 +2689,7 @@ def _execute_agent_definition(
         task = AgentTask(
             text=text,
             resources=refs,
-            system_appendix=_case_appendix(definition, allowed_tools),
+            turn_context=_case_context(definition, allowed_tools),
             metadata={
                 "eval_suite": suite_id,
                 "eval_case": definition.case_id,

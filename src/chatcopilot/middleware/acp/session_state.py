@@ -2,7 +2,7 @@
 
 middleware/acp 内部用 ``SessionState`` 承载一次 ACP session 的全部上下文：
 ``Workspace`` + ``Role`` + ``AgentSession`` + 当前业务模式/调试模式 + bot runtime
-快照（用于重建 system prompt）。这样 ACP server 的各个 handler 不直接持有
+快照（用于重建 PromptPlan）。这样 ACP server 的各个 handler 不直接持有
 ``AgentSession``，所有"角色 / 模式 / workspace"语义都通过本对象访问。
 
 设计意图：
@@ -32,6 +32,7 @@ from chatcopilot.contracts.model_selection import (
     MODEL_SELECTION_SCOPE_SESSION,
 )
 from chatcopilot.contracts.skills import SkillIndexEntry
+from chatcopilot.contracts.persona_control import PendingPersonaProposal
 from chatcopilot.middleware.access_control import AssistantMode, Role
 from chatcopilot.middleware.runtime.workspace import Workspace
 
@@ -73,9 +74,8 @@ class SessionState:
         repr=False,
     )
     conversation_cursor: int = field(default=0, repr=False)
-    turn_system_appendix: str = field(default="", repr=False)
-    _session_dynamic_tail: str = field(default="", repr=False)
-    _memory_snippet: str = field(default="", repr=False)
+    turn_context: str = field(default="", repr=False)
+    pending_persona_proposal: PendingPersonaProposal | None = field(default=None, repr=False)
     _transcript_path: Optional[Path] = field(default=None, repr=False)
     _pending_exchanges: list[tuple[str, str]] = field(default_factory=list, repr=False)
 
@@ -117,44 +117,6 @@ class SessionState:
             except (OSError, RuntimeError):
                 _LOGGER.exception("无法初始化 transcript 路径，本会话不落盘")
                 self._transcript_path = None
-
-    # ------------------------------------------------------------------
-    # BotRuntimeContext 字段的便捷代理（重建 system prompt 时用）
-    # 测试场景下 ``runtime`` 可能为 None，统一退化为安全默认值。
-    # ------------------------------------------------------------------
-    @property
-    def bot_system_prompt(self) -> str:
-        return getattr(self.runtime, "system_prompt", "") if self.runtime is not None else ""
-
-    @property
-    def bot_refusal_prompt(self) -> Optional[str]:
-        return getattr(self.runtime, "refusal_prompt", None) if self.runtime is not None else None
-
-    @property
-    def safety_prompt_override(self) -> Optional[str]:
-        return getattr(self.runtime, "safety_prompt_override", None) if self.runtime is not None else None
-
-    @property
-    def memory_prompt_override(self) -> Optional[str]:
-        return getattr(self.runtime, "memory_prompt_override", None) if self.runtime is not None else None
-
-    @property
-    def mode_prompt_overrides(self) -> dict[str, str]:
-        if self.runtime is None:
-            return {}
-        return getattr(self.runtime, "mode_prompt_overrides", {})
-
-    @property
-    def role_prompt_overrides(self) -> dict[str, str]:
-        if self.runtime is None:
-            return {}
-        return getattr(self.runtime, "role_prompt_overrides", {})
-
-    @property
-    def capability_prompt_fragments(self) -> tuple[str, ...]:
-        if self.runtime is None:
-            return ()
-        return getattr(self.runtime, "capability_prompt_fragments", ())
 
     @property
     def skill_index(self) -> tuple[SkillIndexEntry, ...]:
@@ -235,11 +197,11 @@ class SessionState:
         *,
         identity: TurnIdentity,
         journal: "GroupConversationJournal",
-        system_appendix: str,
+        turn_context: str,
     ) -> None:
         self.turn_identity = identity
         self.conversation_journal = journal
-        self.turn_system_appendix = system_appendix
+        self.turn_context = turn_context
 
     def record_group_model_exchange(
         self,
@@ -301,52 +263,12 @@ class SessionState:
         self.code_model_once = other.code_model_once
         self.persist_transcript()
 
-    def set_prompt_snapshots(self, *, persona: str, memory: str) -> None:
-        """Remember the latest dynamic snapshots across mode-only prompt changes."""
-
-        self._session_dynamic_tail = persona or ""
-        self._memory_snippet = memory or ""
-
     def set_assistant_mode(
         self,
         mode: AssistantMode,
-        system_prompt: str,
-        *,
-        session_dynamic_tail: str | None = None,
-        memory_snippet: str | None = None,
     ) -> None:
-        """切换业务模式：同步更新本 state + AgentSession 的 system baseline。
-
-        每轮 refresh 同时传入当前 persona 与 memory 快照；BackendAgentSession
-        通过统一 renderer 把它们放回稳定 prompt 后缀，Native/LangGraph/Codex
-        不各自维护第二套拼装逻辑。
-        """
+        """Change the mode value; the caller rebuilds the single PromptPlan."""
         self.assistant_mode = mode
-        if session_dynamic_tail is not None:
-            self._session_dynamic_tail = session_dynamic_tail
-        if memory_snippet is not None:
-            self._memory_snippet = memory_snippet
-        if self.session is not None:
-            setter = getattr(self.session, "set_system_context", None)
-            if callable(setter):
-                setter(
-                    system_prompt,
-                    session_dynamic_tail=self._session_dynamic_tail,
-                    memory_snippet=self._memory_snippet,
-                )
-            else:
-                parts = [str(system_prompt or "").strip()]
-                parts.extend(
-                    text
-                    for text in (
-                        self._session_dynamic_tail.strip(),
-                        self._memory_snippet.strip(),
-                    )
-                    if text
-                )
-                self.session.set_system_baseline(
-                    "\n\n".join(part for part in parts if part)
-                )
 
     @property
     def _messages(self) -> list:
@@ -465,7 +387,7 @@ def _make_test_session_state(
     *,
     session_id: str,
     workspace: Workspace,
-    system_prompt: str = "",
+    identity: str = "",
     role: Optional[Role] = None,
     assistant_mode: Optional[AssistantMode] = None,
 ) -> "SessionState":
@@ -475,21 +397,49 @@ def _make_test_session_state(
     ``state.session.run_task`` 注入假实现。
     """
     from chatcopilot.agent.session import AgentSession
+    from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder
     from chatcopilot.agent.tools.executor import ToolExecutor
+    from chatcopilot.contracts.prompt import BotPromptProfile
+    from types import SimpleNamespace
+
+    profile = BotPromptProfile(
+        identity=identity or "Test assistant",
+        response_style="Return concise test responses.",
+    )
+    plan = PromptPlanBuilder().build(
+        PromptBuildInput(
+            profile=profile,
+            backend="native",
+            model=None,
+            role=(role or Role.USER).value,
+            channel_kind="group" if workspace.chat_kind == "group" else "private",
+            session_policy="Test session policy.",
+        )
+    )
 
     fake_session = AgentSession(
         session_id=session_id,
         llm=None,  # type: ignore[arg-type]
         executor=ToolExecutor(tools=[]),
         tools_schema=[],
-        system_baseline=system_prompt,
+        prompt_plan=plan,
+    )
+    fake_session.capabilities = SimpleNamespace(  # type: ignore[attr-defined]
+        tool_names=frozenset()
     )
     return SessionState(
         session_id=session_id,
         workspace=workspace,
         role=role or Role.USER,
         assistant_mode=assistant_mode or AssistantMode.PERFORMANCE,
-        runtime=None,  # type: ignore[arg-type]
+        runtime=SimpleNamespace(
+            agent_backend="native",
+            platform_type="test",
+            prompt_profile=profile,
+            capability_policies=(),
+            skills=(),
+            access=None,
+        ),  # type: ignore[arg-type]
         session=fake_session,
         llm_model=None,
         debug_mode=False,

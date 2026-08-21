@@ -1,6 +1,8 @@
 """AgentSession 行为校验：工具回调、空回复 fallback、事件流。"""
 from __future__ import annotations
 
+from tests.prompt_plan_fixture import prompt_plan
+
 import json
 import unittest
 
@@ -71,7 +73,7 @@ def _make_session(llm: _FakeLLM, tools: list[ToolDef]) -> AgentSession:
         llm=llm,
         executor=ToolExecutor(tools=list(tools)),
         tools_schema=[build_openai_schema(tool) for tool in tools],
-        system_baseline="system baseline",
+        prompt_plan=prompt_plan("system baseline"),
     )
 
 
@@ -470,7 +472,7 @@ class AgentSessionTests(unittest.TestCase):
             llm=llm,
             executor=ToolExecutor(tools=[]),
             tools_schema=[],
-            system_baseline="system baseline",
+            prompt_plan=prompt_plan("system baseline"),
             context_manager=ContextManager(max_context_tokens=50000, sliding_window_turns=10),
             topic_classifier=classifier,
         )

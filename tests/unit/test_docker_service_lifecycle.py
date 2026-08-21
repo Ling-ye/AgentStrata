@@ -42,7 +42,9 @@ def _write_bot(
                 "  type: qq",
                 "  adapter: qq_acp",
                 "prompts:",
-                "  persona: persona.md",
+                "  schema_version: 2",
+                "  identity: persona.md",
+                "  response_style: persona.md",
                 "tools:",
                 "  packs: []",
                 "  mcp:",
@@ -278,7 +280,7 @@ def test_resolver_rejects_unrelated_fatal_botspec_error(tmp_path: Path) -> None:
 
     with pytest.raises(
         desired_state.DesiredStateError,
-        match=r"BotSpec validation failed:.*prompts\.persona",
+        match=r"BotSpec validation failed:.*prompts\.identity",
     ):
         desired_state.resolve_desired_services((bot,))
 

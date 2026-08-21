@@ -1,7 +1,7 @@
 """Caller identity context for agent tools (platform-neutral).
 
 Middleware injects the caller's role hint (a plain string like ``"owner"``
-or ``"user"``) via :func:`bind_caller_role`; persona tools and other
+or ``"user"``) via :func:`bind_caller_role`; privileged tools and other
 scope-aware handlers read it through :func:`get_caller_role_hint` to
 enforce per-scope permission without importing any middleware module.
 """

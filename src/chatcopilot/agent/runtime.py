@@ -6,26 +6,25 @@
 
 - LLMClient
 - ToolExecutor + 全量 tools schema（融合 builtin + external_tools + mcp client）
-- 可选的 MemoryProvider（让 AgentSession 在 system prompt 末尾注入记忆摘要）
-- 可选的 SkillIndex（让 prompt builder 列出可按需读取的 skill）
+- 可信 PromptBuildInput（由唯一 PromptPlanBuilder 构造不可变 plan）
+- 可选的 SkillIndex（形成唯一 capability.skills layer）
 - 可选的 tool_payload_filter（中间件按角色绑定，agent 不感知 Role）
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence, cast
 
-from chatcopilot.core.config import ChatConfig
+from chatcopilot.core.config import ChatConfig, LLMConfig
 from chatcopilot.agent.context.manager import ContextManager
-from chatcopilot.agent.context.prompt_builder import build_system_prompt
-from chatcopilot.agent.quality_gate import build_quality_gate
+from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder
 from chatcopilot.agent.context.topic import TopicLlm, TopicPolicy, TopicRelevanceClassifier
 from chatcopilot.core.llm_client import LLMClient
-from chatcopilot.agent.memory.provider import MemoryProvider
 from chatcopilot.agent.mcp.client import McpToolProvider
 from chatcopilot.agent.rag.provider import LocalTextRetriever, Retriever
-from chatcopilot.agent.search.tool import build_search_tool
+from chatcopilot.agent.search.coordinator import SearchCoordinator
+from chatcopilot.agent.search.tool import build_search_coordinator, build_search_tool
 from chatcopilot.agent.session import AgentSession, ToolPayloadFilter
 from chatcopilot.agent.session_protocol import AgentSessionProtocol
 from chatcopilot.agent.backends import BackendAgentSession, build_backend
@@ -58,7 +57,7 @@ class AgentRuntime:
     tools: tuple[ToolDef, ...]
     tools_schema: tuple[Dict[str, Any], ...]
     runtime_config: ChatConfig
-    memory_factory: Optional[Callable[[], MemoryProvider]] = None
+    research_llm: LLMClient | None = None
     retriever: Optional[Retriever] = None
     skill_index: tuple[SkillIndexEntry, ...] = ()
     subagents: SubagentSpec = field(default_factory=SubagentSpec)
@@ -75,6 +74,10 @@ class AgentRuntime:
     _background_submitter_factory: Optional[Callable[[str], BackgroundSubmitter]] = field(
         default=None, repr=False
     )
+
+    def __post_init__(self) -> None:
+        if self.research_llm is None:
+            self.research_llm = self.llm
 
     def close(self) -> None:
         """Release long-lived resources (MCP runners, retriever, etc.)."""
@@ -95,13 +98,43 @@ class AgentRuntime:
         """绑定按 session_id 生成后台任务提交器的工厂。"""
         self._background_submitter_factory = factory
 
+    def build_unified_search_coordinator(
+        self,
+        *,
+        max_wall_seconds: float | None = None,
+    ) -> SearchCoordinator | None:
+        """Expose the canonical search coordinator to trusted host workflows.
+
+        This deliberately reuses the same provider registry, router, circuit
+        breaker, and chat-model policy as ``search_information``.  It does not
+        expose project/private-wiki tools to the persona research pipeline.
+        """
+
+        if not self.subagents.research_enabled:
+            return None
+        raw_mcp_search_tools = tuple(
+            tool
+            for tool in (self.subagent_tools or self.tools)
+            if tool.category == "mcp"
+            and str(tool.metadata.get("mcp_risk", "")) == "search"
+        )
+        return build_search_coordinator(
+            main_llm=self.research_llm or self.llm,
+            budget=self.subagents.research_budget,
+            tools=self.tools,
+            raw_mcp_tools=raw_mcp_search_tools,
+            provider_specs=self.subagents.search_providers,
+            turn_timeout_seconds=self.runtime_config.runtime.turn_timeout_seconds,
+            max_wall_seconds=max_wall_seconds,
+            circuit=self.search_circuit,
+            semantic_rerank=False,
+        )
+
     def new_session(
         self,
         *,
         session_id: str,
-        system_baseline: str,
-        session_dynamic_tail: Optional[str] = None,
-        memory_snippet_override: Optional[str] = None,
+        prompt_input: PromptBuildInput,
         extra_tools: Sequence[ToolDef] = (),
         payload_filter: Optional[ToolPayloadFilter] = None,
         permission_filter: Optional[PermissionFilter] = None,
@@ -113,19 +146,13 @@ class AgentRuntime:
         retriever_override: Retriever | None | _UseDefaultRetriever = (
             _USE_DEFAULT_RETRIEVER
         ),
-        skill_index_override: Sequence[SkillIndexEntry] | None = None,
     ) -> AgentSessionProtocol:
         """装配一个 AgentSession 实例。
 
         Args:
             session_id: 上层为本会话分配的 id（用于 transcript / debug 日志）。
-            system_baseline: 上层提供的角色无关基线（机器人人格 + 安全规则 +
-                capability 片段）；agent 内部会自动把 memory 摘要 + skill 索引
-                拼到末尾。
-            session_dynamic_tail: per-session 动态内容（如 persona overlay），
-                放在 skill 索引之后、memory 之前，不破坏前面稳定前缀的 cache。
-            memory_snippet_override: 上层显式提供的记忆摘要；为 None 时用
-                ``memory_factory`` 主动取一次。
+            prompt_input: 已认证会话事实、Bot 表达层和动态上下文；本方法在工具
+                投影完成后通过唯一 PromptPlanBuilder 构造不可变 PromptPlan。
             extra_tools: 本次会话专属工具（如 ACP 的模式切换工具），与全局 tools
                 合并后构造本会话的 ``ToolExecutor`` 与 schema。
             payload_filter: 角色化的 tool payload sanitizer；若为 None 则用绑定
@@ -135,15 +162,8 @@ class AgentRuntime:
             caller_identity: 当前入站消息的稳定身份；后端不得从角色提示反推身份。
             retriever_override: 会话级 RAG 投影。省略时使用 Bot 级 retriever；
                 显式传 ``None`` 会关闭检索，供共享群等受限会话使用。
-            skill_index_override: 会话级 Skill 索引投影。``None`` 使用 Bot 级索引；
-                空序列明确隐藏索引，供受限角色会话使用。
         """
-        memory_snippet = memory_snippet_override
-        if memory_snippet is None and self.memory_factory is not None:
-            try:
-                memory_snippet = self.memory_factory().snapshot()
-            except Exception:  # noqa: BLE001
-                memory_snippet = ""
+        memory_snippet = prompt_input.memory
 
         if payload_filter is None and self._payload_filter_factory is not None:
             payload_filter = self._payload_filter_factory()
@@ -213,7 +233,7 @@ class AgentRuntime:
                 and str(tool.metadata.get("mcp_risk", "")) == "search"
             )
             search_tool = build_search_tool(
-                main_llm=self.llm,
+                main_llm=self.research_llm or self.llm,
                 budget=self.subagents.research_budget,
                 tools=(
                     *accessible_base_tools,
@@ -226,57 +246,6 @@ class AgentRuntime:
                 ),
                 circuit=self.search_circuit,
             )
-        has_search_tools = search_tool is not None or any(
-            t.metadata.get("subagent_kind") == "search" for t in accessible_delegate_tools
-        )
-        # For prompt text stability (prefix cache), derive routing tool names from
-        # the declared MCP config rather than runtime-available tools. This way,
-        # temporary MCP unavailability doesn't change the system prompt text.
-        # Permission filtering is NOT applied here because the routing policy is
-        # informational; denied tools simply won't appear in the schema.
-        if self.subagents.research_enabled and (
-            not direct_codex or allow_codex_unified_search
-        ):
-            routing_tool_names: tuple[str, ...] = ("search_information",)
-        else:
-            declared_search_names = tuple(
-                f"search_{cfg.id}"
-                for cfg in sorted(self.mcp_configs, key=lambda c: c.id)
-                if cfg.risk == "search"
-            )
-            routing_tool_names = declared_search_names or tuple(
-                tool.name
-                for tool in accessible_delegate_tools
-                if tool.metadata.get("subagent_kind") == "search"
-                or tool.name == "query_approved_sources"
-            )
-
-        session_skill_index = (
-            self.skill_index
-            if skill_index_override is None
-            else tuple(skill_index_override)
-        )
-
-        def render_system_prompt(
-            baseline: str,
-            dynamic_tail: str | None,
-            current_memory: str | None,
-        ) -> str:
-            return build_system_prompt(
-                baseline=baseline,
-                skill_index=session_skill_index,
-                memory_snippet=current_memory,
-                has_search_tools=has_search_tools,
-                search_tool_names=routing_tool_names,
-                session_dynamic_tail=dynamic_tail,
-            )
-
-        system_prompt = render_system_prompt(
-            system_baseline,
-            session_dynamic_tail,
-            memory_snippet,
-        )
-
         merged_tools = [
             *self.tools,
             *delegate_tools,
@@ -292,6 +261,20 @@ class AgentRuntime:
         merged_schema = sorted(
             (build_openai_schema(tool) for tool in visible_tools),
             key=lambda entry: str((entry.get("function") or {}).get("name") or ""),
+        )
+        effective_model = (
+            str(self.runtime_config.routing.code_model or "").strip() or None
+            if backend_id == "codex"
+            else str(getattr(self.llm, "model", "") or "").strip() or None
+        )
+        prompt_plan = PromptPlanBuilder().build(
+            replace(
+                prompt_input,
+                backend=backend_id,
+                model=effective_model,
+                memory=memory_snippet or "",
+                tool_names=tuple(tool.name for tool in visible_tools),
+            )
         )
 
         executor = ToolExecutor(
@@ -330,9 +313,6 @@ class AgentRuntime:
             if topic_policy.active
             else None
         )
-
-        gate_level = getattr(rt, "quality_gate_level", 0)
-        quality_gate = build_quality_gate(level=gate_level, llm=self.llm)
 
         _defaults_rt = ChatConfig().runtime
         session_cls: type[AgentSession] | None = None
@@ -431,7 +411,7 @@ class AgentRuntime:
                     llm=self.llm,
                     executor=executor,
                     tools_schema=merged_schema,
-                    system_baseline=system_prompt,
+                    prompt_plan=prompt_plan,
                     tool_payload_filter=payload_filter,
                     context_manager=ctx_mgr,
                     topic_classifier=topic_classifier,
@@ -476,14 +456,13 @@ class AgentRuntime:
                     ),
                     max_consecutive_tool_failures=max(1, rt.max_tool_retries),
                     retriever=effective_retriever,
-                    quality_gate=quality_gate,
                 )
 
             options["session_factory"] = session_factory
         session_ref = backend.open_session(
             BackendOpenRequest(
                 session_id=session_id,
-                system_baseline=system_prompt,
+                prompt_plan=prompt_plan,
                 allowed_tool_names=frozenset(tool.name for tool in visible_tools),
                 caller_identity=caller_identity,
                 options=options,
@@ -493,20 +472,17 @@ class AgentRuntime:
             backend,
             session_ref,
             allowed_tool_names=frozenset(tool.name for tool in visible_tools),
-            system_prompt_renderer=render_system_prompt,
-            session_dynamic_tail=session_dynamic_tail,
-            memory_snippet=memory_snippet,
         )
 
 
 def build_agent_runtime(
     *,
     chat_config: ChatConfig,
+    research_llm_config: LLMConfig | None = None,
     tool_packs: Optional[Sequence[str]] = None,
     exclude_tools: Optional[Sequence[str]] = None,
     extra_tools: Sequence[ToolDef] = (),
     skill_index: Sequence[SkillIndexEntry] = (),
-    memory_factory: Optional[Callable[[], MemoryProvider]] = None,
     rag_sources: Sequence[RagSourceConfig] = (),
     mcp_servers: Sequence[McpServerConfig] = (),
     subagents: Optional[SubagentSpec] = None,
@@ -515,18 +491,24 @@ def build_agent_runtime(
     """装配一个 AgentRuntime。
 
     Args:
-        chat_config: 上层加载的 LLM + 运行时配置。
+        chat_config: 上层加载的日常 LLM + 运行时配置。
+        research_llm_config: 已解析的研究模型槽；为空时继承日常模型。
         tool_packs: BotSpec 声明的工具包白名单；为 None 时启用全部。
         exclude_tools: BotSpec 声明的工具黑名单。
         extra_tools: 上层注入的会话本地工具（不进入全局注册中心）。
         skill_index: BotSpec 解析出的 skill 索引，会同步写入 agent.skills 注册表。
-        memory_factory: 长期记忆 provider 工厂。每次 new_session 调用一次取 snapshot。
         rag_sources: BotSpec 声明的本地 RAG 知识源；为空时检索能力 no-op。
         mcp_servers: BotSpec 声明的 MCP server 绑定。
         subagents: BotSpec 声明的委托 Agent 配置。
         agent_backend: 主 Agent 实现选择；当前支持 native / langgraph。
     """
     llm = LLMClient(chat_config.llm)
+    effective_research_config = research_llm_config or chat_config.llm
+    research_llm = (
+        llm
+        if effective_research_config == chat_config.llm
+        else LLMClient(effective_research_config)
+    )
     retriever = LocalTextRetriever(rag_sources) if rag_sources else None
     mcp_provider = McpToolProvider(tuple(mcp_servers)) if mcp_servers else None
     mcp_tools = mcp_provider.load_tools() if mcp_provider is not None else ()
@@ -551,7 +533,7 @@ def build_agent_runtime(
         tools=tuple(merged),
         tools_schema=schema,
         runtime_config=chat_config,
-        memory_factory=memory_factory,
+        research_llm=research_llm,
         retriever=retriever,
         skill_index=tuple(skill_index),
         subagents=subagents or SubagentSpec(),

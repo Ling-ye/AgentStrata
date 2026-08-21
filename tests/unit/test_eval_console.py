@@ -35,6 +35,7 @@ from chatcopilot.evals.runner import (
     _select_cases,
     run_suite,
 )
+from chatcopilot.contracts.prompt import BotPromptProfile
 
 
 @pytest.fixture(autouse=True)
@@ -200,14 +201,10 @@ def test_agent_runtime_is_closed_when_case_execution_fails() -> None:
         source_path=Path("bots/test/bot.yaml"),
         instance_id="test-bot",
         platform_type="qq",
-        system_prompt="",
-        refusal_prompt="",
-        capability_prompt_fragments=(),
+        agent_backend="native",
+        prompt_profile=BotPromptProfile(identity="test", response_style="concise"),
+        capability_policies=(),
         skills=(),
-        mode_prompt_overrides={},
-        role_prompt_overrides={},
-        safety_prompt_override=None,
-        memory_prompt_override=None,
         tool_packs=(),
         tool_features=(),
         exclude_tools=(),
@@ -239,10 +236,6 @@ def test_agent_runtime_is_closed_when_case_execution_fails() -> None:
             "chatcopilot.evals.runner.build_agent_runtime",
             return_value=fake_agent_runtime,
         ),
-        patch(
-            "chatcopilot.evals.runner.build_system_prompt",
-            return_value="system",
-        ),
     ):
         with pytest.raises(RuntimeError, match="session failed"):
             _run_agent_cases(
@@ -255,20 +248,17 @@ def test_agent_runtime_is_closed_when_case_execution_fails() -> None:
     fake_agent_runtime.close.assert_called_once_with()
 
 
-def test_agent_runtime_is_closed_when_prompt_assembly_fails() -> None:
+def test_agent_runtime_is_closed_when_prompt_plan_session_creation_fails() -> None:
     case = get_cases("ifeval")[0]
     fake_agent_runtime = MagicMock()
+    fake_agent_runtime.new_session.side_effect = RuntimeError("prompt failed")
     runtime = SimpleNamespace(
         source_path=Path("bots/test/bot.yaml"),
         instance_id="test-bot",
         platform_type="qq",
-        system_prompt="",
-        refusal_prompt="",
-        capability_prompt_fragments=(),
-        mode_prompt_overrides={},
-        role_prompt_overrides={},
-        safety_prompt_override=None,
-        memory_prompt_override=None,
+        agent_backend="native",
+        prompt_profile=BotPromptProfile(identity="test", response_style="concise"),
+        capability_policies=(),
         tool_packs=(),
         tool_features=(),
         exclude_tools=(),
@@ -299,10 +289,6 @@ def test_agent_runtime_is_closed_when_prompt_assembly_fails() -> None:
         patch(
             "chatcopilot.evals.runner.build_agent_runtime",
             return_value=fake_agent_runtime,
-        ),
-        patch(
-            "chatcopilot.evals.runner.build_system_prompt",
-            side_effect=RuntimeError("prompt failed"),
         ),
     ):
         with pytest.raises(RuntimeError, match="prompt failed"):

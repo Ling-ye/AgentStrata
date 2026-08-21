@@ -11,19 +11,19 @@ created: 2026-07-17
 
 ### Background
 
-[KNOWN][HIGH] AgentStrata exposes separate ordinary-chat, research, and Codex code-model slots.
+ AgentStrata exposes separate ordinary-chat, research, and Codex code-model slots.
 
-[KNOWN][HIGH] Persistent repository mutations are submitted as background Codex jobs, and the worker currently reloads the global code model after the job has been queued.
+ Persistent repository mutations are submitted as background Codex jobs, and the worker currently reloads the global code model after the job has been queued.
 
-[COMPUTED][HIGH] A model value carried by `TurnRouteDecision` does not currently control the Codex command because the worker uses `RoutingConfig.code_model`.
+ A model value carried by `TurnRouteDecision` does not currently control the Codex command because the worker uses `RoutingConfig.code_model`.
 
-[COMPUTED][HIGH] The ordinary Agent runtime shares one `LLMClient` across ACP sessions, so mutating that client would leak a model switch between concurrent users.
+ The ordinary Agent runtime shares one `LLMClient` across ACP sessions, so mutating that client would leak a model switch between concurrent users.
 
 ### Goal
 
-[INFERRED][HIGH] Add deterministic conversational control for the Codex development lane without changing ordinary chat or research models.
+ Add deterministic conversational control for the Codex development lane without changing ordinary chat or research models.
 
-[INFERRED][HIGH] Support session-scoped and one-job model profile selection through `/model`, freeze the selected model and reasoning effort into each queued job, and reject unavailable or tampered selections without fallback.
+ Support session-scoped and one-job model profile selection through `/model`, freeze the selected model and reasoning effort into each queued job, and reject unavailable or tampered selections without fallback.
 
 ### Non-goals
 
@@ -35,13 +35,13 @@ created: 2026-07-17
 
 ### Design
 
-[INFERRED][HIGH] BotSpec `llm.code` declares a default `model`, a default `reasoning_effort`, and a named `profiles` mapping. Profile names are the user-selectable allowlist.
+ BotSpec `llm.code` declares a default `model`, a default `reasoning_effort`, and a named `profiles` mapping. Profile names are the user-selectable allowlist.
 
-[INFERRED][HIGH] The Lingye built-in instance uses `gpt-5.6-sol` with `high` reasoning as its code-lane default.
+ The Lingye built-in instance uses `gpt-5.6-sol` with `high` reasoning as its code-lane default.
 
-[INFERRED][HIGH] `CodeModelSelection` is a contracts-layer immutable DTO containing lane, provider, model, reasoning effort, source profile, and scope.
+ `CodeModelSelection` is a contracts-layer immutable DTO containing lane, provider, model, reasoning effort, source profile, and scope.
 
-[INFERRED][HIGH] The deterministic ACP command layer handles:
+ The deterministic ACP command layer handles:
 
 - `/model`
 - `/model code`
@@ -51,15 +51,15 @@ created: 2026-07-17
 - `/model code <model> <reasoning-effort> once`
 - `/model code default`
 
-[INFERRED][HIGH] Explicit model-and-effort input is accepted only when it exactly matches one configured profile after conservative identifier normalization.
+ Explicit model-and-effort input is accepted only when it exactly matches one configured profile after conservative identifier normalization.
 
-[INFERRED][HIGH] `SessionState` keeps a persistent session override and an independent one-job override. The one-job override wins for the next code job and is consumed only after `submit_tool_job` succeeds.
+ `SessionState` keeps a persistent session override and an independent one-job override. The one-job override wins for the next code job and is consumed only after `submit_tool_job` succeeds.
 
-[INFERRED][HIGH] Route orchestration resolves the effective selection before telemetry and job submission. `request.json` stores the resulting execution profile alongside the existing code-job contract.
+ Route orchestration resolves the effective selection before telemetry and job submission. `request.json` stores the resulting execution profile alongside the existing code-job contract.
 
-[INFERRED][HIGH] The worker reloads current routing policy, validates the frozen selection against the configured default or named profile, and passes both model and `model_reasoning_effort` to `codex exec`.
+ The worker reloads current routing policy, validates the frozen selection against the configured default or named profile, and passes both model and `model_reasoning_effort` to `codex exec`.
 
-[INFERRED][HIGH] Missing execution profiles in historical requests use the current configured default for backward compatibility.
+ Missing execution profiles in historical requests use the current configured default for backward compatibility.
 
 ### Prior Art
 
@@ -72,13 +72,13 @@ created: 2026-07-17
 
 ### Alternatives
 
-[INFERRED][HIGH] Mutating the shared ordinary `LLMClient` was rejected because it would affect unrelated ACP sessions.
+ Mutating the shared ordinary `LLMClient` was rejected because it would affect unrelated ACP sessions.
 
-[INFERRED][HIGH] Persisting the selection to BotSpec or process environment was rejected because a conversational switch is session state, not a deployment mutation.
+ Persisting the selection to BotSpec or process environment was rejected because a conversational switch is session state, not a deployment mutation.
 
-[INFERRED][HIGH] Accepting arbitrary model strings was rejected because it creates cost, availability, spelling, and silent-fallback ambiguity.
+ Accepting arbitrary model strings was rejected because it creates cost, availability, spelling, and silent-fallback ambiguity.
 
-[INFERRED][HIGH] Re-reading only the session state in the background worker was rejected because the worker is a separate process and queued jobs require an immutable execution snapshot.
+ Re-reading only the session state in the background worker was rejected because the worker is a separate process and queued jobs require an immutable execution snapshot.
 
 ### Failure Modes
 
@@ -174,25 +174,25 @@ validation_commands:
 
 # Acceptance Criteria
 
-- [INFERRED][HIGH] `/model` and `/model code` report the effective Codex model, reasoning effort, scope, and available profiles without calling an LLM.
-- [INFERRED][HIGH] The Lingye built-in instance defaults new code jobs to `gpt-5.6-sol` with `high` reasoning when no session or one-job override exists.
-- [INFERRED][HIGH] `/model code sol-high` applies `gpt-5.6-sol` with `high` reasoning to later code jobs in the same ACP session only.
-- [INFERRED][HIGH] `/model code sol-high once` affects one successfully submitted code job and then restores the session/default selection.
-- [INFERRED][HIGH] `/model code gpt-5.6-sol high` resolves to the configured allowlisted profile.
-- [INFERRED][HIGH] `/model code default` clears both session and one-job overrides.
-- [INFERRED][HIGH] Unknown profiles, unmatched model/effort pairs, invalid scopes, and unauthorized roles fail visibly without fallback.
-- [INFERRED][HIGH] A queued job records its immutable execution profile in `request.json`.
-- [INFERRED][HIGH] The Codex command uses the frozen model plus `model_reasoning_effort`.
-- [INFERRED][HIGH] Subsequent session switches do not alter already queued jobs.
-- [INFERRED][HIGH] Historical jobs without an execution profile use the configured default.
-- [INFERRED][HIGH] BotSpec validation rejects invalid profile names, empty models, unsupported efforts, and reserved profile names.
-- [INFERRED][HIGH] Runtime diagnostics, BotSpec documentation, and built-in bot examples describe the delivered behavior.
+-  `/model` and `/model code` report the effective Codex model, reasoning effort, scope, and available profiles without calling an LLM.
+-  The Lingye built-in instance defaults new code jobs to `gpt-5.6-sol` with `high` reasoning when no session or one-job override exists.
+-  `/model code sol-high` applies `gpt-5.6-sol` with `high` reasoning to later code jobs in the same ACP session only.
+-  `/model code sol-high once` affects one successfully submitted code job and then restores the session/default selection.
+-  `/model code gpt-5.6-sol high` resolves to the configured allowlisted profile.
+-  `/model code default` clears both session and one-job overrides.
+-  Unknown profiles, unmatched model/effort pairs, invalid scopes, and unauthorized roles fail visibly without fallback.
+-  A queued job records its immutable execution profile in `request.json`.
+-  The Codex command uses the frozen model plus `model_reasoning_effort`.
+-  Subsequent session switches do not alter already queued jobs.
+-  Historical jobs without an execution profile use the configured default.
+-  BotSpec validation rejects invalid profile names, empty models, unsupported efforts, and reserved profile names.
+-  Runtime diagnostics, BotSpec documentation, and built-in bot examples describe the delivered behavior.
 
 ## Verification
 
 # Verification
 
-[INFERRED][HIGH] Run the structural, targeted unit, BotSpec, compilation, and whitespace checks below.
+ Run the structural, targeted unit, BotSpec, compilation, and whitespace checks below.
 
 ```bash
 python3 scripts/check_sdd_specs.py
@@ -209,7 +209,7 @@ python3 scripts/check_sdd_specs.py
 git diff --check
 ```
 
-[COMPUTED][HIGH] Verification completed on 2026-07-17:
+ Verification completed on 2026-07-17:
 
 - `python3 scripts/check_sdd_specs.py` -> `OK: SDD specs`.
 - Focused feature suite -> `77 passed, 5 subtests passed`.
@@ -219,4 +219,4 @@ git diff --check
 - `python -m compileall -q src bots tests` -> passed.
 - `git diff --check` -> passed.
 
-[COMPUTED][HIGH] The full-suite failures do not touch the conversational model-selection files or assertions; the focused suite covers the user-requested natural-language phrase, explicit `/model` commands, session/once semantics, frozen request payloads, Codex command construction, worker validation, and backward compatibility.
+ The full-suite failures do not touch the conversational model-selection files or assertions; the focused suite covers the user-requested natural-language phrase, explicit `/model` commands, session/once semantics, frozen request payloads, Codex command construction, worker validation, and backward compatibility.

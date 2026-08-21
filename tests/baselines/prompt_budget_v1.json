@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "maximum_growth_percent": 10,
+  "profiles": {
+    "owner_private": {"prompt_chars": 3459, "prompt_limit": 3805, "tool_schema_chars": 19289, "tool_schema_limit": 21218, "historical_tool_schema_chars": 23744},
+    "owner_group": {"prompt_chars": 3457, "prompt_limit": 3803, "tool_schema_chars": 17332, "tool_schema_limit": 19066, "historical_tool_schema_chars": 21787},
+    "user_private": {"prompt_chars": 2942, "prompt_limit": 3237, "tool_schema_chars": 10010, "tool_schema_limit": 11011, "historical_tool_schema_chars": 12824},
+    "user_group": {"prompt_chars": 2940, "prompt_limit": 3234, "tool_schema_chars": 10010, "tool_schema_limit": 11011, "historical_tool_schema_chars": 12824}
+  }
+}

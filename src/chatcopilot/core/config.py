@@ -68,11 +68,6 @@ class RuntimeConfig:
     topic_current_max_chars: int = 1200
     topic_previous_user_max_chars: int = 800
     topic_previous_assistant_max_chars: int = 800
-    # Post-generation quality gate level.
-    # 0 = regex heuristic only (default, zero LLM cost).
-    # 1 = regex + LLM critique (one extra call per turn, opt-in).
-    # -1 = disabled entirely.
-    quality_gate_level: int = 0
 
 
 @dataclass
@@ -334,9 +329,6 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
             rt_raw.get("topic_previous_assistant_max_chars"),
             cfg.runtime.topic_previous_assistant_max_chars,
         )
-        cfg.runtime.quality_gate_level = _coerce_int(
-            rt_raw.get("quality_gate_level"), cfg.runtime.quality_gate_level
-        )
 
         cfg.routing.enabled = _coerce_bool_strict(
             routing_raw.get('enabled'),
@@ -498,10 +490,6 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
     cfg.runtime.topic_previous_assistant_max_chars = _coerce_int(
         os.environ.get(f"{env_prefix}_TOPIC_PREVIOUS_ASSISTANT_MAX_CHARS"),
         cfg.runtime.topic_previous_assistant_max_chars,
-    )
-    cfg.runtime.quality_gate_level = _coerce_int(
-        os.environ.get(f"{env_prefix}_QUALITY_GATE_LEVEL"),
-        cfg.runtime.quality_gate_level,
     )
 
     cfg.routing.enabled = _coerce_bool_strict(

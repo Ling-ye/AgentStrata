@@ -9,11 +9,11 @@ created: 2026-08-03
 
 ## Summary
 
-[KNOWN][HIGH] The public AgentStrata repository is bootstrapped from an audited
+ The public AgentStrata repository is bootstrapped from an audited
 tracked-file tree, not from an existing Git object graph. Its first public
 state is source-only, uses version `0.1.0.dev0`, and has no tag or Release.
 
-[KNOWN][HIGH] The public product includes the declarative BotSpec runtime,
+ The public product includes the declarative BotSpec runtime,
 generic QQ and Feishu adapters and tools, the Codex backend, Console, MCP,
 Evaluation, Wiki, search, memory, and development-task infrastructure. Private
 product integrations and private operating values are outside this contract.
