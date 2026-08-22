@@ -2,10 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Drawer, Empty, Message, Space, Spin, Tabs, Tag, Typography } from "@arco-design/web-react";
 import BotCard from "../components/BotCard";
 import ProvisionWizard from "../components/ProvisionWizard";
-import JobsModal from "../features/bots/JobsModal";
 import { useBotActions } from "../features/bots/useBotActions";
 import { useBotsOverview } from "../features/bots/useBotsOverview";
-import { useJobsModal } from "../features/bots/useJobsModal";
 import BotTaskFlowPanel from "../features/bots/BotTaskFlowPanel";
 import { api, streamLogs, streamTask } from "../api";
 import type { BotInstance, BotStatus, Task } from "../types";
@@ -54,7 +52,6 @@ export default function BotsPage({ loadError, visible = true }: Props) {
   } = useBotsOverview(visible);
   const taskStream = useEventStreamLines();
   const logStream = useEventStreamLines();
-  const jobsModal = useJobsModal();
   const [provisionBot, setProvisionBot] = useState<BotInstance | null>(null);
   const [taskResultStatus, setTaskResultStatus] = useState<Task["status"] | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
@@ -270,7 +267,6 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                     <BotTaskFlowPanel
                       bot={selectedBot}
                       visible={visible}
-                      onOpenFullEvidence={() => jobsModal.show(selectedBot)}
                     />
                   </Tabs.TabPane>
                   <Tabs.TabPane title="运行与能力" key="capabilities">
@@ -282,7 +278,6 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                       onAction={(verb) => void handleAction(selectedBot, verb)}
                       onApplyToolConfig={(task, onSuccess) => openApplyToolConfig(selectedBot, task, onSuccess)}
                       onLogs={() => openLogs(selectedBot)}
-                      onJobs={() => jobsModal.show(selectedBot)}
                       onProvision={() => setProvisionBot(selectedBot)}
                       onRegister={() => void handleRegister(selectedBot)}
                     />
@@ -311,19 +306,6 @@ export default function BotsPage({ loadError, visible = true }: Props) {
         status={logStream.status}
         lines={logStream.lines}
         onClose={logStream.close}
-      />
-
-      <JobsModal
-        visible={jobsModal.open}
-        bot={jobsModal.bot}
-        jobs={jobsModal.jobs}
-        updatedAt={jobsModal.updatedAt}
-        loading={jobsModal.loading}
-        error={jobsModal.error}
-        workspaceRoot={jobsModal.workspaceRoot}
-        workspaceExists={jobsModal.workspaceExists}
-        onRefresh={(bot, opts) => jobsModal.load(bot, opts)}
-        onClose={jobsModal.close}
       />
 
       <ProvisionDrawer

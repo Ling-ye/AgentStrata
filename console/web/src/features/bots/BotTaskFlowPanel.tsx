@@ -4,25 +4,33 @@ import {
   Button,
   Empty,
   Input,
+  Message,
+  Modal,
   Skeleton,
   Space,
   Spin,
   Tag,
   Typography,
 } from "@arco-design/web-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
 import type {
   BotInstance,
+  BotTask,
+  TasksResponse,
   TaskFlowEvidenceLevel,
   TaskFlowTransition,
 } from "../../types";
-import { fmtElapsed, fmtTime, jobStatusColor } from "./jobsFormat";
+import { fmtTime, jobStatusColor } from "./jobsFormat";
+import TaskEvidencePanel from "./TaskEvidencePanel";
 import {
   buildFlowRows,
   groupTasks,
   isLiveTask,
+  nextTaskIdAfterDelete,
+  taskDeleteAvailability,
   taskStatusLabel,
+  withoutTaskRecord,
 } from "./taskFlowModel";
 
 const { Text, Title } = Typography;
@@ -30,7 +38,6 @@ const { Text, Title } = Typography;
 interface Props {
   bot: BotInstance;
   visible?: boolean;
-  onOpenFullEvidence: () => void;
 }
 
 const EVIDENCE_META: Record<
@@ -44,9 +51,11 @@ const EVIDENCE_META: Record<
   missing: { label: "缺少证据", color: "orange", note: "不会根据相邻步骤推断" },
 };
 
-export default function BotTaskFlowPanel({ bot, visible = true, onOpenFullEvidence }: Props) {
+export default function BotTaskFlowPanel({ bot, visible = true }: Props) {
+  const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
+  const [deletingId, setDeletingId] = useState("");
   const tasksQuery = useQuery({
     queryKey: ["bot-tasks", bot.instance_id],
     queryFn: () => api.tasks(bot.instance_id),
@@ -77,13 +86,6 @@ export default function BotTaskFlowPanel({ bot, visible = true, onOpenFullEviden
     enabled: visible && !!selectedId,
     refetchInterval: visible && selectedTask && isLiveTask(selectedTask.status) ? 2_500 : false,
   });
-  const detailQuery = useQuery({
-    queryKey: ["bot-task-detail", bot.instance_id, selectedId],
-    queryFn: () => api.taskDetail(bot.instance_id, selectedId),
-    enabled: visible && !!selectedId,
-    refetchInterval: visible && selectedTask && isLiveTask(selectedTask.status) ? 4_000 : false,
-  });
-
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return tasks;
@@ -100,6 +102,46 @@ export default function BotTaskFlowPanel({ bot, visible = true, onOpenFullEviden
     () => buildFlowRows(flowQuery.data?.transitions ?? []),
     [flowQuery.data?.transitions],
   );
+
+  const confirmDeleteTask = (task: BotTask) => {
+    const availability = taskDeleteAvailability(task.status);
+    if (!availability.allowed) return;
+    Modal.confirm({
+      title: "删除任务记录",
+      content: `永久删除“${task.description || task.task_id}”的任务详情、上下文快照和原始事件？关联后台 Job 不会被删除。`,
+      okText: "删除记录",
+      cancelText: "取消",
+      okButtonProps: { status: "danger" },
+      onOk: async () => {
+        setDeletingId(task.task_id);
+        try {
+          await api.deleteTask(bot.instance_id, task.task_id);
+          const taskQueryKey = ["bot-tasks", bot.instance_id];
+          queryClient.setQueryData<TasksResponse>(
+            taskQueryKey,
+            (current) => current ? withoutTaskRecord(current, task.task_id) : current,
+          );
+          queryClient.removeQueries({
+            queryKey: ["bot-task-flow", bot.instance_id, task.task_id],
+            exact: true,
+          });
+          if (selectedId === task.task_id) {
+            setSelectedId(nextTaskIdAfterDelete(tasks, task.task_id));
+          }
+          Message.success("任务记录已删除");
+          try {
+            await queryClient.invalidateQueries({ queryKey: taskQueryKey, exact: true });
+          } catch {
+            Message.warning("任务记录已删除，但列表刷新失败，请手动刷新。");
+          }
+        } catch (error) {
+          Message.error(error instanceof Error ? error.message : String(error));
+        } finally {
+          setDeletingId("");
+        }
+      },
+    });
+  };
 
   if (tasksQuery.isLoading) {
     return <div className="bot-flow-loading"><Spin size={28} /></div>;
@@ -147,24 +189,44 @@ export default function BotTaskFlowPanel({ bot, visible = true, onOpenFullEviden
               <div className="bot-flow-task-group-title">
                 <span>{group.label}</span><span>{group.tasks.length}</span>
               </div>
-              {group.tasks.map((task) => (
-                <button
-                  type="button"
-                  key={task.task_id}
-                  className={`bot-flow-task-item${task.task_id === selectedId ? " is-selected" : ""}`}
-                  onClick={() => setSelectedId(task.task_id)}
-                >
-                  <span className="bot-flow-task-item-head">
-                    <strong>{task.description || "（无文本摘要）"}</strong>
-                    <Tag size="small" color={jobStatusColor(task.status)}>{taskStatusLabel(task.status)}</Tag>
-                  </span>
-                  <span className="bot-flow-task-progress">{task.current_step || task.progress || "等待运行时事件"}</span>
-                  <span className="bot-flow-task-meta">
-                    <span>{fmtTime(task.sort_time)}</span>
-                    <span>{task.primary_model || "未记录模型"}</span>
-                  </span>
-                </button>
-              ))}
+              {group.tasks.map((task) => {
+                const deletion = taskDeleteAvailability(task.status);
+                return (
+                  <div
+                    key={task.task_id}
+                    className={`bot-flow-task-entry${task.task_id === selectedId ? " is-selected" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      className="bot-flow-task-item"
+                      onClick={() => setSelectedId(task.task_id)}
+                    >
+                      <span className="bot-flow-task-item-head">
+                        <strong>{task.description || "（无文本摘要）"}</strong>
+                        <Tag size="small" color={jobStatusColor(task.status)}>{taskStatusLabel(task.status)}</Tag>
+                      </span>
+                      <span className="bot-flow-task-progress">{task.current_step || task.progress || "等待运行时事件"}</span>
+                      <span className="bot-flow-task-meta">
+                        <span>{fmtTime(task.sort_time)}</span>
+                        <span>{task.primary_model || "未记录模型"}</span>
+                      </span>
+                    </button>
+                    <span className="bot-flow-task-delete" title={deletion.reason}>
+                      <Button
+                        type="text"
+                        size="mini"
+                        status="danger"
+                        disabled={!deletion.allowed}
+                        loading={deletingId === task.task_id}
+                        aria-label={`删除任务 ${task.description || task.task_id}`}
+                        onClick={() => confirmDeleteTask(task)}
+                      >
+                        删除
+                      </Button>
+                    </span>
+                  </div>
+                );
+              })}
             </section>
           ))}
         </div>
@@ -183,7 +245,6 @@ export default function BotTaskFlowPanel({ bot, visible = true, onOpenFullEviden
               <Text type="secondary">{selectedTask.progress || "暂无任务进度"}</Text>
             </div>
             <Space wrap>
-              <Button onClick={onOpenFullEvidence}>完整任务证据</Button>
               <Button type="primary" loading={flowQuery.isFetching} onClick={() => void flowQuery.refetch()}>
                 刷新链路
               </Button>
@@ -275,28 +336,16 @@ export default function BotTaskFlowPanel({ bot, visible = true, onOpenFullEviden
               </div>
             </section>
 
-            {detailQuery.data && (
-              <section className="bot-flow-section bot-flow-task-facts">
-                <div>
-                  <span>耗时</span>
-                  <strong>{fmtElapsed(detailQuery.data.elapsed_s)}</strong>
-                </div>
-                <div>
-                  <span>模型调用</span>
-                  <strong>{detailQuery.data.actual_usage?.llm_calls ?? 0}</strong>
-                </div>
-                <div>
-                  <span>工具 / 活动步骤</span>
-                  <strong>{detailQuery.data.steps.length}</strong>
-                </div>
-                <div>
-                  <span>上下文快照</span>
-                  <strong>{detailQuery.data.context_snapshots?.length ?? 0}</strong>
-                </div>
-              </section>
-            )}
           </>
         ) : null}
+
+        {selectedTask && (
+          <TaskEvidencePanel
+            bot={bot}
+            taskId={selectedTask.task_id}
+            visible={visible}
+          />
+        )}
       </main>
     </div>
   );

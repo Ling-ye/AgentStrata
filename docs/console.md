@@ -37,11 +37,17 @@ Console 后端的进程执行、YAML 投影和 job/task/log 可观测读取分�
 已经观测到的最强边界。隐藏 chain-of-thought、provider 内部 instructions 和原始平台身份
 不会被采集、重建或展示。
 
-“完整任务证据”仍使用既有任务主从工作台：左侧只加载最近 50 个
-`schema_version=2` 任务，按“运行中 / 需要关注 / 最近完成”分组并在浏览器内搜索；旧任务
-不会进入该列表。右侧先展示每次模型调用的上下文快照，再按 Span 层级展示路由、模型、
-工具、Codex activity、subagent 和后台 Job 阶段。列表和选中任务每 3 秒轮询，运行中的
-墙钟耗时由浏览器每秒刷新；此链路不使用 SSE。
+完整任务信息直接位于“任务流”页签，不再使用“完整任务证据”按钮、大型弹窗或
+“运行与能力”中的重复任务入口。左侧只加载最近 50 个 `schema_version=2` 任务，按
+“运行中 / 需要关注 / 最近完成”分组并在浏览器内搜索；旧任务不会进入该列表。右侧在
+八层跨层链路之后继续展示分类耗时、Token/费用、每次模型调用的上下文快照，以及按 Span
+层级组织的路由、模型、工具、Codex activity、subagent 和后台 Job 阶段。任务详情每 3 秒
+轮询，运行中的墙钟耗时由浏览器每秒刷新；此链路不使用 SSE。
+
+每条任务记录都显示“删除”按钮。`succeeded`、`failed`、`error`、`cancelled` 终态记录经
+二次确认后可以删除；运行中的按钮保持可见但禁用，因为删除记录不等于取消 Agent 执行。
+删除只覆盖该任务目录内的 `task.json`、`turn.json`、`events.jsonl` 和上下文 artifacts，
+不会删除独立的后台 Job、会话 journal、memory、persona、executor state 或相邻任务。
 普通会话任务位于 workspace 的 `tasks/`；已接受 QQ shared-group 回合位于受保护的
 `.conversation-state/task-actors/<actor-digest>/tasks/`，Console 统一发现。后者不位于成员可写
 shared root，群内任务与 workspace 工具均不能读取。准入拒绝的消息仍按已认证 actor 留下
@@ -49,7 +55,7 @@ shared root，群内任务与 workspace 工具均不能读取。准入拒绝的�
 `.conversation-state/task-intake/tasks/`，只显示“未验证来源”和通用失败原因，不保存原始正文、
 sender envelope 或发送者账号。任务记录无法安全创建时，入站管线失败关闭且不调用 Agent。
 
-只读 API：
+任务可观测 API：
 
 - `GET /api/bots/{instance_id}/tasks?limit=50`：v2 任务摘要，服务端硬限制最多 50 条；
   同时返回服务端计算的活动数、最近 24 小时失败数和最后活动时间。
@@ -70,6 +76,12 @@ sender envelope 或发送者账号。任务记录无法安全创建时，入站�
   文件、非符号链接、单硬链接和 8 MiB 上限均在返回前校验。Context 与 event tail 都从
   已验证并持续持有的 task/job directory descriptor 通过 `openat` 读取，祖先目录不能在
   检查与读取之间通过 symlink 竞态重定向正文。
+- `DELETE /api/bots/{instance_id}/tasks/{task_id}`：删除一个终态 v2 任务记录。控制层在
+  mutation 前重新校验实例 containment、唯一任务身份、`0700` 目录、owner、inode、
+  `task.json` 普通文件/单硬链接/大小/终态状态，并独占任务事件写锁；递归删除使用
+  descriptor-relative `openat` / `unlinkat` / `rmdir` 且不跟随符号链接。活动任务、仍有关联
+  活跃 Job 的记录、未知状态、畸形、跨实例、重复 ID 或不安全记录返回冲突且不删除目标，
+  关联 Job 记录保持不变。
 
 上下文卡片分开显示“AgentStrata 会话历史”和“实际模型输入”。
 `exact_model_input` 表示 AgentStrata 能证明 Native/LangGraph 的纯文本最终请求；

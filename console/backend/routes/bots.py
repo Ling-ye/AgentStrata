@@ -50,6 +50,21 @@ def bot_task_detail(instance_id: str, task_id: str):
     return result
 
 
+@router.delete("/{instance_id}/tasks/{task_id}")
+def delete_bot_task(instance_id: str, task_id: str):
+    try:
+        result = operations.delete_task(get_instance(instance_id), task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except observability.TaskDeletionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except observability.UnsafeTaskRecordError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return result
+
+
 @router.get("/{instance_id}/tasks/{task_id}/events")
 def bot_task_events(
     instance_id: str,

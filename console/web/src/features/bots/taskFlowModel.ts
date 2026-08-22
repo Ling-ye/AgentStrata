@@ -1,4 +1,39 @@
-import type { BotTask, TaskFlowTransition } from "../../types";
+import type { BotTask, TaskFlowTransition, TasksResponse } from "../../types";
+
+const ACTIVE_TASK_STATUSES = new Set(["queued", "running", "delegated", "cancel_requested"]);
+const TERMINAL_TASK_STATUSES = new Set(["succeeded", "failed", "error", "cancelled"]);
+
+export function taskDeleteAvailability(status: string) {
+  if (ACTIVE_TASK_STATUSES.has(status)) {
+    return {
+      allowed: false,
+      reason: "任务仍在运行；删除记录不会取消执行，请等待任务结束。",
+    };
+  }
+  if (!TERMINAL_TASK_STATUSES.has(status)) {
+    return {
+      allowed: false,
+      reason: "任务状态无法确认，已拒绝删除。",
+    };
+  }
+  return { allowed: true, reason: "删除此任务记录" };
+}
+
+export function nextTaskIdAfterDelete(tasks: BotTask[], taskId: string) {
+  const index = tasks.findIndex((task) => task.task_id === taskId);
+  if (index < 0) return tasks[0]?.task_id ?? "";
+  return tasks[index + 1]?.task_id ?? tasks[index - 1]?.task_id ?? "";
+}
+
+export function withoutTaskRecord(response: TasksResponse, taskId: string): TasksResponse {
+  if (!response.tasks.some((task) => task.task_id === taskId)) return response;
+  return {
+    ...response,
+    count: Math.max(0, response.count - 1),
+    total_count: Math.max(0, response.total_count - 1),
+    tasks: response.tasks.filter((task) => task.task_id !== taskId),
+  };
+}
 
 export type FlowRow =
   | { type: "single"; transition: TaskFlowTransition }

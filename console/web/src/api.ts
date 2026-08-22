@@ -64,6 +64,11 @@ export const api = {
     req<TaskFlowResponse>(
       `/api/bots/${id}/tasks/${encodeURIComponent(taskId)}/flow`,
     ),
+  deleteTask: (id: string, taskId: string) =>
+    req<{ ok: boolean; deleted: boolean; task_id: string; status: string }>(
+      `/api/bots/${id}/tasks/${encodeURIComponent(taskId)}`,
+      { method: "DELETE" },
+    ),
   taskContext: (id: string, taskId: string, snapshotId: string) =>
     req<ContextSnapshot>(
       `/api/bots/${id}/tasks/${encodeURIComponent(taskId)}/contexts/${encodeURIComponent(snapshotId)}`,

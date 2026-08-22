@@ -106,7 +106,7 @@ allowed_paths:
 - console/control/operations.py
 - console/control/diagnostics.py
 - console/web/src/types.ts
-- console/web/src/features/bots/JobsModal.tsx
+- console/web/src/features/bots/TaskEvidencePanel.tsx
 - console/web/src/features/bots/jobsFormat.ts
 - bots/lingye-copilot-qq/bot.yaml
 - tests/unit/test_llm_routing.py

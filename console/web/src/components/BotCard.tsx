@@ -12,7 +12,6 @@ interface Props {
   onAction: (verb: "start" | "stop" | "restart" | "update" | "dump") => void;
   onApplyToolConfig?: (task: Task, onSuccess: () => void) => void;
   onLogs: () => void;
-  onJobs: () => void;
   onProvision: () => void;
   onRegister: () => void;
 }
@@ -55,7 +54,7 @@ function inventorySummary(inv?: BotInventory): React.ReactNode {
   );
 }
 
-export default function BotCard({ bot, status, inventory, busy, onAction, onApplyToolConfig, onLogs, onJobs, onProvision, onRegister }: Props) {
+export default function BotCard({ bot, status, inventory, busy, onAction, onApplyToolConfig, onLogs, onProvision, onRegister }: Props) {
   const running = status?.running ?? false;
   const ws = status?.ws_connected;
   const shouldShowRegister = status?.registered === false;
@@ -153,7 +152,6 @@ export default function BotCard({ bot, status, inventory, busy, onAction, onAppl
                   </Button>
                 </Tooltip>
                 <Button type="secondary" onClick={onLogs}>日志</Button>
-                <Button type="secondary" onClick={onJobs}>任务</Button>
                 <Tooltip content="抓一份诊断快照（dump.sh）">
                   <Button type="secondary" loading={busy} onClick={() => onAction("dump")}>
                     诊断

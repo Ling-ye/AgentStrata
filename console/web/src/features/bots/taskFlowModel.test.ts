@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { BotTask, TaskFlowTransition } from "../../types";
-import { buildFlowRows, groupTasks } from "./taskFlowModel";
+import {
+  buildFlowRows,
+  groupTasks,
+  nextTaskIdAfterDelete,
+  taskDeleteAvailability,
+  withoutTaskRecord,
+} from "./taskFlowModel";
 
 function transition(
   id: string,
@@ -69,5 +75,41 @@ describe("task flow presentation model", () => {
       ["failed"],
       ["done"],
     ]);
+  });
+
+  it("exposes deletion only for recognized terminal task records", () => {
+    expect(taskDeleteAvailability("succeeded").allowed).toBe(true);
+    expect(taskDeleteAvailability("failed").allowed).toBe(true);
+    expect(taskDeleteAvailability("running")).toEqual({
+      allowed: false,
+      reason: "任务仍在运行；删除记录不会取消执行，请等待任务结束。",
+    });
+    expect(taskDeleteAvailability("unknown").allowed).toBe(false);
+  });
+
+  it("selects the next task, then the previous task, after deletion", () => {
+    const tasks = [task("first", "succeeded"), task("second", "failed"), task("third", "succeeded")];
+    expect(nextTaskIdAfterDelete(tasks, "second")).toBe("third");
+    expect(nextTaskIdAfterDelete(tasks, "third")).toBe("second");
+    expect(nextTaskIdAfterDelete([tasks[0]], "first")).toBe("");
+  });
+
+  it("removes a deleted record from the shared task-list cache", () => {
+    const response = {
+      instance_id: "bot",
+      workspace_root: "/redacted",
+      workspace_exists: true,
+      count: 2,
+      total_count: 2,
+      summary: { active_count: 0, failed_recent_count: 1, last_activity_at: 2 },
+      tasks: [task("first", "failed"), task("second", "succeeded")],
+    };
+
+    expect(withoutTaskRecord(response, "first")).toMatchObject({
+      count: 1,
+      total_count: 1,
+      tasks: [{ task_id: "second" }],
+    });
+    expect(withoutTaskRecord(response, "missing")).toBe(response);
   });
 });

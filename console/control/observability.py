@@ -1,4 +1,4 @@
-"""Read-only Console job, task, and log observability services."""
+"""Console job, task, and log observability services."""
 from __future__ import annotations
 
 import json
@@ -16,6 +16,10 @@ from typing import Dict, Iterator, List, Optional
 from console.control import systemd
 from console.control.instances import BotInstance
 from console.control.task_flow import project_task_flow
+from chatcopilot.contracts.code_tasks import (
+    CODE_TASK_ACTIVE_STATUSES,
+    CODE_TASK_TERMINAL_STATUSES,
+)
 from chatcopilot.core.observability_redaction import (
     collect_observability_secrets,
     default_observability_roots,
@@ -35,12 +39,23 @@ _MAX_TASK_EVENT_LIMIT = 1000
 _MAX_EVENT_FILE_TAIL_BYTES = 512 * 1024
 _MAX_SAFE_COUNT = (1 << 63) - 1
 _ACTIVE_TASK_STATUSES = {"queued", "running", "delegated", "cancel_requested"}
+_ACTIVE_JOB_STATUSES = set(CODE_TASK_ACTIVE_STATUSES) | {"pending"}
+_TERMINAL_JOB_STATUSES = set(CODE_TASK_TERMINAL_STATUSES)
+_TERMINAL_TASK_STATUSES = {"succeeded", "failed", "error", "cancelled"}
 _FAILED_TASK_STATUSES = {"failed", "error", "cancelled"}
 _RECENT_FAILURE_WINDOW_S = 24 * 60 * 60
 
 
 class UnsafeContextSnapshotError(RuntimeError):
     """A context artifact exists but cannot be served through the Console."""
+
+
+class TaskDeletionConflictError(RuntimeError):
+    """A task record is valid but cannot be removed in its current state."""
+
+
+class UnsafeTaskRecordError(RuntimeError):
+    """A task record failed the protected-filesystem deletion contract."""
 
 
 def _open_path_without_symlink_ancestors(path: Path, flags: int) -> int:
@@ -517,6 +532,290 @@ def _resolve_task(inst: BotInstance, task_id: str) -> tuple[Path, Dict[str, obje
     return None
 
 
+def _task_delete_candidate(inst: BotInstance, task_id: str) -> tuple[Path, Path] | None:
+    if not _TASK_ID_RE.fullmatch(task_id):
+        raise ValueError("invalid task id")
+    if not inst.workspace_root:
+        return None
+    workspace_root = Path(inst.workspace_root).absolute()
+    try:
+        workspace_stat = workspace_root.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise UnsafeTaskRecordError("task workspace cannot be inspected safely") from exc
+    if stat.S_ISLNK(workspace_stat.st_mode) or not stat.S_ISDIR(workspace_stat.st_mode):
+        raise UnsafeTaskRecordError("task workspace must be a real directory")
+
+    candidates: list[Path] = []
+    try:
+        task_files = workspace_root.glob(f"**/tasks/{task_id}/task.json")
+        for task_file in task_files:
+            task_dir = task_file.parent.absolute()
+            try:
+                task_dir.relative_to(workspace_root)
+            except ValueError:
+                continue
+            if task_dir.name == task_id and task_dir.parent.name == "tasks":
+                candidates.append(task_dir)
+    except OSError as exc:
+        raise UnsafeTaskRecordError("task workspace cannot be searched safely") from exc
+    unique_candidates = list(dict.fromkeys(candidates))
+    if not unique_candidates:
+        return None
+    if len(unique_candidates) != 1:
+        raise UnsafeTaskRecordError("task id resolves to multiple records")
+    return workspace_root, unique_candidates[0]
+
+
+def _read_task_json_for_delete(task_fd: int, task_id: str) -> Dict[str, object]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open("task.json", flags, dir_fd=task_fd)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or bool(stat.S_IMODE(opened.st_mode) & 0o022)
+            or opened.st_size > _MAX_JOB_JSON_BYTES
+            or (os.name == "posix" and opened.st_uid != os.geteuid())
+        ):
+            raise UnsafeTaskRecordError("task metadata is unsafe")
+        chunks: list[bytes] = []
+        remaining = opened.st_size + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > _MAX_JOB_JSON_BYTES:
+            raise UnsafeTaskRecordError("task metadata exceeds the size limit")
+    except UnsafeTaskRecordError:
+        raise
+    except OSError as exc:
+        raise UnsafeTaskRecordError("task metadata cannot be opened safely") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+    loaded = load_bounded_observability_json(raw, max_bytes=_MAX_JOB_JSON_BYTES)
+    if not loaded.ok or not isinstance(loaded.value, dict):
+        raise UnsafeTaskRecordError("task metadata is malformed")
+    data = loaded.value
+    if data.get("schema_version") != 2 or str(data.get("task_id") or "") != task_id:
+        raise UnsafeTaskRecordError("task metadata identity does not match its directory")
+    return data
+
+
+def _acquire_task_delete_lock(task_fd: int) -> int | None:
+    if os.name != "posix":  # pragma: no cover - Console deployment is WSL/Linux
+        return None
+    import fcntl
+
+    flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(".events.lock", flags, dir_fd=task_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise UnsafeTaskRecordError("task event lock cannot be opened safely") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or bool(stat.S_IMODE(opened.st_mode) & 0o022)
+            or opened.st_uid != os.geteuid()
+        ):
+            raise UnsafeTaskRecordError("task event lock is unsafe")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise TaskDeletionConflictError("task record is still being written") from exc
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _remove_task_directory_contents(directory_fd: int, *, depth: int = 0) -> None:
+    if depth > 64:
+        raise UnsafeTaskRecordError("task record nesting exceeds the deletion limit")
+    directory_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    directory_flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        entries = list(os.scandir(directory_fd))
+    except OSError as exc:
+        raise UnsafeTaskRecordError("task record contents cannot be inspected safely") from exc
+    for entry in entries:
+        try:
+            expected = entry.stat(follow_symlinks=False)
+            if stat.S_ISDIR(expected.st_mode) and not stat.S_ISLNK(expected.st_mode):
+                child_fd = os.open(entry.name, directory_flags, dir_fd=directory_fd)
+                try:
+                    opened = os.fstat(child_fd)
+                    if (
+                        not stat.S_ISDIR(opened.st_mode)
+                        or (opened.st_dev, opened.st_ino)
+                        != (expected.st_dev, expected.st_ino)
+                        or opened.st_uid != os.geteuid()
+                    ):
+                        raise UnsafeTaskRecordError("task artifact directory changed during deletion")
+                    _remove_task_directory_contents(child_fd, depth=depth + 1)
+                finally:
+                    os.close(child_fd)
+                current = os.stat(entry.name, dir_fd=directory_fd, follow_symlinks=False)
+                if (
+                    not stat.S_ISDIR(current.st_mode)
+                    or (current.st_dev, current.st_ino)
+                    != (expected.st_dev, expected.st_ino)
+                ):
+                    raise UnsafeTaskRecordError("task artifact directory changed during deletion")
+                os.rmdir(entry.name, dir_fd=directory_fd)
+            else:
+                os.unlink(entry.name, dir_fd=directory_fd)
+        except (TaskDeletionConflictError, UnsafeTaskRecordError):
+            raise
+        except OSError as exc:
+            raise UnsafeTaskRecordError("task artifact could not be deleted safely") from exc
+
+
+def _job_dir_candidates(task_dir: Path, job_id: str) -> list[Path]:
+    workspace_dir = task_dir.parent.parent
+    candidates = [workspace_dir / "jobs" / job_id]
+    protected_state = next(
+        (parent for parent in task_dir.parents if parent.name == ".conversation-state"),
+        None,
+    )
+    if protected_state is not None and workspace_dir.parent.name == "task-actors":
+        candidates.insert(
+            0,
+            protected_state / "jobs" / workspace_dir.name / job_id,
+        )
+    return candidates
+
+
+def _task_delete_job_status(task_dir: Path, job_id: str) -> str | None:
+    existing: list[Path] = []
+    for candidate in _job_dir_candidates(task_dir, job_id):
+        try:
+            candidate.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise UnsafeTaskRecordError(
+                "associated background job cannot be inspected safely"
+            ) from exc
+        existing.append(candidate)
+    if not existing:
+        return None
+    if len(existing) != 1:
+        raise UnsafeTaskRecordError("associated background job is ambiguous")
+    job_dir = _find_job_dir(task_dir, job_id)
+    if job_dir is None or job_dir != existing[0]:
+        raise UnsafeTaskRecordError("associated background job is unsafe")
+    status = _read_job_json(job_dir / "status.json")
+    status_value = str(status.get("status") or "")
+    if not status_value:
+        raise UnsafeTaskRecordError("associated background job status is unavailable")
+    return status_value
+
+
+def delete_task(inst: BotInstance, task_id: str) -> Dict[str, object] | None:
+    """Remove one terminal v2 task record without following filesystem links."""
+
+    candidate = _task_delete_candidate(inst, task_id)
+    if candidate is None:
+        return None
+    _workspace_root, task_dir = candidate
+    if os.name != "posix":
+        raise UnsafeTaskRecordError("safe task deletion is unavailable on this platform")
+
+    directory_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    directory_flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    tasks_fd: int | None = None
+    task_fd: int | None = None
+    lock_fd: int | None = None
+    try:
+        tasks_fd = _open_path_without_symlink_ancestors(task_dir.parent, directory_flags)
+        tasks_stat = os.fstat(tasks_fd)
+        if (
+            not stat.S_ISDIR(tasks_stat.st_mode)
+            or tasks_stat.st_uid != os.geteuid()
+            or stat.S_IMODE(tasks_stat.st_mode) != 0o700
+        ):
+            raise UnsafeTaskRecordError("task collection directory is unsafe")
+        expected = os.stat(task_id, dir_fd=tasks_fd, follow_symlinks=False)
+        if stat.S_ISLNK(expected.st_mode) or not stat.S_ISDIR(expected.st_mode):
+            raise UnsafeTaskRecordError("task record must be a real directory")
+        task_fd = os.open(task_id, directory_flags, dir_fd=tasks_fd)
+        opened = os.fstat(task_fd)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (expected.st_dev, expected.st_ino)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) != 0o700
+        ):
+            raise UnsafeTaskRecordError("task record directory is unsafe")
+
+        data = _read_task_json_for_delete(task_fd, task_id)
+        status_value = str(data.get("status") or "")
+        if status_value in _ACTIVE_TASK_STATUSES:
+            raise TaskDeletionConflictError("active tasks cannot be deleted")
+        if status_value not in _TERMINAL_TASK_STATUSES:
+            raise UnsafeTaskRecordError("task status is not a recognized terminal state")
+        raw_job_ids = data.get("job_ids")
+        if raw_job_ids is None:
+            raw_job_ids = []
+        if not isinstance(raw_job_ids, list):
+            raise UnsafeTaskRecordError("task background job references are malformed")
+        for raw_job_id in raw_job_ids:
+            job_id = str(raw_job_id)
+            if not _JOB_ID_RE.fullmatch(job_id):
+                raise UnsafeTaskRecordError("task background job reference is invalid")
+            job_status = _task_delete_job_status(task_dir, job_id)
+            if job_status is None:
+                continue
+            if job_status in _ACTIVE_JOB_STATUSES:
+                raise TaskDeletionConflictError("tasks with active background jobs cannot be deleted")
+            if job_status not in _TERMINAL_JOB_STATUSES:
+                raise UnsafeTaskRecordError(
+                    "associated background job status is not recognized"
+                )
+        lock_fd = _acquire_task_delete_lock(task_fd)
+
+        current = os.stat(task_id, dir_fd=tasks_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+            raise UnsafeTaskRecordError("task record changed before deletion")
+        _remove_task_directory_contents(task_fd)
+        os.close(task_fd)
+        task_fd = None
+        os.rmdir(task_id, dir_fd=tasks_fd)
+        os.fsync(tasks_fd)
+        return {
+            "ok": True,
+            "deleted": True,
+            "task_id": task_id,
+            "status": status_value,
+        }
+    except (TaskDeletionConflictError, UnsafeTaskRecordError):
+        raise
+    except FileNotFoundError as exc:
+        raise UnsafeTaskRecordError("task record changed before deletion") from exc
+    except OSError as exc:
+        raise UnsafeTaskRecordError("task record could not be deleted safely") from exc
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+        if task_fd is not None:
+            os.close(task_fd)
+        if tasks_fd is not None:
+            os.close(tasks_fd)
+
+
 def _read_json_lines(path: Path) -> List[Dict[str, object]]:
     events, _truncated, _integrity_gap = _read_json_lines_tail(
         path,
@@ -651,17 +950,7 @@ def _read_json_lines_tail(
 def _find_job_dir(task_dir: Path, job_id: str) -> Path | None:
     if not _JOB_ID_RE.fullmatch(job_id):
         return None
-    workspace_dir = task_dir.parent.parent
-    candidates = [workspace_dir / "jobs" / job_id]
-    protected_state = next(
-        (parent for parent in task_dir.parents if parent.name == ".conversation-state"),
-        None,
-    )
-    if protected_state is not None and workspace_dir.parent.name == "task-actors":
-        candidates.insert(
-            0,
-            protected_state / "jobs" / workspace_dir.name / job_id,
-        )
+    candidates = _job_dir_candidates(task_dir, job_id)
     candidate = next((path for path in candidates if path.is_dir()), candidates[0])
     try:
         expected = candidate.lstat()
@@ -1344,7 +1633,10 @@ def follow_console_log(*, from_end_lines: int = 200) -> Iterator[str]:
 
 __all__ = [
     "KEEPALIVE",
+    "TaskDeletionConflictError",
+    "UnsafeTaskRecordError",
     "console_log_error",
+    "delete_task",
     "follow_console_log",
     "follow_log",
     "jobs",

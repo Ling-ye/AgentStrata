@@ -51,6 +51,21 @@ describe("task flow API", () => {
       undefined,
     );
   });
+
+  it("deletes an encoded instance-scoped task record", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, deleted: true, task_id: "task/with space" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.deleteTask("qq-bot", "task/with space");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/bots/qq-bot/tasks/task%2Fwith%20space",
+      { method: "DELETE" },
+    );
+  });
 });
 
 describe("streamTask", () => {

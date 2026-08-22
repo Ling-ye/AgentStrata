@@ -4,11 +4,13 @@ import math
 import os
 from pathlib import Path
 
-from fastapi import Response
+import pytest
+from fastapi import HTTPException, Response
 
 from console.backend.routes import bots as bot_routes
 from console.control import observability, operations
 from console.control.instances import BotInstance
+from chatcopilot.contracts.code_tasks import CODE_TASK_ACTIVE_STATUSES
 
 
 def _inst(workspace_root: Path) -> BotInstance:
@@ -24,6 +26,14 @@ def _inst(workspace_root: Path) -> BotInstance:
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _secure_task_record(task_dir: Path) -> None:
+    task_dir.parent.chmod(0o700)
+    task_dir.chmod(0o700)
+    for path in task_dir.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            path.chmod(0o600)
 
 
 def test_observability_numeric_coercion_rejects_non_finite_values() -> None:
@@ -600,6 +610,264 @@ def test_tasks_exclude_legacy_and_limit_to_latest_50(tmp_path: Path) -> None:
     assert len(resp["tasks"]) == 50
     assert resp["tasks"][0]["task_id"] == "task_v2_54"
     assert all(task["task_id"] != "task_legacy" for task in resp["tasks"])
+
+
+def test_delete_task_removes_one_terminal_record_and_preserves_job_and_sibling(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspaces"
+    actor_root = root / "p2p_alice"
+    deleted_dir = actor_root / "tasks" / "task_delete"
+    sibling_dir = actor_root / "tasks" / "task_keep"
+    job_dir = actor_root / "jobs" / "job_20260822_120000_deadbeef"
+    _write_json(
+        deleted_dir / "task.json",
+        {
+            "schema_version": 2,
+            "task_id": "task_delete",
+            "status": "succeeded",
+            "job_ids": [job_dir.name],
+        },
+    )
+    _write_json(deleted_dir / "contexts" / "ctx_one.json", {"safe": True})
+    (deleted_dir / "events.jsonl").write_text("{}\n", encoding="utf-8")
+    outside_dir = tmp_path / "outside-artifacts"
+    outside_dir.mkdir()
+    (outside_dir / "keep.txt").write_text("keep", encoding="utf-8")
+    (deleted_dir / "outside-link").symlink_to(outside_dir, target_is_directory=True)
+    _write_json(
+        sibling_dir / "task.json",
+        {"schema_version": 2, "task_id": "task_keep", "status": "failed"},
+    )
+    _write_json(job_dir / "request.json", {"job_id": job_dir.name})
+    _write_json(job_dir / "status.json", {"status": "succeeded"})
+    _secure_task_record(deleted_dir)
+    _secure_task_record(sibling_dir)
+
+    result = operations.delete_task(_inst(root), "task_delete")
+
+    assert result == {
+        "ok": True,
+        "deleted": True,
+        "task_id": "task_delete",
+        "status": "succeeded",
+    }
+    assert not deleted_dir.exists()
+    assert sibling_dir.is_dir()
+    assert job_dir.is_dir()
+    assert (outside_dir / "keep.txt").read_text(encoding="utf-8") == "keep"
+    assert operations.task_detail(_inst(root), "task_delete") is None
+
+
+def test_delete_task_rejects_active_or_unknown_status_without_mutation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspaces"
+    active_dir = root / "p2p_alice" / "tasks" / "task_active"
+    unknown_dir = root / "p2p_alice" / "tasks" / "task_unknown"
+    _write_json(
+        active_dir / "task.json",
+        {"schema_version": 2, "task_id": "task_active", "status": "running"},
+    )
+    _write_json(
+        unknown_dir / "task.json",
+        {"schema_version": 2, "task_id": "task_unknown", "status": "unknown"},
+    )
+    _secure_task_record(active_dir)
+    _secure_task_record(unknown_dir)
+
+    with pytest.raises(observability.TaskDeletionConflictError, match="active tasks"):
+        operations.delete_task(_inst(root), "task_active")
+    with pytest.raises(observability.UnsafeTaskRecordError, match="terminal state"):
+        operations.delete_task(_inst(root), "task_unknown")
+
+    assert active_dir.is_dir()
+    assert unknown_dir.is_dir()
+
+
+@pytest.mark.parametrize("job_status", sorted(CODE_TASK_ACTIVE_STATUSES))
+def test_delete_task_rejects_terminal_record_with_active_background_job(
+    tmp_path: Path,
+    job_status: str,
+) -> None:
+    root = tmp_path / "workspaces"
+    actor_root = root / "p2p_alice"
+    job_id = "job_20260822_120001_deadbeef"
+    task_dir = actor_root / "tasks" / "task_job_active"
+    job_dir = actor_root / "jobs" / job_id
+    _write_json(
+        task_dir / "task.json",
+        {
+            "schema_version": 2,
+            "task_id": "task_job_active",
+            "status": "failed",
+            "job_ids": [job_id],
+        },
+    )
+    _write_json(job_dir / "request.json", {"job_id": job_id})
+    _write_json(job_dir / "status.json", {"status": job_status})
+    _secure_task_record(task_dir)
+
+    with pytest.raises(observability.TaskDeletionConflictError, match="background jobs"):
+        operations.delete_task(_inst(root), "task_job_active")
+
+    assert task_dir.is_dir()
+    assert job_dir.is_dir()
+
+
+@pytest.mark.parametrize("job_status", ["", "unknown"])
+def test_delete_task_rejects_unverified_background_job_status(
+    tmp_path: Path,
+    job_status: str,
+) -> None:
+    root = tmp_path / "workspaces"
+    actor_root = root / "p2p_alice"
+    job_id = "job_20260822_120002_deadbeef"
+    task_dir = actor_root / "tasks" / "task_job_unknown"
+    job_dir = actor_root / "jobs" / job_id
+    _write_json(
+        task_dir / "task.json",
+        {
+            "schema_version": 2,
+            "task_id": "task_job_unknown",
+            "status": "failed",
+            "job_ids": [job_id],
+        },
+    )
+    _write_json(job_dir / "request.json", {"job_id": job_id})
+    if job_status:
+        _write_json(job_dir / "status.json", {"status": job_status})
+    _secure_task_record(task_dir)
+
+    with pytest.raises(observability.UnsafeTaskRecordError, match="background job status"):
+        operations.delete_task(_inst(root), "task_job_unknown")
+
+    assert task_dir.is_dir()
+    assert job_dir.is_dir()
+
+
+def test_delete_task_rejects_malformed_background_job_references(tmp_path: Path) -> None:
+    root = tmp_path / "workspaces"
+    task_dir = root / "p2p_alice" / "tasks" / "task_job_refs"
+    _write_json(
+        task_dir / "task.json",
+        {
+            "schema_version": 2,
+            "task_id": "task_job_refs",
+            "status": "failed",
+            "job_ids": "job_not_a_list",
+        },
+    )
+    _secure_task_record(task_dir)
+
+    with pytest.raises(observability.UnsafeTaskRecordError, match="references are malformed"):
+        operations.delete_task(_inst(root), "task_job_refs")
+
+    assert task_dir.is_dir()
+
+
+def test_delete_task_rejects_unsafe_metadata_and_directory_permissions(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspaces"
+    outside = tmp_path / "outside-task.json"
+    _write_json(
+        outside,
+        {"schema_version": 2, "task_id": "task_symlink", "status": "failed"},
+    )
+    task_dir = root / "p2p_alice" / "tasks" / "task_symlink"
+    task_dir.mkdir(parents=True)
+    task_dir.parent.chmod(0o700)
+    task_dir.chmod(0o700)
+    (task_dir / "task.json").symlink_to(outside)
+
+    with pytest.raises(observability.UnsafeTaskRecordError, match="metadata"):
+        operations.delete_task(_inst(root), "task_symlink")
+    assert outside.is_file()
+    assert task_dir.is_dir()
+
+    (task_dir / "task.json").unlink()
+    _write_json(
+        task_dir / "task.json",
+        {"schema_version": 2, "task_id": "task_symlink", "status": "failed"},
+    )
+    task_dir.chmod(0o755)
+    with pytest.raises(observability.UnsafeTaskRecordError, match="directory is unsafe"):
+        operations.delete_task(_inst(root), "task_symlink")
+    assert task_dir.is_dir()
+
+
+def test_delete_task_rejects_ambiguous_instance_records(tmp_path: Path) -> None:
+    root = tmp_path / "workspaces"
+    for actor in ("p2p_alice", "p2p_bob"):
+        task_dir = root / actor / "tasks" / "task_duplicate"
+        _write_json(
+            task_dir / "task.json",
+            {"schema_version": 2, "task_id": "task_duplicate", "status": "failed"},
+        )
+        _secure_task_record(task_dir)
+
+    with pytest.raises(observability.UnsafeTaskRecordError, match="multiple records"):
+        operations.delete_task(_inst(root), "task_duplicate")
+    assert len(tuple(root.glob("**/tasks/task_duplicate/task.json"))) == 2
+
+
+def test_delete_task_rejects_live_event_writer_then_succeeds(tmp_path: Path) -> None:
+    import fcntl
+
+    root = tmp_path / "workspaces"
+    task_dir = root / "p2p_alice" / "tasks" / "task_locked"
+    _write_json(
+        task_dir / "task.json",
+        {"schema_version": 2, "task_id": "task_locked", "status": "succeeded"},
+    )
+    (task_dir / ".events.lock").write_text("", encoding="utf-8")
+    _secure_task_record(task_dir)
+    descriptor = os.open(task_dir / ".events.lock", os.O_RDWR)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(observability.TaskDeletionConflictError, match="still being written"):
+            operations.delete_task(_inst(root), "task_locked")
+        assert task_dir.is_dir()
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+    assert operations.delete_task(_inst(root), "task_locked") is not None
+    assert not task_dir.exists()
+
+
+def test_delete_task_route_maps_success_conflict_missing_and_invalid(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "workspaces"
+    finished = root / "p2p_alice" / "tasks" / "task_route_delete"
+    active = root / "p2p_alice" / "tasks" / "task_route_active"
+    _write_json(
+        finished / "task.json",
+        {"schema_version": 2, "task_id": finished.name, "status": "failed"},
+    )
+    _write_json(
+        active / "task.json",
+        {"schema_version": 2, "task_id": active.name, "status": "delegated"},
+    )
+    _secure_task_record(finished)
+    _secure_task_record(active)
+    monkeypatch.setattr(bot_routes, "get_instance", lambda _instance_id: _inst(root))
+
+    result = bot_routes.delete_bot_task("sample-bot", finished.name)
+    assert result["deleted"] is True
+
+    with pytest.raises(HTTPException) as active_error:
+        bot_routes.delete_bot_task("sample-bot", active.name)
+    assert active_error.value.status_code == 409
+    with pytest.raises(HTTPException) as missing_error:
+        bot_routes.delete_bot_task("sample-bot", "task_missing")
+    assert missing_error.value.status_code == 404
+    with pytest.raises(HTTPException) as invalid_error:
+        bot_routes.delete_bot_task("sample-bot", "../outside")
+    assert invalid_error.value.status_code == 400
 
 
 def test_task_detail_merges_job_stages_and_events(tmp_path: Path) -> None:

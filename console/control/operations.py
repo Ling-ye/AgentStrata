@@ -26,6 +26,7 @@ from console.control.instances import BotInstance
 from console.control.observability import (
     KEEPALIVE,
     console_log_error,
+    delete_task,
     follow_console_log,
     follow_log,
     jobs,
@@ -44,6 +45,7 @@ from chatcopilot.platforms.registry import get_adapter
 __all__ = [
     "KEEPALIVE",
     "console_log_error",
+    "delete_task",
     "follow_console_log",
     "follow_log",
     "jobs",

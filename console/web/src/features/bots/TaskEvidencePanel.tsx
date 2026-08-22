@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Button,
   Empty,
-  Input,
   Message,
-  Modal,
   Skeleton,
   Space,
   Tag,
@@ -15,7 +13,6 @@ import { api } from "../../api";
 import { estimateTaskCost, formatRmb } from "../../billing";
 import type {
   BotInstance,
-  BotTask,
   BotTaskDetail,
   ContextSnapshot,
   ContextSnapshotSummary,
@@ -24,24 +21,15 @@ import type {
   TokenUsageV2,
 } from "../../types";
 import { usePolling } from "../../shared/hooks/usePolling";
-import { fmtClock, fmtElapsed, fmtInt, fmtTime, jobStatusColor } from "./jobsFormat";
+import { fmtElapsed, fmtInt, fmtTime, jobStatusColor } from "./jobsFormat";
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
 
 interface Props {
   visible: boolean;
-  bot: BotInstance | null;
-  jobs: BotTask[];
-  updatedAt: number | null;
-  loading: boolean;
-  error: string | null;
-  workspaceRoot: string;
-  workspaceExists: boolean | null;
-  onRefresh: (bot: BotInstance, opts?: { clear?: boolean }) => Promise<void>;
-  onClose: () => void;
+  bot: BotInstance;
+  taskId: string;
 }
-
-type TaskGroup = { key: string; label: string; tasks: BotTask[] };
 
 type ContextLoadState = {
   loading: boolean;
@@ -59,7 +47,7 @@ function usageSummary(usage?: TokenUsageV2 | null) {
   return `${fmtInt(usageTotal(usage))} Token · Cache ${fmtInt(cached)}`;
 }
 
-function liveElapsed(task: BotTask | BotTaskDetail, now: number) {
+function liveElapsed(task: BotTaskDetail, now: number) {
   if (
     !task.finished_at &&
     typeof task.started_at === "number" &&
@@ -198,20 +186,12 @@ function ContextPayload({
   );
 }
 
-export default function JobsModal({
+export default function TaskEvidencePanel({
   visible,
   bot,
-  jobs,
-  updatedAt,
-  loading,
-  error,
-  workspaceRoot,
-  workspaceExists,
-  onRefresh,
-  onClose,
+  taskId,
 }: Props) {
-  const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState("");
+  const selectedId = taskId;
   const [detail, setDetail] = useState<BotTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
@@ -221,7 +201,6 @@ export default function JobsModal({
   const [eventsIntegrityGap, setEventsIntegrityGap] = useState(false);
   const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(new Set());
   const [contextLoads, setContextLoads] = useState<Record<string, ContextLoadState>>({});
-  const [mobileDetail, setMobileDetail] = useState(false);
   const [now, setNow] = useState(Date.now());
   const selectionRef = useRef("");
   const detailRequestRef = useRef(0);
@@ -274,8 +253,6 @@ export default function JobsModal({
 
   useEffect(() => {
     if (!visible) return;
-    setQuery("");
-    setSelectedId("");
     setDetail(null);
     setEvents(null);
     setEventsTruncated(false);
@@ -284,15 +261,7 @@ export default function JobsModal({
     setContextLoads({});
     requestedContextsRef.current.clear();
     loadedContextsRef.current.clear();
-    setMobileDetail(false);
-  }, [visible, bot?.instance_id]);
-
-  useEffect(() => {
-    if (!visible || jobs.length === 0) return;
-    if (!selectedId || !jobs.some((task) => task.task_id === selectedId)) {
-      setSelectedId(jobs[0].task_id);
-    }
-  }, [jobs, selectedId, visible]);
+  }, [visible, bot.instance_id]);
 
   useEffect(() => {
     selectionRef.current = bot && selectedId ? `${bot.instance_id}:${selectedId}` : "";
@@ -319,43 +288,6 @@ export default function JobsModal({
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [visible]);
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    if (!needle) return jobs;
-    return jobs.filter((task) =>
-      [
-        task.task_id,
-        task.description,
-        task.progress,
-        task.current_step,
-        task.submitter,
-        task.primary_model,
-        ...(task.job_ids || []),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLocaleLowerCase()
-        .includes(needle),
-    );
-  }, [jobs, query]);
-
-  const groups = useMemo<TaskGroup[]>(() => {
-    const running = filtered.filter((task) =>
-      ["running", "delegated", "queued"].includes(task.status),
-    );
-    const attention = filtered.filter((task) =>
-      ["failed", "error", "cancelled", "cancel_requested"].includes(task.status),
-    );
-    const complete = filtered.filter(
-      (task) => !running.includes(task) && !attention.includes(task),
-    );
-    return [
-      { key: "running", label: "运行中", tasks: running },
-      { key: "attention", label: "需要关注", tasks: attention },
-      { key: "complete", label: "最近完成", tasks: complete },
-    ];
-  }, [filtered]);
 
   const ensureEvents = useCallback((refresh = false): Promise<void> => {
     if (!bot || !selectedId || (!refresh && events !== null)) return Promise.resolve();
@@ -428,9 +360,8 @@ export default function JobsModal({
   }, [bot, selectedId]);
 
   usePolling(
-    visible && !!bot,
+    visible && !!selectedId,
     async () => {
-      if (bot) await onRefresh(bot, { clear: false });
       const wasActive = !!detail
         && ["running", "delegated", "queued"].includes(detail.status);
       const nextDetail = selectedId ? await loadDetail(true) : null;
@@ -473,89 +404,11 @@ export default function JobsModal({
       || detail.summary_limits.steps_retained < detail.summary_limits.steps_total
     );
 
-  return (
-    <Modal
-      title={
-        <div className="task-workbench-title">
-          <span>{bot ? `${bot.display_name} · 任务可观测工作台` : "任务可观测工作台"}</span>
-          <Text type="secondary">
-            {updatedAt ? `3 秒自动刷新 · ${fmtClock(updatedAt)}` : "加载中…"}
-          </Text>
-        </div>
-      }
-      visible={visible}
-      footer={null}
-      className="task-workbench-modal"
-      style={{ width: "95vw" }}
-      onCancel={onClose}
-    >
-      <div className={`task-workbench ${mobileDetail ? "is-mobile-detail" : ""}`}>
-        <aside className="task-workbench-nav">
-          <div className="task-workbench-nav-tools">
-            <Input.Search
-              allowClear
-              value={query}
-              placeholder="搜索标题、ID、步骤、模型"
-              onChange={setQuery}
-            />
-            <Button
-              loading={loading}
-              onClick={() => {
-                if (bot) void onRefresh(bot, { clear: false });
-              }}
-            >
-              刷新
-            </Button>
-          </div>
-          {error && <Alert type="error" content={error} showIcon />}
-          {workspaceExists === false && (
-            <Alert type="warning" content={`工作区不存在：${workspaceRoot || "未配置"}`} showIcon />
-          )}
-          {!loading && filtered.length === 0 ? (
-            <Empty description={query ? "没有匹配的 v2 任务" : "暂无 schema v2 任务"} />
-          ) : (
-            <div className="task-nav-scroll">
-              {groups.map((group) => (
-                group.tasks.length > 0 && (
-                  <section className="task-nav-group" key={group.key}>
-                    <div className="task-nav-group-title">
-                      {group.label}<span>{group.tasks.length}</span>
-                    </div>
-                    {group.tasks.map((task) => (
-                      <button
-                        type="button"
-                        key={task.task_id}
-                        className={`task-nav-item ${selectedId === task.task_id ? "is-selected" : ""}`}
-                        onClick={() => {
-                          selectionRef.current = bot
-                            ? `${bot.instance_id}:${task.task_id}`
-                            : "";
-                          setSelectedId(task.task_id);
-                          setMobileDetail(true);
-                        }}
-                      >
-                        <div className="task-nav-item-head">
-                          <strong>{task.description || "未命名任务"}</strong>
-                          <Tag size="small" color={jobStatusColor(task.status)} title={task.status}>{task.status}</Tag>
-                        </div>
-                        <div className="task-nav-step">{task.current_step || task.progress || "等待步骤"}</div>
-                        <div className="task-nav-meta">
-                          <span>{fmtElapsed(liveElapsed(task, now))}</span>
-                          <span>{usageSummary(task.usage_totals)}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </section>
-                )
-              ))}
-            </div>
-          )}
-        </aside>
+  if (!visible || !selectedId) return null;
 
-        <main className="task-workbench-detail">
-          <Button className="task-mobile-back" onClick={() => setMobileDetail(false)}>
-            ← 返回任务列表
-          </Button>
+  return (
+    <section className="task-evidence-inline" aria-label="完整任务信息">
+      <div className="task-workbench-detail">
           {detailLoading && !detail ? (
             <Skeleton text={{ rows: 8 }} animation />
           ) : detailError ? (
@@ -564,16 +417,9 @@ export default function JobsModal({
             <Empty description="选择一个任务查看执行流程" />
           ) : (
             <>
-              <header className="task-detail-header">
-                <div className="task-detail-heading">
-                  <div>
-                    <Space wrap>
-                      <Tag color={jobStatusColor(detail.status)} title={detail.status}>{detail.status}</Tag>
-                      <Text type="secondary">{detail.primary_model || "模型待定"}</Text>
-                    </Space>
-                    <Title heading={5}>{detail.description || detail.task_id}</Title>
-                    <Text type="secondary">{detail.current_step || detail.progress}</Text>
-                  </div>
+              <section className="task-detail-header">
+                <div className="task-section-title">
+                  <span>完整任务信息</span>
                   <Space wrap>
                     <Button size="small" onClick={() => void copyText(detail.task_id, "任务 ID")}>
                       复制任务 ID
@@ -619,7 +465,7 @@ export default function JobsModal({
                     }</strong>
                   </div>
                 </div>
-              </header>
+              </section>
 
               <section className="task-context-section">
                 <div className="task-section-title">
@@ -883,8 +729,7 @@ export default function JobsModal({
               </section>
             </>
           )}
-        </main>
       </div>
-    </Modal>
+    </section>
   );
 }
