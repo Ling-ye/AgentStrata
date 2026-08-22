@@ -46,7 +46,7 @@ from chatcopilot.agent.tools.file_delivery import FileSender
 from chatcopilot.agent.tools.workspace_context import WorkspaceService
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.subagents import CustomSubagentSpec, SubagentSpec
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 if TYPE_CHECKING:
     from chatcopilot.agent.rag.provider import Retriever

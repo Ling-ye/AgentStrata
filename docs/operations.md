@@ -406,15 +406,23 @@ python -m chatcopilot evals run \
   --output reports/evals/manual/bfcl-smoke
 ```
 
-### 手动产品能力测评
+### 两轨手动测评
 
-`agentstrata-capabilities-v1` 只能从 Console 的“新建评测”按钮或下面的 CLI
-命令手动启动；它不接 Git hook、CI、文件监听、部署回调或 Bot 重启回调。
-`quick` 选择 10 个代表性 Case，`full` 包含全部 26 个 Agent Case，`security`
-选择 5 个权限/白名单/注入 Case；`custom` 要求用一个或多个 `--case-id` 显式选择
-Case。MVP 默认 `repetitions=1`，因此完整运行是 26 Case × 1；这只能说明本次执行
-结果，不能作为重复可靠性结论。产品能力 Suite 不发送 QQ 消息，也不检查 OneBot
-连通性。
+Console 测评中心只提供两个入口。`agentstrata-capabilities-v1` 直接提交给 Agent
+runtime，不经过 ACP 或 QQ；`quick/full/security` 分别选择 10/23/3 个 Case。
+能力目录保留 25 个 Case；依赖未启用 `experience` 来源的两个来源专用 Case 只允许在启用
+对应受信来源后通过 `custom` 显式选择，因此默认 `full` 实际选择 23 个 Case。
+`agentstrata-qq-message-flow-v1` 从合成 OneBot 帧开始验证 AgentStrata 自有链路，
+`quick/full/security` 分别选择 3/7/4 个 Case。两者只可手动启动；默认
+`repetitions=1`，只说明本次执行结果，不能作为重复可靠性结论。
+
+两条产品轨道均不接 Git hook、CI、文件监听、部署回调或 Bot 重启回调。
+
+直接 Agent 的实时汇率 Case 要求搜索最新可用业务日的 ECB USD/CNY 参考值，并由
+Evaluation 独立读取 ECB Data Portal 作为 oracle。oracle 不可用时 Case 记为基础设施
+错误，不会降级为格式或搜索调用通过。QQ 轨道只使用随机合成身份、回环端口、临时保护
+状态和确定性 Agent sentinel，不连接或写入真实 QQ；真实 NapCat/cc-connect/外部用户
+往返继续由基础设施检查报告，缺少独立发送账号时仍为 `not_tested`。
 
 代码修改后可先用只读 Advisor 获取建议；它只做 changed-path 到 Preset/Case 的确定性
 映射，不读取 Git diff、不创建 Evaluation，也不会自动启动模型或外部服务：
@@ -441,6 +449,13 @@ python -m chatcopilot evals run \
   --repetitions 1 \
   --bot bots/lingye-copilot-qq/bot.yaml \
   --output reports/evals/manual/capabilities-security
+
+python -m chatcopilot evals run \
+  --suite agentstrata-qq-message-flow-v1 \
+  --preset full \
+  --repetitions 1 \
+  --bot bots/lingye-copilot-qq/bot.yaml \
+  --output reports/evals/manual/qq-message-flow-full
 
 python -m chatcopilot evals run \
   --suite agentstrata-capabilities-v1 \

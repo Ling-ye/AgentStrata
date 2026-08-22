@@ -36,7 +36,7 @@ from chatcopilot.middleware.runtime.task_forecast import (
     load_task_history,
     normalize_usage,
 )
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 TASK_SCHEMA_VERSION = 2
 TASKS_DIRNAME = "tasks"

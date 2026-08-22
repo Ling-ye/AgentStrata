@@ -162,13 +162,6 @@ def test_release_resource_allowlist_is_exact() -> None:
     verifier = _load_verifier()
     assert verifier.REQUIRED_PACKAGE_RESOURCES == frozenset(
         {
-            "agent/context/builtin_prompts/accuracy.md",
-            "agent/context/builtin_prompts/memory.md",
-            "agent/context/builtin_prompts/role_admin.md",
-            "agent/context/builtin_prompts/role_owner.md",
-            "agent/context/builtin_prompts/role_user.md",
-            "agent/context/builtin_prompts/safety.md",
-            "agent/context/builtin_prompts/search_first.md",
             "botspec/mcp_catalog.yaml",
             "evals/suites/agent-comparison/cases.yaml",
             "evals/suites/agentstrata-canary-self-update-v1/manifest.yaml",
@@ -181,6 +174,9 @@ def test_release_resource_allowlist_is_exact() -> None:
             "evals/suites/agentstrata-capabilities-v1/fixtures/untrusted-instructions.txt",
             "evals/suites/agentstrata-capabilities-v1/fixtures/workspace-note.txt",
             "evals/suites/agentstrata-capabilities-v1/manifest.yaml",
+            "evals/suites/agentstrata-qq-message-flow-v1/README.md",
+            "evals/suites/agentstrata-qq-message-flow-v1/cases.yaml",
+            "evals/suites/agentstrata-qq-message-flow-v1/manifest.yaml",
             "evals/suites/bfcl/manifest.yaml",
             "evals/suites/gaia/manifest.yaml",
             "evals/suites/ifeval/manifest.yaml",
@@ -194,12 +190,18 @@ def test_release_resource_allowlist_is_exact() -> None:
     )
 
 
+def test_release_runtime_probe_uses_canonical_prompt_plan() -> None:
+    verifier = _load_verifier()
+    assert "builtin_prompts" not in verifier._RUNTIME_PROBE
+    assert "PromptPlanBuilder" in verifier._RUNTIME_PROBE
+
+
 def test_release_resource_allowlist_rejects_drift() -> None:
     verifier = _load_verifier()
     required = verifier.REQUIRED_PACKAGE_RESOURCES
     with pytest.raises(verifier.VerificationError, match="missing="):
         verifier._assert_exact_resources(
-            required - {"agent/context/builtin_prompts/accuracy.md"},
+            required - {"botspec/mcp_catalog.yaml"},
             archive_label="test",
         )
     with pytest.raises(verifier.VerificationError, match="unexpected="):

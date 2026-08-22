@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from typing import Any
 
-from chatcopilot.agent.protocol import (
+from chatcopilot.contracts.agent import (
     AgentResult,
     AgentTask,
     DeferredLifecycleIntent,

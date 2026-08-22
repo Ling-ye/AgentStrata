@@ -9,11 +9,11 @@ import pytest
 
 from console.control import diagnostics
 from console.control.instances import BotInstance
-from chatcopilot.middleware.runtime.workspace.cleanup import cleanup_diagnostic_records
+from chatcopilot.core.workspace_runtime.cleanup import cleanup_diagnostic_records
 from chatcopilot.core.log_context import bind_log_context, current_log_context
-from chatcopilot.external_tools.shared.tool_spec import EXECUTION_USER_SERIAL_BACKGROUND
+from chatcopilot.contracts.tools import EXECUTION_USER_SERIAL_BACKGROUND
 from chatcopilot.middleware.runtime.jobs import submitter as job_submitter
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 TASK_ID = "task_20260623_120000_1234abcd"

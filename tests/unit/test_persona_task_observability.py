@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 def test_persona_decision_and_clarification_outcome_are_structured(tmp_path) -> None:

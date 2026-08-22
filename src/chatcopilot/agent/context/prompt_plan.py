@@ -1,4 +1,5 @@
 """The single prompt-plan builder and backend renderers."""
+
 from __future__ import annotations
 
 import hashlib
@@ -12,6 +13,7 @@ from chatcopilot.contracts.prompt import (
     PromptLayer,
     PromptPlan,
     PromptRenderReceipt,
+    PromptTrust,
 )
 from chatcopilot.contracts.skills import SkillIndexEntry, render_skill_index_section
 from chatcopilot.contracts.tool_packs import ToolPackPolicy
@@ -57,22 +59,35 @@ class PromptPlanBuilder:
 
     def build(self, data: PromptBuildInput) -> PromptPlan:
         layers: list[PromptLayer] = [
-            _layer("runtime.boundary", "runtime_policy", "trusted_policy", "global", _RUNTIME_POLICY),
+            _layer(
+                "runtime.boundary", "runtime_policy", "trusted_policy", "global", _RUNTIME_POLICY
+            ),
         ]
         if data.is_subagent:
             layers.append(
-                _layer("runtime.subagent", "runtime_policy", "trusted_policy", "global", _SUBAGENT_POLICY)
+                _layer(
+                    "runtime.subagent",
+                    "runtime_policy",
+                    "trusted_policy",
+                    "global",
+                    _SUBAGENT_POLICY,
+                )
             )
         session_policy = data.session_policy.strip()
         if session_policy:
             layers.append(
-                _layer("runtime.session", "runtime_policy", "trusted_policy", "session", session_policy)
+                _layer(
+                    "runtime.session", "runtime_policy", "trusted_policy", "session", session_policy
+                )
             )
         layers.append(
-            _layer("bot.identity", "bot_identity", "trusted_runtime_fact", "bot", data.profile.identity)
+            _layer("bot.identity", "bot_identity", "bot_instruction", "bot", data.profile.identity)
         )
         for policy in data.capability_policies:
-            if data.role in policy.applies_to_roles and data.channel_kind in policy.applies_to_channels:
+            if (
+                data.role in policy.applies_to_roles
+                and data.channel_kind in policy.applies_to_channels
+            ):
                 layers.append(
                     _layer(
                         f"capability.{policy.id}",
@@ -104,7 +119,7 @@ class PromptPlanBuilder:
             _layer(
                 "bot.response_style",
                 "response_style",
-                "trusted_runtime_fact",
+                "bot_instruction",
                 "bot",
                 "\n\n".join(part.strip() for part in style_parts if part.strip()),
             )
@@ -114,8 +129,8 @@ class PromptPlanBuilder:
             layers.append(
                 _layer(
                     "capability.skills",
-                    "capability_policy",
-                    "trusted_policy",
+                    "skill_instruction",
+                    "bot_instruction",
                     "bot",
                     skill_section,
                 )
@@ -130,7 +145,9 @@ class PromptPlanBuilder:
                     data.dynamic_persona,
                 )
             )
-        untrusted = [part.strip() for part in (data.memory, data.conversation_journal) if part.strip()]
+        untrusted = [
+            part.strip() for part in (data.memory, data.conversation_journal) if part.strip()
+        ]
         if untrusted:
             layers.append(
                 _layer(
@@ -167,16 +184,24 @@ class PromptPlanBuilder:
 
 
 def render_native_prefix(plan: PromptPlan) -> list[dict[str, str]]:
-    trusted = [layer for layer in plan.layers if layer.trust != "untrusted_data"]
-    untrusted = [layer for layer in plan.layers if layer.trust == "untrusted_data"]
-    messages = [{"role": "system", "content": _render_layers(trusted)}]
+    partitions = _partition_layers(plan)
+    system_envelope = {
+        "schema_version": 2,
+        "host_policy": _render_layers(partitions["trusted_policy"]),
+        "runtime_facts": _render_layers(partitions["trusted_runtime_fact"]),
+    }
+    messages = [
+        {
+            "role": "system",
+            "content": json.dumps(system_envelope, ensure_ascii=False, sort_keys=True),
+        }
+    ]
+    bot_instructions = _render_layers(partitions["bot_instruction"])
+    if bot_instructions:
+        messages.append(_context_message("bot_instructions", bot_instructions))
+    untrusted = _render_layers(partitions["untrusted_data"])
     if untrusted:
-        messages.append(
-            {
-                "role": "user",
-                "content": "<untrusted_context>\n" + _render_layers(untrusted) + "\n</untrusted_context>",
-            }
-        )
+        messages.append(_context_message("untrusted_context", untrusted))
     return messages
 
 
@@ -187,15 +212,16 @@ def render_codex_prompt(
     execution_policy: str = "",
     turn_context: str = "",
 ) -> str:
-    trusted = [layer for layer in plan.layers if layer.trust != "untrusted_data"]
-    untrusted = [layer for layer in plan.layers if layer.trust == "untrusted_data"]
+    partitions = _partition_layers(plan)
     envelope = {
-        "schema_version": 1,
-        "trusted_policy": _render_layers(trusted),
+        "schema_version": 2,
+        "host_policy": _render_layers(partitions["trusted_policy"]),
+        "runtime_facts": _render_layers(partitions["trusted_runtime_fact"]),
+        "bot_instructions": _render_layers(partitions["bot_instruction"]),
         "runtime_execution_policy": execution_policy.strip(),
-        "untrusted_context": _render_layers(untrusted),
+        "untrusted_context": _render_layers(partitions["untrusted_data"]),
         "user_message": user_message,
-        "turn_context": (turn_context or "").strip(),
+        "untrusted_turn_context": (turn_context or "").strip(),
     }
     return json.dumps(envelope, ensure_ascii=False, sort_keys=True)
 
@@ -206,9 +232,22 @@ def render_receipt(
     *,
     tool_schema_chars: int = 0,
 ) -> PromptRenderReceipt:
+    partitions = _partition_layers(plan)
     return PromptRenderReceipt(
         layer_ids=tuple(layer.id for layer in plan.layers),
         layer_hashes=tuple(layer.content_sha256 for layer in plan.layers),
+        partition_hashes=tuple(
+            (
+                trust,
+                hashlib.sha256(_render_layers(partitions[trust]).encode("utf-8")).hexdigest(),
+            )
+            for trust in (
+                "trusted_policy",
+                "trusted_runtime_fact",
+                "bot_instruction",
+                "untrusted_data",
+            )
+        ),
         rendered_sha256=hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
         prompt_chars=len(rendered),
         tool_schema_chars=tool_schema_chars,
@@ -234,6 +273,33 @@ def _layer(
 
 def _render_layers(layers: Iterable[PromptLayer]) -> str:
     return "\n\n".join(f"[{layer.id}]\n{layer.content}" for layer in layers)
+
+
+def _partition_layers(plan: PromptPlan) -> dict[PromptTrust, list[PromptLayer]]:
+    partitions: dict[PromptTrust, list[PromptLayer]] = {
+        "trusted_policy": [],
+        "trusted_runtime_fact": [],
+        "bot_instruction": [],
+        "untrusted_data": [],
+    }
+    for layer in plan.layers:
+        partitions[layer.trust].append(layer)
+    return partitions
+
+
+def _context_message(context_type: str, content: str) -> dict[str, str]:
+    return {
+        "role": "user",
+        "content": json.dumps(
+            {
+                "schema_version": 2,
+                "context_type": context_type,
+                "content": content,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+    }
 
 
 __all__ = [

@@ -33,8 +33,8 @@ from chatcopilot.core.workspace_context import bind_workspace_service
 from chatcopilot.middleware.acp import server as acp_server
 from chatcopilot.middleware.acp.job_dispatch import extract_job_status_query
 from chatcopilot.middleware.acp.task_dispatch import extract_task_status_query
-from chatcopilot.middleware.runtime.workspace import Workspace
-from chatcopilot.middleware.runtime.workspace.model import describe_workspace as _model_describe
+from chatcopilot.core.workspace_runtime import Workspace
+from chatcopilot.core.workspace_runtime.model import describe_workspace as _model_describe
 
 
 class _StubWorkspaceService:

@@ -34,7 +34,7 @@ from chatcopilot.contracts.model_selection import (
 from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.contracts.persona_control import PendingPersonaProposal
 from chatcopilot.middleware.access_control import AssistantMode, Role
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 if TYPE_CHECKING:
     from chatcopilot.core.config import RoutingConfig

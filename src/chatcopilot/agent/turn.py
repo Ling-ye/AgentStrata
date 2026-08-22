@@ -5,6 +5,7 @@ Backends decide control flow: native uses a Python loop, LangGraph uses a
 not vary by backend: task framing, ``AgentEvent`` emission, tool-result
 messages, lifecycle intents, produced resources, and ``AgentResult`` assembly.
 """
+
 from __future__ import annotations
 
 import copy
@@ -32,7 +33,7 @@ from chatcopilot.core.observability_redaction import (
     omit_local_resource_paths,
     omit_private_reasoning_messages,
 )
-from chatcopilot.agent.protocol import (
+from chatcopilot.contracts.agent import (
     AgentResult,
     AgentStopReason,
     AgentTask,
@@ -143,7 +144,10 @@ class TurnOps:
 
         if self.session.topic_classifier is not None:
             routing_started_at = time.time()
-            topic_messages = _text_only_messages(self.session._messages)
+            topic_messages = _text_only_messages(
+                self.session._messages,
+                prompt_prefix_length=self.session.prompt_prefix_length,
+            )
             decision = self.session.topic_classifier.classify(
                 messages=topic_messages,
                 current_user_text=user_text,
@@ -203,9 +207,7 @@ class TurnOps:
         safe_effective = omit_private_reasoning_messages(call_messages)
         path_safe_session = omit_local_resource_paths(safe_session.messages)
         path_safe_effective = omit_local_resource_paths(safe_effective.messages)
-        reasoning_omission_count = (
-            safe_session.omission_count + safe_effective.omission_count
-        )
+        reasoning_omission_count = safe_session.omission_count + safe_effective.omission_count
         resource_path_omission_count = (
             path_safe_session.omission_count + path_safe_effective.omission_count
         )
@@ -221,9 +223,7 @@ class TurnOps:
         if resource_path_omission_count:
             omitted.append("local_resource_paths")
         partial_capture = bool(
-            image_receipts
-            or reasoning_omission_count
-            or resource_path_omission_count
+            image_receipts or reasoning_omission_count or resource_path_omission_count
         )
         self.emit(
             ContextSnapshotPrepared(
@@ -297,9 +297,7 @@ class TurnOps:
                     input_estimated_tokens=int(prompt_estimate["tokens"]),
                     system_estimated_tokens=int(prompt_estimate["system_tokens"]),
                     tool_schema_count=len(self.session.tools_schema),
-                    tool_schema_estimated_tokens=int(
-                        prompt_estimate["tool_schema_tokens"]
-                    ),
+                    tool_schema_estimated_tokens=int(prompt_estimate["tool_schema_tokens"]),
                     estimator_version=str(prompt_estimate["estimator_version"]),
                     context_kind=state.context_kind,
                     context_snapshot_id=snapshot_id,
@@ -454,10 +452,7 @@ class TurnOps:
             final_text,
             successful_operations=tuple(state.successful_operations),
         )
-        if any(
-            issue.startswith("missing_receipt:")
-            for issue in state.response_integrity.issues
-        ):
+        if any(issue.startswith("missing_receipt:") for issue in state.response_integrity.issues):
             final_text = "未能确认该操作已完成：本轮缺少相应的可信成功回执。"
             self.emit(FinalText(text=final_text))
             self._patch_last_assistant_content(final_text, state)
@@ -518,6 +513,7 @@ class TurnOps:
             state.llm_view = self.session.context_manager.prepare_messages(
                 self.session._messages,
                 topic_decision=state.topic_decision,
+                prompt_prefix_length=self.session.prompt_prefix_length,
             )
         elif state.llm_view is None:
             state.llm_view = self.session._messages
@@ -658,10 +654,21 @@ class TurnOps:
             state.llm_view[-1]["content"] = text
 
 
-def _text_only_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _text_only_messages(
+    messages: list[dict[str, Any]],
+    *,
+    prompt_prefix_length: int,
+) -> list[dict[str, Any]]:
     """Return a topic-routing view containing only textual content blocks."""
     out: list[dict[str, Any]] = []
-    for message in messages:
+    if (
+        isinstance(prompt_prefix_length, bool)
+        or not isinstance(prompt_prefix_length, int)
+        or prompt_prefix_length < 0
+        or prompt_prefix_length > len(messages)
+    ):
+        raise ValueError("prompt_prefix_length is outside the message view")
+    for message in messages[prompt_prefix_length:]:
         item = dict(message)
         content = item.get("content")
         if isinstance(content, list):

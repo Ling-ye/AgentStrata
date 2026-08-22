@@ -21,7 +21,7 @@ The fixed semantic order is runtime identity and safety boundaries, Bot identity
 
 `PromptPlanBuilder` receives a `BotPromptProfile`, authenticated session facts, final backend/model selection, structured capability policies, a Skills index, dynamic persona, untrusted memory and journal, and the current tool projection. It computes a stable projection digest and returns an immutable plan. Middleware supplies structures and never concatenates policy strings. Runtime does not append a second set of accuracy, search, Skills, persona, memory, or date rules.
 
-Native and LangGraph render trusted layers as system content and untrusted context as a separate user-context message. Codex renders a fixed JSON envelope separating trusted policy, execution policy, untrusted context, and JSON-encoded current user text. Provider-internal Codex instructions remain opaque. Every render can produce a `PromptRenderReceipt` with layer IDs and hashes, rendered hash, prompt and tool-schema characters, and estimated tokens.
+Native and LangGraph render host policy and trusted runtime facts in the system envelope, Bot identity/style/Skills in a dedicated user-context envelope, and untrusted context in a separate user-context message. Codex schema v2 renders fixed `host_policy`, `runtime_facts`, `bot_instructions`, `runtime_execution_policy`, `untrusted_context`, `user_message`, and `untrusted_turn_context` fields. Provider-internal Codex instructions remain opaque. Every render can produce a `PromptRenderReceipt` with layer IDs and hashes, four partition hashes, rendered hash, prompt and tool-schema characters, and estimated tokens.
 
 Main Agent and subagents share the same DTO and renderer. A subagent contributes only a role description; framework execution boundaries and tool scope come from the trusted builder and selector projection. `TaskPack` is strict, requires `objective`, rejects unknown fields and wrong types, and enters as structured untrusted task data. The output schema, rather than prose duplication, is the sole field contract for `submit_result`.
 
@@ -33,6 +33,7 @@ Tool schemas describe individual operations, parameters, risks, and results. Ski
 - There is one builder and one backend renderer set; no secondary string assembler or backend appendix policy exists.
 - Main Agent and subagent use the same `PromptLayer` and `PromptPlan` types.
 - Bot prompt files cannot create trusted runtime policy.
+- Bot identity, style, and Skills do not enter the Native system envelope or Codex `host_policy`.
 - Duplicate layer IDs and unknown kind, trust, role, channel, or backend values fail.
 - User content, memory, journals, webpages, and dynamic persona cannot become system authority.
 - Codex effective model comes from the final code profile; an opaque model is represented as null rather than copied from chat configuration.

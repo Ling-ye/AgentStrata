@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from chatcopilot.core.ingress_receipts import consume_ingress_receipt
 from chatcopilot.platforms.qq.at_proxy import _ProxyConfig
+from chatcopilot.platforms.qq.access_proxy import normalized_onebot_text
 from chatcopilot.platforms.qq.ingress_probe import run_simulated_gateway_ingress
 
 
@@ -67,6 +71,40 @@ class SimulatedGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(first.passed)
         self.assertTrue(second.passed)
+
+    async def test_synthetic_proxy_propagates_and_writes_ingress_receipt(self) -> None:
+        captured: list[dict[str, object]] = []
+
+        async def observe(frame: dict[str, object]) -> None:
+            captured.append(dict(frame))
+
+        with TemporaryDirectory(prefix="qq-ingress-receipt-") as raw:
+            env = _env()
+            env["CHATCOPILOT_INGRESS_RECEIPT_DIR"] = raw
+            receipt = await run_simulated_gateway_ingress(
+                env,
+                downstream_observer=observe,
+            )
+            self.assertTrue(receipt.passed)
+            self.assertEqual(len(captured), 1)
+            frame = captured[0]
+            normalized = normalized_onebot_text(frame)
+            self.assertIsNotNone(normalized)
+            content, _segment_count = normalized or ("", 0)
+            match = consume_ingress_receipt(
+                Path(raw),
+                platform="qq",
+                chat_kind="group",
+                chat_id=str(frame["group_id"]),
+                actor_id=str(frame["user_id"]),
+                content=content,
+            )
+
+        self.assertEqual(match.status, "matched")
+        self.assertIsNotNone(match.receipt)
+        decision = dict((match.receipt or {}).get("decision") or {})
+        self.assertEqual(decision.get("outcome"), "forward")
+        self.assertEqual(decision.get("code"), "group_mention_matched")
 
     def test_proxy_config_can_be_built_from_immutable_mapping(self) -> None:
         config = _ProxyConfig(_env())

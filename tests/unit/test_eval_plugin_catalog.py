@@ -300,13 +300,17 @@ def test_capability_case_contract_is_strict_and_typed() -> None:
         .joinpath("cases.yaml")
     )
     definitions = parse_case_definitions(resource.read_bytes(), source="capability/cases.yaml")
-    assert len(definitions) == 26
+    assert len(definitions) == 25
     by_id = {item.case_id: item for item in definitions}
-    acp_case = by_id["access-nickname-spoof-denied"]
-    assert acp_case.plugin_id == "acp-scenario"
-    assert acp_case.driver_id == "acp_scenario"
-    assert acp_case.policy.side_effect == "isolated_read"
-    assert acp_case.assertions[0].kind == "trusted_verifier"
+    persona_case = by_id["persona-applied-behavior"]
+    assert persona_case.plugin_id == "generic-agent"
+    assert persona_case.driver_id == "agent_configured"
+    assert persona_case.policy.side_effect == "none"
+    assert persona_case.assertions[0].kind == "trusted_verifier"
+    assert {item.driver_id for item in definitions} <= {
+        "agent_isolated",
+        "agent_configured",
+    }
     assert all(item.policy.side_effect != "external_write" for item in definitions)
 
 
@@ -930,8 +934,8 @@ def test_product_definition_snapshot_hashes_each_selected_execution_layer() -> N
     plugin = get_evaluation_plugin(manifest.plugin_id)
     selected_ids = {
         "dialogue-strict-json",
-        "access-nickname-spoof-denied",
-        "attachment-remote-reference-not-local",
+        "persona-applied-behavior",
+        "current-usd-cny-reference",
     }
     cases = tuple(case for case in get_cases(manifest.suite_id) if case.case_id in selected_ids)
 
@@ -943,12 +947,50 @@ def test_product_definition_snapshot_hashes_each_selected_execution_layer() -> N
         "chatcopilot.evals.runner",
         "chatcopilot.evals.capability_executor",
         "chatcopilot.evals.capability_verifiers",
-        "chatcopilot.evals.capability_scenarios",
+        "chatcopilot.evals.fx_oracle",
     }.issubset(modules)
-    assert set(snapshot["case_plugin_bindings"]) == {
-        "acp-scenario",
-        "generic-agent",
+    assert set(snapshot["case_plugin_bindings"]) == {"generic-agent"}
+
+
+def test_qq_flow_snapshot_hashes_real_acp_orchestration_and_attestation_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = get_suite_manifest("agentstrata-qq-message-flow-v1")
+    plugin = get_evaluation_plugin(manifest.plugin_id)
+    cases = tuple(get_cases(manifest.suite_id))
+    snapshot = suite_definition_snapshot(manifest, plugin, cases)
+    modules = snapshot["execution_implementations"]["modules"]
+    required = {
+        "chatcopilot.evals.qq_flow_scenarios",
+        "chatcopilot.platforms.qq.access_proxy",
+        "chatcopilot.platforms.qq.ingress_probe",
+        "chatcopilot.middleware.acp.server",
+        "chatcopilot.middleware.acp.agent_bridge",
+        "chatcopilot.middleware.acp.persona_control",
+        "chatcopilot.middleware.acp.transport_attestation",
+        "chatcopilot.middleware.acp.turn_orchestrator",
+        "chatcopilot.middleware.acp.event_translator",
+        "chatcopilot.middleware.acp.workspace_service",
+        "chatcopilot.middleware.runtime.tasks",
+        "chatcopilot.core.persona_control",
+        "chatcopilot.core.persistent_state",
     }
+
+    assert required.issubset(modules)
+    assert all(len(digest) == 64 for digest in modules.values())
+
+    baseline = suite_definition_fingerprint(manifest, plugin, cases)
+    original = implementation_catalog.trusted_runtime_module_sha256
+    monkeypatch.setattr(
+        implementation_catalog,
+        "trusted_runtime_module_sha256",
+        lambda module_name: (
+            "f" * 64
+            if module_name == "chatcopilot.middleware.acp.agent_bridge"
+            else original(module_name)
+        ),
+    )
+    assert baseline != suite_definition_fingerprint(manifest, plugin, cases)
 
 
 def test_comparison_implementation_snapshot_covers_executor_profile_and_scorers() -> None:

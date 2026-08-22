@@ -15,9 +15,11 @@ DriverId = Literal[
     "agent_isolated",
     "agent_configured",
     "acp_scenario",
+    "qq_message_flow",
     "direct_llm",
     "dry_run",
 ]
+EvaluationTrack = Literal["agent", "qq_message_flow"]
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,7 @@ class SuiteManifest:
     value: str
     recommendation: str
     cadence: str
+    track: EvaluationTrack | str = ""
     plugin_id: str = ""
     driver_id: DriverId | str = ""
     requires_bot: bool = True

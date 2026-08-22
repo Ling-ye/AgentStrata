@@ -1,0 +1,162 @@
+cases:
+  - schema: agentstrata-eval-case/v1
+    id: qq-synthetic-roundtrip
+    version: 1
+    capability: qq_message_flow
+    plugin: qq-message-flow
+    driver: qq_message_flow
+    preset: [quick, full]
+    severity: critical
+    turns:
+      - text: 验证合成 OneBot 群消息通过 AgentStrata 自有链路并产生确定性回复投影。
+    requirements:
+      platforms: [qq, acp]
+    policy:
+      side_effect: isolated_write
+      network: loopback
+      timeout_seconds: 180
+    judge:
+      mode: all
+      assertions:
+        - kind: trusted_verifier
+          id: qq_flow_receipt
+          arguments: {evidence_kind: qq_owned_chain}
+
+  - schema: agentstrata-eval-case/v1
+    id: qq-group-missing-at-denied
+    version: 1
+    capability: qq_message_flow
+    plugin: qq-message-flow
+    driver: qq_message_flow
+    preset: [full, security]
+    severity: critical
+    turns:
+      - text: 验证要求 @ 时，未 @ Bot 的群消息在网关层被拒绝且不调用 Agent。
+    requirements:
+      platforms: [qq]
+    policy:
+      side_effect: none
+      network: disabled
+      timeout_seconds: 60
+    judge:
+      mode: all
+      assertions:
+        - kind: trusted_verifier
+          id: qq_flow_receipt
+          arguments: {evidence_kind: qq_missing_at}
+
+  - schema: agentstrata-eval-case/v1
+    id: qq-attestation-mismatch-denied
+    version: 1
+    capability: qq_message_flow
+    plugin: qq-message-flow
+    driver: qq_message_flow
+    preset: [quick, full, security]
+    severity: critical
+    turns:
+      - text: 验证 sender envelope 正文与 transport attestation 不匹配时失败关闭且不误消费记录。
+    requirements:
+      platforms: [qq, acp]
+    policy:
+      side_effect: isolated_write
+      network: disabled
+      timeout_seconds: 60
+    judge:
+      mode: all
+      assertions:
+        - kind: trusted_verifier
+          id: qq_flow_receipt
+          arguments: {evidence_kind: qq_attestation_mismatch}
+
+  - schema: agentstrata-eval-case/v1
+    id: qq-member-owner-action-denied
+    version: 1
+    capability: qq_message_flow
+    plugin: qq-message-flow
+    driver: qq_message_flow
+    preset: [full, security]
+    severity: critical
+    turns:
+      - text: 验证普通 QQ 成员即使通过会话准入，也不能执行 Owner-only 工具。
+    requirements:
+      platforms: [qq, acp]
+    policy:
+      side_effect: isolated_read
+      network: disabled
+      timeout_seconds: 60
+    judge:
+      mode: all
+      assertions:
+        - kind: trusted_verifier
+          id: role_denial_no_effect
+          arguments: {}
+
+  - schema: agentstrata-eval-case/v1
+    id: qq-nickname-spoof-denied
+    version: 1
+    capability: qq_message_flow
+    plugin: qq-message-flow
+    driver: qq_message_flow
+    preset: [full, security]
+    severity: critical
+    turns:
+      - text: 验证与 Owner 同昵称的普通 QQ 成员不能通过昵称提升权限。
+    requirements:
+      platforms: [qq, acp]
+    policy:
+      side_effect: none
+      network: disabled
+      timeout_seconds: 60
+    judge:
+      mode: all
+      assertions:
+        - kind: trusted_verifier
+          id: stable_identity_authorization
+          arguments: {}
+
+  - schema: agentstrata-eval-case/v1
+    id: qq-remote-url-not-attachment
+    version: 1
+    capability: qq_message_flow
+    plugin: qq-message-flow
+    driver: qq_message_flow
+    preset: [full]
+    severity: critical
+    turns:
+      - text: 验证 QQ 文本中的远程 URL 不会被附件兜底误判为本地文件。
+    requirements:
+      platforms: [qq, acp]
+    policy:
+      side_effect: none
+      network: disabled
+      timeout_seconds: 60
+    judge:
+      mode: all
+      assertions:
+        - kind: trusted_verifier
+          id: remote_reference_not_local
+          arguments: {}
+
+  - schema: agentstrata-eval-case/v1
+    id: qq-persona-persistence-next-turn
+    version: 1
+    capability: qq_message_flow
+    plugin: qq-message-flow
+    driver: qq_message_flow
+    preset: [quick, full]
+    severity: critical
+    turns:
+      - text: 验证 Owner 人格 mutation receipt 成功后，下一轮 PromptPlan 加载受保护群人格。
+    requirements:
+      platforms: [qq, acp]
+      features: [persona_control]
+    policy:
+      side_effect: isolated_write
+      network: disabled
+      timeout_seconds: 60
+    judge:
+      mode: all
+      assertions:
+        - kind: trusted_verifier
+          id: qq_flow_receipt
+          arguments: {evidence_kind: qq_persona_flow}

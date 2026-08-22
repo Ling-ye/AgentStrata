@@ -10,7 +10,7 @@ from chatcopilot.core.config import ChatConfig
 from chatcopilot.agent.langgraph_session import LangGraphAgentSession
 from chatcopilot.agent.backends import BackendAgentSession
 from chatcopilot.core.llm_client import ChatResult
-from chatcopilot.agent.protocol import (
+from chatcopilot.contracts.agent import (
     AgentTask,
     FinalText,
     LlmCallFinished,
@@ -19,7 +19,7 @@ from chatcopilot.agent.protocol import (
 )
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.external_tools.shared.tool_spec import ToolDef, build_openai_schema
+from chatcopilot.contracts.tools import ToolDef, build_openai_schema
 
 
 def _has_langgraph() -> bool:

@@ -7,7 +7,7 @@ from dataclasses import replace
 from chatcopilot.agent.subagents.spec import WorkflowDef
 from chatcopilot.agent.subagents.task_pack import parse_task_pack, task_pack_schema
 from chatcopilot.agent.subagents.workflow import WorkflowRunner
-from chatcopilot.external_tools.shared.tool_spec import EXECUTION_USER_SERIAL_BACKGROUND, ToolDef
+from chatcopilot.contracts.tools import EXECUTION_USER_SERIAL_BACKGROUND, ToolDef
 
 
 def make_workflow_tool(

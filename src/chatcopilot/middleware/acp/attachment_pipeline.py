@@ -26,7 +26,7 @@ from chatcopilot.middleware.acp.attachment_classifier import (
     is_plausible_file_basename,
     resource_basename,
 )
-from chatcopilot.middleware.runtime.workspace import Workspace, resolve_workspace_root
+from chatcopilot.core.workspace_runtime import Workspace, resolve_workspace_root
 
 _LOGGER = logging.getLogger("chatcopilot.middleware.acp.attachment_pipeline")
 

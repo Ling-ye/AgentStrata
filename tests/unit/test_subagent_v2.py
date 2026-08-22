@@ -15,7 +15,7 @@ from chatcopilot.agent.subagents.task_pack import TaskPack
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.loader import _parse_subagents, load_botspec, validate_botspec
 from chatcopilot.botspec.model import CustomSubagentSpec, SubagentBudgetSpec, SubagentSpec
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 
 class _ScriptedLLM:

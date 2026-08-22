@@ -1,4 +1,5 @@
 """Workspace 身份元数据 IDENTITY.json 的持久化与读取。"""
+
 from __future__ import annotations
 
 import json
@@ -7,13 +8,16 @@ import time
 from pathlib import Path
 from typing import Dict, Optional
 
-from chatcopilot.core.workspace_runtime.model import IDENTITY_FILENAME, Workspace
-from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
+from chatcopilot.contracts.workspace import (
+    IDENTITY_FILENAME,
+    WORKSPACE_SCOPE_GROUP_SHARED,
+    WorkspaceView,
+)
 
 _LOGGER = logging.getLogger("chatcopilot.core.workspace_runtime.identity")
 
 
-def persist_workspace_identity(ws: Workspace) -> None:
+def persist_workspace_identity(ws: WorkspaceView) -> None:
     """把当前会话身份写入工作区，供 Owner 全局扫描读取显示名。
 
     任意 user_id / user_name / chat 信息存在时才写。失败只记日志，不阻断主流程。

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict, cast
 
-from chatcopilot.agent.protocol import AgentResult, AgentTask, EventSink
+from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
 from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.turn import TurnOps, TurnState
 

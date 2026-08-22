@@ -17,7 +17,7 @@ from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.trace import TraceContext, current_trace, reset_trace, set_trace
 from chatcopilot.botspec.model import SubagentBudgetSpec
 from chatcopilot.contracts.agent import ContextSnapshotPrepared, LlmCallStarted, SpanFinished
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 
 class _FakeLLM:

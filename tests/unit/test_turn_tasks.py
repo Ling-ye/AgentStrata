@@ -18,7 +18,7 @@ from chatcopilot.middleware.runtime.tasks import (
     TurnTaskRecorder,
     complete_delegated_task,
 )
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 def _workspace(root: Path) -> Workspace:

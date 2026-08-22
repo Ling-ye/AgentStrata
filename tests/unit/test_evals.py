@@ -11,7 +11,7 @@ from typing import Iterator
 import pytest
 
 from chatcopilot.agent.context.task_framing import frame_task_message
-from chatcopilot.core.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.evals.adapters import bfcl, gaia, ifeval
 from chatcopilot.evals.cli import main as evals_cli_main
 from chatcopilot.evals.models import EvalCase
@@ -39,6 +39,7 @@ class EvalRegistryTests(unittest.TestCase):
             {
                 "agentstrata-canary-self-update-v1",
                 "agentstrata-capabilities-v1",
+                "agentstrata-qq-message-flow-v1",
                 "gaia",
                 "bfcl",
                 "ifeval",

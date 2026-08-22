@@ -29,7 +29,7 @@ Comparison 选择版本化 Profile。Quick/Standard 使用 Profile 的服务端�
 
 同一 Bot 的活动 Evaluation 约束跨 Evaluation application 线程和 service 进程生效。创建使用持久化根级原子 claim，进程真正退出后才释放；只要 service 仍观察到活进程，记录就不能删除、重跑或让同 Bot 启动下一条。Worker 身份只能通过解析 argv 中唯一的 `--output` 并与 Evaluation 目录规范路径精确匹配，不能使用路径子串；遗留 PID 存在但身份暂时无法验证时必须 fail closed，不能发送信号、定态或释放 claim。Evaluation 目录、claim 和权威 artifact 均拒绝符号链接，读取、流式传输、导出和删除前必须核对记录内的 `evaluation_id`。进程与部署所有权的后续边界以 `evaluation-service-boundary` 规格为准。
 
-控制台一级区域固定为“新建评测 / 评测记录 / 任务集”。新建页共享 Bot 选择和单一启动动作；评测记录统一列表并从宽抽屉查看两类详情；任务集聚合 Profile、Suite 数据准备、Case 与覆盖历史。
+控制台产品面按后续 `evaluation-two-track-center` 规格收敛为“开始测试 / 运行记录”，开始页只显示直接 Agent 与 QQ 消息链路两个入口。Profile、公开 benchmark、数据准备与任意 Suite 仍由同一 service/CLI 管理，但不进入 Console 主测评面。
 
 ## Acceptance
 
@@ -42,9 +42,9 @@ Comparison 选择版本化 Profile。Quick/Standard 使用 Profile 的服务端�
 - Resume 只接受完整请求、Case 快照、Bot runtime Target fingerprint 和 Trial 结构均一致的完整 checkpoint，拒绝已完成记录、请求漂移与残留 workspace 污染，失败前不改写任何权威文件。
 - 任意外部 Case ID 都不能逃逸 Evaluation workspace 或 Trial artifact 根；通用 token、已知 secret 和机器绝对路径不能落盘。
 - CLI 保持严格布尔、列表、有限数、统一 ID 和新目录语义，并直接生成 `progress.jsonl`；报告比较拒绝 incomplete lifecycle、不同 kind、Profile、Suite、Case/Trial 样本、Judge 或 Target executor/backend 语义。
-- 任务集页可准备 Suite 数据并按 Bot、Case、Target fingerprint 查看覆盖历史。
+- CLI/服务仍可准备公开 Suite 数据并按 Bot、Case、Target fingerprint 查询覆盖历史。
 - 旧 API、旧 CLI 分支、旧 manager 和 Legacy 页面不存在；旧报告目录不会被自动删除。
-- 桌面和窄屏下只出现一套创建、记录与任务集信息架构；切换 Bot、Suite、表单或记录后，旧异步响应不得覆盖当前上下文，SSE 重连不得重复追加历史事件。
+- 桌面和窄屏下只出现两轨创建与统一记录信息架构；切换 Bot、轨道或记录后，旧异步响应不得覆盖当前上下文。
 
 ## Verification
 
@@ -56,4 +56,4 @@ Comparison 选择版本化 Profile。Quick/Standard 使用 Profile 的服务端�
 - `.venv/bin/python scripts/check_repo.py fast`
 - `.venv/bin/python scripts/check_repo.py full`
 - `git diff --check`
-- 使用本地浏览器检查桌面与窄屏的新建、阻断、记录抽屉、任务集、数据准备和 dry-run。
+- 使用本地浏览器检查桌面与窄屏的两轨卡片、阻断、活动进度和记录抽屉。

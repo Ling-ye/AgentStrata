@@ -21,12 +21,21 @@ SUITE_DIR = (
     / "chatcopilot"
     / "evals"
     / "suites"
-    / "agentstrata-capabilities-v1"
+    / "agentstrata-qq-message-flow-v1"
 )
+AGENT_SUITE_DIR = SUITE_DIR.parent / "agentstrata-capabilities-v1"
 
 
 def _case(case_id: str):
     manifest = load_suite_manifest(SUITE_DIR / "manifest.yaml", suite_dir=SUITE_DIR)
+    return next(case for case in load_case_definitions(manifest) if case.case_id == case_id)
+
+
+def _agent_case(case_id: str):
+    manifest = load_suite_manifest(
+        AGENT_SUITE_DIR / "manifest.yaml",
+        suite_dir=AGENT_SUITE_DIR,
+    )
     return next(case for case in load_case_definitions(manifest) if case.case_id == case_id)
 
 
@@ -52,7 +61,7 @@ def _context(monkeypatch: pytest.MonkeyPatch) -> CapabilityScenarioContext:
 def test_member_owner_action_runs_selected_gate_then_denies_by_stable_role(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    case = _case("access-member-owner-tool-denied")
+    case = _case("qq-member-owner-action-denied")
 
     observation = run_capability_scenario(case, context=_context(monkeypatch))
     decision = observation.evidence[0]
@@ -106,7 +115,7 @@ def test_member_owner_action_runs_selected_gate_then_denies_by_stable_role(
 def test_qq_nickname_spoof_cannot_replace_stable_user_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    case = _case("access-nickname-spoof-denied")
+    case = _case("qq-nickname-spoof-denied")
 
     observation = run_capability_scenario(case, context=_context(monkeypatch))
     decision = observation.evidence[0]
@@ -142,7 +151,7 @@ def test_group_mention_with_unknown_identity_is_denied_before_side_effect(
 def test_remote_reference_uses_production_attachment_parser(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    case = _case("attachment-remote-reference-not-local")
+    case = _case("qq-remote-url-not-attachment")
 
     observation = run_capability_scenario(case, context=_context(monkeypatch))
     boundary = observation.evidence[0]
@@ -162,6 +171,6 @@ def test_scenario_registry_rejects_non_scenario_cases(
 ) -> None:
     with pytest.raises(ValueError, match="no deterministic capability scenario"):
         run_capability_scenario(
-            _case("dialogue-strict-json"),
+            _agent_case("dialogue-strict-json"),
             context=_context(monkeypatch),
         )

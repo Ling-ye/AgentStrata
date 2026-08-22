@@ -12,8 +12,10 @@ from chatcopilot.external_tools.dev.file_tools import TOOLS as DEV_FILE_TOOLS
 from chatcopilot.external_tools.dev.shell_tools import TOOLS as DEV_SHELL_TOOLS
 from chatcopilot.external_tools.mcp_admin.tools import TOOLS as MCP_ADMIN_TOOLS
 from chatcopilot.external_tools.web_fetch.tools import web_fetch_page
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
-from chatcopilot.middleware.acp.agent_bridge import _make_permission_filter
+from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.middleware.acp.tool_permissions import (
+    build_permission_filter as _make_permission_filter,
+)
 
 
 def _by_name(tools: list[ToolDef]) -> dict[str, ToolDef]:

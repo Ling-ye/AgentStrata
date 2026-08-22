@@ -39,7 +39,7 @@ from chatcopilot.contracts.agent_backend import (
     CodexMainSessionPolicy,
 )
 from chatcopilot.core.adapter_approval import AdapterApprovalStore
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 
 class _FakeLLM:

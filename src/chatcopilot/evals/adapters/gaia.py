@@ -21,8 +21,8 @@ import string
 from pathlib import Path
 from typing import Any
 
-from chatcopilot.agent.protocol import AgentTask, ResourceRef
-from chatcopilot.core.workspace import Workspace
+from chatcopilot.contracts.agent import AgentTask, ResourceRef
+from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.evals.env import positive_int_from_env
 from chatcopilot.evals.models import EvalCase, JudgeResult
 from chatcopilot.evals.selection import balanced_100_cases, normalize_categories, normalize_level

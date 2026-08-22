@@ -44,13 +44,6 @@ _MARKDOWN_REFERENCE_TARGET_RE = re.compile(
 )
 REQUIRED_PACKAGE_RESOURCES = frozenset(
     {
-        "agent/context/builtin_prompts/accuracy.md",
-        "agent/context/builtin_prompts/memory.md",
-        "agent/context/builtin_prompts/role_admin.md",
-        "agent/context/builtin_prompts/role_owner.md",
-        "agent/context/builtin_prompts/role_user.md",
-        "agent/context/builtin_prompts/safety.md",
-        "agent/context/builtin_prompts/search_first.md",
         "botspec/mcp_catalog.yaml",
         "evals/suites/agent-comparison/cases.yaml",
         "evals/suites/agentstrata-canary-self-update-v1/manifest.yaml",
@@ -63,6 +56,9 @@ REQUIRED_PACKAGE_RESOURCES = frozenset(
         "evals/suites/agentstrata-capabilities-v1/fixtures/untrusted-instructions.txt",
         "evals/suites/agentstrata-capabilities-v1/fixtures/workspace-note.txt",
         "evals/suites/agentstrata-capabilities-v1/manifest.yaml",
+        "evals/suites/agentstrata-qq-message-flow-v1/README.md",
+        "evals/suites/agentstrata-qq-message-flow-v1/cases.yaml",
+        "evals/suites/agentstrata-qq-message-flow-v1/manifest.yaml",
         "evals/suites/bfcl/manifest.yaml",
         "evals/suites/gaia/manifest.yaml",
         "evals/suites/ifeval/manifest.yaml",
@@ -153,23 +149,29 @@ except ValueError as exc:
 from chatcopilot.__main__ import main
 assert main(["--help"]) == 0
 
-from chatcopilot.agent.context.builtin_prompts import (
-    default_accuracy,
-    default_memory,
-    default_role,
-    default_safety,
-    default_search_first,
+from chatcopilot.agent.context.prompt_plan import (
+    PromptBuildInput,
+    PromptPlanBuilder,
+    render_native_prefix,
 )
-prompts = (
-    default_accuracy(),
-    default_memory(),
-    default_safety(),
-    default_search_first(),
-    default_role("owner"),
-    default_role("admin"),
-    default_role("user"),
+from chatcopilot.contracts.prompt import BotPromptProfile
+
+plan = PromptPlanBuilder().build(
+    PromptBuildInput(
+        profile=BotPromptProfile(
+            identity="Release probe assistant",
+            response_style="Respond concisely.",
+        ),
+        backend="native",
+        model=None,
+        role="owner",
+        channel_kind="private",
+        session_policy="Exercise the installed PromptPlan runtime.",
+    )
 )
-assert all(value.strip() for value in prompts)
+prompt_prefix = render_native_prefix(plan)
+assert prompt_prefix[0]["role"] == "system"
+assert any("Release probe assistant" in message["content"] for message in prompt_prefix)
 
 from chatcopilot.external_tools.unity_codebase.config import load_registry
 assert load_registry(force_reload=True).ids()

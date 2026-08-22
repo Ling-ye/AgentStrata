@@ -47,9 +47,13 @@ from chatcopilot.middleware.acp import (
 )
 from chatcopilot.middleware.acp.agent_bridge import (
     _build_session_for_workspace,
-    _make_permission_filter,
-    _make_workspace_service,
     _materialize_session_for_workspace,
+)
+from chatcopilot.middleware.acp.tool_permissions import (
+    build_permission_filter as _make_permission_filter,
+)
+from chatcopilot.middleware.acp.workspace_service import (
+    build_workspace_service as _make_workspace_service,
 )
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.middleware.acp.group_conversation import (
@@ -60,7 +64,7 @@ from chatcopilot.middleware.acp.group_conversation import (
 from chatcopilot.middleware.acp.server import AcpChatAgent
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.acp.turn_orchestrator import AcpTurnOrchestrator
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.middleware.runtime.jobs.submitter import submit_tool_job
 from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder, group_task_actor_root
 
@@ -103,9 +107,7 @@ def _write_group_transport_attestation(
     session_dir.chmod(0o700)
     monkeypatch.setenv("CC_SESSION_KEY", session_key)
     monkeypatch.setenv("CHATCOPILOT_SESSION_ENV_DIR", str(session_dir))
-    path = session_dir / (
-        f"cc-sess-{hashlib.sha256(session_key.encode('utf-8')).hexdigest()}.env"
-    )
+    path = session_dir / (f"cc-sess-{hashlib.sha256(session_key.encode('utf-8')).hexdigest()}.env")
     session_digest = hashlib.sha256(session_key.encode("utf-8")).hexdigest()
     payload = {
         "schema_version": 2,
@@ -122,9 +124,7 @@ def _write_group_transport_attestation(
                 "event": "message.received",
                 "transport_user_id": sender_id,
                 "content_sha256": hashlib.sha256(
-                (hook_content if hook_content is not None else text)
-                .strip()
-                .encode("utf-8")
+                    (hook_content if hook_content is not None else text).strip().encode("utf-8")
                 ).hexdigest(),
                 "created_at_ns": time.time_ns(),
             }
@@ -550,9 +550,7 @@ def test_group_actor_cache_keeps_role_and_execution_session_actor_scoped(
     assert built == []
     assert agent._sessions == {}
     assert agent._group_actor_sessions == {}
-    assert json.loads(owner_attestation.read_text(encoding="utf-8"))[
-        "attestations"
-    ] == []
+    assert json.loads(owner_attestation.read_text(encoding="utf-8"))["attestations"] == []
     assert not (shared_workspace.root.parent / ".conversation-state").exists()
 
     owner_state = agent._activate_turn_identity(
@@ -631,10 +629,7 @@ def test_group_backend_state_is_outside_member_visible_shared_root(
     protected = service.resolve_backend_state_root()
     actor_digest = hashlib.sha256(f"qq\0{_MEMBER_ID}".encode()).hexdigest()
     assert protected == (
-        workspace.root.parent
-        / ".conversation-state"
-        / "backend-sessions"
-        / actor_digest
+        workspace.root.parent / ".conversation-state" / "backend-sessions" / actor_digest
     )
     assert protected is not None
     with pytest.raises(ValueError):
@@ -844,9 +839,7 @@ def test_access_denied_sender_is_tracked_without_activating_actor_execution(
         user_id=_MEMBER_ID,
         user_name=None,
     )
-    task_paths = tuple(
-        (group_task_actor_root(tracked_workspace) / "tasks").glob("*/task.json")
-    )
+    task_paths = tuple((group_task_actor_root(tracked_workspace) / "tasks").glob("*/task.json"))
     assert len(task_paths) == 1
     task = json.loads(task_paths[0].read_text(encoding="utf-8"))
     assert task["status"] == "succeeded"
@@ -1194,24 +1187,16 @@ def test_group_owner_permission_surface_keeps_owner_tools_and_shared_files(
         (target / "private.json").write_text("host diagnostic", encoding="utf-8")
 
     with bind_workspace_service(_make_workspace_service(workspace)):
-        listing, _, _ = workspace_tools._handler_list_workspace(
-            {"subdir": "", "recursive": True}
-        )
-        readable, _, _ = workspace_tools._handler_read_text_head(
-            {"path": "report.txt"}
-        )
+        listing, _, _ = workspace_tools._handler_list_workspace({"subdir": "", "recursive": True})
+        readable, _, _ = workspace_tools._handler_read_text_head({"path": "report.txt"})
         assert "group report" in readable
         assert "private.json" not in listing
         for reserved in ("jobs", "tasks"):
             with pytest.raises(PermissionError):
-                workspace_tools._handler_list_workspace(
-                    {"subdir": reserved, "recursive": True}
-                )
+                workspace_tools._handler_list_workspace({"subdir": reserved, "recursive": True})
         for reserved in ("jobs", "tasks", "transcripts"):
             with pytest.raises(PermissionError):
-                workspace_tools._handler_read_text_head(
-                    {"path": f"{reserved}/private.json"}
-                )
+                workspace_tools._handler_read_text_head({"path": f"{reserved}/private.json"})
 
 
 def test_group_turn_tasks_and_owner_jobs_use_protected_actor_storage(
@@ -1287,9 +1272,7 @@ def test_group_turn_tasks_and_owner_jobs_use_protected_actor_storage(
     )
 
     assert job.job_dir.parent == job_storage_root(owner_workspace)
-    assert job.job_dir.is_relative_to(
-        owner_workspace.root.parent / ".conversation-state" / "jobs"
-    )
+    assert job.job_dir.is_relative_to(owner_workspace.root.parent / ".conversation-state" / "jobs")
     assert find_job(owner_workspace, job.job_id) == job
     assert find_job(member_workspace, job.job_id) is None
     assert job.request_path in iter_job_request_paths(tmp_path)
@@ -1351,9 +1334,7 @@ def test_group_owner_deterministic_controls_keep_owner_permissions(
         workspace=workspace,
         role=Role.OWNER,
         assistant_mode=AssistantMode.PERFORMANCE,
-        runtime=SimpleNamespace(
-            access=SimpleNamespace(owner_only_project_access=False)
-        ),
+        runtime=SimpleNamespace(access=SimpleNamespace(owner_only_project_access=False)),
         routing_config=ChatConfig().routing,
     )
     state.bind_group_turn(
@@ -1436,9 +1417,7 @@ def test_group_normal_turn_does_not_replay_background_jobs(tmp_path: Path) -> No
         workspace=workspace,
         role=Role.USER,
         assistant_mode=AssistantMode.PERFORMANCE,
-        runtime=SimpleNamespace(
-            access=SimpleNamespace(owner_only_project_access=False)
-        ),
+        runtime=SimpleNamespace(access=SimpleNamespace(owner_only_project_access=False)),
     )
 
     async def forbidden(*_args: object, **_kwargs: object) -> str:
@@ -1534,15 +1513,15 @@ def test_group_same_named_transport_attachment_is_rejected_not_reused(
     assert "正在保存" not in updates[0]
     assert cancelled == ["group-upload"]
     assert old_file.read_text(encoding="utf-8") == "old actor content"
-    assert attachment_pipeline.confirmed_transport_attachments(
-        workspace,
-        ["report.txt"],
-        imported_names=[],
-    ) == []
-    records = [
-        json.loads(line)
-        for line in journal.path.read_text(encoding="utf-8").splitlines()
-    ]
+    assert (
+        attachment_pipeline.confirmed_transport_attachments(
+            workspace,
+            ["report.txt"],
+            imported_names=[],
+        )
+        == []
+    )
+    records = [json.loads(line) for line in journal.path.read_text(encoding="utf-8").splitlines()]
     assert len(records) == 1
     assert records[0]["message_id"] == "new-upload"
     assert "report.txt" in records[0]["user_text"]
@@ -1770,8 +1749,7 @@ def test_group_codex_command_has_read_only_namespace_and_strict_config(
     assert "features.shell_tool=false" in inner
     assert "features.unified_exec=false" in inner
     assert not any(
-        name in command
-        for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
+        name in command for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
     )
 
     probe = """

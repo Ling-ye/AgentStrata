@@ -10,7 +10,7 @@ from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.context.prompt_plan import render_native_prefix
 from chatcopilot.contracts import Role, role_ge, role_value
 from chatcopilot.contracts.skills import SkillIndexEntry
-from chatcopilot.external_tools.shared.tool_spec import ToolDef, build_openai_schema
+from chatcopilot.contracts.tools import ToolDef, build_openai_schema
 
 
 def _tool(name: str, *, requires_role: str | None = None) -> ToolDef:
@@ -113,7 +113,11 @@ def test_session_can_explicitly_hide_bot_skill_index() -> None:
         prompt_input=prompt_input("baseline"),
     )
 
-    owner_text = render_native_prefix(_native(owner).prompt_plan)[0]["content"]
-    member_text = render_native_prefix(_native(member).prompt_plan)[0]["content"]
+    owner_text = "\n".join(
+        message["content"] for message in render_native_prefix(_native(owner).prompt_plan)
+    )
+    member_text = "\n".join(
+        message["content"] for message in render_native_prefix(_native(member).prompt_plan)
+    )
     assert "internal-playbook" in owner_text
     assert "internal-playbook" not in member_text

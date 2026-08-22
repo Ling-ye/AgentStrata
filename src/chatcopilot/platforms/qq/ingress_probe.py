@@ -1,10 +1,10 @@
 """Hermetic QQ gateway ingress probe.
 
-The probe never connects to QQ, NapCat, cc-connect, ACP, or an Agent.  It starts
-two ephemeral loopback WebSocket listeners in the current process: a fake
-NapCat upstream and the real access-proxy relay.  Synthetic OneBot frames then
-prove that the configured gateway policy forwards an accepted message and
-drops a denied message.
+By default this starts a fake NapCat upstream and the real access-proxy relay
+on ephemeral loopback listeners, proving only accepted-frame forwarding and
+denied-frame dropping.  A hermetic Evaluation may explicitly own a downstream
+observer and continue the forwarded synthetic frame through project-local
+layers; neither mode connects to QQ or proves an external QQ end-to-end flow.
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ import hmac
 import json
 import secrets
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Awaitable, Callable, Mapping
 
-from chatcopilot.platforms.qq.at_proxy import (
-    _ProxyConfig,
-    _handle_cc_connection,
-    _validate_proxy_config,
+from chatcopilot.platforms.qq.access_proxy import (
+    ProxyConfig,
+    handle_cc_connection,
     should_forward,
+    validate_proxy_config,
 )
 
 _LOOPBACK_HOST = "127.0.0.1"
@@ -71,7 +71,7 @@ def _preferred_numeric(value: str | None) -> str | None:
     return None
 
 
-def _synthetic_probe_env(base_cfg: _ProxyConfig) -> dict[str, str]:
+def _synthetic_probe_env(base_cfg: ProxyConfig) -> dict[str, str]:
     synthetic_bot = _random_numeric_id(excluded=frozenset())
     synthetic_user = _random_numeric_id(excluded=frozenset({synthetic_bot}))
     synthetic_group = _random_numeric_id(excluded=frozenset({synthetic_bot, synthetic_user}))
@@ -87,7 +87,7 @@ def _synthetic_probe_env(base_cfg: _ProxyConfig) -> dict[str, str]:
         group_allowlist = synthetic_group
     else:
         group_allowlist = ""
-    return {
+    values = {
         "QQ_ACCESS_TOKEN": secrets.token_urlsafe(32),
         "QQ_ACCOUNT": synthetic_bot,
         "QQ_ALLOW_FROM": user_allowlist,
@@ -98,10 +98,13 @@ def _synthetic_probe_env(base_cfg: _ProxyConfig) -> dict[str, str]:
         "QQ_AT_PROXY_URL": "ws://127.0.0.1:1",
         "CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID": synthetic_group,
     }
+    if base_cfg.receipt_root is not None:
+        values["CHATCOPILOT_INGRESS_RECEIPT_DIR"] = str(base_cfg.receipt_root)
+    return values
 
 
 def _probe_events(
-    cfg: _ProxyConfig,
+    cfg: ProxyConfig,
     env: Mapping[str, str],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     excluded = frozenset(
@@ -208,15 +211,17 @@ async def _connect_loopback(websockets: Any, url: str) -> Any:
 
 async def run_simulated_gateway_ingress(
     env: Mapping[str, str],
+    *,
+    downstream_observer: Callable[[Mapping[str, Any]], Awaitable[None] | None] | None = None,
 ) -> SimulatedGatewayIngressReceipt:
-    """Run the production relay against synthetic frames on ephemeral ports."""
+    """Run the relay locally and optionally hand its accepted frame to the caller."""
 
     import websockets
 
-    base_cfg = _ProxyConfig(env)
-    _validate_proxy_config(base_cfg)
+    base_cfg = ProxyConfig(env)
+    validate_proxy_config(base_cfg)
     synthetic_env = _synthetic_probe_env(base_cfg)
-    synthetic_cfg = _ProxyConfig(synthetic_env)
+    synthetic_cfg = ProxyConfig(synthetic_env)
     positive, negative = _probe_events(synthetic_cfg, synthetic_env)
     positive_raw = json.dumps(positive, ensure_ascii=True, separators=(",", ":"))
     negative_raw = json.dumps(negative, ensure_ascii=True, separators=(",", ":"))
@@ -246,11 +251,11 @@ async def run_simulated_gateway_ingress(
             upstream_url = f"ws://{_LOOPBACK_HOST}:{_server_port(upstream_server)}"
             probe_env = dict(synthetic_env)
             probe_env["QQ_WS_URL"] = upstream_url
-            cfg = _ProxyConfig(probe_env)
-            _validate_proxy_config(cfg)
+            cfg = ProxyConfig(probe_env)
+            validate_proxy_config(cfg)
 
             async def proxy_handler(connection: Any, *_: Any) -> None:
-                await _handle_cc_connection(connection, cfg)
+                await handle_cc_connection(connection, cfg)
 
             async with websockets.serve(
                 proxy_handler,
@@ -290,9 +295,15 @@ async def run_simulated_gateway_ingress(
     finally:
         release_upstream.set()
 
+    positive_forwarded = positive_raw in received
+    if positive_forwarded and downstream_observer is not None:
+        observed = downstream_observer(dict(positive))
+        if observed is not None:
+            await observed
+
     return SimulatedGatewayIngressReceipt(
         upstream_authenticated=state["upstream_authenticated"],
-        positive_forwarded=positive_raw in received,
+        positive_forwarded=positive_forwarded,
         negative_dropped=negative_raw not in received,
         positive_frame_sha256=hashlib.sha256(positive_raw.encode("utf-8")).hexdigest(),
         negative_frame_sha256=hashlib.sha256(negative_raw.encode("utf-8")).hexdigest(),

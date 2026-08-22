@@ -1,12 +1,13 @@
 schema: 1
 suite_id: agentstrata-capabilities-v1
 version: "1"
-name: AgentStrata 产品能力 v1
+name: 直接 Agent 能力 v1
 kind: product
 status: implemented
-value: 验证 AgentStrata 上层 Agent 的核心产品行为和安全边界；真实平台连通性由独立外部检查承担。
-recommendation: 手动按需运行 quick、full 或 security；变更前后使用相同 Target fingerprint 比较，多次重复运行才能用于可靠性结论。
+value: 不经过 ACP 或平台链路，直接验证所选 Bot 的 Agent runtime、工具编排、人格表现和实时信息回答。
+recommendation: 手动按需运行 quick、full 或 security；启用对应来源后可用 custom 显式选择来源专用 Case；变更前后使用相同 Target fingerprint 比较，多次重复运行才能用于可靠性结论。
 cadence: manual only
+track: agent
 plugin_id: generic-agent
 driver_id: agent_configured
 requires_bot: true
@@ -14,7 +15,7 @@ files:
   - path: cases.yaml
     role: cases
     media_type: application/yaml
-    sha256: f2f8c0196254bde37e72662c7405c00c430c7cbf42fac72fad8f529f0df1e048
+    sha256: 48e899680329f977a8ee7cf1771177b1164f38bb676bd7f2edc5c48f40749278
   - path: fixtures/order-card.png
     role: fixture
     resource_id: order-card
@@ -47,33 +48,32 @@ files:
     sha256: 3ccd264a1c853f0ac7770506fe983d4e1b7b6318dab82736e431a4b61ad5fc35
 presets:
   quick:
-    description: 10 个代表性 Case，不执行真实 QQ 外部写入。
+    description: 10 个代表性直接 Agent Case，不经过 ACP 或 QQ 链路。
     case_ids:
       - dialogue-strict-json
+      - persona-applied-behavior
       - tool-allowed-exact-call
       - tool-disabled-hidden-no-effect
       - search-general-with-evidence
-      - attachment-remote-reference-not-local
+      - current-usd-cny-reference
       - image-ocr-order-number
       - session-cross-user-isolation
       - code-restart-and-health
-      - access-member-owner-tool-denied
       - injection-untrusted-search-contained
   full:
-    description: 全部 26 个 Agent Case；不执行真实平台外部检查或写入。
+    description: 当前内置 Bot 可运行的 23 个直接 Agent Case；不经过 ACP 或真实平台链路。
     case_ids:
       - dialogue-strict-json
       - dialogue-clarify-before-action
+      - persona-applied-behavior
       - tool-allowed-exact-call
       - tool-multistep-data-flow
       - tool-disabled-hidden-no-effect
       - tool-error-bounded-recovery
       - search-general-with-evidence
-      - search-explicit-source
-      - search-conflict-disclosure
+      - current-usd-cny-reference
       - workspace-read-fixture
       - workspace-write-contained
-      - attachment-remote-reference-not-local
       - image-ocr-order-number
       - image-shape-spatial-count
       - image-multi-input-order
@@ -83,16 +83,12 @@ presets:
       - code-fix-and-verify
       - code-restart-and-health
       - code-failure-no-false-success
-      - access-member-owner-tool-denied
-      - access-nickname-spoof-denied
       - access-forbidden-tool-no-effect
       - injection-untrusted-search-contained
       - injection-untrusted-attachment-contained
   security:
-    description: 5 个白名单、角色和间接注入安全 Case。
+    description: 3 个直接 Agent 工具权限和间接注入安全 Case。
     case_ids:
-      - access-member-owner-tool-denied
-      - access-nickname-spoof-denied
       - access-forbidden-tool-no-effect
       - injection-untrusted-search-contained
       - injection-untrusted-attachment-contained

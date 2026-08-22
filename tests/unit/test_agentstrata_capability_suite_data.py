@@ -38,17 +38,18 @@ CASE_FIELDS = {
 }
 PLUGIN_DRIVERS = {
     "generic-agent": {"agent_isolated", "agent_configured"},
-    "acp-scenario": {"acp_scenario"},
 }
 EXPECTED_CAPABILITY_COUNTS = {
     "dialogue_constraints": 2,
+    "persona": 1,
     "tool_orchestration": 4,
     "search": 3,
-    "file_workspace": 3,
+    "current_information": 1,
+    "file_workspace": 2,
     "image_understanding": 3,
     "session_memory_subagent": 3,
     "code_recovery": 3,
-    "access_security": 5,
+    "access_security": 3,
 }
 FORBIDDEN_KEYS = {
     "cleanup",
@@ -99,7 +100,8 @@ def test_suite_loads_through_strict_core_contract() -> None:
     assert manifest.plugin_id == "generic-agent"
     assert manifest.driver_id == "agent_configured"
     assert manifest.default_preset == "quick"
-    assert len(cases) == 26
+    assert manifest.track == "agent"
+    assert len(cases) == 25
 
 
 def test_case_contract_counts_and_presets_are_exact() -> None:
@@ -107,17 +109,16 @@ def test_case_contract_counts_and_presets_are_exact() -> None:
     cases = _load_yaml(SUITE_DIR / "cases.yaml")["cases"]
 
     assert isinstance(cases, list)
-    assert len(cases) == 26
+    assert len(cases) == 25
     assert Counter(case["capability"] for case in cases) == EXPECTED_CAPABILITY_COUNTS
 
     identifiers = [case["id"] for case in cases]
-    assert len(set(identifiers)) == 26
+    assert len(set(identifiers)) == 25
     assert all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?", item) for item in identifiers)
     assert all(set(case) == CASE_FIELDS for case in cases)
     assert all(case["schema"] == "agentstrata-eval-case/v1" for case in cases)
     assert all(type(case["version"]) is int and case["version"] >= 1 for case in cases)
     assert {case["id"]: case["version"] for case in cases if case["version"] != 1} == {
-        "access-member-owner-tool-denied": 2,
         "code-failure-no-false-success": 2,
         "injection-untrusted-attachment-contained": 2,
         "injection-untrusted-search-contained": 2,
@@ -134,9 +135,15 @@ def test_case_contract_counts_and_presets_are_exact() -> None:
     presets = manifest["presets"]
     assert set(presets) == {"quick", "full", "security"}
     assert len(presets["quick"]["case_ids"]) == 10
-    assert len(presets["full"]["case_ids"]) == 26
-    assert len(presets["security"]["case_ids"]) == 5
-    assert presets["full"]["case_ids"] == identifiers
+    assert len(presets["full"]["case_ids"]) == 23
+    assert len(presets["security"]["case_ids"]) == 3
+    assert presets["full"]["case_ids"] == [
+        case["id"] for case in cases if "full" in case["preset"]
+    ]
+    assert [case["id"] for case in cases if case["preset"] == ["custom"]] == [
+        "search-explicit-source",
+        "search-conflict-disclosure",
+    ]
     for preset_id, preset in presets.items():
         expected = [case["id"] for case in cases if preset_id in case["preset"]]
         assert preset["case_ids"] == expected
@@ -151,6 +158,10 @@ def test_quick_security_and_external_write_boundaries() -> None:
     assert all(case["capability"] == "access_security" for case in security)
     assert all(case["policy"]["side_effect"] != "external_write" for case in cases.values())
     assert all(case["plugin"] != "qq-live" and case["driver"] != "qq_live" for case in cases.values())
+    assert {case["driver"] for case in cases.values()} <= {
+        "agent_isolated",
+        "agent_configured",
+    }
 
 
 def test_workspace_write_case_pins_exact_artifact_and_isolated_delivery() -> None:

@@ -47,7 +47,7 @@ from chatcopilot.contracts.model_selection import (
 )
 from chatcopilot.core.model_selection import CODE_MODEL_SELECTION_METADATA_KEY
 from chatcopilot.core.config import ChatConfig
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.external_tools.codex_cli.credentials import (
     CredentialError,
     install_login_credential,

@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence
 
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.contracts.tools import HandlerResult, ToolDef
 
 SUBMIT_RESULT_TOOL = "submit_result"
 

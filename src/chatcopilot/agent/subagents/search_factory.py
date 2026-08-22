@@ -14,7 +14,7 @@ from chatcopilot.agent.subagents.spec import (
 )
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.subagents import SubagentBudgetSpec
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 _SEARCH_SUBAGENT_PREFIX = "search_"
 

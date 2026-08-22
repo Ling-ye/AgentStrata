@@ -57,6 +57,21 @@ BotSpec 只声明 tool-pack id。具体目录在 `tool_packs/catalog.py`，每�
 列出精确工具名；builtin 与 external 使用同一映射。工具发现统一走
 `agent/tools/registry`，Console 通过 `component_catalog` 读取同一目录投影。
 
+## PromptPlan 信任分区
+
+所有 main Agent、subagent、backend 和 Evaluation 模型入口只消费一个不可变
+`PromptPlan`。Layer kind 与 trust 是封闭映射，renderer 不能把内容移动到更高权限分区：
+
+| 分区 | 内容 | Native / LangGraph | Codex |
+| --- | --- | --- | --- |
+| Host policy | runtime policy、capability policy | system envelope | `host_policy` |
+| Runtime facts | 已认证身份、backend/model、时间等宿主事实 | system envelope | `runtime_facts` |
+| Bot instructions | Bot identity/style、Skills 索引 | 独立 user-context envelope | `bot_instructions` |
+| Untrusted data | persona、memory、journal、网页、用户输入 | 独立 user-context/user message | `untrusted_context` 与 JSON 用户字段 |
+
+Codex envelope 使用 schema v2；render receipt 记录四个分区、各 layer 与最终渲染结果的
+稳定摘要。Bot 文件即使由维护者提供，也只控制 identity/style，不获得授权或安全策略权限。
+
 ## Agent backend
 
 三个 backend 共享 `AgentTask`、`AgentEvent`、`AgentResult` 和 turn runtime。backend
@@ -78,6 +93,11 @@ BotSpec 只声明 tool-pack id。具体目录在 `tool_packs/catalog.py`，每�
 Tool pack 通过 component catalog 贡献精确工具绑定和结构化跨工具 policy。通用公开 tool pack 包括
 workspace、memory、playbook、MCP 管理、Feishu、Wiki、职业情报、网页读取、
 Windows/Unity 只读能力与受控开发工具。
+
+显式启用的 tool pack 是部署契约，不是 best-effort 插件。绑定模块无法 import、没有非空
+`TOOLS`、导出非 `ToolDef`、重复导出，或 catalog 声明的工具没有完整物化时，统一抛出包含
+module、pack 和 tool 证据的 `ToolMaterializationError`。运行时不得把该错误降级成空工具列表；
+无副作用预检可以把它转换为明确的失败检查。
 
 MCP catalog 是经过审阅的静态目录。公开运行时不会自动下载、安装或启用第三方
 MCP/Skill。`risk: search` 的 MCP binding 可产生只读搜索来源；统一搜索入口负责路由、
@@ -214,6 +234,19 @@ lifecycle owner。详细验收见
 [`evaluation-service-boundary`](../specs/evaluation-service-boundary/spec.md)。
 
 ## 验证入口
+
+`scripts/check_architecture.py` 对 `src/chatcopilot` 与 Console 下的 Python 源码做 AST
+静态解析，覆盖可静态解析的绝对、相对 import；动态加载、非 Python 依赖和运行时调用关系
+不在该图内：
+
+- area policy 自身必须是 DAG，跨 area 导入只能沿声明方向；
+- 受检 Python 模块的静态 import 图不允许包含两个及以上模块的强连通分量；
+- 兼容 facade 只允许实现域和专门兼容测试引用，内部实现和普通测试使用 canonical surface；
+- ACP 等跨域模块不能导入其它 owner 模块的私有符号。
+
+单元测试调用与 CLI 相同的检查入口和规则集合，避免命令行通过而测试只覆盖旧前缀规则。
+当前边界与验收事实源是
+[`architecture-boundary-hardening`](../specs/architecture-boundary-hardening/spec.md)。
 
 ```bash
 python scripts/check_architecture.py

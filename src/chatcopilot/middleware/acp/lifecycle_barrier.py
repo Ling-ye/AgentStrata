@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal, Sequence
 
-from chatcopilot.agent.protocol import DeferredLifecycleIntent
+from chatcopilot.contracts.agent import DeferredLifecycleIntent
 from chatcopilot.external_tools.dev.lifecycle_job import workspace_payload as build_workspace_payload
 from chatcopilot.external_tools.dev.lifecycle_tools import (
     execute_finalize_self_update_from_workspace,

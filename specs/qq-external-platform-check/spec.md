@@ -20,8 +20,11 @@ QQ 是否连接、NapCat/OneBot 是否接受受认证动作、当前登录账号
 
 系统可以额外运行 hermetic 模拟 ingress：在检查进程内为一次调用临时启动随机回环
 端口上的假 NapCat 与真实 QQ access-proxy relay，发送合成 OneBot 消息并观察下游帧。
-该检查只证明当前安装代码的 gateway JSON 解析、白名单策略形状/@策略和 WebSocket 转发可用，
-不连接真实 QQ、不连接 Agent/ACP，也不证明正在运行的 NapCat 曾产生该事件。
+外部检查中的该探针只证明当前安装代码的 gateway JSON 解析、白名单策略形状/@策略和
+WebSocket 转发可用，不连接真实 QQ、不连接 Agent/ACP，也不证明正在运行的 NapCat 曾产生
+该事件。独立的 `agentstrata-qq-message-flow-v1` Evaluation 可以把同类回环帧继续传入
+attestation、身份/权限、临时 persona、确定性 Agent sentinel 与回复投影，但同样不构成真实
+QQ、NapCat 或 cc-connect E2E。
 
 ## Design
 
@@ -62,15 +65,18 @@ token 派生的 HMAC 摘要；不得输出 nickname、群名、token 或原始�
 limitations。`failed` 表示配置或平台拒绝；`error` 表示 transport/协议异常；
 `not_configured` 与 `not_tested` 是覆盖说明，不得计入 Agent 失败。
 
-`agentstrata-capabilities-v1` 固定为 26 个 Agent Case，只提供
-`quick/full/security/custom`。真实 QQ Case、`qq-live` preset、QQ sender env 和
-Evaluation 的 QQ 外部写路径全部移除。白名单、角色、群聊 @ 与间接注入仍由隔离的
-ACP/OneBot 场景验证，因为它们测试的是 AgentStrata 自身的授权策略而非公网 QQ 连通性。
+`agentstrata-capabilities-v1` 目录固定为 25 个直接 Agent Case，不含 ACP 或 QQ；默认 `full`
+只选择当前内置 Bot 可运行的 23 个，两个来源专用 Case 仅供显式 `custom`。
+`agentstrata-qq-message-flow-v1` 固定为 7 个无外部写的合成后链路 Case。真实 QQ Case、
+`qq-live` preset、生产 QQ sender env 和 Evaluation 的 QQ 外部写路径仍全部禁止；白名单、
+角色、群聊 @、attestation 与 persona host boundary 由随机合成身份和临时状态验证，因为它们
+测试的是 AgentStrata 自身策略而非公网 QQ 连通性。
 
 ## Acceptance
 
-- Agent capability Suite 不包含 QQ live Case、`qq-live` preset、QQ sender 配置检查或
-  QQ 外部写；`full` 正好包含 26 个 Agent Case。
+- Agent capability Suite 不包含 ACP、QQ live Case、`qq-live` preset、QQ sender 配置检查或
+  QQ 外部写；`full` 正好包含当前内置 Bot 可运行的 23 个直接 Agent Case，两个来源专用 Case
+  仅供显式 `custom`。QQ message-flow `full` 包含 7 个合成 Case。
 - QQ 外部检查不创建 Evaluation/report，不调用模型，不读取或修改 Agent session。
 - hermetic ingress 使用真实 access-proxy relay 与回环 WebSocket，正例必须完整转发、
   负例必须被丢弃、上游必须看到正确 Bearer 认证；任一证据缺失均失败关闭。

@@ -10,7 +10,7 @@ import secrets
 import sys
 import tempfile
 
-from chatcopilot.platforms.qq.gateway_health import (
+from chatcopilot.platforms.qq.boundary import (
     QQBoundaryError,
     require_access_token,
 )

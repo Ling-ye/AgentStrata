@@ -3,6 +3,7 @@
 Prompt policy is assembled once into an immutable plan.  Backends may render
 the plan for their transport, but may not append policy of their own.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -14,6 +15,7 @@ PromptKind = Literal[
     "runtime_policy",
     "bot_identity",
     "capability_policy",
+    "skill_instruction",
     "response_style",
     "dynamic_persona",
     "untrusted_context",
@@ -23,23 +25,24 @@ PromptKind = Literal[
 PromptTrust = Literal[
     "trusted_policy",
     "trusted_runtime_fact",
+    "bot_instruction",
     "untrusted_data",
 ]
 PromptCacheScope = Literal["global", "bot", "session", "turn"]
 
-_KINDS = frozenset(
-    {
-        "runtime_policy",
-        "bot_identity",
-        "capability_policy",
-        "response_style",
-        "dynamic_persona",
-        "untrusted_context",
-        "session_fact",
-        "user_input",
-    }
-)
-_TRUST = frozenset({"trusted_policy", "trusted_runtime_fact", "untrusted_data"})
+_KIND_TRUST = {
+    "runtime_policy": "trusted_policy",
+    "capability_policy": "trusted_policy",
+    "session_fact": "trusted_runtime_fact",
+    "bot_identity": "bot_instruction",
+    "skill_instruction": "bot_instruction",
+    "response_style": "bot_instruction",
+    "dynamic_persona": "untrusted_data",
+    "untrusted_context": "untrusted_data",
+    "user_input": "untrusted_data",
+}
+_KINDS = frozenset(_KIND_TRUST)
+_TRUST = frozenset(_KIND_TRUST.values())
 _CACHE_SCOPES = frozenset({"global", "bot", "session", "turn"})
 _BACKENDS = frozenset({"native", "langgraph", "codex"})
 _ROLES = frozenset({"owner", "admin", "user"})
@@ -68,10 +71,9 @@ class PromptLayer:
             raise ValueError(f"unknown prompt cache scope: {self.cache_scope!r}")
         if not content:
             raise ValueError(f"prompt layer {layer_id!r} cannot be empty")
-        if self.kind in {"bot_identity", "response_style"} and self.trust == "trusted_policy":
-            raise ValueError("bot-authored prompt layers cannot be trusted_policy")
-        if self.kind in {"dynamic_persona", "untrusted_context", "user_input"} and self.trust != "untrusted_data":
-            raise ValueError(f"{self.kind} layers must be untrusted_data")
+        expected_trust = _KIND_TRUST[self.kind]
+        if self.trust != expected_trust:
+            raise ValueError(f"{self.kind} layers must use {expected_trust}, got {self.trust}")
         object.__setattr__(self, "id", layer_id)
         object.__setattr__(self, "content", content)
         object.__setattr__(
@@ -117,6 +119,7 @@ class PromptRenderReceipt:
     prompt_chars: int
     tool_schema_chars: int
     estimated_tokens: int
+    partition_hashes: tuple[tuple[PromptTrust, str], ...] = ()
 
 
 @dataclass(frozen=True)

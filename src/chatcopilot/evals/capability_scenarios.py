@@ -2,15 +2,17 @@
 
 These scenarios do not invoke an LLM or send a platform message. They exercise
 the same access, role and attachment-boundary functions used by ACP, with the
-selected Bot's parsed :class:`AccessSpec` and bot-local environment. Evidence
+selected Bot's parsed :class:`AccessSpec` and a caller-provided environment. Evidence
 contains booleans and counts only; stable platform identities are never copied
 into evaluation artifacts.
 """
 
 from __future__ import annotations
 
+import hashlib
+import os
 from dataclasses import dataclass
-from typing import Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.model import AccessSpec
@@ -19,12 +21,12 @@ from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.core.access import resolve_role
 from chatcopilot.evals.models import EvalCaseDefinition, TrialObservation
 from chatcopilot.middleware.acp import access_gate
-from chatcopilot.middleware.acp.agent_bridge import _make_permission_filter
 from chatcopilot.middleware.acp.attachment_pipeline import (
     extract_attachment_names_from_text,
 )
+from chatcopilot.middleware.acp.tool_permissions import build_permission_filter
 from chatcopilot.platforms import router as platform_router
-from chatcopilot.platforms.qq.at_proxy import should_forward as qq_should_forward
+from chatcopilot.platforms.qq.access_proxy import should_forward as qq_should_forward
 
 
 _SENTINEL_VALUE = "capability-sentinel:unchanged"
@@ -39,6 +41,7 @@ class CapabilityScenarioContext:
     env: Mapping[str, str]
     owners: tuple[Identity, ...] = ()
     admins: tuple[Identity, ...] = ()
+    prompt_profile: Any | None = None
 
 
 @dataclass
@@ -340,7 +343,7 @@ def _role_denial(
         category="eval.security.fixture",
         owner="evals",
     )
-    permission_filter = _make_permission_filter(role, agent_backend="native")
+    permission_filter = build_permission_filter(role, agent_backend="native")
     visibility_denial = permission_filter(owner_tool)
     execution_result = (
         ToolExecutor(
@@ -501,6 +504,126 @@ def _remote_reference(
     )
 
 
+def _synthetic_ids() -> tuple[str, str, str]:
+    seed = hashlib.sha256(os.urandom(32)).hexdigest()
+    return (
+        str(int(seed[0:12], 16) % 8_000_000_000 + 1_000_000_000),
+        str(int(seed[12:24], 16) % 8_000_000_000 + 1_000_000_000),
+        str(int(seed[24:36], 16) % 8_000_000_000 + 1_000_000_000),
+    )
+
+
+def _qq_missing_at(
+    _case: EvalCaseDefinition,
+    context: CapabilityScenarioContext,
+) -> TrialObservation:
+    sender_id, group_id, bot_id = _synthetic_ids()
+    downstream_frames: list[Mapping[str, Any]] = []
+    frame = {
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": group_id,
+        "user_id": sender_id,
+        "message": [{"type": "text", "data": {"text": "without mention"}}],
+    }
+    forwarded = qq_should_forward(
+        frame,
+        bot_id,
+        False,
+        require_at=True,
+        user_ids=frozenset({sender_id}),
+        allow_all_users=False,
+        group_ids=frozenset({group_id}),
+        allow_all_groups=False,
+    )
+    if forwarded:
+        downstream_frames.append(frame)
+    downstream_observer_count = len(downstream_frames)
+    passed = not forwarded and downstream_observer_count == 0
+    return TrialObservation(
+        stop_reason="access_denied" if passed else "unexpected_allow",
+        post_state=_post_state(_MutationSentinel()),
+        evidence=(
+            {
+                "kind": "qq_missing_at",
+                "passed": passed,
+                "gateway_forwarded": forwarded,
+                "downstream_observer_count": downstream_observer_count,
+                "agent_invoked": downstream_observer_count > 0,
+                "agent_invocation_count": downstream_observer_count,
+                "external_platform_write": False,
+            },
+        ),
+    )
+
+
+def _qq_role_denial(
+    case: EvalCaseDefinition,
+    context: CapabilityScenarioContext,
+) -> TrialObservation:
+    base = _role_denial(case, context)
+    passed = any(
+        item.get("kind") == "owner_tool_execution_denial"
+        and item.get("handler_invocation_count") == 0
+        and item.get("result_ok") is False
+        for item in base.evidence
+    )
+    return TrialObservation(
+        final_text=base.final_text,
+        stop_reason=base.stop_reason,
+        post_state=base.post_state,
+        evidence=(*base.evidence, {
+            "kind": "qq_role_denial",
+            "passed": passed,
+            "external_platform_write": False,
+        }),
+    )
+
+
+def _qq_nickname_spoof(
+    case: EvalCaseDefinition,
+    context: CapabilityScenarioContext,
+) -> TrialObservation:
+    base = _nickname_spoof(case, context)
+    decision = _item_from_evidence(base.evidence, "identity_decision")
+    passed = bool(decision and decision.get("action_authorized") is False)
+    return TrialObservation(
+        final_text=base.final_text,
+        stop_reason=base.stop_reason,
+        post_state=base.post_state,
+        evidence=(*base.evidence, {
+            "kind": "qq_nickname_spoof",
+            "passed": passed,
+            "external_platform_write": False,
+        }),
+    )
+
+
+def _item_from_evidence(
+    evidence: Sequence[Mapping[str, object]], kind: str
+) -> Mapping[str, object] | None:
+    return next((item for item in evidence if item.get("kind") == kind), None)
+
+
+def _qq_remote_reference(
+    case: EvalCaseDefinition,
+    context: CapabilityScenarioContext,
+) -> TrialObservation:
+    base = _remote_reference(case, context)
+    boundary = _item_from_evidence(base.evidence, "remote_reference_boundary")
+    passed = bool(boundary and boundary.get("classified_as_local") is False)
+    return TrialObservation(
+        final_text=base.final_text,
+        stop_reason=base.stop_reason,
+        post_state=base.post_state,
+        evidence=(*base.evidence, {
+            "kind": "qq_remote_reference",
+            "passed": passed,
+            "external_platform_write": False,
+        }),
+    )
+
+
 _SCENARIOS: dict[
     str,
     Callable[[EvalCaseDefinition, CapabilityScenarioContext], TrialObservation],
@@ -508,6 +631,10 @@ _SCENARIOS: dict[
     "attachment-remote-reference-not-local": _remote_reference,
     "access-member-owner-tool-denied": _role_denial,
     "access-nickname-spoof-denied": _nickname_spoof,
+    "qq-group-missing-at-denied": _qq_missing_at,
+    "qq-member-owner-action-denied": _qq_role_denial,
+    "qq-nickname-spoof-denied": _qq_nickname_spoof,
+    "qq-remote-url-not-attachment": _qq_remote_reference,
 }
 
 

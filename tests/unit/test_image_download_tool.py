@@ -10,7 +10,7 @@ from unittest import mock
 from chatcopilot.agent.tools.workspace_context import bind_workspace_service
 from chatcopilot.agent.tools.builtin import workspace_tools
 from chatcopilot.agent.tools.registry import discover_tools
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"x" * 32

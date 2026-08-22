@@ -2011,6 +2011,33 @@
   min-width: 0;
 }
 
+.eval-track-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.eval-track-card {
+  min-width: 0;
+  cursor: pointer;
+  border: 1px solid var(--color-border-2);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.eval-track-card:hover,
+.eval-track-card-selected {
+  border-color: rgb(var(--arcoblue-6));
+  box-shadow: 0 6px 20px rgb(var(--arcoblue-2) / 35%);
+}
+
+.eval-track-controls {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-2);
+}
+
 .eval-create-header label,
 .eval-field-grid {
   min-width: 0;
@@ -2219,6 +2246,7 @@
   .eval-field-grid,
   .eval-matrix-grid,
   .eval-target-grid,
+  .eval-track-grid,
   .eval-create-card .eval-case-toolbar,
   .eval-center-stack .eval-coverage-toolbar {
     grid-template-columns: minmax(0, 1fr);

@@ -11,7 +11,7 @@ from typing import Any
 
 from chatcopilot.platforms.feishu import notifier as feishu_notifier
 from chatcopilot.middleware.access_control import AssistantMode
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.middleware.acp import server as acp_server
 from chatcopilot.middleware.acp.server import AcpChatAgent
 

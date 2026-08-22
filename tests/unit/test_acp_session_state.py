@@ -11,7 +11,7 @@ from chatcopilot.contracts.model_selection import (
     MODEL_SELECTION_SOURCE_PROFILE,
 )
 from chatcopilot.middleware.acp.session_state import SessionState
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 class _FakeAgentSession:

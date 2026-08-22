@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any, Literal, cast
 
-from chatcopilot.agent.protocol import AgentEvent, AgentTask, EventSink, ResourceRef
+from chatcopilot.contracts.agent import AgentEvent, AgentTask, EventSink, ResourceRef
 from chatcopilot.agent.tools.executor import ToolResult
 
 LOGGER = logging.getLogger("chatcopilot.agent.turn_support")

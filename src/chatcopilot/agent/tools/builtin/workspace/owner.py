@@ -8,7 +8,7 @@ from chatcopilot.agent.tools.workspace_context import (
     resolve_workspace,
     resolve_workspace_root,
 )
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult
+from chatcopilot.contracts.tools import HandlerResult
 from chatcopilot.agent.tools.builtin.workspace.common import _format_bytes, _format_mtime, _require
 
 def _handler_owner_list_workspaces(args: Dict[str, Any]) -> HandlerResult:

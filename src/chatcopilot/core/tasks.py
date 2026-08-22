@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from chatcopilot.core.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 EVENTS_FILENAME = "events.jsonl"
 TASK_FILENAME = "task.json"

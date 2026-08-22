@@ -51,11 +51,13 @@ resulting system structure.
 - **Controlled development.** Codex-backed owner sessions dispatch repository
   mutation to isolated code tasks that validate and prepare draft pull
   requests; they do not merge or deploy automatically.
-- **Unified evaluation.** Profile comparisons, the manual 26-Case product
-  capability Suite, BFCL, GAIA, and IFEval use one Evaluation resource and one
-  artifact layout. Product presets are started manually; BFCL remains a
-  direct-LLM protocol calibration. The local service owns managed workers and
-  lifecycle state, while the Console is its UI/BFF over a same-user Unix socket.
+- **Unified evaluation.** The Console exposes a 25-Case direct-Agent catalog
+  whose default `full` preset runs the 23 Cases supported by the built-in Bot,
+  plus 7 synthetic QQ message-flow Cases; Profile comparisons, BFCL, GAIA, and IFEval
+  remain available through the same Evaluation resource and artifact layout.
+  Product presets are started manually; BFCL remains a direct-LLM protocol
+  calibration. The local service owns managed workers and lifecycle state,
+  while the Console is its UI/BFF over a same-user Unix socket.
 
 ## Quick start
 
@@ -177,12 +179,14 @@ and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.m
 | Capabilities | Local tool packs; in-process web search; reviewed MCP bindings; RAG; memory; private Wiki |
 | Operations | React/FastAPI Console BFF; diagnostics; task/context observability; logs |
 | Deployment | Linux / WSL; Console and Evaluation systemd user services; desired-state Docker infrastructure |
-| Evaluation | Manual capability presets (`quick/full/security/custom`, 26 Case × 1 by default); Profile comparisons; BFCL direct-LLM; GAIA; IFEval |
+| Evaluation | Console has two manual tracks: a 25-Case direct-Agent catalog with a 23-Case default `full`, and 7 synthetic QQ message-flow Cases; benchmark/Profile adapters remain available from CLI |
 
-QQ/NapCat/OneBot connectivity is a platform external check, not an Agent
-Evaluation. Its default read-only path combines authenticated OneBot actions
-with a hermetic, ephemeral fake-NapCat/access-proxy relay probe; synthetic
-ingress never counts as real QQ or Agent end-to-end evidence.
+The direct-Agent track bypasses ACP and platform transport. The synthetic QQ
+message-flow track starts after a hypothetical QQ event and validates the
+AgentStrata-owned ingress, identity, permission, session, persona and response
+projection code without external writes. Real QQ/NapCat/OneBot connectivity
+remains a platform external check; neither local track counts as real QQ or
+external-user end-to-end evidence.
 
 Third-party MCP servers and Skills are not downloaded, installed, or enabled
 automatically. Review source, license, command, secret use, and remote write

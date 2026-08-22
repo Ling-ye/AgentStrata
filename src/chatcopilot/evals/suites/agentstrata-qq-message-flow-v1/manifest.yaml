@@ -1,0 +1,43 @@
+schema: 1
+suite_id: agentstrata-qq-message-flow-v1
+version: "1"
+name: QQ 消息全链路 v1
+kind: product
+status: implemented
+value: 假设 QQ 已产生消息后，验证 AgentStrata 自有的合成入站、身份、权限、会话、编排和回复投影链路。
+recommendation: 日常使用 quick；身份、权限、Persona 或 QQ gateway 变更后运行 full。真实 QQ 连通性另用基础设施检查。
+cadence: manual only
+track: qq_message_flow
+plugin_id: qq-message-flow
+driver_id: qq_message_flow
+requires_bot: true
+files:
+  - path: cases.yaml
+    role: cases
+    media_type: application/yaml
+    sha256: c9d078861a2b55db4f23d5725ab8496dcfb5c6fbd722a9206739eb5e8f669e38
+presets:
+  quick:
+    description: 正向自有链路、attestation 失败关闭和人格下一轮生效。
+    case_ids:
+      - qq-synthetic-roundtrip
+      - qq-attestation-mismatch-denied
+      - qq-persona-persistence-next-turn
+  full:
+    description: 全部 7 个合成 QQ 消息链路 Case；不连接或写入真实 QQ。
+    case_ids:
+      - qq-synthetic-roundtrip
+      - qq-group-missing-at-denied
+      - qq-attestation-mismatch-denied
+      - qq-member-owner-action-denied
+      - qq-nickname-spoof-denied
+      - qq-remote-url-not-attachment
+      - qq-persona-persistence-next-turn
+  security:
+    description: 4 个网关、attestation、角色和稳定身份失败关闭 Case。
+    case_ids:
+      - qq-group-missing-at-denied
+      - qq-attestation-mismatch-denied
+      - qq-member-owner-action-denied
+      - qq-nickname-spoof-denied
+default_preset: quick

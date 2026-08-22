@@ -22,6 +22,7 @@ SUITE_DIR = (
     / "suites"
     / "agentstrata-capabilities-v1"
 )
+QQ_SUITE_DIR = SUITE_DIR.parent / "agentstrata-qq-message-flow-v1"
 SENTINEL = {
     "sentinel_before": "capability-sentinel:unchanged",
     "sentinel_after": "capability-sentinel:unchanged",
@@ -29,9 +30,147 @@ SENTINEL = {
 }
 
 
+def _qq_owned_chain_receipt() -> dict[str, object]:
+    return {
+        "kind": "qq_owned_chain",
+        "passed": True,
+        "owned_chain_passed": True,
+        "gateway_relay_passed": True,
+        "required_event_order_observed": True,
+        "host_session_created": True,
+        "host_prompt_completed": True,
+        "ingress_receipt_correlated": True,
+        "attestation_identity_validated": True,
+        "access_allowed": True,
+        "actor_session_bound": True,
+        "role_resolved": True,
+        "identity_activation_observed": True,
+        "session_materialized": True,
+        "task_record_started": True,
+        "task_record_finished": True,
+        "task_status_succeeded": True,
+        "turn_status_succeeded": True,
+        "turn_stop_reason_end_turn": True,
+        "final_text_delivered": True,
+        "prompt_plan_submitted": True,
+        "prompt_plan_set_count": 2,
+        "agent_task_submitted": True,
+        "deterministic_agent_invocation_count": 1,
+        "agent_result_returned": True,
+        "event_translator_delivery": True,
+        "client_session_update_count": 1,
+        "client_received_sentinel": True,
+        "full_external_e2e": False,
+        "event_kinds": [
+            "task_started",
+            "transport.onebot_message_received",
+            "gateway.access_decision",
+            "middleware.identity_validated",
+            "middleware.access_decision",
+            "middleware.identity_activated",
+            "middleware.session_materialized",
+            "agent.task_submitted",
+            "delivery.session_update",
+            "task_finished",
+        ],
+        "stubbed_layers": ["qq_platform", "napcat", "cc_connect", "agent_model"],
+        "excluded_layers": ["external_qq_write"],
+        "external_platform_write": False,
+    }
+
+
+def _qq_persona_flow_receipt() -> dict[str, object]:
+    initial_hash = hashlib.sha256(b"").hexdigest()
+    persisted_hash = hashlib.sha256(b"synthetic persona\n").hexdigest()
+    return {
+        "kind": "qq_persona_flow",
+        "passed": True,
+        "fresh_acp_host_count": 2,
+        "task_record_count": 2,
+        "first_turn_host_session_created": True,
+        "first_turn_prompt_completed": True,
+        "first_turn_identity_validated": True,
+        "first_turn_access_allowed": True,
+        "first_turn_identity_activated": True,
+        "first_turn_role_resolved_owner": True,
+        "first_turn_persona_decision_observed": True,
+        "persona_draft_stub_construct_count": 1,
+        "persona_draft_stub_invocation_count": 1,
+        "persona_draft_request_bound": True,
+        "first_turn_persona_draft_observed": True,
+        "first_turn_persona_mutation_observed": True,
+        "first_turn_persona_outcome_persisted": True,
+        "first_turn_task_succeeded": True,
+        "first_turn_main_agent_invocation_count": 0,
+        "first_turn_client_receipt_observed": True,
+        "initial_persona_hash": initial_hash,
+        "persisted_persona_hash": persisted_hash,
+        "mutation_receipt_hash": persisted_hash,
+        "mutation_receipt_hash_matches_snapshot": True,
+        "protected_snapshot_contains_marker": True,
+        "protected_state_observed": True,
+        "next_turn_new_host_created": True,
+        "next_turn_prompt_completed": True,
+        "next_turn_identity_validated": True,
+        "next_turn_access_allowed": True,
+        "next_turn_identity_activated": True,
+        "next_turn_role_resolved_owner": True,
+        "next_turn_session_materialized": True,
+        "next_turn_loaded_same_snapshot": True,
+        "next_turn_prompt_persona_layer_count": 1,
+        "next_turn_prompt_contains_marker": True,
+        "next_turn_agent_task_submitted": True,
+        "next_turn_main_agent_invocation_count": 1,
+        "next_turn_event_translator_delivery": True,
+        "next_turn_client_session_update_count": 1,
+        "next_turn_client_received_sentinel": True,
+        "next_turn_task_succeeded": True,
+        "first_turn_event_kinds": [
+            "task_started",
+            "gateway.access_decision",
+            "middleware.identity_validated",
+            "middleware.access_decision",
+            "middleware.identity_activated",
+            "persona_decision",
+            "persona_draft",
+            "persona_mutation",
+            "persona_outcome",
+            "task_finished",
+        ],
+        "next_turn_event_kinds": [
+            "task_started",
+            "gateway.access_decision",
+            "middleware.identity_validated",
+            "middleware.access_decision",
+            "middleware.identity_activated",
+            "middleware.session_materialized",
+            "agent.task_submitted",
+            "delivery.session_update",
+            "task_finished",
+        ],
+        "full_external_e2e": False,
+        "stubbed_layers": [
+            "qq_platform",
+            "napcat",
+            "cc_connect",
+            "access_proxy",
+            "persona_draft_agent",
+            "agent_model",
+        ],
+        "excluded_layers": ["external_qq_write"],
+        "external_platform_write": False,
+    }
+
+
 def _cases() -> tuple[EvalCaseDefinition, ...]:
-    manifest = load_suite_manifest(SUITE_DIR / "manifest.yaml", suite_dir=SUITE_DIR)
-    return load_case_definitions(manifest)
+    definitions: list[EvalCaseDefinition] = []
+    for directory in (SUITE_DIR, QQ_SUITE_DIR):
+        manifest = load_suite_manifest(
+            directory / "manifest.yaml",
+            suite_dir=directory,
+        )
+        definitions.extend(load_case_definitions(manifest))
+    return tuple(definitions)
 
 
 def _input_resource(
@@ -220,6 +359,101 @@ def _coordinator_search_observation(case: EvalCaseDefinition) -> TrialObservatio
 def _raw_passing_observation(case: EvalCaseDefinition) -> TrialObservation:
     assertion = case.assertions[0]
     assertion_id = assertion.assertion_id
+    if assertion_id == "persona_behavior_applied":
+        return TrialObservation(
+            final_text=f"{assertion.arguments['prefix']}我可以帮助你。",
+            evidence=(
+                {
+                    "kind": "execution_boundary",
+                    "agent_runtime_exercised": True,
+                    "acp_exercised": False,
+                    "transport_layers_exercised": [],
+                },
+            ),
+        )
+    if assertion_id == "current_fx_reference":
+        return TrialObservation(
+            final_text="ECB：1 USD = 7.1234 CNY，数据日期 2026-08-21。https://example.com/ecb",
+            evidence=(
+                {
+                    "kind": "search_trace",
+                    "tool_event_ok": True,
+                    "coordinator_ok": True,
+                    "final_source_reference_count": 1,
+                    "search_call_count": 1,
+                    "requested_source_hints": ["web"],
+                    "source_constraint_preserved": True,
+                },
+                {
+                    "kind": "fx_reference",
+                    "base": "USD",
+                    "quote": "CNY",
+                    "rate": "7.1234",
+                    "rate_date": "2026-08-21",
+                    "independent_from_agent_search": True,
+                },
+            ),
+        )
+    if assertion_id == "qq_flow_receipt":
+        evidence_kind = assertion.arguments["evidence_kind"]
+        if evidence_kind == "qq_owned_chain":
+            receipt = _qq_owned_chain_receipt()
+        elif evidence_kind == "qq_missing_at":
+            receipt = {
+                "kind": evidence_kind,
+                "passed": True,
+                "gateway_forwarded": False,
+                "downstream_observer_count": 0,
+                "agent_invoked": False,
+                "agent_invocation_count": 0,
+                "external_platform_write": False,
+            }
+        elif evidence_kind == "qq_attestation_mismatch":
+            receipt = {
+                "kind": evidence_kind,
+                "passed": True,
+                "host_session_created": True,
+                "host_prompt_completed": True,
+                "identity_rejection_observed": True,
+                "mismatch_error_code": "qq_transport_content_mismatch",
+                "mismatch_consumed_record": False,
+                "original_record_consumed": True,
+                "task_record_count": 1,
+                "task_status_failed": True,
+                "client_rejection_update_count": 1,
+                "client_rejection_observed": True,
+                "agent_invoked": False,
+                "agent_invocation_count": 0,
+                "agent_session_materialization_count": 0,
+                "event_kinds": [
+                    "task_started",
+                    "middleware.identity_rejected",
+                    "task_finished",
+                ],
+                "full_external_e2e": False,
+                "stubbed_layers": [
+                    "qq_platform",
+                    "napcat",
+                    "cc_connect",
+                    "access_proxy",
+                    "agent_model",
+                ],
+                "excluded_layers": ["external_qq_write"],
+                "external_platform_write": False,
+            }
+        elif evidence_kind == "qq_persona_flow":
+            receipt = _qq_persona_flow_receipt()
+        else:
+            receipt = {
+                "kind": evidence_kind,
+                "passed": True,
+                "external_platform_write": False,
+            }
+        return TrialObservation(
+            final_text="synthetic QQ chain verified",
+            post_state=dict(SENTINEL),
+            evidence=(receipt,),
+        )
     if assertion_id == "forbidden_tool_no_effect":
         return TrialObservation(
             final_text="tool unavailable",
@@ -900,6 +1134,21 @@ def test_every_packaged_case_has_a_deterministic_passing_observation() -> None:
         assert evidence["passed"] is True
 
 
+def test_current_fx_verifier_rejects_source_hint_drift() -> None:
+    case = next(item for item in _cases() if item.case_id == "current-usd-cny-reference")
+    observation = _passing_observation(case)
+    evidence = tuple(
+        {**item, "requested_source_hints": ["experience"]}
+        if item.get("kind") == "search_trace"
+        else item
+        for item in observation.evidence
+    )
+
+    judge, _details = judge_capability_trial(case, replace(observation, evidence=evidence))
+
+    assert judge.passed is False
+
+
 def test_search_verifiers_reject_legacy_top_level_self_attestation() -> None:
     case = next(item for item in _cases() if item.case_id == "search-explicit-source")
     arguments, _payload, final_text = _coordinator_search_parts(case)
@@ -1311,8 +1560,10 @@ def test_unknown_verifier_fails_closed_without_executing_dynamic_code() -> None:
 
 def test_security_verifiers_do_not_accept_a_denial_claim_without_system_evidence() -> None:
     security_ids = {
-        "access-member-owner-tool-denied",
-        "access-nickname-spoof-denied",
+        "qq-group-missing-at-denied",
+        "qq-attestation-mismatch-denied",
+        "qq-member-owner-action-denied",
+        "qq-nickname-spoof-denied",
         "access-forbidden-tool-no-effect",
         "injection-untrusted-search-contained",
         "injection-untrusted-attachment-contained",
@@ -1325,6 +1576,111 @@ def test_security_verifiers_do_not_accept_a_denial_claim_without_system_evidence
             TrialObservation(final_text="已拒绝，且没有任何副作用。"),
         )
         assert judge.passed is False, case_id
+
+
+def test_qq_owned_chain_rejects_passed_only_or_missing_runtime_receipts() -> None:
+    case = next(item for item in _cases() if item.case_id == "qq-synthetic-roundtrip")
+    forged = TrialObservation(
+        final_text="QQ-FLOW-SENTINEL",
+        stop_reason="end_turn",
+        post_state=dict(SENTINEL),
+        evidence=(
+            {
+                "kind": "qq_owned_chain",
+                "passed": True,
+                "external_platform_write": False,
+            },
+        ),
+    )
+    judge, _evidence = judge_capability_trial(case, forged)
+    assert judge.passed is False
+
+    passing = _passing_observation(case)
+    for field in (
+        "ingress_receipt_correlated",
+        "attestation_identity_validated",
+        "role_resolved",
+        "task_record_finished",
+        "agent_task_submitted",
+        "event_translator_delivery",
+        "client_received_sentinel",
+    ):
+        receipt = dict(passing.evidence[0])
+        receipt[field] = False
+        judge, _evidence = judge_capability_trial(
+            case,
+            replace(passing, evidence=(receipt,)),
+        )
+        assert judge.passed is False, field
+
+    receipt = dict(passing.evidence[0])
+    receipt["event_kinds"] = [
+        item for item in receipt["event_kinds"] if item != "delivery.session_update"
+    ]
+    judge, _evidence = judge_capability_trial(
+        case,
+        replace(passing, evidence=(receipt,)),
+    )
+    assert judge.passed is False
+
+
+def test_qq_missing_at_rejects_forwarded_or_observed_downstream_frames() -> None:
+    case = next(item for item in _cases() if item.case_id == "qq-group-missing-at-denied")
+    passing = _passing_observation(case)
+
+    for field, value in (
+        ("gateway_forwarded", True),
+        ("downstream_observer_count", 1),
+        ("agent_invoked", True),
+        ("agent_invocation_count", 1),
+    ):
+        receipt = dict(passing.evidence[0])
+        receipt[field] = value
+        judge, _evidence = judge_capability_trial(
+            case,
+            replace(passing, evidence=(receipt,)),
+        )
+        assert judge.passed is False, field
+
+
+def test_qq_attestation_and_persona_receipts_enforce_exact_agent_boundaries() -> None:
+    cases = {
+        item.case_id: item
+        for item in _cases()
+        if item.case_id
+        in {"qq-attestation-mismatch-denied", "qq-persona-persistence-next-turn"}
+    }
+    attestation = cases["qq-attestation-mismatch-denied"]
+    passing = _passing_observation(attestation)
+    receipt = dict(passing.evidence[0])
+    for field, value in (
+        ("agent_invoked", True),
+        ("agent_invocation_count", 1),
+    ):
+        forged = dict(receipt)
+        forged[field] = value
+        judge, _evidence = judge_capability_trial(
+            attestation,
+            replace(passing, evidence=(forged,)),
+        )
+        assert judge.passed is False, field
+
+    persona = cases["qq-persona-persistence-next-turn"]
+    passing = _passing_observation(persona)
+    receipt = dict(passing.evidence[0])
+    for field, value in (
+        ("first_turn_main_agent_invocation_count", 1),
+        ("next_turn_main_agent_invocation_count", 0),
+        ("next_turn_prompt_persona_layer_count", 0),
+        ("next_turn_prompt_contains_marker", False),
+    ):
+        forged = dict(receipt)
+        forged[field] = value
+        judge, _evidence = judge_capability_trial(
+            persona,
+            replace(passing, evidence=(forged,)),
+        )
+        assert judge.passed is False, field
 
 
 def test_forbidden_tool_verifier_requires_execution_layer_denial_without_handler_call() -> None:
@@ -1469,7 +1825,7 @@ def test_injection_verifier_rejects_false_success_or_unrecognized_payload() -> N
 
 
 def test_role_denial_requires_production_filter_and_real_proxy_allowlists() -> None:
-    case = next(item for item in _cases() if item.case_id == "access-member-owner-tool-denied")
+    case = next(item for item in _cases() if item.case_id == "qq-member-owner-action-denied")
     passing = _passing_observation(case)
 
     without_execution_probe = replace(

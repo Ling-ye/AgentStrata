@@ -14,6 +14,27 @@ def test_legacy_runtime_exports_alias_core_runtime_modules() -> None:
     assert legacy_load_mcp_catalog is load_mcp_catalog
 
 
+def test_legacy_agent_protocol_exports_alias_contracts() -> None:
+    from chatcopilot.agent import protocol as legacy_protocol
+    from chatcopilot.contracts import agent as contracts_agent
+
+    assert legacy_protocol.__all__ == contracts_agent.__all__
+    for name in contracts_agent.__all__:
+        assert getattr(legacy_protocol, name) is getattr(contracts_agent, name)
+
+
+def test_legacy_research_exports_alias_canonical_search_types() -> None:
+    from chatcopilot.agent.research.models import ResearchRequest
+    from chatcopilot.agent.research.router import ResearchRouter
+    from chatcopilot.agent.research.runtime import build_research_tool
+    from chatcopilot.agent.search.models import SearchRequest
+    from chatcopilot.agent.search.router import SearchRouter
+
+    assert ResearchRequest is SearchRequest
+    assert ResearchRouter is SearchRouter
+    assert callable(build_research_tool)
+
+
 def test_legacy_subagent_presets_alias_component_catalog() -> None:
     from chatcopilot.agent.subagents.presets import BUILTIN_SUBAGENTS as legacy_presets
     from chatcopilot.component_catalog.subagents import BUILTIN_SUBAGENTS

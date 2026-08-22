@@ -94,4 +94,17 @@ class BackendAgentSession:
     def _messages(self) -> list[dict[str, Any]]:
         return self.snapshot_messages()
 
+    @property
+    def prompt_prefix_length(self) -> int:
+        """Expose the concrete in-process prefix; opaque backends own their framing."""
+
+        native_session = getattr(self.backend, "native_session", None)
+        if not callable(native_session):
+            return 0
+        concrete = native_session(self._session_ref)
+        value = getattr(concrete, "prompt_prefix_length", 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise RuntimeError("backend session has invalid prompt prefix provenance")
+        return value
+
 __all__ = ["BackendAgentSession"]

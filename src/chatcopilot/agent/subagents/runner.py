@@ -16,7 +16,7 @@ from chatcopilot.agent.context.manager import ContextManager
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder
 from chatcopilot.agent.lifecycle import defer_lifecycle_intent
 from chatcopilot.core.llm_client import LLMClient
-from chatcopilot.agent.protocol import (
+from chatcopilot.contracts.agent import (
     AgentTask,
     DeferredLifecycleIntent,
     SpanFinished,
@@ -38,7 +38,7 @@ from chatcopilot.agent.tools.executor import BackgroundSubmitter, PermissionFilt
 from chatcopilot.agent.tools.file_delivery import FileSender
 from chatcopilot.agent.tools.workspace_context import WorkspaceService
 from chatcopilot.agent.trace import current_trace, new_span_id, new_trace_id
-from chatcopilot.external_tools.shared.tool_spec import ToolDef, build_openai_schema
+from chatcopilot.contracts.tools import ToolDef, build_openai_schema
 from chatcopilot.contracts.prompt import BotPromptProfile
 
 if TYPE_CHECKING:

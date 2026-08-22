@@ -50,9 +50,9 @@ def _normalize_playwright_arguments(
 ) -> Dict[str, Any]:
     out = dict(args)
     if remote_name == "browser_navigate":
-        from chatcopilot.external_tools.web_fetch.tools import _validate_url
+        from chatcopilot.external_tools.web_fetch.tools import validate_url
 
-        out["url"] = _validate_url(str(out.get("url") or ""))
+        out["url"] = validate_url(str(out.get("url") or ""))
     elif remote_name == "browser_snapshot":
         if out.get("filename"):
             raise ValueError("browser_snapshot filename is not allowed")

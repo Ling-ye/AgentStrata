@@ -11,25 +11,28 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
-from chatcopilot.agent.protocol import AgentTask
+from chatcopilot.contracts.agent import AgentTask
 from chatcopilot.agent.runtime import build_agent_runtime
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput
-from chatcopilot.botspec import assemble_runtime_context, load_botspec, resolve_bot_spec_path
 from chatcopilot.botspec.runtime_env import load_research_llm_config
 from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.core.config import load_config
-from chatcopilot.core.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.evals.adapters import gaia, ifeval
 from chatcopilot.evals.artifact_ids import contained_artifact_path, trial_artifact_id
+from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime, permission_filter
+from chatcopilot.evals.execution_support import event_to_dict, usage_summary
 from chatcopilot.evals.models import EvalCase, JudgeResult
 from chatcopilot.evals.profiles import ProfileCase
 from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, sanitize_text
-from chatcopilot.evals.runner import _event_to_dict, _load_local_env, _usage_summary
-from chatcopilot.middleware.runtime.workspace import MiddlewareWorkspaceService
+from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService
+
+_event_to_dict = event_to_dict
+_usage_summary = usage_summary
 
 
 @dataclass(frozen=True)
@@ -116,9 +119,7 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
             user_id="eval-user",
             user_name="Eval Runner",
         ).ensure()
-        allowed_tools = frozenset(
-            str(value) for value in case.metadata.get("allowed_tools", [])
-        )
+        allowed_tools = frozenset(str(value) for value in case.metadata.get("allowed_tools", []))
         extra_tools = _extra_tools(case, tool_audit)
         subagents = _isolated_subagents(runtime.subagents)
         with _trial_environment(workspace, workspace_root):
@@ -155,7 +156,7 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
             )
             result = session.run_task(
                 _prepare_task(request.profile_case, workspace),
-                on_event=lambda event: raw_events.append(_event_to_dict(event)),
+                on_event=lambda event: raw_events.append(event_to_dict(event)),
             )
             final_text = result.final_text
             stop_reason = result.stop_reason
@@ -176,7 +177,7 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
     roots = {"evaluation": request.output, "workspace": workspace_root}
     secrets = collect_env_secrets()
     sanitized_events = redact_payload(raw_events, secrets=secrets, roots=roots)
-    usage = _usage_summary(sanitized_events).get("usage_totals", {})
+    usage = usage_summary(sanitized_events).get("usage_totals", {})
     judge_payload = asdict(judge) if judge is not None else None
     return IsolatedTrialResult(
         trial_id=trial_id,
@@ -188,11 +189,7 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
         backend=request.target.backend,
         attempt=request.attempt,
         outcome=outcome,
-        score=(
-            judge.score / judge.max_score
-            if judge is not None and judge.max_score
-            else 0.0
-        ),
+        score=(judge.score / judge.max_score if judge is not None and judge.max_score else 0.0),
         passed=bool(judge and judge.passed),
         duration_seconds=time.monotonic() - started,
         final_text=sanitize_text(final_text, secrets=secrets, roots=roots),
@@ -202,36 +199,12 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
         judge=redact_payload(judge_payload, secrets=secrets, roots=roots),
         events=tuple(sanitized_events),
         usage_totals={
-            str(key): int(value)
-            for key, value in usage.items()
-            if isinstance(value, int)
+            str(key): int(value) for key, value in usage.items() if isinstance(value, int)
         },
         tool_summary=_summarize_tools(raw_events, tool_audit),
         evidence=redact_payload(verification, secrets=secrets, roots=roots),
         error=sanitize_text(error, secrets=secrets, roots=roots),
     )
-
-
-def load_evaluation_runtime(bot: str) -> Any:
-    """Load the Bot runtime and its private environment for execution."""
-
-    candidate: str | Path = (
-        Path(bot) if any(char in bot for char in ("/", "\\")) else bot
-    )
-    runtime = assemble_runtime_context(load_botspec(resolve_bot_spec_path(candidate)))
-    _load_local_env(runtime.source_path.parent / "local.env")
-    return runtime
-
-
-def permission_filter(allowed: frozenset[str]) -> Callable[[ToolDef], str | None]:
-    """Deny every tool not explicitly listed by the Profile Case."""
-
-    def check(tool: ToolDef) -> str | None:
-        if tool.name in allowed:
-            return None
-        return "evaluation policy denies this tool"
-
-    return check
 
 
 def stage_fixture(case: EvalCase, root: Path) -> dict[str, str]:
@@ -288,9 +261,7 @@ def _extra_tools(case: EvalCase, audit: list[dict[str, Any]]) -> tuple[ToolDef, 
     ) -> tuple[str, list[str], str | None]:
         key = str(args.get("key", ""))
         ok = key == expected_key
-        audit.append(
-            {"name": "lookup_eval_fact", "arguments": {"key": key}, "ok": ok}
-        )
+        audit.append({"name": "lookup_eval_fact", "arguments": {"key": key}, "ok": ok})
         if not ok:
             return "unknown evaluation key", [], "invalid key"
         return expected_answer, [], None
@@ -299,9 +270,7 @@ def _extra_tools(case: EvalCase, audit: list[dict[str, Any]]) -> tuple[ToolDef, 
         ToolDef(
             name="lookup_eval_fact",
             summary="Return one deterministic evaluation fact by exact key.",
-            properties={
-                "key": {"type": "string", "description": "Exact evaluation key"}
-            },
+            properties={"key": {"type": "string", "description": "Exact evaluation key"}},
             required=["key"],
             handler=lookup,
             category="eval.deterministic",
@@ -316,8 +285,7 @@ def _prepare_task(item: ProfileCase, workspace: Workspace) -> AgentTask:
     else:
         base = AgentTask(text=item.case.input, metadata={})
     allowed = (
-        ", ".join(str(value) for value in item.case.metadata.get("allowed_tools", []))
-        or "none"
+        ", ".join(str(value) for value in item.case.metadata.get("allowed_tools", [])) or "none"
     )
     context = "\n".join(
         (
@@ -369,13 +337,9 @@ def _judge_trial(
 ) -> tuple[JudgeResult, dict[str, Any]]:
     adapter = str(case.metadata.get("adapter", ""))
     if adapter == "ifeval":
-        return ifeval.judge(case, final_text), {
-            "judge_kind": "deterministic:ifeval"
-        }
+        return ifeval.judge(case, final_text), {"judge_kind": "deterministic:ifeval"}
     if adapter == "gaia" or case.case_id.startswith("gaia-"):
-        return gaia.judge(case, final_text), {
-            "judge_kind": "deterministic:gaia-exact"
-        }
+        return gaia.judge(case, final_text), {"judge_kind": "deterministic:gaia-exact"}
     if case.metadata.get("task_kind") == "tool":
         expected_tool = str(case.metadata.get("expected_tool", ""))
         expected_key = str(case.metadata.get("expected_key", ""))
@@ -472,14 +436,10 @@ def _summarize_tools(
     audit: Sequence[dict[str, Any]],
 ) -> dict[str, int]:
     successful = sum(
-        1
-        for event in events
-        if event.get("type") == "ToolFinished" and event.get("ok")
+        1 for event in events if event.get("type") == "ToolFinished" and event.get("ok")
     )
     failed = sum(
-        1
-        for event in events
-        if event.get("type") == "ToolFinished" and not event.get("ok")
+        1 for event in events if event.get("type") == "ToolFinished" and not event.get("ok")
     )
     successful += sum(1 for item in audit if item.get("ok"))
     failed += sum(1 for item in audit if not item.get("ok"))

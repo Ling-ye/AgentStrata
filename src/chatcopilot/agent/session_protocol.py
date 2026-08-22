@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from chatcopilot.agent.protocol import AgentResult, AgentTask, EventSink
+from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
 from chatcopilot.contracts.prompt import PromptPlan
 
 
@@ -21,6 +21,10 @@ class AgentSessionProtocol(Protocol):
     @property
     def _messages(self) -> list[dict[str, Any]]:
         """Raw message history snapshot used by debug/transcript code."""
+
+    @property
+    def prompt_prefix_length(self) -> int:
+        """Host-recorded renderer prefix length for provenance-aware views."""
 
     def run_task(self, task: AgentTask, *, on_event: EventSink) -> AgentResult:
         """Run one user task and return the final structured result."""

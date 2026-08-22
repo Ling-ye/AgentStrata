@@ -15,7 +15,7 @@ from chatcopilot.middleware.acp.group_conversation import (
 )
 from chatcopilot.middleware.acp.server import AcpChatAgent
 from chatcopilot.middleware.acp.session_state import SessionState
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 class _DiscardableBackend:

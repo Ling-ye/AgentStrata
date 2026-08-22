@@ -20,7 +20,7 @@ from chatcopilot.contracts.identity import (
     TurnIdentity,
 )
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 _SENDER_ENVELOPE_RE = re.compile(
     r"\A\[cc-connect sender_id=(?P<sender>[1-9][0-9]{4,19})"

@@ -13,7 +13,7 @@ from chatcopilot.contracts.persistent_state import (
 from chatcopilot.contracts.tools import ToolContext
 from chatcopilot.core.memory_policy import evaluate_memory_content
 from chatcopilot.external_tools.shared.spec_helpers import require_arg
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.contracts.tools import HandlerResult, ToolDef
 
 
 def _persistent_state(ctx: ToolContext | None) -> PersistentConversationState:

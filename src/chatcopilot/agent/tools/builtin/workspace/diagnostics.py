@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from chatcopilot.agent.tools.workspace_context import resolve_workspace
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult
+from chatcopilot.contracts.tools import HandlerResult
 from chatcopilot.agent.tools.builtin.workspace.common import _format_mtime, _require, _silent_cleanup
 
 def _handler_get_job_status(args: Dict[str, Any]) -> HandlerResult:

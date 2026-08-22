@@ -10,7 +10,7 @@ from chatcopilot.agent.subagents.runner import SubagentRuntimeConfig, SubagentRu
 from chatcopilot.agent.subagents.spec import SubagentDef, WorkflowDef
 from chatcopilot.agent.subagents.task_pack import TaskPack
 from chatcopilot.agent.trace import current_trace
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 _MAX_STEP_SUMMARY_CHARS = 1600
 _MAX_PRIOR_SUMMARY_CHARS = 2200

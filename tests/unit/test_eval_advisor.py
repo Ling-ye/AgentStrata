@@ -17,99 +17,91 @@ _MACHINE_ABSOLUTE_PATH = "/" + "/".join(
 
 
 @pytest.mark.parametrize(
-    ("path", "category", "preset", "expected_case"),
+    ("path", "expected_runs", "external_checks"),
     (
         (
             "src/chatcopilot/agent/session.py",
-            "agent",
-            "full",
-            "subagent-structured-result",
+            {"agent": ("full", "subagent-structured-result")},
+            (),
         ),
         (
             "src/chatcopilot/core/llm_client.py",
-            "runtime",
-            "full",
-            "session-cross-user-isolation",
+            {"agent": ("full", "session-cross-user-isolation")},
+            (),
         ),
         (
             "src/chatcopilot/external_tools/wiki/service.py",
-            "tools",
-            "full",
-            "tool-disabled-hidden-no-effect",
+            {"agent": ("full", "tool-disabled-hidden-no-effect")},
+            (),
         ),
         (
             "src/chatcopilot/agent/search/coordinator.py",
-            "search",
-            "full",
-            "search-conflict-disclosure",
+            {"agent": ("full", "search-general-with-evidence")},
+            (),
         ),
         (
-            "src/chatcopilot/middleware/acp/image_pipeline.py",
-            "multimodal",
-            "full",
-            "image-multi-input-order",
+            "src/chatcopilot/core/image_content.py",
+            {"agent": ("full", "image-multi-input-order")},
+            (),
         ),
         (
             "src/chatcopilot/core/workspace_runtime/resolver.py",
-            "workspace",
-            "full",
-            "workspace-write-contained",
+            {"agent": ("full", "workspace-write-contained")},
+            (),
         ),
         (
             "src/chatcopilot/middleware/acp/turn_pipeline.py",
-            "acp",
-            "full",
-            "session-same-user-memory",
+            {"qq_message_flow": ("full", "qq-synthetic-roundtrip")},
+            (),
         ),
         (
             "src/chatcopilot/middleware/acp/access_gate.py",
-            "access",
-            "security",
-            "access-nickname-spoof-denied",
+            {
+                "agent": ("security", "access-forbidden-tool-no-effect"),
+                "qq_message_flow": ("security", "qq-nickname-spoof-denied"),
+            },
+            (),
         ),
         (
             "src/chatcopilot/platforms/qq/adapter.py",
-            "qq",
-            None,
-            None,
+            {"qq_message_flow": ("full", "qq-synthetic-roundtrip")},
+            ("qq",),
         ),
         (
             "src/chatcopilot/external_tools/dev/code_task_service.py",
-            "code-task",
-            "full",
-            "code-restart-and-health",
+            {"agent": ("full", "code-restart-and-health")},
+            (),
         ),
         (
             "src/chatcopilot/evals/manifest.py",
-            "evals",
-            "quick",
-            "dialogue-strict-json",
+            {
+                "agent": ("quick", "dialogue-strict-json"),
+                "qq_message_flow": ("quick", "qq-synthetic-roundtrip"),
+            },
+            (),
         ),
         (
             "docs/unclassified-change.md",
-            "unknown",
-            "quick",
-            "dialogue-strict-json",
+            {"agent": ("quick", "dialogue-strict-json")},
+            (),
         ),
     ),
 )
 def test_changed_path_maps_to_validated_capability_advice(
     path: str,
-    category: str,
-    preset: str | None,
-    expected_case: str | None,
+    expected_runs: dict[str, tuple[str, str]],
+    external_checks: tuple[str, ...],
 ) -> None:
     result = advise_capability_evaluation((path,))
 
     assert isinstance(result, EvaluationAdvice)
     assert result.changed_paths == (path,)
-    assert result.categories == (category,)
-    assert result.recommended_preset == preset
-    if expected_case is None:
-        assert result.case_ids == ()
-        assert result.external_checks == ("qq",)
-    else:
-        assert expected_case in result.case_ids
+    by_track = {run.track: run for run in result.runs}
+    assert set(by_track) == set(expected_runs)
+    for track, (preset, expected_case) in expected_runs.items():
+        assert by_track[track].recommended_preset == preset
+        assert expected_case in by_track[track].case_ids
+    assert result.external_checks == external_checks
     assert result.reason
 
 
@@ -138,9 +130,14 @@ def test_multiple_categories_are_order_independent_and_recommend_custom() -> Non
     second = advise_capability_evaluation(reversed(paths))
 
     assert first == second
-    assert first.categories == ("search", "qq")
-    assert first.recommended_preset == "full"
-    assert "search-explicit-source" in first.case_ids
+    assert first.categories == ("search", "qq-message-flow", "qq")
+    by_track = {run.track: run for run in first.runs}
+    assert by_track["agent"].recommended_preset == "full"
+    assert "search-general-with-evidence" in by_track["agent"].case_ids
+    assert "search-explicit-source" not in by_track["agent"].case_ids
+    assert "search-conflict-disclosure" not in by_track["agent"].case_ids
+    assert "current-usd-cny-reference" in by_track["agent"].case_ids
+    assert by_track["qq_message_flow"].recommended_preset == "full"
     assert first.external_checks == ("qq",)
 
 
@@ -200,12 +197,17 @@ def test_cli_advisor_is_read_only_and_returns_manual_recommendation(
 
     payload = json.loads(capsys.readouterr().out)
     assert code == 0
-    assert payload["recommended_preset"] == "security"
+    assert payload["recommended_preset"] is None
+    assert {item["track"] for item in payload["runs"]} == {
+        "agent",
+        "qq_message_flow",
+    }
+    assert {item["recommended_preset"] for item in payload["runs"]} == {"security"}
     assert payload["external_checks"] == []
     assert payload["manual_only"] is True
 
 
-def test_cli_advisor_reports_qq_as_external_check_not_agent_case(
+def test_cli_advisor_reports_qq_flow_and_separate_external_check(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     code = evals_cli_main(
@@ -219,8 +221,8 @@ def test_cli_advisor_reports_qq_as_external_check_not_agent_case(
 
     payload = json.loads(capsys.readouterr().out)
     assert code == 0
-    assert payload["recommended_preset"] is None
-    assert payload["case_ids"] == []
+    assert payload["runs"][0]["suite_id"] == "agentstrata-qq-message-flow-v1"
+    assert payload["runs"][0]["recommended_preset"] == "full"
     assert payload["external_checks"] == ["qq"]
 
 

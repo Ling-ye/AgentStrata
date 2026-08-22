@@ -28,7 +28,7 @@ from chatcopilot.platforms.feishu.sender import (
     resolve_sendable_paths as _feishu_resolve_sendable_paths,
     send_via_cc_connect as _feishu_send_via_cc_connect,
 )
-from chatcopilot.platforms.qq.gateway_health import (
+from chatcopilot.platforms.qq.boundary import (
     require_access_token,
     require_loopback_websocket_url,
 )

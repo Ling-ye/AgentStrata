@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from chatcopilot.agent.tools.workspace_context import resolve_workspace
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult
+from chatcopilot.contracts.tools import HandlerResult
 
 _IMAGE_DEFAULT_LIMIT = 3
 _IMAGE_MAX_LIMIT = 5

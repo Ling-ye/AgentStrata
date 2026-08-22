@@ -8,8 +8,8 @@ from chatcopilot.tool_packs.catalog import (
     ToolModuleBinding,
     ToolPackEntry,
     ToolPackPolicy,
-    _BUILTIN_TOOL_FEATURES,
-    _BUILTIN_TOOL_PACKS,
+    BUILTIN_TOOL_FEATURES,
+    BUILTIN_TOOL_PACKS,
     all_tool_bindings,
     all_tool_modules,
     get_tool_feature_entry,
@@ -20,6 +20,9 @@ from chatcopilot.tool_packs.catalog import (
     resolve_tool_bindings,
     resolve_tool_modules,
 )
+
+_BUILTIN_TOOL_FEATURES = BUILTIN_TOOL_FEATURES
+_BUILTIN_TOOL_PACKS = BUILTIN_TOOL_PACKS
 
 
 __all__ = [

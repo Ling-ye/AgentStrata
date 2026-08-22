@@ -9,7 +9,7 @@ from typing import Any, Sequence
 from chatcopilot.agent.context.token_estimator import estimate_tokens
 from chatcopilot.agent.subagents.spec import ContextPolicySpec
 from chatcopilot.agent.subagents.task_pack import TaskPack
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 
 @dataclass(frozen=True)

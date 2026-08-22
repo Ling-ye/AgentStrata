@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Callable, Sequence
 
 from chatcopilot.agent.subagents.spec import ToolMatchRule, ToolSelectorSpec
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 ToolPredicate = Callable[[ToolDef], bool]
 

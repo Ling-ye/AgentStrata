@@ -26,7 +26,7 @@ from chatcopilot.core.jobs import (
     safe_segment,
     write_job_status as _write_job_status,
 )
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     EXECUTION_GLOBAL_SERIAL_BACKGROUND,
     EXECUTION_USER_SERIAL_BACKGROUND,
 )
@@ -36,7 +36,7 @@ from chatcopilot.middleware.runtime.jobs.notification import (
     read_json_file,
     write_json_atomic,
 )
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.project import ENV_PREFIX
 
 _RESULT_FILENAME = "result.json"

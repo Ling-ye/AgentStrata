@@ -12,7 +12,7 @@ from chatcopilot.agent.skills.index import (
     set_skill_index,
 )
 from chatcopilot.external_tools.shared.spec_helpers import require_arg, schema_property
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.contracts.tools import HandlerResult, ToolDef
 
 
 def _handler_read_bot_skill(args: Dict[str, Any]) -> HandlerResult:

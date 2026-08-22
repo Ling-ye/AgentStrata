@@ -16,7 +16,7 @@ from typing import Any, Sequence
 from chatcopilot.agent.search.relevance import filter_relevant_items
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.contracts.subagents import SearchProviderSpec
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 _LOG = logging.getLogger(__name__)
 

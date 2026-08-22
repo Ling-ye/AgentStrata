@@ -33,6 +33,7 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("generic-agent", "agent_configured"): (
         "chatcopilot.evals.capability_executor",
         "chatcopilot.evals.capability_verifiers",
+        "chatcopilot.evals.fx_oracle",
         "chatcopilot.evals.isolated_executor",
     ),
     ("acp-scenario", "acp_scenario"): (
@@ -40,6 +41,30 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "chatcopilot.evals.capability_scenarios",
         "chatcopilot.evals.capability_verifiers",
         "chatcopilot.evals.isolated_executor",
+    ),
+    ("qq-message-flow", "qq_message_flow"): (
+        "chatcopilot.evals.capability_executor",
+        "chatcopilot.evals.capability_scenarios",
+        "chatcopilot.evals.capability_verifiers",
+        "chatcopilot.evals.isolated_executor",
+        "chatcopilot.evals.qq_flow_scenarios",
+        "chatcopilot.botspec.session_env",
+        "chatcopilot.core.ingress_receipts",
+        "chatcopilot.core.persona_control",
+        "chatcopilot.core.persistent_state",
+        "chatcopilot.core.session_env_store",
+        "chatcopilot.middleware.acp.access_gate",
+        "chatcopilot.middleware.acp.agent_bridge",
+        "chatcopilot.middleware.acp.event_translator",
+        "chatcopilot.platforms.qq.ingress_probe",
+        "chatcopilot.platforms.qq.access_proxy",
+        "chatcopilot.middleware.acp.group_conversation",
+        "chatcopilot.middleware.acp.persona_control",
+        "chatcopilot.middleware.acp.server",
+        "chatcopilot.middleware.acp.transport_attestation",
+        "chatcopilot.middleware.acp.turn_orchestrator",
+        "chatcopilot.middleware.acp.workspace_service",
+        "chatcopilot.middleware.runtime.tasks",
     ),
     ("gaia", "agent_configured"): (
         "chatcopilot.evals.adapters.gaia",
@@ -231,10 +256,16 @@ def suite_implementation_snapshot(
             for plugin_id, driver_id in normalized
         ],
         "modules": {
-            module_name: trusted_module_sha256(module_name)
+            module_name: _suite_module_sha256(module_name)
             for module_name in sorted(modules)
         },
     }
+
+
+def _suite_module_sha256(module_name: str) -> str:
+    if module_name.startswith(_TRUSTED_NAMESPACE):
+        return trusted_module_sha256(module_name)
+    return trusted_runtime_module_sha256(module_name)
 
 
 def comparison_implementation_snapshot() -> dict[str, object]:

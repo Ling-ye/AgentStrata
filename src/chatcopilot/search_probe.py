@@ -18,7 +18,7 @@ from chatcopilot.agent.mcp.client import McpToolProvider
 from chatcopilot.botspec.loader import load_botspec
 from chatcopilot.botspec.mcp import load_mcp_server_configs
 from chatcopilot.contracts.runtime import McpServerConfig
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 _DEFAULT_BOT = "bots/lingye-copilot-qq/bot.yaml"
 _DEFAULT_QUERY = "上海 二郎拉面 探店"

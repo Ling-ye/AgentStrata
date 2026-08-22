@@ -48,9 +48,11 @@ _DRIVERS = {
     "agent_isolated",
     "agent_configured",
     "acp_scenario",
+    "qq_message_flow",
     "direct_llm",
     "dry_run",
 }
+_TRACKS = {"agent", "qq_message_flow"}
 _TOP_LEVEL_FIELDS = {
     "schema",
     "suite_id",
@@ -61,6 +63,7 @@ _TOP_LEVEL_FIELDS = {
     "value",
     "recommendation",
     "cadence",
+    "track",
     "plugin_id",
     "driver_id",
     "requires_bot",
@@ -172,6 +175,9 @@ def parse_suite_manifest(data: bytes, *, source: str = "manifest.yaml") -> Suite
     name = _required_string(raw.get("name"), source, "name", maximum=120)
     kind = _choice(raw.get("kind"), _KINDS, source, "kind")
     status = _choice(raw.get("status"), _STATUSES, source, "status")
+    track = _optional_string(raw.get("track"), source, "track", maximum=64)
+    if track and track not in _TRACKS:
+        raise ValueError(f"{source}: unsupported evaluation track {track!r}")
     plugin_id = _optional_identifier(raw.get("plugin_id"), source, "plugin_id")
     driver_id = _optional_string(raw.get("driver_id"), source, "driver_id", maximum=64)
     if driver_id and driver_id not in _DRIVERS:
@@ -202,6 +208,7 @@ def parse_suite_manifest(data: bytes, *, source: str = "manifest.yaml") -> Suite
             raw.get("recommendation"), source, "recommendation", maximum=1000
         ),
         cadence=_required_string(raw.get("cadence"), source, "cadence", maximum=120),
+        track=track,
         plugin_id=plugin_id,
         driver_id=driver_id,
         requires_bot=_boolean(raw.get("requires_bot", True), source, "requires_bot"),

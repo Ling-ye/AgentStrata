@@ -24,7 +24,7 @@ from chatcopilot.contracts.persona_control import (
 )
 from chatcopilot.contracts.persistent_state import has_meaningful_persona
 from chatcopilot.core.persona_control import PersonaControlService
-from chatcopilot.middleware.acp.agent_bridge import _make_workspace_service
+from chatcopilot.middleware.acp.workspace_service import build_workspace_service
 
 
 _DENIED = (
@@ -167,7 +167,7 @@ async def handle_persona_control(
             reason="actor-bound proposal confirmed",
         )
 
-    persistent_state = _make_workspace_service(
+    persistent_state = build_workspace_service(
         turn.session.workspace,
         str(getattr(turn.session.runtime, "platform_type", "unknown") or "unknown"),
     ).resolve_persistent_state()

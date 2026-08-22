@@ -5,9 +5,9 @@ ACP server 通过 ``JobDispatcher`` 把后台任务相关的协程/同步逻辑�
 
 - ``extract_job_status_query``: 从 user_text 里识别 job_id（user 主动查任务进展）
 - ``format_job_accepted``: 任务提交成功时给用户的回执文案
-- ``JobDispatcher``: 封装 watch / send / replay 的协程，绑定 ACP server 的
-  ``_conn`` + ``_loop`` + ``_sessions`` + ``_job_watch_tasks``
+- ``JobDispatcher``: 封装 watch / send / replay 的协程，只依赖显式 host port
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +15,8 @@ import logging
 import os
 import re
 import time
+from collections.abc import Callable, MutableMapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -41,7 +43,7 @@ from chatcopilot.middleware.runtime.jobs import (
 )
 from chatcopilot.middleware.runtime.jobs.notification import read_json_file
 from chatcopilot.middleware.runtime.tasks import complete_delegated_task
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.platforms import router as _platform_router
 from chatcopilot.project import ENV_PREFIX
 
@@ -62,6 +64,17 @@ _CODE_TASK_COMMAND_RE = re.compile(
 )
 
 
+@dataclass(frozen=True)
+class JobDispatchPort:
+    """Minimal ACP host capabilities required by background job delivery."""
+
+    connection: Callable[[], Any]
+    runtime: Callable[[], Any]
+    loop: Callable[[], Any]
+    watch_tasks: MutableMapping[str, Any]
+    make_text_update: Callable[[str], Any]
+
+
 # ----------------------------------------------------------------------------
 # Formatters
 # ----------------------------------------------------------------------------
@@ -72,16 +85,9 @@ def format_job_accepted(job: BackgroundJob) -> str:
             f"代码任务已进入隔离执行队列，任务 ID: {job.job_id}。{position}"
             "我会推送阶段变化和每五分钟进度摘要；可用 /task 或 /cancel 管理。"
         )
-    scope = (
-        "全局迁移队列"
-        if job.execution_policy == "global_serial_background"
-        else "你的分析队列"
-    )
+    scope = "全局迁移队列" if job.execution_policy == "global_serial_background" else "你的分析队列"
     position = f"当前排队位置约为第 {job.queue_position} 位。" if job.queue_position else ""
-    return (
-        f"已加入{scope}，任务 ID: {job.job_id}。{position}"
-        "我会在处理完成后在这里通知你。"
-    )
+    return f"已加入{scope}，任务 ID: {job.job_id}。{position}我会在处理完成后在这里通知你。"
 
 
 def format_job_result(job: BackgroundJob, result: Dict[str, Any]) -> str:
@@ -107,9 +113,7 @@ def format_job_result(job: BackgroundJob, result: Dict[str, Any]) -> str:
     details = result.get("details") if isinstance(result.get("details"), dict) else {}
     failed_stage = str(details.get("failed_stage") or result.get("stage") or "").strip()
     console_tail = (
-        ""
-        if job.tool_name == CODE_TASK_TOOL
-        else str(result.get("console_tail") or "").strip()
+        "" if job.tool_name == CODE_TASK_TOOL else str(result.get("console_tail") or "").strip()
     )
     lines = [
         f"后台任务失败：{job.tool_name}",
@@ -265,18 +269,13 @@ def extract_code_task_command(text: str) -> tuple[str, str] | None:
 # Dispatcher：绑定 ACP server 的连接/loop/sessions
 # ----------------------------------------------------------------------------
 class JobDispatcher:
-    """绑 ACP server 的协程派发器。
+    """Dispatch background-job watches and delivery through an ACP host port."""
 
-    通过持有 ACP server 引用获取 ``_conn`` / ``_loop`` / ``_job_watch_tasks``，
-    避免把这些循环依赖塞进 server.py 内部。所有 watch / send / replay 协程都
-    委托到这里执行。
-    """
-
-    def __init__(self, server: Any) -> None:
-        self._server = server
+    def __init__(self, host: JobDispatchPort) -> None:
+        self._host = host
 
     def _platform_type(self) -> str:
-        runtime = getattr(self._server, "_runtime", None)
+        runtime = self._host.runtime()
         return getattr(runtime, "platform_type", "feishu") if runtime is not None else "feishu"
 
     def _sender_module(self) -> Any:
@@ -322,7 +321,7 @@ class JobDispatcher:
     # watch loop
     # ------------------------------------------------------------------
     def schedule_job_watch(self, job: BackgroundJob) -> None:
-        loop = self._server._loop
+        loop = self._host.loop()
         if loop is None or not loop.is_running():
             _LOGGER.warning(
                 "background job watch not scheduled | job_id=%s session_id=%s loop_ready=%s",
@@ -334,10 +333,10 @@ class JobDispatcher:
         future = asyncio.run_coroutine_threadsafe(self._watch_background_job(job), loop)
 
         def _cleanup(_future: Any) -> None:
-            self._server._job_watch_tasks.pop(job.job_id, None)
+            self._host.watch_tasks.pop(job.job_id, None)
 
         future.add_done_callback(_cleanup)
-        self._server._job_watch_tasks[job.job_id] = future
+        self._host.watch_tasks[job.job_id] = future
         _LOGGER.info(
             "background job watch scheduled | job_id=%s session_id=%s",
             job.job_id,
@@ -345,7 +344,9 @@ class JobDispatcher:
         )
 
     async def _watch_background_job(self, job: BackgroundJob) -> None:
-        _LOGGER.info("background job watch started | job_id=%s session_id=%s", job.job_id, job.session_id)
+        _LOGGER.info(
+            "background job watch started | job_id=%s session_id=%s", job.job_id, job.session_id
+        )
         last_stage = ""
         last_progress_sent = time.monotonic()
         while True:
@@ -461,10 +462,6 @@ class JobDispatcher:
             _LOGGER.exception("background job result delivery failed | job_id=%s", job.job_id)
 
     async def send_job_status(self, session_id: str, session: SessionState, job_id: str) -> None:
-        # 从 server 模块动态读 update_agent_message_text 而非顶层 import，让
-        # 测试 ``acp_server.update_agent_message_text = lambda text: text`` 能生效。
-        from chatcopilot.middleware.acp import server as _server
-
         job = find_job(session.workspace, job_id)
         if job is None:
             text = f"没有在当前会话工作区找到后台任务：{job_id}"
@@ -474,9 +471,9 @@ class JobDispatcher:
                 text = format_job_result(job, result)
             else:
                 text = format_job_status(job, read_job_status(job))
-        await self._server._conn.session_update(
+        await self._host.connection().session_update(
             session_id=session_id,
-            update=_server.update_agent_message_text(text),
+            update=self._host.make_text_update(text),
         )
 
     async def handle_code_task_control(
@@ -486,8 +483,6 @@ class JobDispatcher:
         action: str,
         job_id: str,
     ) -> str:
-        from chatcopilot.middleware.acp import server as _server
-
         if str(getattr(session.role, "value", session.role)).lower() != "owner":
             text = "代码任务控制仅限 Owner。"
         else:
@@ -538,9 +533,9 @@ class JobDispatcher:
                     if result is not None
                     else format_job_status(job, read_job_status(job))
                 )
-        await self._server._conn.session_update(
+        await self._host.connection().session_update(
             session_id=session_id,
-            update=_server.update_agent_message_text(text),
+            update=self._host.make_text_update(text),
         )
         return text
 
@@ -565,6 +560,7 @@ class JobDispatcher:
 
 
 __all__ = [
+    "JobDispatchPort",
     "JobDispatcher",
     "extract_job_status_query",
     "extract_code_task_command",

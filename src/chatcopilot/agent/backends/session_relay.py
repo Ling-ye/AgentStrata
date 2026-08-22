@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 from chatcopilot.agent.trace import TraceContext, reset_trace, set_trace
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.contracts.agent import AgentEvent
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 if TYPE_CHECKING:
     from chatcopilot.agent.session import ToolPayloadFilter

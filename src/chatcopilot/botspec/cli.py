@@ -20,16 +20,11 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import datetime
-import fcntl
-import hashlib
-import json
 import os
 import re
-import secrets
 import shlex
 import stat
 import sys
-import time
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -38,9 +33,20 @@ from chatcopilot.botspec.runtime_env import (
     llm_runtime_env_defaults,
     load_research_llm_config,
 )
+from chatcopilot.botspec.session_env import (
+    build_session_env_values as _build_session_env_values,
+    read_private_session_env as _read_session_env_identity,
+    write_private_session_env as _write_session_env_identity,
+)
 from chatcopilot.core.config import load_config
 from chatcopilot.core.model_selection import code_task_model_selection
 from chatcopilot.core.mcp_catalog import resolve_catalog_server
+from chatcopilot.core.session_env_store import (
+    MAX_SESSION_ATTESTATIONS,
+    SESSION_ATTESTATION_TTL_NS,
+    SESSION_ENV_IDENTITY_KEYS,
+    SessionEnvSecurityError,
+)
 from chatcopilot.core.settings import expand_leading_home, load_local_env_values
 from chatcopilot.external_tools.codex_cli.auth_cli import (
     CodexAuthOperatorConfig,
@@ -53,37 +59,10 @@ from chatcopilot.platforms import registry as _registry
 from chatcopilot.platforms.base import PlatformAdapter
 
 
-_SESSION_ENV_SCHEMA_VERSION = 2
-_SESSION_ENV_IDENTITY_KEYS = (
-    "CHATCOPILOT_USER_ID",
-    "CHATCOPILOT_CHAT_ID",
-    "CHATCOPILOT_CHAT_KIND",
-    "CHATCOPILOT_USER_NAME",
-)
-_SESSION_ENV_TRANSPORT_KEYS = (
-    "CHATCOPILOT_TRANSPORT_HOOK_EVENT",
-    "CHATCOPILOT_TRANSPORT_USER_ID",
-    "CHATCOPILOT_TRANSPORT_CONTENT_SHA256",
-)
-_SESSION_ENV_ALLOWED_KEYS = frozenset((*_SESSION_ENV_IDENTITY_KEYS, *_SESSION_ENV_TRANSPORT_KEYS))
-_MAX_SESSION_ENV_BYTES = 64 * 1024
-_MAX_SESSION_ATTESTATIONS = 128
-# 128 serialized turns at the longest checked-in 6h timeout need 32 days.
-_SESSION_ATTESTATION_TTL_NS = 45 * 24 * 60 * 60 * 1_000_000_000
-_SESSION_ATTESTATION_FUTURE_SKEW_NS = 5 * 60 * 1_000_000_000
-_ATTESTATION_KEYS = frozenset(
-    {
-        "record_id",
-        "event",
-        "transport_user_id",
-        "content_sha256",
-        "created_at_ns",
-    }
-)
-
-
-class _SessionEnvSecurityError(RuntimeError):
-    """The private session identity handoff failed a filesystem invariant."""
+_SESSION_ENV_IDENTITY_KEYS = SESSION_ENV_IDENTITY_KEYS
+_MAX_SESSION_ATTESTATIONS = MAX_SESSION_ATTESTATIONS
+_SESSION_ATTESTATION_TTL_NS = SESSION_ATTESTATION_TTL_NS
+_SessionEnvSecurityError = SessionEnvSecurityError
 
 
 def _repo_root() -> Path:
@@ -909,348 +888,17 @@ def _session_env_values(
     transport_user_id: str | None = None,
     hook_content: str | None = None,
 ) -> dict[str, str]:
-    values = {
-        "CHATCOPILOT_USER_ID": identity.user_id or "",
-        "CHATCOPILOT_CHAT_ID": identity.chat_id or "",
-        "CHATCOPILOT_CHAT_KIND": identity.chat_kind or "",
-        "CHATCOPILOT_USER_NAME": identity.user_name or "",
-    }
-    if (hook_event or "").strip() == "message.received":
-        values.update(
-            {
-                "CHATCOPILOT_TRANSPORT_HOOK_EVENT": "message.received",
-                "CHATCOPILOT_TRANSPORT_USER_ID": (transport_user_id or "").strip(),
-                "CHATCOPILOT_TRANSPORT_CONTENT_SHA256": hashlib.sha256(
-                    (hook_content or "").strip().encode("utf-8")
-                ).hexdigest(),
-            }
-        )
-    return values
+    return _build_session_env_values(
+        identity,
+        hook_event=hook_event,
+        transport_user_id=transport_user_id,
+        hook_content=hook_content,
+    )
 
 
 def _render_session_env(identity) -> str:
     values = _session_env_values(identity)
     return "\n".join(f"export {key}={shlex.quote(value)}" for key, value in values.items()) + "\n"
-
-
-def _session_env_filename(session_key: str) -> str:
-    if not session_key:
-        raise _SessionEnvSecurityError("session key is empty")
-    digest = hashlib.sha256(session_key.encode("utf-8")).hexdigest()
-    return f"cc-sess-{digest}.env"
-
-
-def _normalized_session_env_dir(raw: str | Path) -> Path:
-    directory = Path(raw).expanduser()
-    if not directory.is_absolute() or ".." in directory.parts:
-        raise _SessionEnvSecurityError("session env directory must be absolute")
-    return directory
-
-
-def _open_private_session_env_dir(raw: str | Path, *, create: bool) -> tuple[Path, int]:
-    directory = _normalized_session_env_dir(raw)
-    created = False
-    if create:
-        try:
-            directory.mkdir(mode=0o700, parents=True, exist_ok=False)
-            created = True
-        except FileExistsError:
-            pass
-    if created:
-        os.chmod(directory, 0o700, follow_symlinks=False)
-    try:
-        directory_lstat = directory.lstat()
-    except OSError as exc:
-        raise _SessionEnvSecurityError("session env directory is unavailable") from exc
-    if stat.S_ISLNK(directory_lstat.st_mode):
-        raise _SessionEnvSecurityError("session env directory must not be a symlink")
-    flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    if hasattr(os, "O_CLOEXEC"):
-        flags |= os.O_CLOEXEC
-    try:
-        fd = os.open(directory, flags)
-    except OSError as exc:
-        raise _SessionEnvSecurityError("session env directory is unavailable") from exc
-    directory_stat = os.fstat(fd)
-    if (
-        not stat.S_ISDIR(directory_stat.st_mode)
-        or directory_stat.st_uid != os.geteuid()
-        or stat.S_IMODE(directory_stat.st_mode) != 0o700
-        or (directory_stat.st_dev, directory_stat.st_ino)
-        != (directory_lstat.st_dev, directory_lstat.st_ino)
-    ):
-        os.close(fd)
-        raise _SessionEnvSecurityError("session env directory has unsafe ownership, type, or mode")
-    return directory, fd
-
-
-def _session_key_digest(session_key: str) -> str:
-    if not session_key:
-        raise _SessionEnvSecurityError("session key is empty")
-    return hashlib.sha256(session_key.encode("utf-8")).hexdigest()
-
-
-def _session_env_lock_filename(session_key: str) -> str:
-    return f"cc-sess-{_session_key_digest(session_key)}.lock"
-
-
-def _validate_secure_regular_file(file_stat: os.stat_result, *, label: str) -> None:
-    if (
-        not stat.S_ISREG(file_stat.st_mode)
-        or file_stat.st_uid != os.geteuid()
-        or file_stat.st_nlink != 1
-        or stat.S_IMODE(file_stat.st_mode) != 0o600
-    ):
-        raise _SessionEnvSecurityError(f"{label} has unsafe ownership, type, links, or mode")
-
-
-@contextmanager
-def _locked_private_session_env(
-    *,
-    directory: str | Path,
-    session_key: str,
-    exclusive: bool,
-    create_directory: bool,
-    create_lock: bool,
-):
-    private_dir, dir_fd = _open_private_session_env_dir(directory, create=create_directory)
-    lock_name = _session_env_lock_filename(session_key)
-    lock_fd: int | None = None
-    try:
-        flags = os.O_RDWR
-        if hasattr(os, "O_NONBLOCK"):
-            flags |= os.O_NONBLOCK
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        if hasattr(os, "O_CLOEXEC"):
-            flags |= os.O_CLOEXEC
-        if create_lock:
-            try:
-                lock_fd = os.open(
-                    lock_name,
-                    flags | os.O_CREAT | os.O_EXCL,
-                    0o600,
-                    dir_fd=dir_fd,
-                )
-                os.fchmod(lock_fd, 0o600)
-            except FileExistsError:
-                lock_fd = os.open(lock_name, flags, dir_fd=dir_fd)
-        else:
-            lock_fd = os.open(lock_name, flags, dir_fd=dir_fd)
-    except OSError as exc:
-        os.close(dir_fd)
-        raise _SessionEnvSecurityError("session env lock is unavailable") from exc
-    try:
-        lock_stat = os.fstat(lock_fd)
-        _validate_secure_regular_file(lock_stat, label="session env lock")
-        fcntl.flock(lock_fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
-        lock_path_stat = os.stat(lock_name, dir_fd=dir_fd, follow_symlinks=False)
-        _validate_secure_regular_file(lock_path_stat, label="session env lock")
-        if (lock_stat.st_dev, lock_stat.st_ino) != (
-            lock_path_stat.st_dev,
-            lock_path_stat.st_ino,
-        ):
-            raise _SessionEnvSecurityError("session env lock binding changed")
-        yield private_dir, dir_fd
-    finally:
-        if lock_fd is not None:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            finally:
-                os.close(lock_fd)
-        os.close(dir_fd)
-
-
-def _read_session_env_state_unlocked(
-    *,
-    dir_fd: int,
-    session_key: str,
-    allow_missing: bool,
-) -> dict[str, object] | None:
-    filename = _session_env_filename(session_key)
-    file_fd: int | None = None
-    try:
-        flags = os.O_RDONLY
-        if hasattr(os, "O_NONBLOCK"):
-            flags |= os.O_NONBLOCK
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        if hasattr(os, "O_CLOEXEC"):
-            flags |= os.O_CLOEXEC
-        try:
-            file_fd = os.open(filename, flags, dir_fd=dir_fd)
-        except FileNotFoundError:
-            if allow_missing:
-                return None
-            raise
-        file_stat = os.fstat(file_fd)
-        _validate_secure_regular_file(file_stat, label="session env file")
-        if file_stat.st_size > _MAX_SESSION_ENV_BYTES:
-            raise _SessionEnvSecurityError("session env payload is too large")
-        chunks: list[bytes] = []
-        remaining = _MAX_SESSION_ENV_BYTES + 1
-        while remaining > 0:
-            chunk = os.read(file_fd, min(remaining, 8192))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        encoded = b"".join(chunks)
-        if len(encoded) > _MAX_SESSION_ENV_BYTES:
-            raise _SessionEnvSecurityError("session env payload is too large")
-    except OSError as exc:
-        raise _SessionEnvSecurityError("session env file is unavailable") from exc
-    finally:
-        if file_fd is not None:
-            os.close(file_fd)
-    try:
-        payload = json.loads(encoded.decode("utf-8", errors="strict"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise _SessionEnvSecurityError("session env payload is invalid") from exc
-    return _validate_session_env_state(payload, session_key=session_key)
-
-
-def _validate_session_env_state(payload: object, *, session_key: str) -> dict[str, object]:
-    expected_top_keys = {
-        "schema_version",
-        "session_key_sha256",
-        "identity",
-        "attestations",
-    }
-    if not isinstance(payload, dict) or set(payload) != expected_top_keys:
-        raise _SessionEnvSecurityError("session env schema is invalid")
-    if payload.get("schema_version") != _SESSION_ENV_SCHEMA_VERSION:
-        raise _SessionEnvSecurityError("session env schema is invalid")
-    if payload.get("session_key_sha256") != _session_key_digest(session_key):
-        raise _SessionEnvSecurityError("session env session binding is invalid")
-
-    raw_identity = payload.get("identity")
-    if not isinstance(raw_identity, dict) or set(raw_identity) != set(_SESSION_ENV_IDENTITY_KEYS):
-        raise _SessionEnvSecurityError("session identity is incomplete")
-    identity: dict[str, str] = {}
-    for key, value in raw_identity.items():
-        if not isinstance(value, str) or "\x00" in value or len(value) > 4096:
-            raise _SessionEnvSecurityError("session identity value is invalid")
-        identity[key] = value
-
-    raw_attestations = payload.get("attestations")
-    if not isinstance(raw_attestations, list) or len(raw_attestations) > _MAX_SESSION_ATTESTATIONS:
-        raise _SessionEnvSecurityError("session attestation queue is invalid")
-    attestations: list[dict[str, object]] = []
-    seen_record_ids: set[str] = set()
-    for raw_record in raw_attestations:
-        if not isinstance(raw_record, dict) or set(raw_record) != _ATTESTATION_KEYS:
-            raise _SessionEnvSecurityError("session attestation record is invalid")
-        record_id = raw_record.get("record_id")
-        event = raw_record.get("event")
-        transport_user_id = raw_record.get("transport_user_id")
-        content_sha256 = raw_record.get("content_sha256")
-        created_at_ns = raw_record.get("created_at_ns")
-        if (
-            not isinstance(record_id, str)
-            or not re.fullmatch(r"[0-9a-f]{32}", record_id)
-            or record_id in seen_record_ids
-            or event != "message.received"
-            or not isinstance(transport_user_id, str)
-            or not transport_user_id
-            or "\x00" in transport_user_id
-            or len(transport_user_id) > 4096
-            or not isinstance(content_sha256, str)
-            or not re.fullmatch(r"[0-9a-f]{64}", content_sha256)
-            or not isinstance(created_at_ns, int)
-            or isinstance(created_at_ns, bool)
-            or created_at_ns <= 0
-        ):
-            raise _SessionEnvSecurityError("session attestation record is invalid")
-        seen_record_ids.add(record_id)
-        attestations.append(
-            {
-                "record_id": record_id,
-                "event": event,
-                "transport_user_id": transport_user_id,
-                "content_sha256": content_sha256,
-                "created_at_ns": created_at_ns,
-            }
-        )
-    return {
-        "schema_version": _SESSION_ENV_SCHEMA_VERSION,
-        "session_key_sha256": _session_key_digest(session_key),
-        "identity": identity,
-        "attestations": attestations,
-    }
-
-
-def _live_session_attestations(
-    records: list[dict[str, object]], *, now_ns: int
-) -> list[dict[str, object]]:
-    cutoff = now_ns - _SESSION_ATTESTATION_TTL_NS
-    live: list[dict[str, object]] = []
-    for record in records:
-        created_at_ns = int(record["created_at_ns"])
-        if created_at_ns > now_ns + _SESSION_ATTESTATION_FUTURE_SKEW_NS:
-            raise _SessionEnvSecurityError("session attestation timestamp is invalid")
-        if created_at_ns >= cutoff:
-            live.append(record)
-    return live
-
-
-def _write_session_env_state_unlocked(
-    *,
-    private_dir: Path,
-    dir_fd: int,
-    session_key: str,
-    state: Mapping[str, object],
-) -> Path:
-    validated = _validate_session_env_state(dict(state), session_key=session_key)
-    encoded = (json.dumps(validated, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
-        "utf-8"
-    )
-    if len(encoded) > _MAX_SESSION_ENV_BYTES:
-        raise _SessionEnvSecurityError("session env payload is too large")
-    filename = _session_env_filename(session_key)
-    try:
-        existing = os.stat(filename, dir_fd=dir_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        existing = None
-    except OSError as exc:
-        raise _SessionEnvSecurityError("session env target is unavailable") from exc
-    if existing is not None:
-        _validate_secure_regular_file(existing, label="session env target")
-
-    temp_name = f".{filename}.{secrets.token_hex(16)}.tmp"
-    temp_fd: int | None = None
-    try:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        if hasattr(os, "O_CLOEXEC"):
-            flags |= os.O_CLOEXEC
-        temp_fd = os.open(temp_name, flags, 0o600, dir_fd=dir_fd)
-        os.fchmod(temp_fd, 0o600)
-        offset = 0
-        while offset < len(encoded):
-            written = os.write(temp_fd, encoded[offset:])
-            if written <= 0:
-                raise OSError("short write")
-            offset += written
-        os.fsync(temp_fd)
-        os.close(temp_fd)
-        temp_fd = None
-        os.replace(temp_name, filename, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
-        os.fsync(dir_fd)
-    except Exception:
-        if temp_fd is not None:
-            os.close(temp_fd)
-        try:
-            os.unlink(temp_name, dir_fd=dir_fd)
-        except FileNotFoundError:
-            pass
-        raise
-    return private_dir / filename
 
 
 def _write_private_session_env(
@@ -1260,87 +908,18 @@ def _write_private_session_env(
     values: Mapping[str, str],
     queue_transport: bool = True,
 ) -> Path:
-    if set(values) - _SESSION_ENV_ALLOWED_KEYS:
-        raise _SessionEnvSecurityError("session env contains unsupported keys")
-    if any(key not in values for key in _SESSION_ENV_IDENTITY_KEYS):
-        raise _SessionEnvSecurityError("session identity is incomplete")
-    present_transport = set(values) & set(_SESSION_ENV_TRANSPORT_KEYS)
-    if present_transport and present_transport != set(_SESSION_ENV_TRANSPORT_KEYS):
-        raise _SessionEnvSecurityError("transport attestation is incomplete")
-
-    with _locked_private_session_env(
+    return _write_session_env_identity(
         directory=directory,
         session_key=session_key,
-        exclusive=True,
-        create_directory=True,
-        create_lock=True,
-    ) as (private_dir, dir_fd):
-        state = _read_session_env_state_unlocked(
-            dir_fd=dir_fd,
-            session_key=session_key,
-            allow_missing=True,
-        )
-        if state is None:
-            state = {
-                "schema_version": _SESSION_ENV_SCHEMA_VERSION,
-                "session_key_sha256": _session_key_digest(session_key),
-                "identity": {},
-                "attestations": [],
-            }
-        state["identity"] = {key: str(values[key]) for key in _SESSION_ENV_IDENTITY_KEYS}
-        now_ns = time.time_ns()
-        records = _live_session_attestations(
-            list(state["attestations"]),
-            now_ns=now_ns,  # type: ignore[arg-type]
-        )
-        if present_transport:
-            if not queue_transport:
-                records = []
-            event = values[_SESSION_ENV_TRANSPORT_KEYS[0]]
-            transport_user_id = values[_SESSION_ENV_TRANSPORT_KEYS[1]]
-            content_sha256 = values[_SESSION_ENV_TRANSPORT_KEYS[2]]
-            if (
-                event != "message.received"
-                or not transport_user_id
-                or not re.fullmatch(r"[0-9a-f]{64}", content_sha256)
-            ):
-                raise _SessionEnvSecurityError("transport attestation is invalid")
-            if len(records) >= _MAX_SESSION_ATTESTATIONS:
-                raise _SessionEnvSecurityError("session attestation queue is full")
-            records.append(
-                {
-                    "record_id": secrets.token_hex(16),
-                    "event": "message.received",
-                    "transport_user_id": transport_user_id,
-                    "content_sha256": content_sha256,
-                    "created_at_ns": now_ns,
-                }
-            )
-        state["attestations"] = records
-        return _write_session_env_state_unlocked(
-            private_dir=private_dir,
-            dir_fd=dir_fd,
-            session_key=session_key,
-            state=state,
-        )
+        values=values,
+        queue_transport=queue_transport,
+        max_attestations=_MAX_SESSION_ATTESTATIONS,
+        ttl_ns=_SESSION_ATTESTATION_TTL_NS,
+    )
 
 
 def _read_private_session_env(*, directory: str | Path, session_key: str) -> dict[str, str]:
-    with _locked_private_session_env(
-        directory=directory,
-        session_key=session_key,
-        exclusive=False,
-        create_directory=False,
-        create_lock=False,
-    ) as (_private_dir, dir_fd):
-        state = _read_session_env_state_unlocked(
-            dir_fd=dir_fd,
-            session_key=session_key,
-            allow_missing=False,
-        )
-        if state is None:
-            raise _SessionEnvSecurityError("session env file is unavailable")
-        return dict(state["identity"])  # type: ignore[arg-type]
+    return _read_session_env_identity(directory=directory, session_key=session_key)
 
 
 def _cmd_render_session_env(args: argparse.Namespace) -> int:

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.platforms.qq.notifier import QQNotifyError, resolve_delivery_target, send_text_to_workspace
 
 

@@ -20,7 +20,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional
 
-from chatcopilot.agent.protocol import EventSink
+from chatcopilot.contracts.agent import EventSink
 
 
 @dataclass(frozen=True)

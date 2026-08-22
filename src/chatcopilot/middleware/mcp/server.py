@@ -18,7 +18,7 @@ import sys
 from typing import Any, Dict, List
 
 from chatcopilot.agent.tools import ToolExecutor, ToolResult, build_mcp_tools_schema
-from chatcopilot.middleware.runtime.workspace import (
+from chatcopilot.core.workspace_runtime import (
     cleanup_workspace,
     describe_workspace,
     resolve_workspace,

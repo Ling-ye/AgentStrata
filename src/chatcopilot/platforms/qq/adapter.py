@@ -27,12 +27,12 @@ from chatcopilot.platforms.base import (
 )
 from chatcopilot.platforms.qq import notifier as _notifier
 from chatcopilot.platforms.qq import sender as _sender
-from chatcopilot.platforms.qq.gateway_health import (
+from chatcopilot.platforms.qq.boundary import (
     QQBoundaryError,
     require_access_token,
     require_loopback_websocket_url,
-    run_qq_external_checks,
 )
+from chatcopilot.platforms.qq.gateway_health import run_qq_external_checks
 
 if TYPE_CHECKING:
     from chatcopilot.contracts.workspace import WorkspaceView as Workspace

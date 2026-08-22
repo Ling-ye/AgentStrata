@@ -5,7 +5,7 @@ import contextvars
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
-from chatcopilot.agent.protocol import DeferredLifecycleIntent
+from chatcopilot.contracts.agent import DeferredLifecycleIntent
 
 LifecycleIntentCollector = Callable[[DeferredLifecycleIntent], None]
 LifecycleIntentCollectorToken = contextvars.Token[LifecycleIntentCollector | None]

@@ -22,7 +22,7 @@ from pathlib import Path
 from unittest import mock
 
 from chatcopilot.platforms.feishu import sender as feishu_sender
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 def _make_workspace(tmp_root: Path) -> Workspace:

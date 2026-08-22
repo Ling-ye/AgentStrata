@@ -168,6 +168,15 @@ def _cmd_advise(args: argparse.Namespace) -> int:
         "changed_paths": list(advice.changed_paths),
         "categories": list(advice.categories),
         "reason": advice.reason,
+        "runs": [
+            {
+                "suite_id": run.suite_id,
+                "track": run.track,
+                "case_ids": list(run.case_ids),
+                "recommended_preset": run.recommended_preset,
+            }
+            for run in advice.runs
+        ],
         "case_ids": list(advice.case_ids),
         "recommended_preset": advice.recommended_preset,
         "external_checks": list(advice.external_checks),
@@ -176,9 +185,13 @@ def _cmd_advise(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
+        runs = "\n".join(
+            f"- {run.track}: suite={run.suite_id} preset={run.recommended_preset} "
+            f"cases={', '.join(run.case_ids)}"
+            for run in advice.runs
+        ) or "- none"
         print(
-            f"recommended preset: {advice.recommended_preset or 'none'}\n"
-            f"cases: {', '.join(advice.case_ids)}\n"
+            f"recommended runs:\n{runs}\n"
             f"external checks: {', '.join(advice.external_checks)}\n"
             f"reason: {advice.reason}\n"
             "No Evaluation was started."
@@ -364,7 +377,11 @@ def _is_product_capability_result(result: Any) -> bool:
     return bool(
         result.kind == "suite"
         and (
-            result.suite == "agentstrata-capabilities-v1"
+            result.suite
+            in {
+                "agentstrata-capabilities-v1",
+                "agentstrata-qq-message-flow-v1",
+            }
             or summary.get("score_scope")
             == "product capability gates are not averaged into an intelligence score"
         )

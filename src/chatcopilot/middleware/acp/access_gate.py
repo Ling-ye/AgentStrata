@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from chatcopilot.botspec.model import AccessSpec
-from chatcopilot.middleware.runtime.workspace.model import normalize_chat_kind
+from chatcopilot.core.workspace_runtime.model import normalize_chat_kind
 from chatcopilot.platforms import router as _platform_router
 
 

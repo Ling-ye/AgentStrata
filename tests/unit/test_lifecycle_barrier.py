@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from chatcopilot.agent.protocol import DeferredLifecycleIntent
+from chatcopilot.contracts.agent import DeferredLifecycleIntent
 from chatcopilot.middleware.acp.lifecycle_barrier import LifecycleBarrierExecutor
 
 

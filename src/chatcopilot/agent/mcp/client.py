@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.core.mcp_probe import verified_stdio_command
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.agent.mcp.concurrency import _cross_process_lock
 from chatcopilot.agent.mcp.arguments import _normalize_mcp_tool_arguments
 from chatcopilot.agent.mcp.errors import (

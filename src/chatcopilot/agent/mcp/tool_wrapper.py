@@ -6,7 +6,7 @@ import re
 from typing import Any, Dict
 
 from chatcopilot.contracts.runtime import McpServerConfig
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.contracts.tools import HandlerResult, ToolDef
 from chatcopilot.agent.mcp.arguments import _normalize_mcp_tool_arguments
 from chatcopilot.agent.mcp.errors import McpToolBusyError, McpToolTimeoutError
 from chatcopilot.agent.mcp.health import (

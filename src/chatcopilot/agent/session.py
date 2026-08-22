@@ -28,7 +28,7 @@ from chatcopilot.agent.context.manager import ContextManager
 from chatcopilot.agent.context.prompt_plan import render_native_prefix
 from chatcopilot.agent.context.topic import TopicRelevanceClassifier
 from chatcopilot.core.llm_client import LLMClient
-from chatcopilot.agent.protocol import (
+from chatcopilot.contracts.agent import (
     AgentResult,
     AgentTask,
     DeferredLifecycleIntent,
@@ -84,11 +84,13 @@ class AgentSession:
     trace_id: Optional[str] = None
     trace_parent_span_id: Optional[str] = None
     trace_depth: int = 0
-    _messages: List[Dict[str, Any]] = field(default_factory=list)
+    _messages: List[Dict[str, Any]] = field(default_factory=list, init=False)
+    _prompt_prefix_length: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
-        if not self._messages:
-            self._messages.extend(render_native_prefix(self.prompt_plan))
+        prefix = render_native_prefix(self.prompt_plan)
+        self._messages.extend(prefix)
+        self._prompt_prefix_length = len(prefix)
 
     # ------------------------------------------------------------------
     # 公共状态控制
@@ -96,10 +98,17 @@ class AgentSession:
     def set_prompt_plan(self, plan: PromptPlan) -> None:
         """Replace the immutable prompt plan while preserving conversation turns."""
 
-        old_prefix = render_native_prefix(self.prompt_plan)
+        prefix = render_native_prefix(plan)
+        old_prefix_length = self._prompt_prefix_length
+        self._messages[:old_prefix_length] = prefix
         self.prompt_plan = plan
-        del self._messages[: len(old_prefix)]
-        self._messages[0:0] = render_native_prefix(plan)
+        self._prompt_prefix_length = len(prefix)
+
+    @property
+    def prompt_prefix_length(self) -> int:
+        """Return the host-recorded native renderer prefix length."""
+
+        return self._prompt_prefix_length
 
     def record_exchange(self, user_text: str, assistant_text: str) -> None:
         """记录没有进入 LLM 工具循环的确定性回复，让后续轮次能看到真实上下文。"""

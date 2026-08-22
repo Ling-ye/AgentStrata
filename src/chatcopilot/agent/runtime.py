@@ -39,7 +39,7 @@ from chatcopilot.contracts.agent_backend import BackendOpenRequest
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.skills import SkillIndexEntry
-from chatcopilot.external_tools.shared.tool_spec import ToolDef, build_openai_schema
+from chatcopilot.contracts.tools import ToolDef, build_openai_schema
 
 
 class _UseDefaultRetriever:

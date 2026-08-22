@@ -11,7 +11,7 @@ from chatcopilot.contracts.model_selection import CodeModelSelection
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.model_selection import CODE_MODEL_SELECTION_METADATA_KEY
 from chatcopilot.middleware.acp.server import AcpChatAgent
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 def _runtime() -> SimpleNamespace:

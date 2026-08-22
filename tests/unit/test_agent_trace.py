@@ -7,7 +7,7 @@ import unittest
 
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.llm_client import ChatResult
-from chatcopilot.agent.protocol import (
+from chatcopilot.contracts.agent import (
     AgentTask,
     ContextSnapshotPrepared,
     LlmCallStarted,
@@ -22,7 +22,7 @@ from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.subagents.registry import build_subagent_tools
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.model import SubagentBudgetSpec, SubagentSpec
-from chatcopilot.external_tools.shared.tool_spec import ToolDef, build_openai_schema
+from chatcopilot.contracts.tools import ToolDef, build_openai_schema
 
 
 class _ScriptedLLM:
@@ -129,14 +129,10 @@ class AgentTraceTests(unittest.TestCase):
                 )
 
                 snapshots = [
-                    event
-                    for event in events
-                    if isinstance(event, ContextSnapshotPrepared)
+                    event for event in events if isinstance(event, ContextSnapshotPrepared)
                 ]
                 starts = [event for event in events if isinstance(event, LlmCallStarted)]
-                finishes = [
-                    event for event in events if isinstance(event, LlmCallFinished)
-                ]
+                finishes = [event for event in events if isinstance(event, LlmCallFinished)]
                 self.assertEqual(result.stop_reason, "llm_error")
                 self.assertEqual(len(snapshots), 1)
                 self.assertEqual(len(starts), 1)
@@ -170,14 +166,10 @@ class AgentTraceTests(unittest.TestCase):
 
         session.run_task(AgentTask(text="go"), on_event=events.append)
 
-        contexts = [
-            event for event in events if isinstance(event, ContextSnapshotPrepared)
-        ]
+        contexts = [event for event in events if isinstance(event, ContextSnapshotPrepared)]
         self.assertEqual(len(contexts), 2)
         second = contexts[1]
-        serialized = json.dumps(
-            list(second.effective_messages), ensure_ascii=False, default=str
-        )
+        serialized = json.dumps(list(second.effective_messages), ensure_ascii=False, default=str)
         self.assertNotIn("provider private chain of thought", serialized)
         self.assertNotIn("reasoning_content", serialized)
         self.assertIn("public tool argument", serialized)
@@ -196,7 +188,9 @@ class AgentTraceTests(unittest.TestCase):
             prompt_plan=prompt_plan("baseline"),
         )
         events = []
-        session.run_task(AgentTask(text="go", metadata={"trace_id": "trace_fixed"}), on_event=events.append)
+        session.run_task(
+            AgentTask(text="go", metadata={"trace_id": "trace_fixed"}), on_event=events.append
+        )
 
         started = [e for e in events if isinstance(e, ToolStarted)]
         finished = [e for e in events if isinstance(e, ToolFinished)]
@@ -215,7 +209,10 @@ class AgentTraceTests(unittest.TestCase):
         self.assertEqual(contexts[0].span_id, llm_starts[0].span_id)
         self.assertEqual(contexts[0].snapshot_id, llm_starts[0].context_snapshot_id)
         self.assertEqual(contexts[0].effective_messages[0]["role"], "system")
-        self.assertIn("baseline", contexts[0].effective_messages[0]["content"])
+        rendered = "\n".join(
+            str(message.get("content") or "") for message in contexts[0].effective_messages
+        )
+        self.assertIn("baseline", rendered)
         self.assertEqual(len(contexts[0].tool_schemas), 1)
         self.assertEqual(llm_starts[0].span_id, llm_calls[0].span_id)
         self.assertGreater(llm_calls[0].input_message_count, 0)

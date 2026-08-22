@@ -10,15 +10,17 @@ from pathlib import Path
 from typing import Any, Callable
 
 from chatcopilot.core.config import ChatConfig, load_config
-from chatcopilot.agent.protocol import AgentEvent, AgentTask, LlmCallFinished
+from chatcopilot.contracts.agent import AgentTask
 from chatcopilot.agent.runtime import build_agent_runtime
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput
 from chatcopilot.botspec import assemble_runtime_context, load_botspec, resolve_bot_spec_path
 from chatcopilot.botspec.runtime_env import load_research_llm_config
-from chatcopilot.core.settings import load_local_env_values
-from chatcopilot.core.workspace import Workspace
-from chatcopilot.evals.env import normalize_eval_env_value
-from chatcopilot.evals.event_projection import project_evaluation_event
+from chatcopilot.core.workspace_runtime import Workspace
+from chatcopilot.evals.execution_support import (
+    event_to_dict as _event_to_dict,
+    load_local_env as _load_local_env,
+    usage_summary as _usage_summary,
+)
 from chatcopilot.evals.models import (
     EvalCase,
     EvalCaseResult,
@@ -28,7 +30,7 @@ from chatcopilot.evals.models import (
 )
 from chatcopilot.evals.plugins import CaseLoadContext, EvaluationPlugin, get_evaluation_plugin
 from chatcopilot.evals.registry import get_manifest, get_standard
-from chatcopilot.middleware.runtime.workspace import MiddlewareWorkspaceService
+from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService
 from chatcopilot.project import ENV_PREFIX
 
 ProgressCallback = Callable[[dict[str, Any]], None]
@@ -724,28 +726,6 @@ def _case_context(case: EvalCase) -> str:
     return "\n".join(parts)
 
 
-def _event_to_dict(event: AgentEvent) -> dict[str, Any]:
-    return project_evaluation_event(event)
-
-
-def _usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
-    totals: dict[str, int] = {}
-    for event in events:
-        if event.get("type") != LlmCallFinished.__name__:
-            continue
-        usage = event.get("usage") or {}
-        for key, value in usage.items():
-            if isinstance(value, int):
-                totals[key] = totals.get(key, 0) + value
-            elif isinstance(value, dict):
-                for nested_key, nested_value in value.items():
-                    if isinstance(nested_value, int):
-                        totals[nested_key] = totals.get(nested_key, 0) + nested_value
-                        flat_key = f"{key}.{nested_key}"
-                        totals[flat_key] = totals.get(flat_key, 0) + nested_value
-    return {"usage_totals": totals} if totals else {}
-
-
 def _summarize(results: tuple[EvalCaseResult, ...]) -> dict[str, Any]:
     total = len(results)
     passed = sum(1 for item in results if item.status == "passed")
@@ -922,17 +902,6 @@ def _select_cases(
 
 def _looks_like_path(value: str) -> bool:
     return any(sep in value for sep in ("/", "\\")) or value.endswith((".yaml", ".yml"))
-
-
-def _load_local_env(path: Path) -> None:
-    """Load BotSpec local.env entries for local eval runs without overwriting process env."""
-
-    if os.environ.get("CHATCOPILOT_EVALUATION_ENV_SNAPSHOT") == "1":
-        return
-    values = load_local_env_values(path, missing_ok=True, expand_home=True)
-    for key, value in values.items():
-        if key not in os.environ:
-            os.environ[key] = normalize_eval_env_value(key, value)
 
 
 class _EvalWorkspaceEnv:

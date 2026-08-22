@@ -15,7 +15,7 @@ from chatcopilot.middleware.acp.group_conversation import (
     GroupConversationJournal,
     GroupConversationJournalError,
 )
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 _GROUP_ID = "31001"
 _ACTOR_ID = "21001"

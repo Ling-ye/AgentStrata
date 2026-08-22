@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 from chatcopilot.agent.tools.workspace_context import resolve_workspace
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult
+from chatcopilot.contracts.tools import HandlerResult
 from chatcopilot.agent.tools.builtin.workspace.common import _is_unsafe_member, _require
 
 _UNZIP_MAX_TOTAL_BYTES = 2 * 1024 ** 3

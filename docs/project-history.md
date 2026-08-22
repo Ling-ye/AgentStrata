@@ -25,8 +25,9 @@ flowchart LR
     J["确认式开发请求<br/>plan first · explicit confirm · isolated evidence"]
     K["QQ 群级共享会话<br/>conversation scope · turn identity · actor-bound execution"]
     L["统一上下文可观测性<br/>effective input · provider boundary · safe artifacts"]
+    M["架构边界加固<br/>trust partitions · static DAG · zero multi-module SCCs"]
 
-    A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L
+    A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L --> M
 ```
 
 这些阶段按主要架构变化划分，实际开发时间存在重叠。
@@ -546,6 +547,72 @@ Console 现在能区分已接受、准入拒绝和身份拒绝的入站消息，
 [`qq-group-shared-conversation-context`](../specs/qq-group-shared-conversation-context/spec.md)、
 [`all-bot-console-deploy-entrypoint`](../specs/all-bot-console-deploy-entrypoint/spec.md)。
 
+## 15. 架构边界加固：从局部禁止规则到可执行静态依赖门禁
+
+**暴露的问题**
+
+原有架构门禁能阻止若干明显的跨层 import，但没有建立覆盖 `src/chatcopilot` 与 Console Python
+源码的静态 import 图；当时 401 个受检 Python 模块和 1,149 条可静态解析内部边仍形成 5 个强连通
+分量。Prompt DTO 虽区分宿主策略、运行时事实和不可信数据，
+renderer 仍把 Bot identity/style 合入 system authority。显式启用的 tool pack 在 import 或导出异常时
+还会静默消失，使部署错误表现成能力缺失。
+
+**结构调整**
+
+- Prompt layer kind 与 trust 改为封闭映射，renderer 固定输出 host policy、runtime facts、Bot
+  instructions 和 untrusted data 四个分区。Native 的 user-context envelopes 作为不可裁剪前缀保留，
+  topic routing 不把它们误识别成历史用户发言。
+- 架构脚本解析 `src/chatcopilot` 与 Console 的绝对、相对 import，同时验证 area policy DAG、受检
+  模块静态 SCC、canonical import、兼容 facade 白名单和跨 owner 私有符号。
+- Workspace identity 改为依赖 contract view；QQ 的 token/loopback boundary 与 access relay、
+  Evaluation execution support/runtime、ACP tool permission/workspace service/job host port 分别归属明确
+  模块。facade 保留已有入口，但生产实现不再借兼容层反向调用。
+- Tool catalog binding 改为显式物化契约；模块、`TOOLS`、类型、重复名称和缺失声明任一异常都返回
+  `ToolMaterializationError`。Evaluation 预检可以结构化呈现该错误，真实运行不能降级为空列表。
+- 唯一 PromptPlan 删除旧 builtin prompt 资源后，打包 allowlist 和安装后 runtime probe 同步改用
+  canonical PromptPlan，避免源码架构已迁移而 sdist 契约仍指向已删除资源。
+
+**结果与边界**
+
+受检 Python 模块的静态 import 图不再包含多模块强连通分量；架构 CLI 与单元测试执行同一个检查
+入口和规则集合。既有 BotSpec、工具名、平台协议、Evaluation artifact 和兼容 facade 保持不变。
+自动化验证覆盖本地 renderer、真实 access-proxy 上的合成 OneBot relay，以及 receipt 中明确列出的
+AgentStrata-owned ACP、任务、确定性 Agent 和回复投影链；它不等于真实 QQ、NapCat、cc-connect、
+商用模型或两账号外部往返，也不能证明 Codex provider 内部 instructions。
+
+相关规格：
+[`architecture-boundary-hardening`](../specs/architecture-boundary-hardening/spec.md)、
+[`prompt-plan-architecture`](../specs/prompt-plan-architecture/spec.md)。
+
+## 16. 测评中心两轨收敛：分开 Agent 表现与 QQ 后链路
+
+**暴露的问题**
+
+旧控制台把 Agent Profile 对比、公开 benchmark、产品能力、ACP 场景、数据准备和覆盖目录
+放在同一创建面。产品能力 Suite 也同时包含真实 Agent Trial 与无模型 ACP 场景，因此一次
+结果既不能纯粹回答“Agent 会不会”，也不能完整回答“QQ 消息进入后链路是否正确”。
+
+**结构调整**
+
+- Console 主测评面只保留“直接测试 Agent 能力”和“QQ 消息全链路”两张卡，以及统一运行记录。
+- `agentstrata-capabilities-v1` 收敛为 25 个纯 Agent Case，加入人格行为和独立 ECB oracle
+  判分的最新 USD/CNY Case；默认 `full` 只选择当前内置 Bot 可运行的 23 个，两个来源专用
+  Case 保留给显式 `custom`，所有 Trial 明确记录未经过 ACP/transport。
+- 新增 7 Case 的 `agentstrata-qq-message-flow-v1`，用随机回环端口上的假 NapCat、真实
+  access-proxy、Evaluation-owned cc-connect 等价交接、one-shot attestation、身份/权限、临时保护
+  persona 状态和 ACP 回复投影验证仓库自有链路。
+- Comparison、GAIA、BFCL、IFEval 和数据准备继续复用现有 Evaluation service 与 CLI；旧记录
+  保持可读，但不再占据 Console 产品入口。
+
+**结果与边界**
+
+两条轨道分别给出模型能力和系统链路证据，失败归因不再混在一个总分中。QQ 轨道使用确定性
+Agent sentinel 隔离模型波动，并在 receipt 中列出 `qq_platform/napcat/cc_connect/agent_model`
+替代层；其通过不证明真实 QQ 或外部用户端到端，真实连通性仍由基础设施检查单独报告。
+
+相关规格：
+[`evaluation-two-track-center`](../specs/evaluation-two-track-center/spec.md)。
+
 ## 当前架构的收敛结果
 
 | 关注点 | 当前做法 |
@@ -558,7 +625,7 @@ Console 现在能区分已接受、准入拒绝和身份拒绝的入站消息，
 | 会话身份 | QQ 群共享 conversation/普通文件，journal 与 backend state 受保护，逐轮权限按 actor 绑定 |
 | 源码修改 | 主会话只读，异步 worker 隔离执行，验证后交付 Draft PR |
 | 搜索 | 统一入口、直接 provider、统一 deadline/circuit/result policy |
-| 评测 | Comparison 与插件化 Suite 统一为 Evaluation；产品能力只手动启动并按完整 Target 组留证 |
+| 评测 | Console 只展示直接 Agent 与 QQ 后链路两轨；Comparison/benchmark 保留 CLI，全部复用统一 Evaluation 生命周期 |
 | 公开维护 | 公开仓库是源码、规格和发布流程的唯一事实源 |
 
 进一步的组件关系、依赖方向和运行时细节分别见

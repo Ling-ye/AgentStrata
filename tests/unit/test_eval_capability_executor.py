@@ -28,6 +28,7 @@ from chatcopilot.evals.registry import get_cases, get_manifest
 
 
 SUITE_ID = "agentstrata-capabilities-v1"
+QQ_SUITE_ID = "agentstrata-qq-message-flow-v1"
 SEND_FILES_TO_USER = next(tool for tool in WORKSPACE_TOOLS if tool.name == "send_files_to_user")
 
 
@@ -39,6 +40,10 @@ def _definition(case_id: str):
     return next(
         item for item in load_case_definitions(get_manifest(SUITE_ID)) if item.case_id == case_id
     )
+
+
+def _qq_case(case_id: str) -> EvalCase:
+    return next(item for item in get_cases(QQ_SUITE_ID) if item.case_id == case_id)
 
 
 def test_record_only_code_task_context_preserves_requested_draft_pr_scope() -> None:
@@ -1039,8 +1044,8 @@ def test_search_trace_derives_deadline_exhaustion_from_coordinator_result() -> N
 @pytest.mark.parametrize(
     "case_id",
     (
-        "attachment-remote-reference-not-local",
-        "access-member-owner-tool-denied",
+        "qq-remote-url-not-attachment",
+        "qq-member-owner-action-denied",
     ),
 )
 def test_quick_acp_scenarios_dispatch_with_selected_bot_policy_without_model(
@@ -1052,10 +1057,11 @@ def test_quick_acp_scenarios_dispatch_with_selected_bot_policy_without_model(
     monkeypatch.setenv("QQ_ACCOUNT", "10001")
     monkeypatch.setenv("QQ_REQUIRE_AT_IN_GROUP", "true")
     monkeypatch.setenv("CHATCOPILOT_ADD_OWNER_IDS", "eval-owner")
-    monkeypatch.setattr(
-        executor,
-        "load_evaluation_runtime",
-        lambda _bot: SimpleNamespace(
+    runtime_load: dict[str, Any] = {}
+
+    def load_runtime(_bot: str, **kwargs: Any) -> SimpleNamespace:
+        runtime_load.update(kwargs)
+        return SimpleNamespace(
             access=AccessSpec(
                 private_require_whitelist=True,
                 group_require_whitelist=True,
@@ -1063,11 +1069,17 @@ def test_quick_acp_scenarios_dispatch_with_selected_bot_policy_without_model(
                 whitelist_env="QQ_ALLOW_FROM",
             ),
             platform_type="qq",
-        ),
-    )
+            prompt_profile=BotPromptProfile(
+                identity="Evaluation Bot",
+                response_style="简洁回答。",
+                refusal_style="拒绝越权请求。",
+            ),
+        )
+
+    monkeypatch.setattr(executor, "load_evaluation_runtime", load_runtime)
     result = executor.execute_capability_case(
-        _case(case_id),
-        suite_id=SUITE_ID,
+        _qq_case(case_id),
+        suite_id=QQ_SUITE_ID,
         bot="selected-bot",
         workspace_root=tmp_path,
         options={},
@@ -1075,7 +1087,11 @@ def test_quick_acp_scenarios_dispatch_with_selected_bot_policy_without_model(
     )
 
     assert result.status == "passed"
-    assert result.metadata["driver"] == "acp_scenario"
+    assert result.metadata["driver"] == "qq_message_flow"
+    assert runtime_load == {
+        "load_local_environment": False,
+        "inherit_environment": False,
+    }
 
 
 def test_assertion_failure_is_failed_not_infrastructure_error(
@@ -1116,8 +1132,8 @@ def test_declared_workspace_root_symlink_is_rejected_before_writes(tmp_path: Pat
     linked.symlink_to(actual, target_is_directory=True)
 
     result = executor.execute_capability_case(
-        _case("attachment-remote-reference-not-local"),
-        suite_id=SUITE_ID,
+        _qq_case("qq-remote-url-not-attachment"),
+        suite_id=QQ_SUITE_ID,
         bot="selected-bot",
         workspace_root=linked,
         options={},

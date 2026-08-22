@@ -5,7 +5,7 @@ agent 层只关心：LLM 客户端、工具调度、上下文工程、技能/记
 中间过程，最后返回 ``AgentResult``。agent 内部不感知 chat 平台、协议帧、用户
 角色、调试模式、附件流程等概念。
 """
-from chatcopilot.agent.protocol import (
+from chatcopilot.contracts.agent import (
     AgentEvent,
     AgentResult,
     AgentTask,

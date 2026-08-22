@@ -9,13 +9,14 @@
 LLM 也可以通过 ``set_assistant_mode`` / ``set_debug_mode`` 两个工具间接触发同样
 的状态变更（绕过元命令解析时），故工具与短路处理共享同一组校验/装配函数。
 """
+
 from __future__ import annotations
 
 import os
 import re
 from typing import Any, Callable, Dict, Mapping, Optional
 
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.contracts.tools import HandlerResult, ToolDef
 from chatcopilot.middleware.access_control import (
     AssistantMode,
     Role,
@@ -24,11 +25,13 @@ from chatcopilot.middleware.access_control import (
     normalize_chat_kind,
 )
 from chatcopilot.middleware.acp.session_state import SessionState
-from chatcopilot.middleware.runtime.workspace import (
+from chatcopilot.core.workspace_runtime import (
     Workspace,
     list_workspace_inventories,
     resolve_workspace_root,
 )
+
+PromptPlanRefresh = Callable[[SessionState], None]
 # ----------------------------------------------------------------------------
 # 常量：正则与提示文案
 # ----------------------------------------------------------------------------
@@ -38,7 +41,9 @@ from chatcopilot.middleware.runtime.workspace import (
 # 切换仅 per-session、不持久化（避免上次开了忘关给下次别人看到）。
 # 命中调试模式命令时本轮不进 AgentSession.run_task，也不写 transcript（元操作不算业务对话）。
 _DEBUG_CMD_RE = re.compile(r"^\s*/debug(?:\s+(\S+))?\s*$", re.IGNORECASE)
-_DEBUG_ON_INTENT_RE = re.compile(r"(开启|打开|启用|切换到|进入).{0,12}(debug|调试模式)", re.IGNORECASE)
+_DEBUG_ON_INTENT_RE = re.compile(
+    r"(开启|打开|启用|切换到|进入).{0,12}(debug|调试模式)", re.IGNORECASE
+)
 _DEBUG_OFF_INTENT_RE = re.compile(r"(关闭|关掉|退出|切回).{0,12}(debug|调试模式)", re.IGNORECASE)
 _GENERAL_MODE_INTENT_RE = re.compile(r"(切换|进入|开启|启用|换到|改成|设为|设置为).{0,12}通用模式")
 _PERFORMANCE_MODE_INTENT_RE = re.compile(
@@ -132,24 +137,33 @@ def _debug_toggle_hint(session: SessionState) -> str:
     return "不可切换（仅限 Owner 私聊）"
 
 
-def _force_performance_mode(session: SessionState) -> None:
+def _force_performance_mode(
+    session: SessionState,
+    refresh_prompt_plan: PromptPlanRefresh | None = None,
+) -> None:
     if session.assistant_mode == AssistantMode.PERFORMANCE:
         return
-    _set_mode_and_refresh(session, AssistantMode.PERFORMANCE)
+    _set_mode_and_refresh(session, AssistantMode.PERFORMANCE, refresh_prompt_plan)
 
 
-def _set_mode_and_refresh(session: SessionState, mode: AssistantMode) -> None:
+def _set_mode_and_refresh(
+    session: SessionState,
+    mode: AssistantMode,
+    refresh_prompt_plan: PromptPlanRefresh | None,
+) -> None:
     session.set_assistant_mode(mode)
-    if session.is_materialized:
-        from chatcopilot.middleware.acp.agent_bridge import _refresh_session_prompt_plan
-
-        _refresh_session_prompt_plan(session)
+    if session.is_materialized and refresh_prompt_plan is not None:
+        refresh_prompt_plan(session)
 
 
 # ----------------------------------------------------------------------------
 # LLM 工具：set_assistant_mode / set_debug_mode
 # ----------------------------------------------------------------------------
-def _build_set_assistant_mode_tool(session_getter: Callable[[], SessionState]) -> ToolDef:
+def _build_set_assistant_mode_tool(
+    session_getter: Callable[[], SessionState],
+    *,
+    refresh_prompt_plan: PromptPlanRefresh | None = None,
+) -> ToolDef:
     """构造飞书会话本地工具：由 LLM 调用来切换业务模式。"""
 
     def _handler(args: Dict[str, Any]) -> HandlerResult:
@@ -161,7 +175,7 @@ def _build_set_assistant_mode_tool(session_getter: Callable[[], SessionState]) -
             raise ValueError("mode 只能是 performance 或 general") from exc
 
         if desired == AssistantMode.GENERAL and not _can_session_select_general_mode(session):
-            _force_performance_mode(session)
+            _force_performance_mode(session, refresh_prompt_plan)
             return (_general_denied_message(session), [], None)
 
         if session.assistant_mode == desired:
@@ -171,7 +185,7 @@ def _build_set_assistant_mode_tool(session_getter: Callable[[], SessionState]) -
                 None,
             )
 
-        _set_mode_and_refresh(session, desired)
+        _set_mode_and_refresh(session, desired, refresh_prompt_plan)
         return (
             f"已切换到{_assistant_mode_label(desired)}。",
             [],
@@ -288,19 +302,24 @@ def _parse_assistant_mode_command(text: str) -> Optional[AssistantMode]:
     return None
 
 
-def _handle_assistant_mode_command(session: SessionState, text: str) -> Optional[str]:
+def _handle_assistant_mode_command(
+    session: SessionState,
+    text: str,
+    *,
+    refresh_prompt_plan: PromptPlanRefresh | None = None,
+) -> Optional[str]:
     desired = _parse_assistant_mode_command(text)
     if desired is None:
         return None
 
     if desired == AssistantMode.GENERAL and not _can_session_select_general_mode(session):
-        _force_performance_mode(session)
+        _force_performance_mode(session, refresh_prompt_plan)
         return _general_denied_message(session)
 
     if session.assistant_mode == desired:
         return f"当前已经是{_assistant_mode_label(desired)}，无需切换。"
 
-    _set_mode_and_refresh(session, desired)
+    _set_mode_and_refresh(session, desired, refresh_prompt_plan)
     return f"已切换到{_assistant_mode_label(desired)}。"
 
 
@@ -396,9 +415,7 @@ def _format_owner_access_allowlist_status(
     chat_kind = str(getattr(workspace, "chat_kind", "") or "").strip().lower()
     chat_id = str(getattr(workspace, "chat_id", "") or "").strip()
     is_group_chat = chat_kind == "group"
-    asks_current_group = bool(
-        _CURRENT_GROUP_ALLOWLIST_INTENT_RE.search(user_text or "")
-    )
+    asks_current_group = bool(_CURRENT_GROUP_ALLOWLIST_INTENT_RE.search(user_text or ""))
     asks_enumeration = bool(_ALLOWLIST_ENUMERATION_INTENT_RE.search(user_text or ""))
 
     if is_group_chat and asks_enumeration:
@@ -431,9 +448,7 @@ def _format_owner_access_allowlist_status(
     if not user_env_name:
         lines.append("- 用户白名单：BotSpec 未声明。")
     elif all_users:
-        lines.append(
-            f"- 用户白名单来源：`{user_env_name}`；当前为空或 `*`，允许所有用户来源。"
-        )
+        lines.append(f"- 用户白名单来源：`{user_env_name}`；当前为空或 `*`，允许所有用户来源。")
     else:
         lines.append(
             f"- 用户白名单来源：`{user_env_name}`；当前共有 {len(user_ids)} 个允许来源："
@@ -484,7 +499,9 @@ def _is_owner_global_workspace_query(user_text: str) -> bool:
 
 
 def _should_handle_owner_global_workspace_query(session: Any, user_text: str) -> bool:
-    return getattr(session, "role", None) == Role.OWNER and _is_owner_global_workspace_query(user_text)
+    return getattr(session, "role", None) == Role.OWNER and _is_owner_global_workspace_query(
+        user_text
+    )
 
 
 def _format_owner_global_workspace_status(current_workspace: Workspace) -> str:
@@ -519,7 +536,9 @@ def _format_owner_global_workspace_status(current_workspace: Workspace) -> str:
         lines.append("用户明细：")
         for user_id in sorted(user_workspace_counts):
             names = "、".join(sorted(user_names.get(user_id, set()))) or "-"
-            lines.append(f"- user_id={user_id} name={names} workspaces={user_workspace_counts[user_id]}")
+            lines.append(
+                f"- user_id={user_id} name={names} workspaces={user_workspace_counts[user_id]}"
+            )
     else:
         lines.append("没有识别到带明确 user_id 的工作区。")
 

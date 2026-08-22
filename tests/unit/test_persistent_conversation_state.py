@@ -12,7 +12,7 @@ from chatcopilot.core.persistent_state import (
     FilesystemPersistentConversationState,
     PersistentStateSecurityError,
 )
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 def _state(

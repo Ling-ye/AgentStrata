@@ -20,7 +20,7 @@ from chatcopilot.core.log_context import pop_log_context
 from chatcopilot.middleware.acp.persona_control import handle_persona_control
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder
-from chatcopilot.middleware.runtime.workspace import MiddlewareWorkspaceService, Workspace
+from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService, Workspace
 
 
 class _Conn:

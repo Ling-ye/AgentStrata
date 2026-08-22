@@ -66,7 +66,7 @@ from acp.schema import (
 )
 
 from chatcopilot.core.config import load_config
-from chatcopilot.agent.protocol import (
+from chatcopilot.contracts.agent import (
     AgentEvent,
     AgentTask,
     ContextSnapshotPrepared,
@@ -96,7 +96,7 @@ from chatcopilot.middleware.acp import agent_bridge as _agent_bridge
 from chatcopilot.middleware.acp import attachment_pipeline as _attachment
 from chatcopilot.middleware.acp import meta_commands as _meta
 from chatcopilot.middleware.acp.event_translator import EventTranslator
-from chatcopilot.middleware.acp.job_dispatch import JobDispatcher
+from chatcopilot.middleware.acp.job_dispatch import JobDispatcher, JobDispatchPort
 from chatcopilot.middleware.acp.group_conversation import (
     GroupConversationJournal,
     GroupConversationJournalError,
@@ -109,8 +109,12 @@ from chatcopilot.middleware.acp.memory_receipt import (
     classify_memory_receipt_requirement,
 )
 from chatcopilot.middleware.acp.session_state import SessionState
+from chatcopilot.middleware.acp.transport_attestation import (
+    TransportAttestationError,
+    validate_qq_group_transport_attestation,
+)
 from chatcopilot.middleware.acp.turn_orchestrator import AcpTurnOrchestrator
-from chatcopilot.middleware.runtime.workspace import (
+from chatcopilot.core.workspace_runtime import (
     Workspace,
     cleanup_workspace,
     describe_workspace,
@@ -221,8 +225,7 @@ class AcpChatAgent(Agent):
         # 注入 extra_tools + payload sanitizer + workspace。
         self._agent_runtime = None
         self._agent_runtime_lock = threading.Lock()
-        # 后台任务派发器：绑定 self 引用以便从 submitter / watch 回调访问 _conn / _loop。
-        self._jobs = JobDispatcher(self)
+        self._jobs = self._new_job_dispatcher()
         _LOGGER.info(
             "AgentStrata ACP agent init | bot=%s instance=%s model=%s base_url=%s tools=%d",
             self._runtime.bot_id,
@@ -311,10 +314,7 @@ class AcpChatAgent(Agent):
         """Authenticate the prompt envelope without creating actor state."""
 
         platform_type = self._platform_type()
-        if (
-            getattr(session.workspace, "scope", "actor")
-            != WORKSPACE_SCOPE_GROUP_SHARED
-        ):
+        if getattr(session.workspace, "scope", "actor") != WORKSPACE_SCOPE_GROUP_SHARED:
             # ``inject_sender`` is a cc-connect project setting, so QQ private
             # messages receive the same outer envelope as shared-group turns.
             # Their authorization identity is already fixed by the private
@@ -360,12 +360,12 @@ class AcpChatAgent(Agent):
             message_id=message_id,
         )
         try:
-            _agent_bridge._validate_qq_group_transport_attestation(
+            validate_qq_group_transport_attestation(
                 parsed.identity,
                 parsed.text,
                 require_content_digest=True,
             )
-        except _agent_bridge.TransportAttestationError as exc:
+        except TransportAttestationError as exc:
             raise SenderEnvelopeError(exc.code, exc.message) from exc
         # Only the combination of the prompt envelope and the independently
         # written one-shot hook record is a trusted per-turn source.
@@ -423,9 +423,7 @@ class AcpChatAgent(Agent):
 
         try:
             journal = GroupConversationJournal(actor_ws, conversation)
-            history, _latest_sequence = journal.context_since(
-                actor_session.conversation_cursor
-            )
+            history, _latest_sequence = journal.context_since(actor_session.conversation_cursor)
         except (GroupConversationJournalError, OSError, RuntimeError, ValueError) as exc:
             # A journal/metadata mismatch is conversation-wide, not specific to
             # the actor who happened to observe it.  Drop every cached backend
@@ -606,9 +604,24 @@ class AcpChatAgent(Agent):
     def _ensure_jobs(self) -> JobDispatcher:
         jobs = getattr(self, "_jobs", None)
         if jobs is None:
-            jobs = JobDispatcher(self)
+            jobs = self._new_job_dispatcher()
             self._jobs = jobs
         return jobs
+
+    def _new_job_dispatcher(self) -> JobDispatcher:
+        watch_tasks = getattr(self, "_job_watch_tasks", None)
+        if watch_tasks is None:
+            watch_tasks = {}
+            self._job_watch_tasks = watch_tasks
+        return JobDispatcher(
+            JobDispatchPort(
+                connection=lambda: self._conn,
+                runtime=lambda: getattr(self, "_runtime", None),
+                loop=lambda: getattr(self, "_loop", None),
+                watch_tasks=watch_tasks,
+                make_text_update=lambda text: update_agent_message_text(text),
+            )
+        )
 
     def _make_background_submitter(self, *, session_id: str, ws: Workspace) -> Any:
         return self._ensure_jobs().make_background_submitter(session_id=session_id, ws=ws)
@@ -1200,9 +1213,7 @@ class AcpChatAgent(Agent):
                     depth=event.depth,
                     estimated_tokens=event.estimated_tokens,
                     model_selection=dict(event.model_selection or {}),
-                    private_reasoning_omission_count=(
-                        event.private_reasoning_omission_count
-                    ),
+                    private_reasoning_omission_count=(event.private_reasoning_omission_count),
                     resource_path_omission_count=event.resource_path_omission_count,
                 )
             elif isinstance(event, InputResourcesDispatched):
@@ -1309,10 +1320,7 @@ class AcpChatAgent(Agent):
 
         platform_type = self._platform_type()
         latest_ws = None
-        if (
-            getattr(session.workspace, "scope", "actor")
-            != WORKSPACE_SCOPE_GROUP_SHARED
-        ):
+        if getattr(session.workspace, "scope", "actor") != WORKSPACE_SCOPE_GROUP_SHARED:
             latest_ws = _latest_workspace_from_session_env(
                 session.workspace,
                 platform_type=platform_type,
@@ -1412,8 +1420,7 @@ class AcpChatAgent(Agent):
                 user_text,
                 caller_role=getattr(role_object, "value", str(role_object)),
                 is_group=(
-                    getattr(session.workspace, "scope", "actor")
-                    == WORKSPACE_SCOPE_GROUP_SHARED
+                    getattr(session.workspace, "scope", "actor") == WORKSPACE_SCOPE_GROUP_SHARED
                 ),
             )
 
@@ -1439,9 +1446,7 @@ class AcpChatAgent(Agent):
                     if (
                         receipt_requirement is not None
                         and receipt_requirement.retry_allowed
-                        and successful_tools.isdisjoint(
-                            receipt_requirement.successful_tools
-                        )
+                        and successful_tools.isdisjoint(receipt_requirement.successful_tools)
                     ):
                         translator.reset_text_cache()
                         retry_metadata = dict(task_metadata)
@@ -1466,9 +1471,8 @@ class AcpChatAgent(Agent):
                     return result
 
             result = await asyncio.to_thread(run_agent_turn)
-            if (
-                receipt_requirement is not None
-                and successful_tools.isdisjoint(receipt_requirement.successful_tools)
+            if receipt_requirement is not None and successful_tools.isdisjoint(
+                receipt_requirement.successful_tools
             ):
                 memory_receipt_failed = True
                 failure_text = receipt_requirement.failure_text
@@ -1500,10 +1504,7 @@ class AcpChatAgent(Agent):
                 translator.replace_final_text(combined_text)
             if code_model_selection is not None:
                 session.consume_code_model_once(code_model_selection)
-            if (
-                getattr(session.workspace, "scope", "actor")
-                == WORKSPACE_SCOPE_GROUP_SHARED
-            ):
+            if getattr(session.workspace, "scope", "actor") == WORKSPACE_SCOPE_GROUP_SHARED:
                 try:
                     session.record_group_model_exchange(
                         journal_user_text or user_text,
@@ -1649,19 +1650,14 @@ class AcpChatAgent(Agent):
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("prompt handler crashed")
             shared_group = (
-                getattr(session.workspace, "scope", "actor")
-                == WORKSPACE_SCOPE_GROUP_SHARED
+                getattr(session.workspace, "scope", "actor") == WORKSPACE_SCOPE_GROUP_SHARED
             )
             public_progress = (
                 _turn_error_progress("internal_error")
                 if shared_group
                 else f"执行失败：{type(exc).__name__}: {exc}"
             )
-            public_error = (
-                "internal_error"
-                if shared_group
-                else f"{type(exc).__name__}: {exc}"
-            )
+            public_error = "internal_error" if shared_group else f"{type(exc).__name__}: {exc}"
             self._finish_turn_task(
                 turn_task,
                 status="failed",
@@ -1681,6 +1677,7 @@ class AcpChatAgent(Agent):
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("error message dispatch failed")
             return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
+
     # ------------------------------------------------------------------
     # ACP handler: session/cancel
     # ------------------------------------------------------------------
@@ -1694,7 +1691,7 @@ async def _amain(runtime: BotRuntimeContext | None = None) -> None:
     _setup_logging()
     selected_runtime = runtime or load_runtime_context()
     try:
-        from chatcopilot.middleware.runtime.workspace import cleanup_diagnostic_records
+        from chatcopilot.core.workspace_runtime import cleanup_diagnostic_records
 
         workspace_root = os.environ.get("CHATCOPILOT_WORKSPACE_ROOT")
         if workspace_root:

@@ -1,4 +1,5 @@
 """Regression tests for Feishu ACP attachment-only handling."""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,13 +11,13 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder
 from chatcopilot.contracts.prompt import BotPromptProfile
 from chatcopilot.contracts.tool_packs import ToolPackPolicy
 from chatcopilot.middleware.acp.session_state import _make_test_session_state
 from chatcopilot.middleware.acp import server as acp_server
-from chatcopilot.agent.protocol import AgentResult as _AgentResult, FinalText as _FinalText
+from chatcopilot.contracts.agent import AgentResult as _AgentResult, FinalText as _FinalText
 from chatcopilot.middleware.acp.private_space import (
     format_workspace_inventory,
     is_workspace_inventory_query,
@@ -76,7 +77,7 @@ class AttachmentGateTests(unittest.TestCase):
 
     def test_feishu_file_size_limit_error_is_detected(self) -> None:
         text = (
-            'time=2026-05-26T17:03:24.084+08:00 level=ERROR '
+            "time=2026-05-26T17:03:24.084+08:00 level=ERROR "
             'msg="feishu: download file failed" '
             'error="feishu: resource API code=234037 msg=Downloaded file size exceeds limit."'
         )
@@ -85,7 +86,9 @@ class AttachmentGateTests(unittest.TestCase):
 
     def test_plain_large_file_text_is_not_size_limit_error(self) -> None:
         self.assertFalse(is_feishu_file_size_limit_error("这个文件太大了，帮我分析一下怎么拆分"))
-        self.assertFalse(is_feishu_file_size_limit_error("Downloaded file size exceeds limit 是什么意思？"))
+        self.assertFalse(
+            is_feishu_file_size_limit_error("Downloaded file size exceeds limit 是什么意思？")
+        )
 
     def test_resource_only_prompt_short_circuits(self) -> None:
         parts = extract_prompt_parts(
@@ -315,7 +318,7 @@ class AttachmentGateTests(unittest.TestCase):
                     agent._attachment_ack_tasks = {"sid": asyncio.create_task(asyncio.sleep(60))}
                     agent._attachment_ack_resource_names = {"sid": ["too_large.zip"]}
                     prompt_text = (
-                        'time=2026-05-26T17:03:24.084+08:00 level=ERROR '
+                        "time=2026-05-26T17:03:24.084+08:00 level=ERROR "
                         'msg="feishu: download file failed" '
                         'error="feishu: resource API code=234037 '
                         'msg=Downloaded file size exceeds limit."'
@@ -377,7 +380,9 @@ class AttachmentGateTests(unittest.TestCase):
         )
 
         self.assertTrue(parts.has_resource)
-        self.assertEqual(parts.resource_names, ["v3-sample_scene.moduleAlloc", "v4-sample_scene.moduleAlloc"])
+        self.assertEqual(
+            parts.resource_names, ["v3-sample_scene.moduleAlloc", "v4-sample_scene.moduleAlloc"]
+        )
         self.assertTrue(has_task_verb(parts.text))
         self.assertFalse(should_short_circuit_attachment_only(parts))
 
@@ -389,10 +394,7 @@ class AttachmentGateTests(unittest.TestCase):
         self.assertFalse(should_short_circuit_attachment_only(parts))
 
     def test_migration_request_is_explicit_task(self) -> None:
-        text = (
-            "给我把 https://example.feishu.cn/sheets/source 的数据，"
-            "转移到 SampleGame-内存数据库"
-        )
+        text = "给我把 https://example.feishu.cn/sheets/source 的数据，转移到 SampleGame-内存数据库"
         parts = extract_prompt_parts([{"type": "text", "text": text}])
 
         self.assertFalse(parts.has_resource)
@@ -468,7 +470,9 @@ class AttachmentGateTests(unittest.TestCase):
         )
 
         self.assertTrue(parts.has_resource)
-        self.assertEqual(parts.resource_names, ["capture_before.memory_report", "capture_after.memory_report"])
+        self.assertEqual(
+            parts.resource_names, ["capture_before.memory_report", "capture_after.memory_report"]
+        )
         self.assertTrue(should_short_circuit_attachment_only(parts))
 
     def test_feishu_url_resource_link_is_not_treated_as_attachment(self) -> None:
@@ -484,10 +488,7 @@ class AttachmentGateTests(unittest.TestCase):
                 },
                 {
                     "type": "text",
-                    "text": (
-                        "把版本性能数据源（内存）"
-                        "数据迁移到 SampleGame-内存数据库中"
-                    ),
+                    "text": ("把版本性能数据源（内存）数据迁移到 SampleGame-内存数据库中"),
                 },
             ]
         )
@@ -587,17 +588,13 @@ class AttachmentGateTests(unittest.TestCase):
         """block 只有 name 是裸 hostname，**没有**任何 source 字段。
         老代码会把 ``.cn`` 当合法扩展名放行；classifier 必须用 TLD 黑名单 +
         hostname 形态把它拒掉。"""
-        result = classify_resource_block(
-            {"type": "resource_link", "name": "example.feishu.cn"}
-        )
+        result = classify_resource_block({"type": "resource_link", "name": "example.feishu.cn"})
         self.assertEqual(result.kind, ResourceKind.WEB_URL)
         self.assertEqual(result.name, "")
 
     def test_classifier_link_type_with_hostname(self) -> None:
         """显式 ``type=link`` 即便没有 URL 字段也必须判为 WEB_URL。"""
-        result = classify_resource_block(
-            {"type": "link", "name": "x.com"}
-        )
+        result = classify_resource_block({"type": "link", "name": "x.com"})
         self.assertEqual(result.kind, ResourceKind.WEB_URL)
 
     def test_classifier_legacy_module_alloc_remains_file(self) -> None:
@@ -693,8 +690,7 @@ class AttachmentGateTests(unittest.TestCase):
                             {
                                 "type": "text",
                                 "text": (
-                                    "把版本性能数据源（内存）"
-                                    "数据迁移到 SampleGame-内存数据库中"
+                                    "把版本性能数据源（内存）数据迁移到 SampleGame-内存数据库中"
                                 ),
                             },
                         ],
@@ -725,7 +721,9 @@ class AttachmentGateTests(unittest.TestCase):
 
             text = format_attachment_ack(ws, ["file_a.csv", "file_b.csv"])
 
-        self.assertIn("文件已保存到你的私人空间：attachments/file_a.csv、attachments/file_b.csv。", text)
+        self.assertIn(
+            "文件已保存到你的私人空间：attachments/file_a.csv、attachments/file_b.csv。", text
+        )
         self.assertIn("你当前累计 2 个已保存文件：", text)
         self.assertIn("- attachments/file_a.csv", text)
         self.assertIn("- attachments/file_b.csv", text)
@@ -931,9 +929,15 @@ class AttachmentGateTests(unittest.TestCase):
                         user_name=None,
                     ).ensure()
                     filename = "MemoryReport_MobilePlayer_1.2.0-102-1-v1d0_2026_01_03_04_05_06.csv"
-                    (default_ws.attachments / filename).write_text("frame,cost\n1,2", encoding="utf-8")
+                    (default_ws.attachments / filename).write_text(
+                        "frame,cost\n1,2", encoding="utf-8"
+                    )
 
-                    session = _make_test_session_state(session_id="sid", workspace=default_ws, identity=render_test_prompt(default_ws),)
+                    session = _make_test_session_state(
+                        session_id="sid",
+                        workspace=default_ws,
+                        identity=render_test_prompt(default_ws),
+                    )
 
                     def fail_run_task(task, **kwargs) -> None:
                         raise AssertionError(f"run_task should not be called: {task}")
@@ -941,7 +945,11 @@ class AttachmentGateTests(unittest.TestCase):
                     session.session.run_task = fail_run_task  # type: ignore[method-assign]
 
                     def fake_build_session(**kwargs: Any):
-                        rebuilt = _make_test_session_state(session_id=kwargs["session_id"], workspace=kwargs["ws"], identity=render_test_prompt(kwargs["ws"]),)
+                        rebuilt = _make_test_session_state(
+                            session_id=kwargs["session_id"],
+                            workspace=kwargs["ws"],
+                            identity=render_test_prompt(kwargs["ws"]),
+                        )
                         rebuilt.session.run_task = fail_run_task  # type: ignore[method-assign]
                         return rebuilt
 
@@ -964,8 +972,7 @@ class AttachmentGateTests(unittest.TestCase):
                                 {
                                     "type": "text",
                                     "text": (
-                                        f"回复 示例用户（示例别名）:\u00a0\n"
-                                        f"[文件] {filename}"
+                                        f"回复 示例用户（示例别名）:\u00a0\n[文件] {filename}"
                                     ),
                                 }
                             ],
@@ -976,9 +983,7 @@ class AttachmentGateTests(unittest.TestCase):
                     recovered_session = agent._sessions["sid"]
                     self.assertNotEqual(recovered_session.workspace.root, default_ws.root)
                     self.assertTrue(
-                        recovered_session.workspace.root.name.startswith(
-                            "p2p_name_示例用户"
-                        )
+                        recovered_session.workspace.root.name.startswith("p2p_name_示例用户")
                     )
                     self.assertFalse((default_ws.attachments / filename).exists())
                     self.assertTrue((recovered_session.workspace.attachments / filename).is_file())
@@ -1017,7 +1022,11 @@ class AttachmentGateTests(unittest.TestCase):
                     ).ensure()
                     (default_ws.attachments / "MemoryReport.csv").write_text("x", encoding="utf-8")
 
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
+                    session = _make_test_session_state(
+                        session_id="sid",
+                        workspace=user_ws,
+                        identity=render_test_prompt(user_ws),
+                    )
 
                     def fail_run_task(task, **kwargs) -> None:
                         raise AssertionError(f"run_task should not be called: {task}")
@@ -1081,10 +1090,10 @@ class AttachmentGateTests(unittest.TestCase):
                         user_id="ou_test",
                         user_name="tester",
                     ).ensure()
-                    filename = (
-                        "MemoryReport_MobilePlayer_1.1.0-101-1-v1d0_2026_01_02_04_05_06.csv"
+                    filename = "MemoryReport_MobilePlayer_1.1.0-101-1-v1d0_2026_01_02_04_05_06.csv"
+                    (default_ws.attachments / filename).write_text(
+                        "frame,cost\n1,2", encoding="utf-8"
                     )
-                    (default_ws.attachments / filename).write_text("frame,cost\n1,2", encoding="utf-8")
 
                     session = _make_test_session_state(
                         session_id="sid",
@@ -1147,7 +1156,11 @@ class AttachmentGateTests(unittest.TestCase):
                     ).ensure()
                     filename = "d91761343ad3ca61d1eddd92ee0971cc.jpg"
                     (default_ws.attachments / filename).write_bytes(b"fake-jpg")
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
+                    session = _make_test_session_state(
+                        session_id="sid",
+                        workspace=user_ws,
+                        identity=render_test_prompt(user_ws),
+                    )
 
                     def fail_run_task(task, **kwargs) -> None:
                         raise AssertionError(f"run_task should not be called: {task}")
@@ -1160,7 +1173,7 @@ class AttachmentGateTests(unittest.TestCase):
                     agent._attachment_ack_resource_names = {}
                     agent._runtime = _runtime_context(
                         platform_type="feishu",
-                        tool_features=("chat.file_uploads", "chat.private_workspace")
+                        tool_features=("chat.file_uploads", "chat.private_workspace"),
                     )
 
                     await agent._prompt_locked(
@@ -1207,7 +1220,11 @@ class AttachmentGateTests(unittest.TestCase):
                     ).ensure()
                     filename = "d91761343ad3ca61d1eddd92ee0971cc.jpg"
                     (default_ws.attachments / filename).write_bytes(b"fake-jpg")
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
+                    session = _make_test_session_state(
+                        session_id="sid",
+                        workspace=user_ws,
+                        identity=render_test_prompt(user_ws),
+                    )
                     seen_user_text: list[str] = []
 
                     def fake_run_task(task, *, on_event, **kwargs):
@@ -1270,10 +1287,18 @@ class AttachmentGateTests(unittest.TestCase):
                         user_id="ou_test",
                         user_name="tester",
                     ).ensure()
-                    (default_ws.attachments / "v3-sample_scene.moduleAlloc").write_text("old", encoding="utf-8")
-                    (default_ws.attachments / "v4-sample_scene.moduleAlloc").write_text("new", encoding="utf-8")
+                    (default_ws.attachments / "v3-sample_scene.moduleAlloc").write_text(
+                        "old", encoding="utf-8"
+                    )
+                    (default_ws.attachments / "v4-sample_scene.moduleAlloc").write_text(
+                        "new", encoding="utf-8"
+                    )
 
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
+                    session = _make_test_session_state(
+                        session_id="sid",
+                        workspace=user_ws,
+                        identity=render_test_prompt(user_ws),
+                    )
                     seen_user_text: list[str] = []
 
                     def fake_run_task(task, *, on_event, **kwargs):
@@ -1306,11 +1331,14 @@ class AttachmentGateTests(unittest.TestCase):
                         "mid",
                     )
 
-                    self.assertEqual(seen_user_text, [
-                        "给我diff这两个.moduleAlloc文件\n"
-                        "[资源引用: v3-sample_scene.moduleAlloc]\n"
-                        "[资源引用: v4-sample_scene.moduleAlloc]"
-                    ])
+                    self.assertEqual(
+                        seen_user_text,
+                        [
+                            "给我diff这两个.moduleAlloc文件\n"
+                            "[资源引用: v3-sample_scene.moduleAlloc]\n"
+                            "[资源引用: v4-sample_scene.moduleAlloc]"
+                        ],
+                    )
                     self.assertEqual(len(agent._conn.messages), 1)
                     _sid, text = agent._conn.messages[0]
                     self.assertIn("已进入工具流程", text)
@@ -1324,6 +1352,7 @@ class AttachmentGateTests(unittest.TestCase):
     def test_textified_task_imports_attachments_then_enters_agent_turn(self) -> None:
         """Regression: textified [文件] + 任务动词必须把 default 里的附件搬到私人空间，
         并把 [资源引用] hint 拼到 user_text，避免 LLM 跨工作区找文件。"""
+
         async def run_case() -> None:
             original_update = acp_server.update_agent_message_text
             acp_server.update_agent_message_text = lambda text: text
@@ -1342,12 +1371,20 @@ class AttachmentGateTests(unittest.TestCase):
                         user_id="ou_test",
                         user_name="tester",
                     ).ensure()
-                    filename_a = "MemoryReport_MobilePlayer_1.2.0-102-1-v1d0_2026_01_03_04_05_06.csv"
-                    filename_b = "MemoryReport_MobilePlayer_1.3.0-103-1-Release_v1d0_2026_01_03_05_06_07.csv"
+                    filename_a = (
+                        "MemoryReport_MobilePlayer_1.2.0-102-1-v1d0_2026_01_03_04_05_06.csv"
+                    )
+                    filename_b = (
+                        "MemoryReport_MobilePlayer_1.3.0-103-1-Release_v1d0_2026_01_03_05_06_07.csv"
+                    )
                     (default_ws.attachments / filename_a).write_text("old", encoding="utf-8")
                     (default_ws.attachments / filename_b).write_text("new", encoding="utf-8")
 
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
+                    session = _make_test_session_state(
+                        session_id="sid",
+                        workspace=user_ws,
+                        identity=render_test_prompt(user_ws),
+                    )
                     seen_user_text: list[str] = []
 
                     def fake_run_task(task, *, on_event, **kwargs):
@@ -1396,6 +1433,7 @@ class AttachmentGateTests(unittest.TestCase):
     def test_textified_task_defers_when_default_inbox_is_empty(self) -> None:
         """Regression: textified 附件还没落盘 + 任务动词，必须延迟回复让用户重发，
         而不是带着空 attachments 去跑 LLM。"""
+
         async def run_case() -> None:
             original_update = acp_server.update_agent_message_text
             acp_server.update_agent_message_text = lambda text: text
@@ -1416,7 +1454,11 @@ class AttachmentGateTests(unittest.TestCase):
                     ).ensure()
                     filename = "MemoryReport_pending.csv"
 
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
+                    session = _make_test_session_state(
+                        session_id="sid",
+                        workspace=user_ws,
+                        identity=render_test_prompt(user_ws),
+                    )
 
                     def fail_run_task(task, **kwargs) -> None:
                         raise AssertionError(f"run_task should not be called: {task}")
@@ -1466,6 +1508,7 @@ class AttachmentGateTests(unittest.TestCase):
     def test_debounced_ack_eventually_sends_saved_message_when_file_arrives_late(self) -> None:
         """Regression: cc-connect 写盘比 ACP 进入 prompt 慢时，debounced ack 必须在
         最大轮询窗口内捕捉到文件落盘并送出"文件已保存"回执。"""
+
         async def run_case() -> None:
             original_delay = acp_server._ATTACHMENT_ACK_DEBOUNCE_SEC
             original_poll = acp_server._ATTACHMENT_ACK_POLL_INTERVAL_SEC
@@ -1525,8 +1568,13 @@ class AttachmentGateTests(unittest.TestCase):
                 user_id="ou_test",
                 user_name="tester",
             ).ensure()
-            session = _make_test_session_state(session_id="sid", workspace=ws, identity=render_test_prompt(ws),)
-            self.assertNotIn("更新后的表达风格", session._messages[0]["content"])
+            session = _make_test_session_state(
+                session_id="sid",
+                workspace=ws,
+                identity=render_test_prompt(ws),
+            )
+            rendered = "\n".join(str(message.get("content") or "") for message in session._messages)
+            self.assertNotIn("更新后的表达风格", rendered)
             session.runtime.prompt_profile = BotPromptProfile(
                 identity="Test assistant",
                 response_style="更新后的表达风格。",
@@ -1534,7 +1582,8 @@ class AttachmentGateTests(unittest.TestCase):
 
             _refresh_session_prompt_plan(session)
 
-        self.assertIn("更新后的表达风格", session._messages[0]["content"])
+        rendered = "\n".join(str(message.get("content") or "") for message in session._messages)
+        self.assertIn("更新后的表达风格", rendered)
 
     def test_attachment_ack_records_context_for_next_turn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1545,7 +1594,11 @@ class AttachmentGateTests(unittest.TestCase):
                 user_id="ou_test",
                 user_name="tester",
             ).ensure()
-            session = _make_test_session_state(session_id="sid", workspace=ws, identity=render_test_prompt(ws),)
+            session = _make_test_session_state(
+                session_id="sid",
+                workspace=ws,
+                identity=render_test_prompt(ws),
+            )
             (ws.attachments / "file_a.csv").write_text("a", encoding="utf-8")
             ack = format_attachment_ack(ws, ["file_a.csv"])
 
@@ -1554,7 +1607,9 @@ class AttachmentGateTests(unittest.TestCase):
         self.assertEqual(session._messages[-2]["role"], "user")
         self.assertIn("file_a.csv", session._messages[-2]["content"])
         self.assertEqual(session._messages[-1]["role"], "assistant")
-        self.assertIn("文件已保存到你的私人空间：attachments/file_a.csv。", session._messages[-1]["content"])
+        self.assertIn(
+            "文件已保存到你的私人空间：attachments/file_a.csv。", session._messages[-1]["content"]
+        )
 
     def test_text_attachment_prompt_with_missing_file_falls_back_to_receipt_only(self) -> None:
         """Regression: cc-connect 把 file 消息推给 ACP 时若文件还没写到 default
@@ -1562,6 +1617,7 @@ class AttachmentGateTests(unittest.TestCase):
         异步 ack（cc-connect 在 ``end_turn`` 后丢弃 ``session_update``），所以
         只同步发一条 fallback 占位，让用户至少知道消息被接住；最终保存确认
         由用户下条主动问 inventory 来获取。"""
+
         async def run_case() -> None:
             original_update = acp_server.update_agent_message_text
             acp_server.update_agent_message_text = lambda text: text
@@ -1574,7 +1630,11 @@ class AttachmentGateTests(unittest.TestCase):
                         user_id="ou_test",
                         user_name="tester",
                     ).ensure()
-                    session = _make_test_session_state(session_id="sid", workspace=ws, identity=render_test_prompt(ws),)
+                    session = _make_test_session_state(
+                        session_id="sid",
+                        workspace=ws,
+                        identity=render_test_prompt(ws),
+                    )
                     agent = AcpChatAgent.__new__(AcpChatAgent)
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
@@ -1640,7 +1700,10 @@ class AttachmentGateTests(unittest.TestCase):
                 self.assertEqual(len(agent._conn.messages), 1)
                 sid, text = agent._conn.messages[0]
                 self.assertEqual(sid, "sid")
-                self.assertIn("文件已保存到你的私人空间：attachments/file_a.csv、attachments/file_b.csv。", text)
+                self.assertIn(
+                    "文件已保存到你的私人空间：attachments/file_a.csv、attachments/file_b.csv。",
+                    text,
+                )
                 self.assertIn("你当前累计 2 个已保存文件：", text)
                 self.assertIn("- attachments/file_a.csv", text)
                 self.assertIn("- attachments/file_b.csv", text)
@@ -1709,9 +1772,15 @@ class AttachmentGateTests(unittest.TestCase):
                         user_id="ou_test",
                         user_name="tester",
                     ).ensure()
-                    (default_ws.attachments / "v3-sample_scene.moduleAlloc").write_text("x", encoding="utf-8")
+                    (default_ws.attachments / "v3-sample_scene.moduleAlloc").write_text(
+                        "x", encoding="utf-8"
+                    )
 
-                    session = _make_test_session_state(session_id="sid", workspace=user_ws, identity=render_test_prompt(user_ws),)
+                    session = _make_test_session_state(
+                        session_id="sid",
+                        workspace=user_ws,
+                        identity=render_test_prompt(user_ws),
+                    )
                     agent = AcpChatAgent.__new__(AcpChatAgent)
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
@@ -1728,7 +1797,9 @@ class AttachmentGateTests(unittest.TestCase):
                 # 先送一条"文件已保存"回执，再送 inventory 详情。
                 self.assertEqual(len(agent._conn.messages), 2)
                 _sid_a, ack_text = agent._conn.messages[0]
-                self.assertIn("文件已保存到你的私人空间：attachments/v3-sample_scene.moduleAlloc。", ack_text)
+                self.assertIn(
+                    "文件已保存到你的私人空间：attachments/v3-sample_scene.moduleAlloc。", ack_text
+                )
                 _sid_b, inv_text = agent._conn.messages[1]
                 self.assertIn("附件：1 个文件", inv_text)
                 self.assertIn("- attachments/v3-sample_scene.moduleAlloc", inv_text)

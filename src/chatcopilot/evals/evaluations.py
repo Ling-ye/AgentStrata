@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Literal, Mapping, Sequence, TypeAlias
 
 from chatcopilot.agent.backends.registry import backend_ids
+from chatcopilot.agent.tools.registry import ToolMaterializationError, discover_tools
 from chatcopilot.core.config import ChatConfig, load_config
 from chatcopilot.evals.artifact_ids import (
     contained_artifact_path,
@@ -42,8 +43,8 @@ from chatcopilot.evals.isolated_executor import (
     IsolatedTarget,
     IsolatedTrialRequest,
     execute_isolated_trial,
-    load_evaluation_runtime,
 )
+from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 from chatcopilot.evals.implementation_catalog import (
     comparison_implementation_snapshot,
     runtime_implementation_snapshot,
@@ -79,6 +80,7 @@ TargetExecutor = Literal[
     "agent_configured",
     "agent_isolated",
     "acp_scenario",
+    "qq_message_flow",
     "dry_run",
 ]
 ComparisonPreset = Literal["quick", "standard", "custom"]
@@ -803,8 +805,7 @@ def _terminate_trial_process(process: Any, *, receiver: Any | None = None) -> No
     process.join(timeout=0)
     if process.exitcode != 0:
         raise _TrialCleanupFailed(
-            f"Trial supervisor {process.pid} exited without cleanup proof "
-            f"(code={process.exitcode})"
+            f"Trial supervisor {process.pid} exited without cleanup proof (code={process.exitcode})"
         )
 
 
@@ -817,8 +818,7 @@ def _await_clean_trial_supervisor_exit(process: Any) -> None:
     process.join(timeout=0)
     if process.exitcode != 0:
         raise _TrialCleanupFailed(
-            f"Trial supervisor {process.pid} exited without cleanup proof "
-            f"(code={process.exitcode})"
+            f"Trial supervisor {process.pid} exited without cleanup proof (code={process.exitcode})"
         )
 
 
@@ -915,8 +915,10 @@ def _execute_supervised_trial(
                     )
                 if kind == "result":
                     payload = message.get("trial")
-                    if not ready or set(message) != {"kind", "trial"} or not isinstance(
-                        payload, Mapping
+                    if (
+                        not ready
+                        or set(message) != {"kind", "trial"}
+                        or not isinstance(payload, Mapping)
                     ):
                         _terminate_trial_process(process, receiver=receiver)
                         raise RuntimeError("supervised Trial returned an invalid result frame")
@@ -1399,9 +1401,7 @@ def _load_current_suite_manifest(suite_id: str) -> Any:
 
 def _current_suite_target(request: TrialExecutionRequest) -> EvaluationTarget:
     if request.target.executor == "dry_run":
-        current_config_fingerprint = _hash_json(
-            {"executor": "dry_run", "suite": request.suite_id}
-        )
+        current_config_fingerprint = _hash_json({"executor": "dry_run", "suite": request.suite_id})
     else:
         if not request.bot:
             raise ValueError("configured Suite Target has no BotSpec")
@@ -1444,9 +1444,11 @@ def _assert_suite_trial_definition_current(request: TrialExecutionRequest) -> No
     if _hash_json(expected) != request.frozen_definition_fingerprint:
         raise _EvaluationDefinitionDrift("frozen Suite definition fingerprint is inconsistent")
     environment_identity = expected.get("environment_identity")
-    if not isinstance(environment_identity, Mapping) or environment_identity.get(
-        "private_runtime_configuration_sha256"
-    ) != request.frozen_environment_fingerprint:
+    if (
+        not isinstance(environment_identity, Mapping)
+        or environment_identity.get("private_runtime_configuration_sha256")
+        != request.frozen_environment_fingerprint
+    ):
         raise _EvaluationDefinitionDrift("frozen Suite environment fingerprint is inconsistent")
     expected_base_fingerprint = expected.get("base_fingerprint")
     expected_base = dict(expected)
@@ -1465,7 +1467,11 @@ def _assert_suite_trial_definition_current(request: TrialExecutionRequest) -> No
             raise _EvaluationDefinitionDrift("frozen Suite Case identity is malformed")
         case_id = str(record.get("case_id") or "")
         digest = str(record.get("definition_sha256") or "")
-        if not case_id or case_id in expected_case_hashes or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        if (
+            not case_id
+            or case_id in expected_case_hashes
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
             raise _EvaluationDefinitionDrift("frozen Suite Case identity is malformed")
         expected_case_ids.append(case_id)
         expected_case_hashes[case_id] = digest
@@ -1587,6 +1593,7 @@ def execute_evaluation_trial(request: TrialExecutionRequest) -> EvaluationTrial:
         "agent_configured",
         "agent_isolated",
         "acp_scenario",
+        "qq_message_flow",
         "dry_run",
     }:
         raise ValueError(f"unsupported evaluation executor: {executor}")
@@ -2092,17 +2099,29 @@ def _validate_suite(
                     ready = ready and credential_ready
                     detail += f", credential={'configured' if credential_ready else 'missing'}"
             else:
-                executor: TargetExecutor = "acp_scenario"
+                selected_executor = next(iter(selected_drivers), "acp_scenario")
+                executor: TargetExecutor = (
+                    selected_executor
+                    if selected_executor in {"acp_scenario", "qq_message_flow"}
+                    else "acp_scenario"
+                )  # type: ignore[assignment]
                 target = _make_target(
                     target_id=f"{executor}-configured",
-                    label="ACP scenario",
+                    label=(
+                        "QQ message flow"
+                        if executor == "qq_message_flow"
+                        else "ACP scenario"
+                    ),
                     executor=executor,
                     backend=backend,
                     model="",
                     reasoning_effort="",
                     config_fingerprint=config_fingerprint,
                 )
-                ready = bool(selected_drivers) and selected_drivers == {"acp_scenario"}
+                ready = bool(selected_drivers) and selected_drivers in (
+                    {"acp_scenario"},
+                    {"qq_message_flow"},
+                )
                 detail = f"executor={executor}, drivers={','.join(sorted(selected_drivers))}"
             checks.append(
                 _check(
@@ -2161,9 +2180,7 @@ def _validated_capability_definitions(
 
     if str(getattr(manifest, "kind", "")) != "product":
         return {}
-    definitions = {
-        definition.case_id: definition for definition in load_case_definitions(manifest)
-    }
+    definitions = {definition.case_id: definition for definition in load_case_definitions(manifest)}
     for case in cases:
         try:
             definition = definitions[case.case_id]
@@ -2192,9 +2209,7 @@ def _expected_search_sources(definition: Any) -> frozenset[str]:
         values = arguments.get("expected_source_hints")
         if not isinstance(values, (list, tuple)):
             continue
-        sources.update(
-            str(value).strip().lower() for value in values if str(value).strip()
-        )
+        sources.update(str(value).strip().lower() for value in values if str(value).strip())
     return frozenset(sources)
 
 
@@ -2276,11 +2291,12 @@ def _suite_case_preflight(
         available_features.update({"image_input", "multiple_image_input"})
     if str(getattr(runtime, "memory_namespace", "")).strip():
         available_features.add("session_memory")
+    persona_control = getattr(getattr(runtime, "subagents", None), "persona_control", None)
+    if bool(getattr(persona_control, "enabled", False)):
+        available_features.add("persona_control")
     packs = set(str(value) for value in getattr(runtime, "tool_packs", ()))
     configured_tools: set[str] = set()
     try:
-        from chatcopilot.agent.tools.registry import discover_tools
-
         configured_tools.update(
             tool.name
             for tool in discover_tools(
@@ -2288,8 +2304,16 @@ def _suite_case_preflight(
                 exclude_tools=runtime.exclude_tools,
             )
         )
-    except Exception:  # noqa: BLE001 - surfaced through per-Case missing tools below
-        pass
+    except ToolMaterializationError as exc:
+        checks.append(
+            _check(
+                "tool_materialization",
+                "工具物化",
+                False,
+                str(exc),
+                "修复显式启用的 tool pack 绑定或工具模块",
+            )
+        )
     configured_search_sources = _configured_search_sources(runtime)
 
     access_drivers: set[str] = set()
@@ -2334,9 +2358,8 @@ def _suite_case_preflight(
         if driver_id == "agent_configured":
             available_case_tools = set(configured_tools)
             expected_search_sources = _expected_search_sources(capability_definition)
-            if (
-                expected_search_sources
-                and expected_search_sources.issubset(configured_search_sources)
+            if expected_search_sources and expected_search_sources.issubset(
+                configured_search_sources
             ):
                 available_case_tools.add("search_information")
             if expected_search_sources:
@@ -2369,7 +2392,7 @@ def _suite_case_preflight(
             )
         )
 
-    if "acp_scenario" in access_drivers:
+    if access_drivers.intersection({"acp_scenario", "qq_message_flow"}):
         checks.extend(_access_configuration_checks(runtime=runtime, config=config))
     return checks
 
@@ -3661,9 +3684,7 @@ def _private_runtime_configuration_snapshot(
         runtime = load_evaluation_runtime(bot)
         config = load_config(env_prefix=runtime.spec.llm.env_prefix)
         whitelist_env = str(getattr(runtime.access, "whitelist_env", "") or "").strip()
-        group_whitelist_env = str(
-            getattr(runtime.access, "group_whitelist_env", "") or ""
-        ).strip()
+        group_whitelist_env = str(getattr(runtime.access, "group_whitelist_env", "") or "").strip()
         whitelist = tuple(
             value.strip()
             for value in str(os.environ.get(whitelist_env, "")).split(",")
@@ -3761,8 +3782,7 @@ def _validation_payload(
 ) -> dict[str, Any]:
     failed_codes = {str(item.get("code") or "") for item in checks if not bool(item.get("ok"))}
     configuration_failure = any(
-        code.startswith(("case_requirements:", "access_"))
-        or code == "external_write_confirmation"
+        code.startswith(("case_requirements:", "access_")) or code == "external_write_confirmation"
         for code in failed_codes
     )
     payload = {

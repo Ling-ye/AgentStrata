@@ -27,7 +27,7 @@ from chatcopilot.agent.subagents.runner import (
 from chatcopilot.agent.subagents.spec import SubagentDef
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.trace import TraceContext, reset_trace, set_trace
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 
 class _FakeLLM:
@@ -65,9 +65,11 @@ class CurrentDatePromptTests(unittest.TestCase):
             first_input = prompt_input("platform-v1")
             session = runtime.new_session(session_id="sid", prompt_input=first_input)
             concrete = session.backend.native_session(session.backend_session_ref)
-            first = render_native_prefix(concrete.prompt_plan)[0]["content"]
+            first_messages = render_native_prefix(concrete.prompt_plan)
+            first = "\n".join(message["content"] for message in first_messages)
             session.set_prompt_plan(PromptPlanBuilder().build(prompt_input("platform-v2")))
-            second = render_native_prefix(concrete.prompt_plan)[0]["content"]
+            second_messages = render_native_prefix(concrete.prompt_plan)
+            second = "\n".join(message["content"] for message in second_messages)
 
         self.assertIn("准确性与搜索", first)
         self.assertNotIn("每个事实性断言都要打标签", first)
@@ -75,20 +77,26 @@ class CurrentDatePromptTests(unittest.TestCase):
         self.assertIn("platform-v2", second)
         self.assertIn("准确性与搜索", second)
         self.assertIn("今天是 2026-06-22", second)
-        self.assertEqual(second, session.snapshot_messages()[0]["content"])
+        self.assertEqual(second_messages, session.snapshot_messages()[: len(second_messages)])
 
     def test_runtime_refresh_replaces_persona_and_memory_without_duplication(self) -> None:
         runtime = AgentRuntime(
             llm=_FakeLLM(), tools=(), tools_schema=(), runtime_config=ChatConfig()
         )
         old_input = prompt_input("stable")
-        old_input = old_input.__class__(**{**old_input.__dict__, "dynamic_persona": "old persona", "memory": "old memory"})
+        old_input = old_input.__class__(
+            **{**old_input.__dict__, "dynamic_persona": "old persona", "memory": "old memory"}
+        )
         session = runtime.new_session(session_id="sid-dynamic", prompt_input=old_input)
         new_input = prompt_input("stable-v2")
-        new_input = new_input.__class__(**{**new_input.__dict__, "dynamic_persona": "new persona", "memory": "new memory"})
+        new_input = new_input.__class__(
+            **{**new_input.__dict__, "dynamic_persona": "new persona", "memory": "new memory"}
+        )
         session.set_prompt_plan(PromptPlanBuilder().build(new_input))
         concrete = session.backend.native_session(session.backend_session_ref)
-        rendered = "\n".join(message["content"] for message in render_native_prefix(concrete.prompt_plan))
+        rendered = "\n".join(
+            message["content"] for message in render_native_prefix(concrete.prompt_plan)
+        )
 
         self.assertIn("stable-v2", rendered)
         self.assertIn("new persona", rendered)
@@ -123,9 +131,7 @@ class SearchFallbackTests(unittest.TestCase):
             ],
             primary_calls,
         )
-        fallback = _delegate(
-            "search_searxng", [{"ok": True, "summary": "fresh"}], fallback_calls
-        )
+        fallback = _delegate("search_searxng", [{"ok": True, "summary": "fresh"}], fallback_calls)
         routed = _with_web_fallback(primary=primary, fallback=fallback, circuit=circuit)
 
         first = json.loads(routed.handler({"objective": "latest"})[0])

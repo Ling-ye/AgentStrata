@@ -27,7 +27,7 @@ from chatcopilot.core.observability_redaction import (
     load_bounded_observability_json,
     redact_observability_payload,
 )
-from chatcopilot.core.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.project import ENV_PREFIX, LIMIT_DIRNAME
 
 JOBS_DIRNAME = "jobs"

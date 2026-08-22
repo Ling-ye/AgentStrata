@@ -1,7 +1,7 @@
 ---
 id: architecture-decoupling-roadmap
 type: architecture
-status: accepted
+status: superseded
 created: 2026-07-09
 ---
 
@@ -179,6 +179,8 @@ validation_commands:
 ## Verification
 
 # Verification
+
+The remaining boundary work is superseded by `architecture-boundary-hardening`.
 
 Use these checks for roadmap maintenance and future roadmap items:
 

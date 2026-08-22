@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import importlib
-from typing import Callable
+from types import MappingProxyType
+from typing import Callable, Mapping
 
 from chatcopilot.contracts.tool_packs import (
     ToolFeatureEntry,
@@ -16,7 +17,7 @@ def _binding(module: str, *tool_names: str) -> ToolModuleBinding:
     return ToolModuleBinding(module=module, tool_names=tuple(tool_names))
 
 
-_BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
+_BUILTIN_TOOL_PACKS_DATA: dict[str, ToolPackEntry] = {
     "feishu.document": ToolPackEntry(
         name="feishu.document",
         policy_module="chatcopilot.external_tools.feishu.tool_pack_policies",
@@ -297,7 +298,7 @@ _BUILTIN_TOOL_PACKS: dict[str, ToolPackEntry] = {
 }
 
 
-_BUILTIN_TOOL_FEATURES: dict[str, ToolFeatureEntry] = {
+_BUILTIN_TOOL_FEATURES_DATA: dict[str, ToolFeatureEntry] = {
     "chat.file_uploads": ToolFeatureEntry(
         name="chat.file_uploads",
         description="Deterministic user file upload storage feature.",
@@ -312,21 +313,28 @@ _BUILTIN_TOOL_FEATURES: dict[str, ToolFeatureEntry] = {
     ),
 }
 
+BUILTIN_TOOL_PACKS: Mapping[str, ToolPackEntry] = MappingProxyType(
+    _BUILTIN_TOOL_PACKS_DATA
+)
+BUILTIN_TOOL_FEATURES: Mapping[str, ToolFeatureEntry] = MappingProxyType(
+    _BUILTIN_TOOL_FEATURES_DATA
+)
+
 
 def known_tool_pack_names() -> set[str]:
-    return set(_BUILTIN_TOOL_PACKS)
+    return set(BUILTIN_TOOL_PACKS)
 
 
 def known_tool_feature_names() -> set[str]:
-    return set(_BUILTIN_TOOL_FEATURES)
+    return set(BUILTIN_TOOL_FEATURES)
 
 
 def get_tool_pack_entry(name: str) -> ToolPackEntry | None:
-    return _BUILTIN_TOOL_PACKS.get(name)
+    return BUILTIN_TOOL_PACKS.get(name)
 
 
 def get_tool_feature_entry(name: str) -> ToolFeatureEntry | None:
-    return _BUILTIN_TOOL_FEATURES.get(name)
+    return BUILTIN_TOOL_FEATURES.get(name)
 
 
 def resolve_tool_bindings(
@@ -363,7 +371,7 @@ def resolve_tool_modules(tool_pack_names: tuple[str, ...] | list[str]) -> tuple[
 def all_tool_bindings() -> tuple[ToolModuleBinding, ...]:
     """Return the exact bindings for the complete built-in catalog."""
 
-    return resolve_tool_bindings(list(_BUILTIN_TOOL_PACKS))
+    return resolve_tool_bindings(list(BUILTIN_TOOL_PACKS))
 
 
 def all_tool_modules() -> tuple[str, ...]:
@@ -385,7 +393,13 @@ def load_tool_pack_policies(name: str) -> tuple[ToolPackPolicy, ...]:
     return build_policy()
 
 
+_BUILTIN_TOOL_FEATURES = BUILTIN_TOOL_FEATURES
+_BUILTIN_TOOL_PACKS = BUILTIN_TOOL_PACKS
+
+
 __all__ = [
+    "BUILTIN_TOOL_FEATURES",
+    "BUILTIN_TOOL_PACKS",
     "ToolFeatureEntry",
     "ToolModuleBinding",
     "ToolPackEntry",

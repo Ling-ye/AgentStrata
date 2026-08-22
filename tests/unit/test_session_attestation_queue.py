@@ -15,6 +15,12 @@ import pytest
 
 from chatcopilot.botspec import cli as botspec_cli
 from chatcopilot.contracts.identity import ConversationIdentity, TurnIdentity
+from chatcopilot.core.session_env_store import (
+    MAX_SESSION_ATTESTATIONS,
+    SESSION_ATTESTATION_TTL_NS,
+    SessionEnvSecurityError,
+    write_session_env,
+)
 from chatcopilot.middleware.acp import agent_bridge
 
 
@@ -84,6 +90,35 @@ def _turn(actor: str) -> TurnIdentity:
 def _bind_runtime_env(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
     monkeypatch.setenv("CHATCOPILOT_SESSION_ENV_DIR", str(directory))
     monkeypatch.setenv("CC_SESSION_KEY", SESSION_KEY)
+
+
+@pytest.mark.parametrize(
+    ("max_attestations", "ttl_ns"),
+    [
+        (MAX_SESSION_ATTESTATIONS + 1, SESSION_ATTESTATION_TTL_NS),
+        (MAX_SESSION_ATTESTATIONS, SESSION_ATTESTATION_TTL_NS + 1),
+        (0, SESSION_ATTESTATION_TTL_NS),
+        (MAX_SESSION_ATTESTATIONS, 0),
+        (True, SESSION_ATTESTATION_TTL_NS),
+    ],
+)
+def test_writer_rejects_limits_that_the_canonical_reader_cannot_consume(
+    tmp_path: Path,
+    max_attestations: int,
+    ttl_ns: int,
+) -> None:
+    directory = tmp_path / "session-env"
+
+    with pytest.raises(SessionEnvSecurityError):
+        write_session_env(
+            directory=directory,
+            session_key=SESSION_KEY,
+            values=_identity_values(),
+            max_attestations=max_attestations,
+            ttl_ns=ttl_ns,
+        )
+
+    assert not directory.exists()
 
 
 def test_cross_process_append_preserves_every_unique_and_duplicate_record(

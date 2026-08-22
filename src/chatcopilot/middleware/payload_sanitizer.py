@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from chatcopilot.middleware.access_control import Role
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 _USER_STRIP_FIELDS = ("console_tail", "doc_links", "details", "stage")
 

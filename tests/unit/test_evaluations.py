@@ -18,6 +18,7 @@ import chatcopilot.evals.evaluations as evaluation_module
 import chatcopilot.evals.implementation_catalog as implementation_catalog
 import chatcopilot.evals.paths as evaluation_paths
 import chatcopilot.evals.runner as evaluation_runner
+from chatcopilot.agent.tools.registry import ToolMaterializationError
 from chatcopilot.botspec.runtime import BotPromptProfile
 from chatcopilot.core.config import ChatConfig, LLMConfig, RoutingConfig, RuntimeConfig
 from chatcopilot.contracts.runtime import McpServerConfig
@@ -176,7 +177,9 @@ def _process_tree_probe_executor(request: TrialExecutionRequest) -> EvaluationTr
     if descendant_pid == 0:
         if bool(request.options.get("escape_session", True)):
             os.setsid()
-        marker.write_text(str(os.getpid()), encoding="utf-8")
+        pending_marker = marker.with_suffix(".pending")
+        pending_marker.write_text(str(os.getpid()), encoding="utf-8")
+        pending_marker.replace(marker)
         time.sleep(60)
         os._exit(0)
     deadline = time.monotonic() + 5
@@ -676,9 +679,10 @@ def test_product_dry_run_validates_static_capability_catalog_before_runtime_load
     )
 
     assert result["ready"] is True
-    assert next(item for item in result["checks"] if item["code"] == "capability_catalog")[
-        "ok"
-    ] is True
+    assert (
+        next(item for item in result["checks"] if item["code"] == "capability_catalog")["ok"]
+        is True
+    )
 
 
 def test_product_dry_run_rejects_invalid_static_verifier_before_runtime_loading(
@@ -802,18 +806,56 @@ def _capability_case_preflight(
     )
 
 
+def test_qq_persona_preflight_projects_enabled_host_control() -> None:
+    manifest = evaluation_module.get_manifest("agentstrata-qq-message-flow-v1")
+    case = next(
+        item
+        for item in evaluation_module.get_cases(manifest.suite_id, auto_prepare=False)
+        if item.case_id == "qq-persona-persistence-next-turn"
+    )
+    runtime = SimpleNamespace(
+        agent_backend="codex",
+        platform_type="qq",
+        tool_features=(),
+        memory_namespace="",
+        tool_packs=(),
+        exclude_tools=(),
+        subagents=SimpleNamespace(
+            persona_control=SimpleNamespace(enabled=True),
+            search_providers=(),
+        ),
+        mcp_servers=(),
+        access=SimpleNamespace(
+            enabled=True,
+            whitelist_env="QQ_ALLOW_FROM",
+            group_whitelist_env="QQ_ALLOW_GROUPS",
+            private_require_whitelist=True,
+            group_require_whitelist=True,
+            group_require_mention=True,
+        ),
+    )
+    definitions = evaluation_module._validated_capability_definitions(manifest, (case,))
+
+    checks = evaluation_module._suite_case_preflight(
+        manifest=manifest,
+        cases=(case,),
+        runtime=runtime,
+        config=SimpleNamespace(llm=SimpleNamespace(model="test", api_key="credential")),
+        capability_definitions=definitions,
+    )
+
+    case_check = next(item for item in checks if item["code"].startswith("case_requirements:"))
+    assert case_check["ok"] is True
+
+
 def test_product_search_preflight_distinguishes_web_from_explicit_experience_source() -> None:
     web_provider = SearchProviderSpec(id="searxng", kind="searxng", enabled=True)
 
-    general = _capability_case_preflight(
-        "search-general-with-evidence", providers=(web_provider,)
-    )
+    general = _capability_case_preflight("search-general-with-evidence", providers=(web_provider,))
     general_case = next(item for item in general if item["code"].startswith("case_requirements:"))
     assert general_case["ok"] is True
 
-    explicit = _capability_case_preflight(
-        "search-explicit-source", providers=(web_provider,)
-    )
+    explicit = _capability_case_preflight("search-explicit-source", providers=(web_provider,))
     explicit_case = next(item for item in explicit if item["code"].startswith("case_requirements:"))
     assert explicit_case["ok"] is False
     assert "search_source:experience" in str(explicit_case["detail"])
@@ -830,17 +872,13 @@ def test_product_search_preflight_requires_declared_direct_provider_credential(
         credential_env="TEST_EVAL_TAVILY_KEY",
     )
 
-    missing = _capability_case_preflight(
-        "search-general-with-evidence", providers=(provider,)
-    )
+    missing = _capability_case_preflight("search-general-with-evidence", providers=(provider,))
     missing_case = next(item for item in missing if item["code"].startswith("case_requirements:"))
     assert missing_case["ok"] is False
     assert "search_source:web" in str(missing_case["detail"])
 
     monkeypatch.setenv("TEST_EVAL_TAVILY_KEY", "configured-test-key")
-    ready = _capability_case_preflight(
-        "search-general-with-evidence", providers=(provider,)
-    )
+    ready = _capability_case_preflight("search-general-with-evidence", providers=(provider,))
     ready_case = next(item for item in ready if item["code"].startswith("case_requirements:"))
     assert ready_case["ok"] is True
 
@@ -875,6 +913,28 @@ def test_product_subagent_preflight_requires_chat_llm_for_codex_main_backend() -
     ready = _capability_case_preflight("subagent-structured-result")
     ready_case = next(item for item in ready if item["code"].startswith("case_requirements:"))
     assert ready_case["ok"] is True
+
+
+def test_product_preflight_reports_enabled_tool_pack_materialization_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        evaluation_module,
+        "discover_tools",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            ToolMaterializationError(
+                module="chatcopilot.external_tools.example.tools",
+                pack_names=("example.pack",),
+                reason="import_error:ImportError",
+            )
+        ),
+    )
+
+    checks = _capability_case_preflight("subagent-structured-result")
+
+    materialization = next(item for item in checks if item["code"] == "tool_materialization")
+    assert materialization["ok"] is False
+    assert "example.pack" in str(materialization["detail"])
 
 
 def test_suite_request_rejects_legacy_external_write_authority() -> None:
@@ -1549,9 +1609,9 @@ def test_trial_authority_mutation_is_indeterminate_and_quarantined(
     assert result.trials == ()
     assert result.error.startswith(evaluation_module._ARTIFACT_INTEGRITY_ERROR_PREFIX)
     assert any((output / "workspaces").iterdir())
-    assert '"event":"target_group_quarantined"' in (
-        output / "progress.jsonl"
-    ).read_text(encoding="utf-8")
+    assert '"event":"target_group_quarantined"' in (output / "progress.jsonl").read_text(
+        encoding="utf-8"
+    )
 
     with pytest.raises(ValueError, match="quarantined Evaluation"):
         run_evaluation(request, output=output, resume=True)
@@ -1702,14 +1762,14 @@ def test_suite_resume_validates_the_case_driver_not_the_mixed_target_driver() ->
             "preset": "custom",
             "case_ids": [
                 "dialogue-strict-json",
-                "access-nickname-spoof-denied",
+                "tool-allowed-exact-call",
             ],
             "repetitions": 2,
         }
     )
     assert request.kind == "suite"
     cases = evaluation_module._execution_cases(request)
-    acp_case = next(case for case in cases if case.case_id == "access-nickname-spoof-denied")
+    isolated_case = next(case for case in cases if case.case_id == "tool-allowed-exact-call")
     target = EvaluationTarget(
         target_id="codex-configured",
         label="Codex configured",
@@ -1722,7 +1782,7 @@ def test_suite_resume_validates_the_case_driver_not_the_mixed_target_driver() ->
     execution = evaluation_module._trial_request(
         request=request,
         output=Path("reports/evals/manual/eval-mixed-driver-resume"),
-        case=acp_case,
+        case=isolated_case,
         target=target,
         attempt=1,
         order=1,
@@ -1735,7 +1795,7 @@ def test_suite_resume_validates_the_case_driver_not_the_mixed_target_driver() ->
     trial = replace(
         _trial(execution),
         trial_id=trial_artifact_id(
-            acp_case.case_id,
+            isolated_case.case_id,
             attempt=1,
             target_fingerprint=target.fingerprint,
         ),
@@ -1748,7 +1808,7 @@ def test_suite_resume_validates_the_case_driver_not_the_mixed_target_driver() ->
         cases=cases,
     )
 
-    assert resumed[0].executor == "acp_scenario"
+    assert resumed[0].executor == "agent_isolated"
 
 
 def test_suite_resume_rejects_plugin_definition_drift(
@@ -2017,8 +2077,7 @@ def test_resume_rejects_runtime_prompt_drift(
             runtime,
             prompt_profile=replace(
                 runtime.prompt_profile,
-                identity=runtime.prompt_profile.identity
-                + "\nchanged evaluation behavior",
+                identity=runtime.prompt_profile.identity + "\nchanged evaluation behavior",
             ),
         )
 
@@ -2177,9 +2236,7 @@ def _frozen_ifeval_trial_request(tmp_path: Path) -> TrialExecutionRequest:
     )
     validation = validate_evaluation(parsed)
     assert validation["ready"] is True
-    targets = tuple(
-        evaluation_module._target_from_dict(item) for item in validation["targets"]
-    )
+    targets = tuple(evaluation_module._target_from_dict(item) for item in validation["targets"])
     cases = evaluation_module._execution_cases(parsed)
     snapshot = evaluation_module._config_snapshot(parsed, targets, cases)
     return evaluation_module._trial_request(
@@ -2219,9 +2276,7 @@ def test_suite_trial_rejects_trusted_source_drift_before_execution(
         implementation_catalog,
         "trusted_module_sha256",
         lambda module_name: (
-            "0" * 64
-            if module_name == "chatcopilot.evals.runner"
-            else original_digest(module_name)
+            "0" * 64 if module_name == "chatcopilot.evals.runner" else original_digest(module_name)
         ),
     )
 
@@ -2854,7 +2909,7 @@ def test_product_suite_summary_never_reports_a_partial_green_or_total_score() ->
                 "preset": "custom",
                 "case_ids": [
                     "dialogue-strict-json",
-                    "access-nickname-spoof-denied",
+                    "tool-allowed-exact-call",
                 ],
                 "dry_run": True,
             }

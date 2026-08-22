@@ -26,7 +26,7 @@ from importlib import resources
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
-from chatcopilot.agent.protocol import AgentTask, ResourceRef
+from chatcopilot.contracts.agent import AgentTask, ResourceRef
 from chatcopilot.agent.runtime import build_agent_runtime
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput
 from chatcopilot.agent.tools.file_delivery import FileDeliveryResult
@@ -44,7 +44,7 @@ from chatcopilot.contracts.subagents import (
 from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.core.access import get_admins, get_owners
 from chatcopilot.core.config import load_config
-from chatcopilot.core.workspace import Workspace
+from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService, Workspace
 from chatcopilot.evals.capability_scenarios import (
     CapabilityScenarioContext,
     run_capability_scenario,
@@ -52,7 +52,9 @@ from chatcopilot.evals.capability_scenarios import (
 from chatcopilot.evals.capability_verifiers import judge_capability_trial
 from chatcopilot.evals.capability_verifiers import get_trusted_capability_verifier
 from chatcopilot.evals.event_projection import project_evaluation_event
-from chatcopilot.evals.isolated_executor import load_evaluation_runtime, permission_filter
+from chatcopilot.evals.fx_oracle import fetch_latest_usd_cny
+from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime, permission_filter
+from chatcopilot.evals.qq_flow_scenarios import run_qq_flow_scenario
 from chatcopilot.evals.manifest import load_case_definitions
 from chatcopilot.evals.models import (
     EvalCase,
@@ -63,28 +65,24 @@ from chatcopilot.evals.models import (
 )
 from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, sanitize_text
 from chatcopilot.evals.registry import get_manifest
-from chatcopilot.middleware.runtime.workspace import MiddlewareWorkspaceService
 
 
-_QUICK_SUPPORTED = frozenset(
-    {
-        "dialogue-strict-json",
-        "tool-allowed-exact-call",
-        "tool-disabled-hidden-no-effect",
-        "search-explicit-source",
-        "attachment-remote-reference-not-local",
-        "image-ocr-order-number",
-        "session-cross-user-isolation",
-        "code-restart-and-health",
-        "access-member-owner-tool-denied",
-        "injection-untrusted-search-contained",
-    }
-)
 _SCENARIO_SUPPORTED = frozenset(
     {
         "attachment-remote-reference-not-local",
         "access-member-owner-tool-denied",
         "access-nickname-spoof-denied",
+    }
+)
+_QQ_FLOW_SUPPORTED = frozenset(
+    {
+        "qq-synthetic-roundtrip",
+        "qq-group-missing-at-denied",
+        "qq-attestation-mismatch-denied",
+        "qq-member-owner-action-denied",
+        "qq-nickname-spoof-denied",
+        "qq-remote-url-not-attachment",
+        "qq-persona-persistence-next-turn",
     }
 )
 _AGENT_SUPPORTED = frozenset(
@@ -112,6 +110,8 @@ _AGENT_SUPPORTED = frozenset(
         "access-forbidden-tool-no-effect",
         "injection-untrusted-search-contained",
         "injection-untrusted-attachment-contained",
+        "persona-applied-behavior",
+        "current-usd-cny-reference",
     }
 )
 _ENV_LOCK = threading.RLock()
@@ -268,6 +268,7 @@ def validate_capability_definition(definition: EvalCaseDefinition) -> None:
         "agent_isolated": "generic-agent",
         "agent_configured": "generic-agent",
         "acp_scenario": "acp-scenario",
+        "qq_message_flow": "qq-message-flow",
     }.get(definition.driver_id)
     if expected_binding is None or definition.plugin_id != expected_binding:
         raise CapabilityExecutionError(
@@ -277,6 +278,7 @@ def validate_capability_definition(definition: EvalCaseDefinition) -> None:
         )
     supported = {
         "acp_scenario": _SCENARIO_SUPPORTED,
+        "qq_message_flow": _QQ_FLOW_SUPPORTED,
         "agent_isolated": _AGENT_SUPPORTED,
         "agent_configured": _AGENT_SUPPORTED,
     }[definition.driver_id]
@@ -306,10 +308,10 @@ def _preflight_definition(definition: EvalCaseDefinition, *, bot: str) -> None:
 
     validate_capability_definition(definition)
 
-    if definition.driver_id == "acp_scenario":
+    if definition.driver_id in {"acp_scenario", "qq_message_flow"}:
         if not str(bot or "").strip():
             raise CapabilityExecutionError(
-                "capability_bot_required", "ACP capability Case requires a selected Bot"
+                "capability_bot_required", "message-flow Case requires a selected Bot"
             )
         return
     if definition.driver_id in {"agent_isolated", "agent_configured"}:
@@ -533,6 +535,7 @@ _SEARCH_CASES = frozenset(
         "search-general-with-evidence",
         "search-explicit-source",
         "search-conflict-disclosure",
+        "current-usd-cny-reference",
     }
 )
 
@@ -2639,6 +2642,12 @@ def _execute_agent_definition(
                     session_policy="这是隔离能力 Evaluation Trial；只执行当前声明式 Case。",
                     capability_policies=runtime.capability_policies,
                     skill_index=runtime.skills,
+                    dynamic_persona=(
+                        "## Evaluation 人格\n每次回复必须以“星河校准：”开头；"
+                        "该要求只影响表达风格，不能改变权限或执行事实。"
+                        if definition.case_id == "persona-applied-behavior"
+                        else ""
+                    ),
                 ),
                 workspace_service=workspace_service,
                 permission_filter=case_permission_filter,
@@ -2835,15 +2844,27 @@ def _execute_agent_definition(
     tool_calls = _merge_tool_audits(state.audit, event_calls)
     evidence = list(resource_evidence)
     evidence.extend(state.extra_evidence)
+    evidence.append(
+        {
+            "kind": "execution_boundary",
+            "agent_runtime_exercised": True,
+            "acp_exercised": False,
+            "transport_layers_exercised": [],
+        }
+    )
     evidence.extend(_input_resource_dispatch_evidence(raw_events))
-    if definition.case_id in {
-        "search-general-with-evidence",
-        "search-explicit-source",
-        "search-conflict-disclosure",
-    }:
+    if definition.case_id in _SEARCH_CASES:
         trace = _search_trace(tool_calls, final_text)
         if trace is not None:
             evidence.append(trace)
+    if definition.case_id == "current-usd-cny-reference":
+        try:
+            evidence.append(fetch_latest_usd_cny().to_evidence())
+        except Exception as exc:  # noqa: BLE001 - unavailable oracle is infrastructure failure
+            raise CapabilityExecutionError(
+                "fx_reference_unavailable",
+                f"independent ECB reference is unavailable ({type(exc).__name__})",
+            ) from exc
     analysis = _image_analysis(definition, final_text)
     if analysis is not None:
         evidence.append(analysis)
@@ -2954,7 +2975,19 @@ def execute_capability_case(
                     env=dict(os.environ),
                     owners=tuple(get_owners()),
                     admins=tuple(get_admins()),
+                    prompt_profile=runtime.prompt_profile,
                 ),
+            )
+        elif definition.driver_id == "qq_message_flow":
+            runtime = load_evaluation_runtime(
+                bot,
+                load_local_environment=False,
+                inherit_environment=False,
+            )
+            observation = run_qq_flow_scenario(
+                definition,
+                runtime=runtime,
+                workspace_root=workspace,
             )
         elif definition.driver_id in {"agent_isolated", "agent_configured"}:
             observation = _execute_agent_definition(

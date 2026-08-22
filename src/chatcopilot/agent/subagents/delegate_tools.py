@@ -21,7 +21,7 @@ from chatcopilot.core.adapter_approval import (
     AdapterApprovalStore,
     resolve_adapter_bot_spec,
 )
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 _CONSECUTIVE_FAILURE_THROTTLE = 2
 _KNOWN_WRITE_TOOL_NAMES = frozenset(

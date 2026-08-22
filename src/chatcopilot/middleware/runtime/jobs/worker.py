@@ -77,7 +77,7 @@ def run_worker(request_path: Path) -> int:
             )
             # local import 避免 worker 启动期 import agent runtime 的额外开销
             from chatcopilot.contracts.jobs import JobExecutionContext
-            from chatcopilot.middleware.runtime.workspace import MiddlewareWorkspaceService
+            from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService
 
             workspace_service = MiddlewareWorkspaceService()
             def update_job_stage(

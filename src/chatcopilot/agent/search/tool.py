@@ -17,7 +17,7 @@ from chatcopilot.agent.search.router import SearchRouter
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.core.llm_client import LLMClient
 from chatcopilot.contracts.subagents import SearchProviderSpec, SubagentBudgetSpec
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.contracts.tools import HandlerResult, ToolDef
 
 _MAX_SEARCH_WALL_SECONDS = 180.0
 _SEARCH_BUDGET_RATIO = 0.6

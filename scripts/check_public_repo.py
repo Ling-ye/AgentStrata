@@ -36,6 +36,8 @@ PUBLIC_URL_HOSTS = frozenset(
         "careers.tencent.com",
         "cli.github.com",
         "config.sinataoke.cn",
+        "data-api.ecb.europa.eu",
+        "data.ecb.europa.eu",
         "deb.nodesource.com",
         "developers.openai.com",
         "docs.github.com",

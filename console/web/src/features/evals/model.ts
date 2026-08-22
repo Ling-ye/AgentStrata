@@ -246,6 +246,7 @@ export interface EvaluationSuite {
   value: string;
   recommendation: string;
   cadence: string;
+  track?: "agent" | "qq_message_flow" | string;
   requires_bot: boolean;
   requires_external_data: boolean;
   official_url: string;
@@ -442,6 +443,7 @@ export function isProductCapabilityEvaluation(record: EvaluationRecord): boolean
     asString(result.suite, asString(record.selection.id)),
   );
   return suiteId === "agentstrata-capabilities-v1" ||
+    suiteId === "agentstrata-qq-message-flow-v1" ||
     summary.score_scope ===
       "product capability gates are not averaged into an intelligence score";
 }

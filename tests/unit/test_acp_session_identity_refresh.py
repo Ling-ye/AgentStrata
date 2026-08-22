@@ -12,7 +12,7 @@ from unittest.mock import patch
 from chatcopilot.contracts.identity import ConversationIdentity, TurnIdentity
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.middleware.acp import agent_bridge
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 def _session_env_file(

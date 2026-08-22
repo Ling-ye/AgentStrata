@@ -10,7 +10,7 @@ from chatcopilot.agent.search.providers import SearchProviderRegistry as Researc
 from chatcopilot.agent.search.tool import build_search_tool
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.contracts.subagents import SubagentBudgetSpec
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.contracts.tools import HandlerResult, ToolDef
 
 
 def build_research_tool(

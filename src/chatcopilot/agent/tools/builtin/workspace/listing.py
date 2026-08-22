@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 
 from chatcopilot.agent.tools.workspace_context import describe_workspace, resolve_workspace
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult
+from chatcopilot.contracts.tools import HandlerResult
 from chatcopilot.agent.tools.builtin.workspace.common import _silent_cleanup
 
 _VALID_SUBDIRS = ("downloads", "results", "uploads", "attachments", "jobs", "tasks")

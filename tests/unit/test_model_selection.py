@@ -19,11 +19,11 @@ from chatcopilot.core.model_selection import (
     validate_frozen_code_model_selection,
 )
 from chatcopilot.middleware.acp.model_commands import handle_model_command
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     EXECUTION_USER_SERIAL_BACKGROUND,
 )
 from chatcopilot.middleware.runtime.jobs.submitter import submit_tool_job
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 class _Session:

@@ -11,6 +11,7 @@ ContextManager 是纯函数式的视图生成器：接收完整 _messages，返�
 5. 滑动窗口：保留最近 N 轮
 6. token 上限裁剪：对话部分超限时整轮丢弃最老轮次
 """
+
 from __future__ import annotations
 
 import copy
@@ -20,7 +21,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List
 
 from chatcopilot.agent.context.token_estimator import (
-    estimate_message_tokens,
     estimate_messages_tokens,
 )
 
@@ -64,11 +64,13 @@ def _segment_turns(messages: List[Dict[str, Any]]) -> List[Turn]:
                 current_msgs.append(msg)
 
     if current_msgs:
-        turns.append(Turn(
-            messages=current_msgs,
-            start_idx=current_start,
-            end_idx=current_start + len(current_msgs),
-        ))
+        turns.append(
+            Turn(
+                messages=current_msgs,
+                start_idx=current_start,
+                end_idx=current_start + len(current_msgs),
+            )
+        )
     return turns
 
 
@@ -79,6 +81,7 @@ def _summarize_tool_message(msg: Dict[str, Any], max_tokens: int) -> Dict[str, A
         content_raw = json.dumps(content_raw, ensure_ascii=False)
 
     from chatcopilot.agent.context.token_estimator import estimate_tokens
+
     if estimate_tokens(content_raw) <= max_tokens:
         return msg
 
@@ -119,6 +122,7 @@ class ContextManager:
         messages: List[Dict[str, Any]],
         *,
         topic_decision: Any = None,
+        prompt_prefix_length: int | None = None,
     ) -> List[Dict[str, Any]]:
         """Return a trimmed deep-copy of *messages* for LLM consumption."""
         if not messages:
@@ -126,20 +130,32 @@ class ContextManager:
 
         working = copy.deepcopy(messages)
 
-        system_msg, conversation = self._split_system(working)
+        if prompt_prefix_length is None:
+            prefix_length = 1 if working[0].get("role") == "system" else 0
+        else:
+            if (
+                isinstance(prompt_prefix_length, bool)
+                or not isinstance(prompt_prefix_length, int)
+                or prompt_prefix_length < 0
+                or prompt_prefix_length > len(working)
+            ):
+                raise ValueError("prompt_prefix_length is outside the message view")
+            if prompt_prefix_length and working[0].get("role") != "system":
+                raise ValueError("native prompt prefix must start with a system message")
+            prefix_length = prompt_prefix_length
+        prompt_prefix = working[:prefix_length]
+        conversation = working[prefix_length:]
         turns = _segment_turns(conversation)
 
         if not turns:
-            unsegmented = [system_msg] if system_msg else []
+            unsegmented = list(prompt_prefix)
             unsegmented.extend(conversation)
             return unsegmented
 
         topic_context = getattr(topic_decision, "context_kind", None)
         if topic_context == "unrelated":
             turns = turns[-1:]
-            unrelated_result: List[Dict[str, Any]] = []
-            if system_msg:
-                unrelated_result.append(system_msg)
+            unrelated_result: List[Dict[str, Any]] = list(prompt_prefix)
             unrelated_result.extend(turns[0].messages)
             _LOGGER.debug(
                 "context window | topic=unrelated turns_kept=1 turns_trimmed=%d",
@@ -157,51 +173,38 @@ class ContextManager:
 
         if self.summarize_prior_tool_results:
             for turn in turns:
-                _summarize_prior_iteration_tools(
-                    turn.messages, self.tool_result_summary_max_tokens
-                )
+                _summarize_prior_iteration_tools(turn.messages, self.tool_result_summary_max_tokens)
 
-        conv_tokens = sum(
-            estimate_messages_tokens(t.messages) for t in turns
-        )
+        prefix_tokens = estimate_messages_tokens(prompt_prefix)
+        conversation_budget = max(0, self.max_context_tokens - prefix_tokens)
+        conv_tokens = sum(estimate_messages_tokens(t.messages) for t in turns)
         trimmed_count = 0
-        while conv_tokens > self.max_context_tokens and turns and len(turns) > 1:
+        while conv_tokens > conversation_budget and turns and len(turns) > 1:
             oldest = turns.pop(0)
             conv_tokens -= estimate_messages_tokens(oldest.messages)
             trimmed_count += 1
 
-        prepared: List[Dict[str, Any]] = []
-        if system_msg:
-            prepared.append(system_msg)
+        prepared: List[Dict[str, Any]] = list(prompt_prefix)
 
         for turn in turns:
             prepared.extend(turn.messages)
 
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            system_tokens = estimate_message_tokens(system_msg) if system_msg else 0
             _LOGGER.debug(
-                "context window | system ~%d tokens | conversation ~%d/%d tokens | "
+                "context window | prompt prefix ~%d tokens | conversation ~%d/%d tokens | "
                 "%d turns kept | %d trimmed%s",
-                system_tokens, conv_tokens, self.max_context_tokens,
-                len(turns), trimmed_count,
+                prefix_tokens,
+                conv_tokens,
+                conversation_budget,
+                len(turns),
+                trimmed_count,
                 f" | topic={topic_context}" if topic_context else "",
             )
 
         return prepared
 
-    @staticmethod
-    def _split_system(
-        messages: List[Dict[str, Any]],
-    ) -> tuple[Dict[str, Any] | None, List[Dict[str, Any]]]:
-        """Separate the leading system message from conversation messages."""
-        if messages and messages[0].get("role") == "system":
-            return messages[0], messages[1:]
-        return None, messages
 
-
-def _summarize_prior_iteration_tools(
-    messages: List[Dict[str, Any]], max_tokens: int
-) -> None:
+def _summarize_prior_iteration_tools(messages: List[Dict[str, Any]], max_tokens: int) -> None:
     """Summarize tool results from earlier iterations within a single turn.
 
     In subagent sessions the conversation often has only one turn (a single

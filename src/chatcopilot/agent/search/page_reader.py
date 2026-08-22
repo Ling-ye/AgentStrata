@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 _JS_SHELL_RE = re.compile(
     r"(enable javascript|javascript is required|requires javascript|"

@@ -14,7 +14,7 @@ from chatcopilot.agent.context.prompt_plan import (
 from chatcopilot.agent.tools.registry import discover_tools
 from chatcopilot.botspec.runtime import load_runtime_context
 from chatcopilot.contracts import Role, role_ge
-from chatcopilot.external_tools.shared.tool_spec import build_openai_schema
+from chatcopilot.contracts.tools import build_openai_schema
 
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -66,7 +66,13 @@ def test_removed_contract_symbols_and_output_labels_do_not_reappear() -> None:
     violations: list[str] = []
     for root in roots:
         for path in root.rglob("*"):
-            if not path.is_file() or path.suffix not in {".py", ".md", ".yaml", ".template", ".example"}:
+            if not path.is_file() or path.suffix not in {
+                ".py",
+                ".md",
+                ".yaml",
+                ".template",
+                ".example",
+            }:
                 continue
             text = path.read_text(encoding="utf-8")
             for token in banned:
@@ -103,8 +109,7 @@ def test_lingye_prompt_and_tool_schema_budgets(monkeypatch: pytest.MonkeyPatch) 
                     role=role,
                     channel_kind=channel,
                     session_policy=(
-                        "当前可信角色与会话作用域已由 transport attestation "
-                        "和运行时完成校验。"
+                        "当前可信角色与会话作用域已由 transport attestation 和运行时完成校验。"
                     ),
                     capability_policies=runtime.capability_policies,
                     skill_index=runtime.skills,
@@ -120,9 +125,7 @@ def test_lingye_prompt_and_tool_schema_budgets(monkeypatch: pytest.MonkeyPatch) 
 
             visible = []
             for tool in tools:
-                if tool.requires_role is not None and not role_ge(
-                    Role(role), tool.requires_role
-                ):
+                if tool.requires_role is not None and not role_ge(Role(role), tool.requires_role):
                     continue
                 if tool.metadata.get("private_chat_only") and channel != "private":
                     continue
@@ -135,6 +138,4 @@ def test_lingye_prompt_and_tool_schema_budgets(monkeypatch: pytest.MonkeyPatch) 
             )
             assert len(schema_text) == baseline[key]["tool_schema_chars"]
             assert len(schema_text) <= baseline[key]["tool_schema_limit"]
-            assert len(schema_text) * 100 <= (
-                baseline[key]["historical_tool_schema_chars"] * 85
-            )
+            assert len(schema_text) * 100 <= (baseline[key]["historical_tool_schema_chars"] * 85)

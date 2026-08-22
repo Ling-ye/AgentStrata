@@ -25,11 +25,13 @@ from chatcopilot.middleware.acp.agent_bridge import (
     _build_session_for_workspace,
     _effective_project_role,
     _extract_persona_snippet,
-    _make_permission_filter,
     _materialize_session_for_workspace,
     _prompt_projection,
 )
-from chatcopilot.middleware.runtime.workspace import (
+from chatcopilot.middleware.acp.tool_permissions import (
+    build_permission_filter as _make_permission_filter,
+)
+from chatcopilot.core.workspace_runtime import (
     MiddlewareWorkspaceService,
     Workspace,
 )
@@ -49,9 +51,7 @@ def _tool(
         handler=lambda args: ("ok", [], None),
         requires_role=requires_role,
         category=category,
-        metadata=(
-            metadata if metadata is not None else {"private_chat_only": True}
-        ),
+        metadata=(metadata if metadata is not None else {"private_chat_only": True}),
     )
 
 
@@ -79,9 +79,7 @@ def _runtime(tmp_path: Path):
         source_path=tmp_path / "bot.yaml",
         platform=PlatformSpec(type="qq", adapter="qq_acp"),
         prompts=PromptSpec(schema_version=2, identity="persona.md", response_style="persona.md"),
-        context=ContextSpec(
-            wiki=WikiSpec(enabled=True, read_role="owner", private_chat_only=True)
-        ),
+        context=ContextSpec(wiki=WikiSpec(enabled=True, read_role="owner", private_chat_only=True)),
     )
     return SimpleNamespace(spec=spec)
 
@@ -196,15 +194,11 @@ def test_shared_group_persona_projection_merges_global_then_group(
         user_id="owner-1",
         scope=WORKSPACE_SCOPE_GROUP_SHARED,
     ).ensure()
-    tmp_path.joinpath("PERSONA.md").write_text(
-        "ignored legacy global persona", encoding="utf-8"
-    )
+    tmp_path.joinpath("PERSONA.md").write_text("ignored legacy global persona", encoding="utf-8")
     group_ws.root.parent.joinpath("PERSONA.md").write_text(
         "ignored legacy group persona", encoding="utf-8"
     )
-    group_ws.root.joinpath("PERSONA.md").write_text(
-        "untrusted shared file", encoding="utf-8"
-    )
+    group_ws.root.joinpath("PERSONA.md").write_text("untrusted shared file", encoding="utf-8")
     state = MiddlewareWorkspaceService(
         workspace=group_ws,
         workspace_root=tmp_path,
@@ -219,9 +213,7 @@ def test_shared_group_persona_projection_merges_global_then_group(
     for prompt in (user_prompt, owner_group_prompt):
         assert "current group persona" in prompt
         assert "private global persona" in prompt
-        assert prompt.index("private global persona") < prompt.index(
-            "current group persona"
-        )
+        assert prompt.index("private global persona") < prompt.index("current group persona")
         assert "untrusted shared file" not in prompt
         assert "ignored legacy" not in prompt
 
@@ -240,12 +232,8 @@ def test_private_persona_projection_uses_only_protected_state(
         user_id="owner-1",
     ).ensure()
     workspace_root = private_ws.root.parent
-    workspace_root.joinpath("PERSONA.md").write_text(
-        "private global persona", encoding="utf-8"
-    )
-    private_ws.root.joinpath("PERSONA.md").write_text(
-        "owner preference", encoding="utf-8"
-    )
+    workspace_root.joinpath("PERSONA.md").write_text("private global persona", encoding="utf-8")
+    private_ws.root.joinpath("PERSONA.md").write_text("owner preference", encoding="utf-8")
     state = MiddlewareWorkspaceService(
         workspace=private_ws,
         workspace_root=workspace_root,

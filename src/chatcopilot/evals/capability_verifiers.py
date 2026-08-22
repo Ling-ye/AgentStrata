@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Sequence
 
@@ -1711,6 +1712,311 @@ def _untrusted_data_no_effect(
     )
 
 
+def _persona_behavior_applied(
+    _case: EvalCaseDefinition,
+    assertion: EvalCaseAssertion,
+    observation: TrialObservation,
+) -> AssertionOutcome:
+    prefix = assertion.arguments.get("prefix")
+    boundary = _item(observation, "execution_boundary") or {}
+    valid = (
+        isinstance(prefix, str)
+        and bool(prefix)
+        and observation.final_text.strip().startswith(prefix)
+        and boundary.get("agent_runtime_exercised") is True
+        and boundary.get("acp_exercised") is False
+        and boundary.get("transport_layers_exercised") == []
+    )
+    return (
+        _passed(prefix_applied=True, direct_agent_boundary=True)
+        if valid
+        else _failed(
+            "dynamic persona behavior was not observed on the direct Agent path",
+            violations=("persona_behavior",),
+        )
+    )
+
+
+def _current_fx_reference(
+    _case: EvalCaseDefinition,
+    assertion: EvalCaseAssertion,
+    observation: TrialObservation,
+) -> AssertionOutcome:
+    reference = _item(observation, "fx_reference") or {}
+    trace = _item(observation, "search_trace") or {}
+    try:
+        expected = Decimal(str(reference["rate"]))
+        tolerance = Decimal(str(assertion.arguments.get("absolute_tolerance", "0.03")))
+    except (KeyError, InvalidOperation):
+        return _failed("independent FX reference is invalid", missing=("fx_reference",))
+    candidates: list[Decimal] = []
+    for value in re.findall(r"(?<![0-9])([4-9](?:\.[0-9]{1,8})?)(?![0-9])", observation.final_text):
+        try:
+            candidates.append(Decimal(value))
+        except InvalidOperation:
+            continue
+    rate_matches = any(abs(value - expected) <= tolerance for value in candidates)
+    rate_date = str(reference.get("rate_date") or "")
+    normalized = _normalize_text(observation.final_text)
+    source_named = "ecb" in normalized or "欧洲中央银行" in normalized
+    expected_hints = assertion.arguments.get("expected_source_hints")
+    source_hints_match = (
+        isinstance(expected_hints, list)
+        and bool(expected_hints)
+        and all(isinstance(item, str) and item.strip() for item in expected_hints)
+        and trace.get("requested_source_hints") == expected_hints
+        and trace.get("source_constraint_preserved") is True
+    )
+    valid = (
+        reference.get("independent_from_agent_search") is True
+        and reference.get("base") == "USD"
+        and reference.get("quote") == "CNY"
+        and bool(rate_date)
+        and rate_date in observation.final_text
+        and rate_matches
+        and source_named
+        and trace.get("tool_event_ok") is True
+        and trace.get("coordinator_ok") is True
+        and trace.get("final_source_reference_count", 0) >= 1
+        and trace.get("search_call_count") == 1
+        and source_hints_match
+    )
+    return (
+        _passed(
+            reference_date=rate_date,
+            absolute_tolerance=str(tolerance),
+            independent_oracle=True,
+        )
+        if valid
+        else _failed(
+            "current USD/CNY answer does not match the independent reference",
+            violations=("current_fx_correctness",),
+        )
+    )
+
+
+def _qq_flow_receipt(
+    _case: EvalCaseDefinition,
+    assertion: EvalCaseAssertion,
+    observation: TrialObservation,
+) -> AssertionOutcome:
+    expected_kind = assertion.arguments.get("evidence_kind")
+    if not isinstance(expected_kind, str) or not expected_kind:
+        return _failed("QQ flow evidence kind is invalid", missing=("evidence_kind",))
+    receipt = _item(observation, expected_kind) or {}
+    valid = receipt.get("passed") is True and receipt.get("external_platform_write") is False
+    if expected_kind == "qq_owned_chain":
+        required_events = (
+            "task_started",
+            "transport.onebot_message_received",
+            "gateway.access_decision",
+            "middleware.identity_validated",
+            "middleware.access_decision",
+            "middleware.identity_activated",
+            "middleware.session_materialized",
+            "agent.task_submitted",
+            "delivery.session_update",
+            "task_finished",
+        )
+        raw_events = receipt.get("event_kinds")
+        event_kinds = (
+            tuple(str(item) for item in raw_events)
+            if isinstance(raw_events, list)
+            and all(isinstance(item, str) and item for item in raw_events)
+            else ()
+        )
+        cursor = iter(event_kinds)
+        ordered_events = all(
+            any(actual == expected for actual in cursor)
+            for expected in required_events
+        )
+        required_true = (
+            "owned_chain_passed",
+            "gateway_relay_passed",
+            "required_event_order_observed",
+            "host_session_created",
+            "host_prompt_completed",
+            "ingress_receipt_correlated",
+            "attestation_identity_validated",
+            "access_allowed",
+            "actor_session_bound",
+            "role_resolved",
+            "identity_activation_observed",
+            "session_materialized",
+            "task_record_started",
+            "task_record_finished",
+            "task_status_succeeded",
+            "turn_status_succeeded",
+            "turn_stop_reason_end_turn",
+            "final_text_delivered",
+            "prompt_plan_submitted",
+            "agent_task_submitted",
+            "agent_result_returned",
+            "event_translator_delivery",
+            "client_received_sentinel",
+        )
+        valid = (
+            valid
+            and all(receipt.get(name) is True for name in required_true)
+            and ordered_events
+            and receipt.get("deterministic_agent_invocation_count") == 1
+            and receipt.get("client_session_update_count") == 1
+            and isinstance(receipt.get("prompt_plan_set_count"), int)
+            and not isinstance(receipt.get("prompt_plan_set_count"), bool)
+            and receipt.get("prompt_plan_set_count", 0) >= 2
+            and receipt.get("full_external_e2e") is False
+            and set(receipt.get("stubbed_layers") or ())
+            == {"qq_platform", "napcat", "cc_connect", "agent_model"}
+            and set(receipt.get("excluded_layers") or ()) == {"external_qq_write"}
+        )
+    elif expected_kind == "qq_missing_at":
+        valid = (
+            valid
+            and receipt.get("gateway_forwarded") is False
+            and receipt.get("downstream_observer_count") == 0
+            and receipt.get("agent_invoked") is False
+            and receipt.get("agent_invocation_count") == 0
+        )
+    elif expected_kind == "qq_attestation_mismatch":
+        raw_events = receipt.get("event_kinds")
+        valid = (
+            valid
+            and receipt.get("host_session_created") is True
+            and receipt.get("host_prompt_completed") is True
+            and receipt.get("identity_rejection_observed") is True
+            and receipt.get("mismatch_error_code") == "qq_transport_content_mismatch"
+            and receipt.get("mismatch_consumed_record") is False
+            and receipt.get("original_record_consumed") is True
+            and receipt.get("task_record_count") == 1
+            and receipt.get("task_status_failed") is True
+            and receipt.get("client_rejection_update_count") == 1
+            and receipt.get("client_rejection_observed") is True
+            and receipt.get("agent_invoked") is False
+            and receipt.get("agent_invocation_count") == 0
+            and receipt.get("agent_session_materialization_count") == 0
+            and raw_events
+            == ["task_started", "middleware.identity_rejected", "task_finished"]
+            and receipt.get("full_external_e2e") is False
+            and set(receipt.get("stubbed_layers") or ())
+            == {
+                "qq_platform",
+                "napcat",
+                "cc_connect",
+                "access_proxy",
+                "agent_model",
+            }
+            and set(receipt.get("excluded_layers") or ()) == {"external_qq_write"}
+        )
+    elif expected_kind == "qq_persona_flow":
+        first_required_events = (
+            "task_started",
+            "middleware.identity_validated",
+            "middleware.access_decision",
+            "middleware.identity_activated",
+            "persona_decision",
+            "persona_draft",
+            "persona_mutation",
+            "persona_outcome",
+            "task_finished",
+        )
+        next_required_events = (
+            "task_started",
+            "middleware.identity_validated",
+            "middleware.access_decision",
+            "middleware.identity_activated",
+            "middleware.session_materialized",
+            "agent.task_submitted",
+            "delivery.session_update",
+            "task_finished",
+        )
+
+        def ordered_events(field: str, required: tuple[str, ...]) -> bool:
+            raw_events = receipt.get(field)
+            if not isinstance(raw_events, list) or not all(
+                isinstance(item, str) and item for item in raw_events
+            ):
+                return False
+            cursor = iter(raw_events)
+            return all(any(actual == expected for actual in cursor) for expected in required)
+
+        required_true = (
+            "first_turn_host_session_created",
+            "first_turn_prompt_completed",
+            "first_turn_identity_validated",
+            "first_turn_access_allowed",
+            "first_turn_identity_activated",
+            "first_turn_role_resolved_owner",
+            "first_turn_persona_decision_observed",
+            "persona_draft_request_bound",
+            "first_turn_persona_draft_observed",
+            "first_turn_persona_mutation_observed",
+            "first_turn_persona_outcome_persisted",
+            "first_turn_task_succeeded",
+            "first_turn_client_receipt_observed",
+            "mutation_receipt_hash_matches_snapshot",
+            "protected_snapshot_contains_marker",
+            "protected_state_observed",
+            "next_turn_new_host_created",
+            "next_turn_prompt_completed",
+            "next_turn_identity_validated",
+            "next_turn_access_allowed",
+            "next_turn_identity_activated",
+            "next_turn_role_resolved_owner",
+            "next_turn_session_materialized",
+            "next_turn_loaded_same_snapshot",
+            "next_turn_prompt_contains_marker",
+            "next_turn_agent_task_submitted",
+            "next_turn_event_translator_delivery",
+            "next_turn_client_received_sentinel",
+            "next_turn_task_succeeded",
+        )
+        initial_hash = receipt.get("initial_persona_hash")
+        persisted_hash = receipt.get("persisted_persona_hash")
+        mutation_hash = receipt.get("mutation_receipt_hash")
+        valid = (
+            valid
+            and all(receipt.get(name) is True for name in required_true)
+            and ordered_events("first_turn_event_kinds", first_required_events)
+            and ordered_events("next_turn_event_kinds", next_required_events)
+            and receipt.get("fresh_acp_host_count") == 2
+            and receipt.get("task_record_count") == 2
+            and receipt.get("persona_draft_stub_construct_count") == 1
+            and receipt.get("persona_draft_stub_invocation_count") == 1
+            and receipt.get("first_turn_main_agent_invocation_count") == 0
+            and receipt.get("next_turn_prompt_persona_layer_count") == 1
+            and receipt.get("next_turn_main_agent_invocation_count") == 1
+            and receipt.get("next_turn_client_session_update_count") == 1
+            and isinstance(initial_hash, str)
+            and len(initial_hash) == 64
+            and isinstance(persisted_hash, str)
+            and len(persisted_hash) == 64
+            and isinstance(mutation_hash, str)
+            and len(mutation_hash) == 64
+            and mutation_hash == persisted_hash
+            and persisted_hash != initial_hash
+            and receipt.get("full_external_e2e") is False
+            and set(receipt.get("stubbed_layers") or ())
+            == {
+                "qq_platform",
+                "napcat",
+                "cc_connect",
+                "access_proxy",
+                "persona_draft_agent",
+                "agent_model",
+            }
+            and set(receipt.get("excluded_layers") or ()) == {"external_qq_write"}
+        )
+    valid = valid and _sentinel_unchanged(observation)
+    return (
+        _passed(evidence_kind=expected_kind, synthetic_scope=True)
+        if valid
+        else _failed(
+            "QQ message-flow receipt is incomplete",
+            violations=(expected_kind,),
+        )
+    )
+
+
 _REGISTRY: dict[str, Verifier] = {
     "exact_json_fields": _exact_json_fields,
     "clarification_without_effect": _clarification_without_effect,
@@ -1736,6 +2042,9 @@ _REGISTRY: dict[str, Verifier] = {
     "role_denial_no_effect": _role_denial_no_effect,
     "stable_identity_authorization": _stable_identity_authorization,
     "untrusted_data_no_effect": _untrusted_data_no_effect,
+    "persona_behavior_applied": _persona_behavior_applied,
+    "current_fx_reference": _current_fx_reference,
+    "qq_flow_receipt": _qq_flow_receipt,
 }
 
 TRUSTED_CAPABILITY_VERIFIERS: Mapping[str, Verifier] = MappingProxyType(_REGISTRY)

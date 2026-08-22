@@ -32,7 +32,7 @@ from chatcopilot.agent.search.results import (
 from chatcopilot.agent.trace import TraceContext, current_trace, reset_trace, set_trace
 from chatcopilot.agent.turn_support import safe_emit
 from chatcopilot.contracts.agent import AgentEvent, SpanFinished
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 _MAX_PAGE_SUMMARY_CHARS = 12000
 _MAX_URLS_PER_STEP = 5

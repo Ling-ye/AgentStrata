@@ -9,15 +9,15 @@ import pytest
 
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.llm_client import ChatResult
-from chatcopilot.agent.research.models import ResearchRequest
-from chatcopilot.agent.research.router import ResearchRouter
-from chatcopilot.agent.research.runtime import build_research_tool
+from chatcopilot.agent.search.models import SearchRequest
+from chatcopilot.agent.search.router import SearchRouter
+from chatcopilot.agent.search.tool import build_search_tool
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.model import SubagentBudgetSpec, SubagentSpec
 from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
 from chatcopilot.contracts.subagents import SearchProviderSpec
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 
 class _FakeLLM:
@@ -77,13 +77,13 @@ def test_router_emits_validated_complete_plan() -> None:
             }
         )
     )
-    router = ResearchRouter(
+    router = SearchRouter(
         main_llm=llm,
         budget=SubagentBudgetSpec(timeout_seconds=15),
     )
 
     plan = router.route(
-        ResearchRequest(
+        SearchRequest(
             objective="compare Unity release notes versus GitHub releases",
             required_fields=("title", "url", "date"),
             depth="thorough",
@@ -110,11 +110,11 @@ def test_router_preserves_explicit_url_and_source_hint() -> None:
             }
         )
     )
-    router = ResearchRouter(
+    router = SearchRouter(
         main_llm=llm,
         budget=SubagentBudgetSpec(),
     )
-    request = ResearchRequest(
+    request = SearchRequest(
         objective="读取并比较",
         urls=("https://example.com/page",),
         source_hints=("experience",),
@@ -133,13 +133,13 @@ def test_router_preserves_explicit_url_and_source_hint() -> None:
 
 def test_router_explicit_url_uses_deterministic_plan() -> None:
     llm = _FakeLLM("not json")
-    router = ResearchRouter(
+    router = SearchRouter(
         main_llm=llm,
         budget=SubagentBudgetSpec(),
     )
 
     plan = router.route(
-        ResearchRequest(
+        SearchRequest(
             objective="读取这个页面",
             urls=("https://example.com",),
         ),
@@ -154,7 +154,7 @@ def test_router_explicit_url_uses_deterministic_plan() -> None:
 
 def test_request_rejects_more_sources_than_plan_can_preserve() -> None:
     with pytest.raises(ValueError, match="at most 3"):
-        ResearchRequest.from_args(
+        SearchRequest.from_args(
             {
                 "objective": "compare everything",
                 "urls": ["https://example.com"],
@@ -165,7 +165,7 @@ def test_request_rejects_more_sources_than_plan_can_preserve() -> None:
 
 def test_request_rejects_url_hint_without_concrete_url() -> None:
     with pytest.raises(ValueError, match="requires at least one concrete URL"):
-        ResearchRequest.from_args(
+        SearchRequest.from_args(
             {
                 "objective": "read a page",
                 "source_hints": ["url"],
@@ -185,8 +185,8 @@ def test_router_does_not_cache_transient_fallback() -> None:
             ),
         ]
     )
-    router = ResearchRouter(main_llm=llm, budget=SubagentBudgetSpec())
-    request = ResearchRequest(
+    router = SearchRouter(main_llm=llm, budget=SubagentBudgetSpec())
+    request = SearchRequest(
         objective="compare release notes versus changelog",
         depth="thorough",
     )
@@ -214,10 +214,10 @@ def test_router_rejects_hallucinated_url_and_recomputes_operation() -> None:
             }
         )
     )
-    router = ResearchRouter(main_llm=llm, budget=SubagentBudgetSpec())
+    router = SearchRouter(main_llm=llm, budget=SubagentBudgetSpec())
 
     plan = router.route(
-        ResearchRequest(
+        SearchRequest(
             objective="compare the real page versus release notes",
             depth="thorough",
         ),
@@ -238,10 +238,10 @@ def test_verification_none_disables_discretionary_cross_check() -> None:
             }
         )
     )
-    router = ResearchRouter(main_llm=llm, budget=SubagentBudgetSpec())
+    router = SearchRouter(main_llm=llm, budget=SubagentBudgetSpec())
 
     plan = router.route(
-        ResearchRequest(
+        SearchRequest(
             objective="compare stable fact versus prior result",
             verification="none",
             depth="thorough",
@@ -252,7 +252,7 @@ def test_verification_none_disables_discretionary_cross_check() -> None:
     assert plan.cross_check is False
 
 
-def test_research_runner_upgrades_javascript_shell_to_browser() -> None:
+def test_search_runner_upgrades_javascript_shell_to_browser() -> None:
     llm = _FakeLLM(
         json.dumps(
             {
@@ -285,7 +285,7 @@ def test_research_runner_upgrades_javascript_shell_to_browser() -> None:
             }
         ),
     )
-    research = build_research_tool(
+    research = build_search_tool(
         main_llm=llm,
         budget=SubagentBudgetSpec(),
         tools=(static, dynamic),
@@ -293,7 +293,7 @@ def test_research_runner_upgrades_javascript_shell_to_browser() -> None:
     assert research is not None
 
     result = ToolExecutor(tools=[research]).execute(
-        "research_information",
+        "search_information",
         {
             "objective": "读取邪教徒战士的生命值",
             "urls": ["https://tarkov.dev/boss/cultist-warrior"],
@@ -339,7 +339,7 @@ def test_cross_check_uses_searxng_after_tavily_fallback() -> None:
             None,
         ),
     )
-    research = build_research_tool(
+    research = build_search_tool(
         main_llm=llm,
         budget=SubagentBudgetSpec(),
         tools=(primary, secondary),
@@ -347,7 +347,7 @@ def test_cross_check_uses_searxng_after_tavily_fallback() -> None:
     assert research is not None
 
     result = ToolExecutor(tools=[research]).execute(
-        "research_information",
+        "search_information",
         {"objective": "latest release"},
     )
     payload = json.loads(result.summary)

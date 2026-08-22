@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 _WORKSPACE_INVENTORY_INTENT_RE = re.compile(
     r"(我的|当前|私人)?\s*(空间|私人空间|工作区|工作目录).{0,12}(有哪些|有什么|内容|文件|清单|列表|列出|查看|看一下)"

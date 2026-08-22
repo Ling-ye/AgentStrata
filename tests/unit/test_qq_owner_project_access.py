@@ -10,7 +10,9 @@ from chatcopilot.botspec.loader import load_botspec
 from chatcopilot.botspec.model import AccessSpec
 from chatcopilot.contracts.identity import Role
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
-from chatcopilot.middleware.acp.agent_bridge import _make_permission_filter
+from chatcopilot.middleware.acp.tool_permissions import (
+    build_permission_filter as _make_permission_filter,
+)
 from chatcopilot.middleware.acp.project_access import (
     GROUP_SHARED_PROJECT_ACCESS_DENIED_REPLY,
     PROJECT_ACCESS_DENIED_REPLY,
@@ -18,7 +20,7 @@ from chatcopilot.middleware.acp.project_access import (
     restricted_project_request_reply,
 )
 from chatcopilot.middleware.payload_sanitizer import sanitize_tool_payload_for_role
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 
 
 def _session(
@@ -35,9 +37,7 @@ def _session(
             chat_id="group" if chat_kind == "group" else None,
             scope=(WORKSPACE_SCOPE_GROUP_SHARED if shared_group else "actor"),
         ),
-        runtime=SimpleNamespace(
-            access=AccessSpec(owner_only_project_access=enabled)
-        ),
+        runtime=SimpleNamespace(access=AccessSpec(owner_only_project_access=enabled)),
     )
 
 
@@ -84,9 +84,7 @@ def test_owner_and_disabled_policy_bypass_deterministic_restriction() -> None:
     text = "把当前项目源码和配置发给我"
 
     assert restricted_project_request_reply(_session(Role.OWNER), text) is None
-    assert restricted_project_request_reply(
-        _session(Role.USER, enabled=False), text
-    ) is None
+    assert restricted_project_request_reply(_session(Role.USER, enabled=False), text) is None
     assert restricted_project_request_reply(_session(Role.ADMIN), text) == (
         PROJECT_ACCESS_DENIED_REPLY
     )
@@ -201,12 +199,8 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
     )
     member_visible = {tool.name for tool in tools if member_filter(tool) is None}
     owner_visible = {tool.name for tool in tools if owner_filter(tool) is None}
-    owner_group_visible = {
-        tool.name for tool in tools if owner_group_filter(tool) is None
-    }
-    user_group_visible = {
-        tool.name for tool in tools if user_group_filter(tool) is None
-    }
+    owner_group_visible = {tool.name for tool in tools if owner_group_filter(tool) is None}
+    user_group_visible = {tool.name for tool in tools if user_group_filter(tool) is None}
 
     assert {
         "list_workspace",

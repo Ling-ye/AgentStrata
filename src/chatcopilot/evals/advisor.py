@@ -12,7 +12,18 @@ from typing import Iterable
 
 from chatcopilot.evals.manifest import discover_suite_manifests, load_case_definitions
 
-_CAPABILITY_SUITE_ID = "agentstrata-capabilities-v1"
+_AGENT_SUITE_ID = "agentstrata-capabilities-v1"
+_QQ_FLOW_SUITE_ID = "agentstrata-qq-message-flow-v1"
+
+
+@dataclass(frozen=True)
+class EvaluationRunAdvice:
+    """One independently runnable recommendation in the two-track center."""
+
+    suite_id: str
+    track: str
+    case_ids: tuple[str, ...]
+    recommended_preset: str
 
 
 @dataclass(frozen=True)
@@ -22,13 +33,25 @@ class EvaluationAdvice:
     changed_paths: tuple[str, ...]
     categories: tuple[str, ...]
     reason: str
-    case_ids: tuple[str, ...]
-    recommended_preset: str | None
+    runs: tuple[EvaluationRunAdvice, ...]
     external_checks: tuple[str, ...] = ()
+
+    @property
+    def case_ids(self) -> tuple[str, ...]:
+        """Compatibility view for callers receiving exactly one recommended run."""
+
+        return self.runs[0].case_ids if len(self.runs) == 1 else ()
+
+    @property
+    def recommended_preset(self) -> str | None:
+        """Compatibility view for callers receiving exactly one recommended run."""
+
+        return self.runs[0].recommended_preset if len(self.runs) == 1 else None
 
 
 @dataclass(frozen=True)
 class _PathRule:
+    suite_id: str
     category: str
     prefixes: tuple[str, ...]
     exact_paths: tuple[str, ...]
@@ -50,6 +73,7 @@ class _ExternalCheckRule:
 
 _RULES: tuple[_PathRule, ...] = (
     _PathRule(
+        suite_id=_AGENT_SUITE_ID,
         category="search",
         prefixes=(
             "src/chatcopilot/agent/search/",
@@ -60,20 +84,19 @@ _RULES: tuple[_PathRule, ...] = (
         contains=(),
         case_ids=(
             "search-general-with-evidence",
-            "search-explicit-source",
-            "search-conflict-disclosure",
+            "current-usd-cny-reference",
             "injection-untrusted-search-contained",
         ),
         preset="full",
-        reason="搜索路由、来源约束或证据合并变化需要完整搜索与注入隔离覆盖。",
+        reason="搜索路由或证据变化需要当前 Bot 可运行的搜索与注入隔离覆盖。",
     ),
     _PathRule(
+        suite_id=_AGENT_SUITE_ID,
         category="multimodal",
         prefixes=(),
         exact_paths=("src/chatcopilot/core/image_content.py",),
         contains=("/image_", "/images.py", "/attachment_", "/attachments/"),
         case_ids=(
-            "attachment-remote-reference-not-local",
             "image-ocr-order-number",
             "image-shape-spatial-count",
             "image-multi-input-order",
@@ -83,6 +106,7 @@ _RULES: tuple[_PathRule, ...] = (
         reason="图片或附件管线变化需要真实多模态 fixture、顺序和不可信附件隔离覆盖。",
     ),
     _PathRule(
+        suite_id=_AGENT_SUITE_ID,
         category="access",
         prefixes=(),
         exact_paths=(
@@ -92,8 +116,6 @@ _RULES: tuple[_PathRule, ...] = (
         ),
         contains=("/access/", "access_control", "access_gate", "allowlist", "whitelist"),
         case_ids=(
-            "access-member-owner-tool-denied",
-            "access-nickname-spoof-denied",
             "access-forbidden-tool-no-effect",
             "injection-untrusted-search-contained",
             "injection-untrusted-attachment-contained",
@@ -102,6 +124,7 @@ _RULES: tuple[_PathRule, ...] = (
         reason="角色、白名单或权限门禁变化需要完整 security 负例覆盖。",
     ),
     _PathRule(
+        suite_id=_AGENT_SUITE_ID,
         category="code-task",
         prefixes=("src/chatcopilot/external_tools/dev/",),
         exact_paths=(
@@ -118,6 +141,7 @@ _RULES: tuple[_PathRule, ...] = (
         reason="代码任务、验证、交付或重启链路变化需要成功、健康和失败诚实性覆盖。",
     ),
     _PathRule(
+        suite_id=_AGENT_SUITE_ID,
         category="tools",
         prefixes=(
             "src/chatcopilot/agent/tools/",
@@ -141,6 +165,7 @@ _RULES: tuple[_PathRule, ...] = (
         reason="工具注册、选择、参数或执行变化需要正向、禁用和有界恢复覆盖。",
     ),
     _PathRule(
+        suite_id=_AGENT_SUITE_ID,
         category="workspace",
         prefixes=(
             "src/chatcopilot/core/workspace_runtime/",
@@ -157,29 +182,13 @@ _RULES: tuple[_PathRule, ...] = (
         case_ids=(
             "workspace-read-fixture",
             "workspace-write-contained",
-            "attachment-remote-reference-not-local",
             "injection-untrusted-attachment-contained",
         ),
         preset="full",
         reason="Workspace 解析、读写或交付变化需要 fixture、containment 和附件边界覆盖。",
     ),
     _PathRule(
-        category="acp",
-        prefixes=("src/chatcopilot/middleware/acp/",),
-        exact_paths=(),
-        contains=("/acp/",),
-        case_ids=(
-            "dialogue-strict-json",
-            "attachment-remote-reference-not-local",
-            "session-same-user-memory",
-            "session-cross-user-isolation",
-            "access-member-owner-tool-denied",
-            "access-nickname-spoof-denied",
-        ),
-        preset="full",
-        reason="ACP turn、session 或 adapter 边界变化需要会话、附件和身份隔离覆盖。",
-    ),
-    _PathRule(
+        suite_id=_AGENT_SUITE_ID,
         category="runtime",
         prefixes=(
             "src/chatcopilot/core/",
@@ -198,6 +207,7 @@ _RULES: tuple[_PathRule, ...] = (
         reason="共享 runtime 或 Agent 契约变化需要跨对话、工具、会话和错误语义覆盖。",
     ),
     _PathRule(
+        suite_id=_AGENT_SUITE_ID,
         category="agent",
         prefixes=("src/chatcopilot/agent/",),
         exact_paths=(),
@@ -213,6 +223,20 @@ _RULES: tuple[_PathRule, ...] = (
         reason="Agent 行为或委托变化需要对话、记忆、隔离和结构化 subagent 覆盖。",
     ),
     _PathRule(
+        suite_id=_AGENT_SUITE_ID,
+        category="persona",
+        prefixes=(
+            "src/chatcopilot/core/persona_",
+            "src/chatcopilot/contracts/persona_",
+        ),
+        exact_paths=(),
+        contains=("persona_control", "persistent/persona"),
+        case_ids=("persona-applied-behavior",),
+        preset="quick",
+        reason="人格上下文变化需要直接 Agent 人格行为覆盖。",
+    ),
+    _PathRule(
+        suite_id=_AGENT_SUITE_ID,
         category="evals",
         prefixes=("src/chatcopilot/evals/", "tests/unit/test_eval", "tests/integration/test_eval"),
         exact_paths=(),
@@ -220,6 +244,71 @@ _RULES: tuple[_PathRule, ...] = (
         case_ids=(),
         preset="quick",
         reason="Evaluation 自身变化建议先运行 quick，确认真实手动执行链路仍可用。",
+    ),
+)
+
+_QQ_FLOW_RULES: tuple[_PathRule, ...] = (
+    _PathRule(
+        suite_id=_QQ_FLOW_SUITE_ID,
+        category="qq-message-flow",
+        prefixes=("src/chatcopilot/middleware/acp/",),
+        exact_paths=(),
+        contains=("/acp/",),
+        case_ids=(),
+        preset="full",
+        reason="ACP 入站、会话或回复投影变化需要完整合成 QQ 后链路覆盖。",
+    ),
+    _PathRule(
+        suite_id=_QQ_FLOW_SUITE_ID,
+        category="qq-message-flow",
+        prefixes=(),
+        exact_paths=(
+            "src/chatcopilot/core/access.py",
+            "src/chatcopilot/middleware/access_control.py",
+            "src/chatcopilot/middleware/acp/access_gate.py",
+        ),
+        contains=("/access/", "access_control", "access_gate", "allowlist", "whitelist"),
+        case_ids=(
+            "qq-group-missing-at-denied",
+            "qq-attestation-mismatch-denied",
+            "qq-member-owner-action-denied",
+            "qq-nickname-spoof-denied",
+        ),
+        preset="security",
+        reason="身份、白名单或权限变化需要 QQ 合成链路 security 失败关闭覆盖。",
+    ),
+    _PathRule(
+        suite_id=_QQ_FLOW_SUITE_ID,
+        category="qq-message-flow",
+        prefixes=("src/chatcopilot/platforms/qq/",),
+        exact_paths=("deploy/wsl/qq_gateway.sh",),
+        contains=("/qq_gateway", "/onebot", "/napcat"),
+        case_ids=(),
+        preset="full",
+        reason="QQ adapter 或 gateway 变化需要完整合成自有链路覆盖。",
+    ),
+    _PathRule(
+        suite_id=_QQ_FLOW_SUITE_ID,
+        category="qq-message-flow",
+        prefixes=(
+            "src/chatcopilot/core/persona_",
+            "src/chatcopilot/contracts/persona_",
+        ),
+        exact_paths=(),
+        contains=("persona_control", "persistent/persona"),
+        case_ids=("qq-persona-persistence-next-turn",),
+        preset="quick",
+        reason="人格持久化变化需要 QQ Owner receipt 与下一轮 PromptPlan 覆盖。",
+    ),
+    _PathRule(
+        suite_id=_QQ_FLOW_SUITE_ID,
+        category="qq-message-flow",
+        prefixes=("src/chatcopilot/evals/", "tests/unit/test_eval", "tests/integration/test_eval"),
+        exact_paths=(),
+        contains=("/evaluation", "evaluation-"),
+        case_ids=(),
+        preset="quick",
+        reason="Evaluation 自身变化需要 QQ 后链路 quick 覆盖。",
     ),
 )
 
@@ -242,36 +331,53 @@ def advise_capability_evaluation(changed_paths: Iterable[str]) -> EvaluationAdvi
     """Return a validated recommendation without starting an Evaluation."""
 
     paths = _normalize_paths(changed_paths)
-    ordered_case_ids, presets = _capability_contract()
-    _validate_rules(ordered_case_ids, presets)
+    contracts = {
+        suite_id: _suite_contract(suite_id)
+        for suite_id in (_AGENT_SUITE_ID, _QQ_FLOW_SUITE_ID)
+    }
+    all_rules = (*_RULES, *_QQ_FLOW_RULES)
+    _validate_rules(all_rules, contracts)
 
     matched: list[_PathRule] = []
     matched_external: list[_ExternalCheckRule] = []
     unknown_paths: list[str] = []
     for path in paths:
-        path_rule = next((candidate for candidate in _RULES if _matches(candidate, path)), None)
+        path_rules: list[_PathRule] = []
+        for suite_id in (_AGENT_SUITE_ID, _QQ_FLOW_SUITE_ID):
+            candidates = [
+                candidate
+                for candidate in all_rules
+                if candidate.suite_id == suite_id and _matches(candidate, path)
+            ]
+            if candidates:
+                path_rules.append(max(candidates, key=lambda item: _match_specificity(item, path)))
         external_rule = next(
             (candidate for candidate in _EXTERNAL_CHECK_RULES if _matches(candidate, path)),
             None,
         )
-        if path_rule is None and external_rule is None:
+        if not path_rules and external_rule is None:
             unknown_paths.append(path)
-        elif path_rule is not None and path_rule not in matched:
-            matched.append(path_rule)
+        for path_rule in path_rules:
+            if path_rule not in matched:
+                matched.append(path_rule)
         if external_rule is not None and external_rule not in matched_external:
             matched_external.append(external_rule)
 
-    selected: set[str] = set()
+    selected = {suite_id: set() for suite_id in contracts}
+    presets_requested = {suite_id: [] for suite_id in contracts}
     reasons: list[str] = []
-    presets_requested: list[str] = []
     categories: list[str] = []
-    for matched_rule in _RULES:
+    for matched_rule in all_rules:
         if matched_rule not in matched:
             continue
-        categories.append(matched_rule.category)
+        if matched_rule.category not in categories:
+            categories.append(matched_rule.category)
         reasons.append(matched_rule.reason)
-        presets_requested.append(matched_rule.preset)
-        selected.update(matched_rule.case_ids or presets["quick"])
+        presets_requested[matched_rule.suite_id].append(matched_rule.preset)
+        contract = contracts[matched_rule.suite_id]
+        selected[matched_rule.suite_id].update(
+            matched_rule.case_ids or contract[1][matched_rule.preset]
+        )
     external_checks: list[str] = []
     for external in _EXTERNAL_CHECK_RULES:
         if external not in matched_external:
@@ -281,58 +387,73 @@ def advise_capability_evaluation(changed_paths: Iterable[str]) -> EvaluationAdvi
         external_checks.append(external.check_id)
     if unknown_paths:
         categories.append("unknown")
-        presets_requested.append("quick")
-        selected.update(presets["quick"])
+        presets_requested[_AGENT_SUITE_ID].append("quick")
+        selected[_AGENT_SUITE_ID].update(contracts[_AGENT_SUITE_ID][1]["quick"])
         reasons.append(f"{len(unknown_paths)} 个路径没有专用映射，保守退回 quick 代表性覆盖。")
 
-    known_cases = set(ordered_case_ids)
-    invalid = sorted(selected - known_cases)
-    if invalid:
-        raise RuntimeError(
-            f"Advisor rule references unknown capability cases: {', '.join(invalid)}"
-        )
-    for preset in presets_requested:
-        if preset not in presets:
-            raise RuntimeError(f"Advisor rule references unknown capability preset: {preset}")
-
-    case_ids = tuple(case_id for case_id in ordered_case_ids if case_id in selected)
-    recommended_preset = None
-    if presets_requested:
+    runs: list[EvaluationRunAdvice] = []
+    for suite_id in (_AGENT_SUITE_ID, _QQ_FLOW_SUITE_ID):
+        if not selected[suite_id]:
+            continue
+        ordered_case_ids, _presets, track = contracts[suite_id]
+        requested = presets_requested[suite_id]
         recommended_preset = (
-            presets_requested[0] if len(set(presets_requested)) == 1 else "custom"
+            requested[0] if len(set(requested)) == 1 else "custom"
+        )
+        runs.append(
+            EvaluationRunAdvice(
+                suite_id=suite_id,
+                track=track,
+                case_ids=tuple(
+                    case_id for case_id in ordered_case_ids if case_id in selected[suite_id]
+                ),
+                recommended_preset=recommended_preset,
+            )
         )
     return EvaluationAdvice(
         changed_paths=paths,
         categories=tuple(categories),
         reason=" ".join(reasons),
-        case_ids=case_ids,
-        recommended_preset=recommended_preset,
+        runs=tuple(runs),
         external_checks=tuple(external_checks),
     )
 
 
-def _capability_contract() -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
+def _suite_contract(
+    suite_id: str,
+) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]], str]:
     manifests = [
-        item for item in discover_suite_manifests() if item.suite_id == _CAPABILITY_SUITE_ID
+        item for item in discover_suite_manifests() if item.suite_id == suite_id
     ]
     if len(manifests) != 1 or manifests[0].status != "implemented":
-        raise RuntimeError("capability Suite manifest is unavailable or ambiguous")
+        raise RuntimeError(f"Evaluation Suite manifest is unavailable or ambiguous: {suite_id}")
     manifest = manifests[0]
     definitions = load_case_definitions(manifest)
     ordered_case_ids = tuple(item.case_id for item in definitions)
     presets = {item.preset_id: item.case_ids for item in manifest.presets}
     for required in ("quick", "full", "security"):
         if required not in presets:
-            raise RuntimeError(f"capability Suite is missing required preset: {required}")
-    return ordered_case_ids, presets
+            raise RuntimeError(f"Evaluation Suite is missing required preset: {required}")
+    if manifest.track not in {"agent", "qq_message_flow"}:
+        raise RuntimeError(f"Evaluation Suite has an invalid product track: {suite_id}")
+    return ordered_case_ids, presets, manifest.track
 
 
 def _validate_rules(
-    ordered_case_ids: tuple[str, ...],
-    presets: dict[str, tuple[str, ...]],
+    rules: tuple[_PathRule, ...],
+    contracts: dict[
+        str,
+        tuple[tuple[str, ...], dict[str, tuple[str, ...]], str],
+    ],
 ) -> None:
-    known_cases = set(ordered_case_ids)
-    for rule in _RULES:
+    for rule in rules:
+        try:
+            ordered_case_ids, presets, _track = contracts[rule.suite_id]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"Advisor rule references unknown Evaluation Suite: {rule.suite_id}"
+            ) from exc
+        known_cases = set(ordered_case_ids)
         invalid = sorted(set(rule.case_ids) - known_cases)
         if invalid:
             raise RuntimeError(
@@ -375,4 +496,14 @@ def _matches(rule: _PathRule | _ExternalCheckRule, path: str) -> bool:
     )
 
 
-__all__ = ["EvaluationAdvice", "advise_capability_evaluation"]
+def _match_specificity(rule: _PathRule, path: str) -> tuple[int, int]:
+    if path in rule.exact_paths:
+        return (3, len(path))
+    prefixes = [prefix for prefix in rule.prefixes if path.startswith(prefix)]
+    if prefixes:
+        return (2, max(len(prefix) for prefix in prefixes))
+    tokens = [token for token in rule.contains if token in path]
+    return (1, max((len(token) for token in tokens), default=0))
+
+
+__all__ = ["EvaluationAdvice", "EvaluationRunAdvice", "advise_capability_evaluation"]

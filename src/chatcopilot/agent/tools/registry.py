@@ -4,33 +4,86 @@
 按 BotSpec 的 tool pack 名解析模块路径并 import 合并。MCP client 在占位阶段
 返回空列表，预留扩展位。
 """
+
 from __future__ import annotations
 
 import importlib
-import logging
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from chatcopilot.tool_packs.catalog import all_tool_bindings, resolve_tool_bindings
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.tool_packs.catalog import (
+    all_tool_bindings,
+    get_tool_pack_entry,
+    known_tool_pack_names,
+    resolve_tool_bindings,
+)
+from chatcopilot.contracts.tools import (
     ToolDef,
     build_mcp_schema,
     build_openai_schema,
 )
 
-_LOGGER = logging.getLogger("chatcopilot.agent.tools.registry")
+
+class ToolMaterializationError(RuntimeError):
+    """An enabled catalog binding could not produce its exact ToolDef set."""
+
+    def __init__(
+        self,
+        *,
+        module: str,
+        pack_names: Sequence[str],
+        reason: str,
+        tool_names: Sequence[str] = (),
+    ) -> None:
+        self.module = module
+        self.pack_names = tuple(pack_names)
+        self.reason = reason
+        self.tool_names = tuple(tool_names)
+        details = [f"module={module}", f"reason={reason}"]
+        if self.pack_names:
+            details.append("packs=" + ",".join(self.pack_names))
+        if self.tool_names:
+            details.append("tools=" + ",".join(self.tool_names))
+        super().__init__("tool materialization failed: " + "; ".join(details))
 
 
-def _import_module_tools(module_path: str) -> List[ToolDef]:
+def _import_module_tools(
+    module_path: str,
+    *,
+    pack_names: Sequence[str],
+) -> List[ToolDef]:
     try:
         mod = importlib.import_module(module_path)
     except Exception as exc:  # noqa: BLE001
-        _LOGGER.warning("无法加载工具模块 %s: %s", module_path, exc)
-        return []
+        raise ToolMaterializationError(
+            module=module_path,
+            pack_names=pack_names,
+            reason=f"import_error:{type(exc).__name__}",
+        ) from exc
     tools = getattr(mod, "TOOLS", None)
-    if not tools:
-        _LOGGER.warning("工具模块 %s 未导出 TOOLS", module_path)
-        return []
-    return [tool for tool in tools if isinstance(tool, ToolDef)]
+    if not isinstance(tools, (list, tuple)) or not tools:
+        raise ToolMaterializationError(
+            module=module_path,
+            pack_names=pack_names,
+            reason="missing_or_empty_tools_export",
+        )
+    invalid = [type(tool).__name__ for tool in tools if not isinstance(tool, ToolDef)]
+    if invalid:
+        raise ToolMaterializationError(
+            module=module_path,
+            pack_names=pack_names,
+            reason="invalid_tool_export",
+            tool_names=invalid,
+        )
+    names = [tool.name for tool in tools]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ToolMaterializationError(
+            module=module_path,
+            pack_names=pack_names,
+            reason="duplicate_tool_export",
+            tool_names=duplicates,
+        )
+    return list(tools)
 
 
 def discover_tools(
@@ -51,14 +104,40 @@ def discover_tools(
     excluded = set(exclude_tools or ())
 
     # 1) Static tools: built-in and domain tools share one exact catalog projection.
+    selected_packs = (
+        tuple(tool_packs) if tool_packs is not None else tuple(sorted(known_tool_pack_names()))
+    )
+    unknown_packs = sorted(set(selected_packs) - known_tool_pack_names())
+    if unknown_packs:
+        raise ToolMaterializationError(
+            module="chatcopilot.tool_packs.catalog",
+            pack_names=unknown_packs,
+            reason="unknown_tool_pack",
+        )
     bindings = (
-        resolve_tool_bindings(tuple(tool_packs))
-        if tool_packs is not None
-        else all_tool_bindings()
+        resolve_tool_bindings(tuple(tool_packs)) if tool_packs is not None else all_tool_bindings()
     )
     for binding in bindings:
         allowed_names = frozenset(binding.tool_names)
-        for tool in _import_module_tools(binding.module):
+        binding_packs = tuple(
+            pack_name
+            for pack_name in selected_packs
+            if (
+                (entry := get_tool_pack_entry(pack_name)) is not None
+                and any(item.module == binding.module for item in entry.tool_bindings)
+            )
+        )
+        module_tools = _import_module_tools(binding.module, pack_names=binding_packs)
+        materialized_names = {tool.name for tool in module_tools}
+        missing = sorted(allowed_names - materialized_names)
+        if missing:
+            raise ToolMaterializationError(
+                module=binding.module,
+                pack_names=binding_packs,
+                reason="declared_tools_missing",
+                tool_names=missing,
+            )
+        for tool in module_tools:
             if tool.name not in allowed_names:
                 continue
             if tool.name in excluded or tool.name in seen:
@@ -132,6 +211,7 @@ def find_spec(
 
 
 __all__ = [
+    "ToolMaterializationError",
     "build_mcp_tools_schema",
     "build_tools_schema",
     "discover_tools",

@@ -15,7 +15,7 @@ from chatcopilot.middleware.acp.agent_bridge import (
 )
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.acp.project_access import restricted_project_request_reply
-from chatcopilot.middleware.runtime.workspace import (
+from chatcopilot.core.workspace_runtime import (
     MiddlewareWorkspaceService,
     Workspace,
 )

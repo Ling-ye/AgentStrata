@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult
+from chatcopilot.contracts.tools import HandlerResult
 
 def _handler_send_files_to_user(args: Dict[str, Any]) -> HandlerResult:
     """把当前用户工作区内的文件回传到当前会话。

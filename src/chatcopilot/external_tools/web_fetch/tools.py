@@ -32,7 +32,7 @@ _STRIP_TAGS = {"script", "style", "noscript", "svg", "head", "iframe", "object",
 # URL validation
 # ---------------------------------------------------------------------------
 
-def _validate_url(url: str) -> str:
+def validate_url(url: str) -> str:
     """Validate and normalize a URL, raising ``ValueError`` when disallowed."""
     url = url.strip()
     if not url:
@@ -113,7 +113,7 @@ def _extract_text(html_content: str) -> tuple[str, str]:
 def _fetch_page(url: str, max_chars: int) -> str:
     """Fetch a URL and return consistently formatted text."""
     try:
-        url = _validate_url(url)
+        url = validate_url(url)
     except ValueError as exc:
         return f"Error: Invalid URL: {exc}"
 

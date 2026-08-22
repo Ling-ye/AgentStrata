@@ -1,4 +1,5 @@
 """Concrete ordered handlers for one ACP prompt turn."""
+
 from __future__ import annotations
 
 import logging
@@ -51,10 +52,7 @@ class AcpTurnOrchestrator:
         update_text: Callable[[str], Any],
         recover_workspace: Callable[..., Any],
         refresh_prompt_plan: Callable[[Any], None],
-        prepare_turn_identity: Callable[
-            ..., tuple[Any, str, TurnIdentity | None]
-        ]
-        | None = None,
+        prepare_turn_identity: Callable[..., tuple[Any, str, TurnIdentity | None]] | None = None,
         activate_turn_identity: Callable[..., Any] | None = None,
     ) -> None:
         self._host = host
@@ -93,12 +91,8 @@ class AcpTurnOrchestrator:
                 CallbackTurnHandler("attachments", self._attachments),
                 CallbackTurnHandler("permissions", self._permissions),
                 CallbackTurnHandler("persona_control", self._persona_control),
-                CallbackTurnHandler(
-                    "deterministic_shortcuts", self._deterministic_shortcuts
-                ),
-                CallbackTurnHandler(
-                    "session_materialization", self._session_materialization
-                ),
+                CallbackTurnHandler("deterministic_shortcuts", self._deterministic_shortcuts),
+                CallbackTurnHandler("session_materialization", self._session_materialization),
                 CallbackTurnHandler("execution", self._execution),
                 CallbackTurnHandler("finish", self._finish),
             )
@@ -142,9 +136,7 @@ class AcpTurnOrchestrator:
             )
             await self._host._conn.session_update(
                 session_id=session_id,
-                update=self._update_text(
-                    "消息处理失败，请让维护者查看控制台任务记录。"
-                ),
+                update=self._update_text("消息处理失败，请让维护者查看控制台任务记录。"),
             )
             return PromptResponse(
                 stop_reason="end_turn",
@@ -272,15 +264,9 @@ class AcpTurnOrchestrator:
             else workspace.chat_kind
         )
         chat_id = (
-            turn_identity.conversation.chat_id
-            if turn_identity is not None
-            else workspace.chat_id
+            turn_identity.conversation.chat_id if turn_identity is not None else workspace.chat_id
         )
-        user_id = (
-            turn_identity.sender_user_id
-            if turn_identity is not None
-            else workspace.user_id
-        )
+        user_id = turn_identity.sender_user_id if turn_identity is not None else workspace.user_id
         decision = _access_gate.evaluate(
             access,
             platform_type=self._platform_type,
@@ -291,8 +277,7 @@ class AcpTurnOrchestrator:
             mention_name=mention_name,
         )
         _LOGGER.info(
-            "session/prompt | sid=%s access-gate %s | kind=%s uid=%s "
-            "reason=%s text=%r",
+            "session/prompt | sid=%s access-gate %s | kind=%s uid=%s reason=%s text=%r",
             turn.session_id,
             "passed" if decision.allowed else "IGNORED",
             chat_kind,
@@ -339,9 +324,7 @@ class AcpTurnOrchestrator:
             stop_reason="access_denied",
         )
         return TurnOutcome(
-            response=PromptResponse(
-                stop_reason="end_turn", user_message_id=turn.message_id
-            ),
+            response=PromptResponse(stop_reason="end_turn", user_message_id=turn.message_id),
             stop=True,
             reason="access_denied",
         )
@@ -620,9 +603,7 @@ class AcpTurnOrchestrator:
             has_role_matrix=self._has_role_matrix,
             has_user_files_pipeline=self._has_user_files_pipeline,
             has_private_space_inventory=self._has_private_space_inventory,
-            pending_attachment_names=getattr(
-                self._host, "_attachment_ack_resource_names", {}
-            ).get(
+            pending_attachment_names=getattr(self._host, "_attachment_ack_resource_names", {}).get(
                 self._host._attachment_ack_key(
                     turn.session_id,
                     turn.session,
@@ -631,12 +612,11 @@ class AcpTurnOrchestrator:
             ),
             send_task_status=self._host._send_task_status,
             send_job_status=self._host._send_job_status,
-            send_unnotified_completed_jobs=(
-                self._host._send_unnotified_completed_jobs
-            ),
+            send_unnotified_completed_jobs=(self._host._send_unnotified_completed_jobs),
             handle_code_task_control=self._host._handle_code_task_control,
             cancel_attachment_ack=self._host._cancel_attachment_ack,
             finish_turn_task=self._host._finish_turn_task,
+            refresh_prompt_plan=self._refresh_prompt_plan,
             make_text_update=self._update_text,
         )
         if response is None:
@@ -650,16 +630,12 @@ class AcpTurnOrchestrator:
     async def _session_materialization(self, turn: TurnContext) -> TurnOutcome:
         prompt_parts = turn.metadata["prompt_parts"]
         referenced = (
-            _attachment.collect_attachment_references(
-                prompt_parts, turn.user_text
-            )
+            _attachment.collect_attachment_references(prompt_parts, turn.user_text)
             if self._has_user_files_pipeline
             else []
         )
         imported = (
-            _attachment.import_transport_attachments(
-                turn.session.workspace, referenced
-            )
+            _attachment.import_transport_attachments(turn.session.workspace, referenced)
             if referenced
             else []
         )
@@ -676,8 +652,7 @@ class AcpTurnOrchestrator:
         turn.metadata["task_resources"] = ()
 
         if (
-            getattr(turn.session.workspace, "scope", "actor")
-            == WORKSPACE_SCOPE_GROUP_SHARED
+            getattr(turn.session.workspace, "scope", "actor") == WORKSPACE_SCOPE_GROUP_SHARED
             and referenced
             and len(available) < len(referenced)
         ):
@@ -685,9 +660,7 @@ class AcpTurnOrchestrator:
 
         raw_prompt = turn.metadata["raw_prompt"]
         inline_images = _image.has_inline_images(raw_prompt)
-        referenced_image_names = [
-            name for name in referenced if is_supported_image_path(name)
-        ]
+        referenced_image_names = [name for name in referenced if is_supported_image_path(name)]
         has_new_images = inline_images or bool(referenced_image_names)
         if inline_images and not self._has_image_inputs:
             return await self._finish_image_turn(
@@ -699,31 +672,17 @@ class AcpTurnOrchestrator:
                 reason="image_inputs_disabled",
                 progress="已说明读图能力未启用。",
             )
-        if (
-            referenced_image_names
-            and turn.user_text.strip()
-            and not self._has_image_inputs
-        ):
+        if referenced_image_names and turn.user_text.strip() and not self._has_image_inputs:
             return await self._finish_image_turn(
                 turn,
-                text=(
-                    "当前机器人未启用读图能力。这些图片仍可按普通文件保存，"
-                    "但不会交给模型分析。"
-                ),
+                text=("当前机器人未启用读图能力。这些图片仍可按普通文件保存，但不会交给模型分析。"),
                 reason="image_inputs_disabled",
                 progress="已说明读图能力未启用。",
             )
-        if (
-            has_new_images
-            and self._has_image_inputs
-            and not turn.session.workspace.user_id
-        ):
+        if has_new_images and self._has_image_inputs and not turn.session.workspace.user_id:
             return await self._finish_image_turn(
                 turn,
-                text=(
-                    "当前会话没有稳定用户身份，不能安全保存或分析图片。"
-                    "请重启机器人后重试。"
-                ),
+                text=("当前会话没有稳定用户身份，不能安全保存或分析图片。请重启机器人后重试。"),
                 reason="image_identity_missing",
                 progress="已拒绝无稳定身份的图片输入。",
             )
@@ -736,13 +695,10 @@ class AcpTurnOrchestrator:
             if image_outcome is not None:
                 return image_outcome
 
-        if (
-            not turn.metadata["task_resources"]
-            and _attachment_turns.is_upload_only_prompt(
-                has_user_files_pipeline=self._has_user_files_pipeline,
-                prompt_parts=prompt_parts,
-                user_text=turn.user_text,
-            )
+        if not turn.metadata["task_resources"] and _attachment_turns.is_upload_only_prompt(
+            has_user_files_pipeline=self._has_user_files_pipeline,
+            prompt_parts=prompt_parts,
+            user_text=turn.user_text,
         ):
             attachment_result = await _attachment_turns.handle_upload_only_turn(
                 conn=self._host._conn,
@@ -785,9 +741,7 @@ class AcpTurnOrchestrator:
                 len(imported),
                 "acp_resource" if prompt_parts.has_resource else "textified",
             )
-        if turn.metadata["task_resources"] or _attachment.has_task_verb(
-            turn.user_text
-        ):
+        if turn.metadata["task_resources"] or _attachment.has_task_verb(turn.user_text):
             self._host._cancel_attachment_ack(turn.session_id)
         hint_names = (
             [name for name in prompt_parts.resource_names if name]
@@ -798,14 +752,9 @@ class AcpTurnOrchestrator:
             hint = "\n".join(f"[资源引用: {name}]" for name in hint_names)
             turn.user_text = f"{turn.user_text}\n{hint}".strip()
         turn.metadata["has_attachment"] = bool(
-            hint_names
-            or referenced
-            or prompt_parts.has_resource
-            or turn.metadata["task_resources"]
+            hint_names or referenced or prompt_parts.has_resource or turn.metadata["task_resources"]
         )
-        turn.session = await self._host._ensure_agent_session(
-            turn.session_id, turn.session
-        )
+        turn.session = await self._host._ensure_agent_session(turn.session_id, turn.session)
         self._refresh_prompt_plan(turn.session)
         turn.metadata["task_metadata"] = build_topic_metadata(
             user_text=turn.user_text,
@@ -813,19 +762,13 @@ class AcpTurnOrchestrator:
             has_attachment=bool(turn.metadata["has_attachment"]),
             message_count=turn.session.message_count(),
         )
-        turn.metadata["task_metadata"]["has_image"] = bool(
-            turn.metadata["task_resources"]
-        )
+        turn.metadata["task_metadata"]["has_image"] = bool(turn.metadata["task_resources"])
         turn_identity = getattr(turn.session, "turn_identity", None)
         if turn_identity is not None:
             turn.metadata["task_metadata"].update(
                 {
-                    "conversation_platform": (
-                        turn_identity.conversation.platform
-                    ),
-                    "conversation_chat_kind": (
-                        turn_identity.conversation.chat_kind
-                    ),
+                    "conversation_platform": (turn_identity.conversation.platform),
+                    "conversation_chat_kind": (turn_identity.conversation.chat_kind),
                     "turn_actor_ref": turn_identity.actor_ref,
                     "turn_identity_source": turn_identity.source,
                 }
@@ -858,12 +801,8 @@ class AcpTurnOrchestrator:
             session_id=turn.session_id,
             update=self._update_text(text),
         )
-        resource_hint = "\n".join(
-            f"[资源引用: {name}]" for name in referenced if name
-        )
-        accepted_text = "\n".join(
-            part for part in (turn.user_text.strip(), resource_hint) if part
-        )
+        resource_hint = "\n".join(f"[资源引用: {name}]" for name in referenced if name)
+        accepted_text = "\n".join(part for part in (turn.user_text.strip(), resource_hint) if part)
         turn.session.record_exchange(accepted_text or "[文件上传]", text)
         self._host._cancel_attachment_ack(turn.session_id)
         self._host._finish_turn_task(
@@ -912,9 +851,7 @@ class AcpTurnOrchestrator:
                 imported_names=imported_names,
             )
             available_name_set = set(available_names)
-            unresolved_names = [
-                name for name in pending_names if name not in available_name_set
-            ]
+            unresolved_names = [name for name in pending_names if name not in available_name_set]
             file_resources = tuple(
                 _image.image_resource_ref(
                     turn.session.workspace.attachments / name,
@@ -927,13 +864,8 @@ class AcpTurnOrchestrator:
                 inline_resources,
                 file_resources,
             )
-            if (
-                len(resources) + len(unresolved_names)
-                > _image.DEFAULT_IMAGE_INPUT_MAX_COUNT
-            ):
-                raise ImageContentError(
-                    "too many pending images for one model turn"
-                )
+            if len(resources) + len(unresolved_names) > _image.DEFAULT_IMAGE_INPUT_MAX_COUNT:
+                raise ImageContentError("too many pending images for one model turn")
         except ImageContentError as exc:
             _LOGGER.warning(
                 "session/prompt | sid=%s rejected image input | reason=%s",
@@ -1045,12 +977,8 @@ class AcpTurnOrchestrator:
         # Persist the accepted upload turn now, under the immutable identity
         # bound to this locked prompt. The asynchronous final acknowledgement
         # is delivery-only and may run after another message from this actor.
-        resource_hint = "\n".join(
-            f"[资源引用: {name}]" for name in referenced if name
-        )
-        accepted_text = "\n".join(
-            part for part in (turn.user_text.strip(), resource_hint) if part
-        )
+        resource_hint = "\n".join(f"[资源引用: {name}]" for name in referenced if name)
+        accepted_text = "\n".join(part for part in (turn.user_text.strip(), resource_hint) if part)
         turn.session.record_exchange(
             accepted_text or "[文件上传]",
             text,
@@ -1071,9 +999,7 @@ class AcpTurnOrchestrator:
             stop_reason="end_turn",
         )
         return TurnOutcome(
-            response=PromptResponse(
-                stop_reason="end_turn", user_message_id=turn.message_id
-            ),
+            response=PromptResponse(stop_reason="end_turn", user_message_id=turn.message_id),
             stop=True,
             reason="attachments_pending",
         )
@@ -1085,9 +1011,7 @@ class AcpTurnOrchestrator:
             turn.session.pending_image_names = ()
         run_kwargs: dict[str, Any] = {
             "task_metadata": turn.metadata["task_metadata"],
-            "task_turn_context": (
-                getattr(turn.session, "turn_context", "") or None
-            ),
+            "task_turn_context": (getattr(turn.session, "turn_context", "") or None),
         }
         if task_resources:
             run_kwargs["task_resources"] = task_resources
@@ -1141,11 +1065,7 @@ def _merge_image_resources(
             ):
                 raise ImageContentError("image resource sha256 identity is missing")
             size_bytes = resource.size_bytes
-            if (
-                isinstance(size_bytes, bool)
-                or not isinstance(size_bytes, int)
-                or size_bytes <= 0
-            ):
+            if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes <= 0:
                 raise ImageContentError("image resource size identity is missing")
             key = sha256
             if key in seen:

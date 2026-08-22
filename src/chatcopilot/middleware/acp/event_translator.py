@@ -18,7 +18,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List
 
-from chatcopilot.agent.protocol import (
+from chatcopilot.contracts.agent import (
     AgentEvent,
     FinalText,
     SpanFinished,

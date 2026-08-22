@@ -11,14 +11,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from chatcopilot.core.llm_client import ChatResult
-from chatcopilot.agent.protocol import AgentTask
+from chatcopilot.contracts.agent import AgentTask
 from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder, render_native_prefix
 from chatcopilot.contracts.prompt import BotPromptProfile
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.middleware.acp.session_state import SessionState
-from chatcopilot.middleware.runtime.workspace import (
+from chatcopilot.core.workspace_runtime import (
     Workspace,
     normalize_chat_kind as normalize_workspace_chat_kind,
     resolve_workspace,
@@ -37,7 +37,8 @@ from chatcopilot.middleware.acp.meta_commands import (
     _handle_debug_command,
     _parse_debug_command,
 )
-from chatcopilot.external_tools.shared.tool_spec import build_openai_schema
+from chatcopilot.middleware.acp.agent_bridge import _refresh_session_prompt_plan
+from chatcopilot.contracts.tools import build_openai_schema
 
 
 def _test_prompt_plan(workspace: Workspace, **kwargs):
@@ -69,7 +70,17 @@ def _test_prompt_plan(workspace: Workspace, **kwargs):
 
 
 def render_test_prompt(workspace: Workspace, **kwargs) -> str:
-    return render_native_prefix(_test_prompt_plan(workspace, **kwargs))[0]["content"]
+    return "\n".join(
+        message["content"]
+        for message in render_native_prefix(_test_prompt_plan(workspace, **kwargs))
+    )
+
+
+def _rendered_session_prompt(session: SessionState) -> str:
+    return "\n".join(
+        message["content"]
+        for message in render_native_prefix(session.require_session().prompt_plan)
+    )
 
 
 class _FakeLLM:
@@ -297,7 +308,10 @@ class DebugModeAccessTests(unittest.TestCase):
             ),
         ).ensure()
         state_ref: dict = {}
-        mode_tool = _build_set_assistant_mode_tool(lambda: state_ref["session"])
+        mode_tool = _build_set_assistant_mode_tool(
+            lambda: state_ref["session"],
+            refresh_prompt_plan=_refresh_session_prompt_plan,
+        )
         debug_tool = _build_set_debug_mode_tool(lambda: state_ref["session"])
         tools = [mode_tool, debug_tool]
         agent_session = AgentSession(
@@ -359,7 +373,7 @@ class DebugModeAccessTests(unittest.TestCase):
 
         self.assertEqual(session.assistant_mode, AssistantMode.GENERAL)
         self.assertIn("已切换到通用模式", reply or "")
-        self.assertIn("SampleGame 通用模式", session.session._messages[0]["content"])
+        self.assertIn("SampleGame 通用模式", _rendered_session_prompt(session))
 
     def test_user_cannot_switch_to_general_mode_via_llm_tool_call(self) -> None:
         session = self._build_mode_session(
@@ -381,7 +395,7 @@ class DebugModeAccessTests(unittest.TestCase):
         reply = session.session.run_task(AgentTask(text="切到通用模式"), on_event=lambda e: None).final_text
 
         self.assertEqual(session.assistant_mode, AssistantMode.PERFORMANCE)
-        self.assertIn("SampleGame 性能分析模式", session.session._messages[0]["content"] or "")
+        self.assertIn("SampleGame 性能分析模式", _rendered_session_prompt(session))
         self.assertIn("通用模式仅限 Owner 私聊", reply or "")
 
     def test_group_owner_cannot_switch_to_general_mode_via_llm_tool_call(self) -> None:
@@ -406,7 +420,7 @@ class DebugModeAccessTests(unittest.TestCase):
         reply = session.session.run_task(AgentTask(text="切到通用模式"), on_event=lambda e: None).final_text
 
         self.assertEqual(session.assistant_mode, AssistantMode.PERFORMANCE)
-        self.assertIn("SampleGame 性能分析模式", session.session._messages[0]["content"] or "")
+        self.assertIn("SampleGame 性能分析模式", _rendered_session_prompt(session))
         self.assertIn("群聊固定", reply or "")
 
     def test_group_owner_cannot_switch_to_general_mode_with_natural_language(self) -> None:
@@ -421,10 +435,11 @@ class DebugModeAccessTests(unittest.TestCase):
         reply = _handle_assistant_mode_command(
             session,
             "@SampleGame性能助手 切换为通用模式",
+            refresh_prompt_plan=_refresh_session_prompt_plan,
         )
 
         self.assertEqual(session.assistant_mode, AssistantMode.PERFORMANCE)
-        self.assertIn("SampleGame 性能分析模式", session.session._messages[0]["content"] or "")
+        self.assertIn("SampleGame 性能分析模式", _rendered_session_prompt(session))
         self.assertIn("群聊固定", reply or "")
 
     def test_owner_can_switch_back_to_performance_mode_via_llm_tool_call(self) -> None:
@@ -448,7 +463,7 @@ class DebugModeAccessTests(unittest.TestCase):
 
         self.assertEqual(session.assistant_mode, AssistantMode.PERFORMANCE)
         self.assertIn("已切换到性能分析模式", reply or "")
-        self.assertIn("SampleGame 性能分析模式", session.session._messages[0]["content"] or "")
+        self.assertIn("SampleGame 性能分析模式", _rendered_session_prompt(session))
 
     def test_owner_can_enable_debug_mode_via_llm_tool_call(self) -> None:
         session = self._build_mode_session(

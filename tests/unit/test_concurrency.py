@@ -13,7 +13,7 @@ from chatcopilot.core.concurrency import FileTokenLimiter
 from chatcopilot.middleware.runtime.jobs import FileQueueSlot
 from chatcopilot.agent.tools.executor import ToolExecutor, ToolResult
 from chatcopilot.middleware.acp.server import AcpChatAgent
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     EXECUTION_SYNC,
     EXECUTION_USER_SERIAL_BACKGROUND,
     ToolDef,

@@ -27,7 +27,7 @@ from chatcopilot.agent.tools.file_delivery import (
 from chatcopilot.agent.tools.registry import discover_tools
 from chatcopilot.agent.tools.workspace_context import WorkspaceService, bind_workspace_service
 from chatcopilot.core.caller_context import bind_caller_role
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     EXECUTION_SYNC,
     DocAnchors,
     ToolContext,

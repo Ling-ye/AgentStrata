@@ -4,7 +4,7 @@ import unittest
 
 from chatcopilot.agent.subagents.selector import build_predicate, is_user_facing
 from chatcopilot.agent.subagents.spec import ToolMatchRule, ToolSelectorSpec
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 
 def _tool(name: str, **kwargs) -> ToolDef:

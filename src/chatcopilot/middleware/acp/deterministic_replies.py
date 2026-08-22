@@ -1,4 +1,5 @@
 """Deterministic ACP prompt shortcuts before the LLM turn."""
+
 from __future__ import annotations
 
 import logging
@@ -33,6 +34,7 @@ SendUnnotifiedJobs = Callable[[str, SessionState], Awaitable[Any]]
 HandleCodeTaskControl = Callable[[str, SessionState, str, str], Awaitable[str]]
 CancelAttachmentAck = Callable[[str], None]
 MakeTextUpdate = Callable[[str], Any]
+RefreshPromptPlan = Callable[[SessionState], None]
 
 
 async def handle_deterministic_replies(
@@ -53,15 +55,11 @@ async def handle_deterministic_replies(
     handle_code_task_control: HandleCodeTaskControl,
     cancel_attachment_ack: CancelAttachmentAck,
     finish_turn_task: FinishTurnTask,
+    refresh_prompt_plan: RefreshPromptPlan | None = None,
     make_text_update: MakeTextUpdate = update_agent_message_text,
 ) -> PromptResponse | None:
-    shared_group = (
-        getattr(session.workspace, "scope", "actor")
-        == WORKSPACE_SCOPE_GROUP_SHARED
-    )
-    owner_turn = (
-        role_value(getattr(session, "role", Role.USER)) == Role.OWNER.value
-    )
+    shared_group = getattr(session.workspace, "scope", "actor") == WORKSPACE_SCOPE_GROUP_SHARED
+    owner_turn = role_value(getattr(session, "role", Role.USER)) == Role.OWNER.value
     runtime_info_reply = _meta._handle_owner_runtime_info_query(session, user_text)
     if runtime_info_reply is not None:
         _LOGGER.info(
@@ -78,9 +76,7 @@ async def handle_deterministic_replies(
         )
         return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
 
-    restricted_reply = _project_access.restricted_project_request_reply(
-        session, user_text
-    )
+    restricted_reply = _project_access.restricted_project_request_reply(session, user_text)
     if restricted_reply is not None:
         _LOGGER.info(
             "session/prompt | sid=%s deterministic project access denied",
@@ -193,11 +189,7 @@ async def handle_deterministic_replies(
     if not shared_group or owner_turn:
         await send_unnotified_completed_jobs(session_id, session)
 
-    if (
-        shared_group
-        and not owner_turn
-        and _model_commands._parse_request(user_text) is not None
-    ):
+    if shared_group and not owner_turn and _model_commands._parse_request(user_text) is not None:
         text = "Codex 开发模型查看与切换仅限 Owner；群号加白不会授予该权限。"
         await _send_text(conn, session_id, text, make_text_update)
         session.record_exchange(user_text, text)
@@ -228,7 +220,11 @@ async def handle_deterministic_replies(
         return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
 
     mode_reply = (
-        _meta._handle_assistant_mode_command(session, user_text)
+        _meta._handle_assistant_mode_command(
+            session,
+            user_text,
+            refresh_prompt_plan=refresh_prompt_plan,
+        )
         if has_role_matrix
         else None
     )

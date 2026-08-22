@@ -12,7 +12,7 @@ from chatcopilot.external_tools.web_fetch.tools import (
     TOOLS,
     _extract_text,
     _fetch_page,
-    _validate_url,
+    validate_url,
     web_fetch_page,
 )
 
@@ -35,37 +35,37 @@ class _FakeResponse:
 
 class TestUrlValidation:
     def test_valid_https(self):
-        assert _validate_url("https://example.com/page") == "https://example.com/page"
+        assert validate_url("https://example.com/page") == "https://example.com/page"
 
     def test_valid_http(self):
-        assert _validate_url("http://example.com") == "http://example.com"
+        assert validate_url("http://example.com") == "http://example.com"
 
     def test_strips_whitespace(self):
-        assert _validate_url("  https://example.com  ") == "https://example.com"
+        assert validate_url("  https://example.com  ") == "https://example.com"
 
     def test_rejects_empty(self):
         with pytest.raises(ValueError, match="empty"):
-            _validate_url("")
+            validate_url("")
 
     def test_rejects_file_scheme(self):
         with pytest.raises(ValueError, match="not allowed"):
-            _validate_url("file:///etc/passwd")
+            validate_url("file:///etc/passwd")
 
     def test_rejects_ftp_scheme(self):
         with pytest.raises(ValueError, match="not allowed"):
-            _validate_url("ftp://mirror.example.com/file")
+            validate_url("ftp://mirror.example.com/file")
 
     def test_rejects_data_scheme(self):
         with pytest.raises(ValueError, match="not allowed"):
-            _validate_url("data:text/html,<h1>hi</h1>")
+            validate_url("data:text/html,<h1>hi</h1>")
 
     def test_rejects_no_hostname(self):
         with pytest.raises(ValueError, match="no hostname"):
-            _validate_url("https://")
+            validate_url("https://")
 
     def test_rejects_unsupported_scheme(self):
         with pytest.raises(ValueError, match="unsupported"):
-            _validate_url("gopher://example.com")
+            validate_url("gopher://example.com")
 
     @pytest.mark.parametrize(
         "url",
@@ -77,7 +77,7 @@ class TestUrlValidation:
         ),
     )
     def test_accepts_private_and_loopback_http_destinations(self, url):
-        assert _validate_url(url) == url
+        assert validate_url(url) == url
 
 
 class TestHtmlExtraction:
@@ -181,7 +181,7 @@ class TestHandler:
 class TestFetchOutput:
     def test_success_output_has_consistent_fields(self, monkeypatch):
         html = b"<html><head><title>Example</title></head><body><p>Hello</p></body></html>"
-        monkeypatch.setattr(web_fetch_tools, "_validate_url", lambda url: url)
+        monkeypatch.setattr(web_fetch_tools, "validate_url", lambda url: url)
         monkeypatch.setattr(
             web_fetch_tools.urllib.request,
             "urlopen",
@@ -198,7 +198,7 @@ class TestFetchOutput:
         )
 
     def test_missing_title_uses_placeholder(self, monkeypatch):
-        monkeypatch.setattr(web_fetch_tools, "_validate_url", lambda url: url)
+        monkeypatch.setattr(web_fetch_tools, "validate_url", lambda url: url)
         monkeypatch.setattr(
             web_fetch_tools.urllib.request,
             "urlopen",
@@ -215,7 +215,7 @@ class TestFetchOutput:
 
     def test_truncation_is_reported_separately(self, monkeypatch):
         html = f"<html><body><p>{'x' * 120}</p></body></html>".encode()
-        monkeypatch.setattr(web_fetch_tools, "_validate_url", lambda url: url)
+        monkeypatch.setattr(web_fetch_tools, "validate_url", lambda url: url)
         monkeypatch.setattr(
             web_fetch_tools.urllib.request,
             "urlopen",
@@ -233,7 +233,7 @@ class TestFetchErrors:
         def reject_url(_url):
             raise ValueError("unsupported scheme 'ftp'; only http/https")
 
-        monkeypatch.setattr(web_fetch_tools, "_validate_url", reject_url)
+        monkeypatch.setattr(web_fetch_tools, "validate_url", reject_url)
 
         result = _fetch_page("ftp://example.com", 8000)
 
@@ -242,7 +242,7 @@ class TestFetchErrors:
         )
 
     def test_http_error_is_concise(self, monkeypatch):
-        monkeypatch.setattr(web_fetch_tools, "_validate_url", lambda url: url)
+        monkeypatch.setattr(web_fetch_tools, "validate_url", lambda url: url)
 
         def raise_http_error(*args, **kwargs):
             raise urllib.error.HTTPError(
@@ -258,7 +258,7 @@ class TestFetchErrors:
         assert result == "Error: HTTP 404 Not Found."
 
     def test_network_error_is_readable(self, monkeypatch):
-        monkeypatch.setattr(web_fetch_tools, "_validate_url", lambda url: url)
+        monkeypatch.setattr(web_fetch_tools, "validate_url", lambda url: url)
 
         def raise_url_error(*args, **kwargs):
             raise urllib.error.URLError("connection refused")
@@ -272,7 +272,7 @@ class TestFetchErrors:
         assert result == "Error: Network request failed: connection refused"
 
     def test_timeout_is_readable(self, monkeypatch):
-        monkeypatch.setattr(web_fetch_tools, "_validate_url", lambda url: url)
+        monkeypatch.setattr(web_fetch_tools, "validate_url", lambda url: url)
 
         def raise_timeout(*args, **kwargs):
             raise TimeoutError
@@ -284,7 +284,7 @@ class TestFetchErrors:
         assert result == "Error: Request timed out after 15 seconds."
 
     def test_unsupported_content_type_is_readable(self, monkeypatch):
-        monkeypatch.setattr(web_fetch_tools, "_validate_url", lambda url: url)
+        monkeypatch.setattr(web_fetch_tools, "validate_url", lambda url: url)
         monkeypatch.setattr(
             web_fetch_tools.urllib.request,
             "urlopen",
@@ -299,7 +299,7 @@ class TestFetchErrors:
         )
 
     def test_unknown_error_is_readable(self, monkeypatch):
-        monkeypatch.setattr(web_fetch_tools, "_validate_url", lambda url: url)
+        monkeypatch.setattr(web_fetch_tools, "validate_url", lambda url: url)
 
         def raise_unknown(*args, **kwargs):
             raise RuntimeError("unexpected failure")

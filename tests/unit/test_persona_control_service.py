@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from chatcopilot.contracts.persona_control import PersonaMutationRequest
 from chatcopilot.core.persona_control import PersonaControlService
-from chatcopilot.middleware.runtime.workspace import MiddlewareWorkspaceService, Workspace
+from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService, Workspace
 
 
 def _state(tmp_path, *, chat_kind="group"):

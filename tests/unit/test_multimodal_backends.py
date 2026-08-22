@@ -19,7 +19,7 @@ from chatcopilot.contracts.agent import (
     ResourceRef,
 )
 from chatcopilot.core.llm_client import ChatResult, LLMClient
-from chatcopilot.external_tools.shared.tool_spec import ToolDef, build_openai_schema
+from chatcopilot.contracts.tools import ToolDef, build_openai_schema
 
 
 _PNG_BYTES = b"\x89PNG\r\n\x1a\nmultimodal-test"
@@ -71,9 +71,7 @@ def _image_resource(path: Path) -> ResourceRef:
 def _llm_client(completions: _Completions) -> LLMClient:
     client = object.__new__(LLMClient)
     client._cfg = SimpleNamespace(model="vision-test")
-    client._client = SimpleNamespace(
-        chat=SimpleNamespace(completions=completions)
-    )
+    client._client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     client._limiter = _Limiter()
     return client
 
@@ -103,14 +101,14 @@ def test_native_expands_image_only_at_request_boundary(tmp_path: Path) -> None:
     )
 
     assert result.final_text == "image received"
-    outbound_content = completions.calls[0]["messages"][1]["content"]
-    image_blocks = [
-        block for block in outbound_content if block.get("type") == "image_url"
-    ]
-    assert len(image_blocks) == 1
-    assert image_blocks[0]["image_url"]["url"].startswith(
-        "data:image/png;base64,"
+    outbound_content = next(
+        message["content"]
+        for message in completions.calls[0]["messages"]
+        if isinstance(message.get("content"), list)
     )
+    image_blocks = [block for block in outbound_content if block.get("type") == "image_url"]
+    assert len(image_blocks) == 1
+    assert image_blocks[0]["image_url"]["url"].startswith("data:image/png;base64,")
 
     transcript = json.dumps(session.snapshot_messages(), ensure_ascii=False)
     assert '"type": "local_image"' in transcript
@@ -130,9 +128,7 @@ def test_native_expands_image_only_at_request_boundary(tmp_path: Path) -> None:
     assert context.resources == dispatch.resources
     assert "binary_resource_payload_not_persisted" in context.omitted
     assert "local_resource_paths" in context.omitted
-    assert str(image_path) not in json.dumps(
-        list(context.effective_messages), ensure_ascii=False
-    )
+    assert str(image_path) not in json.dumps(list(context.effective_messages), ensure_ascii=False)
     assert context.resource_path_omission_count > 0
 
 
@@ -174,12 +170,8 @@ def test_native_tool_loop_keeps_resource_receipts_on_every_context_snapshot(
         on_event=events.append,
     )
 
-    contexts = [
-        event for event in events if isinstance(event, ContextSnapshotPrepared)
-    ]
-    dispatches = [
-        event for event in events if isinstance(event, InputResourcesDispatched)
-    ]
+    contexts = [event for event in events if isinstance(event, ContextSnapshotPrepared)]
+    dispatches = [event for event in events if isinstance(event, InputResourcesDispatched)]
     assert len(contexts) == 2
     assert len(dispatches) == 2
     assert all(len(context.resources) == 1 for context in contexts)

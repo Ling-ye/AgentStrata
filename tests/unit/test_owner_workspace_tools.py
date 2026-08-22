@@ -9,8 +9,8 @@ from unittest import mock
 
 from chatcopilot.middleware.access_control import Role
 from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.middleware.runtime.workspace import Workspace, list_workspace_inventories, persist_workspace_identity
-from chatcopilot.middleware.runtime.workspace.service import MiddlewareWorkspaceService
+from chatcopilot.core.workspace_runtime import Workspace, list_workspace_inventories, persist_workspace_identity
+from chatcopilot.core.workspace_runtime.service import MiddlewareWorkspaceService
 from chatcopilot.agent.tools.builtin.workspace_tools import TOOLS
 from chatcopilot.middleware.acp.meta_commands import (
     _format_owner_global_workspace_status,

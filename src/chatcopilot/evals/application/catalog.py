@@ -94,6 +94,7 @@ def list_suite_descriptors(
                     "plugin_id": manifest.plugin_id,
                     "driver_id": manifest.driver_id,
                     "driver": manifest.driver_id,
+                    "track": manifest.track,
                     "execution_scope": _suite_execution_scope(manifest.suite_id),
                     "capability_status": _suite_capability_status(manifest.suite_id),
                     "default_preset": manifest.default_preset,
@@ -123,7 +124,9 @@ def _suite_execution_scope(suite_id: str) -> str:
     if suite_id == "bfcl":
         return "direct_llm/function_call_protocol"
     if suite_id == "agentstrata-capabilities-v1":
-        return "product_agent_mixed_drivers"
+        return "direct_agent_runtime/no_acp"
+    if suite_id == "agentstrata-qq-message-flow-v1":
+        return "synthetic_qq_owned_chain/no_external_platform"
     return "agent_runtime" if suite_id in {"gaia", "ifeval"} else "unavailable"
 
 

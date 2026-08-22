@@ -1,4 +1,5 @@
 """Workspace dataclass + 路径常量 + 显示 helper。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from chatcopilot.contracts.workspace import (
 # 工作区可被 list_workspace 直接列举的逻辑子目录名（attachments 走单独 property）。
 _SUBDIRS = WORKSPACE_SUBDIRS
 
+
 @dataclass(frozen=True)
 class Workspace(WorkspaceView):
     """Conversation workspace plus the current turn's actor metadata."""
@@ -40,7 +42,8 @@ class Workspace(WorkspaceView):
             sub.mkdir(parents=True, exist_ok=True)
         # MEMORY.md is now only a legacy migration locator.  Never create a new
         # authoritative memory file inside a member-writable workspace.
-        # 避免循环 import：identity 持久化由 identity 模块负责
+        # Identity metadata is a best-effort inventory projection, not
+        # authoritative conversation state.
         from chatcopilot.core.workspace_runtime.identity import (
             persist_workspace_identity,
         )

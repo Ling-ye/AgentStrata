@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from chatcopilot.agent.protocol import AgentTask, InputResourceReceipt, ResourceRef
+from chatcopilot.contracts.agent import AgentTask, InputResourceReceipt, ResourceRef
 from chatcopilot.core.image_content import (
     SUPPORTED_IMAGE_MEDIA_TYPES,
     normalize_image_media_type,

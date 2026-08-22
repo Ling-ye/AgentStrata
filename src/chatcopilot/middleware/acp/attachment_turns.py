@@ -13,7 +13,7 @@ from chatcopilot.middleware.acp import attachment_pipeline as _attachment
 from chatcopilot.middleware.acp.attachment_pipeline import ExtractedPrompt
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder
-from chatcopilot.middleware.runtime.workspace import Workspace
+from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 
 _LOGGER = logging.getLogger("chatcopilot.middleware.acp.attachment_turns")

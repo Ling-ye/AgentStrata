@@ -8,7 +8,7 @@ import unittest
 from chatcopilot.agent.subagents.context_pack import ContextPackBuilder
 from chatcopilot.agent.subagents.spec import ContextPolicySpec
 from chatcopilot.agent.subagents.task_pack import TaskPack
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 
 def _dummy_tool(name: str) -> ToolDef:
