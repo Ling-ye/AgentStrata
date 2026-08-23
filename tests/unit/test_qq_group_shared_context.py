@@ -34,7 +34,10 @@ from chatcopilot.contracts.prompt import BotPromptProfile
 from chatcopilot.contracts.tool_packs import ToolPackPolicy
 from chatcopilot.contracts.tools import (
     EXECUTION_USER_SERIAL_BACKGROUND,
+    ToolContext,
     ToolDef,
+    ToolResult,
+    object_schema,
 )
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.core.workspace_runtime import resolve_workspace
@@ -72,6 +75,10 @@ from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder, group_task_ac
 _GROUP_ID = "30003"
 _OWNER_ID = "20002"
 _MEMBER_ID = "29999"
+
+
+def _ok_tool_handler(_args: dict, _context: ToolContext) -> ToolResult:
+    return ToolResult(ok=True, summary="ok")
 
 
 def _conversation(group_id: str = _GROUP_ID) -> ConversationIdentity:
@@ -1166,9 +1173,9 @@ def test_group_owner_permission_surface_keeps_owner_tools_and_shared_files(
     background = ToolDef(
         name="background_workspace_tool",
         summary="background",
-        properties={},
-        required=[],
-        handler=lambda _args: ("ok", [], None),
+        input_schema=object_schema(),
+        output_schema=object_schema(),
+        handler=_ok_tool_handler,
         category="agent.workspace",
         execution_policy=EXECUTION_USER_SERIAL_BACKGROUND,
     )
@@ -1187,16 +1194,28 @@ def test_group_owner_permission_surface_keeps_owner_tools_and_shared_files(
         (target / "private.json").write_text("host diagnostic", encoding="utf-8")
 
     with bind_workspace_service(_make_workspace_service(workspace)):
-        listing, _, _ = workspace_tools._handler_list_workspace({"subdir": "", "recursive": True})
-        readable, _, _ = workspace_tools._handler_read_text_head({"path": "report.txt"})
+        listing = workspace_tools._handler_list_workspace(
+            {"subdir": "", "recursive": True},
+            ToolContext(),
+        ).summary
+        readable = workspace_tools._handler_read_text_head(
+            {"path": "report.txt"},
+            ToolContext(),
+        ).summary
         assert "group report" in readable
         assert "private.json" not in listing
         for reserved in ("jobs", "tasks"):
             with pytest.raises(PermissionError):
-                workspace_tools._handler_list_workspace({"subdir": reserved, "recursive": True})
+                workspace_tools._handler_list_workspace(
+                    {"subdir": reserved, "recursive": True},
+                    ToolContext(),
+                )
         for reserved in ("jobs", "tasks", "transcripts"):
             with pytest.raises(PermissionError):
-                workspace_tools._handler_read_text_head({"path": f"{reserved}/private.json"})
+                workspace_tools._handler_read_text_head(
+                    {"path": f"{reserved}/private.json"},
+                    ToolContext(),
+                )
 
 
 def test_group_turn_tasks_and_owner_jobs_use_protected_actor_storage(
@@ -1243,9 +1262,9 @@ def test_group_turn_tasks_and_owner_jobs_use_protected_actor_storage(
     background = ToolDef(
         name="long_running_analysis",
         summary="background",
-        properties={},
-        required=[],
-        handler=lambda _args: ("ok", [], None),
+        input_schema=object_schema(),
+        output_schema=object_schema(),
+        handler=_ok_tool_handler,
         category="agent.workspace",
         execution_policy=EXECUTION_USER_SERIAL_BACKGROUND,
     )
@@ -1631,13 +1650,13 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
         assert captured["prompt_input"].memory == ""
         assert captured["prompt_input"].skill_index == ("PRIVATE SKILL",)
         assert captured["caller_role_hint"] == "owner"
-        assert captured["extra_tools"] == ()
+        assert captured["session_providers"] == ()
         owner_only_tool = ToolDef(
             name="owner_only_tool",
             summary="owner",
-            properties={},
-            required=[],
-            handler=lambda _args: ("ok", [], None),
+            input_schema=object_schema(),
+            output_schema=object_schema(),
+            handler=_ok_tool_handler,
             requires_role="owner",
             category="filesystem.windows.read",
         )

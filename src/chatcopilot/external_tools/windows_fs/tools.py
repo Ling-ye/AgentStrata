@@ -11,12 +11,18 @@ import shutil
 import subprocess
 from typing import Any, Dict, List, Tuple
 
+from chatcopilot.contracts.tool_packs import static_tool_provider
 from chatcopilot.external_tools.shared.spec_helpers import (
     require_arg,
     schema_property,
     validate_non_negative,
 )
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.external_tools.shared.tool_spec import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 from chatcopilot.external_tools.windows_fs.config import load_config
 from chatcopilot.external_tools.windows_fs.path_guard import (
     PathAccessError,
@@ -58,7 +64,7 @@ def _run_subprocess(cmd: List[str], *, timeout: int = _DEFAULT_TIMEOUT_SECS) -> 
 # ---------------------------------------------------------------------------
 # win_read_file
 # ---------------------------------------------------------------------------
-def _handler_win_read_file(args: Dict[str, Any]) -> HandlerResult:
+def _handler_win_read_file(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     cfg = load_config()
     path = require_arg(args, "path")
     start_line = args.get("start_line")
@@ -94,13 +100,24 @@ def _handler_win_read_file(args: Dict[str, Any]) -> HandlerResult:
     body = "".join(selected).rstrip("\n")
     header = f"# {target} (lines {s}-{e} of {total})"
     summary = f"{header}\n{body}" if body else f"{header}\n<empty>"
-    return summary, [str(target)], None
+    return ToolResult(
+        ok=True,
+        summary=summary,
+        outputs=[str(target)],
+        data={
+            "path": str(target),
+            "content": body,
+            "start_line": s,
+            "end_line": e,
+            "total_lines": total,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
 # win_grep
 # ---------------------------------------------------------------------------
-def _handler_win_grep(args: Dict[str, Any]) -> HandlerResult:
+def _handler_win_grep(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     cfg = load_config()
     query = require_arg(args, "query")
     raw_path = require_arg(args, "path")
@@ -139,17 +156,25 @@ def _handler_win_grep(args: Dict[str, Any]) -> HandlerResult:
     hits = stdout.rstrip("\n").splitlines()
     if not hits:
         summary = f"win_grep: no matches for {query!r} under {search_root}"
-        return summary, [], None
+        return ToolResult(
+            ok=True,
+            summary=summary,
+            data={"query": query, "root": str(search_root), "hits": []},
+        )
 
     body = "\n".join(hits[: max_count or len(hits)])
     summary = f"win_grep: {len(hits)} hits for {query!r} under {search_root}\n{body}"
-    return summary, [], None
+    return ToolResult(
+        ok=True,
+        summary=summary,
+        data={"query": query, "root": str(search_root), "hits": hits[: max_count or len(hits)]},
+    )
 
 
 # ---------------------------------------------------------------------------
 # win_glob
 # ---------------------------------------------------------------------------
-def _handler_win_glob(args: Dict[str, Any]) -> HandlerResult:
+def _handler_win_glob(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     cfg = load_config()
     pattern = require_arg(args, "pattern")
     raw_path = require_arg(args, "path")
@@ -173,13 +198,26 @@ def _handler_win_glob(args: Dict[str, Any]) -> HandlerResult:
     files = [line for line in stdout.splitlines() if line.strip()]
     if not files:
         summary = f"win_glob: no files match {pattern!r} under {search_root}"
-        return summary, [], None
+        return ToolResult(
+            ok=True,
+            summary=summary,
+            data={"pattern": pattern, "root": str(search_root), "files": [], "truncated": False},
+        )
 
     truncated = files[:limit] if limit else files
     body = "\n".join(truncated)
     note = "" if len(files) <= len(truncated) else f"\n... ({len(files) - len(truncated)} more truncated)"
     summary = f"win_glob: {len(files)} files match {pattern!r} under {search_root}\n{body}{note}"
-    return summary, [], None
+    return ToolResult(
+        ok=True,
+        summary=summary,
+        data={
+            "pattern": pattern,
+            "root": str(search_root),
+            "files": truncated,
+            "truncated": len(files) > len(truncated),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -242,28 +280,57 @@ TOOLS: List[ToolDef] = [
     _win_tool(
         name="win_read_file",
         summary="Read a bounded text range from an allowed absolute Windows/WSL path.",
-        properties=_PROPS_READ,
-        required=["path"],
+        input_schema=object_schema(_PROPS_READ, required=("path",)),
+        output_schema=object_schema(
+            {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+                "start_line": {"type": "integer"},
+                "end_line": {"type": "integer"},
+                "total_lines": {"type": "integer"},
+            },
+            required=("path", "content", "start_line", "end_line", "total_lines"),
+        ),
         handler=_handler_win_read_file,
         aliases=["read_windows_file", "win-read"],
     ),
     _win_tool(
         name="win_grep",
         summary="Search an allowed absolute Windows/WSL directory with ripgrep.",
-        properties=_PROPS_GREP,
-        required=["query", "path"],
+        input_schema=object_schema(_PROPS_GREP, required=("query", "path")),
+        output_schema=object_schema(
+            {
+                "query": {"type": "string"},
+                "root": {"type": "string"},
+                "hits": {"type": "array", "items": {"type": "string"}},
+            },
+            required=("query", "root", "hits"),
+        ),
         handler=_handler_win_grep,
         aliases=["grep_windows", "win-grep"],
     ),
     _win_tool(
         name="win_glob",
         summary="List files matching a glob under an allowed absolute Windows/WSL directory.",
-        properties=_PROPS_GLOB,
-        required=["pattern", "path"],
+        input_schema=object_schema(_PROPS_GLOB, required=("pattern", "path")),
+        output_schema=object_schema(
+            {
+                "pattern": {"type": "string"},
+                "root": {"type": "string"},
+                "files": {"type": "array", "items": {"type": "string"}},
+                "truncated": {"type": "boolean"},
+            },
+            required=("pattern", "root", "files", "truncated"),
+        ),
         handler=_handler_win_glob,
         aliases=["glob_windows", "win-glob"],
     ),
 ]
 
+TOOL_PROVIDER = static_tool_provider(
+    "windows-fs",
+    packs={"filesystem.windows.read": tuple(TOOLS)},
+    module=__name__,
+)
 
-__all__ = ["TOOLS", "PathAccessError"]
+__all__ = ["TOOLS", "TOOL_PROVIDER", "PathAccessError"]

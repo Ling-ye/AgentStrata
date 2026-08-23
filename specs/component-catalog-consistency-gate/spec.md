@@ -9,6 +9,12 @@ created: 2026-08-11
 
 ## Summary
 
+This specification records the exact-name binding design implemented on 2026-08-11.
+The current provider-owned registration contract superseding that intermediate
+design is specified by
+[`unified-tool-registry`](../unified-tool-registry/spec.md); the audit and Console
+projection requirements below remain in force.
+
 The component catalog currently describes tool packs, tool features, MCP entries,
 subagent presets, and workflows, but its tool-pack projection is not the runtime
 source of truth. Built-in module mappings live in `agent.tools.builtin`, external

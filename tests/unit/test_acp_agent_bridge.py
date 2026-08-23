@@ -16,7 +16,7 @@ from chatcopilot.botspec.model import (
     WikiSpec,
 )
 from chatcopilot.contracts import Role
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.contracts.prompt import BotPromptProfile
 from chatcopilot.contracts.tool_packs import ToolPackPolicy
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
@@ -43,12 +43,15 @@ def _tool(
     requires_role: str | None = "owner",
     metadata: dict | None = None,
 ) -> ToolDef:
+    def handler(_args: dict, _context: ToolContext) -> ToolResult:
+        return ToolResult(ok=True, summary="ok")
+
     return ToolDef(
         name="private_wiki_tool",
         summary="test",
-        properties={},
-        required=[],
-        handler=lambda args: ("ok", [], None),
+        input_schema=object_schema(),
+        output_schema=object_schema(),
+        handler=handler,
         requires_role=requires_role,
         category=category,
         metadata=(metadata if metadata is not None else {"private_chat_only": True}),

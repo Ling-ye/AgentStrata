@@ -17,7 +17,7 @@ from chatcopilot.contracts.subagents import (
     SubagentDef,
     WorkflowDef,
 )
-from chatcopilot.contracts.tool_packs import ToolFeatureEntry, ToolPackEntry
+from chatcopilot.contracts.tool_packs import ToolFeatureEntry, ToolPackEntry, ToolProvider
 from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.core.mcp_catalog import McpCatalogEntry, load_mcp_catalog
 from chatcopilot.tool_packs.catalog import (
@@ -25,7 +25,6 @@ from chatcopilot.tool_packs.catalog import (
     get_tool_pack_entry,
     known_tool_feature_names,
     known_tool_pack_names,
-    resolve_tool_bindings,
 )
 
 
@@ -57,38 +56,36 @@ def iter_tool_pack_tools(
 ) -> Iterator[ToolDef]:
     """Yield the exact ordered ToolDef projection declared by one pack."""
 
-    seen: set[str] = set()
-    for binding in resolve_tool_bindings((name,)):
-        try:
-            module = module_loader(binding.module)
-        except Exception as exc:  # noqa: BLE001
+    entry = get_tool_pack_entry(name)
+    if entry is None:
+        raise CatalogProjectionError(f"unknown tool pack: {name}")
+    if entry.dynamic:
+        return
+    module_path = entry.provider_module or ""
+    if not module_path:
+        raise CatalogProjectionError(f"tool provider module is missing: {name}")
+    try:
+        module = module_loader(module_path)
+    except Exception as exc:  # noqa: BLE001
+        raise CatalogProjectionError(
+            f"tool provider module could not be imported: {module_path} ({type(exc).__name__})"
+        ) from None
+    provider = getattr(module, "TOOL_PROVIDER", None)
+    if not isinstance(provider, ToolProvider):
+        raise CatalogProjectionError(
+            f"tool provider module must export TOOL_PROVIDER: {module_path}"
+        )
+    tools = provider.packs.get(name)
+    if not isinstance(tools, tuple) or not tools:
+        raise CatalogProjectionError(
+            f"tool provider does not export pack {name!r}: {module_path}"
+        )
+    for tool in tools:
+        if not isinstance(tool, ToolDef):
             raise CatalogProjectionError(
-                f"tool module could not be imported: {binding.module} ({type(exc).__name__})"
-            ) from None
-        exported = getattr(module, "TOOLS", None)
-        if not isinstance(exported, (list, tuple)):
-            raise CatalogProjectionError(
-                f"tool module must export a list or tuple named TOOLS: {binding.module}"
+                f"tool provider pack contains a non-ToolDef: {module_path}"
             )
-        by_name: dict[str, ToolDef] = {}
-        for tool in exported:
-            if not isinstance(tool, ToolDef):
-                continue
-            if tool.name in by_name:
-                raise CatalogProjectionError(
-                    f"tool module exports duplicate tool name {tool.name!r}: {binding.module}"
-                )
-            by_name[tool.name] = tool
-        for tool_name in binding.tool_names:
-            tool = by_name.get(tool_name)
-            if tool is None:
-                raise CatalogProjectionError(
-                    f"declared tool {tool_name!r} is missing from {binding.module}"
-                )
-            if tool_name in seen:
-                continue
-            seen.add(tool_name)
-            yield tool
+        yield tool
 
 
 def get_mcp_catalog_entry(ref: str) -> McpCatalogEntry | None:

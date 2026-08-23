@@ -226,11 +226,9 @@ systemd 托管实例的每次 start/restart 也会先执行 `start.sh --apply-co
 BotSpec 的 shared-session、sender injection 与同步身份见证 hook 在 cc-connect 载入配置前
 同时落盘；渲染失败时实例启动失败关闭。
 
-Owner 可直接使用自然语言提出持续人格要求。普通消息先经零模型候选检测；明确要求直接进入专用
-`PersonaDraftAgent`，含糊要求才调用一次严格解释器。人格正文完全由该 Agent 生成；宿主只校验真实
-Owner、scope、严格输出、来源和大小，然后执行唯一一次原子替换。命名人物、角色、歌手或组织形象
-要求 Agent 先通过统一搜索完成公开资料消歧。任一步骤失败都保持旧人格不变。也可使用
-以下完全不依赖主 Agent 的入口，`/persona` 后允许不加空格直接写自然语言：
+BotSpec 选择 `persona.control` 后，Owner 可用自然语言或 `/persona` 提出持续人格要求；两者都会
+原样进入主 Agent，由它调用 Owner-only `persona_manage`。不存在宿主 detector、解释器或直达写入
+后门，因此若主 Agent 没有调用工具，本轮就不会修改人格。建议使用下列清晰格式减少模型误判：
 
 ```text
 /persona show [global|group|user]
@@ -245,11 +243,17 @@ Owner、scope、严格输出、来源和大小，然后执行唯一一次原子�
 ```
 
 未指定 scope 时群聊固定为 `group`、私聊固定为 `user`；群聊不能选 `user`，私聊不能选
-`group`。`set` 从要求生成完整文档；`append` 把当前层人格与补充要求交给 Agent，并整体替换为
-一份合并后的完整文档；`research` 强制搜索后生成；`refresh` 用当前权威人格重新研究并整体替换。
-这条链路没有歌词专用字段或回复装饰器，任何持续结尾风格都只是普通人格要求。依赖前文的中可信要求和 `clear` 都只建立与 actor/chat/scope/hash
-及十分钟 TTL 绑定的受保护提案，只有精确 `/persona confirm` 可以落盘；`/persona cancel` 取消。
-普通“确认”不会触发。群聊 `show` 不输出底层人格正文。
+`group`。`set/append/research` 的 requirement 必须逐字来自当前用户消息的连续片段；`global` 也必须
+由当前消息明确提出。`set` 从要求生成完整文档；`append` 把当前层人格与补充要求交给
+`PersonaDraftAgent` 并整体替换；`research` 强制搜索后生成；`refresh` 用当前权威人格重新研究并
+整体替换。命名人物、角色、歌手或组织形象由该 Agent 通过统一搜索完成公开资料消歧。任一步骤失败
+都保持旧人格不变。
+
+明确的非清空更新可直接提交；主 Agent 对依赖前文或仍含糊的要求应传
+`defer_confirmation=true`。该情况和 `clear` 都只建立与 actor/chat/scope/hash 及十分钟 TTL 绑定的
+受保护提案。确认时，当前真实 raw user text 必须精确等于 `/persona confirm`，前后空格或普通
+“确认”都不会写；取消可以自然语言或 `/persona cancel`。只有工具结果的
+`data.committed=true` 及其 receipt 能证明人格已经保存或清空。群聊 `show` 不输出底层正文。
 
 ## Codex main / worker 认证
 

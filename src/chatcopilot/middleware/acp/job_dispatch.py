@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from chatcopilot.agent.tools.executor import ToolResult
 from chatcopilot.contracts.code_tasks import CODE_TASK_TOOL
+from chatcopilot.contracts.tools import ToolResult
 from chatcopilot.core.jobs import (
     latest_code_job,
     request_job_cancel,

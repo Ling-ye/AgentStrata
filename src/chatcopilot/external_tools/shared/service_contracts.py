@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult
+from chatcopilot.contracts.tools import ToolResult
 
 
 @dataclass
@@ -17,8 +17,14 @@ class ToolServiceResult:
     data: Dict[str, Any]
     file_type_hint: Optional[str] = None
 
-    def to_handler_result(self) -> HandlerResult:
-        return (self.message, list(self.outputs), self.file_type_hint)
+    def to_tool_result(self) -> ToolResult:
+        return ToolResult(
+            ok=True,
+            summary=self.message,
+            outputs=list(self.outputs),
+            data=to_jsonable(self.data),
+            file_type_hint=self.file_type_hint,
+        )
 
     def to_json(self) -> Dict[str, Any]:
         return {
@@ -43,18 +49,14 @@ def to_jsonable(value: Any) -> Any:
     return value
 
 
-def handler_result_from_service(result: ToolServiceResult) -> HandlerResult:
-    return result.to_handler_result()
+def tool_result_from_service(result: ToolServiceResult) -> ToolResult:
+    return result.to_tool_result()
 
 
-def service_result_from_handler(result: HandlerResult, *, data: Dict[str, Any] | None = None) -> ToolServiceResult:
-    message, outputs, file_type_hint = result
+def service_result_from_tool(result: ToolResult, *, data: Dict[str, Any] | None = None) -> ToolServiceResult:
     return ToolServiceResult(
-        message=message,
-        outputs=list(outputs),
-        data=dict(data or {}),
-        file_type_hint=file_type_hint,
+        message=result.summary,
+        outputs=list(result.outputs),
+        data=dict(data if data is not None else result.data),
+        file_type_hint=result.file_type_hint,
     )
-
-
-HandlerResultTuple = Tuple[str, List[str], Optional[str]]

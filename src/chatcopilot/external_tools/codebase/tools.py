@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from chatcopilot.contracts.tool_packs import static_tool_provider
 from chatcopilot.project import ENV_PREFIX
 from chatcopilot.external_tools.codebase.config import CodeRepositoryConfig, load_registry
 from chatcopilot.external_tools.codebase.fallback_search import (
@@ -27,7 +28,12 @@ from chatcopilot.external_tools.shared.spec_helpers import (
     schema_property,
     validate_non_negative,
 )
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.external_tools.shared.tool_spec import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 
 _CATEGORY = "codebase.read"
 _OWNER = "codebase"
@@ -45,6 +51,10 @@ def _tool(**kwargs: Any) -> ToolDef:
     )
 
 
+def _text_result(summary: str, **data: Any) -> ToolResult:
+    return ToolResult(ok=True, summary=summary, data={"text": summary, **data})
+
+
 def _repository(args: dict[str, Any]) -> CodeRepositoryConfig:
     change_id = str(args.get("change_id") or "").strip()
     if change_id:
@@ -59,7 +69,7 @@ def _repository(args: dict[str, Any]) -> CodeRepositoryConfig:
 # ---------------------------------------------------------------------------
 
 
-def _handler_list(_: dict[str, Any]) -> HandlerResult:
+def _handler_list(_: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     registry = load_registry()
     lines = ["# Registered codebase repositories"]
     for repository in registry.repositories.values():
@@ -69,10 +79,10 @@ def _handler_list(_: dict[str, Any]) -> HandlerResult:
             f"- {repository.repository_id}: {repository.display_name} [{state}] "
             f"root={repository.root}{description}"
         )
-    return "\n".join(lines), [], None
+    return _text_result("\n".join(lines), repositories=list(registry.repositories))
 
 
-def _handler_map(args: dict[str, Any]) -> HandlerResult:
+def _handler_map(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     repository = _repository(args)
     rel_subdir = str(args.get("rel_subdir") or "").strip()
     depth = int(args["depth"]) if args.get("depth") is not None else 4
@@ -97,10 +107,14 @@ def _handler_map(args: dict[str, Any]) -> HandlerResult:
     lines = [header, *(f"- {item}" for item in visible)]
     if len(files) > len(visible):
         lines.append(f"... showing {len(visible)} of {len(files)} matched files")
-    return "\n".join(lines), [], None
+    return _text_result(
+        "\n".join(lines),
+        repository=repository.repository_id,
+        files=visible,
+    )
 
 
-def _handler_search(args: dict[str, Any]) -> HandlerResult:
+def _handler_search(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     repository = _repository(args)
     query = require_arg(args, "query")
     rel_subdir = str(args.get("rel_subdir") or "").strip()
@@ -144,10 +158,15 @@ def _handler_search(args: dict[str, Any]) -> HandlerResult:
     ]
     if not hits:
         lines.append("<no matches>")
-    return "\n".join(lines), [], None
+    return _text_result(
+        "\n".join(lines),
+        repository=repository.repository_id,
+        query=query,
+        hits=hits,
+    )
 
 
-def _handler_read(args: dict[str, Any]) -> HandlerResult:
+def _handler_read(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     repository = _repository(args)
     rel_path = require_arg(args, "rel_path")
     target, normalized = ensure_readable(repository, rel_path)
@@ -171,10 +190,17 @@ def _handler_read(args: dict[str, Any]) -> HandlerResult:
         f"# repository={repository.repository_id} {normalized} "
         f"(lines {start}-{end} of {len(lines)})"
     )
-    return "\n".join([header, *numbered]), [], None
+    return _text_result(
+        "\n".join([header, *numbered]),
+        repository=repository.repository_id,
+        path=normalized,
+        start_line=start,
+        end_line=end,
+        total_lines=len(lines),
+    )
 
 
-def _handler_symbols(args: dict[str, Any]) -> HandlerResult:
+def _handler_symbols(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     repository = _repository(args)
     query = str(args.get("query") or "").strip()
     kind = str(args.get("kind") or "").strip()
@@ -196,10 +222,15 @@ def _handler_symbols(args: dict[str, Any]) -> HandlerResult:
         lines.append(entry)
     if not hits:
         lines.append("<no symbols>")
-    return "\n".join(lines), [], None
+    return _text_result(
+        "\n".join(lines),
+        repository=repository.repository_id,
+        query=query,
+        symbol_count=len(hits),
+    )
 
 
-def _handler_references(args: dict[str, Any]) -> HandlerResult:
+def _handler_references(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     """Find all references to a named symbol across the repository."""
     repository = _repository(args)
     symbol = require_arg(args, "symbol")
@@ -227,10 +258,15 @@ def _handler_references(args: dict[str, Any]) -> HandlerResult:
         lines.append(f"  {ref.path}:{ref.line} | {ref.content}")
     if not refs:
         lines.append("  <no references found>")
-    return "\n".join(lines), [], None
+    return _text_result(
+        "\n".join(lines),
+        repository=repository.repository_id,
+        symbol=symbol,
+        reference_count=len(refs),
+    )
 
 
-def _handler_dependencies(args: dict[str, Any]) -> HandlerResult:
+def _handler_dependencies(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     """Analyze import dependencies of a file or module."""
     repository = _repository(args)
     rel_path = str(args.get("rel_path") or "").strip()
@@ -263,10 +299,14 @@ def _handler_dependencies(args: dict[str, Any]) -> HandlerResult:
 
     if len(lines) == 1:
         lines.append("<provide rel_path or module to analyze dependencies>")
-    return "\n".join(lines), [], None
+    return _text_result(
+        "\n".join(lines),
+        repository=repository.repository_id,
+        direction=direction,
+    )
 
 
-def _handler_context(args: dict[str, Any]) -> HandlerResult:
+def _handler_context(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     """Assemble relevant context for understanding or modifying a code region."""
     repository = _repository(args)
     rel_path = require_arg(args, "rel_path")
@@ -318,7 +358,12 @@ def _handler_context(args: dict[str, Any]) -> HandlerResult:
             for imp in importers[:15]:
                 lines.append(f"  {imp.path}:L{imp.line} ({imp.names or '*'})")
 
-    return "\n".join(lines), [], None
+    return _text_result(
+        "\n".join(lines),
+        repository=repository.repository_id,
+        path=rel_path,
+        focus_symbol=focus_symbol,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -422,32 +467,38 @@ _CHANGE_PROPERTY = schema_property(
     description="Optional managed change id; when set, inspect that task worktree.",
     default="",
 )
+_CODEBASE_RESULT_SCHEMA = {
+    "type": "object",
+    "properties": {"text": {"type": "string"}},
+    "required": ["text"],
+    "additionalProperties": True,
+}
 
 TOOLS = [
     _tool(
         name="codebase_list_repositories",
         summary="List source-code repositories registered for the current bot.",
-        properties={},
-        required=[],
+        input_schema=object_schema(),
+        output_schema=_CODEBASE_RESULT_SCHEMA,
         handler=_handler_list,
     ),
     _tool(
         name="codebase_map",
         summary="Inspect the file and directory structure of a registered code repository.",
-        properties={
+        input_schema=object_schema({
             "repository": _REPOSITORY_PROPERTY,
             "change_id": _CHANGE_PROPERTY,
             "rel_subdir": schema_property(type="string", description="Optional repository-relative directory.", default=""),
             "depth": schema_property(type="integer", description="Maximum relative directory depth.", default=4),
             "limit": schema_property(type="integer", description="Maximum files returned.", default=300),
-        },
-        required=[],
+        }),
+        output_schema=_CODEBASE_RESULT_SCHEMA,
         handler=_handler_map,
     ),
     _tool(
         name="codebase_search",
         summary="Search source code in a registered repository with ripgrep and return file:line evidence.",
-        properties={
+        input_schema=object_schema({
             "query": schema_property(type="string", description="Regex or literal text to search for."),
             "repository": _REPOSITORY_PROPERTY,
             "change_id": _CHANGE_PROPERTY,
@@ -455,78 +506,83 @@ TOOLS = [
             "file_glob": schema_property(type="string", description="Optional filename glob such as '*.py'.", default=""),
             "fixed_strings": schema_property(type="boolean", description="Treat query as literal text.", default=False),
             "max_count": schema_property(type="integer", description="Maximum matching lines returned.", default=100),
-        },
-        required=["query"],
+        }, required=("query",)),
+        output_schema=_CODEBASE_RESULT_SCHEMA,
         handler=_handler_search,
     ),
     _tool(
         name="codebase_symbols",
         summary="Incrementally index and query symbols (classes, functions, methods, imports) with scope hierarchy and docstrings.",
-        properties={
+        input_schema=object_schema({
             "repository": _REPOSITORY_PROPERTY,
             "change_id": _CHANGE_PROPERTY,
             "query": schema_property(type="string", description="Optional partial symbol name.", default=""),
             "kind": schema_property(type="string", description="Symbol kind: class, function, method, type, import.", default=""),
             "parent": schema_property(type="string", description="Filter by parent scope (e.g. class name to find its methods).", default=""),
             "limit": schema_property(type="integer", description="Maximum symbols returned.", default=100),
-        },
-        required=[],
+        }),
+        output_schema=_CODEBASE_RESULT_SCHEMA,
         handler=_handler_symbols,
     ),
     _tool(
         name="codebase_read",
         summary="Read a bounded line range from a file in a registered code repository.",
-        properties={
+        input_schema=object_schema({
             "rel_path": schema_property(type="string", description="Repository-relative file path."),
             "repository": _REPOSITORY_PROPERTY,
             "change_id": _CHANGE_PROPERTY,
             "start_line": schema_property(type="integer", description="1-based inclusive start line."),
             "end_line": schema_property(type="integer", description="1-based inclusive end line; capped to 500 lines."),
-        },
-        required=["rel_path"],
+        }, required=("rel_path",)),
+        output_schema=_CODEBASE_RESULT_SCHEMA,
         handler=_handler_read,
     ),
     _tool(
         name="codebase_references",
         summary="Find all references to a symbol across the repository using word-boundary search, with definition cross-check.",
-        properties={
+        input_schema=object_schema({
             "symbol": schema_property(type="string", description="Exact symbol name to find references for."),
             "repository": _REPOSITORY_PROPERTY,
             "change_id": _CHANGE_PROPERTY,
             "exclude_definition": schema_property(type="boolean", description="Exclude definition sites from results.", default=True),
             "limit": schema_property(type="integer", description="Maximum references returned.", default=50),
-        },
-        required=["symbol"],
+        }, required=("symbol",)),
+        output_schema=_CODEBASE_RESULT_SCHEMA,
         handler=_handler_references,
     ),
     _tool(
         name="codebase_dependencies",
         summary="Analyze import dependencies of a file or module: upstream (what it imports) and downstream (who imports it).",
-        properties={
+        input_schema=object_schema({
             "repository": _REPOSITORY_PROPERTY,
             "change_id": _CHANGE_PROPERTY,
             "rel_path": schema_property(type="string", description="Repository-relative file path to analyze.", default=""),
             "module": schema_property(type="string", description="Dotted module name to search for importers.", default=""),
             "direction": schema_property(type="string", description="'upstream', 'downstream', or 'both'.", default="both"),
             "limit": schema_property(type="integer", description="Maximum imports returned per direction.", default=100),
-        },
-        required=[],
+        }),
+        output_schema=_CODEBASE_RESULT_SCHEMA,
         handler=_handler_dependencies,
     ),
     _tool(
         name="codebase_context",
         summary="Assemble relevant context for understanding or modifying a code region: file structure, imports, references, and importers.",
-        properties={
+        input_schema=object_schema({
             "rel_path": schema_property(type="string", description="Repository-relative file path to analyze."),
             "repository": _REPOSITORY_PROPERTY,
             "change_id": _CHANGE_PROPERTY,
             "focus_symbol": schema_property(type="string", description="Optional symbol to trace references for.", default=""),
             "max_symbols": schema_property(type="integer", description="Maximum symbols shown in file structure.", default=20),
-        },
-        required=["rel_path"],
+        }, required=("rel_path",)),
+        output_schema=_CODEBASE_RESULT_SCHEMA,
         handler=_handler_context,
     ),
 ]
 
+TOOL_PROVIDER = static_tool_provider(
+    "codebase",
+    packs={"codebase.read": tuple(TOOLS)},
+    module=__name__,
+)
 
-__all__ = ["TOOLS"]
+__all__ = ["TOOLS", "TOOL_PROVIDER"]

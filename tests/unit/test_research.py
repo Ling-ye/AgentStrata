@@ -17,7 +17,8 @@ from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.model import SubagentBudgetSpec, SubagentSpec
 from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
 from chatcopilot.contracts.subagents import SearchProviderSpec
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tool_packs import ToolProvider
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 
 
 class _FakeLLM:
@@ -43,13 +44,26 @@ class _ScriptedLLM(_FakeLLM):
 
 
 def _tool(name: str, summary: str = "ok", *, metadata: dict | None = None) -> ToolDef:
+    def handler(_args: dict, _context: ToolContext) -> ToolResult:
+        return ToolResult(ok=True, summary=summary)
+
     return ToolDef(
         name=name,
         summary=name,
-        properties={},
-        required=[],
-        handler=lambda _args: (summary, [], None),
+        input_schema=object_schema(additional_properties=True),
+        output_schema=object_schema(),
+        handler=handler,
         metadata=dict(metadata or {}),
+    )
+
+
+def _delegation_provider(*tools: ToolDef) -> ToolProvider | None:
+    if not tools:
+        return None
+    return ToolProvider(
+        id="agent.delegation",
+        packs={"agent.delegation": tuple(tools)},
+        module="chatcopilot.agent.subagents.registry",
     )
 
 
@@ -300,7 +314,7 @@ def test_search_runner_upgrades_javascript_shell_to_browser() -> None:
             "required_fields": ["name", "health"],
         },
     )
-    payload = json.loads(result.summary)
+    payload = result.data
 
     assert payload["ok"] is True
     assert payload["results"][0]["pages"][0]["method"] == "dynamic"
@@ -328,16 +342,16 @@ def test_cross_check_uses_searxng_after_tavily_fallback() -> None:
             }
         ),
     )
+    def secondary_handler(args: dict, _context: ToolContext) -> ToolResult:
+        secondary_calls.append(args)
+        return ToolResult(ok=True, summary=json.dumps({"ok": True}))
+
     secondary = ToolDef(
         name="search_searxng",
         summary="search_searxng",
-        properties={},
-        required=[],
-        handler=lambda args: (
-            secondary_calls.append(args) or json.dumps({"ok": True}),
-            [],
-            None,
-        ),
+        input_schema=object_schema(additional_properties=True),
+        output_schema=object_schema(),
+        handler=secondary_handler,
     )
     research = build_search_tool(
         main_llm=llm,
@@ -350,7 +364,7 @@ def test_cross_check_uses_searxng_after_tavily_fallback() -> None:
         "search_information",
         {"objective": "latest release"},
     )
-    payload = json.loads(result.summary)
+    payload = result.data
 
     assert payload["ok"] is True
     assert payload["actual_sources"] == ["tavily:fallback_searxng", "searxng"]
@@ -378,8 +392,8 @@ def test_runtime_hides_internal_information_tools_when_research_enabled() -> Non
     )
 
     with patch(
-        "chatcopilot.agent.runtime.build_subagent_tools",
-        return_value=delegates,
+        "chatcopilot.agent.runtime.build_subagent_provider",
+        return_value=_delegation_provider(*delegates),
     ):
         session = runtime.new_session(session_id="sid", prompt_input=prompt_input("base"))
 
@@ -417,7 +431,7 @@ def test_native_and_langgraph_expose_search_information_for_direct_provider(
         agent_backend=backend,
     )
 
-    with patch("chatcopilot.agent.runtime.build_subagent_tools", return_value=()):
+    with patch("chatcopilot.agent.runtime.build_subagent_provider", return_value=None):
         session = runtime.new_session(session_id=f"sid-{backend}", prompt_input=prompt_input("base"))
 
     assert "search_information" in session.capabilities.tool_names
@@ -453,8 +467,8 @@ def test_codex_backend_does_not_construct_chatcopilot_search_or_delegate_agents(
         agent_backend="codex",
     )
 
-    with patch("chatcopilot.agent.runtime.build_subagent_tools") as delegates, patch(
-        "chatcopilot.agent.runtime.build_search_tool"
+    with patch("chatcopilot.agent.runtime.build_subagent_provider") as delegates, patch(
+        "chatcopilot.agent.runtime.build_search_provider"
     ) as search, patch(
         "chatcopilot.agent.runtime.build_backend", return_value=backend
     ):
@@ -502,8 +516,8 @@ def test_codex_eval_policy_exposes_real_unified_search_tool() -> None:
     )
 
     with patch(
-        "chatcopilot.agent.runtime.build_subagent_tools",
-        return_value=(),
+        "chatcopilot.agent.runtime.build_subagent_provider",
+        return_value=None,
     ), patch(
         "chatcopilot.agent.runtime.build_backend",
         return_value=backend,
@@ -551,7 +565,7 @@ def test_codex_backend_uses_current_personal_workspace_root(tmp_path) -> None:
         agent_backend="codex",
     )
 
-    with patch("chatcopilot.agent.runtime.build_subagent_tools", return_value=()), patch(
+    with patch("chatcopilot.agent.runtime.build_subagent_provider", return_value=None), patch(
         "chatcopilot.agent.runtime.build_backend", return_value=backend
     ):
         runtime.new_session(
@@ -571,12 +585,17 @@ def test_codex_backend_uses_current_personal_workspace_root(tmp_path) -> None:
 
 def test_runtime_permission_filter_prevents_url_read_bypass() -> None:
     fetch_calls: list[dict] = []
+
+    def web_fetch_handler(args: dict, _context: ToolContext) -> ToolResult:
+        fetch_calls.append(args)
+        return ToolResult(ok=True, summary="page")
+
     web_fetch = ToolDef(
         name="web_fetch_page",
         summary="web_fetch_page",
-        properties={},
-        required=[],
-        handler=lambda args: (fetch_calls.append(args) or "page", [], None),
+        input_schema=object_schema(additional_properties=True),
+        output_schema=object_schema(),
+        handler=web_fetch_handler,
     )
     search = _tool("search_tavily", metadata={"subagent_kind": "search"})
     runtime = AgentRuntime(
@@ -591,8 +610,8 @@ def test_runtime_permission_filter_prevents_url_read_bypass() -> None:
     )
 
     with patch(
-        "chatcopilot.agent.runtime.build_subagent_tools",
-        return_value=(search,),
+        "chatcopilot.agent.runtime.build_subagent_provider",
+        return_value=_delegation_provider(search),
     ):
         session = runtime.new_session(
             session_id="sid",
@@ -610,7 +629,7 @@ def test_runtime_permission_filter_prevents_url_read_bypass() -> None:
             "source_hints": ["url"],
         },
     )
-    payload = json.loads(result.summary)
+    payload = result.data
 
     assert fetch_calls == []
     assert payload["plan"]["steps"][0]["source"] == "web"

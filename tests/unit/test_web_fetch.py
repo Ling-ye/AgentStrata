@@ -15,6 +15,7 @@ from chatcopilot.external_tools.web_fetch.tools import (
     validate_url,
     web_fetch_page,
 )
+from chatcopilot.contracts.tools import ToolContext
 
 
 class _FakeResponse:
@@ -145,18 +146,20 @@ class TestToolDef:
 
 class TestHandler:
     def test_empty_url_returns_error(self):
-        result, outputs, hint = web_fetch_page.handler({"url": ""})
-        assert result == "Error: Missing required parameter: url."
-        assert outputs == []
-        assert hint is None
+        result = web_fetch_page.handler({"url": ""}, ToolContext())
+        assert result.ok is False
+        assert result.error == "Missing required parameter: url."
+        assert result.error_code == "url_required"
+        assert result.outputs == []
 
     def test_invalid_max_chars_returns_readable_error(self):
-        result, outputs, hint = web_fetch_page.handler(
-            {"url": "https://example.com", "max_chars": "many"}
+        result = web_fetch_page.handler(
+            {"url": "https://example.com", "max_chars": "many"}, ToolContext()
         )
-        assert result == "Error: Invalid max_chars: expected an integer."
-        assert outputs == []
-        assert hint is None
+        assert result.ok is False
+        assert result.error == "Invalid max_chars: expected an integer."
+        assert result.error_code == "max_chars_invalid"
+        assert result.outputs == []
 
     def test_max_chars_is_clamped_low(self, monkeypatch):
         captured = {}
@@ -168,14 +171,15 @@ class TestHandler:
 
         monkeypatch.setattr(web_fetch_tools, "_fetch_page", fake_fetch)
 
-        result, outputs, hint = web_fetch_page.handler(
-            {"url": "https://example.com", "max_chars": 10}
+        result = web_fetch_page.handler(
+            {"url": "https://example.com", "max_chars": 10}, ToolContext()
         )
 
-        assert result == "ok"
+        assert result.ok is True
+        assert result.summary == "ok"
+        assert result.data == {"url": "https://example.com", "content": "ok"}
         assert captured == {"url": "https://example.com", "max_chars": 100}
-        assert outputs == []
-        assert hint is None
+        assert result.outputs == []
 
 
 class TestFetchOutput:

@@ -95,14 +95,22 @@ packaging:
 ### `tools`
 
 - `packs`：启用的静态 tool-pack id，例如 `workspace.read_write`、`memory.chat`、
-  `feishu.document`、`career.intelligence`、`dev.code_tasks`。
+  `feishu.document`、`career.intelligence`、`dev.code_tasks`；也可选择按会话构造的
+  `persona.control`。
 - `features`：非工具 schema 的运行能力，例如 `chat.file_uploads`、
   `chat.image_inputs`、`chat.private_workspace`。
 - `mcp.servers`：bot-local MCP binding 文件。
 - `hide`：按工具名隐藏运行时工具。
 
-具体目录由 `tool_packs/catalog.py` 管理；每个 pack 用 module binding 声明精确工具名，
-Agent 与 Console 使用相同投影。BotSpec 不直接指定可 import 的任意 Python 模块。
+具体目录由 `tool_packs/catalog.py` 管理；catalog 只定位显式 `ToolProvider`，精确工具成员
+由领域 provider 自己声明。静态、MCP、搜索、委托、人格和 session-local 工具都进入同一个
+Registry 快照，Agent 与 Console 使用对应 surface 的同源投影。BotSpec 不直接指定可 import
+的任意 Python 模块。
+
+`persona.control` 向 Owner 主 Agent 提供 session-bound `persona_manage`，支持
+`show/set/append/research/refresh/clear/confirm/cancel`。自然语言和 `/persona` 都由主 Agent
+理解并调用，不再存在 `agents.persona_control` 或宿主 detector/interpreter。工具执行端仍按
+真实角色、当前请求原文、会话 scope、受保护提案和 mutation receipt 失败关闭。
 
 ### `agents`
 
@@ -116,11 +124,6 @@ Agent 与 Console 使用相同投影。BotSpec 不直接指定可 import 的任�
   `id / kind / enabled / endpoint / credential_env / timeout_seconds / max_results`。
   BotSpec 只保存凭据环境变量名，不保存凭据值。Tavily 与 Brave 只接受审核过的官方
   HTTPS endpoint；SearXNG 只接受回环 endpoint。
-- `persona_control.enabled`：显式启用宿主人格控制；默认关闭，也是该 block 唯一字段。
-  启用后，普通消息先经零模型候选检测：`none` 直接进入主 Agent，明确要求直接进入
-  `PersonaDraftAgent`，只有含糊要求调用一次严格解释器。所有非清空操作均由该 Agent 生成完整
-  Markdown；`append` 也形成一次整体替换。命名人物由 Agent 通过统一搜索自行查询、消歧和选择
-  实际使用来源，再执行唯一一次宿主原子写。失败不会产生部分写入，人格写操作不向主 Agent 暴露为工具。
 - `codex.owner_access`：仅允许 `worktree`。
 - `codex.member_access`：仅允许 `workspace`。
 

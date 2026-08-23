@@ -69,7 +69,7 @@ limitations。`failed` 表示配置或平台拒绝；`error` 表示 transport/�
 只选择当前内置 Bot 可运行的 23 个，两个来源专用 Case 仅供显式 `custom`。
 `agentstrata-qq-message-flow-v1` 固定为 7 个无外部写的合成后链路 Case。真实 QQ Case、
 `qq-live` preset、生产 QQ sender env 和 Evaluation 的 QQ 外部写路径仍全部禁止；白名单、
-角色、群聊 @、attestation 与 persona host boundary 由随机合成身份和临时状态验证，因为它们
+角色、群聊 @、attestation 与 Owner-only persona tool boundary 由随机合成身份和临时状态验证，因为它们
 测试的是 AgentStrata 自身策略而非公网 QQ 连通性。
 
 ## Acceptance

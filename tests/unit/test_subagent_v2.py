@@ -15,7 +15,12 @@ from chatcopilot.agent.subagents.task_pack import TaskPack
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.loader import _parse_subagents, load_botspec, validate_botspec
 from chatcopilot.botspec.model import CustomSubagentSpec, SubagentBudgetSpec, SubagentSpec
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 
 
 class _ScriptedLLM:
@@ -68,17 +73,22 @@ def _done() -> ChatResult:
 
 
 def _tool(name: str, *, category: str = "", owner: str = "", tags: tuple[str, ...] = ()) -> ToolDef:
-    def _handler(args: dict):
-        return (f"{name} done", [], None)
+    def _handler(_args: dict, _ctx: ToolContext) -> ToolResult:
+        result = f"{name} done"
+        return ToolResult(ok=True, summary=result, data={"result": result})
 
     tool = ToolDef(
         name=name,
         summary=f"{name} summary",
-        properties={},
-        required=[],
+        input_schema=object_schema(),
+        output_schema=object_schema(
+            {"result": {"type": "string"}}, required=("result",)
+        ),
         handler=_handler,
         category=category,
         owner=owner,
+        module=__name__,
+        artifact_kinds=(),
     )
     if tags:
         tool.metadata["tags"] = list(tags)
@@ -196,8 +206,8 @@ class SubagentV2Tests(unittest.TestCase):
         executor = ToolExecutor(tools=list(tools))
 
         args = {"objective": "same task", "write_scope": "read-only"}
-        first = json.loads(executor.execute("delegate_cacheable", args).summary)
-        second = json.loads(executor.execute("delegate_cacheable", args).summary)
+        first = executor.execute("delegate_cacheable", args).data
+        second = executor.execute("delegate_cacheable", args).data
 
         self.assertEqual(first["summary"], "cached_result")
         self.assertEqual(second["summary"], "cached_result")
@@ -229,13 +239,13 @@ class SubagentV2Tests(unittest.TestCase):
             base_tools=(writer, sender),
         )
 
-        payload = json.loads(
+        payload = (
             ToolExecutor(tools=list(tools))
             .execute(
                 "delegate_writer",
                 {"objective": "write", "write_scope": "mcp:jira/issues"},
             )
-            .summary
+            .data
         )
 
         self.assertTrue(payload["ok"])

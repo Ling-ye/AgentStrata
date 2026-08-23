@@ -7,6 +7,7 @@ import urllib
 from typing import Any, Dict, List
 
 from chatcopilot.contracts.runtime import McpServerConfig
+from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.core.mcp_probe import verified_stdio_command
 from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.agent.mcp.concurrency import _cross_process_lock
@@ -66,6 +67,30 @@ class McpToolProvider:
                 seen.add(local_name)
                 tools.append(_wrap_remote_tool(config, self, remote_tool, local_name))
         return tuple(tools)
+
+    def load_provider(self) -> ToolProvider | None:
+        """Materialize configured MCP tools as one exposure-aware Registry provider."""
+
+        tools = self.load_tools()
+        if not tools:
+            return None
+        main_tools = tuple(
+            tool
+            for tool in tools
+            if str(tool.metadata.get("mcp_exposure", "subagent")) == "main"
+        )
+        subagent_tools = tuple(tool for tool in tools if tool not in main_tools)
+        packs: dict[str, tuple[ToolDef, ...]] = {}
+        if main_tools:
+            packs["mcp.dynamic"] = main_tools
+        if subagent_tools:
+            packs["mcp.subagent"] = subagent_tools
+        return ToolProvider(
+            id="mcp.dynamic",
+            packs=packs,
+            module=__name__,
+            description="Tools materialized from configured MCP servers.",
+        )
 
     def close(self) -> None:
         with self._lock:

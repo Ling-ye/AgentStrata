@@ -16,9 +16,55 @@ from chatcopilot.agent.mcp import client as mcp_client
 from chatcopilot.agent.mcp.client import McpToolProvider, _stream_read_timeout
 from chatcopilot.agent.mcp.runner import _resolve_stdio_args, _resolve_stdio_command
 from chatcopilot.botspec.mcp import McpServerConfig
+from chatcopilot.contracts.tools import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 
 
 class McpClientProviderTests(unittest.TestCase):
+    def test_load_provider_splits_main_and_subagent_exposure(self) -> None:
+        def _handler(_arguments, _context):
+            return ToolResult(ok=True, data={})
+
+        def _tool(name: str, exposure: str) -> ToolDef:
+            return ToolDef(
+                name=name,
+                summary=name,
+                input_schema=object_schema(),
+                output_schema=object_schema(),
+                handler=_handler,
+                category="mcp",
+                owner="mcp",
+                module=__name__,
+                metadata={"mcp_exposure": exposure},
+            )
+
+        source = McpToolProvider(())
+        with mock.patch.object(
+            source,
+            "load_tools",
+            return_value=(
+                _tool("main_search", "main"),
+                _tool("private_search", "subagent"),
+            ),
+        ):
+            provider = source.load_provider()
+
+        self.assertIsNotNone(provider)
+        assert provider is not None
+        self.assertEqual(tuple(provider.packs), ("mcp.dynamic", "mcp.subagent"))
+        self.assertEqual(
+            [tool.name for tool in provider.packs["mcp.dynamic"]],
+            ["main_search"],
+        )
+        self.assertEqual(
+            [tool.name for tool in provider.packs["mcp.subagent"]],
+            ["private_search"],
+        )
+
     def test_generic_python_stdio_command_uses_runtime_interpreter(self) -> None:
         self.assertEqual(_resolve_stdio_command("python"), sys.executable)
         self.assertEqual(_resolve_stdio_command("python3"), sys.executable)
@@ -250,11 +296,15 @@ class McpClientProviderTests(unittest.TestCase):
             self.assertIn("web_search", by_name)
             self.assertEqual(by_name["web_search"].required, ["query"])
 
-            summary, outputs, hint = by_name["web_search"].handler({"query": "wallpaper"})
+            result = by_name["web_search"].handler(
+                {"query": "wallpaper"},
+                ToolContext(),
+            )
 
-        self.assertIn('"text": "ok"', summary)
-        self.assertEqual(outputs, [])
-        self.assertIsNone(hint)
+        self.assertTrue(result.ok)
+        self.assertIn('"text": "ok"', result.summary)
+        self.assertEqual(result.outputs, [])
+        self.assertIsNone(result.file_type_hint)
 
     def test_stateless_mcp_error_is_structured_feedback(self) -> None:
         responses = [
@@ -301,17 +351,18 @@ class McpClientProviderTests(unittest.TestCase):
             tools = provider.load_tools()
             by_name = {tool.name: tool for tool in tools}
 
-            summary, outputs, hint = by_name["web_tavily_search"].handler({"query": "wallpaper"})
+            result = by_name["web_tavily_search"].handler(
+                {"query": "wallpaper"},
+                ToolContext(),
+            )
 
-        payload = json.loads(summary)
-        self.assertFalse(payload["ok"])
-        self.assertTrue(payload["is_error"])
-        self.assertEqual(payload["error_code"], "mcp_quota_exceeded")
-        self.assertEqual(payload["server_id"], "tavily")
-        self.assertEqual(payload["tool_name"], "tavily_search")
-        self.assertFalse(payload["retryable"])
-        self.assertEqual(outputs, [])
-        self.assertIsNone(hint)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "mcp_quota_exceeded")
+        self.assertEqual(result.data["server_id"], "tavily")
+        self.assertEqual(result.data["tool_name"], "tavily_search")
+        self.assertFalse(result.data["retryable"])
+        self.assertEqual(result.outputs, [])
+        self.assertIsNone(result.file_type_hint)
 
     def test_stdio_server_tool_is_wrapped_and_callable(self) -> None:
         tmp_dir = Path(__file__).resolve().parents[2] / "scratch_unit_tests" / f"mcp-{uuid.uuid4().hex}"
@@ -390,11 +441,15 @@ class McpClientProviderTests(unittest.TestCase):
                     )
 
                 self.assertIn("web_search", by_name)
-                summary, outputs, hint = by_name["web_search"].handler({"query": "unity memory"})
+                result = by_name["web_search"].handler(
+                    {"query": "unity memory"},
+                    ToolContext(),
+                )
 
-                self.assertIn("result for unity memory", summary)
-                self.assertEqual(outputs, [])
-                self.assertIsNone(hint)
+                self.assertTrue(result.ok)
+                self.assertIn("result for unity memory", result.summary)
+                self.assertEqual(result.outputs, [])
+                self.assertIsNone(result.file_type_hint)
                 self.assertEqual(by_name["web_search"].metadata["mcp_exposure"], "subagent")
                 self.assertEqual(by_name["web_search"].metadata["mcp_allowed_subagents"], ["web_research"])
                 self.assertEqual(by_name["web_search"].metadata["mcp_risk"], "search")
@@ -456,11 +511,15 @@ class McpClientProviderTests(unittest.TestCase):
                 tools = provider.load_tools()
                 by_name = {tool.name: tool for tool in tools}
 
-                summary, outputs, hint = by_name["xhs_search"].handler({"query": "成都29所"})
+                result = by_name["xhs_search"].handler(
+                    {"query": "成都29所"},
+                    ToolContext(),
+                )
 
-                self.assertIn("recovered search for 成都29所", summary)
-                self.assertEqual(outputs, [])
-                self.assertIsNone(hint)
+                self.assertTrue(result.ok)
+                self.assertIn("recovered search for 成都29所", result.summary)
+                self.assertEqual(result.outputs, [])
+                self.assertIsNone(result.file_type_hint)
                 self.assertEqual(len(FakeRunner.instances), 2)
                 self.assertTrue(FakeRunner.instances[0].stopped)
             finally:
@@ -527,17 +586,18 @@ class McpClientProviderTests(unittest.TestCase):
                 tools = provider.load_tools()
                 by_name = {tool.name: tool for tool in tools}
 
-                summary, outputs, hint = by_name["xhs_search_feeds"].handler(
-                    {"keyword": "青山制面 上海"}
+                result = by_name["xhs_search_feeds"].handler(
+                    {"keyword": "青山制面 上海"},
+                    ToolContext(),
                 )
 
-                payload = json.loads(summary)
-                self.assertEqual(payload["error_code"], "mcp_timeout")
-                self.assertEqual(payload["server_id"], "xiaohongshu")
-                self.assertEqual(payload["tool_name"], "search_feeds")
-                self.assertFalse(payload["retryable"])
-                self.assertEqual(outputs, [])
-                self.assertIsNone(hint)
+                self.assertFalse(result.ok)
+                self.assertEqual(result.error_code, "mcp_timeout")
+                self.assertEqual(result.data["server_id"], "xiaohongshu")
+                self.assertEqual(result.data["tool_name"], "search_feeds")
+                self.assertFalse(result.data["retryable"])
+                self.assertEqual(result.outputs, [])
+                self.assertIsNone(result.file_type_hint)
                 self.assertEqual(len(FakeRunner.instances), 1)
                 self.assertEqual(FakeRunner.instances[0].calls, 1)
                 self.assertTrue(FakeRunner.instances[0].stopped)
@@ -608,7 +668,8 @@ class McpClientProviderTests(unittest.TestCase):
                             "location": "同城",
                             "search_scope": "",
                         },
-                    }
+                    },
+                    ToolContext(),
                 )
 
                 self.assertEqual(
@@ -673,12 +734,12 @@ class McpClientProviderTests(unittest.TestCase):
                 tools = provider.load_tools()
                 by_name = {tool.name: tool for tool in tools}
 
-                summary, _outputs, _hint = by_name["xhs_search_feeds"].handler({})
+                result = by_name["xhs_search_feeds"].handler({}, ToolContext())
 
-                payload = json.loads(summary)
-                self.assertEqual(payload["error_code"], "xhs_browser_error")
-                self.assertEqual(payload["server_id"], "xiaohongshu")
-                self.assertFalse(payload["retryable"])
+                self.assertFalse(result.ok)
+                self.assertEqual(result.error_code, "xhs_browser_error")
+                self.assertEqual(result.data["server_id"], "xiaohongshu")
+                self.assertFalse(result.data["retryable"])
             finally:
                 provider.close()
 
@@ -744,7 +805,7 @@ class McpClientProviderTests(unittest.TestCase):
 
                 def _call(kw: str) -> None:
                     try:
-                        handler({"keyword": kw})
+                        handler({"keyword": kw}, ToolContext())
                     except Exception as exc:
                         errors.append(exc)
 
@@ -824,8 +885,12 @@ class McpClientProviderTests(unittest.TestCase):
                 tools = provider.load_tools()
                 handler = {tool.name: tool for tool in tools}["web_search"].handler
 
-                t1 = _threading.Thread(target=lambda: handler({"q": "a"}))
-                t2 = _threading.Thread(target=lambda: handler({"q": "b"}))
+                t1 = _threading.Thread(
+                    target=lambda: handler({"q": "a"}, ToolContext())
+                )
+                t2 = _threading.Thread(
+                    target=lambda: handler({"q": "b"}, ToolContext())
+                )
                 t1.start()
                 t2.start()
                 t1.join(timeout=10)

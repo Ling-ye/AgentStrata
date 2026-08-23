@@ -7,7 +7,7 @@ import logging
 from typing import Any, Literal, cast
 
 from chatcopilot.contracts.agent import AgentEvent, AgentTask, EventSink, ResourceRef
-from chatcopilot.agent.tools.executor import ToolResult
+from chatcopilot.contracts.tools import ToolResult
 
 LOGGER = logging.getLogger("chatcopilot.agent.turn_support")
 

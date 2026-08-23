@@ -16,19 +16,29 @@ from chatcopilot.external_tools.dev.path_guard import (
     ensure_readable,
     ensure_writable,
 )
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.external_tools.shared.tool_spec import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 
 _MAX_READ_LINES = 2000
 _MAX_SEARCH_RESULTS = 50
 
 
-def _handle_read_file(args: dict[str, Any]) -> HandlerResult:
+def _handle_read_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     config = get_dev_config()
     path_str = str(args.get("path") or "").strip()
     resolved, normalized = ensure_readable(config, path_str)
 
     if not resolved.is_file():
-        return f"File not found: {normalized}", [], None
+        return ToolResult(
+            ok=False,
+            error=f"File not found: {normalized}",
+            error_code="file_not_found",
+            stage="execution",
+        )
 
     start_line = int(args.get("start_line") or 1)
     end_line = args.get("end_line")
@@ -36,7 +46,12 @@ def _handle_read_file(args: dict[str, Any]) -> HandlerResult:
     try:
         content = resolved.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
-        return f"Cannot read file: {e}", [], None
+        return ToolResult(
+            ok=False,
+            error=f"Cannot read file: {e}",
+            error_code="file_read_failed",
+            stage="execution",
+        )
 
     lines = content.splitlines(keepends=True)
     total = len(lines)
@@ -55,10 +70,21 @@ def _handle_read_file(args: dict[str, Any]) -> HandlerResult:
 
     truncated = " (truncated)" if end_idx < total else ""
     summary = f"{normalized} [{start_idx+1}:{end_idx}/{total} lines]{truncated}"
-    return summary, [numbered], None
+    return ToolResult(
+        ok=True,
+        summary=summary,
+        data={
+            "path": normalized,
+            "content": numbered,
+            "start_line": start_idx + 1,
+            "end_line": end_idx,
+            "total_lines": total,
+            "truncated": end_idx < total,
+        },
+    )
 
 
-def _handle_write_file(args: dict[str, Any]) -> HandlerResult:
+def _handle_write_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     config = get_dev_config()
     path_str = str(args.get("path") or "").strip()
     content = str(args.get("content") or "")
@@ -68,10 +94,15 @@ def _handle_write_file(args: dict[str, Any]) -> HandlerResult:
     resolved.write_text(content, encoding="utf-8")
 
     lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
-    return f"Wrote {normalized} ({lines} lines)", [normalized], None
+    return ToolResult(
+        ok=True,
+        summary=f"Wrote {normalized} ({lines} lines)",
+        outputs=[normalized],
+        data={"path": normalized, "lines": lines},
+    )
 
 
-def _handle_edit_file(args: dict[str, Any]) -> HandlerResult:
+def _handle_edit_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     config = get_dev_config()
     path_str = str(args.get("path") or "").strip()
     old_text = str(args.get("old_text") or "")
@@ -79,23 +110,41 @@ def _handle_edit_file(args: dict[str, Any]) -> HandlerResult:
     resolved, normalized = ensure_writable(config, path_str)
 
     if not resolved.is_file():
-        return f"File not found: {normalized}", [], None
+        return ToolResult(
+            ok=False,
+            error=f"File not found: {normalized}",
+            error_code="file_not_found",
+            stage="execution",
+        )
     if not old_text:
-        return "old_text must not be empty", [], None
+        return ToolResult(
+            ok=False,
+            error="old_text must not be empty",
+            error_code="old_text_empty",
+            stage="validation",
+        )
 
     content = resolved.read_text(encoding="utf-8", errors="replace")
     new_content = _apply_edit(content, old_text, new_text)
 
     if new_content is None:
-        return (
-            f"edit_file failed: old_text not found in {normalized}. "
-            "Ensure old_text exactly matches existing content (check whitespace/indentation).",
-            [],
-            None,
+        return ToolResult(
+            ok=False,
+            error=(
+                f"edit_file failed: old_text not found in {normalized}. "
+                "Ensure old_text exactly matches existing content (check whitespace/indentation)."
+            ),
+            error_code="old_text_not_found",
+            stage="execution",
         )
 
     resolved.write_text(new_content, encoding="utf-8")
-    return f"Edited {normalized}", [normalized], None
+    return ToolResult(
+        ok=True,
+        summary=f"Edited {normalized}",
+        outputs=[normalized],
+        data={"path": normalized},
+    )
 
 
 def _apply_edit(content: str, old_text: str, new_text: str) -> str | None:
@@ -130,19 +179,24 @@ def _apply_edit(content: str, old_text: str, new_text: str) -> str | None:
     return None
 
 
-def _handle_delete_file(args: dict[str, Any]) -> HandlerResult:
+def _handle_delete_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     config = get_dev_config()
     path_str = str(args.get("path") or "").strip()
     resolved, normalized = ensure_writable(config, path_str)
 
     if not resolved.exists():
-        return f"File not found: {normalized}", [], None
+        return ToolResult(
+            ok=False,
+            error=f"File not found: {normalized}",
+            error_code="file_not_found",
+            stage="execution",
+        )
 
     resolved.unlink()
-    return f"Deleted {normalized}", [], None
+    return ToolResult(ok=True, summary=f"Deleted {normalized}", data={"path": normalized})
 
 
-def _handle_list_directory(args: dict[str, Any]) -> HandlerResult:
+def _handle_list_directory(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     config = get_dev_config()
     path_str = str(args.get("path") or "").strip()
     resolved, normalized = ensure_listable(config, path_str)
@@ -150,7 +204,12 @@ def _handle_list_directory(args: dict[str, Any]) -> HandlerResult:
     glob_pattern = str(args.get("glob") or "").strip()
 
     if not resolved.is_dir():
-        return f"Not a directory: {normalized or '.'}", [], None
+        return ToolResult(
+            ok=False,
+            error=f"Not a directory: {normalized or '.'}",
+            error_code="not_a_directory",
+            stage="execution",
+        )
 
     entries: list[str] = []
     max_entries = 500
@@ -178,18 +237,34 @@ def _handle_list_directory(args: dict[str, Any]) -> HandlerResult:
             entries.append(f"{rel.as_posix()}{suffix}")
 
     if not entries:
-        return f"Empty directory: {normalized or '.'}", [], None
+        return ToolResult(
+            ok=True,
+            summary=f"Empty directory: {normalized or '.'}",
+            data={"path": normalized or ".", "entries": [], "truncated": False},
+        )
 
     truncated = f" (showing first {max_entries})" if len(entries) >= max_entries else ""
-    listing = "\n".join(entries)
-    return f"{len(entries)} entries in {normalized or '.'}{truncated}", [listing], None
+    return ToolResult(
+        ok=True,
+        summary=f"{len(entries)} entries in {normalized or '.'}{truncated}",
+        data={
+            "path": normalized or ".",
+            "entries": entries,
+            "truncated": len(entries) >= max_entries,
+        },
+    )
 
 
-def _handle_search_content(args: dict[str, Any]) -> HandlerResult:
+def _handle_search_content(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     config = get_dev_config()
     pattern = str(args.get("pattern") or "").strip()
     if not pattern:
-        return "pattern is required", [], None
+        return ToolResult(
+            ok=False,
+            error="pattern is required",
+            error_code="pattern_required",
+            stage="validation",
+        )
 
     search_path = str(args.get("path") or "").strip()
     glob_filter = str(args.get("glob") or "").strip()
@@ -219,13 +294,27 @@ def _handle_search_content(args: dict[str, Any]) -> HandlerResult:
                 cmd_grep, capture_output=True, text=True, timeout=30
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
-            return "search_content requires 'rg' (ripgrep) to be installed", [], None
+            return ToolResult(
+                ok=False,
+                error="search_content requires 'rg' (ripgrep) to be installed",
+                error_code="search_backend_unavailable",
+                stage="execution",
+            )
     except subprocess.TimeoutExpired:
-        return "Search timed out", [], None
+        return ToolResult(
+            ok=False,
+            error="Search timed out",
+            error_code="search_timeout",
+            stage="execution",
+        )
 
     output = result.stdout.strip()
     if not output:
-        return f"No matches for pattern: {pattern}", [], None
+        return ToolResult(
+            ok=True,
+            summary=f"No matches for pattern: {pattern}",
+            data={"pattern": pattern, "matches": []},
+        )
 
     lines = output.splitlines()
     rel_lines: list[str] = []
@@ -235,36 +324,61 @@ def _handle_search_content(args: dict[str, Any]) -> HandlerResult:
             line = line[len(root_str):]
         rel_lines.append(line)
 
-    return f"{len(rel_lines)} matches for '{pattern}'", ["\n".join(rel_lines)], None
+    return ToolResult(
+        ok=True,
+        summary=f"{len(rel_lines)} matches for '{pattern}'",
+        data={"pattern": pattern, "matches": rel_lines},
+    )
+
+
+_PATH_RESULT_SCHEMA = object_schema(
+    {"path": {"type": "string"}},
+    required=("path",),
+)
 
 
 TOOLS: list[ToolDef] = [
     ToolDef(
         name="read_file",
         summary="Read a file's contents with line numbers. Supports line range selection.",
-        properties={
+        input_schema=object_schema({
             "path": {"type": "string", "description": "Relative path from project root"},
             "start_line": {"type": "integer", "description": "First line to read (1-based, default 1)"},
             "end_line": {"type": "integer", "description": "Last line to read (inclusive, default start+2000)"},
-        },
-        required=["path"],
+        }, required=("path",)),
+        output_schema=object_schema(
+            {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+                "start_line": {"type": "integer"},
+                "end_line": {"type": "integer"},
+                "total_lines": {"type": "integer"},
+                "truncated": {"type": "boolean"},
+            },
+            required=("path", "content", "start_line", "end_line", "total_lines", "truncated"),
+        ),
         handler=_handle_read_file,
         category="dev.files",
         owner="dev",
+        module=__name__,
         weight="light",
         artifact_kinds=(),
     ),
     ToolDef(
         name="write_file",
         summary="Create or overwrite a file with the given content.",
-        properties={
+        input_schema=object_schema({
             "path": {"type": "string", "description": "Relative path from project root"},
             "content": {"type": "string", "description": "Full file content to write"},
-        },
-        required=["path", "content"],
+        }, required=("path", "content")),
+        output_schema=object_schema(
+            {"path": {"type": "string"}, "lines": {"type": "integer"}},
+            required=("path", "lines"),
+        ),
         handler=_handle_write_file,
         category="dev.files",
         owner="dev",
+        module=__name__,
         requires_role="owner",
         artifact_kinds=("file",),
     ),
@@ -274,15 +388,16 @@ TOOLS: list[ToolDef] = [
             "Edit a file by replacing old_text with new_text. Uses fuzzy matching "
             "to handle minor whitespace/indentation differences."
         ),
-        properties={
+        input_schema=object_schema({
             "path": {"type": "string", "description": "Relative path from project root"},
             "old_text": {"type": "string", "description": "Existing text to find (must be unique enough to match)"},
             "new_text": {"type": "string", "description": "Replacement text"},
-        },
-        required=["path", "old_text", "new_text"],
+        }, required=("path", "old_text", "new_text")),
+        output_schema=_PATH_RESULT_SCHEMA,
         handler=_handle_edit_file,
         category="dev.files",
         owner="dev",
+        module=__name__,
         requires_role="owner",
         artifact_kinds=("file",),
         metadata={"execution_boundary": "codex"},
@@ -290,13 +405,14 @@ TOOLS: list[ToolDef] = [
     ToolDef(
         name="delete_file",
         summary="Delete a file from the project.",
-        properties={
+        input_schema=object_schema({
             "path": {"type": "string", "description": "Relative path from project root"},
-        },
-        required=["path"],
+        }, required=("path",)),
+        output_schema=_PATH_RESULT_SCHEMA,
         handler=_handle_delete_file,
         category="dev.files",
         owner="dev",
+        module=__name__,
         requires_role="owner",
         artifact_kinds=(),
         metadata={"execution_boundary": "codex"},
@@ -304,31 +420,46 @@ TOOLS: list[ToolDef] = [
     ToolDef(
         name="list_directory",
         summary="List files and directories. Supports glob patterns and recursive listing.",
-        properties={
+        input_schema=object_schema({
             "path": {"type": "string", "description": "Relative directory path (empty or '.' for project root)"},
             "recursive": {"type": "boolean", "description": "List recursively (default false)"},
             "glob": {"type": "string", "description": "Glob pattern to filter (e.g. '*.py', '**/*.yaml')"},
-        },
-        required=[],
+        }),
+        output_schema=object_schema(
+            {
+                "path": {"type": "string"},
+                "entries": {"type": "array", "items": {"type": "string"}},
+                "truncated": {"type": "boolean"},
+            },
+            required=("path", "entries", "truncated"),
+        ),
         handler=_handle_list_directory,
         category="dev.files",
         owner="dev",
+        module=__name__,
         weight="light",
         artifact_kinds=(),
     ),
     ToolDef(
         name="search_content",
         summary="Search file contents using regex pattern (ripgrep). Returns matching lines with file paths and line numbers.",
-        properties={
+        input_schema=object_schema({
             "pattern": {"type": "string", "description": "Regex pattern to search for"},
             "path": {"type": "string", "description": "Subdirectory to search in (default: project root)"},
             "glob": {"type": "string", "description": "File glob filter (e.g. '*.py')"},
             "max_results": {"type": "integer", "description": "Maximum matches to return (default 50, max 200)"},
-        },
-        required=["pattern"],
+        }, required=("pattern",)),
+        output_schema=object_schema(
+            {
+                "pattern": {"type": "string"},
+                "matches": {"type": "array", "items": {"type": "string"}},
+            },
+            required=("pattern", "matches"),
+        ),
         handler=_handle_search_content,
         category="dev.files",
         owner="dev",
+        module=__name__,
         weight="light",
         artifact_kinds=(),
     ),

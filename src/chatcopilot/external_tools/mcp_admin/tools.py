@@ -12,19 +12,41 @@ from pathlib import Path
 from typing import Any
 
 from chatcopilot.contracts.runtime import McpServerConfig
+from chatcopilot.contracts.tool_packs import static_tool_provider
 from chatcopilot.core.bot_paths import resolve_bot_spec_path
 from chatcopilot.core.mcp_catalog import load_mcp_catalog, resolve_catalog_server
 from chatcopilot.core.mcp_probe import probe_mcp_server
 from chatcopilot.core.settings import get_bot_spec_env
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.external_tools.shared.tool_spec import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 from chatcopilot.project import ENV_PREFIX
 
 _REGISTRY_URL = "https://registry.modelcontextprotocol.io/v0.1/servers"
 _REGISTRY_PAGE_LIMIT = 100
 _REGISTRY_DEFAULT_MAX_PAGES = 5
+_MCP_ADMIN_RESULT_SCHEMA = {"type": "object", "additionalProperties": True}
 
 
-def _handler_discover(args: dict[str, Any]):
+def _payload_result(payload: dict[str, Any], *, summary: str) -> ToolResult:
+    ok = payload.get("ok") is not False
+    error = str(payload.get("message") or payload.get("error") or summary)
+    return ToolResult(
+        ok=ok,
+        summary=summary if ok else "",
+        data=payload,
+        error=None if ok else error,
+        error_code=str(payload.get("error_code") or payload.get("error") or "mcp_admin_failed")
+        if not ok
+        else "",
+        stage="execution" if not ok else "",
+    )
+
+
+def _handler_discover(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     query = str((args or {}).get("query") or "").strip()
     if not query:
         raise ValueError("query must not be empty")
@@ -52,29 +74,25 @@ def _handler_discover(args: dict[str, Any]):
                 ],
             }
         )
-    return (
-        json.dumps(
-            {
-                "ok": not bool(registry_result.error_code) or bool(proposals),
-                "query": query,
-                "proposals": proposals,
-                "registry": {
-                    "api": "v0.1",
-                    "pages_fetched": registry_result.pages_fetched,
-                    "pagination_exhausted": registry_result.pagination_exhausted,
-                    "error_code": registry_result.error_code,
-                    "error": registry_result.error,
-                },
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        [],
-        None,
+    payload = {
+        "ok": not bool(registry_result.error_code) or bool(proposals),
+        "query": query,
+        "proposals": proposals,
+        "registry": {
+            "api": "v0.1",
+            "pages_fetched": registry_result.pages_fetched,
+            "pagination_exhausted": registry_result.pagination_exhausted,
+            "error_code": registry_result.error_code,
+            "error": registry_result.error,
+        },
+    }
+    return _payload_result(
+        payload,
+        summary=f"发现 {len(proposals)} 个 MCP 候选。",
     )
 
 
-def _handler_approve(args: dict[str, Any]):
+def _handler_approve(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     proposal_id = str((args or {}).get("proposal_id") or "").strip()
     bot_value = str((args or {}).get("bot") or "").strip() or None
     if not proposal_id:
@@ -82,22 +100,17 @@ def _handler_approve(args: dict[str, Any]):
 
     catalog_entry = load_mcp_catalog().get(proposal_id)
     if catalog_entry is None:
-        return (
-            json.dumps(
-                {
-                    "ok": False,
-                    "error": "catalog_entry_required",
-                    "proposal_id": proposal_id,
-                    "message": (
-                        "Only reviewed built-in catalog entries can be enabled by this tool. "
-                        "Review other servers manually and add an explicit BotSpec binding."
-                    ),
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            [],
-            None,
+        return _payload_result(
+            {
+                "ok": False,
+                "error": "catalog_entry_required",
+                "proposal_id": proposal_id,
+                "message": (
+                    "Only reviewed built-in catalog entries can be enabled by this tool. "
+                    "Review other servers manually and add an explicit BotSpec binding."
+                ),
+            },
+            summary="MCP catalog entry is required.",
         )
 
     spec = _load_mcp_admin_bot_spec(_resolve_bot_path(bot_value))
@@ -113,38 +126,32 @@ def _handler_approve(args: dict[str, Any]):
         spec.base_dir / "local.env.example",
         catalog_entry.env_examples,
     )
-    return (
-        json.dumps(
-            {
-                "ok": True,
-                "proposal_id": proposal_id,
-                "bot": spec.id,
-                "servers_path": str(servers_path),
-                "servers_yaml_changed": changed,
-                "local_env_example_changed": example_changed,
-                "restart_required": True,
-                "next_step": (
-                    "Set required secrets in bots/<id>/local.env, then apply the BotSpec "
-                    "through the existing update and restart flow."
-                ),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        [],
-        None,
+    return _payload_result(
+        {
+            "ok": True,
+            "proposal_id": proposal_id,
+            "bot": spec.id,
+            "servers_path": str(servers_path),
+            "servers_yaml_changed": changed,
+            "local_env_example_changed": example_changed,
+            "restart_required": True,
+            "next_step": (
+                "Set required secrets in bots/<id>/local.env, then apply the BotSpec "
+                "through the existing update and restart flow."
+            ),
+        },
+        summary=f"已为 {spec.id} 启用 MCP catalog entry {proposal_id}。",
     )
 
 
-def _handler_list(args: dict[str, Any]):
+def _handler_list(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     bot_value = str((args or {}).get("bot") or "").strip() or None
     spec = _load_mcp_admin_bot_spec(_resolve_bot_path(bot_value))
     servers_path = spec.resolve_path(spec.mcp_servers)
     if servers_path is None or not servers_path.is_file():
-        return (
-            json.dumps({"ok": True, "bot": spec.id, "servers": []}, ensure_ascii=False, indent=2),
-            [],
-            None,
+        return _payload_result(
+            {"ok": True, "bot": spec.id, "servers": []},
+            summary=f"{spec.id} 当前没有 MCP bindings。",
         )
     data = _load_servers_yaml(servers_path)
     servers = data.get("servers", [])
@@ -172,14 +179,13 @@ def _handler_list(args: dict[str, Any]):
                 "tool_prefix": resolved.get("tool_prefix", ""),
             }
         )
-    return (
-        json.dumps({"ok": True, "bot": spec.id, "servers": visible}, ensure_ascii=False, indent=2),
-        [],
-        None,
+    return _payload_result(
+        {"ok": True, "bot": spec.id, "servers": visible},
+        summary=f"{spec.id} 当前有 {len(visible)} 个 MCP bindings。",
     )
 
 
-def _handler_probe(args: dict[str, Any]):
+def _handler_probe(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     server_id = str((args or {}).get("server_id") or "").strip()
     bot_value = str((args or {}).get("bot") or "").strip() or None
     if not server_id:
@@ -205,7 +211,7 @@ def _handler_probe(args: dict[str, Any]):
             "read_only": True,
         }
     )
-    return json.dumps(payload, ensure_ascii=False, indent=2), [], None
+    return _payload_result(payload, summary=f"MCP server {server_id} 探针完成。")
 
 
 def _curated_matches(query: str) -> list[dict[str, Any]]:
@@ -594,7 +600,7 @@ TOOLS = [
             "Search the official MCP Registry and the built-in catalog. Discovery is "
             "read-only and never installs or enables a server. Owner only."
         ),
-        properties={
+        input_schema=object_schema({
             "query": {
                 "type": "string",
                 "description": "MCP name or capability, such as github or docs search.",
@@ -603,8 +609,8 @@ TOOLS = [
                 "type": "integer",
                 "description": "Registry v0.1 pages to inspect; default 5, maximum 20.",
             },
-        },
-        required=["query"],
+        }, required=("query",)),
+        output_schema=_MCP_ADMIN_RESULT_SCHEMA,
         handler=_handler_discover,
         requires_role="owner",
         category="mcp.admin",
@@ -618,7 +624,7 @@ TOOLS = [
             "Enable a reviewed built-in MCP catalog proposal in the current BotSpec. "
             "Unknown registry candidates require manual review and configuration. Owner only."
         ),
-        properties={
+        input_schema=object_schema({
             "proposal_id": {
                 "type": "string",
                 "description": "An approvable proposal_id returned by discover_mcp_server.",
@@ -627,8 +633,16 @@ TOOLS = [
                 "type": "string",
                 "description": "Optional bot id or bot.yaml path.",
             },
-        },
-        required=["proposal_id"],
+            "server": {
+                "type": "object",
+                "description": (
+                    "Legacy manual server proposal payload; retained only so the handler "
+                    "can return the reviewed-catalog requirement explicitly."
+                ),
+                "additionalProperties": True,
+            },
+        }, required=("proposal_id",)),
+        output_schema=_MCP_ADMIN_RESULT_SCHEMA,
         handler=_handler_approve,
         requires_role="owner",
         category="mcp.admin",
@@ -643,7 +657,7 @@ TOOLS = [
             "Initialize one existing BotSpec MCP binding and list its tool schemas without "
             "calling any remote tool or changing configuration. Owner only."
         ),
-        properties={
+        input_schema=object_schema({
             "server_id": {
                 "type": "string",
                 "description": "Existing binding id or catalog ref from this BotSpec.",
@@ -652,8 +666,8 @@ TOOLS = [
                 "type": "string",
                 "description": "Optional bot id or bot.yaml path.",
             },
-        },
-        required=["server_id"],
+        }, required=("server_id",)),
+        output_schema=_MCP_ADMIN_RESULT_SCHEMA,
         handler=_handler_probe,
         requires_role="owner",
         category="mcp.admin",
@@ -664,13 +678,13 @@ TOOLS = [
     ToolDef(
         name="list_mcp_servers",
         summary="List MCP bindings and exposure policies for the current bot. Owner only.",
-        properties={
+        input_schema=object_schema({
             "bot": {
                 "type": "string",
                 "description": "Optional bot id or bot.yaml path.",
             }
-        },
-        required=[],
+        }),
+        output_schema=_MCP_ADMIN_RESULT_SCHEMA,
         handler=_handler_list,
         requires_role="owner",
         category="mcp.admin",
@@ -680,5 +694,10 @@ TOOLS = [
     ),
 ]
 
+TOOL_PROVIDER = static_tool_provider(
+    "mcp-admin",
+    packs={"mcp.admin": tuple(TOOLS)},
+    module=__name__,
+)
 
-__all__ = ["TOOLS"]
+__all__ = ["TOOLS", "TOOL_PROVIDER"]

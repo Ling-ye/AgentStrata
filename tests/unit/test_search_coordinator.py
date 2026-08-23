@@ -17,7 +17,7 @@ from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.trace import TraceContext, current_trace, reset_trace, set_trace
 from chatcopilot.botspec.model import SubagentBudgetSpec
 from chatcopilot.contracts.agent import ContextSnapshotPrepared, LlmCallStarted, SpanFinished
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 
 
 class _FakeLLM:
@@ -36,16 +36,33 @@ def _raw_search(
     payload: dict,
     calls: list[str],
 ) -> ToolDef:
-    def handler(args: dict):
+    def handler(args: dict, _context: ToolContext) -> ToolResult:
         calls.append(f"{server_id}:{args['query']}")
-        return json.dumps(payload, ensure_ascii=False), [], None
+        if payload.get("ok") is False:
+            return ToolResult(
+                ok=False,
+                error=str(payload.get("error") or "search provider failed"),
+                error_code=str(payload.get("error_code") or "mcp_unavailable"),
+                data=dict(payload),
+            )
+        return ToolResult(
+            ok=True,
+            summary=json.dumps(payload, ensure_ascii=False),
+            data={"content": dict(payload)},
+        )
 
     remote = "brave_web_search" if server_id == "brave" else "search"
     return ToolDef(
         name=f"raw_{server_id}",
         summary=f"raw_{server_id}",
-        properties={"query": {"type": "string"}, "max_results": {"type": "integer"}},
-        required=["query"],
+        input_schema=object_schema(
+            {"query": {"type": "string"}, "max_results": {"type": "integer"}},
+            required=("query",),
+        ),
+        output_schema=object_schema(
+            {"content": {"type": "object"}},
+            required=("content",),
+        ),
         handler=handler,
         category="mcp",
         metadata={
@@ -58,7 +75,7 @@ def _raw_search(
 
 
 def _raw_xiaohongshu_search(calls: list[dict]) -> ToolDef:
-    def handler(args: dict):
+    def handler(args: dict, _context: ToolContext) -> ToolResult:
         calls.append(dict(args))
         text_payload = {
             "items": [
@@ -81,13 +98,23 @@ def _raw_xiaohongshu_search(calls: list[dict]) -> ToolDef:
                 }
             ],
         }
-        return json.dumps(wrapper_payload, ensure_ascii=False), [], None
+        return ToolResult(
+            ok=True,
+            summary=json.dumps(wrapper_payload, ensure_ascii=False),
+            data={"content": wrapper_payload},
+        )
 
     return ToolDef(
         name="xhs_search_feeds",
         summary="xhs_search_feeds",
-        properties={"keyword": {"type": "string"}, "limit": {"type": "integer"}},
-        required=["keyword"],
+        input_schema=object_schema(
+            {"keyword": {"type": "string"}, "limit": {"type": "integer"}},
+            required=("keyword",),
+        ),
+        output_schema=object_schema(
+            {"content": {"type": "object"}},
+            required=("content",),
+        ),
         handler=handler,
         category="mcp",
         metadata={
@@ -100,12 +127,15 @@ def _raw_xiaohongshu_search(calls: list[dict]) -> ToolDef:
 
 
 def _tool(name: str, summary: str) -> ToolDef:
+    def handler(_args: dict, _context: ToolContext) -> ToolResult:
+        return ToolResult(ok=True, summary=summary, data={})
+
     return ToolDef(
         name=name,
         summary=name,
-        properties={},
-        required=[],
-        handler=lambda _args: (summary, [], None),
+        input_schema=object_schema(additional_properties=True),
+        output_schema=object_schema(),
+        handler=handler,
     )
 
 
@@ -382,7 +412,7 @@ def test_search_information_skips_tavily_quota_and_uses_brave() -> None:
         "search_information",
         {"objective": "package release", "verification": "none"},
     )
-    payload = json.loads(result.summary)
+    payload = result.data
 
     assert payload["ok"] is True
     assert payload["actual_sources"] == ["brave"]
@@ -422,7 +452,7 @@ def test_searxng_results_are_filtered_for_relevance() -> None:
         "search_information",
         {"objective": "Unity package release", "verification": "none"},
     )
-    payload = json.loads(result.summary)
+    payload = result.data
     items = payload["results"][0]["summary"]["items"]
 
     assert payload["actual_sources"] == ["searxng"]
@@ -461,7 +491,7 @@ def test_xiaohongshu_direct_search_uses_keyword_and_extracts_wrapped_content() -
         "search_information",
         {"objective": "上海 二郎拉面 探店", "verification": "none"},
     )
-    payload = json.loads(result.summary)
+    payload = result.data
     items = payload["results"][0]["summary"]["items"]
 
     assert calls == [{"keyword": "上海 二郎拉面 探店", "limit": 10}]
@@ -501,7 +531,7 @@ def test_explicit_xiaohongshu_request_forces_experience_over_web() -> None:
         "search_information",
         {"objective": objective, "verification": "none"},
     )
-    payload = json.loads(result.summary)
+    payload = result.data
 
     assert payload["actual_sources"] == ["xiaohongshu"]
     assert xhs_calls == [{"keyword": objective, "limit": 10}]
@@ -560,7 +590,7 @@ def test_search_result_deep_read_uses_dynamic_browser_when_static_page_is_shell(
         "search_information",
         {"objective": "Cultist warrior health", "verification": "none"},
     )
-    payload = json.loads(result.summary)
+    payload = result.data
     fetched = payload["results"][0]["summary"]["fetched_pages"]
 
     assert fetched[0]["method"] == "dynamic"

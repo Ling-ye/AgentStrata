@@ -65,7 +65,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:. \
   tests/unit/test_evaluations.py \
   tests/unit/test_qq_gateway_ingress_probe.py \
   tests/unit/test_acp_agent_bridge.py \
-  tests/unit/test_acp_persona_control.py \
+  tests/unit/test_persona_tools.py \
   tests/unit/test_persona_control_service.py \
   tests/unit/test_persona_task_observability.py \
   tests/unit/test_turn_tasks.py \

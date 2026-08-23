@@ -59,7 +59,7 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "chatcopilot.platforms.qq.ingress_probe",
         "chatcopilot.platforms.qq.access_proxy",
         "chatcopilot.middleware.acp.group_conversation",
-        "chatcopilot.middleware.acp.persona_control",
+        "chatcopilot.agent.persona.tools",
         "chatcopilot.middleware.acp.server",
         "chatcopilot.middleware.acp.transport_attestation",
         "chatcopilot.middleware.acp.turn_orchestrator",

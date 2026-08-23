@@ -1,4 +1,8 @@
-"""Concrete tool pack catalog shared by BotSpec validation and Agent discovery."""
+"""Explicit provider-module index shared by BotSpec and tool discovery.
+
+Tool membership belongs to the provider exported by each domain module.  This
+index deliberately contains no exact tool-name list.
+"""
 from __future__ import annotations
 
 import importlib
@@ -7,293 +11,191 @@ from typing import Callable, Mapping
 
 from chatcopilot.contracts.tool_packs import (
     ToolFeatureEntry,
-    ToolModuleBinding,
     ToolPackEntry,
     ToolPackPolicy,
 )
 
 
-def _binding(module: str, *tool_names: str) -> ToolModuleBinding:
-    return ToolModuleBinding(module=module, tool_names=tuple(tool_names))
+def _entry(
+    name: str,
+    provider_module: str | None,
+    description: str,
+    *,
+    dynamic: bool = False,
+    policy_module: str | None = None,
+    policy_builder: str = "build_policy",
+) -> ToolPackEntry:
+    return ToolPackEntry(
+        name=name,
+        provider_module=provider_module,
+        dynamic=dynamic,
+        policy_module=policy_module,
+        policy_builder=policy_builder,
+        description=description,
+    )
 
 
 _BUILTIN_TOOL_PACKS_DATA: dict[str, ToolPackEntry] = {
-    "feishu.document": ToolPackEntry(
-        name="feishu.document",
+    "feishu.document": _entry(
+        "feishu.document",
+        "chatcopilot.external_tools.feishu",
+        "Generic Feishu docx create/append tools (bot identity).",
         policy_module="chatcopilot.external_tools.feishu.tool_pack_policies",
         policy_builder="build_docs_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.feishu.spec",
-                "feishu_doc_create",
-                "feishu_doc_append",
-                "feishu_api_get",
-            ),
-        ),
-        description="Generic Feishu docx create/append tools (bot identity).",
     ),
-    "feishu.sheet": ToolPackEntry(
-        name="feishu.sheet",
+    "feishu.sheet": _entry(
+        "feishu.sheet",
+        "chatcopilot.external_tools.feishu",
+        "Generic Feishu spreadsheet read/write/append tools (bot identity).",
         policy_module="chatcopilot.external_tools.feishu.tool_pack_policies",
         policy_builder="build_sheets_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.feishu.spec",
-                "feishu_sheet_read",
-                "feishu_sheet_write",
-                "feishu_sheet_append",
-                "feishu_api_get",
-            ),
-        ),
-        description="Generic Feishu spreadsheet read/write/append tools (bot identity).",
     ),
-    "feishu.bitable": ToolPackEntry(
-        name="feishu.bitable",
+    "feishu.bitable": _entry(
+        "feishu.bitable",
+        "chatcopilot.external_tools.feishu",
+        "Generic Feishu Bitable query/add/update tools (bot identity).",
         policy_module="chatcopilot.external_tools.feishu.tool_pack_policies",
         policy_builder="build_bitable_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.feishu.spec",
-                "feishu_bitable_query",
-                "feishu_bitable_add",
-                "feishu_bitable_update",
-                "feishu_api_get",
-            ),
-        ),
-        description="Generic Feishu Bitable query/add/update tools (bot identity).",
     ),
-    "feishu.wiki": ToolPackEntry(
-        name="feishu.wiki",
+    "feishu.wiki": _entry(
+        "feishu.wiki",
+        "chatcopilot.external_tools.feishu",
+        "Generic Feishu wiki and drive search tools (bot identity).",
         policy_module="chatcopilot.external_tools.feishu.tool_pack_policies",
         policy_builder="build_wiki_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.feishu.spec",
-                "feishu_wiki_search",
-                "feishu_drive_search",
-                "feishu_api_get",
-            ),
-        ),
-        description="Generic Feishu wiki / drive search tools (bot identity).",
     ),
-    "feishu.messaging": ToolPackEntry(
-        name="feishu.messaging",
+    "feishu.messaging": _entry(
+        "feishu.messaging",
+        "chatcopilot.external_tools.feishu",
+        "Generic Feishu instant-message tools (bot identity, Owner-only).",
         policy_module="chatcopilot.external_tools.feishu.tool_pack_policies",
         policy_builder="build_im_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.feishu.spec",
-                "feishu_im_send",
-                "feishu_api_get",
-            ),
-        ),
-        description="Generic Feishu instant-message send tool (bot identity, owner-only).",
     ),
-    "filesystem.windows.read": ToolPackEntry(
-        name="filesystem.windows.read",
+    "filesystem.windows.read": _entry(
+        "filesystem.windows.read",
+        "chatcopilot.external_tools.windows_fs.tools",
+        "Generic Windows and WSL read-only filesystem tools.",
         policy_module="chatcopilot.external_tools.windows_fs.tool_pack_policies",
         policy_builder="build_windows_fs_read_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.windows_fs.tools",
-                "win_read_file",
-                "win_grep",
-                "win_glob",
-            ),
-        ),
-        description="Generic Windows / WSL file access tools (win_read_file / win_grep / win_glob).",
     ),
-    "unity.codebase.read": ToolPackEntry(
-        name="unity.codebase.read",
+    "unity.codebase.read": _entry(
+        "unity.codebase.read",
+        "chatcopilot.external_tools.unity_codebase",
+        "Project-aware Unity code retrieval tools.",
         policy_module="chatcopilot.external_tools.unity_codebase.tool_pack_policies",
         policy_builder="build_unity_codebase_read_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.unity_codebase.read_tools",
-                "unity_project_read",
-                "unity_project_search",
-                "unity_project_glob",
-                "unity_find_csharp_symbol",
-            ),
-        ),
-        description="Project-aware Unity code retrieval (read / search / glob / find_csharp_symbol).",
     ),
-    "unity.skills": ToolPackEntry(
-        name="unity.skills",
+    "unity.skills": _entry(
+        "unity.skills",
+        "chatcopilot.external_tools.unity_codebase",
+        "Wrappers around registered Unity-project skill scripts.",
         policy_module="chatcopilot.external_tools.unity_codebase.tool_pack_policies",
         policy_builder="build_unity_codebase_skills_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.unity_codebase.skill_tools",
-                "unity_path_book",
-            ),
-        ),
-        description="Wrappers around skill scripts shipped inside each registered Unity project (e.g. path_book).",
     ),
-    "codebase.read": ToolPackEntry(
-        name="codebase.read",
+    "codebase.read": _entry(
+        "codebase.read",
+        "chatcopilot.external_tools.codebase.tools",
+        "Platform-neutral registered repository inspection tools.",
         policy_module="chatcopilot.external_tools.codebase.tool_pack_policies",
         policy_builder="build_codebase_read_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.codebase.tools",
-                "codebase_list_repositories",
-                "codebase_map",
-                "codebase_search",
-                "codebase_symbols",
-                "codebase_read",
-                "codebase_references",
-                "codebase_dependencies",
-                "codebase_context",
-            ),
-        ),
-        description="Platform-neutral registered repository inspection (map / search / read).",
     ),
-    "dev.files": ToolPackEntry(
-        name="dev.files",
+    "dev.files": _entry(
+        "dev.files",
+        "chatcopilot.external_tools.dev",
+        "Direct project file operation tools.",
         policy_module="chatcopilot.external_tools.dev.tool_pack_policies",
         policy_builder="build_dev_files_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.dev.file_tools",
-                "read_file",
-                "write_file",
-                "edit_file",
-                "delete_file",
-                "list_directory",
-                "search_content",
-            ),
-        ),
-        description="Direct file operations: read, write, edit (fuzzy search-replace), delete, list, search.",
     ),
-    "dev.shell": ToolPackEntry(
-        name="dev.shell",
+    "dev.shell": _entry(
+        "dev.shell",
+        "chatcopilot.external_tools.dev",
+        "Sandboxed project shell command execution.",
         policy_module="chatcopilot.external_tools.dev.tool_pack_policies",
         policy_builder="build_dev_shell_pack",
-        tool_bindings=(
-            _binding("chatcopilot.external_tools.dev.shell_tools", "run_command"),
-        ),
-        description="Sandboxed shell command execution within the project directory.",
     ),
-    "dev.code_tasks": ToolPackEntry(
-        name="dev.code_tasks",
+    "dev.code_tasks": _entry(
+        "dev.code_tasks",
+        "chatcopilot.external_tools.dev",
+        "Owner-only isolated source-development task tools.",
         policy_module="chatcopilot.external_tools.dev.tool_pack_policies",
         policy_builder="build_dev_code_tasks_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.dev.code_task_tools",
-                "start_code_task",
-                "get_code_task",
-                "cancel_code_task",
-                "resume_code_task",
-            ),
-            _binding(
-                "chatcopilot.external_tools.dev.adapter_tools",
-                "prepare_adapter_source",
-                "approve_adapter_source",
-            ),
-        ),
-        description=(
-            "Owner-only asynchronous source development in isolated worktrees with "
-            "validation, cancellation, resume, and transactional publication."
-        ),
     ),
-    "career.intelligence": ToolPackEntry(
-        name="career.intelligence",
+    "career.intelligence": _entry(
+        "career.intelligence",
+        "chatcopilot.external_tools.career.spec",
+        "Job discovery and workspace-local career intelligence tools.",
         policy_module="chatcopilot.external_tools.career.tool_pack_policies",
         policy_builder="build_career_intelligence_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.career.spec",
-                "career_watchlist_update",
-                "career_watchlist_show",
-                "search_company_ai_jobs",
-                "career_jobs_ingest",
-                "career_intel_ingest",
-                "career_intel_query",
-            ),
-        ),
-        description="AI job discovery, market evidence, and workspace-local intelligence snapshots.",
     ),
-    "wiki.knowledge": ToolPackEntry(
-        name="wiki.knowledge",
+    "wiki.knowledge": _entry(
+        "wiki.knowledge",
+        "chatcopilot.external_tools.wiki.spec",
+        "Owner-private Markdown Wiki capture and retrieval tools.",
         policy_module="chatcopilot.external_tools.wiki.tool_pack_policies",
         policy_builder="build_wiki_knowledge_pack",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.wiki.spec",
-                "wiki_upsert_page",
-                "wiki_search",
-                "wiki_read_page",
-                "wiki_list_pages",
-            ),
-        ),
-        description="Owner-private local Markdown Wiki capture, read, and search tools.",
     ),
-    "web.fetch": ToolPackEntry(
-        name="web.fetch",
+    "web.fetch": _entry(
+        "web.fetch",
+        "chatcopilot.external_tools.web_fetch.tools",
+        "HTTP page fetch for extracting text from known URLs.",
         policy_module="chatcopilot.external_tools.web_fetch.tool_pack_policies",
         policy_builder="build_web_fetch_pack",
-        tool_bindings=(
-            _binding("chatcopilot.external_tools.web_fetch.tools", "web_fetch_page"),
-        ),
-        description="Standalone HTTP page fetch for extracting text from known URLs (no MCP dependency).",
     ),
-    "workspace.read_write": ToolPackEntry(
-        name="workspace.read_write",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.agent.tools.builtin.workspace_tools",
-                "list_workspace",
-                "get_job_status",
-                "get_task_status",
-                "read_text_head",
-                "unzip_attachment",
-                "send_files_to_user",
-                "download_image_urls",
-                "owner_list_workspaces",
-                "owner_read_workspace_file",
-            ),
-        ),
-        description="Chat workspace, attachment, and response helpers (builtin).",
+    "workspace.read_write": _entry(
+        "workspace.read_write",
+        "chatcopilot.agent.tools.builtin.workspace_tools",
+        "Chat workspace, attachment, and response helper tools.",
     ),
-    "memory.chat": ToolPackEntry(
-        name="memory.chat",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.agent.tools.builtin.memory_tools",
-                "read_memory",
-                "append_memory",
-                "clear_memory",
-            ),
-        ),
-        description=(
-            "Trusted conversation-scoped memory helpers: admitted users read/append; "
-            "private users clear self and only Owner clears group memory."
-        ),
+    "memory.chat": _entry(
+        "memory.chat",
+        "chatcopilot.agent.tools.builtin.memory_tools",
+        "Trusted conversation-scoped memory tools.",
     ),
-    "playbooks.reader": ToolPackEntry(
-        name="playbooks.reader",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.agent.tools.builtin.skill_tools",
-                "read_bot_skill",
-            ),
-        ),
-        description="Lazy-load registered bot skill bodies via read_bot_skill (builtin).",
+    "playbooks.reader": _entry(
+        "playbooks.reader",
+        "chatcopilot.agent.tools.builtin.skill_tools",
+        "Lazy loading for registered bot playbooks.",
     ),
-    "mcp.admin": ToolPackEntry(
-        name="mcp.admin",
-        tool_bindings=(
-            _binding(
-                "chatcopilot.external_tools.mcp_admin.tools",
-                "discover_mcp_server",
-                "approve_mcp_server",
-                "probe_mcp_server",
-                "list_mcp_servers",
-            ),
-        ),
-        description="Owner-only MCP discovery, approval, and inventory helpers (builtin).",
+    "mcp.admin": _entry(
+        "mcp.admin",
+        "chatcopilot.external_tools.mcp_admin.tools",
+        "Owner-only MCP discovery, approval, and inventory tools.",
+    ),
+    "mcp.dynamic": _entry(
+        "mcp.dynamic",
+        "chatcopilot.agent.mcp.client",
+        "Main-Agent tools materialized from configured MCP servers.",
+        dynamic=True,
+    ),
+    "mcp.subagent": _entry(
+        "mcp.subagent",
+        "chatcopilot.agent.mcp.client",
+        "Subagent-only tools materialized from configured MCP servers.",
+        dynamic=True,
+    ),
+    "search.unified": _entry(
+        "search.unified",
+        "chatcopilot.agent.search.tool",
+        "Session-bound unified search tool.",
+        dynamic=True,
+    ),
+    "agent.delegation": _entry(
+        "agent.delegation",
+        "chatcopilot.agent.subagents.registry",
+        "Session-bound subagent and workflow delegation tools.",
+        dynamic=True,
+    ),
+    "persona.control": _entry(
+        "persona.control",
+        "chatcopilot.agent.persona.tools",
+        "Owner-only session-bound persona management tool.",
+        dynamic=True,
+    ),
+    "runtime.session": _entry(
+        "runtime.session",
+        None,
+        "Adapter-supplied session-local control tools.",
+        dynamic=True,
     ),
 }
 
@@ -337,47 +239,21 @@ def get_tool_feature_entry(name: str) -> ToolFeatureEntry | None:
     return BUILTIN_TOOL_FEATURES.get(name)
 
 
-def resolve_tool_bindings(
-    tool_pack_names: tuple[str, ...] | list[str],
-) -> tuple[ToolModuleBinding, ...]:
-    """Resolve packs into an ordered union of exact module/tool bindings."""
+def resolve_tool_modules(tool_pack_names: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    """Resolve selected packs to their unique provider modules."""
 
-    names_by_module: dict[str, list[str]] = {}
-    seen_by_module: dict[str, set[str]] = {}
-    for name in tool_pack_names:
-        entry = get_tool_pack_entry(name)
-        if entry is None:
-            continue
-        for binding in entry.tool_bindings:
-            names = names_by_module.setdefault(binding.module, [])
-            seen = seen_by_module.setdefault(binding.module, set())
-            for tool_name in binding.tool_names:
-                if tool_name in seen:
-                    continue
-                seen.add(tool_name)
-                names.append(tool_name)
     return tuple(
-        ToolModuleBinding(module=module, tool_names=tuple(tool_names))
-        for module, tool_names in names_by_module.items()
+        dict.fromkeys(
+            entry.provider_module
+            for name in tool_pack_names
+            if (entry := get_tool_pack_entry(name)) is not None
+            and entry.provider_module is not None
+        )
     )
 
 
-def resolve_tool_modules(tool_pack_names: tuple[str, ...] | list[str]) -> tuple[str, ...]:
-    """Resolve BotSpec tool pack names into runtime tool module paths."""
-
-    return tuple(binding.module for binding in resolve_tool_bindings(tool_pack_names))
-
-
-def all_tool_bindings() -> tuple[ToolModuleBinding, ...]:
-    """Return the exact bindings for the complete built-in catalog."""
-
-    return resolve_tool_bindings(list(BUILTIN_TOOL_PACKS))
-
-
 def all_tool_modules() -> tuple[str, ...]:
-    """Return the ordered union of all built-in tool pack modules."""
-
-    return tuple(binding.module for binding in all_tool_bindings())
+    return resolve_tool_modules(list(BUILTIN_TOOL_PACKS))
 
 
 def load_tool_pack_policies(name: str) -> tuple[ToolPackPolicy, ...]:
@@ -401,18 +277,15 @@ __all__ = [
     "BUILTIN_TOOL_FEATURES",
     "BUILTIN_TOOL_PACKS",
     "ToolFeatureEntry",
-    "ToolModuleBinding",
     "ToolPackEntry",
     "ToolPackPolicy",
     "_BUILTIN_TOOL_FEATURES",
     "_BUILTIN_TOOL_PACKS",
-    "all_tool_bindings",
     "all_tool_modules",
     "get_tool_feature_entry",
     "get_tool_pack_entry",
     "known_tool_feature_names",
     "known_tool_pack_names",
     "load_tool_pack_policies",
-    "resolve_tool_bindings",
     "resolve_tool_modules",
 ]

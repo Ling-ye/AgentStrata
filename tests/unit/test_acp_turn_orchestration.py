@@ -54,7 +54,6 @@ class AcpTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
             [
                 "attachments",
                 "permissions",
-                "persona_control",
                 "deterministic_shortcuts",
             ],
         )

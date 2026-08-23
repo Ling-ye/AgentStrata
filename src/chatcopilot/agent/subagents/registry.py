@@ -46,6 +46,7 @@ from chatcopilot.agent.tools.file_delivery import FileSender
 from chatcopilot.agent.tools.workspace_context import WorkspaceService
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.subagents import CustomSubagentSpec, SubagentSpec
+from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.tools import ToolDef
 
 if TYPE_CHECKING:
@@ -163,6 +164,20 @@ def build_subagent_tools(
     return tuple(tools)
 
 
+def build_subagent_provider(**kwargs) -> ToolProvider | None:
+    """Build the session-bound provider for delegate and workflow tools."""
+
+    tools = build_subagent_tools(**kwargs)
+    if not tools:
+        return None
+    return ToolProvider(
+        id="agent.delegation",
+        packs={"agent.delegation": tools},
+        module=__name__,
+        description="Session-bound subagent and workflow delegation tools.",
+    )
+
+
 def _iter_definitions(subagents: SubagentSpec):
     yield from _iter_definitions_impl(subagents, presets=BUILTIN_SUBAGENTS)
 
@@ -254,5 +269,6 @@ __all__ = [
     "BUILTIN_WORKFLOWS",
     "SearchCircuitBreaker",
     "_build_search_prompt",
+    "build_subagent_provider",
     "build_subagent_tools",
 ]

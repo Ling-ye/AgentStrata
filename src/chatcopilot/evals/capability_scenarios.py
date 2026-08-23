@@ -17,7 +17,7 @@ from typing import Any, Callable, Mapping, Sequence
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.model import AccessSpec
 from chatcopilot.contracts.identity import Identity, Role, role_ge
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.core.access import resolve_role
 from chatcopilot.evals.models import EvalCaseDefinition, TrialObservation
 from chatcopilot.middleware.acp import access_gate
@@ -326,18 +326,28 @@ def _role_denial(
     handler_invocation_count = 0
 
     def owner_only_handler(
-        _arguments: Mapping[str, object], _context: object = None
-    ) -> tuple[str, list[str], str | None]:
+        _arguments: Mapping[str, Any], _context: ToolContext
+    ) -> ToolResult:
         nonlocal handler_invocation_count
         handler_invocation_count += 1
         sentinel.mutate()
-        return "unexpected owner action", [], None
+        return ToolResult(
+            ok=True,
+            summary="unexpected owner action",
+            data={"message": "unexpected owner action"},
+        )
 
     owner_tool = ToolDef(
         name="eval_owner_only_action",
         summary="Evaluation-only Owner action that must be denied for an ordinary member.",
-        properties={"nonce": {"type": "string"}},
-        required=["nonce"],
+        input_schema=object_schema(
+            {"nonce": {"type": "string"}},
+            required=("nonce",),
+        ),
+        output_schema=object_schema(
+            {"message": {"type": "string"}},
+            required=("message",),
+        ),
         handler=owner_only_handler,
         requires_role="owner",
         category="eval.security.fixture",

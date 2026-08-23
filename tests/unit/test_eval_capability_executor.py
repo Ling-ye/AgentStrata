@@ -18,6 +18,7 @@ from chatcopilot.contracts.agent import (
 )
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.prompt import BotPromptProfile
+from chatcopilot.contracts.tools import ToolContext
 from chatcopilot.agent.tools.builtin.workspace_tools import TOOLS as WORKSPACE_TOOLS
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.core.config import ChatConfig
@@ -292,14 +293,11 @@ class _FakeSession:
             error = None if result.ok else result.error
             data: dict[str, Any] | None = result.to_llm_payload()
         else:
-            summary, paths, error = tool.handler(arguments)
-            data = None
-            try:
-                parsed = __import__("json").loads(summary)
-            except (TypeError, ValueError):
-                parsed = None
-            if isinstance(parsed, dict):
-                data = parsed
+            result = tool.handler(arguments, ToolContext())
+            summary = result.summary
+            paths = result.outputs
+            error = None if result.ok else result.error_code or result.error
+            data = result.data or None
         on_event(
             ToolFinished(
                 name,
@@ -615,14 +613,15 @@ class _FakeSession:
         if case_id == "injection-untrusted-search-contained":
             tool = self.tools["search_eval_fixture"]
             on_event(ToolStarted(tool.name, {}, trace_id="trace-injection"))
-            summary, _paths, error = tool.handler({})
+            result = tool.handler({}, ToolContext())
             on_event(
                 ToolFinished(
                     tool.name,
-                    error is None,
-                    summary,
-                    error,
+                    result.ok,
+                    result.summary,
+                    result.error,
                     trace_id="trace-injection",
+                    data=result.data,
                 )
             )
             return AgentResult("UNTRUSTED_CONTENT_REJECTED", "end_turn")
@@ -656,7 +655,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     tasks: list[Any] = []
     runtime = SimpleNamespace(
         spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")),
-        tool_packs=("configured-development",),
+        tool_packs=("configured-development", "persona.control"),
         exclude_tools=(),
         skills=(),
         rag_sources=("configured-rag",),
@@ -675,7 +674,12 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     def build_runtime(**kwargs: Any) -> _FakeAgentRuntime:
         if kwargs["agent_backend"] != "native":
             raise AssertionError("selected Bot backend was not preserved")
-        tools = tuple(kwargs.get("extra_tools") or ())
+        tools = tuple(
+            tool
+            for provider in kwargs.get("runtime_providers") or ()
+            for pack_tools in provider.packs.values()
+            for tool in pack_tools
+        )
         if any(tool.name == "write_capability_proof" for tool in tools):
             tools = (*tools, SEND_FILES_TO_USER)
         return _FakeAgentRuntime(tools, tasks)
@@ -1184,6 +1188,7 @@ def test_isolated_agent_runtime_drops_configured_rag_mcp_and_research_subagents(
     )
 
     assert result.status == "passed"
+    assert captured["tool_packs"] == ("configured-development",)
     assert captured["rag_sources"] == ()
     assert captured["mcp_servers"] == ()
     assert captured["subagents"].research_enabled is False
@@ -1320,7 +1325,12 @@ def test_code_recovery_runtime_exposes_only_eval_owned_atomic_tools(
 
     assert result.status == "passed"
     assert captured["tool_packs"] == ()
-    assert tuple(tool.name for tool in captured["extra_tools"]) == expected_tools
+    assert tuple(
+        tool.name
+        for provider in captured["runtime_providers"]
+        for pack_tools in provider.packs.values()
+        for tool in pack_tools
+    ) == expected_tools
     assert fake_agent
 
 
@@ -1331,17 +1341,19 @@ def test_code_fix_atomic_edit_rejects_skipping_the_read_step(tmp_path: Path) -> 
         for tool in executor._extra_tools(_definition("code-fix-and-verify"), tmp_path, state)
     }
 
-    summary, paths, error = tools["edit_eval_code"].handler(
+    result = tools["edit_eval_code"].handler(
         {
             "path": "calculator.py",
             "old_text": "return left + right",
             "new_text": "return left * right",
-        }
+        },
+        ToolContext(),
     )
 
-    assert error == "code_operation_out_of_order"
-    assert paths == []
-    assert __import__("json").loads(summary) == {"code": "code_operation_out_of_order"}
+    assert result.ok is False
+    assert result.error_code == "code_operation_out_of_order"
+    assert result.outputs == []
+    assert result.data == {"code": "code_operation_out_of_order"}
     assert (tmp_path / "calculator.py").read_text(encoding="utf-8") == (
         "def multiply(left, right):\n    return left + right\n"
     )

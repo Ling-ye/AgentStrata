@@ -8,16 +8,19 @@ import unittest
 from chatcopilot.agent.subagents.context_pack import ContextPackBuilder
 from chatcopilot.agent.subagents.spec import ContextPolicySpec
 from chatcopilot.agent.subagents.task_pack import TaskPack
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 
 
 def _dummy_tool(name: str) -> ToolDef:
+    def handler(_args: dict, _context: ToolContext) -> ToolResult:
+        return ToolResult(ok=True, summary="ok")
+
     return ToolDef(
         name=name,
         summary=f"Tool {name}",
-        properties={},
-        required=[],
-        handler=lambda _: ("ok", [], None),
+        input_schema=object_schema(),
+        output_schema=object_schema(),
+        handler=handler,
     )
 
 

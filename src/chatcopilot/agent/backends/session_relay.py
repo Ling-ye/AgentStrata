@@ -46,6 +46,7 @@ class _RelayTraceBinding:
     trace_id: str
     parent_span_id: str
     depth: int
+    request_text: str
 
 
 @dataclass(frozen=True)
@@ -120,7 +121,14 @@ class SessionToolRelay:
         self._server.server_close()
         self._thread.join(timeout=2.0)
 
-    def begin_turn(self, *, trace_id: str, parent_span_id: str, depth: int) -> int:
+    def begin_turn(
+        self,
+        *,
+        trace_id: str,
+        parent_span_id: str,
+        depth: int,
+        request_text: str = "",
+    ) -> int:
         """Bind one relay generation to the turn that owns its event stream."""
 
         normalized_trace = str(trace_id or "").strip()
@@ -140,6 +148,7 @@ class SessionToolRelay:
                 trace_id=normalized_trace,
                 parent_span_id=normalized_parent,
                 depth=depth,
+                request_text=str(request_text),
             )
             return self._generation
 
@@ -431,11 +440,7 @@ class SessionToolRelay:
                     {
                         "name": tool.name,
                         "description": tool.summary,
-                        "input_schema": {
-                            "type": "object",
-                            "properties": tool.properties,
-                            "required": tool.required,
-                        },
+                        "input_schema": tool.input_schema,
                     }
                     for tool in self._tools.values()
                 ],
@@ -469,7 +474,11 @@ class SessionToolRelay:
                 )
             )
         try:
-            result = self._executor.execute(name, arguments)
+            result = self._executor.execute(
+                name,
+                arguments,
+                request_text=binding.request_text if binding is not None else "",
+            )
             result_payload = result.to_llm_payload()
             if self._payload_filter is not None:
                 result_payload = self._payload_filter(dict(result_payload))

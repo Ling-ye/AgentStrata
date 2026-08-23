@@ -4,16 +4,19 @@ import unittest
 
 from chatcopilot.agent.subagents.selector import build_predicate, is_user_facing
 from chatcopilot.agent.subagents.spec import ToolMatchRule, ToolSelectorSpec
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 
 
 def _tool(name: str, **kwargs) -> ToolDef:
+    def handler(_args: dict, _context: ToolContext) -> ToolResult:
+        return ToolResult(ok=True, summary=name)
+
     return ToolDef(
         name=name,
         summary=f"{name} summary",
-        properties={},
-        required=[],
-        handler=lambda args: (name, [], None),
+        input_schema=object_schema(),
+        output_schema=object_schema(),
+        handler=handler,
         category=kwargs.get("category", ""),
         owner=kwargs.get("owner", ""),
         module=kwargs.get("module", ""),

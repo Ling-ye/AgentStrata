@@ -27,24 +27,25 @@ external_tools/
 `tool_packs/catalog.py` 是静态 catalog。Entry 可以声明：
 
 - structured policy module 和 builder；
-- 一个或多个 `ToolModuleBinding`，每个 binding 同时声明模块与该 pack 精确暴露的
-  `ToolDef.name`；
+- 一个显式 `ToolProvider` 模块；
 - 可选通用 HTTP route module。
 
 `contracts.tool_packs.ToolPackEntry` 不携带领域专用后端字段。BotSpec 只选择 pack id，
-Agent 工具发现统一走 `agent/tools/registry`。builtin 与 external pack 使用同一张映射；
-模块被多个 pack 共享时，运行时只取各 binding 明确列出的工具。一个工具需要跨 pack
-共享时，必须在每个 binding 中显式声明，不能依赖模块级全量导出。
+Agent 工具发现统一走 `agent/tools/registry`。builtin 与 external provider 都通过
+`ToolProvider.packs` 声明自己拥有的完整 `ToolDef`；catalog 不复制精确工具名。一个 provider
+可以拥有多个 pack，但每个 pack 只允许一个 provider，重复 pack 或工具名在注册阶段失败关闭。
+MCP、搜索、委托、人格与 session-local 工具在会话装配时使用同一 provider 契约注册，不维护
+第二条列表拼接路径。
 
-Console 通过 `component_catalog.iter_tool_pack_tools()` 读取同一精确投影，不自行 import
-模块或维护第二张映射。新增或调整 pack 后运行：
+Console 通过 `component_catalog.iter_tool_pack_tools()` 读取同一 provider 投影，不自行维护
+工具名映射。新增或调整 pack 后运行：
 
 ```bash
 python scripts/check_component_catalog.py --json
 ```
 
-门禁会拒绝遗漏工具、幽灵工具、重复工具、跨模块冲突、无效 tool-pack policy、权限或
-schema 异常，以及 MCP、subagent、workflow 之间的静态工具名冲突。仓库门禁严格读取
+门禁会拒绝缺失 provider、重复 pack 或工具、跨 provider 冲突、无效 tool-pack policy、
+handler 签名、权限或 JSON schema 异常，以及 MCP、subagent、workflow 之间的静态工具名冲突。仓库门禁严格读取
 packaged MCP catalog，拒绝运行时宽容读取会跳过的损坏记录或重复 ID；它不执行 handler，
 也不连接远端 MCP。
 

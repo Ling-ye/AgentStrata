@@ -9,14 +9,15 @@
 """
 from __future__ import annotations
 
-import inspect
 import io
+import json
 import os
 import sys
 import traceback
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
+
+from jsonschema import Draft202012Validator
 
 from chatcopilot.core.concurrency import build_heavy_tool_limiter
 from chatcopilot.agent.tools.file_delivery import (
@@ -33,6 +34,7 @@ from chatcopilot.contracts.tools import (
     ToolContext,
     ToolDef,
     ToolHandlerError,
+    ToolResult,
 )
 from chatcopilot.project import ENV_PREFIX
 
@@ -41,46 +43,6 @@ from chatcopilot.project import ENV_PREFIX
 #   返回 None 表示放行；返回非空字符串表示拒绝并以该文本作为 ToolResult.error。
 PermissionFilter = Callable[[ToolDef], Optional[str]]
 BackgroundSubmitter = Callable[[ToolDef, Dict[str, Any]], "ToolResult"]
-
-
-@dataclass
-class ToolResult:
-    ok: bool
-    summary: str
-    outputs: List[str]
-    console: str
-    doc_links: List[str]
-    error: Optional[str] = None
-    artifact_kinds: List[str] = field(default_factory=list)
-    error_code: str = ""
-    details: Dict[str, Any] = field(default_factory=dict)
-    stage: str = ""
-
-    def to_llm_payload(self) -> Dict[str, Any]:
-        """回灌给 LLM 的精简版（避免 token 浪费）。"""
-        if self.ok:
-            payload: Dict[str, Any] = {
-                "ok": True,
-                "summary": self.summary,
-                "outputs": self.outputs,
-            }
-            if self.console:
-                payload["console_tail"] = self.console[-2000:]
-            if self.doc_links:
-                payload["doc_links"] = self.doc_links
-            return payload
-        payload = {
-            "ok": False,
-            "error": self.error or "unknown error",
-        }
-        if self.error_code:
-            payload["error_code"] = self.error_code
-        if self.details:
-            payload["details"] = self.details
-        if self.stage:
-            payload["stage"] = self.stage
-        return payload
-
 
 @contextmanager
 def _capture_streams():
@@ -166,6 +128,7 @@ class ToolExecutor:
         arguments: Dict[str, Any],
         *,
         role: Any = None,
+        request_text: str = "",
     ) -> ToolResult:
         """执行工具。
 
@@ -185,6 +148,8 @@ class ToolExecutor:
                 console="",
                 doc_links=[],
                 error=f"未知的工具名: {tool_name}",
+                error_code="tool_not_found",
+                stage="dispatch",
             )
 
         if self._permission_filter is not None:
@@ -197,6 +162,8 @@ class ToolExecutor:
                     console="",
                     doc_links=[],
                     error=reject,
+                    error_code="tool_permission_denied",
+                    stage="permission",
                 )
         elif role is not None and tool.requires_role is not None:
             from chatcopilot.contracts import role_ge, role_value
@@ -212,11 +179,29 @@ class ToolExecutor:
                         f"工具 {tool_name} 需要 {role_value(tool.requires_role)} 及以上权限；"
                         f"当前用户角色 {role_value(role)}，拒绝执行。"
                     ),
+                    error_code="tool_permission_denied",
+                    stage="permission",
                 )
+
+        input_error = _first_validation_error(tool.input_schema, arguments or {})
+        if input_error is not None:
+            return ToolResult(
+                ok=False,
+                error=f"工具 {tool_name} 输入不符合 schema: {input_error.message}",
+                error_code="tool_input_schema_invalid",
+                details={"path": _validation_path(input_error)},
+                stage="input_validation",
+            )
 
         if self._should_submit_background(tool):
             try:
-                return self._background_submitter(tool, arguments or {})  # type: ignore[misc]
+                submitted = self._background_submitter(tool, arguments or {})  # type: ignore[misc]
+                if not isinstance(submitted, ToolResult):
+                    raise TypeError(
+                        "background_submitter 必须返回 ToolResult，"
+                        f"实际为 {type(submitted).__name__}"
+                    )
+                return submitted
             except Exception as exc:  # noqa: BLE001
                 err_msg = f"{type(exc).__name__}: {exc}"
                 detail = traceback.format_exc(limit=2)
@@ -227,27 +212,78 @@ class ToolExecutor:
                     console="",
                     doc_links=[],
                     error=err_msg if not detail else f"{err_msg}\n{detail}",
+                    error_code="background_submit_failed",
+                    stage="background_submit",
                 )
 
-        tool_context = self._build_tool_context()
+        tool_context = self._build_tool_context(request_text=request_text)
         sender_token = set_current_file_sender(self._file_sender)
         try:
             with bind_workspace_service(self._workspace_service), bind_caller_role(self._caller_role_hint), _capture_streams() as buf:
                 try:
                     if tool.weight == "heavy" and not _is_background_worker():
                         with self._heavy_tool_limiter.slot():
-                            summary, outputs, file_type_hint = _invoke_handler(tool.handler, arguments or {}, tool_context)
+                            handler_result = tool.handler(arguments or {}, tool_context)
                     else:
-                        summary, outputs, file_type_hint = _invoke_handler(tool.handler, arguments or {}, tool_context)
+                        handler_result = tool.handler(arguments or {}, tool_context)
+                    if not isinstance(handler_result, ToolResult):
+                        raise TypeError(
+                            f"工具 {tool_name} handler 必须返回 ToolResult，"
+                            f"实际为 {type(handler_result).__name__}"
+                        )
                     console_text = buf.getvalue()
-                    links = _render_doc_links_for_tool(tool, file_type_hint)
+                    if handler_result.ok:
+                        try:
+                            json.dumps(handler_result.data, ensure_ascii=False)
+                        except (TypeError, ValueError) as exc:
+                            return ToolResult(
+                                ok=False,
+                                console=console_text,
+                                error=(
+                                    f"工具 {tool_name} 返回数据不是 JSON："
+                                    f"{type(exc).__name__}"
+                                ),
+                                error_code="tool_output_json_invalid",
+                                details={"error_kind": type(exc).__name__},
+                                stage="output_validation",
+                            )
+                        output_error = _first_validation_error(
+                            tool.output_schema,
+                            handler_result.data,
+                        )
+                        if output_error is not None:
+                            return ToolResult(
+                                ok=False,
+                                console=console_text,
+                                error=(
+                                    f"工具 {tool_name} 返回数据不符合 schema: "
+                                    f"{output_error.message}"
+                                ),
+                                error_code="tool_output_schema_invalid",
+                                details={"path": _validation_path(output_error)},
+                                stage="output_validation",
+                            )
+                    links = [
+                        *handler_result.doc_links,
+                        *_render_doc_links_for_tool(tool, handler_result.file_type_hint),
+                    ]
                     return ToolResult(
-                        ok=True,
-                        summary=summary,
-                        outputs=list(outputs) if outputs else [],
-                        console=console_text,
-                        doc_links=links,
-                        artifact_kinds=list(tool.artifact_kinds),
+                        ok=handler_result.ok,
+                        summary=handler_result.summary,
+                        outputs=list(handler_result.outputs),
+                        console="".join((handler_result.console, console_text)),
+                        doc_links=list(dict.fromkeys(links)),
+                        error=handler_result.error,
+                        artifact_kinds=(
+                            list(handler_result.artifact_kinds)
+                            if handler_result.artifact_kinds
+                            else list(tool.artifact_kinds)
+                        ),
+                        error_code=handler_result.error_code,
+                        details=dict(handler_result.details),
+                        stage=handler_result.stage,
+                        data=dict(handler_result.data),
+                        file_type_hint=handler_result.file_type_hint,
                     )
                 except Exception as exc:
                     console_text = buf.getvalue()
@@ -263,15 +299,19 @@ class ToolExecutor:
                         console=console_text,
                         doc_links=links,
                         error=full_err,
-                        error_code=structured.error_code if structured else "",
+                        error_code=(
+                            structured.error_code
+                            if structured
+                            else "tool_handler_exception"
+                        ),
                         details=dict(structured.details) if structured else {},
-                        stage=structured.stage if structured else "",
+                        stage=structured.stage if structured else "handler",
                     )
         finally:
             reset_current_file_sender(sender_token)
 
 
-    def _build_tool_context(self) -> ToolContext:
+    def _build_tool_context(self, *, request_text: str = "") -> ToolContext:
         workspace = None
         workspace_root = None
         persistent_state = None
@@ -300,6 +340,7 @@ class ToolExecutor:
             caller_role=self._caller_role_hint,
             job=self._job_context,
             persistent_state=persistent_state,
+            request_text=request_text,
         )
 
     def _should_submit_background(self, tool: ToolDef) -> bool:
@@ -309,22 +350,12 @@ class ToolExecutor:
             and not _is_background_worker()
         )
 
+def _first_validation_error(schema: Dict[str, Any], value: Any):
+    return next(Draft202012Validator(schema).iter_errors(value), None)
 
-def _invoke_handler(handler, arguments: Dict[str, Any], ctx: ToolContext):
-    """Call a tool handler with explicit ToolContext when it accepts one."""
-    try:
-        signature = inspect.signature(handler)
-    except (TypeError, ValueError):
-        return handler(arguments, ctx)
-    params = list(signature.parameters.values())
-    accepts_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
-    positional = [
-        p for p in params
-        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    ]
-    if accepts_varargs or len(positional) >= 2:
-        return handler(arguments, ctx)
-    return handler(arguments)
+
+def _validation_path(error: Any) -> str:
+    return "/".join(str(item) for item in error.absolute_path)
 
 
 def _is_background_worker() -> bool:

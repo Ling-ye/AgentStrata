@@ -22,7 +22,7 @@ from chatcopilot.contracts.code_tasks import (
     validate_code_task_title,
 )
 from chatcopilot.contracts.model_selection import CODEX_REASONING_EFFORTS
-from chatcopilot.contracts.tools import HandlerResult, ToolContext, ToolHandlerError
+from chatcopilot.contracts.tools import ToolContext, ToolHandlerError, ToolResult
 from chatcopilot.core.jobs import (
     code_task_state_lock,
     iter_job_request_paths,
@@ -100,7 +100,7 @@ class CodeTaskChange:
         }
 
 
-def execute_code_task(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
+def execute_code_task(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     if ctx.job is None:
         raise ToolHandlerError(
             "code task requires a background job context",
@@ -280,7 +280,12 @@ def execute_code_task(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
             "final": final_text[-2000:],
         }
         _cleanup_success(paths)
-        return json.dumps(summary_payload, ensure_ascii=False), [str(job_dir)], None
+        return ToolResult(
+            ok=True,
+            summary="代码任务已完成并生成结构化交付结果。",
+            outputs=[str(job_dir)],
+            data=summary_payload,
+        )
     except ToolHandlerError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -299,7 +304,7 @@ def _resume_delivery_only(
     paths: CodeTaskPaths,
     ctx: ToolContext,
     title: str,
-) -> HandlerResult:
+) -> ToolResult:
     changes_payload = read_json_file(paths.job_dir / CHANGES_FILENAME) or {}
     raw_files = changes_payload.get("files")
     changed_files = [
@@ -344,10 +349,11 @@ def _resume_delivery_only(
         "final": "",
     }
     _cleanup_success(paths)
-    return (
-        json.dumps(summary_payload, ensure_ascii=False),
-        [str(paths.job_dir)],
-        None,
+    return ToolResult(
+        ok=True,
+        summary="代码任务交付重试已完成。",
+        outputs=[str(paths.job_dir)],
+        data=summary_payload,
     )
 
 def code_task_limits() -> CodeTaskLimits:

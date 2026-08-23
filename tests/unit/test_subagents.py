@@ -39,7 +39,12 @@ from chatcopilot.contracts.agent_backend import (
     CodexMainSessionPolicy,
 )
 from chatcopilot.core.adapter_approval import AdapterApprovalStore
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 
 
 class _FakeLLM:
@@ -88,14 +93,17 @@ def _submit_call(payload: dict) -> ChatResult:
 
 
 def _tool(name: str, *, category: str = "", owner: str = "", module: str = "") -> ToolDef:
-    def _handler(args: dict):
-        return (f"{name} done", [], None)
+    def _handler(_args: dict, _ctx: ToolContext) -> ToolResult:
+        result = f"{name} done"
+        return ToolResult(ok=True, summary=result, data={"result": result})
 
     return ToolDef(
         name=name,
         summary=f"{name} summary",
-        properties={},
-        required=[],
+        input_schema=object_schema(),
+        output_schema=object_schema(
+            {"result": {"type": "string"}}, required=("result",)
+        ),
         handler=_handler,
         category=category,
         owner=owner,
@@ -106,14 +114,21 @@ def _tool(name: str, *, category: str = "", owner: str = "", module: str = "") -
 class SubagentTests(unittest.TestCase):
     def test_search_subagent_honors_mcp_search_only_tools(self) -> None:
         def _mcp_tool(remote_name: str) -> ToolDef:
+            def handler(_args: dict, _ctx: ToolContext) -> ToolResult:
+                return ToolResult(ok=True, summary="ok", data={"result": "ok"})
+
             return ToolDef(
                 name=f"web_{remote_name}",
                 summary=f"{remote_name} summary",
-                properties={},
-                required=[],
-                handler=lambda args: ("ok", [], None),
+                input_schema=object_schema(),
+                output_schema=object_schema(
+                    {"result": {"type": "string"}}, required=("result",)
+                ),
+                handler=handler,
                 category="mcp",
                 owner="tavily",
+                module=__name__,
+                artifact_kinds=(),
                 metadata={
                     "mcp_server_id": "tavily",
                     "mcp_exposure": "subagent",
@@ -236,7 +251,7 @@ class SubagentTests(unittest.TestCase):
             "search_test",
             {"objective": "latest Unity version"},
         )
-        payload = json.loads(result.summary)
+        payload = result.data
 
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error_code"], "invalid_search_task_pack")
@@ -297,7 +312,7 @@ class SubagentTests(unittest.TestCase):
             "forge_open_source_adapter",
             {
                 "objective": "Integrate the approved adapter",
-                "write_scope": ["src/chatcopilot/external_tools/sample"],
+                "write_scope": "src/chatcopilot/external_tools/sample",
                 "source_url": "https://github.com/example/sample",
                 "approved_ref": "main",
                 "candidate_digest": "not-a-digest",
@@ -306,7 +321,7 @@ class SubagentTests(unittest.TestCase):
                 "resource_name": "sample",
             },
         )
-        payload = json.loads(result.summary)
+        payload = result.data
 
         self.assertEqual(tool.requires_role, "owner")
         self.assertEqual(tool.metadata["execution_boundary"], "codex")
@@ -321,7 +336,9 @@ class SubagentTests(unittest.TestCase):
         class Runner:
             def run(self, **kwargs):
                 calls.append(kwargs)
-                return SimpleNamespace(ok=True, summary="adapter ready", outputs=())
+                return SimpleNamespace(
+                    ok=True, summary="adapter ready", outputs=(), error_code=""
+                )
 
         definition = BUILTIN_SUBAGENTS["adapter_forge"]
         tool = _make_delegate_tool(
@@ -333,7 +350,7 @@ class SubagentTests(unittest.TestCase):
         )
         args = {
             "objective": "Integrate the approved adapter",
-            "write_scope": ["src/chatcopilot/external_tools/sample"],
+            "write_scope": "src/chatcopilot/external_tools/sample",
             "source_url": "https://github.com/example/sample",
             "approved_ref": "a" * 40,
             "license_evidence": "MIT LICENSE",
@@ -386,7 +403,7 @@ class SubagentTests(unittest.TestCase):
         self.assertEqual(result.summary, "adapter ready")
         self.assertEqual(len(calls), 1)
         self.assertEqual(
-            json.loads(replay.summary)["error_code"],
+            replay.data["error_code"],
             "adapter_approval_required",
         )
 
@@ -396,7 +413,9 @@ class SubagentTests(unittest.TestCase):
         class Runner:
             def run(self, **kwargs):
                 calls.append(kwargs)
-                return SimpleNamespace(ok=True, summary="unexpected", outputs=())
+                return SimpleNamespace(
+                    ok=True, summary="unexpected", outputs=(), error_code=""
+                )
 
         definition = BUILTIN_SUBAGENTS["adapter_forge"]
         tool = _make_delegate_tool(
@@ -413,7 +432,7 @@ class SubagentTests(unittest.TestCase):
             bot_path.write_text("id: sample-bot\n", encoding="utf-8")
             args = {
                 "objective": "Integrate an unapproved adapter",
-                "write_scope": ["src/chatcopilot/external_tools/sample"],
+                "write_scope": "src/chatcopilot/external_tools/sample",
                 "source_url": "https://github.com/example/sample",
                 "approved_ref": "a" * 40,
                 "license_evidence": "MIT LICENSE",
@@ -435,7 +454,7 @@ class SubagentTests(unittest.TestCase):
                 workspace_service=WorkspaceService(),
             ).execute("forge_open_source_adapter", args)
 
-        payload = json.loads(result.summary)
+        payload = result.data
         self.assertEqual(payload["error_code"], "adapter_approval_required")
         self.assertIn("record not found", payload["summary"])
         self.assertEqual(calls, [])
@@ -582,7 +601,7 @@ class SubagentTests(unittest.TestCase):
             "delegate_development",
             {"objective": "检查代码", "write_scope": "tests"},
         )
-        payload = json.loads(result.summary)
+        payload = result.data
 
         self.assertTrue(payload["ok"])
         self.assertIn("read_file", fake_llm.seen_tools)
@@ -618,7 +637,7 @@ class SubagentTests(unittest.TestCase):
         result = ToolExecutor(tools=list(tools)).execute(
             "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
-        payload = json.loads(result.summary)
+        payload = result.data
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["summary"], "内存峰值上升 12%")
@@ -643,7 +662,7 @@ class SubagentTests(unittest.TestCase):
         result = ToolExecutor(tools=list(tools)).execute(
             "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
-        payload = json.loads(result.summary)
+        payload = result.data
 
         self.assertTrue(payload["limits"]["partial"])
         self.assertIn("自然语言", payload["summary"])
@@ -653,9 +672,16 @@ class SubagentTests(unittest.TestCase):
         browser_close = ToolDef(
             name="browser_close",
             summary="close browser",
-            properties={},
-            required=[],
-            handler=lambda args: (close_calls.append(args) or "closed", [], None),
+            input_schema=object_schema(),
+            output_schema=object_schema(
+                {"result": {"type": "string"}}, required=("result",)
+            ),
+            handler=lambda args, _ctx: (
+                close_calls.append(args)
+                or ToolResult(ok=True, summary="closed", data={"result": "closed"})
+            ),
+            module=__name__,
+            artifact_kinds=(),
         )
         scripted = _ScriptedLLM(
             [
@@ -687,7 +713,7 @@ class SubagentTests(unittest.TestCase):
             },
         )
 
-        self.assertTrue(json.loads(result.summary)["ok"])
+        self.assertTrue(result.data["ok"])
         self.assertEqual(close_calls, [{}])
 
     def test_subagent_never_sees_user_facing_tool(self) -> None:
@@ -751,7 +777,7 @@ class SubagentTests(unittest.TestCase):
         self.assertNotIn("github_search_repositories", schema_names)
 
         result = session.tool_executor.execute("query_approved_sources", {"objective": "查 repo"})
-        payload = json.loads(result.summary)
+        payload = result.data
 
         self.assertTrue(payload["ok"])
         self.assertIn("github_search_repositories", fake_llm.seen_tools)
@@ -799,7 +825,7 @@ class SubagentTests(unittest.TestCase):
         result = ToolExecutor(tools=list(tools)).execute(
             "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
-        payload = json.loads(result.summary)
+        payload = result.data
 
         self.assertTrue(payload["ok"], f"Expected ok=True but got payload: {payload}")
         self.assertEqual(payload["summary"], "Found relevant data")
@@ -843,7 +869,7 @@ class SubagentTests(unittest.TestCase):
         result = ToolExecutor(tools=list(tools)).execute(
             "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
-        payload = json.loads(result.summary)
+        payload = result.data
 
         self.assertFalse(payload["ok"])
 

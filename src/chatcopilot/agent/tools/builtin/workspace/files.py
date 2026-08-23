@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 from chatcopilot.agent.tools.workspace_context import resolve_workspace
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
-from chatcopilot.contracts.tools import HandlerResult
+from chatcopilot.contracts.tools import ToolContext, ToolResult
 from chatcopilot.agent.tools.builtin.workspace.common import _is_unsafe_member, _require
 
 _UNZIP_MAX_TOTAL_BYTES = 2 * 1024 ** 3
@@ -17,7 +17,7 @@ _GROUP_RESERVED_PATHS = frozenset(
 )
 
 
-def _handler_read_text_head(args: Dict[str, Any]) -> HandlerResult:
+def _handler_read_text_head(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     raw_path = _require(args, "path")
     kb = int(args.get("kb") or 4)
     if kb <= 0 or kb > 512:
@@ -63,15 +63,19 @@ def _handler_read_text_head(args: Dict[str, Any]) -> HandlerResult:
     if b"\x00" in raw:
         raise ValueError(f"疑似二进制文件，拒绝读取: {ws.relpath(target)}")
     text = raw.decode("utf-8", errors="replace")
-    truncated_hint = "（已截断，仅展示前 %d KB）" % kb if target.stat().st_size > size_limit else ""
-    return (
-        f"读取 {ws.relpath(target)} 前 {kb}KB{truncated_hint}\n----\n{text}",
-        [str(target)],
-        None,
+    truncated = target.stat().st_size > size_limit
+    truncated_hint = "（已截断，仅展示前 %d KB）" % kb if truncated else ""
+    return ToolResult(
+        ok=True,
+        summary=f"读取 {ws.relpath(target)} 前 {kb}KB{truncated_hint}\n----\n{text}",
+        outputs=[str(target)],
+        data={"content": text, "kb": kb, "truncated": truncated},
     )
 
 
-def _handler_unzip_attachment(args: Dict[str, Any]) -> HandlerResult:
+def _handler_unzip_attachment(
+    args: Dict[str, Any], _ctx: ToolContext
+) -> ToolResult:
     """把 attachments/ 下的压缩包解压到同名子目录（含压缩炸弹 + 路径穿越防护）。"""
     import tarfile
     import zipfile
@@ -146,12 +150,15 @@ def _handler_unzip_attachment(args: Dict[str, Any]) -> HandlerResult:
         if not is_dir
     ]
     more_hint = "\n（仅展示前 50 个，更多请用 list_workspace recursive=true）" if file_count > 50 else ""
-    return (
-        f"已解压 attachments/{name} → {ws.relpath(dest)}/，共 {file_count} 个文件\n"
-        + "\n".join(sample)
-        + more_hint,
-        [str(dest)],
-        None,
+    return ToolResult(
+        ok=True,
+        summary=(
+            f"已解压 attachments/{name} → {ws.relpath(dest)}/，共 {file_count} 个文件\n"
+            + "\n".join(sample)
+            + more_hint
+        ),
+        outputs=[str(dest)],
+        data={"file_count": file_count},
     )
 
 

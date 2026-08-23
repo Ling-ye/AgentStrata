@@ -505,6 +505,7 @@ class CodexAgentBackend:
                 trace_id=trace_id,
                 parent_span_id=llm_span_id,
                 depth=1,
+                request_text=task.text,
             )
             projector = CodexJsonlProjector(
                 model=selection.model,
@@ -801,7 +802,16 @@ class CodexAgentBackend:
             if data is not None and not isinstance(data, dict):
                 return "relay returned malformed tool result data"
             ok = event.get("ok") is True
-            if ok and successful_operations is not None:
+            business_data = data.get("data") if isinstance(data, dict) else None
+            committed_value = (
+                business_data.get("committed")
+                if isinstance(business_data, dict)
+                else None
+            )
+            has_receipt = committed_value is True or (
+                ok and committed_value is not False
+            )
+            if has_receipt and successful_operations is not None:
                 successful_operations.append(name)
             safe_emit(
                 on_event,

@@ -417,7 +417,9 @@ def _run_agent_cases(
             runtime.spec.llm,
             fallback=chat_config.llm,
         ),
-        tool_packs=runtime.tool_packs,
+        tool_packs=tuple(
+            pack for pack in runtime.tool_packs if pack != "persona.control"
+        ),
         exclude_tools=runtime.exclude_tools,
         skill_index=runtime.skills,
         rag_sources=runtime.rag_sources,

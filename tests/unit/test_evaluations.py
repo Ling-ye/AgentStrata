@@ -23,7 +23,7 @@ from chatcopilot.botspec.runtime import BotPromptProfile
 from chatcopilot.core.config import ChatConfig, LLMConfig, RoutingConfig, RuntimeConfig
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.subagents import SearchProviderSpec
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.evals.cli import main as evals_cli_main
 from chatcopilot.evals.artifact_ids import trial_artifact_id
 from chatcopilot.evals.capability_executor import CapabilityExecutionError
@@ -39,6 +39,8 @@ from chatcopilot.evals.evaluations import (
     validate_evaluation,
 )
 from chatcopilot.evals.isolated_executor import (
+    _evaluation_tool_provider,
+    _isolated_tool_packs,
     judge_profile_trial,
     permission_filter,
     stage_fixture,
@@ -806,7 +808,7 @@ def _capability_case_preflight(
     )
 
 
-def test_qq_persona_preflight_projects_enabled_host_control() -> None:
+def test_qq_persona_preflight_projects_enabled_tool_pack() -> None:
     manifest = evaluation_module.get_manifest("agentstrata-qq-message-flow-v1")
     case = next(
         item
@@ -818,10 +820,9 @@ def test_qq_persona_preflight_projects_enabled_host_control() -> None:
         platform_type="qq",
         tool_features=(),
         memory_namespace="",
-        tool_packs=(),
+        tool_packs=("persona.control",),
         exclude_tools=(),
         subagents=SimpleNamespace(
-            persona_control=SimpleNamespace(enabled=True),
             search_providers=(),
         ),
         mcp_servers=(),
@@ -3532,12 +3533,58 @@ def test_parse_custom_requires_every_budget_and_selection_field() -> None:
 
 
 def test_isolated_permission_filter_is_fail_closed() -> None:
-    allowed = ToolDef("read_file", "", {}, [], lambda _args: ("", [], None))
-    denied = ToolDef("send_message", "", {}, [], lambda _args: ("", [], None))
+    def handler(_arguments: dict, _context: ToolContext) -> ToolResult:
+        return ToolResult(ok=True, data={})
+
+    allowed = ToolDef(
+        name="read_file",
+        summary="Read a file.",
+        input_schema=object_schema(),
+        output_schema=object_schema(),
+        handler=handler,
+    )
+    denied = ToolDef(
+        name="send_message",
+        summary="Send a message.",
+        input_schema=object_schema(),
+        output_schema=object_schema(),
+        handler=handler,
+    )
     check = permission_filter(frozenset({"read_file"}))
 
     assert check(allowed) is None
     assert check(denied) == "evaluation policy denies this tool"
+
+
+def test_isolated_evaluation_excludes_session_bound_persona_pack() -> None:
+    assert _isolated_tool_packs(
+        ("workspace.read_write", "persona.control", "memory.chat")
+    ) == ("workspace.read_write", "memory.chat")
+
+
+def test_isolated_evaluation_tool_uses_runtime_provider_and_structured_result() -> None:
+    case = get_profile("agent-comparison-mvp").cases[2].case
+    audit: list[dict[str, object]] = []
+
+    provider = _evaluation_tool_provider(case, audit)
+
+    assert provider is not None
+    assert provider.pack_names == ("runtime.session",)
+    tool = provider.packs["runtime.session"][0]
+    result = tool.handler(
+        {"key": case.metadata["expected_key"]},
+        ToolContext(),
+    )
+    assert result.ok is True
+    assert result.summary == case.metadata["expected_answer"]
+    assert result.data == {"answer": case.metadata["expected_answer"]}
+    assert audit == [
+        {
+            "name": "lookup_eval_fact",
+            "arguments": {"key": case.metadata["expected_key"]},
+            "ok": True,
+        }
+    ]
 
 
 def test_deterministic_tool_judge_requires_call_and_exact_answer(

@@ -21,7 +21,14 @@ from chatcopilot.botspec.session_env import (
     build_session_env_values,
     write_private_session_env,
 )
-from chatcopilot.contracts.agent import AgentResult, AgentTask, FinalText
+from chatcopilot.agent.tools.executor import ToolExecutor
+from chatcopilot.contracts.agent import (
+    AgentResult,
+    AgentTask,
+    FinalText,
+    ToolFinished,
+    ToolStarted,
+)
 from chatcopilot.contracts.identity import ConversationIdentity, Identity, SessionIdentity
 from chatcopilot.contracts.persona_control import PersonaDraftResult
 from chatcopilot.evals.capability_scenarios import (
@@ -88,12 +95,30 @@ class _CapturingClient:
 
 
 class _DeterministicAgentSession:
-    def __init__(self, prompt_plan: Any) -> None:
-        self.capabilities = SimpleNamespace(tool_names=frozenset())
+    def __init__(
+        self,
+        prompt_plan: Any,
+        *,
+        tools: tuple[Any, ...] = (),
+        workspace_service: Any = None,
+        caller_role_hint: str = "user",
+        permission_filter: Any = None,
+    ) -> None:
+        self.capabilities = SimpleNamespace(
+            tool_names=frozenset(tool.name for tool in tools)
+        )
         self._messages: list[dict[str, Any]] = []
         self.tasks: list[AgentTask] = []
+        self.tool_calls: list[dict[str, Any]] = []
         self.prompt_plan_set_count = 1
         self.prompt_plan = prompt_plan
+        self._executor = ToolExecutor(
+            tools=list(tools),
+            workspace_service=workspace_service,
+            caller_role_hint=caller_role_hint,
+            permission_filter=permission_filter,
+        )
+        self._caller_role_hint = caller_role_hint
 
     @property
     def message_count(self) -> int:
@@ -102,10 +127,43 @@ class _DeterministicAgentSession:
     def run_task(self, task: AgentTask, *, on_event: Any) -> AgentResult:
         self.tasks.append(task)
         self._messages.append({"role": "user", "content": task.text})
-        on_event(FinalText(text=_SENTINEL))
-        self._messages.append({"role": "assistant", "content": _SENTINEL})
+        final_text = _SENTINEL
+        prefix = "/persona set group "
+        if task.text.startswith(prefix) and "persona_manage" in self.capabilities.tool_names:
+            arguments = {
+                "operation": "set",
+                "scope": "group",
+                "requirement": task.text[len(prefix) :],
+            }
+            self.tool_calls.append({"name": "persona_manage", "arguments": arguments})
+            on_event(
+                ToolStarted(
+                    name="persona_manage",
+                    arguments=arguments,
+                    span_id="synthetic-persona-manage",
+                )
+            )
+            result = self._executor.execute(
+                "persona_manage",
+                arguments,
+                role=self._caller_role_hint,
+                request_text=task.text,
+            )
+            on_event(
+                ToolFinished(
+                    name="persona_manage",
+                    ok=result.ok,
+                    summary=result.summary,
+                    error=result.error,
+                    span_id="synthetic-persona-manage",
+                    data=result.to_llm_payload(),
+                )
+            )
+            final_text = result.summary if result.ok else (result.error or "工具执行失败")
+        on_event(FinalText(text=final_text))
+        self._messages.append({"role": "assistant", "content": final_text})
         return AgentResult(
-            final_text=_SENTINEL,
+            final_text=final_text,
             stop_reason="end_turn",
             message_count=self.message_count,
         )
@@ -133,9 +191,32 @@ class _DeterministicAgentRuntime:
         self.research_llm = SimpleNamespace(model="qq-flow-persona-draft-stub")
         self.sessions: list[_DeterministicAgentSession] = []
 
-    def new_session(self, *, prompt_input: Any, **_kwargs: Any) -> _DeterministicAgentSession:
-        plan = PromptPlanBuilder().build(replace(prompt_input, tool_names=()))
-        session = _DeterministicAgentSession(plan)
+    def new_session(
+        self,
+        *,
+        prompt_input: Any,
+        session_providers: tuple[Any, ...] = (),
+        workspace_service: Any = None,
+        caller_role_hint: str = "user",
+        permission_filter: Any = None,
+        **_kwargs: Any,
+    ) -> _DeterministicAgentSession:
+        tools = tuple(
+            tool
+            for provider in session_providers
+            for pack_tools in provider.packs.values()
+            for tool in pack_tools
+        )
+        plan = PromptPlanBuilder().build(
+            replace(prompt_input, tool_names=tuple(tool.name for tool in tools))
+        )
+        session = _DeterministicAgentSession(
+            plan,
+            tools=tools,
+            workspace_service=workspace_service,
+            caller_role_hint=caller_role_hint,
+            permission_filter=permission_filter,
+        )
         self.sessions.append(session)
         return session
 
@@ -766,7 +847,7 @@ async def _run_persona_roundtrip(
         f"chat_id={inputs.group_id}]\n{persona_command}"
     )
     with patch(
-        "chatcopilot.middleware.acp.persona_control.PersonaDraftAgent",
+        "chatcopilot.agent.persona.tools.PersonaDraftAgent",
         draft_factory,
     ):
         first_response = await first_host.prompt(
@@ -815,17 +896,29 @@ async def _run_persona_roundtrip(
     first_identity = _transition(first_events, "middleware.identity_validated")
     first_access = _transition(first_events, "middleware.access_decision")
     first_activation = _transition(first_events, "middleware.identity_activated")
-    persona_decision = _event_payload(first_events, "persona_decision")
-    persona_draft = _event_payload(first_events, "persona_draft")
-    persona_mutation = _event_payload(first_events, "persona_mutation")
-    persona_outcome = _event_payload(first_events, "persona_outcome")
+    first_materialized = _transition(first_events, "middleware.session_materialized")
+    first_submitted = _transition(first_events, "agent.task_submitted")
+    first_delivery = _transition(first_events, "delivery.session_update")
+    persona_tool_started = _event_payload(first_events, "tool_started")
+    persona_tool_finished = _event_payload(first_events, "tool_finished")
+    raw_tool_result = persona_tool_finished.get("result")
+    persona_tool_result = raw_tool_result if isinstance(raw_tool_result, Mapping) else {}
+    raw_persona_data = persona_tool_result.get("data")
+    persona_data = raw_persona_data if isinstance(raw_persona_data, Mapping) else {}
+    raw_receipt = persona_data.get("receipt")
+    persona_receipt = raw_receipt if isinstance(raw_receipt, Mapping) else {}
+    raw_draft = persona_data.get("draft")
+    persona_draft = raw_draft if isinstance(raw_draft, Mapping) else {}
     first_main_tasks = [
         task for session in first_runtime.sessions for task in session.tasks
     ]
+    first_tool_calls = [
+        tool_call for session in first_runtime.sessions for tool_call in session.tool_calls
+    ]
+    first_session = first_runtime.sessions[0] if len(first_runtime.sessions) == 1 else None
     draft_request = draft_factory.requests[0] if len(draft_factory.requests) == 1 else {}
-    mutation_hash = str(persona_mutation.get("content_sha256") or "")
+    mutation_hash = str(persona_receipt.get("content_sha256") or "")
     snapshot_hash = hashlib.sha256(snapshot_after_first.encode("utf-8")).hexdigest()
-    draft_hash = hashlib.sha256(draft_factory.last_markdown.encode("utf-8")).hexdigest()
 
     second_runtime = _DeterministicAgentRuntime(agent_backend=runtime.agent_backend)
     second_client = _CapturingClient()
@@ -915,10 +1008,24 @@ async def _run_persona_roundtrip(
             and first_state.workspace.user_id == inputs.owner_id
             and first_state.workspace.chat_id == inputs.group_id
         ),
-        "first_turn_persona_decision_observed": (
-            persona_decision.get("operation") == "set"
-            and persona_decision.get("confidence") == "high"
-            and persona_decision.get("scope") == "group"
+        "first_turn_session_materialized": (
+            first_materialized.get("status") == "succeeded"
+        ),
+        "first_turn_agent_task_submitted": (
+            first_submitted.get("status") == "succeeded"
+            and len(first_main_tasks) == 1
+            and first_main_tasks[0].text == persona_command
+        ),
+        "first_turn_persona_tool_visible": (
+            first_session is not None
+            and "persona_manage" in first_session.capabilities.tool_names
+        ),
+        "first_turn_persona_tool_called": (
+            persona_tool_started.get("name") == "persona_manage"
+            and len(first_tool_calls) == 1
+            and first_tool_calls[0].get("name") == "persona_manage"
+            and first_tool_calls[0].get("arguments", {}).get("requirement")
+            == persona_command.removeprefix("/persona set group ")
         ),
         "persona_draft_stub_construct_count": draft_factory.construction_count,
         "persona_draft_stub_invocation_count": draft_factory.draft_call_count,
@@ -928,19 +1035,20 @@ async def _run_persona_roundtrip(
             and draft_request.get("current_persona") == ""
             and draft_request.get("research_required") is False
         ),
+        "first_turn_persona_tool_succeeded": (
+            persona_tool_finished.get("name") == "persona_manage"
+            and persona_tool_finished.get("status") == "succeeded"
+            and persona_tool_result.get("ok") is True
+            and persona_data.get("outcome") == "saved"
+        ),
         "first_turn_persona_draft_observed": (
-            persona_draft.get("ok") is True
-            and persona_draft.get("markdown_sha256") == draft_hash
+            persona_draft.get("model") == "qq-flow-persona-draft-stub"
+            and persona_draft.get("model_calls") == 0
         ),
-        "first_turn_persona_mutation_observed": (
-            persona_mutation.get("ok") is True
-            and persona_mutation.get("operation") == "set"
-            and persona_mutation.get("scope") == "group"
-        ),
-        "first_turn_persona_outcome_persisted": (
-            persona_outcome.get("outcome") == "persisted"
-            and first_task.get("persona_outcome")
-            == {"outcome": "persisted", "error_code": ""}
+        "first_turn_persona_receipt_committed": (
+            persona_data.get("committed") is True
+            and persona_receipt.get("operation") == "set"
+            and persona_receipt.get("scope") == "group"
         ),
         "first_turn_task_succeeded": (
             first_task.get("status") == "succeeded"
@@ -949,10 +1057,13 @@ async def _run_persona_roundtrip(
         ),
         "first_turn_main_agent_invocation_count": len(first_main_tasks),
         "first_turn_client_receipt_observed": (
-            len(first_client.updates) == 1
-            and mutation_hash[:16] in first_client.updates[0]
-            and _SENTINEL not in first_client.updates[0]
+            len(first_client.updates) >= 2
+            and mutation_hash[:16] in first_client.updates[-1]
+            and _SENTINEL not in first_client.updates[-1]
+            and first_delivery.get("status") == "succeeded"
         ),
+        "first_turn_model_replaced": True,
+        "first_turn_synthetic_tool_call": True,
         "initial_persona_hash": hashlib.sha256(initial_snapshot.encode("utf-8")).hexdigest(),
         "persisted_persona_hash": snapshot_hash,
         "mutation_receipt_hash": mutation_hash,
@@ -1010,7 +1121,7 @@ async def _run_persona_roundtrip(
             "transport_attestation_consumer",
             "access_gate",
             "role_resolution",
-            "persona_control_host",
+            "persona_manage_tool",
             "persona_persistent_state",
             "task_observability",
             "acp_chat_agent",
@@ -1037,13 +1148,18 @@ async def _run_persona_roundtrip(
         "first_turn_access_allowed",
         "first_turn_identity_activated",
         "first_turn_role_resolved_owner",
-        "first_turn_persona_decision_observed",
+        "first_turn_session_materialized",
+        "first_turn_agent_task_submitted",
+        "first_turn_persona_tool_visible",
+        "first_turn_persona_tool_called",
         "persona_draft_request_bound",
+        "first_turn_persona_tool_succeeded",
         "first_turn_persona_draft_observed",
-        "first_turn_persona_mutation_observed",
-        "first_turn_persona_outcome_persisted",
+        "first_turn_persona_receipt_committed",
         "first_turn_task_succeeded",
         "first_turn_client_receipt_observed",
+        "first_turn_model_replaced",
+        "first_turn_synthetic_tool_call",
         "mutation_receipt_hash_matches_snapshot",
         "protected_snapshot_contains_marker",
         "protected_state_observed",
@@ -1067,7 +1183,7 @@ async def _run_persona_roundtrip(
         and evidence["task_record_count"] == 2
         and evidence["persona_draft_stub_construct_count"] == 1
         and evidence["persona_draft_stub_invocation_count"] == 1
-        and evidence["first_turn_main_agent_invocation_count"] == 0
+        and evidence["first_turn_main_agent_invocation_count"] == 1
         and evidence["next_turn_prompt_persona_layer_count"] == 1
         and evidence["next_turn_main_agent_invocation_count"] == 1
         and evidence["next_turn_client_session_update_count"] == 1

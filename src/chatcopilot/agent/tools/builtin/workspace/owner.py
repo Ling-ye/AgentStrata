@@ -8,10 +8,12 @@ from chatcopilot.agent.tools.workspace_context import (
     resolve_workspace,
     resolve_workspace_root,
 )
-from chatcopilot.contracts.tools import HandlerResult
+from chatcopilot.contracts.tools import ToolContext, ToolResult
 from chatcopilot.agent.tools.builtin.workspace.common import _format_bytes, _format_mtime, _require
 
-def _handler_owner_list_workspaces(args: Dict[str, Any]) -> HandlerResult:
+def _handler_owner_list_workspaces(
+    args: Dict[str, Any], _ctx: ToolContext
+) -> ToolResult:
     limit = int(args.get("limit") or 50)
     if limit <= 0 or limit > 500:
         raise ValueError("limit 必须在 [1, 500] 区间内")
@@ -62,7 +64,19 @@ def _handler_owner_list_workspaces(args: Dict[str, Any]) -> HandlerResult:
             f"data=[{'; '.join(category_bits) if category_bits else 'empty'}]"
         )
 
-    return ("\n".join(lines), [str(root)], None)
+    return ToolResult(
+        ok=True,
+        summary="\n".join(lines),
+        outputs=[str(root)],
+        data={
+            "workspace_count": len(inventories),
+            "shown_count": len(shown),
+            "user_count": len(unique_users),
+            "named_user_count": len(named_users),
+            "total_files": total_files,
+            "total_bytes": total_bytes,
+        },
+    )
 
 
 def _known_identity_names() -> Dict[str, str]:
@@ -81,7 +95,9 @@ def _known_identity_names() -> Dict[str, str]:
     return names
 
 
-def _handler_owner_read_workspace_file(args: Dict[str, Any]) -> HandlerResult:
+def _handler_owner_read_workspace_file(
+    args: Dict[str, Any], _ctx: ToolContext
+) -> ToolResult:
     workspace_path = _require(args, "workspace_path").strip()
     file_path = _require(args, "file_path").strip()
     kb = int(args.get("kb") or 8)
@@ -112,12 +128,14 @@ def _handler_owner_read_workspace_file(args: Dict[str, Any]) -> HandlerResult:
         raise ValueError(f"疑似二进制文件，拒绝读取: {workspace_path}/{file_path}")
 
     text = raw.decode("utf-8", errors="replace")
-    truncated_hint = "（已截断）" if target.stat().st_size > size_limit else ""
+    truncated = target.stat().st_size > size_limit
+    truncated_hint = "（已截断）" if truncated else ""
     rel_target = target.relative_to(root)
-    return (
-        f"读取 {rel_target} 前 {kb}KB{truncated_hint}\n----\n{text}",
-        [str(target)],
-        None,
+    return ToolResult(
+        ok=True,
+        summary=f"读取 {rel_target} 前 {kb}KB{truncated_hint}\n----\n{text}",
+        outputs=[str(target)],
+        data={"content": text, "kb": kb, "truncated": truncated},
     )
 
 

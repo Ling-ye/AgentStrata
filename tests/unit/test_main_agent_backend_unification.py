@@ -16,7 +16,7 @@ from chatcopilot.agent.backends.codex_events import CodexJsonlProjector
 from chatcopilot.agent.backends.registry import backend_ids, build_backend
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.trace import current_trace
-from chatcopilot.agent.tools.executor import ToolExecutor, ToolResult
+from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.backend_state import prepare_backend_deployment
 from chatcopilot.contracts.agent import (
     AgentTask,
@@ -47,7 +47,7 @@ from chatcopilot.contracts.model_selection import (
 )
 from chatcopilot.core.model_selection import CODE_MODEL_SELECTION_METADATA_KEY
 from chatcopilot.core.config import ChatConfig
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.external_tools.codex_cli.credentials import (
     CredentialError,
     install_login_credential,
@@ -66,17 +66,20 @@ from chatcopilot.agent.backends.session_relay import (
 
 
 def _dynamic_tool(calls: list[str] | None = None) -> ToolDef:
-    def handler(args):
+    def handler(args: dict, _context: ToolContext) -> ToolResult:
         value = str(args.get("value") or "")
         if calls is not None:
             calls.append(value)
-        return f"dynamic:{value}", [], None
+        return ToolResult(ok=True, summary=f"dynamic:{value}")
 
     return ToolDef(
         name="dynamic_echo",
         summary="Echo through the live session executor.",
-        properties={"value": {"type": "string"}},
-        required=["value"],
+        input_schema=object_schema(
+            {"value": {"type": "string"}},
+            required=("value",),
+        ),
+        output_schema=object_schema(),
         handler=handler,
     )
 
@@ -285,7 +288,7 @@ class CodexBackendResumeTests(TestCase):
             auth_root = _main_auth_root(root)
             handler_threads: list[int] = []
 
-            def traced_handler(args):
+            def traced_handler(args: dict, _context: ToolContext) -> ToolResult:
                 trace = current_trace()
                 self.assertIsNotNone(trace)
                 assert trace is not None
@@ -320,13 +323,16 @@ class CodexBackendResumeTests(TestCase):
                     )
                 )
                 value = str(args.get("value") or "")
-                return f"dynamic:{value}", [], None
+                return ToolResult(ok=True, summary=f"dynamic:{value}")
 
             traced_tool = ToolDef(
                 name="dynamic_echo",
                 summary="Emit nested trace events through the live relay.",
-                properties={"value": {"type": "string"}},
-                required=["value"],
+                input_schema=object_schema(
+                    {"value": {"type": "string"}},
+                    required=("value",),
+                ),
+                output_schema=object_schema(),
                 handler=traced_handler,
             )
             routing = SimpleNamespace(
@@ -544,7 +550,7 @@ class CodexBackendResumeTests(TestCase):
             tool_started = threading.Event()
             release_tool = threading.Event()
 
-            def blocked_handler(_args):
+            def blocked_handler(_args: dict, _context: ToolContext) -> ToolResult:
                 trace = current_trace()
                 self.assertIsNotNone(trace)
                 assert trace is not None
@@ -577,13 +583,13 @@ class CodexBackendResumeTests(TestCase):
                         depth=trace.depth + 1,
                     )
                 )
-                return "late result", [], None
+                return ToolResult(ok=True, summary="late result")
 
             tool = ToolDef(
                 name="blocked_tool",
                 summary="Block until the test releases the retired relay generation.",
-                properties={},
-                required=[],
+                input_schema=object_schema(),
+                output_schema=object_schema(),
                 handler=blocked_handler,
             )
             routing = SimpleNamespace(
@@ -2350,17 +2356,99 @@ class SessionToolRelayTests(TestCase):
         self.assertFalse(denied["ok"])
         self.assertIn("authentication", denied["error"])
 
+    def test_session_relay_binds_original_request_text_to_tool_context(self) -> None:
+        request_texts: list[str] = []
+
+        def handler(_args: dict, context: ToolContext) -> ToolResult:
+            request_texts.append(context.request_text)
+            return ToolResult(ok=True, summary="captured")
+
+        tool = ToolDef(
+            name="capture_request",
+            summary="Capture the trusted relay request text.",
+            input_schema=object_schema(),
+            output_schema=object_schema(),
+            handler=handler,
+        )
+        relay = SessionToolRelay(
+            tools=(tool,),
+            executor=ToolExecutor(tools=[tool]),
+        )
+        endpoint = relay.start()
+        generation = relay.begin_turn(
+            trace_id="trace_request_text",
+            parent_span_id="span_codex_llm",
+            depth=1,
+            request_text="/persona confirm 原始 Codex 请求",
+        )
+        try:
+            response = call_session_relay(
+                endpoint.to_dict(),
+                {"action": "call_tool", "name": tool.name, "arguments": {}},
+            )
+        finally:
+            relay.end_turn(generation)
+            relay.close()
+
+        self.assertTrue(response["result"]["ok"])
+        self.assertEqual(request_texts, ["/persona confirm 原始 Codex 请求"])
+
+    def test_codex_relay_uses_committed_receipt_for_success_evidence(self) -> None:
+        generation = 7
+        trace_id = "trace_committed_receipt"
+        parent_span_id = "span_codex_llm"
+
+        def finished(name: str, committed: bool) -> dict[str, object]:
+            return {
+                "generation": generation,
+                "type": "tool_finished",
+                "call_id": f"call_{name}",
+                "name": name,
+                "trace_id": trace_id,
+                "parent_span_id": parent_span_id,
+                "depth": 1,
+                "ok": False,
+                "summary": "",
+                "error": "confirmation state",
+                "data": {
+                    "ok": False,
+                    "error": "confirmation state",
+                    "data": {"committed": committed},
+                },
+            }
+
+        relay = mock.Mock()
+        relay.drain_tool_events.return_value = (
+            finished("persona_committed", True),
+            finished("persona_not_committed", False),
+        )
+        projected: list[object] = []
+        successful_operations: list[str] = []
+
+        error = CodexAgentBackend._emit_relay_tool_events(
+            relay,
+            projected.append,
+            generation=generation,
+            trace_id=trace_id,
+            parent_span_id=parent_span_id,
+            successful_operations=successful_operations,
+        )
+
+        self.assertEqual(error, "")
+        self.assertEqual(successful_operations, ["persona_committed"])
+        self.assertEqual(len([event for event in projected if isinstance(event, ToolFinished)]), 2)
+
     def test_filtered_handler_result_is_used_for_response_and_audit_event(self) -> None:
         private_path = str((Path.cwd() / "relay-sensitive" / "source.py").resolve())
 
-        def handler(_args):
+        def handler(_args: dict, _context: ToolContext) -> ToolResult:
             raise RuntimeError(f"failed at {private_path}")
 
         tool = ToolDef(
             name="sensitive_tool",
             summary="Sensitive failure.",
-            properties={},
-            required=[],
+            input_schema=object_schema(),
+            output_schema=object_schema(),
             handler=handler,
         )
         seen: list[dict[str, object]] = []
@@ -2409,7 +2497,8 @@ class SessionToolRelayTests(TestCase):
         private_path = str((Path.cwd() / "relay-owner" / "report.txt").resolve())
 
         class OwnerExecutor:
-            def execute(self, _name, _arguments):
+            def execute(self, _name, _arguments, *, request_text=""):
+                del request_text
                 return ToolResult(
                     ok=True,
                     summary=f"created {private_path}",
@@ -2418,12 +2507,15 @@ class SessionToolRelayTests(TestCase):
                     doc_links=[],
                 )
 
+        def owner_handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(ok=True)
+
         tool = ToolDef(
             name="owner_tool",
             summary="Owner-only result.",
-            properties={},
-            required=[],
-            handler=lambda _args: ("", [], None),
+            input_schema=object_schema(),
+            output_schema=object_schema(),
+            handler=owner_handler,
         )
         relay = SessionToolRelay(
             tools=(tool,),
@@ -2450,7 +2542,8 @@ class SessionToolRelayTests(TestCase):
         tool = _dynamic_tool()
 
         class ExplodingExecutor:
-            def execute(self, _name, _arguments):
+            def execute(self, _name, _arguments, *, request_text=""):
+                del request_text
                 raise RuntimeError(f"traceback at {secret}")
 
         def exploding_filter(_payload):
@@ -2506,7 +2599,7 @@ class SessionToolRelayTests(TestCase):
         overflow_recorded = threading.Event()
         release_tool = threading.Event()
 
-        def handler(_args):
+        def handler(_args: dict, _context: ToolContext) -> ToolResult:
             trace = current_trace()
             self.assertIsNotNone(trace)
             assert trace is not None
@@ -2526,13 +2619,16 @@ class SessionToolRelayTests(TestCase):
                 )
             overflow_recorded.set()
             release_tool.wait(timeout=5)
-            return "tool succeeded despite telemetry overflow", [], None
+            return ToolResult(
+                ok=True,
+                summary="tool succeeded despite telemetry overflow",
+            )
 
         tool = ToolDef(
             name="overflow_tool",
             summary="Emit more nested events than the bounded relay can retain.",
-            properties={},
-            required=[],
+            input_schema=object_schema(),
+            output_schema=object_schema(),
             handler=handler,
         )
         relay = SessionToolRelay(

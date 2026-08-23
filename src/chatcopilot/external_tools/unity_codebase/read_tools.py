@@ -17,7 +17,12 @@ from chatcopilot.external_tools.shared.spec_helpers import (
     schema_property,
     validate_non_negative,
 )
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.external_tools.shared.tool_spec import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 from chatcopilot.external_tools.unity_codebase._csharp_patterns import (
     build_csharp_query,
     supported_modes,
@@ -68,7 +73,7 @@ def _format_hit_summary(
 # ---------------------------------------------------------------------------
 # unity_project_read
 # ---------------------------------------------------------------------------
-def _handler_project_read(args: Dict[str, Any]) -> HandlerResult:
+def _handler_project_read(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     project = _resolve_project(args)
     rel_path = require_arg(args, "rel_path")
     start_line = args.get("start_line")
@@ -106,13 +111,25 @@ def _handler_project_read(args: Dict[str, Any]) -> HandlerResult:
     body = "".join(lines[s - 1 : e]).rstrip("\n")
     header = f"# project={project.project_id} {norm_rel} (lines {s}-{e} of {total})"
     summary = f"{header}\n{body}" if body else f"{header}\n<empty>"
-    return summary, [str(abs_path)], None
+    return ToolResult(
+        ok=True,
+        summary=summary,
+        outputs=[str(abs_path)],
+        data={
+            "project": project.project_id,
+            "path": norm_rel,
+            "content": body,
+            "start_line": s,
+            "end_line": e,
+            "total_lines": total,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
 # unity_project_search
 # ---------------------------------------------------------------------------
-def _handler_project_search(args: Dict[str, Any]) -> HandlerResult:
+def _handler_project_search(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     project = _resolve_project(args)
     query = require_arg(args, "query")
     rel_subdir = (args.get("rel_subdir") or "").strip()
@@ -144,13 +161,17 @@ def _handler_project_search(args: Dict[str, Any]) -> HandlerResult:
         hits=hits,
         max_count=max_count,
     )
-    return summary, [], None
+    return ToolResult(
+        ok=True,
+        summary=summary,
+        data={"project": project.project_id, "query": query, "hits": hits[:max_count]},
+    )
 
 
 # ---------------------------------------------------------------------------
 # unity_project_glob
 # ---------------------------------------------------------------------------
-def _handler_project_glob(args: Dict[str, Any]) -> HandlerResult:
+def _handler_project_glob(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     project = _resolve_project(args)
     pattern = require_arg(args, "pattern")
     rel_subdir = (args.get("rel_subdir") or "").strip()
@@ -175,13 +196,17 @@ def _handler_project_glob(args: Dict[str, Any]) -> HandlerResult:
         hits=files,
         max_count=limit,
     )
-    return summary, [], None
+    return ToolResult(
+        ok=True,
+        summary=summary,
+        data={"project": project.project_id, "pattern": pattern, "files": files[:limit]},
+    )
 
 
 # ---------------------------------------------------------------------------
 # unity_find_csharp_symbol
 # ---------------------------------------------------------------------------
-def _handler_find_csharp_symbol(args: Dict[str, Any]) -> HandlerResult:
+def _handler_find_csharp_symbol(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     project = _resolve_project(args)
     symbol = require_arg(args, "symbol")
     mode = require_arg(args, "mode")
@@ -208,7 +233,16 @@ def _handler_find_csharp_symbol(args: Dict[str, Any]) -> HandlerResult:
     hits = stdout.rstrip("\n").splitlines() if stdout.strip() else []
     label = f"unity_find_csharp_symbol symbol={symbol!r} mode={mode!r}"
     summary = _format_hit_summary(label=label, project=project, hits=hits, max_count=max_count)
-    return summary, [], None
+    return ToolResult(
+        ok=True,
+        summary=summary,
+        data={
+            "project": project.project_id,
+            "symbol": symbol,
+            "mode": mode,
+            "hits": hits[:max_count],
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +335,15 @@ _PROPS_CSHARP: Dict[str, Dict[str, Any]] = {
     ),
 }
 
+_HITS_RESULT_SCHEMA = object_schema(
+    {
+        "project": {"type": "string"},
+        "query": {"type": "string"},
+        "hits": {"type": "array", "items": {"type": "string"}},
+    },
+    required=("project", "query", "hits"),
+)
+
 
 TOOLS: List[ToolDef] = [
     _tool(
@@ -310,8 +353,18 @@ TOOLS: List[ToolDef] = [
             "Honors per-project allow_globs / deny_globs / allow_extensions and a max_read_bytes cap. "
             "Use this for C#/Lua/yaml/json/md files inside the project."
         ),
-        properties=_PROPS_READ,
-        required=["rel_path"],
+        input_schema=object_schema(_PROPS_READ, required=("rel_path",)),
+        output_schema=object_schema(
+            {
+                "project": {"type": "string"},
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+                "start_line": {"type": "integer"},
+                "end_line": {"type": "integer"},
+                "total_lines": {"type": "integer"},
+            },
+            required=("project", "path", "content", "start_line", "end_line", "total_lines"),
+        ),
         handler=_handler_project_read,
         aliases=["unity_read", "unity-read"],
     ),
@@ -321,8 +374,8 @@ TOOLS: List[ToolDef] = [
             "ripgrep over a registered Unity project (or a subdirectory). "
             "For C# symbol-level queries (definition / new / callers) prefer unity_find_csharp_symbol."
         ),
-        properties=_PROPS_SEARCH,
-        required=["query"],
+        input_schema=object_schema(_PROPS_SEARCH, required=("query",)),
+        output_schema=_HITS_RESULT_SCHEMA,
         handler=_handler_project_search,
         aliases=["unity_search", "unity_grep"],
     ),
@@ -332,8 +385,15 @@ TOOLS: List[ToolDef] = [
             "List files in a registered Unity project matching a ripgrep -g pattern. "
             "Respects project deny_globs and uses ripgrep's gitignore-aware traversal."
         ),
-        properties=_PROPS_GLOB,
-        required=["pattern"],
+        input_schema=object_schema(_PROPS_GLOB, required=("pattern",)),
+        output_schema=object_schema(
+            {
+                "project": {"type": "string"},
+                "pattern": {"type": "string"},
+                "files": {"type": "array", "items": {"type": "string"}},
+            },
+            required=("project", "pattern", "files"),
+        ),
         handler=_handler_project_glob,
         aliases=["unity_glob", "unity_list_files"],
     ),
@@ -345,8 +405,16 @@ TOOLS: List[ToolDef] = [
             "memory object / list / instance is created; follow up with unity_project_read for "
             "context, then re-query with mode='callers' on the enclosing method to walk the call chain."
         ),
-        properties=_PROPS_CSHARP,
-        required=["symbol", "mode"],
+        input_schema=object_schema(_PROPS_CSHARP, required=("symbol", "mode")),
+        output_schema=object_schema(
+            {
+                "project": {"type": "string"},
+                "symbol": {"type": "string"},
+                "mode": {"type": "string"},
+                "hits": {"type": "array", "items": {"type": "string"}},
+            },
+            required=("project", "symbol", "mode", "hits"),
+        ),
         handler=_handler_find_csharp_symbol,
         aliases=["unity_csharp", "find_csharp", "csharp_symbol"],
     ),

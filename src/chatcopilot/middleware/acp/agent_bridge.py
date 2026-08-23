@@ -20,14 +20,17 @@ from typing import Any, Callable, Dict, Optional
 
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder
+from chatcopilot.agent.persona import PersonaToolPort, build_persona_provider
 from chatcopilot.agent.rag import CompositeRetriever, WikiRetriever
-from chatcopilot.agent.tools.executor import ToolResult
 from chatcopilot.agent.tools.file_delivery import FileDeliveryResult, FileSender
 from chatcopilot.botspec import BotRuntimeContext
 from chatcopilot.botspec.wiki import resolve_wiki_root
 from chatcopilot.contracts import Role, role_ge, role_value
 from chatcopilot.contracts.identity import SessionIdentity
+from chatcopilot.contracts.persona_control import PendingPersonaProposal
 from chatcopilot.contracts.persistent_state import has_meaningful_memory
+from chatcopilot.contracts.tool_packs import ToolProvider
+from chatcopilot.contracts.tools import ToolResult
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.core.session_env_store import (
     SessionEnvSecurityError,
@@ -76,6 +79,82 @@ _TEXTIFIED_ATTACHMENT_SENDER_RE = re.compile(
     r"^\s*(?:回复\s+)?(?P<sender>[^\r\n:：]{1,80})[:：]\s*(?:\r?\n)+\s*(?:\[文件\]|\bfile[:：]|\battachment[:：])",
     re.IGNORECASE,
 )
+
+
+class _SessionPersonaToolPort(PersonaToolPort):
+    """Bind persona proposals and PromptPlan refresh to one main ACP session."""
+
+    def __init__(self, session_getter: Callable[[], SessionState]) -> None:
+        self._session_getter = session_getter
+
+    def _session(self) -> SessionState:
+        return self._session_getter()
+
+    @property
+    def actor_id(self) -> str:
+        return str(self._session().workspace.user_id or "")
+
+    @property
+    def chat_id(self) -> str:
+        return str(self._session().workspace.chat_id or "")
+
+    def get_pending_proposal(self) -> PendingPersonaProposal | None:
+        return self._session().pending_persona_proposal
+
+    def set_pending_proposal(self, proposal: PendingPersonaProposal) -> None:
+        self._session().pending_persona_proposal = proposal
+
+    def clear_pending_proposal(self) -> None:
+        self._session().pending_persona_proposal = None
+
+    def refresh_prompt_plan(self) -> None:
+        _refresh_session_prompt_plan(self._session())
+
+
+def _persona_session_providers(
+    *,
+    runtime: BotRuntimeContext,
+    agent_runtime: AgentRuntime,
+    session_getter: Callable[[], SessionState],
+) -> tuple[ToolProvider, ...]:
+    if "persona.control" not in tuple(getattr(runtime, "tool_packs", ()) or ()):
+        return ()
+    return (
+        build_persona_provider(
+            _SessionPersonaToolPort(session_getter),
+            llm=agent_runtime.research_llm,
+            coordinator_factory=lambda: agent_runtime.build_unified_search_coordinator(
+                max_wall_seconds=60.0
+            ),
+        ),
+    )
+
+
+def _main_session_providers(
+    *,
+    runtime: BotRuntimeContext,
+    agent_runtime: AgentRuntime,
+    session_getter: Callable[[], SessionState],
+    local_tools: tuple = (),
+) -> tuple[ToolProvider, ...]:
+    providers: list[ToolProvider] = []
+    if local_tools:
+        providers.append(
+            ToolProvider(
+                id="acp.session",
+                module=__name__,
+                description="ACP session-local control tools.",
+                packs={"runtime.session": tuple(local_tools)},
+            )
+        )
+    providers.extend(
+        _persona_session_providers(
+            runtime=runtime,
+            agent_runtime=agent_runtime,
+            session_getter=session_getter,
+        )
+    )
+    return tuple(providers)
 
 
 # ----------------------------------------------------------------------------
@@ -531,7 +610,7 @@ def _build_session_for_workspace(
         else (retrievers[0] if retrievers else None)
     )
 
-    extra_tools: tuple = ()
+    local_tools: tuple = ()
     if adapter.supports_role_matrix:
         # set_assistant_mode / set_debug_mode 工具仅对启用角色矩阵的平台有意义
         # （目前只有飞书）；其它平台不会注册这两个工具，避免 LLM 误调。
@@ -540,12 +619,17 @@ def _build_session_for_workspace(
             refresh_prompt_plan=_refresh_session_prompt_plan,
         )
         debug_tool = _build_set_debug_mode_tool(lambda: state_ref["session"])
-        extra_tools = (mode_tool, debug_tool)
+        local_tools = (mode_tool, debug_tool)
     payload_role = Role.USER if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED else effective_role
     agent_session = agent_runtime.new_session(
         session_id=execution_session_id or session_id,
         prompt_input=prompt_input,
-        extra_tools=extra_tools,
+        session_providers=_main_session_providers(
+            runtime=runtime,
+            agent_runtime=agent_runtime,
+            session_getter=lambda: state_ref["session"],
+            local_tools=local_tools,
+        ),
         payload_filter=make_payload_sanitizer(payload_role, ws),
         permission_filter=_make_permission_filter(
             role,
@@ -629,9 +713,9 @@ def _materialize_session_for_workspace(
         else (retrievers[0] if retrievers else None)
     )
 
-    extra_tools: tuple = ()
+    local_tools: tuple = ()
     if adapter.supports_role_matrix:
-        extra_tools = (
+        local_tools = (
             _build_set_assistant_mode_tool(
                 lambda: state,
                 refresh_prompt_plan=_refresh_session_prompt_plan,
@@ -644,7 +728,12 @@ def _materialize_session_for_workspace(
     agent_session = agent_runtime.new_session(
         session_id=state.execution_session_id or state.session_id,
         prompt_input=prompt_input,
-        extra_tools=extra_tools,
+        session_providers=_main_session_providers(
+            runtime=runtime,
+            agent_runtime=agent_runtime,
+            session_getter=lambda: state,
+            local_tools=local_tools,
+        ),
         payload_filter=make_payload_sanitizer(payload_role, state.workspace),
         permission_filter=_make_permission_filter(
             state.role,

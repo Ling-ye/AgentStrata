@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 
 from chatcopilot.agent.tools.builtin import skill_tools as bot_skills
 from chatcopilot.botspec.skills import SkillIndexEntry
+from chatcopilot.contracts.tools import ToolContext
 
 
 def _write_skill_body(path: Path) -> None:
@@ -34,13 +35,16 @@ class ReadBotSkillToolTests(unittest.TestCase):
             )
             bot_skills.set_skill_index((entry,))
 
-            summary, outputs, _ = bot_skills._handler_read_bot_skill({"skill_id": "alpha"})
+            result = bot_skills._handler_read_bot_skill(
+                {"skill_id": "alpha"}, ToolContext()
+            )
 
-        self.assertIn("alpha", summary)
-        self.assertIn("# Alpha", summary)
-        self.assertIn("body-content-line", summary)
-        self.assertNotIn("description: 测试用 skill", summary)
-        self.assertEqual(outputs, [str(skill_path)])
+        self.assertIn("alpha", result.summary)
+        self.assertIn("# Alpha", result.summary)
+        self.assertIn("body-content-line", result.summary)
+        self.assertNotIn("description: 测试用 skill", result.summary)
+        self.assertEqual(result.outputs, [str(skill_path)])
+        self.assertEqual(result.data["body_path"], str(skill_path))
 
     def test_handler_lists_available_when_not_found(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -52,7 +56,9 @@ class ReadBotSkillToolTests(unittest.TestCase):
             bot_skills.set_skill_index((entry,))
 
             with self.assertRaises(ValueError) as cm:
-                bot_skills._handler_read_bot_skill({"skill_id": "ghost"})
+                bot_skills._handler_read_bot_skill(
+                    {"skill_id": "ghost"}, ToolContext()
+                )
 
         self.assertIn("alpha", str(cm.exception))
         self.assertIn("ghost", str(cm.exception))
@@ -60,7 +66,9 @@ class ReadBotSkillToolTests(unittest.TestCase):
     def test_handler_raises_when_registry_empty(self) -> None:
         bot_skills.set_skill_index(())
         with self.assertRaises(ValueError) as cm:
-            bot_skills._handler_read_bot_skill({"skill_id": "alpha"})
+            bot_skills._handler_read_bot_skill(
+                {"skill_id": "alpha"}, ToolContext()
+            )
         self.assertIn("未注册", str(cm.exception))
 
 

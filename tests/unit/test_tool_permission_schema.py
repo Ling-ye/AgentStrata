@@ -10,16 +10,25 @@ from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.context.prompt_plan import render_native_prefix
 from chatcopilot.contracts import Role, role_ge, role_value
 from chatcopilot.contracts.skills import SkillIndexEntry
-from chatcopilot.contracts.tools import ToolDef, build_openai_schema
+from chatcopilot.contracts.tools import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    build_openai_schema,
+    object_schema,
+)
 
 
 def _tool(name: str, *, requires_role: str | None = None) -> ToolDef:
+    def handler(_args: dict, _context: ToolContext) -> ToolResult:
+        return ToolResult(ok=True, summary="ok")
+
     return ToolDef(
         name=name,
         summary=name,
-        properties={},
-        required=[],
-        handler=lambda _args: ("ok", [], None),
+        input_schema=object_schema(),
+        output_schema=object_schema(),
+        handler=handler,
         requires_role=requires_role,
     )
 

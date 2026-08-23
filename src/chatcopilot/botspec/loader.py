@@ -20,7 +20,6 @@ from chatcopilot.contracts.model_selection import (
     CODEX_REASONING_EFFORTS,
     CodeModelProfile,
 )
-from chatcopilot.contracts.persona_control import PersonaControlSpec
 from chatcopilot.botspec.model import (
     AccessSpec,
     BotSpec,
@@ -85,7 +84,6 @@ _SUBAGENT_BUDGET_FIELDS = {
     "timeout_seconds",
     "max_output_chars",
 }
-_PERSONA_CONTROL_FIELDS = frozenset({"enabled"})
 
 
 def load_botspec(path: str | Path) -> BotSpec:
@@ -729,6 +727,10 @@ def _parse_subagents(
     field_prefix: str = "agents",
     research_env_prefix: str | None = None,
 ) -> SubagentSpec:
+    if "persona_control" in raw:
+        raise ValueError(
+            f"{field_prefix}.persona_control was removed; enable persona.control in tools.packs"
+        )
     include = tuple(_str_list(raw.get("presets", raw.get("include", []))))
     defaults = _parse_subagent_budget(
         _mapping(raw.get("defaults", {}), f"{field_prefix}.defaults"),
@@ -763,10 +765,6 @@ def _parse_subagents(
         research_router.get("providers", []),
         field_prefix=f"{field_prefix}.unified_search.providers",
     )
-    persona_control = _parse_persona_control(
-        raw.get("persona_control", {}),
-        field_prefix=f"{field_prefix}.persona_control",
-    )
     return SubagentSpec(
         backend=str(raw.get("backend", "native")).strip().lower() or "native",
         codex=_parse_codex_main_session_policy(raw, field_prefix=field_prefix),
@@ -785,27 +783,6 @@ def _parse_subagents(
         custom=custom,
         workflows=tuple(_str_list(raw.get("workflows", []))),
         max_workflow_depth=_as_int(raw.get("max_workflow_depth"), 2),
-        persona_control=persona_control,
-    )
-
-
-def _parse_persona_control(
-    raw: Any,
-    *,
-    field_prefix: str,
-) -> PersonaControlSpec:
-    block = _mapping(raw, field_prefix)
-    unknown = sorted(set(block).difference(_PERSONA_CONTROL_FIELDS))
-    if unknown:
-        raise ValueError(
-            f"{field_prefix} contains unsupported field(s): {', '.join(unknown)}"
-        )
-    return PersonaControlSpec(
-        enabled=_strict_bool(
-            block.get("enabled"),
-            f"{field_prefix}.enabled",
-            False,
-        ),
     )
 
 

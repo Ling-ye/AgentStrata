@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import textwrap
 from pathlib import Path
 from unittest import mock
@@ -68,7 +67,7 @@ def test_discover_and_approve_playwright_curated_proposal(tmp_path: Path) -> Non
     empty_registry = mcp_admin._RegistryDiscoveryResult(pagination_exhausted=True)
     with mock.patch.object(mcp_admin, "_registry_matches", return_value=empty_registry):
         discovered = _executor().execute("discover_mcp_server", {"query": "Playwright"})
-    payload = json.loads(discovered.summary)
+    payload = discovered.data
     ids = {item["proposal_id"] for item in payload["proposals"]}
 
     assert "playwright-browser" in ids
@@ -77,7 +76,7 @@ def test_discover_and_approve_playwright_curated_proposal(tmp_path: Path) -> Non
         "approve_mcp_server",
         {"proposal_id": "playwright-browser", "bot": str(bot_yaml)},
     )
-    result = json.loads(approved.summary)
+    result = approved.data
     data = yaml.safe_load((bot_yaml.parent / "mcp" / "servers.yaml").read_text(encoding="utf-8"))
 
     assert result["ok"] is True
@@ -102,8 +101,9 @@ def test_manual_approval_requires_reviewed_catalog_entry(tmp_path: Path) -> None
         },
     )
 
-    assert result.ok is True
-    payload = json.loads(result.summary)
+    assert result.ok is False
+    assert result.error_code == "catalog_entry_required"
+    payload = result.data
     assert payload["ok"] is False
     assert payload["error"] == "catalog_entry_required"
 
@@ -118,7 +118,7 @@ def test_approval_prefers_source_bot_spec_env(tmp_path: Path, monkeypatch) -> No
         "approve_mcp_server",
         {"proposal_id": "playwright-browser"},
     )
-    result = json.loads(approved.summary)
+    result = approved.data
     source_data = yaml.safe_load((source_bot.parent / "mcp" / "servers.yaml").read_text(encoding="utf-8"))
     runtime_data = yaml.safe_load((runtime_bot.parent / "mcp" / "servers.yaml").read_text(encoding="utf-8"))
 
@@ -141,7 +141,7 @@ def test_list_mcp_servers_resolves_catalog_binding(tmp_path: Path) -> None:
     )
 
     listed = _executor().execute("list_mcp_servers", {"bot": str(bot_yaml)})
-    payload = json.loads(listed.summary)
+    payload = listed.data
 
     assert payload["servers"] == [
         {
@@ -198,7 +198,7 @@ def test_probe_existing_binding_is_read_only_and_resolves_secret_refs(
             {"server_id": "local-docs", "bot": str(bot_yaml)},
         )
 
-    payload = json.loads(completed.summary)
+    payload = completed.data
     config = called.call_args.args[0]
     assert called.call_args.kwargs == {"allow_private_network": True}
     assert config.id == "local-docs"

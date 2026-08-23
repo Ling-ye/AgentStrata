@@ -1,52 +1,8 @@
-"""Small contracts for trusted, host-owned persona control.
-
-The main Agent never owns persona persistence. An interpreter may describe a
-request, but only ``PersonaMutationReceipt.ok`` proves that protected state was
-changed by the host.
-"""
+"""Contracts for trusted persona drafting, proposals, and persistence."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
-
-
-PersonaOperation = Literal[
-    "none", "help", "show", "set", "append", "research", "refresh", "clear", "confirm", "cancel"
-]
-PersonaConfidence = Literal["high", "medium", "low"]
-PersonaScope = Literal["default", "global", "group", "user"]
-
-
-@dataclass(frozen=True)
-class PersonaControlSpec:
-    """One explicit BotSpec switch; search is an optional runtime enhancement."""
-
-    enabled: bool = False
-
-
-@dataclass(frozen=True)
-class PersonaDirective:
-    """A validated interpretation of one message.
-
-    ``text`` and ``residual_text`` are exact substrings of the current message,
-    except that structured slash-command arguments are exact command suffixes.
-    The interpreter cannot supply paths, identities, or authority.
-    """
-
-    operation: PersonaOperation = "none"
-    confidence: PersonaConfidence = "low"
-    scope: PersonaScope = "default"
-    text: str = ""
-    residual_text: str = ""
-    enrich: bool = False
-    source: str = "none"
-    reason: str = ""
-    model: str = ""
-    usage: Mapping[str, Any] | None = None
-
-    @property
-    def handles_turn(self) -> bool:
-        return self.operation != "none"
 
 
 @dataclass(frozen=True)
@@ -110,9 +66,10 @@ class PersonaDraftResult:
 
 @dataclass(frozen=True)
 class PendingPersonaProposal:
-    operation: Literal["set", "append", "research", "clear"]
+    operation: Literal["set", "append", "research", "refresh", "clear"]
     scope: str
     text: str
+    # Bind confirmation to the protected scope snapshot observed when proposed.
     content_sha256: str
     actor_id: str
     chat_id: str
@@ -121,14 +78,9 @@ class PendingPersonaProposal:
 
 
 __all__ = [
-    "PersonaConfidence",
-    "PersonaControlSpec",
-    "PersonaDirective",
     "PersonaDraftCall",
     "PersonaDraftResult",
     "PersonaMutationReceipt",
     "PersonaMutationRequest",
-    "PersonaOperation",
-    "PersonaScope",
     "PendingPersonaProposal",
 ]

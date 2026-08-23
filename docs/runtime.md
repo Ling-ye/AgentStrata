@@ -145,13 +145,14 @@ shared root 创建 `MEMORY.md`，而是按稳定群身份使用 `.conversation-s
 普通成员不能启动后台 job；Owner 的后台
 job 控制面按 actor 写入 `.conversation-state/jobs/`，不会暴露到 `shared/jobs`。当前群交流风格
 使用 `.conversation-state/persistent/persona/global/PERSONA.md` 与 `persona/group/<digest>/PERSONA.md`
-保护层。启用 `agents.persona_control` 时，真实 Owner 的自然语言人格要求在主 Agent 前由
-零模型 detector 分流：普通消息不调用人格模型，明确要求直接编译，只有歧义要求使用一次
-`llm.chat` 严格解释。命名人物/角色先经统一搜索 registry 完成消歧、证据提取和完整草案，再执行
-一次原子写；搜索、来源或草案失败时旧人格不变。`/persona` 可直接紧跟自然语言，也支持
-`show/set/append/research/refresh/clear/confirm/cancel`；clear 只建立 actor-bound 提案，随后精确
-`/persona confirm` 才能清空。主 Agent 不获得人格写工具。群聊默认 `scope=group`；User/Admin
-不能执行，群聊 show 只返回层级和哈希。
+保护层。启用 `tools.packs: persona.control` 时，Owner 主 Agent 获得 session-bound
+`persona_manage`；自然语言与 `/persona` 原样进入主 Agent，由它选择
+`show/set/append/research/refresh/clear/confirm/cancel`。工具在执行时再次校验真实 Owner、当前
+scope 和可信原文；命名人物/角色通过统一搜索 registry 完成消歧、来源验证和完整草案，再执行
+一次原子写。搜索、来源或草案失败时旧人格不变。clear 和主 Agent 标记为需确认的请求只建立
+actor/chat/hash/TTL 提案，随后当前 raw message 精确等于 `/persona confirm` 才能写。只有
+结构化结果中的 `committed=true` receipt 能证明保存或清空。群聊默认 `scope=group`；User/Admin
+既看不到也不能执行该工具，群聊 show 只返回层级和哈希。
 所有同群成员的后续 prompt 都按
 `global → group` 获得最新人格，并获得当前群 memory，但不会获得任何 actor 的私聊 memory、
 user persona 或私有 Wiki/RAG。

@@ -27,7 +27,7 @@ from chatcopilot.agent.subagents.runner import (
 from chatcopilot.agent.subagents.spec import SubagentDef
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.trace import TraceContext, reset_trace, set_trace
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 
 
 class _FakeLLM:
@@ -38,16 +38,35 @@ class _FakeLLM:
 
 
 def _delegate(name: str, payloads: list[dict], calls: list[str]) -> ToolDef:
-    def handler(_args: dict):
+    def handler(_args: dict, _ctx: ToolContext) -> ToolResult:
         calls.append(name)
         payload = payloads[min(len(calls) - 1, len(payloads) - 1)]
-        return json.dumps(payload, ensure_ascii=False), [], None
+        ok = payload.get("ok") is not False
+        summary = str(payload.get("summary") or "")
+        return ToolResult(
+            ok=ok,
+            summary=summary,
+            error=None if ok else summary,
+            error_code="" if ok else str(payload.get("error_code") or "delegate_failed"),
+            data=dict(payload),
+        )
 
     return ToolDef(
         name=name,
         summary=name,
-        properties={"objective": {"type": "string"}},
-        required=["objective"],
+        input_schema=object_schema(
+            {"objective": {"type": "string"}},
+            required=("objective",),
+        ),
+        output_schema=object_schema(
+            {
+                "ok": {"type": "boolean"},
+                "error_code": {"type": "string"},
+                "summary": {"type": "string"},
+            },
+            required=("ok", "summary"),
+            additional_properties=True,
+        ),
         handler=handler,
     )
 
@@ -134,10 +153,10 @@ class SearchFallbackTests(unittest.TestCase):
         fallback = _delegate("search_searxng", [{"ok": True, "summary": "fresh"}], fallback_calls)
         routed = _with_web_fallback(primary=primary, fallback=fallback, circuit=circuit)
 
-        first = json.loads(routed.handler({"objective": "latest"})[0])
-        second = json.loads(routed.handler({"objective": "latest again"})[0])
+        first = routed.handler({"objective": "latest"}, ToolContext()).data
+        second = routed.handler({"objective": "latest again"}, ToolContext()).data
         now[0] += 3601
-        third = json.loads(routed.handler({"objective": "probe"})[0])
+        third = routed.handler({"objective": "probe"}, ToolContext()).data
 
         self.assertEqual(first["fallback"]["source"], "searxng")
         self.assertEqual(second["fallback"]["source"], "searxng")
@@ -168,7 +187,7 @@ class SearchFallbackTests(unittest.TestCase):
             primary=primary, fallback=fallback, circuit=SearchCircuitBreaker()
         )
 
-        payload = json.loads(routed.handler({"objective": "latest"})[0])
+        payload = routed.handler({"objective": "latest"}, ToolContext()).data
 
         self.assertFalse(payload["ok"])
         self.assertTrue(payload["limits"]["allow_stale_knowledge"])
@@ -221,13 +240,13 @@ class SearchDelegateTurnTests(unittest.TestCase):
             mocked_date.today.return_value = date(2026, 6, 22)
             token = set_trace(TraceContext("turn-1", "span-1", 0))
             try:
-                tool.handler(_search_args("latest"))
-                tool.handler(_search_args("latest"))
+                tool.handler(_search_args("latest"), ToolContext())
+                tool.handler(_search_args("latest"), ToolContext())
             finally:
                 reset_trace(token)
             token = set_trace(TraceContext("turn-2", "span-2", 0))
             try:
-                tool.handler(_search_args("latest"))
+                tool.handler(_search_args("latest"), ToolContext())
             finally:
                 reset_trace(token)
 

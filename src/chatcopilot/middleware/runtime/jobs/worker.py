@@ -252,7 +252,9 @@ def _build_background_executor(
             runtime_context.spec.llm,
             fallback=chat_config.llm,
         ),
-        tool_packs=runtime_context.tool_packs,
+        tool_packs=tuple(
+            pack for pack in runtime_context.tool_packs if pack != "persona.control"
+        ),
         exclude_tools=runtime_context.exclude_tools,
         skill_index=runtime_context.skills,
         rag_sources=runtime_context.rag_sources,

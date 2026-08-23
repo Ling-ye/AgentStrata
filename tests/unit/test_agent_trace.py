@@ -22,7 +22,13 @@ from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.subagents.registry import build_subagent_tools
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.model import SubagentBudgetSpec, SubagentSpec
-from chatcopilot.contracts.tools import ToolDef, build_openai_schema
+from chatcopilot.contracts.tools import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    build_openai_schema,
+    object_schema,
+)
 
 
 class _ScriptedLLM:
@@ -45,12 +51,15 @@ class _FailingLLM:
 
 
 def _tool(name: str, *, category: str = "") -> ToolDef:
+    def handler(_args: dict, _context: ToolContext) -> ToolResult:
+        return ToolResult(ok=True, summary=f"{name} ok")
+
     return ToolDef(
         name=name,
         summary=f"{name} summary",
-        properties={},
-        required=[],
-        handler=lambda args: (f"{name} ok", [], None),
+        input_schema=object_schema(additional_properties=True),
+        output_schema=object_schema(),
+        handler=handler,
         category=category,
     )
 

@@ -613,6 +613,39 @@ Agent sentinel 隔离模型波动，并在 receipt 中列出 `qq_platform/napcat
 相关规格：
 [`evaluation-two-track-center`](../specs/evaluation-two-track-center/spec.md)。
 
+## 17. 工具注册统一与人格工具化：从多条装配路径到 Provider 快照
+
+**暴露的问题**
+
+静态 builtin、external、MCP、搜索、委托和会话临时工具通过不同列表或适配路径进入 Agent，
+中央 catalog 还复制精确工具名，新增能力时容易出现运行面与 Console 漂移。人格修改则在主 Agent
+前依赖 detector、命令 parser 和解释器分流；“你来模仿清宵，作为你的人格”这类明确自然语言也
+可能在分流阶段失败，主 Agent 没有机会理解和调用能力。
+
+**结构调整**
+
+- `ToolDef` 统一持有完整输入/输出 JSON schema，handler 固定接受结构化参数与可信
+  `ToolContext`，并统一返回 `ToolResult`。
+- 领域模块通过显式 `ToolProvider` 声明 pack 与工具；中央 catalog 只定位 provider 模块，不再
+  维护第二份工具名清单。静态和会话动态 provider 均进入同一个 `ToolRegistry`，再生成用于模型
+  schema、执行索引、来源定位和 Console 投影的快照。
+- 注册阶段拒绝 provider、pack、工具名冲突、非法 schema 和旧 handler 签名；没有加入目录扫描、
+  decorator import 副作用、第三方 entry point、依赖图或通用插件生命周期。
+- 人格能力迁为 `persona.control` pack 中的 Owner-only `persona_manage`。自然语言与 `/persona`
+  原样进入主 Agent，由模型选择是否调用；执行端继续以可信 actor、role、chat、scope、原始请求、
+  受保护提案和原子 mutation receipt 失败关闭。
+
+**结果与边界**
+
+Bot 配置可独立选择 tool pack，新增或定位工具只需沿 catalog → provider → handler 查找，Agent 与
+Console 不再各自维护工具成员。人格意图不再被宿主启发式分类器提前拒绝，但模型是否选择工具仍是
+模型行为，不能承诺确定性；只有结构化结果中的真实 `committed` receipt 可以证明已持久化。该改造
+不提供任意第三方 Python 插件 ABI，也不把 persona mutation 暴露给 subagent。
+
+相关规格：
+[`unified-tool-registry`](../specs/unified-tool-registry/spec.md)、
+[`persona-and-conversation-memory-authorization`](../specs/persona-and-conversation-memory-authorization/spec.md)。
+
 ## 当前架构的收敛结果
 
 | 关注点 | 当前做法 |
@@ -625,6 +658,7 @@ Agent sentinel 隔离模型波动，并在 receipt 中列出 `qq_platform/napcat
 | 会话身份 | QQ 群共享 conversation/普通文件，journal 与 backend state 受保护，逐轮权限按 actor 绑定 |
 | 源码修改 | 主会话只读，异步 worker 隔离执行，验证后交付 Draft PR |
 | 搜索 | 统一入口、直接 provider、统一 deadline/circuit/result policy |
+| 工具注册 | catalog 只定位显式 provider，静态与会话动态工具统一进入 Registry 快照 |
 | 评测 | Console 只展示直接 Agent 与 QQ 后链路两轨；Comparison/benchmark 保留 CLI，全部复用统一 Evaluation 生命周期 |
 | 公开维护 | 公开仓库是源码、规格和发布流程的唯一事实源 |
 

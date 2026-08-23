@@ -10,7 +10,8 @@ import socket
 import urllib.request
 from typing import List
 
-from chatcopilot.contracts.tools import HandlerResult, ToolDef
+from chatcopilot.contracts.tool_packs import static_tool_provider
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.agent.tools.workspace_context import (
     cleanup_workspace,
     describe_workspace,
@@ -23,7 +24,9 @@ from chatcopilot.agent.tools.builtin.workspace import files as _files
 from chatcopilot.agent.tools.builtin.workspace import images as _images
 from chatcopilot.agent.tools.builtin.workspace import listing as _listing
 from chatcopilot.agent.tools.builtin.workspace import owner as _owner
-from chatcopilot.agent.tools.builtin.workspace.delivery import _handler_send_files_to_user
+from chatcopilot.agent.tools.builtin.workspace.delivery import (
+    _handler_send_files_to_user as _workspace_send_files_to_user,
+)
 from chatcopilot.agent.tools.builtin.workspace.images import (
     _IMAGE_DEFAULT_LIMIT,
     _IMAGE_DEFAULT_MAX_BYTES,
@@ -47,51 +50,131 @@ def _sync_workspace_handler_context() -> None:
     _owner.list_workspace_inventories = list_workspace_inventories
 
 
-def _handler_list_workspace(args: dict) -> HandlerResult:
+def _handler_list_workspace(args: dict, ctx: ToolContext) -> ToolResult:
     _sync_workspace_handler_context()
-    return _listing._handler_list_workspace(args)
+    return _listing._handler_list_workspace(args, ctx)
 
 
-def _handler_get_job_status(args: dict) -> HandlerResult:
+def _handler_get_job_status(args: dict, ctx: ToolContext) -> ToolResult:
     _sync_workspace_handler_context()
-    return _diagnostics._handler_get_job_status(args)
+    return _diagnostics._handler_get_job_status(args, ctx)
 
 
-def _handler_get_task_status(args: dict) -> HandlerResult:
+def _handler_get_task_status(args: dict, ctx: ToolContext) -> ToolResult:
     _sync_workspace_handler_context()
-    return _diagnostics._handler_get_task_status(args)
+    return _diagnostics._handler_get_task_status(args, ctx)
 
 
-def _handler_read_text_head(args: dict) -> HandlerResult:
+def _handler_read_text_head(args: dict, ctx: ToolContext) -> ToolResult:
     _sync_workspace_handler_context()
-    return _files._handler_read_text_head(args)
+    return _files._handler_read_text_head(args, ctx)
 
 
-def _handler_unzip_attachment(args: dict) -> HandlerResult:
+def _handler_unzip_attachment(args: dict, ctx: ToolContext) -> ToolResult:
     _sync_workspace_handler_context()
-    return _files._handler_unzip_attachment(args)
+    return _files._handler_unzip_attachment(args, ctx)
 
 
-def _handler_download_image_urls(args: dict) -> HandlerResult:
+def _handler_send_files_to_user(args: dict, ctx: ToolContext) -> ToolResult:
+    return _workspace_send_files_to_user(args, ctx)
+
+
+def _handler_download_image_urls(args: dict, ctx: ToolContext) -> ToolResult:
     _sync_workspace_handler_context()
-    return _images._handler_download_image_urls(args)
+    return _images._handler_download_image_urls(args, ctx)
 
 
-def _handler_owner_list_workspaces(args: dict) -> HandlerResult:
+def _handler_owner_list_workspaces(args: dict, ctx: ToolContext) -> ToolResult:
     _sync_workspace_handler_context()
-    return _owner._handler_owner_list_workspaces(args)
+    return _owner._handler_owner_list_workspaces(args, ctx)
 
 
-def _handler_owner_read_workspace_file(args: dict) -> HandlerResult:
+def _handler_owner_read_workspace_file(args: dict, ctx: ToolContext) -> ToolResult:
     _sync_workspace_handler_context()
-    return _owner._handler_owner_read_workspace_file(args)
+    return _owner._handler_owner_read_workspace_file(args, ctx)
+
+
+_LIST_RESULT_SCHEMA = object_schema(
+    {
+        "subdir": {"type": "string"},
+        "recursive": {"type": "boolean"},
+        "entry_count": {"type": "integer"},
+        "truncated": {"type": "boolean"},
+    },
+    required=("subdir", "recursive", "entry_count", "truncated"),
+)
+_JOB_RESULT_SCHEMA = object_schema(
+    {
+        "job_id": {"type": "string"},
+        "tool_name": {"type": "string"},
+        "execution_policy": {"type": "string"},
+        "status": {"type": "string"},
+        "queue_position": {"type": ["integer", "null"]},
+        "completed": {"type": "boolean"},
+    },
+    required=(
+        "job_id",
+        "tool_name",
+        "execution_policy",
+        "status",
+        "queue_position",
+        "completed",
+    ),
+)
+_TASK_RESULT_SCHEMA = object_schema(
+    {"task_id": {"type": "string"}}, required=("task_id",)
+)
+_TEXT_RESULT_SCHEMA = object_schema(
+    {
+        "content": {"type": "string"},
+        "kb": {"type": "integer"},
+        "truncated": {"type": "boolean"},
+    },
+    required=("content", "kb", "truncated"),
+)
+_UNZIP_RESULT_SCHEMA = object_schema(
+    {"file_count": {"type": "integer"}}, required=("file_count",)
+)
+_SEND_RESULT_SCHEMA = object_schema(
+    {
+        "sent_count": {"type": "integer"},
+        "sent_names": {"type": "array", "items": {"type": "string"}},
+        "message": {"type": "string"},
+    },
+    required=("sent_count", "sent_names", "message"),
+)
+_IMAGE_RESULT_SCHEMA = object_schema(
+    {
+        "downloaded_count": {"type": "integer"},
+        "failed_count": {"type": "integer"},
+    },
+    required=("downloaded_count", "failed_count"),
+)
+_OWNER_LIST_RESULT_SCHEMA = object_schema(
+    {
+        "workspace_count": {"type": "integer"},
+        "shown_count": {"type": "integer"},
+        "user_count": {"type": "integer"},
+        "named_user_count": {"type": "integer"},
+        "total_files": {"type": "integer"},
+        "total_bytes": {"type": "integer"},
+    },
+    required=(
+        "workspace_count",
+        "shown_count",
+        "user_count",
+        "named_user_count",
+        "total_files",
+        "total_bytes",
+    ),
+)
 
 
 TOOLS: List[ToolDef] = [
     ToolDef(
         name="list_workspace",
         summary="按修改时间列出当前会话工作区文件；结果受当前会话作用域隔离。",
-        properties={
+        input_schema=object_schema({
             "subdir": {
                 "type": "string",
                 "description": "子目录；空值表示工作区根。",
@@ -108,8 +191,8 @@ TOOLS: List[ToolDef] = [
                 "description": "是否递归，默认 false。",
                 "default": False,
             },
-        },
-        required=[],
+        }),
+        output_schema=_LIST_RESULT_SCHEMA,
         handler=_handler_list_workspace,
         aliases=["ls", "列文件", "查看工作目录"],
         category="agent.workspace",
@@ -119,7 +202,7 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         name="get_job_status",
         summary="查询当前工作区后台 job 的权威状态和日志末尾；不接受 task ID。",
-        properties={
+        input_schema=object_schema({
             "job_id": {
                 "type": "string",
                 "description": "来自用户或工具回执的完整 job ID。",
@@ -129,8 +212,8 @@ TOOLS: List[ToolDef] = [
                 "description": "返回的日志末尾行数；默认 20，最大 200。",
                 "default": 20,
             },
-        },
-        required=["job_id"],
+        }, required=("job_id",)),
+        output_schema=_JOB_RESULT_SCHEMA,
         handler=_handler_get_job_status,
         aliases=["job_status", "查job", "看后台任务进度"],
         category="agent.workspace",
@@ -140,13 +223,13 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         name="get_task_status",
         summary="查询当前工作区单轮 task 的权威状态、结果、调用统计和失败信号。",
-        properties={
+        input_schema=object_schema({
             "task_id": {
                 "type": "string",
                 "description": "来自用户或工具回执的完整 task ID。",
             },
-        },
-        required=["task_id"],
+        }, required=("task_id",)),
+        output_schema=_TASK_RESULT_SCHEMA,
         handler=_handler_get_task_status,
         aliases=["task_status", "查单轮任务", "查task", "看对话任务"],
         category="agent.workspace",
@@ -156,7 +239,7 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         name="read_text_head",
         summary="读取当前工作区文本文件开头；拒绝目录、二进制和越界路径。",
-        properties={
+        input_schema=object_schema({
             "path": {
                 "type": "string",
                 "description": "工作区内的绝对或相对文件路径。",
@@ -166,8 +249,8 @@ TOOLS: List[ToolDef] = [
                 "description": "最大 KB，默认 4。",
                 "default": 4,
             },
-        },
-        required=["path"],
+        }, required=("path",)),
+        output_schema=_TEXT_RESULT_SCHEMA,
         handler=_handler_read_text_head,
         aliases=["head", "预览"],
         category="agent.workspace",
@@ -177,13 +260,13 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         name="unzip_attachment",
         summary="安全解压 attachments 中的 zip/tar 包到同名子目录；拒绝越界成员和超过 2GB 的内容。",
-        properties={
+        input_schema=object_schema({
             "name": {
                 "type": "string",
                 "description": "attachments 下不含路径的压缩包文件名。",
             },
-        },
-        required=["name"],
+        }, required=("name",)),
+        output_schema=_UNZIP_RESULT_SCHEMA,
         handler=_handler_unzip_attachment,
         aliases=["解压", "extract", "unzip"],
         weight="heavy",
@@ -194,7 +277,7 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         name="send_files_to_user",
         summary="把当前工作区文件发送到当前会话；只接受已核实的工作区内路径。",
-        properties={
+        input_schema=object_schema({
             "files": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -206,8 +289,8 @@ TOOLS: List[ToolDef] = [
                 "description": "可选随附文字。",
                 "default": "",
             },
-        },
-        required=["files"],
+        }, required=("files",)),
+        output_schema=_SEND_RESULT_SCHEMA,
         handler=_handler_send_files_to_user,
         aliases=["发送文件", "回传文件", "send_file", "send_files"],
         category="agent.workspace",
@@ -219,7 +302,7 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         name="download_image_urls",
         summary="下载公网图片到当前工作区；拒绝非 HTTP(S)、内网、非图片和超限响应。",
-        properties={
+        input_schema=object_schema({
             "urls": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -236,8 +319,8 @@ TOOLS: List[ToolDef] = [
                 "description": "单张最大字节数；默认 5MB，上限 20MB。",
                 "default": _IMAGE_DEFAULT_MAX_BYTES,
             },
-        },
-        required=["urls"],
+        }, required=("urls",)),
+        output_schema=_IMAGE_RESULT_SCHEMA,
         handler=_handler_download_image_urls,
         aliases=["下载图片", "抓取图片", "download_images", "image_download"],
         category="agent.workspace",
@@ -253,14 +336,14 @@ TOOLS: List[ToolDef] = [
             "chat_id/user_id 明文、各类存储数据数量/大小和最近更新时间。"
             "用于回答'有几个用户使用过'、'现在存了哪些数据'等管理问题。"
         ),
-        properties={
+        input_schema=object_schema({
             "limit": {
                 "type": "integer",
                 "description": "最多展示多少个工作区，默认 50，最大 500。",
                 "default": 50,
             },
-        },
-        required=[],
+        }),
+        output_schema=_OWNER_LIST_RESULT_SCHEMA,
         handler=_handler_owner_list_workspaces,
         aliases=["owner_ls_workspaces", "全局工作区", "用户存储统计"],
         requires_role="owner",
@@ -275,7 +358,7 @@ TOOLS: List[ToolDef] = [
             "workspace_path 必须来自 owner_list_workspaces 返回的 workspace 字段；"
             "file_path 是该工作区内的相对路径。拒绝路径穿越和二进制文件。"
         ),
-        properties={
+        input_schema=object_schema({
             "workspace_path": {
                 "type": "string",
                 "description": "工作区相对总根目录的路径，例如 p2p_ou_xxx 或 group_oc_xxx/user_ou_xxx。",
@@ -289,8 +372,8 @@ TOOLS: List[ToolDef] = [
                 "description": "最多读取多少 KB，默认 8，最大 512。",
                 "default": 8,
             },
-        },
-        required=["workspace_path", "file_path"],
+        }, required=("workspace_path", "file_path")),
+        output_schema=_TEXT_RESULT_SCHEMA,
         handler=_handler_owner_read_workspace_file,
         aliases=["owner_read_file", "读取用户工作区文件"],
         requires_role="owner",
@@ -300,5 +383,10 @@ TOOLS: List[ToolDef] = [
     ),
 ]
 
+TOOL_PROVIDER = static_tool_provider(
+    "workspace",
+    packs={"workspace.read_write": tuple(TOOLS)},
+    module=__name__,
+)
 
-__all__ = ["TOOLS"]
+__all__ = ["TOOLS", "TOOL_PROVIDER"]

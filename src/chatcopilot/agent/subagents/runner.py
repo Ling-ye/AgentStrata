@@ -36,9 +36,11 @@ from chatcopilot.agent.subagents.spec import CachePolicySpec, ContextPolicySpec
 from chatcopilot.agent.subagents.task_pack import TaskPack
 from chatcopilot.agent.tools.executor import BackgroundSubmitter, PermissionFilter, ToolExecutor
 from chatcopilot.agent.tools.file_delivery import FileSender
+from chatcopilot.agent.tools.registry import ToolRegistry
 from chatcopilot.agent.tools.workspace_context import WorkspaceService
 from chatcopilot.agent.trace import current_trace, new_span_id, new_trace_id
-from chatcopilot.contracts.tools import ToolDef, build_openai_schema
+from chatcopilot.contracts.tool_packs import ToolProvider
+from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.contracts.prompt import BotPromptProfile
 
 if TYPE_CHECKING:
@@ -171,7 +173,17 @@ class SubagentRunner:
 
         holder = SubagentResultHolder()
         submit_tool = build_submit_result_tool(holder)
-        allowed_tools = [submit_tool, *work_tools]
+        tool_registry = ToolRegistry(
+            (
+                ToolProvider(
+                    id="subagent.session",
+                    packs={"runtime.session": (submit_tool, *work_tools)},
+                    module=__name__,
+                ),
+            )
+        )
+        tool_snapshot = tool_registry.snapshot(tool_packs=("runtime.session",))
+        allowed_tools = list(tool_snapshot.tools)
 
         pfp = hashlib.sha256(role_prompt.encode("utf-8")).hexdigest()[:16]
         llm = self._resolve_llm(config.model_env_prefix)
@@ -226,10 +238,7 @@ class SubagentRunner:
                 )
             )
 
-        tools_schema = sorted(
-            (build_openai_schema(tool) for tool in allowed_tools),
-            key=lambda entry: str((entry.get("function") or {}).get("name") or ""),
-        )
+        tools_schema = list(tool_snapshot.openai_schema)
         prompt_plan = PromptPlanBuilder().build(
             PromptBuildInput(
                 profile=BotPromptProfile(

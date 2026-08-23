@@ -32,7 +32,7 @@ from chatcopilot.agent.search.results import (
 from chatcopilot.agent.trace import TraceContext, current_trace, reset_trace, set_trace
 from chatcopilot.agent.turn_support import safe_emit
 from chatcopilot.contracts.agent import AgentEvent, SpanFinished
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult
 
 _MAX_PAGE_SUMMARY_CHARS = 12000
 _MAX_URLS_PER_STEP = 5
@@ -497,17 +497,19 @@ def _invoke(
     logical_source: str,
 ) -> dict[str, Any]:
     try:
-        summary, outputs, _hint = tool.handler(args)
+        result = tool.handler(args, ToolContext())
     except Exception as exc:  # noqa: BLE001
         return _failed(logical_source, f"{type(exc).__name__}: {exc}", actual_source=tool.name)
-    payload = _parse_payload(summary)
-    ok = payload.get("ok") is not False and not str(summary).startswith("Error:")
+    if not isinstance(result, ToolResult):
+        return _failed(logical_source, "invalid_tool_result", actual_source=tool.name)
+    payload = dict(result.data) or _parse_payload(result.summary)
+    ok = result.ok and payload.get("ok") is not False
     return {
         "ok": ok,
         "logical_source": logical_source,
         "actual_source": _actual_source(tool.name, payload),
-        "summary": payload if payload else summary,
-        "outputs": list(outputs),
+        "summary": payload if payload else (result.summary or result.error or ""),
+        "outputs": list(result.outputs),
     }
 
 

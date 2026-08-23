@@ -22,7 +22,12 @@ from chatcopilot.external_tools.shared.spec_helpers import (
     schema_property,
     validate_choice,
 )
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.external_tools.shared.tool_spec import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 from chatcopilot.external_tools.unity_codebase.config import (
     UnityProjectConfig,
     load_registry,
@@ -76,7 +81,7 @@ def _python_executable() -> str:
 # ---------------------------------------------------------------------------
 # unity_path_book
 # ---------------------------------------------------------------------------
-def _handler_path_book(args: Dict[str, Any]) -> HandlerResult:
+def _handler_path_book(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     project = _resolve_project(args)
     mode = require_arg(args, "mode")
     validate_choice(mode, _PATH_BOOK_MODES, name="mode")
@@ -117,7 +122,16 @@ def _handler_path_book(args: Dict[str, Any]) -> HandlerResult:
             f"unity_path_book mode={mode!r} pattern={pattern!r} in project {project.project_id!r}:\n"
             f"{stdout}"
         )
-    return summary, [], None
+    return ToolResult(
+        ok=True,
+        summary=summary,
+        data={
+            "project": project.project_id,
+            "mode": mode,
+            "pattern": pattern,
+            "output": stdout,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +174,16 @@ TOOLS: List[ToolDef] = [
             "given keywords or script name. Use this whenever you do not yet know where the relevant "
             "code or doc lives, then drill in with unity.codebase.read tools."
         ),
-        properties=_PROPS_PATH_BOOK,
-        required=["mode", "pattern"],
+        input_schema=object_schema(_PROPS_PATH_BOOK, required=("mode", "pattern")),
+        output_schema=object_schema(
+            {
+                "project": {"type": "string"},
+                "mode": {"type": "string"},
+                "pattern": {"type": "string"},
+                "output": {"type": "string"},
+            },
+            required=("project", "mode", "pattern", "output"),
+        ),
         handler=_handler_path_book,
         aliases=["path_book", "unity_route", "unity-path-book"],
     ),

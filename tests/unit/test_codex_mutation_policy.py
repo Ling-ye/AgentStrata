@@ -12,7 +12,7 @@ from chatcopilot.external_tools.dev.file_tools import TOOLS as DEV_FILE_TOOLS
 from chatcopilot.external_tools.dev.shell_tools import TOOLS as DEV_SHELL_TOOLS
 from chatcopilot.external_tools.mcp_admin.tools import TOOLS as MCP_ADMIN_TOOLS
 from chatcopilot.external_tools.web_fetch.tools import web_fetch_page
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.middleware.acp.tool_permissions import (
     build_permission_filter as _make_permission_filter,
 )
@@ -54,12 +54,17 @@ def test_owner_direct_tools_are_allowed_only_for_owner() -> None:
 
 def test_execution_boundary_is_backend_aware_and_role_filter_still_applies() -> None:
     called = mock.Mock()
+
+    def handler(_args: dict, _context: ToolContext) -> ToolResult:
+        called()
+        return ToolResult(ok=True, summary="ok")
+
     tool = ToolDef(
         name="mutate_repository",
         summary="test",
-        properties={},
-        required=[],
-        handler=lambda _args: (called(), [], None),
+        input_schema=object_schema(),
+        output_schema=object_schema(),
+        handler=handler,
         requires_role="owner",
         metadata={"execution_boundary": "codex"},
     )
@@ -113,9 +118,9 @@ def test_adapter_forge_can_dispatch_code_task_but_cannot_write_directly() -> Non
             ToolDef(
                 name="start_code_task",
                 summary="test",
-                properties={},
-                required=[],
-                handler=lambda _args: ("queued", [], None),
+                input_schema=object_schema(),
+                output_schema=object_schema(),
+                handler=lambda _args, _context: ToolResult(ok=True, summary="queued"),
                 category="development.task.write",
             ),
         ]

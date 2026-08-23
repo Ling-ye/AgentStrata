@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from chatcopilot.agent.tools.workspace_context import resolve_workspace
-from chatcopilot.contracts.tools import HandlerResult
+from chatcopilot.contracts.tools import ToolContext, ToolResult
 
 _IMAGE_DEFAULT_LIMIT = 3
 _IMAGE_MAX_LIMIT = 5
@@ -32,7 +32,9 @@ _IMAGE_EXT_BY_KIND = {
 }
 
 
-def _handler_download_image_urls(args: Dict[str, Any]) -> HandlerResult:
+def _handler_download_image_urls(
+    args: Dict[str, Any], _ctx: ToolContext
+) -> ToolResult:
     raw_urls = args.get("urls")
     if not isinstance(raw_urls, (list, tuple)) or not raw_urls:
         raise ValueError("缺少必填参数: urls (非空数组)")
@@ -83,7 +85,16 @@ def _handler_download_image_urls(args: Dict[str, Any]) -> HandlerResult:
     ]
     if failed:
         lines.append(f"另有 {len(failed)} 个 URL 下载失败。")
-    return ("\n".join(lines), [str(path) for path in downloaded], "image")
+    return ToolResult(
+        ok=True,
+        summary="\n".join(lines),
+        outputs=[str(path) for path in downloaded],
+        data={
+            "downloaded_count": len(downloaded),
+            "failed_count": len(failed),
+        },
+        file_type_hint="image",
+    )
 
 
 def _download_one_image_url(out_dir: Path, url: str, *, max_bytes: int) -> Path:

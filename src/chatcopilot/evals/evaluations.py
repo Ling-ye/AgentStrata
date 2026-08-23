@@ -2291,8 +2291,7 @@ def _suite_case_preflight(
         available_features.update({"image_input", "multiple_image_input"})
     if str(getattr(runtime, "memory_namespace", "")).strip():
         available_features.add("session_memory")
-    persona_control = getattr(getattr(runtime, "subagents", None), "persona_control", None)
-    if bool(getattr(persona_control, "enabled", False)):
+    if "persona.control" in tuple(getattr(runtime, "tool_packs", ()) or ()):
         available_features.add("persona_control")
     packs = set(str(value) for value in getattr(runtime, "tool_packs", ()))
     configured_tools: set[str] = set()

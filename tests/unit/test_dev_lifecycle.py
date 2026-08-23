@@ -65,16 +65,17 @@ class DevLifecycleToolTests(unittest.TestCase):
                 mock.patch("chatcopilot.external_tools.dev.self_update_publisher.run_checks", return_value=["git diff --check"]), \
                 mock.patch("chatcopilot.external_tools.dev.self_update_publisher.changed_files", return_value=["src/app.py"]), \
                 mock.patch("chatcopilot.external_tools.dev.self_update_publisher.subprocess.run", return_value=completed) as run_mock:
-                summary, outputs, error = execute_finalize_self_update_from_workspace(
+                result = execute_finalize_self_update_from_workspace(
                     {"reason": "internal publication"},
                     workspace_payload={"root": str(workspace.root)},
                     session_id="sid-1",
                 )
 
-            self.assertIsNone(error)
-            self.assertIn("job_id:", summary)
-            self.assertEqual(len(outputs), 1)
-            job_dir = Path(outputs[0])
+            self.assertTrue(result.ok)
+            self.assertIsNone(result.error)
+            self.assertIn("job_id:", result.summary)
+            self.assertEqual(len(result.outputs), 1)
+            job_dir = Path(result.outputs[0])
             self.assertEqual(job_dir.parent, workspace.root / JOBS_DIRNAME)
             request = json.loads((job_dir / REQUEST_FILENAME).read_text(encoding="utf-8"))
             status = json.loads((job_dir / STATUS_FILENAME).read_text(encoding="utf-8"))

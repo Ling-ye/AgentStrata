@@ -1,7 +1,7 @@
-"""Compatibility views of Agent built-in tool modules.
+"""Views of Agent built-in provider modules.
 
 The concrete pack-to-module mapping belongs to :mod:`chatcopilot.tool_packs.catalog`.
-This module derives the legacy views so Agent discovery has no second registry.
+This module derives its views so Agent discovery has no second registry.
 """
 
 from chatcopilot.tool_packs.catalog import get_tool_pack_entry, known_tool_pack_names
@@ -11,14 +11,11 @@ _BUILTIN_MODULE_PREFIX = "chatcopilot.agent.tools.builtin."
 
 
 BUILTIN_TOOL_MODULES_BY_TOOL_PACK = {
-    name: tuple(
-        module
-        for module in entry.tool_modules
-        if module.startswith(_BUILTIN_MODULE_PREFIX)
-    )
+    name: (entry.provider_module,)
     for name in sorted(known_tool_pack_names())
     if (entry := get_tool_pack_entry(name)) is not None
-    and any(module.startswith(_BUILTIN_MODULE_PREFIX) for module in entry.tool_modules)
+    and entry.provider_module is not None
+    and entry.provider_module.startswith(_BUILTIN_MODULE_PREFIX)
 }
 
 BUILTIN_TOOL_MODULES = tuple(
@@ -33,7 +30,7 @@ BUILTIN_TOOL_MODULES = tuple(
 def resolve_builtin_tool_modules(tool_packs):
     """Resolve built-in tool modules for selected BotSpec tool packs.
 
-    ``None`` keeps the legacy load-all behavior used by MCP compatibility paths.
+    ``None`` loads all built-in provider modules used by standalone MCP paths.
     An empty sequence means the bot instance runs without built-in tools.
     """
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, Sequence
 
 from chatcopilot.agent.search.reranker import ResultReranker
@@ -17,7 +16,8 @@ from chatcopilot.agent.search.router import SearchRouter
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.core.llm_client import LLMClient
 from chatcopilot.contracts.subagents import SearchProviderSpec, SubagentBudgetSpec
-from chatcopilot.contracts.tools import HandlerResult, ToolDef
+from chatcopilot.contracts.tool_packs import ToolProvider
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 
 _MAX_SEARCH_WALL_SECONDS = 180.0
 _SEARCH_BUDGET_RATIO = 0.6
@@ -46,18 +46,23 @@ def build_search_tool(
     if coordinator is None:
         return None
 
-    def _handler(args: dict[str, Any]) -> HandlerResult:
+    def _handler(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        del ctx
         try:
             request = SearchRequest.from_args(args)
         except ValueError as exc:
-            payload = {
-                "ok": False,
-                "error_code": "invalid_search_request",
-                "summary": str(exc),
-                "results": [],
-            }
-            return json.dumps(payload, ensure_ascii=False), [], None
-        return json.dumps(coordinator.run(request), ensure_ascii=False), [], None
+            return ToolResult(
+                ok=False,
+                error=str(exc),
+                error_code="invalid_search_request",
+                stage="validation",
+            )
+        data = coordinator.run(request)
+        return ToolResult(
+            ok=True,
+            summary=str(data.get("summary") or "搜索已完成。"),
+            data=data,
+        )
 
     return ToolDef(
         name="search_information",
@@ -67,7 +72,7 @@ def build_search_tool(
             "sources, reads static pages, escalates dynamic pages to browser rendering, "
             "reflects on failures, and returns structured evidence."
         ),
-        properties={
+        input_schema=object_schema({
             "objective": {
                 "type": "string",
                 "description": "The concrete factual question or information objective.",
@@ -120,8 +125,30 @@ def build_search_tool(
                 "enum": ["auto", "required", "none"],
                 "default": "auto",
             },
-        },
-        required=["objective"],
+        }, required=("objective",)),
+        output_schema=object_schema(
+            {
+                "ok": {"type": "boolean"},
+                "summary": {"type": "string"},
+                "plan": {"type": "object"},
+                "results": {"type": "array"},
+                "actual_sources": {"type": "array"},
+                "reflection": {"type": "object"},
+                "result_processing": {"type": "object"},
+                "limits": {"type": "object"},
+                "reranked": {},
+            },
+            required=(
+                "ok",
+                "summary",
+                "plan",
+                "results",
+                "actual_sources",
+                "reflection",
+                "result_processing",
+                "limits",
+            ),
+        ),
         handler=_handler,
         category="agent.search",
         owner="agent",
@@ -129,6 +156,20 @@ def build_search_tool(
         artifact_kinds=(),
         weight="heavy",
         metadata={"search_entry": True},
+    )
+
+
+def build_search_provider(**kwargs: Any) -> ToolProvider | None:
+    """Build the session-bound provider for the unified search entrypoint."""
+
+    tool = build_search_tool(**kwargs)
+    if tool is None:
+        return None
+    return ToolProvider(
+        id="search.unified",
+        packs={"search.unified": (tool,)},
+        module=__name__,
+        description="Session-bound unified search tool.",
     )
 
 
@@ -177,4 +218,4 @@ def build_search_coordinator(
         max_wall_seconds=max_wall,
     )
 
-__all__ = ["build_search_coordinator", "build_search_tool"]
+__all__ = ["build_search_coordinator", "build_search_provider", "build_search_tool"]

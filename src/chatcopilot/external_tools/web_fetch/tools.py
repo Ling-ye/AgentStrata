@@ -15,7 +15,13 @@ import urllib.request
 from typing import Any, Dict, List
 from urllib.parse import urlparse
 
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.contracts.tool_packs import static_tool_provider
+from chatcopilot.external_tools.shared.tool_spec import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 
 _CATEGORY = "web_fetch"
 _OWNER = "web_fetch"
@@ -174,21 +180,43 @@ def _fetch_page(url: str, max_chars: int) -> str:
 # Tool handler and declaration
 # ---------------------------------------------------------------------------
 
-def _handler_web_fetch_page(args: Dict[str, Any]) -> HandlerResult:
+def _handler_web_fetch_page(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     url = str(args.get("url") or "").strip()
     if not url:
-        return "Error: Missing required parameter: url.", [], None
+        return ToolResult(
+            ok=False,
+            error="Missing required parameter: url.",
+            error_code="url_required",
+            stage="validation",
+        )
     try:
         max_chars = int(args.get("max_chars", _DEFAULT_MAX_CHARS))
     except (TypeError, ValueError):
-        return "Error: Invalid max_chars: expected an integer.", [], None
+        return ToolResult(
+            ok=False,
+            error="Invalid max_chars: expected an integer.",
+            error_code="max_chars_invalid",
+            stage="validation",
+        )
     if max_chars < 100:
         max_chars = 100
     if max_chars > 50000:
         max_chars = 50000
 
     result = _fetch_page(url, max_chars)
-    return result, [], None
+    if result.startswith("Error:"):
+        return ToolResult(
+            ok=False,
+            error=result.removeprefix("Error:").strip(),
+            error_code="web_fetch_failed",
+            stage="execution",
+            data={"url": url},
+        )
+    return ToolResult(
+        ok=True,
+        summary=result,
+        data={"url": url, "content": result},
+    )
 
 
 web_fetch_page = ToolDef(
@@ -200,7 +228,7 @@ web_fetch_page = ToolDef(
         "or any URL suggested in a previous tool's next_steps). "
         "Does not render JavaScript; works best on article, documentation, and API response pages."
     ),
-    properties={
+    input_schema=object_schema({
         "url": {
             "type": "string",
             "description": "The full URL to fetch (http or https only).",
@@ -210,8 +238,11 @@ web_fetch_page = ToolDef(
             "description": "Maximum characters of page text to return (100-50000).",
             "default": _DEFAULT_MAX_CHARS,
         },
-    },
-    required=["url"],
+    }, required=("url",)),
+    output_schema=object_schema(
+        {"url": {"type": "string"}, "content": {"type": "string"}},
+        required=("url", "content"),
+    ),
     handler=_handler_web_fetch_page,
     category=_CATEGORY,
     owner=_OWNER,
@@ -221,3 +252,11 @@ web_fetch_page = ToolDef(
 )
 
 TOOLS: List[ToolDef] = [web_fetch_page]
+
+TOOL_PROVIDER = static_tool_provider(
+    "web-fetch",
+    packs={"web.fetch": tuple(TOOLS)},
+    module=__name__,
+)
+
+__all__ = ["TOOLS", "TOOL_PROVIDER", "web_fetch_page"]

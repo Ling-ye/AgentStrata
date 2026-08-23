@@ -65,7 +65,7 @@ from chatcopilot.agent.turn_support import (
     task_trace_id as _task_trace_id,
     tool_fingerprint as _tool_fingerprint,
 )
-from chatcopilot.agent.tools.executor import ToolResult
+from chatcopilot.contracts.tools import ToolResult
 from chatcopilot.agent.trace import (
     TraceContext,
     new_span_id,
@@ -406,6 +406,10 @@ class TurnOps:
             )
         )
 
+        committed = tool_result.data.get("committed")
+        if committed is True or (tool_result.ok and committed is not False):
+            state.successful_operations.append(name)
+
         if not tool_result.ok:
             state.consecutive_failures += 1
             if state.consecutive_failures >= self.session.max_consecutive_tool_failures:
@@ -417,7 +421,6 @@ class TurnOps:
             return
 
         state.consecutive_failures = 0
-        state.successful_operations.append(name)
         if name in _DEV_WRITE_TOOLS:
             state.self_update_required = True
         elif name == _FINALIZE_SELF_UPDATE_TOOL:
@@ -572,7 +575,11 @@ class TurnOps:
         )
         lifecycle_token = set_lifecycle_intent_collector(collect)
         try:
-            result = self.session.executor.execute(name, args)
+            result = self.session.executor.execute(
+                name,
+                args,
+                request_text=self.task.text,
+            )
         finally:
             reset_lifecycle_intent_collector(lifecycle_token)
             reset_trace(trace_token)

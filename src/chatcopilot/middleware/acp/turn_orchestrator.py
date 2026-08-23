@@ -23,7 +23,6 @@ from chatcopilot.middleware.acp import attachment_pipeline as _attachment
 from chatcopilot.middleware.acp import attachment_turns as _attachment_turns
 from chatcopilot.middleware.acp import deterministic_replies as _deterministic_replies
 from chatcopilot.middleware.acp import image_pipeline as _image
-from chatcopilot.middleware.acp import persona_control as _persona_control
 from chatcopilot.middleware.acp.prompt_pipeline import build_topic_metadata
 from chatcopilot.middleware.acp.group_conversation import SenderEnvelopeError
 from chatcopilot.middleware.acp.turn_pipeline import (
@@ -90,7 +89,6 @@ class AcpTurnOrchestrator:
             (
                 CallbackTurnHandler("attachments", self._attachments),
                 CallbackTurnHandler("permissions", self._permissions),
-                CallbackTurnHandler("persona_control", self._persona_control),
                 CallbackTurnHandler("deterministic_shortcuts", self._deterministic_shortcuts),
                 CallbackTurnHandler("session_materialization", self._session_materialization),
                 CallbackTurnHandler("execution", self._execution),
@@ -216,21 +214,6 @@ class AcpTurnOrchestrator:
             turn.session.debug_mode,
         )
         return TurnOutcome()
-
-    async def _persona_control(self, turn: TurnContext) -> TurnOutcome:
-        response = await _persona_control.handle_persona_control(
-            host=self._host,
-            turn=turn,
-            update_text=self._update_text,
-            refresh_prompt_plan=self._refresh_prompt_plan,
-        )
-        if response is None:
-            return TurnOutcome()
-        return TurnOutcome(
-            response=response,
-            stop=True,
-            reason="persona_control",
-        )
 
     async def _permissions(self, turn: TurnContext) -> TurnOutcome:
         runtime = getattr(self._host, "_runtime", None)
@@ -1015,10 +998,6 @@ class AcpTurnOrchestrator:
         }
         if task_resources:
             run_kwargs["task_resources"] = task_resources
-        if turn.metadata.get("persona_final_prefix"):
-            run_kwargs["final_text_prefix"] = turn.metadata["persona_final_prefix"]
-        if turn.metadata.get("journal_user_text"):
-            run_kwargs["journal_user_text"] = turn.metadata["journal_user_text"]
         runtime = getattr(self._host, "_runtime", None)
         self._record_flow_transition(
             turn,

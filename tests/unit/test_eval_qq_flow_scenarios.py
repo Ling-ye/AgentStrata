@@ -139,7 +139,7 @@ def test_attestation_mismatch_records_zero_main_agent_invocations(
     assert receipt["agent_invoked"] is False
 
 
-def test_persona_roundtrip_uses_host_control_then_loads_next_host_prompt_plan(
+def test_persona_roundtrip_uses_main_agent_tool_then_loads_next_host_prompt_plan(
     tmp_path: Path,
 ) -> None:
     runtime = load_evaluation_runtime(
@@ -163,8 +163,13 @@ def test_persona_roundtrip_uses_host_control_then_loads_next_host_prompt_plan(
 
     assert judge.passed is True
     assert receipt["first_turn_role_resolved_owner"] is True
-    assert receipt["first_turn_persona_mutation_observed"] is True
-    assert receipt["first_turn_main_agent_invocation_count"] == 0
+    assert receipt["first_turn_persona_tool_visible"] is True
+    assert receipt["first_turn_persona_tool_called"] is True
+    assert receipt["first_turn_persona_tool_succeeded"] is True
+    assert receipt["first_turn_persona_receipt_committed"] is True
+    assert receipt["first_turn_main_agent_invocation_count"] == 1
+    assert receipt["first_turn_model_replaced"] is True
+    assert receipt["first_turn_synthetic_tool_call"] is True
     assert receipt["persona_draft_stub_invocation_count"] == 1
     assert receipt["mutation_receipt_hash_matches_snapshot"] is True
     assert receipt["protected_state_observed"] is True
@@ -224,8 +229,9 @@ def test_persona_draft_failure_preserves_old_hash_and_cannot_pass(
     assert judge.passed is False
     assert receipt["passed"] is False
     assert receipt["initial_persona_hash"] == receipt["persisted_persona_hash"]
-    assert receipt["first_turn_main_agent_invocation_count"] == 0
-    assert receipt["first_turn_persona_mutation_observed"] is False
+    assert receipt["first_turn_main_agent_invocation_count"] == 1
+    assert receipt["first_turn_persona_tool_succeeded"] is False
+    assert receipt["first_turn_persona_receipt_committed"] is False
     assert receipt["next_turn_prompt_persona_layer_count"] == 0
     assert receipt["next_turn_prompt_contains_marker"] is False
     assert list(workspace.iterdir()) == []

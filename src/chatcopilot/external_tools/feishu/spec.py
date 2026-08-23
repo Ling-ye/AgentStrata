@@ -13,7 +13,12 @@ import json
 from typing import Any, Dict, List
 
 from chatcopilot.external_tools.shared.spec_helpers import require_arg, schema_property
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.external_tools.shared.tool_spec import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 
 from chatcopilot.external_tools.feishu.service import FeishuService
 
@@ -58,76 +63,80 @@ def _as_object(raw: Any, *, name: str) -> Dict[str, Any]:
 # ----------------------------------------------------------------------------
 # Handlers
 # ----------------------------------------------------------------------------
-def _h_doc_create(args: Dict[str, Any]) -> HandlerResult:
+def _h_doc_create(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     title = require_arg(args, "title")
-    return _SERVICE.create_doc(title=title, markdown=str(args.get("markdown") or "")).to_handler_result()
+    return _SERVICE.create_doc(title=title, markdown=str(args.get("markdown") or "")).to_tool_result()
 
 
-def _h_doc_append(args: Dict[str, Any]) -> HandlerResult:
+def _h_doc_append(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     url = require_arg(args, "url")
     markdown = require_arg(args, "markdown")
-    return _SERVICE.append_doc(url=url, markdown=markdown).to_handler_result()
+    return _SERVICE.append_doc(url=url, markdown=markdown).to_tool_result()
 
 
-def _h_sheet_read(args: Dict[str, Any]) -> HandlerResult:
+def _h_sheet_read(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     url = require_arg(args, "url")
     return _SERVICE.read_sheet(
         url=url, range_a1=str(args.get("range") or ""), sheet_id=str(args.get("sheet_id") or ""),
-    ).to_handler_result()
+    ).to_tool_result()
 
 
-def _h_sheet_write(args: Dict[str, Any]) -> HandlerResult:
+def _h_sheet_write(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     url = require_arg(args, "url")
     values = _as_2d_values(args.get("values"))
     return _SERVICE.write_sheet(
         url=url, values=values, range_a1=str(args.get("range") or ""), sheet_id=str(args.get("sheet_id") or ""),
-    ).to_handler_result()
+    ).to_tool_result()
 
 
-def _h_sheet_append(args: Dict[str, Any]) -> HandlerResult:
+def _h_sheet_append(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     url = require_arg(args, "url")
     values = _as_2d_values(args.get("values"))
     return _SERVICE.append_sheet(
         url=url, values=values, range_a1=str(args.get("range") or ""), sheet_id=str(args.get("sheet_id") or ""),
-    ).to_handler_result()
+    ).to_tool_result()
 
 
-def _h_bitable_query(args: Dict[str, Any]) -> HandlerResult:
+def _h_bitable_query(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     url = require_arg(args, "url")
     return _SERVICE.bitable_query(
         url=url, table_id=str(args.get("table_id") or ""),
         page_size=int(args.get("page_size") or 20), view_id=str(args.get("view_id") or ""),
-    ).to_handler_result()
+    ).to_tool_result()
 
 
-def _h_bitable_add(args: Dict[str, Any]) -> HandlerResult:
+def _h_bitable_add(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     url = require_arg(args, "url")
     fields = _as_object(args.get("fields"), name="fields")
-    return _SERVICE.bitable_add(url=url, fields=fields, table_id=str(args.get("table_id") or "")).to_handler_result()
+    return _SERVICE.bitable_add(
+        url=url, fields=fields, table_id=str(args.get("table_id") or "")
+    ).to_tool_result()
 
 
-def _h_bitable_update(args: Dict[str, Any]) -> HandlerResult:
+def _h_bitable_update(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     url = require_arg(args, "url")
     record_id = require_arg(args, "record_id")
     fields = _as_object(args.get("fields"), name="fields")
     return _SERVICE.bitable_update(
         url=url, record_id=record_id, fields=fields, table_id=str(args.get("table_id") or ""),
-    ).to_handler_result()
+    ).to_tool_result()
 
 
-def _h_wiki_search(args: Dict[str, Any]) -> HandlerResult:
+def _h_wiki_search(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     query = require_arg(args, "query")
     return _SERVICE.wiki_search(
         query=query, space_id=str(args.get("space_id") or ""), page_size=int(args.get("page_size") or 20),
-    ).to_handler_result()
+    ).to_tool_result()
 
 
-def _h_drive_search(args: Dict[str, Any]) -> HandlerResult:
+def _h_drive_search(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     query = require_arg(args, "query")
-    return _SERVICE.drive_search(query=query, count=int(args.get("count") or 20)).to_handler_result()
+    return _SERVICE.drive_search(
+        query=query, count=int(args.get("count") or 20)
+    ).to_tool_result()
 
 
-def _h_im_send(args: Dict[str, Any]) -> HandlerResult:
+def _h_im_send(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     receive_id = require_arg(args, "receive_id")
     receive_id_type = require_arg(args, "receive_id_type")
     return _SERVICE.send_message(
@@ -136,17 +145,17 @@ def _h_im_send(args: Dict[str, Any]) -> HandlerResult:
         msg_type=str(args.get("msg_type") or "text"),
         text=str(args.get("text") or ""),
         content=str(args.get("content") or ""),
-    ).to_handler_result()
+    ).to_tool_result()
 
 
-def _h_api_get(args: Dict[str, Any]) -> HandlerResult:
+def _h_api_get(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     path = require_arg(args, "path")
     params = args.get("params")
     if isinstance(params, str) and params.strip():
         params = _as_object(params, name="params")
     elif not isinstance(params, dict):
         params = None
-    return _SERVICE.api_get(path=path, params=params).to_handler_result()
+    return _SERVICE.api_get(path=path, params=params).to_tool_result()
 
 
 # ----------------------------------------------------------------------------
@@ -161,16 +170,17 @@ _FIELDS_PROP = {
     "type": "object",
     "description": "记录字段对象 {字段名: 值}，字段名需与多维表格列名一致",
 }
+_FEISHU_RESULT_SCHEMA = {"type": "object", "additionalProperties": True}
 
 TOOLS: List[ToolDef] = [
     _feishu_tool(
         name="feishu_doc_create",
         summary="新建飞书云文档（标题 + Markdown 正文），返回文档链接。仅 owner 可用。",
-        properties={
+        input_schema=object_schema({
             "title": schema_property(type="string", description="文档标题"),
             "markdown": schema_property(type="string", description="Markdown 正文，可为空"),
-        },
-        required=["title"],
+        }, required=("title",)),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_doc_create,
         aliases=["创建飞书文档", "新建飞书文档", "lark_doc_create"],
         requires_role="owner",
@@ -178,11 +188,11 @@ TOOLS: List[ToolDef] = [
     _feishu_tool(
         name="feishu_doc_append",
         summary="向已有飞书 docx 文档末尾追加 Markdown 文本（按行追加为段落）。仅 owner 可用。",
-        properties={
+        input_schema=object_schema({
             "url": schema_property(type="string", description="飞书 docx 文档 URL"),
             "markdown": schema_property(type="string", description="要追加的 Markdown 文本"),
-        },
-        required=["url", "markdown"],
+        }, required=("url", "markdown")),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_doc_append,
         aliases=["追加飞书文档", "lark_doc_append"],
         requires_role="owner",
@@ -190,25 +200,25 @@ TOOLS: List[ToolDef] = [
     _feishu_tool(
         name="feishu_sheet_read",
         summary="读取飞书电子表格指定范围的数据（返回二维数组预览）。",
-        properties={
+        input_schema=object_schema({
             "url": schema_property(type="string", description="飞书电子表格 URL"),
             "range": schema_property(type="string", description="范围，如 A1:D20；不带页签时用 sheet_id 或 URL ?sheet="),
             "sheet_id": schema_property(type="string", description="页签 ID，可选"),
-        },
-        required=["url"],
+        }, required=("url",)),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_sheet_read,
         aliases=["读取飞书表格", "lark_sheet_read"],
     ),
     _feishu_tool(
         name="feishu_sheet_write",
         summary="覆盖写入飞书电子表格指定范围。仅 owner 可用。",
-        properties={
+        input_schema=object_schema({
             "url": schema_property(type="string", description="飞书电子表格 URL"),
             "values": _VALUES_PROP,
             "range": schema_property(type="string", description="写入范围，如 A1:D3"),
             "sheet_id": schema_property(type="string", description="页签 ID，可选"),
-        },
-        required=["url", "values"],
+        }, required=("url", "values")),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_sheet_write,
         aliases=["写入飞书表格", "lark_sheet_write"],
         requires_role="owner",
@@ -216,13 +226,13 @@ TOOLS: List[ToolDef] = [
     _feishu_tool(
         name="feishu_sheet_append",
         summary="向飞书电子表格末尾追加行。仅 owner 可用。",
-        properties={
+        input_schema=object_schema({
             "url": schema_property(type="string", description="飞书电子表格 URL"),
             "values": _VALUES_PROP,
             "range": schema_property(type="string", description="参考范围，默认 A1，可选"),
             "sheet_id": schema_property(type="string", description="页签 ID，可选"),
-        },
-        required=["url", "values"],
+        }, required=("url", "values")),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_sheet_append,
         aliases=["追加飞书表格", "lark_sheet_append"],
         requires_role="owner",
@@ -230,25 +240,25 @@ TOOLS: List[ToolDef] = [
     _feishu_tool(
         name="feishu_bitable_query",
         summary="查询飞书多维表格（Bitable）记录（分页）。",
-        properties={
+        input_schema=object_schema({
             "url": schema_property(type="string", description="飞书多维表格 URL（含 ?table=）"),
             "table_id": schema_property(type="string", description="table_id，URL 未带 ?table= 时必填"),
             "page_size": schema_property(type="integer", description="每页记录数，默认 20", default=20),
             "view_id": schema_property(type="string", description="视图 ID，可选"),
-        },
-        required=["url"],
+        }, required=("url",)),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_bitable_query,
         aliases=["查询多维表格", "lark_bitable_query"],
     ),
     _feishu_tool(
         name="feishu_bitable_add",
         summary="向飞书多维表格新增一条记录。仅 owner 可用。",
-        properties={
+        input_schema=object_schema({
             "url": schema_property(type="string", description="飞书多维表格 URL（含 ?table=）"),
             "fields": _FIELDS_PROP,
             "table_id": schema_property(type="string", description="table_id，URL 未带 ?table= 时必填"),
-        },
-        required=["url", "fields"],
+        }, required=("url", "fields")),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_bitable_add,
         aliases=["新增多维表格记录", "lark_bitable_add"],
         requires_role="owner",
@@ -256,13 +266,13 @@ TOOLS: List[ToolDef] = [
     _feishu_tool(
         name="feishu_bitable_update",
         summary="更新飞书多维表格指定记录的字段。仅 owner 可用。",
-        properties={
+        input_schema=object_schema({
             "url": schema_property(type="string", description="飞书多维表格 URL（含 ?table=）"),
             "record_id": schema_property(type="string", description="要更新的 record_id"),
             "fields": _FIELDS_PROP,
             "table_id": schema_property(type="string", description="table_id，URL 未带 ?table= 时必填"),
-        },
-        required=["url", "record_id", "fields"],
+        }, required=("url", "record_id", "fields")),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_bitable_update,
         aliases=["更新多维表格记录", "lark_bitable_update"],
         requires_role="owner",
@@ -270,23 +280,23 @@ TOOLS: List[ToolDef] = [
     _feishu_tool(
         name="feishu_wiki_search",
         summary="在飞书知识库节点中检索关键词（可见范围受应用权限/共享范围限制）。",
-        properties={
+        input_schema=object_schema({
             "query": schema_property(type="string", description="检索关键词"),
             "space_id": schema_property(type="string", description="限定知识空间 ID，可选"),
             "page_size": schema_property(type="integer", description="返回条数，默认 20", default=20),
-        },
-        required=["query"],
+        }, required=("query",)),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_wiki_search,
         aliases=["检索知识库", "lark_wiki_search"],
     ),
     _feishu_tool(
         name="feishu_drive_search",
         summary="在飞书云盘文档中按关键词检索（可见范围受应用权限/共享范围限制）。",
-        properties={
+        input_schema=object_schema({
             "query": schema_property(type="string", description="检索关键词"),
             "count": schema_property(type="integer", description="返回条数，默认 20", default=20),
-        },
-        required=["query"],
+        }, required=("query",)),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_drive_search,
         aliases=["检索云盘文档", "lark_drive_search"],
     ),
@@ -296,7 +306,7 @@ TOOLS: List[ToolDef] = [
             "以应用(机器人)身份给指定飞书用户/群发送消息，必须显式提供接收者 ID。"
             "仅 owner 可用，避免误发。"
         ),
-        properties={
+        input_schema=object_schema({
             "receive_id": schema_property(type="string", description="接收者 ID（必填，显式指定）"),
             "receive_id_type": schema_property(
                 type="string",
@@ -306,8 +316,8 @@ TOOLS: List[ToolDef] = [
             "msg_type": schema_property(type="string", description="消息类型，默认 text", default="text"),
             "text": schema_property(type="string", description="文本消息内容（msg_type=text 时）"),
             "content": schema_property(type="string", description="原始 content JSON 字符串（post/卡片等高级用法）"),
-        },
-        required=["receive_id", "receive_id_type"],
+        }, required=("receive_id", "receive_id_type")),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_im_send,
         aliases=["发送飞书消息", "lark_im_send"],
         requires_role="owner",
@@ -318,11 +328,11 @@ TOOLS: List[ToolDef] = [
             "只读逃生门：以应用身份发起任意飞书 OpenAPI GET 请求（仅 GET）。"
             "用于 curated 工具未覆盖的查询场景，如 /im/v1/chats、/contact/v3/users 等。"
         ),
-        properties={
+        input_schema=object_schema({
             "path": schema_property(type="string", description="OpenAPI 路径，以 / 开头，如 /im/v1/chats"),
             "params": schema_property(type="string", description="query 参数 JSON 字符串，可选"),
-        },
-        required=["path"],
+        }, required=("path",)),
+        output_schema=_FEISHU_RESULT_SCHEMA,
         handler=_h_api_get,
         aliases=["飞书API查询", "lark_api_get"],
     ),

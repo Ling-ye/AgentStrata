@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
-from chatcopilot.contracts.persona_control import PersonaControlSpec
 
 
 TASK_PACK_FIELDS: tuple[str, ...] = (
@@ -242,7 +241,6 @@ class SubagentSpec:
     workflows: tuple[str, ...] = ()
     max_workflow_depth: int = 2
     codex: CodexMainSessionPolicy = field(default_factory=CodexMainSessionPolicy)
-    persona_control: PersonaControlSpec = field(default_factory=PersonaControlSpec)
 
 
 BUILTIN_SUBAGENT_PRESET_NAMES: frozenset[str] = frozenset((
@@ -263,7 +261,6 @@ __all__ = [
     "CachePolicySpec",
     "CodexMainSessionPolicy",
     "ContextPolicySpec",
-    "PersonaControlSpec",
     "SearchProviderSpec",
     "CustomSubagentSpec",
     "SubagentBudgetSpec",

@@ -21,9 +21,16 @@ from chatcopilot.contracts.agent import (
 )
 from chatcopilot.agent.lifecycle import defer_lifecycle_intent
 from chatcopilot.agent.rag import RagHit
+from chatcopilot.agent.response_integrity import ResponseIntegrityResult
 from chatcopilot.agent.session import AgentSession, _EMPTY_MODEL_REPLY_TEXT
 from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.contracts.tools import ToolDef, build_openai_schema
+from chatcopilot.contracts.tools import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    build_openai_schema,
+    object_schema,
+)
 
 
 class _FakeLLM:
@@ -93,14 +100,14 @@ class AgentSessionTests(unittest.TestCase):
             )
 
     def test_tool_summary_is_returned_when_followup_model_reply_is_empty(self) -> None:
-        def handler(args: dict):
-            return ("已加入全局迁移队列，任务 ID: job-1。", [], None)
+        def handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(ok=True, summary="已加入全局迁移队列，任务 ID: job-1。")
 
         tool = ToolDef(
             name="submit_job",
             summary="提交后台任务",
-            properties={},
-            required=[],
+            input_schema=object_schema(),
+            output_schema=object_schema(),
             handler=handler,
         )
         session = _make_session(
@@ -124,15 +131,95 @@ class AgentSessionTests(unittest.TestCase):
         self.assertEqual(result.stop_reason, "end_turn")
         self.assertIn("已加入全局迁移队列，任务 ID: job-1。", final_texts)
 
+    def test_tool_context_receives_original_agent_task_text(self) -> None:
+        request_texts: list[str] = []
+
+        def handler(_args: dict, context: ToolContext) -> ToolResult:
+            request_texts.append(context.request_text)
+            return ToolResult(ok=True, summary="captured")
+
+        tool = ToolDef(
+            name="capture_request",
+            summary="Capture the trusted request text.",
+            input_schema=object_schema(),
+            output_schema=object_schema(),
+            handler=handler,
+        )
+        session = _make_session(
+            _FakeLLM(
+                [
+                    ChatResult(tool_calls=[_tool_call("capture_request", {})]),
+                    ChatResult(content="完成"),
+                ]
+            ),
+            [tool],
+        )
+
+        session.run_task(
+            AgentTask(text="/persona confirm 原始请求"),
+            on_event=lambda _event: None,
+        )
+
+        self.assertEqual(request_texts, ["/persona confirm 原始请求"])
+
+    def test_committed_receipt_controls_successful_operation_evidence(self) -> None:
+        for committed, expected in ((True, ("persona_manage",)), (False, ())):
+            with self.subTest(committed=committed):
+                captured: list[tuple[str, ...]] = []
+
+                class CapturingIntegrity:
+                    def check(
+                        self,
+                        _final_text: str,
+                        *,
+                        evidence_urls: tuple[str, ...] = (),
+                        successful_operations: tuple[str, ...] = (),
+                    ) -> ResponseIntegrityResult:
+                        del evidence_urls
+                        captured.append(successful_operations)
+                        return ResponseIntegrityResult(ok=True)
+
+                def handler(_args: dict, _context: ToolContext) -> ToolResult:
+                    return ToolResult(
+                        ok=False,
+                        error="confirmation state",
+                        data={"committed": committed},
+                    )
+
+                tool = ToolDef(
+                    name="persona_manage",
+                    summary="Return a structured persona receipt.",
+                    input_schema=object_schema(),
+                    output_schema=object_schema(),
+                    handler=handler,
+                )
+                session = _make_session(
+                    _FakeLLM(
+                        [
+                            ChatResult(tool_calls=[_tool_call("persona_manage", {})]),
+                            ChatResult(content="完成"),
+                        ]
+                    ),
+                    [tool],
+                )
+                session.response_integrity = CapturingIntegrity()  # type: ignore[assignment]
+
+                session.run_task(
+                    AgentTask(text="设置人格"),
+                    on_event=lambda _event: None,
+                )
+
+                self.assertEqual(captured[-1], expected)
+
     def test_tool_call_cap_summarizes_collected_tool_evidence(self) -> None:
-        def handler(args: dict):
-            return ("已定位到 stop_reason=tool_call_cap。", [], None)
+        def handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(ok=True, summary="已定位到 stop_reason=tool_call_cap。")
 
         tool = ToolDef(
             name="get_task_status",
             summary="查询 task 状态",
-            properties={},
-            required=[],
+            input_schema=object_schema(),
+            output_schema=object_schema(),
             handler=handler,
         )
         calls = [
@@ -174,14 +261,14 @@ class AgentSessionTests(unittest.TestCase):
         self.assertEqual(session.snapshot_messages()[-1]["content"], _EMPTY_MODEL_REPLY_TEXT)
 
     def test_tool_lifecycle_events_dispatched(self) -> None:
-        def handler(args: dict):
-            return ("done", ["/tmp/out.txt"], None)
+        def handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(ok=True, summary="done", outputs=["/tmp/out.txt"])
 
         tool = ToolDef(
             name="produce",
             summary="produce a file",
-            properties={},
-            required=[],
+            input_schema=object_schema({"x": {"type": "integer"}}),
+            output_schema=object_schema(),
             handler=handler,
         )
         session = _make_session(
@@ -205,14 +292,18 @@ class AgentSessionTests(unittest.TestCase):
         self.assertTrue(any(p.path == "/tmp/out.txt" for p in result.produced_resources))
 
     def test_non_artifact_tool_outputs_are_not_recorded_as_resources(self) -> None:
-        def handler(args: dict):
-            return ("found", ["src/app.py:1:old text"], None)
+        def handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(
+                ok=True,
+                summary="found",
+                outputs=["src/app.py:1:old text"],
+            )
 
         tool = ToolDef(
             name="search",
             summary="search text",
-            properties={},
-            required=[],
+            input_schema=object_schema(),
+            output_schema=object_schema(),
             handler=handler,
             artifact_kinds=(),
         )
@@ -231,24 +322,31 @@ class AgentSessionTests(unittest.TestCase):
         self.assertEqual(result.produced_resources, ())
 
     def test_dev_write_requires_finalize_before_final_answer(self) -> None:
-        def edit_handler(args: dict):
-            return ("已修改文件", [], None)
+        def edit_handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(ok=True, summary="已修改文件")
 
-        def finalize_handler(args: dict):
-            return ("已提交自更新任务。job_id: job-1", ["/tmp/jobs/job-1"], None)
+        def finalize_handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(
+                ok=True,
+                summary="已提交自更新任务。job_id: job-1",
+                outputs=["/tmp/jobs/job-1"],
+            )
 
         edit_tool = ToolDef(
             name="edit_file",
             summary="edit file",
-            properties={},
-            required=[],
+            input_schema=object_schema(),
+            output_schema=object_schema(),
             handler=edit_handler,
         )
         finalize_tool = ToolDef(
             name="finalize_self_update",
             summary="finalize update",
-            properties={"reason": {"type": "string", "description": "reason"}},
-            required=["reason"],
+            input_schema=object_schema(
+                {"reason": {"type": "string", "description": "reason"}},
+                required=("reason",),
+            ),
+            output_schema=object_schema(),
             handler=finalize_handler,
             artifact_kinds=("directory",),
         )
@@ -288,35 +386,45 @@ class AgentSessionTests(unittest.TestCase):
     def test_dev_write_blocks_submit_result_until_finalize(self) -> None:
         submitted: list[dict] = []
 
-        def edit_handler(args: dict):
-            return ("已修改文件", [], None)
+        def edit_handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(ok=True, summary="已修改文件")
 
-        def finalize_handler(args: dict):
-            return ("已提交自更新任务。job_id: job-1", ["/tmp/jobs/job-1"], None)
+        def finalize_handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(
+                ok=True,
+                summary="已提交自更新任务。job_id: job-1",
+                outputs=["/tmp/jobs/job-1"],
+            )
 
-        def submit_handler(args: dict):
+        def submit_handler(args: dict, _context: ToolContext) -> ToolResult:
             submitted.append(args)
-            return ("structured result submitted", [], None)
+            return ToolResult(ok=True, summary="structured result submitted")
 
         edit_tool = ToolDef(
             name="edit_file",
             summary="edit file",
-            properties={},
-            required=[],
+            input_schema=object_schema(),
+            output_schema=object_schema(),
             handler=edit_handler,
         )
         finalize_tool = ToolDef(
             name="finalize_self_update",
             summary="finalize update",
-            properties={"reason": {"type": "string", "description": "reason"}},
-            required=["reason"],
+            input_schema=object_schema(
+                {"reason": {"type": "string", "description": "reason"}},
+                required=("reason",),
+            ),
+            output_schema=object_schema(),
             handler=finalize_handler,
         )
         submit_tool = ToolDef(
             name="submit_result",
             summary="submit result",
-            properties={"summary": {"type": "string", "description": "summary"}},
-            required=["summary"],
+            input_schema=object_schema(
+                {"summary": {"type": "string", "description": "summary"}},
+                required=("summary",),
+            ),
+            output_schema=object_schema(),
             handler=submit_handler,
         )
         llm = _FakeLLM(
@@ -342,15 +450,18 @@ class AgentSessionTests(unittest.TestCase):
     def test_finalize_self_update_requires_user_visible_summary(self) -> None:
         called: list[dict] = []
 
-        def finalize_handler(args: dict):
+        def finalize_handler(args: dict, _context: ToolContext) -> ToolResult:
             called.append(args)
-            return ("should not run", [], None)
+            return ToolResult(ok=True, summary="should not run")
 
         finalize_tool = ToolDef(
             name="finalize_self_update",
             summary="finalize update",
-            properties={"reason": {"type": "string", "description": "reason"}},
-            required=["reason"],
+            input_schema=object_schema(
+                {"reason": {"type": "string", "description": "reason"}},
+                required=("reason",),
+            ),
+            output_schema=object_schema(),
             handler=finalize_handler,
         )
         llm = _FakeLLM(
@@ -369,12 +480,18 @@ class AgentSessionTests(unittest.TestCase):
         self.assertEqual(result.lifecycle_intents, ())
 
     def test_finalize_self_update_rejects_duplicate_lifecycle_intent(self) -> None:
+        def finalize_handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(ok=True, summary="should not run")
+
         finalize_tool = ToolDef(
             name="finalize_self_update",
             summary="finalize update",
-            properties={"reason": {"type": "string", "description": "reason"}},
-            required=["reason"],
-            handler=lambda _args: ("should not run", [], None),
+            input_schema=object_schema(
+                {"reason": {"type": "string", "description": "reason"}},
+                required=("reason",),
+            ),
+            output_schema=object_schema(),
+            handler=finalize_handler,
         )
         llm = _FakeLLM(
             [
@@ -398,7 +515,7 @@ class AgentSessionTests(unittest.TestCase):
         self.assertEqual(result.lifecycle_intents[0].arguments["reason"], "第一次")
 
     def test_delegate_tool_can_bubble_lifecycle_intent_structurally(self) -> None:
-        def delegate_handler(args: dict):
+        def delegate_handler(_args: dict, _context: ToolContext) -> ToolResult:
             defer_lifecycle_intent(
                 DeferredLifecycleIntent(
                     name="finalize_self_update",
@@ -406,13 +523,13 @@ class AgentSessionTests(unittest.TestCase):
                     source="subagent",
                 )
             )
-            return ("developer subagent completed", [], None)
+            return ToolResult(ok=True, summary="developer subagent completed")
 
         delegate_tool = ToolDef(
             name="delegate_developer",
             summary="delegate developer",
-            properties={},
-            required=[],
+            input_schema=object_schema(),
+            output_schema=object_schema(),
             handler=delegate_handler,
         )
         llm = _FakeLLM(
@@ -430,7 +547,7 @@ class AgentSessionTests(unittest.TestCase):
         self.assertEqual(result.lifecycle_intents[0].source, "subagent")
 
     def test_failed_delegate_tool_does_not_commit_bubbled_lifecycle_intent(self) -> None:
-        def delegate_handler(args: dict):
+        def delegate_handler(_args: dict, _context: ToolContext) -> ToolResult:
             defer_lifecycle_intent(
                 DeferredLifecycleIntent(
                     name="finalize_self_update",
@@ -443,8 +560,8 @@ class AgentSessionTests(unittest.TestCase):
         delegate_tool = ToolDef(
             name="delegate_developer",
             summary="delegate developer",
-            properties={},
-            required=[],
+            input_schema=object_schema(),
+            output_schema=object_schema(),
             handler=delegate_handler,
         )
         llm = _FakeLLM(
@@ -697,14 +814,17 @@ class RepairOrphanToolCallsTests(unittest.TestCase):
     def test_timeout_path_repairs_history(self) -> None:
         """Simulates the timeout scenario from task_20260628_204607."""
 
-        def handler(args: dict):
-            return ("ok", [], None)
+        def handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(ok=True, summary="ok")
 
         tool = ToolDef(
             name="search",
             summary="search",
-            properties={"q": {"type": "string", "description": "query"}},
-            required=["q"],
+            input_schema=object_schema(
+                {"q": {"type": "string", "description": "query"}},
+                required=("q",),
+            ),
+            output_schema=object_schema(),
             handler=handler,
         )
         session = _make_session(

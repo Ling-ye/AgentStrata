@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 
 @dataclass
@@ -18,8 +18,8 @@ class DocAnchors:
 class ToolContext:
     """Explicit runtime context passed to tool handlers.
 
-    The current executor still supports legacy one-argument handlers while tool
-    packages are migrated. New tools should accept ``(args, ctx)``.
+    ``request_text`` is the trusted original user text for the current turn. It
+    is never derived from model-supplied tool arguments.
     """
 
     workspace: Any = None
@@ -29,10 +29,58 @@ class ToolContext:
     caller_role: str = "user"
     job: Any = None
     persistent_state: Any = None
+    request_text: str = ""
 
 
-HandlerResult = Tuple[str, List[str], Optional[str]]
-Handler = Callable[..., HandlerResult]
+@dataclass
+class ToolResult:
+    """One structured result returned by every tool handler."""
+
+    ok: bool
+    summary: str = ""
+    outputs: List[str] = field(default_factory=list)
+    console: str = ""
+    doc_links: List[str] = field(default_factory=list)
+    error: Optional[str] = None
+    artifact_kinds: List[str] = field(default_factory=list)
+    error_code: str = ""
+    details: Dict[str, Any] = field(default_factory=dict)
+    stage: str = ""
+    data: Dict[str, Any] = field(default_factory=dict)
+    file_type_hint: Optional[str] = None
+
+    def to_llm_payload(self) -> Dict[str, Any]:
+        """Return the bounded structured payload projected back to the model."""
+
+        if self.ok:
+            payload: Dict[str, Any] = {
+                "ok": True,
+                "summary": self.summary,
+                "outputs": self.outputs,
+            }
+            if self.data:
+                payload["data"] = self.data
+            if self.console:
+                payload["console_tail"] = self.console[-2000:]
+            if self.doc_links:
+                payload["doc_links"] = self.doc_links
+            return payload
+        payload = {
+            "ok": False,
+            "error": self.error or "unknown error",
+        }
+        if self.error_code:
+            payload["error_code"] = self.error_code
+        if self.details:
+            payload["details"] = self.details
+        if self.stage:
+            payload["stage"] = self.stage
+        if self.data:
+            payload["data"] = self.data
+        return payload
+
+
+Handler = Callable[[Mapping[str, Any], ToolContext], ToolResult]
 
 EXECUTION_SYNC = "sync"
 EXECUTION_GLOBAL_SERIAL_BACKGROUND = "global_serial_background"
@@ -56,12 +104,28 @@ class ToolHandlerError(RuntimeError):
         self.details = dict(details or {})
 
 
+def object_schema(
+    properties: Mapping[str, Mapping[str, Any]] | None = None,
+    *,
+    required: tuple[str, ...] | List[str] = (),
+    additional_properties: bool = False,
+) -> Dict[str, Any]:
+    """Build the complete object schema used by tool input and output contracts."""
+
+    return {
+        "type": "object",
+        "properties": dict(properties or {}),
+        "required": list(required),
+        "additionalProperties": additional_properties,
+    }
+
+
 @dataclass
 class ToolDef:
     name: str
     summary: str
-    properties: Dict[str, Dict[str, Any]]
-    required: List[str]
+    input_schema: Dict[str, Any]
+    output_schema: Dict[str, Any]
     handler: Handler
     aliases: List[str] = field(default_factory=list)
     doc_anchors: Optional[DocAnchors] = None
@@ -74,6 +138,20 @@ class ToolDef:
     deprecated: bool = False
     artifact_kinds: Tuple[str, ...] = ("file", "directory")
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def properties(self) -> Dict[str, Dict[str, Any]]:
+        """Compatibility view of the canonical input schema properties."""
+
+        value = self.input_schema.get("properties", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    @property
+    def required(self) -> List[str]:
+        """Compatibility view of the canonical input schema required fields."""
+
+        value = self.input_schema.get("required", [])
+        return list(value) if isinstance(value, (list, tuple)) else []
 
 
 _TYPE_MAP: Dict[Any, str] = {
@@ -140,18 +218,16 @@ def _description_with_aliases(tool: ToolDef) -> str:
 
 
 def build_openai_schema(tool: ToolDef) -> Dict[str, Any]:
-    sorted_props = dict(sorted(tool.properties.items()))
+    parameters = dict(tool.input_schema)
+    properties = parameters.get("properties")
+    if isinstance(properties, dict):
+        parameters["properties"] = dict(sorted(properties.items()))
     return {
         "type": "function",
         "function": {
             "name": tool.name,
             "description": _description_with_aliases(tool),
-            "parameters": {
-                "type": "object",
-                "properties": sorted_props,
-                "required": [d for d in tool.required if d in tool.properties],
-                "additionalProperties": False,
-            },
+            "parameters": parameters,
         },
     }
 
@@ -163,6 +239,7 @@ def build_mcp_schema(tool: ToolDef) -> Dict[str, Any]:
         "name": fn["name"],
         "description": fn["description"],
         "inputSchema": fn["parameters"],
+        "outputSchema": tool.output_schema,
     }
 
 
@@ -172,13 +249,14 @@ __all__ = [
     "EXECUTION_SYNC",
     "EXECUTION_USER_SERIAL_BACKGROUND",
     "Handler",
-    "HandlerResult",
     "ToolContext",
     "ToolDef",
     "ToolHandlerError",
+    "ToolResult",
     "action_to_property",
     "build_mcp_schema",
     "build_openai_schema",
     "index_actions_by_dest",
+    "object_schema",
     "properties_from_argparse",
 ]

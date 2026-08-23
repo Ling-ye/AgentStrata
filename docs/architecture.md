@@ -53,9 +53,10 @@ deploy / console / CLI
 - `platform` / `llm` / `workspace` / `deploy` / `access`：平台、模型、目录、部署与
   访问控制。
 
-BotSpec 只声明 tool-pack id。具体目录在 `tool_packs/catalog.py`，每个 module binding
-列出精确工具名；builtin 与 external 使用同一映射。工具发现统一走
-`agent/tools/registry`，Console 通过 `component_catalog` 读取同一目录投影。
+BotSpec 只声明 tool-pack id。具体目录在 `tool_packs/catalog.py`，catalog 只定位显式
+`ToolProvider` 模块，精确工具成员由领域 provider 自己声明；builtin 与 external 使用
+同一注册机制。静态和会话动态工具统一进入 `agent/tools/registry`，Agent 与 Console 通过
+同源 Registry 快照或 `component_catalog` 投影读取工具面。
 
 ## PromptPlan 信任分区
 
@@ -138,7 +139,9 @@ Owner 可 clear；member-visible turn diagnostics 仍禁用。已接受回合的
 工具均不能读取。准入拒绝保留同一 actor 分区的终态 task，但不激活执行 session；身份无效
 只写入 `.conversation-state/task-intake/tasks/` 的脱敏失败记录。任何入站消息无法先建立 task
 记录时失败关闭，不进入 Agent、附件或工具阶段。群人格使用通用 protected persona port 的
-`global → group` 层；Owner 调用现有 `persona_*` 工具，User/Admin 无法读取或修改任何层。
+`global → group` 层；启用 `persona.control` 后仅 Owner 主 Agent 获得 session-bound
+`persona_manage`，User/Admin 与 subagent 都不会获得该投影。handler 仍按可信 role、当前请求、
+scope、受保护提案和 mutation receipt 复检，模型参数不能越过授权边界。
 Owner 后台 job 的 request/status/
 result/log 位于 `.conversation-state/jobs/<actor-digest>/`，普通成员不能从 shared root 发现或控制。
 

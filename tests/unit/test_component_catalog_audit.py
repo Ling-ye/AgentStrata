@@ -8,10 +8,10 @@ import pytest
 from chatcopilot.component_catalog.audit import audit_component_catalog
 from chatcopilot.contracts.subagents import SubagentDef, WorkflowDef
 from chatcopilot.contracts.tool_packs import (
-    ToolModuleBinding,
     ToolPackEntry,
+    ToolProvider,
 )
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolDef, ToolResult, object_schema
 from chatcopilot.core.mcp_catalog import McpCatalogEntry
 from chatcopilot.core import mcp_catalog
 
@@ -20,9 +20,12 @@ def _tool(name: str = "demo_tool", **overrides: object) -> ToolDef:
     values: dict[str, object] = {
         "name": name,
         "summary": "A valid catalog audit tool.",
-        "properties": {"query": {"type": "string"}},
-        "required": ["query"],
-        "handler": lambda _args: ("ok", [], None),
+        "input_schema": object_schema(
+            {"query": {"type": "string"}},
+            required=("query",),
+        ),
+        "output_schema": object_schema(),
+        "handler": lambda _args, _ctx: ToolResult(ok=True, summary="ok"),
         "category": "tests.catalog",
         "owner": "tests",
     }
@@ -40,7 +43,6 @@ def _module(name: str, **exports: object) -> ModuleType:
 def _pack(
     name: str,
     module: str,
-    *tool_names: str,
     policy_module: str | None = None,
     policy_builder: str = "build_policy",
 ) -> ToolPackEntry:
@@ -49,7 +51,23 @@ def _pack(
         description=f"Catalog test pack {name}.",
         policy_module=policy_module,
         policy_builder=policy_builder,
-        tool_bindings=(ToolModuleBinding(module, tuple(tool_names)),),
+        provider_module=module,
+    )
+
+
+def _provider_module(
+    module: str,
+    packs: dict[str, tuple[ToolDef, ...]],
+    *,
+    provider_id: str | None = None,
+) -> ModuleType:
+    return _module(
+        module,
+        TOOL_PROVIDER=ToolProvider(
+            id=provider_id or module.rsplit(".", 1)[-1],
+            packs=packs,
+            module=module,
+        ),
     )
 
 
@@ -102,30 +120,32 @@ def test_strict_mcp_catalog_loading_rejects_duplicate_ids(monkeypatch) -> None:
         mcp_catalog.load_mcp_catalog(use_env_override=False, strict=True)
 
 
-def test_audit_enforces_exact_declared_membership() -> None:
+def test_audit_enforces_exact_provider_pack_membership() -> None:
     module_name = "chatcopilot.external_tools.tests.membership_tools"
-    module = _module(module_name, TOOLS=[_tool("declared"), _tool("orphan")])
+    module = _provider_module(
+        module_name,
+        {"tests.other": (_tool("declared"), _tool("orphan"))},
+    )
     packs = {
-        "tests.membership": _pack(
-            "tests.membership",
-            module_name,
-            "declared",
-            "missing",
-        )
+        "tests.membership": _pack("tests.membership", module_name)
     }
 
     report = _audit(packs, {module_name: module})
-    codes = {(issue.code, issue.tool) for issue in report.issues}
+    codes = {issue.code for issue in report.issues}
 
-    assert ("tool_binding.tool_missing", "missing") in codes
-    assert ("tool_module.tool_unassigned", "orphan") in codes
+    assert "tool_provider.pack_missing" in codes
+    assert "tool_provider.pack_unassigned" in codes
 
 
 def test_shared_module_and_explicit_shared_tool_are_valid_and_loaded_once() -> None:
     module_name = "chatcopilot.external_tools.tests.shared_tools"
-    module = _module(
+    shared = _tool("shared")
+    module = _provider_module(
         module_name,
-        TOOLS=[_tool("first"), _tool("second"), _tool("shared")],
+        {
+            "tests.first": (_tool("first"), shared),
+            "tests.second": (_tool("second"), shared),
+        },
     )
     calls: list[str] = []
 
@@ -135,8 +155,8 @@ def test_shared_module_and_explicit_shared_tool_are_valid_and_loaded_once() -> N
 
     report = audit_component_catalog(
         tool_packs={
-            "tests.first": _pack("tests.first", module_name, "first", "shared"),
-            "tests.second": _pack("tests.second", module_name, "second", "shared"),
+            "tests.first": _pack("tests.first", module_name),
+            "tests.second": _pack("tests.second", module_name),
         },
         tool_features={},
         mcp_entries={},
@@ -154,13 +174,17 @@ def test_cross_module_tool_name_conflict_is_rejected() -> None:
     first_name = "chatcopilot.external_tools.tests.first_tools"
     second_name = "chatcopilot.external_tools.tests.second_tools"
     modules = {
-        first_name: _module(first_name, TOOLS=[_tool("same_name")]),
-        second_name: _module(second_name, TOOLS=[_tool("same_name")]),
+        first_name: _provider_module(
+            first_name, {"tests.first": (_tool("same_name"),)}
+        ),
+        second_name: _provider_module(
+            second_name, {"tests.second": (_tool("same_name"),)}
+        ),
     }
     report = _audit(
         {
-            "tests.first": _pack("tests.first", first_name, "same_name"),
-            "tests.second": _pack("tests.second", second_name, "same_name"),
+            "tests.first": _pack("tests.first", first_name),
+            "tests.second": _pack("tests.second", second_name),
         },
         modules,
     )
@@ -178,7 +202,9 @@ def test_policy_mapping_and_policy_result_type_are_checked() -> None:
     policy_name = "chatcopilot.external_tools.tests.prompt_policy"
     builder = lambda: ("not-a-policy",)  # noqa: E731
     modules = {
-        tools_name: _module(tools_name, TOOLS=[_tool()]),
+        tools_name: _provider_module(
+            tools_name, {"tests.prompt": (_tool(),)}
+        ),
         policy_name: _module(
             policy_name,
             build_policy=builder,
@@ -190,7 +216,6 @@ def test_policy_mapping_and_policy_result_type_are_checked() -> None:
             "tests.prompt": _pack(
                 "tests.prompt",
                 tools_name,
-                "demo_tool",
                 policy_module=policy_name,
             )
         },
@@ -206,25 +231,23 @@ def test_policy_mapping_and_policy_result_type_are_checked() -> None:
 def test_tool_security_contract_and_schema_are_checked_without_calling_handler() -> None:
     calls: list[object] = []
 
-    def handler(args):
+    def handler(args, _ctx):
         calls.append(args)
-        return "ok", [], None
+        return ToolResult(ok=True, summary="ok")
 
     module_name = "chatcopilot.external_tools.tests.security_tools"
     tool = _tool(
         handler=handler,
         requires_role="owenr",
-        properties={
-            "query": {
-                "type": "string",
-                "default": object(),
-            }
-        },
+        input_schema=object_schema(
+            {"query": {"type": "string", "default": object()}},
+            required=("query",),
+        ),
     )
-    module = _module(module_name, TOOLS=[tool])
+    module = _provider_module(module_name, {"tests.security": (tool,)})
 
     report = _audit(
-        {"tests.security": _pack("tests.security", module_name, "demo_tool")},
+        {"tests.security": _pack("tests.security", module_name)},
         {module_name: module},
     )
 
@@ -235,6 +258,30 @@ def test_tool_security_contract_and_schema_are_checked_without_calling_handler()
     }
 
 
+def test_old_one_argument_handler_is_rejected_without_execution() -> None:
+    calls: list[object] = []
+
+    def old_handler(args):
+        calls.append(args)
+        return ToolResult(ok=True, data={})
+
+    module_name = "chatcopilot.external_tools.tests.old_handler_tools"
+    module = _provider_module(
+        module_name,
+        {"tests.old-handler": (_tool(handler=old_handler),)},
+    )
+
+    report = _audit(
+        {"tests.old-handler": _pack("tests.old-handler", module_name)},
+        {module_name: module},
+    )
+
+    assert calls == []
+    assert "tool.handler_signature_invalid" in {
+        issue.code for issue in report.issues
+    }
+
+
 def test_malformed_runtime_values_become_issues_instead_of_crashing() -> None:
     module_name = "chatcopilot.external_tools.tests.malformed_tools"
     malformed_tool = _tool(
@@ -242,16 +289,17 @@ def test_malformed_runtime_values_become_issues_instead_of_crashing() -> None:
         execution_policy=[],
         weight=[],
         artifact_kinds=([],),
+        input_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query", []],
+            "additionalProperties": False,
+        },
     )
     malformed_pack = ToolPackEntry(
         name="tests.malformed",
         description="Malformed runtime values.",
-        tool_bindings=(
-            ToolModuleBinding(
-                module_name,
-                ("demo_tool", []),  # type: ignore[arg-type]
-            ),
-        ),
+        provider_module=module_name,
     )
     malformed_mcp = McpCatalogEntry(
         id="tests-mcp",
@@ -262,7 +310,11 @@ def test_malformed_runtime_values_become_issues_instead_of_crashing() -> None:
 
     report = _audit(
         {"tests.malformed": malformed_pack},
-        {module_name: _module(module_name, TOOLS=[malformed_tool])},
+        {
+            module_name: _provider_module(
+                module_name, {"tests.malformed": (malformed_tool,)}
+            )
+        },
         mcp_entries={"tests-mcp": malformed_mcp},
     )
 
@@ -272,7 +324,7 @@ def test_malformed_runtime_values_become_issues_instead_of_crashing() -> None:
         "tool.execution_policy_invalid",
         "tool.requires_role_invalid",
         "tool.weight_invalid",
-        "tool_binding.name_invalid",
+        "tool.input_schema_invalid",
     }
 
 
@@ -286,7 +338,7 @@ def test_module_namespace_is_fail_closed_and_exception_text_is_redacted() -> Non
 
     outside_report = audit_component_catalog(
         tool_packs={
-            "tests.outside": _pack("tests.outside", "urllib.request", "demo_tool")
+            "tests.outside": _pack("tests.outside", "urllib.request")
         },
         tool_features={},
         mcp_entries={},
@@ -296,13 +348,13 @@ def test_module_namespace_is_fail_closed_and_exception_text_is_redacted() -> Non
     )
     assert calls == []
     assert {issue.code for issue in outside_report.issues} == {
-        "tool_binding.module_invalid"
+        "tool_pack.provider_module_invalid"
     }
 
     allowed_name = "chatcopilot.external_tools.tests.import_failure"
     import_report = audit_component_catalog(
         tool_packs={
-            "tests.import": _pack("tests.import", allowed_name, "demo_tool")
+            "tests.import": _pack("tests.import", allowed_name)
         },
         tool_features={},
         mcp_entries={},
@@ -312,14 +364,17 @@ def test_module_namespace_is_fail_closed_and_exception_text_is_redacted() -> Non
     )
     payload = json.dumps(import_report.to_dict(), ensure_ascii=False)
 
-    assert "tool_module.import_failed" in payload
+    assert "tool_provider.import_failed" in payload
     assert "RuntimeError" in payload
     assert hidden not in payload
 
 
 def test_cross_surface_delegate_name_and_workflow_references_are_checked() -> None:
     module_name = "chatcopilot.external_tools.tests.delegate_tools"
-    module = _module(module_name, TOOLS=[_tool("delegate_demo")])
+    module = _provider_module(
+        module_name,
+        {"tests.delegate": (_tool("delegate_demo"),)},
+    )
     subagent = SubagentDef(
         name="demo_agent",
         tool_name="delegate_demo",
@@ -334,7 +389,7 @@ def test_cross_surface_delegate_name_and_workflow_references_are_checked() -> No
     )
 
     report = _audit(
-        {"tests.delegate": _pack("tests.delegate", module_name, "delegate_demo")},
+        {"tests.delegate": _pack("tests.delegate", module_name)},
         {module_name: module},
         subagents={"demo_agent": subagent},
         workflows={"demo_flow": workflow},

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -57,7 +56,7 @@ def test_prepare_approve_and_consume_adapter_source_once(tmp_path: Path) -> None
     args = _args(bot_path)
 
     prepared = executor.execute("prepare_adapter_source", args, role=Role.OWNER)
-    prepared_payload = json.loads(prepared.summary)
+    prepared_payload = prepared.data
     digest = prepared_payload["candidate_digest"]
     approved = executor.execute(
         "approve_adapter_source",
@@ -67,7 +66,7 @@ def test_prepare_approve_and_consume_adapter_source_once(tmp_path: Path) -> None
 
     assert prepared.ok is True
     assert approved.ok is True
-    assert json.loads(approved.summary)["status"] == "approved"
+    assert approved.data["status"] == "approved"
     store = AdapterApprovalStore.for_bot(bot_path)
     record = store.consume(
         envelope=_envelope(args),

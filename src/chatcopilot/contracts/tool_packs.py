@@ -1,44 +1,45 @@
-"""Tool pack DTO contracts shared by BotSpec validation and Agent discovery."""
+"""Tool-provider and tool-pack contracts shared by discovery and BotSpec."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Mapping
+
+from chatcopilot.contracts.tools import ToolDef
 
 
 @dataclass(frozen=True)
-class ToolModuleBinding:
-    """Exact tool names contributed by one repository module to a tool pack."""
+class ToolProvider:
+    """One explicitly registered source of tools grouped by BotSpec pack id."""
 
-    module: str
-    tool_names: tuple[str, ...]
+    id: str
+    packs: Mapping[str, tuple[ToolDef, ...]]
+    module: str = ""
+    description: str = ""
+
+    def __post_init__(self) -> None:
+        normalized = {
+            pack_id: tuple(tools)
+            for pack_id, tools in self.packs.items()
+        }
+        object.__setattr__(self, "packs", MappingProxyType(normalized))
+
+    @property
+    def pack_names(self) -> tuple[str, ...]:
+        return tuple(self.packs)
 
 
 @dataclass(frozen=True)
 class ToolPackEntry:
+    """Central index entry containing no duplicated tool-name membership."""
+
     name: str
+    provider_module: str | None = None
+    dynamic: bool = False
     policy_module: str | None = None
     policy_builder: str = "build_policy"
-    tool_bindings: tuple[ToolModuleBinding, ...] = ()
     http_route_modules: tuple[str, ...] = ()
     description: str = ""
-
-    @property
-    def tool_modules(self) -> tuple[str, ...]:
-        """Return declared module paths without exposing mutable registry state."""
-
-        return tuple(binding.module for binding in self.tool_bindings)
-
-    @property
-    def tool_names(self) -> tuple[str, ...]:
-        """Return the ordered union of exact tool names exposed by this pack."""
-
-        return tuple(
-            dict.fromkeys(
-                tool_name
-                for binding in self.tool_bindings
-                for tool_name in binding.tool_names
-            )
-        )
-
 
 @dataclass(frozen=True)
 class ToolFeatureEntry:
@@ -83,10 +84,28 @@ def tool_pack_policies(
     )
 
 
+def static_tool_provider(
+    provider_id: str,
+    *,
+    packs: Mapping[str, tuple[ToolDef, ...]],
+    module: str,
+    description: str = "",
+) -> ToolProvider:
+    """Construct an explicit provider for domain-owned static tool tuples."""
+
+    return ToolProvider(
+        id=provider_id,
+        packs=packs,
+        module=module,
+        description=description,
+    )
+
+
 __all__ = [
     "ToolFeatureEntry",
-    "ToolModuleBinding",
     "ToolPackEntry",
     "ToolPackPolicy",
+    "ToolProvider",
+    "static_tool_provider",
     "tool_pack_policies",
 ]

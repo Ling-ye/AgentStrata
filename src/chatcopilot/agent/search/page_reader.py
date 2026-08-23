@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult
 
 _JS_SHELL_RE = re.compile(
     r"(enable javascript|javascript is required|requires javascript|"
@@ -75,19 +75,27 @@ class PageReader:
                 actual_source="web_fetch",
             )
         try:
-            summary, outputs, _hint = self._web_fetch.handler(
-                {"url": url, "max_chars": self._max_chars}
+            tool_result = self._web_fetch.handler(
+                {"url": url, "max_chars": self._max_chars},
+                ToolContext(),
             )
         except Exception as exc:  # noqa: BLE001
-            summary = f"{type(exc).__name__}: {exc}"
-            outputs = []
+            tool_result = ToolResult(ok=False, error=f"{type(exc).__name__}: {exc}")
+
+        if not isinstance(tool_result, ToolResult):
+            tool_result = ToolResult(ok=False, error="invalid_tool_result")
+        summary = (
+            tool_result.summary
+            if tool_result.ok
+            else f"Error: {tool_result.error or 'web fetch failed'}"
+        )
 
         result = PageReadResult(
             url=url,
             method="static",
-            ok=not str(summary).startswith("Error:"),
+            ok=tool_result.ok,
             summary=summary,
-            outputs=list(outputs),
+            outputs=list(tool_result.outputs),
             actual_source="web_fetch",
         )
         if (
@@ -146,7 +154,7 @@ class PageReader:
             "evidence_required": ["final URL", "rendered page facts"],
         }
         try:
-            summary, outputs, _hint = self._dynamic_browser.handler(dynamic_args)
+            tool_result = self._dynamic_browser.handler(dynamic_args, ToolContext())
         except Exception as exc:  # noqa: BLE001
             return PageReadResult(
                 url=url,
@@ -156,14 +164,23 @@ class PageReader:
                 outputs=[],
                 actual_source="playwright",
             )
-        payload = _parse_payload(summary)
-        ok = payload.get("ok") is not False and not str(summary).startswith("Error:")
+        if not isinstance(tool_result, ToolResult):
+            return PageReadResult(
+                url=url,
+                method="dynamic",
+                ok=False,
+                summary="invalid_tool_result",
+                outputs=[],
+                actual_source="playwright",
+            )
+        payload = dict(tool_result.data) or _parse_payload(tool_result.summary)
+        ok = tool_result.ok and payload.get("ok") is not False
         return PageReadResult(
             url=url,
             method="dynamic",
             ok=ok,
-            summary=payload if payload else summary,
-            outputs=list(outputs),
+            summary=payload if payload else (tool_result.summary or tool_result.error or ""),
+            outputs=list(tool_result.outputs),
             actual_source="playwright",
         )
 

@@ -19,7 +19,13 @@ from chatcopilot.contracts.agent import (
     ResourceRef,
 )
 from chatcopilot.core.llm_client import ChatResult, LLMClient
-from chatcopilot.contracts.tools import ToolDef, build_openai_schema
+from chatcopilot.contracts.tools import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    build_openai_schema,
+    object_schema,
+)
 
 
 _PNG_BYTES = b"\x89PNG\r\n\x1a\nmultimodal-test"
@@ -138,12 +144,15 @@ def test_native_tool_loop_keeps_resource_receipts_on_every_context_snapshot(
     image_path = tmp_path / "input.png"
     image_path.write_bytes(_PNG_BYTES)
     resource = _image_resource(image_path)
+    def ping_handler(_args: dict, _context: ToolContext) -> ToolResult:
+        return ToolResult(ok=True, summary="pong")
+
     ping = ToolDef(
         name="ping",
         summary="Ping once",
-        properties={},
-        required=[],
-        handler=lambda _args: ("pong", [], None),
+        input_schema=object_schema(),
+        output_schema=object_schema(),
+        handler=ping_handler,
     )
     tool_call = {
         "id": "call-ping",

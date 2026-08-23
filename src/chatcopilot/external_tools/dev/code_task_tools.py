@@ -30,9 +30,10 @@ from chatcopilot.external_tools.dev.code_task_delivery import (
 from chatcopilot.external_tools.shared.spec_helpers import schema_property
 from chatcopilot.external_tools.shared.tool_spec import (
     EXECUTION_GLOBAL_SERIAL_BACKGROUND,
-    HandlerResult,
     ToolContext,
     ToolDef,
+    ToolResult,
+    object_schema,
 )
 
 _OWNER = "dev.code_tasks"
@@ -48,17 +49,17 @@ def _tool(**kwargs: Any) -> ToolDef:
     )
 
 
-def _start(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
+def _start(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     return execute_code_task(args, ctx)
 
 
-def _status(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
+def _status(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     job = _resolve_job(args, ctx)
     payload = _public_status(job)
-    return json.dumps(payload, ensure_ascii=False), [], None
+    return ToolResult(ok=True, summary="已查询代码任务状态。", data=payload)
 
 
-def _cancel(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
+def _cancel(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     job = _resolve_job(args, ctx)
     caller = _caller_user_id(ctx)
     requested = request_job_cancel(job, requested_by=caller or "owner")
@@ -77,10 +78,10 @@ def _cancel(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
             "process_termination_requested": terminated,
         }
     )
-    return json.dumps(payload, ensure_ascii=False), [], None
+    return ToolResult(ok=True, summary="已处理代码任务取消请求。", data=payload)
 
 
-def _resume(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
+def _resume(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     job = _resolve_job(args, ctx, require_id=True)
     prompt = str(args.get("prompt") or "").strip()
     delivery_only = delivery_retry_pending(job.job_dir)
@@ -104,7 +105,12 @@ def _resume(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
     unit = schedule_code_task_worker(job.request_path)
     payload = _public_status(job)
     payload.update({"attempt": attempt, "worker": unit})
-    return json.dumps(payload, ensure_ascii=False), [str(job.job_dir)], None
+    return ToolResult(
+        ok=True,
+        summary="已提交代码任务恢复请求。",
+        outputs=[str(job.job_dir)],
+        data=payload,
+    )
 
 
 def _resolve_job(
@@ -208,6 +214,7 @@ _TASK_ID = schema_property(
     type="string",
     description="Code task id returned by start_code_task. Omit only for latest-task queries.",
 )
+_CODE_TASK_RESULT_SCHEMA = {"type": "object", "additionalProperties": True}
 
 TOOLS = [
     _tool(
@@ -220,7 +227,7 @@ TOOLS = [
             "the user requested a plan before later confirmation, do not call this tool "
             "until that confirmation arrives, then submit the complete approved plan."
         ),
-        properties={
+        input_schema=object_schema({
             "prompt": schema_property(
                 type="string",
                 description="Complete implementation request preserving the user's intent.",
@@ -241,8 +248,8 @@ TOOLS = [
                 "description": "Optional observable acceptance criteria inferred from the request.",
                 "default": [],
             },
-        },
-        required=["prompt", "title"],
+        }, required=("prompt", "title")),
+        output_schema=_CODE_TASK_RESULT_SCHEMA,
         handler=_start,
         execution_policy=EXECUTION_GLOBAL_SERIAL_BACKGROUND,
         category="development.task.write",
@@ -251,8 +258,8 @@ TOOLS = [
     _tool(
         name="get_code_task",
         summary="Get redacted progress, heartbeat, changed files, checks, and result for a code task.",
-        properties={"task_id": _TASK_ID},
-        required=[],
+        input_schema=object_schema({"task_id": _TASK_ID}),
+        output_schema=_CODE_TASK_RESULT_SCHEMA,
         handler=_status,
         category="development.task.read",
     ),
@@ -262,8 +269,8 @@ TOOLS = [
             "Idempotently cancel a queued or running code task and terminate its execution "
             "group. Draft-PR delivery is non-cancellable once it starts."
         ),
-        properties={"task_id": _TASK_ID},
-        required=[],
+        input_schema=object_schema({"task_id": _TASK_ID}),
+        output_schema=_CODE_TASK_RESULT_SCHEMA,
         handler=_cancel,
         category="development.task.write",
     ),
@@ -273,7 +280,7 @@ TOOLS = [
             "Resume a failed, cancelled, or interrupted code task. Delivery failures retry "
             "the retained commit without invoking Codex again."
         ),
-        properties={
+        input_schema=object_schema({
             "task_id": _TASK_ID,
             "prompt": schema_property(
                 type="string",
@@ -282,8 +289,8 @@ TOOLS = [
                     "retrying an already validated PR delivery."
                 ),
             ),
-        },
-        required=["task_id"],
+        }, required=("task_id",)),
+        output_schema=_CODE_TASK_RESULT_SCHEMA,
         handler=_resume,
         category="development.task.write",
     ),

@@ -458,7 +458,7 @@ def test_fake_codex_jsonl_task_streams_validates_and_keeps_source_unchanged(
     )
     ctx = ToolContext(job=_JobContext(job_dir))
 
-    summary, outputs, _ = runtime.execute_code_task(
+    result = runtime.execute_code_task(
         {
             "prompt": "implement a regression fix",
             "title": _PUBLIC_TITLE,
@@ -467,7 +467,8 @@ def test_fake_codex_jsonl_task_streams_validates_and_keeps_source_unchanged(
         ctx,
     )
 
-    payload = json.loads(summary)
+    payload = result.data
+    assert result.ok is True
     assert payload["changed_files"] == ["codex-args.json", "tracked.txt"]
     assert payload["delivered"] is True
     assert payload["draft"] is True
@@ -475,7 +476,7 @@ def test_fake_codex_jsonl_task_streams_validates_and_keeps_source_unchanged(
     assert "--ignore-rules" in payload["final"]
     assert "mcp_servers={}" in payload["final"]
     assert "features.hooks=false" in payload["final"]
-    assert outputs == [str(job_dir)]
+    assert result.outputs == [str(job_dir)]
     assert (source / "tracked.txt").read_text(encoding="utf-8") == "tracked baseline\n"
     assert not (job_dir / "worktree").exists()
     assert "thread-test-1" in (job_dir / runtime.CODEX_EVENTS_FILENAME).read_text(
@@ -513,7 +514,7 @@ def test_failed_task_retains_worktree_and_resume_reuses_native_session(
     assert session["native_session_id"] == "thread-test-1"
     assert session["credential_generation"] == 0
 
-    summary, _, _ = runtime.execute_code_task(
+    result = runtime.execute_code_task(
         {
             "prompt": "resume succeeds",
             "title": _PUBLIC_TITLE,
@@ -522,7 +523,8 @@ def test_failed_task_retains_worktree_and_resume_reuses_native_session(
         ctx,
     )
 
-    payload = json.loads(summary)
+    payload = result.data
+    assert result.ok is True
     assert payload["changed_files"] == [
         "codex-args.json",
         "pass.marker",

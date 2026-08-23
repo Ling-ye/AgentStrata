@@ -1381,8 +1381,6 @@ class AcpChatAgent(Agent):
         task_metadata: Optional[dict[str, Any]] = None,
         task_resources: tuple[ResourceRef, ...] = (),
         task_turn_context: str | None = None,
-        final_text_prefix: str = "",
-        journal_user_text: str | None = None,
     ) -> PromptResponse:
         loop = asyncio.get_running_loop()
         self._loop = loop
@@ -1494,20 +1492,12 @@ class AcpChatAgent(Agent):
                     lifecycle_intents=(),
                 )
                 translator.replace_final_text(failure_text)
-            if final_text_prefix:
-                combined_text = "\n\n".join(
-                    part.strip()
-                    for part in (final_text_prefix, result.final_text)
-                    if part and part.strip()
-                )
-                result = replace(result, final_text=combined_text)
-                translator.replace_final_text(combined_text)
             if code_model_selection is not None:
                 session.consume_code_model_once(code_model_selection)
             if getattr(session.workspace, "scope", "actor") == WORKSPACE_SCOPE_GROUP_SHARED:
                 try:
                     session.record_group_model_exchange(
-                        journal_user_text or user_text,
+                        user_text,
                         result.final_text,
                     )
                 except Exception:  # noqa: BLE001 - backend advanced but journal did not

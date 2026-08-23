@@ -10,7 +10,12 @@ from typing import Any
 from chatcopilot.contracts.development import current_development_task_scope
 from chatcopilot.external_tools.dev.config import get_dev_config, DevConfig
 from chatcopilot.external_tools.dev.path_guard import DevPathAccessError
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.external_tools.shared.tool_spec import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 
 
 def _validate_command(config: DevConfig, command: str) -> str | None:
@@ -121,21 +126,36 @@ def _resolve_cwd(config: DevConfig, cwd_raw: str | None) -> Path:
     return resolved
 
 
-def _handle_run_command(args: dict[str, Any]) -> HandlerResult:
+def _handle_run_command(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     config = get_dev_config()
     command = str(args.get("command") or "").strip()
     if not command:
-        return "command is required", [], None
+        return ToolResult(
+            ok=False,
+            error="command is required",
+            error_code="command_required",
+            stage="validation",
+        )
 
     blocked = _validate_command(config, command)
     if blocked:
-        return blocked, [], None
+        return ToolResult(
+            ok=False,
+            error=blocked,
+            error_code="command_blocked",
+            stage="validation",
+        )
 
     cwd_raw = args.get("cwd")
     try:
         cwd = _resolve_cwd(config, str(cwd_raw) if cwd_raw else None)
     except DevPathAccessError as e:
-        return str(e), [], None
+        return ToolResult(
+            ok=False,
+            error=str(e),
+            error_code="command_cwd_invalid",
+            stage="validation",
+        )
 
     timeout_raw = args.get("timeout_seconds")
     timeout = config.shell.timeout_default
@@ -154,9 +174,19 @@ def _handle_run_command(args: dict[str, Any]) -> HandlerResult:
             env=None,  # inherit parent env
         )
     except subprocess.TimeoutExpired:
-        return f"Command timed out after {timeout}s: {command}", [], None
+        return ToolResult(
+            ok=False,
+            error=f"Command timed out after {timeout}s: {command}",
+            error_code="command_timeout",
+            stage="execution",
+        )
     except OSError as e:
-        return f"Command execution failed: {e}", [], None
+        return ToolResult(
+            ok=False,
+            error=f"Command execution failed: {e}",
+            error_code="command_execution_failed",
+            stage="execution",
+        )
 
     output_parts: list[str] = []
     if result.stdout:
@@ -173,7 +203,14 @@ def _handle_run_command(args: dict[str, Any]) -> HandlerResult:
     status = "OK" if exit_code == 0 else f"exit code {exit_code}"
     summary = f"[{status}] {command}"
 
-    return summary, [combined] if combined.strip() else [], None
+    return ToolResult(
+        ok=exit_code == 0,
+        summary=summary if exit_code == 0 else "",
+        data={"command": command, "exit_code": exit_code, "output": combined},
+        error=summary if exit_code != 0 else None,
+        error_code="command_nonzero_exit" if exit_code != 0 else "",
+        stage="execution" if exit_code != 0 else "",
+    )
 
 
 TOOLS: list[ToolDef] = [
@@ -184,15 +221,23 @@ TOOLS: list[ToolDef] = [
             "Use for running tests, builds, linters, or other dev tasks. "
             "Commands are restricted to the project root."
         ),
-        properties={
+        input_schema=object_schema({
             "command": {"type": "string", "description": "Shell command to execute"},
             "cwd": {"type": "string", "description": "Working directory relative to project root (default: project root)"},
             "timeout_seconds": {"type": "integer", "description": "Timeout in seconds (default 60, max 300)"},
-        },
-        required=["command"],
+        }, required=("command",)),
+        output_schema=object_schema(
+            {
+                "command": {"type": "string"},
+                "exit_code": {"type": "integer"},
+                "output": {"type": "string"},
+            },
+            required=("command", "exit_code", "output"),
+        ),
         handler=_handle_run_command,
         category="dev.shell",
         owner="dev",
+        module=__name__,
         requires_role="owner",
         weight="heavy",
     ),

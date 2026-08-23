@@ -4,10 +4,10 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from chatcopilot.agent.tools.workspace_context import resolve_workspace
-from chatcopilot.contracts.tools import HandlerResult
+from chatcopilot.contracts.tools import ToolContext, ToolResult
 from chatcopilot.agent.tools.builtin.workspace.common import _format_mtime, _require, _silent_cleanup
 
-def _handler_get_job_status(args: Dict[str, Any]) -> HandlerResult:
+def _handler_get_job_status(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     """查询后台任务（jobs/<job_id>/）的实时状态 + 末尾进度。
 
     背景：``long_running_export`` / ``long_running_analysis`` 等长耗时
@@ -26,11 +26,15 @@ def _handler_get_job_status(args: Dict[str, Any]) -> HandlerResult:
 
     job_id = _require(args, "job_id").strip()
     if job_id.startswith("task_"):
-        return (
-            f"{job_id} 是单轮对话任务 ID，不是后台 job ID。\n"
-            "请改用 get_task_status(task_id=...) 查询 stop reason、最终回复、工具调用和关联 job。",
-            [],
-            None,
+        return ToolResult(
+            ok=False,
+            error=(
+                f"{job_id} 是单轮对话任务 ID，不是后台 job ID。\n"
+                "请改用 get_task_status(task_id=...) 查询 stop reason、最终回复、工具调用和关联 job。"
+            ),
+            error_code="invalid_job_id",
+            stage="validation",
+            data={"job_id": job_id},
         )
     tail_lines = int(args.get("tail_lines") or 20)
     if tail_lines < 0 or tail_lines > 200:
@@ -39,13 +43,17 @@ def _handler_get_job_status(args: Dict[str, Any]) -> HandlerResult:
     ws = resolve_workspace(create=True)
     job = find_job(ws, job_id)
     if job is None:
-        return (
-            f"当前工作区内找不到后台任务: {job_id}\n"
-            f"workspace={ws.root}\n"
-            f"提示：任务 ID 格式必须为 job_<YYYYMMDD>_<HHMMSS>_<8 位 hex>；"
-            f"也可能任务属于别的会话或已被清理。",
-            [],
-            None,
+        return ToolResult(
+            ok=False,
+            error=(
+                f"当前工作区内找不到后台任务: {job_id}\n"
+                f"workspace={ws.root}\n"
+                "提示：任务 ID 格式必须为 job_<YYYYMMDD>_<HHMMSS>_<8 位 hex>；"
+                "也可能任务属于别的会话或已被清理。"
+            ),
+            error_code="job_not_found",
+            stage="validation",
+            data={"job_id": job_id},
         )
 
     status = read_job_status(job) or {}
@@ -100,16 +108,43 @@ def _handler_get_job_status(args: Dict[str, Any]) -> HandlerResult:
         if err and not ok:
             lines.append(f"失败原因: {err[:500]}")
 
-    return ("\n".join(lines), [str(job.job_dir)], None)
+    return ToolResult(
+        ok=True,
+        summary="\n".join(lines),
+        outputs=[str(job.job_dir)],
+        data={
+            "job_id": job.job_id,
+            "tool_name": job.tool_name or "unknown",
+            "execution_policy": job.execution_policy or "unknown",
+            "status": str(status.get("status") or "unknown"),
+            "queue_position": job.queue_position,
+            "completed": result is not None,
+        },
+    )
 
 
-def _handler_get_task_status(args: Dict[str, Any]) -> HandlerResult:
+def _handler_get_task_status(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     from chatcopilot.core.tasks import format_task_status
 
     task_id = _require(args, "task_id").strip()
     ws = resolve_workspace(create=True)
     try:
-        return format_task_status(ws, task_id)
+        summary, outputs, file_type_hint = format_task_status(ws, task_id)
+        if not outputs:
+            return ToolResult(
+                ok=False,
+                error=summary,
+                error_code="task_not_found_or_invalid",
+                stage="validation",
+                data={"task_id": task_id},
+            )
+        return ToolResult(
+            ok=True,
+            summary=summary,
+            outputs=outputs,
+            file_type_hint=file_type_hint,
+            data={"task_id": task_id},
+        )
     finally:
         _silent_cleanup(ws)
 

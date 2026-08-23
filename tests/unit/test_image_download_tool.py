@@ -10,6 +10,7 @@ from unittest import mock
 from chatcopilot.agent.tools.workspace_context import bind_workspace_service
 from chatcopilot.agent.tools.builtin import workspace_tools
 from chatcopilot.agent.tools.registry import discover_tools
+from chatcopilot.contracts.tools import ToolContext
 from chatcopilot.core.workspace_runtime import Workspace
 
 
@@ -99,22 +100,23 @@ class DownloadImageUrlsTests(unittest.TestCase):
             "chatcopilot.agent.tools.builtin.workspace_tools.urllib.request.urlopen",
             return_value=_FakeResponse(_PNG),
         ), bind_workspace_service(_WorkspaceService(self.root)):
-            summary, outputs, file_type = workspace_tools._handler_download_image_urls(
-                {"urls": ["https://example.com/a.png"]}
+            result = workspace_tools._handler_download_image_urls(
+                {"urls": ["https://example.com/a.png"]}, ToolContext()
             )
 
-        self.assertEqual(file_type, "image")
-        self.assertEqual(len(outputs), 1)
-        output = Path(outputs[0])
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(result.file_type_hint, "image")
+        self.assertEqual(len(result.outputs), 1)
+        output = Path(result.outputs[0])
         self.assertTrue(output.is_file())
         self.assertTrue(str(output).startswith(str(self.root)))
-        self.assertIn("downloads", summary)
+        self.assertIn("downloads", result.summary)
         self.assertEqual(output.read_bytes(), _PNG)
 
     def test_rejects_private_ip_url(self) -> None:
         with bind_workspace_service(_WorkspaceService(self.root)), self.assertRaises(RuntimeError) as ctx:
             workspace_tools._handler_download_image_urls(
-                {"urls": ["http://127.0.0.1/a.png"]}
+                {"urls": ["http://127.0.0.1/a.png"]}, ToolContext()
             )
         self.assertIn("没有成功下载任何图片", str(ctx.exception))
 
@@ -125,7 +127,7 @@ class DownloadImageUrlsTests(unittest.TestCase):
         ), bind_workspace_service(_WorkspaceService(self.root)):
             with self.assertRaises(RuntimeError) as ctx:
                 workspace_tools._handler_download_image_urls(
-                    {"urls": ["https://example.com/a.html"]}
+                    {"urls": ["https://example.com/a.html"]}, ToolContext()
                 )
         self.assertIn("没有成功下载任何图片", str(ctx.exception))
 

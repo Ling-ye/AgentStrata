@@ -966,7 +966,7 @@ def test_qq_flow_snapshot_hashes_real_acp_orchestration_and_attestation_modules(
         "chatcopilot.platforms.qq.ingress_probe",
         "chatcopilot.middleware.acp.server",
         "chatcopilot.middleware.acp.agent_bridge",
-        "chatcopilot.middleware.acp.persona_control",
+        "chatcopilot.agent.persona.tools",
         "chatcopilot.middleware.acp.transport_attestation",
         "chatcopilot.middleware.acp.turn_orchestrator",
         "chatcopilot.middleware.acp.event_translator",

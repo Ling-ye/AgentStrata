@@ -1913,10 +1913,11 @@ def _qq_flow_receipt(
             "middleware.identity_validated",
             "middleware.access_decision",
             "middleware.identity_activated",
-            "persona_decision",
-            "persona_draft",
-            "persona_mutation",
-            "persona_outcome",
+            "middleware.session_materialized",
+            "agent.task_submitted",
+            "tool_started",
+            "tool_finished",
+            "delivery.session_update",
             "task_finished",
         )
         next_required_events = (
@@ -1946,13 +1947,18 @@ def _qq_flow_receipt(
             "first_turn_access_allowed",
             "first_turn_identity_activated",
             "first_turn_role_resolved_owner",
-            "first_turn_persona_decision_observed",
+            "first_turn_session_materialized",
+            "first_turn_agent_task_submitted",
+            "first_turn_persona_tool_visible",
+            "first_turn_persona_tool_called",
             "persona_draft_request_bound",
+            "first_turn_persona_tool_succeeded",
             "first_turn_persona_draft_observed",
-            "first_turn_persona_mutation_observed",
-            "first_turn_persona_outcome_persisted",
+            "first_turn_persona_receipt_committed",
             "first_turn_task_succeeded",
             "first_turn_client_receipt_observed",
+            "first_turn_model_replaced",
+            "first_turn_synthetic_tool_call",
             "mutation_receipt_hash_matches_snapshot",
             "protected_snapshot_contains_marker",
             "protected_state_observed",
@@ -1982,7 +1988,7 @@ def _qq_flow_receipt(
             and receipt.get("task_record_count") == 2
             and receipt.get("persona_draft_stub_construct_count") == 1
             and receipt.get("persona_draft_stub_invocation_count") == 1
-            and receipt.get("first_turn_main_agent_invocation_count") == 0
+            and receipt.get("first_turn_main_agent_invocation_count") == 1
             and receipt.get("next_turn_prompt_persona_layer_count") == 1
             and receipt.get("next_turn_main_agent_invocation_count") == 1
             and receipt.get("next_turn_client_session_update_count") == 1

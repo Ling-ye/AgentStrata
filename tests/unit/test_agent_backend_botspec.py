@@ -158,6 +158,18 @@ class AgentBackendBotSpecTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("native, langgraph, codex", errors[0].message)
 
+    def test_removed_agents_persona_control_points_to_tool_pack(self) -> None:
+        with TemporaryDirectory(dir="/tmp") as tmp:
+            path = _write_bot(
+                Path(tmp),
+                "persona_control:\n  enabled: true",
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                r"agents\.persona_control was removed; enable persona\.control",
+            ):
+                load_botspec(path)
+
     def test_removed_default_route_is_an_immediate_validation_error(self) -> None:
         with TemporaryDirectory(dir="/tmp") as tmp:
             path = _write_bot(Path(tmp), "backend: native")

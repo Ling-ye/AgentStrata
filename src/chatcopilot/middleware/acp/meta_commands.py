@@ -16,7 +16,7 @@ import os
 import re
 from typing import Any, Callable, Dict, Mapping, Optional
 
-from chatcopilot.contracts.tools import HandlerResult, ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.middleware.access_control import (
     AssistantMode,
     Role,
@@ -166,7 +166,8 @@ def _build_set_assistant_mode_tool(
 ) -> ToolDef:
     """构造飞书会话本地工具：由 LLM 调用来切换业务模式。"""
 
-    def _handler(args: Dict[str, Any]) -> HandlerResult:
+    def _handler(args: Dict[str, Any], ctx: ToolContext) -> ToolResult:
+        del ctx
         session = session_getter()
         raw_mode = str(args.get("mode") or "").strip().lower()
         try:
@@ -176,20 +177,25 @@ def _build_set_assistant_mode_tool(
 
         if desired == AssistantMode.GENERAL and not _can_session_select_general_mode(session):
             _force_performance_mode(session, refresh_prompt_plan)
-            return (_general_denied_message(session), [], None)
+            return ToolResult(
+                ok=False,
+                error=_general_denied_message(session),
+                error_code="assistant_mode_denied",
+                stage="permission",
+            )
 
         if session.assistant_mode == desired:
-            return (
-                f"当前已经是{_assistant_mode_label(desired)}，无需切换。",
-                [],
-                None,
+            return ToolResult(
+                ok=True,
+                summary=f"当前已经是{_assistant_mode_label(desired)}，无需切换。",
+                data={"mode": desired.value, "changed": False},
             )
 
         _set_mode_and_refresh(session, desired, refresh_prompt_plan)
-        return (
-            f"已切换到{_assistant_mode_label(desired)}。",
-            [],
-            None,
+        return ToolResult(
+            ok=True,
+            summary=f"已切换到{_assistant_mode_label(desired)}。",
+            data={"mode": desired.value, "changed": True},
         )
 
     return ToolDef(
@@ -200,7 +206,7 @@ def _build_set_assistant_mode_tool(
             "或用自然语言表达类似意图时调用本工具；不要自行声称已切换。"
             "通用模式仅 Owner 私聊可用，工具会做最终权限校验。"
         ),
-        properties={
+        input_schema=object_schema({
             "mode": {
                 "type": "string",
                 "enum": [AssistantMode.PERFORMANCE.value, AssistantMode.GENERAL.value],
@@ -210,43 +216,79 @@ def _build_set_assistant_mode_tool(
                 "type": "string",
                 "description": "用户请求切换模式的简短原因或原话摘要。",
             },
-        },
-        required=["mode"],
+        }, required=("mode",)),
+        output_schema=object_schema(
+            {
+                "mode": {
+                    "type": "string",
+                    "enum": [
+                        AssistantMode.PERFORMANCE.value,
+                        AssistantMode.GENERAL.value,
+                    ],
+                },
+                "changed": {"type": "boolean"},
+            },
+            required=("mode", "changed"),
+        ),
         handler=_handler,
         aliases=["业务模式切换", "切换通用模式", "切换性能分析模式"],
         weight="light",
+        category="session.control",
+        owner="middleware",
+        module=__name__,
+        artifact_kinds=(),
     )
 
 
 def _build_set_debug_mode_tool(session_getter: Callable[[], SessionState]) -> ToolDef:
     """构造飞书会话本地工具：由 LLM 调用来切换调试输出模式。"""
 
-    def _handler(args: Dict[str, Any]) -> HandlerResult:
+    def _handler(args: Dict[str, Any], ctx: ToolContext) -> ToolResult:
+        del ctx
         session = session_getter()
         mode = str(args.get("mode") or "").strip().lower()
         if mode not in {"on", "off", "status"}:
             raise ValueError("mode 只能是 on / off / status")
 
         if mode == "status":
-            return (
-                f"当前调试模式：{'on' if session.debug_mode else 'off'}；"
-                f"当前角色：{session.role.value}（{_debug_toggle_hint(session)}）。",
-                [],
-                None,
+            return ToolResult(
+                ok=True,
+                summary=(
+                    f"当前调试模式：{'on' if session.debug_mode else 'off'}；"
+                    f"当前角色：{session.role.value}（{_debug_toggle_hint(session)}）。"
+                ),
+                data={"mode": "on" if session.debug_mode else "off", "changed": False},
             )
 
         if not _can_session_toggle_debug(session):
             session.debug_mode = False
-            return (_debug_denied_message(session), [], None)
+            return ToolResult(
+                ok=False,
+                error=_debug_denied_message(session),
+                error_code="debug_mode_denied",
+                stage="permission",
+            )
 
         desired = mode == "on"
         if session.debug_mode == desired:
-            return (f"调试模式已经是 {mode}，无需切换。", [], None)
+            return ToolResult(
+                ok=True,
+                summary=f"调试模式已经是 {mode}，无需切换。",
+                data={"mode": mode, "changed": False},
+            )
 
         session.debug_mode = desired
         if desired:
-            return ("调试模式已开启：本会话内将一并推送 LLM 中间文本与工具调用进度。", [], None)
-        return ("调试模式已关闭：本会话内只推送每轮的最终结论。", [], None)
+            return ToolResult(
+                ok=True,
+                summary="调试模式已开启：本会话内将一并推送 LLM 中间文本与工具调用进度。",
+                data={"mode": "on", "changed": True},
+            )
+        return ToolResult(
+            ok=True,
+            summary="调试模式已关闭：本会话内只推送每轮的最终结论。",
+            data={"mode": "off", "changed": True},
+        )
 
     return ToolDef(
         name="set_debug_mode",
@@ -255,7 +297,7 @@ def _build_set_debug_mode_tool(session_getter: Callable[[], SessionState]) -> To
             "当用户用自然语言要求开启调试、关闭调试、只看最终结论、查看调试模式时调用本工具。"
             "不要自行声称已经切换；仅 Owner 私聊可切换，工具会做权限校验。"
         ),
-        properties={
+        input_schema=object_schema({
             "mode": {
                 "type": "string",
                 "enum": ["on", "off", "status"],
@@ -265,11 +307,21 @@ def _build_set_debug_mode_tool(session_getter: Callable[[], SessionState]) -> To
                 "type": "string",
                 "description": "用户请求切换或查询调试模式的简短原因或原话摘要。",
             },
-        },
-        required=["mode"],
+        }, required=("mode",)),
+        output_schema=object_schema(
+            {
+                "mode": {"type": "string", "enum": ["on", "off"]},
+                "changed": {"type": "boolean"},
+            },
+            required=("mode", "changed"),
+        ),
         handler=_handler,
         aliases=["调试模式切换", "开启调试模式", "关闭调试模式", "只看最终结论"],
         weight="light",
+        category="session.control",
+        owner="middleware",
+        module=__name__,
+        artifact_kinds=(),
     )
 
 

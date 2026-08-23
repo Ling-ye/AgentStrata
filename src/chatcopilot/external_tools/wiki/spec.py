@@ -1,11 +1,11 @@
 """Tool definitions for the owner-private local Markdown Wiki."""
 from __future__ import annotations
 
-import json
 from dataclasses import asdict
 from typing import Any
 
-from chatcopilot.contracts.tools import HandlerResult, ToolContext, ToolDef
+from chatcopilot.contracts.tool_packs import static_tool_provider
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.contracts.workspace import normalize_chat_kind
 from chatcopilot.core.wiki import WikiStore
 
@@ -34,11 +34,12 @@ def _list_arg(args: dict[str, Any], key: str) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
-def _result(payload: Any) -> HandlerResult:
-    return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")), [], None)
+def _result(payload: Any) -> ToolResult:
+    data = payload if isinstance(payload, dict) else {"result": payload}
+    return ToolResult(ok=True, summary="私有 Wiki 操作完成。", data=data)
 
 
-def _upsert(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
+def _upsert(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     _require_private_context(ctx)
     result = _store().upsert_page(
         title=str(args.get("title") or ""),
@@ -55,7 +56,7 @@ def _upsert(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
     return _result(asdict(result))
 
 
-def _search(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
+def _search(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     _require_private_context(ctx)
     hits = _store().search(
         str(args.get("query") or ""),
@@ -64,19 +65,20 @@ def _search(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
     return _result({"hits": [asdict(hit) for hit in hits]})
 
 
-def _read(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
+def _read(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     _require_private_context(ctx)
     page, body = _store().read_page(str(args.get("path") or ""))
     return _result({"page": asdict(page), "body": body})
 
 
-def _list(args: dict[str, Any], ctx: ToolContext) -> HandlerResult:
+def _list(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     _require_private_context(ctx)
     pages = _store().list_pages(limit=int(args.get("limit") or 50))
     return _result({"pages": [asdict(page) for page in pages]})
 
 
 _PRIVATE_METADATA = {"tags": ["wiki", "private"], "private_chat_only": True}
+_WIKI_RESULT_SCHEMA = {"type": "object", "additionalProperties": True}
 
 TOOLS = [
     ToolDef(
@@ -86,7 +88,7 @@ TOOLS = [
             "先忠实传入 source_text，再将内容整理为摘要、事实、步骤和待确认项；"
             "不要补造来源中不存在的事实。"
         ),
-        properties={
+        input_schema=object_schema({
             "title": {"type": "string", "description": "页面标题。"},
             "summary": {"type": "string", "description": "忠实、简洁的内容摘要。"},
             "facts": {**_STRING_ARRAY, "description": "来源明确支持的事实；至少一项。"},
@@ -108,8 +110,8 @@ TOOLS = [
                 "type": "string",
                 "description": "可选 pages/ 内相对 Markdown 路径；仅在明确合并或更新指定页面时传入。",
             },
-        },
-        required=["title", "summary", "facts", "source_text"],
+        }, required=("title", "summary", "facts", "source_text")),
+        output_schema=_WIKI_RESULT_SCHEMA,
         handler=_upsert,
         requires_role="owner",
         category="wiki.knowledge",
@@ -120,11 +122,11 @@ TOOLS = [
     ToolDef(
         name="wiki_search",
         summary="搜索 owner 私有 Wiki，返回页面、章节、来源标识和相关片段。",
-        properties={
+        input_schema=object_schema({
             "query": {"type": "string", "description": "检索问题或关键词。"},
             "top_k": {"type": "integer", "description": "返回结果数，最多 20。", "default": 5},
-        },
-        required=["query"],
+        }, required=("query",)),
+        output_schema=_WIKI_RESULT_SCHEMA,
         handler=_search,
         requires_role="owner",
         category="wiki.knowledge",
@@ -135,8 +137,11 @@ TOOLS = [
     ToolDef(
         name="wiki_read_page",
         summary="读取 owner 私有 Wiki 中一个 Markdown 页面的正文和来源元数据。",
-        properties={"path": {"type": "string", "description": "pages/ 内相对 Markdown 路径。"}},
-        required=["path"],
+        input_schema=object_schema(
+            {"path": {"type": "string", "description": "pages/ 内相对 Markdown 路径。"}},
+            required=("path",),
+        ),
+        output_schema=_WIKI_RESULT_SCHEMA,
         handler=_read,
         requires_role="owner",
         category="wiki.knowledge",
@@ -147,8 +152,10 @@ TOOLS = [
     ToolDef(
         name="wiki_list_pages",
         summary="列出 owner 私有 Wiki 页面及其标题、标签、更新时间和来源标识。",
-        properties={"limit": {"type": "integer", "description": "返回页面数，最多 200。", "default": 50}},
-        required=[],
+        input_schema=object_schema(
+            {"limit": {"type": "integer", "description": "返回页面数，最多 200。", "default": 50}}
+        ),
+        output_schema=_WIKI_RESULT_SCHEMA,
         handler=_list,
         requires_role="owner",
         category="wiki.knowledge",
@@ -158,4 +165,10 @@ TOOLS = [
     ),
 ]
 
-__all__ = ["TOOLS"]
+TOOL_PROVIDER = static_tool_provider(
+    "wiki",
+    packs={"wiki.knowledge": tuple(TOOLS)},
+    module=__name__,
+)
+
+__all__ = ["TOOLS", "TOOL_PROVIDER"]

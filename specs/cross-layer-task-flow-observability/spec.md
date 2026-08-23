@@ -26,7 +26,7 @@ The public layer vocabulary is:
 - `channel`: the external QQ user or other platform source and destination.
 - `transport`: NapCat, OneBot, and cc-connect transport boundaries.
 - `gateway`: loopback access proxy admission and message normalization.
-- `middleware`: ACP identity, access, persona, session, and turn orchestration.
+- `middleware`: ACP identity, access, session, and turn orchestration.
 - `agent`: the configured main Agent backend and its public lifecycle.
 - `model`: submitted model context snapshots, public response lifecycle, and usage.
 - `capability`: tools, subagents, workflows, searches, and other delegated work.
@@ -38,7 +38,7 @@ Existing task records stay readable. A task without new receipts is projected fr
 
 ### Runtime flow evidence
 
-The ACP orchestration path records bounded, redacted flow events for stages whose execution is authoritative inside middleware: task intake, identity and attestation validation outcome, access decision, persona-control outcome, session materialization, Agent handoff, context preparation, capability activity, Agent final result, and outbound handoff. Events store decision codes and safe structural metadata, not allowlist values, raw credentials, machine paths, complete prompts, or raw platform identities. The existing `ContextSnapshotPrepared` artifact remains the sole model-input evidence contract and retains its `exact`, `partial`, `adapter_visible`, and `provider_opaque` semantics.
+The ACP orchestration path records bounded, redacted flow events for stages whose execution is authoritative inside middleware: task intake, identity and attestation validation outcome, access decision, session materialization, Agent handoff, context preparation, capability activity, Agent final result, and outbound handoff. Persona uses the same structured `tool_started`/`tool_finished` activity as other Agent tools rather than a middleware-specific outcome event. Events store decision codes and safe structural metadata, not allowlist values, raw credentials, machine paths, complete prompts, or raw platform identities. The existing `ContextSnapshotPrepared` artifact remains the sole model-input evidence contract and retains its `exact`, `partial`, `adapter_visible`, and `provider_opaque` semantics.
 
 Flow recording is best-effort after the existing authority checks have created a task. Failure to persist supplemental flow evidence is surfaced as missing coverage but does not retry or alter an otherwise authorized message. Identity-invalid intake keeps its current scrubbed, fail-closed path and does not acquire raw actor or message content through this feature. In contrast, failure of the existing authoritative transport attestation continues to block tools, attachments, persona, memory, model calls, and other side effects exactly as before.
 

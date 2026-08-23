@@ -6,15 +6,19 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
+from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.tools.registry import build_tools_schema, find_spec
 from chatcopilot.botspec.registry import get_tool_pack_entry, known_tool_pack_names
 from chatcopilot.botspec.loader import load_botspec, validate_botspec
 from chatcopilot.botspec.model import CodebaseSpec
 from chatcopilot.external_tools.codebase.config import load_registry, reset_cache
-from chatcopilot.external_tools.codebase.path_guard import CodebasePathAccessError
 
 
 class CodebaseReadToolPackTests(unittest.TestCase):
+    @staticmethod
+    def _execute(tool, arguments):
+        return ToolExecutor(tools=[tool]).execute(tool.name, arguments)
+
     def setUp(self) -> None:
         fixture = Path(__file__).resolve().parents[1] / "fixtures" / "codebase_read"
         self.root = fixture / "repo"
@@ -47,7 +51,9 @@ class CodebaseReadToolPackTests(unittest.TestCase):
         self.assertIn("codebase.read", known_tool_pack_names())
         entry = get_tool_pack_entry("codebase.read")
         self.assertIsNotNone(entry)
-        self.assertIn("chatcopilot.external_tools.codebase.tools", entry.tool_modules)
+        self.assertEqual(
+            "chatcopilot.external_tools.codebase.tools", entry.provider_module
+        )
         schema, tools = build_tools_schema(tool_packs=("codebase.read",))
         names = {item["function"]["name"] for item in schema}
         self.assertEqual(
@@ -70,7 +76,9 @@ class CodebaseReadToolPackTests(unittest.TestCase):
         self.assertEqual(tuple(registry.repositories), ("demo",))
         tool = find_spec("codebase_map", tool_packs=("codebase.read",))
         self.assertIsNotNone(tool)
-        summary, _, _ = tool.handler({"repository": "demo", "depth": 4})
+        result = self._execute(tool, {"repository": "demo", "depth": 4})
+        self.assertTrue(result.ok, result.error)
+        summary = result.summary
         self.assertIn("src/app.py", summary)
         self.assertIn("README.md", summary)
         self.assertNotIn("build/hidden.py", summary)
@@ -85,15 +93,15 @@ class CodebaseReadToolPackTests(unittest.TestCase):
             self.assertIsNotNone(listing)
             self.assertIsNotNone(mapping)
 
-            summary, _, _ = listing.handler({"repository": "demo"})
+            listing_result = self._execute(listing, {})
+            self.assertTrue(listing_result.ok, listing_result.error)
+            summary = listing_result.summary
             self.assertIn("[missing]", summary)
             self.assertIn(str(missing_root.resolve()), summary)
-            with self.assertRaisesRegex(
-                FileNotFoundError,
-                "CHATCOPILOT_CODEBASE_DEMO_ROOT",
-            ) as ctx:
-                mapping.handler({"repository": "demo"})
-            self.assertIn(str(missing_root.resolve()), str(ctx.exception))
+            mapping_result = self._execute(mapping, {"repository": "demo"})
+            self.assertFalse(mapping_result.ok)
+            self.assertIn("CHATCOPILOT_CODEBASE_DEMO_ROOT", mapping_result.error or "")
+            self.assertIn(str(missing_root.resolve()), mapping_result.error or "")
         reset_cache()
 
     def test_search_and_read_return_repository_relative_line_evidence(self) -> None:
@@ -101,13 +109,19 @@ class CodebaseReadToolPackTests(unittest.TestCase):
         read = find_spec("codebase_read", tool_packs=("codebase.read",))
         self.assertIsNotNone(search)
         self.assertIsNotNone(read)
-        search_summary, _, _ = search.handler(
+        search_result = self._execute(
+            search,
             {"repository": "demo", "query": "hello codebase", "fixed_strings": True}
         )
+        self.assertTrue(search_result.ok, search_result.error)
+        search_summary = search_result.summary
         self.assertIn("src/app.py:2", search_summary.replace("\\", "/"))
-        read_summary, _, _ = read.handler(
+        read_result = self._execute(
+            read,
             {"repository": "demo", "rel_path": "src/app.py", "start_line": 1, "end_line": 2}
         )
+        self.assertTrue(read_result.ok, read_result.error)
+        read_summary = read_result.summary
         self.assertIn("repository=demo src/app.py", read_summary)
         self.assertIn('2 |     return "hello codebase"', read_summary)
         self.assertNotIn(str(self.root), read_summary)
@@ -115,17 +129,16 @@ class CodebaseReadToolPackTests(unittest.TestCase):
     def test_read_rejects_traversal_and_sensitive_file(self) -> None:
         read = find_spec("codebase_read", tool_packs=("codebase.read",))
         self.assertIsNotNone(read)
-        with self.assertRaises(CodebasePathAccessError):
-            read.handler({"repository": "demo", "rel_path": "../outside.py"})
-        with self.assertRaises(CodebasePathAccessError):
-            read.handler({"repository": "demo", "rel_path": "build/hidden.py"})
-        with self.assertRaises(CodebasePathAccessError):
-            read.handler({"repository": "demo", "rel_path": "notes/hidden.py"})
+        for rel_path in ("../outside.py", "build/hidden.py", "notes/hidden.py"):
+            result = self._execute(read, {"repository": "demo", "rel_path": rel_path})
+            self.assertFalse(result.ok)
+            self.assertIn("CodebasePathAccessError", result.error or "")
 
     def test_search_file_glob_cannot_widen_repository_include(self) -> None:
         search = find_spec("codebase_search", tool_packs=("codebase.read",))
         self.assertIsNotNone(search)
-        summary, _, _ = search.handler(
+        result = self._execute(
+            search,
             {
                 "repository": "demo",
                 "query": "outside include",
@@ -133,12 +146,14 @@ class CodebaseReadToolPackTests(unittest.TestCase):
                 "file_glob": "*.py",
             }
         )
-        self.assertIn("<no matches>", summary)
+        self.assertTrue(result.ok, result.error)
+        self.assertIn("<no matches>", result.summary)
 
     def test_search_accepts_subdirectory_that_looks_like_an_option(self) -> None:
         search = find_spec("codebase_search", tool_packs=("codebase.read",))
         self.assertIsNotNone(search)
-        summary, _, _ = search.handler(
+        result = self._execute(
+            search,
             {
                 "repository": "demo",
                 "query": "dash path",
@@ -146,7 +161,8 @@ class CodebaseReadToolPackTests(unittest.TestCase):
                 "rel_subdir": "-dash",
             }
         )
-        self.assertIn("-dash/option.py:1", summary.replace("\\", "/"))
+        self.assertTrue(result.ok, result.error)
+        self.assertIn("-dash/option.py:1", result.summary.replace("\\", "/"))
 
     def test_writable_registry_requires_validation_checks(self) -> None:
         invalid = self.registry_path.with_name("invalid_writable.yaml")
@@ -173,14 +189,19 @@ class CodebaseReadToolPackTests(unittest.TestCase):
     def test_incremental_symbol_index_covers_python_csharp_and_go(self) -> None:
         symbols = find_spec("codebase_symbols", tool_packs=("codebase.read",))
         self.assertIsNotNone(symbols)
-        summary, _, _ = symbols.handler({"repository": "demo", "limit": 100})
+        result = self._execute(symbols, {"repository": "demo", "limit": 100})
+        self.assertTrue(result.ok, result.error)
+        summary = result.summary
         self.assertIn("hello [function] src/app.py:1", summary)
         self.assertIn("Worker [class] src/Worker.cs:3", summary)
         self.assertIn("Run [method] src/Worker.cs:5", summary)
         self.assertIn("WorkerState [type] src/worker.go:2", summary)
         self.assertIn("RunWorker [function] src/worker.go:4", summary)
-        second, _, _ = symbols.handler({"repository": "demo", "query": "Worker", "limit": 20})
-        self.assertIn("updated=0", second)
+        second = self._execute(
+            symbols, {"repository": "demo", "query": "Worker", "limit": 20}
+        )
+        self.assertTrue(second.ok, second.error)
+        self.assertIn("updated=0", second.summary)
 
 
 if __name__ == "__main__":

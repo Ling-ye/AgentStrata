@@ -29,6 +29,7 @@ from chatcopilot.agent.tools.builtin.workspace_tools import (
     _handler_list_workspace,
     _handler_read_text_head,
 )
+from chatcopilot.contracts.tools import ToolContext
 from chatcopilot.core.workspace_context import bind_workspace_service
 from chatcopilot.middleware.acp import server as acp_server
 from chatcopilot.middleware.acp.job_dispatch import extract_job_status_query
@@ -199,12 +200,14 @@ class ListWorkspaceAcceptsJobsSubdirTests(unittest.TestCase):
             )
 
             with bind_workspace_service(_StubWorkspaceService(ws)):
-                summary, outputs, _ = _handler_list_workspace(
-                    {"subdir": "jobs", "recursive": True}
+                result = _handler_list_workspace(
+                    {"subdir": "jobs", "recursive": True}, ToolContext()
                 )
 
-        self.assertIn(VALID_JOB_ID, summary)
-        self.assertTrue(outputs)
+        self.assertTrue(result.ok)
+        self.assertIn(VALID_JOB_ID, result.summary)
+        self.assertTrue(result.outputs)
+        self.assertEqual(result.data["subdir"], "jobs")
 
     def test_tasks_subdir_lists_task_directories(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -212,12 +215,14 @@ class ListWorkspaceAcceptsJobsSubdirTests(unittest.TestCase):
             _seed_task_dir(ws)
 
             with bind_workspace_service(_StubWorkspaceService(ws)):
-                summary, outputs, _ = _handler_list_workspace(
-                    {"subdir": "tasks", "recursive": True}
+                result = _handler_list_workspace(
+                    {"subdir": "tasks", "recursive": True}, ToolContext()
                 )
 
-        self.assertIn(VALID_TASK_ID, summary)
-        self.assertTrue(outputs)
+        self.assertTrue(result.ok)
+        self.assertIn(VALID_TASK_ID, result.summary)
+        self.assertTrue(result.outputs)
+        self.assertEqual(result.data["subdir"], "tasks")
 
 
 class ReadTextHeadRejectsDirectoryTests(unittest.TestCase):
@@ -238,7 +243,7 @@ class ReadTextHeadRejectsDirectoryTests(unittest.TestCase):
             _wt.resolve_workspace = lambda create=False: ws
             try:
                 with self.assertRaises(IsADirectoryError) as ctx:
-                    _handler_read_text_head({"path": str(job_dir)})
+                    _handler_read_text_head({"path": str(job_dir)}, ToolContext())
             finally:
                 _wt.resolve_workspace = saved_resolver
 
@@ -270,18 +275,21 @@ class GetJobStatusToolTests(unittest.TestCase):
             saved_resolver = _wt.resolve_workspace
             _wt.resolve_workspace = lambda create=False: ws
             try:
-                summary, outputs, _ = _handler_get_job_status(
-                    {"job_id": VALID_JOB_ID, "tail_lines": 20}
+                result = _handler_get_job_status(
+                    {"job_id": VALID_JOB_ID, "tail_lines": 20}, ToolContext()
                 )
             finally:
                 _wt.resolve_workspace = saved_resolver
 
-        self.assertIn(VALID_JOB_ID, summary)
-        self.assertIn("状态: running", summary)
-        self.assertIn("任务正在执行", summary)
+        self.assertTrue(result.ok)
+        self.assertIn(VALID_JOB_ID, result.summary)
+        self.assertIn("状态: running", result.summary)
+        self.assertIn("任务正在执行", result.summary)
         # 进度尾部必须出现，否则用户看不到"分片 37/59"这种关键信号。
-        self.assertIn("part 37/59", summary)
-        self.assertTrue(outputs)
+        self.assertIn("part 37/59", result.summary)
+        self.assertTrue(result.outputs)
+        self.assertEqual(result.data["job_id"], VALID_JOB_ID)
+        self.assertEqual(result.data["status"], "running")
 
     def test_missing_job_returns_friendly_message(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -291,14 +299,16 @@ class GetJobStatusToolTests(unittest.TestCase):
             saved_resolver = _wt.resolve_workspace
             _wt.resolve_workspace = lambda create=False: ws
             try:
-                summary, outputs, _ = _handler_get_job_status(
-                    {"job_id": VALID_JOB_ID}
+                result = _handler_get_job_status(
+                    {"job_id": VALID_JOB_ID}, ToolContext()
                 )
             finally:
                 _wt.resolve_workspace = saved_resolver
 
-        self.assertIn("找不到", summary)
-        self.assertEqual(outputs, [])
+        self.assertFalse(result.ok)
+        self.assertIn("找不到", result.error or "")
+        self.assertEqual(result.outputs, [])
+        self.assertEqual(result.data["job_id"], VALID_JOB_ID)
 
     def test_invalid_job_id_format_returns_not_found(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -308,13 +318,15 @@ class GetJobStatusToolTests(unittest.TestCase):
             saved_resolver = _wt.resolve_workspace
             _wt.resolve_workspace = lambda create=False: ws
             try:
-                summary, _, _ = _handler_get_job_status(
-                    {"job_id": "not_a_valid_id"}
+                result = _handler_get_job_status(
+                    {"job_id": "not_a_valid_id"}, ToolContext()
                 )
             finally:
                 _wt.resolve_workspace = saved_resolver
 
-        self.assertIn("找不到", summary)
+        self.assertFalse(result.ok)
+        self.assertIn("找不到", result.error or "")
+        self.assertEqual(result.data["job_id"], "not_a_valid_id")
 
     def test_task_id_returns_get_task_status_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -324,15 +336,17 @@ class GetJobStatusToolTests(unittest.TestCase):
             saved_resolver = _wt.resolve_workspace
             _wt.resolve_workspace = lambda create=False: ws
             try:
-                summary, outputs, _ = _handler_get_job_status(
-                    {"job_id": VALID_TASK_ID}
+                result = _handler_get_job_status(
+                    {"job_id": VALID_TASK_ID}, ToolContext()
                 )
             finally:
                 _wt.resolve_workspace = saved_resolver
 
-        self.assertIn("单轮对话任务 ID", summary)
-        self.assertIn("get_task_status", summary)
-        self.assertEqual(outputs, [])
+        self.assertFalse(result.ok)
+        self.assertIn("单轮对话任务 ID", result.error or "")
+        self.assertIn("get_task_status", result.error or "")
+        self.assertEqual(result.outputs, [])
+        self.assertEqual(result.data["job_id"], VALID_TASK_ID)
 
 
 class GetTaskStatusToolTests(unittest.TestCase):
@@ -345,18 +359,20 @@ class GetTaskStatusToolTests(unittest.TestCase):
             saved_resolver = _wt.resolve_workspace
             _wt.resolve_workspace = lambda create=False: ws
             try:
-                summary, outputs, _ = _handler_get_task_status(
-                    {"task_id": VALID_TASK_ID}
+                result = _handler_get_task_status(
+                    {"task_id": VALID_TASK_ID}, ToolContext()
                 )
             finally:
                 _wt.resolve_workspace = saved_resolver
 
-        self.assertIn(VALID_TASK_ID, summary)
-        self.assertIn("Stop reason: tool_call_cap", summary)
-        self.assertIn("预算/上限停止", summary)
-        self.assertIn("工具调用: 2 次", summary)
-        self.assertIn(VALID_JOB_ID, summary)
-        self.assertTrue(outputs)
+        self.assertTrue(result.ok)
+        self.assertIn(VALID_TASK_ID, result.summary)
+        self.assertIn("Stop reason: tool_call_cap", result.summary)
+        self.assertIn("预算/上限停止", result.summary)
+        self.assertIn("工具调用: 2 次", result.summary)
+        self.assertIn(VALID_JOB_ID, result.summary)
+        self.assertTrue(result.outputs)
+        self.assertEqual(result.data["task_id"], VALID_TASK_ID)
 
     def test_failed_task_returns_failed_signal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -367,12 +383,16 @@ class GetTaskStatusToolTests(unittest.TestCase):
             saved_resolver = _wt.resolve_workspace
             _wt.resolve_workspace = lambda create=False: ws
             try:
-                summary, _, _ = _handler_get_task_status({"task_id": VALID_TASK_ID})
+                result = _handler_get_task_status(
+                    {"task_id": VALID_TASK_ID}, ToolContext()
+                )
             finally:
                 _wt.resolve_workspace = saved_resolver
 
-        self.assertIn("状态: failed", summary)
-        self.assertIn("task status=failed", summary)
+        self.assertTrue(result.ok)
+        self.assertIn("状态: failed", result.summary)
+        self.assertIn("task status=failed", result.summary)
+        self.assertEqual(result.data["task_id"], VALID_TASK_ID)
 
     def test_missing_task_returns_friendly_message(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -382,12 +402,16 @@ class GetTaskStatusToolTests(unittest.TestCase):
             saved_resolver = _wt.resolve_workspace
             _wt.resolve_workspace = lambda create=False: ws
             try:
-                summary, outputs, _ = _handler_get_task_status({"task_id": VALID_TASK_ID})
+                result = _handler_get_task_status(
+                    {"task_id": VALID_TASK_ID}, ToolContext()
+                )
             finally:
                 _wt.resolve_workspace = saved_resolver
 
-        self.assertIn("找不到单轮任务", summary)
-        self.assertEqual(outputs, [])
+        self.assertFalse(result.ok)
+        self.assertIn("找不到单轮任务", result.error or "")
+        self.assertEqual(result.outputs, [])
+        self.assertEqual(result.data["task_id"], VALID_TASK_ID)
 
     def test_invalid_task_id_returns_format_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -397,13 +421,17 @@ class GetTaskStatusToolTests(unittest.TestCase):
             saved_resolver = _wt.resolve_workspace
             _wt.resolve_workspace = lambda create=False: ws
             try:
-                summary, outputs, _ = _handler_get_task_status({"task_id": "job_20260528_120125_10a50d0c"})
+                result = _handler_get_task_status(
+                    {"task_id": "job_20260528_120125_10a50d0c"}, ToolContext()
+                )
             finally:
                 _wt.resolve_workspace = saved_resolver
 
-        self.assertIn("不是有效的单轮任务 ID", summary)
-        self.assertIn("get_job_status", summary)
-        self.assertEqual(outputs, [])
+        self.assertFalse(result.ok)
+        self.assertIn("不是有效的单轮任务 ID", result.error or "")
+        self.assertIn("get_job_status", result.error or "")
+        self.assertEqual(result.outputs, [])
+        self.assertEqual(result.data["task_id"], "job_20260528_120125_10a50d0c")
 
 
 class AcpTaskStatusShortcutTests(unittest.IsolatedAsyncioTestCase):

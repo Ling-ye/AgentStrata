@@ -5,14 +5,14 @@ from typing import Any, Dict, List
 
 from chatcopilot.agent.tools.workspace_context import describe_workspace, resolve_workspace
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
-from chatcopilot.contracts.tools import HandlerResult
+from chatcopilot.contracts.tools import ToolContext, ToolResult
 from chatcopilot.agent.tools.builtin.workspace.common import _silent_cleanup
 
 _VALID_SUBDIRS = ("downloads", "results", "uploads", "attachments", "jobs", "tasks")
 _GROUP_RESERVED_SUBDIRS = frozenset({"jobs", "tasks", "transcripts"})
 
 
-def _handler_list_workspace(args: Dict[str, Any]) -> HandlerResult:
+def _handler_list_workspace(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     ws = resolve_workspace(create=True)
     subdir = (args.get("subdir") or "").strip()
     limit = int(args.get("limit") or 50)
@@ -32,10 +32,12 @@ def _handler_list_workspace(args: Dict[str, Any]) -> HandlerResult:
     existing_targets = [target for target in targets if target.is_dir()]
     if not existing_targets:
         _silent_cleanup(ws)
-        return (
-            f"目录不存在: {subdir or ws.relpath(targets[0])}",
-            [],
-            None,
+        return ToolResult(
+            ok=False,
+            error=f"目录不存在: {subdir or ws.relpath(targets[0])}",
+            error_code="workspace_directory_not_found",
+            stage="validation",
+            data={"subdir": subdir, "recursive": recursive},
         )
 
     entries = []
@@ -76,7 +78,17 @@ def _handler_list_workspace(args: Dict[str, Any]) -> HandlerResult:
         else f"{describe_workspace(ws)}\n目录为空: {subdir or ws.relpath(existing_targets[0])}"
     )
     _silent_cleanup(ws)
-    return (body, [str(target) for target in existing_targets], None)
+    return ToolResult(
+        ok=True,
+        summary=body,
+        outputs=[str(target) for target in existing_targets],
+        data={
+            "subdir": subdir,
+            "recursive": recursive,
+            "entry_count": len(entries),
+            "truncated": truncated,
+        },
+    )
 
 
 __all__ = ["_handler_list_workspace"]

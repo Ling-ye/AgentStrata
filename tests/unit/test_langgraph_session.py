@@ -19,7 +19,13 @@ from chatcopilot.contracts.agent import (
 )
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.contracts.tools import ToolDef, build_openai_schema
+from chatcopilot.contracts.tools import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    build_openai_schema,
+    object_schema,
+)
 
 
 def _has_langgraph() -> bool:
@@ -52,14 +58,17 @@ def _tool_call(name: str, args: dict) -> dict:
 
 
 def _make_tool() -> ToolDef:
-    def handler(args: dict):
-        return (f"tool ok: {args.get('value')}", [], None)
+    def handler(args: dict, _context: ToolContext) -> ToolResult:
+        return ToolResult(ok=True, summary=f"tool ok: {args.get('value')}")
 
     return ToolDef(
         name="sample_tool",
         summary="sample tool",
-        properties={"value": {"type": "string"}},
-        required=["value"],
+        input_schema=object_schema(
+            {"value": {"type": "string"}},
+            required=("value",),
+        ),
+        output_schema=object_schema(),
         handler=handler,
     )
 

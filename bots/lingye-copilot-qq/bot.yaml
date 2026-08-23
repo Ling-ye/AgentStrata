@@ -37,6 +37,7 @@ tools:
   packs:
   - workspace.read_write
   - memory.chat
+  - persona.control
   - playbooks.reader
   - mcp.admin
   - career.intelligence
@@ -55,8 +56,6 @@ agents:
   codex:
     owner_access: worktree
     member_access: workspace
-  persona_control:
-    enabled: true
   unified_search:
     enabled: true
     providers:

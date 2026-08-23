@@ -59,9 +59,10 @@ attestation 消费；ACP access gate 与真实角色解析；actor-bound session
 列出 `qq_platform/napcat/cc_connect/agent_model` 替代层与 `external_qq_write` 排除层。
 
 QQ 轨道至少覆盖：群聊被 @ 的允许回合、缺少 @ 的网关拒绝、伪造或正文不匹配 attestation 的
-失败关闭、普通成员请求 Owner 动作被拒绝、远程 URL 不被当成本地附件、Owner 人格设置经宿主
-前置入口写入并在下一轮 PromptPlan 生效。人格 Case 使用临时保护状态和确定性 PersonaDraftAgent
-替身，只评价路由、授权、receipt、原子持久化与下一轮加载，不评价模型写作质量。
+失败关闭、普通成员请求 Owner 动作被拒绝、远程 URL 不被当成本地附件、Owner 人格设置经
+`persona_manage` 写入并在下一轮 PromptPlan 生效。人格 Case 使用临时保护状态、确定性
+PersonaDraftAgent 替身和显式发出工具调用的 model-replaced sentinel，只评价授权、结构化调用、
+receipt、原子持久化与下一轮加载，不评价真实模型的意图理解或写作质量。
 
 控制台首页只显示两张测试卡：`直接测试 Agent 能力` 与 `QQ 消息全链路`。选择 Bot 后每张卡显示
 测试对象、不包含的层、Preset、Case 数、预计时间和当前就绪/阻断原因；启动动作仍走统一
@@ -83,8 +84,9 @@ QQ 轨道至少覆盖：群聊被 @ 的允许回合、缺少 @ 的网关拒绝�
   投影全部有成功 receipt 时通过；证据同时列出 exercised/stubbed/excluded layers。
 - QQ 轨道的无 @、actor/content attestation 不匹配和成员越权 Case 均失败关闭，且没有 Agent
   调用、受保护 mutation 或平台写入。
-- QQ 人格 Case 通过真实宿主 PersonaControlService 契约在临时保护域执行，只有成功 receipt 后下一轮
-  PromptPlan 才加载新人格；旧哈希在任何失败路径保持不变。
+- QQ 人格 Case 通过真实 `persona_manage` handler 与 PersonaControlService 契约在临时保护域
+  执行；sentinel 明确标记 synthetic/model-replaced，只有 committed receipt 后下一轮 PromptPlan
+  才加载新人格，旧哈希在任何写前失败路径保持不变。
 - QQ 轨道不读取真实 QQ ID、群号、token 或生产 state，不监听固定端口、不连接真实 NapCat/
   cc-connect/ACP 服务、不发送真实 QQ 消息，报告中所有身份与帧只保存摘要。
 - 真实 QQ 外部检查继续独立展示 `not_tested` 入站 Agent E2E；两轨 Evaluation 的本地通过不会改变

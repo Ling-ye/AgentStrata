@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from types import ModuleType
 from typing import cast
+
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 
 from chatcopilot.component_catalog.audit_models import (
     CatalogAuditIssue,
@@ -21,9 +25,9 @@ from chatcopilot.component_catalog.audit_models import (
     _valid_component_id,
 )
 from chatcopilot.contracts.tool_packs import (
-    ToolModuleBinding,
     ToolPackEntry,
     ToolPackPolicy,
+    ToolProvider,
 )
 from chatcopilot.contracts.tools import (
     EXECUTION_GLOBAL_SERIAL_BACKGROUND,
@@ -38,7 +42,7 @@ from chatcopilot.contracts.tools import (
 _MODULE_RE = re.compile(
     r"^chatcopilot\.(?:"
     r"external_tools(?:\.[A-Za-z_][A-Za-z0-9_]*)+|"
-    r"agent\.tools\.builtin(?:\.[A-Za-z_][A-Za-z0-9_]*)+"
+    r"agent(?:\.[A-Za-z_][A-Za-z0-9_]*)+"
     r")$"
 )
 _POLICY_MODULE_RE = re.compile(
@@ -105,18 +109,52 @@ def _validate_tool(
             tool=issue_name,
         )
 
-    properties_valid = isinstance(tool.properties, dict)
+    input_schema = tool.input_schema
+    output_schema = tool.output_schema
+    schemas_valid = True
+    for schema_name, schema in (
+        ("input", input_schema),
+        ("output", output_schema),
+    ):
+        if not isinstance(schema, dict) or schema.get("type") != "object":
+            schemas_valid = False
+            _append(
+                issues,
+                f"tool.{schema_name}_schema_invalid",
+                f"ToolDef.{schema_name}_schema must be an object JSON schema.",
+                surface=surface,
+                module=module,
+                tool=issue_name,
+            )
+            continue
+        try:
+            Draft202012Validator.check_schema(schema)
+        except SchemaError:
+            schemas_valid = False
+            _append(
+                issues,
+                f"tool.{schema_name}_schema_invalid",
+                f"ToolDef.{schema_name}_schema must be a valid JSON schema.",
+                surface=surface,
+                module=module,
+                tool=issue_name,
+            )
+
+    properties = (
+        input_schema.get("properties", {}) if isinstance(input_schema, dict) else None
+    )
+    properties_valid = isinstance(properties, dict)
     if not properties_valid:
         _append(
             issues,
             "tool.properties_invalid",
-            "ToolDef.properties must be a dict.",
+            "ToolDef.input_schema.properties must be a dict.",
             surface=surface,
             module=module,
             tool=issue_name,
         )
     else:
-        for property_name, schema in tool.properties.items():
+        for property_name, schema in properties.items():
             if (
                 not isinstance(property_name, str)
                 or not property_name.strip()
@@ -140,18 +178,19 @@ def _validate_tool(
                     tool=issue_name,
                 )
 
-    if not isinstance(tool.required, list):
+    required = input_schema.get("required", []) if isinstance(input_schema, dict) else None
+    if not isinstance(required, list):
         _append(
             issues,
             "tool.required_invalid",
-            "ToolDef.required must be a list.",
+            "ToolDef.input_schema.required must be a list.",
             surface=surface,
             module=module,
             tool=issue_name,
         )
     else:
-        string_required = [item for item in tool.required if isinstance(item, str)]
-        if len(string_required) != len(tool.required) or any(
+        string_required = [item for item in required if isinstance(item, str)]
+        if len(string_required) != len(required) or any(
             not item.strip() or item != item.strip() for item in string_required
         ):
             _append(
@@ -172,7 +211,7 @@ def _validate_tool(
                 tool=issue_name,
             )
         if properties_valid and any(
-            required not in tool.properties for required in string_required
+            item not in properties for item in string_required
         ):
             _append(
                 issues,
@@ -192,6 +231,27 @@ def _validate_tool(
             module=module,
             tool=issue_name,
         )
+    else:
+        try:
+            parameters = tuple(inspect.signature(tool.handler).parameters.values())
+        except (TypeError, ValueError):
+            parameters = ()
+        if len(parameters) != 2 or any(
+            parameter.kind
+            not in {
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            }
+            for parameter in parameters
+        ):
+            _append(
+                issues,
+                "tool.handler_signature_invalid",
+                "ToolDef.handler must accept exactly (arguments, ToolContext).",
+                surface=surface,
+                module=module,
+                tool=issue_name,
+            )
     if not (
         tool.requires_role is None
         or isinstance(tool.requires_role, str)
@@ -290,7 +350,7 @@ def _validate_tool(
         schemas = (build_openai_schema(tool), build_mcp_schema(tool))
     except Exception:  # noqa: BLE001
         schemas = ()
-    if not schemas or not _json_serializable(schemas):
+    if not schemas_valid or not schemas or not _json_serializable(schemas):
         _append(
             issues,
             "tool.schema_invalid",
@@ -411,8 +471,7 @@ def _audit_tool_packs(
 ) -> _ToolPackAuditFacts:
     modules = _ModuleCache(module_loader)
     entries: list[tuple[str, ToolPackEntry]] = []
-    bindings_by_module: dict[str, list[tuple[str, ToolModuleBinding]]] = defaultdict(list)
-    pack_name_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    packs_by_module: dict[str, list[tuple[str, ToolPackEntry]]] = defaultdict(list)
 
     for raw_key, raw_entry in _records(records):
         pack = _component_label(raw_key)
@@ -451,82 +510,27 @@ def _audit_tool_packs(
                 surface="tool_pack",
                 component=pack,
             )
-        if not isinstance(entry.tool_bindings, tuple):
+        module_path = entry.provider_module
+        if module_path is None:
+            if not entry.dynamic:
+                _append(
+                    issues,
+                    "tool_pack.provider_missing",
+                    "Static tool packs must declare one provider module.",
+                    surface="tool_pack",
+                    component=pack,
+                )
+        elif not isinstance(module_path, str) or _MODULE_RE.fullmatch(module_path) is None:
             _append(
                 issues,
-                "tool_pack.bindings_invalid",
-                "ToolPackEntry.tool_bindings must be a tuple.",
+                "tool_pack.provider_module_invalid",
+                "Provider modules must be approved Agent or external-tool modules.",
                 surface="tool_pack",
                 component=pack,
+                module=module_path if isinstance(module_path, str) else "",
             )
-        else:
-            seen_modules: set[str] = set()
-            for binding in entry.tool_bindings:
-                if not isinstance(binding, ToolModuleBinding):
-                    _append(
-                        issues,
-                        "tool_binding.type_invalid",
-                        "Every tool binding must be ToolModuleBinding.",
-                        surface="tool_pack",
-                        component=pack,
-                    )
-                    continue
-                module_path = binding.module
-                if not isinstance(module_path, str) or _MODULE_RE.fullmatch(module_path) is None:
-                    _append(
-                        issues,
-                        "tool_binding.module_invalid",
-                        "Tool modules must be approved Agent builtin or external-tool modules.",
-                        surface="tool_pack",
-                        component=pack,
-                        module=module_path if isinstance(module_path, str) else "",
-                    )
-                    continue
-                if module_path in seen_modules:
-                    _append(
-                        issues,
-                        "tool_binding.module_duplicate",
-                        "A pack must declare each tool module once.",
-                        surface="tool_pack",
-                        component=pack,
-                        module=module_path,
-                    )
-                seen_modules.add(module_path)
-                if not isinstance(binding.tool_names, tuple) or not binding.tool_names:
-                    _append(
-                        issues,
-                        "tool_binding.names_invalid",
-                        "ToolModuleBinding.tool_names must be a non-empty tuple.",
-                        surface="tool_pack",
-                        component=pack,
-                        module=module_path,
-                    )
-                    continue
-                valid_names: list[str] = []
-                for name in binding.tool_names:
-                    if not isinstance(name, str) or _TOOL_NAME_RE.fullmatch(name) is None:
-                        _append(
-                            issues,
-                            "tool_binding.name_invalid",
-                            "Declared tool names must match [A-Za-z0-9_-]{1,64}.",
-                            surface="tool_pack",
-                            component=pack,
-                            module=module_path,
-                            tool=name if isinstance(name, str) else "",
-                        )
-                        continue
-                    valid_names.append(name)
-                    pack_name_counts[pack][name] += 1
-                if len(set(valid_names)) != len(valid_names):
-                    _append(
-                        issues,
-                        "tool_binding.name_duplicate",
-                        "A module binding must not repeat a tool name.",
-                        surface="tool_pack",
-                        component=pack,
-                        module=module_path,
-                    )
-                bindings_by_module[module_path].append((pack, binding))
+        elif not entry.dynamic:
+            packs_by_module[module_path].append((pack, entry))
         if not isinstance(entry.http_route_modules, tuple) or any(
             not isinstance(module, str) or _POLICY_MODULE_RE.fullmatch(module) is None
             for module in entry.http_route_modules
@@ -540,102 +544,105 @@ def _audit_tool_packs(
             )
         _audit_policy(pack, entry, modules=modules, issues=issues)
 
-    for pack, counts in sorted(pack_name_counts.items()):
-        for name, count in sorted(counts.items()):
-            if count > 1:
-                _append(
-                    issues,
-                    "tool_pack.projection_duplicate",
-                    "One pack projects the same tool through multiple bindings.",
-                    surface="tool_pack",
-                    component=pack,
-                    tool=name,
-                )
-
     locations: dict[str, set[str]] = defaultdict(set)
     declared_tools: set[str] = set()
-    for module_name in sorted(bindings_by_module):
-        references = bindings_by_module[module_name]
+    provider_ids: dict[str, str] = {}
+    for module_name in sorted(packs_by_module):
+        references = packs_by_module[module_name]
         try:
             loaded_module = modules.load(module_name)
         except Exception as exc:  # noqa: BLE001
-            for pack, _binding_record in references:
+            for pack, _entry_record in references:
                 _append(
                     issues,
-                    "tool_module.import_failed",
-                    f"Tool module import failed: {type(exc).__name__}.",
+                    "tool_provider.import_failed",
+                    f"Tool provider import failed: {type(exc).__name__}.",
                     surface="tool_pack",
                     component=pack,
                     module=module_name,
                 )
             continue
-        exported = getattr(loaded_module, "TOOLS", None)
-        if not isinstance(exported, (list, tuple)) or not exported:
+        provider = getattr(loaded_module, "TOOL_PROVIDER", None)
+        if not isinstance(provider, ToolProvider):
             _append(
                 issues,
-                "tool_module.export_invalid",
-                "Tool modules must export a non-empty list or tuple named TOOLS.",
+                "tool_provider.export_invalid",
+                "Static provider modules must export one ToolProvider as TOOL_PROVIDER.",
                 surface="tool_pack",
                 module=module_name,
             )
             continue
-        exported_counts: Counter[str] = Counter()
-        exported_names: set[str] = set()
-        for index, tool in enumerate(exported):
-            if not isinstance(tool, ToolDef):
-                _append(
-                    issues,
-                    "tool.type_invalid",
-                    f"TOOLS[{index}] must be a ToolDef.",
-                    surface="tool_pack",
-                    module=module_name,
-                )
-                continue
-            valid_name = _validate_tool(tool, module=module_name, issues=issues)
-            if valid_name is None:
-                continue
-            exported_counts[valid_name] += 1
-            exported_names.add(valid_name)
-            locations[valid_name].add(module_name)
-        for name, count in sorted(exported_counts.items()):
-            if count > 1:
-                _append(
-                    issues,
-                    "tool.name_duplicate_in_module",
-                    "A module must not export the same tool name more than once.",
-                    surface="tool_pack",
-                    module=module_name,
-                    tool=name,
-                )
+        if provider.module != module_name:
+            _append(
+                issues,
+                "tool_provider.module_mismatch",
+                "ToolProvider.module must match its catalog module.",
+                surface="tool_pack",
+                module=module_name,
+            )
+        previous_module = provider_ids.get(provider.id)
+        if previous_module is not None and previous_module != module_name:
+            _append(
+                issues,
+                "tool_provider.id_conflict",
+                "ToolProvider.id must be unique across provider modules.",
+                surface="tool_pack",
+                module=f"{previous_module},{module_name}",
+            )
+        provider_ids[provider.id] = module_name
 
-        declared_in_module = {
-            name
-            for _pack, binding in references
-            for name in binding.tool_names
-            if isinstance(name, str)
-        }
-        declared_tools.update(declared_in_module & exported_names)
-        for pack, binding in references:
-            for name in binding.tool_names:
-                if isinstance(name, str) and name not in exported_names:
+        catalog_packs = {pack for pack, _entry_record in references}
+        for extra_pack in sorted(set(provider.packs) - catalog_packs):
+            _append(
+                issues,
+                "tool_provider.pack_unassigned",
+                "Every provider-owned pack must have one catalog entry.",
+                surface="tool_pack",
+                component=extra_pack,
+                module=module_name,
+            )
+
+        for pack, _entry_record in references:
+            tools = provider.packs.get(pack)
+            if not isinstance(tools, tuple) or not tools:
+                _append(
+                    issues,
+                    "tool_provider.pack_missing",
+                    "The provider must own a non-empty tuple for every catalog pack.",
+                    surface="tool_pack",
+                    component=pack,
+                    module=module_name,
+                )
+                continue
+            counts: Counter[str] = Counter()
+            for index, tool in enumerate(tools):
+                if not isinstance(tool, ToolDef):
                     _append(
                         issues,
-                        "tool_binding.tool_missing",
-                        "A declared tool name is not exported by its bound module.",
+                        "tool.type_invalid",
+                        f"Provider pack item {index} must be a ToolDef.",
+                        surface="tool_pack",
+                        component=pack,
+                        module=module_name,
+                    )
+                    continue
+                valid_name = _validate_tool(tool, module=module_name, issues=issues)
+                if valid_name is None:
+                    continue
+                counts[valid_name] += 1
+                declared_tools.add(valid_name)
+                locations[valid_name].add(module_name)
+            for name, count in sorted(counts.items()):
+                if count > 1:
+                    _append(
+                        issues,
+                        "tool.name_duplicate_in_pack",
+                        "A provider pack must not repeat a tool name.",
                         surface="tool_pack",
                         component=pack,
                         module=module_name,
                         tool=name,
                     )
-        for name in sorted(exported_names - declared_in_module):
-            _append(
-                issues,
-                "tool_module.tool_unassigned",
-                "Every exported ToolDef must belong to at least one catalog pack.",
-                surface="tool_pack",
-                module=module_name,
-                tool=name,
-            )
 
     for name, module_names in sorted(locations.items()):
         if len(module_names) > 1:
@@ -650,6 +657,6 @@ def _audit_tool_packs(
 
     return _ToolPackAuditFacts(
         pack_count=len(entries),
-        module_count=len(bindings_by_module),
+        module_count=len(packs_by_module),
         tool_names=frozenset(declared_tools),
     )

@@ -16,7 +16,7 @@ from typing import Any, Sequence
 from chatcopilot.agent.search.relevance import filter_relevant_items
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.contracts.subagents import SearchProviderSpec
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult
 
 _LOG = logging.getLogger(__name__)
 
@@ -503,15 +503,22 @@ class DirectSearchProvider:
     ) -> tuple[dict[str, Any], list[Any], str]:
         args = _build_raw_search_args(tool, query)
         try:
-            summary, outputs, _hint = tool.handler(args)
+            result = tool.handler(args, ToolContext())
         except Exception as exc:  # noqa: BLE001
             _LOG.debug("direct search handler raised | tool=%s error=%s", tool.name, exc)
             return {}, [], "mcp_unavailable"
-        text = str(summary or "")
-        content = _extract_mcp_body(text)
-        payload = _parse_payload(content) or _parse_payload(text)
+        if not isinstance(result, ToolResult):
+            return {}, [], "mcp_unavailable"
+        if not result.ok:
+            return dict(result.data), list(result.outputs), result.error_code or "mcp_unavailable"
+        content = result.data.get("content")
+        if isinstance(content, dict):
+            payload = content
+        else:
+            text = str(content if content is not None else result.summary or "")
+            payload = _parse_payload(_extract_mcp_body(text)) or _parse_payload(text)
         if not payload:
-            return {"results": []}, list(outputs), ""
+            return {"results": []}, list(result.outputs), ""
         error_code = str(payload.get("error_code") or "")
         is_error = (
             payload.get("is_error")
@@ -519,8 +526,8 @@ class DirectSearchProvider:
             or error_code in CIRCUIT_BREAKER_ERRORS
         )
         if is_error:
-            return payload, list(outputs), error_code or "mcp_unavailable"
-        return payload, list(outputs), ""
+            return payload, list(result.outputs), error_code or "mcp_unavailable"
+        return payload, list(result.outputs), ""
 
 
 def _build_raw_search_args(tool: ToolDef, query: str) -> dict[str, Any]:

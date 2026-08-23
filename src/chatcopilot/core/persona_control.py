@@ -1,4 +1,4 @@
-"""Trusted Owner-only persona mutations for the pre-Agent host boundary."""
+"""Trusted Owner-only persona mutations behind the persona tool boundary."""
 from __future__ import annotations
 
 import hashlib

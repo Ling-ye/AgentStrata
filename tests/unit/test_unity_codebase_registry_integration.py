@@ -23,13 +23,13 @@ class UnityCodebaseRegistryIntegrationTests(unittest.TestCase):
     def test_tool_pack_entries_point_to_real_tool_modules(self) -> None:
         cases = {
             "filesystem.windows.read": "chatcopilot.external_tools.windows_fs.tools",
-            "unity.codebase.read": "chatcopilot.external_tools.unity_codebase.read_tools",
-            "unity.skills": "chatcopilot.external_tools.unity_codebase.skill_tools",
+            "unity.codebase.read": "chatcopilot.external_tools.unity_codebase",
+            "unity.skills": "chatcopilot.external_tools.unity_codebase",
         }
         for pack_name, expected_module in cases.items():
             entry = get_tool_pack_entry(pack_name)
             self.assertIsNotNone(entry, f"missing tool pack entry: {pack_name}")
-            self.assertIn(expected_module, entry.tool_modules)
+            self.assertEqual(expected_module, entry.provider_module)
 
     def test_resolve_tool_modules_for_new_tool_packs(self) -> None:
         resolved = resolve_tool_modules(
@@ -39,8 +39,7 @@ class UnityCodebaseRegistryIntegrationTests(unittest.TestCase):
             resolved,
             (
                 "chatcopilot.external_tools.windows_fs.tools",
-                "chatcopilot.external_tools.unity_codebase.read_tools",
-                "chatcopilot.external_tools.unity_codebase.skill_tools",
+                "chatcopilot.external_tools.unity_codebase",
             ),
         )
 

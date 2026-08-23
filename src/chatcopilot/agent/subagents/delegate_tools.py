@@ -16,7 +16,7 @@ from chatcopilot.contracts.adapter_approval import (
     AdapterApprovalEnvelope,
     validate_adapter_approval,
 )
-from chatcopilot.contracts.tools import ToolContext
+from chatcopilot.contracts.tools import ToolContext, ToolResult, object_schema
 from chatcopilot.core.adapter_approval import (
     AdapterApprovalStore,
     resolve_adapter_bot_spec,
@@ -52,7 +52,7 @@ def make_delegate_tool(
     last_partial: list[str] = []
     failure_trace: list[str | None] = [None]
 
-    def _handler(args: dict, ctx: ToolContext | None = None):
+    def _handler(args: dict, ctx: ToolContext) -> ToolResult:
         trace = current_trace()
         trace_id = trace.trace_id if trace is not None else None
         if trace_id is None or trace_id != failure_trace[0]:
@@ -77,7 +77,7 @@ def make_delegate_tool(
                 "limits": {"delegate_blocked": True, "scope": "current_turn"},
                 "confidence": "low",
             }
-            return json.dumps(payload, ensure_ascii=False), [], None
+            return _delegate_tool_result(payload)
 
         if definition.kind == "search":
             validation_errors = validate_search_task_args(args)
@@ -96,7 +96,7 @@ def make_delegate_tool(
                     "confidence": "low",
                     "limits": {"validation_failed": True},
                 }
-                return json.dumps(payload, ensure_ascii=False), [], None
+                return _delegate_tool_result(payload)
         elif has_write_selector(definition):
             validation_errors = validate_write_task_args(args)
             if validation_errors:
@@ -114,7 +114,7 @@ def make_delegate_tool(
                     "confidence": "low",
                     "limits": {"validation_failed": True},
                 }
-                return json.dumps(payload, ensure_ascii=False), [], None
+                return _delegate_tool_result(payload)
             if definition.name == "adapter_forge":
                 approval_errors = _validate_adapter_forge_args(args)
                 if approval_errors:
@@ -132,7 +132,7 @@ def make_delegate_tool(
                         "confidence": "high",
                         "limits": {"validation_failed": True},
                     }
-                    return json.dumps(payload, ensure_ascii=False), [], None
+                    return _delegate_tool_result(payload)
                 try:
                     _consume_adapter_approval(args, ctx)
                 except (FileNotFoundError, PermissionError, RuntimeError, ValueError) as exc:
@@ -151,7 +151,7 @@ def make_delegate_tool(
                         "confidence": "high",
                         "limits": {"validation_failed": True},
                     }
-                    return json.dumps(payload, ensure_ascii=False), [], None
+                    return _delegate_tool_result(payload)
 
         task_args = dict(args)
         extension_inputs: list[str] = []
@@ -199,10 +199,18 @@ def make_delegate_tool(
                     f"{definition.tool_name} 已连续 {consecutive_failures[0]} 次未完成；"
                     "本轮不要继续重试此来源。"
                 )
-                return json.dumps(payload, ensure_ascii=False), list(result.outputs), None
+                return _delegate_tool_result(payload, outputs=list(result.outputs))
         else:
             consecutive_failures[0] = 0
-        return result.summary, list(result.outputs), None
+        payload = delegate_payload(result.summary)
+        if not payload:
+            payload = {
+                "ok": result.ok,
+                "error_code": result.error_code or "",
+                "summary": result.summary,
+                "outputs": list(result.outputs),
+            }
+        return _delegate_tool_result(payload, outputs=list(result.outputs))
 
     properties = task_pack_schema()
     required = ["objective"]
@@ -218,8 +226,8 @@ def make_delegate_tool(
     return ToolDef(
         name=definition.tool_name,
         summary=summary_with_availability(definition.summary, availability_hint),
-        properties=properties,
-        required=required,
+        input_schema=object_schema(properties, required=tuple(required)),
+        output_schema=_delegate_output_schema(),
         handler=_handler,
         category="agent.subagent",
         owner="agent",
@@ -248,6 +256,50 @@ def delegate_payload(summary: str) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _delegate_tool_result(
+    payload: dict,
+    *,
+    outputs: list[str] | None = None,
+) -> ToolResult:
+    ok = payload.get("ok") is not False
+    summary = str(payload.get("summary") or "").strip()
+    return ToolResult(
+        ok=ok,
+        summary=summary,
+        outputs=list(outputs or payload.get("outputs") or ()),
+        error=None if ok else (summary or "delegated task failed"),
+        error_code="" if ok else str(payload.get("error_code") or "delegate_failed"),
+        stage="" if ok else "delegation",
+        data=dict(payload),
+    )
+
+
+def _delegate_output_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "ok": {"type": "boolean"},
+            "error_code": {"type": "string"},
+            "summary": {"type": "string"},
+            "findings": {"type": "array"},
+            "evidence": {"type": "array"},
+            "changes": {"type": "array"},
+            "commands_run": {"type": "array"},
+            "outputs": {"type": "array", "items": {"type": "string"}},
+            "risks": {"type": "array"},
+            "limits": {"type": "object"},
+            "next_steps": {"type": "array"},
+            "confidence": {"type": "string"},
+            "cache_summary": {"type": "string"},
+            "partial_findings": {"type": "array"},
+            "throttle_hint": {"type": "string"},
+            "fallback": {"type": "object"},
+        },
+        "required": ["ok", "summary"],
+        "additionalProperties": True,
+    }
+
+
 def with_web_fallback(
     *,
     primary: ToolDef,
@@ -258,33 +310,44 @@ def with_web_fallback(
     primary_handler = primary.handler
     fallback_handler = fallback.handler
 
-    def _handler(args: dict):
+    def _handler(args: dict, ctx: ToolContext) -> ToolResult:
         primary_block = circuit.blocked("tavily")
         primary_payload: dict = {}
         if primary_block is None:
-            primary_summary, primary_outputs, primary_hint = primary_handler(args)
-            primary_payload = payload_parser(primary_summary)
-            if primary_payload.get("ok") is not False:
+            primary_result = primary_handler(args, ctx)
+            primary_payload = dict(primary_result.data) or payload_parser(
+                primary_result.summary
+            )
+            if primary_result.ok and primary_payload.get("ok") is not False:
                 circuit.record_success("tavily")
-                return primary_summary, primary_outputs, primary_hint
-            primary_block = str(primary_payload.get("error_code") or "") or None
+                return primary_result
+            primary_block = str(
+                primary_payload.get("error_code") or primary_result.error_code or ""
+            ) or None
             circuit.record_failure("tavily", primary_block)
             if primary_block not in _SEARCH_FAILURE_TTLS:
-                return primary_summary, primary_outputs, primary_hint
+                return primary_result
 
         fallback_block = circuit.blocked("searxng")
         if fallback_block is None:
-            fallback_summary, fallback_outputs, fallback_hint = fallback_handler(args)
-            fallback_payload = payload_parser(fallback_summary)
-            if fallback_payload.get("ok") is not False:
+            fallback_result = fallback_handler(args, ctx)
+            fallback_payload = dict(fallback_result.data) or payload_parser(
+                fallback_result.summary
+            )
+            if fallback_result.ok and fallback_payload.get("ok") is not False:
                 circuit.record_success("searxng")
                 fallback_payload["fallback"] = {
                     "from": "tavily",
                     "reason": primary_block,
                     "source": "searxng",
                 }
-                return json.dumps(fallback_payload, ensure_ascii=False), fallback_outputs, fallback_hint
-            fallback_block = str(fallback_payload.get("error_code") or "") or None
+                return replace(
+                    fallback_result,
+                    data=fallback_payload,
+                )
+            fallback_block = str(
+                fallback_payload.get("error_code") or fallback_result.error_code or ""
+            ) or None
             circuit.record_failure("searxng", fallback_block)
 
         payload = {
@@ -304,7 +367,7 @@ def with_web_fallback(
             },
             "confidence": "low",
         }
-        return json.dumps(payload, ensure_ascii=False), [], None
+        return _delegate_tool_result(payload)
 
     return replace(primary, handler=_handler)
 

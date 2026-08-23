@@ -28,7 +28,7 @@ python -m chatcopilot bot doctor --bot bots/my-bot/bot.yaml
 
 - `workspace.read_write`
 - `memory.chat`
-- `agents.persona_control.enabled`（宿主直接管理人格，不向主 Agent 暴露写工具）
+- `persona.control`（Owner-only 主 Agent 人格管理工具）
 - `mcp.admin`
 - `chat.file_uploads`
 - `chat.private_workspace`

@@ -59,10 +59,8 @@ from chatcopilot.contracts.persistent_state import (
     PersistentConversationState,
 )
 from chatcopilot.contracts.persona_control import (
-    PersonaControlSpec,
     PersonaDraftCall,
     PersonaDraftResult,
-    PersonaDirective,
     PersonaMutationReceipt,
     PersonaMutationRequest,
 )
@@ -109,9 +107,10 @@ from chatcopilot.contracts.runtime import (
 )
 from chatcopilot.contracts.tool_packs import (
     ToolFeatureEntry,
-    ToolModuleBinding,
     ToolPackEntry,
     ToolPackPolicy,
+    ToolProvider,
+    static_tool_provider,
     tool_pack_policies,
 )
 from chatcopilot.contracts.tools import (
@@ -120,12 +119,13 @@ from chatcopilot.contracts.tools import (
     EXECUTION_USER_SERIAL_BACKGROUND,
     DocAnchors,
     Handler,
-    HandlerResult,
     ToolContext,
     ToolDef,
     ToolHandlerError,
+    ToolResult,
     build_mcp_schema,
     build_openai_schema,
+    object_schema,
     properties_from_argparse,
 )
 from chatcopilot.contracts.workspace import (
@@ -167,7 +167,6 @@ __all__ = [
     "EventSink",
     "FinalText",
     "Handler",
-    "HandlerResult",
     "Identity",
     "LlmCallStarted",
     "LlmCallFinished",
@@ -185,10 +184,8 @@ __all__ = [
     "PERSONA_MAX_BYTES",
     "PERSONA_MAX_ITEM_CHARS",
     "PERSONA_SCOPES",
-    "PersonaControlSpec",
     "PersonaDraftCall",
     "PersonaDraftResult",
-    "PersonaDirective",
     "PersonaMutationReceipt",
     "PersonaMutationRequest",
     "PersistentConversationState",
@@ -210,12 +207,14 @@ __all__ = [
     "TextDelta",
     "ToolContext",
     "ToolFeatureEntry",
-    "ToolModuleBinding",
     "ToolPackEntry",
     "ToolPackPolicy",
+    "ToolProvider",
     "tool_pack_policies",
+    "static_tool_provider",
     "ToolDef",
     "ToolHandlerError",
+    "ToolResult",
     "ToolFinished",
     "ToolStarted",
     "TopicDecisionMade",
@@ -235,6 +234,7 @@ __all__ = [
     "render_skill_index_section",
     "build_mcp_schema",
     "build_openai_schema",
+    "object_schema",
     "current_development_task_scope",
     "development_task_scope",
     "parse_write_scope",

@@ -18,7 +18,7 @@ from chatcopilot.agent.mcp.client import McpToolProvider
 from chatcopilot.botspec.loader import load_botspec
 from chatcopilot.botspec.mcp import load_mcp_server_configs
 from chatcopilot.contracts.runtime import McpServerConfig
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult
 
 _DEFAULT_BOT = "bots/lingye-copilot-qq/bot.yaml"
 _DEFAULT_QUERY = "上海 二郎拉面 探店"
@@ -214,7 +214,7 @@ def _probe_tool(
         )
 
     try:
-        summary, _outputs, _hint = tool.handler(arguments)
+        tool_result = tool.handler(arguments, ToolContext(request_text=query))
     except Exception as exc:  # noqa: BLE001
         return ProbeResult(
             server_id=config.id,
@@ -228,14 +228,28 @@ def _probe_tool(
             message=str(exc),
         )
 
-    parsed = _parse_summary(summary)
-    error_code = _error_code(parsed)
+    if not isinstance(tool_result, ToolResult):
+        return ProbeResult(
+            server_id=config.id,
+            tool_name=remote_name,
+            local_name=tool.name,
+            status="failed",
+            ok=False,
+            arguments=arguments,
+            result_count=0,
+            error_code="invalid_tool_result",
+            message="Tool handler returned a non-ToolResult value.",
+        )
+
+    content = tool_result.data.get("content")
+    parsed = content if content is not None else _parse_summary(tool_result.summary)
+    error_code = tool_result.error_code or _error_code(parsed)
     items = _collect_items(parsed)
     result_count = len(items)
     sample = _sample_text(parsed, items)
     expects_items = _expects_items(tool)
     empty_is_failure = require_results and expects_items
-    ok = not error_code and (result_count > 0 or not empty_is_failure)
+    ok = tool_result.ok and not error_code and (result_count > 0 or not empty_is_failure)
     status = "passed" if ok else "empty" if not error_code else "failed"
     return ProbeResult(
         server_id=config.id,
@@ -246,7 +260,13 @@ def _probe_tool(
         arguments=arguments,
         result_count=result_count,
         error_code=error_code,
-        message="" if ok else "Tool returned no extractable results." if not error_code else sample,
+        message=(
+            ""
+            if ok
+            else "Tool returned no extractable results."
+            if tool_result.ok and not error_code
+            else tool_result.error or sample
+        ),
         sample=sample,
     )
 

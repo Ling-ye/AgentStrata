@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence
 
-from chatcopilot.contracts.tools import HandlerResult, ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 
 SUBMIT_RESULT_TOOL = "submit_result"
 
@@ -51,7 +51,8 @@ def _normalize_evidence(value: Any) -> List[Dict[str, str]]:
 
 
 def build_submit_result_tool(holder: SubagentResultHolder) -> ToolDef:
-    def _handler(args: Dict[str, Any]) -> HandlerResult:
+    def _handler(args: Dict[str, Any], ctx: ToolContext) -> ToolResult:
+        del ctx
         args = args or {}
         summary = str(args.get("summary") or "").strip()
         if not summary:
@@ -75,12 +76,17 @@ def build_submit_result_tool(holder: SubagentResultHolder) -> ToolDef:
         }
         holder.payload = payload
         holder.outputs = outputs
-        return ("structured result submitted", outputs, None)
+        return ToolResult(
+            ok=True,
+            summary="structured result submitted",
+            outputs=outputs,
+            data={"submitted": True, "result": payload},
+        )
 
     return ToolDef(
         name=SUBMIT_RESULT_TOOL,
         summary="Submit the final structured result for this subagent task.",
-        properties={
+        input_schema=object_schema({
             "summary": {
                 "type": "string",
                 "description": "Concise conclusion for the main agent.",
@@ -147,8 +153,14 @@ def build_submit_result_tool(holder: SubagentResultHolder) -> ToolDef:
                 "type": "string",
                 "description": "Stable upstream error code when ok is false.",
             },
-        },
-        required=["summary"],
+        }, required=("summary",)),
+        output_schema=object_schema(
+            {
+                "submitted": {"type": "boolean", "const": True},
+                "result": {"type": "object"},
+            },
+            required=("submitted", "result"),
+        ),
         handler=_handler,
         category="agent.subagent",
         owner="agent",

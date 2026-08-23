@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,7 +32,7 @@ def test_wiki_tools_are_owner_private() -> None:
 
 def test_upsert_and_search_tools_share_canonical_store(tmp_path: Path) -> None:
     with mock.patch.dict(os.environ, {"CHATCOPILOT_WIKI_ROOT": str(tmp_path / "wiki")}):
-        summary, _, _ = _tool("wiki_upsert_page").handler(
+        upserted = _tool("wiki_upsert_page").handler(
             {
                 "title": "部署约束",
                 "summary": "记录部署约束。",
@@ -46,11 +45,11 @@ def test_upsert_and_search_tools_share_canonical_store(tmp_path: Path) -> None:
             },
             _context(),
         )
-        created = json.loads(summary)
-        search_summary, _, _ = _tool("wiki_search").handler(
+        created = upserted.data
+        searched = _tool("wiki_search").handler(
             {"query": "源码修改目标"}, _context()
         )
-        hits = json.loads(search_summary)["hits"]
+        hits = searched.data["hits"]
 
     assert created["action"] == "created"
     assert hits[0]["page_id"] == created["page"]["page_id"]

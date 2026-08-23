@@ -3,9 +3,12 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from chatcopilot.contracts.tools import HandlerResult
+from chatcopilot.contracts.tools import ToolContext, ToolResult
 
-def _handler_send_files_to_user(args: Dict[str, Any]) -> HandlerResult:
+
+def _handler_send_files_to_user(
+    args: Dict[str, Any], _ctx: ToolContext
+) -> ToolResult:
     """把当前用户工作区内的文件回传到当前会话。
 
     平台无关：实际回传通道由 middleware 在装配会话时注入（绑定当前 BotSpec 的平台
@@ -31,10 +34,15 @@ def _handler_send_files_to_user(args: Dict[str, Any]) -> HandlerResult:
     result = sender(list(raw_files), message)
     names = ", ".join(result.sent_names)
     msg_hint = f"，附言: {message[:60]}" if message else ""
-    return (
-        f"已发送 {len(result.sent_paths)} 个文件到当前会话：{names}{msg_hint}",
-        list(result.sent_paths),
-        None,
+    return ToolResult(
+        ok=True,
+        summary=f"已发送 {len(result.sent_paths)} 个文件到当前会话：{names}{msg_hint}",
+        outputs=list(result.sent_paths),
+        data={
+            "sent_count": len(result.sent_paths),
+            "sent_names": list(result.sent_names),
+            "message": message,
+        },
     )
 
 

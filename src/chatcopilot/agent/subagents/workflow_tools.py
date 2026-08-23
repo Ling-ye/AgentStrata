@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 from chatcopilot.agent.subagents.spec import WorkflowDef
 from chatcopilot.agent.subagents.task_pack import parse_task_pack, task_pack_schema
 from chatcopilot.agent.subagents.workflow import WorkflowRunner
-from chatcopilot.contracts.tools import EXECUTION_USER_SERIAL_BACKGROUND, ToolDef
+from chatcopilot.contracts.tools import (
+    EXECUTION_USER_SERIAL_BACKGROUND,
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 
 
 def make_workflow_tool(
@@ -17,7 +24,8 @@ def make_workflow_tool(
     *,
     module_name: str = __name__,
 ) -> ToolDef:
-    def _handler(args: dict):
+    def _handler(args: dict, ctx: ToolContext) -> ToolResult:
+        del ctx
         task_args = dict(args)
         extension_inputs: list[str] = []
         if workflow.name == "coding":
@@ -39,7 +47,30 @@ def make_workflow_tool(
             workflow=workflow,
             task=task,
         )
-        return result.summary, list(result.outputs), None
+        try:
+            data = json.loads(result.summary)
+        except (TypeError, ValueError):
+            data = {
+                "ok": result.ok,
+                "summary": result.summary,
+                "outputs": list(result.outputs),
+            }
+        if not isinstance(data, dict):
+            data = {
+                "ok": result.ok,
+                "summary": result.summary,
+                "outputs": list(result.outputs),
+            }
+        summary = str(data.get("summary") or result.summary)
+        return ToolResult(
+            ok=result.ok,
+            summary=summary,
+            outputs=list(result.outputs),
+            error=None if result.ok else (summary or "workflow failed"),
+            error_code="" if result.ok else "workflow_failed",
+            stage="" if result.ok else "workflow",
+            data=data,
+        )
 
     properties = task_pack_schema()
     required = ["objective"]
@@ -61,8 +92,19 @@ def make_workflow_tool(
     return ToolDef(
         name=workflow.tool_name,
         summary=workflow.summary,
-        properties=properties,
-        required=required,
+        input_schema=object_schema(properties, required=tuple(required)),
+        output_schema={
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "summary": {"type": "string"},
+                "steps": {"type": "array"},
+                "outputs": {"type": "array", "items": {"type": "string"}},
+                "risks": {"type": "array"},
+            },
+            "required": ["ok", "summary"],
+            "additionalProperties": True,
+        },
         handler=_handler,
         category="agent.subagent.workflow",
         owner="agent",

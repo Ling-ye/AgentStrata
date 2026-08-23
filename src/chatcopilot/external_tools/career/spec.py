@@ -5,9 +5,15 @@ import json
 from copy import deepcopy
 from typing import Any
 
+from chatcopilot.contracts.tool_packs import static_tool_provider
 from chatcopilot.external_tools.career.service import CareerIntelService
 from chatcopilot.external_tools.shared.spec_helpers import current_workspace
-from chatcopilot.external_tools.shared.tool_spec import HandlerResult, ToolDef
+from chatcopilot.external_tools.shared.tool_spec import (
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 
 
 def _service() -> CareerIntelService:
@@ -17,9 +23,19 @@ def _service() -> CareerIntelService:
 _MAX_TOOL_RESULT_CHARS = 12000
 
 
-def _result(payload: Any) -> HandlerResult:
+def _result(payload: Any) -> ToolResult:
     bounded = _bounded_payload(payload)
-    return (json.dumps(bounded, ensure_ascii=False, separators=(",", ":")), [], None)
+    data = bounded if isinstance(bounded, dict) else {"result": bounded}
+    ok = data.get("ok") is not False
+    summary = str(data.get("summary") or data.get("message") or "职业情报操作完成。")
+    return ToolResult(
+        ok=ok,
+        summary=summary if ok else "",
+        data=data,
+        error=None if ok else summary,
+        error_code=str(data.get("error_code") or "career_operation_failed") if not ok else "",
+        stage="execution" if not ok else "",
+    )
 
 
 def _bounded_payload(payload: Any) -> Any:
@@ -71,7 +87,7 @@ def _list(args: dict[str, Any], key: str) -> list[str] | None:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
-def _watchlist_update(args: dict[str, Any]) -> HandlerResult:
+def _watchlist_update(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     payload = _service().store.update_watchlist(
         companies=_list(args, "companies"),
         keywords=_list(args, "keywords"),
@@ -81,12 +97,12 @@ def _watchlist_update(args: dict[str, Any]) -> HandlerResult:
     return _result({"watchlist": payload})
 
 
-def _watchlist_show(args: dict[str, Any]) -> HandlerResult:
+def _watchlist_show(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     del args
     return _result({"watchlist": _service().store.get_watchlist()})
 
 
-def _search_jobs(args: dict[str, Any]) -> HandlerResult:
+def _search_jobs(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     payload = _service().search_jobs(
         companies=_list(args, "companies"),
         keywords=_list(args, "keywords"),
@@ -97,7 +113,7 @@ def _search_jobs(args: dict[str, Any]) -> HandlerResult:
     return _result(payload)
 
 
-def _ingest(args: dict[str, Any]) -> HandlerResult:
+def _ingest(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     records = args.get("records")
     if not isinstance(records, list) or not records:
         raise ValueError("records 必须是非空证据数组")
@@ -106,7 +122,7 @@ def _ingest(args: dict[str, Any]) -> HandlerResult:
     return _result(_service().store.ingest_evidence(records))
 
 
-def _ingest_jobs(args: dict[str, Any]) -> HandlerResult:
+def _ingest_jobs(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     records = args.get("records")
     scan_scope = args.get("scan_scope")
     if not isinstance(records, list) or not records or not all(isinstance(item, dict) for item in records):
@@ -116,7 +132,7 @@ def _ingest_jobs(args: dict[str, Any]) -> HandlerResult:
     return _result(_service().ingest_jobs(records=records, scan_scope=scan_scope))
 
 
-def _query(args: dict[str, Any]) -> HandlerResult:
+def _query(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     kind = str(args.get("kind") or "all")
     if kind not in {"all", "jobs", "evidence"}:
         raise ValueError("kind 仅支持 all/jobs/evidence")
@@ -141,18 +157,19 @@ def _int_arg(args: dict[str, Any], key: str, default: int) -> int:
 
 
 _STRING_ARRAY = {"type": "array", "items": {"type": "string"}}
+_PAYLOAD_SCHEMA = {"type": "object", "additionalProperties": True}
 
 TOOLS = [
     ToolDef(
         name="career_watchlist_update",
         summary="更新当前用户关注的公司、岗位关键词和城市；默认与现有列表合并。",
-        properties={
+        input_schema=object_schema({
             "companies": {**_STRING_ARRAY, "description": "公司规范名或别名。"},
             "keywords": {**_STRING_ARRAY, "description": "岗位检索关键词。"},
             "locations": {**_STRING_ARRAY, "description": "可选城市过滤。"},
             "replace": {"type": "boolean", "description": "为 true 时替换传入的非空维度。", "default": False},
-        },
-        required=[],
+        }),
+        output_schema=_PAYLOAD_SCHEMA,
         handler=_watchlist_update,
         category="career.intelligence",
         owner="career",
@@ -162,7 +179,7 @@ TOOLS = [
     ToolDef(
         name="career_watchlist_show",
         summary="查看当前用户的 AI 岗位情报关注公司、关键词和城市。",
-        properties={}, required=[], handler=_watchlist_show,
+        input_schema=object_schema(), output_schema=_PAYLOAD_SCHEMA, handler=_watchlist_show,
         category="career.intelligence", owner="career", module=__name__,
     ),
     ToolDef(
@@ -171,14 +188,14 @@ TOOLS = [
             "按用户指定公司查询公开招聘源，保存快照并返回新增、变化、疑似下线岗位，"
             "以及需要统一搜索入口执行的 fallback_query。"
         ),
-        properties={
+        input_schema=object_schema({
             "companies": {**_STRING_ARRAY, "description": "留空使用 watchlist。"},
             "keywords": {**_STRING_ARRAY, "description": "留空使用 watchlist。"},
             "locations": {**_STRING_ARRAY, "description": "留空使用 watchlist。"},
             "posted_within_days": {"type": "integer", "description": "只保留最近多少天发布的岗位。", "default": 30},
             "limit_per_company": {"type": "integer", "description": "每家公司最多返回数，1-50。", "default": 20},
-        },
-        required=[], handler=_search_jobs,
+        }),
+        output_schema=_PAYLOAD_SCHEMA, handler=_search_jobs,
         category="career.intelligence", owner="career", module=__name__, weight="heavy",
         metadata={"tags": ["career", "search", "write"]},
     ),
@@ -188,7 +205,7 @@ TOOLS = [
             "把统一搜索入口从用户指定公司的官方招聘链接找到的岗位写入快照。"
             "搜索摘要、社区帖子和面经链接不能作为岗位来源；fallback 快照不会判定岗位下线。"
         ),
-        properties={
+        input_schema=object_schema({
             "records": {
                 "type": "array",
                 "items": {
@@ -216,8 +233,8 @@ TOOLS = [
                 },
                 "required": ["keywords", "posted_within_days", "source_name"],
             },
-        },
-        required=["records", "scan_scope"], handler=_ingest_jobs,
+        }, required=("records", "scan_scope")),
+        output_schema=_PAYLOAD_SCHEMA, handler=_ingest_jobs,
         category="career.intelligence", owner="career", module=__name__,
         metadata={"tags": ["career", "write"]},
     ),
@@ -227,7 +244,7 @@ TOOLS = [
             "保存联网研究得到的薪资、待遇、面试流程或面试问题证据。每条必须包含公开链接、"
             "来源等级 A-D 和置信度；不得只写无法拆解的推测总包。"
         ),
-        properties={
+        input_schema=object_schema({
             "records": {
                 "type": "array",
                 "description": "结构化证据数组。",
@@ -250,25 +267,31 @@ TOOLS = [
                     "required": ["kind", "company", "source_name", "source_url", "source_type", "source_grade", "published_at", "confidence"],
                 },
             }
-        },
-        required=["records"], handler=_ingest,
+        }, required=("records",)),
+        output_schema=_PAYLOAD_SCHEMA, handler=_ingest,
         category="career.intelligence", owner="career", module=__name__,
         metadata={"tags": ["career", "write"]},
     ),
     ToolDef(
         name="career_intel_query",
         summary="查询已保存的岗位、市场证据、高频面试题和最近一次扫描状态。",
-        properties={
+        input_schema=object_schema({
             "companies": {**_STRING_ARRAY, "description": "可选公司过滤。"},
             "kind": {"type": "string", "enum": ["all", "jobs", "evidence"], "default": "all"},
             "limit": {"type": "integer", "default": 50},
             "since_days": {"type": "integer", "description": "仅查询最近多少天，默认 365。", "default": 365},
             "role_family": {"type": "string", "description": "可选岗位族过滤。"},
             "detail": {"type": "boolean", "description": "是否返回完整 JD/证据细节。", "default": False},
-        },
-        required=[], handler=_query,
+        }),
+        output_schema=_PAYLOAD_SCHEMA, handler=_query,
         category="career.intelligence", owner="career", module=__name__,
     ),
 ]
 
-__all__ = ["TOOLS"]
+TOOL_PROVIDER = static_tool_provider(
+    "career",
+    packs={"career.intelligence": tuple(TOOLS)},
+    module=__name__,
+)
+
+__all__ = ["TOOLS", "TOOL_PROVIDER"]

@@ -11,12 +11,15 @@ from unittest import mock
 
 from chatcopilot.core.concurrency import FileTokenLimiter
 from chatcopilot.middleware.runtime.jobs import FileQueueSlot
-from chatcopilot.agent.tools.executor import ToolExecutor, ToolResult
+from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.middleware.acp.server import AcpChatAgent
 from chatcopilot.contracts.tools import (
     EXECUTION_SYNC,
     EXECUTION_USER_SERIAL_BACKGROUND,
+    ToolContext,
     ToolDef,
+    ToolResult,
+    object_schema,
 )
 
 
@@ -79,12 +82,15 @@ class SessionLockTests(unittest.TestCase):
 
 class ToolExecutorLimiterTests(unittest.TestCase):
     def test_tool_weight_defaults_to_light(self) -> None:
+        def handler(_args: dict, _context: ToolContext) -> ToolResult:
+            return ToolResult(ok=True, summary="ok")
+
         tool = ToolDef(
             name="light",
             summary="light test tool",
-            properties={},
-            required=[],
-            handler=lambda _args: ("ok", [], None),
+            input_schema=object_schema(),
+            output_schema=object_schema(),
+            handler=handler,
         )
 
         self.assertEqual(tool.weight, "light")
@@ -93,16 +99,19 @@ class ToolExecutorLimiterTests(unittest.TestCase):
     def test_background_policy_submits_without_running_handler(self) -> None:
         called = False
 
-        def handler(_args):
+        def handler(_args: dict, _context: ToolContext) -> ToolResult:
             nonlocal called
             called = True
-            return "ran", [], None
+            return ToolResult(ok=True, summary="ran")
 
         tool = ToolDef(
             name="bg",
             summary="background test tool",
-            properties={},
-            required=[],
+            input_schema=object_schema(
+                {"x": {"type": "integer"}},
+                required=("x",),
+            ),
+            output_schema=object_schema(),
             handler=handler,
             execution_policy=EXECUTION_USER_SERIAL_BACKGROUND,
         )
@@ -129,16 +138,16 @@ class ToolExecutorLimiterTests(unittest.TestCase):
     def test_background_worker_executes_handler_directly(self) -> None:
         called = False
 
-        def handler(_args):
+        def handler(_args: dict, _context: ToolContext) -> ToolResult:
             nonlocal called
             called = True
-            return "ran", [], None
+            return ToolResult(ok=True, summary="ran")
 
         tool = ToolDef(
             name="bg",
             summary="background test tool",
-            properties={},
-            required=[],
+            input_schema=object_schema(),
+            output_schema=object_schema(),
             handler=handler,
             execution_policy=EXECUTION_USER_SERIAL_BACKGROUND,
         )
@@ -159,13 +168,42 @@ class ToolExecutorLimiterTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.summary, "ran")
 
+    def test_background_submitter_rejects_legacy_tuple_result(self) -> None:
+        called = False
+
+        def handler(_args: dict, _context: ToolContext) -> ToolResult:
+            nonlocal called
+            called = True
+            return ToolResult(ok=True, summary="ran")
+
+        tool = ToolDef(
+            name="bg_invalid_result",
+            summary="Background result contract test tool.",
+            input_schema=object_schema(),
+            output_schema=object_schema(),
+            handler=handler,
+            execution_policy=EXECUTION_USER_SERIAL_BACKGROUND,
+        )
+
+        def legacy_submitter(_tool: ToolDef, _args: dict):
+            return "queued", [], None
+
+        result = ToolExecutor(
+            tools=[tool],
+            background_submitter=legacy_submitter,  # type: ignore[arg-type]
+        ).execute(tool.name, {})
+
+        self.assertIsInstance(result, ToolResult)
+        self.assertFalse(result.ok)
+        self.assertFalse(called)
+
     def test_heavy_tool_uses_global_limiter(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             active = 0
             max_seen = 0
             guard = threading.Lock()
 
-            def handler(_args):
+            def handler(_args: dict, _context: ToolContext) -> ToolResult:
                 nonlocal active, max_seen
                 with guard:
                     active += 1
@@ -173,13 +211,13 @@ class ToolExecutorLimiterTests(unittest.TestCase):
                 time.sleep(0.05)
                 with guard:
                     active -= 1
-                return "ok", [], None
+                return ToolResult(ok=True, summary="ok")
 
             tool = ToolDef(
                 name="heavy",
                 summary="heavy test tool",
-                properties={},
-                required=[],
+                input_schema=object_schema(),
+                output_schema=object_schema(),
                 handler=handler,
                 weight="heavy",
             )

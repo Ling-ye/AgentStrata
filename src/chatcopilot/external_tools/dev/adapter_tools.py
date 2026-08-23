@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from chatcopilot.contracts.adapter_approval import (
     AdapterApprovalEnvelope,
     validate_adapter_approval,
 )
-from chatcopilot.contracts.tools import ToolContext
+from chatcopilot.contracts.tools import ToolContext, ToolResult, object_schema
 from chatcopilot.core.adapter_approval import (
     AdapterApprovalStore,
     resolve_adapter_bot_spec,
@@ -37,7 +36,7 @@ def _owner_user_id(ctx: ToolContext) -> str:
     return identity
 
 
-def _prepare(args: dict[str, Any], _ctx: ToolContext):
+def _prepare(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     envelope = _envelope(args)
     errors = validate_adapter_approval(envelope)
     if errors:
@@ -51,10 +50,10 @@ def _prepare(args: dict[str, Any], _ctx: ToolContext):
             "approve_adapter_source only after the Owner explicitly confirms it."
         ),
     }
-    return json.dumps(payload, ensure_ascii=False, indent=2), [], None
+    return ToolResult(ok=True, summary="适配器来源候选已完成校验。", data=payload)
 
 
-def _approve(args: dict[str, Any], ctx: ToolContext):
+def _approve(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     envelope = _envelope(args)
     candidate_digest = str(args.get("candidate_digest") or "").strip()
     bot_path = resolve_adapter_bot_spec(str(args.get("bot") or "").strip() or None)
@@ -74,7 +73,7 @@ def _approve(args: dict[str, Any], ctx: ToolContext):
             "digest, objective, and write_scope."
         ),
     }
-    return json.dumps(payload, ensure_ascii=False, indent=2), [], None
+    return ToolResult(ok=True, summary="适配器来源批准已记录。", data=payload)
 
 
 _COMMON_PROPERTIES = {
@@ -110,6 +109,7 @@ _COMMON_REQUIRED = [
     "license_evidence",
     "integration_intent",
 ]
+_ADAPTER_RESULT_SCHEMA = {"type": "object", "additionalProperties": True}
 
 TOOLS = [
     ToolDef(
@@ -118,8 +118,11 @@ TOOLS = [
             "Validate and normalize one public adapter source and return its immutable "
             "approval digest. This does not approve, download, or modify anything."
         ),
-        properties=dict(_COMMON_PROPERTIES),
-        required=list(_COMMON_REQUIRED),
+        input_schema=object_schema(
+            dict(_COMMON_PROPERTIES),
+            required=tuple(_COMMON_REQUIRED),
+        ),
+        output_schema=_ADAPTER_RESULT_SCHEMA,
         handler=_prepare,
         requires_role="owner",
         category="development.adapter.approval",
@@ -133,14 +136,14 @@ TOOLS = [
             "Record one explicit, bot-local Owner approval for an exact prepared adapter "
             "source. The approval is single-use and does not install or modify source."
         ),
-        properties={
+        input_schema=object_schema({
             **_COMMON_PROPERTIES,
             "candidate_digest": schema_property(
                 type="string",
                 description="Exact sha256 digest returned by prepare_adapter_source.",
             ),
-        },
-        required=[*_COMMON_REQUIRED, "candidate_digest"],
+        }, required=(*_COMMON_REQUIRED, "candidate_digest")),
+        output_schema=_ADAPTER_RESULT_SCHEMA,
         handler=_approve,
         requires_role="owner",
         category="development.adapter.approval",

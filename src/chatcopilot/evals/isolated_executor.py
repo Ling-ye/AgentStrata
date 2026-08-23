@@ -19,7 +19,8 @@ from chatcopilot.agent.context.prompt_plan import PromptBuildInput
 from chatcopilot.botspec.runtime_env import load_research_llm_config
 from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
 from chatcopilot.contracts.subagents import SubagentSpec
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tool_packs import ToolProvider
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.core.config import load_config
 from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.evals.adapters import gaia, ifeval
@@ -120,7 +121,7 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
             user_name="Eval Runner",
         ).ensure()
         allowed_tools = frozenset(str(value) for value in case.metadata.get("allowed_tools", []))
-        extra_tools = _extra_tools(case, tool_audit)
+        evaluation_provider = _evaluation_tool_provider(case, tool_audit)
         subagents = _isolated_subagents(runtime.subagents)
         with _trial_environment(workspace, workspace_root):
             agent_runtime = build_agent_runtime(
@@ -129,9 +130,9 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
                     runtime.spec.llm,
                     fallback=chat_config.llm,
                 ),
-                tool_packs=runtime.tool_packs,
+                tool_packs=_isolated_tool_packs(runtime.tool_packs),
                 exclude_tools=runtime.exclude_tools,
-                extra_tools=extra_tools,
+                runtime_providers=(evaluation_provider,) if evaluation_provider else (),
                 skill_index=runtime.skills,
                 rag_sources=(),
                 mcp_servers=(),
@@ -249,33 +250,58 @@ def _isolated_subagents(value: SubagentSpec) -> SubagentSpec:
     )
 
 
-def _extra_tools(case: EvalCase, audit: list[dict[str, Any]]) -> tuple[ToolDef, ...]:
+def _isolated_tool_packs(value: Sequence[str]) -> tuple[str, ...]:
+    return tuple(pack_id for pack_id in value if pack_id != "persona.control")
+
+
+def _evaluation_tool_provider(
+    case: EvalCase,
+    audit: list[dict[str, Any]],
+) -> ToolProvider | None:
     if case.metadata.get("task_kind") != "tool":
-        return ()
+        return None
     expected_key = str(case.metadata.get("expected_key", ""))
     expected_answer = str(case.metadata.get("expected_answer", ""))
 
     def lookup(
         args: Mapping[str, Any],
-        _ctx: Any = None,
-    ) -> tuple[str, list[str], str | None]:
+        _ctx: ToolContext,
+    ) -> ToolResult:
         key = str(args.get("key", ""))
         ok = key == expected_key
         audit.append({"name": "lookup_eval_fact", "arguments": {"key": key}, "ok": ok})
         if not ok:
-            return "unknown evaluation key", [], "invalid key"
-        return expected_answer, [], None
+            return ToolResult(
+                ok=False,
+                error="invalid key",
+                error_code="evaluation_key_invalid",
+            )
+        return ToolResult(
+            ok=True,
+            summary=expected_answer,
+            data={"answer": expected_answer},
+        )
 
-    return (
-        ToolDef(
-            name="lookup_eval_fact",
-            summary="Return one deterministic evaluation fact by exact key.",
-            properties={"key": {"type": "string", "description": "Exact evaluation key"}},
-            required=["key"],
-            handler=lookup,
-            category="eval.deterministic",
-            owner="evals",
+    tool = ToolDef(
+        name="lookup_eval_fact",
+        summary="Return one deterministic evaluation fact by exact key.",
+        input_schema=object_schema(
+            {"key": {"type": "string", "description": "Exact evaluation key"}},
+            required=("key",),
         ),
+        output_schema=object_schema(
+            {"answer": {"type": "string"}},
+            required=("answer",),
+        ),
+        handler=lookup,
+        category="eval.deterministic",
+        owner="evals",
+    )
+    return ToolProvider(
+        id="evals.isolated",
+        packs={"runtime.session": (tool,)},
+        module=__name__,
+        description="Deterministic tools scoped to one isolated Evaluation trial.",
     )
 
 

@@ -1,7 +1,7 @@
 """Compatibility ToolDef for the legacy research_information entrypoint."""
 from __future__ import annotations
 
-import json
+from dataclasses import replace
 from typing import Sequence
 
 from chatcopilot.core.llm_client import LLMClient
@@ -10,7 +10,7 @@ from chatcopilot.agent.search.providers import SearchProviderRegistry as Researc
 from chatcopilot.agent.search.tool import build_search_tool
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.contracts.subagents import SubagentBudgetSpec
-from chatcopilot.contracts.tools import HandlerResult, ToolDef
+from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult
 
 
 def build_research_tool(
@@ -33,9 +33,11 @@ def build_research_tool(
     if search_tool is None:
         return None
 
-    def _handler(args: dict) -> HandlerResult:
-        summary, outputs, hint = search_tool.handler(args)
-        return _rewrite_legacy_error_code(summary), outputs, hint
+    def _handler(args: dict, ctx: ToolContext) -> ToolResult:
+        result = search_tool.handler(args, ctx)
+        if not result.ok and result.error_code == "invalid_search_request":
+            return replace(result, error_code="invalid_research_request")
+        return result
 
     return ToolDef(
         name="research_information",
@@ -44,8 +46,8 @@ def build_research_tool(
             "searches approved web or vertical sources, reads concrete URLs, "
             "performs cross-checks when required, and returns structured evidence."
         ),
-        properties=search_tool.properties,
-        required=search_tool.required,
+        input_schema=search_tool.input_schema,
+        output_schema=search_tool.output_schema,
         handler=_handler,
         category="agent.research",
         owner=search_tool.owner,
@@ -63,17 +65,5 @@ def build_research_tool(
             "compat_entry": "search_information",
         },
     )
-
-
-def _rewrite_legacy_error_code(summary: str) -> str:
-    try:
-        payload = json.loads(summary)
-    except (TypeError, ValueError):
-        return summary
-    if isinstance(payload, dict) and payload.get("error_code") == "invalid_search_request":
-        payload["error_code"] = "invalid_research_request"
-        return json.dumps(payload, ensure_ascii=False)
-    return summary
-
 
 __all__ = ["ResearchRunner", "ResearchSourceRegistry", "build_research_tool"]

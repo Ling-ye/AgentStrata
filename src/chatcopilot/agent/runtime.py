@@ -24,21 +24,25 @@ from chatcopilot.core.llm_client import LLMClient
 from chatcopilot.agent.mcp.client import McpToolProvider
 from chatcopilot.agent.rag.provider import LocalTextRetriever, Retriever
 from chatcopilot.agent.search.coordinator import SearchCoordinator
-from chatcopilot.agent.search.tool import build_search_coordinator, build_search_tool
+from chatcopilot.agent.search.tool import build_search_coordinator, build_search_provider
 from chatcopilot.agent.session import AgentSession, ToolPayloadFilter
 from chatcopilot.agent.session_protocol import AgentSessionProtocol
 from chatcopilot.agent.backends import BackendAgentSession, build_backend
 from chatcopilot.agent.skills.index import set_skill_index
-from chatcopilot.agent.subagents.registry import SearchCircuitBreaker, build_subagent_tools
+from chatcopilot.agent.subagents.registry import (
+    SearchCircuitBreaker,
+    build_subagent_provider,
+)
 from chatcopilot.agent.tools.executor import BackgroundSubmitter, PermissionFilter, ToolExecutor
 from chatcopilot.agent.tools.file_delivery import FileSender
-from chatcopilot.agent.tools.registry import discover_tools
+from chatcopilot.agent.tools.registry import ToolRegistry
 from chatcopilot.agent.tools.workspace_context import WorkspaceService
 from chatcopilot.contracts.runtime import McpServerConfig, RagSourceConfig
 from chatcopilot.contracts.agent_backend import BackendOpenRequest
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.skills import SkillIndexEntry
+from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.tools import ToolDef, build_openai_schema
 
 
@@ -66,6 +70,9 @@ class AgentRuntime:
     mcp_configs: tuple[McpServerConfig, ...] = ()
     search_circuit: SearchCircuitBreaker = field(default_factory=SearchCircuitBreaker, repr=False)
     agent_backend: str = "native"
+    tool_registry: ToolRegistry | None = field(default=None, repr=False)
+    tool_packs: tuple[str, ...] = ()
+    exclude_tools: tuple[str, ...] = ()
     # 上层可在创建 runtime 之后再用 :meth:`bind_payload_filter_factory` 绑定按会话
     # 生成 sanitizer 的工厂；agent 不感知 Role 概念。
     _payload_filter_factory: Optional[Callable[[], Optional[ToolPayloadFilter]]] = field(
@@ -78,6 +85,18 @@ class AgentRuntime:
     def __post_init__(self) -> None:
         if self.research_llm is None:
             self.research_llm = self.llm
+        if self.tool_registry is None:
+            registry = ToolRegistry()
+            if self.tools:
+                registry.register_runtime_provider(
+                    ToolProvider(
+                        id="runtime.supplied",
+                        packs={"runtime.session": tuple(self.tools)},
+                        module=__name__,
+                    )
+                )
+                self.tool_packs = ("runtime.session",)
+            self.tool_registry = registry
 
     def close(self) -> None:
         """Release long-lived resources (MCP runners, retriever, etc.)."""
@@ -135,7 +154,7 @@ class AgentRuntime:
         *,
         session_id: str,
         prompt_input: PromptBuildInput,
-        extra_tools: Sequence[ToolDef] = (),
+        session_providers: Sequence[ToolProvider] = (),
         payload_filter: Optional[ToolPayloadFilter] = None,
         permission_filter: Optional[PermissionFilter] = None,
         background_submitter: Optional[BackgroundSubmitter] = None,
@@ -153,8 +172,8 @@ class AgentRuntime:
             session_id: 上层为本会话分配的 id（用于 transcript / debug 日志）。
             prompt_input: 已认证会话事实、Bot 表达层和动态上下文；本方法在工具
                 投影完成后通过唯一 PromptPlanBuilder 构造不可变 PromptPlan。
-            extra_tools: 本次会话专属工具（如 ACP 的模式切换工具），与全局 tools
-                合并后构造本会话的 ``ToolExecutor`` 与 schema。
+            session_providers: 本次会话按依赖构造的工具 provider；所有工具仍通过
+                同一个 Registry 快照进入 schema 与执行器。
             payload_filter: 角色化的 tool payload sanitizer；若为 None 则用绑定
                 的 ``_payload_filter_factory`` 主动取一次。
             file_sender: 由 middleware 绑定当前平台 adapter 的文件回传回调，供
@@ -184,13 +203,18 @@ class AgentRuntime:
             direct_codex and codex_policy.allow_unified_search_tool
         )
 
-        delegate_tools: tuple[ToolDef, ...] = ()
+        if self.tool_registry is None:
+            raise RuntimeError("AgentRuntime tool registry is not initialized")
+        session_registry = ToolRegistry(self.tool_registry.providers.values())
+        dynamic_pack_names: list[str] = []
+
+        delegate_provider: ToolProvider | None = None
         if (
             not direct_codex
             or allow_codex_delegate_tools
             or "adapter_forge" in self.subagents.include
         ):
-            delegate_tools = build_subagent_tools(
+            delegate_provider = build_subagent_provider(
                 session_id=session_id,
                 subagents=self.subagents,
                 main_llm=self.llm,
@@ -205,19 +229,42 @@ class AgentRuntime:
                 retriever=effective_retriever,
                 search_circuit=self.search_circuit,
             )
-            if direct_codex and not allow_codex_delegate_tools:
+            if (
+                delegate_provider is not None
+                and direct_codex
+                and not allow_codex_delegate_tools
+            ):
                 delegate_tools = tuple(
                     tool
-                    for tool in delegate_tools
+                    for tool in delegate_provider.packs["agent.delegation"]
                     if tool.metadata.get("subagent") == "adapter_forge"
                 )
+                delegate_provider = (
+                    ToolProvider(
+                        id=delegate_provider.id,
+                        packs={"agent.delegation": delegate_tools},
+                        module=delegate_provider.module,
+                        description=delegate_provider.description,
+                    )
+                    if delegate_tools
+                    else None
+                )
+
+        delegate_tools = (
+            delegate_provider.packs["agent.delegation"]
+            if delegate_provider is not None
+            else ()
+        )
+        if delegate_provider is not None:
+            session_registry.register_runtime_provider(delegate_provider)
+            dynamic_pack_names.extend(delegate_provider.pack_names)
 
         accessible_delegate_tools = tuple(
             tool
             for tool in delegate_tools
             if permission_filter is None or permission_filter(tool) is None
         )
-        search_tool: ToolDef | None = None
+        search_provider: ToolProvider | None = None
         if self.subagents.research_enabled and (
             not direct_codex or allow_codex_unified_search
         ):
@@ -232,7 +279,7 @@ class AgentRuntime:
                 if tool.category == "mcp"
                 and str(tool.metadata.get("mcp_risk", "")) == "search"
             )
-            search_tool = build_search_tool(
+            search_provider = build_search_provider(
                 main_llm=self.research_llm or self.llm,
                 budget=self.subagents.research_budget,
                 tools=(
@@ -246,12 +293,23 @@ class AgentRuntime:
                 ),
                 circuit=self.search_circuit,
             )
-        merged_tools = [
-            *self.tools,
-            *delegate_tools,
-            *([search_tool] if search_tool is not None else []),
-            *extra_tools,
-        ]
+        if search_provider is not None:
+            session_registry.register_runtime_provider(search_provider)
+            dynamic_pack_names.extend(search_provider.pack_names)
+        for provider in session_providers:
+            session_registry.register_runtime_provider(provider)
+            dynamic_pack_names.extend(provider.pack_names)
+
+        selected_packs = tuple(
+            dict.fromkeys((*self.tool_packs, *dynamic_pack_names))
+        )
+        snapshot = session_registry.snapshot(
+            tool_packs=selected_packs,
+            exclude_tools=self.exclude_tools,
+            require_all_selected=True,
+        )
+        merged_tools = list(snapshot.tools)
+        search_tool = snapshot.index.get("search_information")
         visible_tools = [
             tool
             for tool in merged_tools
@@ -481,7 +539,7 @@ def build_agent_runtime(
     research_llm_config: LLMConfig | None = None,
     tool_packs: Optional[Sequence[str]] = None,
     exclude_tools: Optional[Sequence[str]] = None,
-    extra_tools: Sequence[ToolDef] = (),
+    runtime_providers: Sequence[ToolProvider] = (),
     skill_index: Sequence[SkillIndexEntry] = (),
     rag_sources: Sequence[RagSourceConfig] = (),
     mcp_servers: Sequence[McpServerConfig] = (),
@@ -495,7 +553,7 @@ def build_agent_runtime(
         research_llm_config: 已解析的研究模型槽；为空时继承日常模型。
         tool_packs: BotSpec 声明的工具包白名单；为 None 时启用全部。
         exclude_tools: BotSpec 声明的工具黑名单。
-        extra_tools: 上层注入的会话本地工具（不进入全局注册中心）。
+        runtime_providers: 装配期按依赖构造的工具 provider。
         skill_index: BotSpec 解析出的 skill 索引，会同步写入 agent.skills 注册表。
         rag_sources: BotSpec 声明的本地 RAG 知识源；为空时检索能力 no-op。
         mcp_servers: BotSpec 声明的 MCP server 绑定。
@@ -511,45 +569,62 @@ def build_agent_runtime(
     )
     retriever = LocalTextRetriever(rag_sources) if rag_sources else None
     mcp_provider = McpToolProvider(tuple(mcp_servers)) if mcp_servers else None
-    mcp_tools = mcp_provider.load_tools() if mcp_provider is not None else ()
-    main_mcp_tools = tuple(tool for tool in mcp_tools if _mcp_visible_to_main(tool))
-    subagent_only_mcp_tools = tuple(tool for tool in mcp_tools if tool not in main_mcp_tools)
-    discovered = discover_tools(
-        tool_packs=tool_packs,
-        exclude_tools=exclude_tools,
-        mcp_tools=main_mcp_tools,
+    mcp_runtime_provider = (
+        mcp_provider.load_provider() if mcp_provider is not None else None
     )
-    merged = [*discovered, *extra_tools]
-    subagent_base_tools = tuple([*discovered, *subagent_only_mcp_tools])
-    schema = tuple(
-        sorted(
-            (build_openai_schema(tool) for tool in merged),
-            key=lambda entry: str((entry.get("function") or {}).get("name") or ""),
-        )
+    main_mcp_tools = (
+        mcp_runtime_provider.packs.get("mcp.dynamic", ())
+        if mcp_runtime_provider is not None
+        else ()
+    )
+    subagent_only_mcp_tools = (
+        mcp_runtime_provider.packs.get("mcp.subagent", ())
+        if mcp_runtime_provider is not None
+        else ()
+    )
+    registry = ToolRegistry.from_catalog(tool_packs)
+    selected_packs = list(
+        tuple(tool_packs) if tool_packs is not None else registry.pack_names
+    )
+    if main_mcp_tools:
+        selected_packs.append("mcp.dynamic")
+    if mcp_runtime_provider is not None:
+        registry.register_runtime_provider(mcp_runtime_provider)
+    for provider in runtime_providers:
+        registry.register_runtime_provider(provider)
+        selected_packs.extend(provider.pack_names)
+    selected_packs = list(dict.fromkeys(selected_packs))
+    snapshot = registry.snapshot(
+        tool_packs=selected_packs,
+        exclude_tools=exclude_tools,
+    )
+    subagent_pack_names = [
+        pack for pack in selected_packs if pack != "persona.control"
+    ]
+    if subagent_only_mcp_tools:
+        subagent_pack_names.append("mcp.subagent")
+    subagent_snapshot = registry.snapshot(
+        tool_packs=tuple(dict.fromkeys(subagent_pack_names)),
+        exclude_tools=exclude_tools,
     )
     set_skill_index(skill_index)
     return AgentRuntime(
         llm=llm,
-        tools=tuple(merged),
-        tools_schema=schema,
+        tools=snapshot.tools,
+        tools_schema=snapshot.openai_schema,
         runtime_config=chat_config,
         research_llm=research_llm,
         retriever=retriever,
         skill_index=tuple(skill_index),
         subagents=subagents or SubagentSpec(),
-        subagent_tools=subagent_base_tools,
+        subagent_tools=subagent_snapshot.tools,
         mcp_provider=mcp_provider,
         mcp_configs=tuple(mcp_servers),
         agent_backend=agent_backend,
+        tool_registry=registry,
+        tool_packs=tuple(selected_packs),
+        exclude_tools=tuple(exclude_tools or ()),
     )
-
-
-def _mcp_visible_to_main(tool: ToolDef) -> bool:
-    if tool.category != "mcp":
-        return True
-    return str(tool.metadata.get("mcp_exposure", "subagent")) == "main"
-
-
 def _hidden_by_search_entry(tool: ToolDef) -> bool:
     if tool.name in {
         "query_approved_sources",

@@ -20,6 +20,7 @@ tools:
   packs:
     - workspace.read_write
     - memory.chat
+    - persona.control
     - mcp.admin
   features:
     - chat.file_uploads
@@ -29,8 +30,6 @@ tools:
 
 agents:
   backend: native
-  persona_control:
-    enabled: true
   presets:
     - mcp_query
 
