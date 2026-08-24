@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Button, Drawer, Empty, Message, Space, Spin, Tabs, Tag, Typography } from "@arco-design/web-react";
-import BotCard from "../components/BotCard";
+import { Alert, Button, Drawer, Empty, Message, Space, Spin, Tabs, Tag, Tooltip, Typography } from "@arco-design/web-react";
+import BotToolEditor from "../components/BotToolEditor";
 import ProvisionWizard from "../components/ProvisionWizard";
 import { useBotActions } from "../features/bots/useBotActions";
 import { useBotsOverview } from "../features/bots/useBotsOverview";
 import BotTaskFlowPanel from "../features/bots/BotTaskFlowPanel";
+import BotRuntimePanel from "../features/bots/BotRuntimePanel";
 import { api, streamLogs, streamTask } from "../api";
 import type { BotInstance, BotStatus, Task } from "../types";
 import { useEventStreamLines } from "../shared/hooks/useEventStreamLines";
@@ -69,6 +70,8 @@ export default function BotsPage({ loadError, visible = true }: Props) {
   }, [bots, selectedBotId]);
 
   const selectedBot = bots.find((bot) => bot.instance_id === selectedBotId) ?? null;
+  const selectedStatus = selectedBot ? statuses[selectedBot.instance_id] : undefined;
+  const selectedInventory = selectedBot ? inventoryMap[selectedBot.instance_id] : undefined;
 
   const openTask = useCallback(
     (
@@ -225,41 +228,71 @@ export default function BotsPage({ loadError, visible = true }: Props) {
             {selectedBot && (
               <section className="bot-instance-detail">
                 <header className="bot-instance-detail-header">
-                  <div>
+                  <div className="bot-instance-detail-summary">
                     <Space wrap size={8}>
                       <Title heading={4}>{selectedBot.display_name}</Title>
-                      <Tag color={rosterState(statuses[selectedBot.instance_id]).color}>
-                        {rosterState(statuses[selectedBot.instance_id]).label}
+                      <Tag className="cc-status-tag" color={rosterState(selectedStatus).color}>
+                        {rosterState(selectedStatus).label}
                       </Tag>
                       <Tag className="cc-tag-meta">{selectedBot.platform || "?"}</Tag>
                     </Space>
-                    <Text type="secondary">
-                      {selectedBot.instance_id} · MCP {inventoryMap[selectedBot.instance_id]?.mcp_services.length ?? "—"}
-                      {" · "}工具包 {inventoryMap[selectedBot.instance_id]?.tool_packs.length ?? "—"}
+                    <Text type="secondary" className="bot-instance-detail-meta">
+                      {selectedBot.instance_id} · MCP {selectedInventory?.mcp_services.length ?? "—"}
+                      {" · "}工具包 {selectedInventory?.tool_packs.length ?? "—"}
                     </Text>
                   </div>
-                  <Space wrap>
+                  <div className="bot-instance-detail-actions">
                     {!selectedBot.is_deployed ? (
                       <Button type="primary" onClick={() => setProvisionBot(selectedBot)}>首次部署</Button>
                     ) : (
-                      <>
+                      <Space wrap>
                         <Button
                           type="primary"
                           loading={isBusy(selectedBot.instance_id)}
-                          onClick={() => void handleAction(selectedBot, statuses[selectedBot.instance_id]?.running ? "restart" : "start")}
+                          onClick={() => void handleAction(selectedBot, selectedStatus?.running ? "restart" : "start")}
                         >
-                          {statuses[selectedBot.instance_id]?.running ? "重启" : "启动"}
+                          {selectedStatus?.running ? "重启" : "启动"}
                         </Button>
-                        <Button onClick={() => openLogs(selectedBot)}>实时日志</Button>
                         <Button
+                          status="danger"
+                          disabled={!selectedStatus?.running}
                           loading={isBusy(selectedBot.instance_id)}
-                          onClick={() => void handleAction(selectedBot, "update")}
+                          onClick={() => void handleAction(selectedBot, "stop")}
                         >
-                          更新实例
+                          停止
                         </Button>
-                      </>
+                        {selectedStatus?.registered === false && (
+                          <Tooltip content="注册 systemd 用户服务：安装模板 unit、启用 lingering 并写入实例配置。">
+                            <Button
+                              type="primary"
+                              status="warning"
+                              loading={isBusy(selectedBot.instance_id)}
+                              onClick={() => void handleRegister(selectedBot)}
+                            >
+                              注册服务
+                            </Button>
+                          </Tooltip>
+                        )}
+                        <Tooltip content="同步代码和运行配置，按需重建依赖并重启实例。">
+                          <Button
+                            loading={isBusy(selectedBot.instance_id)}
+                            onClick={() => void handleAction(selectedBot, "update")}
+                          >
+                            更新并重启
+                          </Button>
+                        </Tooltip>
+                        <Button onClick={() => openLogs(selectedBot)}>实时日志</Button>
+                        <Tooltip content="生成一份只读诊断快照。">
+                          <Button
+                            loading={isBusy(selectedBot.instance_id)}
+                            onClick={() => void handleAction(selectedBot, "dump")}
+                          >
+                            诊断
+                          </Button>
+                        </Tooltip>
+                      </Space>
                     )}
-                  </Space>
+                  </div>
                 </header>
 
                 <Tabs type="line" defaultActiveTab="flow" className="bot-instance-tabs">
@@ -269,18 +302,25 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                       visible={visible}
                     />
                   </Tabs.TabPane>
-                  <Tabs.TabPane title="运行与能力" key="capabilities">
-                    <BotCard
+                  <Tabs.TabPane title="运行状态" key="runtime">
+                    <BotRuntimePanel
                       bot={selectedBot}
-                      status={statuses[selectedBot.instance_id]}
-                      inventory={inventoryMap[selectedBot.instance_id]}
-                      busy={isBusy(selectedBot.instance_id)}
-                      onAction={(verb) => void handleAction(selectedBot, verb)}
-                      onApplyToolConfig={(task, onSuccess) => openApplyToolConfig(selectedBot, task, onSuccess)}
-                      onLogs={() => openLogs(selectedBot)}
-                      onProvision={() => setProvisionBot(selectedBot)}
-                      onRegister={() => void handleRegister(selectedBot)}
+                      status={selectedStatus}
                     />
+                  </Tabs.TabPane>
+                  <Tabs.TabPane title="能力与工具" key="capabilities">
+                    <div className="bot-capability-panel">
+                      <div className="bot-capability-heading">
+                        <Title heading={5}>能力配置</Title>
+                        <Text type="secondary">按 BotSpec surface 管理工具、Prompt、Agent 与上下文来源。</Text>
+                      </div>
+                      <BotToolEditor
+                        instanceId={selectedBot.instance_id}
+                        isDeployed={selectedBot.is_deployed}
+                        inventory={selectedInventory}
+                        onApplyTask={(task, onSuccess) => openApplyToolConfig(selectedBot, task, onSuccess)}
+                      />
+                    </div>
                   </Tabs.TabPane>
                 </Tabs>
               </section>

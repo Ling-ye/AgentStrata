@@ -840,15 +840,16 @@ def test_tools_api_clears_existing_mcp_servers(tmp_path: Path) -> None:
     assert data == {"servers": []}
 
 
-def test_bot_card_exposes_single_update_button() -> None:
-    text = Path("console/web/src/components/BotCard.tsx").read_text(encoding="utf-8")
+def test_bot_workspace_exposes_single_update_button() -> None:
+    text = Path("console/web/src/pages/BotsPage.tsx").read_text(encoding="utf-8")
 
-    assert 'onAction("update")' in text
-    assert 'onAction("sync")' not in text
-    assert 'onAction("rebuild")' not in text
-    assert "更新并重启" in text
+    assert text.count('handleAction(selectedBot, "update")') == 1
+    assert 'handleAction(selectedBot, "sync")' not in text
+    assert 'handleAction(selectedBot, "rebuild")' not in text
+    assert text.count("更新并重启") == 1
     assert "更新代码并重启" not in text
-    assert "onApplyToolConfig" in text
+    assert "<BotToolEditor" in text
+    assert "onApplyTask=" in text
 
 
 def test_bot_tool_editor_applies_config_via_unified_update() -> None:

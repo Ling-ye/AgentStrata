@@ -25,7 +25,6 @@ body {
   --cc-border-color: var(--color-border-2);
   --cc-border-strong-color: var(--color-border-3);
   --cc-sidebar-width: 200px;
-  --cc-page-max-width: 1200px;
   --cc-content-padding-x: 28px;
   --cc-content-padding-y: 24px;
   --cc-gap-xs: 4px;

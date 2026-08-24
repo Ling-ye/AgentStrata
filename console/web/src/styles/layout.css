@@ -43,11 +43,13 @@ body {
 
 .console-content {
   margin-left: var(--cc-sidebar-width);
+  min-width: 0;
+  width: calc(100% - var(--cc-sidebar-width));
   padding: var(--cc-content-padding-y) var(--cc-content-padding-x) 64px;
-  max-width: var(--cc-page-max-width);
 }
 
 .console-section {
+  min-width: 0;
   background: var(--cc-bg-panel);
   border: var(--cc-border-strong);
   border-radius: var(--cc-section-radius);
@@ -96,10 +98,6 @@ body {
     --cc-content-padding-y: 16px;
   }
 
-  .console-content {
-    max-width: none;
-  }
-
   .section-header {
     flex-direction: column;
     align-items: stretch;
@@ -131,6 +129,7 @@ body {
 
   .console-content {
     margin-left: 0;
+    width: 100%;
   }
 
 }

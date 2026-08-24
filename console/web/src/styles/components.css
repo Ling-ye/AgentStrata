@@ -1,5 +1,4 @@
-.service-card,
-.bot-card {
+.service-card {
   border-radius: var(--cc-card-radius);
   border-color: var(--cc-border-strong-color);
   background: var(--cc-bg-card);
@@ -8,26 +7,6 @@
 
 .service-card {
   border-left: 4px solid var(--cc-primary);
-}
-
-.bot-card {
-  border-left: 4px solid var(--cc-primary);
-}
-
-.bot-card-running {
-  border-left-color: var(--cc-success);
-}
-
-.bot-card-warning {
-  border-left-color: var(--cc-warning);
-}
-
-.bot-card-danger {
-  border-left-color: var(--cc-danger);
-}
-
-.bot-card-muted {
-  border-left-color: var(--cc-meta);
 }
 
 .cc-text-small {
@@ -1057,8 +1036,24 @@
   border-bottom: var(--cc-border);
 }
 
+.bot-instance-detail-summary {
+  min-width: 0;
+}
+
 .bot-instance-detail-header h4 {
   margin: 0;
+}
+
+.bot-instance-detail-meta {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.bot-instance-detail-actions {
+  display: flex;
+  flex: 0 1 auto;
+  justify-content: flex-end;
 }
 
 .bot-instance-tabs > .arco-tabs-header {
@@ -1070,9 +1065,123 @@
   padding-top: 0;
 }
 
-.bot-instance-tabs .bot-card {
-  margin: 18px;
-  box-shadow: none;
+.bot-runtime-panel,
+.bot-capability-panel {
+  margin: 18px 20px 28px;
+}
+
+.bot-runtime-panel {
+  display: grid;
+  gap: var(--cc-gap-lg);
+}
+
+.bot-runtime-section {
+  min-width: 0;
+  padding: 18px;
+  border: var(--cc-border);
+  border-radius: var(--cc-card-radius);
+  background: var(--cc-bg-subtle);
+}
+
+.bot-runtime-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--cc-gap-lg);
+  margin-bottom: var(--cc-gap-lg);
+}
+
+.bot-runtime-section-heading h5,
+.bot-capability-heading h5 {
+  margin: 0 0 4px;
+}
+
+.bot-runtime-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--cc-gap-md);
+}
+
+.bot-runtime-metric {
+  min-width: 0;
+  min-height: 82px;
+  padding: 13px 14px;
+  border: var(--cc-border);
+  border-left: 3px solid var(--cc-meta);
+  border-radius: var(--cc-card-radius);
+  background: var(--cc-bg-card);
+}
+
+.bot-runtime-metric-success {
+  border-left-color: var(--cc-success);
+}
+
+.bot-runtime-metric-warning {
+  border-left-color: var(--cc-warning);
+}
+
+.bot-runtime-metric-danger {
+  border-left-color: var(--cc-danger);
+}
+
+.bot-runtime-metric > span,
+.bot-runtime-metric > strong {
+  display: block;
+}
+
+.bot-runtime-metric > span {
+  margin-bottom: 10px;
+  color: var(--cc-text-tertiary);
+  font-size: 11px;
+}
+
+.bot-runtime-metric > strong {
+  overflow: hidden;
+  color: var(--cc-text-primary);
+  font-size: 18px;
+  text-overflow: ellipsis;
+}
+
+.bot-runtime-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  border-top: var(--cc-border);
+  border-left: var(--cc-border);
+  border-radius: var(--cc-card-radius);
+  overflow: hidden;
+}
+
+.bot-runtime-details > div {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.32fr) minmax(0, 1fr);
+  min-width: 0;
+  padding: 11px 13px;
+  border-right: var(--cc-border);
+  border-bottom: var(--cc-border);
+  background: var(--cc-bg-card);
+}
+
+.bot-runtime-details dt {
+  color: var(--cc-text-tertiary);
+}
+
+.bot-runtime-details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--cc-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.bot-runtime-code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.bot-capability-heading {
+  margin-bottom: var(--cc-gap-lg);
+  padding-bottom: 14px;
+  border-bottom: var(--cc-border);
 }
 
 .bot-flow-loading,
@@ -1521,10 +1630,22 @@
     flex: 0 0 226px;
     margin: 0;
   }
+
+  .bot-instance-detail-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .bot-instance-detail-actions {
+    justify-content: flex-start;
+  }
+
+  .bot-runtime-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 860px) {
-  .bot-instance-detail-header,
   .bot-flow-detail-header {
     align-items: stretch;
     flex-direction: column;
@@ -1547,6 +1668,10 @@
   .bot-flow-task-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .bot-runtime-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 640px) {
@@ -1556,9 +1681,26 @@
   }
 
   .bot-instance-detail-header,
-  .bot-flow-detail {
+  .bot-flow-detail,
+  .bot-runtime-panel,
+  .bot-capability-panel {
     padding-right: 12px;
     padding-left: 12px;
+  }
+
+  .bot-runtime-panel,
+  .bot-capability-panel {
+    margin-right: 0;
+    margin-left: 0;
+  }
+
+  .bot-runtime-section {
+    padding: 14px;
+  }
+
+  .bot-runtime-section-heading {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .bot-flow-detail-header {
