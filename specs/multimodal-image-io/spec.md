@@ -9,9 +9,12 @@ created: 2026-07-29
 
 ## Summary
 
-AgentStrata already lets the main Agent download public images and deliver workspace files
-through the platform-neutral `file_sender` hook. QQ image output is transported directly through
-OneBot, while Feishu uses its existing file sender. The missing half is image understanding:
+AgentStrata lets the main Agent download public images and deliver workspace files through the
+platform-neutral `file_sender` hook. QQ image output is transported directly through OneBot,
+while Feishu uses its existing file sender. Public-URL delivery is also available as one explicit
+`send_image_urls_to_user` action so the model does not have to infer a fragile two-tool sequence;
+a Markdown image or link is never treated as a delivery receipt. The remaining multimodal half is
+image understanding:
 ACP accepts `ImageContentBlock`, but the current prompt pipeline reduces a turn to text and file
 names, so neither the Native/LangGraph chat-completions path nor the Codex backend receives the
 image.
@@ -65,6 +68,24 @@ existing `llm.chat / llm.research / llm.code` three-slot design.
   the existing user-facing tool permission boundary and avoids duplicate automatic sends. QQ
   continues to use OneBot for supported image files, but checks the content signature against
   the suffix before encoding it.
+- When the user asks to send public image URLs, `send_image_urls_to_user` combines the existing
+  downloader and `file_sender` hook. It checks that a sender exists before any download, accepts at
+  most five URLs at 5 MiB each, sends all valid images in one delivery, and reports sanitized
+  partial failures without exposing URL credentials or query parameters. It follows at most five
+  redirects; every hop resolves and connects only to validated public addresses. The tool reports
+  success only after a complete platform receipt. An uncertain delivery is not retried
+  automatically and cannot be described as sent.
+- When system DNS returns only transparent-proxy addresses from the RFC 2544 benchmark Fake-IP
+  block, the
+  downloader does not connect to that reserved range. It resolves the hostname through a public
+  DoH endpoint reached by fixed public bootstrap addresses with TLS hostname validation, validates
+  the returned A/AAAA records with the same public-address policy, and pins the image connection to
+  those independently resolved addresses. Other non-public or mixed DNS answers, unavailable DoH,
+  and malformed responses continue to fail closed.
+- The `workspace.read_write` capability policy tells every main backend to prefer the combined
+  action for public image URLs and to keep `send_files_to_user` for existing workspace files.
+  Both tools remain hidden from subagents because they deliver directly to the user. No manual
+  approval, domain allowlist, or per-image confirmation is added.
 - Rollout is capability-gated. Disabling `chat.image_inputs` rolls back image forwarding without
   changing attachment storage, text turns, file delivery, or backend selection.
 
@@ -87,6 +108,10 @@ existing `llm.chat / llm.research / llm.code` three-slot design.
 - Codex new and resumed turns attach every validated image with `--image`.
 - QQ refuses a filename-only image spoof before opening the OneBot delivery path, while valid
   image output and non-image file fallback continue to work.
+- A public image URL request can download and send one or more valid images with one platform
+  action. Partial download failures do not block valid peers, all-invalid input performs no send,
+  private or redirected-private targets fail closed, and only the successful platform receipt can
+  support an “images sent” claim.
 - Existing text-only, generic attachment, image-search download, and file-delivery behavior
   remains compatible.
 
@@ -102,7 +127,7 @@ Run:
 
 ```bash
 python3 scripts/check_sdd_specs.py
-.venv/bin/python -m pytest tests/unit/test_multimodal_image_io.py tests/unit/test_multimodal_backends.py tests/unit/test_multimodal_turn_orchestration.py tests/unit/test_acp_image_capabilities.py tests/unit/test_qq_sender.py tests/unit/test_main_agent_backend_unification.py -q --basetemp=/tmp/chatcopilot-pytest-image-io
+.venv/bin/python -m pytest tests/unit/test_multimodal_image_io.py tests/unit/test_multimodal_backends.py tests/unit/test_multimodal_turn_orchestration.py tests/unit/test_acp_image_capabilities.py tests/unit/test_image_download_tool.py tests/unit/test_image_url_delivery_tool.py tests/unit/test_qq_sender.py tests/unit/test_main_agent_backend_unification.py -q --basetemp=/tmp/chatcopilot-pytest-image-io
 .venv/bin/python -m pytest tests/integration/test_acp_attachment_gate.py -q --basetemp=/tmp/chatcopilot-pytest-image-attachment
 .venv/bin/python -m chatcopilot botspec validate bots/lingye-copilot-qq/bot.yaml
 .venv/bin/python -m compileall -q src bots tests

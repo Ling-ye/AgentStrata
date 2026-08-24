@@ -30,6 +30,7 @@ from chatcopilot.agent.tools.builtin.workspace.delivery import (
 from chatcopilot.agent.tools.builtin.workspace.images import (
     _IMAGE_DEFAULT_LIMIT,
     _IMAGE_DEFAULT_MAX_BYTES,
+    _IMAGE_MAX_LIMIT,
 )
 
 
@@ -82,6 +83,11 @@ def _handler_send_files_to_user(args: dict, ctx: ToolContext) -> ToolResult:
 def _handler_download_image_urls(args: dict, ctx: ToolContext) -> ToolResult:
     _sync_workspace_handler_context()
     return _images._handler_download_image_urls(args, ctx)
+
+
+def _handler_send_image_urls_to_user(args: dict, ctx: ToolContext) -> ToolResult:
+    _sync_workspace_handler_context()
+    return _images._handler_send_image_urls_to_user(args, ctx)
 
 
 def _handler_owner_list_workspaces(args: dict, ctx: ToolContext) -> ToolResult:
@@ -149,6 +155,15 @@ _IMAGE_RESULT_SCHEMA = object_schema(
         "failed_count": {"type": "integer"},
     },
     required=("downloaded_count", "failed_count"),
+)
+_IMAGE_SEND_RESULT_SCHEMA = object_schema(
+    {
+        "downloaded_count": {"type": "integer"},
+        "sent_count": {"type": "integer"},
+        "sent_names": {"type": "array", "items": {"type": "string"}},
+        "failed_count": {"type": "integer"},
+    },
+    required=("downloaded_count", "sent_count", "sent_names", "failed_count"),
 )
 _OWNER_LIST_RESULT_SCHEMA = object_schema(
     {
@@ -328,6 +343,35 @@ TOOLS: List[ToolDef] = [
         module=__name__,
         artifact_kinds=("file",),
         metadata={"tags": ("image", "download")},
+    ),
+    ToolDef(
+        name="send_image_urls_to_user",
+        summary=(
+            "下载已核实的公网图片 URL 并直接发送到当前会话；只有平台返回完整回执后"
+            "才报告成功，部分下载失败时发送其余有效图片。"
+        ),
+        input_schema=object_schema({
+            "urls": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "description": "需要发送的公网 HTTP(S) 图片 URL，最多 5 个。",
+                "minItems": 1,
+                "maxItems": _IMAGE_MAX_LIMIT,
+            },
+            "message": {
+                "type": "string",
+                "description": "可选随附文字。",
+                "default": "",
+            },
+        }, required=("urls",)),
+        output_schema=_IMAGE_SEND_RESULT_SCHEMA,
+        handler=_handler_send_image_urls_to_user,
+        aliases=["发送图片链接", "图片直发", "send_image_urls", "send_images"],
+        category="agent.workspace",
+        owner="agent",
+        module=__name__,
+        artifact_kinds=("file",),
+        metadata={"user_facing": True, "tags": ("image", "download", "delivery")},
     ),
     ToolDef(
         name="owner_list_workspaces",

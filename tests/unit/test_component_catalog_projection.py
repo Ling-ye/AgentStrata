@@ -8,6 +8,7 @@ from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.tool_packs.catalog import (
     get_tool_pack_entry,
+    load_tool_pack_policies,
     resolve_tool_modules,
 )
 
@@ -99,6 +100,16 @@ def test_component_catalog_and_agent_use_the_same_registry_projection() -> None:
         catalog_names = [tool.name for tool in iter_tool_pack_tools(pack)]
         agent_names = [tool.name for tool in discover_tools(tool_packs=(pack,))]
         assert catalog_names == agent_names
+
+
+def test_workspace_pack_projects_image_delivery_tool_and_policy() -> None:
+    names = _names("workspace.read_write")
+    assert "send_image_urls_to_user" in names
+
+    policies = load_tool_pack_policies("workspace.read_write")
+    assert [policy.id for policy in policies] == ["workspace.read_write.1"]
+    assert "send_image_urls_to_user" in policies[0].content
+    assert "Markdown 图片" in policies[0].content
 
 
 def test_shared_provider_module_is_loaded_once_for_multiple_selected_packs() -> None:

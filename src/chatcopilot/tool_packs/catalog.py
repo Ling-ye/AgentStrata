@@ -145,6 +145,8 @@ _BUILTIN_TOOL_PACKS_DATA: dict[str, ToolPackEntry] = {
         "workspace.read_write",
         "chatcopilot.agent.tools.builtin.workspace_tools",
         "Chat workspace, attachment, and response helper tools.",
+        policy_module="chatcopilot.external_tools.shared.workspace_tool_pack_policies",
+        policy_builder="build_workspace_read_write_pack",
     ),
     "memory.chat": _entry(
         "memory.chat",

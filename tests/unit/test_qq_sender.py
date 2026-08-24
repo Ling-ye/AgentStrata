@@ -132,6 +132,30 @@ class QQSenderTests(unittest.TestCase):
         encoded = segments[1]["data"]["file"].removeprefix("base64://")
         self.assertEqual(base64.b64decode(encoded), _PNG)
 
+    def test_multiple_images_use_one_group_send_action(self) -> None:
+        second = self.root / "b.png"
+        second.write_bytes(_PNG + b"-second")
+        ws = _FakeWs()
+        target = sender._OneBotTarget("group", "group_id", "20002")
+
+        asyncio.run(
+            sender._send_onebot_payload(
+                ws,
+                target,
+                [self.image, second],
+                "角色立绘",
+                timeout_s=1,
+            )
+        )
+
+        self.assertEqual(len(ws.sent), 1)
+        payload = ws.sent[0]
+        self.assertEqual(payload["action"], "send_msg")
+        self.assertEqual(payload["params"]["message_type"], "group")
+        self.assertEqual(payload["params"]["group_id"], "20002")
+        segments = payload["params"]["message"]
+        self.assertEqual([segment["type"] for segment in segments], ["text", "image", "image"])
+
     def test_onebot_text_payload_targets_group(self) -> None:
         ws = _FakeWs()
         target = sender._OneBotTarget("group", "group_id", "20002")

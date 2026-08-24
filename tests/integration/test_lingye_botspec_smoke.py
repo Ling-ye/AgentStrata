@@ -88,6 +88,8 @@ class LingyeBotSpecSmokeTests(unittest.TestCase):
         owner_style = runtime.prompt_profile.role_styles["owner"]
         self.assertIn("技术细节", owner_style)
         capability_prompt = "\n".join(policy.content for policy in runtime.capability_policies)
+        self.assertIn("send_image_urls_to_user", capability_prompt)
+        self.assertIn("Markdown 图片", capability_prompt)
         self.assertIn("isolated code task", capability_prompt)
         self.assertIn("entire approved plan exactly once", capability_prompt)
         self.assertIn("one-shot Owner approval", capability_prompt)

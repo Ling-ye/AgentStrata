@@ -646,6 +646,34 @@ Console 不再各自维护工具成员。人格意图不再被宿主启发式分
 [`unified-tool-registry`](../specs/unified-tool-registry/spec.md)、
 [`persona-and-conversation-memory-authorization`](../specs/persona-and-conversation-memory-authorization/spec.md)。
 
+## 18. QQ 公网图片直发：从模型两步推断到显式组合能力
+
+**暴露的问题**
+
+QQ adapter、OneBot 图片 sender、`download_image_urls` 和 `send_files_to_user` 已经存在，但主 Codex
+回合仍可能只输出 Markdown 图片，随后错误判断当前会话没有图片发送能力。工具可见并不等于模型会
+稳定选择跨工具编排，而 Markdown 链接也没有平台发送回执。
+
+**结构调整**
+
+- `workspace.read_write` 新增 `send_image_urls_to_user`，复用同一公网图片下载器和平台无关
+  `file_sender`，在一次主 Agent 工具调用中完成下载、校验、批量发送和结构化回执。
+- workspace capability policy 明确区分公网 URL 直发、已有工作区文件发送和 Markdown 展示；只有
+  成功发送回执才能声称已发出，用户可见的发送工具继续对 subagent 隐藏。
+- 公网下载只保留无需人工审批的最低运行时边界：固定已验证公网地址连接、逐跳重定向复检、数量与
+  字节上限、图片签名/MIME、一致的工作区边界和安全化错误。部分 URL 失败时发送有效项，发送结果
+  不确定时不自动重试。
+- WSL 透明代理可能把公网域名解析到 RFC 2544 benchmark Fake-IP 网段；下载器不放行该保留网段，而是经
+  固定公网地址访问公共 DoH，重新取得并校验真实公网地址后再固定连接，解析不可确认时仍失败关闭。
+
+**结果与边界**
+
+搜索得到直接图片 URL 后，主 Agent 有一个与用户意图一致的外发动作，不再依赖模型自行拼接两次
+工具调用，也不会把 Markdown 图片误记为 QQ 图片消息。自动化测试使用 fake downloader、actor-bound
+Session Gateway relay 和 fake OneBot，不调用商用模型、不向真实 QQ 写入，也不证明客户端实际显示。
+
+相关规格：[`multimodal-image-io`](../specs/multimodal-image-io/spec.md)。
+
 ## 当前架构的收敛结果
 
 | 关注点 | 当前做法 |
