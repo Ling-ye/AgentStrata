@@ -1,10 +1,9 @@
 """Deterministic ACP scenarios backed by the selected Bot's real policy.
 
 These scenarios do not invoke an LLM or send a platform message. They exercise
-the same access, role and attachment-boundary functions used by ACP, with the
-selected Bot's parsed :class:`AccessSpec` and a caller-provided environment. Evidence
-contains booleans and counts only; stable platform identities are never copied
-into evaluation artifacts.
+the same Relay trigger, ACP admission, role and attachment-boundary functions
+used by production. Evidence contains booleans and counts only; stable platform
+identities are never copied into evaluation artifacts.
 """
 
 from __future__ import annotations
@@ -15,18 +14,22 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.botspec.model import AccessSpec
 from chatcopilot.contracts.identity import Identity, Role, role_ge
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.core.access import resolve_role
+from chatcopilot.core.allowlists import is_numeric_platform_id, parse_numeric_allowlist
 from chatcopilot.evals.models import EvalCaseDefinition, TrialObservation
-from chatcopilot.middleware.acp import access_gate
+from chatcopilot.middleware.acp.admission import (
+    QQ_GROUP_ALLOWLIST_ENV,
+    QQ_USER_ALLOWLIST_ENV,
+    evaluate_admission,
+)
 from chatcopilot.middleware.acp.attachment_pipeline import (
     extract_attachment_names_from_text,
 )
 from chatcopilot.middleware.acp.tool_permissions import build_permission_filter
 from chatcopilot.platforms import router as platform_router
-from chatcopilot.platforms.qq.access_proxy import should_forward as qq_should_forward
+from chatcopilot.platforms.qq.at_proxy import evaluate_forward
 
 
 _SENTINEL_VALUE = "capability-sentinel:unchanged"
@@ -36,12 +39,13 @@ _SENTINEL_VALUE = "capability-sentinel:unchanged"
 class CapabilityScenarioContext:
     """Private runtime inputs required by ACP capability scenarios."""
 
-    access: AccessSpec
     platform_type: str
     env: Mapping[str, str]
     owners: tuple[Identity, ...] = ()
     admins: tuple[Identity, ...] = ()
     prompt_profile: Any | None = None
+    member_id: str = ""
+    group_id: str = ""
 
 
 @dataclass
@@ -71,18 +75,20 @@ def _configured_ids(values: Sequence[Identity]) -> set[str]:
 
 
 def _whitelist_ids(context: CapabilityScenarioContext) -> tuple[str, ...]:
-    env_name = str(context.access.whitelist_env or "").strip()
-    raw = str(context.env.get(env_name, "") if env_name else "").strip()
-    if not raw or raw == "*":
+    parsed = parse_numeric_allowlist(
+        context.env.get(QQ_USER_ALLOWLIST_ENV),
+        field=QQ_USER_ALLOWLIST_ENV,
+    )
+    if parsed.allow_all or not parsed.values:
         raise ValueError("selected Bot requires a finite, non-empty whitelist")
-    values = tuple(dict.fromkeys(item.strip() for item in raw.split(",") if item.strip()))
-    if not values or "*" in values:
-        raise ValueError("selected Bot requires a finite, non-empty whitelist")
-    return values
+    return tuple(sorted(parsed.values))
 
 
 def _ordinary_member(context: CapabilityScenarioContext) -> str:
     privileged = _configured_ids((*context.owners, *context.admins))
+    explicit = str(context.member_id or "").strip()
+    if is_numeric_platform_id(explicit) and explicit not in privileged:
+        return explicit
     member = next((item for item in _whitelist_ids(context) if item not in privileged), "")
     if not member:
         raise ValueError(
@@ -98,23 +104,17 @@ def _safe_reason(reason: str) -> str:
 
 
 def _unlisted_identity(context: CapabilityScenarioContext) -> str:
-    configured = set(_whitelist_ids(context))
-    candidate = "eval-unlisted-stable-id"
-    suffix = 0
+    configured = set(_whitelist_ids(context)) | _configured_ids(
+        (*context.owners, *context.admins)
+    )
+    if context.member_id:
+        configured.add(context.member_id)
+    candidate_number = 9_000_000_001
+    candidate = str(candidate_number)
     while candidate in configured:
-        suffix += 1
-        candidate = f"eval-unlisted-stable-id-{suffix}"
+        candidate_number += 1
+        candidate = str(candidate_number)
     return candidate
-
-
-def _allowlist(raw: str, *, empty_means_all: bool) -> tuple[frozenset[str], bool]:
-    value = str(raw or "").strip()
-    if not value:
-        return frozenset(), empty_means_all
-    items = frozenset(item.strip() for item in value.split(",") if item.strip())
-    if "*" in items:
-        return frozenset(), True
-    return items, False
 
 
 def _qq_access_matrix(
@@ -122,51 +122,55 @@ def _qq_access_matrix(
     *,
     member_id: str,
 ) -> dict[str, object]:
-    """Exercise the real QQ @ proxy plus ACP access gate without network IO."""
+    """Exercise the fixed QQ Relay trigger and ACP-only admission without IO."""
 
     if context.platform_type != "qq":
         raise ValueError("access matrix currently requires the selected QQ adapter")
     bot_id = str(context.env.get("QQ_ACCOUNT", "")).strip()
     if not bot_id:
         raise ValueError("selected QQ Bot requires QQ_ACCOUNT for access evaluation")
-    unlisted = _unlisted_identity(context)
-    user_ids = frozenset(_whitelist_ids(context))
-    group_env = str(context.access.group_whitelist_env or "").strip()
-    group_ids, allow_all_groups = _allowlist(
-        str(context.env.get(group_env, "") if group_env else ""),
-        empty_means_all=False,
+    users = parse_numeric_allowlist(
+        context.env.get(QQ_USER_ALLOWLIST_ENV),
+        field=QQ_USER_ALLOWLIST_ENV,
     )
-    test_group = "eval-unlisted-group"
-    suffix = 0
-    while test_group in group_ids:
-        suffix += 1
-        test_group = f"eval-unlisted-group-{suffix}"
-    require_at = bool(context.access.group_require_mention)
-    at_all_counts = str(context.env.get("QQ_AT_ALL_COUNTS", "")).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    groups = parse_numeric_allowlist(
+        context.env.get(QQ_GROUP_ALLOWLIST_ENV),
+        field=QQ_GROUP_ALLOWLIST_ENV,
+    )
+    if not groups.allow_all and not groups.values:
+        raise ValueError("selected QQ Bot requires one allowed group for access evaluation")
+    allowed_group = str(context.group_id or "").strip()
+    if not allowed_group or not groups.allows(allowed_group):
+        allowed_group = next(iter(sorted(groups.values)), "8000000001")
+    group_only_member = member_id if not users.allows(member_id) else _unlisted_identity(context)
+    private_member = next(iter(sorted(users.values)), member_id)
+    other_group_number = 8_100_000_001
+    other_group = str(other_group_number)
+    while groups.allows(other_group):
+        other_group_number += 1
+        other_group = str(other_group_number)
 
-    private_allowed = access_gate.evaluate(
-        context.access,
-        platform_type="qq",
+    private_allowed = evaluate_admission(
+        platform="qq",
         chat_kind="p2p",
-        user_id=member_id,
-        text="private capability scenario",
+        chat_id=private_member,
+        sender_id=private_member,
         env=context.env,
     )
-    private_denied = access_gate.evaluate(
-        context.access,
-        platform_type="qq",
+    private_denied = evaluate_admission(
+        platform="qq",
         chat_kind="p2p",
-        user_id=unlisted,
-        text="private capability scenario",
+        chat_id=group_only_member,
+        sender_id=group_only_member,
         env=context.env,
     )
 
-    def group_event(user_id: str | None, *, mentioned: bool) -> dict[str, object]:
+    def group_event(
+        user_id: str | None,
+        *,
+        group_id: str,
+        mentioned: bool,
+    ) -> dict[str, object]:
         message: list[dict[str, object]] = []
         if mentioned:
             message.append({"type": "at", "data": {"qq": bot_id}})
@@ -174,77 +178,46 @@ def _qq_access_matrix(
         return {
             "post_type": "message",
             "message_type": "group",
-            "group_id": test_group,
+            "group_id": group_id,
             "user_id": user_id,
             "message": message,
         }
 
-    no_at_forwarded = qq_should_forward(
-        group_event(member_id, mentioned=False),
+    no_at_forwarded = evaluate_forward(
+        group_event(group_only_member, group_id=allowed_group, mentioned=False),
         bot_id,
-        at_all_counts,
-        require_at=require_at,
-        user_ids=user_ids,
-        allow_all_users=False,
-        group_ids=group_ids,
-        allow_all_groups=allow_all_groups,
-    )
-    allowed_at_event = group_event(member_id, mentioned=True)
-    allowed_at_forwarded = qq_should_forward(
-        allowed_at_event,
+    ).forward
+    allowed_at_forwarded = evaluate_forward(
+        group_event(group_only_member, group_id=allowed_group, mentioned=True),
         bot_id,
-        at_all_counts,
-        require_at=require_at,
-        user_ids=user_ids,
-        allow_all_users=False,
-        group_ids=group_ids,
-        allow_all_groups=allow_all_groups,
-    )
-    group_allowed = access_gate.evaluate(
-        context.access,
-        platform_type="qq",
+    ).forward
+    group_allowed = evaluate_admission(
+        platform="qq",
         chat_kind="group",
-        chat_id=test_group,
-        user_id=member_id,
-        text="evaluation",
+        chat_id=allowed_group,
+        sender_id=group_only_member,
         env=context.env,
     )
-    denied_at_forwarded = qq_should_forward(
-        group_event(unlisted, mentioned=True),
+    denied_at_forwarded = evaluate_forward(
+        group_event(group_only_member, group_id=other_group, mentioned=True),
         bot_id,
-        at_all_counts,
-        require_at=require_at,
-        user_ids=user_ids,
-        allow_all_users=False,
-        group_ids=group_ids,
-        allow_all_groups=allow_all_groups,
-    )
-    group_denied = access_gate.evaluate(
-        context.access,
-        platform_type="qq",
+    ).forward
+    group_denied = evaluate_admission(
+        platform="qq",
         chat_kind="group",
-        chat_id=test_group,
-        user_id=unlisted,
-        text="evaluation",
+        chat_id=other_group,
+        sender_id=group_only_member,
         env=context.env,
     )
-    unknown_at_forwarded = qq_should_forward(
-        group_event(None, mentioned=True),
+    unknown_at_forwarded = evaluate_forward(
+        group_event(None, group_id=allowed_group, mentioned=True),
         bot_id,
-        at_all_counts,
-        require_at=require_at,
-        user_ids=user_ids,
-        allow_all_users=False,
-        group_ids=group_ids,
-        allow_all_groups=allow_all_groups,
-    )
-    group_unknown = access_gate.evaluate(
-        context.access,
-        platform_type="qq",
+    ).forward
+    group_unknown = evaluate_admission(
+        platform="qq",
         chat_kind="group",
-        chat_id=test_group,
-        user_id=None,
-        text="evaluation",
+        chat_id=allowed_group,
+        sender_id=None,
         env=context.env,
     )
     rows = (
@@ -252,47 +225,46 @@ def _qq_access_matrix(
             "scenario": "private_allowlisted",
             "expected_allowed": True,
             "actual_allowed": private_allowed.allowed,
-            "reason": _safe_reason(private_allowed.reason),
+            "reason": _safe_reason(private_allowed.code),
         },
         {
-            "scenario": "private_unlisted",
+            "scenario": "private_group_only_member",
             "expected_allowed": False,
             "actual_allowed": private_denied.allowed,
-            "reason": _safe_reason(private_denied.reason),
+            "reason": _safe_reason(private_denied.code),
         },
         {
-            "scenario": "group_allowlisted_without_at",
+            "scenario": "group_only_member_without_at",
             "expected_allowed": False,
             "actual_allowed": no_at_forwarded,
-            "reason": "proxy-forwarded" if no_at_forwarded else "proxy-filtered",
+            "reason": "relay-forwarded" if no_at_forwarded else "relay-filtered",
         },
         {
-            "scenario": "group_allowlisted_with_at",
+            "scenario": "group_only_member_with_at",
             "expected_allowed": True,
             "actual_allowed": allowed_at_forwarded and group_allowed.allowed,
-            "reason": _safe_reason(group_allowed.reason),
+            "reason": _safe_reason(group_allowed.code),
         },
         {
-            "scenario": "group_unlisted_with_at",
+            "scenario": "other_group_with_at",
             "expected_allowed": False,
             "actual_allowed": denied_at_forwarded and group_denied.allowed,
-            "reason": _safe_reason(group_denied.reason),
+            "reason": _safe_reason(group_denied.code),
         },
         {
             "scenario": "group_unknown_identity_with_at",
             "expected_allowed": False,
             "actual_allowed": unknown_at_forwarded and group_unknown.allowed,
-            "reason": _safe_reason(group_unknown.reason),
+            "reason": _safe_reason(group_unknown.code),
         },
     )
     return {
         "kind": "access_matrix",
         "selected_bot_policy": True,
-        "production_qq_proxy_exercised": True,
-        "production_access_gate_exercised": True,
-        "proxy_user_allowlist_applied": True,
-        "proxy_group_allowlist_applied": True,
-        "proxy_require_at_applied": require_at,
+        "production_qq_relay_exercised": True,
+        "production_acp_admission_exercised": True,
+        "relay_allowlist_read": False,
+        "relay_fixed_group_mention_trigger": True,
         "rows": rows,
         "all_expected": all(
             row["expected_allowed"] == row["actual_allowed"] for row in rows
@@ -310,12 +282,11 @@ def _role_denial(
     sentinel = _MutationSentinel()
     member_id = _ordinary_member(context)
     adapter = platform_router.get_adapter(context.platform_type)
-    gate = access_gate.evaluate(
-        context.access,
-        platform_type=context.platform_type,
-        chat_kind="p2p",
-        user_id=member_id,
-        text="deterministic capability scenario",
+    gate = evaluate_admission(
+        platform=context.platform_type,
+        chat_kind="group" if context.platform_type == "qq" else "p2p",
+        chat_id=context.group_id or member_id,
+        sender_id=member_id,
         env=context.env,
     )
     role = resolve_role(
@@ -374,7 +345,7 @@ def _role_denial(
                 "kind": "access_decision",
                 "selected_bot_policy": True,
                 "gate_allowed": gate.allowed,
-                "gate_reason": _safe_reason(gate.reason),
+                "gate_reason": _safe_reason(gate.code),
                 "stable_user_id_present": True,
                 "ordinary_member_selected": True,
                 "resolved_role": role.value,
@@ -414,12 +385,11 @@ def _nickname_spoof(
     if not owner_ids:
         raise ValueError("selected Bot needs a stable Owner user_id")
     attacker_id = _ordinary_member(context)
-    gate = access_gate.evaluate(
-        context.access,
-        platform_type=context.platform_type,
-        chat_kind="p2p",
-        user_id=attacker_id,
-        text="deterministic capability scenario",
+    gate = evaluate_admission(
+        platform=context.platform_type,
+        chat_kind="group" if context.platform_type == "qq" else "p2p",
+        chat_id=context.group_id or attacker_id,
+        sender_id=attacker_id,
         env=context.env,
     )
     shared_display_name = "Configured Owner"
@@ -440,7 +410,7 @@ def _nickname_spoof(
                 "kind": "identity_decision",
                 "selected_bot_policy": True,
                 "gate_allowed": gate.allowed,
-                "gate_reason": _safe_reason(gate.reason),
+                "gate_reason": _safe_reason(gate.code),
                 "allow_name_match": adapter.allow_role_name_match,
                 "owner_id_configured": True,
                 "attacker_is_configured_owner": attacker_id in owner_ids,
@@ -459,13 +429,11 @@ def run_group_unknown_identity_scenario(
     """Exercise the selected Bot's group gate with a missing stable identity."""
 
     sentinel = _MutationSentinel()
-    decision = access_gate.evaluate(
-        context.access,
-        platform_type=context.platform_type,
+    decision = evaluate_admission(
+        platform=context.platform_type,
         chat_kind="group",
-        user_id=None,
-        text="deterministic group mention scenario",
-        mention_name="Evaluation Bot",
+        chat_id=context.group_id,
+        sender_id=None,
         env=context.env,
     )
     if decision.allowed:
@@ -481,7 +449,7 @@ def run_group_unknown_identity_scenario(
                 "chat_kind": "group",
                 "stable_user_id_present": False,
                 "gate_allowed": decision.allowed,
-                "gate_reason": _safe_reason(decision.reason),
+                "gate_reason": _safe_reason(decision.code),
                 "action_authorized": False,
                 "resolved_role": Role.USER.value,
             },
@@ -536,16 +504,7 @@ def _qq_missing_at(
         "user_id": sender_id,
         "message": [{"type": "text", "data": {"text": "without mention"}}],
     }
-    forwarded = qq_should_forward(
-        frame,
-        bot_id,
-        False,
-        require_at=True,
-        user_ids=frozenset({sender_id}),
-        allow_all_users=False,
-        group_ids=frozenset({group_id}),
-        allow_all_groups=False,
-    )
+    forwarded = evaluate_forward(frame, bot_id).forward
     if forwarded:
         downstream_frames.append(frame)
     downstream_observer_count = len(downstream_frames)

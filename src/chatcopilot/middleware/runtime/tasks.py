@@ -1,4 +1,5 @@
 """Per-turn task progress records for the console UI."""
+
 from __future__ import annotations
 
 import contextvars
@@ -114,14 +115,11 @@ def group_task_actor_root(workspace: Workspace, *, create: bool = False) -> Path
     if workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
         return workspace.root
     if workspace.root.name != "shared" or not workspace.chat_id or not workspace.user_id:
-        raise ValueError(
-            "shared-group task storage requires stable chat and actor identities"
-        )
+        raise ValueError("shared-group task storage requires stable chat and actor identities")
     actor_digest = hashlib.sha256(
-        (
-            f"{workspace.chat_kind or 'group'}\0{workspace.chat_id}\0"
-            f"{workspace.user_id}"
-        ).encode("utf-8")
+        (f"{workspace.chat_kind or 'group'}\0{workspace.chat_id}\0{workspace.user_id}").encode(
+            "utf-8"
+        )
     ).hexdigest()
     state_root = workspace.root.parent / ".conversation-state"
     actors_root = state_root / GROUP_TASK_ACTORS_DIRNAME
@@ -129,23 +127,16 @@ def group_task_actor_root(workspace: Workspace, *, create: bool = False) -> Path
     if create:
         for path in (state_root, actors_root, actor_root):
             if path.is_symlink():
-                raise RuntimeError(
-                    "protected group task directory must not be a symlink"
-                )
+                raise RuntimeError("protected group task directory must not be a symlink")
             path.mkdir(mode=0o700, parents=True, exist_ok=True)
             if not path.is_dir() or path.is_symlink():
-                raise RuntimeError(
-                    "protected group task path must be a real directory"
-                )
+                raise RuntimeError("protected group task path must be a real directory")
             path.chmod(0o700)
             info = path.stat()
             if os.name == "posix" and (
-                info.st_uid != os.geteuid()
-                or stat.S_IMODE(info.st_mode) != 0o700
+                info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700
             ):
-                raise RuntimeError(
-                    "protected group task directory must be owner-only"
-                )
+                raise RuntimeError("protected group task directory must be owner-only")
     return actor_root
 
 
@@ -166,44 +157,213 @@ def group_task_intake_root(workspace: Workspace, *, create: bool = False) -> Pat
     if create:
         for path in (state_root, intake_root):
             if path.is_symlink():
-                raise RuntimeError(
-                    "protected group intake directory must not be a symlink"
-                )
+                raise RuntimeError("protected group intake directory must not be a symlink")
             path.mkdir(mode=0o700, parents=True, exist_ok=True)
             if not path.is_dir() or path.is_symlink():
-                raise RuntimeError(
-                    "protected group intake path must be a real directory"
-                )
+                raise RuntimeError("protected group intake path must be a real directory")
             path.chmod(0o700)
             info = path.stat()
             if os.name == "posix" and (
-                info.st_uid != os.geteuid()
-                or stat.S_IMODE(info.st_mode) != 0o700
+                info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700
             ):
-                raise RuntimeError(
-                    "protected group intake directory must be owner-only"
-                )
+                raise RuntimeError("protected group intake directory must be owner-only")
     return intake_root
 
 
-def _workspace_payload(workspace: Workspace) -> Dict[str, Any]:
+def _workspace_payload(
+    workspace: Workspace,
+    *,
+    redact_identity: bool = False,
+) -> Dict[str, Any]:
     shared_group = workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+    actor_ref = (
+        stable_actor_ref(
+            "qq",
+            workspace.user_id or "",
+            conversation_id=f"{workspace.chat_kind or ''}:{workspace.chat_id or ''}",
+        )
+        if workspace.user_id and (shared_group or redact_identity)
+        else None
+    )
     return {
         "root": str(workspace.root),
         "chat_kind": workspace.chat_kind,
-        "chat_id": workspace.chat_id,
-        "user_id": None if shared_group else workspace.user_id,
-        "user_name": None if shared_group else workspace.user_name,
-        "actor_ref": (
-            stable_actor_ref(
-                "qq",
-                workspace.user_id or "",
-                conversation_id=f"{workspace.chat_kind or ''}:{workspace.chat_id or ''}",
-            )
-            if shared_group and workspace.user_id
-            else None
-        ),
+        "chat_id": None if shared_group or redact_identity else workspace.chat_id,
+        "user_id": None if shared_group or redact_identity else workspace.user_id,
+        "user_name": None if shared_group or redact_identity else workspace.user_name,
+        "actor_ref": actor_ref,
     }
+
+
+def _resolve_task_observability_root(
+    workspace: Workspace,
+    history_root: Path | None,
+) -> Path:
+    configured_workspace = workspace.root.expanduser()
+    try:
+        workspace_info = configured_workspace.lstat()
+    except FileNotFoundError:
+        workspace_info = None
+    if workspace_info is not None and (
+        stat.S_ISLNK(workspace_info.st_mode)
+        or not stat.S_ISDIR(workspace_info.st_mode)
+        or (os.name == "posix" and workspace_info.st_uid != os.geteuid())
+    ):
+        raise ValueError("task workspace root must be a real directory owned by the current user")
+    workspace_root = configured_workspace.resolve()
+    if history_root is None:
+        return workspace_root
+    configured_root = history_root.expanduser()
+    try:
+        configured_info = configured_root.lstat()
+    except FileNotFoundError:
+        configured_info = None
+    if configured_info is not None and (
+        stat.S_ISLNK(configured_info.st_mode)
+        or not stat.S_ISDIR(configured_info.st_mode)
+        or (os.name == "posix" and configured_info.st_uid != os.geteuid())
+    ):
+        raise ValueError("task history root must be a real directory owned by the current user")
+    trusted_root = configured_root.resolve()
+    try:
+        workspace_root.relative_to(trusted_root)
+    except ValueError as exc:
+        raise ValueError("task workspace must be contained by its history root") from exc
+    return trusted_root
+
+
+def _materialize_private_task_workspace(
+    workspace: Workspace,
+    *,
+    history_root: Path | None,
+    observability_root: Path,
+) -> None:
+    """Create only a private p2p task root when the admitted workspace is still lazy."""
+
+    configured_workspace = workspace.root.expanduser()
+    try:
+        workspace_info = configured_workspace.lstat()
+    except FileNotFoundError:
+        workspace_info = None
+    if workspace_info is not None:
+        if (
+            stat.S_ISLNK(workspace_info.st_mode)
+            or not stat.S_ISDIR(workspace_info.st_mode)
+            or (os.name == "posix" and workspace_info.st_uid != os.geteuid())
+        ):
+            raise OSError("task workspace root is unsafe")
+        return
+    workspace_root = configured_workspace.resolve()
+    if history_root is None:
+        raise OSError("missing task history root for an unmaterialized workspace")
+
+    observability_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root_info = observability_root.lstat()
+    if (
+        stat.S_ISLNK(root_info.st_mode)
+        or not stat.S_ISDIR(root_info.st_mode)
+        or (os.name == "posix" and root_info.st_uid != os.geteuid())
+    ):
+        raise OSError("task history root is unsafe")
+
+    relative = workspace_root.relative_to(observability_root)
+    if os.name != "posix":  # pragma: no cover - native Windows validation required
+        current = observability_root
+        for part in relative.parts:
+            current = current / part
+            try:
+                current_info = current.lstat()
+            except FileNotFoundError:
+                current.mkdir(mode=0o700)
+                current_info = current.lstat()
+            if stat.S_ISLNK(current_info.st_mode) or not stat.S_ISDIR(current_info.st_mode):
+                raise OSError("task workspace path is unsafe")
+            _chmod_private(current, 0o700)
+        return
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    directory_fd = os.open(observability_root, flags)
+    try:
+        current = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(current.st_mode)
+            or current.st_uid != os.geteuid()
+            or (current.st_dev, current.st_ino) != (root_info.st_dev, root_info.st_ino)
+        ):
+            raise OSError("task history root identity is unsafe")
+        for part in relative.parts:
+            child_fd = _open_private_child_dir_at(directory_fd, part, create=True)
+            os.close(directory_fd)
+            directory_fd = child_fd
+    finally:
+        os.close(directory_fd)
+
+
+def _replace_identity_literals(value: Any, literals: tuple[str, ...]) -> Any:
+    if isinstance(value, str):
+        safe = value
+        for literal in sorted(set(literals), key=len, reverse=True):
+            safe = safe.replace(literal, "[REDACTED_IDENTITY]")
+        return safe
+    if isinstance(value, list):
+        return [_replace_identity_literals(item, literals) for item in value]
+    if isinstance(value, dict):
+        return {
+            _replace_identity_literals(key, literals): _replace_identity_literals(
+                item,
+                literals,
+            )
+            for key, item in value.items()
+        }
+    return value
+
+
+def _redact_workspace_identity(
+    payload: Any,
+    workspace: Workspace,
+    *,
+    force: bool = False,
+) -> Any:
+    if not force and workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
+        return payload
+    literals = tuple(
+        value
+        for value in (
+            workspace.chat_id,
+            workspace.user_id,
+            workspace.user_name,
+        )
+        if value
+    )
+    return _replace_identity_literals(payload, literals)
+
+
+def _redact_group_turn_content(
+    payload: Any,
+    workspace: Workspace,
+    *,
+    user_text: str,
+    message_id: str | None,
+) -> Any:
+    if workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
+        return payload
+
+    def redact(value: Any) -> Any:
+        if isinstance(value, str):
+            safe = value
+            if message_id:
+                safe = safe.replace(message_id, "[REDACTED_MESSAGE]")
+            if user_text:
+                safe = safe.replace(user_text, "[REDACTED_GROUP_TURN_TEXT]")
+            return safe
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        if isinstance(value, dict):
+            return {key: redact(item) for key, item in value.items()}
+        return value
+
+    return redact(payload)
 
 
 def _extract_job_ids(*parts: object) -> List[str]:
@@ -484,12 +644,16 @@ class TurnTaskRecorder:
     asked_at: float = field(default_factory=time.time)
     history_root: Optional[Path] = None
     unauthenticated_intake: bool = False
+    redact_identity: bool = False
     _path: Path = field(init=False, repr=False)
+    _observability_root: Path = field(init=False, repr=False)
     _tools: List[Dict[str, Any]] = field(default_factory=list, init=False, repr=False)
     _llm_calls: List[Dict[str, Any]] = field(default_factory=list, init=False, repr=False)
     _context_snapshots: List[Dict[str, Any]] = field(default_factory=list, init=False, repr=False)
     _input_resources: List[Dict[str, Any]] = field(default_factory=list, init=False, repr=False)
-    _usage_totals: Dict[str, Any] = field(default_factory=_empty_usage_totals, init=False, repr=False)
+    _usage_totals: Dict[str, Any] = field(
+        default_factory=_empty_usage_totals, init=False, repr=False
+    )
     _job_ids: List[str] = field(default_factory=list, init=False, repr=False)
     _status: str = field(default="running", init=False, repr=False)
     _progress: str = field(default="已收到提问。", init=False, repr=False)
@@ -509,12 +673,19 @@ class TurnTaskRecorder:
     _provider_omission_event_written: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if (
-            self.unauthenticated_intake
-            and self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
-        ):
+        self._observability_root = _resolve_task_observability_root(
+            self.workspace,
+            self.history_root,
+        )
+        if self.unauthenticated_intake and self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
             storage_root = group_task_intake_root(self.workspace, create=True)
         else:
+            if self.workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
+                _materialize_private_task_workspace(
+                    self.workspace,
+                    history_root=self.history_root,
+                    observability_root=self._observability_root,
+                )
             storage_root = group_task_actor_root(
                 self.workspace,
                 create=self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED,
@@ -530,7 +701,10 @@ class TurnTaskRecorder:
             "fixed_at": None,
         }
         self.write(progress=self._progress)
-        self._append_event("task_started", {"user_text": self.user_text})
+        self._append_event(
+            "task_started",
+            {"user_text": self._persisted_user_text()},
+        )
         from chatcopilot.core.log_context import push_log_context
 
         self._log_context_token = push_log_context(
@@ -611,9 +785,7 @@ class TurnTaskRecorder:
                     ordered_ids.append(job_id)
 
         self._job_ids = ordered_ids
-        self._job_results = [
-            summaries[job_id] for job_id in ordered_ids if job_id in summaries
-        ]
+        self._job_results = [summaries[job_id] for job_id in ordered_ids if job_id in summaries]
 
         all_complete = bool(ordered_ids) and all(job_id in summaries for job_id in ordered_ids)
         persisted_status = str(persisted.get("status") or "")
@@ -651,20 +823,36 @@ class TurnTaskRecorder:
     def _write_activity_progress(self, progress: str) -> None:
         """Bound task.json rewrites while raw activity events remain append-only."""
         self._progress = progress
-        if (
-            time.monotonic() - self._last_summary_write_at
-            < ACTIVITY_SUMMARY_WRITE_INTERVAL_SECONDS
-        ):
+        if time.monotonic() - self._last_summary_write_at < ACTIVITY_SUMMARY_WRITE_INTERVAL_SECONDS:
             return
         self.write()
 
     def _sanitize_for_persistence(self, payload: Any) -> Any:
+        prepared = payload
+        if not self.redact_identity:
+            prepared = _redact_group_turn_content(
+                payload,
+                self.workspace,
+                user_text=self.user_text,
+                message_id=self.message_id,
+            )
+        if self.redact_identity and self.message_id:
+            prepared = _replace_identity_literals(prepared, (self.message_id,))
         result = redact_observability_payload(
-            payload,
+            prepared,
             secrets=collect_observability_secrets(),
-            roots=default_observability_roots(self.workspace.root),
+            roots=default_observability_roots(self._observability_root),
         )
-        return result.value
+        return _redact_workspace_identity(
+            result.value,
+            self.workspace,
+            force=self.redact_identity,
+        )
+
+    def _persisted_user_text(self) -> str:
+        if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED and not self.redact_identity:
+            return "（群消息正文未保存）"
+        return self.user_text
 
     def _find_step(self, span_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not span_id:
@@ -730,9 +918,7 @@ class TurnTaskRecorder:
         step["finished_at"] = ended
         started_at = step.get("started_at")
         step["elapsed_s"] = (
-            round(ended - float(started_at), 4)
-            if isinstance(started_at, (int, float))
-            else None
+            round(ended - float(started_at), 4) if isinstance(started_at, (int, float)) else None
         )
         step["summary"] = summary or ""
         step["error"] = error
@@ -972,9 +1158,7 @@ class TurnTaskRecorder:
                 1,
             )
             retained = sum(
-                1
-                for item in self._tools
-                if str(item.get("kind") or "") in _PROVIDER_ACTIVITY_KINDS
+                1 for item in self._tools if str(item.get("kind") or "") in _PROVIDER_ACTIVITY_KINDS
             )
             retain_summary = retained < MAX_PROVIDER_ACTIVITY_SUMMARIES
             if not retain_summary:
@@ -1074,13 +1258,16 @@ class TurnTaskRecorder:
                 )
                 self.write(progress="模型调用失败。" if not ok else "模型调用完成。")
                 return
+        persisted_summary = (
+            ("委托执行完成。" if ok else "委托执行失败。")
+            if kind == "subagent" and self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+            else summary
+        )
         target = self._match_running(name, span_id)
         if target is None:
             is_provider_activity = kind in _PROVIDER_ACTIVITY_KINDS
             retained = sum(
-                1
-                for item in self._tools
-                if str(item.get("kind") or "") in _PROVIDER_ACTIVITY_KINDS
+                1 for item in self._tools if str(item.get("kind") or "") in _PROVIDER_ACTIVITY_KINDS
             )
             if is_provider_activity and retained >= MAX_PROVIDER_ACTIVITY_SUMMARIES:
                 self._append_provider_activity_omission_event()
@@ -1100,7 +1287,7 @@ class TurnTaskRecorder:
         started_at = target.get("started_at")
         if isinstance(started_at, (int, float)):
             target["elapsed_s"] = round(finished_at - float(started_at), 1)
-        target["summary"] = summary or ""
+        target["summary"] = persisted_summary or ""
         step = self._find_step(span_id)
         if step is None:
             step = self._start_step(
@@ -1115,7 +1302,7 @@ class TurnTaskRecorder:
         self._finish_step(
             step,
             ok=ok,
-            summary=summary,
+            summary=persisted_summary,
             finished_at=finished_at,
             raw_event="span_finished",
         )
@@ -1159,8 +1346,11 @@ class TurnTaskRecorder:
         if not _CONTEXT_ID_RE.fullmatch(snapshot_id):
             raise ValueError("invalid context snapshot id")
         captured_at = time.time()
-        safe_session = omit_private_reasoning_messages(session_messages)
-        safe_effective = omit_private_reasoning_messages(effective_messages)
+        group_turn_redacted = self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+        persisted_session_messages = [] if group_turn_redacted else session_messages
+        persisted_effective_messages = [] if group_turn_redacted else effective_messages
+        safe_session = omit_private_reasoning_messages(persisted_session_messages)
+        safe_effective = omit_private_reasoning_messages(persisted_effective_messages)
         path_safe_session = omit_local_resource_paths(safe_session.messages)
         path_safe_effective = omit_local_resource_paths(safe_effective.messages)
         helper_results = (
@@ -1171,9 +1361,7 @@ class TurnTaskRecorder:
         )
         helper_truncated = any(result.truncated for result in helper_results)
         truncation_reasons = {
-            reason
-            for result in helper_results
-            for reason in result.truncation_reasons
+            reason for result in helper_results for reason in result.truncation_reasons
         }
         reasoning_omission_count = (
             max(0, int(private_reasoning_omission_count))
@@ -1187,14 +1375,13 @@ class TurnTaskRecorder:
         )
         effective_omitted = list(omitted)
         if (
-            reasoning_omission_count
-            and "provider_private_reasoning" not in effective_omitted
+            group_turn_redacted
+            and "group_turn_text_and_transport_identity" not in effective_omitted
         ):
+            effective_omitted.append("group_turn_text_and_transport_identity")
+        if reasoning_omission_count and "provider_private_reasoning" not in effective_omitted:
             effective_omitted.append("provider_private_reasoning")
-        if (
-            resource_path_omission_count
-            and "local_resource_paths" not in effective_omitted
-        ):
+        if resource_path_omission_count and "local_resource_paths" not in effective_omitted:
             effective_omitted.append("local_resource_paths")
         if helper_truncated and "observability_budget_exhausted" not in effective_omitted:
             effective_omitted.append("observability_budget_exhausted")
@@ -1203,6 +1390,7 @@ class TurnTaskRecorder:
             item
             in {
                 "binary_resource_payload_not_persisted",
+                "group_turn_text_and_transport_identity",
                 "local_resource_paths",
                 "observability_budget_exhausted",
                 "provider_private_reasoning",
@@ -1232,19 +1420,29 @@ class TurnTaskRecorder:
             "tool_schemas": list(tool_schemas),
             "resources": list(resources),
         }
-        redaction = redact_observability_payload(
+        prepared_payload = _redact_group_turn_content(
             raw_payload,
+            self.workspace,
+            user_text=self.user_text,
+            message_id=self.message_id,
+        )
+        redaction = redact_observability_payload(
+            prepared_payload,
             secrets=collect_observability_secrets(),
-            roots=default_observability_roots(self.workspace.root),
+            roots=default_observability_roots(self._observability_root),
         )
         truncation_reasons.update(redaction.truncation_reasons)
         payload_truncated = helper_truncated or redaction.truncated
         if redaction.truncated and "observability_budget_exhausted" not in effective_omitted:
             effective_omitted.append("observability_budget_exhausted")
             effective_coverage = "partial"
+        identity_safe_value = _redact_workspace_identity(
+            redaction.value,
+            self.workspace,
+        )
         safe_payload = (
-            dict(redaction.value)
-            if isinstance(redaction.value, dict)
+            dict(identity_safe_value)
+            if isinstance(identity_safe_value, dict)
             else {
                 "schema_version": 1,
                 "task_id": self.task_id,
@@ -1265,6 +1463,7 @@ class TurnTaskRecorder:
             or reasoning_omission_count > 0
             or resource_path_omission_count > 0
             or payload_truncated
+            or group_turn_redacted
         )
         safe_payload.update(
             {
@@ -1276,6 +1475,7 @@ class TurnTaskRecorder:
                     "redacted_before_persistence": True,
                     "redacted": was_redacted,
                     "replacement_count": redaction.replacement_count,
+                    "group_turn_redacted": group_turn_redacted,
                     "private_reasoning_omission_count": reasoning_omission_count,
                     "resource_path_omission_count": resource_path_omission_count,
                     "payload_truncated": payload_truncated,
@@ -1292,9 +1492,7 @@ class TurnTaskRecorder:
 
         selection = safe_payload.get("model_selection")
         reasoning_effort = (
-            str(selection.get("reasoning_effort") or "")
-            if isinstance(selection, dict)
-            else ""
+            str(selection.get("reasoning_effort") or "") if isinstance(selection, dict) else ""
         )
         summary = {
             "snapshot_id": snapshot_id,
@@ -1410,8 +1608,7 @@ class TurnTaskRecorder:
     ) -> str:
         valid_id = snapshot_id if _CONTEXT_ID_RE.fullmatch(snapshot_id) else ""
         if valid_id and any(
-            str(item.get("snapshot_id") or "") == valid_id
-            for item in self._context_snapshots
+            str(item.get("snapshot_id") or "") == valid_id for item in self._context_snapshots
         ):
             return valid_id
         if not valid_id:
@@ -1925,24 +2122,47 @@ class TurnTaskRecorder:
             target = target_dir / f"{artifact_stem}.json"
             raw_transcript = data.get("transcript")
             transcript_items = (
-                list(raw_transcript)
-                if isinstance(raw_transcript, (list, tuple))
-                else []
+                list(raw_transcript) if isinstance(raw_transcript, (list, tuple)) else []
             )
             transcript_messages = [
                 item if isinstance(item, dict) else {"role": "unknown", "content": item}
                 for item in transcript_items
             ]
-            reasoning_omission = omit_private_reasoning_messages(transcript_messages)
+            group_messages_omitted = self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+            persisted_messages = [] if group_messages_omitted else transcript_messages
+            raw_result = data.get("result")
+            persisted_result = raw_result
+            if group_messages_omitted:
+                result_mapping = raw_result if isinstance(raw_result, dict) else {}
+                raw_outputs = result_mapping.get("outputs")
+                persisted_result = {
+                    "ok": bool(result_mapping.get("ok")),
+                    "output_count": (
+                        len(raw_outputs) if isinstance(raw_outputs, (list, tuple)) else 0
+                    ),
+                    "content_omitted": raw_result is not None,
+                }
+            reasoning_omission = omit_private_reasoning_messages(persisted_messages)
             resource_omission = omit_local_resource_paths(reasoning_omission.messages)
             payload = self._sanitize_for_persistence(
                 {
                     "name": name,
                     "span_id": span_id,
-                    "stop_reason": data.get("stop_reason"),
-                    "result": data.get("result"),
+                    "stop_reason": (None if group_messages_omitted else data.get("stop_reason")),
+                    "result": persisted_result,
                     "transcript": list(resource_omission.messages),
+                    "transcript_message_count": len(transcript_messages),
+                    "omitted": (
+                        [
+                            "group_message_content",
+                            "group_subagent_result_content",
+                            "group_subagent_stop_reason",
+                        ]
+                        if group_messages_omitted
+                        else []
+                    ),
                     "sanitization": {
+                        "group_message_content_omitted": group_messages_omitted,
                         "private_reasoning_omission_count": reasoning_omission.omission_count,
                         "resource_path_omission_count": resource_omission.omission_count,
                         "invalid_transcript_omitted": raw_transcript is not None
@@ -2023,16 +2243,12 @@ class TurnTaskRecorder:
                 )
                 if self._job_ids and all_jobs_complete:
                     child_results = [known_results[job_id] for job_id in self._job_ids]
-                    children_succeeded = all(
-                        bool(item.get("ok")) for item in child_results
-                    )
+                    children_succeeded = all(bool(item.get("ok")) for item in child_results)
                     # The main turn may close after every child has already
                     # persisted its result.  In that ordering the recorder is
                     # the single owner of the terminal transition.
                     self._status = (
-                        "failed"
-                        if status == "failed" or not children_succeeded
-                        else "succeeded"
+                        "failed" if status == "failed" or not children_succeeded else "succeeded"
                     )
                     self._progress = _delegated_progress(
                         child_results,
@@ -2073,7 +2289,7 @@ class TurnTaskRecorder:
                     "task_id": self.task_id,
                     "session_id": self.session_id,
                     "message_id": self.message_id,
-                    "user_text": self.user_text,
+                    "user_text": self._persisted_user_text(),
                     "final_text": final_text,
                     "stop_reason": stop_reason,
                     "error": effective_error,
@@ -2133,7 +2349,12 @@ class TurnTaskRecorder:
 
     def _append_event(self, event_type: str, payload: Dict[str, Any]) -> None:
         with self._event_lock:
-            _append_task_event(self._path.parent, event_type, payload)
+            _append_task_event(
+                self._path.parent,
+                event_type,
+                self._sanitize_for_persistence(payload),
+                workspace_root=self._observability_root,
+            )
 
     def to_payload(self) -> Dict[str, Any]:
         finished_at = self._finished_at
@@ -2148,7 +2369,11 @@ class TurnTaskRecorder:
         return {
             "schema_version": TASK_SCHEMA_VERSION,
             "task_id": self.task_id,
-            "description": describe_user_text(self.user_text),
+            "description": (
+                "（群消息正文未保存）"
+                if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED and not self.redact_identity
+                else describe_user_text(self.user_text)
+            ),
             "progress": self._progress,
             "status": self._status,
             "submitter": (
@@ -2159,10 +2384,8 @@ class TurnTaskRecorder:
                         f"{self.workspace.chat_kind or ''}:{self.workspace.chat_id or ''}"
                     ),
                 )
-                if (
-                    self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
-                    and self.workspace.user_id
-                )
+                if self.workspace.user_id
+                and (self.redact_identity or self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED)
                 else "未验证来源"
                 if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
                 else self.workspace.user_name or self.workspace.user_id or ""
@@ -2207,7 +2430,10 @@ class TurnTaskRecorder:
             "job_results": self._job_results,
             "session_id": self.session_id,
             "message_id": self.message_id,
-            "workspace": _workspace_payload(self.workspace),
+            "workspace": _workspace_payload(
+                self.workspace,
+                redact_identity=self.redact_identity,
+            ),
             "path": str(self._path.parent),
             "trace_id": self.task_id,
             "events_path": str(self._path.parent / EVENTS_FILENAME),
@@ -2258,7 +2484,11 @@ def _bounded_job_result(item: Any, *, compact: bool = False) -> Dict[str, Any]:
         bounded, was_truncated = _bounded_string(value, MAX_JOB_RESULT_OUTPUT_CHARS)
         outputs.append(bounded)
         output_text_truncated = output_text_truncated or was_truncated
-    omissions: list[str] = []
+    omissions = [
+        field
+        for field in source.get("omitted_fields") or []
+        if field in {"summary", "error", "outputs"}
+    ]
     if summary_truncated:
         omissions.append("summary")
     if error_truncated:
@@ -2299,10 +2529,7 @@ def _bounded_job_result(item: Any, *, compact: bool = False) -> Dict[str, Any]:
 
 def _bounded_job_results(values: Any, *, compact: bool = False) -> list[Dict[str, Any]]:
     items, _, _ = _bounded_collection(values, MAX_JOB_RESULT_SUMMARIES)
-    return [
-        _bounded_job_result(item, compact=compact)
-        for item in items
-    ]
+    return [_bounded_job_result(item, compact=compact) for item in items]
 
 
 def _bounded_collection(
@@ -2368,9 +2595,7 @@ def _task_llm_call_summaries(values: Any) -> tuple[list[Dict[str, Any]], int, bo
                 "system_estimated_tokens": _bounded_nonnegative_integer(
                     item.get("system_estimated_tokens")
                 ),
-                "tool_schema_count": _bounded_nonnegative_integer(
-                    item.get("tool_schema_count")
-                ),
+                "tool_schema_count": _bounded_nonnegative_integer(item.get("tool_schema_count")),
                 "tool_schema_estimated_tokens": _bounded_nonnegative_integer(
                     item.get("tool_schema_estimated_tokens")
                 ),
@@ -2420,21 +2645,15 @@ def _task_context_snapshot_summaries(
                 {
                     "redacted": bool(item.get("redacted")),
                     "iteration": _bounded_nonnegative_integer(item.get("iteration")),
-                    "message_count": _bounded_nonnegative_integer(
-                        item.get("message_count")
-                    ),
+                    "message_count": _bounded_nonnegative_integer(item.get("message_count")),
                     "effective_message_count": _bounded_nonnegative_integer(
                         item.get("effective_message_count")
                     ),
                     "tool_schema_count": _bounded_nonnegative_integer(
                         item.get("tool_schema_count")
                     ),
-                    "resource_count": _bounded_nonnegative_integer(
-                        item.get("resource_count")
-                    ),
-                    "estimated_tokens": _bounded_nonnegative_integer(
-                        item.get("estimated_tokens")
-                    ),
+                    "resource_count": _bounded_nonnegative_integer(item.get("resource_count")),
+                    "estimated_tokens": _bounded_nonnegative_integer(item.get("estimated_tokens")),
                     "reasoning_effort": _bounded_text(
                         item.get("reasoning_effort"),
                         64,
@@ -2526,14 +2745,9 @@ def _task_usage_summary(value: Any) -> Dict[str, Any]:
     summary.update(
         {
             "llm_calls": _bounded_nonnegative_integer(source.get("llm_calls")),
-            "cache_hit_calls": _bounded_nonnegative_integer(
-                source.get("cache_hit_calls")
-            ),
-            "cache_hit_rate": _bounded_observed_number(source.get("cache_hit_rate"))
-            or 0.0,
-            "cache_hit_call_rate": _bounded_observed_number(
-                source.get("cache_hit_call_rate")
-            )
+            "cache_hit_calls": _bounded_nonnegative_integer(source.get("cache_hit_calls")),
+            "cache_hit_rate": _bounded_observed_number(source.get("cache_hit_rate")) or 0.0,
+            "cache_hit_call_rate": _bounded_observed_number(source.get("cache_hit_call_rate"))
             or 0.0,
         }
     )
@@ -2579,9 +2793,7 @@ def _bounded_task_document(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
     unknown_field_count = sum(1 for key in payload if key not in document_fields)
     bounded = {key: value for key, value in payload.items() if key in document_fields}
-    bounded["schema_version"] = _bounded_nonnegative_integer(
-        bounded.get("schema_version")
-    )
+    bounded["schema_version"] = _bounded_nonnegative_integer(bounded.get("schema_version"))
     for key, limit in (
         ("task_id", 256),
         ("description", 512),
@@ -2612,9 +2824,7 @@ def _bounded_task_document(payload: Dict[str, Any]) -> Dict[str, Any]:
             bounded[key] = _bounded_observed_number(bounded.get(key))
     bounded["workspace"] = _bounded_mapping(bounded.get("workspace"))
     raw_persona_outcome = bounded.get("persona_outcome")
-    persona_outcome = (
-        raw_persona_outcome if isinstance(raw_persona_outcome, dict) else {}
-    )
+    persona_outcome = raw_persona_outcome if isinstance(raw_persona_outcome, dict) else {}
     bounded["persona_outcome"] = {
         "outcome": _bounded_text(persona_outcome.get("outcome"), 80),
         "error_code": _bounded_text(persona_outcome.get("error_code"), 120),
@@ -2625,9 +2835,7 @@ def _bounded_task_document(payload: Dict[str, Any]) -> Dict[str, Any]:
     activity: Dict[str, Any] = raw_activity if isinstance(raw_activity, dict) else {}
     bounded["activity_summary"] = {
         "provider_total": _bounded_nonnegative_integer(activity.get("provider_total")),
-        "provider_retained": _bounded_nonnegative_integer(
-            activity.get("provider_retained")
-        ),
+        "provider_retained": _bounded_nonnegative_integer(activity.get("provider_retained")),
         "provider_dropped": _bounded_nonnegative_integer(activity.get("provider_dropped")),
         "truncated": bool(activity.get("truncated")),
     }
@@ -2635,16 +2843,14 @@ def _bounded_task_document(payload: Dict[str, Any]) -> Dict[str, Any]:
     tool_source = raw_tools if isinstance(raw_tools, (list, tuple)) else []
     observed_tool_total = len(tool_source)
     tool_values = [
-        item if isinstance(item, dict) else {}
-        for item in tool_source[-MAX_TASK_TOOL_SUMMARIES:]
+        item if isinstance(item, dict) else {} for item in tool_source[-MAX_TASK_TOOL_SUMMARIES:]
     ]
     bounded["tools"] = _task_tool_summaries(tool_values)
     raw_steps = bounded.get("steps")
     step_source = raw_steps if isinstance(raw_steps, (list, tuple)) else []
     observed_step_total = len(step_source)
     step_values = [
-        item if isinstance(item, dict) else {}
-        for item in step_source[-MAX_TASK_STEP_SUMMARIES:]
+        item if isinstance(item, dict) else {} for item in step_source[-MAX_TASK_STEP_SUMMARIES:]
     ]
     bounded["steps"] = _task_step_summaries(step_values)
     raw_job_id_values, raw_job_id_total, invalid_job_ids = _bounded_collection(
@@ -2657,10 +2863,7 @@ def _bounded_task_document(payload: Dict[str, Any]) -> Dict[str, Any]:
         MAX_JOB_RESULT_SUMMARIES,
     )
     raw_job_results = list(raw_job_result_values)
-    bounded["job_ids"] = [
-        _bounded_text(value, 256)
-        for value in raw_job_ids
-    ]
+    bounded["job_ids"] = [_bounded_text(value, 256) for value in raw_job_ids]
     bounded["job_results"] = _bounded_job_results(raw_job_results)
     limits = _bounded_mapping(bounded.get("summary_limits"))
     if unknown_field_count:
@@ -2711,12 +2914,10 @@ def _bounded_task_document(payload: Dict[str, Any]) -> Dict[str, Any]:
             "steps_retained": len(bounded["steps"]),
             "llm_calls_total": llm_call_total,
             "llm_calls_retained": len(llm_calls),
-            "llm_calls_truncated": llm_calls_truncated
-            or llm_call_total > len(llm_calls),
+            "llm_calls_truncated": llm_calls_truncated or llm_call_total > len(llm_calls),
             "context_snapshots_total": context_total,
             "context_snapshots_retained": len(contexts),
-            "context_snapshots_truncated": contexts_truncated
-            or context_total > len(contexts),
+            "context_snapshots_truncated": contexts_truncated or context_total > len(contexts),
             "input_resources_total": input_resource_total,
             "input_resources_retained": len(input_resources),
             "input_resources_truncated": input_resources_truncated
@@ -2798,9 +2999,7 @@ def _bounded_turn_document(payload: Dict[str, Any]) -> Dict[str, Any]:
         1000,
     )
     raw_resources = [value for value in resource_values if isinstance(value, str)]
-    bounded["produced_resources"] = [
-        _bounded_text(value, 1024) for value in raw_resources
-    ]
+    bounded["produced_resources"] = [_bounded_text(value, 1024) for value in raw_resources]
     if invalid_resources or resource_total > len(bounded["produced_resources"]):
         omissions.append("produced_resources")
     raw_job_results, job_result_total, invalid_job_results = _bounded_collection(
@@ -2808,8 +3007,10 @@ def _bounded_turn_document(payload: Dict[str, Any]) -> Dict[str, Any]:
         MAX_JOB_RESULT_SUMMARIES,
     )
     bounded["job_results"] = _bounded_job_results(raw_job_results)
-    if invalid_job_results or job_result_total > len(bounded["job_results"]) or any(
-        item.get("payload_truncated") for item in bounded["job_results"]
+    if (
+        invalid_job_results
+        or job_result_total > len(bounded["job_results"])
+        or any(item.get("payload_truncated") for item in bounded["job_results"])
     ):
         omissions.append("job_results")
     if omissions:
@@ -2845,6 +3046,7 @@ def complete_delegated_task(
     task_id: str,
     job_id: str,
     result: Dict[str, Any],
+    history_root: Path | None = None,
 ) -> Dict[str, Any] | None:
     """Merge one child result and terminalize a delegated parent when all children finish."""
 
@@ -2852,6 +3054,7 @@ def complete_delegated_task(
         return None
     try:
         storage_root = group_task_actor_root(workspace, create=False)
+        observability_root = _resolve_task_observability_root(workspace, history_root)
     except ValueError:
         return None
     task_dir = storage_root / TASKS_DIRNAME / task_id
@@ -2862,6 +3065,7 @@ def complete_delegated_task(
                 task_dir=task_dir,
                 job_id=job_id,
                 result=result,
+                observability_root=observability_root,
             )
             if completion is None:
                 return None
@@ -2872,17 +3076,25 @@ def complete_delegated_task(
                 _append_task_event(
                     task_dir,
                     "job_completed",
-                    {"job_id": job_id, "result": completed_result},
+                    _redact_workspace_identity(
+                        {"job_id": job_id, "result": completed_result},
+                        workspace,
+                    ),
+                    workspace_root=observability_root,
                 )
                 if all_complete:
                     _append_task_event(
                         task_dir,
                         "task_finished",
-                        {
-                            "status": task["status"],
-                            "job_results": task["job_results"],
-                            "finished_at": task["finished_at"],
-                        },
+                        _redact_workspace_identity(
+                            {
+                                "status": task["status"],
+                                "job_results": task["job_results"],
+                                "finished_at": task["finished_at"],
+                            },
+                            workspace,
+                        ),
+                        workspace_root=observability_root,
                     )
             except (OSError, OverflowError, ValueError) as exc:
                 # task.json and turn.json are authoritative.  A bounded
@@ -2906,10 +3118,7 @@ def _task_completion_lock(task_dir: Path, *, create: bool = False) -> Iterator[N
         lock_path = task_dir / COMPLETION_LOCK_FILENAME
         lock_fd = _open_event_path(
             lock_path,
-            os.O_RDWR
-            | os.O_CREAT
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
             0o600,
             dir_fd=task_dir_fd,
         )
@@ -2933,6 +3142,7 @@ def _merge_delegated_task_completion(
     task_dir: Path,
     job_id: str,
     result: Dict[str, Any],
+    observability_root: Path,
 ) -> tuple[Dict[str, Any], Optional[Dict[str, Any]], bool] | None:
     task = _read_private_task_json(task_dir, TASK_FILENAME)
     if not isinstance(task, dict):
@@ -2953,11 +3163,13 @@ def _merge_delegated_task_completion(
         if isinstance(item, dict) and item.get("job_id")
     }
     result_already_recorded = job_id in summaries
-    already_terminal = (
-        result_already_recorded and task.get("status") in {"succeeded", "failed"}
-    )
+    already_terminal = result_already_recorded and task.get("status") in {"succeeded", "failed"}
     if not result_already_recorded:
-        summaries[job_id] = _job_result_summary(job_id, result)
+        summaries[job_id] = _job_result_summary(
+            job_id,
+            result,
+            omit_free_text=workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED,
+        )
     ordered_ids = [str(item) for item in task.get("job_ids") or [] if str(item)]
     if job_id not in ordered_ids:
         ordered_ids.append(job_id)
@@ -2981,9 +3193,7 @@ def _merge_delegated_task_completion(
         task["updated_at"] = now
         task["progress"] = _delegated_progress(ordered_results, len(ordered_ids))
         if all_complete:
-            succeeded = not main_failed and all(
-                bool(item.get("ok")) for item in ordered_results
-            )
+            succeeded = not main_failed and all(bool(item.get("ok")) for item in ordered_results)
             task["status"] = "succeeded" if succeeded else "failed"
             task["finished_at"] = now
             started_at = task.get("started_at") or task.get("asked_at")
@@ -2996,9 +3206,13 @@ def _merge_delegated_task_completion(
         task_redaction = redact_observability_payload(
             task,
             secrets=collect_observability_secrets(),
-            roots=default_observability_roots(workspace.root),
+            roots=default_observability_roots(observability_root),
         )
-        _write_private_task_json(task_dir, TASK_FILENAME, task_redaction.value)
+        _write_private_task_json(
+            task_dir,
+            TASK_FILENAME,
+            _redact_workspace_identity(task_redaction.value, workspace),
+        )
 
     if isinstance(turn, dict):
         turn["job_results"] = ordered_results
@@ -3018,15 +3232,17 @@ def _merge_delegated_task_completion(
                     for item in ordered_results
                     if not item.get("ok")
                 )
-                turn["error"] = "\n".join(
-                    dict.fromkeys(error for error in errors if error)
-                )
+                turn["error"] = "\n".join(dict.fromkeys(error for error in errors if error))
         turn_redaction = redact_observability_payload(
             turn,
             secrets=collect_observability_secrets(),
-            roots=default_observability_roots(workspace.root),
+            roots=default_observability_roots(observability_root),
         )
-        _write_private_task_json(task_dir, TURN_FILENAME, turn_redaction.value)
+        _write_private_task_json(
+            task_dir,
+            TURN_FILENAME,
+            _redact_workspace_identity(turn_redaction.value, workspace),
+        )
     return (
         task,
         None if result_already_recorded else summaries[job_id],
@@ -3034,9 +3250,16 @@ def _merge_delegated_task_completion(
     )
 
 
-def _job_result_summary(job_id: str, result: Dict[str, Any]) -> Dict[str, Any]:
+def _job_result_summary(
+    job_id: str,
+    result: Dict[str, Any],
+    *,
+    omit_free_text: bool = False,
+) -> Dict[str, Any]:
     details = result.get("details") if isinstance(result.get("details"), dict) else {}
-    return _bounded_job_result(
+    raw_summary = str(result.get("summary") or "")
+    raw_error = str(result.get("error") or "")
+    summary = _bounded_job_result(
         {
             "job_id": job_id,
             "ok": bool(result.get("ok")),
@@ -3047,16 +3270,28 @@ def _job_result_summary(job_id: str, result: Dict[str, Any]) -> Dict[str, Any]:
                 or ("succeeded" if result.get("ok") else "failed")
             ),
             "error_code": str(result.get("error_code") or ""),
-            "summary": str(result.get("summary") or ""),
-            "error": str(result.get("error") or ""),
-            "outputs": [
-                str(item)
-                for item in result.get("outputs") or []
-                if isinstance(item, str)
-            ],
+            "summary": "" if omit_free_text else raw_summary,
+            "error": "" if omit_free_text else raw_error,
+            "outputs": [str(item) for item in result.get("outputs") or [] if isinstance(item, str)],
             "finished_at": result.get("finished_at"),
         }
     )
+    omitted_fields = [
+        field
+        for field, value in (("summary", raw_summary), ("error", raw_error))
+        if omit_free_text and value
+    ]
+    if omitted_fields:
+        summary["payload_truncated"] = True
+        summary["omitted_fields"] = omitted_fields
+        summary["payload_sha256"] = _payload_digest(
+            {
+                "job_id": job_id,
+                "ok": bool(result.get("ok")),
+                "finished_at": result.get("finished_at"),
+            }
+        )
+    return summary
 
 
 def _delegated_progress(results: List[Dict[str, Any]], expected: int) -> str:
@@ -3069,7 +3304,13 @@ def _delegated_progress(results: List[Dict[str, Any]], expected: int) -> str:
     return f"All {expected} background child job(s) completed."
 
 
-def _append_task_event(task_dir: Path, event_type: str, payload: Dict[str, Any]) -> None:
+def _append_task_event(
+    task_dir: Path,
+    event_type: str,
+    payload: Dict[str, Any],
+    *,
+    workspace_root: Path,
+) -> None:
     target = task_dir / EVENTS_FILENAME
     task_dir_fd = _open_private_event_task_dir(task_dir)
     lock_fd: int | None = None
@@ -3077,10 +3318,7 @@ def _append_task_event(task_dir: Path, event_type: str, payload: Dict[str, Any])
         lock_path = task_dir / ".events.lock"
         lock_fd = _open_event_path(
             lock_path,
-            os.O_RDWR
-            | os.O_CREAT
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
             0o600,
             dir_fd=task_dir_fd,
         )
@@ -3110,7 +3348,6 @@ def _append_task_event(task_dir: Path, event_type: str, payload: Dict[str, Any])
             if last_sequence >= MAX_EVENT_SEQUENCE:
                 raise OverflowError("task event sequence exhausted the int64 range")
             sequence = last_sequence + 1
-            workspace_root = task_dir.parent.parent
             redaction = redact_observability_payload(
                 payload,
                 secrets=collect_observability_secrets(),
@@ -3556,9 +3793,7 @@ def _message_manifest(messages: Any) -> List[Dict[str, Any]]:
                 "role": _bounded_text(item.get("role"), 256),
                 "name": _bounded_text(item.get("name"), 256),
                 "char_count": reported_message_chars,
-                "message_sha256": hashlib.sha256(
-                    serialized_message.encode("utf-8")
-                ).hexdigest(),
+                "message_sha256": hashlib.sha256(serialized_message.encode("utf-8")).hexdigest(),
                 "content_char_count": reported_content_chars,
                 "content_sha256": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
                 "content_preview": serialized[:1024],
@@ -3599,9 +3834,7 @@ def _truncated_context_payload(
         "model": _bounded_text(payload.get("model"), 1024),
         "iteration": payload.get("iteration"),
         "coverage": _bounded_text(payload.get("coverage"), 256),
-        "omitted": [
-            _bounded_text(item, 512) for item in list(payload.get("omitted") or [])[:200]
-        ],
+        "omitted": [_bounded_text(item, 512) for item in list(payload.get("omitted") or [])[:200]],
         "context_kind": _bounded_text(payload.get("context_kind"), 256),
         "trace_id": _bounded_text(payload.get("trace_id"), 256),
         "span_id": _bounded_text(payload.get("span_id"), 256),

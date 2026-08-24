@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from chatcopilot.contracts import AssistantMode, Role
 from chatcopilot.contracts.model_selection import (
@@ -44,8 +45,8 @@ def _state(tmp_path: Path) -> SessionState:
         chat_kind="p2p",
         chat_id="chat-1",
         user_id="owner-1",
-    ).ensure()
-    return SessionState(
+    )
+    state = SessionState(
         session_id="sid-lazy",
         workspace=workspace,
         role=Role.OWNER,
@@ -53,6 +54,40 @@ def _state(tmp_path: Path) -> SessionState:
         runtime=SimpleNamespace(),
         session=None,
     )
+    state.materialize_workspace()
+    return state
+
+
+def test_control_session_construction_has_no_workspace_side_effects(tmp_path: Path) -> None:
+    workspace = Workspace(
+        root=tmp_path / "not-created",
+        chat_kind="p2p",
+        chat_id="chat-1",
+        user_id="owner-1",
+    )
+
+    with mock.patch("chatcopilot.middleware.acp.session_state.cleanup_workspace") as cleanup:
+        state = SessionState(
+            session_id="sid-control",
+            workspace=workspace,
+            role=Role.OWNER,
+            assistant_mode=AssistantMode.GENERAL,
+            runtime=SimpleNamespace(),
+        )
+
+        assert not workspace.root.exists()
+        assert state.transcript_path is None
+        assert not state.is_workspace_materialized
+        cleanup.assert_not_called()
+
+        assert state.materialize_workspace()
+        assert not state.materialize_workspace()
+
+    assert workspace.root.is_dir()
+    assert (workspace.root / "IDENTITY.json").is_file()
+    assert state.transcript_path is not None
+    assert state.is_workspace_materialized
+    cleanup.assert_called_once_with(state.workspace)
 
 
 def test_control_plane_session_buffers_and_replays_exchanges(tmp_path: Path) -> None:

@@ -100,11 +100,11 @@ def _bot_status(inst: BotInstance) -> dict[str, Any]:
         summary = str(status.get("error_summary") or "").strip()
         suffix = f": {summary}" if summary else "."
         add("log_errors", False, "warning", f"cc-connect tail contains {error_count} error line(s){suffix}")
-    proxy_error_count = int(status.get("qq_proxy_error_count") or 0)
-    if proxy_error_count > 0:
-        summary = str(status.get("qq_proxy_error_summary") or "").strip()
+    relay_error_count = int(status.get("qq_relay_error_count") or 0)
+    if relay_error_count > 0:
+        summary = str(status.get("qq_relay_error_summary") or "").strip()
         suffix = f": {summary}" if summary else "."
-        add("qq_proxy", False, "critical", f"QQ @ proxy has {proxy_error_count} upstream error line(s){suffix}")
+        add("qq_relay", False, "critical", f"QQ @ Relay has {relay_error_count} upstream error line(s){suffix}")
 
     status["checks"] = checks
     status["reasons"] = reasons

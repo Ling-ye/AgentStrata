@@ -125,6 +125,17 @@ def validate_botspec(spec: BotSpec) -> list[ValidationIssue]:
             )
     if not spec.platform.adapter.strip():
         issues.append(ValidationIssue("error", "platform.adapter 不能为空", "platform.adapter"))
+    platform_raw = spec.raw.get("platform", {}) if isinstance(spec.raw, dict) else {}
+    platform_keys = set(platform_raw) if isinstance(platform_raw, dict) else set()
+    unknown_platform_keys = sorted(platform_keys - {"type", "adapter"})
+    if unknown_platform_keys:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "platform 包含已删除或未知字段: " + ", ".join(unknown_platform_keys),
+                "platform",
+            )
+        )
     prompt_raw = spec.raw.get("prompts", {}) if isinstance(spec.raw, dict) else {}
     prompt_keys = set(prompt_raw) if isinstance(prompt_raw, dict) else set()
     allowed_prompt_keys = {
@@ -143,6 +154,18 @@ def validate_botspec(spec: BotSpec) -> list[ValidationIssue]:
                 "prompts 只接受 schema v2 字段；未知字段: "
                 + ", ".join(unknown_prompt_keys),
                 "prompts",
+            )
+        )
+    access_raw = spec.raw.get("access", {}) if isinstance(spec.raw, dict) else {}
+    access_keys = set(access_raw) if isinstance(access_raw, dict) else set()
+    unknown_access_keys = sorted(access_keys - {"owner_only_project_access"})
+    if unknown_access_keys:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "access 只接受能力投影字段；已废弃或未知字段: "
+                + ", ".join(unknown_access_keys),
+                "access",
             )
         )
     if spec.prompts.schema_version != 2:
@@ -455,7 +478,6 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         platform=PlatformSpec(
             type=str(platform.get("type", "")).strip(),
             adapter=str(platform.get("adapter", "")).strip(),
-            mention_name=_optional_str(platform.get("mention_name")),
         ),
         llm=LLMSpec(
             env_prefix=chat_env_prefix,
@@ -586,11 +608,6 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         ),
         packaging=PackagingSpec(allowlist=_optional_str(packaging.get("allowlist"))),
         access=AccessSpec(
-            private_require_whitelist=_as_bool(access.get("private_require_whitelist")),
-            group_require_whitelist=_as_bool(access.get("group_require_whitelist")),
-            group_require_mention=_as_bool(access.get("group_require_mention")),
-            whitelist_env=_optional_str(access.get("whitelist_env")),
-            group_whitelist_env=_optional_str(access.get("group_whitelist_env")),
             owner_only_project_access=_as_bool(
                 access.get("owner_only_project_access")
             ),

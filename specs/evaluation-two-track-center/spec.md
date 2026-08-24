@@ -1,7 +1,7 @@
 ---
 id: evaluation-two-track-center
 type: architecture
-status: implemented
+status: draft
 created: 2026-08-22
 ---
 
@@ -15,7 +15,7 @@ Evaluation application、service、worker、生命周期、取消/重跑、证�
 第二套 manager、API 根或 artifact owner。
 
 `agent` 轨道必须从 Evaluation Core 直接调用所选 Bot 的 Agent runtime，不经过 ACP、QQ
-adapter、access-proxy、cc-connect、平台身份门禁或回复投影。它回答“相同任务已经到达
+adapter、QQ @ Relay、cc-connect、平台身份门禁或回复投影。它回答“相同任务已经到达
 Agent 时，Agent 本身能否正确理解、调用工具并作答”，包含人格生效行为和带独立参考值的
 当日美元兑人民币汇率 Case。
 
@@ -51,18 +51,24 @@ ACP 前置工作流。
 新增 `agentstrata-qq-message-flow-v1`，标记为 `track: qq_message_flow`。其 driver 是 Core-owned
 `qq_message_flow`，只接受静态 `qq-message-flow` 插件。每个 Trial 使用随机回环端口、随机合成
 QQ 号/群号/消息 ID、临时 `0700/0600` 状态与确定性 Agent sentinel。正向 Case 至少串联并留下
-逐层 receipt：真实 access-proxy relay 对合成 OneBot 帧的认证、@/名单过滤和字节转发；
+逐层 receipt：真实 @ Relay 对合成 OneBot 帧的认证、结构化 @ 触发和字节转发，且 Relay 不读取名单；
 message.received hook 等价的受信 session-attestation writer；sender envelope 解析与 one-shot
-attestation 消费；ACP access gate 与真实角色解析；actor-bound session/task 构造；PromptPlan
+attestation 消费；ACP 唯一用户/群名单准入与真实角色解析；actor-bound session/task 构造；PromptPlan
 提交给确定性 Agent；最终回复经 ACP session update 投影。任一中间层被测试替身替代时，证据
 必须列出替代层。只有 `owned_chain_passed` 可以为 true；`full_external_e2e` 必须保持 false，并强制
 列出 `qq_platform/napcat/cc_connect/agent_model` 替代层与 `external_qq_write` 排除层。
 
-QQ 轨道至少覆盖：群聊被 @ 的允许回合、缺少 @ 的网关拒绝、伪造或正文不匹配 attestation 的
-失败关闭、普通成员请求 Owner 动作被拒绝、远程 URL 不被当成本地附件、Owner 人格设置经
+QQ 轨道固定保留七个 Case。合成 roundtrip 正例使用“sender 不在用户名单、当前群在群名单、
+明确 @ 当前机器人”，并断言最终角色仍为 User、Agent 恰好调用一次；缺少 @ 的负例只证明 Relay
+触发检查。其它 Case 至少覆盖：伪造或正文不匹配 attestation 的失败关闭、普通成员请求 Owner
+动作被拒绝、远程 URL 不被当成本地附件、Owner 人格设置经
 `persona_manage` 写入并在下一轮 PromptPlan 生效。人格 Case 使用临时保护状态、确定性
 PersonaDraftAgent 替身和显式发出工具调用的 model-replaced sentinel，只评价授权、结构化调用、
 receipt、原子持久化与下一轮加载，不评价真实模型的意图理解或写作质量。
+
+QQ Case 中的 ACP 准入使用与生产相同的严格名单 parser：缺失/空值不授予，只有完整 `*` 为
+通配，畸形有限列表失败。群名单命中不授予私聊或角色提升；拒绝回合在附件、journal、Agent、
+模型和工具之前结束。Suite 不新增第八个 Case。
 
 控制台首页只显示两张测试卡：`直接测试 Agent 能力` 与 `QQ 消息全链路`。选择 Bot 后每张卡显示
 测试对象、不包含的层、Preset、Case 数、预计时间和当前就绪/阻断原因；启动动作仍走统一

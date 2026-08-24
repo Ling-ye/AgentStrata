@@ -4,7 +4,6 @@ display_name: __DISPLAY_NAME__
 platform:
   type: feishu
   adapter: feishu_acp
-  mention_name: __MENTION_NAME__
 
 llm:
   chat:

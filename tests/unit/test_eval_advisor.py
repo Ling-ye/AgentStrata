@@ -54,12 +54,9 @@ _MACHINE_ABSOLUTE_PATH = "/" + "/".join(
             {"qq_message_flow": ("full", "qq-synthetic-roundtrip")},
             (),
         ),
-        (
-            "src/chatcopilot/middleware/acp/access_gate.py",
-            {
-                "agent": ("security", "access-forbidden-tool-no-effect"),
-                "qq_message_flow": ("security", "qq-nickname-spoof-denied"),
-            },
+            (
+                "src/chatcopilot/middleware/acp/admission.py",
+                {"qq_message_flow": ("security", "qq-nickname-spoof-denied")},
             (),
         ),
         (
@@ -190,18 +187,15 @@ def test_cli_advisor_is_read_only_and_returns_manual_recommendation(
         [
             "advise",
             "--changed-path",
-            "src/chatcopilot/middleware/acp/access_gate.py",
+            "src/chatcopilot/middleware/acp/admission.py",
             "--json",
         ]
     )
 
     payload = json.loads(capsys.readouterr().out)
     assert code == 0
-    assert payload["recommended_preset"] is None
-    assert {item["track"] for item in payload["runs"]} == {
-        "agent",
-        "qq_message_flow",
-    }
+    assert payload["recommended_preset"] == "security"
+    assert {item["track"] for item in payload["runs"]} == {"qq_message_flow"}
     assert {item["recommended_preset"] for item in payload["runs"]} == {"security"}
     assert payload["external_checks"] == []
     assert payload["manual_only"] is True

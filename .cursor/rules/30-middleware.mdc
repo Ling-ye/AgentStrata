@@ -38,17 +38,11 @@ middleware/
 
 ## 关键不变量
 
-1. **ACP `prompt` 派发顺序**（在 `acp/server.py::_prompt_locked`）：
-   - meta_commands → 短路（不进 LLM）
-   - 私人空间 inventory 查询 → 短路
-   - 纯附件上传（`should_short_circuit_attachment_only`）→ 只做 `import_transport_attachments` + debounced ack
-   - 文件 + 任务动词 → 落盘 + 在 user_text 末尾拼 `[资源引用: xxx]` hint → `AgentTask`
-   - 纯文本 → 直接构造 `AgentTask`
+1. **ACP `prompt` 派发顺序**：`identity → admission → attachments → deterministic_shortcuts → session_materialization → execution → finish`；QQ 未通过身份与名单准入时不得导入附件、激活 actor session 或进入 Agent。
 2. **会话锁**：每个 ACP `session_id` 用 `asyncio.Lock` 串行化所有 prompt，避免并发污染 workspace。
-3. **per-user Workspace**：cc-connect 通过 `session.started` hook 注入 `USER_ID` / `CHAT_ID` / `CHAT_KIND` / `USER_NAME` 到进程 env。
+3. **Workspace identity**：cc-connect 通过同步 `message.received` hook 刷新可信会话字段；QQ 还以 sender envelope 绑定逐轮发送者。
    - p2p → `<workspace_root>/p2p_<user_id>/`
-   - group → `<workspace_root>/group_<chat_id>/user_<user_id>/`
-   - 缺 user_id 时由 `identity.py` 按发送人姓名回查 Owners/Admins 兜底。
+   - QQ group → `<workspace_root>/group_<chat_id>/shared/`，执行 session、任务和 job 仍按真实 actor 放在保护状态域。
 4. **路径越权防御**：所有写入路径必须 `Workspace.is_inside(dst)` 校验；含 `..`、绝对路径段、Windows 盘符的文件名一律丢弃。
 5. **附件搬运**：从共享 `default/.cc-connect/attachments/` `shutil.copy2` 到 per-user `<workspace>/.cc-connect/attachments/`，**搬运后删除源文件**。
 6. **回执 debounce**：3 秒 debounce + 最多 15 秒轮询；超时给"等了较长时间仍未确认"提示。

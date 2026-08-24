@@ -254,26 +254,6 @@ class PlatformAdapter(abc.ABC):
             user_name=user_name or None,
         )
 
-    # -- runtime: access gate ----------------------------------------------
-    def detect_self_mention(
-        self,
-        text: str,
-        *,
-        env: Mapping[str, str],
-        mention_name: str | None = None,
-    ) -> bool | None:
-        """判断这条消息文本是否 @ 了本机器人。
-
-        供中间件的群聊 @门禁使用。返回值语义：
-
-        - ``True`` / ``False``：明确判定被 @ / 未被 @。
-        - ``None``：当前平台无法判定（如缺少识别本机器人所需的配置）。门禁遇到
-          ``None`` 时按"配置缺失"处理（放行 + 告警），而非误杀。
-
-        默认无能力返回 ``None``；需要群聊 @门禁的平台覆盖本方法。
-        """
-        return None
-
     # -- deploy -------------------------------------------------------------
     def required_secrets(self) -> tuple[SecretSpec, ...]:
         """声明该平台运行所需的 env 凭据；CLI / 部署脚本据此做前置校验。"""

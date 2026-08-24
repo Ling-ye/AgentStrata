@@ -352,7 +352,7 @@ QQ/NapCat/OneBot 连通性则属于部署与平台检查，不应混入 Agent �
   `planned/unavailable`。
 - 创建前先做无副作用预检；配置阻断不创建 Evaluation、artifact 或进程，也不调用模型。
 - 真实 QQ 连通性移到 `external-platform-check/v1`：默认只读验证 OneBot 认证、登录身份与
-  可选群访问，并在随机回环端口用假 NapCat + 真实 access-proxy relay 验证合成帧正例
+  可选群访问，并在随机回环端口用假 NapCat + 真实 QQ @ Relay 验证合成帧正例
   转发和负例丢弃，不创建 Evaluation 或调用模型。可选群消息动作要求双参数单次确认；
   没有独立发送 QQ 时，真实入站 Agent 往返仍明确为 `not_tested`。
 - 正式 Trial 在独立 spawn 子进程运行，期限取 Case timeout 与剩余 max-wall 的最小值；
@@ -576,8 +576,8 @@ renderer 仍把 Bot identity/style 合入 system authority。显式启用的 too
 
 受检 Python 模块的静态 import 图不再包含多模块强连通分量；架构 CLI 与单元测试执行同一个检查
 入口和规则集合。既有 BotSpec、工具名、平台协议、Evaluation artifact 和兼容 facade 保持不变。
-自动化验证覆盖本地 renderer、真实 access-proxy 上的合成 OneBot relay，以及 receipt 中明确列出的
-AgentStrata-owned ACP、任务、确定性 Agent 和回复投影链；它不等于真实 QQ、NapCat、cc-connect、
+自动化验证覆盖本地 renderer、真实 QQ @ Relay 上的合成 OneBot 消息，以及结构化证据中明确列出的
+AgentStrata-owned ACP 准入、任务、确定性 Agent 和回复投影链；它不等于真实 QQ、NapCat、cc-connect、
 商用模型或两账号外部往返，也不能证明 Codex provider 内部 instructions。
 
 相关规格：
@@ -599,7 +599,7 @@ AgentStrata-owned ACP、任务、确定性 Agent 和回复投影链；它不等�
   判分的最新 USD/CNY Case；默认 `full` 只选择当前内置 Bot 可运行的 23 个，两个来源专用
   Case 保留给显式 `custom`，所有 Trial 明确记录未经过 ACP/transport。
 - 新增 7 Case 的 `agentstrata-qq-message-flow-v1`，用随机回环端口上的假 NapCat、真实
-  access-proxy、Evaluation-owned cc-connect 等价交接、one-shot attestation、身份/权限、临时保护
+  QQ @ Relay、Evaluation-owned cc-connect 等价交接、one-shot attestation、ACP 准入、身份/权限、临时保护
   persona 状态和 ACP 回复投影验证仓库自有链路。
 - Comparison、GAIA、BFCL、IFEval 和数据准备继续复用现有 Evaluation service 与 CLI；旧记录
   保持可读，但不再占据 Console 产品入口。

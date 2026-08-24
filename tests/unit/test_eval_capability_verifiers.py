@@ -39,7 +39,7 @@ def _qq_owned_chain_receipt() -> dict[str, object]:
         "required_event_order_observed": True,
         "host_session_created": True,
         "host_prompt_completed": True,
-        "ingress_receipt_correlated": True,
+        "relay_allowlist_independent": True,
         "attestation_identity_validated": True,
         "access_allowed": True,
         "actor_session_bound": True,
@@ -63,8 +63,6 @@ def _qq_owned_chain_receipt() -> dict[str, object]:
         "full_external_e2e": False,
         "event_kinds": [
             "task_started",
-            "transport.onebot_message_received",
-            "gateway.access_decision",
             "middleware.identity_validated",
             "middleware.access_decision",
             "middleware.identity_activated",
@@ -132,7 +130,6 @@ def _qq_persona_flow_receipt() -> dict[str, object]:
         "next_turn_task_succeeded": True,
         "first_turn_event_kinds": [
             "task_started",
-            "gateway.access_decision",
             "middleware.identity_validated",
             "middleware.access_decision",
             "middleware.identity_activated",
@@ -145,7 +142,6 @@ def _qq_persona_flow_receipt() -> dict[str, object]:
         ],
         "next_turn_event_kinds": [
             "task_started",
-            "gateway.access_decision",
             "middleware.identity_validated",
             "middleware.access_decision",
             "middleware.identity_activated",
@@ -159,7 +155,7 @@ def _qq_persona_flow_receipt() -> dict[str, object]:
             "qq_platform",
             "napcat",
             "cc_connect",
-            "access_proxy",
+            "qq_at_relay",
             "persona_draft_agent",
             "agent_model",
         ],
@@ -441,7 +437,7 @@ def _raw_passing_observation(case: EvalCaseDefinition) -> TrialObservation:
                     "qq_platform",
                     "napcat",
                     "cc_connect",
-                    "access_proxy",
+                    "qq_at_relay",
                     "agent_model",
                 ],
                 "excluded_layers": ["external_qq_write"],
@@ -550,20 +546,19 @@ def _raw_passing_observation(case: EvalCaseDefinition) -> TrialObservation:
                 {
                     "kind": "access_matrix",
                     "selected_bot_policy": True,
-                    "production_qq_proxy_exercised": True,
-                    "production_access_gate_exercised": True,
-                    "proxy_user_allowlist_applied": True,
-                    "proxy_group_allowlist_applied": True,
-                    "proxy_require_at_applied": True,
+                    "production_qq_relay_exercised": True,
+                    "production_acp_admission_exercised": True,
+                    "relay_allowlist_read": False,
+                    "relay_fixed_group_mention_trigger": True,
                     "all_expected": True,
                     "rows": [
                         {"scenario": scenario}
                         for scenario in (
                             "private_allowlisted",
-                            "private_unlisted",
-                            "group_allowlisted_without_at",
-                            "group_allowlisted_with_at",
-                            "group_unlisted_with_at",
+                            "private_group_only_member",
+                            "group_only_member_without_at",
+                            "group_only_member_with_at",
+                            "other_group_with_at",
                             "group_unknown_identity_with_at",
                         )
                     ],
@@ -1603,7 +1598,7 @@ def test_qq_owned_chain_rejects_passed_only_or_missing_runtime_receipts() -> Non
 
     passing = _passing_observation(case)
     for field in (
-        "ingress_receipt_correlated",
+        "relay_allowlist_independent",
         "attestation_identity_validated",
         "role_resolved",
         "task_record_finished",
@@ -1854,7 +1849,7 @@ def test_role_denial_requires_production_filter_and_real_proxy_allowlists() -> N
     assert judge.passed is False
 
     matrix = dict(passing.evidence[2])
-    matrix["proxy_user_allowlist_applied"] = False
+    matrix["relay_allowlist_read"] = True
     judge, _evidence = judge_capability_trial(
         case,
         replace(passing, evidence=(passing.evidence[0], passing.evidence[1], matrix)),

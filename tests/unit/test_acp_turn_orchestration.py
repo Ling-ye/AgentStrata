@@ -52,8 +52,9 @@ class AcpTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             seen,
             [
+                "identity",
+                "admission",
                 "attachments",
-                "permissions",
                 "deterministic_shortcuts",
             ],
         )
@@ -66,12 +67,12 @@ class AcpTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
             raise RuntimeError("boom")
 
         handlers = [_handler(name, seen) for name in TURN_STAGE_ORDER]
-        handlers[1] = CallbackTurnHandler("permissions", fail)
+        handlers[1] = CallbackTurnHandler("admission", fail)
         with self.assertRaisesRegex(RuntimeError, "boom"):
             await OrderedTurnPipeline(tuple(handlers)).run(
                 TurnContext("sid", object(), "hello", None)
             )
-        self.assertEqual(seen, ["attachments"])
+        self.assertEqual(seen, ["identity"])
 
     async def test_context_is_passed_without_reconstruction(self) -> None:
         identities: list[int] = []
@@ -118,7 +119,7 @@ class AcpTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
 
     def test_context_rejects_manual_out_of_order_completion(self) -> None:
         context = TurnContext("sid", object(), "hello", None)
-        with self.assertRaisesRegex(RuntimeError, "expected 'attachments'"):
+        with self.assertRaisesRegex(RuntimeError, "expected 'identity'"):
             context.complete("execution")
 
     def test_context_metadata_has_no_shared_mutable_default(self) -> None:

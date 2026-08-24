@@ -96,8 +96,7 @@ def test_positive_qq_flow_names_exercised_stubbed_and_excluded_layers(
     }
     assert receipt["excluded_layers"] == ["external_qq_write"]
     assert {
-        "access_proxy",
-        "ingress_receipt",
+        "qq_at_relay",
         "session_attestation_writer",
         "acp_chat_agent",
         "turn_orchestrator",

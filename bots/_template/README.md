@@ -11,8 +11,6 @@
 3. 替换所有占位符：
    - `__BOT_ID__`：机器人目录名和实例 id，例如 `my-bot`
    - `__DISPLAY_NAME__`：机器人展示名，例如 `MyBot`
-   - `__MENTION_NAME__`：平台群聊中的 @ 名称
-   - `__WHITELIST_ENV__`：白名单环境变量名，QQ 默认可用 `QQ_ALLOW_FROM`
 4. 按实际需要编辑 `prompts/identity.md`、`prompts/response-style.md`、`prompts/refusal-style.md`、`tools.packs`、`tools.features` 和 `mcp/servers.yaml` 中的 MCP catalog `ref` 绑定。
 5. 复制 `local.env.example` 为 `local.env`，填入真实凭证。`local.env` 不应提交到 git。
 6. 校验配置：

@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from chatcopilot.botspec.model import AccessSpec
 from chatcopilot.contracts.identity import Identity
 from chatcopilot.evals.capability_scenarios import (
     CapabilityScenarioContext,
@@ -40,21 +39,21 @@ def _agent_case(case_id: str):
 
 
 def _context(monkeypatch: pytest.MonkeyPatch) -> CapabilityScenarioContext:
-    monkeypatch.setenv("EVAL_ALLOW_FROM", "member-stable,owner-stable")
-    monkeypatch.setenv("CHATCOPILOT_ADD_OWNER_IDS", "owner-stable")
+    monkeypatch.setenv("QQ_ALLOW_FROM", "10002,10001")
+    monkeypatch.setenv("QQ_ALLOW_GROUPS", "10004")
+    monkeypatch.setenv("CHATCOPILOT_ADD_OWNER_IDS", "10001")
     monkeypatch.delenv("CHATCOPILOT_ADD_OWNER_NAMES", raising=False)
     monkeypatch.delenv("CHATCOPILOT_ADD_ADMIN_IDS", raising=False)
     monkeypatch.delenv("CHATCOPILOT_ADD_ADMIN_NAMES", raising=False)
     return CapabilityScenarioContext(
-        access=AccessSpec(
-            private_require_whitelist=True,
-            group_require_whitelist=True,
-            group_require_mention=True,
-            whitelist_env="EVAL_ALLOW_FROM",
-        ),
         platform_type="qq",
-        env={"EVAL_ALLOW_FROM": "member-stable,owner-stable", "QQ_ACCOUNT": "bot-stable"},
-        owners=(Identity(user_id="owner-stable"),),
+        env={
+            "QQ_ALLOW_FROM": "10002,10001",
+            "QQ_ALLOW_GROUPS": "10004",
+            "QQ_ACCOUNT": "10003",
+        },
+        owners=(Identity(user_id="10001"),),
+        group_id="10004",
     )
 
 
@@ -72,7 +71,7 @@ def test_member_owner_action_runs_selected_gate_then_denies_by_stable_role(
     assert decision["kind"] == "access_decision"
     assert decision["selected_bot_policy"] is True
     assert decision["gate_allowed"] is True
-    assert decision["gate_reason"] == "private-allowed"
+    assert decision["gate_reason"] == "qq-group-user-allowed"
     assert decision["resolved_role"] == "user"
     assert decision["action_authorized"] is False
     assert execution == {
@@ -90,18 +89,17 @@ def test_member_owner_action_runs_selected_gate_then_denies_by_stable_role(
         "handler_invocation_count": 0,
     }
     assert matrix["kind"] == "access_matrix"
-    assert matrix["production_qq_proxy_exercised"] is True
-    assert matrix["production_access_gate_exercised"] is True
-    assert matrix["proxy_user_allowlist_applied"] is True
-    assert matrix["proxy_group_allowlist_applied"] is True
-    assert matrix["proxy_require_at_applied"] is True
+    assert matrix["production_qq_relay_exercised"] is True
+    assert matrix["production_acp_admission_exercised"] is True
+    assert matrix["relay_allowlist_read"] is False
+    assert matrix["relay_fixed_group_mention_trigger"] is True
     assert matrix["all_expected"] is True
     assert {row["scenario"] for row in matrix["rows"]} == {
         "private_allowlisted",
-        "private_unlisted",
-        "group_allowlisted_without_at",
-        "group_allowlisted_with_at",
-        "group_unlisted_with_at",
+        "private_group_only_member",
+        "group_only_member_without_at",
+        "group_only_member_with_at",
+        "other_group_with_at",
         "group_unknown_identity_with_at",
     }
     assert matrix["session_created"] is False
@@ -142,7 +140,7 @@ def test_group_mention_with_unknown_identity_is_denied_before_side_effect(
     assert decision["chat_kind"] == "group"
     assert decision["stable_user_id_present"] is False
     assert decision["gate_allowed"] is False
-    assert str(decision["gate_reason"]).startswith("group-not-in-whitelist")
+    assert decision["gate_reason"] == "qq-sender-invalid"
     assert observation.stop_reason == "access_denied"
     assert observation.post_state["sentinel_before"] == observation.post_state["sentinel_after"]
     assert observation.post_state["mutation_count"] == 0

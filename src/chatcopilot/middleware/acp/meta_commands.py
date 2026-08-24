@@ -17,6 +17,7 @@ import re
 from typing import Any, Callable, Dict, Mapping, Optional
 
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
+from chatcopilot.core.allowlists import AllowlistConfigError, parse_numeric_allowlist
 from chatcopilot.middleware.access_control import (
     AssistantMode,
     Role,
@@ -410,32 +411,6 @@ def _handle_debug_command(session: SessionState, text: str) -> Optional[str]:
     return "✅ 调试模式已关闭：本会话内只推送每轮的最终结论。"
 
 
-# ----------------------------------------------------------------------------
-# Owner 运行时信息短路
-# ----------------------------------------------------------------------------
-def _parse_runtime_allowlist(
-    raw: str | None, *, empty_means_all: bool = True
-) -> tuple[list[str], bool]:
-    """解析访问白名单 env；返回 ``(成员列表, 是否放行所有人)``。"""
-    value = (raw or "").strip().strip('"').strip("'")
-    if not value:
-        return [], empty_means_all
-    if value == "*":
-        return [], True
-    items: list[str] = []
-    seen: set[str] = set()
-    for token in value.split(","):
-        item = token.strip().strip('"').strip("'").rstrip("\\")
-        if not item:
-            continue
-        if item == "*":
-            return [], True
-        if item not in seen:
-            seen.add(item)
-            items.append(item)
-    return items, empty_means_all and not items
-
-
 def _is_owner_runtime_info_query(user_text: str) -> bool:
     text = re.sub(r"\s+", "", user_text or "")
     return bool(text and _OWNER_RUNTIME_ACCESS_INTENT_RE.search(text))
@@ -447,21 +422,20 @@ def _format_owner_access_allowlist_status(
     *,
     env: Mapping[str, str] | None = None,
 ) -> str:
-    runtime = getattr(session, "runtime", None)
-    access = getattr(runtime, "access", None)
-    user_env_name = getattr(access, "whitelist_env", None) or ""
-    group_env_name = getattr(access, "group_whitelist_env", None) or ""
-    if not user_env_name and not group_env_name:
-        return "当前 BotSpec 没有声明访问白名单 env，因此中间件不会按白名单限制来源。"
-
     resolved_env = env if env is not None else os.environ
-    user_ids, all_users = _parse_runtime_allowlist(
-        resolved_env.get(user_env_name) if user_env_name else None
-    )
-    group_ids, all_groups = _parse_runtime_allowlist(
-        resolved_env.get(group_env_name) if group_env_name else None,
-        empty_means_all=False,
-    )
+    try:
+        users = parse_numeric_allowlist(
+            resolved_env.get("QQ_ALLOW_FROM"),
+            field="QQ_ALLOW_FROM",
+        )
+        groups = parse_numeric_allowlist(
+            resolved_env.get("QQ_ALLOW_GROUPS"),
+            field="QQ_ALLOW_GROUPS",
+        )
+    except AllowlistConfigError:
+        return "当前 ACP 准入名单配置无效，请由维护者检查私有配置。"
+    user_ids = sorted(users.values)
+    group_ids = sorted(groups.values)
     queried_ids = _QQ_NUMBER_RE.findall(user_text or "")
     workspace = getattr(session, "workspace", None)
     chat_kind = str(getattr(workspace, "chat_kind", "") or "").strip().lower()
@@ -474,19 +448,17 @@ def _format_owner_access_allowlist_status(
         return "为避免在群聊中暴露私有白名单，不能在这里列出完整名单。请由 Owner 私聊查询。"
 
     if is_group_chat and asks_current_group and chat_id:
-        current_group_allowed = all_groups or chat_id in set(group_ids)
+        current_group_allowed = groups.allows(chat_id)
         return "当前群在群聊白名单中。" if current_group_allowed else "当前群不在群聊白名单中。"
 
     if is_group_chat:
         return "为避免在群聊中暴露私有白名单，这里只支持查询当前群是否已加白；其他查询请由 Owner 私聊进行。"
 
     if queried_ids:
-        user_set = set(user_ids)
-        group_set = set(group_ids)
         checks = ["查询结果："]
         for qq in queried_ids:
-            user_status = "在用户白名单中" if all_users or qq in user_set else "不在用户白名单中"
-            group_status = "在群聊白名单中" if all_groups or qq in group_set else "不在群聊白名单中"
+            user_status = "在用户白名单中" if users.allows(qq) else "不在用户白名单中"
+            group_status = "在群聊白名单中" if groups.allows(qq) else "不在群聊白名单中"
             checks.append(f"- `{qq}`：{user_status}；{group_status}")
         return "\n".join(checks)
 
@@ -497,23 +469,19 @@ def _format_owner_access_allowlist_status(
         )
 
     lines = ["当前访问白名单："]
-    if not user_env_name:
-        lines.append("- 用户白名单：BotSpec 未声明。")
-    elif all_users:
-        lines.append(f"- 用户白名单来源：`{user_env_name}`；当前为空或 `*`，允许所有用户来源。")
+    if users.allow_all:
+        lines.append("- 用户白名单：显式允许全部用户来源。")
     else:
         lines.append(
-            f"- 用户白名单来源：`{user_env_name}`；当前共有 {len(user_ids)} 个允许来源："
+            f"- 用户白名单：当前共有 {len(user_ids)} 个允许来源："
             f"{', '.join(user_ids) if user_ids else '无'}。"
         )
 
-    if not group_env_name:
-        lines.append("- 群聊白名单：BotSpec 未声明。")
-    elif all_groups:
-        lines.append(f"- 群聊白名单来源：`{group_env_name}`；显式 `*`，允许所有群聊。")
+    if groups.allow_all:
+        lines.append("- 群聊白名单：显式允许全部群聊。")
     else:
         lines.append(
-            f"- 群聊白名单来源：`{group_env_name}`；当前共有 {len(group_ids)} 个允许群聊："
+            f"- 群聊白名单：当前共有 {len(group_ids)} 个允许群聊："
             f"{', '.join(group_ids) if group_ids else '无'}。"
         )
 
@@ -607,7 +575,6 @@ __all__ = [
     "_handle_owner_runtime_info_query",
     "_is_owner_global_workspace_query",
     "_is_owner_runtime_info_query",
-    "_parse_runtime_allowlist",
     "_parse_assistant_mode_command",
     "_parse_debug_command",
     "_should_handle_owner_global_workspace_query",

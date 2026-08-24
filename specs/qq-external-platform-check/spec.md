@@ -19,8 +19,8 @@ QQ 是否连接、NapCat/OneBot 是否接受受认证动作、当前登录账号
 登录态、群信息或发送动作回执替代入站 Agent 证据。
 
 系统可以额外运行 hermetic 模拟 ingress：在检查进程内为一次调用临时启动随机回环
-端口上的假 NapCat 与真实 QQ access-proxy relay，发送合成 OneBot 消息并观察下游帧。
-外部检查中的该探针只证明当前安装代码的 gateway JSON 解析、白名单策略形状/@策略和
+端口上的假 NapCat 与真实 QQ @ Relay，发送合成 OneBot 消息并观察下游帧。
+外部检查中的该探针只证明当前安装代码的 gateway JSON 解析、结构化 @ 触发和
 WebSocket 转发可用，不连接真实 QQ、不连接 Agent/ACP，也不证明正在运行的 NapCat 曾产生
 该事件。独立的 `agentstrata-qq-message-flow-v1` Evaluation 可以把同类回环帧继续传入
 attestation、身份/权限、临时 persona、确定性 Agent sentinel 与回复投影，但同样不构成真实
@@ -42,11 +42,11 @@ QQ 默认执行只读检查：
 4. 若 bot-local env 配置 `CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID`，执行
    `get_group_info` 证明 Bot 能访问该群；未配置时该检查标为 `not_configured`；
 5. 在两个随机回环端口上运行一次 hermetic gateway ingress probe：假 NapCat 先发送
-   一个按当前策略形状必须丢弃的负例帧，再发送一个应被接受的合成群聊 `@Bot` 帧；真实
-   access-proxy 必须携带认证连接假 NapCat、丢弃负例并把正例逐字节转发给临时下游；
+   一个未明确 `@Bot` 的负例帧，再发送一个应被接受的合成群聊结构化 `@Bot` 帧；真实
+   QQ @ Relay 必须携带认证连接假 NapCat、丢弃负例并把正例逐字节转发给临时下游；
 6. 明确记录真实入站 Agent 链路为 `not_tested`。
 
-模拟事件只复制当前 Bot 的策略形状（是否要求 @、用户/群名单是显式还是通配），所有
+模拟事件只复制 Relay 的固定结构化 `@当前机器人` 触发条件，所有
 Bot ID、群号、发送者 ID、消息 ID、文本和 token 均为每次随机合成值；真实私有值既不
 进入 relay 也不进入报告。报告只保存 `mode=hermetic_loopback`、
 认证/正例转发/负例丢弃布尔值和帧 SHA-256。探针禁止绑定固定端口、禁止复用生产
@@ -78,7 +78,7 @@ limitations。`failed` 表示配置或平台拒绝；`error` 表示 transport/�
   QQ 外部写；`full` 正好包含当前内置 Bot 可运行的 23 个直接 Agent Case，两个来源专用 Case
   仅供显式 `custom`。QQ message-flow `full` 包含 7 个合成 Case。
 - QQ 外部检查不创建 Evaluation/report，不调用模型，不读取或修改 Agent session。
-- hermetic ingress 使用真实 access-proxy relay 与回环 WebSocket，正例必须完整转发、
+- hermetic ingress 使用真实 QQ @ Relay 与回环 WebSocket，正例必须完整转发、
   负例必须被丢弃、上游必须看到正确 Bearer 认证；任一证据缺失均失败关闭。
 - 模拟探针不得监听固定生产端口、不得连接真实 NapCat/cc-connect/ACP、不得暴露消息
   注入 API，也不得把合成消息解释为真实 QQ 或 Agent E2E 通过。

@@ -12,7 +12,6 @@ display_name: My Bot
 platform:
   type: feishu
   adapter: feishu_acp
-  mention_name: My Bot
 
 llm:
   chat:
@@ -58,16 +57,22 @@ packaging:
 
 - `type`：当前公开 adapter 为 `qq` 和 `feishu`。
 - `adapter`：对应 `qq_acp` 或 `feishu_acp`。
-- `mention_name`：群聊展示/提及名称，不参与稳定身份授权。
 
 平台技术能力由 adapter 声明，实例开关位于 `tools.features`。QQ Owner/Admin 只按
 稳定 `user_id` 授权；Feishu 保留 adapter 的显示名兜底。
 
-`access.whitelist_env` 声明用户白名单变量；可选的
-`access.group_whitelist_env` 声明稳定群聊 ID 白名单变量。启用群聊门禁时，发送者命中
-用户白名单或当前 `chat_id` 命中群聊白名单均可进入群聊，但群聊白名单不会授予私聊
-权限。群聊变量缺失或为空时不新增权限，只有显式 `*` 才允许所有群聊。QQ 实例使用
-`QQ_ALLOW_FROM` 与 `QQ_ALLOW_GROUPS`，真实 ID 只放在 `local.env`。
+### `access`
+
+`access.owner_only_project_access` 只控制获准消息进入 Agent 后的项目、主机和高级能力
+投影，不参与消息准入。QQ 准入不允许在 BotSpec 中改字段名或开关：ACP 固定读取 bot-local
+`local.env` 中的 `QQ_ALLOW_FROM` 与 `QQ_ALLOW_GROUPS`。前者只包含稳定发送者 QQ 号，
+后者只包含稳定群号；缺失或空值不授予权限，只有整个值精确为 `*` 才允许全部，有限
+名单只接受逗号分隔的数字 ID。旧准入字段会直接导致 BotSpec 校验失败。
+
+QQ Relay 不读取这两份名单，也不解析角色：私聊原样转发，群聊只转发 OneBot 结构化
+`at` segment 明确指向当前 `QQ_ACCOUNT` 的消息；未携带同一 OneBot 强 token 的下游连接会在
+连接 NapCat 前被拒绝。cc-connect 固定使用 `allow_from = "*"`，
+白名单与角色语义只由 ACP 解释。
 
 ### `llm`
 

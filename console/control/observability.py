@@ -1510,9 +1510,7 @@ def context_snapshot(
 # 日志：tail + follow（供 SSE）
 # ---------------------------------------------------------------------------
 def resolve_log_files(inst: BotInstance, source: str = "cc") -> List[str]:
-    if source == "questions":
-        f = inst.questions_log_file()
-    elif source == "runtime":
+    if source == "runtime":
         f = inst.runtime_log_file()
     else:
         f = inst.cc_log_file()

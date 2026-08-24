@@ -13,7 +13,6 @@ from chatcopilot.middleware.acp import attachment_pipeline as _attachment
 from chatcopilot.middleware.acp import meta_commands as _meta
 from chatcopilot.middleware.acp import model_commands as _model_commands
 from chatcopilot.middleware.acp import private_space as _private
-from chatcopilot.middleware.acp import project_access as _project_access
 from chatcopilot.middleware.acp.job_dispatch import (
     extract_code_task_command,
     extract_job_status_query,
@@ -72,22 +71,6 @@ async def handle_deterministic_replies(
             turn_task,
             progress="已完成 Owner 运行时信息查询。",
             final_text=runtime_info_reply,
-            stop_reason="end_turn",
-        )
-        return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
-
-    restricted_reply = _project_access.restricted_project_request_reply(session, user_text)
-    if restricted_reply is not None:
-        _LOGGER.info(
-            "session/prompt | sid=%s deterministic project access denied",
-            session_id,
-        )
-        await _send_text(conn, session_id, restricted_reply, make_text_update)
-        session.record_exchange(user_text, restricted_reply)
-        finish_turn_task(
-            turn_task,
-            progress="已按 Owner-only 项目权限拒绝请求。",
-            final_text=restricted_reply,
             stop_reason="end_turn",
         )
         return PromptResponse(stop_reason="end_turn", user_message_id=message_id)

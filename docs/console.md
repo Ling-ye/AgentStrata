@@ -134,10 +134,9 @@ secret、Authorization/Cookie、URI userinfo、Bearer/inline credential、私钥
 脱敏后的事件和上下文。显式改成非回环监听时，部署方必须另行提供可信代理认证和网络
 边界。HTTP operator 认证仍属于独立的控制面安全变更。
 
-QQ 回环接入代理可为无损纯文本转发写入短期私有 ingress receipt，内容仅含会话、actor、
-正文的摘要和安全决策码。ACP 只有在既有 sender envelope 与 transport attestation 已经
-完成权威身份校验后，才会精确消费一条匹配 receipt 作为 `correlated` 可观测证据；歧义、
-过期、非文本或持久化失败只降低任务流覆盖率，不改变准入、角色、授权或消息处理结果。
+QQ Relay 不产生准入凭据，也不判断用户或群名单。Console 任务流以 ACP 写入的
+`middleware.access_decision` 作为唯一准入结论，并结合 sender envelope 与 transport
+attestation 的身份事件解释消息来源；Relay 的结构化 @ 触发只属于传输层证据。
 
 ## NapCat WebUI 登录
 

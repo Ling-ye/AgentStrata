@@ -209,7 +209,7 @@ def _summarize_error_lines(lines: list[str]) -> str:
     if "qq: ws read error" in last and "websocket: close 1000 (normal)" in last:
         return "QQ OneBot websocket is closing immediately; check NapCat and qq-at-proxy upstream."
     if "upstream connect failed" in last:
-        return "QQ @ proxy cannot reach NapCat OneBot upstream."
+        return "QQ @ Relay cannot reach NapCat OneBot upstream."
     if "panic:" in last:
         return "Runtime panic detected in log tail."
     if "[ERR]" in last:
@@ -217,7 +217,7 @@ def _summarize_error_lines(lines: list[str]) -> str:
     return last.strip()[-240:]
 
 
-def _qq_proxy_log_file(inst: BotInstance) -> Path | None:
+def _qq_relay_log_file(inst: BotInstance) -> Path | None:
     if inst.platform != "qq" or not inst.log_dir:
         return None
     return Path(inst.log_dir) / "qq-at-proxy" / f"{time.strftime('%Y-%m-%d')}.log"
@@ -232,9 +232,8 @@ def _log_signal(inst: BotInstance) -> Dict[str, object]:
         "ws_connected": None,
         "error_count": 0,
         "error_summary": "",
-        "qq_proxy_error_count": 0,
-        "qq_proxy_error_summary": "",
-        "questions_today": None,
+        "qq_relay_error_count": 0,
+        "qq_relay_error_summary": "",
     }
     if cc_log and Path(cc_log).is_file():
         st = Path(cc_log).stat()
@@ -247,22 +246,16 @@ def _log_signal(inst: BotInstance) -> Dict[str, object]:
         error_lines = _log_error_lines(text)
         info["error_count"] = len(error_lines)
         info["error_summary"] = _summarize_error_lines(error_lines)
-    proxy_log = _qq_proxy_log_file(inst)
-    if proxy_log and proxy_log.is_file():
-        proxy_text = _read_tail_text(proxy_log)
-        proxy_errors = _log_error_lines(proxy_text)
-        upstream_errors = [ln for ln in proxy_text.splitlines() if "upstream connect failed" in ln]
-        relevant_errors = upstream_errors or proxy_errors
-        info["qq_proxy_error_count"] = len(relevant_errors)
-        info["qq_proxy_error_summary"] = _summarize_error_lines(relevant_errors)
+    relay_log = _qq_relay_log_file(inst)
+    if relay_log and relay_log.is_file():
+        relay_text = _read_tail_text(relay_log)
+        relay_errors = _log_error_lines(relay_text)
+        upstream_errors = [ln for ln in relay_text.splitlines() if "upstream connect failed" in ln]
+        relevant_errors = upstream_errors or relay_errors
+        info["qq_relay_error_count"] = len(relevant_errors)
+        info["qq_relay_error_summary"] = _summarize_error_lines(relevant_errors)
         if upstream_errors:
             info["ws_connected"] = False
-    q_log = inst.questions_log_file()
-    if q_log and Path(q_log).is_file():
-        try:
-            info["questions_today"] = sum(1 for _ in Path(q_log).open("r", encoding="utf-8", errors="replace"))
-        except OSError:
-            pass
     return info
 
 
@@ -454,11 +447,11 @@ def _status_checks(status_data: Dict[str, object]) -> tuple[list[dict[str, objec
         summary = str(status_data.get("error_summary") or "").strip()
         suffix = f": {summary}" if summary else "."
         add("log_errors", False, "warning", f"cc-connect tail contains {error_count} error line(s){suffix}")
-    proxy_error_count = int(status_data.get("qq_proxy_error_count") or 0)
-    if proxy_error_count > 0:
-        summary = str(status_data.get("qq_proxy_error_summary") or "").strip()
+    relay_error_count = int(status_data.get("qq_relay_error_count") or 0)
+    if relay_error_count > 0:
+        summary = str(status_data.get("qq_relay_error_summary") or "").strip()
         suffix = f": {summary}" if summary else "."
-        add("qq_proxy", False, "critical", f"QQ @ proxy has {proxy_error_count} upstream error line(s){suffix}")
+        add("qq_relay", False, "critical", f"QQ @ Relay has {relay_error_count} upstream error line(s){suffix}")
     return checks, reasons
 
 

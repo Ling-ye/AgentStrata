@@ -3,8 +3,7 @@
 #
 # ``message.received`` 把 conversation identity 与独立 transport attestation 追加到实例
 # 私有 ``session-env`` 目录的有界加锁队列。文件名只包含 session key 的 SHA-256，state 是 JSON；
-# 该文件绝不由 shell source。``session.started`` 有意跳过，避免晚到的生命周期事件
-# 覆盖已由当前消息写入的 actor/content attestation。
+# 该文件绝不由 shell source。
 set -euo pipefail
 umask 077
 
@@ -15,12 +14,7 @@ ccp_load_env "CHATCOPILOT_|WORKSPACE_ROOT"
 ccp_apply_bot_deploy_config
 export PYTHONPATH="$CCP_HOME_DEFAULT/src${PYTHONPATH:+:$PYTHONPATH}"
 
-HOOK_EVENT="${CC_HOOK_EVENT:-}"
-if [ "$HOOK_EVENT" = "session.started" ]; then
-    echo "[_session_env] session.started leaves the message attestation unchanged" >&2
-    exit 0
-fi
-if [ "$HOOK_EVENT" != "message.received" ]; then
+if [ "${CC_HOOK_EVENT:-}" != "message.received" ]; then
     echo "[_session_env] unsupported or missing hook event" >&2
     exit 64
 fi

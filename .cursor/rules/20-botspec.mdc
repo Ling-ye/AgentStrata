@@ -32,7 +32,7 @@ bots/<bot-id>/
 ## BotSpec 字段（顶层）
 
 - `id` / `display_name` — 实例唯一标识
-- `platform.type` / `adapter` / `mention_name` — 走 `platforms/<type>/adapter.py`；`type` 白名单由 `platforms/registry`（扫描 `ADAPTER`）动态给出，**不**在 `loader.py` 硬编码
+- `platform.type` / `adapter` — 走 `platforms/<type>/adapter.py`；`type` 白名单由 `platforms/registry`（扫描 `ADAPTER`）动态给出，**不**在 `loader.py` 硬编码
 - `llm.env_prefix` — 共享 LLM 配置 loader 的 env 前缀（如 `CHATCOPILOT_CHAT`）
 - `behavior` — 相对 `bots/<bot-id>/` 的 md 路径，分层装配（**机制下沉、内容上浮**）：
   - `behavior.persona`（必填）：机器人身份/个性/领域范围/风格/本 bot 工具规则

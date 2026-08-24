@@ -70,11 +70,6 @@ class BotInstance:
             return str(today)
         return "/tmp/cc-connect.log"
 
-    def questions_log_file(self) -> Optional[str]:
-        if not self.log_dir:
-            return None
-        return str(Path(self.log_dir) / f"{date.today().isoformat()}.log")
-
     def runtime_log_file(self) -> Optional[str]:
         if not self.log_dir:
             return None

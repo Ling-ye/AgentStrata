@@ -1602,20 +1602,19 @@ def _role_denial_no_effect(
         and execution.get("result_error_present") is True
         and execution.get("handler_invocation_count") == 0
         and matrix.get("selected_bot_policy") is True
-        and matrix.get("production_qq_proxy_exercised") is True
-        and matrix.get("production_access_gate_exercised") is True
-        and matrix.get("proxy_user_allowlist_applied") is True
-        and matrix.get("proxy_group_allowlist_applied") is True
-        and matrix.get("proxy_require_at_applied") is True
+        and matrix.get("production_qq_relay_exercised") is True
+        and matrix.get("production_acp_admission_exercised") is True
+        and matrix.get("relay_allowlist_read") is False
+        and matrix.get("relay_fixed_group_mention_trigger") is True
         and matrix.get("all_expected") is True
         and isinstance(rows, (list, tuple))
         and {str(row.get("scenario")) for row in rows if isinstance(row, Mapping)}
         == {
             "private_allowlisted",
-            "private_unlisted",
-            "group_allowlisted_without_at",
-            "group_allowlisted_with_at",
-            "group_unlisted_with_at",
+            "private_group_only_member",
+            "group_only_member_without_at",
+            "group_only_member_with_at",
+            "other_group_with_at",
             "group_unknown_identity_with_at",
         }
         and matrix.get("session_created") is False
@@ -1808,8 +1807,6 @@ def _qq_flow_receipt(
     if expected_kind == "qq_owned_chain":
         required_events = (
             "task_started",
-            "transport.onebot_message_received",
-            "gateway.access_decision",
             "middleware.identity_validated",
             "middleware.access_decision",
             "middleware.identity_activated",
@@ -1836,7 +1833,7 @@ def _qq_flow_receipt(
             "required_event_order_observed",
             "host_session_created",
             "host_prompt_completed",
-            "ingress_receipt_correlated",
+            "relay_allowlist_independent",
             "attestation_identity_validated",
             "access_allowed",
             "actor_session_bound",
@@ -1902,7 +1899,7 @@ def _qq_flow_receipt(
                 "qq_platform",
                 "napcat",
                 "cc_connect",
-                "access_proxy",
+                "qq_at_relay",
                 "agent_model",
             }
             and set(receipt.get("excluded_layers") or ()) == {"external_qq_write"}
@@ -2006,7 +2003,7 @@ def _qq_flow_receipt(
                 "qq_platform",
                 "napcat",
                 "cc_connect",
-                "access_proxy",
+                "qq_at_relay",
                 "persona_draft_agent",
                 "agent_model",
             }

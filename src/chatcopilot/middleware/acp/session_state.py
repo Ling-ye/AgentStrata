@@ -11,6 +11,7 @@ middleware/acp 内部用 ``SessionState`` 承载一次 ACP session 的全部上�
   层在 ``SessionState`` 里维持。
 - transcript 落盘由 middleware 负责，通过 ``persist_transcript()`` 在每轮末尾调用。
 """
+
 from __future__ import annotations
 
 import json
@@ -34,7 +35,7 @@ from chatcopilot.contracts.model_selection import (
 from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.contracts.persona_control import PendingPersonaProposal
 from chatcopilot.middleware.access_control import AssistantMode, Role
-from chatcopilot.core.workspace_runtime import Workspace
+from chatcopilot.core.workspace_runtime import Workspace, cleanup_workspace
 
 if TYPE_CHECKING:
     from chatcopilot.core.config import RoutingConfig
@@ -44,7 +45,10 @@ _LOGGER = logging.getLogger("chatcopilot.middleware.acp.session_state")
 
 
 def _sanitize_session_id(value: str) -> str:
-    return "".join(ch if (ch.isalnum() or ch in "-_.@") else "_" for ch in value).strip("_") or "session"
+    return (
+        "".join(ch if (ch.isalnum() or ch in "-_.@") else "_" for ch in value).strip("_")
+        or "session"
+    )
 
 
 @dataclass
@@ -78,13 +82,28 @@ class SessionState:
     pending_persona_proposal: PendingPersonaProposal | None = field(default=None, repr=False)
     _transcript_path: Optional[Path] = field(default=None, repr=False)
     _pending_exchanges: list[tuple[str, str]] = field(default_factory=list, repr=False)
+    _workspace_materialized: bool = field(default=False, init=False, repr=False)
 
-    def __post_init__(self) -> None:
+    @property
+    def is_workspace_materialized(self) -> bool:
+        return self._workspace_materialized
+
+    def materialize_workspace(self) -> bool:
+        """Create runtime storage once, after the caller has admitted the turn."""
+
+        if self._workspace_materialized:
+            return False
+        self.workspace = self.workspace.ensure()
+        cleanup_workspace(self.workspace)
+        self._workspace_materialized = True
+        self._initialize_transcript_path()
+        return True
+
+    def _initialize_transcript_path(self) -> None:
         # The conversation-level placeholder exists before a sender passes the
-        # access gate. It must not create actor diagnostics or protected state.
-        if (
-            self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
-            and (not self.workspace.user_id or not self.execution_session_id)
+        # admission boundary. It does not own actor diagnostics.
+        if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED and (
+            not self.workspace.user_id or not self.execution_session_id
         ):
             self._transcript_path = None
             return
@@ -94,16 +113,12 @@ class SessionState:
                 if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
                     state_root = self.workspace.root.parent / ".conversation-state"
                     if state_root.is_symlink():
-                        raise RuntimeError(
-                            "shared-group conversation state must not be a symlink"
-                        )
+                        raise RuntimeError("shared-group conversation state must not be a symlink")
                     state_root.mkdir(mode=0o700, parents=True, exist_ok=True)
                     state_root.chmod(0o700)
                     transcript_root = state_root / "transcripts"
                     if transcript_root.is_symlink():
-                        raise RuntimeError(
-                            "shared-group transcript root must not be a symlink"
-                        )
+                        raise RuntimeError("shared-group transcript root must not be a symlink")
                     transcript_root.mkdir(mode=0o700, exist_ok=True)
                     transcript_root.chmod(0o700)
                 else:
@@ -141,6 +156,8 @@ class SessionState:
             return
         if self.session is not None:
             raise RuntimeError("Agent session is already materialized")
+        if not self._workspace_materialized:
+            raise RuntimeError("Workspace must be materialized before the Agent session")
         for user_text, assistant_text in self._pending_exchanges:
             session.record_exchange(user_text, assistant_text)
         self._pending_exchanges.clear()
@@ -261,7 +278,6 @@ class SessionState:
         """Preserve conversational model overrides across workspace identity refreshes."""
         self.code_model_selection = other.code_model_selection
         self.code_model_once = other.code_model_once
-        self.persist_transcript()
 
     def set_assistant_mode(
         self,
@@ -294,14 +310,12 @@ class SessionState:
 
     def persist_transcript(self) -> None:
         """把当前 messages 整体覆写到 transcript JSONL（每轮调用一次）。"""
-        if self._transcript_path is None:
+        if not self._workspace_materialized or self._transcript_path is None:
             return
         shared_group = self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
         now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
         messages = (
-            self.session.snapshot_messages()
-            if self.session is not None
-            else list(self._messages)
+            self.session.snapshot_messages() if self.session is not None else list(self._messages)
         )
         meta = {
             "_meta": {
@@ -315,18 +329,14 @@ class SessionState:
                     else None
                 ),
                 "code_model_once": (
-                    self.code_model_once.to_payload()
-                    if self.code_model_once is not None
-                    else None
+                    self.code_model_once.to_payload() if self.code_model_once is not None else None
                 ),
                 "user_id": None if shared_group else self.workspace.user_id,
                 "user_name": None if shared_group else self.workspace.user_name,
                 "chat_kind": self.workspace.chat_kind,
                 "chat_id": self.workspace.chat_id,
                 "message_count": len(messages),
-                "backend_session_ref": (
-                    None if shared_group else self._backend_session_payload()
-                ),
+                "backend_session_ref": (None if shared_group else self._backend_session_payload()),
                 "workspace_scope": self.workspace.scope,
                 "execution_session_id": None if shared_group else self.execution_session_id,
                 "turn_actor": self._turn_actor_payload(),
@@ -427,7 +437,7 @@ def _make_test_session_state(
     fake_session.capabilities = SimpleNamespace(  # type: ignore[attr-defined]
         tool_names=frozenset()
     )
-    return SessionState(
+    state = SessionState(
         session_id=session_id,
         workspace=workspace,
         role=role or Role.USER,
@@ -440,10 +450,13 @@ def _make_test_session_state(
             skills=(),
             access=None,
         ),  # type: ignore[arg-type]
-        session=fake_session,
+        session=None,
         llm_model=None,
         debug_mode=False,
     )
+    state.materialize_workspace()
+    state.attach_session(fake_session)
+    return state
 
 
 __all__ = ["SessionState", "_make_test_session_state"]

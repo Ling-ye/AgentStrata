@@ -310,7 +310,7 @@ def _time_window(task: dict[str, Any], job_roots: list[Path]) -> tuple[datetime,
 
 def _log_sources(instance: BotInstance, start: datetime, end: datetime) -> dict[str, list[Path]]:
     if not instance.log_dir:
-        return {"runtime": [], "cc-connect": [], "questions": []}
+        return {"runtime": [], "cc-connect": []}
     root = Path(instance.log_dir)
     dates: list[str] = []
     cursor = start.date()
@@ -320,7 +320,6 @@ def _log_sources(instance: BotInstance, start: datetime, end: datetime) -> dict[
     return {
         "runtime": [root / "runtime" / f"{day}.log" for day in dates],
         "cc-connect": [root / "cc-connect" / f"{day}.log" for day in dates],
-        "questions": [root / f"{day}.log" for day in dates],
     }
 
 

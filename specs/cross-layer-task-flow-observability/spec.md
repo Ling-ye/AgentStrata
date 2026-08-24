@@ -1,7 +1,7 @@
 ---
 id: cross-layer-task-flow-observability
 type: architecture
-status: implemented
+status: draft
 created: 2026-08-21
 ---
 
@@ -9,7 +9,7 @@ created: 2026-08-21
 
 ## Summary
 
-The Console already exposes persisted Agent tasks, nested steps, context snapshots, tool activity, usage, cost, and raw redacted events. The bot instances page, however, presents those capabilities through separate cards and a large task modal, while the task record starts after a platform message has crossed several transport and access-control boundaries. An operator therefore cannot inspect one coherent, evidence-labelled path from a QQ event through NapCat, the loopback access proxy, cc-connect, ACP middleware, the selected Agent backend, model and tool activity, and the outbound delivery boundary.
+The Console already exposes persisted Agent tasks, nested steps, context snapshots, tool activity, usage, cost, and raw redacted events. The bot instances page, however, presents those capabilities through separate cards and a large task modal, while the task record starts after a platform message has crossed several transport and access-control boundaries. An operator therefore cannot inspect one coherent, evidence-labelled path from a QQ event through NapCat, the loopback @ Relay, cc-connect, ACP middleware, the selected Agent backend, model and tool activity, and the outbound delivery boundary.
 
 This specification adds a backend-owned task-flow projection and a bot-oriented Console workspace. The projection normalizes existing task evidence plus new bounded flow receipts into stable layers and transitions. The frontend renders that projection without parsing backend-private event names or reconstructing business decisions. The result must distinguish observed evidence, deterministic declarations, best-effort correlations, opaque provider state, and missing evidence.
 
@@ -25,7 +25,7 @@ The public layer vocabulary is:
 
 - `channel`: the external QQ user or other platform source and destination.
 - `transport`: NapCat, OneBot, and cc-connect transport boundaries.
-- `gateway`: loopback access proxy admission and message normalization.
+- `gateway`: declared loopback Relay topology and, when directly observed, transport-trigger handling; it does not represent admission.
 - `middleware`: ACP identity, access, session, and turn orchestration.
 - `agent`: the configured main Agent backend and its public lifecycle.
 - `model`: submitted model context snapshots, public response lifecycle, and usage.
@@ -38,17 +38,25 @@ Existing task records stay readable. A task without new receipts is projected fr
 
 ### Runtime flow evidence
 
-The ACP orchestration path records bounded, redacted flow events for stages whose execution is authoritative inside middleware: task intake, identity and attestation validation outcome, access decision, session materialization, Agent handoff, context preparation, capability activity, Agent final result, and outbound handoff. Persona uses the same structured `tool_started`/`tool_finished` activity as other Agent tools rather than a middleware-specific outcome event. Events store decision codes and safe structural metadata, not allowlist values, raw credentials, machine paths, complete prompts, or raw platform identities. The existing `ContextSnapshotPrepared` artifact remains the sole model-input evidence contract and retains its `exact`, `partial`, `adapter_visible`, and `provider_opaque` semantics.
+The ACP orchestration path records bounded, redacted flow events for stages whose execution is authoritative inside middleware: task intake, identity and attestation validation outcome, the unique ACP access decision, session materialization, Agent handoff, context preparation, capability activity, Agent final result, and outbound handoff. Persona uses the same structured `tool_started`/`tool_finished` activity as other Agent tools rather than a middleware-specific outcome event. Events store decision codes and safe structural metadata, not allowlist values, raw credentials, machine paths, complete prompts, or raw platform identities. The task recorder receives the trusted workspace root explicitly and uses it for redaction; it never infers that root from a task directory whose layout may be actor-protected or delegated. The existing `ContextSnapshotPrepared` artifact remains the sole model-input evidence contract and retains its `exact`, `partial`, `adapter_visible`, and `provider_opaque` semantics.
 
 Flow recording is best-effort after the existing authority checks have created a task. Failure to persist supplemental flow evidence is surfaced as missing coverage but does not retry or alter an otherwise authorized message. Identity-invalid intake keeps its current scrubbed, fail-closed path and does not acquire raw actor or message content through this feature. In contrast, failure of the existing authoritative transport attestation continues to block tools, attachments, persona, memory, model calls, and other side effects exactly as before.
 
-### QQ ingress correlation
+### QQ ingress evidence boundary
 
-The loopback QQ access proxy produces a structured admission decision from the same policy currently used by `should_forward`: conversation kind, whether sender or group admission matched, whether an `@` was required and satisfied, and a stable outcome code. Public or persisted diagnostics never contain the source allowlists, their sizes, raw QQ numbers, access tokens, or complete message content.
+The loopback QQ Relay is not an authorization source. It validates the OneBot transport boundary,
+forwards private messages, and uses the original structured segments to keep only group messages that
+explicitly mention the current bot. It does not read user/group allowlists, resolve roles, write an
+admission receipt, or correlate an external frame to a task. The old best-effort plaintext ingress
+receipt and `gateway.access_decision` vocabulary are removed because they did not establish identity or
+authorization and encouraged the Console to present a transport observation as a permission decision.
 
-For forwarded pure-text messages, the proxy may write a short-lived private ingress receipt containing pseudonymous conversation and actor digests, a normalized-content digest, safe OneBot message metadata, the admission outcome, and a bounded host timestamp. The ACP side may associate one receipt using exact digest equality and a bounded time window after its existing authoritative identity and attestation validation succeeds. Non-text messages, lossy normalization, stale candidates, duplicate candidates, and any ambiguity produce `missing` or `correlated` coverage with a reason; they never guess.
-
-The receipt store is non-authoritative, bounded, owner-only, no-follow, single-link checked, and atomically updated under a lock. Raw message text and raw stable platform identifiers are not written. A receipt match cannot grant admission, establish identity, select a role, or relax any containment rule. Disabling or removing the store must leave message behavior unchanged and only reduce observability coverage.
+The authoritative task evidence begins with ACP's trusted conversation and sender evidence. For QQ
+groups, the sender envelope must agree with the independently written synchronous one-shot transport
+attestation before ACP evaluates the current user/group allowlists. Console may declare that the managed
+topology contains a Relay, but it shows the actual allow/deny result only from ACP's `access_decision`.
+Absent external transport evidence remains `declared` or `missing`; it is never reconstructed from
+content digests, filenames or task timing.
 
 ### Delivery evidence
 
@@ -64,15 +72,17 @@ Desktop layout uses a persistent roster and detail pane; narrow screens stack th
 
 All new persisted material is redacted before first write and follows the existing private task-artifact ownership, permissions, containment, retention, and size limits. API responses are bounded and reject instance/task mismatches. Opaque IDs are used for lazy artifact reads. `DELETE /api/bots/{instance_id}/tasks/{task_id}` removes only a terminal v2 task directory after revalidating identity, status, ownership, permissions, file type, and containment beneath the selected instance workspace. It never deletes an associated Job or treats deletion as cancellation; active or unsafe records fail closed. Console authentication and same-origin behavior are unchanged.
 
-The rollout is additive: first add projection tests against old and new records, then emit new middleware evidence, then add optional QQ ingress receipts, and finally switch the bot page to the workspace view. The raw events endpoint and existing task detail contract remain available during the transition. Rollback removes the new route, emitters, receipt store, and UI while leaving existing task records valid; supplemental events are ignored by older readers.
+The raw events endpoint and existing task detail contract remain available. Existing records that contain
+old supplemental gateway events remain readable as opaque historical evidence, but new code neither writes
+nor interprets ingress receipts and provides no compatibility reader for the removed receipt store.
 
 ## Acceptance
 
 - An operator can select a bot and task without opening a modal and see one ordered flow covering the declared QQ/NapCat/OneBot, gateway, middleware, Agent, model/capability, and delivery layers.
-- For a successfully observed plain-text QQ turn such as `你是谁`, the flow can show the access-proxy decision, authoritative ACP identity/access outcome, Agent handoff, exact or explicitly partial model-input snapshot, public tool/subagent/workflow activity, Agent result, and strongest observed outbound boundary.
+- For a successfully observed QQ turn, the flow can show declared Relay topology, authoritative ACP identity/access outcome, Agent handoff, exact or explicitly partial model-input snapshot, public tool/subagent/workflow activity, Agent result, and strongest observed outbound boundary; it never labels the Relay as having authorized the turn.
 - Every displayed transition identifies whether it is observed, best-effort correlated, declared, provider-opaque, or missing; old tasks render honestly with partial coverage rather than fabricated history.
 - The task-flow API is versioned, bounded, redacted, instance-scoped, and stable across Agent backends. React components do not parse private runtime event names or platform frames.
-- QQ ingress correlation never changes admission or authorization. Ambiguous, stale, duplicate, non-text, or normalization-loss cases remain unmatched and message processing continues according to the existing authoritative contracts.
+- ACP access evidence is the only allowlist decision shown. Missing Relay or external-platform observations remain missing and are not guessed or correlated from plaintext.
 - Hidden chain-of-thought, provider-internal instructions, credentials, raw allowlists, raw stable platform identities, machine paths, and unredacted message bodies do not appear in receipts, task artifacts, API responses, or the UI.
 - The UI never represents Agent completion, ACP emission, or a transport hook as proof that a QQ client displayed or read the response.
 - Bot start, stop, restart, update, logs, diagnostics, existing task detail, context snapshots, and raw evidence remain accessible with their current permission and backend behavior.
@@ -85,7 +95,7 @@ The rollout is additive: first add projection tests against old and new records,
 
 - Run `python3 scripts/check_sdd_specs.py` and the focused SDD unit test.
 - Run focused unit tests for the task-flow projector using legacy records, complete records, missing artifacts, provider-opaque context, bounded output, redaction, and instance/task mismatch cases.
-- Run QQ access-proxy and ingress-receipt tests for private/group admission decisions, `@` handling, pure-text correlation, TTL behavior, ambiguity, non-text input, permissions, no-follow/single-link checks, bounds, and the guarantee that receipt failure does not grant or deny access.
+- Run QQ Relay tests for transport authentication, private forwarding, structured `@` handling, transparent non-message frames and proof that user/group allowlists are not read; run ACP tests for the unique admission decision.
 - Run middleware task-recorder and ACP orchestration tests proving ordered stage evidence, preservation of identity-invalid scrubbing, unchanged authoritative attestation failure behavior, and accurate outbound-boundary labels.
 - Run Console route tests for authentication, versioned response shape, missing tasks, unsafe artifacts, bounds, and backward-compatible task detail/raw-events behavior.
 - Run Console control and route tests for safe terminal deletion, active conflict, path and instance containment, unsafe metadata, sibling/Job preservation, and no-store reads after deletion.

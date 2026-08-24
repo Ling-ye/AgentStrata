@@ -1,227 +1,138 @@
-"""QQ OneBot @ 过滤代理的 should_forward 纯函数单测。"""
+"""Focused tests for the QQ explicit-mention Relay."""
+
 from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from chatcopilot.platforms.qq.at_proxy import (
-    _ProxyConfig,
-    _validate_proxy_config,
+    RelayConfig,
     evaluate_forward,
-    normalized_onebot_text,
-    should_forward,
+    handle_downstream_connection,
+    validate_relay_config,
 )
-from chatcopilot.platforms.qq.gateway_health import QQBoundaryError
+from chatcopilot.platforms.qq.boundary import QQBoundaryError
 
 BOT = "10001"
 
 
-def _group(message, **extra):
-    ev = {"post_type": "message", "message_type": "group", "group_id": 20001,
-          "user_id": 10002, "message": message}
-    ev.update(extra)
-    return ev
+def _group(message: Any, **extra: Any) -> dict[str, Any]:
+    event = {
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 20001,
+        "user_id": 10002,
+        "message": message,
+    }
+    event.update(extra)
+    return event
 
 
-class ShouldForwardTests(unittest.TestCase):
-    # ---- 群聊：只有 @机器人 才放行 ----
-    def test_group_at_bot_array_forwarded(self) -> None:
-        ev = _group([{"type": "at", "data": {"qq": BOT}}, {"type": "text", "data": {"text": " 你好"}}])
-        self.assertTrue(should_forward(ev, BOT))
-
-    def test_group_decision_explains_forward_without_exposing_allowlists(self) -> None:
-        ev = _group(
+class ForwardDecisionTests(unittest.TestCase):
+    def test_group_structured_at_bot_is_forwarded(self) -> None:
+        event = _group(
             [
                 {"type": "at", "data": {"qq": BOT}},
-                {"type": "text", "data": {"text": " 你是谁"}},
+                {"type": "text", "data": {"text": " hello"}},
             ]
         )
 
-        decision = evaluate_forward(ev, BOT)
+        decision = evaluate_forward(event, BOT)
 
         self.assertTrue(decision.forward)
         self.assertEqual(decision.code, "group_mention_matched")
-        self.assertTrue(decision.mention_required)
-        self.assertTrue(decision.mention_satisfied)
-        self.assertNotIn("user_ids", decision.receipt_payload())
-        self.assertNotIn("group_ids", decision.receipt_payload())
+        self.assertEqual(decision.chat_kind, "group")
 
-    def test_onebot_text_normalization_is_lossless_or_declines_correlation(self) -> None:
-        pure = _group(
-            [
-                {"type": "at", "data": {"qq": BOT}},
-                {"type": "text", "data": {"text": " 你是谁"}},
-            ]
+    def test_group_structured_at_bot_accepts_numeric_qq(self) -> None:
+        event = _group([{"type": "at", "data": {"qq": 10001}}])
+
+        self.assertTrue(evaluate_forward(event, BOT).forward)
+
+    def test_group_without_explicit_self_at_is_dropped(self) -> None:
+        cases = (
+            _group([{"type": "text", "data": {"text": "hello"}}]),
+            _group([{"type": "at", "data": {"qq": "99999"}}]),
+            _group([{"type": "at", "data": {"qq": "all"}}]),
+            _group([{"type": "text", "data": {"text": "AgentStrata hello"}}]),
         )
-        image = _group(
-            [
-                {"type": "at", "data": {"qq": BOT}},
-                {"type": "image", "data": {"file": "private-name.jpg"}},
-            ]
+        for event in cases:
+            with self.subTest(message=event["message"]):
+                decision = evaluate_forward(event, BOT)
+                self.assertFalse(decision.forward)
+                self.assertEqual(decision.code, "group_mention_missing")
+
+    def test_cq_text_is_not_treated_as_authoritative_mention(self) -> None:
+        event = _group(
+            "[CQ:at,qq=10001] hello",
+            raw_message="[CQ:at,qq=10001] hello",
         )
 
-        self.assertEqual(normalized_onebot_text(pure), ("你是谁", 2))
-        self.assertIsNone(normalized_onebot_text(image))
-        self.assertIsNone(
-            normalized_onebot_text(
-                _group("[CQ:at,qq=10001] 你是谁", raw_message="[CQ:at,qq=10001] 你是谁")
-            )
-        )
+        self.assertFalse(evaluate_forward(event, BOT).forward)
 
-    def test_group_at_bot_qq_as_int_forwarded(self) -> None:
-        ev = _group([{"type": "at", "data": {"qq": 10001}}])
-        self.assertTrue(should_forward(ev, BOT))
-
-    def test_group_no_at_dropped(self) -> None:
-        ev = _group([{"type": "text", "data": {"text": "你是谁"}}])
-        self.assertFalse(should_forward(ev, BOT))
-
-    def test_group_at_other_user_dropped(self) -> None:
-        ev = _group([{"type": "at", "data": {"qq": "99999"}}, {"type": "text", "data": {"text": " hi"}}])
-        self.assertFalse(should_forward(ev, BOT))
-
-    def test_group_cq_code_raw_message_forwarded(self) -> None:
-        ev = _group("[CQ:at,qq=10001] 你好", raw_message="[CQ:at,qq=10001] 你好")
-        self.assertTrue(should_forward(ev, BOT))
-
-    def test_group_cq_other_user_dropped(self) -> None:
-        ev = _group("[CQ:at,qq=99999] hi", raw_message="[CQ:at,qq=99999] hi")
-        self.assertFalse(should_forward(ev, BOT))
-
-    # ---- @全体成员：默认不算，开关可放宽 ----
-    def test_group_at_all_default_dropped(self) -> None:
-        ev = _group([{"type": "at", "data": {"qq": "all"}}, {"type": "text", "data": {"text": " hi"}}])
-        self.assertFalse(should_forward(ev, BOT))
-
-    def test_group_at_all_counts_when_enabled(self) -> None:
-        ev = _group([{"type": "at", "data": {"qq": "all"}}])
-        self.assertTrue(should_forward(ev, BOT, at_all_counts=True))
-
-    # ---- 透传：私聊 / 非 message / API 响应 ----
-    def test_private_always_forwarded(self) -> None:
-        ev = {"post_type": "message", "message_type": "private", "user_id": 10002,
-              "message": [{"type": "text", "data": {"text": "你是谁"}}]}
-        self.assertTrue(should_forward(ev, BOT))
-
-    def test_private_requires_user_allowlist_when_proxy_enforces_access(self) -> None:
-        ev = {
+    def test_private_message_always_passes_relay(self) -> None:
+        event = {
             "post_type": "message",
             "message_type": "private",
             "user_id": 40004,
-            "message": [{"type": "text", "data": {"text": "hi"}}],
+            "message": "hello",
         }
-        self.assertFalse(
-            should_forward(
-                ev,
-                BOT,
-                user_ids=frozenset({"20002"}),
-                allow_all_users=False,
+
+        decision = evaluate_forward(event, BOT)
+
+        self.assertTrue(decision.forward)
+        self.assertEqual(decision.code, "private_passthrough")
+
+    def test_non_message_frames_and_api_responses_are_transparent(self) -> None:
+        cases: tuple[Any, ...] = (
+            {"post_type": "meta_event", "meta_event_type": "heartbeat"},
+            {"status": "ok", "retcode": 0, "echo": "1"},
+            "not-an-object",
+        )
+        for event in cases:
+            with self.subTest(event=event):
+                self.assertTrue(evaluate_forward(event, BOT).forward)
+
+    def test_unsupported_message_type_is_dropped(self) -> None:
+        event = {"post_type": "message", "message_type": "guild", "message": "hello"}
+
+        self.assertFalse(evaluate_forward(event, BOT).forward)
+
+    def test_missing_bot_identity_fails_closed_for_group(self) -> None:
+        event = _group([{"type": "at", "data": {"qq": BOT}}])
+
+        decision = evaluate_forward(event, "")
+
+        self.assertFalse(decision.forward)
+        self.assertEqual(decision.code, "bot_identity_missing")
+
+
+class _AllowlistGuard(dict[str, str]):
+    def get(self, key: str, default: Any = None) -> Any:
+        if key in {"QQ_ALLOW_FROM", "QQ_ALLOW_GROUPS"}:
+            raise AssertionError(f"Relay read ACP-only setting: {key}")
+        return super().get(key, default)
+
+
+class RelayConfigTests(unittest.TestCase):
+    def test_valid_config_does_not_read_acp_allowlists(self) -> None:
+        config = RelayConfig(
+            _AllowlistGuard(
+                {
+                    "QQ_ACCOUNT": BOT,
+                    "QQ_ACCESS_TOKEN": "x" * 32,
+                    "QQ_WS_URL": "ws://127.0.0.1:3001",
+                    "QQ_AT_PROXY_URL": "ws://localhost:3002",
+                }
             )
         )
 
-    def test_group_allowlist_allows_non_allowlisted_sender_with_at(self) -> None:
-        ev = _group(
-            [{"type": "at", "data": {"qq": BOT}}],
-            group_id=30003,
-            user_id=40004,
-        )
-        self.assertTrue(
-            should_forward(
-                ev,
-                BOT,
-                user_ids=frozenset({"20002"}),
-                allow_all_users=False,
-                group_ids=frozenset({"30003"}),
-            )
-        )
+        validate_relay_config(config)
 
-    def test_group_allowlist_does_not_grant_other_group_or_private(self) -> None:
-        group = _group(
-            [{"type": "at", "data": {"qq": BOT}}],
-            group_id=50005,
-            user_id=40004,
-        )
-        private = {
-            "post_type": "message",
-            "message_type": "private",
-            "user_id": 40004,
-            "message": "hi",
-        }
-        policy = {
-            "user_ids": frozenset({"20002"}),
-            "allow_all_users": False,
-            "group_ids": frozenset({"30003"}),
-        }
-        self.assertFalse(should_forward(group, BOT, **policy))
-        self.assertFalse(should_forward(private, BOT, **policy))
-
-    def test_group_allowlist_still_honours_mention_policy(self) -> None:
-        ev = _group(
-            [{"type": "text", "data": {"text": "hi"}}],
-            group_id=30003,
-            user_id=40004,
-        )
-        policy = {
-            "user_ids": frozenset({"20002"}),
-            "allow_all_users": False,
-            "group_ids": frozenset({"30003"}),
-        }
-        self.assertFalse(should_forward(ev, BOT, **policy))
-        self.assertTrue(should_forward(ev, BOT, require_at=False, **policy))
-
-    def test_allowlisted_user_retains_access_in_other_group(self) -> None:
-        ev = _group(
-            [{"type": "at", "data": {"qq": BOT}}],
-            group_id=50005,
-            user_id=20002,
-        )
-        self.assertTrue(
-            should_forward(
-                ev,
-                BOT,
-                user_ids=frozenset({"20002"}),
-                allow_all_users=False,
-                group_ids=frozenset({"30003"}),
-            )
-        )
-
-    def test_meta_event_forwarded(self) -> None:
-        self.assertTrue(should_forward({"post_type": "meta_event", "meta_event_type": "heartbeat"}, BOT))
-
-    def test_api_response_forwarded(self) -> None:
-        # API 响应没有 post_type，仅有 echo/status/data
-        self.assertTrue(should_forward({"status": "ok", "retcode": 0, "echo": "1"}, BOT))
-
-    def test_non_dict_forwarded(self) -> None:
-        self.assertTrue(should_forward("not-json", BOT))
-
-    # ---- fail-open：缺机器人号一律放行 ----
-    def test_missing_bot_qq_fail_open(self) -> None:
-        ev = _group([{"type": "text", "data": {"text": "你是谁"}}])
-        self.assertTrue(should_forward(ev, ""))
-
-
-class ProxyConfigTests(unittest.TestCase):
-    def test_valid_config_is_accepted(self) -> None:
-        with mock.patch.dict(
-            "os.environ",
-            {
-                "QQ_ACCOUNT": BOT,
-                "QQ_ACCESS_TOKEN": "x" * 32,
-                "QQ_WS_URL": "ws://127.0.0.1:3001",
-                "QQ_AT_PROXY_URL": "ws://localhost:3002",
-                "QQ_ALLOW_FROM": "20002",
-                "QQ_ALLOW_GROUPS": "30003",
-            },
-            clear=True,
-        ):
-            config = _ProxyConfig()
-            _validate_proxy_config(config)
-            self.assertEqual(config.user_ids, frozenset({"20002"}))
-            self.assertFalse(config.allow_all_users)
-            self.assertEqual(config.group_ids, frozenset({"30003"}))
-            self.assertFalse(config.allow_all_groups)
+        self.assertFalse(hasattr(config, "user_ids"))
+        self.assertFalse(hasattr(config, "group_ids"))
 
     def test_missing_account_weak_token_and_public_urls_are_rejected(self) -> None:
         cases = (
@@ -242,38 +153,78 @@ class ProxyConfigTests(unittest.TestCase):
                 "QQ_WS_URL": "ws://0.0.0.0:3001",
                 "QQ_AT_PROXY_URL": "ws://127.0.0.1:3002",
             },
+            {
+                "QQ_ACCOUNT": "not-numeric",
+                "QQ_ACCESS_TOKEN": "x" * 32,
+                "QQ_WS_URL": "ws://127.0.0.1:3001",
+                "QQ_AT_PROXY_URL": "ws://127.0.0.1:3002",
+            },
         )
         for env in cases:
-            with self.subTest(env_keys=sorted(env)), mock.patch.dict(
-                "os.environ",
-                env,
-                clear=True,
-            ), self.assertRaises(QQBoundaryError):
-                _validate_proxy_config(_ProxyConfig())
+            with self.subTest(env_keys=sorted(env)), self.assertRaises(QQBoundaryError):
+                validate_relay_config(RelayConfig(env))
 
 
-class ProxyStartupContractTests(unittest.TestCase):
-    def test_parent_runtime_loads_qq_environment(self) -> None:
+class RelayAuthenticationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unauthenticated_downstream_is_closed_before_upstream_connect(self) -> None:
+        connection = SimpleNamespace(
+            request=SimpleNamespace(headers={}),
+            close=mock.AsyncMock(),
+        )
+        config = RelayConfig(
+            {
+                "QQ_ACCOUNT": BOT,
+                "QQ_ACCESS_TOKEN": "x" * 32,
+                "QQ_WS_URL": "ws://127.0.0.1:3001",
+                "QQ_AT_PROXY_URL": "ws://127.0.0.1:3002",
+            }
+        )
+
+        with mock.patch(
+            "chatcopilot.platforms.qq.at_proxy._connect_upstream",
+            new=mock.AsyncMock(side_effect=AssertionError("must not connect upstream")),
+        ):
+            await handle_downstream_connection(connection, config)
+
+        connection.close.assert_awaited_once_with(
+            code=1008,
+            reason="authentication required",
+        )
+
+
+class RelayStartupContractTests(unittest.TestCase):
+    def test_external_processes_do_not_receive_acp_allowlists(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
-        start_script = (repo_root / "deploy" / "wsl" / "start.sh").read_text(
+        start_script = (repo_root / "deploy" / "wsl" / "start.sh").read_text(encoding="utf-8")
+        relay_script = (repo_root / "deploy" / "wsl" / "_start_qq_proxy.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn(
-            'ccp_load_env "FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|QQ_|'
-            'CHATCOPILOT_|WORKSPACE_ROOT"',
-            start_script,
-        )
 
-    def test_proxy_timeout_cleans_up_spawned_process(self) -> None:
+        self.assertIn("env -u QQ_ALLOW_FROM -u QQ_ALLOW_GROUPS", start_script)
+        self.assertIn("env -u QQ_ALLOW_FROM -u QQ_ALLOW_GROUPS", relay_script)
+        self.assertNotIn("START_PROXY", relay_script)
+        self.assertIn('if [ ! -f "$CC_CONFIG" ]', relay_script)
+        self.assertIn("exit 3", relay_script)
+
+    def test_relay_timeout_cleans_up_spawned_process(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
-        proxy_script = (
-            repo_root / "deploy" / "wsl" / "_start_qq_proxy.sh"
-        ).read_text(encoding="utf-8")
-        timeout_block = proxy_script.split(
-            'log "代理在 ~10s 内未就绪', maxsplit=1
-        )[1]
+        proxy_script = (repo_root / "deploy" / "wsl" / "_start_qq_proxy.sh").read_text(
+            encoding="utf-8"
+        )
+        timeout_block = proxy_script.split('log "Relay 在 ~10s 内未就绪', maxsplit=1)[1]
         self.assertIn('kill -TERM "$NEW_PID"', timeout_block)
         self.assertIn('rm -f "$PIDFILE"', timeout_block)
+
+    def test_relay_readiness_uses_the_validated_listener_host(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        relay_script = (repo_root / "deploy" / "wsl" / "_start_qq_proxy.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("urlsplit(sys.argv[1])", relay_script)
+        self.assertIn('"$RELAY_HOST" "$PORT"', relay_script)
+        self.assertNotIn("/dev/tcp/127.0.0.1/$PORT", relay_script)
+        self.assertIn('probe --url "$PROXY_URL" --url-env-key QQ_AT_PROXY_URL', relay_script)
 
 
 if __name__ == "__main__":

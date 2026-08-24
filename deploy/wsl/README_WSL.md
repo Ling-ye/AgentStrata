@@ -100,10 +100,11 @@ journalctl --user -u chatcopilot@lingye-copilot-qq.service -n 120 --no-page
 - token 缺失或错配：回到
   [`../../docs/operations.md#qq--napcat`](../../docs/operations.md#qq--napcat)
   执行 `sync-token`，不要手工拼接 token 同步命令。
-- `access.group_require_mention` 与 `QQ_REQUIRE_AT_IN_GROUP` 不一致：同时修正 BotSpec 和
-  私有 env，再更新实例。
+- 启动报告 `QQ_REQUIRE_AT_IN_GROUP` 或 `QQ_AT_ALL_COUNTS` 已废弃：从 bot-local
+  `local.env` 删除该键，再更新实例；群聊明确 @ 是 Relay 的固定触发条件，不再提供开关。
 - 配置群号后仍只有个别用户可用：确认群号写在私有 `QQ_ALLOW_GROUPS`，没有误写到只
-  接受发送者 QQ 号的 `QQ_ALLOW_FROM`，再更新实例并检查访问代理日志。
+  接受发送者 QQ 号的 `QQ_ALLOW_FROM`，再更新实例并检查 ACP task 的
+  `middleware.access_decision`。
 - gateway 健康但 Bot service 失败：检查主 service 日志中的 ACP、模型和 cc-connect
   错误。健康链路通常包含 `qq: connected to OneBot`、`qq: logged in` 和
   `cc-connect is running`。

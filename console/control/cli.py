@@ -66,7 +66,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--json", action="store_true", help="结构化 JSON 输出")
     parser.add_argument("--dry-run", action="store_true", help="sync/update 时只预览")
     parser.add_argument("--mode", default="quick", help="dump 模式：quick|full")
-    parser.add_argument("--source", default="cc", help="logs 来源：cc|questions|runtime")
+    parser.add_argument("--source", default="cc", help="logs 来源：cc|runtime")
     parser.add_argument("--lines", type=int, default=200, help="logs tail 行数")
     parser.add_argument("--id", dest="query_id", default=None, help="task_* 或 job_* ID")
     parser.add_argument("--out", default=None, help="诊断证据包输出目录")

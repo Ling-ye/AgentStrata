@@ -915,14 +915,6 @@ def test_qq_persona_preflight_projects_enabled_tool_pack() -> None:
             search_providers=(),
         ),
         mcp_servers=(),
-        access=SimpleNamespace(
-            enabled=True,
-            whitelist_env="QQ_ALLOW_FROM",
-            group_whitelist_env="QQ_ALLOW_GROUPS",
-            private_require_whitelist=True,
-            group_require_whitelist=True,
-            group_require_mention=True,
-        ),
     )
     definitions = evaluation_module._validated_capability_definitions(manifest, (case,))
 
@@ -2020,31 +2012,25 @@ def test_comparison_report_rejects_execution_implementation_drift(
 def test_private_runtime_fingerprint_binds_group_allowlist_without_persisting_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    user_env = "TEST_EVAL_USER_ALLOWLIST"
-    group_env = "TEST_EVAL_GROUP_ALLOWLIST"
     runtime = SimpleNamespace(
-        access=SimpleNamespace(
-            enabled=True,
-            whitelist_env=user_env,
-            group_whitelist_env=group_env,
-        ),
         spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST_EVAL_GROUP")),
     )
     config = SimpleNamespace(llm=SimpleNamespace(api_key="fallback-eval-key-123456"))
     monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)
     monkeypatch.setattr(evaluation_module, "load_config", lambda **_kwargs: config)
-    monkeypatch.setenv(user_env, "user-private-17")
-    monkeypatch.setenv(group_env, "group-private-23")
+    monkeypatch.setenv("QQ_ALLOW_FROM", "10017")
+    monkeypatch.setenv("QQ_ALLOW_GROUPS", "10023")
 
     first = evaluation_module._private_runtime_configuration_snapshot("configured-bot")
     serialized = json.dumps(first, ensure_ascii=False, sort_keys=True)
 
-    assert first["group_whitelist_configured"] is True
-    assert first["group_whitelist_entry_count"] == 1
-    assert "user-private-17" not in serialized
-    assert "group-private-23" not in serialized
+    assert first["qq_user_allowlist_mode"] == "finite"
+    assert first["qq_group_allowlist_mode"] == "finite"
+    assert first["qq_group_allowlist_entry_count"] == 1
+    assert "10017" not in serialized
+    assert "10023" not in serialized
 
-    monkeypatch.setenv(group_env, "group-private-24")
+    monkeypatch.setenv("QQ_ALLOW_GROUPS", "10024")
     drifted = evaluation_module._private_runtime_configuration_snapshot("configured-bot")
     assert first["identity_hmac"] != drifted["identity_hmac"]
 

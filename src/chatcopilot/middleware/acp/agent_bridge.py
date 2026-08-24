@@ -66,7 +66,6 @@ from chatcopilot.core.workspace_runtime import (
     MiddlewareWorkspaceService,
     Workspace,
     normalize_chat_kind,
-    persist_workspace_identity,
     resolve_workspace_root,
 )
 from chatcopilot.platforms import router as _platform_router
@@ -161,14 +160,13 @@ def _main_session_providers(
 # Workspace identity enrichment
 # ----------------------------------------------------------------------------
 def _enrich_workspace_identity(ws: Workspace, platform_type: str = "feishu") -> Workspace:
-    """用平台 adapter 补全显示名。
+    """用平台 adapter 补全显示名，不创建或写入 workspace。
 
     cc-connect 的 hook 不一定提供 ``CC_HOOK_USER_NAME``；只要平台用户标识已可用，就调
     当前平台 adapter 的 ``resolve_user_display_name`` 回查（飞书走 OpenAPI；不具备该能力
     的平台返回 ``None``）。失败时保持原 workspace，保证会话不被身份查询阻断。
     """
     if ws.user_name or not ws.user_id:
-        persist_workspace_identity(ws)
         return ws
     try:
         adapter = _platform_router.get_adapter(platform_type)
@@ -178,7 +176,6 @@ def _enrich_workspace_identity(ws: Workspace, platform_type: str = "feishu") -> 
     if not user_name:
         return ws
     enriched = replace(ws, user_name=user_name)
-    persist_workspace_identity(enriched)
     _LOGGER.info("workspace identity enriched from Feishu | user=%s name=%s", ws.user_id, user_name)
     return enriched
 
@@ -241,7 +238,7 @@ def _compose_workspace_from_identity(
         user_id=user_id or None,
         user_name=(user_name or "").strip() or None,
         scope=workspace_scope,
-    ).ensure()
+    )
 
 
 def _latest_workspace_from_session_env(
@@ -541,6 +538,20 @@ def _authorized_wiki_retriever(
     )
 
 
+def _runtime_platform_type(runtime: BotRuntimeContext) -> str:
+    configured = str(getattr(runtime, "platform_type", "") or "").strip()
+    if configured:
+        return configured
+    return str(
+        getattr(
+            getattr(getattr(runtime, "spec", None), "platform", None),
+            "type",
+            "feishu",
+        )
+        or "feishu"
+    )
+
+
 def _build_session_for_workspace(
     *,
     session_id: str,
@@ -552,17 +563,8 @@ def _build_session_for_workspace(
     routing_config: Any | None = None,
     execution_session_id: str | None = None,
 ) -> SessionState:
-    """统一装配 SessionState（含 AgentSession），保证 role / mode / prompt 同源。"""
-    platform_type = str(getattr(runtime, "platform_type", "") or "").strip()
-    if not platform_type:
-        platform_type = str(
-            getattr(
-                getattr(getattr(runtime, "spec", None), "platform", None),
-                "type",
-                "feishu",
-            )
-            or "feishu"
-        )
+    """Build a side-effect-free control session, then optionally materialize it."""
+    platform_type = _runtime_platform_type(runtime)
     adapter = _platform_router.get_adapter(platform_type)
     role = resolve_role(
         user_id=ws.user_id,
@@ -570,99 +572,25 @@ def _build_session_for_workspace(
         allow_name_match=adapter.allow_role_name_match,
     )
     assistant_mode = default_assistant_mode(role)
-    if agent_runtime is None:
-        return SessionState(
-            session_id=session_id,
-            workspace=ws,
-            role=role,
-            assistant_mode=assistant_mode,
-            runtime=runtime,
-            session=None,
-            llm_model=llm_model,
-            routing_config=routing_config,
-            execution_session_id=execution_session_id,
-            debug_mode=False,
-        )
-    state_ref: Dict[str, SessionState] = {}
-
-    effective_role = _effective_project_role(runtime, role, ws)
-    _, visible_skills = _prompt_projection(runtime, role, ws)
-    workspace_service = _make_workspace_service(ws, platform_type)
-    persona_snippet = extract_persona_snippet(runtime, role, ws, workspace_service)
-    memory_snippet = _extract_memory_snippet(runtime, ws, workspace_service)
-    prompt_input = _prompt_input(
-        runtime=runtime,
-        role=role,
-        ws=ws,
-        assistant_mode=assistant_mode,
-        skills=visible_skills,
-        persona=persona_snippet,
-        memory=memory_snippet,
-        llm_model=llm_model,
-        routing_config=routing_config,
-    )
-    wiki_retriever = _authorized_wiki_retriever(runtime=runtime, role=role, ws=ws)
-    base_retriever = None if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED else agent_runtime.retriever
-    retrievers = [item for item in (base_retriever, wiki_retriever) if item is not None]
-    session_retriever = (
-        CompositeRetriever(retrievers)
-        if len(retrievers) > 1
-        else (retrievers[0] if retrievers else None)
-    )
-
-    local_tools: tuple = ()
-    if adapter.supports_role_matrix:
-        # set_assistant_mode / set_debug_mode 工具仅对启用角色矩阵的平台有意义
-        # （目前只有飞书）；其它平台不会注册这两个工具，避免 LLM 误调。
-        mode_tool = _build_set_assistant_mode_tool(
-            lambda: state_ref["session"],
-            refresh_prompt_plan=_refresh_session_prompt_plan,
-        )
-        debug_tool = _build_set_debug_mode_tool(lambda: state_ref["session"])
-        local_tools = (mode_tool, debug_tool)
-    payload_role = Role.USER if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED else effective_role
-    agent_session = agent_runtime.new_session(
-        session_id=execution_session_id or session_id,
-        prompt_input=prompt_input,
-        session_providers=_main_session_providers(
-            runtime=runtime,
-            agent_runtime=agent_runtime,
-            session_getter=lambda: state_ref["session"],
-            local_tools=local_tools,
-        ),
-        payload_filter=make_payload_sanitizer(payload_role, ws),
-        permission_filter=_make_permission_filter(
-            role,
-            ws,
-            agent_backend=getattr(agent_runtime, "agent_backend", "native"),
-            owner_only_project_access=_owner_only_project_access(runtime),
-        ),
-        background_submitter=background_submitter,
-        file_sender=_make_file_sender(adapter, workspace_service),
-        workspace_service=workspace_service,
-        caller_role_hint=role_value(effective_role),
-        caller_identity=SessionIdentity(
-            user_id=ws.user_id,
-            user_name=ws.user_name,
-            chat_id=ws.chat_id,
-            chat_kind=ws.chat_kind,
-        ),
-        retriever_override=session_retriever,
-    )
     state = SessionState(
         session_id=session_id,
         workspace=ws,
         role=role,
         assistant_mode=assistant_mode,
         runtime=runtime,
-        session=agent_session,
+        session=None,
         llm_model=llm_model,
         routing_config=routing_config,
         execution_session_id=execution_session_id,
         debug_mode=False,
     )
-    state_ref["session"] = state
-    return state
+    if agent_runtime is None:
+        return state
+    return _materialize_session_for_workspace(
+        state,
+        agent_runtime=agent_runtime,
+        background_submitter=background_submitter,
+    )
 
 
 def _materialize_session_for_workspace(
@@ -673,13 +601,15 @@ def _materialize_session_for_workspace(
 ) -> SessionState:
     """Attach an AgentSession to an existing control-plane SessionState."""
 
+    state.materialize_workspace()
     if state.is_materialized:
         return state
     runtime = state.runtime
-    adapter = _platform_router.get_adapter(runtime.platform_type)
+    platform_type = _runtime_platform_type(runtime)
+    adapter = _platform_router.get_adapter(platform_type)
     effective_role = _effective_project_role(runtime, state.role, state.workspace)
     _, visible_skills = _prompt_projection(runtime, state.role, state.workspace)
-    workspace_service = _make_workspace_service(state.workspace, runtime.platform_type)
+    workspace_service = _make_workspace_service(state.workspace, platform_type)
     persona_snippet = extract_persona_snippet(
         runtime, state.role, state.workspace, workspace_service
     )

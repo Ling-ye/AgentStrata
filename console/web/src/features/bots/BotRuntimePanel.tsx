@@ -87,10 +87,6 @@ export default function BotRuntimePanel({ bot, status }: Props) {
             value={<Tag size="small" color={connection.color}>{connection.label}</Tag>}
           />
           <Metric
-            label="今日提问"
-            value={status?.questions_today ?? "—"}
-          />
-          <Metric
             label="错误"
             tone={(status?.error_count ?? 0) > 0 ? "danger" : "muted"}
             value={status?.error_count ?? "—"}

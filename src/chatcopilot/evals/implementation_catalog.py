@@ -49,15 +49,15 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "chatcopilot.evals.isolated_executor",
         "chatcopilot.evals.qq_flow_scenarios",
         "chatcopilot.botspec.session_env",
-        "chatcopilot.core.ingress_receipts",
+        "chatcopilot.core.allowlists",
         "chatcopilot.core.persona_control",
         "chatcopilot.core.persistent_state",
         "chatcopilot.core.session_env_store",
-        "chatcopilot.middleware.acp.access_gate",
+        "chatcopilot.middleware.acp.admission",
         "chatcopilot.middleware.acp.agent_bridge",
         "chatcopilot.middleware.acp.event_translator",
         "chatcopilot.platforms.qq.ingress_probe",
-        "chatcopilot.platforms.qq.access_proxy",
+        "chatcopilot.platforms.qq.at_proxy",
         "chatcopilot.middleware.acp.group_conversation",
         "chatcopilot.agent.persona.tools",
         "chatcopilot.middleware.acp.server",
@@ -92,9 +92,6 @@ _COMMON_RUNTIME_IMPLEMENTATIONS = (
     "chatcopilot.agent.tools.executor",
     "chatcopilot.agent.tools.registry",
     "chatcopilot.agent.turn",
-    "chatcopilot.middleware.acp.access_gate",
-    "chatcopilot.middleware.acp.agent_bridge",
-    "chatcopilot.platforms.qq.at_proxy",
 )
 _BACKEND_RUNTIME_IMPLEMENTATIONS: dict[str, tuple[str, ...]] = {
     "codex": (

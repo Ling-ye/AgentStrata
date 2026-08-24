@@ -20,9 +20,6 @@
 #       ├── logs/
 #       │   ├── cc-connect/<date>.log     新位置（start.sh 改造后）；老 /tmp/cc-connect.log 也兜底拍
 #       │   ├── runtime/<date>.log        ACP runtime 的 chatcopilot.* logger 独立文件
-#       │   ├── questions/<date>.log      用户提问精简日志
-#       │   ├── raw/<date>.log            用户提问 raw（CC_HOOK_* 全量）
-#       │   └── _hook_errors.log
 #       ├── runtime/
 #       │   ├── status.txt                bash status.sh 输出
 #       │   ├── processes.txt             pgrep -af cc-connect + ps
@@ -33,7 +30,7 @@
 #       │   ├── system.txt                uname / free / df / wsl.conf / PATH / timezone
 #       │   ├── network.txt               ss -tulpn / LiteLLM 探活 / DNS 解析
 #       │   ├── process_detail.txt        /proc/<pid>/status + lsof + cmdline（per pid）
-#       │   └── timeline.tsv              cc-connect / runtime / questions 三流合并按 ts 排序
+#       │   └── timeline.tsv              cc-connect / runtime 两流合并按 ts 排序
 #       ├── manifest.json                 每个文件的 path / size / sha256 / mtime
 #       └── README.md                     导航说明
 #
@@ -425,18 +422,16 @@ render_process_detail_txt() {
     } > "$out" 2>&1
 }
 
-# 时间轴聚合：把 cc-connect.log + runtime/<date>.log + questions/<date>.log 抽出
+# 时间轴聚合：把 cc-connect.log + runtime/<date>.log 抽出
 # <ts>\t<source>\t<level>\t<message> 合并按 ts 排序，便于回答"14:30-14:35 之间发生了什么"。
-# 三种 ts 前缀的解析：
+# 两种 ts 前缀的解析：
 #   - cc-connect.log：通常是 `[YYYY-MM-DD HH:MM:SS]` 或 `YYYY-MM-DDTHH:MM:SS.fffZ`
 #   - runtime/<date>.log：`[YYYY-MM-DD HH:MM:SS,fff] LEVEL name | msg`
-#   - questions/<date>.log：`[YYYY-MM-DD HH:MM:SS+08:00] | user | msg`
 render_timeline_tsv() {
     local out="$1"
     local cc_log="$2"
     local runtime_log="$3"
-    local question_log="$4"
-    awk -v ccfile="$cc_log" -v rtfile="$runtime_log" -v qfile="$question_log" '
+    awk -v ccfile="$cc_log" -v rtfile="$runtime_log" '
         BEGIN {
             FS = "";
             ts_re = "^\\[?([0-9]{4}-[0-9]{2}-[0-9]{2})[T ]([0-9]{2}:[0-9]{2}:[0-9]{2})";
@@ -461,11 +456,10 @@ render_timeline_tsv() {
         FNR == 1 {
             if (FILENAME == ccfile) current_source = "cc-connect";
             else if (FILENAME == rtfile) current_source = "runtime";
-            else if (FILENAME == qfile) current_source = "question";
             else current_source = "unknown";
         }
         { emit(FILENAME, current_source, $0); }
-    ' "$cc_log" "$runtime_log" "$question_log" 2>/dev/null \
+    ' "$cc_log" "$runtime_log" 2>/dev/null \
         | sort -k1,2 \
         | { printf "ts\tsource\tlevel\tmessage\n"; cat; } \
         > "$out"
@@ -551,7 +545,6 @@ dump_one_instance() {
     local inst_out="$2"
     local mem_count=0
     local tr_count=0
-    local qcount=0
 
     resolve_instance_paths "$instance"
 
@@ -569,8 +562,6 @@ dump_one_instance() {
         [ "$INCLUDE_ENV" = 1 ] && echo "  configs/.chatcopilot.env         <- $INST_ENV_FILE (+ .sanitized)"
         echo "  logs/cc-connect/<date>.log       <- $INST_LOG_DIR/cc-connect/"
         echo "  logs/runtime/<date>.log          <- $INST_LOG_DIR/runtime/"
-        echo "  logs/questions/<date>.log        <- $INST_LOG_DIR/"
-        echo "  logs/raw/<date>.log              <- $INST_LOG_DIR/raw/"
         echo "  runtime/{status,processes,versions,system,network,process_detail,attachments_manifest,timeline}.*"
         if [ "$MODE" = "full" ]; then
             [ -d "$INST_WS_ROOT" ] && find "$INST_WS_ROOT" -maxdepth 6 -name "MEMORY.md" 2>/dev/null | while IFS= read -r f; do
@@ -587,7 +578,7 @@ dump_one_instance() {
     fi
 
     # ------- 建子目录 -------
-    mkdir -p "$inst_out"/{configs,logs/cc-connect,logs/runtime,logs/questions,logs/raw,runtime} \
+    mkdir -p "$inst_out"/{configs,logs/cc-connect,logs/runtime,runtime} \
         || { err "无法创建 $inst_out"; return 1; }
     if [ "$MODE" = "full" ]; then
         mkdir -p "$inst_out"/{memories,transcripts,prompts}
@@ -612,7 +603,7 @@ dump_one_instance() {
         ok "[$instance] configs/.chatcopilot.env.sanitized （脱敏副本，可放心分享）"
     fi
 
-    # ------- logs：cc-connect / runtime / questions / raw / _hook_errors -------
+    # ------- logs：cc-connect / runtime -------
     copy_logs_dir() {
         local src_dir="$1"
         local dst_dir="$2"
@@ -642,26 +633,6 @@ dump_one_instance() {
 
     # runtime/<date>.log（FileHandler 写的本项目 chatcopilot.* logger）
     copy_logs_dir "$INST_LOG_DIR/runtime" "$inst_out/logs/runtime"
-
-    # questions/<date>.log + raw/<date>.log + _hook_errors.log
-    if [ -d "$INST_LOG_DIR" ]; then
-        while IFS= read -r f; do
-            [ -f "$f" ] || continue
-            cp "$f" "$inst_out/logs/questions/$(basename "$f")"
-            qcount=$((qcount + 1))
-        done < <(find "$INST_LOG_DIR" -maxdepth 1 -type f -name "*.log" -not -name "_hook_errors.log" 2>/dev/null)
-        [ "$qcount" -gt 0 ] && ok "[$instance] logs/questions/ ($qcount 个日期文件)"
-
-        if [ -d "$INST_LOG_DIR/raw" ]; then
-            while IFS= read -r f; do
-                [ -f "$f" ] || continue
-                cp "$f" "$inst_out/logs/raw/$(basename "$f")"
-            done < <(find "$INST_LOG_DIR/raw" -maxdepth 1 -type f -name "*.log" 2>/dev/null)
-        fi
-        if [ -f "$INST_LOG_DIR/_hook_errors.log" ]; then
-            cp "$INST_LOG_DIR/_hook_errors.log" "$inst_out/logs/_hook_errors.log"
-        fi
-    fi
 
     # ------- memories / transcripts (full only, 按 user_id 过滤) -------
     if [ "$MODE" = "full" ] && [ -d "$INST_WS_ROOT" ]; then
@@ -817,22 +788,18 @@ PYEOF
     fi
 
     # ------- runtime: timeline.tsv -------
-    local cc_log_pick="" runtime_log_pick="" question_log_pick=""
+    local cc_log_pick="" runtime_log_pick=""
     if [ -d "$inst_out/logs/cc-connect" ]; then
         cc_log_pick="$(find "$inst_out/logs/cc-connect" -maxdepth 1 -type f -name "*.log" | sort | tail -1)"
     fi
     if [ -d "$inst_out/logs/runtime" ]; then
         runtime_log_pick="$(find "$inst_out/logs/runtime" -maxdepth 1 -type f -name "*.log" | sort | tail -1)"
     fi
-    if [ -d "$inst_out/logs/questions" ]; then
-        question_log_pick="$(find "$inst_out/logs/questions" -maxdepth 1 -type f -name "*.log" | sort | tail -1)"
-    fi
     render_timeline_tsv \
         "$inst_out/runtime/timeline.tsv" \
         "${cc_log_pick:-/dev/null}" \
-        "${runtime_log_pick:-/dev/null}" \
-        "${question_log_pick:-/dev/null}"
-    ok "[$instance] runtime/timeline.tsv （cc-connect + runtime + question 合并按 ts）"
+        "${runtime_log_pick:-/dev/null}"
+    ok "[$instance] runtime/timeline.tsv （cc-connect + runtime 合并按 ts）"
 
     # ------- 清理空 .err -------
     for e in "$inst_out"/runtime/*.err; do
@@ -855,8 +822,6 @@ mode=$MODE  tail_lines=$TAIL_LINES  include_env=$INCLUDE_ENV  users_filter=${USE
 | prompts/ | persona.py 副本 + 最终 system prompt |
 | logs/cc-connect/ | cc-connect 主日志（新位置 \$LOG_DIR/cc-connect/<date>.log） |
 | logs/runtime/ | ACP runtime 的 chatcopilot.* logger 独立文件 |
-| logs/questions/ | 用户提问精简日志（按日期） |
-| logs/raw/ | 用户提问 raw 上下文（CC_HOOK_* 全量） |
 | runtime/status.txt | bash status.sh 输出 |
 | runtime/processes.txt | pgrep -af cc-connect + ps |
 | runtime/tools_schema.json | full 模式才生成；当前注册的 tool schema |
@@ -865,7 +830,7 @@ mode=$MODE  tail_lines=$TAIL_LINES  include_env=$INCLUDE_ENV  users_filter=${USE
 | runtime/system.txt | uname / free / df / wsl.conf / PATH |
 | runtime/network.txt | ss -tulpn / Chat LLM gateway 探活 / DNS |
 | runtime/process_detail.txt | /proc/<pid>/status + lsof + cmdline |
-| runtime/timeline.tsv | cc-connect + runtime + question 三流合并按 ts 排序 |
+| runtime/timeline.tsv | cc-connect + runtime 两流合并按 ts 排序 |
 
 | 元信息 | 值 |
 |---|---|

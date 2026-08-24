@@ -59,7 +59,7 @@ Core-owned driver 为 `agent_isolated`、`agent_configured`、`acp_scenario`、`
 以下命令验证仓库实现与契约；其中使用 fixture、mock、dry-run 或隔离 transport 的结果不构成真实商用 LLM、真实 QQ 或 Canary E2E 证据：
 
 - `python3 scripts/check_sdd_specs.py`
-- `.venv/bin/python -m pytest tests/unit -q -k "eval or evaluation or access_gate or qq"`
+- `.venv/bin/python -m pytest tests/unit -q -k "eval or evaluation or acp_admission or qq"`
 - `.venv/bin/python -m pytest tests/integration -q -k "evaluation or acp or attachment"`
 - `.venv/bin/python scripts/check_component_catalog.py`
 - `.venv/bin/python -m chatcopilot botspec validate bots/lingye-copilot-qq/bot.yaml`

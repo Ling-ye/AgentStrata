@@ -32,7 +32,6 @@ class ValidationIssue:
 class PlatformSpec:
     type: str
     adapter: str
-    mention_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -126,38 +125,9 @@ class PackagingSpec:
 
 @dataclass(frozen=True)
 class AccessSpec:
-    """会话访问门禁策略。
+    """Capability projection policy after a message has been admitted."""
 
-    平台中立的门禁声明，由中间件 ACP server 在进入业务逻辑前强制执行。默认全部
-    关闭——未声明 ``access`` 段的机器人行为完全不变（飞书等实例零影响）。
-
-    - ``private_require_whitelist``：私聊仅白名单内用户可触发。
-    - ``group_require_whitelist``：群聊仅用户或群聊白名单命中时可触发。
-    - ``group_require_mention``：群聊还需 @机器人 才触发。
-    - ``whitelist_env``：白名单来源 env 变量名（逗号分隔的平台用户标识，如 QQ 号）；
-      具体名单值放进 ``local.env``，不进 git。``*`` 表示放行所有人。
-    - ``group_whitelist_env``：可选群聊白名单 env 变量名（逗号分隔的稳定 chat ID）；
-      空值不新增权限，``*`` 表示放行所有群聊。
-    - ``owner_only_project_access``：白名单仅授予会话访问；项目、主机、机器人配置、
-      内部 playbook 与跨用户隐私能力只向 Owner 暴露。普通用户仅保留显式标记的
-      公开能力和当前会话空间（QQ 群内为当前群共享空间），未知工具默认拒绝。
-    """
-
-    private_require_whitelist: bool = False
-    group_require_whitelist: bool = False
-    group_require_mention: bool = False
-    whitelist_env: str | None = None
-    group_whitelist_env: str | None = None
     owner_only_project_access: bool = False
-
-    @property
-    def enabled(self) -> bool:
-        """是否声明了任何门禁约束（决定中间件是否执行门禁短路）。"""
-        return (
-            self.private_require_whitelist
-            or self.group_require_whitelist
-            or self.group_require_mention
-        )
 
 
 

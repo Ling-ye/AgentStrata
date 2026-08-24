@@ -249,9 +249,9 @@ def _bot_config(bot_data: dict[str, Any], base_dir: Path) -> dict[str, Any]:
     access = None
     if access_raw:
         access = {
-            "private_require_whitelist": bool(access_raw.get("private_require_whitelist", False)),
-            "group_require_whitelist": bool(access_raw.get("group_require_whitelist", False)),
-            "group_require_mention": bool(access_raw.get("group_require_mention", False)),
+            "owner_only_project_access": bool(
+                access_raw.get("owner_only_project_access", False)
+            ),
         }
 
     return {

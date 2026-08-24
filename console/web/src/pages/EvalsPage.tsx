@@ -64,7 +64,7 @@ const TRACKS: readonly TrackDefinition[] = [
     shortTitle: "Agent 能力",
     description: "任务直接提交给所选 Bot 的 Agent runtime，观察模型、工具和回答本身。",
     includes: "人格表现、工具编排、搜索与证据、当日 USD/CNY、文件、图片、会话和代码恢复",
-    excludes: "不经过 QQ、access-proxy、cc-connect、身份门禁或 ACP",
+    excludes: "不经过 QQ、QQ @ Relay、cc-connect、身份准入或 ACP",
     suiteId: "agentstrata-capabilities-v1",
     accent: "arcoblue",
   },

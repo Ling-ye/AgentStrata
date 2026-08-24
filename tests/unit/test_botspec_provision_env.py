@@ -126,8 +126,6 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
     def _write_qq_bot(
         base: Path,
         local_env: str,
-        *,
-        group_require_mention: bool = True,
     ) -> tuple[Path, Path]:
         bot_dir = base / "qq-bot"
         bot_dir.mkdir()
@@ -149,8 +147,6 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                   response_style: persona.md
                 tools:
                   packs: []
-                access:
-                  group_require_mention: {str(group_require_mention).lower()}
                 deploy:
                   target: wsl2
                   instance_id: qq-bot
@@ -250,10 +246,10 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             self.assertFalse(runtime_env.exists())
-            self.assertIn("qq_group_allowlist_invalid", output.getvalue())
+            self.assertIn("qq_allowlist_invalid", output.getvalue())
             self.assertNotIn(private_value, output.getvalue())
 
-    def test_qq_provision_rejects_group_mention_policy_mismatch(self) -> None:
+    def test_qq_provision_rejects_removed_group_mention_env(self) -> None:
         with TemporaryDirectory() as tmp:
             bot_yaml, runtime_env = self._write_qq_bot(
                 Path(tmp),
@@ -273,29 +269,33 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertFalse(runtime_env.exists())
             self.assertIn(
-                "qq_group_mention_policy_mismatch",
+                "qq_legacy_ingress_env_removed",
                 output.getvalue(),
             )
 
-    def test_qq_provision_accepts_consistent_disabled_group_mention(self) -> None:
+    def test_qq_doctor_rejects_removed_ingress_env(self) -> None:
         with TemporaryDirectory() as tmp:
-            bot_yaml, runtime_env = self._write_qq_bot(
+            legacy_value = "legacy-private-value"
+            bot_yaml, _runtime_env = self._write_qq_bot(
                 Path(tmp),
                 textwrap.dedent(
-                    """\
-                    export CHATCOPILOT_CHAT_API_KEY="sk-test"
+                    f"""\
                     export QQ_ACCOUNT="10001"
-                    export QQ_ACCESS_TOKEN="dddddddddddddddddddddddddddddddd"
-                    export QQ_REQUIRE_AT_IN_GROUP="false"
+                    export QQ_ACCESS_TOKEN="ffffffffffffffffffffffffffffffff"
+                    export QQ_AT_ALL_COUNTS="{legacy_value}"
                     """
                 ),
-                group_require_mention=False,
             )
+            output = StringIO()
+            with (
+                mock.patch.dict(os.environ, {}, clear=True),
+                redirect_stdout(output),
+            ):
+                code = bot_cli_main(["doctor", "--bot", str(bot_yaml)])
 
-            code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
-
-            self.assertEqual(code, 0)
-            self.assertTrue(runtime_env.exists())
+            self.assertEqual(code, 1)
+            self.assertIn("qq_legacy_ingress_env_removed", output.getvalue())
+            self.assertNotIn(legacy_value, output.getvalue())
 
     def test_provision_env_expands_only_leading_home_path_markers(self) -> None:
         with TemporaryDirectory() as tmp:

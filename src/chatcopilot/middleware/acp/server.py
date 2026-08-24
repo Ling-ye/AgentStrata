@@ -116,7 +116,6 @@ from chatcopilot.middleware.acp.transport_attestation import (
 from chatcopilot.middleware.acp.turn_orchestrator import AcpTurnOrchestrator
 from chatcopilot.core.workspace_runtime import (
     Workspace,
-    cleanup_workspace,
     describe_workspace,
     resolve_workspace,
 )
@@ -263,7 +262,6 @@ class AcpChatAgent(Agent):
             ws=ws,
             agent_runtime=None,
             runtime=self._runtime,
-            background_submitter=self._make_background_submitter(session_id=session_id, ws=ws),
             llm_model=getattr(llm, "model", None),
             routing_config=getattr(chat_config, "routing", None),
             execution_session_id=execution_session_id,
@@ -276,7 +274,7 @@ class AcpChatAgent(Agent):
             group_scope=_platform_router.group_conversation_scope(platform_type),
         )
         if workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
-            return workspace.ensure()
+            return workspace
 
         # The shared cc-connect key is itself the stable conversation identity.
         # Recover it directly if the hook env was unavailable, rather than ever
@@ -285,7 +283,7 @@ class AcpChatAgent(Agent):
             os.environ.get("CC_SESSION_KEY") or os.environ.get("CC_HOOK_SESSION_KEY") or ""
         ).strip()
         if not session_key:
-            return workspace.ensure()
+            return workspace
         adapter = _platform_router.get_adapter(platform_type)
         identity = adapter.parse_session_identity(session_key=session_key)
         if (
@@ -293,7 +291,7 @@ class AcpChatAgent(Agent):
             or identity.chat_kind != "group"
             or not identity.chat_id
         ):
-            return workspace.ensure()
+            return workspace
         return _agent_bridge._compose_workspace_from_identity(
             current=workspace,
             user_id="",
@@ -315,11 +313,6 @@ class AcpChatAgent(Agent):
 
         platform_type = self._platform_type()
         if getattr(session.workspace, "scope", "actor") != WORKSPACE_SCOPE_GROUP_SHARED:
-            # ``inject_sender`` is a cc-connect project setting, so QQ private
-            # messages receive the same outer envelope as shared-group turns.
-            # Their authorization identity is already fixed by the private
-            # session key; validate and remove a present transport envelope so
-            # it never becomes ordinary model-visible user text.
             if platform_type != "qq":
                 return session, user_text, None
             expected_user_id = str(session.workspace.user_id or "")
@@ -328,11 +321,6 @@ class AcpChatAgent(Agent):
                     "qq_session_identity_unresolved",
                     "QQ 会话缺少稳定的群或私聊身份，已拒绝处理；请让维护者检查 cc-connect session key 与 hook 配置。",
                 )
-            if not user_text.startswith("[cc-connect "):
-                # Compatibility with an already-running private session whose
-                # cc-connect config has not yet been re-rendered. The private
-                # session key itself remains the stable actor identity.
-                return session, user_text, None
             private_conversation = ConversationIdentity(
                 platform=platform_type,
                 chat_kind="p2p",
@@ -348,7 +336,7 @@ class AcpChatAgent(Agent):
                     "qq_sender_user_mismatch",
                     "消息发送者与当前私聊会话不一致，已拒绝处理。",
                 )
-            return session, parsed.text, None
+            return session, parsed.text, parsed.identity
         conversation = ConversationIdentity(
             platform=platform_type,
             chat_kind="group",
@@ -382,9 +370,13 @@ class AcpChatAgent(Agent):
         session_id: str,
         identity: TurnIdentity | None,
     ) -> SessionState:
-        """Select actor-bound execution state after the access gate allows the turn."""
+        """Select actor-bound group execution state after ACP admission."""
 
-        if identity is None:
+        if (
+            identity is None
+            or getattr(session.workspace, "scope", "actor") != WORKSPACE_SCOPE_GROUP_SHARED
+        ):
+            self._materialize_admitted_workspace(session)
             return session
         actor = identity
         conversation = actor.conversation
@@ -415,8 +407,11 @@ class AcpChatAgent(Agent):
                 ws=actor_ws,
                 execution_session_id=execution_id,
             )
+            self._materialize_admitted_workspace(actor_session)
             cache[cache_key] = actor_session
             self._evict_group_actor_sessions(cache, session_id=session_id)
+        else:
+            self._materialize_admitted_workspace(actor_session)
         move_to_end = getattr(cache, "move_to_end", None)
         if callable(move_to_end):
             move_to_end(cache_key)
@@ -442,6 +437,10 @@ class AcpChatAgent(Agent):
         )
         self._store_session(session_id, actor_session)
         return actor_session
+
+    @staticmethod
+    def _materialize_admitted_workspace(session: SessionState) -> None:
+        session.materialize_workspace()
 
     def _evict_group_actor_sessions(
         self,
@@ -582,6 +581,8 @@ class AcpChatAgent(Agent):
         session_id: str,
         session: SessionState,
     ) -> SessionState:
+        if not session.is_workspace_materialized:
+            raise RuntimeError("ACP session workspace was not activated after admission")
         if session.is_materialized:
             return session
         agent_runtime = await asyncio.to_thread(self._get_or_build_agent_runtime)
@@ -934,12 +935,13 @@ class AcpChatAgent(Agent):
         mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio] | None = None,
         **kwargs: Any,
     ) -> NewSessionResponse:
-        """新会话：解析稳定 conversation workspace 并初始化 MEMORY.md。
+        """Create a side-effect-free conversation shell from stable transport identity.
 
-        cc-connect 启动 ACP server 进程前通过 ``session.started`` hook 注入
-        ``USER_ID / CHAT_ID / CHAT_KIND``。私聊和 actor-scoped 群聊保持用户隔离；
-        QQ shared key 直接映射到 ``group_<chat_id>/shared/``，逐轮 actor 稍后由
-        与 prompt 绑定的 sender envelope 解析。
+        同步 ``message.received`` hook 在 cc-connect 启动 ACP server 前写入受保护的
+        会话身份文件，wrapper 只在文件尚不存在时从稳定 session key 建立会话身份。
+        私聊和 actor-scoped 群聊保持用户隔离；QQ shared key 直接映射到
+        ``group_<chat_id>/shared/``，逐轮 actor 稍后由与 prompt 绑定的 sender
+        envelope 解析。
 
         ACP 的 ``cwd`` 参数当前只用于日志；真实路径由稳定会话身份决定，不使用
         cc-connect 的 ``$WS_DEFAULT`` 作为用户可见 workspace。
@@ -949,17 +951,9 @@ class AcpChatAgent(Agent):
             self._platform_type(),
         )
 
-        # 启动期做一次轻量清理（attachments / downloads / results 三个目录按预设策略）。
-        try:
-            cleanup_workspace(ws)
-        except Exception:  # noqa: BLE001
-            _LOGGER.exception("cleanup_workspace on session/new failed (non-fatal)")
-
         session_id = uuid4().hex
         session = self._build_session(session_id=session_id, ws=ws)
         self._sessions[session_id] = session
-        if ws.scope != WORKSPACE_SCOPE_GROUP_SHARED:
-            asyncio.create_task(self._send_unnotified_completed_jobs(session_id, session))
 
         _LOGGER.info(
             "session/new | sid=%s | %s | role=%s | cc_cwd=%s | mcp_servers=%d",
@@ -982,7 +976,7 @@ class AcpChatAgent(Agent):
         mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio] | None = None,
         **kwargs: Any,
     ) -> LoadSessionResponse | None:
-        """会话恢复：本机器人不持久化历史，每次"恢复"等于建一个新 SessionState。"""
+        """Restore a side-effect-free shell; execution state is admitted per turn."""
         if session_id in self._sessions:
             _LOGGER.info("session/load | sid=%s reuse existing", session_id)
             return LoadSessionResponse()
@@ -993,8 +987,6 @@ class AcpChatAgent(Agent):
         )
         new_session = self._build_session(session_id=session_id, ws=ws)
         self._sessions[session_id] = new_session
-        if ws.scope != WORKSPACE_SCOPE_GROUP_SHARED:
-            asyncio.create_task(self._send_unnotified_completed_jobs(session_id, new_session))
         _LOGGER.info(
             "session/load | sid=%s | %s | role=%s (rebuilt fresh)",
             session_id,
@@ -1091,6 +1083,7 @@ class AcpChatAgent(Agent):
         user_text: str,
         workspace: Workspace | None = None,
         unauthenticated_intake: bool = False,
+        redact_identity: bool = False,
     ) -> Optional[TurnTaskRecorder]:
         # Turn traces include tool arguments, results and host paths. They are
         # diagnostic state, not collaborative group data.  Shared-group turns
@@ -1103,6 +1096,7 @@ class AcpChatAgent(Agent):
                 message_id=message_id,
                 user_text=user_text,
                 unauthenticated_intake=unauthenticated_intake,
+                redact_identity=redact_identity,
                 history_root=(
                     Path(os.environ["CHATCOPILOT_WORKSPACE_ROOT"]).expanduser()
                     if os.environ.get("CHATCOPILOT_WORKSPACE_ROOT")

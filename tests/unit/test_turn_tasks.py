@@ -513,7 +513,12 @@ def test_legacy_event_sequence_ignores_pathological_json(tmp_path: Path) -> None
     )
     event_path.chmod(0o600)
 
-    task_runtime._append_task_event(task_dir, "task_finished", {"ok": True})
+    task_runtime._append_task_event(
+        task_dir,
+        "task_finished",
+        {"ok": True},
+        workspace_root=tmp_path / "workspace",
+    )
 
     appended = json.loads(event_path.read_text(encoding="utf-8").splitlines()[-1])
     assert appended["sequence"] == 1
@@ -530,7 +535,12 @@ def test_event_writer_rejects_hardlinks_without_mutating_victims(tmp_path: Path)
     sequence_victim.write_text("KEEP-SEQUENCE", encoding="utf-8")
     os.link(sequence_victim, task_dir / task_runtime.EVENT_SEQUENCE_FILENAME)
     try:
-        task_runtime._append_task_event(task_dir, "activity", {"value": 1})
+        task_runtime._append_task_event(
+            task_dir,
+            "activity",
+            {"value": 1},
+            workspace_root=tmp_path / "workspace",
+        )
     except OSError:
         pass
     else:
@@ -542,7 +552,12 @@ def test_event_writer_rejects_hardlinks_without_mutating_victims(tmp_path: Path)
     event_victim.write_text("KEEP-EVENT", encoding="utf-8")
     os.link(event_victim, task_dir / task_runtime.EVENTS_FILENAME)
     try:
-        task_runtime._append_task_event(task_dir, "activity", {"value": 2})
+        task_runtime._append_task_event(
+            task_dir,
+            "activity",
+            {"value": 2},
+            workspace_root=tmp_path / "workspace",
+        )
     except OSError:
         pass
     else:
@@ -563,7 +578,12 @@ def test_event_writer_rejects_symlinked_task_directory_without_touching_target(
     task_dir.symlink_to(external, target_is_directory=True)
 
     try:
-        task_runtime._append_task_event(task_dir, "activity", {"value": 1})
+        task_runtime._append_task_event(
+            task_dir,
+            "activity",
+            {"value": 1},
+            workspace_root=workspace,
+        )
     except OSError:
         pass
     else:
@@ -618,8 +638,18 @@ def test_event_sequence_rejects_oversized_state_and_recovers_from_log(
     sequence_path.write_text("9" * 64, encoding="ascii")
     sequence_path.chmod(0o600)
 
-    task_runtime._append_task_event(task_dir, "first", {})
-    task_runtime._append_task_event(task_dir, "second", {})
+    task_runtime._append_task_event(
+        task_dir,
+        "first",
+        {},
+        workspace_root=tmp_path / "workspace",
+    )
+    task_runtime._append_task_event(
+        task_dir,
+        "second",
+        {},
+        workspace_root=tmp_path / "workspace",
+    )
 
     events = [
         json.loads(line)
@@ -638,7 +668,12 @@ def test_event_encoding_failure_does_not_advance_sequence_sidecar(
     task_dir.mkdir(parents=True)
 
     try:
-        task_runtime._append_task_event(task_dir, "x" * (70 * 1024), {})
+        task_runtime._append_task_event(
+            task_dir,
+            "x" * (70 * 1024),
+            {},
+            workspace_root=tmp_path / "workspace",
+        )
     except ValueError:
         pass
     else:
@@ -646,7 +681,12 @@ def test_event_encoding_failure_does_not_advance_sequence_sidecar(
 
     sequence_path = task_dir / task_runtime.EVENT_SEQUENCE_FILENAME
     assert not sequence_path.exists()
-    task_runtime._append_task_event(task_dir, "valid", {})
+    task_runtime._append_task_event(
+        task_dir,
+        "valid",
+        {},
+        workspace_root=tmp_path / "workspace",
+    )
     event = json.loads(
         (task_dir / task_runtime.EVENTS_FILENAME).read_text(encoding="utf-8")
     )
@@ -669,7 +709,12 @@ def test_event_sequence_reconciles_stale_sidecar_with_authoritative_log(
     sequence_path.write_text("4", encoding="ascii")
     sequence_path.chmod(0o600)
 
-    task_runtime._append_task_event(task_dir, "next", {})
+    task_runtime._append_task_event(
+        task_dir,
+        "next",
+        {},
+        workspace_root=tmp_path / "workspace",
+    )
 
     events = [json.loads(line) for line in event_path.read_text().splitlines()]
     assert [event["sequence"] for event in events] == [5, 6]
@@ -697,7 +742,12 @@ def test_event_writer_tightens_legacy_event_log_permissions(tmp_path: Path) -> N
     )
     event_path.chmod(0o644)
 
-    task_runtime._append_task_event(task_dir, "task_finished", {"ok": True})
+    task_runtime._append_task_event(
+        task_dir,
+        "task_finished",
+        {"ok": True},
+        workspace_root=tmp_path / "workspace",
+    )
 
     assert stat.S_IMODE(event_path.stat().st_mode) == 0o600
     events = [json.loads(line) for line in event_path.read_text().splitlines()]
@@ -727,7 +777,12 @@ def test_event_writer_rejects_group_writable_legacy_log(tmp_path: Path) -> None:
     event_path.chmod(0o666)
 
     try:
-        task_runtime._append_task_event(task_dir, "task_finished", {"ok": True})
+        task_runtime._append_task_event(
+            task_dir,
+            "task_finished",
+            {"ok": True},
+            workspace_root=tmp_path / "workspace",
+        )
     except OSError:
         pass
     else:
@@ -1649,7 +1704,13 @@ def test_concurrent_delegated_completions_preserve_all_results(
 
     monkeypatch.setattr(task_runtime, "_read_private_task_json", delayed_task_read)
 
-    def delayed_event_append(task_dir: Path, event_type: str, payload: dict) -> None:
+    def delayed_event_append(
+        task_dir: Path,
+        event_type: str,
+        payload: dict,
+        *,
+        workspace_root: Path,
+    ) -> None:
         nonlocal completion_event_count
         if event_type == "job_completed":
             with append_guard:
@@ -1659,7 +1720,12 @@ def test_concurrent_delegated_completions_preserve_all_results(
                 # If the completion lock is released before event persistence,
                 # the terminal worker can append task_finished first.
                 terminal_event_persisted.wait(timeout=0.3)
-        original_append(task_dir, event_type, payload)
+        original_append(
+            task_dir,
+            event_type,
+            payload,
+            workspace_root=workspace_root,
+        )
         if event_type == "task_finished":
             terminal_event_persisted.set()
 

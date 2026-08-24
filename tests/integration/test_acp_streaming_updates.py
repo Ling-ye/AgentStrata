@@ -29,6 +29,13 @@ class _FakeConn:
         self.updates.append((session_id, update))
 
 
+class _FakeTaskRecorder:
+    task_id = "task_test"
+
+    def record_event(self, **_kwargs: Any) -> None:
+        return None
+
+
 class _FakeAgentSession:
     def __init__(
         self,
@@ -77,6 +84,8 @@ class _FakeSession:
         lifecycle_barrier: Any = None,
     ) -> None:
         self.is_materialized = True
+        self.is_workspace_materialized = False
+        self.materialization_calls = 0
         self.debug_mode = debug_mode
         self.assistant_mode = AssistantMode.PERFORMANCE
         self.lifecycle_barrier = lifecycle_barrier
@@ -95,6 +104,11 @@ class _FakeSession:
             return_text=return_text,
             lifecycle_intents=lifecycle_intents,
         )
+
+    def materialize_workspace(self) -> bool:
+        self.materialization_calls += 1
+        self.is_workspace_materialized = True
+        return self.materialization_calls == 1
 
     def message_count(self) -> int:
         return 1
@@ -125,7 +139,7 @@ class StreamingUpdateTests(unittest.TestCase):
                 agent._sessions = {"sid": session}
                 agent._conn = _FakeConn()
                 agent._start_turn_task = (
-                    (lambda **_kwargs: SimpleNamespace(task_id="task_test"))
+                    (lambda **_kwargs: _FakeTaskRecorder())
                     if tracking_available
                     else (lambda **_kwargs: None)
                 )
@@ -153,9 +167,11 @@ class StreamingUpdateTests(unittest.TestCase):
         return asyncio.run(run_case())
 
     def test_non_debug_streaming_sends_only_final_update(self) -> None:
-        updates = self._run_prompt(_FakeSession(debug_mode=False))
+        session = _FakeSession(debug_mode=False)
+        updates = self._run_prompt(session)
 
         self.assertEqual(updates, [("sid", "你好")])
+        self.assertEqual(session.materialization_calls, 1)
 
     def test_debug_streaming_sends_only_final_text_update(self) -> None:
         updates = self._run_prompt(_FakeSession(debug_mode=True))

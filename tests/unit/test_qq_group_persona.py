@@ -14,7 +14,6 @@ from chatcopilot.middleware.acp.agent_bridge import (
     _refresh_session_prompt_plan,
 )
 from chatcopilot.middleware.acp.session_state import SessionState
-from chatcopilot.middleware.acp.project_access import restricted_project_request_reply
 from chatcopilot.core.workspace_runtime import (
     MiddlewareWorkspaceService,
     Workspace,
@@ -29,16 +28,6 @@ def _workspace(tmp_path: Path, *, actor_id: str = "10001") -> Workspace:
         user_id=actor_id,
         scope=WORKSPACE_SCOPE_GROUP_SHARED,
     ).ensure()
-
-
-def _session(tmp_path: Path, role: Role) -> SimpleNamespace:
-    return SimpleNamespace(
-        role=role,
-        workspace=_workspace(tmp_path, actor_id=role.value),
-        runtime=SimpleNamespace(
-            access=AccessSpec(owner_only_project_access=True)
-        ),
-    )
 
 
 def test_group_persona_merges_global_then_group_without_shared_file(
@@ -75,15 +64,6 @@ def test_group_persona_merges_global_then_group_without_shared_file(
         )
         assert "untrusted shared file" not in prompt
         assert "ignored legacy" not in prompt
-
-
-def test_owner_group_persona_request_uses_normal_role_authorization(
-    tmp_path: Path,
-) -> None:
-    text = "模仿下某个角色的性格和说话风格，用作你在此群未来的人设"
-
-    assert restricted_project_request_reply(_session(tmp_path, Role.OWNER), text) is None
-    assert restricted_project_request_reply(_session(tmp_path, Role.USER), text) is None
 
 
 def test_every_turn_refreshes_group_persona_and_memory_for_all_actors(

@@ -45,8 +45,8 @@ ccp_prepend_user_bins
 ccp_apply_bot_deploy_config
 # ~/.chatcopilot.env 是运行时权威配置源；每次启动都重新加载，覆盖当前 shell
 # 里可能残留的旧飞书 App，确保 cc-connect 与 Python notifier 使用同一套凭证。
-# QQ_ 必须在父进程加载：@ 代理运行在子 shell，不能替 cc-connect/ACP 继承
-# OneBot token、回传目标与 URL。平台 sender 会在每次发送前再次校验这些值。
+# QQ_ 必须在父进程加载：Relay、cc-connect 与平台 sender 都需要 OneBot token、
+# 回传目标与 URL。ACP 名单只由 bot_wrapper 从 bot-local env 重新加载。
 ccp_load_env "FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
 ccp_apply_bot_deploy_config
 
@@ -91,15 +91,16 @@ if [ -d "$CC_CONFIG_DIR/sessions" ]; then
     echo "    [OK] 已清理 cc-connect sessions 缓存"
 fi
 
-# ---------- QQ 用户/群/@门禁：启动 OneBot 访问代理 ----------
-# 仅 qq 且启用 QQ_REQUIRE_AT_IN_GROUP 或 QQ_ALLOW_GROUPS 时生效。
-# 代理或 OneBot 安全边界不可用时 fail-closed，禁止直连 NapCat 绕过访问策略。
-QQ_PROXY_HELPER="$MT_HOME/deploy/wsl/_start_qq_proxy.sh"
-if [ -f "$QQ_PROXY_HELPER" ]; then
-    if ! bash "$QQ_PROXY_HELPER"; then
-        err "QQ 访问代理或 OneBot 安全边界不可用；拒绝启动 cc-connect"
-        exit 1
-    fi
+# ---------- QQ 明确 @ 触发：启动 OneBot Relay ----------
+# QQ 固定走 Relay；Relay 或 OneBot 安全边界不可用时 fail-closed，不提供直连降级。
+QQ_RELAY_HELPER="$MT_HOME/deploy/wsl/_start_qq_proxy.sh"
+if [ ! -f "$QQ_RELAY_HELPER" ]; then
+    err "缺少 QQ Relay 启动脚本：$QQ_RELAY_HELPER"
+    exit 1
+fi
+if ! bash "$QQ_RELAY_HELPER"; then
+    err "QQ Relay 或 OneBot 安全边界不可用；拒绝启动 cc-connect"
+    exit 1
 fi
 
 # ---------- 校验固定 cc-connect 可执行 ----------
@@ -125,7 +126,6 @@ echo "    instance:   ${CHATCOPILOT_INSTANCE_ID:-default}"
 echo "    cc HOME:    ${CC_HOME}"
 echo "    config:     ${CC_CONFIG}"
 echo "    work_dir:   ${WS_ROOT}/default"
-echo "    用户提问日志：${LOG_DIR}/$(date +%F).log"
 echo
 
 PIDFILE="$CC_HOME/cc-connect.pid"
@@ -180,4 +180,5 @@ echo "    >>> 关闭本终端即停止服务 <<<"
 echo
 
 # 把 CC_LOG_FILE 显式注入子进程 env，cc-connect 与 ACP runtime 都靠它定位日志。
-exec env HOME="$CC_HOME" CC_LOG_FILE="${CC_LOG_FILE:-/tmp/cc-connect.log}" "$CC_CONNECT_BIN"
+exec env -u QQ_ALLOW_FROM -u QQ_ALLOW_GROUPS \
+    HOME="$CC_HOME" CC_LOG_FILE="${CC_LOG_FILE:-/tmp/cc-connect.log}" "$CC_CONNECT_BIN"

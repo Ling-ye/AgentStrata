@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# _start_qq_proxy.sh — 启动【当前实例】的 QQ OneBot 用户/群/@ 访问代理。
+# _start_qq_proxy.sh — 启动【当前实例】的 QQ OneBot @ Relay。
 #
-# 仅当实例 platform=qq 且启用群聊 @ 或群级白名单时启动；否则直接 no-op 退出 0。
+# QQ 实例固定启动；非 QQ 实例直接 no-op 退出 0。
 # 由 start.sh 在 `exec cc-connect` 之前调用：
-#   - 成功（或无需启动）→ 退出 0；
-#   - 应启动但起不来（端口占用 / 崩溃）→ 退出 3，阻止 QQ 实例启动；
+#   - 成功（或非 QQ）→ 退出 0；
+#   - Relay 起不来（端口占用 / 崩溃）→ 退出 3，阻止 QQ 实例启动；
 #   - OneBot token / 回环地址 / 双向认证探针失败 → 退出 4，阻止 QQ 实例启动。
 #
 # 进程：后台 nohup 跑 `python -m chatcopilot qq-at-proxy`，pidfile/日志按实例隔离。
@@ -14,7 +14,7 @@ set -uo pipefail
 source "$(dirname "$0")/_load_env.sh"
 ccp_prepend_user_bins
 ccp_apply_bot_deploy_config
-ccp_load_env "QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
+ccp_load_env "QQ_ACCOUNT|QQ_WS_URL|QQ_ACCESS_TOKEN|QQ_AT_PROXY_URL|QQ_REQUIRE_AT_IN_GROUP|QQ_AT_ALL_COUNTS|CHATCOPILOT_|WORKSPACE_ROOT"
 ccp_apply_bot_deploy_config
 
 MT_HOME="${CHATCOPILOT_HOME:-$CCP_HOME_DEFAULT}"
@@ -29,32 +29,29 @@ PROXY_LOG="$PROXY_LOG_DIR/$(date +%F).log"
 
 log() { printf "[qq-at-proxy] %s\n" "$*" >&2; }
 
-# ---------- 是否需要启动 ----------
-# platform=qq 由已渲染的 config.toml 判定（最可靠）；require_at 与群名单由 env 控制。
-if [ ! -f "$CC_CONFIG" ] || ! grep -q 'type = "qq"' "$CC_CONFIG" 2>/dev/null; then
-    log "非 qq 实例（或 config 未渲染），跳过 @ 过滤代理"
+# ---------- 是否为 QQ 实例 ----------
+# platform=qq 由已渲染的 config.toml 判定（最可靠）。配置缺失时不启动
+# cc-connect，避免落入它自带的默认拓扑。
+if [ ! -f "$CC_CONFIG" ]; then
+    log "cc-connect 配置不存在：$CC_CONFIG；拒绝启动"
+    exit 3
+fi
+if ! grep -q 'type = "qq"' "$CC_CONFIG" 2>/dev/null; then
+    log "非 qq 实例，跳过 QQ @ Relay"
     exit 0
 fi
-REQUIRE_AT="${QQ_REQUIRE_AT_IN_GROUP:-true}"
-GROUP_ALLOWLIST="${QQ_ALLOW_GROUPS:-}"
-case "$(printf '%s' "$REQUIRE_AT" | tr '[:upper:]' '[:lower:]')" in
-    0|false|no|off)
-        if [ -n "$(printf '%s' "$GROUP_ALLOWLIST" | tr -d '[:space:]')" ]; then
-            START_PROXY=1
-        else
-            START_PROXY=0
-        fi
-        ;;
-    *)
-        START_PROXY=1
-        ;;
-esac
+for _legacy_key in QQ_REQUIRE_AT_IN_GROUP QQ_AT_ALL_COUNTS; do
+    if [ -n "${!_legacy_key+x}" ]; then
+        log "已废弃配置 $_legacy_key 仍然存在；请删除后重新 provision"
+        exit 4
+    fi
+done
 
-# ---------- 停旧代理 ----------
+# ---------- 停旧 Relay ----------
 if [ -r "$PIDFILE" ]; then
     OLD="$(tr -d ' \t\r\n' < "$PIDFILE" 2>/dev/null || true)"
     if [ -n "$OLD" ] && kill -0 "$OLD" 2>/dev/null; then
-        log "停止旧代理 pid=$OLD"
+        log "停止旧 Relay pid=$OLD"
         kill -TERM "$OLD" 2>/dev/null || true
         sleep 1
         kill -KILL "$OLD" 2>/dev/null || true
@@ -70,7 +67,7 @@ else
     PY="$(command -v python3 || command -v python || true)"
 fi
 if [ -z "${PY:-}" ]; then
-    log "未找到 python 解释器，无法启动代理"
+    log "未找到 python 解释器，无法启动 Relay"
     exit 3
 fi
 
@@ -86,39 +83,49 @@ if [ "$_probe_rc" != "0" ]; then
     exit 4
 fi
 
-if [ "$START_PROXY" = "0" ]; then
-    log "未启用群聊 @ 或群级白名单；OneBot 双向认证已通过，跳过访问代理"
-    exit 0
-fi
-
 mkdir -p "$PROXY_LOG_DIR" "$CC_HOME" 2>/dev/null || true
 PROXY_URL="${QQ_AT_PROXY_URL:-ws://127.0.0.1:3002}"
-# 解析监听端口用于健康探测
-PORT="$(printf '%s' "$PROXY_URL" | sed -n 's#.*:\([0-9][0-9]*\).*#\1#p')"
-[ -z "$PORT" ] && PORT=3002
+IFS=$'\t' read -r RELAY_HOST PORT < <(
+    "$PY" -c \
+        'import sys; from urllib.parse import urlsplit; parsed = urlsplit(sys.argv[1]); print(parsed.hostname or "", parsed.port or "", sep="\t")' \
+        "$PROXY_URL"
+)
+if [ -z "$RELAY_HOST" ] || [ -z "$PORT" ]; then
+    log "Relay 监听地址无法解析；拒绝启动 QQ 实例"
+    exit 4
+fi
 
-log "启动代理：$PY -m chatcopilot qq-at-proxy（监听 $PROXY_URL，上游 ${QQ_WS_URL:-ws://127.0.0.1:3001}，日志 $PROXY_LOG）"
+log "启动 Relay：$PY -m chatcopilot qq-at-proxy（监听 $PROXY_URL，上游 ${QQ_WS_URL:-ws://127.0.0.1:3001}，日志 $PROXY_LOG）"
 PYTHONPATH="$MT_HOME/src${PYTHONPATH:+:$PYTHONPATH}" \
-    nohup "$PY" -m chatcopilot qq-at-proxy >> "$PROXY_LOG" 2>&1 &
+    nohup env -u QQ_ALLOW_FROM -u QQ_ALLOW_GROUPS \
+    "$PY" -m chatcopilot qq-at-proxy >> "$PROXY_LOG" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "$PIDFILE"
 
 # ---------- 健康门：最多等 ~10s，确认进程存活 + 端口在监听 ----------
 for _ in $(seq 1 20); do
     if ! kill -0 "$NEW_PID" 2>/dev/null; then
-        log "代理进程已退出（pid=$NEW_PID）；详见 $PROXY_LOG"
+        log "Relay 进程已退出（pid=$NEW_PID）；详见 $PROXY_LOG"
         rm -f "$PIDFILE"
         exit 3
     fi
-    if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
-        exec 3>&- 2>/dev/null || true
-        log "代理就绪（pid=$NEW_PID，端口 $PORT 在监听）"
-        exit 0
+    if "$PY" -c \
+        'import socket, sys; connection = socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=0.25); connection.close()' \
+        "$RELAY_HOST" "$PORT" >/dev/null 2>&1; then
+        if PYTHONPATH="$MT_HOME/src${PYTHONPATH:+:$PYTHONPATH}" \
+            QQ_ACCESS_TOKEN="${QQ_ACCESS_TOKEN:-}" \
+            "$PY" -m chatcopilot.platforms.qq.gateway_health \
+            probe --url "$PROXY_URL" --url-env-key QQ_AT_PROXY_URL; then
+            log "Relay 就绪并通过下游认证与 OneBot 往返探针（pid=$NEW_PID，监听 $RELAY_HOST:$PORT）"
+            exit 0
+        fi
+        log "Relay 下游认证或 OneBot 往返探针失败；拒绝启动 QQ 实例"
+        break
     fi
     sleep 0.5
 done
 
-log "代理在 ~10s 内未就绪（端口 $PORT 未监听）；详见 $PROXY_LOG"
+log "Relay 在 ~10s 内未就绪（$RELAY_HOST:$PORT 未监听）；详见 $PROXY_LOG"
 kill -TERM "$NEW_PID" 2>/dev/null || true
 sleep 1
 kill -KILL "$NEW_PID" 2>/dev/null || true

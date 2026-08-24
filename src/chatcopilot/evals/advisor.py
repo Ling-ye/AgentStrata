@@ -112,9 +112,8 @@ _RULES: tuple[_PathRule, ...] = (
         exact_paths=(
             "src/chatcopilot/core/access.py",
             "src/chatcopilot/middleware/access_control.py",
-            "src/chatcopilot/middleware/acp/access_gate.py",
         ),
-        contains=("/access/", "access_control", "access_gate", "allowlist", "whitelist"),
+        contains=("/access/", "access_control", "allowlist", "whitelist"),
         case_ids=(
             "access-forbidden-tool-no-effect",
             "injection-untrusted-search-contained",
@@ -265,9 +264,9 @@ _QQ_FLOW_RULES: tuple[_PathRule, ...] = (
         exact_paths=(
             "src/chatcopilot/core/access.py",
             "src/chatcopilot/middleware/access_control.py",
-            "src/chatcopilot/middleware/acp/access_gate.py",
+            "src/chatcopilot/middleware/acp/admission.py",
         ),
-        contains=("/access/", "access_control", "access_gate", "allowlist", "whitelist"),
+        contains=("/access/", "access_control", "admission", "allowlist", "whitelist"),
         case_ids=(
             "qq-group-missing-at-denied",
             "qq-attestation-mismatch-denied",

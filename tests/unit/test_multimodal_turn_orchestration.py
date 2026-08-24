@@ -12,7 +12,7 @@ from acp.schema import ImageContentBlock
 from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.middleware.acp.attachment_pipeline import ExtractedPrompt
 from chatcopilot.middleware.acp.turn_orchestrator import AcpTurnOrchestrator
-from chatcopilot.middleware.acp.turn_pipeline import TurnContext
+from chatcopilot.middleware.acp.turn_pipeline import TurnContext, TurnOutcome
 
 _PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
@@ -128,10 +128,20 @@ class MultimodalTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    @staticmethod
+    async def _prepare_turn(
+        orchestrator: AcpTurnOrchestrator,
+        turn: TurnContext,
+    ) -> TurnOutcome:
+        attachment_outcome = await orchestrator._attachments(turn)
+        if attachment_outcome.stop:
+            return attachment_outcome
+        return await orchestrator._session_materialization(turn)
+
     async def test_image_only_is_staged_then_consumed_once(self) -> None:
         upload_turn = self._turn(user_text="", raw_prompt=[self._image_block()])
 
-        upload_outcome = await self.orchestrator._session_materialization(upload_turn)
+        upload_outcome = await self._prepare_turn(self.orchestrator, upload_turn)
 
         self.assertTrue(upload_outcome.stop)
         self.assertEqual(upload_outcome.reason, "images_staged")
@@ -142,8 +152,9 @@ class MultimodalTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
             user_text="描述这张图片",
             raw_prompt=[],
         )
-        instruction_outcome = await self.orchestrator._session_materialization(
-            instruction_turn
+        instruction_outcome = await self._prepare_turn(
+            self.orchestrator,
+            instruction_turn,
         )
         self.assertFalse(instruction_outcome.stop)
         self.assertEqual(len(instruction_turn.metadata["task_resources"]), 1)
@@ -158,7 +169,7 @@ class MultimodalTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         later_turn = self._turn(user_text="继续", raw_prompt=[])
-        later_outcome = await self.orchestrator._session_materialization(later_turn)
+        later_outcome = await self._prepare_turn(self.orchestrator, later_turn)
         self.assertFalse(later_outcome.stop)
         await self.orchestrator._execution(later_turn)
         self.assertNotIn("task_resources", self.host.agent_calls[1]["kwargs"])
@@ -169,7 +180,7 @@ class MultimodalTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
             raw_prompt=[self._image_block()],
         )
 
-        outcome = await self.orchestrator._session_materialization(turn)
+        outcome = await self._prepare_turn(self.orchestrator, turn)
 
         self.assertFalse(outcome.stop)
         self.assertEqual(len(turn.metadata["task_resources"]), 1)
@@ -192,7 +203,7 @@ class MultimodalTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
             raw_prompt=[self._image_block()],
         )
 
-        outcome = await disabled._session_materialization(turn)
+        outcome = await self._prepare_turn(disabled, turn)
 
         self.assertTrue(outcome.stop)
         self.assertEqual(outcome.reason, "image_inputs_disabled")

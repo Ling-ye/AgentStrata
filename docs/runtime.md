@@ -108,7 +108,7 @@ QQ 群使用 chat scope：`qq:g:<group-id>` 共享 session key 只标识群，cc
 prompt 首行注入 sender envelope，并由同步 `message.received` hook 把真实 transport actor 与
 原始正文摘要追加到实例私有、有界加锁的 JSON attestation 队列。state/lock 位于实例 `0700`
 session-env 目录，按 exact session key 的 SHA-256 命名且自身为 `0600`；wrapper 通过严格 JSON
-白名单 loader 只传递稳定 conversation 字段，绝不 shell source。Middleware 在 access gate、
+白名单 loader 只传递稳定 conversation 字段，绝不 shell source。Middleware 在 identity/admission、
 附件导入、task 创建、工具或模型执行前交叉校验 envelope 的平台/群/发送者与 hook 的发送者/
 正文摘要，并按随机记录 ID 精确消费一条；缺失、陈旧、
 畸形、跨群或不匹配均失败关闭。稳定发送者 ID继续用于准入和角色计算，显示名不参与授权。共享群聊不再依赖刷新临时 env 后销毁并重建

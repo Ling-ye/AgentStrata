@@ -91,7 +91,6 @@ export interface BotStatus {
   cc_log_size: number | null;
   ws_connected: boolean | null;
   error_count: number;
-  questions_today: number | null;
   mcp_services?: McpServiceStatus[];
   enabled_services?: BotEnabledService[];
   tool_packs?: ToolPackGroup[];
@@ -205,9 +204,7 @@ export interface BotConfig {
   codebases: { registry: string } | null;
   skills: { manifest: string } | null;
   access: {
-    private_require_whitelist: boolean;
-    group_require_whitelist: boolean;
-    group_require_mention: boolean;
+    owner_only_project_access: boolean;
   } | null;
 }
 

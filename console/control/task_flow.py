@@ -24,7 +24,7 @@ LAYER_ORDER = (
 _LAYER_LABELS = {
     "channel": "外部渠道",
     "transport": "NapCat / OneBot / cc-connect",
-    "gateway": "接入网关",
+    "gateway": "QQ @ Relay",
     "middleware": "ACP 中间件",
     "agent": "主 Agent",
     "model": "模型",
@@ -508,17 +508,16 @@ def _layer_status(layer_id: str, transitions: Iterable[Mapping[str, object]]) ->
 
 def _omissions(
     layer_coverage: Mapping[str, str],
-    transitions: Iterable[Mapping[str, object]],
+    _transitions: Iterable[Mapping[str, object]],
     task: Mapping[str, object],
     events_truncated: bool,
     integrity_gap: bool,
 ) -> List[Dict[str, str]]:
-    transition_list = list(transitions)
     omissions: List[Dict[str, str]] = []
     messages = {
         "channel": "没有外部客户端回执；不能证明用户已收到或阅读。",
         "transport": "没有可绑定到该任务的 NapCat / OneBot / cc-connect 传输证据。",
-        "gateway": "没有可绑定到该任务的接入网关决策收据。",
+        "gateway": "Relay 不产生准入收据；缺少可直接绑定到任务的传输触发证据。",
         "model": "没有模型上下文或调用事件；模型内部状态不会被推断。",
         "capability": "本任务没有观察到工具、子 Agent 或流程调用。",
         "delivery": "没有观察到 Agent 最终结果或后续交付边界。",
@@ -528,21 +527,6 @@ def _omissions(
             omissions.append(
                 {"code": f"{layer_id}_evidence_missing", "layer": layer_id, "message": messages[layer_id]}
             )
-    gateway_receipts = [
-        item
-        for item in transition_list
-        if item.get("kind") == "gateway.access_decision"
-    ]
-    if not gateway_receipts or all(
-        item.get("evidence_level") == "missing" for item in gateway_receipts
-    ):
-        omissions.append(
-            {
-                "code": "gateway_ingress_receipt_missing",
-                "layer": "gateway",
-                "message": "没有可精确关联的 QQ 接入代理准入收据；ACP 授权证据仍独立有效。",
-            }
-        )
     snapshots = task.get("context_snapshots")
     if isinstance(snapshots, list) and any(
         isinstance(item, dict) and item.get("coverage") == "provider_opaque"

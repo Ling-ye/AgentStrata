@@ -53,7 +53,7 @@ def test_status_checks_keep_stale_cc_log_informational() -> None:
     assert reasons == []
 
 
-def test_log_signal_reports_qq_proxy_upstream_failure() -> None:
+def test_log_signal_reports_qq_relay_upstream_failure() -> None:
     log_dir = _TMP_PARENT / "logs" / "lingye-copilot-qq"
     shutil.rmtree(_TMP_PARENT, ignore_errors=True)
     cc_dir = log_dir / "cc-connect"
@@ -88,13 +88,13 @@ def test_log_signal_reports_qq_proxy_upstream_failure() -> None:
         assert signal["ws_connected"] is False
         assert signal["error_count"] == 1
         assert "websocket is closing immediately" in str(signal["error_summary"])
-        assert signal["qq_proxy_error_count"] == 1
-        assert "cannot reach NapCat" in str(signal["qq_proxy_error_summary"])
+        assert signal["qq_relay_error_count"] == 1
+        assert "cannot reach NapCat" in str(signal["qq_relay_error_summary"])
     finally:
         shutil.rmtree(_TMP_PARENT, ignore_errors=True)
 
 
-def test_status_checks_report_qq_proxy_failure_as_critical() -> None:
+def test_status_checks_report_qq_relay_failure_as_critical() -> None:
     status = {
         "is_deployed": True,
         "registered": True,
@@ -102,17 +102,17 @@ def test_status_checks_report_qq_proxy_failure_as_critical() -> None:
         "ws_connected": False,
         "error_count": 1,
         "error_summary": "QQ OneBot websocket is closing immediately.",
-        "qq_proxy_error_count": 1,
-        "qq_proxy_error_summary": "QQ @ proxy cannot reach NapCat OneBot upstream.",
+        "qq_relay_error_count": 1,
+        "qq_relay_error_summary": "QQ @ Relay cannot reach NapCat OneBot upstream.",
     }
 
     checks, reasons = operations._status_checks(status)
 
-    proxy = next(item for item in checks if item["name"] == "qq_proxy")
-    assert proxy["ok"] is False
-    assert proxy["severity"] == "critical"
-    assert "cannot reach NapCat" in proxy["message"]
-    assert any("QQ @ proxy" in reason for reason in reasons)
+    relay = next(item for item in checks if item["name"] == "qq_relay")
+    assert relay["ok"] is False
+    assert relay["severity"] == "critical"
+    assert "cannot reach NapCat" in relay["message"]
+    assert any("QQ @ Relay" in reason for reason in reasons)
 
 
 def test_overview_does_not_mark_bot_unhealthy_for_stale_cc_log() -> None:

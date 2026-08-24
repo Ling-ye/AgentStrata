@@ -1,7 +1,7 @@
 ---
 id: architecture-boundary-hardening
 type: architecture
-status: implemented
+status: draft
 created: 2026-08-21
 ---
 
@@ -9,7 +9,7 @@ created: 2026-08-21
 
 AgentStrata 的层级方向已经有局部禁止导入规则，但原门禁没有覆盖声明范围内的完整静态 import 图：当时纳入 `src/chatcopilot` 与 Console 的 401 个 Python 模块、1,149 条可静态解析内部边中仍有 5 个强连通分量，现有架构测试也只调用前缀规则而没有执行全部语义检查。PromptPlan 在 DTO 中区分了宿主策略、运行时事实和不可信数据，renderer 却把 Bot 身份与风格合并进系统策略或 Codex 的 `trusted_policy` 字段；显式启用的工具包在模块加载异常时还会静默消失。
 
-本规格收敛五项同源问题：保留 PromptPlan 的端到端信任分区；用显式层级依赖图、受检 Python 模块的静态 import 图和兼容入口规则替换“局部黑名单即通过”；消除 ACP、Evaluation、QQ 和 workspace 的全部已知循环；按职责所有权拆出共享机制而不是机械切文件；完成生产代码与普通测试的 canonical import 迁移。原有 facade 和外部兼容导出继续存在，但内部实现不得依赖兼容入口。
+本规格收敛五项同源问题：保留 PromptPlan 的端到端信任分区；用显式层级依赖图、受检 Python 模块的静态 import 图和兼容入口规则替换“局部黑名单即通过”；消除 ACP、Evaluation、QQ 和 workspace 的全部已知循环；按职责所有权拆出共享机制而不是机械切文件；完成生产代码与普通测试的 canonical import 迁移。仍有实际外部契约的稳定 facade 可以保留；仅为旧内部路径服务且没有有效消费者的 QQ Relay、mention 和准入 facade 直接删除，不建立新兼容层。
 
 最强失败路径是只改变文件位置而保留反向调用、把 Bot 文本换个 JSON 字段却仍赋予系统权限、或让更严格的工具发现破坏可选能力检查。本次设计因此以可执行图约束、封闭的 Prompt layer-kind/trust 映射、显式工具物化失败和兼容入口白名单作为验收边界。
 
@@ -21,13 +21,13 @@ Native 的多个 renderer message 共同构成不可裁剪的 prompt prefix。Co
 
 `scripts/check_architecture.py` 解析绝对与相对导入，覆盖 `src/chatcopilot` 和 Console Python 模块，并建立两张静态图。第一张是显式 area DAG：contracts/project、core、catalog、domain、assembly/evaluation、entrypoint 只能依赖声明的下层 area；未声明的跨 area 边失败。第二张是模块图：任何包含两个及以上模块的强连通分量失败。兼容入口单独声明，只允许对应 facade、自身实现域和 `tests/unit/test_compatibility_exports.py` 使用；普通生产代码与测试必须使用 `contracts.tools`、`core.workspace_runtime`、`core.config`、`core.llm_client`、`core.concurrency`、`core.mcp_catalog`、`component_catalog` 和 `agent.search` 等 canonical surface。单元测试必须执行与 CLI 相同的检查入口和规则集合，避免静态门禁与测试门禁分叉。动态加载、非 Python 依赖和运行时调用关系不在该静态图内。
 
-循环按所有权拆除。Workspace identity 只依赖 `WorkspaceView` contract，不反向导入 concrete model。QQ token/loopback 校验归 `platforms.qq.boundary`，WebSocket relay 与 allowlist 归 `platforms.qq.access_proxy`，`at_proxy` 只保留 CLI facade，ingress probe 不再导入 CLI 私有符号。Evaluation 的 env/event/usage helper 归 execution support，Bot runtime 和 permission projection 归 evaluation runtime；runner、capability executor 与 isolated executor 只沿单向依赖调用。ACP mode mutation 接收 prompt refresh callback，job dispatcher 接收最小 host port，不再导入 server 或持有整个 server 对象；server 只负责协议/生命周期编排。
+循环按所有权拆除。Workspace identity 只依赖 `WorkspaceView` contract，不反向导入 concrete model。QQ token/loopback 校验归 `platforms.qq.boundary`；`platforms.qq.at_proxy` 是唯一 Relay 实现和 CLI 入口，只负责下游 token 边界、结构化 @ 触发与透明 WebSocket 转发，不解释名单或角色；旧 `access_proxy`、下划线 alias 和 mention-detection facade 删除。QQ allowlist parser 使用一个 canonical 严格实现，ACP 是唯一准入调用方；Evaluation 与 Owner 查询复用 parser 而不复制决策。Evaluation 的 env/event/usage helper 归 execution support，Bot runtime 和 permission projection 归 evaluation runtime；runner、capability executor 与 isolated executor 只沿单向依赖调用。ACP mode mutation 接收 prompt refresh callback，job dispatcher 接收最小 host port，不再导入 server 或持有整个 server 对象；server 只负责协议/生命周期编排。
 
 工具发现把 catalog binding 视为显式部署契约。模块 import 失败、缺少 `TOOLS`、导出错误类型、或声明工具名没有被物化时抛出带 module/pack/tool 证据的 `ToolMaterializationError`；只有专门的审计调用方可以选择结构化收集错误，运行时不得把异常降级为空工具列表。外部 ToolDef facade 保留，但 Agent、middleware、Evaluation、入口实现和普通测试统一从 `contracts.tools` 导入。
 
 唯一 PromptPlan 已删除的 builtin prompt 资源不再进入 package-data 或 Release allowlist；安装后 runtime probe 直接构造并渲染 canonical PromptPlan。该同步只移除已经不存在的打包输入，不恢复旧 prompt 体系。
 
-兼容范围仅包括既有导出路径和 CLI 入口，不改变 BotSpec YAML、平台协议、工具名、AgentTask/AgentEvent/AgentResult、Evaluation artifact 或 QQ 权限语义。若受检静态图暴露的新依赖只能靠允许上层反向导入才能通过，改造应停止并调整所有权，而不是增加例外。
+兼容范围仅包括仍被明确保留的外部导出和 CLI 入口。QQ BotSpec 的旧 admission 字段、旧 env 开关、`platform.mention_name`、`access_proxy` Python import、router mention API 和 ingress receipt 不属于保留契约，出现时明确失败或直接不存在；不做旧字段转换、导出 shim 或运行时 fallback。平台协议、工具名、AgentTask/AgentEvent/AgentResult 与既存 Evaluation artifact 读取能力保持。若受检静态图暴露的新依赖只能靠允许上层反向导入才能通过，改造应停止并调整所有权，而不是增加例外。
 
 ## Acceptance
 
@@ -37,7 +37,7 @@ Native 的多个 renderer message 共同构成不可裁剪的 prompt prefix。Co
 - 受检 Python 模块静态 import 图的强连通分量从基线 5 个降为 0；ACP、Evaluation、QQ、workspace 的反向私有导入不再存在。
 - Agent、middleware、Evaluation、入口实现和普通测试不再导入 `external_tools.shared.tool_spec` 或 `middleware.runtime.workspace`；旧路径只由兼容 facade、外部工具实现域及专门兼容测试使用。
 - 显式工具包无法完整物化时失败关闭，错误包含绑定模块和缺失工具；正常 catalog 仍投影 19 个 pack、69 个 static tool、4 个 MCP entry、4 个 subagent、0 个 workflow。
-- 原有稳定 facade、BotSpec、Agent backend、QQ ingress、安全状态、Evaluation artifact 和工具公开名称保持兼容。
+- 未被本规格明确删除的稳定 facade、Agent backend、安全状态、Evaluation artifact 读取与工具公开名称保持；旧 QQ admission/mention/receipt 兼容面不存在。
 - 受影响的 Prompt、工具注册、ACP job/mode、Evaluation、QQ ingress、workspace、BotSpec 和架构测试通过；全量 fast gate、public-repository gate、compileall、diff/status 检查报告实际结果和未验证边界。
 
 ## Verification

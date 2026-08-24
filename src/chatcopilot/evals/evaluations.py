@@ -28,6 +28,7 @@ from typing import Any, Callable, Iterator, Literal, Mapping, Sequence, TypeAlia
 
 from chatcopilot.agent.backends.registry import backend_ids
 from chatcopilot.agent.tools.registry import ToolMaterializationError, discover_tools
+from chatcopilot.core.allowlists import parse_numeric_allowlist
 from chatcopilot.core.config import ChatConfig, load_config
 from chatcopilot.evals.artifact_ids import (
     contained_artifact_path,
@@ -2314,14 +2315,12 @@ def _suite_case_preflight(
         )
     configured_search_sources = _configured_search_sources(runtime)
 
-    access_drivers: set[str] = set()
     for case in cases:
         definition = _case_definition(case)
         requirements = definition.get("requirements")
         if not isinstance(requirements, Mapping):
             requirements = {}
         plugin_id, driver_id = _case_plugin_driver(manifest, case)
-        access_drivers.add(driver_id)
         missing: list[str] = []
         capability_definition = definitions.get(case.case_id)
         if definitions:
@@ -2390,102 +2389,6 @@ def _suite_case_preflight(
             )
         )
 
-    if access_drivers.intersection({"acp_scenario", "qq_message_flow"}):
-        checks.extend(_access_configuration_checks(runtime=runtime, config=config))
-    return checks
-
-
-def _access_configuration_checks(*, runtime: Any, config: Any) -> list[dict[str, Any]]:
-    access = runtime.access
-    whitelist_env = str(getattr(access, "whitelist_env", "") or "").strip()
-    group_whitelist_env = str(getattr(access, "group_whitelist_env", "") or "").strip()
-    whitelist_raw = str(os.environ.get(whitelist_env, "") if whitelist_env else "").strip()
-    group_whitelist_raw = str(
-        os.environ.get(group_whitelist_env, "") if group_whitelist_env else ""
-    ).strip()
-    whitelist = tuple(
-        dict.fromkeys(value.strip() for value in whitelist_raw.split(",") if value.strip())
-    )
-    group_whitelist = tuple(
-        dict.fromkeys(value.strip() for value in group_whitelist_raw.split(",") if value.strip())
-    )
-    whitelist_ready = bool(
-        getattr(access, "enabled", False) and whitelist_env and whitelist and "*" not in whitelist
-    )
-    owner_raw = str(os.environ.get("CHATCOPILOT_ADD_OWNER_IDS", "")).strip()
-    admin_raw = str(os.environ.get("CHATCOPILOT_ADD_ADMIN_IDS", "")).strip()
-    owners = tuple(dict.fromkeys(value.strip() for value in owner_raw.split(",") if value.strip()))
-    admins = tuple(dict.fromkeys(value.strip() for value in admin_raw.split(",") if value.strip()))
-    privileged = {*owners, *admins}
-    ordinary_members = tuple(value for value in whitelist if value not in privileged)
-    role_ready = bool(owners and "*" not in owners and "*" not in admins and ordinary_members)
-    digest_material = "\0".join((*whitelist, *group_whitelist, *owners, *admins))
-    digest_key_ready = bool(
-        collect_env_secrets() or str(getattr(config.llm, "api_key", "") or "").strip()
-    )
-    digest = (
-        _private_configuration_digest(
-            digest_material,
-            fallback_secret=str(getattr(config.llm, "api_key", "") or ""),
-        )
-        if digest_key_ready
-        else ""
-    )
-    checks = [
-        _check(
-            "access_whitelist",
-            "实际 Bot 白名单",
-            whitelist_ready,
-            (
-                f"configured=true, entries={len(whitelist)}, digest={digest[:16]}"
-                if whitelist_ready
-                else "configured=false-or-allow-all"
-            ),
-            "为 BotSpec access.whitelist_env 配置非空、非 * 的稳定 user_id 名单",
-        ),
-        _check(
-            "access_roles",
-            "Owner/Admin 稳定身份",
-            role_ready,
-            (
-                f"owner_entries={len(owners)}, admin_entries={len(admins)}, digest={digest[:16]}"
-                if role_ready
-                else "owner stable user_id or distinct ordinary member is missing/wildcarded"
-            ),
-            "配置至少一个稳定 Owner user_id，并在白名单保留一个非 Owner/Admin 测试成员",
-        ),
-        _check(
-            "private_fingerprint_key",
-            "私有配置指纹密钥",
-            digest_key_ready,
-            "configured=true" if digest_key_ready else "configured=false",
-            "配置 Bot 模型或平台 secret，使身份配置可生成不可逆且跨进程稳定的 HMAC",
-        ),
-    ]
-    if str(getattr(runtime, "platform_type", "")) == "qq":
-        qq_account_ready = bool(str(os.environ.get("QQ_ACCOUNT", "")).strip())
-        require_at_raw = str(os.environ.get("QQ_REQUIRE_AT_IN_GROUP", "true")).strip().lower()
-        proxy_policy_ready = bool(
-            qq_account_ready
-            and require_at_raw in {"1", "true", "yes", "on"}
-            and getattr(access, "private_require_whitelist", False)
-            and getattr(access, "group_require_whitelist", False)
-            and getattr(access, "group_require_mention", False)
-        )
-        checks.append(
-            _check(
-                "qq_access_matrix_configuration",
-                "QQ 白名单与群聊 @ 边界",
-                proxy_policy_ready,
-                (
-                    "private_whitelist=true, group_whitelist=true, "
-                    "group_mention=true, proxy_require_at=true, bot_id=configured"
-                    if proxy_policy_ready
-                    else "QQ whitelist/group mention topology is incomplete"
-                ),
-                "配置 QQ_ACCOUNT、QQ_REQUIRE_AT_IN_GROUP=true，并在 BotSpec 同时启用私聊/群聊白名单与群聊 @",
-            )
-        )
     return checks
 
 
@@ -3694,17 +3597,13 @@ def _private_runtime_configuration_snapshot(
     with _preserved_environment():
         runtime = load_evaluation_runtime(bot)
         config = load_config(env_prefix=runtime.spec.llm.env_prefix)
-        whitelist_env = str(getattr(runtime.access, "whitelist_env", "") or "").strip()
-        group_whitelist_env = str(getattr(runtime.access, "group_whitelist_env", "") or "").strip()
-        whitelist = tuple(
-            value.strip()
-            for value in str(os.environ.get(whitelist_env, "")).split(",")
-            if value.strip()
+        user_allowlist = parse_numeric_allowlist(
+            os.environ.get("QQ_ALLOW_FROM"),
+            field="QQ_ALLOW_FROM",
         )
-        group_whitelist = tuple(
-            value.strip()
-            for value in str(os.environ.get(group_whitelist_env, "")).split(",")
-            if value.strip()
+        group_allowlist = parse_numeric_allowlist(
+            os.environ.get("QQ_ALLOW_GROUPS"),
+            field="QQ_ALLOW_GROUPS",
         )
         owners = tuple(
             value.strip()
@@ -3716,14 +3615,30 @@ def _private_runtime_configuration_snapshot(
             for value in str(os.environ.get("CHATCOPILOT_ADD_ADMIN_IDS", "")).split(",")
             if value.strip()
         )
-        material = "\0".join((*whitelist, *group_whitelist, *owners, *admins))
+        user_mode = "all" if user_allowlist.allow_all else (
+            "finite" if user_allowlist.values else "empty"
+        )
+        group_mode = "all" if group_allowlist.allow_all else (
+            "finite" if group_allowlist.values else "empty"
+        )
+        material = "\0".join(
+            (
+                f"users:{user_mode}",
+                *sorted(user_allowlist.values),
+                f"groups:{group_mode}",
+                *sorted(group_allowlist.values),
+                "owners",
+                *owners,
+                "admins",
+                *admins,
+            )
+        )
         fallback_secret = str(getattr(config.llm, "api_key", "") or "")
         snapshot: dict[str, Any] = {
-            "access_enabled": bool(getattr(runtime.access, "enabled", False)),
-            "whitelist_configured": bool(whitelist),
-            "whitelist_entry_count": len(whitelist),
-            "group_whitelist_configured": bool(group_whitelist),
-            "group_whitelist_entry_count": len(group_whitelist),
+            "qq_user_allowlist_mode": user_mode,
+            "qq_user_allowlist_entry_count": len(user_allowlist.values),
+            "qq_group_allowlist_mode": group_mode,
+            "qq_group_allowlist_entry_count": len(group_allowlist.values),
             "owner_entry_count": len(owners),
             "admin_entry_count": len(admins),
             "identity_hmac": _private_configuration_digest(

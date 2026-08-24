@@ -23,7 +23,9 @@ from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.middleware.acp.agent_bridge import (
     _authorized_wiki_retriever,
     _build_session_for_workspace,
+    _compose_workspace_from_identity,
     _effective_project_role,
+    _enrich_workspace_identity,
     _extract_persona_snippet,
     _materialize_session_for_workspace,
     _prompt_projection,
@@ -85,6 +87,25 @@ def _runtime(tmp_path: Path):
         context=ContextSpec(wiki=WikiSpec(enabled=True, read_role="owner", private_chat_only=True)),
     )
     return SimpleNamespace(spec=spec)
+
+
+def test_workspace_identity_projection_is_side_effect_free(tmp_path: Path) -> None:
+    root = tmp_path / "workspaces"
+    current = Workspace(root=root / "default", chat_kind=None, chat_id=None)
+
+    projected = _compose_workspace_from_identity(
+        current=current,
+        user_id="10001",
+        chat_id="10001",
+        chat_kind="p2p",
+        user_name="Example User",
+        platform_type="qq",
+    )
+    enriched = _enrich_workspace_identity(projected, "qq")
+
+    assert enriched.root == root / "p2p_10001"
+    assert enriched.user_name == "Example User"
+    assert not root.exists()
 
 
 def test_permission_filter_requires_owner_and_private_chat(tmp_path: Path) -> None:

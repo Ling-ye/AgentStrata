@@ -218,9 +218,16 @@ bash deploy/wsl/qq_gateway.sh logs --instance lingye-copilot-qq
 动作的双向探针；只完成 WebSocket 握手不算认证成功。
 
 QQ 访问名单只在 `bots/<bot-id>/local.env` 中维护：`QQ_ALLOW_FROM` 是发送者 QQ
-号，`QQ_ALLOW_GROUPS` 是允许整群使用的群号，两者均为逗号分隔。群名单中的成员只在
-该群获得访问权，不因此获得私聊权限；群聊仍服从 `QQ_REQUIRE_AT_IN_GROUP`。群名单为空
-表示不额外放行任何群，`*` 会放行全部群，生产环境应避免使用。修改后运行
+号，`QQ_ALLOW_GROUPS` 是允许整群使用的群号。两者由 ACP 独占解释，Relay 和 cc-connect
+进程不会获得这些变量。缺失或空值不授予权限；只有整个值精确为 `*` 才允许全部，有限
+名单只接受逗号分隔的数字 ID，空 token、尾随分隔符、混入 `*` 或非数字值都会阻止启动
+或 doctor。群名单中的成员只在该群获得访问权，不因此获得私聊权限。
+
+Relay 对私聊全部转发；群聊只在 OneBot 结构化 `at` segment 明确指向当前
+`QQ_ACCOUNT` 时转发，`@全体成员`、纯文本名字和伪造 CQ 文本均不触发。Relay 还会在连接
+NapCat 前拒绝未携带同一强 token 的下游 WebSocket，启动健康门会经 Relay 执行未认证拒绝与
+认证 OneBot action 往返。cc-connect 固定
+渲染 `allow_from = "*"`，最终准入与角色解析发生在 ACP。修改配置后运行
 `update_instance.sh` 重新供应 runtime env、渲染 cc-connect 配置并重启实例。
 systemd 托管实例的每次 start/restart 也会先执行 `start.sh --apply-config`，确保当前
 BotSpec 的 shared-session、sender injection 与同步身份见证 hook 在 cc-connect 载入配置前
@@ -434,7 +441,7 @@ Evaluation 独立读取 ECB Data Portal 作为 oracle。oracle 不可用时 Case
 ```bash
 python -m chatcopilot evals advise \
   --changed-path src/chatcopilot/agent/search/router.py \
-  --changed-path src/chatcopilot/middleware/acp/access_gate.py
+  --changed-path src/chatcopilot/middleware/acp/admission.py
 ```
 
 quick/security/full standalone 示例：
@@ -481,9 +488,9 @@ QQ/NapCat/OneBot 连通性属于平台与部署检查，不属于 Agent 能力 E
 商用 LLM、不创建 Evaluation、Trial 或 Evaluation 报告，也不影响 Agent verdict。
 默认命令只执行读操作：验证回环 OneBot URL、强 token、未认证拒绝、认证
 `get_status`、`get_login_info` 与配置的 `QQ_ACCOUNT` 一致；配置检查群时再验证 Bot
-可以读取该群信息。随后它会在随机回环端口上临时启动假 NapCat 与真实 QQ access
-proxy relay，发送一条应丢弃和一条应转发的合成 OneBot 帧，验证 JSON 解析、当前
-白名单策略形状/@策略与 WebSocket 下游转发。Bot/user/group/token 全部为本次随机
+可以读取该群信息。随后它会在随机回环端口上临时启动假 NapCat 与真实 QQ @ Relay，
+发送一条未明确 @ 的负例和一条结构化 `@当前机器人` 正例，验证 JSON 解析、固定触发
+条件与 WebSocket 下游转发。Bot/user/group/token 全部为本次随机
 合成值，不复用 bot-local 私有身份。该 hermetic probe 不连接真实 QQ、cc-connect、
 ACP 或模型，结束后销毁全部临时 listener：
 
@@ -517,7 +524,7 @@ message ID，也只证明 OneBot 接受了动作，不证明群成员看到消�
 QQ 号、群号、token、昵称、群名或 message ID，只保留 HMAC/digest 和结构化状态。
 Console 的 NapCat“诊断”按钮运行同一个默认只读检查。
 
-`qq_simulated_gateway_ingress:passed` 只证明当前安装源码中的 access-proxy 能在隔离回环
+`qq_simulated_gateway_ingress:passed` 只证明当前安装源码中的 QQ @ Relay 能在隔离回环
 拓扑中携带认证连接上游、丢弃负例并把正例逐字节转发给临时下游。它不证明运行中的
 NapCat 产生过该事件，也不证明 cc-connect、ACP 或 Agent 已收到消息；这两种证据不能
 互相替代。

@@ -210,23 +210,6 @@ export function PromptConfigOverview({ config }: { config: BotInventory["config"
     items.push({ label: "Roles", value: fileStatus(null) });
   }
 
-  if (config.access) {
-    items.push({
-      label: "Access",
-      value: (
-        <Space size={4} wrap>
-          {config.access.private_require_whitelist && <Tag size="small" className="cc-tag-meta">私聊白名单</Tag>}
-          {config.access.group_require_whitelist && <Tag size="small" className="cc-tag-meta">群聊白名单</Tag>}
-          {config.access.group_require_mention && <Tag size="small" className="cc-tag-meta">群聊需 @</Tag>}
-          {!config.access.private_require_whitelist
-            && !config.access.group_require_whitelist
-            && !config.access.group_require_mention
-            && <Text type="secondary" className="cc-text-small">未限制</Text>}
-        </Space>
-      ),
-    });
-  }
-
   return <Descriptions size="small" column={1} data={items} />;
 }
 
@@ -308,14 +291,10 @@ export function InventoryConfigOverview({ config }: { config: BotInventory["conf
 
   if (config.access) {
     items.push({
-      label: "Access",
-      value: (
-        <Space size={4} wrap>
-          {config.access.private_require_whitelist && <Tag size="small" className="cc-tag-meta">私聊白名单</Tag>}
-          {config.access.group_require_whitelist && <Tag size="small" className="cc-tag-meta">群聊白名单</Tag>}
-          {config.access.group_require_mention && <Tag size="small" className="cc-tag-meta">群聊需@</Tag>}
-        </Space>
-      ),
+      label: "Project access",
+      value: config.access.owner_only_project_access
+        ? <Tag size="small" className="cc-tag-meta">仅 Owner</Tag>
+        : <Text type="secondary" className="cc-text-small">按能力权限投影</Text>,
     });
   }
 

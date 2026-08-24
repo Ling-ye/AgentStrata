@@ -1,4 +1,4 @@
-"""Trusted QQ group sender envelopes and the protected shared conversation journal."""
+"""Trusted QQ sender envelopes and the protected shared conversation journal."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ def parse_sender_envelope(
     if match is None:
         raise SenderEnvelopeError(
             "qq_sender_envelope_missing",
-            "共享群消息缺少有效的发送者身份，请让维护者重新生成并加载 cc-connect 配置。",
+            "QQ 消息缺少有效的发送者身份，请让维护者重新生成并加载 cc-connect 配置。",
         )
     platform = match.group("platform")
     chat_id = match.group("chat")

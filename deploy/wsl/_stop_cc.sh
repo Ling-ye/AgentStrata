@@ -26,12 +26,12 @@ ok()   { printf "[OK] %s\n" "$*"; }
 warn() { printf "[WARN] %s\n" "$*"; }
 err()  { printf "[ERR] %s\n" "$*" >&2; }
 
-# 先停 QQ @ 过滤代理（若有）。按实例 pidfile 隔离，不误杀别的实例。
+# 先停 QQ @ Relay（若有）。按实例 pidfile 隔离，不误杀别的实例。
 QQ_PROXY_PIDFILE="$CC_HOME/qq-at-proxy.pid"
 if [ -r "$QQ_PROXY_PIDFILE" ]; then
     _qpp="$(tr -d ' \t\r\n' < "$QQ_PROXY_PIDFILE" 2>/dev/null || true)"
     if [ -n "$_qpp" ] && kill -0 "$_qpp" 2>/dev/null; then
-        step "停止 QQ @ 过滤代理 pid=$_qpp"
+        step "停止 QQ @ Relay pid=$_qpp"
         kill -TERM "$_qpp" 2>/dev/null || true
         sleep 1
         kill -KILL "$_qpp" 2>/dev/null || true

@@ -1,6 +1,6 @@
 """QQ 平台适配器（cc-connect@beta, OneBot v11 / NapCat）。
 
-链路：``QQ Client <-> NapCat (OneBot v11) <-WebSocket-> cc-connect <-> ACP server``。
+链路：``QQ Client <-> NapCat -> QQ @ Relay -> cc-connect -> ACP server``。
 平台层只承载 QQ 会话身份解析、文件回传与部署渲染；具体机器人实例是否启用
 per-user workspace 附件流水线，由 ``bots/<bot-id>/bot.yaml`` 的 ``tools.features``
 （如 ``chat.file_uploads`` / ``chat.private_workspace``）决定。
@@ -14,10 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
+from chatcopilot.core.allowlists import (
+    AllowlistConfigError,
+    is_numeric_platform_id,
+    parse_numeric_allowlist,
+)
 from chatcopilot.platforms.base import (
     ExternalCheckReport,
     PlatformAdapter,
@@ -36,27 +40,6 @@ from chatcopilot.platforms.qq.gateway_health import run_qq_external_checks
 
 if TYPE_CHECKING:
     from chatcopilot.contracts.workspace import WorkspaceView as Workspace
-
-
-def _as_bool(value: str | None) -> bool:
-    """把 env 字符串归一化成 bool；缺省 / 无法识别一律 False。"""
-    if not value:
-        return False
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _qq_group_allowlist_configured(value: str | None) -> bool:
-    return bool((value or "").strip())
-
-
-def _validate_qq_group_allowlist(value: str | None) -> bool:
-    raw = (value or "").strip()
-    if not raw or raw == "*":
-        return True
-    return all(
-        re.fullmatch(r"[1-9][0-9]{4,19}", item.strip())
-        for item in raw.split(",")
-    )
 
 
 class QQAdapter(PlatformAdapter):
@@ -171,24 +154,23 @@ class QQAdapter(PlatformAdapter):
                 required=True,
                 description="OneBot access token（32–128 位 URL-safe 字符）",
             ),
-            SecretSpec("QQ_ALLOW_FROM", required=False, default="*", description="允许的来源白名单（默认全部）"),
+            SecretSpec(
+                "QQ_ALLOW_FROM",
+                required=False,
+                default="",
+                description="ACP QQ 用户准入名单（空值不授予权限）",
+            ),
             SecretSpec(
                 "QQ_ALLOW_GROUPS",
                 required=False,
                 default="",
-                description="允许整群访问的 QQ 群号（默认不额外放行群）",
-            ),
-            SecretSpec(
-                "QQ_REQUIRE_AT_IN_GROUP",
-                required=False,
-                default="true",
-                description="群聊是否必须 @机器人 才回（默认 true，经 OneBot @ 过滤代理实现）",
+                description="ACP QQ 群准入名单（空值不授予权限）",
             ),
             SecretSpec(
                 "QQ_AT_PROXY_URL",
                 required=False,
                 default="ws://127.0.0.1:3002",
-                description="@ 过滤代理监听地址；启用群聊 @门禁时 cc-connect 连这里而非直连 NapCat",
+                description="QQ @ Relay 监听地址；cc-connect 固定连接此回环地址",
             ),
             SecretSpec("QQ_WEBUI_PORT", required=False, default="6099", description="NapCat WebUI 端口"),
             SecretSpec("QQ_IMAGE_MAX_BYTES", required=False, default="5242880", description="QQ image max bytes"),
@@ -197,15 +179,20 @@ class QQAdapter(PlatformAdapter):
 
     def validate_runtime_env(self, env: Mapping[str, str]) -> tuple[str, ...]:
         errors: list[str] = []
-        require_at = str(env.get("QQ_REQUIRE_AT_IN_GROUP") or "true").strip().lower()
-        if require_at not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
+        if not is_numeric_platform_id(env.get("QQ_ACCOUNT")):
             errors.append(
-                "qq_require_at_invalid: QQ_REQUIRE_AT_IN_GROUP must be a boolean"
+                "qq_account_invalid: QQ_ACCOUNT must be a numeric QQ account for the mention relay"
             )
-        if not _validate_qq_group_allowlist(env.get("QQ_ALLOW_GROUPS")):
-            errors.append(
-                "qq_group_allowlist_invalid: QQ_ALLOW_GROUPS must be '*' or comma-separated numeric QQ group IDs"
-            )
+        for legacy_key in ("QQ_REQUIRE_AT_IN_GROUP", "QQ_AT_ALL_COUNTS"):
+            if legacy_key in env:
+                errors.append(
+                    f"qq_legacy_ingress_env_removed: {legacy_key} is no longer supported"
+                )
+        for allowlist_key in ("QQ_ALLOW_FROM", "QQ_ALLOW_GROUPS"):
+            try:
+                parse_numeric_allowlist(env.get(allowlist_key), field=allowlist_key)
+            except AllowlistConfigError as exc:
+                errors.append(f"qq_allowlist_invalid: {exc}")
         try:
             require_access_token(env.get("QQ_ACCESS_TOKEN"))
         except QQBoundaryError as exc:
@@ -231,7 +218,7 @@ class QQAdapter(PlatformAdapter):
             SetupActionSpec(
                 id="qq-gateway",
                 label="QQ gateway",
-                description="Start/check NapCat and the OneBot @ proxy for QQ deployments.",
+                description="Start/check NapCat and the OneBot @ Relay for QQ deployments.",
                 command=(
                     "bash",
                     "{repo_root}/deploy/wsl/qq_gateway.sh",
@@ -271,34 +258,20 @@ class QQAdapter(PlatformAdapter):
         errors = self.validate_runtime_env(env)
         if errors:
             raise ValueError("; ".join(errors))
-        napcat_url = env.get("QQ_WS_URL") or "ws://127.0.0.1:3001"
         token = require_access_token(env.get("QQ_ACCESS_TOKEN"))
-        user_allow_from = env.get("QQ_ALLOW_FROM") or "*"
-        group_allow_from = env.get("QQ_ALLOW_GROUPS") or ""
-        # cc-connect 的 QQ allow_from 只识别用户号，无法表达整群授权。需要 @ 或群白名单
-        # 时统一让本机 OneBot 代理先执行用户/群/@门禁，再把已授权事件交给 cc-connect。
-        require_at = _as_bool(env.get("QQ_REQUIRE_AT_IN_GROUP", "true"))
-        proxy_required = require_at or _qq_group_allowlist_configured(group_allow_from)
         proxy_url = env.get("QQ_AT_PROXY_URL") or "ws://127.0.0.1:3002"
-        ws_url = proxy_url if proxy_required else napcat_url
-        allow_from = "*" if proxy_required else user_allow_from
-        ws_comment = (
-            "# ws_url 指向本仓库的 OneBot 访问代理；代理先执行用户/群/@门禁，再上游连接 NapCat。\n"
-            if proxy_required
-            else "# ws_url 直连 NapCat（未启用群聊 @门禁或群级白名单）。\n"
-        )
         return (
             "[[projects.platforms]]\n"
             "# QQ (cc-connect@beta, OneBot v11 / NapCat)。cc-connect 经正向 WebSocket 连本机\n"
-            "# NapCat；QQ 登录态由 NapCat 持有（首次需手机扫码）。ws_url / token / allow_from\n"
-            "# 由 env file 注入。\n"
+            "# QQ 登录态由 NapCat 持有（首次需手机扫码）。ws_url 指向 Relay，\n"
+            "# token 由 env file 注入，allow_from 固定放行到 ACP。\n"
             'type = "qq"\n'
             "\n"
             "[projects.platforms.options]\n"
-            + ws_comment
-            + f"ws_url = {json.dumps(ws_url, ensure_ascii=False)}\n"
+            "# ws_url 固定指向本机 QQ @ Relay；Relay 只保留群聊明确 @ 的传输触发。\n"
+            f"ws_url = {json.dumps(proxy_url, ensure_ascii=False)}\n"
             f"token = {json.dumps(token, ensure_ascii=False)}\n"
-            f"allow_from = {json.dumps(allow_from, ensure_ascii=False)}\n"
+            'allow_from = "*"\n'
             "share_session_in_channel = true\n"
             "\n"
         )

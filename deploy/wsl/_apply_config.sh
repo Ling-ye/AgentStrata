@@ -80,7 +80,7 @@ if ! "$PY" -m chatcopilot bot render-cc-config --bot "$BOT_SPEC" --out "$CC_CONF
 fi
 
 # 3. 确保 cc-connect 调用的脚本都可执行（git clone 后第一次部署需要）
-for _script in bot_wrapper.sh _session_env.sh log_question.sh; do
+for _script in bot_wrapper.sh _session_env.sh; do
     _path="$MT_HOME/deploy/wsl/$_script"
     if [ -f "$_path" ]; then
         chmod +x "$_path"

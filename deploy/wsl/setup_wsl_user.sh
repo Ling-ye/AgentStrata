@@ -295,18 +295,14 @@ mkdir -p "$WS_ROOT/default/downloads" \
          "$WS_ROOT/default/.cc-connect/attachments"
 ok "工作目录: $WS_ROOT/default"
 
-# 7b. 用户提问日志目录 + hook 脚本可执行位
+# 7b. 运行日志目录 + 部署脚本可执行位
 LOG_DIR="${CHATCOPILOT_LOG_DIR:-$HOME/chatcopilot-logs}"
 mkdir -p "$LOG_DIR"
-ok "用户提问日志目录: $LOG_DIR"
+ok "运行日志目录: $LOG_DIR"
 
-if [ -f "$MT_DIR/deploy/wsl/log_question.sh" ]; then
-    chmod +x "$MT_DIR/deploy/wsl/log_question.sh"
-    ok "log_question.sh +x"
-fi
 for sh in start.sh status.sh dump.sh \
           _apply_config.sh _load_env.sh _session_env.sh _stop_cc.sh \
-          bot_wrapper.sh log_question.sh; do
+          bot_wrapper.sh; do
     f="$MT_DIR/deploy/wsl/$sh"
     [ -f "$f" ] && chmod +x "$f"
 done

@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 
-from chatcopilot.botspec.model import AccessSpec
 from chatcopilot.contracts.agent import (
     AgentResult,
     InputResourceReceipt,
@@ -1057,21 +1056,15 @@ def test_quick_acp_scenarios_dispatch_with_selected_bot_policy_without_model(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("QQ_ALLOW_FROM", "eval-member,eval-owner")
+    monkeypatch.setenv("QQ_ALLOW_FROM", "10002,10001")
+    monkeypatch.setenv("QQ_ALLOW_GROUPS", "10004")
     monkeypatch.setenv("QQ_ACCOUNT", "10001")
-    monkeypatch.setenv("QQ_REQUIRE_AT_IN_GROUP", "true")
-    monkeypatch.setenv("CHATCOPILOT_ADD_OWNER_IDS", "eval-owner")
+    monkeypatch.setenv("CHATCOPILOT_ADD_OWNER_IDS", "10001")
     runtime_load: dict[str, Any] = {}
 
     def load_runtime(_bot: str, **kwargs: Any) -> SimpleNamespace:
         runtime_load.update(kwargs)
         return SimpleNamespace(
-            access=AccessSpec(
-                private_require_whitelist=True,
-                group_require_whitelist=True,
-                group_require_mention=True,
-                whitelist_env="QQ_ALLOW_FROM",
-            ),
             platform_type="qq",
             prompt_profile=BotPromptProfile(
                 identity="Evaluation Bot",

@@ -198,6 +198,7 @@ class PlatformSessionIdentityTests(unittest.TestCase):
                 "CHATCOPILOT_CC_PROJECT_NAME": "qq-bot",
                 "CHATCOPILOT_INSTANCE_ID": "qq-bot",
                 "CHATCOPILOT_BOT_SPEC": "/opt/chatcopilot/bots/qq-bot/bot.yaml",
+                "QQ_ACCOUNT": "10001",
                 "QQ_ACCESS_TOKEN": "a" * 32,
             },
         )
@@ -205,9 +206,13 @@ class PlatformSessionIdentityTests(unittest.TestCase):
         self.assertIn('event = "message.received"', config)
         self.assertIn('command = "/opt/chatcopilot/deploy/wsl/_session_env.sh"', config)
         self.assertIn("async = false", config)
-        self.assertIn('event = "session.started"', config)
+        self.assertEqual(config.count("[[hooks]]"), 1)
+        self.assertNotIn("log_question.sh", config)
+        self.assertNotIn("async = true", config)
+        self.assertNotIn('event = "session.started"', config)
         self.assertIn("share_session_in_channel = true", config)
         self.assertIn("inject_sender = true", config)
+        self.assertNotIn("admin_from", config)
         self.assertIn('CHATCOPILOT_GROUP_CONVERSATION_SCOPE = "chat"', config)
         self.assertIn('CHATCOPILOT_SESSION_ENV_DIR = "/tmp/cc-home/session-env"', config)
         instant_reply = config.split("[instant_reply]", 1)[1].split("\n[", 1)[0]
@@ -314,7 +319,7 @@ class PlatformSessionIdentityTests(unittest.TestCase):
             self.assertNotIn("fallback to explicit hook fields", result.stderr)
 
     @unittest.skipUnless(shutil.which("bash"), "requires bash")
-    def test_session_started_does_not_overwrite_message_attestation(self) -> None:
+    def test_session_started_hook_is_rejected_without_overwriting_attestation(self) -> None:
         with TemporaryDirectory() as tmp:
             base = Path(tmp)
             session_key = "qq:g:30003"
@@ -335,7 +340,7 @@ class PlatformSessionIdentityTests(unittest.TestCase):
                 content="replacement",
             )
 
-            self.assertEqual(started.returncode, 0, started.stderr)
+            self.assertEqual(started.returncode, 64, started.stderr)
             self.assertEqual(same_target, target)
             self.assertEqual(target.read_bytes(), before)
 

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import time
 from collections import OrderedDict
@@ -17,6 +18,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
+from acp import PromptResponse
 
 from chatcopilot.botspec.model import AccessSpec
 from chatcopilot.agent.backends.codex import CodexAgentBackend
@@ -69,7 +71,11 @@ from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.acp.turn_orchestrator import AcpTurnOrchestrator
 from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.middleware.runtime.jobs.submitter import submit_tool_job
-from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder, group_task_actor_root
+from chatcopilot.middleware.runtime.tasks import (
+    TurnTaskRecorder,
+    complete_delegated_task,
+    group_task_actor_root,
+)
 
 
 _GROUP_ID = "30003"
@@ -333,7 +339,110 @@ def test_qq_private_turn_strips_project_sender_envelope(tmp_path: Path) -> None:
 
     assert same_state is state
     assert clean_text == "private turn"
-    assert identity is None
+    assert identity is not None
+    assert identity.sender_user_id == _MEMBER_ID
+    assert identity.conversation.chat_kind == "p2p"
+
+
+def test_qq_private_turn_requires_sender_envelope(tmp_path: Path) -> None:
+    workspace = Workspace(
+        root=tmp_path / f"p2p_{_MEMBER_ID}",
+        chat_kind="p2p",
+        chat_id=None,
+        user_id=_MEMBER_ID,
+        scope="actor",
+    ).ensure()
+    state = SessionState(
+        session_id="qq-private-session",
+        workspace=workspace,
+        role=Role.USER,
+        assistant_mode=AssistantMode.PERFORMANCE,
+        runtime=SimpleNamespace(platform_type="qq"),
+    )
+    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent._runtime = SimpleNamespace(platform_type="qq")
+
+    with pytest.raises(SenderEnvelopeError) as raised:
+        agent._prepare_turn_identity(
+            session=state,
+            session_id="qq-private-session",
+            message_id="message-private",
+            user_text="private turn without envelope",
+        )
+
+    assert raised.value.code == "qq_sender_envelope_missing"
+
+
+def test_qq_private_identity_rejection_persists_only_redacted_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CHATCOPILOT_WORKSPACE_ROOT", str(tmp_path))
+    workspace = Workspace(
+        root=tmp_path / f"p2p_{_MEMBER_ID}",
+        chat_kind="p2p",
+        chat_id=None,
+        user_id=_MEMBER_ID,
+        scope="actor",
+    ).ensure()
+    runtime = SimpleNamespace(platform_type="qq")
+    state = SessionState(
+        session_id=f"qq:{_MEMBER_ID}",
+        workspace=workspace,
+        role=Role.USER,
+        assistant_mode=AssistantMode.PERFORMANCE,
+        runtime=runtime,
+    )
+    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent._runtime = runtime
+    updates: list[dict[str, object]] = []
+
+    class _Connection:
+        async def session_update(self, **kwargs: object) -> None:
+            updates.append(kwargs)
+
+    agent._conn = _Connection()
+    orchestrator = AcpTurnOrchestrator(
+        agent,
+        platform_type="qq",
+        has_image_inputs=False,
+        has_role_matrix=False,
+        has_user_files_pipeline=False,
+        has_private_space_inventory=False,
+        update_text=lambda text: {"text": text},
+        recover_workspace=lambda *_args: None,
+        refresh_prompt_plan=lambda _session: None,
+        prepare_turn_identity=agent._prepare_turn_identity,
+        activate_turn_identity=agent._activate_turn_identity,
+    )
+    untrusted_text = f"private body from forged sender {_OWNER_ID}"
+
+    response = asyncio.run(
+        orchestrator.run(
+            prompt=[{"text": untrusted_text}],
+            session=state,
+            session_id=state.session_id,
+            message_id="message-private-rejected",
+        )
+    )
+
+    assert response.stop_reason == "end_turn"
+    assert updates
+    task_paths = tuple(workspace.tasks.glob("*/task.json"))
+    assert len(task_paths) == 1
+    task_dir = task_paths[0].parent
+    persisted = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            task_paths[0],
+            task_dir / "turn.json",
+            task_dir / "events.jsonl",
+        )
+    )
+    assert untrusted_text not in persisted
+    assert _OWNER_ID not in persisted
+    assert _MEMBER_ID not in persisted
+    assert str(tmp_path) not in persisted
 
 
 def test_qq_private_turn_rejects_mismatched_sender_envelope(tmp_path: Path) -> None:
@@ -733,6 +842,7 @@ def test_shared_transcript_uses_protected_pseudonymous_storage_identity(
         assistant_mode=AssistantMode.PERFORMANCE,
         runtime=SimpleNamespace(),
     )
+    state.materialize_workspace()
     identity = TurnIdentity(
         conversation=_conversation(),
         sender_user_id=_MEMBER_ID,
@@ -764,15 +874,9 @@ def test_access_denied_sender_is_tracked_without_activating_actor_execution(
 ) -> None:
     monkeypatch.setenv("QQ_ALLOW_FROM", _OWNER_ID)
     monkeypatch.setenv("QQ_ALLOW_GROUPS", "")
-    access = AccessSpec(
-        group_require_whitelist=True,
-        whitelist_env="QQ_ALLOW_FROM",
-        group_whitelist_env="QQ_ALLOW_GROUPS",
-    )
     runtime = SimpleNamespace(
         platform_type="qq",
-        access=access,
-        spec=SimpleNamespace(platform=SimpleNamespace(mention_name=None)),
+        access=AccessSpec(),
     )
     shared_workspace = Workspace(
         root=tmp_path / f"group_{_GROUP_ID}" / "shared",
@@ -821,6 +925,11 @@ def test_access_denied_sender_is_tracked_without_activating_actor_execution(
         activate_turn_identity=activate,
     )
 
+    async def fail_if_attachments_run(_turn: object) -> object:
+        raise AssertionError("access-denied turn must not enter attachment handling")
+
+    orchestrator._attachments = fail_if_attachments_run  # type: ignore[method-assign]
+
     _write_group_transport_attestation(
         monkeypatch,
         tmp_path,
@@ -850,12 +959,137 @@ def test_access_denied_sender_is_tracked_without_activating_actor_execution(
     assert len(task_paths) == 1
     task = json.loads(task_paths[0].read_text(encoding="utf-8"))
     assert task["status"] == "succeeded"
-    assert task["description"] == "denied turn"
-    assert task["progress"] == "已按访问策略忽略该消息。"
+    assert task["description"] == "（入站消息内容未保存：ACP 准入拒绝）"
+    assert task["progress"] == "已按 ACP 准入策略忽略该消息。"
     turn = json.loads((task_paths[0].parent / "turn.json").read_text(encoding="utf-8"))
     assert turn["stop_reason"] == "access_denied"
+    persisted = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            task_paths[0],
+            task_paths[0].parent / "turn.json",
+            task_paths[0].parent / "events.jsonl",
+        )
+    )
+    assert "denied turn" not in persisted
+    assert _MEMBER_ID not in persisted
+    assert _GROUP_ID not in persisted
     assert not (shared_workspace.root.parent / ".conversation-state" / "backends").exists()
     assert not (shared_workspace.root.parent / ".conversation-state" / "journal.jsonl").exists()
+
+
+def test_full_group_allowlist_denial_only_writes_redacted_protected_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_root = tmp_path / "instance"
+    shared_workspace = Workspace(
+        root=instance_root / f"group_{_GROUP_ID}" / "shared",
+        chat_kind="group",
+        chat_id=_GROUP_ID,
+        scope=WORKSPACE_SCOPE_GROUP_SHARED,
+    )
+    runtime = SimpleNamespace(
+        bot_id="group-denial-bot",
+        instance_id="group-denial-bot",
+        platform_type="qq",
+        skills=(),
+        tool_packs=(),
+        tool_features=(),
+        exclude_tools=(),
+        rag_sources=(),
+        mcp_servers=(),
+        subagents=SimpleNamespace(),
+        agent_backend="native",
+        access=AccessSpec(),
+        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_GROUPDENIAL")),
+    )
+    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent._runtime = runtime
+    agent._chat_config = ChatConfig()
+    agent._sessions = {}
+    agent._session_locks = {}
+    agent._group_actor_sessions = {}
+    agent._job_watch_tasks = {}
+    agent._attachment_ack_tasks = {}
+    agent._attachment_ack_resource_names = {}
+    agent._resolve_conversation_workspace = lambda: shared_workspace  # type: ignore[method-assign]
+
+    class _Connection:
+        async def session_update(self, **_kwargs: object) -> None:
+            return None
+
+    agent._conn = _Connection()
+    denied_body = "full group denial body [文件] secret.txt"
+    attestation = _write_group_transport_attestation(
+        monkeypatch,
+        tmp_path,
+        sender_id=_MEMBER_ID,
+        text=denied_body,
+    )
+    monkeypatch.setenv("CHATCOPILOT_WORKSPACE_ROOT", str(instance_root))
+    monkeypatch.setenv("QQ_ALLOW_FROM", _OWNER_ID)
+    monkeypatch.setenv("QQ_ALLOW_GROUPS", "")
+
+    async def fail_if_agent_materializes(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("denied group turn must not materialize an Agent session")
+
+    def fail_if_actor_activates(**_kwargs: object) -> SessionState:
+        raise AssertionError("denied group turn must not create an actor SessionState")
+
+    async def exercise() -> tuple[PromptResponse, str, SessionState]:
+        created = await agent.new_session(cwd="/ignored")
+        shell = agent._sessions[created.session_id]
+        agent._build_session = fail_if_actor_activates  # type: ignore[method-assign]
+        agent._ensure_agent_session = fail_if_agent_materializes  # type: ignore[method-assign]
+        with mock.patch.object(
+            attachment_pipeline,
+            "import_transport_attachments",
+            side_effect=AssertionError("denied group turn must not import attachments"),
+        ):
+            response = await agent.prompt(
+                prompt=[{"text": _envelope(_MEMBER_ID, denied_body)}],
+                session_id=created.session_id,
+                message_id="message-full-group-denied",
+            )
+        return response, created.session_id, shell
+
+    response, session_id, shell = asyncio.run(exercise())
+
+    assert response.stop_reason == "end_turn"
+    assert agent._sessions == {session_id: shell}
+    assert agent._group_actor_sessions == {}
+    assert not shell.is_workspace_materialized
+    assert not shell.is_materialized
+    assert shell.turn_identity is None
+    assert not shared_workspace.root.exists()
+    group_root = shared_workspace.root.parent
+    state_root = group_root / ".conversation-state"
+    assert {path.name for path in group_root.iterdir()} == {".conversation-state"}
+    assert {path.name for path in state_root.iterdir()} == {"task-actors"}
+    tracked_workspace = replace(shared_workspace, user_id=_MEMBER_ID)
+    task_paths = tuple((group_task_actor_root(tracked_workspace) / "tasks").glob("*/task.json"))
+    assert len(task_paths) == 1
+    task_dir = task_paths[0].parent
+    task = json.loads(task_paths[0].read_text(encoding="utf-8"))
+    turn = json.loads((task_dir / "turn.json").read_text(encoding="utf-8"))
+    assert task["status"] == "succeeded"
+    assert task["progress"] == "已按 ACP 准入策略忽略该消息。"
+    assert turn["stop_reason"] == "access_denied"
+    persisted = "\n".join(
+        path.read_text(encoding="utf-8") for path in task_dir.iterdir() if path.is_file()
+    )
+    for sensitive in (
+        denied_body,
+        _MEMBER_ID,
+        _GROUP_ID,
+        "message-full-group-denied",
+        str(instance_root),
+    ):
+        assert sensitive not in persisted
+    assert not (state_root / "group-conversation.jsonl").exists()
+    assert not (state_root / "backend-sessions").exists()
+    assert json.loads(attestation.read_text(encoding="utf-8"))["attestations"] == []
 
 
 def test_identity_rejected_group_message_creates_redacted_intake_task(
@@ -1222,6 +1456,7 @@ def test_group_turn_tasks_and_owner_jobs_use_protected_actor_storage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("CHATCOPILOT_WORKSPACE_ROOT", str(tmp_path))
     member_workspace = Workspace(
         root=tmp_path / f"group_{_GROUP_ID}" / "shared",
         chat_kind="group",
@@ -1242,8 +1477,8 @@ def test_group_turn_tasks_and_owner_jobs_use_protected_actor_storage(
     recorder = agent._start_turn_task(
         session=member_state,
         session_id="group-session",
-        message_id="message",
-        user_text="hello",
+        message_id="message-group-unique",
+        user_text="你好",
     )
     assert recorder is not None
     assert member_workspace.root not in recorder.path.parents
@@ -1253,12 +1488,110 @@ def test_group_turn_tasks_and_owner_jobs_use_protected_actor_storage(
     assert recorder.path.stat().st_mode & 0o777 == 0o600
     assert recorder.path.parent.stat().st_mode & 0o777 == 0o700
     assert _MEMBER_ID not in recorder.path.parts
+    recorder.record_event(
+        "path_probe",
+        {"path": str(member_workspace.root / "private.txt")},
+    )
+    recorder.context_snapshot(
+        snapshot_id="ctx_group_redaction",
+        backend="codex",
+        model="test-model",
+        iteration=1,
+        session_messages=[
+            {"role": "user", "content": "昨日群内讨论的私密内容"},
+            {
+                "role": "user",
+                "content": (f"actor={_MEMBER_ID} group={_GROUP_ID} message=message-group-unique"),
+            },
+        ],
+        effective_messages=[
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "history": "昨日群内讨论的私密内容",
+                        "user_message": "你好",
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        ],
+        tool_schemas=[],
+        resources=[{"path": str(member_workspace.root / "private.txt")}],
+        coverage="exact_model_input",
+        omitted=[],
+    )
+    recorder.span_started("worker", "subagent", span_id="group_subagent", depth=1)
+    recorder.span_finished(
+        "worker",
+        "subagent",
+        True,
+        "昨日群内讨论的私密内容",
+        span_id="group_subagent",
+        depth=1,
+        data={
+            "stop_reason": "昨日群内讨论的私密内容",
+            "result": {
+                "ok": True,
+                "summary": "昨日群内讨论的私密内容",
+            },
+            "transcript": [
+                {"role": "user", "content": "昨日群内讨论的私密内容"},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"user_message": "你好"},
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+        },
+    )
     recorder.finish(
         status="succeeded",
         progress="done",
         final_text="ok",
         stop_reason="end_turn",
     )
+    persisted = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            recorder.path,
+            recorder.path.parent / "turn.json",
+            recorder.path.parent / "events.jsonl",
+            recorder.path.parent / "contexts" / "ctx_group_redaction.json",
+            recorder.path.parent / "subagents" / "group_subagent.json",
+        )
+    )
+    assert "你好" not in persisted
+    assert "昨日群内讨论的私密内容" not in persisted
+    assert _GROUP_ID not in persisted
+    assert _MEMBER_ID not in persisted
+    assert "message-group-unique" not in persisted
+    assert str(tmp_path) not in persisted
+    context_payload = json.loads(
+        (recorder.path.parent / "contexts" / "ctx_group_redaction.json").read_text(encoding="utf-8")
+    )
+    assert context_payload["coverage"] == "partial"
+    assert "group_turn_text_and_transport_identity" in context_payload["omitted"]
+    assert context_payload["session_messages"] == []
+    assert context_payload["effective_messages"] == []
+    subagent_payload = json.loads(
+        (recorder.path.parent / "subagents" / "group_subagent.json").read_text(encoding="utf-8")
+    )
+    assert subagent_payload["transcript"] == []
+    assert subagent_payload["transcript_message_count"] == 2
+    assert subagent_payload["result"] == {
+        "ok": True,
+        "output_count": 0,
+        "content_omitted": True,
+    }
+    assert subagent_payload["stop_reason"] is None
+    assert subagent_payload["omitted"] == [
+        "group_message_content",
+        "group_subagent_result_content",
+        "group_subagent_stop_reason",
+    ]
     background = ToolDef(
         name="long_running_analysis",
         summary="background",
@@ -1297,6 +1630,69 @@ def test_group_turn_tasks_and_owner_jobs_use_protected_actor_storage(
     assert job.request_path in iter_job_request_paths(tmp_path)
     assert not (member_workspace.root / "tasks").exists()
     assert not (member_workspace.root / "jobs").exists()
+
+
+def test_group_delegated_task_completion_reuses_explicit_redaction_root(
+    tmp_path: Path,
+) -> None:
+    workspace = Workspace(
+        root=tmp_path / "instance" / f"group_{_GROUP_ID}" / "shared",
+        chat_kind="group",
+        chat_id=_GROUP_ID,
+        user_id=_OWNER_ID,
+        user_name="Group Owner",
+        scope=WORKSPACE_SCOPE_GROUP_SHARED,
+    ).ensure()
+    history_root = tmp_path / "instance"
+    recorder = TurnTaskRecorder(
+        workspace=workspace,
+        session_id=f"qq:g:{_GROUP_ID}",
+        message_id="message",
+        user_text="delegated group body",
+        history_root=history_root,
+    )
+    job_id = "job_20260824_170000_deadbeef"
+    recorder.record_job_submitted(job_id)
+    recorder.finish(
+        status="delegated",
+        progress="queued",
+        final_text="accepted",
+        stop_reason="background",
+    )
+
+    completed = complete_delegated_task(
+        workspace,
+        task_id=recorder.task_id,
+        job_id=job_id,
+        result={
+            "ok": True,
+            "summary": (
+                f"处理结果复述：delegated group body；completed for {_OWNER_ID} in {_GROUP_ID} at "
+                f"{workspace.root / 'results' / 'output.txt'}"
+            ),
+            "outputs": [str(workspace.root / "results" / "output.txt")],
+            "finished_at": 123.0,
+        },
+        history_root=history_root,
+    )
+
+    assert completed is not None
+    persisted = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            recorder.path,
+            recorder.path.parent / "turn.json",
+            recorder.path.parent / "events.jsonl",
+        )
+    )
+    assert "delegated group body" not in persisted
+    assert _GROUP_ID not in persisted
+    assert _OWNER_ID not in persisted
+    assert "Group Owner" not in persisted
+    assert str(history_root) not in persisted
+    persisted_task = json.loads(recorder.path.read_text(encoding="utf-8"))
+    assert persisted_task["job_results"][0]["summary"] == ""
+    assert "summary" in persisted_task["job_results"][0]["omitted_fields"]
 
 
 def test_group_turn_task_storage_rejects_symlinked_protected_root(
@@ -1693,8 +2089,14 @@ def test_agent_runtime_none_retriever_override_is_explicit_disable() -> None:
     assert concrete.retriever is None
 
 
+@pytest.mark.parametrize(
+    "project_config_exists",
+    [False, True],
+    ids=["project-config-absent", "project-config-hidden"],
+)
 def test_group_codex_command_has_read_only_namespace_and_strict_config(
     tmp_path: Path,
+    project_config_exists: bool,
 ) -> None:
     if shutil.which("bwrap") is None:
         pytest.skip("bubblewrap is not installed")
@@ -1702,11 +2104,12 @@ def test_group_codex_command_has_read_only_namespace_and_strict_config(
     workdir = group_root / "shared"
     workdir.mkdir(parents=True)
     (workdir / "visible.txt").write_text("visible", encoding="utf-8")
-    (workdir / ".codex").mkdir()
-    (workdir / ".codex" / "config.toml").write_text(
-        "untrusted = true",
-        encoding="utf-8",
-    )
+    if project_config_exists:
+        (workdir / ".codex").mkdir()
+        (workdir / ".codex" / "config.toml").write_text(
+            "untrusted = true",
+            encoding="utf-8",
+        )
     legacy = group_root / f"user_{_MEMBER_ID}"
     legacy.mkdir()
     (legacy / "secret.txt").write_text("legacy secret", encoding="utf-8")
@@ -1758,7 +2161,8 @@ def test_group_codex_command_has_read_only_namespace_and_strict_config(
     assert ["--ro-bind", str(workdir.resolve()), str(workdir.resolve())] == command[
         command.index(str(workdir.resolve())) - 1 : command.index(str(workdir.resolve())) + 2
     ]
-    assert str(workdir.resolve() / ".codex") in command
+    project_codex = str(workdir.resolve() / ".codex")
+    assert (project_codex in command) is project_config_exists
     separator = command.index("--")
     inner = command[separator + 1 :]
     assert "--strict-config" in inner
@@ -1779,6 +2183,7 @@ workdir = pathlib.Path(sys.argv[1])
 legacy = pathlib.Path(sys.argv[2])
 protected = pathlib.Path(sys.argv[3])
 host_pid = sys.argv[4]
+project_config_existed = sys.argv[5] == 'yes'
 assert (workdir / 'visible.txt').read_text() == 'visible'
 try:
     (workdir / 'blocked.txt').write_text('blocked')
@@ -1787,6 +2192,14 @@ except OSError:
 else:
     raise AssertionError('shared workdir unexpectedly writable')
 assert not (workdir / '.codex' / 'config.toml').exists()
+if not project_config_existed:
+    assert not (workdir / '.codex').exists()
+    try:
+        (workdir / '.codex').mkdir()
+    except OSError:
+        pass
+    else:
+        raise AssertionError('read-only shared root allowed project config creation')
 assert not legacy.exists()
 assert not protected.exists()
 assert not pathlib.Path(f'/proc/{host_pid}/root{protected}').exists()
@@ -1802,6 +2215,7 @@ for name in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'):
         str(legacy.resolve()),
         str(state_root.resolve()),
         str(os.getpid()),
+        "yes" if project_config_exists else "no",
     ]
     completed = subprocess.run(
         probe_command,
@@ -1817,3 +2231,68 @@ for name in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'):
         },
     )
     assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize(
+    "project_config_kind",
+    ["file", "symlink", "foreign-owner"],
+)
+def test_group_codex_rejects_unsafe_project_config_mountpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_config_kind: str,
+) -> None:
+    workdir = tmp_path / "group" / "shared"
+    workdir.mkdir(parents=True)
+    project_codex = workdir / ".codex"
+    if project_config_kind == "file":
+        project_codex.write_text("not a directory", encoding="utf-8")
+    elif project_config_kind == "symlink":
+        target = tmp_path / "external-config"
+        target.mkdir()
+        project_codex.symlink_to(target, target_is_directory=True)
+    else:
+        project_codex.mkdir()
+        original_lstat = Path.lstat
+
+        def foreign_owner_lstat(path: Path) -> object:
+            info = original_lstat(path)
+            if path == project_codex:
+                return SimpleNamespace(
+                    st_mode=stat.S_IFDIR | 0o700,
+                    st_uid=os.getuid() + 1,
+                )
+            return info
+
+        monkeypatch.setattr(Path, "lstat", foreign_owner_lstat)
+
+    state_root = tmp_path / "protected"
+    state_root.mkdir(mode=0o700)
+    state_root.chmod(0o700)
+    codex_home = state_root / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    codex_home.chmod(0o700)
+    gateway_config = state_root / "gateway.json"
+    gateway_config.write_text("{}", encoding="utf-8")
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    state = SimpleNamespace(
+        workdir=workdir.resolve(),
+        codex_home=codex_home.resolve(),
+        gateway_config=gateway_config.resolve(),
+    )
+
+    with (
+        mock.patch(
+            "chatcopilot.agent.backends.codex.shutil.which",
+            return_value="/usr/bin/true",
+        ),
+        pytest.raises(
+            RuntimeError,
+            match="project config must be an owner-owned real directory",
+        ),
+    ):
+        CodexAgentBackend._wrap_isolated_command(
+            state,  # type: ignore[arg-type]
+            [str(fake_codex)],
+        )

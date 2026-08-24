@@ -404,6 +404,11 @@ class JobDispatcher:
                     task_id=task_id,
                     job_id=job.job_id,
                     result=result,
+                    history_root=(
+                        Path(os.environ[f"{ENV_PREFIX}_WORKSPACE_ROOT"]).expanduser()
+                        if os.environ.get(f"{ENV_PREFIX}_WORKSPACE_ROOT")
+                        else None
+                    ),
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.exception(

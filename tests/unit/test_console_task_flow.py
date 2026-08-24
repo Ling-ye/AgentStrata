@@ -61,16 +61,16 @@ def test_task_flow_projects_runtime_boundaries_without_claiming_qq_display(
                 "event": "flow_transition",
                 "recorded_at": 100,
                 "data": {
-                    "kind": "gateway.access_decision",
-                    "source_layer": "transport",
-                    "target_layer": "gateway",
+                    "kind": "middleware.identity_validated",
+                    "source_layer": "gateway",
+                    "target_layer": "middleware",
                     "status": "succeeded",
-                    "evidence_level": "correlated",
-                    "title": "QQ 接入策略允许转发",
+                    "evidence_level": "observed",
+                    "title": "发送者证明已验证",
                     "decision": {
                         "allowed": True,
-                        "code": "sender_allowlist_match",
-                        "authoritative": False,
+                        "code": "attestation_valid",
+                        "authoritative": True,
                     },
                     "payload": {
                         "adapter": "qq",
@@ -85,14 +85,14 @@ def test_task_flow_projects_runtime_boundaries_without_claiming_qq_display(
                 "event": "flow_transition",
                 "recorded_at": 101,
                 "data": {
-                    "kind": "middleware.identity_validated",
-                    "source_layer": "gateway",
+                    "kind": "middleware.access_decision",
+                    "source_layer": "middleware",
                     "target_layer": "middleware",
                     "status": "succeeded",
-                    "title": "发送者证明已验证",
+                    "title": "ACP 准入允许继续",
                     "decision": {
                         "allowed": True,
-                        "code": "attestation_valid",
+                        "code": "qq-private-user-allowed",
                         "authoritative": True,
                     },
                 },
@@ -166,8 +166,8 @@ def test_task_flow_projects_runtime_boundaries_without_claiming_qq_display(
     assert flow is not None
     assert flow["schema_version"] == 1
     assert [item["kind"] for item in flow["transitions"]] == [
-        "gateway.access_decision",
         "middleware.identity_validated",
+        "middleware.access_decision",
         "model.context_prepared",
         "capability.invoke",
         "capability.result",
@@ -187,10 +187,10 @@ def test_task_flow_projects_runtime_boundaries_without_claiming_qq_display(
     assert layer_status["capability"] == "succeeded"
 
 
-def test_task_flow_marks_legacy_transport_and_gateway_evidence_missing() -> None:
+def test_task_flow_marks_absent_transport_and_gateway_evidence_missing() -> None:
     flow = project_task_flow(
         instance_id="flow-bot",
-        task={"task_id": "task_legacy", "status": "succeeded"},
+        task={"task_id": "task_without_ingress_evidence", "status": "succeeded"},
         events=[
             {
                 "sequence": 1,

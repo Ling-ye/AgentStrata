@@ -16,7 +16,7 @@ middleware 与 agent 层不直接 import 任何具体平台模块；``BotSpec.pl
 from __future__ import annotations
 
 import importlib
-from typing import Any, Mapping
+from typing import Any
 
 from chatcopilot.platforms.base import PlatformAdapter, SessionIdentity
 from chatcopilot.platforms.registry import (
@@ -58,22 +58,6 @@ def requires_sender_envelope(platform_type: str) -> bool:
     return bool(get_adapter(platform_type).requires_sender_envelope)
 
 
-# ---------------------------------------------------------------------------
-# Access gate helpers
-# ---------------------------------------------------------------------------
-def detect_self_mention(
-    platform_type: str,
-    text: str,
-    *,
-    env: Mapping[str, str],
-    mention_name: str | None = None,
-) -> bool | None:
-    """委托当前平台 adapter 判断消息是否 @ 了本机器人（供群聊门禁使用）。"""
-    return get_adapter(platform_type).detect_self_mention(
-        text, env=env, mention_name=mention_name
-    )
-
-
 def parse_session_identity(
     platform_type: str,
     *,
@@ -109,7 +93,6 @@ def get_notifier(platform_type: str) -> Any:
 __all__ = [
     "PlatformAdapter",
     "UnsupportedPlatformError",
-    "detect_self_mention",
     "get_adapter",
     "get_notifier",
     "get_sender",

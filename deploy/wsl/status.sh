@@ -115,20 +115,18 @@ fi
 
 # cc-connect 主日志查找顺序：CC_LOG_FILE → $LOG_DIR/cc-connect/<date>.log →
 # $LOG_DIR/cc-connect/current.log → /tmp/cc-connect.log（legacy）
-Q_LOG_DIR="${CHATCOPILOT_LOG_DIR:-$CCP_LOG_DIR_DEFAULT}"
+LOG_DIR="${CHATCOPILOT_LOG_DIR:-$CCP_LOG_DIR_DEFAULT}"
 _resolve_cc_log_for_status() {
     if [ -n "${CC_LOG_FILE:-}" ]; then
         echo "$CC_LOG_FILE"; return
     fi
-    local today_log="$Q_LOG_DIR/cc-connect/$(date +%F).log"
+    local today_log="$LOG_DIR/cc-connect/$(date +%F).log"
     [ -e "$today_log" ] && { echo "$today_log"; return; }
-    local current_link="$Q_LOG_DIR/cc-connect/current.log"
+    local current_link="$LOG_DIR/cc-connect/current.log"
     [ -e "$current_link" ] && { echo "$current_link"; return; }
     echo "/tmp/cc-connect.log"
 }
 CC_LOG="$(_resolve_cc_log_for_status)"
-Q_LOG="$Q_LOG_DIR/$(date +%F).log"
-ERR_LOG="$Q_LOG_DIR/_hook_errors.log"
 CC_HOME="${CHATCOPILOT_CC_HOME:-$CCP_CC_HOME_DEFAULT}"
 CC_CONFIG_DIR="${CHATCOPILOT_CC_CONNECT_CONFIG_DIR:-$CC_HOME/.cc-connect}"
 CC_CONF="$CC_CONFIG_DIR/config.toml"
@@ -272,21 +270,6 @@ print_status() {
         warn "日志文件不存在：$CC_LOG（cc-connect 可能从未启动）"
     fi
 
-    bold "▶ 用户提问日志"
-    if [ -f "$Q_LOG" ]; then
-        local q_count
-        q_count=$(wc -l < "$Q_LOG")
-        local q_age
-        q_age=$(( $(date +%s) - $(stat -c %Y "$Q_LOG") ))
-        ok "$Q_LOG （$q_count 行，上次更新 $(human_age $q_age) 前）"
-    else
-        warn "今日还无用户提问：$Q_LOG"
-    fi
-    if [ -f "$ERR_LOG" ] && [ -s "$ERR_LOG" ]; then
-        warn "hook 错误日志非空：$ERR_LOG"
-        dim "查看：tail -n 30 $ERR_LOG"
-    fi
-
     bold "▶ 环境变量（platform=$PLATFORM_TYPE_FOR_STATUS）"
     case "$PLATFORM_TYPE_FOR_STATUS" in
         feishu)
@@ -313,9 +296,14 @@ print_status() {
                 bad "QQ_ACCESS_TOKEN 缺失或格式无效（必须为 32-128 位 URL-safe 字符）"
             fi
             if [ -n "${QQ_ALLOW_FROM:-}" ]; then
-                ok "QQ_ALLOW_FROM = (已设置，标识已脱敏)"
+                ok "QQ_ALLOW_FROM = (ACP 用户准入已配置，标识已脱敏)"
             else
-                warn "QQ_ALLOW_FROM 未设置（将渲染为 '*' 不限；生产环境建议限制白名单）"
+                warn "QQ_ALLOW_FROM 未设置（ACP 不从用户维度授予准入）"
+            fi
+            if [ -n "${QQ_ALLOW_GROUPS:-}" ]; then
+                ok "QQ_ALLOW_GROUPS = (ACP 群准入已配置，标识已脱敏)"
+            else
+                dim "QQ_ALLOW_GROUPS 未设置（ACP 不从群维度授予准入）"
             fi
             ;;
         *)

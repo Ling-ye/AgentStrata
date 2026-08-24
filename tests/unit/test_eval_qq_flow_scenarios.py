@@ -102,7 +102,6 @@ def test_legacy_capability_registry_rejects_removed_owned_chain_scenarios(
         inherit_environment=False,
     )
     context = CapabilityScenarioContext(
-        access=runtime.access,
         platform_type=runtime.platform_type,
         env={},
         prompt_profile=runtime.prompt_profile,

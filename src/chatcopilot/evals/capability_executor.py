@@ -3175,7 +3175,6 @@ def execute_capability_case(
             observation = run_capability_scenario(
                 definition,
                 context=CapabilityScenarioContext(
-                    access=runtime.access,
                     platform_type=runtime.platform_type,
                     env=dict(os.environ),
                     owners=tuple(get_owners()),

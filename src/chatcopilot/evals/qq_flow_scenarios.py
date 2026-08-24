@@ -31,6 +31,7 @@ from chatcopilot.contracts.agent import (
 )
 from chatcopilot.contracts.identity import ConversationIdentity, Identity, SessionIdentity
 from chatcopilot.contracts.persona_control import PersonaDraftResult
+from chatcopilot.core.allowlists import parse_numeric_allowlist
 from chatcopilot.evals.capability_scenarios import (
     CapabilityScenarioContext,
     run_capability_scenario,
@@ -45,9 +46,7 @@ from chatcopilot.middleware.acp.workspace_service import build_workspace_service
 from chatcopilot.middleware.runtime.tasks import (
     EVENTS_FILENAME,
     TASK_FILENAME,
-    TASKS_DIRNAME,
     TURN_FILENAME,
-    group_task_actor_root,
 )
 from chatcopilot.platforms.qq.ingress_probe import run_simulated_gateway_ingress
 
@@ -57,8 +56,6 @@ _STATE_SENTINEL = "qq-flow-state:unchanged"
 _PERSONA_MARKER_PREFIX = "QQ-FLOW-PERSONA"
 _REQUIRED_EVENT_KINDS = (
     "task_started",
-    "transport.onebot_message_received",
-    "gateway.access_decision",
     "middleware.identity_validated",
     "middleware.access_decision",
     "middleware.identity_activated",
@@ -77,7 +74,6 @@ class _SyntheticInputs:
     bot_id: str
     session_key: str
     session_env_dir: Path
-    receipt_root: Path
     workspace_root: Path
     shared_workspace: Path
     env: Mapping[str, str]
@@ -269,7 +265,6 @@ def _synthetic_inputs(runtime: BotRuntimeContext, root: Path) -> _SyntheticInput
     selected.add(group_id)
     bot_id = _random_numeric_id(excluded=selected)
     session_env_dir = root / "session-env"
-    receipt_root = root / "ingress-receipts"
     workspace_root = root / "workspaces"
     shared_workspace = workspace_root / "group" / "shared"
     env = {
@@ -281,7 +276,6 @@ def _synthetic_inputs(runtime: BotRuntimeContext, root: Path) -> _SyntheticInput
         "CHATCOPILOT_CHAT_KIND": "group",
         "CHATCOPILOT_EVALUATION_ENV_SNAPSHOT": "1",
         "CHATCOPILOT_GROUP_CONVERSATION_SCOPE": "chat",
-        "CHATCOPILOT_INGRESS_RECEIPT_DIR": str(receipt_root),
         "CHATCOPILOT_SESSION_ENV_DIR": str(session_env_dir),
         "CHATCOPILOT_USER_ID": "",
         "CHATCOPILOT_USER_NAME": "",
@@ -291,20 +285,12 @@ def _synthetic_inputs(runtime: BotRuntimeContext, root: Path) -> _SyntheticInput
         "CC_SESSION_KEY": "qq:g:evaluation-shared-session",
         "QQ_ACCESS_TOKEN": secrets.token_urlsafe(32),
         "QQ_ACCOUNT": bot_id,
-        "QQ_ALLOW_FROM": f"{member_id},{owner_id}",
+        "QQ_ALLOW_FROM": owner_id,
         "QQ_ALLOW_GROUPS": group_id,
-        "QQ_AT_ALL_COUNTS": "false",
-        "QQ_REQUIRE_AT_IN_GROUP": (
-            "true" if runtime.access.group_require_mention else "false"
-        ),
         "QQ_WS_URL": "ws://127.0.0.1:1",
         "QQ_AT_PROXY_URL": "ws://127.0.0.1:1",
         "CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID": group_id,
     }
-    if runtime.access.whitelist_env:
-        env[runtime.access.whitelist_env] = f"{member_id},{owner_id}"
-    if runtime.access.group_whitelist_env:
-        env[runtime.access.group_whitelist_env] = group_id
     return _SyntheticInputs(
         member_id=member_id,
         owner_id=owner_id,
@@ -312,7 +298,6 @@ def _synthetic_inputs(runtime: BotRuntimeContext, root: Path) -> _SyntheticInput
         bot_id=bot_id,
         session_key=env["CC_SESSION_KEY"],
         session_env_dir=session_env_dir,
-        receipt_root=receipt_root,
         workspace_root=workspace_root,
         shared_workspace=shared_workspace,
         env=env,
@@ -471,14 +456,10 @@ async def _run_owned_roundtrip(
                 "CHATCOPILOT_CHAT_ID": group_id,
                 "CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID": group_id,
                 "QQ_ACCOUNT": bot_id,
-                "QQ_ALLOW_FROM": sender_id,
+                "QQ_ALLOW_FROM": inputs.owner_id,
                 "QQ_ALLOW_GROUPS": group_id,
             }
         )
-        if runtime.access.whitelist_env:
-            turn_env[runtime.access.whitelist_env] = sender_id
-        if runtime.access.group_whitelist_env:
-            turn_env[runtime.access.group_whitelist_env] = group_id
 
         with patch.dict(os.environ, turn_env, clear=True):
             _write_message_attestation(
@@ -496,10 +477,6 @@ async def _run_owned_roundtrip(
             host.on_connect(client)
             created = await host.new_session(cwd=str(inputs.shared_workspace))
             session_id = str(created.session_id)
-            task_workspace = replace(
-                host._sessions[session_id].workspace,
-                user_id=sender_id,
-            )
             envelope = (
                 f"[cc-connect sender_id={sender_id} platform=qq chat_id={group_id}]\n"
                 f"{content}"
@@ -510,17 +487,14 @@ async def _run_owned_roundtrip(
                 message_id=message_id,
             )
             state = host._sessions[session_id]
-            actor_root = group_task_actor_root(task_workspace)
-            task_root = actor_root / TASKS_DIRNAME
-            task_dirs = sorted(path for path in task_root.iterdir() if path.is_dir())
-            if len(task_dirs) != 1:
+            task_paths = _task_documents(inputs.workspace_root)
+            if len(task_paths) != 1:
                 raise ValueError("QQ flow must create exactly one actor-bound task")
-            task_dir = task_dirs[0]
-            task_document = _read_json(task_dir / TASK_FILENAME)
+            task_dir = task_paths[0].parent
+            task_document = _read_json(task_paths[0])
             turn_document = _read_json(task_dir / TURN_FILENAME)
             events = _read_events(task_dir / EVENTS_FILENAME)
             event_kinds = tuple(_event_kind(event) for event in events)
-            gateway = _transition(events, "gateway.access_decision")
             identity = _transition(events, "middleware.identity_validated")
             access = _transition(events, "middleware.access_decision")
             activation = _transition(events, "middleware.identity_activated")
@@ -541,11 +515,10 @@ async def _run_owned_roundtrip(
                     ),
                     "host_session_created": bool(session_id),
                     "host_prompt_completed": str(response.stop_reason) == "end_turn",
-                    "ingress_receipt_correlated": (
-                        gateway.get("evidence_level") == "correlated"
-                        and _decision(gateway).get("allowed") is True
-                        and _decision(gateway).get("outcome") == "forward"
-                    ),
+                    "relay_allowlist_independent": not parse_numeric_allowlist(
+                        turn_env["QQ_ALLOW_FROM"],
+                        field="QQ_ALLOW_FROM",
+                    ).allows(sender_id),
                     "attestation_identity_validated": (
                         identity.get("status") == "succeeded"
                         and _decision(identity).get("allowed") is True
@@ -598,16 +571,16 @@ async def _run_owned_roundtrip(
                 }
             )
 
-    gateway_receipt = await run_simulated_gateway_ingress(
+    gateway_result = await run_simulated_gateway_ingress(
         inputs.env,
         downstream_observer=observe,
     )
-    gateway = gateway_receipt.to_evidence()
+    gateway = gateway_result.to_evidence()
     required_flags = (
         "required_event_order_observed",
         "host_session_created",
         "host_prompt_completed",
-        "ingress_receipt_correlated",
+        "relay_allowlist_independent",
         "attestation_identity_validated",
         "access_allowed",
         "actor_session_bound",
@@ -626,7 +599,7 @@ async def _run_owned_roundtrip(
         "event_translator_delivery",
         "client_received_sentinel",
     )
-    passed = gateway_receipt.passed and all(
+    passed = gateway_result.passed and all(
         continuation.get(name) is True for name in required_flags
     ) and continuation.get("deterministic_agent_invocation_count") == 1 and continuation.get(
         "client_session_update_count"
@@ -643,7 +616,7 @@ async def _run_owned_roundtrip(
             {
                 "kind": "qq_gateway_relay",
                 **gateway,
-                "passed": gateway_receipt.passed,
+                "passed": gateway_result.passed,
                 "external_platform_write": False,
             },
             {
@@ -651,11 +624,10 @@ async def _run_owned_roundtrip(
                 **continuation,
                 "passed": passed,
                 "owned_chain_passed": passed,
-                "gateway_relay_passed": gateway_receipt.passed,
+                "gateway_relay_passed": gateway_result.passed,
                 "full_external_e2e": False,
                 "exercised_layers": [
-                    "access_proxy",
-                    "ingress_receipt",
+                    "qq_at_relay",
                     "session_attestation_writer",
                     "acp_chat_agent",
                     "turn_orchestrator",
@@ -778,7 +750,7 @@ async def _run_attestation_mismatch(
             "qq_platform",
             "napcat",
             "cc_connect",
-            "access_proxy",
+            "qq_at_relay",
             "agent_model",
         ],
         "excluded_layers": ["external_qq_write"],
@@ -1119,7 +1091,7 @@ async def _run_persona_roundtrip(
             "session_attestation_writer",
             "sender_envelope",
             "transport_attestation_consumer",
-            "access_gate",
+            "acp_admission",
             "role_resolution",
             "persona_manage_tool",
             "persona_persistent_state",
@@ -1134,7 +1106,7 @@ async def _run_persona_roundtrip(
             "qq_platform",
             "napcat",
             "cc_connect",
-            "access_proxy",
+            "qq_at_relay",
             "persona_draft_agent",
             "agent_model",
         ],
@@ -1224,12 +1196,13 @@ def run_qq_flow_scenario(
             if case.case_id == "qq-persona-persistence-next-turn":
                 return asyncio.run(_run_persona_roundtrip(runtime, inputs))
             context = CapabilityScenarioContext(
-                access=runtime.access,
                 platform_type=runtime.platform_type,
                 env=dict(inputs.env),
                 owners=(Identity(user_id=inputs.owner_id),),
                 admins=(),
                 prompt_profile=runtime.prompt_profile,
+                member_id=inputs.member_id,
+                group_id=inputs.group_id,
             )
             return run_capability_scenario(case, context=context)
 

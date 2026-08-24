@@ -962,7 +962,7 @@ def test_qq_flow_snapshot_hashes_real_acp_orchestration_and_attestation_modules(
     modules = snapshot["execution_implementations"]["modules"]
     required = {
         "chatcopilot.evals.qq_flow_scenarios",
-        "chatcopilot.platforms.qq.access_proxy",
+        "chatcopilot.platforms.qq.at_proxy",
         "chatcopilot.platforms.qq.ingress_probe",
         "chatcopilot.middleware.acp.server",
         "chatcopilot.middleware.acp.agent_bridge",
@@ -1019,9 +1019,6 @@ def test_runtime_implementation_snapshot_covers_real_agent_and_capability_depend
         "chatcopilot.agent.subagents.registry",
         "chatcopilot.agent.subagents.runner",
         "chatcopilot.agent.subagents.result",
-        "chatcopilot.middleware.acp.access_gate",
-        "chatcopilot.middleware.acp.agent_bridge",
-        "chatcopilot.platforms.qq.at_proxy",
     }
 
     assert common_modules.issubset(native["modules"])
@@ -1030,6 +1027,9 @@ def test_runtime_implementation_snapshot_covers_real_agent_and_capability_depend
     assert "chatcopilot.agent.backends.codex" in codex["modules"]
     assert "chatcopilot.agent.backends.session_relay" in codex["modules"]
     assert "chatcopilot.agent.backends.session_relay" not in native["modules"]
+    assert "chatcopilot.middleware.acp.admission" not in native["modules"]
+    assert "chatcopilot.middleware.acp.agent_bridge" not in native["modules"]
+    assert "chatcopilot.platforms.qq.at_proxy" not in native["modules"]
 
 
 def test_runner_executes_parent_frozen_case_without_reloading_cases(

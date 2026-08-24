@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+
+from acp import PromptResponse
+import pytest
 
 from chatcopilot.contracts.agent import AgentResult, FinalText, TurnError
 from chatcopilot.contracts.model_selection import CodeModelSelection
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.model_selection import CODE_MODEL_SELECTION_METADATA_KEY
 from chatcopilot.middleware.acp.server import AcpChatAgent
+from chatcopilot.middleware.acp.session_state import SessionState
+from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder
 from chatcopilot.core.workspace_runtime import Workspace
 
 
@@ -27,6 +33,22 @@ def _runtime() -> SimpleNamespace:
         agent_backend="native",
         spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_LAZYTEST")),
     )
+
+
+def _control_agent(workspace: Workspace) -> AcpChatAgent:
+    runtime = _runtime()
+    runtime.platform_type = "qq"
+    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent._runtime = runtime
+    agent._chat_config = ChatConfig()
+    agent._sessions = {}
+    agent._session_locks = {}
+    agent._group_actor_sessions = {}
+    agent._job_watch_tasks = {}
+    agent._attachment_ack_tasks = {}
+    agent._attachment_ack_resource_names = {}
+    agent._resolve_conversation_workspace = lambda: workspace  # type: ignore[method-assign]
+    return agent
 
 
 def test_acp_agent_construction_does_not_build_agent_runtime() -> None:
@@ -85,12 +107,251 @@ def test_session_creation_is_control_plane_only(tmp_path: Path) -> None:
     build.assert_not_called()
 
 
+def test_new_and_load_sessions_do_not_materialize_workspace_or_notifications(
+    tmp_path: Path,
+) -> None:
+    workspace = Workspace(
+        root=tmp_path / "p2p_10001",
+        chat_kind="p2p",
+        chat_id="10001",
+        user_id="10001",
+    )
+    agent = _control_agent(workspace)
+    notify = mock.AsyncMock()
+    agent._send_unnotified_completed_jobs = notify  # type: ignore[method-assign]
+
+    async def exercise() -> tuple[str, str]:
+        created = await agent.new_session(cwd="/ignored")
+        loaded_id = "loaded-session"
+        await agent.load_session(cwd="/ignored", session_id=loaded_id)
+        await asyncio.sleep(0)
+        return created.session_id, loaded_id
+
+    created_id, loaded_id = asyncio.run(exercise())
+
+    assert not workspace.root.exists()
+    assert agent._sessions[created_id].transcript_path is None
+    assert agent._sessions[loaded_id].transcript_path is None
+    assert not agent._sessions[created_id].is_workspace_materialized
+    assert not agent._sessions[loaded_id].is_workspace_materialized
+    notify.assert_not_awaited()
+
+
+def test_missing_session_prompt_builds_only_a_control_shell(tmp_path: Path) -> None:
+    workspace = Workspace(
+        root=tmp_path / "p2p_10002",
+        chat_kind="p2p",
+        chat_id="10002",
+        user_id="10002",
+    )
+    agent = _control_agent(workspace)
+    captured: dict[str, SessionState] = {}
+
+    async def stop_before_identity(_orchestrator, **kwargs):
+        captured["session"] = kwargs["session"]
+        return PromptResponse(stop_reason="end_turn")
+
+    async def exercise() -> None:
+        with (
+            mock.patch(
+                "chatcopilot.middleware.acp.server.AcpTurnOrchestrator.run",
+                new=stop_before_identity,
+            ),
+            mock.patch(
+                "chatcopilot.middleware.acp.server._latest_workspace_from_session_env",
+                return_value=None,
+            ),
+        ):
+            await agent._prompt_locked([], "missing-session", None)
+
+    asyncio.run(exercise())
+
+    state = captured["session"]
+    assert agent._sessions["missing-session"] is state
+    assert not state.is_workspace_materialized
+    assert state.transcript_path is None
+    assert not workspace.root.exists()
+
+
+def test_admitted_workspace_materializes_once_without_control_plane_notification(
+    tmp_path: Path,
+) -> None:
+    workspace = Workspace(
+        root=tmp_path / "p2p_10003",
+        chat_kind="p2p",
+        chat_id="10003",
+        user_id="10003",
+    )
+    agent = _control_agent(workspace)
+    state = agent._build_session(session_id="admitted-session", ws=workspace)
+    notify = mock.AsyncMock()
+    agent._send_unnotified_completed_jobs = notify  # type: ignore[method-assign]
+
+    async def exercise() -> None:
+        first = agent._activate_turn_identity(
+            session=state,
+            session_id="admitted-session",
+            identity=None,
+        )
+        second = agent._activate_turn_identity(
+            session=state,
+            session_id="admitted-session",
+            identity=None,
+        )
+        assert first is second is state
+        await asyncio.sleep(0)
+
+    with mock.patch("chatcopilot.middleware.acp.session_state.cleanup_workspace") as cleanup:
+        asyncio.run(exercise())
+
+    assert state.is_workspace_materialized
+    assert state.transcript_path is not None
+    assert workspace.root.is_dir()
+    assert (workspace.root / "IDENTITY.json").is_file()
+    cleanup.assert_called_once_with(state.workspace)
+    notify.assert_not_awaited()
+
+
+def test_new_session_then_private_admission_denial_has_no_runtime_workspace_side_effects(
+    tmp_path: Path,
+) -> None:
+    instance_root = tmp_path / "instance"
+    workspace = Workspace(
+        root=instance_root / "p2p_10001",
+        chat_kind="p2p",
+        chat_id="10001",
+        user_id="10001",
+    )
+    agent = _control_agent(workspace)
+
+    class _Connection:
+        async def session_update(self, **_kwargs: object) -> None:
+            return None
+
+    agent._conn = _Connection()
+
+    async def fail_if_agent_materializes(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("denied turn must not materialize an Agent session")
+
+    agent._ensure_agent_session = fail_if_agent_materializes  # type: ignore[method-assign]
+    denied_body = "private denied body must not persist"
+
+    async def exercise() -> tuple[PromptResponse, SessionState]:
+        created = await agent.new_session(cwd="/ignored")
+        response = await agent.prompt(
+            prompt=[
+                {"text": (f"[cc-connect sender_id=10001 platform=qq chat_id=10001]\n{denied_body}")}
+            ],
+            session_id=created.session_id,
+            message_id="message-denied-private",
+        )
+        return response, agent._sessions[created.session_id]
+
+    with mock.patch.dict(
+        os.environ,
+        {
+            "CHATCOPILOT_WORKSPACE_ROOT": str(instance_root),
+            "QQ_ALLOW_FROM": "20002",
+            "QQ_ALLOW_GROUPS": "",
+        },
+        clear=False,
+    ):
+        response, state = asyncio.run(exercise())
+
+    assert response.stop_reason == "end_turn"
+    assert not state.is_workspace_materialized
+    assert state.transcript_path is None
+    assert workspace.tasks.is_dir()
+    assert workspace.tasks.stat().st_mode & 0o777 == 0o700
+    for path in (
+        workspace.downloads,
+        workspace.results,
+        workspace.uploads,
+        workspace.attachments,
+        workspace.transcripts,
+        workspace.root / "IDENTITY.json",
+    ):
+        assert not path.exists()
+    persisted = "\n".join(
+        path.read_text(encoding="utf-8") for path in workspace.tasks.rglob("*") if path.is_file()
+    )
+    task_dirs = tuple(path for path in workspace.tasks.iterdir() if path.is_dir())
+    assert len(task_dirs) == 1
+    assert task_dirs[0].stat().st_mode & 0o777 == 0o700
+    assert all(
+        path.stat().st_mode & 0o777 == 0o600 for path in task_dirs[0].iterdir() if path.is_file()
+    )
+    assert denied_body not in persisted
+    assert "10001" not in persisted
+    assert "message-denied-private" not in persisted
+    assert str(instance_root) not in persisted
+
+
+def test_lazy_private_task_storage_rejects_unsafe_roots(tmp_path: Path) -> None:
+    history_root = tmp_path / "history"
+    history_root.mkdir(mode=0o700)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    symlink_workspace = history_root / "p2p_symlink"
+    symlink_workspace.symlink_to(outside, target_is_directory=True)
+    unsafe_workspaces = [
+        Workspace(
+            root=symlink_workspace,
+            chat_kind="p2p",
+            chat_id="10001",
+            user_id="10001",
+        ),
+        Workspace(
+            root=history_root / "p2p_file",
+            chat_kind="p2p",
+            chat_id="10002",
+            user_id="10002",
+        ),
+    ]
+    unsafe_workspaces[1].root.write_text("not a directory", encoding="utf-8")
+
+    for workspace in unsafe_workspaces:
+        with pytest.raises(ValueError):
+            TurnTaskRecorder(
+                workspace=workspace,
+                session_id="unsafe-session",
+                message_id=None,
+                user_text="denied",
+                history_root=history_root,
+            )
+
+    owned_workspace = Workspace(
+        root=history_root / "p2p_owned",
+        chat_kind="p2p",
+        chat_id="10003",
+        user_id="10003",
+    )
+    owned_workspace.root.mkdir(mode=0o700)
+    if os.name == "posix":
+        with (
+            mock.patch(
+                "chatcopilot.middleware.runtime.tasks.os.geteuid",
+                return_value=os.geteuid() + 1,
+            ),
+            pytest.raises(ValueError),
+        ):
+            TurnTaskRecorder(
+                workspace=owned_workspace,
+                session_id="foreign-owner-session",
+                message_id=None,
+                user_text="denied",
+                history_root=history_root,
+            )
+
+    assert tuple(outside.iterdir()) == ()
+
+
 def test_llm_error_keeps_raw_diagnostic_private_and_delivers_safe_text(
     tmp_path: Path,
 ) -> None:
     raw_error = (
-        "Codex CLI failed: 401 Unauthorized; stderr=refresh token already used "
-        "secret-token-value"
+        "Codex CLI failed: 401 Unauthorized; stderr=refresh token already used secret-token-value"
     )
     safe_text = "Codex 登录已失效，请让管理员重新完成机器人独立登录。"
 
@@ -261,9 +522,10 @@ def test_once_model_selection_is_consumed_only_after_run_task_returns(
         )
     )
 
-    assert successful_backend.tasks[0].metadata[
-        CODE_MODEL_SELECTION_METADATA_KEY
-    ] == selection.to_payload()
+    assert (
+        successful_backend.tasks[0].metadata[CODE_MODEL_SELECTION_METADATA_KEY]
+        == selection.to_payload()
+    )
     assert successful_session.consumed == [selection]
     assert config.routing.code_model == "gpt-5.6-terra"
 

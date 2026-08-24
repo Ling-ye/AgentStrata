@@ -1143,8 +1143,24 @@ class CodexAgentBackend:
                 "--ro-bind",
                 str(state.workdir),
                 str(state.workdir),
-                "--tmpfs",
-                str(state.workdir / ".codex"),
+            ]
+        )
+        project_codex = state.workdir / ".codex"
+        try:
+            project_codex_info = project_codex.lstat()
+        except FileNotFoundError:
+            project_codex_info = None
+        if project_codex_info is not None:
+            if (
+                not stat.S_ISDIR(project_codex_info.st_mode)
+                or project_codex_info.st_uid != os.getuid()
+            ):
+                raise RuntimeError(
+                    "shared-group Codex project config must be an owner-owned real directory"
+                )
+            wrapped.extend(["--tmpfs", str(project_codex)])
+        wrapped.extend(
+            [
                 "--ro-bind",
                 str(host_codex),
                 _ISOLATED_CODEX_BINARY,

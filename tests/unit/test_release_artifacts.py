@@ -17,6 +17,20 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _worktree_package_projection(required_resources: frozenset[str]) -> frozenset[str]:
+    package_root = ROOT / "src" / "chatcopilot"
+    python_members = {
+        path.relative_to(package_root).as_posix()
+        for path in package_root.rglob("*")
+        if path.suffix in {".py", ".pyi"} and path.is_file() and not path.is_symlink()
+    }
+    for relative in required_resources:
+        resource = package_root / relative
+        assert resource.is_file()
+        assert not resource.is_symlink()
+    return frozenset(python_members | set(required_resources))
+
+
 def _load_verifier():
     path = ROOT / "scripts" / "verify_release_artifacts.py"
     spec = importlib.util.spec_from_file_location("verify_release_artifacts_test", path)
@@ -25,6 +39,13 @@ def _load_verifier():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _load_synthetic_sdist_verifier():
+    verifier = _load_verifier()
+    projection = _worktree_package_projection(verifier.REQUIRED_PACKAGE_RESOURCES)
+    verifier._source_package_projection = lambda: projection
+    return verifier
 
 
 def _record_hash(payload: bytes) -> str:
@@ -309,7 +330,7 @@ def test_release_sdist_rejects_unexpected_regular_file(
     tmp_path: Path,
     relative: str,
 ) -> None:
-    verifier = _load_verifier()
+    verifier = _load_synthetic_sdist_verifier()
     identity = verifier._source_identity()
     root = f"{identity.name}-{identity.version}"
     sdist = tmp_path / f"{root}.tar.gz"
@@ -477,7 +498,7 @@ def test_release_wheel_accepts_semantically_equivalent_requires_python(
 def test_release_sdist_requires_python_must_match_pyproject(
     tmp_path: Path,
 ) -> None:
-    verifier = _load_verifier()
+    verifier = _load_synthetic_sdist_verifier()
     identity = verifier._source_identity()
     root = f"{identity.name}-{identity.version}"
     sdist = tmp_path / f"{root}.tar.gz"
@@ -576,7 +597,7 @@ def test_release_wheel_description_rejects_relative_markdown_target(
 def test_release_sdist_description_rejects_relative_markdown_target(
     tmp_path: Path,
 ) -> None:
-    verifier = _load_verifier()
+    verifier = _load_synthetic_sdist_verifier()
     identity = verifier._source_identity()
     root = f"{identity.name}-{identity.version}"
     sdist = tmp_path / f"{root}.tar.gz"

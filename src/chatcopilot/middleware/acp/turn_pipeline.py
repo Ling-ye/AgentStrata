@@ -8,8 +8,9 @@ from typing import Any, Protocol
 from acp import PromptResponse
 
 TURN_STAGE_ORDER = (
+    "identity",
+    "admission",
     "attachments",
-    "permissions",
     "deterministic_shortcuts",
     "session_materialization",
     "execution",
