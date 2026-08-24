@@ -3,6 +3,17 @@ import type { BotTask, TaskFlowTransition, TasksResponse } from "../../types";
 const ACTIVE_TASK_STATUSES = new Set(["queued", "running", "delegated", "cancel_requested"]);
 const TERMINAL_TASK_STATUSES = new Set(["succeeded", "failed", "error", "cancelled"]);
 
+export function updateExpandedStepIds(
+  current: ReadonlySet<string>,
+  stepId: string,
+  isOpen: boolean,
+) {
+  const next = new Set(current);
+  if (isOpen) next.add(stepId);
+  else next.delete(stepId);
+  return next;
+}
+
 export function taskDeleteAvailability(status: string) {
   if (ACTIVE_TASK_STATUSES.has(status)) {
     return {

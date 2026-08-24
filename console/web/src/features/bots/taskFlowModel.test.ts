@@ -5,6 +5,7 @@ import {
   groupTasks,
   nextTaskIdAfterDelete,
   taskDeleteAvailability,
+  updateExpandedStepIds,
   withoutTaskRecord,
 } from "./taskFlowModel";
 
@@ -46,6 +47,20 @@ function task(task_id: string, status: string): BotTask {
 }
 
 describe("task flow presentation model", () => {
+  it("updates expanded timeline steps without mutating the current selection", () => {
+    const current = new Set(["first"]);
+    const expanded = updateExpandedStepIds(current, "second", true);
+    const repeated = updateExpandedStepIds(expanded, "second", true);
+    const collapsed = updateExpandedStepIds(repeated, "first", false);
+
+    expect([...current]).toEqual(["first"]);
+    expect([...expanded]).toEqual(["first", "second"]);
+    expect([...repeated]).toEqual(["first", "second"]);
+    expect([...collapsed]).toEqual(["second"]);
+    expect(expanded).not.toBe(current);
+    expect(repeated).not.toBe(expanded);
+  });
+
   it("collapses only consecutive capability traffic and preserves layer boundaries", () => {
     const rows = buildFlowRows([
       transition("middleware1", "gateway", "middleware"),

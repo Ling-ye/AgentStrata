@@ -15,7 +15,6 @@ import multiprocessing
 import os
 import re
 import signal
-import shlex
 import shutil
 import stat
 import sys
@@ -63,6 +62,7 @@ from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, san
 from chatcopilot.evals.plugins import CaseLoadContext, get_evaluation_plugin, get_plugin_binding
 from chatcopilot.evals.registry import get_cases, get_manifest, get_standard
 from chatcopilot.evals.runner import run_suite
+from chatcopilot.external_tools.codex_cli import build_codex_command
 
 EvaluationKind = Literal["comparison", "suite"]
 EvaluationStatus = Literal[
@@ -2088,11 +2088,10 @@ def _validate_suite(
                 ready = backend in backend_ids() and bool(model)
                 detail = f"executor=agent_configured, backend={backend}, model={model or 'missing'}"
                 if backend == "codex":
-                    command_parts = shlex.split(str(config.routing.code_command or ""))
-                    binary = command_parts[0] if command_parts else ""
-                    ready = ready and bool(binary and shutil.which(binary))
+                    command_ready = _codex_command_available(config, model, effort)
+                    ready = ready and command_ready
                     detail += (
-                        f", command={'available' if binary and shutil.which(binary) else 'missing'}"
+                        f", command={'available' if command_ready else 'missing'}"
                     )
                 else:
                     credential_ready = bool(str(config.llm.api_key or "").strip())
@@ -3328,12 +3327,11 @@ def _isolated_target(
     if normalized == "codex":
         model = str(config.routing.code_model or "")
         effort = str(config.routing.code_reasoning_effort or "")
-        command_parts = shlex.split(str(config.routing.code_command or ""))
-        binary = command_parts[0] if command_parts else ""
-        ready = bool(model and binary and shutil.which(binary))
+        command_ready = _codex_command_available(config, model, effort)
+        ready = bool(model and command_ready)
         detail = (
             f"backend=codex, model={model or 'missing'}, "
-            f"command={'available' if binary and shutil.which(binary) else 'missing'}"
+            f"command={'available' if command_ready else 'missing'}"
         )
         target = _make_target(
             target_id="codex",
@@ -3370,6 +3368,19 @@ def _isolated_target(
         detail,
         "检查 LLM、凭据和 Codex CLI 配置",
     )
+
+
+def _codex_command_available(config: Any, model: str, effort: str) -> bool:
+    try:
+        build_codex_command(
+            str(config.routing.code_command or ""),
+            model=model,
+            workdir=Path.cwd(),
+            reasoning_effort=effort,
+        )
+    except (KeyError, OSError, RuntimeError, ValueError):
+        return False
+    return True
 
 
 def _configured_model(backend: str, config: Any) -> tuple[str, str]:

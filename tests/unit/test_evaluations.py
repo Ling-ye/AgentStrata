@@ -62,7 +62,7 @@ def _available_codex_cli(monkeypatch: pytest.MonkeyPatch) -> None:
         "test-" + "credential",
     )
     monkeypatch.setattr(
-        "chatcopilot.evals.evaluations.shutil.which",
+        "chatcopilot.external_tools.codex_cli.command.shutil.which",
         lambda _binary: "/usr/bin/codex",
     )
 
@@ -604,6 +604,34 @@ def test_validation_exposes_fingerprinted_executor_targets() -> None:
         "agent_isolated",
     ]
     assert all(len(item["fingerprint"]) == 64 for item in result["targets"])
+
+
+def test_codex_preflight_uses_explicit_binary_outside_service_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex = tmp_path / "codex"
+    codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    codex.chmod(0o755)
+    monkeypatch.setenv("CHATCOPILOT_CODEX_BIN", str(codex))
+    monkeypatch.setattr(
+        "chatcopilot.external_tools.codex_cli.command.shutil.which",
+        lambda _binary: None,
+    )
+
+    result = validate_evaluation(
+        {
+            "kind": "suite",
+            "bot": "lingye-copilot-qq",
+            "suite": "agentstrata-capabilities-v1",
+            "preset": "quick",
+        }
+    )
+
+    executor = next(item for item in result["checks"] if item["code"] == "executor")
+    assert result["ready"] is True
+    assert executor["ok"] is True
+    assert "command=available" in executor["detail"]
 
 
 @pytest.mark.parametrize(

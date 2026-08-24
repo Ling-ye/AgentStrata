@@ -22,6 +22,7 @@ import type {
 } from "../../types";
 import { usePolling } from "../../shared/hooks/usePolling";
 import { fmtElapsed, fmtInt, fmtTime, jobStatusColor } from "./jobsFormat";
+import { updateExpandedStepIds } from "./taskFlowModel";
 
 const { Text } = Typography;
 
@@ -197,6 +198,7 @@ export default function TaskEvidencePanel({
   const [detailError, setDetailError] = useState("");
   const [events, setEvents] = useState<TaskRawEvent[] | null>(null);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsError, setEventsError] = useState("");
   const [eventsTruncated, setEventsTruncated] = useState(false);
   const [eventsIntegrityGap, setEventsIntegrityGap] = useState(false);
   const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(new Set());
@@ -255,6 +257,7 @@ export default function TaskEvidencePanel({
     if (!visible) return;
     setDetail(null);
     setEvents(null);
+    setEventsError("");
     setEventsTruncated(false);
     setEventsIntegrityGap(false);
     setExpandedStepIds(new Set());
@@ -272,6 +275,7 @@ export default function TaskEvidencePanel({
     terminalEventsRefreshRef.current = false;
     setEvents(null);
     setEventsLoading(false);
+    setEventsError("");
     setEventsTruncated(false);
     setEventsIntegrityGap(false);
     setExpandedStepIds(new Set());
@@ -298,6 +302,7 @@ export default function TaskEvidencePanel({
     const requestId = ++eventsRequestRef.current;
     const request = (async () => {
       setEventsLoading(true);
+      setEventsError("");
       try {
         const response = await api.taskEvents(bot.instance_id, selectedId);
         if (
@@ -305,13 +310,18 @@ export default function TaskEvidencePanel({
           || eventsRequestRef.current !== requestId
         ) return;
         setEvents(response.events);
+        setEventsError("");
         setEventsTruncated(response.truncated);
         setEventsIntegrityGap(response.integrity_gap);
       } catch (reason) {
         if (
           selectionRef.current === requestKey
           && eventsRequestRef.current === requestId
-        ) Message.error(reason instanceof Error ? reason.message : String(reason));
+        ) {
+          const message = reason instanceof Error ? reason.message : String(reason);
+          setEventsError(message);
+          Message.error(`原始事件加载失败：${message}`);
+        }
       } finally {
         if (eventsRequestRef.current === requestId) eventsInFlightRef.current = null;
         if (
@@ -683,13 +693,11 @@ export default function TaskEvidencePanel({
                       key={step.step_id}
                       style={{ marginLeft: `${Math.min(step.depth || 0, 8) * 22}px` }}
                       onToggle={(event) => {
-                        setExpandedStepIds((current) => {
-                          const next = new Set(current);
-                          if (event.currentTarget.open) next.add(step.step_id);
-                          else next.delete(step.step_id);
-                          return next;
-                        });
-                        if (event.currentTarget.open) void ensureEvents();
+                        const isOpen = event.currentTarget.open;
+                        setExpandedStepIds((current) => (
+                          updateExpandedStepIds(current, step.step_id, isOpen)
+                        ));
+                        if (isOpen) void ensureEvents();
                       }}
                     >
                       <summary>
@@ -716,7 +724,14 @@ export default function TaskEvidencePanel({
                             {
                               step,
                               events: matchingEvents,
-                              note: matchingEvents.length === 0 ? "没有匹配的原始事件。" : undefined,
+                              events_error: eventsError || undefined,
+                              note: eventsError
+                                ? events === null
+                                  ? "原始事件加载失败；当前仅展示结构化步骤。"
+                                  : "原始事件刷新失败；当前 events 为上次成功读取的有界尾部。"
+                                : matchingEvents.length === 0
+                                  ? "没有匹配的原始事件。"
+                                  : undefined,
                             },
                             null,
                             2,
