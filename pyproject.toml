@@ -55,11 +55,13 @@ desktop = [
 ]
 test = [
     "pytest",
+    "httpx2>=2.0.0,<3",
 ]
 dev = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "pytest",
+    "httpx2>=2.0.0,<3",
     "ruff>=0.12,<1",
     "build==1.5.0",
     "mypy>=1.16,<2",

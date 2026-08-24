@@ -56,14 +56,20 @@ from chatcopilot.evals.report import compare_reports
 
 
 @pytest.fixture(autouse=True)
-def _available_codex_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+def _available_codex_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex = tmp_path / "fixture-codex"
+    codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    codex.chmod(0o755)
     monkeypatch.setenv(
         "CHATCOPILOT_LINGYE_API_KEY",
         "test-" + "credential",
     )
     monkeypatch.setattr(
         "chatcopilot.external_tools.codex_cli.command.shutil.which",
-        lambda _binary: "/usr/bin/codex",
+        lambda _binary: str(codex),
     )
 
 
@@ -632,6 +638,61 @@ def test_codex_preflight_uses_explicit_binary_outside_service_path(
     assert result["ready"] is True
     assert executor["ok"] is True
     assert "command=available" in executor["detail"]
+
+
+def test_codex_preflight_rejects_unusable_configured_binary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex = tmp_path / "codex"
+    monkeypatch.setenv(
+        "CHATCOPILOT_LINGYE_CODE_COMMAND",
+        f"{codex} exec --model {{model}} --cd {{workdir}}",
+    )
+
+    missing = validate_evaluation(
+        {
+            "kind": "suite",
+            "bot": "lingye-copilot-qq",
+            "suite": "agentstrata-capabilities-v1",
+            "preset": "quick",
+        }
+    )
+    codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    not_executable = validate_evaluation(
+        {
+            "kind": "suite",
+            "bot": "lingye-copilot-qq",
+            "suite": "agentstrata-capabilities-v1",
+            "preset": "quick",
+        }
+    )
+
+    for result in (missing, not_executable):
+        executor = next(item for item in result["checks"] if item["code"] == "executor")
+        assert result["ready"] is False
+        assert executor["ok"] is False
+        assert "command=missing" in executor["detail"]
+
+
+def test_codex_preflight_rejects_malformed_positional_command_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CHATCOPILOT_LINGYE_CODE_COMMAND", "codex exec {}")
+
+    result = validate_evaluation(
+        {
+            "kind": "suite",
+            "bot": "lingye-copilot-qq",
+            "suite": "agentstrata-capabilities-v1",
+            "preset": "quick",
+        }
+    )
+
+    executor = next(item for item in result["checks"] if item["code"] == "executor")
+    assert result["ready"] is False
+    assert executor["ok"] is False
+    assert "command=missing" in executor["detail"]
 
 
 @pytest.mark.parametrize(

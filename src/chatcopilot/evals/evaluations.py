@@ -3372,15 +3372,16 @@ def _isolated_target(
 
 def _codex_command_available(config: Any, model: str, effort: str) -> bool:
     try:
-        build_codex_command(
+        command = build_codex_command(
             str(config.routing.code_command or ""),
             model=model,
             workdir=Path.cwd(),
             reasoning_effort=effort,
         )
-    except (KeyError, OSError, RuntimeError, ValueError):
+        executable = Path(command[0])
+        return executable.is_file() and os.access(executable, os.X_OK)
+    except (IndexError, KeyError, OSError, RuntimeError, ValueError):
         return False
-    return True
 
 
 def _configured_model(backend: str, config: Any) -> tuple[str, str]:
