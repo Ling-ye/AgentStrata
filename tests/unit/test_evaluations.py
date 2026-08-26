@@ -2034,11 +2034,15 @@ def test_private_runtime_fingerprint_binds_group_allowlist_without_persisting_id
     assert first["identity_hmac"] != drifted["identity_hmac"]
 
 
-def _configure_secretless_private_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+def _configure_private_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    api_key: str = "",
+) -> None:
     runtime = SimpleNamespace(
         spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST_EVAL_PRIVATE")),
     )
-    config = SimpleNamespace(llm=SimpleNamespace(api_key=""))
+    config = SimpleNamespace(llm=SimpleNamespace(api_key=api_key))
     monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)
     monkeypatch.setattr(evaluation_module, "load_config", lambda **_kwargs: config)
     monkeypatch.setattr(evaluation_module, "collect_env_secrets", lambda: ())
@@ -2054,7 +2058,7 @@ def _configure_secretless_private_runtime(monkeypatch: pytest.MonkeyPatch) -> No
 def test_private_runtime_fingerprint_allows_empty_identity_without_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_secretless_private_runtime(monkeypatch)
+    _configure_private_runtime(monkeypatch)
 
     snapshot = evaluation_module._private_runtime_configuration_snapshot("configured-bot")
 
@@ -2069,10 +2073,23 @@ def test_private_runtime_fingerprint_allows_empty_identity_without_key(
     }
 
 
+def test_private_runtime_fingerprint_omits_hmac_for_empty_identity_with_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_private_runtime(
+        monkeypatch,
+        api_key="configured-test-credential",
+    )
+
+    snapshot = evaluation_module._private_runtime_configuration_snapshot("configured-bot")
+
+    assert snapshot["identity_hmac"] == ""
+
+
 def test_private_runtime_fingerprint_requires_key_for_actual_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_secretless_private_runtime(monkeypatch)
+    _configure_private_runtime(monkeypatch)
     monkeypatch.setenv("QQ_ALLOW_FROM", "10017")
 
     with pytest.raises(ValueError, match="stable private configuration digest key"):
@@ -2082,7 +2099,7 @@ def test_private_runtime_fingerprint_requires_key_for_actual_identity(
 def test_suite_preflight_rejects_private_identity_without_digest_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_secretless_private_runtime(monkeypatch)
+    _configure_private_runtime(monkeypatch)
     monkeypatch.setenv("QQ_ALLOW_FROM", "10017")
 
     validation = validate_evaluation(

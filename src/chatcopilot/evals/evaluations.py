@@ -3670,9 +3670,13 @@ def _private_runtime_configuration_snapshot(
             "qq_group_allowlist_entry_count": len(group_allowlist.values),
             "owner_entry_count": len(owners),
             "admin_entry_count": len(admins),
-            "identity_hmac": _private_configuration_digest(
-                material,
-                fallback_secret=fallback_secret,
+            "identity_hmac": (
+                _private_configuration_digest(
+                    material,
+                    fallback_secret=fallback_secret,
+                )
+                if has_private_identities
+                else ""
             ),
         }
         return snapshot

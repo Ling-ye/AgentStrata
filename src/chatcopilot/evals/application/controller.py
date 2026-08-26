@@ -1452,10 +1452,8 @@ class EvaluationApplication:
         worker_pid: int,
     ) -> None:
         directory = self._evaluation_dir(evaluation_id)
-        while self._worker_pid_status(worker_pid, directory) == "matched":
+        while self._worker_pid_status(worker_pid, directory) != "exited":
             time.sleep(0.1)
-        if self._worker_pid_status(worker_pid, directory) == "unknown":
-            return
         self._finalize_worker_exit(
             evaluation_id,
             bot_id=bot_id,

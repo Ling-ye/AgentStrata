@@ -1340,6 +1340,37 @@ def test_recovery_adopts_worker_discovered_after_pid_persistence_gap(
     start_watch.assert_called_once()
 
 
+def test_inherited_worker_watch_retries_transient_unknown_identity(
+    tmp_path: Path,
+) -> None:
+    application = EvaluationApplication(
+        tmp_path / "evaluations",
+        validator=_ready_validator(),
+    )
+
+    with (
+        patch.object(
+            application,
+            "_worker_pid_status",
+            side_effect=("matched", "unknown", "unknown", "matched", "exited"),
+        ),
+        patch("chatcopilot.evals.application.controller.time.sleep") as sleep,
+        patch.object(application, "_finalize_worker_exit") as finalize,
+    ):
+        application._watch_inherited_worker(
+            "eval-transient-identity",
+            _instance().instance_id,
+            4321,
+        )
+
+    assert sleep.call_count == 4
+    finalize.assert_called_once_with(
+        "eval-transient-identity",
+        bot_id=_instance().instance_id,
+        exit_code=None,
+    )
+
+
 def test_recovery_does_not_rewrite_an_already_matching_live_claim(
     tmp_path: Path,
 ) -> None:
