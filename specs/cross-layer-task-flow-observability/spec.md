@@ -34,6 +34,8 @@ The public layer vocabulary is:
 
 Layers with no evidence remain visible only when declared by the selected adapter or runtime topology, and their coverage is `declared` or `missing`, never `observed`. The projection uses `observed`, `correlated`, `declared`, `provider_opaque`, and `missing` as evidence levels. `provider_opaque` explicitly describes state that AgentStrata cannot inspect, including Codex native resume state and provider-side instructions. Model reasoning summaries may be shown only when they are explicit public model events already permitted by the backend contract; hidden chain-of-thought is neither stored nor reconstructed.
 
+The external `channel` layer may remain visibly `missing`, but that absence is not repeated in the actionable omission list or its summary count because QQ client display/read receipts are not available in the supported topology. The strongest delivery claim still states that no external client acknowledgement was observed; suppressing the duplicate warning must never promote ACP emission to client delivery or read proof.
+
 Existing task records stay readable. A task without new receipts is projected from its existing redacted events with partial coverage and explicit omissions; the system does not synthesize historical transport evidence. Projection code is isolated behind the existing observability facade so event-shape knowledge does not spread into routes or React components.
 
 ### Runtime flow evidence
@@ -68,6 +70,8 @@ The bot instances page becomes a master-detail workspace. A compact bot roster s
 
 Desktop layout uses a persistent roster and detail pane; narrow screens stack the same regions without removing evidence. Consecutive low-level capability calls may be collapsed into a summary, while expansion preserves individual status, duration, safe arguments/results, and evidence identifiers. Polling, empty states, errors, and actions remain owned by query hooks and backend APIs. Each task row exposes deletion, but active records are visibly ineligible because record deletion is not execution cancellation. A confirmed terminal deletion invalidates every query scoped to that task and the selected bot before the UI selects another task. The frontend does not infer admission results, calculate roles, parse platform frames, inspect model-provider logs, or claim delivery.
 
+The selected task flow polls only while the task is live. When that same selected task changes from a live status to a terminal status, the frontend invalidates and refetches its flow exactly once before leaving periodic polling stopped. This terminal-edge refresh prevents a completed task summary from being paired with the penultimate flow snapshot without introducing permanent terminal-task polling.
+
 ### Security, retention, and rollout
 
 All new persisted material is redacted before first write and follows the existing private task-artifact ownership, permissions, containment, retention, and size limits. API responses are bounded and reject instance/task mismatches. Opaque IDs are used for lazy artifact reads. `DELETE /api/bots/{instance_id}/tasks/{task_id}` removes only a terminal v2 task directory after revalidating identity, status, ownership, permissions, file type, and containment beneath the selected instance workspace. It never deletes an associated Job or treats deletion as cancellation; active or unsafe records fail closed. Console authentication and same-origin behavior are unchanged.
@@ -81,12 +85,14 @@ nor interprets ingress receipts and provides no compatibility reader for the rem
 - An operator can select a bot and task without opening a modal and see one ordered flow covering the declared QQ/NapCat/OneBot, gateway, middleware, Agent, model/capability, and delivery layers.
 - For a successfully observed QQ turn, the flow can show declared Relay topology, authoritative ACP identity/access outcome, Agent handoff, exact or explicitly partial model-input snapshot, public tool/subagent/workflow activity, Agent result, and strongest observed outbound boundary; it never labels the Relay as having authorized the turn.
 - Every displayed transition identifies whether it is observed, best-effort correlated, declared, provider-opaque, or missing; old tasks render honestly with partial coverage rather than fabricated history.
+- A missing external channel receipt remains visible on the channel layer and in the strongest delivery claim, but it is excluded from the actionable omission warning and missing-warning count.
 - The task-flow API is versioned, bounded, redacted, instance-scoped, and stable across Agent backends. React components do not parse private runtime event names or platform frames.
 - ACP access evidence is the only allowlist decision shown. Missing Relay or external-platform observations remain missing and are not guessed or correlated from plaintext.
 - Hidden chain-of-thought, provider-internal instructions, credentials, raw allowlists, raw stable platform identities, machine paths, and unredacted message bodies do not appear in receipts, task artifacts, API responses, or the UI.
 - The UI never represents Agent completion, ACP emission, or a transport hook as proof that a QQ client displayed or read the response.
 - Bot start, stop, restart, update, logs, diagnostics, existing task detail, context snapshots, and raw evidence remain accessible with their current permission and backend behavior.
 - Full bounded task evidence is inline in the task-flow tab, with no separate full-evidence modal or duplicate task button. Every task row exposes deletion, terminal records can be confirmed and removed, and active records remain visible but ineligible for deletion.
+- When the selected task changes from running, queued, delegated, or cancel-requested to a terminal state, its flow is refetched once after the transition and then stops polling.
 - Deleting one terminal task removes no sibling task, Job record, conversation state, or instance data; invalid, unsafe, cross-instance, or active targets fail without mutation.
 - The workspace is usable at desktop and narrow viewport widths, with loading, empty, partial-evidence, failure, and stale-data states represented explicitly.
 - Existing task records and existing instances remain readable without data migration.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -28,6 +28,7 @@ import {
   groupTasks,
   isLiveTask,
   nextTaskIdAfterDelete,
+  shouldRefreshTerminalFlow,
   taskDeleteAvailability,
   taskStatusLabel,
   withoutTaskRecord,
@@ -56,6 +57,7 @@ export default function BotTaskFlowPanel({ bot, visible = true }: Props) {
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
   const [deletingId, setDeletingId] = useState("");
+  const previousFlowTaskRef = useRef<{ key: string; status: string } | null>(null);
   const tasksQuery = useQuery({
     queryKey: ["bot-tasks", bot.instance_id],
     queryFn: () => api.tasks(bot.instance_id),
@@ -86,6 +88,20 @@ export default function BotTaskFlowPanel({ bot, visible = true }: Props) {
     enabled: visible && !!selectedId,
     refetchInterval: visible && selectedTask && isLiveTask(selectedTask.status) ? 2_500 : false,
   });
+  useEffect(() => {
+    if (!visible) return;
+    const current = selectedTask
+      ? { key: `${bot.instance_id}:${selectedTask.task_id}`, status: selectedTask.status }
+      : null;
+    const previous = previousFlowTaskRef.current;
+    previousFlowTaskRef.current = current;
+    if (!shouldRefreshTerminalFlow(previous, current) || !selectedTask) return;
+    void queryClient.invalidateQueries({
+      queryKey: ["bot-task-flow", bot.instance_id, selectedTask.task_id],
+      exact: true,
+      refetchType: "active",
+    });
+  }, [bot.instance_id, queryClient, selectedTask?.task_id, selectedTask?.status, visible]);
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return tasks;

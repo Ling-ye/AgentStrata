@@ -4,6 +4,7 @@ import {
   buildFlowRows,
   groupTasks,
   nextTaskIdAfterDelete,
+  shouldRefreshTerminalFlow,
   taskDeleteAvailability,
   updateExpandedStepIds,
   withoutTaskRecord,
@@ -90,6 +91,33 @@ describe("task flow presentation model", () => {
       ["failed"],
       ["done"],
     ]);
+  });
+
+  it("refreshes one selected flow only when the same task becomes terminal", () => {
+    expect(shouldRefreshTerminalFlow(
+      { key: "bot-a:task-1", status: "running" },
+      { key: "bot-a:task-1", status: "succeeded" },
+    )).toBe(true);
+    expect(shouldRefreshTerminalFlow(
+      { key: "bot-a:task-1", status: "delegated" },
+      { key: "bot-a:task-1", status: "failed" },
+    )).toBe(true);
+    expect(shouldRefreshTerminalFlow(
+      { key: "bot-a:task-1", status: "running" },
+      { key: "bot-a:task-1", status: "delegated" },
+    )).toBe(false);
+    expect(shouldRefreshTerminalFlow(
+      { key: "bot-a:task-1", status: "succeeded" },
+      { key: "bot-a:task-1", status: "failed" },
+    )).toBe(false);
+    expect(shouldRefreshTerminalFlow(
+      { key: "bot-a:task-1", status: "running" },
+      { key: "bot-a:task-1", status: "unknown" },
+    )).toBe(false);
+    expect(shouldRefreshTerminalFlow(
+      { key: "bot-a:task-1", status: "running" },
+      { key: "bot-a:task-2", status: "succeeded" },
+    )).toBe(false);
   });
 
   it("exposes deletion only for recognized terminal task records", () => {

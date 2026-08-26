@@ -184,7 +184,11 @@ def test_task_flow_projects_runtime_boundaries_without_claiming_qq_display(
     assert "must-not-project" not in serialized
     assert "raw_user_id" not in serialized
     layer_status = {item["id"]: item["status"] for item in flow["layers"]}
+    layer_coverage = {item["id"]: item["coverage"] for item in flow["layers"]}
     assert layer_status["capability"] == "succeeded"
+    assert layer_coverage["channel"] == "missing"
+    assert flow["coverage"]["missing"] == 0
+    assert flow["omissions"] == []
 
 
 def test_task_flow_marks_absent_transport_and_gateway_evidence_missing() -> None:
@@ -214,6 +218,7 @@ def test_task_flow_marks_absent_transport_and_gateway_evidence_missing() -> None
     assert layer_coverage["gateway"] == "missing"
     assert flow["delivery_claim"]["boundary"] == "agent_result"
     omission_codes = {item["code"] for item in flow["omissions"]}
+    assert "channel_evidence_missing" not in omission_codes
     assert "transport_evidence_missing" in omission_codes
     assert "gateway_evidence_missing" in omission_codes
     assert "event_window_truncated" in omission_codes

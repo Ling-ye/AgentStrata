@@ -54,6 +54,19 @@ export function isLiveTask(status: string) {
   return ["running", "delegated", "queued", "cancel_requested"].includes(status);
 }
 
+export function shouldRefreshTerminalFlow(
+  previous: Readonly<{ key: string; status: string }> | null,
+  current: Readonly<{ key: string; status: string }> | null,
+) {
+  return Boolean(
+    previous
+    && current
+    && previous.key === current.key
+    && isLiveTask(previous.status)
+    && TERMINAL_TASK_STATUSES.has(current.status),
+  );
+}
+
 export function taskStatusLabel(status: string) {
   return {
     running: "运行中",

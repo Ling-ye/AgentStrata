@@ -40,6 +40,7 @@ _EVIDENCE_LEVELS = {
     "missing",
 }
 _STATUSES = {"pending", "running", "succeeded", "failed", "skipped", "unknown"}
+_NON_ACTIONABLE_MISSING_LAYERS = frozenset({"channel"})
 
 
 def project_task_flow(
@@ -105,7 +106,9 @@ def project_task_flow(
             "declared": coverage_counts["declared"],
             "provider_opaque": coverage_counts["provider_opaque"],
             "missing": sum(
-                1 for value in layer_coverage.values() if value == "missing"
+                1
+                for layer_id, value in layer_coverage.items()
+                if value == "missing" and layer_id not in _NON_ACTIONABLE_MISSING_LAYERS
             ),
             "events_truncated": bool(events_truncated or projection_truncated),
             "integrity_gap": bool(integrity_gap),
@@ -515,7 +518,6 @@ def _omissions(
 ) -> List[Dict[str, str]]:
     omissions: List[Dict[str, str]] = []
     messages = {
-        "channel": "没有外部客户端回执；不能证明用户已收到或阅读。",
         "transport": "没有可绑定到该任务的 NapCat / OneBot / cc-connect 传输证据。",
         "gateway": "Relay 不产生准入收据；缺少可直接绑定到任务的传输触发证据。",
         "model": "没有模型上下文或调用事件；模型内部状态不会被推断。",
@@ -523,7 +525,11 @@ def _omissions(
         "delivery": "没有观察到 Agent 最终结果或后续交付边界。",
     }
     for layer_id in LAYER_ORDER:
-        if layer_coverage[layer_id] == "missing" and layer_id in messages:
+        if (
+            layer_id not in _NON_ACTIONABLE_MISSING_LAYERS
+            and layer_coverage[layer_id] == "missing"
+            and layer_id in messages
+        ):
             omissions.append(
                 {"code": f"{layer_id}_evidence_missing", "layer": layer_id, "message": messages[layer_id]}
             )
