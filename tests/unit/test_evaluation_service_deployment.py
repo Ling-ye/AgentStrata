@@ -300,23 +300,29 @@ def _prepare_default_deploy_bots(
 ) -> None:
     repository = script.parents[2]
     fake_bin = Path(environment["PATH"].split(":", 1)[0])
-    for directory, instance_id in (
-        ("alpha-source", "alpha-runtime"),
-        ("beta-source", "beta-runtime"),
-        ("gamma-source", "gamma-runtime"),
+    for directory, instance_id, wsl_home in (
+        ("alpha-source", "alpha-runtime", "~/custom-alpha"),
+        ("beta-source", "beta-runtime", "/srv/agentstrata/beta"),
+        ("gamma-source", "gamma-runtime", ""),
     ):
         bot_dir = repository / "bots" / directory
         bot_dir.mkdir(parents=True)
+        deploy = f"  instance_id: {instance_id}\n"
+        if wsl_home:
+            deploy += f"  wsl_home: {wsl_home}\n"
         (bot_dir / "bot.yaml").write_text(
-            f"id: {directory}\ndeploy:\n  instance_id: {instance_id}\n",
+            f"id: {directory}\ndeploy:\n{deploy}",
             encoding="utf-8",
         )
     _write_executable(
         fake_bin / "python3",
         """#!/usr/bin/env bash
 printf 'python3 %s\n' "$*" >> "$CALL_LOG"
-if [ "$1" = "-" ] && [ "${3:-}" = "instance_id" ]; then
-  sed -n 's/^  instance_id:[[:space:]]*//p' "$2"
+if [ "$1" = "-" ]; then
+  case "${3:-}" in
+    instance_id) sed -n 's/^  instance_id:[[:space:]]*//p' "$2" ;;
+    wsl_home) sed -n 's/^  wsl_home:[[:space:]]*//p' "$2" ;;
+  esac
 fi
 exit 0
 """,
@@ -361,6 +367,12 @@ def test_deploy_default_updates_every_discovered_bot(
     assert "setup-console --skip-web" in calls
     for instance in ("alpha-runtime", "beta-runtime", "gamma-runtime"):
         assert f"update-instance --instance {instance} " in calls
+    assert "--instance alpha-runtime --src " in calls
+    assert "--dst ~/custom-alpha" in calls
+    assert "--instance beta-runtime --src " in calls
+    assert "--dst /srv/agentstrata/beta" in calls
+    assert "--instance gamma-runtime --src " in calls
+    assert "--dst ~/ChatCopilot-gamma-runtime" in calls
 
 
 def test_environment_installer_uses_console_only_nested_deploy() -> None:

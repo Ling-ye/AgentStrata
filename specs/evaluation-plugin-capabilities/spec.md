@@ -17,7 +17,7 @@ AgentStrata 保留现有 `comparison | suite`、Evaluation application service�
 
 ## Design
 
-Suite 定义从当前硬编码 catalog 迁入安装包内 `chatcopilot.evals/suites/<suite-id>/manifest.yaml`。只扫描该固定一层目录；manifest、Case、fixture 必须为 UTF-8 普通文件并通过大小、ID、duplicate key、未知字段、相对路径 containment、symlink、MIME 与 SHA-256 校验。YAML 只能引用受信 `plugin_id`、Core-owned `driver_id`、fixture 和 verifier ID，禁止 Python 模块、shell、任意 URL、secret、机器绝对路径、模板代码、cleanup 命令和任意表达式。
+Suite 定义从当前硬编码 catalog 迁入安装包内 `chatcopilot.evals/suites/<suite-id>/manifest.yaml`。只扫描该固定一层目录；manifest、Case、fixture 必须为 UTF-8 普通文件并通过大小、ID、duplicate key、未知字段、相对路径 containment、symlink、MIME 与 SHA-256 校验。YAML 只能引用受信 `plugin_id`、Core-owned `driver_id`、fixture 和 verifier ID，禁止 Python 模块、shell、任意 URL、secret、机器绝对路径、模板代码、cleanup 命令和任意表达式。私有身份环境指纹始终记录模式与数量，只有存在真实身份值时才生成 HMAC；需要 HMAC 却无法建立稳定 key 时必须在创建 Evaluation 前作为配置错误失败关闭。
 
 Python 插件只从静态 binding catalog 加载，模块必须位于 `chatcopilot.evals.plugins.*`，API version、plugin ID、允许 driver 和 hook 形状必须完全匹配。不支持 setuptools entry point、用户插件目录、环境变量 Python 路径、网络 registry 或自动安装。插件可实现 Case loading、受限 preflight、prepare、task/turn 构造、trial execution、judge 和 cleanup，但不能写 `request.json`、`state.json`、`result.json`、`summary.md`、`progress.jsonl`、claim 或 cancel marker。Core 创建 workspace/runtime，执行取消与预算，校验并脱敏 `TrialObservation`，再生成 Trial 和权威 artifact。
 
@@ -43,6 +43,7 @@ Core-owned driver 为 `agent_isolated`、`agent_configured`、`acp_scenario`、`
 - Catalog 由 manifest 与静态受信插件单一事实源生成；GAIA、BFCL、IFEval 迁移后 Case 选择与 judge 保持，BFCL 明确为 direct-LLM，SWE-bench/WebArena/Canary 明确 planned/unavailable。
 - 配置化普通 Case 无需改 runner；动态数据、ACP、QQ、Git、子进程和复杂 judge 只能由受信插件实现。
 - 配置预检失败无目录、进程、模型费用或外部消息；通过后一个请求只生成一份报告。
+- 空私有身份集合不要求摘要 key；非空身份集合缺少稳定 HMAC key 时在预检阶段失败，原始身份值始终不进入 artifact。
 - 25 个直接 Agent Case 与 7 个 QQ 后链路 Case 可按各自 preset/custom 选择；Agent `full` 固定为当前内置 Bot 可运行的 23 个，两个来源专用 Case 仅供显式 `custom`；MVP 每 Case 一次并明确不声称重复可靠性。
 - 图片理解 Case 已配置并要求 fixture 真正进入 Native/Codex backend；图片生成显示未配置而不伪装成失败。
 - allowed tool 可执行，disabled/hidden/forbidden tool 即使被构造调用也不能产生副作用；白名单和角色负例以真实后置状态判定。

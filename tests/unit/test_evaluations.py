@@ -2034,6 +2034,76 @@ def test_private_runtime_fingerprint_binds_group_allowlist_without_persisting_id
     assert first["identity_hmac"] != drifted["identity_hmac"]
 
 
+def _configure_secretless_private_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = SimpleNamespace(
+        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST_EVAL_PRIVATE")),
+    )
+    config = SimpleNamespace(llm=SimpleNamespace(api_key=""))
+    monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)
+    monkeypatch.setattr(evaluation_module, "load_config", lambda **_kwargs: config)
+    monkeypatch.setattr(evaluation_module, "collect_env_secrets", lambda: ())
+    for key in (
+        "QQ_ALLOW_FROM",
+        "QQ_ALLOW_GROUPS",
+        "CHATCOPILOT_ADD_OWNER_IDS",
+        "CHATCOPILOT_ADD_ADMIN_IDS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
+def test_private_runtime_fingerprint_allows_empty_identity_without_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_secretless_private_runtime(monkeypatch)
+
+    snapshot = evaluation_module._private_runtime_configuration_snapshot("configured-bot")
+
+    assert snapshot == {
+        "qq_user_allowlist_mode": "empty",
+        "qq_user_allowlist_entry_count": 0,
+        "qq_group_allowlist_mode": "empty",
+        "qq_group_allowlist_entry_count": 0,
+        "owner_entry_count": 0,
+        "admin_entry_count": 0,
+        "identity_hmac": "",
+    }
+
+
+def test_private_runtime_fingerprint_requires_key_for_actual_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_secretless_private_runtime(monkeypatch)
+    monkeypatch.setenv("QQ_ALLOW_FROM", "10017")
+
+    with pytest.raises(ValueError, match="stable private configuration digest key"):
+        evaluation_module._private_runtime_configuration_snapshot("configured-bot")
+
+
+def test_suite_preflight_rejects_private_identity_without_digest_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_secretless_private_runtime(monkeypatch)
+    monkeypatch.setenv("QQ_ALLOW_FROM", "10017")
+
+    validation = validate_evaluation(
+        {
+            "kind": "suite",
+            "bot": "configured-bot",
+            "suite": "ifeval",
+            "preset": "custom",
+            "case_ids": ["ifeval-json-format"],
+            "dry_run": True,
+        }
+    )
+
+    assert validation["ready"] is False
+    assert validation["code"] == "configuration_invalid"
+    assert any(
+        check["code"] == "private_runtime_fingerprint" and check["ok"] is False
+        for check in validation["checks"]
+    )
+
+
 def test_resume_rejects_request_drift_without_touching_artifacts(
     tmp_path: Path,
 ) -> None:

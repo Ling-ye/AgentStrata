@@ -177,6 +177,8 @@ def _run_update_fixture(
     dry_run: bool = False,
     sync_source: Path | None = None,
     changed_files: tuple[str, ...] = ("bots/test-bot/bot.yaml",),
+    destination: str | None = None,
+    home: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     script = Path("deploy/wsl/update_instance.sh").resolve()
     args = [
@@ -187,7 +189,7 @@ def _run_update_fixture(
         "--src",
         str(source),
         "--dst",
-        str(runtime),
+        destination or str(runtime),
         "--bot",
         "bots/test-bot/bot.yaml",
     ]
@@ -207,6 +209,8 @@ def _run_update_fixture(
         "FAIL_STAGE": fail_stage,
         "SOURCE_BOT": str(source / "bots/test-bot/bot.yaml"),
     }
+    if home is not None:
+        env["HOME"] = str(home)
     return subprocess.run(args, capture_output=True, text=True, env=env, timeout=20)
 
 
@@ -267,6 +271,23 @@ def test_update_script_dry_run_reports_selected_python_and_pythonpath() -> None:
     assert '[DRY-RUN] would run: \'$VENV_PY\' -m chatcopilot bot provision-env' in text
     assert "[DRY-RUN] selected update mode:" in text
     assert "[DRY-RUN] would run: python -m chatcopilot" not in text
+
+
+def test_update_script_expands_quoted_tilde_destination(tmp_path: Path) -> None:
+    source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
+
+    completed = _run_update_fixture(
+        source,
+        runtime,
+        stage_log,
+        fake_bin,
+        dry_run=True,
+        destination="~/runtime",
+        home=runtime.parent,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert f"[update] dst:      {runtime}" in completed.stdout
 
 
 def test_update_script_enable_is_post_start_and_fail_closed() -> None:

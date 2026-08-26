@@ -2021,6 +2021,28 @@ def _validate_suite(
         )
         return ()
 
+    try:
+        _private_runtime_configuration_snapshot(request.bot)
+        checks.append(
+            _check(
+                "private_runtime_fingerprint",
+                "私有运行配置指纹",
+                True,
+                "available",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - required configuration preflight
+        checks.append(
+            _check(
+                "private_runtime_fingerprint",
+                "私有运行配置指纹",
+                False,
+                str(exc),
+                "配置稳定凭据，或移除无效的私有身份配置",
+            )
+        )
+        return ()
+
     if request.dry_run:
         target = _make_target(
             target_id="dry-run",
@@ -3621,17 +3643,24 @@ def _private_runtime_configuration_snapshot(
         group_mode = "all" if group_allowlist.allow_all else (
             "finite" if group_allowlist.values else "empty"
         )
-        material = "\0".join(
-            (
-                f"users:{user_mode}",
-                *sorted(user_allowlist.values),
-                f"groups:{group_mode}",
-                *sorted(group_allowlist.values),
-                "owners",
-                *owners,
-                "admins",
-                *admins,
+        has_private_identities = bool(
+            user_allowlist.values or group_allowlist.values or owners or admins
+        )
+        material = (
+            "\0".join(
+                (
+                    f"users:{user_mode}",
+                    *sorted(user_allowlist.values),
+                    f"groups:{group_mode}",
+                    *sorted(group_allowlist.values),
+                    "owners",
+                    *owners,
+                    "admins",
+                    *admins,
+                )
             )
+            if has_private_identities
+            else ""
         )
         fallback_secret = str(getattr(config.llm, "api_key", "") or "")
         snapshot: dict[str, Any] = {
@@ -3708,7 +3737,8 @@ def _validation_payload(
 ) -> dict[str, Any]:
     failed_codes = {str(item.get("code") or "") for item in checks if not bool(item.get("ok"))}
     configuration_failure = any(
-        code.startswith(("case_requirements:", "access_")) or code == "external_write_confirmation"
+        code.startswith(("case_requirements:", "access_"))
+        or code in {"external_write_confirmation", "private_runtime_fingerprint"}
         for code in failed_codes
     )
     payload = {

@@ -370,10 +370,11 @@ PY
 }
 
 update_all_bots() {
-    local bot instance rc index
+    local bot instance wsl_home rc index
     local -A seen_instances=()
     local -a bot_files=()
     local -a instances=()
+    local -a destinations=()
     while IFS= read -r -d '' bot; do
         bot_files+=("$bot")
     done < <(
@@ -404,8 +405,15 @@ update_all_bots() {
             BOT_UPDATE_FAILURES+=("$instance")
             continue
         fi
+        if ! wsl_home="$(read_deploy_value "$bot" wsl_home)"; then
+            err "cannot read deploy.wsl_home from $bot"
+            BOT_UPDATE_FAILURES+=("${bot#"$REPO_ROOT"/}")
+            continue
+        fi
+        [ -z "$wsl_home" ] && wsl_home="~/ChatCopilot-$instance"
         seen_instances["$instance"]="$bot"
         instances+=("$instance")
+        destinations+=("$wsl_home")
     done
     if [ "${#BOT_UPDATE_FAILURES[@]}" -gt 0 ]; then
         err "bot inventory validation failed: ${BOT_UPDATE_FAILURES[*]}"
@@ -418,7 +426,8 @@ update_all_bots() {
         instance="${instances[$index]}"
         info "updating bot $instance from ${bot#"$REPO_ROOT"/} ..."
         if run_or_print bash "$REPO_ROOT/deploy/wsl/update_instance.sh" \
-            --instance "$instance" --src "$REPO_ROOT" --bot "$bot"; then
+            --instance "$instance" --src "$REPO_ROOT" \
+            --dst "${destinations[$index]}" --bot "$bot"; then
             ok "bot $instance updated and verified"
         else
             rc=$?
