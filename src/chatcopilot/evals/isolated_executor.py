@@ -13,10 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
+from chatcopilot.application.agent_runtime import (
+    AgentRuntimeAssemblyProfile,
+    AgentRuntimeOverrides,
+    assemble_agent_runtime,
+)
 from chatcopilot.contracts.agent import AgentTask
-from chatcopilot.agent.runtime import build_agent_runtime
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput
-from chatcopilot.botspec.runtime_env import load_research_llm_config
 from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.tool_packs import ToolProvider
@@ -124,20 +127,17 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
         evaluation_provider = _evaluation_tool_provider(case, tool_audit)
         subagents = _isolated_subagents(runtime.subagents)
         with _trial_environment(workspace, workspace_root):
-            agent_runtime = build_agent_runtime(
+            agent_runtime = assemble_agent_runtime(
+                runtime,
                 chat_config=chat_config,
-                research_llm_config=load_research_llm_config(
-                    runtime.spec.llm,
-                    fallback=chat_config.llm,
+                profile=AgentRuntimeAssemblyProfile.DETACHED,
+                overrides=AgentRuntimeOverrides(
+                    runtime_providers=(evaluation_provider,) if evaluation_provider else (),
+                    rag_sources=(),
+                    mcp_servers=(),
+                    subagents=subagents,
+                    agent_backend=request.target.backend,
                 ),
-                tool_packs=_isolated_tool_packs(runtime.tool_packs),
-                exclude_tools=runtime.exclude_tools,
-                runtime_providers=(evaluation_provider,) if evaluation_provider else (),
-                skill_index=runtime.skills,
-                rag_sources=(),
-                mcp_servers=(),
-                subagents=subagents,
-                agent_backend=request.target.backend,
             )
             session = agent_runtime.new_session(
                 session_id=f"eval-{request.evaluation_id}-{trial_id}",
@@ -248,10 +248,6 @@ def _isolated_subagents(value: SubagentSpec) -> SubagentSpec:
             sandbox_mode="read-only",
         ),
     )
-
-
-def _isolated_tool_packs(value: Sequence[str]) -> tuple[str, ...]:
-    return tuple(pack_id for pack_id in value if pack_id != "persona.control")
 
 
 def _evaluation_tool_provider(

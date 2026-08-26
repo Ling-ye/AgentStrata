@@ -32,6 +32,7 @@ from chatcopilot.contracts.agent import (
     TurnError,
 )
 from chatcopilot.contracts.agent_backend import (
+    AGENT_BACKEND_IDS,
     BackendCapabilityError,
     BackendCapabilities,
     BackendOpenRequest,
@@ -111,7 +112,8 @@ def _codex_auth_payload(token: str) -> dict[str, object]:
 
 class BackendRegistryTests(TestCase):
     def test_three_main_backends_are_code_registered(self) -> None:
-        self.assertEqual(backend_ids(), {"native", "langgraph", "codex"})
+        self.assertEqual(AGENT_BACKEND_IDS, ("native", "langgraph", "codex"))
+        self.assertEqual(backend_ids(), frozenset(AGENT_BACKEND_IDS))
 
     def test_unknown_backend_fails_without_fallback(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported agent backend"):

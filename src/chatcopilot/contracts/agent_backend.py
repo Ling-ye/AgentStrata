@@ -9,6 +9,7 @@ from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.prompt import PromptPlan
 
 
+AGENT_BACKEND_IDS: tuple[str, ...] = ("native", "langgraph", "codex")
 CAPABILITY_CHAT = "chat"
 CAPABILITY_TOOLS = "tools"
 CAPABILITY_NATIVE_RESUME = "native_resume"
@@ -147,6 +148,7 @@ class AgentBackend(Protocol):
 
 
 __all__ = [
+    "AGENT_BACKEND_IDS",
     "AgentBackend",
     "BackendCapabilities",
     "BackendCapabilityError",

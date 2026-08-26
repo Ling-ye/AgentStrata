@@ -115,8 +115,10 @@ def role_value(role: object) -> str:
 
 
 def role_ge(current: object, required: object) -> bool:
-    current_rank = _ROLE_RANK.get(role_value(current), -1)
-    required_rank = _ROLE_RANK.get(role_value(required), -1)
+    current_rank = _ROLE_RANK.get(role_value(current))
+    required_rank = _ROLE_RANK.get(role_value(required))
+    if current_rank is None or required_rank is None:
+        return False
     return current_rank >= required_rank
 
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from chatcopilot.application.agent_runtime import AgentRuntimeAssemblyProfile
 from chatcopilot.botspec.runtime import BotPromptProfile
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.middleware.runtime.jobs.worker import (
@@ -133,19 +134,19 @@ def test_generic_worker_uses_persisted_oversized_result_manifest_for_terminal_st
 
 
 class BackgroundCodingWorkerTests(unittest.TestCase):
-    @mock.patch("chatcopilot.agent.runtime.build_agent_runtime")
+    @mock.patch("chatcopilot.application.agent_runtime.assemble_agent_runtime")
     @mock.patch("chatcopilot.core.config.load_config")
     @mock.patch("chatcopilot.botspec.runtime.load_runtime_context")
     def test_coding_worker_rebuilds_dynamic_tools_with_runtime_env(
         self,
         load_runtime_context: mock.Mock,
         load_config: mock.Mock,
-        build_agent_runtime: mock.Mock,
+        assemble_agent_runtime: mock.Mock,
     ) -> None:
         executor = object()
         runtime = mock.Mock()
         runtime.new_session.return_value = SimpleNamespace(tool_executor=executor)
-        build_agent_runtime.return_value = runtime
+        assemble_agent_runtime.return_value = runtime
         spec = SimpleNamespace(
             llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST"),
             context=SimpleNamespace(
@@ -201,7 +202,11 @@ class BackgroundCodingWorkerTests(unittest.TestCase):
         self.assertIs(actual, executor)
         self.assertIs(actual_runtime, runtime)
         load_config.assert_called_once_with(env_prefix="CHATCOPILOT_TEST")
-        self.assertEqual(build_agent_runtime.call_args.kwargs["mcp_servers"], mcp_servers)
+        self.assertIs(assemble_agent_runtime.call_args.args[0], context)
+        self.assertIs(
+            assemble_agent_runtime.call_args.kwargs["profile"],
+            AgentRuntimeAssemblyProfile.DETACHED,
+        )
         runtime.new_session.assert_called_once_with(
             session_id="background-job-1",
             prompt_input=mock.ANY,

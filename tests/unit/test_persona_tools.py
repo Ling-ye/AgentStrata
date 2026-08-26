@@ -12,7 +12,7 @@ from chatcopilot.contracts.persona_control import (
     PendingPersonaProposal,
     PersonaDraftResult,
 )
-from chatcopilot.contracts.tools import ToolContext
+from chatcopilot.contracts.tools import TOOL_AUDIENCE_MAIN, ToolContext
 from chatcopilot.middleware.acp.agent_bridge import _persona_session_providers
 
 
@@ -135,7 +135,8 @@ def test_provider_exposes_one_structured_owner_main_agent_tool() -> None:
     (tool,) = provider.packs["persona.control"]
     assert tool.name == "persona_manage"
     assert tool.requires_role == "owner"
-    assert tool.metadata == {"main_agent_only": True}
+    assert tool.audiences == (TOOL_AUDIENCE_MAIN,)
+    assert tool.metadata == {}
     assert tool.artifact_kinds == ()
     assert set(tool.input_schema["properties"]["operation"]["enum"]) == {
         "show",

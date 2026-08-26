@@ -676,13 +676,6 @@ def _index_entries(root: Path) -> tuple[IndexEntry, ...]:
     return tuple(entries)
 
 
-def _tracked_paths(root: Path) -> list[str]:
-    """Compatibility helper returning current candidate path names."""
-    paths = {entry.path for entry in _index_entries(root)}
-    paths.update(_path_list(root, "--others", "--exclude-standard"))
-    return sorted(paths)
-
-
 def _same_file_state(left: os.stat_result, right: os.stat_result) -> bool:
     return all(
         getattr(left, attribute) == getattr(right, attribute)

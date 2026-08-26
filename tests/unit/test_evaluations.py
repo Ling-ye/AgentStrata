@@ -40,7 +40,6 @@ from chatcopilot.evals.evaluations import (
 )
 from chatcopilot.evals.isolated_executor import (
     _evaluation_tool_provider,
-    _isolated_tool_packs,
     judge_profile_trial,
     permission_filter,
     stage_fixture,
@@ -1546,7 +1545,7 @@ def test_unproven_supervisor_cleanup_is_fatal_and_process_is_not_closed(
     with pytest.raises(evaluation_module._TrialCleanupFailed, match="did not finish"):
         evaluation_module._execute_supervised_trial(
             request,
-            budget=evaluation_module._TrialExecutionBudget(seconds=10, scope="case"),
+            budget=evaluation_module._TrialExecutionBudget(seconds=0.1, scope="case"),
             cancel_check=lambda: True,
             _context=FakeContext(),
         )
@@ -3629,12 +3628,6 @@ def test_isolated_permission_filter_is_fail_closed() -> None:
 
     assert check(allowed) is None
     assert check(denied) == "evaluation policy denies this tool"
-
-
-def test_isolated_evaluation_excludes_session_bound_persona_pack() -> None:
-    assert _isolated_tool_packs(
-        ("workspace.read_write", "persona.control", "memory.chat")
-    ) == ("workspace.read_write", "memory.chat")
 
 
 def test_isolated_evaluation_tool_uses_runtime_provider_and_structured_result() -> None:

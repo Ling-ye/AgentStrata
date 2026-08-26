@@ -1171,6 +1171,7 @@ def test_delayed_attachment_ack_stays_bound_to_original_actor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(acp_server, "_ATTACHMENT_ACK_DEBOUNCE_SEC", 0.0)
+    monkeypatch.setattr(acp_server, "_ATTACHMENT_ACK_MAX_TOTAL_WAIT_SEC", 0.0)
     workspace = Workspace(
         root=tmp_path / f"group_{_GROUP_ID}" / "shared",
         chat_kind="group",

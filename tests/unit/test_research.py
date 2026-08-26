@@ -392,7 +392,7 @@ def test_runtime_hides_internal_information_tools_when_research_enabled() -> Non
     )
 
     with patch(
-        "chatcopilot.agent.runtime.build_subagent_provider",
+        "chatcopilot.agent.capabilities.delegation.build_subagent_provider",
         return_value=_delegation_provider(*delegates),
     ):
         session = runtime.new_session(session_id="sid", prompt_input=prompt_input("base"))
@@ -431,7 +431,10 @@ def test_native_and_langgraph_expose_search_information_for_direct_provider(
         agent_backend=backend,
     )
 
-    with patch("chatcopilot.agent.runtime.build_subagent_provider", return_value=None):
+    with patch(
+        "chatcopilot.agent.capabilities.delegation.build_subagent_provider",
+        return_value=None,
+    ):
         session = runtime.new_session(session_id=f"sid-{backend}", prompt_input=prompt_input("base"))
 
     assert "search_information" in session.capabilities.tool_names
@@ -467,8 +470,10 @@ def test_codex_backend_does_not_construct_chatcopilot_search_or_delegate_agents(
         agent_backend="codex",
     )
 
-    with patch("chatcopilot.agent.runtime.build_subagent_provider") as delegates, patch(
-        "chatcopilot.agent.runtime.build_search_provider"
+    with patch(
+        "chatcopilot.agent.capabilities.delegation.build_subagent_provider"
+    ) as delegates, patch(
+        "chatcopilot.agent.capabilities.unified_search.build_search_provider"
     ) as search, patch(
         "chatcopilot.agent.runtime.build_backend", return_value=backend
     ):
@@ -516,7 +521,7 @@ def test_codex_eval_policy_exposes_real_unified_search_tool() -> None:
     )
 
     with patch(
-        "chatcopilot.agent.runtime.build_subagent_provider",
+        "chatcopilot.agent.capabilities.delegation.build_subagent_provider",
         return_value=None,
     ), patch(
         "chatcopilot.agent.runtime.build_backend",
@@ -565,7 +570,10 @@ def test_codex_backend_uses_current_personal_workspace_root(tmp_path) -> None:
         agent_backend="codex",
     )
 
-    with patch("chatcopilot.agent.runtime.build_subagent_provider", return_value=None), patch(
+    with patch(
+        "chatcopilot.agent.capabilities.delegation.build_subagent_provider",
+        return_value=None,
+    ), patch(
         "chatcopilot.agent.runtime.build_backend", return_value=backend
     ):
         runtime.new_session(
@@ -610,7 +618,7 @@ def test_runtime_permission_filter_prevents_url_read_bypass() -> None:
     )
 
     with patch(
-        "chatcopilot.agent.runtime.build_subagent_provider",
+        "chatcopilot.agent.capabilities.delegation.build_subagent_provider",
         return_value=_delegation_provider(search),
     ):
         session = runtime.new_session(

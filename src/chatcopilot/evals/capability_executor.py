@@ -26,12 +26,15 @@ from importlib import resources
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
+from chatcopilot.application.agent_runtime import (
+    AgentRuntimeAssemblyProfile,
+    AgentRuntimeOverrides,
+    assemble_agent_runtime,
+)
 from chatcopilot.contracts.agent import AgentTask, ResourceRef
-from chatcopilot.agent.runtime import build_agent_runtime
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput
 from chatcopilot.agent.tools.file_delivery import FileDeliveryResult
 from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.botspec.runtime_env import load_research_llm_config
 from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
 from chatcopilot.contracts.code_tasks import validate_code_task_title
 from chatcopilot.contracts.identity import SessionIdentity
@@ -2785,33 +2788,22 @@ def _execute_agent_definition(
     case_permission_filter = permission_filter(frozenset(allowed_tools))
     evaluation_subagents = _evaluation_subagents(runtime.subagents, definition)
     search_case = definition.case_id in _SEARCH_CASES
-    evaluation_tool_packs = (
-        ()
-        if definition.case_id in _CODE_RECOVERY_CASES
-        else tuple(
-            pack for pack in runtime.tool_packs if pack != "persona.control"
-        )
-    )
-    agent_runtime = build_agent_runtime(
+    agent_runtime = assemble_agent_runtime(
+        runtime,
         chat_config=chat_config,
-        research_llm_config=load_research_llm_config(
-            runtime.spec.llm,
-            fallback=chat_config.llm,
+        profile=AgentRuntimeAssemblyProfile.DETACHED,
+        overrides=AgentRuntimeOverrides(
+            # Code/recovery Cases expose only their evaluation-owned atomic tools.
+            # In particular, the lifecycle Case deliberately shadows production
+            # code-task names without initializing the real repository worker.
+            tool_packs=() if definition.case_id in _CODE_RECOVERY_CASES else None,
+            runtime_providers=runtime_providers,
+            rag_sources=(),
+            # Only the explicit search Cases may initialize the selected Bot's
+            # reviewed search MCP bindings. Every other Case remains hermetic.
+            mcp_servers=runtime.mcp_servers if search_case else (),
+            subagents=evaluation_subagents,
         ),
-        # Code/recovery Cases expose only their evaluation-owned atomic tools.
-        # In particular, the lifecycle Case deliberately shadows production
-        # code-task names without initializing the real repository worker.
-        tool_packs=evaluation_tool_packs,
-        exclude_tools=runtime.exclude_tools,
-        runtime_providers=runtime_providers,
-        skill_index=runtime.skills,
-        rag_sources=(),
-        # Only the three explicit search Cases may initialize the selected Bot's
-        # reviewed search MCP bindings.  Every other Case is hermetic even when
-        # its declarative driver is ``agent_configured``.
-        mcp_servers=runtime.mcp_servers if search_case else (),
-        subagents=evaluation_subagents,
-        agent_backend=getattr(runtime, "agent_backend", "native"),
     )
     raw_events: list[dict[str, Any]] = []
     final_text = ""

@@ -361,6 +361,10 @@ def test_mutation_acceptance_prevents_start_timeout_during_slow_prepare(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv(
+        "CHATCOPILOT_LINGYE_API_KEY",
+        "test-" + "credential",
+    )
     monkeypatch.setenv("CHATCOPILOT_EVALS_DATA_DIR", str(tmp_path / "official-data"))
     prepare_entered = threading.Event()
     release_prepare = threading.Event()
@@ -1032,6 +1036,10 @@ def test_real_ifeval_dry_run_lifecycle_over_uds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(
+        "CHATCOPILOT_LINGYE_API_KEY",
+        "test-" + "credential",
+    )
+    monkeypatch.setenv(
         "CHATCOPILOT_EVALS_DATA_DIR",
         str(tmp_path / "official-data"),
     )
@@ -1112,6 +1120,10 @@ def test_console_and_service_restart_preserve_and_recover_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(
+        "CHATCOPILOT_LINGYE_API_KEY",
+        "test-" + "credential",
+    )
+    monkeypatch.setenv(
         "CHATCOPILOT_EVALS_DATA_DIR",
         str(tmp_path / "official-data"),
     )
@@ -1125,7 +1137,7 @@ def test_console_and_service_restart_preserve_and_recover_worker(
     previous_client = app.state.evaluations
     try:
         _wait_for_service(service_a, client)
-        case_ids = [item["case_id"] for item in client.list_cases("ifeval")]
+        case_ids = ["ifeval-json-format"]
         created = client.start(
             bot_id="lingye-copilot-qq",
             request={

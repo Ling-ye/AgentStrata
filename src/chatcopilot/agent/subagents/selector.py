@@ -1,10 +1,8 @@
 """Compile a :class:`ToolSelectorSpec` into a tool predicate.
 
 This is the single place that turns declarative selection data into a runnable
-``ToolDef -> bool`` predicate, and the single place that enforces the
-*user-facing ban*: a subagent is an internal worker for the main agent and may
-never touch tools that talk to the end user directly (e.g. ``send_files_to_user``).
-Such tools are marked ``metadata['user_facing'] = True``.
+``ToolDef -> bool`` predicate. It projects the closed ``subagent`` audience and
+also preserves the user-facing ban for tools that talk to the end user directly.
 """
 
 from __future__ import annotations
@@ -12,7 +10,7 @@ from __future__ import annotations
 from typing import Callable, Sequence
 
 from chatcopilot.agent.subagents.spec import ToolMatchRule, ToolSelectorSpec
-from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import TOOL_AUDIENCE_SUBAGENT, ToolDef
 
 ToolPredicate = Callable[[ToolDef], bool]
 
@@ -63,6 +61,8 @@ def build_predicate(selector: ToolSelectorSpec) -> ToolPredicate:
     """Compile ``selector`` into a predicate; always excludes user-facing tools."""
 
     def _predicate(tool: ToolDef) -> bool:
+        if TOOL_AUDIENCE_SUBAGENT not in tool.audiences:
+            return False
         if is_user_facing(tool):
             return False
         if tool.name in selector.exclude_names:

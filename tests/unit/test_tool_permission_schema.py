@@ -54,6 +54,12 @@ def _runtime(*tools: ToolDef) -> AgentRuntime:
     )
 
 
+def test_unknown_roles_fail_closed() -> None:
+    assert role_ge(Role.OWNER, "owenr") is False
+    assert role_ge("unknown", Role.USER) is False
+    assert role_ge("unknown", "unknown") is False
+
+
 def _native(session):
     return session.backend.native_session(session.backend_session_ref)
 

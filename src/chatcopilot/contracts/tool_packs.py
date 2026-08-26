@@ -3,9 +3,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Mapping
+from typing import Literal, Mapping
 
 from chatcopilot.contracts.tools import ToolDef
+
+
+ToolPackRuntimeScope = Literal["static", "runtime", "agent_session", "host_session"]
+ToolPackProjectionProfile = Literal["interactive", "detached"]
+CAPABILITY_PROVIDER_FACTORY = "build_provider"
+TOOL_PACK_PROJECTION_PROFILES: tuple[ToolPackProjectionProfile, ...] = (
+    "interactive",
+    "detached",
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +49,15 @@ class ToolPackEntry:
     policy_builder: str = "build_policy"
     http_route_modules: tuple[str, ...] = ()
     description: str = ""
+    runtime_scope: ToolPackRuntimeScope = "static"
+    projection_profiles: tuple[ToolPackProjectionProfile, ...] = (
+        "interactive",
+        "detached",
+    )
+    provider_factory_module: str | None = None
+    factory_order: int = 0
+    session_default_enabled: bool = False
+
 
 @dataclass(frozen=True)
 class ToolFeatureEntry:
@@ -102,9 +120,13 @@ def static_tool_provider(
 
 
 __all__ = [
+    "CAPABILITY_PROVIDER_FACTORY",
+    "TOOL_PACK_PROJECTION_PROFILES",
     "ToolFeatureEntry",
     "ToolPackEntry",
     "ToolPackPolicy",
+    "ToolPackProjectionProfile",
+    "ToolPackRuntimeScope",
     "ToolProvider",
     "static_tool_provider",
     "tool_pack_policies",

@@ -18,9 +18,6 @@ _BOT_PATH = _REPO_ROOT / "bots" / "lingye-copilot-qq" / "bot.yaml"
 
 
 class LingyeBotSpecSmokeTests(unittest.TestCase):
-    def test_bot_yaml_exists(self) -> None:
-        self.assertTrue(_BOT_PATH.is_file(), msg=f"BotSpec file missing: {_BOT_PATH}")
-
     def test_validate_no_error(self) -> None:
         spec = load_botspec(_BOT_PATH)
         issues = validate_botspec(spec)

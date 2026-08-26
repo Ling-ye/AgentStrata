@@ -124,6 +124,47 @@ class SubagentV2Tests(unittest.TestCase):
         self.assertIn("cache_policy", spec.overrides["web_research"].override_fields)
         self.assertNotIn("selector", spec.overrides["web_research"].override_fields)
 
+    def test_context_and_cache_policies_reject_invalid_booleans(self) -> None:
+        invalid_fields = (
+            ("context_policy", "include_tool_summary"),
+            ("context_policy", "include_history"),
+            ("context_policy", "include_allowed_tools"),
+            ("cache_policy", "enabled"),
+            ("cache_policy", "include_resource_hashes"),
+        )
+        for policy, field in invalid_fields:
+            for value in ("invalid", None):
+                with self.subTest(
+                    policy=policy,
+                    field=field,
+                    value=value,
+                ), self.assertRaisesRegex(
+                    ValueError,
+                    rf"agents\.web_research\.{policy}\.{field}",
+                ):
+                    _parse_subagents(
+                        {
+                            "presets": ["web_research"],
+                            "web_research": {policy: {field: value}},
+                        }
+                    )
+
+    def test_custom_policy_error_uses_exact_botspec_path(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            r"agents\.custom\[0\]\.context_policy\.include_history",
+        ):
+            _parse_subagents(
+                {
+                    "custom": [
+                        {
+                            "name": "custom_reader",
+                            "context_policy": {"include_history": None},
+                        }
+                    ]
+                }
+            )
+
     def test_validate_rejects_invalid_workflow_depth(self) -> None:
         spec = load_botspec(Path("bots/lingye-copilot-qq/bot.yaml"))
         bad = replace(spec, agents=replace(spec.agents, max_workflow_depth=3))

@@ -3,15 +3,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from chatcopilot.contracts.agent_backend import AgentBackend
+from chatcopilot.contracts.agent_backend import AGENT_BACKEND_IDS, AgentBackend
 
 BackendFactory = Callable[..., AgentBackend]
 
-_BACKEND_IDS = frozenset({"native", "langgraph", "codex"})
-
 
 def backend_ids() -> frozenset[str]:
-    return _BACKEND_IDS
+    return frozenset(AGENT_BACKEND_IDS)
 
 
 def build_backend(backend_id: str, **kwargs) -> AgentBackend:
@@ -26,9 +24,8 @@ def build_backend(backend_id: str, **kwargs) -> AgentBackend:
         return CodexAgentBackend(**kwargs)
     raise ValueError(
         f"unsupported agent backend: {backend_id!r}; expected one of "
-        + ", ".join(sorted(_BACKEND_IDS))
+        + ", ".join(AGENT_BACKEND_IDS)
     )
 
 
 __all__ = ["backend_ids", "build_backend"]
-

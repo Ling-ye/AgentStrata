@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from chatcopilot.contracts.subagents import BUILTIN_SUBAGENT_PRESET_NAMES
+from collections.abc import Iterator, Mapping
+from types import MappingProxyType
+
 from chatcopilot.contracts.subagents import (
     CachePolicySpec,
     ContextPolicySpec,
     SubagentDef,
     ToolMatchRule,
     ToolSelectorSpec,
+    WorkflowDef,
 )
 
 _NO_TOOLS = ToolSelectorSpec()
@@ -31,7 +34,7 @@ _BROWSER_READ = ToolSelectorSpec(
         ToolMatchRule(categories=("web_fetch",)),
     )
 )
-BUILTIN_SUBAGENTS: dict[str, SubagentDef] = {
+_BUILTIN_SUBAGENTS_DATA: dict[str, SubagentDef] = {
     "adapter_forge": SubagentDef(
         name="adapter_forge",
         tool_name="forge_open_source_adapter",
@@ -214,9 +217,54 @@ BUILTIN_SUBAGENTS: dict[str, SubagentDef] = {
         ),
     ),
 }
+BUILTIN_SUBAGENTS: Mapping[str, SubagentDef] = MappingProxyType(
+    _BUILTIN_SUBAGENTS_DATA
+)
 
-PRESET_NAMES = BUILTIN_SUBAGENT_PRESET_NAMES
-assert PRESET_NAMES == frozenset(BUILTIN_SUBAGENTS)
+_BUILTIN_SUBAGENT_WORKFLOWS_DATA: dict[str, WorkflowDef] = {}
+BUILTIN_SUBAGENT_WORKFLOWS: Mapping[str, WorkflowDef] = MappingProxyType(
+    _BUILTIN_SUBAGENT_WORKFLOWS_DATA
+)
 
 
-__all__ = ["BUILTIN_SUBAGENTS", "PRESET_NAMES", "SubagentDef"]
+def known_subagent_preset_names() -> frozenset[str]:
+    return frozenset(BUILTIN_SUBAGENTS)
+
+
+def get_subagent_preset(name: str) -> SubagentDef | None:
+    return BUILTIN_SUBAGENTS.get(name)
+
+
+def iter_subagent_presets() -> Iterator[tuple[str, SubagentDef]]:
+    yield from sorted(BUILTIN_SUBAGENTS.items())
+
+
+def known_workflow_names() -> frozenset[str]:
+    return frozenset(BUILTIN_SUBAGENT_WORKFLOWS)
+
+
+def get_workflow(name: str) -> WorkflowDef | None:
+    return BUILTIN_SUBAGENT_WORKFLOWS.get(name)
+
+
+def iter_workflows() -> Iterator[tuple[str, WorkflowDef]]:
+    yield from sorted(BUILTIN_SUBAGENT_WORKFLOWS.items())
+
+
+PRESET_NAMES = known_subagent_preset_names()
+WORKFLOW_NAMES = known_workflow_names()
+
+
+__all__ = [
+    "BUILTIN_SUBAGENTS",
+    "BUILTIN_SUBAGENT_WORKFLOWS",
+    "PRESET_NAMES",
+    "SubagentDef",
+    "WORKFLOW_NAMES",
+    "get_subagent_preset",
+    "get_workflow",
+    "iter_subagent_presets",
+    "iter_workflows",
+    "known_subagent_preset_names",
+    "known_workflow_names",
+]

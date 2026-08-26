@@ -64,6 +64,15 @@ class AccessSpecLoaderTests(unittest.TestCase):
 
         self.assertEqual(spec.access, AccessSpec())
 
+    def test_access_rejects_invalid_boolean(self) -> None:
+        for value in ("invalid", ""):
+            block = f"access:\n  owner_only_project_access: {value}\n"
+            with self.subTest(value=value), TemporaryDirectory() as tmp, self.assertRaisesRegex(
+                ValueError,
+                r"access\.owner_only_project_access",
+            ):
+                load_botspec(_write_bot_with_access(Path(tmp), block))
+
     def test_removed_admission_fields_are_validation_errors(self) -> None:
         removed = (
             "private_require_whitelist",

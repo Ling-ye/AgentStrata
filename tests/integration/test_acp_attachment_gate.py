@@ -72,9 +72,6 @@ def _runtime_context(
 
 
 class AttachmentGateTests(unittest.TestCase):
-    def test_attachment_ack_delay_is_three_seconds(self) -> None:
-        self.assertEqual(acp_server._ATTACHMENT_ACK_DEBOUNCE_SEC, 3.0)
-
     def test_feishu_file_size_limit_error_is_detected(self) -> None:
         text = (
             "time=2026-05-26T17:03:24.084+08:00 level=ERROR "

@@ -291,7 +291,9 @@ class DeterministicHelperTests(unittest.TestCase):
 class RepositoryHygieneTests(unittest.TestCase):
     def test_removed_legacy_sources_are_absent(self) -> None:
         for relative in (
+            "src/chatcopilot/agent/persona/interpreter.py",
             "src/chatcopilot/middleware/acp/code_route.py",
+            "src/chatcopilot/middleware/acp/persona_control.py",
             "src/chatcopilot/middleware/acp/route_orchestrator.py",
         ):
             self.assertFalse((ROOT / relative).exists(), relative)

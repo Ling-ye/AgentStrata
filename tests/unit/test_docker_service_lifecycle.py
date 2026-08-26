@@ -323,12 +323,15 @@ def _run_services(
     *args: str,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     bin_dir, log = _fake_docker(tmp_path)
+    python_bin_dir = Path(sys.executable).parent
     env = os.environ.copy()
     env.update(
         {
             "CHATCOPILOT_BOT_SPECS": str(bot),
             "DOCKER_CALL_LOG": str(log),
-            "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
+            "PATH": (
+                f"{bin_dir}{os.pathsep}{python_bin_dir}{os.pathsep}{env['PATH']}"
+            ),
         }
     )
     env.pop("CHATCOPILOT_BOT_SPEC", None)

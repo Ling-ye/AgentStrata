@@ -237,7 +237,7 @@ def test_agent_runtime_is_closed_when_case_execution_fails() -> None:
             return_value=MagicMock(),
         ),
         patch(
-            "chatcopilot.evals.runner.build_agent_runtime",
+            "chatcopilot.evals.runner.assemble_agent_runtime",
             return_value=fake_agent_runtime,
         ),
     ):
@@ -291,7 +291,7 @@ def test_agent_runtime_is_closed_when_prompt_plan_session_creation_fails() -> No
             return_value=MagicMock(),
         ),
         patch(
-            "chatcopilot.evals.runner.build_agent_runtime",
+            "chatcopilot.evals.runner.assemble_agent_runtime",
             return_value=fake_agent_runtime,
         ),
     ):

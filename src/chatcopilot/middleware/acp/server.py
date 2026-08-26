@@ -18,6 +18,8 @@ SDK：``pip install agent-client-protocol``（PyPI 官方，Apache 2.0）。
 
 - ``agent_bridge``      —— SessionState 装配 + workspace identity 增强 / 恢复
 - ``meta_commands``     —— /debug、业务模式切换、Owner 全局工作区短路与对应 ToolDef
+- ``operator_commands`` / ``operator_dispatch`` / ``instance_control`` —— Owner 指令目录、
+  回执时序与当前 systemd 实例控制
 - ``job_dispatch``      —— 后台任务 watch + 飞书通知 + job 状态查询
 - ``task_dispatch``     —— 单轮 task 状态查询短路
 - ``event_translator``  —— AgentEvent → ACP session_update 翻译（含 debug 过滤）
@@ -80,10 +82,12 @@ from chatcopilot.contracts.agent import (
     TopicDecisionMade,
     TurnError,
 )
-from chatcopilot.agent.runtime import build_agent_runtime
-from chatcopilot.agent.skills.index import set_skill_index as _set_bot_skill_index
+from chatcopilot.application.agent_runtime import (
+    AgentRuntimeAssemblyProfile,
+    materialize_agent_runtime,
+    project_agent_runtime,
+)
 from chatcopilot.botspec import BotRuntimeContext, load_runtime_context
-from chatcopilot.botspec.runtime_env import load_research_llm_config
 from chatcopilot.contracts.agent import ResourceRef
 from chatcopilot.contracts.identity import ConversationIdentity, TurnIdentity
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
@@ -105,6 +109,7 @@ from chatcopilot.middleware.acp.group_conversation import (
     render_turn_identity_context,
 )
 from chatcopilot.middleware.acp.lifecycle_barrier import LifecycleBarrierExecutor
+from chatcopilot.middleware.acp.instance_control import InstanceControl
 from chatcopilot.middleware.acp.memory_receipt import (
     classify_memory_receipt_requirement,
 )
@@ -198,7 +203,12 @@ class AcpChatAgent(Agent):
 
     _conn: Client
 
-    def __init__(self, runtime: BotRuntimeContext | None = None) -> None:
+    def __init__(
+        self,
+        runtime: BotRuntimeContext | None = None,
+        *,
+        instance_control: InstanceControl | None = None,
+    ) -> None:
         self._sessions: Dict[str, SessionState] = {}
         self._session_locks: Dict[str, asyncio.Lock] = {}
         self._group_actor_sessions: OrderedDict[
@@ -211,17 +221,16 @@ class AcpChatAgent(Agent):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._runtime = runtime or load_runtime_context()
         self._lifecycle_barrier = LifecycleBarrierExecutor()
-        # 把 BotSpec 解析出的 skill 索引交给 read_bot_skill 工具按需读取。
-        _set_bot_skill_index(self._runtime.skills)
+        self._instance_control = instance_control or InstanceControl()
         # 启动期间一次性加载 LLM 配置；env 改了需要重启 ACP server 才会生效。
         self._chat_config = load_config(env_prefix=self._runtime.spec.llm.env_prefix)
-        self._research_llm_config = load_research_llm_config(
-            self._runtime.spec.llm,
-            fallback=self._chat_config.llm,
+        self._agent_runtime_projection = project_agent_runtime(
+            self._runtime,
+            chat_config=self._chat_config,
+            profile=AgentRuntimeAssemblyProfile.INTERACTIVE,
         )
-        # 一次性装配 AgentRuntime；所有 ACP session 共享同一个 runtime
-        # （LLMClient + tools schema 复用），per-session 仅在 new_session 时
-        # 注入 extra_tools + payload sanitizer + workspace。
+        # 启动时冻结装配投影；AgentRuntime 首次对话时物化并由全部 ACP session 共享。
+        # per-session 仅在 new_session 时注入 extra_tools、payload sanitizer 与 workspace。
         self._agent_runtime = None
         self._agent_runtime_lock = threading.Lock()
         self._jobs = self._new_job_dispatcher()
@@ -558,17 +567,7 @@ class AcpChatAgent(Agent):
         with self._agent_runtime_lock:
             runtime = self._agent_runtime
             if runtime is None:
-                runtime = build_agent_runtime(
-                    chat_config=self._chat_config,
-                    research_llm_config=self._research_llm_config,
-                    tool_packs=self._runtime.tool_packs,
-                    exclude_tools=self._runtime.exclude_tools,
-                    skill_index=self._runtime.skills,
-                    rag_sources=self._runtime.rag_sources,
-                    mcp_servers=self._runtime.mcp_servers,
-                    subagents=self._runtime.subagents,
-                    agent_backend=self._runtime.agent_backend,
-                )
+                runtime = materialize_agent_runtime(self._agent_runtime_projection)
                 self._agent_runtime = runtime
                 _LOGGER.info(
                     "AgentStrata ACP AgentRuntime materialized | tools=%d",
@@ -1133,6 +1132,32 @@ class AcpChatAgent(Agent):
             )
         except Exception:  # noqa: BLE001
             _LOGGER.exception("turn task record finish failed | task=%s", recorder.task_id)
+
+    def _finish_turn_task_strict(
+        self,
+        recorder: Optional[TurnTaskRecorder],
+        *,
+        status: str = "succeeded",
+        progress: str = "已完成回答。",
+        final_text: str = "",
+        stop_reason: str = "",
+        error: str = "",
+        produced_resources: Optional[list[str]] = None,
+        lifecycle: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Persist lifecycle command completion before its delayed action can run."""
+
+        if recorder is None:
+            raise RuntimeError("turn task recorder is unavailable")
+        recorder.finish(
+            status=status,
+            progress=progress,
+            final_text=final_text,
+            stop_reason=stop_reason,
+            error=error,
+            produced_resources=produced_resources,
+            lifecycle=lifecycle,
+        )
 
     def _record_turn_event(
         self,

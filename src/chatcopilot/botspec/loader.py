@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from chatcopilot.component_catalog.subagents import get_subagent_preset, get_workflow
+from chatcopilot.contracts.agent_backend import AGENT_BACKEND_IDS
 from chatcopilot.contracts.subagents import (
     CachePolicySpec,
     CodexMainSessionPolicy,
@@ -84,6 +86,7 @@ _SUBAGENT_BUDGET_FIELDS = {
     "timeout_seconds",
     "max_output_chars",
 }
+_MISSING = object()
 
 
 def load_botspec(path: str | Path) -> BotSpec:
@@ -500,7 +503,11 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
             ).strip().lower()
             or "live",
             code=CodeLLMSpec(
-                enabled=_strict_bool(llm_code.get("enabled"), "llm.code.enabled", False),
+                enabled=_strict_bool(
+                    llm_code.get("enabled", _MISSING),
+                    "llm.code.enabled",
+                    False,
+                ),
                 mode=str(llm_code.get("mode", "rules")).strip().lower() or "rules",
                 prefixes=tuple(
                     _str_list(llm_code.get("prefixes", ["/code", "/codex", "用codex"]))
@@ -561,15 +568,19 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         context=ContextSpec(
             rag=RagSpec(sources=_optional_str(rag.get("sources"))),
             wiki=WikiSpec(
-                enabled=_as_bool(wiki.get("enabled")),
+                enabled=_strict_bool(
+                    wiki.get("enabled", _MISSING),
+                    "context.wiki.enabled",
+                    False,
+                ),
                 root_env=str(wiki.get("root_env", "CHATCOPILOT_WIKI_ROOT")).strip()
                 or "CHATCOPILOT_WIKI_ROOT",
                 label=str(wiki.get("label", "wiki")).strip() or "wiki",
                 read_role=str(wiki.get("read_role", "owner")).strip().lower() or "owner",
-                private_chat_only=(
-                    _as_bool(wiki.get("private_chat_only"))
-                    if "private_chat_only" in wiki
-                    else True
+                private_chat_only=_strict_bool(
+                    wiki.get("private_chat_only", _MISSING),
+                    "context.wiki.private_chat_only",
+                    True,
                 ),
                 max_chunk_chars=_as_int(wiki.get("max_chunk_chars"), 1200),
             ),
@@ -608,8 +619,10 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         ),
         packaging=PackagingSpec(allowlist=_optional_str(packaging.get("allowlist"))),
         access=AccessSpec(
-            owner_only_project_access=_as_bool(
-                access.get("owner_only_project_access")
+            owner_only_project_access=_strict_bool(
+                access.get("owner_only_project_access", _MISSING),
+                "access.owner_only_project_access",
+                False,
             ),
         ),
         agents=agents,
@@ -626,7 +639,7 @@ def _mapping(value: Any, field: str) -> dict[str, Any]:
 
 
 def _strict_bool(value: Any, field: str, default: bool) -> bool:
-    if value is None:
+    if value is _MISSING:
         return default
     if isinstance(value, bool):
         return value
@@ -729,15 +742,6 @@ def _parse_code_model_profiles(raw: Any) -> dict[str, CodeModelProfile]:
     return parsed
 
 
-def _as_bool(value: Any) -> bool:
-    """把 YAML 的 bool/字符串归一化成 bool；缺省 / 无法识别一律 False。"""
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return False
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _parse_subagents(
     raw: dict[str, Any],
     *,
@@ -764,7 +768,12 @@ def _parse_subagents(
         )
         agents[name] = _parse_subagent_budget(block, preset_base)
         if any(key not in _SUBAGENT_BUDGET_FIELDS for key in block):
-            preset_overrides[name] = _parse_subagent_override(name, block, preset_base)
+            preset_overrides[name] = _parse_subagent_override(
+                name,
+                block,
+                preset_base,
+                field=f"{field_prefix}.{name}",
+            )
     custom = _parse_custom_subagents(raw.get("custom", []), defaults, field_prefix=field_prefix)
     search_budget = _parse_subagent_budget(
         _mapping(raw.get("search_budget", {}), f"{field_prefix}.search_budget"),
@@ -789,7 +798,7 @@ def _parse_subagents(
         defaults=defaults,
         search_budget=search_budget,
         research_enabled=_strict_bool(
-            research_router.get("enabled"),
+            research_router.get("enabled", _MISSING),
             f"{field_prefix}.unified_search.enabled",
             False,
         ),
@@ -830,7 +839,11 @@ def _parse_search_providers(
             SearchProviderSpec(
                 id=_strict_string(item.get("id"), f"{field}.id"),
                 kind=_strict_string(item.get("kind"), f"{field}.kind").lower(),
-                enabled=_strict_bool(item.get("enabled"), f"{field}.enabled", True),
+                enabled=_strict_bool(
+                    item.get("enabled", _MISSING),
+                    f"{field}.enabled",
+                    True,
+                ),
                 endpoint=endpoint,
                 credential_env=credential_env,
                 timeout_seconds=_strict_number(
@@ -886,7 +899,8 @@ def _parse_custom_subagents(
         raise ValueError(f"{field_prefix}.custom 必须是 YAML list")
     out: list[CustomSubagentSpec] = []
     for index, item in enumerate(raw):
-        entry = _mapping(item, f"{field_prefix}.custom[{index}]")
+        field = f"{field_prefix}.custom[{index}]"
+        entry = _mapping(item, field)
         name = str(entry.get("name", "")).strip()
         out.append(
             CustomSubagentSpec(
@@ -900,14 +914,26 @@ def _parse_custom_subagents(
                 ),
                 role_prompt_path=_parse_subagent_role_path(
                     entry.get("prompt"),
-                    f"{field_prefix}.custom[{index}].prompt",
+                    f"{field}.prompt",
                 ),
                 kind=str(entry.get("kind", "domain")).strip() or "domain",
                 version=str(entry.get("version", "1")).strip() or "1",
-                input_schema=_mapping(entry.get("input_schema", {}), f"{field_prefix}.custom[{index}].input_schema"),
-                output_schema=_mapping(entry.get("output_schema", {}), f"{field_prefix}.custom[{index}].output_schema"),
-                context_policy=_parse_context_policy(entry.get("context_policy")),
-                cache_policy=_parse_cache_policy(entry.get("cache_policy")),
+                input_schema=_mapping(
+                    entry.get("input_schema", {}),
+                    f"{field}.input_schema",
+                ),
+                output_schema=_mapping(
+                    entry.get("output_schema", {}),
+                    f"{field}.output_schema",
+                ),
+                context_policy=_parse_context_policy(
+                    entry.get("context_policy"),
+                    field=f"{field}.context_policy",
+                ),
+                cache_policy=_parse_cache_policy(
+                    entry.get("cache_policy"),
+                    field=f"{field}.cache_policy",
+                ),
                 workflow_tags=tuple(_str_list(entry.get("workflow_tags", []))),
                 override_fields=tuple(entry.keys()),
                 unavailable_message=_optional_str(entry.get("unavailable_message")),
@@ -917,7 +943,11 @@ def _parse_custom_subagents(
 
 
 def _parse_subagent_override(
-    name: str, raw: dict[str, Any], defaults: SubagentBudgetSpec
+    name: str,
+    raw: dict[str, Any],
+    defaults: SubagentBudgetSpec,
+    *,
+    field: str,
 ) -> CustomSubagentSpec:
     return CustomSubagentSpec(
         name=name,
@@ -927,14 +957,20 @@ def _parse_subagent_override(
         budget=_parse_subagent_budget(raw, defaults),
         role_prompt_path=_parse_subagent_role_path(
             raw.get("prompt"),
-            f"subagents.{name}.prompt",
+            f"{field}.prompt",
         ),
         kind=str(raw.get("kind", "")).strip(),
         version=str(raw.get("version", "")).strip() or "1",
-        input_schema=_mapping(raw.get("input_schema", {}), f"subagents.{name}.input_schema"),
-        output_schema=_mapping(raw.get("output_schema", {}), f"subagents.{name}.output_schema"),
-        context_policy=_parse_context_policy(raw.get("context_policy")),
-        cache_policy=_parse_cache_policy(raw.get("cache_policy")),
+        input_schema=_mapping(raw.get("input_schema", {}), f"{field}.input_schema"),
+        output_schema=_mapping(raw.get("output_schema", {}), f"{field}.output_schema"),
+        context_policy=_parse_context_policy(
+            raw.get("context_policy"),
+            field=f"{field}.context_policy",
+        ),
+        cache_policy=_parse_cache_policy(
+            raw.get("cache_policy"),
+            field=f"{field}.cache_policy",
+        ),
         workflow_tags=tuple(_str_list(raw.get("workflow_tags", []))),
         override_fields=tuple(raw.keys()),
         unavailable_message=_optional_str(raw.get("unavailable_message")),
@@ -989,35 +1025,47 @@ def _parse_subagent_role_path(raw: Any, field: str) -> str | None:
     return _optional_str(mapping.get("role"))
 
 
-def _parse_context_policy(raw: Any) -> ContextPolicySpec:
-    mapping = _mapping(raw or {}, "context_policy")
+def _parse_context_policy(raw: Any, *, field: str) -> ContextPolicySpec:
+    mapping = _mapping(raw or {}, field)
     base = ContextPolicySpec()
     allowed = mapping.get("allowed_task_fields")
     return ContextPolicySpec(
         max_context_tokens=_as_int(mapping.get("max_context_tokens"), base.max_context_tokens),
         sliding_window_turns=_as_int(mapping.get("sliding_window_turns"), base.sliding_window_turns),
-        include_tool_summary=_as_bool(mapping.get("include_tool_summary"))
-        if "include_tool_summary" in mapping
-        else base.include_tool_summary,
-        include_history=_as_bool(mapping.get("include_history"))
-        if "include_history" in mapping
-        else base.include_history,
-        include_allowed_tools=_as_bool(mapping.get("include_allowed_tools"))
-        if "include_allowed_tools" in mapping
-        else base.include_allowed_tools,
+        include_tool_summary=_strict_bool(
+            mapping.get("include_tool_summary", _MISSING),
+            f"{field}.include_tool_summary",
+            base.include_tool_summary,
+        ),
+        include_history=_strict_bool(
+            mapping.get("include_history", _MISSING),
+            f"{field}.include_history",
+            base.include_history,
+        ),
+        include_allowed_tools=_strict_bool(
+            mapping.get("include_allowed_tools", _MISSING),
+            f"{field}.include_allowed_tools",
+            base.include_allowed_tools,
+        ),
         allowed_task_fields=tuple(_str_list(allowed)) if allowed is not None else base.allowed_task_fields,
     )
 
 
-def _parse_cache_policy(raw: Any) -> CachePolicySpec:
-    mapping = _mapping(raw or {}, "cache_policy")
+def _parse_cache_policy(raw: Any, *, field: str) -> CachePolicySpec:
+    mapping = _mapping(raw or {}, field)
     base = CachePolicySpec()
     return CachePolicySpec(
-        enabled=_as_bool(mapping.get("enabled")) if "enabled" in mapping else base.enabled,
+        enabled=_strict_bool(
+            mapping.get("enabled", _MISSING),
+            f"{field}.enabled",
+            base.enabled,
+        ),
         ttl_seconds=_as_int(mapping.get("ttl_seconds"), base.ttl_seconds),
-        include_resource_hashes=_as_bool(mapping.get("include_resource_hashes"))
-        if "include_resource_hashes" in mapping
-        else base.include_resource_hashes,
+        include_resource_hashes=_strict_bool(
+            mapping.get("include_resource_hashes", _MISSING),
+            f"{field}.include_resource_hashes",
+            base.include_resource_hashes,
+        ),
         namespace=str(mapping.get("namespace", base.namespace) or base.namespace).strip(),
     )
 
@@ -1140,19 +1188,11 @@ def _is_loopback_host(hostname: str) -> bool:
 
 
 def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
-    from chatcopilot.contracts.subagents import (
-        BUILTIN_SUBAGENT_PRESET_NAMES,
-        BUILTIN_SUBAGENT_WORKFLOWS,
-    )
-
-    PRESET_NAMES = BUILTIN_SUBAGENT_PRESET_NAMES
-    WORKFLOWS = BUILTIN_SUBAGENT_WORKFLOWS
-
-    if spec.agents.backend not in {"native", "langgraph", "codex"}:
+    if spec.agents.backend not in AGENT_BACKEND_IDS:
         issues.append(
             ValidationIssue(
                 "error",
-                "agents.backend must be one of: native, langgraph, codex",
+                "agents.backend must be one of: " + ", ".join(AGENT_BACKEND_IDS),
                 "agents.backend",
             )
         )
@@ -1216,7 +1256,7 @@ def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
         if name in seen:
             issues.append(ValidationIssue("error", f"subagent 重复声明: {name}", "agents.include"))
         seen.add(name)
-        if name not in PRESET_NAMES:
+        if get_subagent_preset(name) is None:
             issues.append(
                 ValidationIssue(
                     "error",
@@ -1252,7 +1292,7 @@ def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
                 ValidationIssue("error", f"subagent 名称冲突: {custom.name}", f"{field_prefix}.name")
             )
         seen.add(custom.name)
-        if custom.name in PRESET_NAMES:
+        if get_subagent_preset(custom.name) is not None:
             issues.append(
                 ValidationIssue(
                     "error",
@@ -1298,7 +1338,7 @@ def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
 
     enabled_names = set(spec.agents.include) | {custom.name for custom in spec.agents.custom}
     for workflow_name in spec.agents.workflows:
-        workflow = WORKFLOWS.get(workflow_name)
+        workflow = get_workflow(workflow_name)
         if workflow is None:
             issues.append(
                 ValidationIssue(

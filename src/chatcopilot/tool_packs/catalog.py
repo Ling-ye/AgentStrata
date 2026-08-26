@@ -6,13 +6,17 @@ index deliberately contains no exact tool-name list.
 from __future__ import annotations
 
 import importlib
+from collections.abc import Sequence
 from types import MappingProxyType
 from typing import Callable, Mapping
 
 from chatcopilot.contracts.tool_packs import (
+    TOOL_PACK_PROJECTION_PROFILES,
     ToolFeatureEntry,
     ToolPackEntry,
     ToolPackPolicy,
+    ToolPackProjectionProfile,
+    ToolPackRuntimeScope,
 )
 
 
@@ -24,6 +28,14 @@ def _entry(
     dynamic: bool = False,
     policy_module: str | None = None,
     policy_builder: str = "build_policy",
+    runtime_scope: ToolPackRuntimeScope = "static",
+    projection_profiles: tuple[ToolPackProjectionProfile, ...] = (
+        "interactive",
+        "detached",
+    ),
+    provider_factory_module: str | None = None,
+    factory_order: int = 0,
+    session_default_enabled: bool = False,
 ) -> ToolPackEntry:
     return ToolPackEntry(
         name=name,
@@ -32,6 +44,11 @@ def _entry(
         policy_module=policy_module,
         policy_builder=policy_builder,
         description=description,
+        runtime_scope=runtime_scope,
+        projection_profiles=projection_profiles,
+        provider_factory_module=provider_factory_module,
+        factory_order=factory_order,
+        session_default_enabled=session_default_enabled,
     )
 
 
@@ -157,6 +174,9 @@ _BUILTIN_TOOL_PACKS_DATA: dict[str, ToolPackEntry] = {
         "playbooks.reader",
         "chatcopilot.agent.tools.builtin.skill_tools",
         "Lazy loading for registered bot playbooks.",
+        runtime_scope="runtime",
+        provider_factory_module="chatcopilot.agent.capabilities.playbooks",
+        factory_order=100,
     ),
     "mcp.admin": _entry(
         "mcp.admin",
@@ -168,36 +188,49 @@ _BUILTIN_TOOL_PACKS_DATA: dict[str, ToolPackEntry] = {
         "chatcopilot.agent.mcp.client",
         "Main-Agent tools materialized from configured MCP servers.",
         dynamic=True,
+        runtime_scope="runtime",
     ),
     "mcp.subagent": _entry(
         "mcp.subagent",
         "chatcopilot.agent.mcp.client",
         "Subagent-only tools materialized from configured MCP servers.",
         dynamic=True,
+        runtime_scope="runtime",
     ),
     "search.unified": _entry(
         "search.unified",
         "chatcopilot.agent.search.tool",
         "Session-bound unified search tool.",
         dynamic=True,
+        runtime_scope="agent_session",
+        provider_factory_module="chatcopilot.agent.capabilities.unified_search",
+        factory_order=200,
+        session_default_enabled=True,
     ),
     "agent.delegation": _entry(
         "agent.delegation",
         "chatcopilot.agent.subagents.registry",
         "Session-bound subagent and workflow delegation tools.",
         dynamic=True,
+        runtime_scope="agent_session",
+        provider_factory_module="chatcopilot.agent.capabilities.delegation",
+        factory_order=100,
+        session_default_enabled=True,
     ),
     "persona.control": _entry(
         "persona.control",
         "chatcopilot.agent.persona.tools",
         "Owner-only session-bound persona management tool.",
         dynamic=True,
+        runtime_scope="host_session",
+        projection_profiles=("interactive",),
     ),
     "runtime.session": _entry(
         "runtime.session",
         None,
         "Adapter-supplied session-local control tools.",
         dynamic=True,
+        runtime_scope="host_session",
     ),
 }
 
@@ -239,6 +272,49 @@ def get_tool_pack_entry(name: str) -> ToolPackEntry | None:
 
 def get_tool_feature_entry(name: str) -> ToolFeatureEntry | None:
     return BUILTIN_TOOL_FEATURES.get(name)
+
+
+def project_tool_pack_names(
+    tool_pack_names: tuple[str, ...] | list[str],
+    *,
+    profile: str,
+) -> tuple[str, ...]:
+    """Project selected packs to one closed runtime profile."""
+
+    if profile not in TOOL_PACK_PROJECTION_PROFILES:
+        raise ValueError(f"unknown tool-pack projection profile: {profile}")
+    projected: list[str] = []
+    for name in tool_pack_names:
+        entry = get_tool_pack_entry(name)
+        if entry is None:
+            raise ValueError(f"unknown tool pack: {name}")
+        if profile in entry.projection_profiles:
+            projected.append(name)
+    return tuple(dict.fromkeys(projected))
+
+
+def session_tool_pack_entries(
+    tool_pack_names: Sequence[str] | None = None,
+    *,
+    profile: ToolPackProjectionProfile = "interactive",
+) -> tuple[ToolPackEntry, ...]:
+    """Return enabled Agent-session contributors in deterministic order."""
+
+    if profile not in TOOL_PACK_PROJECTION_PROFILES:
+        raise ValueError(f"unknown tool-pack projection profile: {profile}")
+    selected = None if tool_pack_names is None else frozenset(tool_pack_names)
+    entries = tuple(
+        entry
+        for entry in BUILTIN_TOOL_PACKS.values()
+        if entry.runtime_scope == "agent_session"
+        and profile in entry.projection_profiles
+        and (
+            selected is None
+            or entry.session_default_enabled
+            or entry.name in selected
+        )
+    )
+    return tuple(sorted(entries, key=lambda entry: (entry.factory_order, entry.name)))
 
 
 def resolve_tool_modules(tool_pack_names: tuple[str, ...] | list[str]) -> tuple[str, ...]:
@@ -289,5 +365,7 @@ __all__ = [
     "known_tool_feature_names",
     "known_tool_pack_names",
     "load_tool_pack_policies",
+    "project_tool_pack_names",
     "resolve_tool_modules",
+    "session_tool_pack_entries",
 ]

@@ -118,11 +118,21 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
         }
     ),
     "botspec": frozenset(
-        {"contracts", "core", "external_tools", "platforms", "project", "tool_packs"}
+        {
+            "component_catalog",
+            "contracts",
+            "core",
+            "external_tools",
+            "platforms",
+            "project",
+            "tool_packs",
+        }
     ),
+    "application": frozenset({"agent", "botspec", "contracts", "core", "tool_packs"}),
     "middleware": frozenset(
         {
             "agent",
+            "application",
             "botspec",
             "component_catalog",
             "contracts",
@@ -136,6 +146,7 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     "evals": frozenset(
         {
             "agent",
+            "application",
             "botspec",
             "component_catalog",
             "contracts",
@@ -150,6 +161,7 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     "entrypoints": frozenset(
         {
             "agent",
+            "application",
             "botspec",
             "component_catalog",
             "contracts",
@@ -320,13 +332,17 @@ def _private_cross_area_imports(
     return tuple(sorted(set(bad)))
 
 
-def _imports(path: Path) -> list[str]:
+def _imports(
+    path: Path,
+    modules: Mapping[str, ModuleFile] | None = None,
+) -> list[str]:
     if path.is_relative_to(SRC):
         name, is_package = _module_name(path, SRC, "chatcopilot")
     else:
         name, is_package = _module_name(path, ROOT / "console", "console")
     record = ModuleFile(name=name, path=path, area=_module_area(name), is_package=is_package)
-    return [item.imported for item in _import_references(record, _production_modules())]
+    production_modules = modules if modules is not None else _production_modules()
+    return [item.imported for item in _import_references(record, production_modules)]
 
 
 def _merge(
@@ -342,6 +358,7 @@ def _merge(
 
 def check_rules() -> dict[str, dict[str, list[str]]]:
     violations: dict[str, dict[str, list[str]]] = {}
+    modules = _production_modules()
     for rule in RULES:
         allowed = set(rule.allowed)
         rule_violations: dict[str, list[str]] = {}
@@ -349,7 +366,7 @@ def check_rules() -> dict[str, dict[str, list[str]]]:
             rel = path.relative_to(ROOT).as_posix()
             bad = [
                 module
-                for module in _imports(path)
+                for module in _imports(path, modules)
                 if _matches(module, rule.forbidden) and (rel, module) not in allowed
             ]
             if bad:

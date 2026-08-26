@@ -2,17 +2,19 @@
 from __future__ import annotations
 
 import importlib
-import inspect
 import re
 from dataclasses import dataclass
 from types import MappingProxyType, ModuleType
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from jsonschema import Draft202012Validator
-from jsonschema.exceptions import SchemaError
-
 from chatcopilot.contracts.tool_packs import ToolProvider
-from chatcopilot.contracts.tools import ToolDef, build_mcp_schema, build_openai_schema
+from chatcopilot.contracts.tool_validation import validate_tool_contract
+from chatcopilot.contracts.tools import (
+    ToolAudience,
+    ToolDef,
+    build_mcp_schema,
+    build_openai_schema,
+)
 from chatcopilot.tool_packs.catalog import (
     BUILTIN_TOOL_PACKS,
     get_tool_pack_entry,
@@ -20,7 +22,6 @@ from chatcopilot.tool_packs.catalog import (
 )
 
 
-_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _PROVIDER_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
 _PACK_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 ModuleLoader = Callable[[str], ModuleType]
@@ -312,6 +313,7 @@ class ToolRegistry:
         tool_packs: Sequence[str] | None = None,
         exclude_tools: Sequence[str] | None = None,
         require_all_selected: bool = False,
+        audience: ToolAudience | None = None,
     ) -> ToolRegistrySnapshot:
         """Project one selected, conflict-free tool surface."""
 
@@ -347,6 +349,8 @@ class ToolRegistry:
             provider = self._providers[provider_id]
             for tool in provider.packs[pack_id]:
                 if tool.name in excluded:
+                    continue
+                if audience is not None and audience not in tool.audiences:
                     continue
                 previous = tool_by_name.get(tool.name)
                 if previous is not None:
@@ -388,10 +392,12 @@ class ToolRegistry:
         *,
         tool_packs: Sequence[str] | None = None,
         exclude_tools: Sequence[str] | None = None,
+        audience: ToolAudience | None = None,
     ) -> ToolSource | None:
         return self.snapshot(
             tool_packs=tool_packs,
             exclude_tools=exclude_tools,
+            audience=audience,
         ).describe(name)
 
 
@@ -429,77 +435,15 @@ def _validate_tool_contract(
             tool_names=(type(tool).__name__,),
             provider_id=provider_id,
         )
-    if not isinstance(tool.name, str) or _TOOL_NAME_RE.fullmatch(tool.name) is None:
+    violations = validate_tool_contract(tool, require_provenance=False)
+    if violations:
         raise ToolMaterializationError(
             module=module,
             pack_names=(pack_id,),
-            reason="invalid_tool_name",
+            reason=violations[0].materialization_reason,
             tool_names=(str(tool.name),),
             provider_id=provider_id,
         )
-    if not isinstance(tool.summary, str) or not tool.summary.strip():
-        raise ToolMaterializationError(
-            module=module,
-            pack_names=(pack_id,),
-            reason="invalid_tool_summary",
-            tool_names=(tool.name,),
-            provider_id=provider_id,
-        )
-    if not callable(tool.handler):
-        raise ToolMaterializationError(
-            module=module,
-            pack_names=(pack_id,),
-            reason="invalid_tool_handler",
-            tool_names=(tool.name,),
-            provider_id=provider_id,
-        )
-    try:
-        parameters = tuple(inspect.signature(tool.handler).parameters.values())
-    except (TypeError, ValueError) as exc:
-        raise ToolMaterializationError(
-            module=module,
-            pack_names=(pack_id,),
-            reason="invalid_tool_handler_signature",
-            tool_names=(tool.name,),
-            provider_id=provider_id,
-        ) from exc
-    if len(parameters) != 2 or any(
-        parameter.kind
-        not in {
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        }
-        for parameter in parameters
-    ):
-        raise ToolMaterializationError(
-            module=module,
-            pack_names=(pack_id,),
-            reason="invalid_tool_handler_signature",
-            tool_names=(tool.name,),
-            provider_id=provider_id,
-        )
-    for field_name, schema in (
-        ("input", tool.input_schema),
-        ("output", tool.output_schema),
-    ):
-        if not isinstance(schema, dict) or schema.get("type") != "object":
-            raise ToolMaterializationError(
-                module=module,
-                pack_names=(pack_id,),
-                reason=f"invalid_{field_name}_schema",
-                tool_names=(tool.name,),
-                provider_id=provider_id,
-            )
-        try:
-            Draft202012Validator.check_schema(schema)
-        except SchemaError as exc:
-            raise ToolMaterializationError(
-                module=module,
-                pack_names=(pack_id,),
-                reason=f"invalid_{field_name}_schema:{type(exc).__name__}",
-                tool_names=(tool.name,),
-                provider_id=provider_id,
-            ) from exc
 
 
 def discover_tools(

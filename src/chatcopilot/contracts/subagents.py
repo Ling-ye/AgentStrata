@@ -243,6 +243,8 @@ class SubagentSpec:
     codex: CodexMainSessionPolicy = field(default_factory=CodexMainSessionPolicy)
 
 
+# Compatibility snapshots for external importers. Runtime discovery and
+# validation use ``chatcopilot.component_catalog`` as the canonical catalog.
 BUILTIN_SUBAGENT_PRESET_NAMES: frozenset[str] = frozenset((
     "adapter_forge",
     "browser_reader",

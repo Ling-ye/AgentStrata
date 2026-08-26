@@ -2,41 +2,30 @@
 
 from __future__ import annotations
 
-import inspect
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from types import ModuleType
 from typing import cast
 
-from jsonschema import Draft202012Validator
-from jsonschema.exceptions import SchemaError
-
 from chatcopilot.component_catalog.audit_models import (
     CatalogAuditIssue,
     CatalogRecords,
     ModuleLoader,
-    _TOOL_NAME_RE,
     _ToolPackAuditFacts,
     _append,
     _component_label,
-    _json_serializable,
     _records,
     _valid_component_id,
 )
+from chatcopilot.contracts.tool_validation import validate_tool_contract
 from chatcopilot.contracts.tool_packs import (
+    CAPABILITY_PROVIDER_FACTORY,
     ToolPackEntry,
     ToolPackPolicy,
     ToolProvider,
 )
-from chatcopilot.contracts.tools import (
-    EXECUTION_GLOBAL_SERIAL_BACKGROUND,
-    EXECUTION_SYNC,
-    EXECUTION_USER_SERIAL_BACKGROUND,
-    ToolDef,
-    build_mcp_schema,
-    build_openai_schema,
-)
+from chatcopilot.contracts.tools import ToolDef
 
 
 _MODULE_RE = re.compile(
@@ -48,16 +37,8 @@ _MODULE_RE = re.compile(
 _POLICY_MODULE_RE = re.compile(
     r"^chatcopilot\.external_tools(?:\.[A-Za-z_][A-Za-z0-9_]*)+$"
 )
-_ROLES = frozenset({None, "user", "admin", "owner"})
-_EXECUTION_POLICIES = frozenset(
-    {
-        EXECUTION_SYNC,
-        EXECUTION_GLOBAL_SERIAL_BACKGROUND,
-        EXECUTION_USER_SERIAL_BACKGROUND,
-    }
-)
-_WEIGHTS = frozenset({"light", "heavy"})
-_ARTIFACT_KINDS = frozenset({"file", "directory"})
+_RUNTIME_SCOPES = frozenset({"static", "runtime", "agent_session", "host_session"})
+_PROJECTION_PROFILES = frozenset({"interactive", "detached"})
 
 
 class _ModuleCache:
@@ -86,280 +67,23 @@ def _validate_tool(
     module: str,
     issues: list[CatalogAuditIssue],
 ) -> str | None:
-    surface = "tool_pack"
-    name = tool.name
-    valid_name = isinstance(name, str) and _TOOL_NAME_RE.fullmatch(name) is not None
-    issue_name = name if isinstance(name, str) else ""
-    if not valid_name:
+    issue_name = tool.name if isinstance(tool.name, str) else ""
+    violations = validate_tool_contract(tool)
+    for violation in violations:
         _append(
             issues,
-            "tool.name_invalid",
-            "ToolDef.name must match [A-Za-z0-9_-]{1,64}.",
-            surface=surface,
+            violation.audit_code,
+            violation.message,
+            surface="tool_pack",
             module=module,
             tool=issue_name,
         )
-    if not isinstance(tool.summary, str) or not tool.summary.strip():
-        _append(
-            issues,
-            "tool.summary_invalid",
-            "ToolDef.summary must be a non-empty string.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-
-    input_schema = tool.input_schema
-    output_schema = tool.output_schema
-    schemas_valid = True
-    for schema_name, schema in (
-        ("input", input_schema),
-        ("output", output_schema),
+    if any(
+        violation.audit_code == "tool.name_invalid"
+        for violation in violations
     ):
-        if not isinstance(schema, dict) or schema.get("type") != "object":
-            schemas_valid = False
-            _append(
-                issues,
-                f"tool.{schema_name}_schema_invalid",
-                f"ToolDef.{schema_name}_schema must be an object JSON schema.",
-                surface=surface,
-                module=module,
-                tool=issue_name,
-            )
-            continue
-        try:
-            Draft202012Validator.check_schema(schema)
-        except SchemaError:
-            schemas_valid = False
-            _append(
-                issues,
-                f"tool.{schema_name}_schema_invalid",
-                f"ToolDef.{schema_name}_schema must be a valid JSON schema.",
-                surface=surface,
-                module=module,
-                tool=issue_name,
-            )
-
-    properties = (
-        input_schema.get("properties", {}) if isinstance(input_schema, dict) else None
-    )
-    properties_valid = isinstance(properties, dict)
-    if not properties_valid:
-        _append(
-            issues,
-            "tool.properties_invalid",
-            "ToolDef.input_schema.properties must be a dict.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    else:
-        for property_name, schema in properties.items():
-            if (
-                not isinstance(property_name, str)
-                or not property_name.strip()
-                or property_name != property_name.strip()
-            ):
-                _append(
-                    issues,
-                    "tool.property_name_invalid",
-                    "Tool property names must be non-empty trimmed strings.",
-                    surface=surface,
-                    module=module,
-                    tool=issue_name,
-                )
-            if not isinstance(schema, dict):
-                _append(
-                    issues,
-                    "tool.property_schema_invalid",
-                    "Every ToolDef property schema must be a dict.",
-                    surface=surface,
-                    module=module,
-                    tool=issue_name,
-                )
-
-    required = input_schema.get("required", []) if isinstance(input_schema, dict) else None
-    if not isinstance(required, list):
-        _append(
-            issues,
-            "tool.required_invalid",
-            "ToolDef.input_schema.required must be a list.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    else:
-        string_required = [item for item in required if isinstance(item, str)]
-        if len(string_required) != len(required) or any(
-            not item.strip() or item != item.strip() for item in string_required
-        ):
-            _append(
-                issues,
-                "tool.required_name_invalid",
-                "Required property names must be non-empty trimmed strings.",
-                surface=surface,
-                module=module,
-                tool=issue_name,
-            )
-        if len(set(string_required)) != len(string_required):
-            _append(
-                issues,
-                "tool.required_duplicate",
-                "ToolDef.required must not contain duplicate names.",
-                surface=surface,
-                module=module,
-                tool=issue_name,
-            )
-        if properties_valid and any(
-            item not in properties for item in string_required
-        ):
-            _append(
-                issues,
-                "tool.required_unknown",
-                "Every required property must exist in ToolDef.properties.",
-                surface=surface,
-                module=module,
-                tool=issue_name,
-            )
-
-    if not callable(tool.handler):
-        _append(
-            issues,
-            "tool.handler_invalid",
-            "ToolDef.handler must be callable.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    else:
-        try:
-            parameters = tuple(inspect.signature(tool.handler).parameters.values())
-        except (TypeError, ValueError):
-            parameters = ()
-        if len(parameters) != 2 or any(
-            parameter.kind
-            not in {
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            }
-            for parameter in parameters
-        ):
-            _append(
-                issues,
-                "tool.handler_signature_invalid",
-                "ToolDef.handler must accept exactly (arguments, ToolContext).",
-                surface=surface,
-                module=module,
-                tool=issue_name,
-            )
-    if not (
-        tool.requires_role is None
-        or isinstance(tool.requires_role, str)
-        and tool.requires_role in _ROLES
-    ):
-        _append(
-            issues,
-            "tool.requires_role_invalid",
-            "ToolDef.requires_role must be None, user, admin, or owner.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    if not isinstance(tool.execution_policy, str) or (
-        tool.execution_policy not in _EXECUTION_POLICIES
-    ):
-        _append(
-            issues,
-            "tool.execution_policy_invalid",
-            "ToolDef.execution_policy is not supported.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    if not isinstance(tool.weight, str) or tool.weight not in _WEIGHTS:
-        _append(
-            issues,
-            "tool.weight_invalid",
-            "ToolDef.weight must be light or heavy.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    if not isinstance(tool.category, str) or not tool.category.strip():
-        _append(
-            issues,
-            "tool.category_invalid",
-            "ToolDef.category must be a non-empty string.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    if not isinstance(tool.owner, str) or not tool.owner.strip():
-        _append(
-            issues,
-            "tool.owner_invalid",
-            "ToolDef.owner must be a non-empty string.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    if not isinstance(tool.aliases, list) or any(
-        not isinstance(alias, str) or not alias.strip() or alias != alias.strip()
-        for alias in tool.aliases
-    ):
-        _append(
-            issues,
-            "tool.aliases_invalid",
-            "ToolDef.aliases must be a list of non-empty trimmed strings.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    elif len(set(tool.aliases)) != len(tool.aliases):
-        _append(
-            issues,
-            "tool.alias_duplicate",
-            "ToolDef.aliases must not contain duplicates.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    if not isinstance(tool.artifact_kinds, tuple) or any(
-        not isinstance(kind, str) or kind not in _ARTIFACT_KINDS
-        for kind in tool.artifact_kinds
-    ):
-        _append(
-            issues,
-            "tool.artifact_kinds_invalid",
-            "ToolDef.artifact_kinds must contain only file or directory.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    if not isinstance(tool.metadata, dict) or not _json_serializable(tool.metadata):
-        _append(
-            issues,
-            "tool.metadata_invalid",
-            "ToolDef.metadata must be a JSON-serializable dict.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    schemas: tuple[object, ...]
-    try:
-        schemas = (build_openai_schema(tool), build_mcp_schema(tool))
-    except Exception:  # noqa: BLE001
-        schemas = ()
-    if not schemas_valid or not schemas or not _json_serializable(schemas):
-        _append(
-            issues,
-            "tool.schema_invalid",
-            "OpenAI and MCP schemas must be finite JSON-serializable values.",
-            surface=surface,
-            module=module,
-            tool=issue_name,
-        )
-    return name if valid_name else None
+        return None
+    return tool.name
 
 
 def _audit_policy(
@@ -507,6 +231,109 @@ def _audit_tool_packs(
                 issues,
                 "tool_pack.description_invalid",
                 "ToolPackEntry.description must be non-empty.",
+                surface="tool_pack",
+                component=pack,
+            )
+        if entry.runtime_scope not in _RUNTIME_SCOPES:
+            _append(
+                issues,
+                "tool_pack.runtime_scope_invalid",
+                "Tool-pack runtime scope must use the closed catalog values.",
+                surface="tool_pack",
+                component=pack,
+            )
+        if (
+            not isinstance(entry.projection_profiles, tuple)
+            or not entry.projection_profiles
+            or len(entry.projection_profiles) != len(set(entry.projection_profiles))
+            or not set(entry.projection_profiles) <= _PROJECTION_PROFILES
+        ):
+            _append(
+                issues,
+                "tool_pack.projection_profiles_invalid",
+                "Tool-pack projection profiles must be a unique non-empty closed tuple.",
+                surface="tool_pack",
+                component=pack,
+            )
+        if entry.runtime_scope == "static" and entry.dynamic:
+            _append(
+                issues,
+                "tool_pack.runtime_scope_mismatch",
+                "Static-scope tool packs cannot be marked dynamic.",
+                surface="tool_pack",
+                component=pack,
+            )
+        if not isinstance(entry.session_default_enabled, bool) or (
+            entry.session_default_enabled and entry.runtime_scope != "agent_session"
+        ):
+            _append(
+                issues,
+                "tool_pack.session_default_invalid",
+                "Only Agent-session packs may be enabled by the compatibility default.",
+                surface="tool_pack",
+                component=pack,
+            )
+        builder_module = entry.provider_factory_module
+        if entry.runtime_scope == "agent_session" and builder_module is None:
+            _append(
+                issues,
+                "tool_pack.provider_factory_missing",
+                "Agent-session packs require one trusted provider factory.",
+                surface="tool_pack",
+                component=pack,
+            )
+        if builder_module is not None and entry.runtime_scope in {
+            "runtime",
+            "agent_session",
+        }:
+            if (
+                not isinstance(builder_module, str)
+                or _MODULE_RE.fullmatch(builder_module) is None
+                or not isinstance(entry.factory_order, int)
+                or isinstance(entry.factory_order, bool)
+                or entry.factory_order <= 0
+            ):
+                _append(
+                    issues,
+                    "tool_pack.provider_factory_invalid",
+                    "Runtime factories require one trusted ordered callable binding.",
+                    surface="tool_pack",
+                    component=pack,
+                    module=(builder_module if isinstance(builder_module, str) else ""),
+                )
+            else:
+                try:
+                    builder_module_value = modules.load(builder_module)
+                except Exception as exc:  # noqa: BLE001
+                    _append(
+                        issues,
+                        "tool_pack.provider_factory_import_failed",
+                        f"Provider factory import failed: {type(exc).__name__}.",
+                        surface="tool_pack",
+                        component=pack,
+                        module=builder_module,
+                    )
+                else:
+                    if not callable(
+                        getattr(
+                            builder_module_value,
+                            CAPABILITY_PROVIDER_FACTORY,
+                            None,
+                        )
+                    ):
+                        _append(
+                            issues,
+                            "tool_pack.provider_factory_export_invalid",
+                            "Provider factory modules must export callable build_provider.",
+                            surface="tool_pack",
+                            component=pack,
+                            module=builder_module,
+                        )
+        elif builder_module is not None:
+            _append(
+                issues,
+                "tool_pack.provider_factory_unexpected",
+                "Only runtime and Agent-session packs may declare provider factories.",
                 surface="tool_pack",
                 component=pack,
             )

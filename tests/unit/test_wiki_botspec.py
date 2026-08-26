@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from chatcopilot.botspec.loader import load_botspec, validate_botspec
 from chatcopilot.botspec.wiki import resolve_wiki_root
 
@@ -86,6 +88,17 @@ def test_wiki_config_rejects_path_as_env_name_and_bad_role(tmp_path: Path) -> No
         "context.wiki.read_role",
         "context.wiki.max_chunk_chars",
     }
+
+
+@pytest.mark.parametrize("field", ("enabled", "private_chat_only"))
+@pytest.mark.parametrize("value", ("invalid", ""), ids=("string", "null"))
+def test_wiki_config_rejects_invalid_boolean(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    with pytest.raises(ValueError, match=rf"context\.wiki\.{field}"):
+        load_botspec(_write_bot(tmp_path, f"{field}: {value}"))
 
 
 def test_resolve_wiki_root_uses_configured_env(tmp_path: Path) -> None:

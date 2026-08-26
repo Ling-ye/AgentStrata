@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import threading
 import urllib
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.tool_packs import ToolProvider
@@ -233,15 +233,6 @@ def _remote_tool_allowed(config: McpServerConfig, remote_name: str) -> bool:
     return not config.allowed_tools or remote_name in config.allowed_tools
 
 
-def list_mcp_tools() -> List[ToolDef]:
-    """Backward-compatible empty hook for older callers."""
-    return []
-
-
-def call_mcp_tool(name: str, arguments: Dict[str, Any]) -> Any:
-    raise NotImplementedError("MCP tools are now routed through McpToolProvider handlers.")
-
-
 __all__ = [
     "McpToolBusyError",
     "McpToolProvider",
@@ -251,7 +242,5 @@ __all__ = [
     "_parse_stateless_response",
     "_remote_tool_allowed",
     "_stream_read_timeout",
-    "call_mcp_tool",
-    "list_mcp_tools",
     "urllib",
 ]

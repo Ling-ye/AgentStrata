@@ -25,6 +25,10 @@ from chatcopilot.contracts.tools import (
 
 
 class McpClientProviderTests(unittest.TestCase):
+    def test_facade_exposes_only_working_provider_api(self) -> None:
+        self.assertFalse(hasattr(mcp_client, "list_mcp_tools"))
+        self.assertFalse(hasattr(mcp_client, "call_mcp_tool"))
+
     def test_load_provider_splits_main_and_subagent_exposure(self) -> None:
         def _handler(_arguments, _context):
             return ToolResult(ok=True, data={})

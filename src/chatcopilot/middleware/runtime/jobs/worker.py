@@ -237,30 +237,22 @@ def _build_background_executor(
             job_context=job_context,
         ), None
 
+    from chatcopilot.application.agent_runtime import (
+        AgentRuntimeAssemblyProfile,
+        assemble_agent_runtime,
+    )
     from chatcopilot.core.config import load_config
-    from chatcopilot.agent.runtime import build_agent_runtime
     from chatcopilot.agent.context.prompt_plan import PromptBuildInput
     from chatcopilot.botspec.runtime import load_runtime_context
-    from chatcopilot.botspec.runtime_env import apply_runtime_env, load_research_llm_config
+    from chatcopilot.botspec.runtime_env import apply_runtime_env
 
     runtime_context = load_runtime_context()
     apply_runtime_env(runtime_context)
     chat_config = load_config(env_prefix=runtime_context.spec.llm.env_prefix)
-    agent_runtime = build_agent_runtime(
+    agent_runtime = assemble_agent_runtime(
+        runtime_context,
         chat_config=chat_config,
-        research_llm_config=load_research_llm_config(
-            runtime_context.spec.llm,
-            fallback=chat_config.llm,
-        ),
-        tool_packs=tuple(
-            pack for pack in runtime_context.tool_packs if pack != "persona.control"
-        ),
-        exclude_tools=runtime_context.exclude_tools,
-        skill_index=runtime_context.skills,
-        rag_sources=runtime_context.rag_sources,
-        mcp_servers=runtime_context.mcp_servers,
-        subagents=runtime_context.subagents,
-        agent_backend=getattr(runtime_context, "agent_backend", "native"),
+        profile=AgentRuntimeAssemblyProfile.DETACHED,
     )
     session = agent_runtime.new_session(
         session_id=f"background-{job_id}",

@@ -25,6 +25,12 @@ deploy / console / CLI
 - `platforms` 为每个聊天系统提供 adapter；新平台通过
   `platforms/<name>/adapter.py` 的 `ADAPTER` 自动发现。
 - `botspec` 解析实例声明并组装 runtime；它不把实例类型硬编码进 Agent。
+- `application` 把 `BotRuntimeContext` 唯一投影为 Agent runtime，并以 catalog 驱动的
+  `interactive` / `detached` profile 和 typed overrides 表达 ACP、后台任务与
+  Evaluation 的运行边界；新的 session capability 默认关闭、需显式选择，只有既有
+  delegation/search 保留经审计的兼容默认。两个 profile 不提供推测性别名；受信
+  capability factory 模块统一导出固定的 `build_provider`，runtime/session 生命周期入口
+  只共享内部物化与校验逻辑。
 - `middleware` 负责 ACP、MCP、通用 HTTP route registry、会话、workspace、权限和
   后台任务。
 - `deploy`、`console` 与 CLI 是操作面，不定义跨层业务契约。
@@ -57,6 +63,11 @@ BotSpec 只声明 tool-pack id。具体目录在 `tool_packs/catalog.py`，catal
 `ToolProvider` 模块，精确工具成员由领域 provider 自己声明；builtin 与 external 使用
 同一注册机制。静态和会话动态工具统一进入 `agent/tools/registry`，Agent 与 Console 通过
 同源 Registry 快照或 `component_catalog` 投影读取工具面。
+
+Playbook reader 在 runtime 物化时绑定当前 Bot 的不可变 Skill 索引，不存在进程级
+Skill registry。会话 payload filter 与后台提交器由宿主在 `new_session()` 时显式传入，
+避免 runtime 级可变回调成为第二条注入路径。MCP facade 只公开可工作的 provider 与错误
+类型；MCP admin 工具直接从 `external_tools.mcp_admin` 的 canonical provider 进入 catalog。
 
 ## PromptPlan 信任分区
 

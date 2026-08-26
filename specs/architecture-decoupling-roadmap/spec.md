@@ -50,7 +50,7 @@ created: 2026-07-09
 
 ### Large Shared Module Split
 
--  `agent/mcp/client.py` keeps `McpToolProvider`, error classes, `list_mcp_tools`, and `call_mcp_tool` as the stable facade; implementation modules now own runner lifecycle, stateless HTTP, serialization, argument normalization, health feedback, wrapping, concurrency, and errors.
+-  `agent/mcp/client.py` keeps `McpToolProvider` and error classes as the working stable facade; implementation modules own runner lifecycle, stateless HTTP, serialization, argument normalization, health feedback, wrapping, concurrency, and errors. The old `list_mcp_tools` empty return and `call_mcp_tool` always-failing placeholder were later removed because they never represented usable compatibility behavior.
 -  `agent/tools/builtin/workspace_tools.py` keeps the stable `TOOLS` list and legacy private handler names; split modules own listing, diagnostics, file/archive operations, image download, delivery, and owner workspace inspection.
 -  `agent/subagents/registry.py` keeps `SearchCircuitBreaker`, `_make_delegate_tool`, `_with_current_date`, and `_with_web_fallback` compatibility; implementations now live in `definition_catalog.py`, `search_factory.py`, `delegate_tools.py`, `workflow_tools.py`, and `search_circuit.py`.
 -  `agent/search/coordinator.py` keeps orchestration; result reflection/source accounting/compaction moved to `agent/search/results.py`.
@@ -65,7 +65,7 @@ created: 2026-07-09
 -  Do not remove the native handwritten backend.
 -  Do not remove the LangGraph backend.
 -  Do not change BotSpec public YAML shape for this roadmap.
--  Do not delete compatibility wrappers before internal imports and documented external migration windows are handled.
+-  Do not delete working compatibility wrappers before internal imports and documented external migration windows are handled. Empty, always-failing, or zero-symbol placeholders are not a migration surface and may be removed once canonical callers are verified.
 -  Do not fold external tool domain logic into middleware or console.
 
 ## Design

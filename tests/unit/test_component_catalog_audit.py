@@ -288,6 +288,7 @@ def test_malformed_runtime_values_become_issues_instead_of_crashing() -> None:
         requires_role=[],
         execution_policy=[],
         weight=[],
+        audiences=("main", "worker"),
         artifact_kinds=([],),
         input_schema={
             "type": "object",
@@ -321,6 +322,7 @@ def test_malformed_runtime_values_become_issues_instead_of_crashing() -> None:
     assert {issue.code for issue in report.issues} >= {
         "mcp.server_invalid",
         "tool.artifact_kinds_invalid",
+        "tool.audiences_invalid",
         "tool.execution_policy_invalid",
         "tool.requires_role_invalid",
         "tool.weight_invalid",

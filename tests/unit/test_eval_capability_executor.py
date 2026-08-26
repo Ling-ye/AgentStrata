@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from chatcopilot.application.agent_runtime import project_agent_runtime
 from chatcopilot.contracts.agent import (
     AgentResult,
     InputResourceReceipt,
@@ -654,7 +655,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     tasks: list[Any] = []
     runtime = SimpleNamespace(
         spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")),
-        tool_packs=("configured-development", "persona.control"),
+        tool_packs=("dev.files", "persona.control"),
         exclude_tools=(),
         skills=(),
         rag_sources=("configured-rag",),
@@ -670,12 +671,13 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     config.llm.model = "fake-model"
     monkeypatch.setattr(executor, "load_config", lambda **_kwargs: config)
 
-    def build_runtime(**kwargs: Any) -> _FakeAgentRuntime:
-        if kwargs["agent_backend"] != "native":
+    def build_runtime(runtime_context: Any, **kwargs: Any) -> _FakeAgentRuntime:
+        projection = project_agent_runtime(runtime_context, **kwargs)
+        if projection.agent_backend != "native":
             raise AssertionError("selected Bot backend was not preserved")
         tools = tuple(
             tool
-            for provider in kwargs.get("runtime_providers") or ()
+            for provider in projection.runtime_providers
             for pack_tools in provider.packs.values()
             for tool in pack_tools
         )
@@ -683,7 +685,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
             tools = (*tools, SEND_FILES_TO_USER)
         return _FakeAgentRuntime(tools, tasks)
 
-    monkeypatch.setattr(executor, "build_agent_runtime", build_runtime)
+    monkeypatch.setattr(executor, "assemble_agent_runtime", build_runtime)
     return tasks
 
 
@@ -1162,14 +1164,14 @@ def test_isolated_agent_runtime_drops_configured_rag_mcp_and_research_subagents(
     fake_agent: list[Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_build_runtime = executor.build_agent_runtime
+    original_build_runtime = executor.assemble_agent_runtime
     captured: dict[str, Any] = {}
 
-    def capture_build_runtime(**kwargs: Any) -> Any:
-        captured.update(kwargs)
-        return original_build_runtime(**kwargs)
+    def capture_build_runtime(runtime_context: Any, **kwargs: Any) -> Any:
+        captured["projection"] = project_agent_runtime(runtime_context, **kwargs)
+        return original_build_runtime(runtime_context, **kwargs)
 
-    monkeypatch.setattr(executor, "build_agent_runtime", capture_build_runtime)
+    monkeypatch.setattr(executor, "assemble_agent_runtime", capture_build_runtime)
 
     result = executor.execute_capability_case(
         _case("tool-allowed-exact-call"),
@@ -1181,10 +1183,11 @@ def test_isolated_agent_runtime_drops_configured_rag_mcp_and_research_subagents(
     )
 
     assert result.status == "passed"
-    assert captured["tool_packs"] == ("configured-development",)
-    assert captured["rag_sources"] == ()
-    assert captured["mcp_servers"] == ()
-    assert captured["subagents"].research_enabled is False
+    projection = captured["projection"]
+    assert projection.tool_packs == ("dev.files",)
+    assert projection.rag_sources == ()
+    assert projection.mcp_servers == ()
+    assert projection.subagents.research_enabled is False
 
 
 def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
@@ -1299,14 +1302,14 @@ def test_code_recovery_runtime_exposes_only_eval_owned_atomic_tools(
     fake_agent: list[Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_build_runtime = executor.build_agent_runtime
+    original_build_runtime = executor.assemble_agent_runtime
     captured: dict[str, Any] = {}
 
-    def capture_build_runtime(**kwargs: Any) -> Any:
-        captured.update(kwargs)
-        return original_build_runtime(**kwargs)
+    def capture_build_runtime(runtime_context: Any, **kwargs: Any) -> Any:
+        captured["projection"] = project_agent_runtime(runtime_context, **kwargs)
+        return original_build_runtime(runtime_context, **kwargs)
 
-    monkeypatch.setattr(executor, "build_agent_runtime", capture_build_runtime)
+    monkeypatch.setattr(executor, "assemble_agent_runtime", capture_build_runtime)
     result = executor.execute_capability_case(
         _case(case_id),
         suite_id=SUITE_ID,
@@ -1317,10 +1320,11 @@ def test_code_recovery_runtime_exposes_only_eval_owned_atomic_tools(
     )
 
     assert result.status == "passed"
-    assert captured["tool_packs"] == ()
+    projection = captured["projection"]
+    assert projection.tool_packs == ()
     assert tuple(
         tool.name
-        for provider in captured["runtime_providers"]
+        for provider in projection.runtime_providers
         for pack_tools in provider.packs.values()
         for tool in pack_tools
     ) == expected_tools

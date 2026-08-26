@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
 
 
 @dataclass
@@ -86,6 +86,14 @@ EXECUTION_SYNC = "sync"
 EXECUTION_GLOBAL_SERIAL_BACKGROUND = "global_serial_background"
 EXECUTION_USER_SERIAL_BACKGROUND = "user_serial_background"
 
+ToolAudience = Literal["main", "subagent"]
+TOOL_AUDIENCE_MAIN: ToolAudience = "main"
+TOOL_AUDIENCE_SUBAGENT: ToolAudience = "subagent"
+TOOL_AUDIENCES: Tuple[ToolAudience, ...] = (
+    TOOL_AUDIENCE_MAIN,
+    TOOL_AUDIENCE_SUBAGENT,
+)
+
 
 class ToolHandlerError(RuntimeError):
     """Structured handler failure preserved by the executor and job worker."""
@@ -138,6 +146,7 @@ class ToolDef:
     deprecated: bool = False
     artifact_kinds: Tuple[str, ...] = ("file", "directory")
     metadata: Dict[str, Any] = field(default_factory=dict)
+    audiences: Tuple[ToolAudience, ...] = TOOL_AUDIENCES
 
     @property
     def properties(self) -> Dict[str, Dict[str, Any]]:

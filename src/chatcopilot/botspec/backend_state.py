@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from chatcopilot.contracts.agent_backend import AGENT_BACKEND_IDS
+
 
 @dataclass(frozen=True)
 class BackendTransition:
@@ -25,7 +27,7 @@ def prepare_backend_deployment(
     """Delete old backend histories before the target deployment begins."""
 
     root = Path(workspace_root).expanduser().resolve()
-    if not instance_id.strip() or target_backend not in {"native", "langgraph", "codex"}:
+    if not instance_id.strip() or target_backend not in AGENT_BACKEND_IDS:
         raise ValueError("valid instance_id and target_backend are required")
     if root == Path(root.anchor) or root == Path.home().resolve():
         raise ValueError(f"refusing broad backend-state root: {root}")

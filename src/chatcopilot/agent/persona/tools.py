@@ -22,7 +22,13 @@ from chatcopilot.contracts.persistent_state import (
     has_meaningful_persona,
 )
 from chatcopilot.contracts.tool_packs import ToolProvider
-from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
+from chatcopilot.contracts.tools import (
+    TOOL_AUDIENCE_MAIN,
+    ToolContext,
+    ToolDef,
+    ToolResult,
+    object_schema,
+)
 from chatcopilot.core.persona_control import PersonaControlService
 from chatcopilot.core.workspace_runtime import normalize_chat_kind
 
@@ -716,7 +722,7 @@ def build_persona_provider(
         owner="agent",
         module=__name__,
         artifact_kinds=(),
-        metadata={"main_agent_only": True},
+        audiences=(TOOL_AUDIENCE_MAIN,),
     )
     return ToolProvider(
         id="persona",

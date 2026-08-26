@@ -14,6 +14,7 @@ from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.agent.search_policy import SEARCH_DOMAINS
+from chatcopilot.agent.subagents.definition_catalog import iter_definitions
 from chatcopilot.agent.subagents.registry import (
     _build_search_prompt,
     _make_delegate_tool,
@@ -273,6 +274,34 @@ class SubagentTests(unittest.TestCase):
 
         self.assertIn("未知 subagent", messages)
         self.assertIn("max_model_turns", messages)
+
+    def test_botspec_validates_presets_through_component_catalog(self) -> None:
+        spec = load_botspec(Path("bots/lingye-copilot-qq/bot.yaml"))
+        configured = replace(spec, agents=replace(spec.agents, include=("catalog_only",)))
+
+        with mock.patch(
+            "chatcopilot.botspec.loader.get_subagent_preset",
+            return_value=object(),
+        ) as lookup:
+            errors = [
+                issue for issue in validate_botspec(configured) if issue.level == "error"
+            ]
+
+        self.assertEqual(errors, [])
+        lookup.assert_called_once_with("catalog_only")
+
+    def test_agent_resolves_presets_through_component_catalog(self) -> None:
+        configured = SubagentSpec(include=("catalog_only",))
+        expected = BUILTIN_SUBAGENTS["developer"]
+
+        with mock.patch(
+            "chatcopilot.agent.subagents.definition_catalog.get_subagent_preset",
+            return_value=expected,
+        ) as lookup:
+            definitions = list(iter_definitions(configured))
+
+        self.assertEqual(definitions, [(expected, configured.defaults)])
+        lookup.assert_called_once_with("catalog_only")
 
     def test_botspec_accepts_custom_subagent(self) -> None:
         spec = load_botspec(Path("bots/lingye-copilot-qq/bot.yaml"))

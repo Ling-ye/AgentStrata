@@ -9,12 +9,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from chatcopilot.application.agent_runtime import (
+    AgentRuntimeAssemblyProfile,
+    assemble_agent_runtime,
+)
 from chatcopilot.core.config import ChatConfig, load_config
 from chatcopilot.contracts.agent import AgentTask
-from chatcopilot.agent.runtime import build_agent_runtime
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput
 from chatcopilot.botspec import assemble_runtime_context, load_botspec, resolve_bot_spec_path
-from chatcopilot.botspec.runtime_env import load_research_llm_config
 from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.evals.execution_support import (
     event_to_dict as _event_to_dict,
@@ -411,21 +413,10 @@ def _run_agent_cases(
     )
     _load_local_env(runtime.source_path.parent / "local.env")
     chat_config = load_config(env_prefix=runtime.spec.llm.env_prefix)
-    agent_runtime = build_agent_runtime(
+    agent_runtime = assemble_agent_runtime(
+        runtime,
         chat_config=chat_config,
-        research_llm_config=load_research_llm_config(
-            runtime.spec.llm,
-            fallback=chat_config.llm,
-        ),
-        tool_packs=tuple(
-            pack for pack in runtime.tool_packs if pack != "persona.control"
-        ),
-        exclude_tools=runtime.exclude_tools,
-        skill_index=runtime.skills,
-        rag_sources=runtime.rag_sources,
-        mcp_servers=runtime.mcp_servers,
-        subagents=runtime.subagents,
-        agent_backend=getattr(runtime, "agent_backend", "native"),
+        profile=AgentRuntimeAssemblyProfile.DETACHED,
     )
     try:
         resolved_workspace_root = workspace_root or (

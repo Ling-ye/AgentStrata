@@ -11,6 +11,10 @@ from chatcopilot.agent.tools.registry import (
 )
 from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
+from chatcopilot.contracts.tools import (
+    TOOL_AUDIENCE_MAIN,
+    TOOL_AUDIENCE_SUBAGENT,
+)
 
 
 def _tool(name: str = "demo_tool") -> ToolDef:
@@ -66,6 +70,33 @@ def test_runtime_provider_builds_one_snapshot_for_openai_mcp_and_execution() -> 
     assert snapshot.mcp_schema[0]["outputSchema"] == snapshot.index["demo_tool"].output_schema
     with pytest.raises(FrozenInstanceError):
         snapshot.tools = ()  # type: ignore[misc]
+
+
+def test_snapshot_projects_main_and_subagent_audiences_symmetrically() -> None:
+    main_only = _tool("main_only")
+    main_only.audiences = (TOOL_AUDIENCE_MAIN,)
+    subagent_only = _tool("subagent_only")
+    subagent_only.audiences = (TOOL_AUDIENCE_SUBAGENT,)
+    shared = _tool("shared")
+    registry = ToolRegistry(
+        (_provider("audience", "audience.tools", main_only, subagent_only, shared),)
+    )
+
+    main_snapshot = registry.snapshot(
+        tool_packs=("audience.tools",),
+        audience=TOOL_AUDIENCE_MAIN,
+    )
+    subagent_snapshot = registry.snapshot(
+        tool_packs=("audience.tools",),
+        audience=TOOL_AUDIENCE_SUBAGENT,
+    )
+
+    assert tuple(main_snapshot.index) == ("main_only", "shared")
+    assert tuple(subagent_snapshot.index) == ("subagent_only", "shared")
+    assert [schema["function"]["name"] for schema in main_snapshot.openai_schema] == [
+        "main_only",
+        "shared",
+    ]
 
 
 def test_describe_reports_provider_pack_and_handler_source() -> None:
@@ -158,6 +189,47 @@ def test_registration_rejects_one_argument_handler() -> None:
 
     assert caught.value.reason == "invalid_tool_handler_signature"
     assert caught.value.tool_names == ("demo_tool",)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "reason"),
+    [
+        ("requires_role", "owenr", "invalid_tool_requires_role"),
+        ("execution_policy", "background", "invalid_tool_execution_policy"),
+        ("weight", "medium", "invalid_tool_weight"),
+        ("category", " tests.registry", "invalid_tool_category"),
+        ("owner", [], "invalid_tool_owner"),
+        ("module", " tests.module", "invalid_tool_module"),
+        ("aliases", ["same", "same"], "duplicate_tool_alias"),
+        ("audiences", ("main", "worker"), "invalid_tool_audiences"),
+        ("artifact_kinds", ("secret",), "invalid_tool_artifact_kinds"),
+        ("metadata", {"value": object()}, "invalid_tool_metadata"),
+    ],
+)
+def test_runtime_registration_rejects_malformed_full_contract(
+    field_name: str,
+    value: object,
+    reason: str,
+) -> None:
+    tool = _tool()
+    setattr(tool, field_name, value)
+
+    with pytest.raises(ToolMaterializationError) as caught:
+        ToolRegistry((_provider("invalid", "invalid.tools", tool),))
+
+    assert caught.value.reason == reason
+    assert caught.value.tool_names == ("demo_tool",)
+
+
+def test_runtime_registration_keeps_empty_provenance_defaults_compatible() -> None:
+    tool = _tool()
+    tool.category = ""
+    tool.owner = ""
+    tool.module = ""
+
+    registry = ToolRegistry((_provider("legacy", "legacy.tools", tool),))
+
+    assert tuple(registry.snapshot(tool_packs=("legacy.tools",)).index) == ("demo_tool",)
 
 
 @pytest.mark.parametrize("schema_field", ["input_schema", "output_schema"])

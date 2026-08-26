@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from chatcopilot.platforms.feishu import notifier as feishu_notifier
 from chatcopilot.middleware.access_control import AssistantMode
@@ -27,16 +28,19 @@ class _FakeConn:
 class _FakeSession:
     def __init__(self, workspace: Workspace) -> None:
         self.workspace = workspace
+        self.is_workspace_materialized = False
         self.debug_mode = False
         self.assistant_mode = AssistantMode.PERFORMANCE
-        self.run_turn_called = False
+
+    def materialize_workspace(self) -> bool:
+        if self.is_workspace_materialized:
+            return False
+        self.workspace = self.workspace.ensure()
+        self.is_workspace_materialized = True
+        return True
 
     def message_count(self) -> int:
         return 1
-
-    def run_turn(self, *args: Any, **kwargs: Any) -> str:
-        self.run_turn_called = True
-        return "should not be called"
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -87,7 +91,7 @@ def _seed_finished_job(ws: Workspace, job_id: str = "job_20260515_174720_1a9a4fb
 
 class BackgroundJobNotificationTests(unittest.TestCase):
     def test_job_status_prompt_reads_result_without_llm(self) -> None:
-        async def run_case() -> tuple[list[tuple[str, Any]], bool]:
+        async def run_case() -> tuple[list[tuple[str, Any]], AsyncMock]:
             original_update = acp_server.update_agent_message_text
             acp_server.update_agent_message_text = lambda text: text
             try:
@@ -103,6 +107,12 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                     agent = AcpChatAgent.__new__(AcpChatAgent)
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
+                    ensure_agent_session = AsyncMock(
+                        side_effect=AssertionError(
+                            "job status shortcut must not materialize an Agent session"
+                        )
+                    )
+                    agent._ensure_agent_session = ensure_agent_session
 
                     await agent._prompt_locked(
                         [{"type": "text", "text": "job_20260515_174720_1a9a4fb8 处理完了吗？"}],
@@ -110,12 +120,12 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                         "mid",
                     )
 
-                    return agent._conn.updates, session.run_turn_called
+                    return agent._conn.updates, ensure_agent_session
             finally:
                 acp_server.update_agent_message_text = original_update
 
-        updates, run_turn_called = asyncio.run(run_case())
-        self.assertFalse(run_turn_called)
+        updates, ensure_agent_session = asyncio.run(run_case())
+        ensure_agent_session.assert_not_awaited()
         self.assertEqual(len(updates), 1)
         self.assertEqual(updates[0][0], "sid")
         self.assertIn("后台任务已完成：long_running_export", updates[0][1])

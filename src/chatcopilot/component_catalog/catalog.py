@@ -11,11 +11,13 @@ from collections.abc import Iterator
 from types import ModuleType
 from typing import Callable
 
-from chatcopilot.component_catalog.subagents import BUILTIN_SUBAGENTS
-from chatcopilot.contracts.subagents import (
-    BUILTIN_SUBAGENT_WORKFLOWS,
-    SubagentDef,
-    WorkflowDef,
+from chatcopilot.component_catalog.subagents import (
+    get_subagent_preset,
+    get_workflow,
+    iter_subagent_presets,
+    iter_workflows,
+    known_subagent_preset_names,
+    known_workflow_names,
 )
 from chatcopilot.contracts.tool_packs import ToolFeatureEntry, ToolPackEntry, ToolProvider
 from chatcopilot.contracts.tools import ToolDef
@@ -105,23 +107,19 @@ def iter_mcp_catalog_entries(
     )
 
 
-def iter_subagent_presets() -> Iterator[tuple[str, SubagentDef]]:
-    yield from sorted(BUILTIN_SUBAGENTS.items())
-
-
-def iter_workflows() -> Iterator[tuple[str, WorkflowDef]]:
-    yield from sorted(BUILTIN_SUBAGENT_WORKFLOWS.items())
-
-
 __all__ = [
     "CatalogProjectionError",
+    "get_subagent_preset",
     "get_tool_feature_entry",
     "get_tool_pack_entry",
     "get_mcp_catalog_entry",
+    "get_workflow",
     "iter_mcp_catalog_entries",
     "iter_subagent_presets",
     "iter_tool_features",
     "iter_tool_pack_tools",
     "iter_tool_packs",
     "iter_workflows",
+    "known_subagent_preset_names",
+    "known_workflow_names",
 ]

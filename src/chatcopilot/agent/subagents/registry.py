@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Sequence
 
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.llm_client import LLMClient
-from chatcopilot.component_catalog.subagents import BUILTIN_SUBAGENTS
 from chatcopilot.agent.subagents.definition_catalog import (
     BUILTIN_WORKFLOWS,
     apply_override as _apply_override_impl,
@@ -179,11 +178,11 @@ def build_subagent_provider(**kwargs) -> ToolProvider | None:
 
 
 def _iter_definitions(subagents: SubagentSpec):
-    yield from _iter_definitions_impl(subagents, presets=BUILTIN_SUBAGENTS)
+    yield from _iter_definitions_impl(subagents)
 
 
 def _iter_workflows(subagents: SubagentSpec):
-    yield from _iter_workflows_impl(subagents, workflows=BUILTIN_WORKFLOWS)
+    yield from _iter_workflows_impl(subagents)
 
 
 def _apply_override(definition: SubagentDef, custom: CustomSubagentSpec) -> SubagentDef:

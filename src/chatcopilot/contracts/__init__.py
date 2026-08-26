@@ -25,6 +25,7 @@ from chatcopilot.contracts.agent import (
     TopicDecisionMade,
     TurnError,
 )
+from chatcopilot.contracts.agent_backend import AGENT_BACKEND_IDS
 from chatcopilot.contracts.identity import (
     AssistantMode,
     ConversationIdentity,
@@ -106,9 +107,13 @@ from chatcopilot.contracts.runtime import (
     SubagentPlan,
 )
 from chatcopilot.contracts.tool_packs import (
+    CAPABILITY_PROVIDER_FACTORY,
+    TOOL_PACK_PROJECTION_PROFILES,
     ToolFeatureEntry,
     ToolPackEntry,
     ToolPackPolicy,
+    ToolPackProjectionProfile,
+    ToolPackRuntimeScope,
     ToolProvider,
     static_tool_provider,
     tool_pack_policies,
@@ -117,10 +122,14 @@ from chatcopilot.contracts.tools import (
     EXECUTION_GLOBAL_SERIAL_BACKGROUND,
     EXECUTION_SYNC,
     EXECUTION_USER_SERIAL_BACKGROUND,
+    TOOL_AUDIENCE_MAIN,
+    TOOL_AUDIENCE_SUBAGENT,
+    TOOL_AUDIENCES,
     DocAnchors,
     Handler,
     ToolContext,
     ToolDef,
+    ToolAudience,
     ToolHandlerError,
     ToolResult,
     build_mcp_schema,
@@ -136,6 +145,8 @@ from chatcopilot.contracts.workspace import (
 )
 
 __all__ = [
+    "AGENT_BACKEND_IDS",
+    "CAPABILITY_PROVIDER_FACTORY",
     "AgentEvent",
     "AgentResult",
     "AgentRuntimePlan",
@@ -206,9 +217,16 @@ __all__ = [
     "SubagentPlan",
     "TextDelta",
     "ToolContext",
+    "ToolAudience",
+    "TOOL_AUDIENCE_MAIN",
+    "TOOL_AUDIENCE_SUBAGENT",
+    "TOOL_AUDIENCES",
+    "TOOL_PACK_PROJECTION_PROFILES",
     "ToolFeatureEntry",
     "ToolPackEntry",
     "ToolPackPolicy",
+    "ToolPackProjectionProfile",
+    "ToolPackRuntimeScope",
     "ToolProvider",
     "tool_pack_policies",
     "static_tool_provider",

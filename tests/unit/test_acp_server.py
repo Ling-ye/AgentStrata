@@ -10,6 +10,7 @@ from unittest import mock
 from acp import PromptResponse
 import pytest
 
+from chatcopilot.application.agent_runtime import AgentRuntimeAssemblyProfile
 from chatcopilot.contracts.agent import AgentResult, FinalText, TurnError
 from chatcopilot.contracts.model_selection import CodeModelSelection
 from chatcopilot.core.config import ChatConfig
@@ -52,17 +53,47 @@ def _control_agent(workspace: Workspace) -> AcpChatAgent:
 
 
 def test_acp_agent_construction_does_not_build_agent_runtime() -> None:
+    projection = object()
     with (
         mock.patch(
             "chatcopilot.middleware.acp.server.load_config",
             return_value=ChatConfig(),
         ),
-        mock.patch("chatcopilot.middleware.acp.server.build_agent_runtime") as build,
+        mock.patch(
+            "chatcopilot.middleware.acp.server.project_agent_runtime",
+            return_value=projection,
+        ) as project,
+        mock.patch("chatcopilot.middleware.acp.server.materialize_agent_runtime") as build,
     ):
         agent = AcpChatAgent(runtime=_runtime())
 
     build.assert_not_called()
+    assert agent._agent_runtime_projection is projection
+    assert project.call_args.kwargs["profile"] is AgentRuntimeAssemblyProfile.INTERACTIVE
     assert agent._agent_runtime is None
+
+
+def test_acp_agent_preserves_injected_instance_control() -> None:
+    control = object()
+    with (
+        mock.patch(
+            "chatcopilot.middleware.acp.server.load_config",
+            return_value=ChatConfig(),
+        ),
+        mock.patch("chatcopilot.middleware.acp.server.project_agent_runtime"),
+    ):
+        agent = AcpChatAgent(runtime=_runtime(), instance_control=control)
+
+    assert agent._instance_control is control
+
+
+def test_strict_turn_finisher_propagates_persistence_failure() -> None:
+    recorder = mock.Mock()
+    recorder.finish.side_effect = RuntimeError("persistence failed")
+    agent = AcpChatAgent.__new__(AcpChatAgent)
+
+    with pytest.raises(RuntimeError, match="persistence failed"):
+        agent._finish_turn_task_strict(recorder)
 
 
 def test_first_chat_runtime_materialization_is_singleton() -> None:
@@ -73,7 +104,7 @@ def test_first_chat_runtime_materialization_is_singleton() -> None:
             return_value=ChatConfig(),
         ),
         mock.patch(
-            "chatcopilot.middleware.acp.server.build_agent_runtime",
+            "chatcopilot.middleware.acp.server.materialize_agent_runtime",
             return_value=built,
         ) as build,
     ):
@@ -97,7 +128,7 @@ def test_session_creation_is_control_plane_only(tmp_path: Path) -> None:
             "chatcopilot.middleware.acp.server.load_config",
             return_value=ChatConfig(),
         ),
-        mock.patch("chatcopilot.middleware.acp.server.build_agent_runtime") as build,
+        mock.patch("chatcopilot.middleware.acp.server.materialize_agent_runtime") as build,
     ):
         agent = AcpChatAgent(runtime=_runtime())
         session = agent._build_session(session_id="sid-control", ws=workspace)

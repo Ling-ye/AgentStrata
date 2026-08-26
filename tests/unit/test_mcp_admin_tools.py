@@ -7,7 +7,6 @@ from unittest import mock
 import yaml
 import pytest
 
-from chatcopilot.agent.tools.builtin.mcp_tools import TOOLS
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.core.mcp_probe import (
     McpProbeResult,
@@ -58,7 +57,7 @@ def _write_bot(tmp_path: Path) -> Path:
 
 
 def _executor() -> ToolExecutor:
-    return ToolExecutor(tools=list(TOOLS))
+    return ToolExecutor(tools=list(mcp_admin.TOOLS))
 
 
 def test_discover_and_approve_playwright_curated_proposal(tmp_path: Path) -> None:

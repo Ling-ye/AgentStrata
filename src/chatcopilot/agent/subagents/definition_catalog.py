@@ -5,25 +5,30 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 
-from chatcopilot.component_catalog.subagents import BUILTIN_SUBAGENTS
 from chatcopilot.agent.subagents.spec import SubagentDef, WorkflowDef
-from chatcopilot.contracts.subagents import (
+from chatcopilot.component_catalog.subagents import (
     BUILTIN_SUBAGENT_WORKFLOWS,
+    get_subagent_preset,
+    get_workflow,
+)
+from chatcopilot.contracts.subagents import (
     CustomSubagentSpec,
     SubagentBudgetSpec,
     SubagentSpec,
 )
 
-BUILTIN_WORKFLOWS: dict[str, WorkflowDef] = BUILTIN_SUBAGENT_WORKFLOWS
+BUILTIN_WORKFLOWS: Mapping[str, WorkflowDef] = BUILTIN_SUBAGENT_WORKFLOWS
 
 
 def iter_definitions(
     subagents: SubagentSpec,
     *,
-    presets: Mapping[str, SubagentDef] = BUILTIN_SUBAGENTS,
+    presets: Mapping[str, SubagentDef] | None = None,
 ) -> Iterator[tuple[SubagentDef, SubagentBudgetSpec]]:
     for name in subagents.include:
-        definition = presets.get(name)
+        definition = (
+            get_subagent_preset(name) if presets is None else presets.get(name)
+        )
         if definition is None:
             continue
         override = subagents.overrides.get(name)
@@ -38,10 +43,10 @@ def iter_definitions(
 def iter_workflows(
     subagents: SubagentSpec,
     *,
-    workflows: Mapping[str, WorkflowDef] = BUILTIN_WORKFLOWS,
+    workflows: Mapping[str, WorkflowDef] | None = None,
 ) -> Iterator[WorkflowDef]:
     for name in subagents.workflows:
-        workflow = workflows.get(name)
+        workflow = get_workflow(name) if workflows is None else workflows.get(name)
         if workflow is not None:
             yield replace(workflow, max_depth=subagents.max_workflow_depth)
 
