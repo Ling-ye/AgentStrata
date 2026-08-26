@@ -148,7 +148,9 @@ class AcpTurnOrchestrator:
         return outcome.response
 
     async def _identity(self, turn: TurnContext) -> TurnOutcome:
-        prompt_parts = _attachment.extract_prompt_parts(turn.metadata["raw_prompt"])
+        prompt_parts = _attachment.normalize_cc_connect_wrapper(
+            _attachment.extract_prompt_parts(turn.metadata["raw_prompt"])
+        )
         try:
             turn.session, clean_text, turn_identity = self._prepare_turn_identity(
                 session=turn.session,
@@ -158,9 +160,7 @@ class AcpTurnOrchestrator:
             )
         except SenderEnvelopeError as exc:
             return await self._identity_rejection(turn, exc)
-        prompt_parts = _attachment.normalize_cc_connect_wrapper(
-            replace(prompt_parts, text=clean_text)
-        )
+        prompt_parts = replace(prompt_parts, text=clean_text)
         turn.metadata["prompt_parts"] = prompt_parts
         turn.metadata["turn_identity"] = turn_identity
         turn.user_text = prompt_parts.text or ""

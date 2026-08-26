@@ -157,6 +157,35 @@ class AttachmentGateTests(unittest.TestCase):
         self.assertTrue(has_task_verb(normalized.text))
         self.assertFalse(should_short_circuit_attachment_only(normalized))
 
+    def test_normalize_cc_connect_image_suffix_preserves_sender_envelope(self) -> None:
+        prompt_text = (
+            "[cc-connect sender_id=29999 platform=qq chat_id=30003]\n"
+            "帮我看看这张图\n\n"
+            "(Image files saved locally: /srv/fixtures/.cc-connect/attachments/image.png)"
+        )
+        parts = extract_prompt_parts([{"type": "text", "text": prompt_text}])
+
+        normalized = normalize_cc_connect_wrapper(parts)
+
+        self.assertEqual(
+            normalized.text,
+            "[cc-connect sender_id=29999 platform=qq chat_id=30003]\n帮我看看这张图",
+        )
+        self.assertEqual(normalized.resource_names, ["image.png"])
+
+    def test_normalize_cc_connect_file_and_image_suffixes_in_text_order(self) -> None:
+        prompt_text = (
+            "检查附件\n\n"
+            "(Files saved locally, please read them: /tmp/report.csv)\n\n"
+            "(Image files saved locally: /tmp/chart.png)"
+        )
+        parts = extract_prompt_parts([{"type": "text", "text": prompt_text}])
+
+        normalized = normalize_cc_connect_wrapper(parts)
+
+        self.assertEqual(normalized.text, "检查附件")
+        self.assertEqual(normalized.resource_names, ["report.csv", "chart.png"])
+
     def test_normalize_cc_connect_wrapper_noop_on_plain_user_request(self) -> None:
         """反例：用户自己说 ``请分析这个 csv`` 不是协议包装，归一化层必须原样放行，
         不能把用户真实指令当成包装吞掉。"""
@@ -169,8 +198,8 @@ class AttachmentGateTests(unittest.TestCase):
         self.assertEqual(normalized.text, prompt_text)
         self.assertEqual(normalized.resource_names, [])
 
-    def test_normalize_cc_connect_wrapper_noop_when_resource_block_present(self) -> None:
-        """反例：上游已经传了结构化 resource block，归一化层不再覆盖，避免双重处理。"""
+    def test_normalize_cc_connect_wrapper_merges_existing_resource_block(self) -> None:
+        """已有结构化 resource 与 cc-connect 文本尾缀合并，不能留下摘要噪声。"""
         parts = extract_prompt_parts(
             [
                 {
@@ -187,8 +216,12 @@ class AttachmentGateTests(unittest.TestCase):
 
         normalized = normalize_cc_connect_wrapper(parts)
 
-        self.assertIs(normalized, parts)
-        self.assertEqual(normalized.resource_names, ["MemoryReport_before.csv"])
+        self.assertEqual(normalized.text, "")
+        self.assertEqual(
+            normalized.resource_names,
+            ["MemoryReport_before.csv", "foo.csv"],
+        )
+        self.assertEqual(normalized.resource_count, 2)
 
     def test_format_attachment_receipt_single_file(self) -> None:
         text = format_attachment_receipt(["MemoryReport.csv"])

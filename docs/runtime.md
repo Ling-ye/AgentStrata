@@ -110,7 +110,9 @@ prompt 首行注入 sender envelope，并由同步 `message.received` hook 把�
 session-env 目录，按 exact session key 的 SHA-256 命名且自身为 `0600`；wrapper 通过严格 JSON
 白名单 loader 只传递稳定 conversation 字段，绝不 shell source。Middleware 在 identity/admission、
 附件导入、task 创建、工具或模型执行前交叉校验 envelope 的平台/群/发送者与 hook 的发送者/
-正文摘要，并按随机记录 ID 精确消费一条；缺失、陈旧、
+正文摘要。cc-connect 在 hook 之后追加的完整文件/图片路径尾缀会先转换为结构化资源引用，
+再用剩余 canonical 用户正文参与摘要校验；用户自行伪造同形尾缀会因 hook 正文不匹配而失败关闭。
+校验通过后按随机记录 ID 精确消费一条；缺失、陈旧、
 畸形、跨群或不匹配均失败关闭。稳定发送者 ID继续用于准入和角色计算，显示名不参与授权。共享群聊不再依赖刷新临时 env 后销毁并重建
 单一 `SessionState`；每轮选择当前 actor 绑定的执行 session，避免权限 filter、file sender、
 caller identity 或 Codex resume state 跨成员复用。群 actor 在同一 live execution session 内
@@ -138,9 +140,11 @@ actor-scoped backend state 和 transcript 也位于该保护目录。拒绝准�
 contract 和受保护状态中，不会被最后一个说话人或同名符号链接改写。QQ 群不在 member-writable
 shared root 创建 `MEMORY.md`，而是按稳定群身份使用 `.conversation-state/persistent/memory/group/<digest>/MEMORY.md`；所有准入成员可读写，只有 Owner 可整份清空。member-visible `task_...` diagnostics 仍禁用；已接受回合的 Console task 记录按 actor
 写入 `.conversation-state/task-actors/<actor-digest>/tasks/`，原始 actor ID 不形成路径段，群内
-`get_task_status` 与 workspace 工具均不能读取。准入拒绝的消息仍在该 actor 分区写终态 task，
+`get_task_status` 与 workspace 工具均不能读取。已准入 task 的 summary/turn 保存经过可观测性
+脱敏和大小限制的当前 canonical 正文；模型历史、subagent transcript/result 与 delegated-job
+自由文本仍省略。准入拒绝的消息仍在该 actor 分区写通用终态 task，
 但不会创建 actor 执行 session；身份无效的消息只在 `.conversation-state/task-intake/tasks/`
-写入不含原始正文、sender envelope 或发送者账号的脱敏失败 task。ACP 在准入、附件、模型和工具
+写入不含原始正文、sender envelope、发送者账号或共享 session 残留 actor reference 的脱敏失败 task。ACP 在准入、附件、模型和工具
 副作用前要求任务记录创建成功；存储不可用时失败关闭。
 普通成员不能启动后台 job；Owner 的后台
 job 控制面按 actor 写入 `.conversation-state/jobs/`，不会暴露到 `shared/jobs`。当前群交流风格

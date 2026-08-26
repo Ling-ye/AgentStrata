@@ -84,21 +84,17 @@ _FEISHU_FILE_SIZE_LIMIT_TEXT_RE = re.compile(
     r"downloaded\s+file\s+size\s+exceeds\s+limit|file\s+size\s+exceeds\s+limit",
     re.IGNORECASE,
 )
-# cc-connect 把飞书 ``message_type=file`` 合成给 ACP agent 的固定包装文本。
-# 形如::
-#
-#     Please analyze the attached file(s).
-#
-#     (Files saved locally, please read them: <abs path1>, <abs path2>, ...)
-#
-# 这段文本里的 ``analyze`` 会被 ``has_task_verb`` 当成任务授权，把纯文件上传
-# 错送进 LLM。归一化层只识别这一段包装并把它还原为结构化资源引用。
-_CC_CONNECT_WRAPPER_RE = re.compile(
-    r"Please\s+analyze\s+the\s+attached\s+file\(s\)\.\s*\n+"
-    r"\(\s*Files?\s+saved\s+locally\s*,\s*please\s+read\s+them\s*:\s*"
-    r"(?P<paths>[^)]+)\)",
+# cc-connect 在调用 ACP 前把已落盘文件和图片追加为固定尾缀。该尾缀不是
+# transport hook 见证的用户正文，必须先还原为资源引用再做正文摘要校验。
+_CC_CONNECT_RESOURCE_SUFFIX_RE = re.compile(
+    r"\n*\(\s*(?P<kind>"
+    r"Files?\s+saved\s+locally\s*,\s*please\s+read\s+them"
+    r"|Image\s+files?\s+saved\s+locally"
+    r")\s*:\s*(?P<paths>[^)]+)\)\s*$",
     re.IGNORECASE,
 )
+_CC_CONNECT_FILE_DEFAULT = "Please analyze the attached file(s)."
+_CC_CONNECT_IMAGE_DEFAULT = "User sent image(s)."
 
 
 # ---------------------------------------------------------------------------
@@ -221,54 +217,59 @@ def extract_prompt_parts(prompt_blocks: list) -> ExtractedPrompt:
 
 
 def normalize_cc_connect_wrapper(prompt_parts: ExtractedPrompt) -> ExtractedPrompt:
-    """把 cc-connect 自动合成的"文件消息包装文本"还原成结构化资源引用。
+    """把 cc-connect 追加的文件/图片尾缀还原成结构化资源引用。
 
-    上游 cc-connect 在收到飞书 ``message_type=file`` 时，会把文件消息合成
-    一段固定英文包装传给 Agent::
-
-        Please analyze the attached file(s).
-
-        (Files saved locally, please read them: <abs path1>, <abs path2>)
-
-    这段文本里的 ``analyze`` 会让 :func:`has_task_verb` 误判为用户授权分析，
-    导致纯文件上传也走 LLM 工具流程。归一化层只识别这种可确定的协议包装，
-    把它"翻译回" ``ExtractedPrompt(text='剩余用户原话', resource_names=[...])``，
-    后续所有 deterministic gate（短路 6、附件兜底搬运、LLM hint 等）都无须
-    改动，纯粹依赖结构化字段。
-
-    注意：
-    - 若 prompt 本来就带 ACP 结构化 resource block（``has_resource``），保留
-      原样，避免覆盖上游显式语义。
-    - 若包装段抽不出合法文件名（``is_plausible_file_basename`` 全部拒绝），
-      也保留原样，由下游兜底正则继续尝试。
-    - 用户在飞书消息里附带的真实自然语言会被保留（包装段被剥离后剩下的文本）。
+    只剥离完整匹配的末尾协议段；用户正文和已有 ACP resource block 均保留。
+    抽不出合法文件名时保持原样，让身份摘要校验继续失败关闭。
     """
-    if prompt_parts.has_resource:
-        return prompt_parts
-
     text = prompt_parts.text or ""
     if not text:
         return prompt_parts
 
-    match = _CC_CONNECT_WRAPPER_RE.search(text)
-    if not match:
+    wrapper_names: list[str] = []
+    saw_file_suffix = False
+    saw_image_suffix = False
+    stripped = text
+    while match := _CC_CONNECT_RESOURCE_SUFFIX_RE.search(stripped):
+        kind = (match.group("kind") or "").lower()
+        is_image = kind.startswith("image")
+        if (is_image and saw_image_suffix) or (not is_image and saw_file_suffix):
+            break
+        raw_paths = match.group("paths") or ""
+        candidates = re.split(r"[,\n|]+", raw_paths)
+        basenames = [resource_basename(path) for path in candidates if path]
+        names = dedupe_resource_names(
+            [name for name in basenames if is_plausible_file_basename(name)]
+        )
+        if not names:
+            break
+        wrapper_names = names + wrapper_names
+        saw_image_suffix = saw_image_suffix or is_image
+        saw_file_suffix = saw_file_suffix or not is_image
+        stripped = stripped[: match.start()].rstrip()
+
+    if not wrapper_names:
         return prompt_parts
 
-    raw_paths = match.group("paths") or ""
-    # cc-connect 多文件按 ``, `` 分隔；保险起见兼容换行与 ``|``。
-    candidates = re.split(r"[,\n|]+", raw_paths)
-    basenames = [resource_basename(p) for p in candidates if p]
-    file_names = dedupe_resource_names(
-        [name for name in basenames if is_plausible_file_basename(name)]
-    )
-    if not file_names:
-        return prompt_parts
+    for saw_suffix, default_text in (
+        (saw_file_suffix, _CC_CONNECT_FILE_DEFAULT),
+        (saw_image_suffix, _CC_CONNECT_IMAGE_DEFAULT),
+    ):
+        if not saw_suffix:
+            continue
+        trimmed = stripped.rstrip()
+        if trimmed == default_text:
+            stripped = ""
+        elif trimmed.endswith("\n" + default_text):
+            stripped = trimmed[: -len(default_text) - 1].rstrip()
 
-    stripped = (text[: match.start()] + text[match.end() :]).strip()
+    existing_names = dedupe_resource_names(prompt_parts.resource_names)
+    resource_names = dedupe_resource_names(existing_names + wrapper_names)
+    added_count = len([name for name in resource_names if name not in existing_names])
     return ExtractedPrompt(
-        text=stripped,
-        resource_names=file_names,
-        resource_count=len(file_names),
+        text=stripped.strip(),
+        resource_names=resource_names,
+        resource_count=prompt_parts.resource_count + added_count,
     )
 
 

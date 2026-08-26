@@ -127,7 +127,8 @@ QQ adapter 使用 chat-scoped 群会话。同一群共享 `group_<safe-chat-id>/
 有界的 conversation journal；QQ 私聊、不同 QQ 群以及其它平台仍隔离。共享 session key
 只标识群，当前发送者必须由 cc-connect sender envelope 与同步 `message.received` hook 写入的
 实例私有、有界加锁 transport attestation 队列双重绑定。Middleware 先交叉校验 envelope 和
-attestation 的 actor/正文摘要并精确消费一条随机 ID 记录，再选择发送者绑定的执行 `SessionState`；群历史通过 journal 注入，不能
+attestation 的 actor/正文摘要；hook 后由 cc-connect 追加的完整文件/图片尾缀先还原为资源引用，
+不进入 canonical 用户正文摘要。校验通过后精确消费一条随机 ID 记录，再选择发送者绑定的执行 `SessionState`；群历史通过 journal 注入，不能
 通过复用另一成员的 executor、caller identity 或 backend resume state 来共享上下文。
 conversation journal、actor-scoped backend state 与 transcript 位于 shared root 的受保护兄弟
 目录 `.conversation-state/`，不能作为群成员的普通 workspace 文件读取。journal 与持久化
@@ -146,9 +147,11 @@ actor 隔离。群是公开输出场景，因此 Owner 工具 payload 仍脱敏�
 QQ 群不在 member-writable shared root 写 `MEMORY.md`，而是按稳定群身份使用
 `.conversation-state/persistent/memory/group/<digest>/MEMORY.md`。准入成员可 read/append，只有
 Owner 可 clear；member-visible turn diagnostics 仍禁用。已接受回合的 Console task
-记录按真实 actor 写在 `.conversation-state/task-actors/<actor-digest>/tasks/`，群任务与 workspace
-工具均不能读取。准入拒绝保留同一 actor 分区的终态 task，但不激活执行 session；身份无效
-只写入 `.conversation-state/task-intake/tasks/` 的脱敏失败记录。任何入站消息无法先建立 task
+记录按真实 actor 写在 `.conversation-state/task-actors/<actor-digest>/tasks/`，并只保留经大小
+限制和可观测性脱敏的当前 canonical 正文；历史上下文与 subagent/delegated 自由文本仍省略。
+群任务与 workspace 工具均不能读取。准入拒绝保留同一 actor 分区的通用终态 task，但不激活执行 session；身份无效
+只写入 `.conversation-state/task-intake/tasks/` 的脱敏失败记录，且不继承共享 session 上一轮
+actor reference。任何入站消息无法先建立 task
 记录时失败关闭，不进入 Agent、附件或工具阶段。群人格使用通用 protected persona port 的
 `global → group` 层；启用 `persona.control` 后仅 Owner 主 Agent 获得 session-bound
 `persona_manage`，User/Admin 与 subagent 都不会获得该投影。handler 仍按可信 role、当前请求、

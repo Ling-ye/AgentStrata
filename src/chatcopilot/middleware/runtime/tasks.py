@@ -174,6 +174,7 @@ def _workspace_payload(
     workspace: Workspace,
     *,
     redact_identity: bool = False,
+    unauthenticated_intake: bool = False,
 ) -> Dict[str, Any]:
     shared_group = workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
     actor_ref = (
@@ -182,7 +183,9 @@ def _workspace_payload(
             workspace.user_id or "",
             conversation_id=f"{workspace.chat_kind or ''}:{workspace.chat_id or ''}",
         )
-        if workspace.user_id and (shared_group or redact_identity)
+        if workspace.user_id
+        and not (unauthenticated_intake and shared_group)
+        and (shared_group or redact_identity)
         else None
     )
     return {
@@ -811,7 +814,10 @@ class TurnTaskRecorder:
 
     def _write_task_summary_locked(self) -> None:
         payload = self.to_payload()
-        safe_payload = self._sanitize_for_persistence(payload)
+        safe_payload = self._sanitize_for_persistence(
+            payload,
+            retain_group_current_text=True,
+        )
         _write_private_task_json(
             self._path.parent,
             TASK_FILENAME,
@@ -827,7 +833,28 @@ class TurnTaskRecorder:
             return
         self.write()
 
-    def _sanitize_for_persistence(self, payload: Any) -> Any:
+    def _sanitize_for_persistence(
+        self,
+        payload: Any,
+        *,
+        retain_group_current_text: bool = False,
+    ) -> Any:
+        retained: Dict[str, Any] = {}
+        if (
+            retain_group_current_text
+            and not self.redact_identity
+            and self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+            and isinstance(payload, dict)
+        ):
+            expected = {
+                "description": describe_user_text(self.user_text),
+                "user_text": self.user_text,
+            }
+            retained = {
+                key: value
+                for key, value in expected.items()
+                if payload.get(key) == value
+            }
         prepared = payload
         if not self.redact_identity:
             prepared = _redact_group_turn_content(
@@ -836,6 +863,8 @@ class TurnTaskRecorder:
                 user_text=self.user_text,
                 message_id=self.message_id,
             )
+        if retained and isinstance(prepared, dict):
+            prepared = {**prepared, **retained}
         if self.redact_identity and self.message_id:
             prepared = _replace_identity_literals(prepared, (self.message_id,))
         result = redact_observability_payload(
@@ -850,8 +879,6 @@ class TurnTaskRecorder:
         )
 
     def _persisted_user_text(self) -> str:
-        if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED and not self.redact_identity:
-            return "（群消息正文未保存）"
         return self.user_text
 
     def _find_step(self, span_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -2303,7 +2330,10 @@ class TurnTaskRecorder:
                     turn["main_status"] = "failed"
                 if lifecycle:
                     turn.update(lifecycle)
-                safe_turn = self._sanitize_for_persistence(turn)
+                safe_turn = self._sanitize_for_persistence(
+                    turn,
+                    retain_group_current_text=True,
+                )
                 _write_private_task_json(
                     self._path.parent,
                     TURN_FILENAME,
@@ -2352,7 +2382,10 @@ class TurnTaskRecorder:
             _append_task_event(
                 self._path.parent,
                 event_type,
-                self._sanitize_for_persistence(payload),
+                self._sanitize_for_persistence(
+                    payload,
+                    retain_group_current_text=event_type == "task_started",
+                ),
                 workspace_root=self._observability_root,
             )
 
@@ -2366,30 +2399,28 @@ class TurnTaskRecorder:
             (step for step in reversed(self._steps) if step.get("status") == "running"),
             self._steps[-1] if self._steps else None,
         )
+        shared_group = self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+        if self.unauthenticated_intake and shared_group:
+            submitter = "未验证来源"
+        elif self.workspace.user_id and (self.redact_identity or shared_group):
+            submitter = stable_actor_ref(
+                "qq",
+                self.workspace.user_id,
+                conversation_id=(
+                    f"{self.workspace.chat_kind or ''}:{self.workspace.chat_id or ''}"
+                ),
+            )
+        elif shared_group:
+            submitter = "未验证来源"
+        else:
+            submitter = self.workspace.user_name or self.workspace.user_id or ""
         return {
             "schema_version": TASK_SCHEMA_VERSION,
             "task_id": self.task_id,
-            "description": (
-                "（群消息正文未保存）"
-                if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED and not self.redact_identity
-                else describe_user_text(self.user_text)
-            ),
+            "description": describe_user_text(self.user_text),
             "progress": self._progress,
             "status": self._status,
-            "submitter": (
-                stable_actor_ref(
-                    "qq",
-                    self.workspace.user_id,
-                    conversation_id=(
-                        f"{self.workspace.chat_kind or ''}:{self.workspace.chat_id or ''}"
-                    ),
-                )
-                if self.workspace.user_id
-                and (self.redact_identity or self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED)
-                else "未验证来源"
-                if self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
-                else self.workspace.user_name or self.workspace.user_id or ""
-            ),
+            "submitter": submitter,
             "asked_at": self.asked_at,
             "started_at": self.asked_at,
             "finished_at": finished_at,
@@ -2433,6 +2464,7 @@ class TurnTaskRecorder:
             "workspace": _workspace_payload(
                 self.workspace,
                 redact_identity=self.redact_identity,
+                unauthenticated_intake=self.unauthenticated_intake,
             ),
             "path": str(self._path.parent),
             "trace_id": self.task_id,

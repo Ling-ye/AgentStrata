@@ -674,6 +674,33 @@ Session Gateway relay 和 fake OneBot，不调用商用模型、不向真实 QQ 
 
 相关规格：[`multimodal-image-io`](../specs/multimodal-image-io/spec.md)。
 
+## 19. QQ 入站正文诊断：区分 transport 包装、可信正文与失败 intake
+
+**暴露的问题**
+
+cc-connect 在 `message.received` hook 写入原始正文摘要后，才向 ACP prompt 追加本地文件或图片
+路径尾缀。ACP 若先校验摘要再去掉尾缀，会把合法附件消息误判为正文不匹配。另一方面，已通过
+身份与准入的群任务为了避免历史内容泄漏而统一隐藏当前正文，导致 Console 无法诊断真实请求；
+身份失败记录还可能从共享 session shell 带出上一轮 actor reference。
+
+**结构调整**
+
+- 在身份校验前只识别并剥离 cc-connect 完整末尾文件/图片协议段，把 basename 合并为结构化
+  resource；canonical 剩余正文继续与 one-shot attestation 严格比对，静态群附件 inbox 仍不可信。
+- 已准入群 task 的 summary/turn 只放行当前 canonical 正文，并继续经过大小限制、secret/path 与
+  workspace identity 脱敏；model context、subagent 和 delegated-job 自由文本仍按原契约省略。
+- `task-intake` 明确覆盖共享 session shell 的 actor 投影，身份失败 task 固定为“未验证来源”，
+  workspace payload 不再生成 actor reference。
+
+**结果与边界**
+
+合法的 cc-connect 图片/文件包装不再制造身份失败，Console 可以查看已准入任务的当前群消息；
+未通过身份或准入的消息仍只保存通用文本。测试模拟了 ACP 入站、attestation、准入与后续任务链，
+没有发送真实 QQ 消息，也不把合成链路描述成 NapCat/cc-connect/商用模型端到端证明。
+
+相关规格：
+[`qq-group-shared-conversation-context`](../specs/qq-group-shared-conversation-context/spec.md)。
+
 ## 当前架构的收敛结果
 
 | 关注点 | 当前做法 |

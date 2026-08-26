@@ -51,10 +51,12 @@ Console 后端的进程执行、YAML 投影和 job/task/log 可观测读取分�
 不会删除独立的后台 Job、会话 journal、memory、persona、executor state 或相邻任务。
 普通会话任务位于 workspace 的 `tasks/`；已接受 QQ shared-group 回合位于受保护的
 `.conversation-state/task-actors/<actor-digest>/tasks/`，Console 统一发现。后者不位于成员可写
-shared root，群内任务与 workspace 工具均不能读取。准入拒绝的消息仍按已认证 actor 留下
+shared root，群内任务与 workspace 工具均不能读取。已准入回合会显示经过大小限制和可观测性
+脱敏的当前 canonical 消息正文，但不保存模型历史、subagent transcript/result 或 delegated-job
+自由文本。准入拒绝的消息仍按已认证 actor 留下通用
 终态记录，但不会激活 actor 执行 session；身份校验失败的消息写入受保护的
 `.conversation-state/task-intake/tasks/`，只显示“未验证来源”和通用失败原因，不保存原始正文、
-sender envelope 或发送者账号。任务记录无法安全创建时，入站管线失败关闭且不调用 Agent。
+sender envelope、发送者账号或上一轮残留 actor reference。任务记录无法安全创建时，入站管线失败关闭且不调用 Agent。
 
 任务可观测 API：
 
