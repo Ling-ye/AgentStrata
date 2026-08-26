@@ -10,7 +10,7 @@ from typing import Any
 from acp import PromptResponse
 
 from chatcopilot.contracts.agent import ResourceRef
-from chatcopilot.contracts.identity import TurnIdentity
+from chatcopilot.contracts.identity import Role, TurnIdentity, role_value
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.core.allowlists import AllowlistConfigError
 from chatcopilot.core.image_content import ImageContentError, is_supported_image_path
@@ -19,6 +19,8 @@ from chatcopilot.middleware.acp import attachment_pipeline as _attachment
 from chatcopilot.middleware.acp import attachment_turns as _attachment_turns
 from chatcopilot.middleware.acp import deterministic_replies as _deterministic_replies
 from chatcopilot.middleware.acp import image_pipeline as _image
+from chatcopilot.middleware.acp import operator_commands as _operator_commands
+from chatcopilot.middleware.acp import operator_dispatch as _operator_dispatch
 from chatcopilot.middleware.acp.prompt_pipeline import build_topic_metadata
 from chatcopilot.middleware.acp.group_conversation import SenderEnvelopeError
 from chatcopilot.middleware.acp.turn_pipeline import (
@@ -85,6 +87,11 @@ class AcpTurnOrchestrator:
             (
                 CallbackTurnHandler("identity", self._identity),
                 CallbackTurnHandler("admission", self._admission),
+                CallbackTurnHandler(
+                    "command_authorization",
+                    self._command_authorization,
+                ),
+                CallbackTurnHandler("operator_shortcuts", self._operator_shortcuts),
                 CallbackTurnHandler("attachments", self._attachments),
                 CallbackTurnHandler("deterministic_shortcuts", self._deterministic_shortcuts),
                 CallbackTurnHandler("session_materialization", self._session_materialization),
@@ -466,6 +473,92 @@ class AcpTurnOrchestrator:
             ),
             stop=True,
             reason="task_tracking_unavailable",
+        )
+
+    async def _command_authorization(self, turn: TurnContext) -> TurnOutcome:
+        """Reject slash commands from non-Owners before attachment side effects."""
+
+        command = _operator_commands.parse_slash_command(turn.user_text)
+        if command is None:
+            return TurnOutcome()
+        if role_value(getattr(turn.session, "role", Role.USER)) == Role.OWNER.value:
+            self._record_flow_transition(
+                turn,
+                kind="middleware.command_authorization",
+                source_layer="middleware",
+                target_layer="middleware",
+                status="succeeded",
+                title="Owner 斜杠指令准入",
+                summary="指令仍须由对应处理器复检参数和副作用边界。",
+                decision={
+                    "code": "owner_command_allowed",
+                    "allowed": True,
+                    "authoritative": True,
+                },
+                payload={"command": command.name},
+            )
+            return TurnOutcome()
+
+        self._record_flow_transition(
+            turn,
+            kind="middleware.command_authorization",
+            source_layer="middleware",
+            target_layer="delivery",
+            status="skipped",
+            title="非 Owner 斜杠指令拒绝",
+            summary="消息未进入附件、会话、Agent、模型或工具处理。",
+            decision={
+                "code": "owner_command_required",
+                "allowed": False,
+                "authoritative": True,
+            },
+            payload={"command": command.name},
+        )
+        text = _operator_commands.OWNER_COMMAND_DENIED_TEXT
+        await self._host._conn.session_update(
+            session_id=turn.session_id,
+            update=self._update_text(text),
+        )
+        self._host._finish_turn_task(
+            turn.turn_task,
+            status="succeeded",
+            progress="已拒绝非 Owner 斜杠指令。",
+            final_text=text,
+            stop_reason="owner_command_required",
+        )
+        return TurnOutcome(
+            response=PromptResponse(  # type: ignore[call-arg]
+                stop_reason="end_turn",
+                user_message_id=turn.message_id,
+            ),
+            stop=True,
+            reason="owner_command_required",
+        )
+
+    async def _operator_shortcuts(self, turn: TurnContext) -> TurnOutcome:
+        response = await _operator_dispatch.handle_operator_replies(
+            conn=self._host._conn,
+            session=turn.session,
+            session_id=turn.session_id,
+            user_text=turn.user_text,
+            message_id=turn.message_id,
+            turn_task=turn.turn_task,
+            has_role_matrix=self._has_role_matrix,
+            instance_control=getattr(self._host, "_instance_control", None),
+            finish_turn_task=self._host._finish_turn_task,
+            finish_turn_task_strict=getattr(
+                self._host,
+                "_finish_turn_task_strict",
+                None,
+            ),
+            make_text_update=self._update_text,
+        )
+        if response is None:
+            return TurnOutcome()
+        return TurnOutcome(
+            response=response,
+            stop=True,
+            reason="operator_shortcut",
         )
 
     def _record_flow_transition(

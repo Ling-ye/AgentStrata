@@ -48,6 +48,10 @@ resulting system structure.
   requires them.
 - **Platform adapters.** QQ / OneBot and Feishu remain outside Agent logic and
   inject identity, files, notifications, and permissions through contracts.
+- **Owner controls in chat.** A transport-authenticated Owner can list the
+  current Bot's slash commands, inspect combined session and instance state,
+  and request a state-preserving restart of only that Bot after the reply is
+  delivered.
 - **Controlled development.** Codex-backed owner sessions dispatch repository
   mutation to isolated code tasks that validate and prepare draft pull
   requests; they do not merge or deploy automatically.

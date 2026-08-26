@@ -4,9 +4,12 @@ import importlib.util
 import unittest
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from types import SimpleNamespace
 
 from acp import PromptResponse
 
+from chatcopilot.contracts.identity import Role
+from chatcopilot.middleware.acp.turn_orchestrator import AcpTurnOrchestrator
 from chatcopilot.middleware.acp.turn_pipeline import (
     CallbackTurnHandler,
     OrderedTurnPipeline,
@@ -54,11 +57,45 @@ class AcpTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
             [
                 "identity",
                 "admission",
+                "command_authorization",
+                "operator_shortcuts",
                 "attachments",
                 "deterministic_shortcuts",
             ],
         )
         self.assertEqual(context.completed_stages, seen)
+
+    async def test_operator_shortcut_stops_before_attachments(self) -> None:
+        seen: list[str] = []
+        response = PromptResponse(stop_reason="end_turn")
+        handlers = [
+            _handler(
+                name,
+                seen,
+                outcome=(
+                    TurnOutcome(response=response, stop=True, reason="operator")
+                    if name == "operator_shortcuts"
+                    else None
+                ),
+            )
+            for name in TURN_STAGE_ORDER
+        ]
+
+        result = await OrderedTurnPipeline(tuple(handlers)).run(
+            TurnContext("sid", object(), "/state", None)
+        )
+
+        self.assertIs(result.response, response)
+        self.assertEqual(result.reason, "operator")
+        self.assertEqual(
+            seen,
+            [
+                "identity",
+                "admission",
+                "command_authorization",
+                "operator_shortcuts",
+            ],
+        )
 
     async def test_handler_exception_is_not_silently_swallowed(self) -> None:
         seen: list[str] = []
@@ -106,6 +143,88 @@ class AcpTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIs(result.response, response)
         self.assertEqual(seen[-1], "finish")
+
+    async def test_every_non_owner_slash_command_stops_before_attachments(self) -> None:
+        updates: list[str] = []
+        finishes: list[dict[str, object]] = []
+
+        class Connection:
+            async def session_update(self, *, session_id: str, update: str) -> None:
+                assert session_id == "sid"
+                updates.append(update)
+
+        class Recorder:
+            task_id = "task-owner-command"
+
+            def __init__(self) -> None:
+                self.events: list[tuple[str, dict[str, object]]] = []
+
+            def record_event(self, kind: str, payload: dict[str, object]) -> None:
+                self.events.append((kind, payload))
+
+        recorder = Recorder()
+        host = SimpleNamespace(
+            _conn=Connection(),
+            _finish_turn_task=lambda _recorder, **kwargs: finishes.append(kwargs),
+        )
+        orchestrator = AcpTurnOrchestrator.__new__(AcpTurnOrchestrator)
+        orchestrator._host = host
+        orchestrator._update_text = lambda text: text
+        commands = (
+            "/help",
+            "/state",
+            "/restart",
+            "/debug status",
+            "/model code",
+            "/task",
+            "/cancel",
+            "/persona confirm",
+            "/unknown",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                updates.clear()
+                finishes.clear()
+                recorder.events.clear()
+                turn = TurnContext(
+                    "sid",
+                    SimpleNamespace(role=Role.USER),
+                    command,
+                    "message",
+                    turn_task=recorder,
+                )
+
+                outcome = await orchestrator._command_authorization(turn)
+
+                self.assertTrue(outcome.stop)
+                self.assertEqual(outcome.reason, "owner_command_required")
+                self.assertEqual(updates, ["斜杠指令仅限 Owner 使用。"])
+                self.assertEqual(
+                    finishes[0]["stop_reason"],
+                    "owner_command_required",
+                )
+                self.assertEqual(
+                    recorder.events[0][1]["kind"],
+                    "middleware.command_authorization",
+                )
+
+    async def test_owner_slash_command_continues_and_absolute_path_is_not_a_command(
+        self,
+    ) -> None:
+        orchestrator = AcpTurnOrchestrator.__new__(AcpTurnOrchestrator)
+        orchestrator._host = SimpleNamespace()
+        orchestrator._update_text = lambda text: text
+        orchestrator._record_flow_transition = lambda *_args, **_kwargs: None
+
+        allowed = await orchestrator._command_authorization(
+            TurnContext("sid", SimpleNamespace(role=Role.OWNER), "/help", None)
+        )
+        path = await orchestrator._command_authorization(
+            TurnContext("sid", SimpleNamespace(role=Role.USER), "/tmp/report.txt", None)
+        )
+
+        self.assertFalse(allowed.stop)
+        self.assertFalse(path.stop)
 
     def test_pipeline_rejects_missing_handler(self) -> None:
         with self.assertRaisesRegex(ValueError, "fixed stage order"):

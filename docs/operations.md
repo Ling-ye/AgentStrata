@@ -116,6 +116,45 @@ systemctl --user status chatcopilot-code-worker@<id>.service --no-pager -l
 journalctl --user -u chatcopilot-code-worker@<id>.service -n 120 --no-page
 ```
 
+### 聊天内 Owner 运维指令
+
+Bot 接入 ACP 后，用户正文去除前导空白后，以 ASCII `/name` 开头且后接空白或正文结束的
+消息统一视为斜杠指令，并且只接受 transport attestation、平台准入和本轮身份激活共同确认
+的可信 Owner；`/tmp/report.txt` 一类绝对路径、URL、`//name` 和正文中间的 slash 不属于指令。
+群名单命中、昵称、
+历史 Owner 回合或共享 session 都不会授予该权限。准入与身份激活完成后，ACP 会在附件发现
+或导入以及 Session、Agent、模型、工具副作用之前执行这道门禁；非 Owner 的斜杠消息确定性
+拒绝。
+
+当前内置运维指令：
+
+| 指令 | 行为 |
+| --- | --- |
+| `/help` | 按当前 Bot 配置和运行能力列出实际可用的斜杠指令；不会把未启用能力列为可用。 |
+| `/state` | 只读查看当前 ACP 会话与当前 Bot systemd 实例的有界、脱敏状态。 |
+| `/restart` | 请求只重启当前 Bot systemd unit；不接受实例或 unit 参数。 |
+
+`/state` 的会话部分包括当前 backend、模型 profile、assistant mode 和 debug 状态等已有
+安全字段；实例部分包括当前 Bot 的 load/active/substate。systemd 不可达、unit 未注册或结果
+有歧义时显示未知或有界错误，不能因为机器人仍能回复就推断实例整体健康。输出不包含凭据、
+环境变量、机器路径、完整准入名单、原始平台身份、其他 actor 会话或内部 traceback。
+
+`/restart` 只执行进程级重启，不清理 workspace 文件、conversation journal、受保护 memory、
+persona、backend resume state 或持久化 task/job 记录，也不重启 QQ Gateway 或 NapCat。它不保证
+其他正在执行的进程内回合跨重启继续运行。机器人先验证当前 unit 正在运行且 user systemd 与
+detached scheduler 可用，再回复“已接受重启请求”；只有该回复已送达且当前指令 task 的终态已
+持久化，宿主才通过 Bot service cgroup 外的 systemd transient unit 延迟重启当前绑定实例。同一
+实例使用稳定 transient unit 名，第二个待执行的聊天重启会冲突而不会重复排队；Console 或人工
+systemd 操作仍是独立控制入口，竞态会表现为最终调度或状态证明失败。`nohup`、`setsid` 和进程内
+后台任务不作为降级路径；投递、持久化、systemd、冲突或调度任一步骤失败都不能声称重启完成。
+如果 timer 注册成功后 scheduled 回执落盘失败，宿主会 best-effort 停止 timer 与 worker；但即使
+目标进程 generation 尚未变化，也不能排除 systemd manager 已经排队 restart，因此回复只会要求
+从宿主核验，绝不声称“已撤销”。
+
+这些聊天指令与本节前面的宿主命令操作同一个 Bot 实例，但不替代断连时的宿主排障入口。
+QQ Gateway 的状态和重启属于下文独立操作，不能用 `/restart` 代替。完整契约见
+[`../specs/owner-operator-commands/spec.md`](../specs/owner-operator-commands/spec.md)。
+
 ## 运维控制台
 
 控制台默认地址为 `http://localhost:8910`。`deploy_console.sh --status`
