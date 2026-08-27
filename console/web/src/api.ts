@@ -8,9 +8,9 @@ import type {
   CatalogItem,
   InfraService,
   JobsResponse,
-  NapcatWebuiToken,
   Overview,
   ProvisionEnvPayload,
+  ProvisionEnvResult,
   ProvisionSchema,
   Task,
   TaskEventsResponse,
@@ -27,7 +27,9 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
     let detail = `${resp.status}`;
     try {
       const body = await resp.json();
-      detail = body.detail ?? JSON.stringify(body);
+      detail = typeof body.detail === "string"
+        ? body.detail
+        : JSON.stringify(body.detail ?? body);
     } catch {
       /* ignore */
     }
@@ -87,7 +89,7 @@ export const api = {
   // 首次部署
   provisionSchema: (id: string) => req<ProvisionSchema>(`/api/bots/${id}/provision/schema`),
   provisionEnv: (id: string, payload: ProvisionEnvPayload) =>
-    req<{ ok: boolean; env_file: string; local_env_file?: string; written_keys: string[] }>(
+    req<ProvisionEnvResult>(
       `/api/bots/${id}/provision/env`,
       {
         method: "POST",
@@ -139,13 +141,6 @@ export const api = {
     req<XhsLoginQrcode>(`/api/infra/${id}/login/qrcode`, { method: "POST" }),
   infraLoginCheck: (id: string) =>
     req<XhsLoginStatus>(`/api/infra/${id}/login/check`, { method: "POST" }),
-  infraWebuiUrl: (id: string) =>
-    req<{ ok: boolean; url: string }>(`/api/infra/${id}/webui-url`),
-  infraWebuiToken: (id: string) =>
-    req<NapcatWebuiToken>(`/api/infra/${id}/webui-token`),
-  infraWebuiSession: (id: string) =>
-    req<NapcatWebuiToken>(`/api/infra/${id}/webui-session`, { method: "POST" }),
-
 };
 
 /** 通过 SSE 跟读任务输出。返回 close 函数。 */

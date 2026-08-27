@@ -83,8 +83,13 @@ if ! command -v rsync >/dev/null 2>&1; then
 fi
 
 MANIFEST_PY="$CONTROL_ROOT/src"
+MANIFEST_PYTHON="$CONTROL_ROOT/.venv/bin/python"
 if [ ! -f "$MANIFEST_PY/chatcopilot/core/source_manifest.py" ]; then
     echo "[ERR] canonical source manifest module not found: $MANIFEST_PY" >&2
+    exit 1
+fi
+if [ ! -x "$MANIFEST_PYTHON" ]; then
+    echo "[ERR] isolated source Python is missing: $MANIFEST_PYTHON" >&2
     exit 1
 fi
 TRANSFER_MANIFEST="$(mktemp)"
@@ -94,16 +99,16 @@ cleanup_manifests() {
 }
 trap cleanup_manifests EXIT
 if [ -n "$FILES_FROM" ]; then
-    PYTHONPATH="$MANIFEST_PY${PYTHONPATH:+:$PYTHONPATH}" python3 \
+    PYTHONPATH="$MANIFEST_PY${PYTHONPATH:+:$PYTHONPATH}" "$MANIFEST_PYTHON" \
         -m chatcopilot.core.source_manifest \
         --source "$SRC" --paths-from "$FILES_FROM" \
         --include-missing --output "$TRANSFER_MANIFEST" || exit $?
-    PYTHONPATH="$MANIFEST_PY${PYTHONPATH:+:$PYTHONPATH}" python3 \
+    PYTHONPATH="$MANIFEST_PY${PYTHONPATH:+:$PYTHONPATH}" "$MANIFEST_PYTHON" \
         -m chatcopilot.core.source_manifest \
         --source "$SRC" --paths-from "$FILES_FROM" \
         --output "$CURRENT_MANIFEST" || exit $?
 else
-    PYTHONPATH="$MANIFEST_PY${PYTHONPATH:+:$PYTHONPATH}" python3 \
+    PYTHONPATH="$MANIFEST_PY${PYTHONPATH:+:$PYTHONPATH}" "$MANIFEST_PYTHON" \
         -m chatcopilot.core.source_manifest \
         --source "$SRC" --output "$CURRENT_MANIFEST" || exit $?
     cp "$CURRENT_MANIFEST" "$TRANSFER_MANIFEST"
@@ -138,7 +143,7 @@ FINALIZE_ARGS=(
 [ -n "$FILES_FROM" ] && FINALIZE_ARGS+=(--paths-from "$FILES_FROM")
 [ "$DRY_RUN" = 1 ] && FINALIZE_ARGS+=(--dry-run)
 PYTHONPATH="$MANIFEST_PY${PYTHONPATH:+:$PYTHONPATH}" \
-    python3 "${FINALIZE_ARGS[@]}" || exit $?
+    "$MANIFEST_PYTHON" "${FINALIZE_ARGS[@]}" || exit $?
 
 if [ "$DRY_RUN" = 1 ]; then
     echo "[OK] DryRun 完成（未实际改动）"

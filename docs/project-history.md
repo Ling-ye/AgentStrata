@@ -701,6 +701,35 @@ cc-connect 在 `message.received` hook 写入原始正文摘要后，才向 ACP 
 相关规格：
 [`qq-group-shared-conversation-context`](../specs/qq-group-shared-conversation-context/spec.md)。
 
+## 20. 引导式首次部署：从脚本清单到可恢复用户流程
+
+**暴露的问题**
+
+早期 Quick start 只创建开发 venv 并校验内置 BotSpec，却容易被新用户理解为已经部署；首次安装、
+Console、实例更新和 QQ gateway 的命令又分散在多份文档中。高级内置机器人需要搜索、Codex、MCP
+和多组凭据，不适合作为不懂代码用户的第一台机器人。部分部署入口还在统一实例更新后重复注册和
+启动，Console provisioning 则使用固定 LLM 环境变量名，不能忠实反映 BotSpec。
+
+**结构调整**
+
+- 新增唯一终端入口 `deploy/wsl/quickstart.sh`，把主机预检、最小运行时、通用 QQ starter、
+  隐藏式配置、NapCat 本地扫码、认证探针、单次实例更新和证据摘要串成可恢复状态机。
+- CLI 与可选 Console 消费同一个 BotSpec-derived provisioning plan 和原子 env writer；秘密不进入
+  argv、JSON、日志或 receipt，失败后从机器实际状态 `--resume`，不维护平行流程记录。
+- Docker 与系统包在精确变更预览后才允许安装；WSL systemd、docker group 和扫码等无法在当前
+  进程安全完成的动作返回 `needs_user_action`，不使用提权或权限降级技巧绕过。
+- 文档按用户状态收敛：README 只给推荐入口，部署文档只讲首次安装，运维手册只讲安装后操作，
+  WSL README 只保留异常排障。高级 `lingye-copilot-qq` 不再作为新手默认实例。
+
+**结果与边界**
+
+新手路径只启用 Native 对话、workspace、memory 和基础附件，Console、搜索、MCP、Persona、Codex
+和 code-worker 都是后续显式选择。自动化可以证明配置、编排、回环认证和本地 service 边界，默认
+不会消耗模型额度或向 QQ 写入；真实扫码、新鲜主机 systemd 和独立账号 QQ 入站往返在未实际执行
+时继续记录为 `not_tested`。
+
+相关规格：[`guided-first-deployment`](../specs/guided-first-deployment/spec.md)。
+
 ## 当前架构的收敛结果
 
 | 关注点 | 当前做法 |
@@ -715,6 +744,7 @@ cc-connect 在 `message.received` hook 写入原始正文摘要后，才向 ACP 
 | 搜索 | 统一入口、直接 provider、统一 deadline/circuit/result policy |
 | 工具注册 | catalog 只定位显式 provider，静态与会话动态工具统一进入 Registry 快照 |
 | 评测 | Console 只展示直接 Agent 与 QQ 后链路两轨；Comparison/benchmark 保留 CLI，全部复用统一 Evaluation 生命周期 |
+| 首次部署 | 单一终端向导生成通用 QQ starter；特权变更确认、扫码暂停与外部证据边界显式化 |
 | 公开维护 | 公开仓库是源码、规格和发布流程的唯一事实源 |
 
 进一步的组件关系、依赖方向和运行时细节分别见

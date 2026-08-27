@@ -14,13 +14,13 @@ export default function LoginPanel({ service }: Props) {
   const [checking, setChecking] = useState(false);
   const [qrImage, setQrImage] = useState<string | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
-  const [webuiUrl, setWebuiUrl] = useState<string | null>(null);
-  const [webuiToken, setWebuiToken] = useState<string | null>(null);
-  const [webuiTokenUrl, setWebuiTokenUrl] = useState<string | null>(null);
-  const [webuiTokenLoading, setWebuiTokenLoading] = useState(false);
   const [loginState, setLoginState] = useState<"logged_in" | "logged_out" | null>(
     service.login_state,
   );
+  const instanceId = service.instance_id || service.id.split(":", 2)[1] || "";
+  const quickstartCommand = instanceId
+    ? `bash deploy/wsl/quickstart.sh --bot-id ${instanceId} --resume`
+    : "bash deploy/wsl/quickstart.sh --resume";
 
   useEffect(() => {
     setLoginState(service.login_state);
@@ -74,46 +74,9 @@ export default function LoginPanel({ service }: Props) {
     }
   };
 
-  const prepareWebuiSession = async (): Promise<string | null> => {
-    setWebuiTokenLoading(true);
-    try {
-      const res = await api.infraWebuiSession(service.id);
-      setWebuiToken(res.token);
-      setWebuiTokenUrl(res.url);
-      setWebuiUrl(res.url);
-      Message.success("NapCat WebUI 已就绪");
-      return res.url;
-    } catch (e) {
-      Message.error(`准备 WebUI 失败：${e instanceof Error ? e.message : String(e)}`);
-      return null;
-    } finally {
-      setWebuiTokenLoading(false);
-    }
-  };
-
-  const fetchWebuiToken = async () => {
-    await prepareWebuiSession();
-  };
-
-  const openWebui = async () => {
-    const popup = window.open("about:blank", "_blank");
-    if (popup) popup.opener = null;
-    const url = await prepareWebuiSession();
-    if (!url) {
-      popup?.close();
-      return;
-    }
-    if (popup) {
-      popup.location.href = url;
-    } else {
-      window.open(url, "_blank");
-    }
-  };
-
   const handleLoginClick = async () => {
     if (service.login_type === "webui_link") {
       setOpen(true);
-      await prepareWebuiSession();
     } else if (service.login_type === "qrcode") {
       setOpen(true);
       if (loginState !== "logged_in") {
@@ -133,10 +96,9 @@ export default function LoginPanel({ service }: Props) {
       <Space wrap>
         <Button
           size="small"
-          loading={service.login_type === "webui_link" && webuiTokenLoading}
           onClick={handleLoginClick}
         >
-          {service.login_type === "webui_link" ? "WebUI 登录" : "登录"}
+          {service.login_type === "webui_link" ? "终端登录指引" : "登录"}
         </Button>
         {loginState === "logged_in" && (
           <Tag size="small" color="green">已登录</Tag>
@@ -150,49 +112,17 @@ export default function LoginPanel({ service }: Props) {
         <div className="login-panel-content">
           {service.login_type === "webui_link" && (
             <div className="login-panel-webui">
-              <Text>通过 NapCat WebUI 完成 QQ 登录：</Text>
-              <Button
-                size="small"
-                type="primary"
-                loading={webuiTokenLoading}
-                onClick={() => void openWebui()}
-                className="stack-action"
-              >
-                打开 WebUI
+              <Text>请在仓库目录运行终端向导，按提示打开本地 WebUI 并扫码：</Text>
+              <Input size="small" readOnly value={quickstartCommand} />
+              <Button size="small" onClick={() => void copyText(quickstartCommand, "命令")}>
+                复制命令
               </Button>
-              <Button
-                size="small"
-                type="secondary"
-                loading={webuiTokenLoading}
-                onClick={() => void fetchWebuiToken()}
-                className="stack-action"
-              >
-                {"\u83b7\u53d6 Token"}
+              <Button size="small" loading={checking} onClick={() => void checkStatus()}>
+                检查登录状态
               </Button>
               <Text type="secondary" className="cc-text-small">
-                WebUI Token 仅用于 NapCat 管理面板，不是 OneBot 的 QQ_ACCESS_TOKEN。
+                WebUI 管理 token 只在可信交互式终端显示一次，不进入 Console HTTP 响应。
               </Text>
-              {webuiToken && (
-                <div className="login-panel-token-box">
-                  <Input
-                    size="small"
-                    readOnly
-                    value={webuiToken}
-                    className="login-panel-token-input"
-                  />
-                  <Space wrap className="panel-action-row login-panel-token-actions">
-                    <Button size="small" onClick={() => void copyText(webuiToken, "Token")}>
-                      {"\u590d\u5236 Token"}
-                    </Button>
-                    <Button
-                      size="small"
-                      onClick={() => void copyText(webuiTokenUrl || webuiUrl || "", "WebUI \u94fe\u63a5")}
-                    >
-                      {"\u590d\u5236 WebUI \u94fe\u63a5"}
-                    </Button>
-                  </Space>
-                </div>
-              )}
               <Button
                 size="small"
                 type="text"

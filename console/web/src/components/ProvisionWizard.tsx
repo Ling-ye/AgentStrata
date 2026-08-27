@@ -13,6 +13,12 @@ import {
 } from "@arco-design/web-react";
 import LogConsole from "./LogConsole";
 import { api, streamTask } from "../api";
+import {
+  editableProvisionFields,
+  isTerminalSetupAction,
+  setupActionVerb,
+  terminalQuickstartCommand,
+} from "../provisioning";
 import type {
   BotInstance,
   ProvisionEnvPayload,
@@ -33,23 +39,21 @@ interface Props {
 
 type StepState = "wait" | "process" | "finish" | "error";
 
-function isSecretField(field: ProvisionField): boolean {
-  const key = field.env_key.toUpperCase();
-  return key.includes("SECRET") || key.includes("TOKEN") || key.includes("API_KEY");
-}
-
 function renderField(field: ProvisionField) {
-  const control = isSecretField(field)
-    ? <Input.Password placeholder={field.description || field.default || ""} />
-    : <Input placeholder={field.description || field.default || ""} />;
+  const placeholder = field.configured
+    ? "已配置；留空将保留现有值"
+    : field.description || field.default || "";
+  const control = field.secret
+    ? <Input.Password placeholder={placeholder} />
+    : <Input placeholder={placeholder} />;
 
   return (
     <Form.Item
       key={field.env_key}
       field={field.field}
-      label={field.env_key}
-      initialValue={field.default || undefined}
-      rules={field.required ? [{ required: true, message: "必填" }] : []}
+      label={field.label || field.env_key}
+      initialValue={field.configured ? undefined : field.default || undefined}
+      rules={field.required && !field.configured ? [{ required: true, message: "必填" }] : []}
     >
       {control}
     </Form.Item>
@@ -63,23 +67,35 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
     () => (schema?.setup_actions?.length ? schema.setup_actions : []),
     [schema],
   );
+  const terminalSetupAction = useMemo(
+    () => setupActions.find(isTerminalSetupAction) ?? null,
+    [setupActions],
+  );
+  const consoleSetupActions = useMemo(
+    () => setupActions.filter((action) => !isTerminalSetupAction(action)),
+    [setupActions],
+  );
   const sharedServices = useMemo(
-    () => (schema?.shared_services?.length ? schema.shared_services : []),
-    [schema],
+    () => terminalSetupAction
+      ? []
+      : (schema?.shared_services?.length ? schema.shared_services : []),
+    [schema, terminalSetupAction],
   );
   const stepTitles = useMemo(
-    () => [
-      "填写机密",
-      ...setupActions.map((action) => action.label),
-      ...sharedServices.map((service) => service.label),
-      "同步代码",
-      "重建环境",
-      "注册服务",
-      "启动",
-    ],
-    [setupActions, sharedServices],
+    () => terminalSetupAction
+      ? ["填写配置", "在终端完成部署"]
+      : [
+          "填写配置",
+          ...consoleSetupActions.map((action) => action.label),
+          ...sharedServices.map((service) => service.label),
+          "同步代码",
+          "重建环境",
+          "注册服务",
+          "启动",
+        ],
+    [consoleSetupActions, sharedServices, terminalSetupAction],
   );
-  const sharedStartIdx = 1 + setupActions.length;
+  const sharedStartIdx = 1 + consoleSetupActions.length;
   const syncIdx = sharedStartIdx + sharedServices.length;
   const rebuildIdx = syncIdx + 1;
   const registerIdx = rebuildIdx + 1;
@@ -170,7 +186,9 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
       setLines([
         `[OK] 本地配置已写入 ${res.local_env_file ?? "bots/<id>/local.env"}`,
         `[OK] 运行时 env 已生成 ${res.env_file}`,
-        `写入键：${res.written_keys.join(", ")}`,
+        res.written_keys.length
+          ? `更新键：${res.written_keys.join(", ")}`
+          : "配置内容未变化；已保留现有值。",
       ]);
       advance(0);
     } catch (e) {
@@ -182,7 +200,10 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
   };
 
   const runSetupAction = (idx: number, action: SetupAction) => {
-    void runStreamStep(idx, () => api.setupAction(bot.instance_id, action.id, "start"));
+    void runStreamStep(
+      idx,
+      () => api.setupAction(bot.instance_id, action.id, setupActionVerb(action)),
+    );
   };
 
   const fetchXhsQrcode = async (): Promise<boolean> => {
@@ -280,9 +301,11 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
     onClose();
   };
 
-  const fields = schema ? [...schema.fields, ...schema.common_fields] : [];
-  const currentSetupAction = current > 0 && current <= setupActions.length
-    ? setupActions[current - 1]
+  const fields = schema
+    ? editableProvisionFields([...schema.fields, ...schema.common_fields])
+    : [];
+  const currentSetupAction = current > 0 && current <= consoleSetupActions.length
+    ? consoleSetupActions[current - 1]
     : null;
   const currentSharedService =
     current >= sharedStartIdx && current < syncIdx
@@ -321,19 +344,40 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
               loading={busy}
               disabled={!fields.length}
             >
-              写入机密并继续
+              保存本机配置并继续
             </Button>
             <Button onClick={close}>关闭</Button>
           </Space>
           <Text type="secondary" className="cc-text-small form-help-text">
-            机密会写入该 bot 目录的 local.env，并生成 {bot.env_file}。
+            本机私有配置会保存到该 bot 目录的 local.env，并生成 {bot.env_file}。
           </Text>
         </Form>
       ) : (
         <div>
           <LogConsole lines={lines} />
+          {terminalSetupAction ? (
+            <Alert
+              type="warning"
+              closable={false}
+              showIcon
+              className="block-gap-bottom"
+              content={(
+                <div>
+                  <div>QQ 登录、Docker 与 systemd 部署需要在 WSL/Linux 终端继续完成：</div>
+                  <Input
+                    readOnly
+                    value={terminalQuickstartCommand(bot.instance_id)}
+                    className="block-gap-top"
+                  />
+                  <Text type="secondary" className="cc-text-small form-help-text">
+                    终端向导会从现有 local.env 恢复；Console 不会直接启动 QQ gateway。
+                  </Text>
+                </div>
+              )}
+            />
+          ) : null}
           <Space className="panel-action-row-large">
-            {currentSetupAction && (
+            {!terminalSetupAction && currentSetupAction && (
               <Button
                 type="primary"
                 loading={busy}
@@ -342,7 +386,7 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
                 {states[current] === "error" ? `重试 ${currentSetupAction.label}` : currentSetupAction.label}
               </Button>
             )}
-            {currentSharedService && (
+            {!terminalSetupAction && currentSharedService && (
               <Button
                 type="primary"
                 loading={busy}
@@ -351,7 +395,7 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
                 {states[current] === "error" ? `重试 ${currentSharedService.label}` : currentSharedService.label}
               </Button>
             )}
-            {current === syncIdx && (
+            {!terminalSetupAction && current === syncIdx && (
               <Button
                 type="primary"
                 loading={busy}
@@ -360,7 +404,7 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
                 {states[syncIdx] === "error" ? "重试同步代码" : "同步代码"}
               </Button>
             )}
-            {current === rebuildIdx && (
+            {!terminalSetupAction && current === rebuildIdx && (
               <Button
                 type="primary"
                 loading={busy}
@@ -369,7 +413,7 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
                 {states[rebuildIdx] === "error" ? "重试重建环境" : "重建环境"}
               </Button>
             )}
-            {current === registerIdx && (
+            {!terminalSetupAction && current === registerIdx && (
               <Button
                 type="primary"
                 loading={busy}
@@ -378,13 +422,13 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
                 {states[registerIdx] === "error" ? "重试注册服务" : "注册服务"}
               </Button>
             )}
-            {current === startIdx && (
+            {!terminalSetupAction && current === startIdx && (
               <Button type="primary" loading={busy} onClick={doStart}>
                 {states[startIdx] === "finish" ? "已启动" : "启动"}
               </Button>
             )}
             <Button onClick={close}>
-              {states[startIdx] === "finish" ? "完成" : "关闭"}
+              {!terminalSetupAction && states[startIdx] === "finish" ? "完成" : "关闭"}
             </Button>
           </Space>
         </div>

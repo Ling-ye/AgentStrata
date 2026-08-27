@@ -65,41 +65,60 @@ resulting system structure.
 
 ## Quick start
 
-Requirements: Linux or WSL, Python 3.10–3.13, and Git.
+The recommended first deployment is an interactive terminal guide for a
+generic QQ assistant. It supports Ubuntu 22.04/24.04/26.04 and Debian
+11/12/13 on amd64 or arm64, either as Linux or WSL2 with systemd. Native
+Windows is not a deployment target.
 
 ```bash
 git clone https://github.com/Ling-ye/AgentStrata.git
 cd AgentStrata
+bash deploy/wsl/quickstart.sh
+```
 
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ".[agent,acp]"
+Prepare an OpenAI-compatible API Base URL, model ID, API key, a QQ account for
+the bot, and the stable numeric QQ ID of its Owner. The wizard previews system
+and Docker changes before asking for confirmation, keeps secrets out of
+command-line arguments, and pauses once for you to scan the NapCat QR code in a
+local browser. The Console is optional and is not part of this flow.
 
-agentstrata --help
-agentstrata botspec validate bots/lingye-copilot-qq/bot.yaml
+If WSL systemd or a newly granted Docker group membership requires a restart,
+the wizard exits with an exact repair instruction. Continue from actual machine
+state instead of starting over:
+
+```bash
+bash deploy/wsl/quickstart.sh --resume
+```
+
+Successful local checks mean configuration, services, Relay, cc-connect and
+the authenticated OneBot boundary are ready. The wizard does not make a paid
+model call or send a QQ message by default, so a real user-to-Agent-to-reply
+roundtrip remains `not_tested` until you send an ordinary private message or an
+explicit group @ mention yourself.
+
+See the [first-deployment guide](https://github.com/Ling-ye/AgentStrata/blob/main/docs/deployment.md)
+for requirements, permissions and recovery, then use the
+[operations runbook](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md)
+after installation. AgentStrata does not provide hosted models, chat accounts,
+or third-party credentials.
+
+### Developer setup
+
+The guided deployment is not a development environment. Contributors who only
+need an editable checkout can install the declared development dependencies and
+validate the bundled example without deploying a service:
+
+```bash
+uv sync --frozen --extra agent --extra acp --extra dev
+uv run agentstrata --help
+uv run agentstrata botspec validate bots/lingye-copilot-qq/bot.yaml
 ```
 
 The bundled `lingye-copilot-qq` instance demonstrates QQ / NapCat / OneBot,
 the Codex backend, private Wiki, memory, MCP, unified search, evaluations, and
-isolated code tasks. The bot template can scaffold QQ or Feishu instances;
-generic Feishu document, sheet, Bitable, Wiki, messaging, and adapter support
-remain public platform capabilities.
-
-Copy the selected bot's `local.env.example` to the ignored `local.env`, replace
-the placeholders, and keep the file private:
-
-```bash
-cp bots/lingye-copilot-qq/local.env.example bots/lingye-copilot-qq/local.env
-chmod 600 bots/lingye-copilot-qq/local.env
-python -m chatcopilot bot doctor --bot bots/lingye-copilot-qq/bot.yaml
-```
-
-Follow the [deployment guide](https://github.com/Ling-ye/AgentStrata/blob/main/docs/deployment.md)
-for first installation and the
-[operations runbook](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md)
-for routine commands. AgentStrata
-does not provide hosted models, chat accounts, or third-party credentials.
+isolated code tasks. The starter created by the wizard intentionally excludes
+those advanced features. The bot template can also scaffold advanced QQ or
+Feishu instances.
 
 ## BotSpec in 30 seconds
 

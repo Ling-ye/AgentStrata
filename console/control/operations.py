@@ -7,7 +7,6 @@
 """
 from __future__ import annotations
 
-import base64
 import errno
 import json
 import os
@@ -39,7 +38,13 @@ from console.control.observability import (
 )
 from console.control.process_executor import run_capture
 from console.control.yaml_io import load_yaml_mapping_or_empty
-from chatcopilot.platforms.base import SecretSpec
+from chatcopilot.botspec.loader import load_botspec
+from chatcopilot.botspec.provisioning import (
+    ProvisioningError,
+    build_provision_plan,
+    patch_local_env,
+    read_local_env_for_provision,
+)
 from chatcopilot.platforms.registry import get_adapter
 
 __all__ = [
@@ -914,99 +919,6 @@ def stream_dump(inst: BotInstance, *, mode: str = "quick") -> Iterator[str]:
     )
 
 
-# ---------------------------------------------------------------------------
-# 首次部署：写 bot-owned local.env，再生成运行时 env
-# ---------------------------------------------------------------------------
-# 写进 bots/<id>/local.env 的键顺序（稳定输出，便于人读 / diff）。
-_COMMON_ENV_LAYOUT_KEYS = (
-    "CHATCOPILOT_CHAT_API_KEY",
-    "CHATCOPILOT_CHAT_BASE_URL",
-    "CHATCOPILOT_CHAT_MODEL",
-    "CHATCOPILOT_ADD_OWNER_IDS",
-    "TAVILY_API_KEY",
-)
-
-# 仅这些键允许由前端机密表单填入，避免表单越权覆盖路径类变量。
-_COMMON_SECRET_SPECS = (
-    SecretSpec("CHATCOPILOT_CHAT_API_KEY", required=True, description="LLM API key"),
-    SecretSpec("CHATCOPILOT_CHAT_BASE_URL", required=False, description="LLM API base URL"),
-    SecretSpec("CHATCOPILOT_CHAT_MODEL", required=False, description="LLM model name"),
-    SecretSpec("CHATCOPILOT_ADD_OWNER_IDS", required=False, description="追加 Owner open_id 列表"),
-    SecretSpec("TAVILY_API_KEY", required=False, description="Tavily API key"),
-)
-
-_FIELD_ALIASES = {
-    "CHATCOPILOT_CHAT_API_KEY": "chat_api_key",
-    "CHATCOPILOT_CHAT_BASE_URL": "chat_base_url",
-    "CHATCOPILOT_CHAT_MODEL": "chat_model",
-    "CHATCOPILOT_ADD_OWNER_IDS": "add_owner_ids",
-    "TAVILY_API_KEY": "tavily_api_key",
-}
-
-
-def _field_name(env_key: str) -> str:
-    return _FIELD_ALIASES.get(env_key, env_key.lower())
-
-
-def _platform_secret_specs(inst: BotInstance) -> tuple[SecretSpec, ...]:
-    return get_adapter(inst.platform).required_secrets()
-
-
-def _allowed_secret_specs(inst: BotInstance) -> tuple[SecretSpec, ...]:
-    return (*_COMMON_SECRET_SPECS, *_platform_secret_specs(inst))
-
-
-def provision_schema(inst: BotInstance) -> Dict[str, object]:
-    adapter = get_adapter(inst.platform)
-
-    def _render(spec: SecretSpec) -> Dict[str, object]:
-        return {
-            "env_key": spec.env_key,
-            "field": _field_name(spec.env_key),
-            "required": spec.required,
-            "default": spec.default,
-            "description": spec.description,
-        }
-
-    return {
-        "platform": adapter.name,
-        "adapter_id": adapter.adapter_id,
-        "common_fields": [_render(spec) for spec in _COMMON_SECRET_SPECS],
-        "fields": [_render(spec) for spec in adapter.required_secrets()],
-        "setup_actions": [
-            {"id": action.id, "label": action.label, "description": action.description}
-            for action in adapter.setup_actions()
-        ],
-        "shared_services": _shared_service_steps(inst),
-    }
-
-
-def _normalize_secret_values(inst: BotInstance, secrets: Dict[str, str]) -> Dict[str, str]:
-    values: Dict[str, str] = {}
-    for spec in _allowed_secret_specs(inst):
-        for key in (spec.env_key, _field_name(spec.env_key)):
-            val = str(secrets.get(key, "") or "").strip()
-            if val:
-                values[spec.env_key] = val
-                break
-    return values
-
-
-def _bot_spec_relpath(inst: BotInstance) -> str:
-    """源 bot.yaml 相对仓库根的路径（同步后即 wsl_home 下的同名相对路径）。"""
-    try:
-        return str(Path(inst.bot_spec).resolve().relative_to(repo_root())).replace("\\", "/")
-    except (ValueError, OSError):
-        return ""
-
-
-def _bot_local_env_path(inst: BotInstance) -> Path:
-    bot_rel = _bot_spec_relpath(inst)
-    if bot_rel:
-        return repo_root() / Path(bot_rel).parent / "local.env"
-    return Path(inst.bot_spec).expanduser().resolve().parent / "local.env"
-
-
 def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     return load_yaml_mapping_or_empty(path)
 
@@ -1016,6 +928,58 @@ def _bot_spec_path(inst: BotInstance) -> Path:
     if raw.is_absolute():
         return raw
     return repo_root() / raw
+
+
+# ---------------------------------------------------------------------------
+# 首次部署：共享 ProvisionPlan + bot-owned local.env 安全 patch
+# ---------------------------------------------------------------------------
+def _provision_context(inst: BotInstance):
+    candidate = _bot_spec_path(inst)
+    bots_root = (repo_root() / "bots").resolve(strict=True)
+    if candidate.is_symlink() or candidate.parent.is_symlink():
+        raise ProvisioningError("provision_botspec_symlink")
+    bot_yaml = candidate.resolve(strict=True)
+    if (
+        bot_yaml.name != "bot.yaml"
+        or bot_yaml.parent.parent != bots_root
+        or bot_yaml.parent.name != inst.instance_id
+    ):
+        raise ProvisioningError("provision_botspec_outside_repo")
+    spec = load_botspec(bot_yaml)
+    adapter = get_adapter(spec.platform.type)
+    local_env = bot_yaml.parent / "local.env"
+    configured_values = read_local_env_for_provision(
+        local_env,
+        allowed_parent=bot_yaml.parent,
+    )
+    plan = build_provision_plan(spec, adapter, configured_values=configured_values)
+    return bot_yaml, local_env, adapter, plan
+
+
+def provision_schema(inst: BotInstance) -> Dict[str, object]:
+    _bot_yaml, _local_env, adapter, plan = _provision_context(inst)
+    plan_payload = plan.to_dict()
+    rendered_fields = list(plan_payload.get("fields", []))
+    return {
+        "schema_version": 2,
+        "platform": plan.platform,
+        "adapter_id": adapter.adapter_id,
+        "bot_id": plan.bot_id,
+        "requires_code_worker": plan.requires_code_worker,
+        "common_fields": [field for field in rendered_fields if field.get("group") != "platform"],
+        "fields": [field for field in rendered_fields if field.get("group") == "platform"],
+        "setup_actions": [
+            {
+                "id": action.id,
+                "label": action.label,
+                "description": action.description,
+                "guided_surface": getattr(action, "guided_surface", "console"),
+                "default_verb": getattr(action, "default_verb", "start"),
+            }
+            for action in adapter.setup_actions()
+        ],
+        "shared_services": _shared_service_steps(inst),
+    }
 
 
 def _bot_tool_pack_ids(bot_data: dict[str, Any]) -> set[str]:
@@ -1101,41 +1065,45 @@ def _shared_service_steps(inst: BotInstance) -> list[dict[str, object]]:
 
 
 def write_instance_env(inst: BotInstance, secrets: Dict[str, str]) -> Dict[str, object]:
-    """把机密写进 bot-owned local.env，并生成实例运行时 env（chmod 600）。
+    """安全 patch bot-owned local.env，并生成实例运行时 env。
 
     local.env 是本机私有配置源；运行时 env 由 ``chatcopilot bot provision-env``
     从 bot.yaml + local.env 生成，避免控制台重复实现路径推导。
     """
-    values = _normalize_secret_values(inst, secrets)
-    required = [spec.env_key for spec in _allowed_secret_specs(inst) if spec.required]
-    missing = [k for k in required if not values.get(k)]
-    if missing:
-        return {"ok": False, "error": f"缺少必填机密：{', '.join(missing)}"}
-    validator = getattr(get_adapter(inst.platform), "validate_runtime_env", None)
-    platform_errors = tuple(validator(values)) if callable(validator) else ()
-    if platform_errors:
-        return {"ok": False, "error": "; ".join(platform_errors)}
-    local_env = _bot_local_env_path(inst)
-
-    # 机密落盘交给 write_env.sh：每行 KEY=base64(value)，机密不进 argv。
-    layout = [*_COMMON_ENV_LAYOUT_KEYS, *(spec.env_key for spec in _platform_secret_specs(inst))]
-    written_keys = [k for k in dict.fromkeys(layout) if values.get(k)]
-    payload_lines = [
-        f"{key}={base64.b64encode(values[key].encode('utf-8')).decode('ascii')}"
-        for key in written_keys
-    ]
     try:
-        cp = subprocess.run(
-            ["bash", str(_console_script("write_env.sh")), str(local_env)],
-            input="\n".join(payload_lines) + "\n",
-            capture_output=True,
-            text=True,
-            timeout=30.0,
+        bot_yaml, local_env, adapter, plan = _provision_context(inst)
+        by_alias = {
+            alias: field
+            for field in plan.fields
+            for alias in (field.field, field.env_key)
+        }
+        for key, value in secrets.items():
+            field = by_alias.get(str(key))
+            if field is not None and field.host_generated and str(value or "").strip():
+                return {
+                    "ok": False,
+                    "stage": "local_env",
+                    "error": f"host_generated_field_must_not_be_submitted:{field.field}",
+                }
+        receipt = patch_local_env(
+            local_env,
+            plan,
+            secrets,
+            adapter=adapter,
+            allowed_parent=bot_yaml.parent,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"ok": False, "error": f"调用 write_env.sh 失败：{exc}"}
-    if cp.returncode != 0:
-        return {"ok": False, "error": (cp.stderr or cp.stdout or "写入 local.env 失败").strip()}
+    except (OSError, ValueError, ProvisioningError) as exc:
+        message = str(exc)
+        if message.startswith("unknown_provision_field:"):
+            message = "unknown_provision_field"
+        return {"ok": False, "stage": "local_env", "error": message}
+
+    receipt_payload = receipt.to_dict()
+    env_key_by_field = {field.field: field.env_key for field in plan.fields}
+    written_keys = [
+        env_key_by_field.get(field, field)
+        for field in receipt_payload.get("changed_fields", [])
+    ]
 
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{repo_root() / 'src'}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
@@ -1148,7 +1116,7 @@ def write_instance_env(inst: BotInstance, secrets: Dict[str, str]) -> Dict[str, 
                 "bot",
                 "provision-env",
                 "--bot",
-                inst.bot_spec,
+                str(bot_yaml),
             ],
             cwd=str(repo_root()),
             env=env,
@@ -1157,15 +1125,26 @@ def write_instance_env(inst: BotInstance, secrets: Dict[str, str]) -> Dict[str, 
             timeout=30.0,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        return {"ok": False, "error": f"调用 bot provision-env 失败：{exc}"}
+        return {
+            "ok": False,
+            "stage": "runtime_env",
+            "error": f"调用 bot provision-env 失败：{exc}",
+            "receipt": receipt_payload,
+        }
     if provision.returncode != 0:
-        return {"ok": False, "error": (provision.stderr or provision.stdout or "生成运行时 env 失败").strip()}
+        return {
+            "ok": False,
+            "stage": "runtime_env",
+            "error": (provision.stderr or provision.stdout or "生成运行时 env 失败").strip(),
+            "receipt": receipt_payload,
+        }
 
     return {
         "ok": True,
         "env_file": inst.env_file,
         "local_env_file": str(local_env),
         "written_keys": written_keys,
+        "receipt": receipt_payload,
     }
 
 

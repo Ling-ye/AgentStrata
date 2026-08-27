@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+import secrets
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from chatcopilot.core.allowlists import (
@@ -142,39 +143,68 @@ class QQAdapter(PlatformAdapter):
     # -- deploy -------------------------------------------------------------
     def required_secrets(self) -> tuple[SecretSpec, ...]:
         return (
-            SecretSpec("QQ_ACCOUNT", required=True, description="机器人 QQ 号，用于 @ 识别与 NapCat 登录"),
+            SecretSpec(
+                "QQ_ACCOUNT",
+                required=True,
+                label="机器人 QQ 号",
+                description="用于 @ 识别与 NapCat 登录的稳定数字 ID",
+            ),
             SecretSpec(
                 "QQ_WS_URL",
                 required=False,
                 default="ws://127.0.0.1:3001",
+                label="OneBot WebSocket 地址",
                 description="NapCat 正向 WebSocket 地址（OneBot v11）",
             ),
             SecretSpec(
                 "QQ_ACCESS_TOKEN",
                 required=True,
+                label="OneBot Access Token",
                 description="OneBot access token（32–128 位 URL-safe 字符）",
+                host_generated=True,
             ),
             SecretSpec(
                 "QQ_ALLOW_FROM",
                 required=False,
                 default="",
+                label="允许接入的 QQ 用户",
                 description="ACP QQ 用户准入名单（空值不授予权限）",
             ),
             SecretSpec(
                 "QQ_ALLOW_GROUPS",
                 required=False,
                 default="",
+                label="允许接入的 QQ 群",
                 description="ACP QQ 群准入名单（空值不授予权限）",
             ),
             SecretSpec(
                 "QQ_AT_PROXY_URL",
                 required=False,
                 default="ws://127.0.0.1:3002",
+                label="QQ @ Relay 地址",
                 description="QQ @ Relay 监听地址；cc-connect 固定连接此回环地址",
             ),
-            SecretSpec("QQ_WEBUI_PORT", required=False, default="6099", description="NapCat WebUI 端口"),
-            SecretSpec("QQ_IMAGE_MAX_BYTES", required=False, default="5242880", description="QQ image max bytes"),
-            SecretSpec("QQ_IMAGE_SEND_TIMEOUT_SECONDS", required=False, default="15", description="QQ image send timeout seconds"),
+            SecretSpec(
+                "QQ_WEBUI_PORT",
+                required=False,
+                default="6099",
+                label="NapCat WebUI 端口",
+                description="仅绑定本机回环地址的 WebUI 端口",
+            ),
+            SecretSpec(
+                "QQ_IMAGE_MAX_BYTES",
+                required=False,
+                default="5242880",
+                label="QQ 图片大小上限",
+                description="QQ image max bytes",
+            ),
+            SecretSpec(
+                "QQ_IMAGE_SEND_TIMEOUT_SECONDS",
+                required=False,
+                default="15",
+                label="QQ 图片发送超时",
+                description="QQ image send timeout seconds",
+            ),
         )
 
     def validate_runtime_env(self, env: Mapping[str, str]) -> tuple[str, ...]:
@@ -213,6 +243,19 @@ class QQAdapter(PlatformAdapter):
             errors.append(f"{exc.error_code}: {exc}")
         return tuple(errors)
 
+    def materialize_host_generated_secret(
+        self,
+        env_key: str,
+        current_value: str,
+    ) -> str:
+        if env_key != "QQ_ACCESS_TOKEN":
+            return super().materialize_host_generated_secret(env_key, current_value)
+        try:
+            require_access_token(current_value)
+        except QQBoundaryError:
+            return secrets.token_urlsafe(32)
+        return current_value
+
     def setup_actions(self) -> tuple[SetupActionSpec, ...]:
         return (
             SetupActionSpec(
@@ -234,6 +277,8 @@ class QQAdapter(PlatformAdapter):
                     "status",
                     "logs",
                 ),
+                guided_surface="terminal",
+                default_verb="bootstrap",
             ),
         )
 

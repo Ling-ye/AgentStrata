@@ -147,11 +147,10 @@ attestation 的身份事件解释消息来源；Relay 的结构化 @ 触发只�
 
 ## NapCat WebUI 登录
 
--  服务管理中的“WebUI 登录”调用 `POST /api/infra/napcat:<instance>/webui-session`；后端通过 `qq_gateway.sh bootstrap` 幂等启动或修正回环容器，等待 `localhost:6099` 就绪后返回含 WebUI 管理 token 的登录链接。
--  WebUI 管理 token 来自 NapCat 容器日志，只用于进入管理面板，不是正向 OneBot WebSocket 的 `QQ_ACCESS_TOKEN`；相关响应带 `Cache-Control: no-store`。
--  已停止容器仍可通过 `GET /api/infra/napcat:<instance>/webui-token` 恢复历史 WebUI token；容器不存在或日志尚未产生 token 时返回明确错误。
--  NapCat 的正式“启动/重启”继续要求合法 `QQ_ACCESS_TOKEN` 并通过双向 OneBot 探针；WebUI bootstrap 不启动 QQ Bot service，也不降低该门禁。
--  缺失或错配 OneBot token 时先在 WSL 执行 `bash deploy/wsl/qq_gateway.sh sync-token --instance <id>`，再运行实例更新；控制台的 gateway 输出会移除 ANSI 控制序列，启动等待期的临时探针错误不会混入成功响应。
+- Console 只读取并投影 NapCat 登录状态，不通过 HTTP 返回 WebUI 管理 token，也不编排 bootstrap、扫码、Docker 或 systemd。
+- 首次登录或恢复登录统一在仓库目录运行 `bash deploy/wsl/quickstart.sh --bot-id <id> --resume`。向导会在可信交互式终端显示一次本地 WebUI 链接，扫码完成后继续同步 OneBot token 与部署实例。
+- WebUI 管理 token 只用于 NapCat 本地面板，不是正向 OneBot WebSocket 的 `QQ_ACCESS_TOKEN`；两种凭据都不进入 Console HTTP 响应。
+- NapCat 的正式启动或重启继续要求合法 `QQ_ACCESS_TOKEN` 并通过双向 OneBot 探针；Console 状态检查不会降低该门禁。
 
 ## Evaluation 评测中心
 
@@ -278,7 +277,7 @@ WSL 终端直接运行不带参数的 `bash deploy/wsl/deploy_console.sh` 是全
 | 控制台日志 | `/api/console/logs/stream` SSE |
 | 任务流 | `/api/tasks/{task_id}/stream` SSE |
 | 实例诊断 | `bash deploy/wsl/dump.sh --instance <id>` |
-| NapCat WebUI 登录 | `POST /api/infra/napcat:<id>/webui-session` → `qq_gateway.sh bootstrap` |
+| NapCat 登录状态 | Console 只读检查；登录与恢复交给 `bash deploy/wsl/quickstart.sh --bot-id <id> --resume` |
 
 ## 前端协作规则
 

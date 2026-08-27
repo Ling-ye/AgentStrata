@@ -55,9 +55,24 @@ def load_local_env_values(
             return {}
         raise FileNotFoundError(f"本地配置不存在：{path}")
 
+    return parse_local_env_text(
+        path.read_text(encoding="utf-8", errors="replace"),
+        source=path,
+        expand_home=expand_home,
+    )
+
+
+def parse_local_env_text(
+    text: str,
+    *,
+    source: str | Path = "<local.env>",
+    expand_home: bool = False,
+) -> dict[str, str]:
+    """Parse already-trusted env text without evaluating shell expressions."""
+
     values: dict[str, str] = {}
     for lineno, raw in enumerate(
-        path.read_text(encoding="utf-8", errors="replace").splitlines(),
+        text.splitlines(),
         1,
     ):
         line = raw.strip()
@@ -69,16 +84,16 @@ def load_local_env_values(
             lexer.commenters = "#"
             parts = list(lexer)
         except ValueError as exc:
-            raise ValueError(f"{path}:{lineno} 不是合法的 shell export 行") from exc
+            raise ValueError(f"{source}:{lineno} 不是合法的 shell export 行") from exc
         assignments = parts[1:] if parts and parts[0] == "export" else parts
         for item in assignments:
             if "=" not in item:
-                raise ValueError(f"{path}:{lineno} 缺少 KEY=value")
+                raise ValueError(f"{source}:{lineno} 缺少 KEY=value")
             key, value = item.split("=", 1)
             if not key or not (key[0].isalpha() or key[0] == "_") or not all(
                 ch.isalnum() or ch == "_" for ch in key
             ):
-                raise ValueError(f"{path}:{lineno} 非法 env key")
+                raise ValueError(f"{source}:{lineno} 非法 env key")
             values[key] = expand_leading_home(value) if expand_home else value
     return values
 

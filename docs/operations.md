@@ -43,29 +43,21 @@ python -m chatcopilot bot doctor --bot bots/<id>/bot.yaml
 | 查看共享 Docker 服务 | `bash deploy/docker/services.sh status` |
 | 收集诊断快照 | `bash deploy/wsl/dump.sh --instance <id> --mode quick` |
 
-## 安装与启用
+## 部署完成后的起点
 
-首次准备源仓环境和控制台：
-
-```bash
-bash deploy/wsl/install_wsl_env.sh --with-console
-```
-
-部署源仓环境、控制台、BotSpec 所需的共享 Docker 服务和内置 Bot 实例：
+首次安装只使用 [`deployment.md`](deployment.md) 说明的引导入口；本手册不复制安装、
+Docker 配置或 NapCat 扫码顺序。引导流程完成后，先保存输出中的 Bot ID，再确认实例与
+QQ gateway 的本地状态：
 
 ```bash
-bash deploy/wsl/deploy_all.sh
+python -m chatcopilot bot doctor --bot bots/<id>/bot.yaml --json
+bash console/scripts/ctl.sh status <id>
+bash deploy/wsl/qq_gateway.sh status --instance <id>
 ```
 
-先预览一键部署，或跳过部分组件：
-
-```bash
-bash deploy/wsl/deploy_all.sh --dry-run
-bash deploy/wsl/deploy_all.sh --skip-docker
-bash deploy/wsl/deploy_all.sh --skip-bots
-```
-
-完整安装说明与手动顺序见 [`deployment.md`](deployment.md)。
+新手部署默认不安装 Console。需要 Console、Evaluation 或高级内置实例时，先阅读
+[`deployment.md#高级实例与可选-console`](deployment.md#高级实例与可选-console) 的边界，
+再使用本手册对应章节的明确命令。
 
 ## Bot 实例
 
@@ -109,7 +101,8 @@ systemctl --user status chatcopilot@<id>.service --no-pager -l
 journalctl --user -u chatcopilot@<id>.service -n 120 --no-page
 ```
 
-Codex 隔离代码任务还使用独立 worker：
+只有 BotSpec 启用 `dev.code_tasks` 时才有独立 worker；通用 starter 的该项为
+`not_applicable`：
 
 ```bash
 systemctl --user status chatcopilot-code-worker@<id>.service --no-pager -l
@@ -226,29 +219,31 @@ python -m chatcopilot.evals.service maintenance leave --lease-id <lease-id>
 ## QQ / NapCat
 
  OneBot `3001` 和 WebUI `6099` 只允许绑定回环地址。WebUI 管理
-token 只用于登录管理面板，不是 `QQ_ACCESS_TOKEN`。
+token 只用于登录管理面板，不是 `QQ_ACCESS_TOKEN`。首次部署和扫码只使用
+[`deployment.md`](deployment.md) 的 `quickstart.sh`；下面的 bootstrap 命令仅用于
+已安装实例的 NapCat 登录修复。
 
-首次登录或修复回环容器：
+修复回环容器并重新登录：
 
 ```bash
-bash deploy/wsl/qq_gateway.sh bootstrap --instance lingye-copilot-qq
+bash deploy/wsl/qq_gateway.sh bootstrap --instance <id>
 ```
 
 在 `http://localhost:6099` 完成 NapCat 登录后，同步或生成强 OneBot token，再启动
 gateway 和实例：
 
 ```bash
-bash deploy/wsl/qq_gateway.sh sync-token --instance lingye-copilot-qq
-bash deploy/wsl/qq_gateway.sh start --instance lingye-copilot-qq
-bash deploy/wsl/update_instance.sh --instance lingye-copilot-qq --enable
+bash deploy/wsl/qq_gateway.sh sync-token --instance <id>
+bash deploy/wsl/qq_gateway.sh status --instance <id>
+bash deploy/wsl/update_instance.sh --instance <id> --enable
 ```
 
 日常状态、重启和日志：
 
 ```bash
-bash deploy/wsl/qq_gateway.sh status --instance lingye-copilot-qq
-bash deploy/wsl/qq_gateway.sh restart --instance lingye-copilot-qq
-bash deploy/wsl/qq_gateway.sh logs --instance lingye-copilot-qq
+bash deploy/wsl/qq_gateway.sh status --instance <id>
+bash deploy/wsl/qq_gateway.sh restart --instance <id>
+bash deploy/wsl/qq_gateway.sh logs --instance <id>
 ```
 
  `sync-token` 只原子更新 Bot 私有 `local.env` 中的

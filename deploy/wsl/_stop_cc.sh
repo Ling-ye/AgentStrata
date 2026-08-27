@@ -20,23 +20,66 @@ ccp_apply_bot_deploy_config
 
 CC_HOME="${CHATCOPILOT_CC_HOME:-$CCP_CC_HOME_DEFAULT}"
 PIDFILE="$CC_HOME/cc-connect.pid"
+INSTANCE_ID="${CHATCOPILOT_INSTANCE_ID:-}"
 
 step() { printf "[stop] %s\n" "$*"; }
 ok()   { printf "[OK] %s\n" "$*"; }
 warn() { printf "[WARN] %s\n" "$*"; }
 err()  { printf "[ERR] %s\n" "$*" >&2; }
 
+process_has_env() {
+    local pid="$1" assignment="$2"
+    tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
+        | awk -v expected="$assignment" '$0 == expected { found = 1 } END { exit(found ? 0 : 1) }'
+}
+
+pid_is_owned_and_running() {
+    local pid="${1:-}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [ "$(stat -c '%u' "/proc/$pid" 2>/dev/null || true)" = "$(id -u)" ] || return 1
+    kill -0 "$pid" 2>/dev/null
+}
+
+relay_pid_matches_instance() {
+    local pid="${1:-}"
+    pid_is_owned_and_running "$pid" || return 1
+    tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null \
+        | awk '
+            previous_two == "-m" && previous_one == "chatcopilot" \
+                && $0 == "qq-at-proxy" { found = 1 }
+            { previous_two = previous_one; previous_one = $0 }
+            END { exit(found ? 0 : 1) }
+        ' \
+        || return 1
+    process_has_env "$pid" "CHATCOPILOT_INSTANCE_ID=$INSTANCE_ID" \
+        && process_has_env "$pid" "CHATCOPILOT_CC_HOME=$CC_HOME"
+}
+
+cc_connect_pid_matches_instance() {
+    local pid="${1:-}"
+    pid_is_owned_and_running "$pid" || return 1
+    tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null \
+        | awk 'index($0, "cc-connect") { found = 1 } END { exit(found ? 0 : 1) }' \
+        || return 1
+    process_has_env "$pid" "HOME=$CC_HOME" \
+        && process_has_env "$pid" "CHATCOPILOT_INSTANCE_ID=$INSTANCE_ID"
+}
+
 # 先停 QQ @ Relay（若有）。按实例 pidfile 隔离，不误杀别的实例。
 QQ_PROXY_PIDFILE="$CC_HOME/qq-at-proxy.pid"
 if [ -r "$QQ_PROXY_PIDFILE" ]; then
     _qpp="$(tr -d ' \t\r\n' < "$QQ_PROXY_PIDFILE" 2>/dev/null || true)"
-    if [ -n "$_qpp" ] && kill -0 "$_qpp" 2>/dev/null; then
+    if relay_pid_matches_instance "$_qpp"; then
         step "停止 QQ @ Relay pid=$_qpp"
         kill -TERM "$_qpp" 2>/dev/null || true
         sleep 1
-        kill -KILL "$_qpp" 2>/dev/null || true
+        if relay_pid_matches_instance "$_qpp"; then
+            kill -KILL "$_qpp" 2>/dev/null || true
+        fi
+    elif [ -n "$_qpp" ]; then
+        warn "忽略未绑定当前实例的残留 QQ Relay pid=$_qpp"
     fi
-    rm -f "$QQ_PROXY_PIDFILE"
+    rm -f -- "$QQ_PROXY_PIDFILE"
 fi
 
 # 列出本实例对应的 cc-connect PID 集合（去重 + 校验存活）
@@ -45,21 +88,19 @@ list_instance_pids() {
     if [ -r "$PIDFILE" ]; then
         local _p
         _p="$(tr -d ' \t\r\n' < "$PIDFILE" 2>/dev/null || true)"
-        if [ -n "$_p" ] && kill -0 "$_p" 2>/dev/null; then
+        if cc_connect_pid_matches_instance "$_p"; then
             pids="$_p"
+        elif [ -n "$_p" ]; then
+            warn "忽略未绑定当前实例的残留 cc-connect pid=$_p" >&2
         fi
     fi
-    # 兜底：按 environ 里的 HOME=$CC_HOME 匹配，处理 pidfile 缺失或被覆盖的场景
-    local pid environ
+    # 兜底仍同时验证命令与实例环境，不能只凭进程名或 pidfile 发信号。
+    local pid
     while IFS= read -r pid; do
         [ -z "$pid" ] && continue
-        if [ -r "/proc/$pid/environ" ]; then
-            environ="$(tr '\0' '\n' < /proc/$pid/environ 2>/dev/null || true)"
-            if echo "$environ" | grep -Fxq "HOME=$CC_HOME"; then
-                if ! echo " $pids " | grep -Fq " $pid "; then
-                    pids="${pids:+$pids }$pid"
-                fi
-            fi
+        if cc_connect_pid_matches_instance "$pid" \
+            && ! echo " $pids " | grep -Fq " $pid "; then
+            pids="${pids:+$pids }$pid"
         fi
     done < <(pgrep -x cc-connect 2>/dev/null || pgrep -f cc-connect 2>/dev/null || true)
     echo "$pids"
@@ -74,7 +115,9 @@ fi
 
 step "停止 cc-connect（实例 CC_HOME=$CC_HOME, PID=$PIDS）"
 for pid in $PIDS; do
-    kill -TERM "$pid" 2>/dev/null || true
+    if cc_connect_pid_matches_instance "$pid"; then
+        kill -TERM "$pid" 2>/dev/null || true
+    fi
 done
 for _ in 1 2 3 4 5; do
     sleep 1
@@ -85,7 +128,9 @@ done
 if [ -n "$PIDS" ]; then
     warn "SIGTERM 未退干净，发送 SIGKILL：$PIDS"
     for pid in $PIDS; do
-        kill -KILL "$pid" 2>/dev/null || true
+        if cc_connect_pid_matches_instance "$pid"; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
     done
     sleep 1
     PIDS="$(list_instance_pids)"

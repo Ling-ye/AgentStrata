@@ -1,12 +1,3 @@
-export interface NapcatWebuiToken {
-  ok: boolean;
-  token: string;
-  url: string;
-  container: string;
-  running: boolean;
-  bootstrapped?: boolean;
-}
-
 export interface InfraService {
   id: string;
   display_name: string;
@@ -29,7 +20,7 @@ export interface InfraService {
 
 export interface ToolPackGroup {
   namespace: string;
-  label: string;
+  label?: string;
   tool_packs: string[];
 }
 
@@ -306,7 +297,13 @@ export interface ProvisionEnvPayload {
 export interface ProvisionField {
   env_key: string;
   field: string;
+  label: string;
+  group: string;
   required: boolean;
+  secret: boolean;
+  configured: boolean;
+  /** The host generates this value; it remains visible in schema but is never submitted by Console. */
+  host_generated?: boolean;
   default?: string | null;
   description?: string;
 }
@@ -315,6 +312,8 @@ export interface SetupAction {
   id: string;
   label: string;
   description?: string;
+  guided_surface?: "console" | "terminal";
+  default_verb?: string;
 }
 
 export interface SharedServiceStep {
@@ -326,12 +325,30 @@ export interface SharedServiceStep {
 }
 
 export interface ProvisionSchema {
+  schema_version: 2;
   platform: string;
   adapter_id: string;
+  bot_id: string;
+  requires_code_worker: boolean;
   common_fields: ProvisionField[];
   fields: ProvisionField[];
   setup_actions: SetupAction[];
   shared_services?: SharedServiceStep[];
+}
+
+export interface ProvisionReceipt {
+  committed: boolean;
+  changed_fields: string[];
+  preserved_fields: string[];
+  config_sha256: string;
+}
+
+export interface ProvisionEnvResult {
+  ok: boolean;
+  env_file: string;
+  local_env_file?: string;
+  written_keys: string[];
+  receipt: ProvisionReceipt;
 }
 
 export interface XhsLoginQrcode {

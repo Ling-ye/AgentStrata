@@ -2,6 +2,17 @@
 
 此目录是新建机器人实例的复制模板，不是可运行实例。这里故意不提供 `bot.yaml`，避免 `python -m chatcopilot bot list` 把模板识别为真实机器人。
 
+## 先选择创建方式
+
+- **QQ 新手 starter（推荐）**：运行 `bash deploy/wsl/quickstart.sh`。它调用
+  `bot new --platform qq --preset starter`，只启用 Native 日常对话、workspace、memory、
+  私有工作区和基础附件，并交互生成与验证 `local.env`。不需要复制本目录，也不会默认启用
+  Persona、搜索、MCP、Codex 或 code-worker。
+- **最小程序化骨架**：`python -m chatcopilot bot new <id> --platform <qq|feishu>` 保持
+  兼容，只生成最少的 BotSpec 与 prompt；调用方继续自行选择能力和配置环境。
+- **高级手工模板**：只有需要完整 QQ/飞书模板、MCP binding 或高级上下文时才按下面步骤
+  复制本目录。模板不是一键部署入口。
+
 ## 使用方式
 
 1. 复制整个目录到新的机器人目录，例如 `bots/my-bot/`。
@@ -20,7 +31,7 @@ python -m chatcopilot botspec validate bots/my-bot/bot.yaml
 python -m chatcopilot bot doctor --bot bots/my-bot/bot.yaml
 ```
 
-## 默认能力
+## 高级模板的默认能力
 
 模板默认启用通用助手工具与运行特性：
 
@@ -32,6 +43,11 @@ python -m chatcopilot bot doctor --bot bots/my-bot/bot.yaml
 - `chat.private_workspace`
 
 如需 Unity 代码库或 Windows 文件读取能力，请在复制后的 `bot.yaml` 中显式添加对应 `tools.packs`，并同步检查凭证、白名单和提示词边界。
+
+新手 starter 固定只选择 `workspace.read_write`、`memory.chat`、
+`chat.file_uploads` 与 `chat.private_workspace`；不要把本节的高级默认能力误认为 starter
+已启用。starter 的 `local.env.example` 只列 OpenAI-compatible LLM、QQ、Owner/准入和
+workspace 所需字段，真实值仍只写 ignored、mode `0600` 的 `local.env`。
 
 ## 可选：代码仓库能力
 

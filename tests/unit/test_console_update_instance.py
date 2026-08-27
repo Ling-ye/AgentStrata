@@ -19,11 +19,11 @@ from console.control.instances import BotInstance
 
 _REBUILD_INPUTS = (
     "pyproject.toml",
-    "requirements.txt",
-    "src/chatcopilot/agent/requirements.txt",
-    "src/chatcopilot/middleware/acp/requirements.txt",
+    "uv.lock",
+    "deploy/wsl/install_wsl_env.sh",
+    "deploy/wsl/node-tools/package.json",
+    "deploy/wsl/node-tools/package-lock.json",
     "deploy/wsl/bootstrap_wsl.sh",
-    "deploy/wsl/setup_wsl_user.sh",
 )
 
 
@@ -66,8 +66,26 @@ def _make_update_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
                 "  exit 24\n"
                 "fi\n"
             )
-        elif rel == "deploy/wsl/setup_wsl_user.sh":
-            content = "#!/usr/bin/env bash\nexit 0\n"
+        elif rel == "deploy/wsl/install_wsl_env.sh":
+            content = (
+                "#!/usr/bin/env bash\n"
+                'if [ "$PWD" = "$RUNTIME_ROOT_FIXTURE" ]; then\n'
+                '  echo runtime-deps >> "$STAGE_LOG"\n'
+                '  if [ "${FAIL_STAGE:-}" = "runtime-deps" ]; then\n'
+                '    echo "[ERR] locked runtime sync detail" >&2\n'
+                "    exit 26\n"
+                "  fi\n"
+                "else\n"
+                '  echo source-deps >> "$STAGE_LOG"\n'
+                "fi\n"
+                'if [ "${FAIL_STAGE:-}" = "source-deps" ]; then\n'
+                '  echo "[ERR] locked source sync detail" >&2\n'
+                "  exit 20\n"
+                "fi\n"
+                'if [ "${FAIL_STAGE:-}" = "bot-drift" ]; then\n'
+                '  printf "id: test-bot\\nmarker: drifted-during-deps\\n" > "$SOURCE_BOT"\n'
+                "fi\n"
+            )
         for root in (source, runtime):
             path = root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,15 +103,9 @@ def _make_update_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
 
     fake_python = (
         "#!/usr/bin/env bash\n"
-        'if [[ "$*" == *"pip install --quiet -r"* ]]; then\n'
-        '  echo source-deps >> "$STAGE_LOG"\n'
-        '  if [ "${FAIL_STAGE:-}" = "source-deps" ]; then\n'
-        '    echo "[ERR] source dependency detail" >&2\n'
-        "    exit 20\n"
-        "  fi\n"
-        '  if [ "${FAIL_STAGE:-}" = "bot-drift" ]; then\n'
-        '    printf "id: test-bot\\nmarker: drifted-during-deps\\n" > "$SOURCE_BOT"\n'
-        "  fi\n"
+        'if [ -n "${CHATCOPILOT_REQUIREMENT_BOT:-}" ]; then\n'
+        '  if grep -Fq -- "- dev.code_tasks" "$CHATCOPILOT_REQUIREMENT_BOT"; then echo 1; else echo 0; fi\n'
+        "  exit 0\n"
         "fi\n"
         'if [[ "$*" == *"provision-env"* ]]; then\n'
         '  echo provision >> "$STAGE_LOG"\n'
@@ -127,8 +139,8 @@ def _make_update_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
         '  mkdir -p "$sync_dst/bots/test-bot"\n'
         '  cp "$sync_src/bots/test-bot/bot.yaml" "$sync_dst/bots/test-bot/bot.yaml"\n'
         "fi\n"
-        'if [ -f "$sync_src/requirements.txt" ]; then\n'
-        '  cp "$sync_src/requirements.txt" "$sync_dst/requirements.txt"\n'
+        'if [ -f "$sync_src/uv.lock" ]; then\n'
+        '  cp "$sync_src/uv.lock" "$sync_dst/uv.lock"\n'
         "fi\n",
     )
     _write_executable(
@@ -158,7 +170,8 @@ def _make_update_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     _write_executable(
         fake_bin / "systemctl",
         "#!/usr/bin/env bash\n"
-        'if [[ "$*" == *" cat chatcopilot-code-worker@"* ]]; then exit 1; fi\n'
+        'if [ -n "${SYSTEMCTL_LOG:-}" ]; then echo "$*" >> "$SYSTEMCTL_LOG"; fi\n'
+        'if [[ "$*" == *" cat chatcopilot-code-worker@"* ]] && [ "${WORKER_UNIT_EXISTS:-0}" != 1 ]; then exit 1; fi\n'
         'if [[ "$*" == *" is-active "*"chatcopilot@"* ]]; then\n'
         '  [ "${FAIL_STAGE:-}" != "inactive" ] || exit 1\n'
         "fi\n"
@@ -179,6 +192,9 @@ def _run_update_fixture(
     changed_files: tuple[str, ...] = ("bots/test-bot/bot.yaml",),
     destination: str | None = None,
     home: Path | None = None,
+    enable_service: bool = False,
+    worker_unit_exists: bool = False,
+    systemctl_log: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     script = Path("deploy/wsl/update_instance.sh").resolve()
     args = [
@@ -202,13 +218,19 @@ def _run_update_fixture(
         args.extend(["--sync-src", str(sync_source), "--changed-files", str(manifest)])
     if dry_run:
         args.append("--dry-run")
+    if enable_service:
+        args.append("--enable")
     env = {
         **os.environ,
         "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
         "STAGE_LOG": str(stage_log),
+        "RUNTIME_ROOT_FIXTURE": str(runtime),
         "FAIL_STAGE": fail_stage,
         "SOURCE_BOT": str(source / "bots/test-bot/bot.yaml"),
+        "WORKER_UNIT_EXISTS": "1" if worker_unit_exists else "0",
     }
+    if systemctl_log is not None:
+        env["SYSTEMCTL_LOG"] = str(systemctl_log)
     if home is not None:
         env["HOME"] = str(home)
     return subprocess.run(args, capture_output=True, text=True, env=env, timeout=20)
@@ -249,28 +271,92 @@ def test_update_script_sets_pythonpath_for_provision_env() -> None:
     text = Path("deploy/wsl/update_instance.sh").read_text(encoding="utf-8")
 
     assert 'VENV_PY="$SRC/.venv/bin/python"' in text
-    assert 'python3 -m venv "$venv_dir"' in text
-    assert '"$venv_py" -c "import yaml"' in text
-    assert '"$venv_py" -m pip install --quiet -r "$req"' in text
-    assert 'echo "      请确认 WSL 已安装 python3-venv，或检查 Python 环境。"' in text
-    assert 'echo "      请检查网络或 pip 源配置。"' in text
+    assert 'bash "$installer" --no-system-packages --skip-cc-connect' in text
+    assert '--venv "$venv_dir" --no-verify' in text
+    assert 'python3 -m venv "$venv_dir"' not in text
+    assert ' -m pip install ' not in text
     assert 'export PYTHONPATH="$SRC/src${PYTHONPATH:+:$PYTHONPATH}"' in text
     assert '"$PY" -m chatcopilot bot provision-env --bot "$BOT_FOR_CMD"' in text
     assert 'PY="$(command -v python3 || command -v python || true)"' not in text
+    assert "command -v python3" not in text
 
 
 def test_update_script_dry_run_reports_selected_python_and_pythonpath() -> None:
     text = Path("deploy/wsl/update_instance.sh").read_text(encoding="utf-8")
 
-    assert "[DRY-RUN] would ensure source venv:" in text
-    assert "[DRY-RUN] would create missing venv with: python3 -m venv" in text
-    assert "[DRY-RUN] would check: '$VENV_PY' -c 'import yaml'" in text
-    assert "[DRY-RUN] would refresh source CLI deps:" in text
-    assert "[DRY-RUN] would install missing source CLI deps if required:" in text
+    assert "[DRY-RUN] would ensure source venv from:" in text
+    assert "[DRY-RUN] would run locked installer:" in text
+    assert "[DRY-RUN] would reconcile source CLI with uv sync --frozen" in text
     assert '[DRY-RUN] would export: PYTHONPATH=' in text
     assert '[DRY-RUN] would run: \'$VENV_PY\' -m chatcopilot bot provision-env' in text
     assert "[DRY-RUN] selected update mode:" in text
     assert "[DRY-RUN] would run: python -m chatcopilot" not in text
+
+
+def test_update_script_dry_run_never_executes_existing_source_python(
+    tmp_path: Path,
+) -> None:
+    source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
+    marker = tmp_path / "untrusted-python-executed"
+    _write_executable(
+        source / ".venv/bin/python",
+        "#!/usr/bin/env bash\n" f'touch "{marker}"\n' "exit 0\n",
+    )
+
+    result = _run_update_fixture(
+        source,
+        runtime,
+        stage_log,
+        fake_bin,
+        dry_run=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "deferred until locked source CLI reconciliation" in result.stdout
+    assert not marker.exists()
+    assert not stage_log.exists()
+
+
+def test_update_script_reconciles_before_executing_existing_source_python(
+    tmp_path: Path,
+) -> None:
+    source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
+    reconciled = tmp_path / "source-reconciled"
+    unsafe_execution = tmp_path / "pre-reconcile-python-executed"
+    installer = (
+        "#!/usr/bin/env bash\n"
+        'if [ "$PWD" = "$RUNTIME_ROOT_FIXTURE" ]; then\n'
+        '  echo runtime-deps >> "$STAGE_LOG"\n'
+        "else\n"
+        '  echo source-deps >> "$STAGE_LOG"\n'
+        f'  touch "{reconciled}"\n'
+        "fi\n"
+    )
+    for root in (source, runtime):
+        _write_executable(root / "deploy/wsl/install_wsl_env.sh", installer)
+    guarded_python = (
+        "#!/usr/bin/env bash\n"
+        f'if [ ! -f "{reconciled}" ]; then touch "{unsafe_execution}"; fi\n'
+        'if [ -n "${CHATCOPILOT_REQUIREMENT_BOT:-}" ]; then echo 0; exit 0; fi\n'
+        'if [[ "$*" == *"provision-env"* ]]; then echo provision >> "$STAGE_LOG"; fi\n'
+        "exit 0\n"
+    )
+    _write_executable(source / ".venv/bin/python", guarded_python)
+
+    result = _run_update_fixture(source, runtime, stage_log, fake_bin)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert reconciled.exists()
+    assert not unsafe_execution.exists()
+    assert stage_log.read_text(encoding="utf-8").splitlines() == [
+        "source-deps",
+        "provision",
+        "sync",
+        "runtime-deps",
+        "apply",
+        "register",
+        "restart",
+    ]
 
 
 def test_update_script_expands_quoted_tilde_destination(tmp_path: Path) -> None:
@@ -299,7 +385,8 @@ def test_update_script_enable_is_post_start_and_fail_closed() -> None:
     assert enable > restart
     assert 'echo "[ERR] systemctl not found"' in text
     assert 'systemctl --user is-active --quiet "$UNIT"' in text
-    assert text.count("systemctl --user is-active --quiet") == 1
+    assert text.count("systemctl --user is-active --quiet") == 2
+    assert 'systemctl --user is-active --quiet "$CODE_WORKER_UNIT"' in text
     assert 'export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$user_uid}"' in text
     assert 'export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$user_uid/bus}"' in text
     assert 'fail_stage "register service" "$rc"' in text
@@ -316,12 +403,67 @@ def test_update_script_uses_fast_path_when_rebuild_inputs_match(tmp_path: Path) 
     assert "mode:     fast" in result.stdout
     assert (runtime / "bots/test-bot/bot.yaml").read_text(encoding="utf-8") == updated_bot
     assert stage_log.read_text(encoding="utf-8").splitlines() == [
+        "source-deps",
         "provision",
         "sync",
+        "runtime-deps",
         "apply",
         "register",
         "restart",
     ]
+
+
+def test_update_script_starts_and_enables_worker_only_when_pack_is_enabled(
+    tmp_path: Path,
+) -> None:
+    source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
+    bot = "id: test-bot\ntools:\n  packs:\n  - dev.code_tasks\n"
+    (source / "bots/test-bot/bot.yaml").write_text(bot, encoding="utf-8")
+    systemctl_log = tmp_path / "systemctl.log"
+
+    result = _run_update_fixture(
+        source,
+        runtime,
+        stage_log,
+        fake_bin,
+        enable_service=True,
+        worker_unit_exists=True,
+        systemctl_log=systemctl_log,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = systemctl_log.read_text(encoding="utf-8").splitlines()
+    worker_unit = "chatcopilot-code-worker" + "@" + "test-bot.service"
+    main_unit = "chatcopilot" + "@" + "test-bot.service"
+    assert f"--user restart {worker_unit}" in calls
+    assert f"--user is-active --quiet {worker_unit}" in calls
+    assert f"--user enable {main_unit}" in calls
+    assert f"--user enable {worker_unit}" in calls
+
+
+def test_update_script_skips_worker_for_bot_without_code_task_pack(
+    tmp_path: Path,
+) -> None:
+    source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
+    systemctl_log = tmp_path / "systemctl.log"
+
+    result = _run_update_fixture(
+        source,
+        runtime,
+        stage_log,
+        fake_bin,
+        enable_service=True,
+        worker_unit_exists=True,
+        systemctl_log=systemctl_log,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = systemctl_log.read_text(encoding="utf-8").splitlines()
+    main_unit = "chatcopilot" + "@" + "test-bot.service"
+    worker_prefix = "chatcopilot-code-worker" + "@"
+    assert f"--user enable {main_unit}" in calls
+    assert not any(worker_prefix in call for call in calls)
+    assert "code worker not applicable" in result.stdout
 
 
 @pytest.mark.parametrize("changed_rel", _REBUILD_INPUTS)
@@ -330,7 +472,14 @@ def test_update_script_rebuilds_when_input_changes(
     changed_rel: str,
 ) -> None:
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
-    (source / changed_rel).write_text("changed\n", encoding="utf-8")
+    changed_path = source / changed_rel
+    if changed_rel == "deploy/wsl/install_wsl_env.sh":
+        changed_path.write_text(
+            changed_path.read_text(encoding="utf-8") + "# changed\n",
+            encoding="utf-8",
+        )
+    else:
+        changed_path.write_text("changed\n", encoding="utf-8")
 
     result = _run_update_fixture(source, runtime, stage_log, fake_bin)
 
@@ -361,7 +510,7 @@ def test_changed_files_mode_compares_canonical_source_inputs(tmp_path: Path) -> 
     overlay = tmp_path / "overlay"
     (overlay / "bots/test-bot").mkdir(parents=True)
     (overlay / "bots/test-bot/bot.yaml").write_text("id: test-bot\n", encoding="utf-8")
-    (source / "requirements.txt").write_text("unrelated source drift\n", encoding="utf-8")
+    (source / "uv.lock").write_text("unrelated source drift\n", encoding="utf-8")
 
     result = _run_update_fixture(
         source,
@@ -374,8 +523,10 @@ def test_changed_files_mode_compares_canonical_source_inputs(tmp_path: Path) -> 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "mode:     fast" in result.stdout
     assert stage_log.read_text(encoding="utf-8").splitlines() == [
+        "source-deps",
         "provision",
         "sync",
+        "runtime-deps",
         "apply",
         "register",
         "restart",
@@ -386,19 +537,19 @@ def test_changed_files_mode_rebuilds_for_selected_overlay_input(tmp_path: Path) 
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
     overlay = tmp_path / "overlay"
     overlay.mkdir()
-    (overlay / "requirements.txt").write_text("changed\n", encoding="utf-8")
+    (overlay / "uv.lock").write_text("changed\n", encoding="utf-8")
     result = _run_update_fixture(
         source,
         runtime,
         stage_log,
         fake_bin,
         sync_source=overlay,
-        changed_files=("requirements.txt",),
+        changed_files=("uv.lock",),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "mode:     full (requirements.txt changed)" in result.stdout
-    assert (runtime / "requirements.txt").read_text(encoding="utf-8") == "changed\n"
+    assert "mode:     full (uv.lock changed)" in result.stdout
+    assert (runtime / "uv.lock").read_text(encoding="utf-8") == "changed\n"
     stages = stage_log.read_text(encoding="utf-8").splitlines()
     assert stages.index("source-deps") < stages.index("provision")
     assert "bootstrap" in stages
@@ -411,7 +562,7 @@ def test_changed_files_mode_rejects_unselected_missing_runtime_input(
     overlay = tmp_path / "overlay"
     (overlay / "bots/test-bot").mkdir(parents=True)
     (overlay / "bots/test-bot/bot.yaml").write_text("id: test-bot\n", encoding="utf-8")
-    (runtime / "requirements.txt").unlink()
+    (runtime / "uv.lock").unlink()
 
     result = _run_update_fixture(
         source,
@@ -423,7 +574,7 @@ def test_changed_files_mode_rejects_unselected_missing_runtime_input(
 
     assert result.returncode == 1
     assert (
-        "requirements.txt is missing from runtime but absent from changed-files manifest"
+        "uv.lock is missing from runtime but absent from changed-files manifest"
         in result.stderr
     )
     assert "sync code to instance failed (exit 1)" in result.stderr
@@ -457,8 +608,8 @@ def test_changed_files_mode_rejects_unselected_bot_source_drift(tmp_path: Path) 
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
     overlay = tmp_path / "overlay"
     overlay.mkdir()
-    (overlay / "requirements.txt").write_text(
-        (runtime / "requirements.txt").read_text(encoding="utf-8"),
+    (overlay / "uv.lock").write_text(
+        (runtime / "uv.lock").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     (source / "bots/test-bot/bot.yaml").write_text(
@@ -472,7 +623,7 @@ def test_changed_files_mode_rejects_unselected_bot_source_drift(tmp_path: Path) 
         stage_log,
         fake_bin,
         sync_source=overlay,
-        changed_files=("requirements.txt",),
+        changed_files=("uv.lock",),
     )
 
     assert result.returncode == 1
@@ -489,7 +640,7 @@ def test_changed_files_mode_rejects_selected_missing_update_input(
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
     overlay = tmp_path / "overlay"
     overlay.mkdir()
-    (runtime / "requirements.txt").unlink()
+    (runtime / "uv.lock").unlink()
     if runtime_venv_missing:
         (runtime / ".venv/bin/python").unlink()
 
@@ -499,11 +650,11 @@ def test_changed_files_mode_rejects_selected_missing_update_input(
         stage_log,
         fake_bin,
         sync_source=overlay,
-        changed_files=("requirements.txt",),
+        changed_files=("uv.lock",),
     )
 
     assert result.returncode == 1
-    assert "requirements.txt is selected but missing from update source" in result.stderr
+    assert "uv.lock is selected but missing from update source" in result.stderr
     assert "sync code to instance failed (exit 1)" in result.stderr
     assert not stage_log.exists()
 
@@ -514,7 +665,7 @@ def test_changed_files_mode_rechecks_bot_after_source_dependency_refresh(
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
     overlay = tmp_path / "overlay"
     overlay.mkdir()
-    (overlay / "requirements.txt").write_text("changed\n", encoding="utf-8")
+    (overlay / "uv.lock").write_text("changed\n", encoding="utf-8")
 
     result = _run_update_fixture(
         source,
@@ -523,7 +674,7 @@ def test_changed_files_mode_rechecks_bot_after_source_dependency_refresh(
         fake_bin,
         fail_stage="bot-drift",
         sync_source=overlay,
-        changed_files=("requirements.txt",),
+        changed_files=("uv.lock",),
     )
 
     assert result.returncode == 1
@@ -537,7 +688,13 @@ def test_changed_files_mode_rechecks_bot_after_source_dependency_refresh(
     (
         ("provision", 21, "provision runtime env failed (exit 21)", "provision detail", "sync"),
         ("sync", 22, "sync code to instance failed (exit 22)", "sync detail", "apply"),
-        ("apply", 23, "render runtime config failed (exit 23)", "apply detail", "register"),
+        (
+            "apply",
+            23,
+            "reconcile runtime and render config failed (exit 23)",
+            "apply detail",
+            "register",
+        ),
         ("restart", 25, "restart service failed (exit 25)", "restart detail", None),
         ("inactive", 1, "restart service failed (exit 1)", "service is not active after restart", None),
     ),
@@ -569,7 +726,7 @@ def test_update_script_reports_stage_failures(
 
 def test_update_script_reports_rebuild_failure(tmp_path: Path) -> None:
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
-    (source / "requirements.txt").write_text("changed\n", encoding="utf-8")
+    (source / "uv.lock").write_text("changed\n", encoding="utf-8")
 
     result = _run_update_fixture(
         source,
@@ -585,9 +742,66 @@ def test_update_script_reports_rebuild_failure(tmp_path: Path) -> None:
     assert "restart" not in stage_log.read_text(encoding="utf-8").splitlines()
 
 
+def test_failed_full_rebuild_is_reconciled_on_the_next_fast_resume(
+    tmp_path: Path,
+) -> None:
+    source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
+    (source / "uv.lock").write_text("changed\n", encoding="utf-8")
+
+    failed = _run_update_fixture(
+        source,
+        runtime,
+        stage_log,
+        fake_bin,
+        fail_stage="rebuild",
+    )
+
+    assert failed.returncode == 24
+    assert (runtime / "uv.lock").read_text(encoding="utf-8") == "changed\n"
+    stage_log.unlink()
+
+    resumed = _run_update_fixture(source, runtime, stage_log, fake_bin)
+
+    assert resumed.returncode == 0, resumed.stdout + resumed.stderr
+    assert "mode:     fast" in resumed.stdout
+    assert stage_log.read_text(encoding="utf-8").splitlines() == [
+        "source-deps",
+        "provision",
+        "sync",
+        "runtime-deps",
+        "apply",
+        "register",
+        "restart",
+    ]
+
+
+def test_fast_update_stops_when_locked_runtime_reconciliation_fails(
+    tmp_path: Path,
+) -> None:
+    source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
+
+    result = _run_update_fixture(
+        source,
+        runtime,
+        stage_log,
+        fake_bin,
+        fail_stage="runtime-deps",
+    )
+
+    assert result.returncode == 26
+    assert "locked runtime sync detail" in result.stderr
+    assert "reconcile runtime and render config failed (exit 26)" in result.stderr
+    assert stage_log.read_text(encoding="utf-8").splitlines() == [
+        "source-deps",
+        "provision",
+        "sync",
+        "runtime-deps",
+    ]
+
+
 def test_full_update_reports_source_dependency_refresh_failure(tmp_path: Path) -> None:
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
-    (source / "requirements.txt").write_text("changed\n", encoding="utf-8")
+    (source / "uv.lock").write_text("changed\n", encoding="utf-8")
 
     result = _run_update_fixture(
         source,
@@ -598,7 +812,7 @@ def test_full_update_reports_source_dependency_refresh_failure(tmp_path: Path) -
     )
 
     assert result.returncode == 20
-    assert "source dependency detail" in result.stderr
+    assert "locked source sync detail" in result.stderr
     assert "provision runtime env failed (exit 20)" in result.stderr
     assert stage_log.read_text(encoding="utf-8").splitlines() == ["source-deps"]
 
@@ -637,6 +851,7 @@ def test_register_script_fails_when_daemon_reload_fails(tmp_path: Path) -> None:
             **os.environ,
             "HOME": str(home),
             "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+            "AGENTSTRATA_DEPLOY_PYTHON": sys.executable,
         },
         timeout=20,
     )
@@ -666,6 +881,7 @@ def test_register_script_fails_when_unit_copy_fails(tmp_path: Path) -> None:
             **os.environ,
             "HOME": str(home),
             "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+            "AGENTSTRATA_DEPLOY_PYTHON": sys.executable,
         },
         timeout=20,
     )
@@ -687,7 +903,7 @@ def test_register_script_fails_when_worker_env_generation_fails(tmp_path: Path) 
         '  echo "worker env detail" >&2\n'
         "  exit 19\n"
         "fi\n"
-        f'exec "{Path(sys.executable).resolve()}" "$@"\n',
+        f'exec "{sys.executable}" "$@"\n',
     )
     _write_executable(
         fake_bin / "loginctl",
@@ -704,6 +920,7 @@ def test_register_script_fails_when_worker_env_generation_fails(tmp_path: Path) 
             **os.environ,
             "HOME": str(home),
             "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+            "AGENTSTRATA_DEPLOY_PYTHON": str(fake_bin / "python3"),
         },
         timeout=20,
     )

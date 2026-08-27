@@ -49,7 +49,7 @@ fi
 # ---- 读取某个 bot.yaml 的 deploy 字段（与 _load_env.sh 同源的极简解析）----
 read_deploy_value() {
     local bot="$1" name="$2"
-    python3 - "$bot" "$name" <<'PY'
+    "$BOT_SPEC_PY" - "$bot" "$name" <<'PY'
 import sys
 from pathlib import Path
 bot = Path(sys.argv[1]); want = sys.argv[2]
@@ -64,6 +64,30 @@ for raw in bot.read_text(encoding="utf-8", errors="replace").splitlines():
         key, value = line.split(":", 1)
         if key.strip() == want:
             print(value.strip().strip('"').strip("'")); break
+PY
+}
+
+read_code_worker_requirement() {
+    local bot="$1"
+    "$BOT_SPEC_PY" - "$bot" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+if not isinstance(data, dict):
+    raise SystemExit(f"invalid BotSpec mapping: {path}")
+tools = data.get("tools") or {}
+if not isinstance(tools, dict):
+    raise SystemExit(f"invalid tools mapping in BotSpec: {path}")
+packs = tools.get("packs") or []
+if not isinstance(packs, list) or not all(
+    isinstance(pack, str) for pack in packs
+):
+    raise SystemExit(f"invalid tools.packs in BotSpec: {path}")
+print("1" if "dev.code_tasks" in packs else "0")
 PY
 }
 
@@ -94,6 +118,33 @@ if [ "${#BOT_FILES[@]}" -eq 0 ]; then
     exit 1
 fi
 
+BOT_SPEC_PY="${AGENTSTRATA_DEPLOY_PYTHON:-$REPO_ROOT/.venv/bin/python}"
+case "$BOT_SPEC_PY" in
+    /*) ;;
+    *) err "部署 Python 必须是绝对路径：$BOT_SPEC_PY"; exit 1 ;;
+esac
+if [ ! -x "$BOT_SPEC_PY" ] || ! "$BOT_SPEC_PY" -c "import yaml" >/dev/null 2>&1; then
+    err "缺少项目隔离 Python/PyYAML；请先运行 deploy/wsl/install_wsl_env.sh。"
+    exit 1
+fi
+
+declare -A BOT_REQUIRES_CODE_WORKER=()
+ANY_CODE_WORKER=0
+for bot in "${BOT_FILES[@]}"; do
+    if ! required="$(read_code_worker_requirement "$bot")"; then
+        err "无法读取 BotSpec tools.packs：$bot"
+        exit 1
+    fi
+    case "$required" in
+        0|1) ;;
+        *) err "BotSpec worker 判定返回非法值：$bot"; exit 1 ;;
+    esac
+    BOT_REQUIRES_CODE_WORKER["$bot"]="$required"
+    if [ "$required" = 1 ]; then
+        ANY_CODE_WORKER=1
+    fi
+done
+
 # ---- 安装模板 unit ----
 if ! mkdir -p "$USER_UNIT_DIR" "$CONSOLE_CONF_DIR"; then
     err "创建 systemd 或控制台配置目录失败"
@@ -107,20 +158,28 @@ if ! chmod 700 "$CONSOLE_CONF_DIR"; then
     err "failed to secure console config directory: $CONSOLE_CONF_DIR"
     exit 1
 fi
-if [ ! -f "$TEMPLATE_SRC" ] || [ ! -f "$CODE_WORKER_TEMPLATE_SRC" ]; then
-    err "找不到模板 unit：$TEMPLATE_SRC 或 $CODE_WORKER_TEMPLATE_SRC"
+if [ ! -f "$TEMPLATE_SRC" ]; then
+    err "找不到模板 unit：$TEMPLATE_SRC"
     exit 1
 fi
 if ! cp -f "$TEMPLATE_SRC" "$USER_UNIT_DIR/chatcopilot@.service"; then
     err "安装模板 unit 失败：$USER_UNIT_DIR/chatcopilot@.service"
     exit 1
 fi
-if ! cp -f "$CODE_WORKER_TEMPLATE_SRC" "$USER_UNIT_DIR/chatcopilot-code-worker@.service"; then
-    err "安装代码任务 worker unit 失败：$USER_UNIT_DIR/chatcopilot-code-worker@.service"
-    exit 1
-fi
 ok "已安装模板 unit：$USER_UNIT_DIR/chatcopilot@.service"
-ok "已安装代码任务 worker unit：$USER_UNIT_DIR/chatcopilot-code-worker@.service"
+if [ "$ANY_CODE_WORKER" = 1 ]; then
+    if [ ! -f "$CODE_WORKER_TEMPLATE_SRC" ]; then
+        err "找不到代码任务 worker 模板 unit：$CODE_WORKER_TEMPLATE_SRC"
+        exit 1
+    fi
+    if ! cp -f "$CODE_WORKER_TEMPLATE_SRC" "$USER_UNIT_DIR/chatcopilot-code-worker@.service"; then
+        err "安装代码任务 worker unit 失败：$USER_UNIT_DIR/chatcopilot-code-worker@.service"
+        exit 1
+    fi
+    ok "已安装代码任务 worker unit：$USER_UNIT_DIR/chatcopilot-code-worker@.service"
+else
+    info "所选 Bot 未启用 dev.code_tasks，不安装代码任务 worker unit。"
+fi
 
 # ---- lingering ----
 if command -v loginctl >/dev/null 2>&1; then
@@ -129,7 +188,8 @@ if command -v loginctl >/dev/null 2>&1; then
         if loginctl enable-linger "$USER" 2>/dev/null; then
             ok "已开启 lingering（关终端后服务仍存活）"
         else
-            warn "无法自动开启 lingering，请手动执行：sudo loginctl enable-linger $USER"
+            err "无法开启 lingering；请手动执行 sudo loginctl enable-linger $USER 后重试。"
+            exit 1
         fi
     else
         ok "lingering 已开启"
@@ -137,6 +197,7 @@ if command -v loginctl >/dev/null 2>&1; then
 fi
 
 # ---- 逐实例写 env 文件 ----
+declare -a NO_CODE_WORKER_IDS=()
 for bot in "${BOT_FILES[@]}"; do
     iid="$(read_deploy_value "$bot" instance_id)"
     [ -z "$iid" ] && iid="$(basename "$(dirname "$bot")")"
@@ -151,6 +212,7 @@ for bot in "${BOT_FILES[@]}"; do
     workspace_root_raw="$(read_deploy_value "$bot" workspace_root)"
     [ -z "$workspace_root_raw" ] && workspace_root_raw="~/chatcopilot-workspaces/$iid"
     workspace_root="$(expand_tilde "$workspace_root_raw")"
+    requires_code_worker="${BOT_REQUIRES_CODE_WORKER[$bot]}"
 
     conf="$CONSOLE_CONF_DIR/$iid.env"
     if ! {
@@ -158,6 +220,7 @@ for bot in "${BOT_FILES[@]}"; do
         echo "CCP_WSL_HOME=$wsl_home"
         echo "CHATCOPILOT_INSTANCE_ID=$iid"
         echo "CHATCOPILOT_BOT_SPEC=$deployed_bot"
+        echo "CHATCOPILOT_CODE_WORKER_REQUIRED=$requires_code_worker"
     } > "$conf"; then
         err "写入实例配置失败：$conf"
         exit 1
@@ -168,9 +231,10 @@ for bot in "${BOT_FILES[@]}"; do
     fi
     ok "实例 $iid -> $conf (CCP_WSL_HOME=$wsl_home)"
 
-    worker_conf="$CONSOLE_CONF_DIR/$iid-code-worker.env"
-    local_env="$(dirname "$bot")/local.env"
-    if ! CHATCOPILOT_REGISTER_BOT="$bot" \
+    if [ "$requires_code_worker" = 1 ]; then
+        worker_conf="$CONSOLE_CONF_DIR/$iid-code-worker.env"
+        local_env="$(dirname "$bot")/local.env"
+        if ! CHATCOPILOT_REGISTER_BOT="$bot" \
         CHATCOPILOT_REGISTER_LOCAL_ENV="$local_env" \
         CHATCOPILOT_REGISTER_REPO="$REPO_ROOT" \
         CHATCOPILOT_REGISTER_INSTANCE="$iid" \
@@ -178,7 +242,7 @@ for bot in "${BOT_FILES[@]}"; do
         CHATCOPILOT_REGISTER_LOG_DIR="$log_dir" \
         CHATCOPILOT_REGISTER_WORKSPACE_ROOT="$workspace_root" \
         CHATCOPILOT_REGISTER_WORKER_ENV="$worker_conf" \
-        python3 <<'PY'
+        "$BOT_SPEC_PY" <<'PY'
 import json
 import os
 import re
@@ -380,11 +444,15 @@ atomic_private_text(
     + "".join(f"{key}={json.dumps(value)}\n" for key, value in sorted(values.items())),
 )
 PY
-    then
-        err "生成代码任务 worker 环境失败：$worker_conf"
-        exit 1
+        then
+            err "生成代码任务 worker 环境失败：$worker_conf"
+            exit 1
+        fi
+        ok "实例 $iid 代码任务 worker 环境 -> $worker_conf"
+    else
+        NO_CODE_WORKER_IDS+=("$iid")
+        info "实例 $iid 未启用 dev.code_tasks；不生成 worker 环境并保留既有 worker 状态文件。"
     fi
-    ok "实例 $iid 代码任务 worker 环境 -> $worker_conf"
 
     if [ ! -d "$wsl_home/deploy/wsl" ]; then
         warn "  $wsl_home 还未部署（缺 deploy/wsl）。先在控制台点「更新代码并重启」把代码同步过去。"
@@ -397,16 +465,39 @@ if ! systemctl --user daemon-reload; then
 fi
 ok "systemd --user 已 reload"
 
+for iid in "${NO_CODE_WORKER_IDS[@]}"; do
+    worker_unit="chatcopilot-code-worker@$iid.service"
+    if systemctl --user cat "$worker_unit" >/dev/null 2>&1; then
+        if ! systemctl --user stop "$worker_unit"; then
+            err "停止不适用的代码任务 worker 失败：$worker_unit"
+            exit 1
+        fi
+        if ! systemctl --user disable "$worker_unit"; then
+            err "禁用不适用的代码任务 worker 失败：$worker_unit"
+            exit 1
+        fi
+        ok "已停止并禁用不适用的代码任务 worker：$worker_unit"
+    else
+        info "实例 $iid 的代码任务 worker 不适用且未注册。"
+    fi
+done
+
 if [ "$ENABLE" = 1 ]; then
     for bot in "${BOT_FILES[@]}"; do
         iid="$(read_deploy_value "$bot" instance_id)"
         [ -z "$iid" ] && iid="$(basename "$(dirname "$bot")")"
-        systemctl --user enable "chatcopilot@$iid" 2>/dev/null \
-            && ok "已设置开机自启：chatcopilot@$iid" \
-            || warn "enable chatcopilot@$iid 失败"
-        systemctl --user enable "chatcopilot-code-worker@$iid" 2>/dev/null \
-            && ok "已设置开机自启：chatcopilot-code-worker@$iid" \
-            || warn "enable chatcopilot-code-worker@$iid 失败"
+        if ! systemctl --user enable "chatcopilot@$iid"; then
+            err "enable chatcopilot@$iid 失败"
+            exit 1
+        fi
+        ok "已设置开机自启：chatcopilot@$iid"
+        if [ "${BOT_REQUIRES_CODE_WORKER[$bot]}" = 1 ]; then
+            if ! systemctl --user enable "chatcopilot-code-worker@$iid"; then
+                err "enable chatcopilot-code-worker@$iid 失败"
+                exit 1
+            fi
+            ok "已设置开机自启：chatcopilot-code-worker@$iid"
+        fi
     done
 fi
 

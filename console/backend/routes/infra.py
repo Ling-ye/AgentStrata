@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request
 
 from console.backend.routes.common import get_task_manager
 from console.backend.sse import sse
@@ -104,65 +104,26 @@ def infra_login_qrcode(service_id: str):
 
 @router.post("/{service_id}/login/check")
 def infra_login_check(service_id: str):
-    svc = _resolve_infra(service_id)
+    svc, instance_id = _resolve_infra_with_instance(service_id)
     if not svc.has_login:
         raise HTTPException(status_code=400, detail="service does not support login check")
-    res = operations.shared_service_xhs_check_login()
+    if svc.service_type == "standalone" and svc.extra.get("login_type") == "webui_link":
+        inst_id = instance_id or (svc.bound_instance_ids[0] if svc.bound_instance_ids else "")
+        if not inst_id:
+            raise HTTPException(status_code=400, detail="standalone service needs instance_id")
+        res = services.standalone_webui_login_status(
+            svc,
+            inst_id,
+            host=os.environ.get("QQ_WEBUI_HOST", "localhost"),
+            port=os.environ.get("QQ_WEBUI_PORT", "6099"),
+        )
+    else:
+        res = operations.shared_service_xhs_check_login()
     if not res.get("ok"):
         raise HTTPException(status_code=502, detail=res.get("error") or "failed to check login")
     services.update_login_cache(svc.id, "logged_in" if res.get("logged_in") else "logged_out")
     return res
 
-
-@router.get("/{service_id}/webui-url")
-def infra_webui_url(service_id: str):
-    svc = _resolve_infra(service_id)
-    login_type = svc.extra.get("login_type")
-    if login_type != "webui_link":
-        raise HTTPException(status_code=400, detail="service does not support WebUI login")
-    port = os.environ.get("QQ_WEBUI_PORT", "6099")
-    host = os.environ.get("QQ_WEBUI_HOST", "localhost")
-    return {"ok": True, "url": f"http://{host}:{port}"}
-
-
-
-@router.get("/{service_id}/webui-token")
-def infra_webui_token(service_id: str, response: Response):
-    svc, instance_id = _resolve_infra_with_instance(service_id)
-    login_type = svc.extra.get("login_type")
-    if login_type != "webui_link" or svc.service_type != "standalone":
-        raise HTTPException(status_code=400, detail="service does not support WebUI token lookup")
-    inst_id = instance_id or (svc.bound_instance_ids[0] if svc.bound_instance_ids else "")
-    if not inst_id:
-        raise HTTPException(status_code=400, detail="standalone service needs instance_id")
-    port = os.environ.get("QQ_WEBUI_PORT", "6099")
-    host = os.environ.get("QQ_WEBUI_HOST", "localhost")
-    res = services.standalone_webui_token(svc, inst_id, host=host, port=port)
-    if not res.get("ok"):
-        raise HTTPException(status_code=409, detail=res.get("error") or "failed to get WebUI token")
-    response.headers["Cache-Control"] = "no-store"
-    return res
-
-
-@router.post("/{service_id}/webui-session")
-def infra_webui_session(service_id: str, response: Response):
-    svc, instance_id = _resolve_infra_with_instance(service_id)
-    login_type = svc.extra.get("login_type")
-    if login_type != "webui_link" or svc.service_type != "standalone":
-        raise HTTPException(status_code=400, detail="service does not support WebUI sessions")
-    inst_id = instance_id or (svc.bound_instance_ids[0] if svc.bound_instance_ids else "")
-    if not inst_id:
-        raise HTTPException(status_code=400, detail="standalone service needs instance_id")
-    port = os.environ.get("QQ_WEBUI_PORT", "6099")
-    host = os.environ.get("QQ_WEBUI_HOST", "localhost")
-    res = services.standalone_webui_session(svc, inst_id, host=host, port=port)
-    if not res.get("ok"):
-        raise HTTPException(
-            status_code=409,
-            detail=res.get("error") or "failed to prepare WebUI session",
-        )
-    response.headers["Cache-Control"] = "no-store"
-    return res
 
 def _resolve_infra(service_id: str) -> services.ServiceDef:
     sid = service_id.split(":")[0]

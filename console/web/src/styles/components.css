@@ -98,6 +98,10 @@
   margin-bottom: 16px;
 }
 
+.block-gap-top {
+  margin-top: 8px;
+}
+
 .panel-action-row {
   margin-top: 12px;
 }

@@ -81,12 +81,14 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             (bot_dir / "local.env").write_text(
                 textwrap.dedent(
                     f"""\
+                    export CHATCOPILOT_CHAT_API_KEY="test-chat-key"
                     export FEISHU_APP_ID="cli_test"
                     export FEISHU_APP_SECRET="{app_secret}"
                     """
                 ),
                 encoding="utf-8",
             )
+            (bot_dir / "local.env").chmod(0o600)
             bot_yaml = bot_dir / "bot.yaml"
             bot_yaml.write_text(
                 textwrap.dedent(
@@ -132,6 +134,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
         runtime_env = base / "qq-runtime.env"
         (bot_dir / "persona.md").write_text("qq bot\n", encoding="utf-8")
         (bot_dir / "local.env").write_text(local_env, encoding="utf-8")
+        (bot_dir / "local.env").chmod(0o600)
         bot_yaml = bot_dir / "bot.yaml"
         bot_yaml.write_text(
             textwrap.dedent(
@@ -219,12 +222,103 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 ),
             )
 
-            code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
+            with mock.patch.dict(os.environ, {"AGENTSTRATA_RUNTIME_ROOT": ""}):
+                code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
 
             self.assertEqual(code, 0)
             rendered = runtime_env.read_text(encoding="utf-8")
             self.assertIn(f"export QQ_ACCESS_TOKEN={token}", rendered)
             self.assertIn("export QQ_ALLOW_GROUPS=30003", rendered)
+            self.assertEqual(
+                load_local_env_values(runtime_env)["CHATCOPILOT_CC_CONNECT_BIN"],
+                str(
+                    Path.home()
+                    / ".local/share/agentstrata/node-tools"
+                    / "cc-connect-1.4.0-beta.3/node_modules/.bin/cc-connect"
+                ),
+            )
+
+    def test_provision_env_rejects_relative_cc_connect_override(self) -> None:
+        with TemporaryDirectory() as tmp:
+            private_value = "private-relative-cc-connect"
+            bot_yaml, runtime_env = self._write_qq_bot(
+                Path(tmp),
+                textwrap.dedent(
+                    f"""\
+                    export CHATCOPILOT_CHAT_API_KEY="sk-test"
+                    export QQ_ACCOUNT="10001"
+                    export QQ_ACCESS_TOKEN="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    export CHATCOPILOT_CC_CONNECT_BIN="{private_value}"
+                    """
+                ),
+            )
+            output = StringIO()
+
+            with redirect_stdout(output):
+                code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
+
+            self.assertEqual(code, 1)
+            self.assertFalse(runtime_env.exists())
+            self.assertIn("cc_connect_bin_invalid", output.getvalue())
+            self.assertNotIn(private_value, output.getvalue())
+
+    def test_provision_env_uses_configured_agentstrata_runtime_root(self) -> None:
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            runtime_root = base / "private-runtime"
+            bot_yaml, runtime_env = self._write_qq_bot(
+                base,
+                textwrap.dedent(
+                    """\
+                    export CHATCOPILOT_CHAT_API_KEY="sk-test"
+                    export QQ_ACCOUNT="10001"
+                    export QQ_ACCESS_TOKEN="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    """
+                ),
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {"AGENTSTRATA_RUNTIME_ROOT": str(runtime_root)},
+            ):
+                code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                load_local_env_values(runtime_env)["CHATCOPILOT_CC_CONNECT_BIN"],
+                str(
+                    runtime_root
+                    / "node-tools/cc-connect-1.4.0-beta.3"
+                    / "node_modules/.bin/cc-connect"
+                ),
+            )
+
+    def test_qq_provision_rejects_symlink_runtime_env_without_overwriting_target(self) -> None:
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bot_yaml, runtime_env = self._write_qq_bot(
+                base,
+                textwrap.dedent(
+                    """\
+                    export CHATCOPILOT_CHAT_API_KEY="sk-test"
+                    export QQ_ACCOUNT="10001"
+                    export QQ_ACCESS_TOKEN="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    """
+                ),
+            )
+            victim = base / "victim.env"
+            victim.write_text("export KEEP_ME=safe\n", encoding="utf-8")
+            victim.chmod(0o600)
+            runtime_env.symlink_to(victim.name)
+            output = StringIO()
+
+            with redirect_stdout(output):
+                code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
+
+            self.assertEqual(code, 1)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "export KEEP_ME=safe\n")
+            self.assertTrue(runtime_env.is_symlink())
+            self.assertIn("runtime_env_write_failed", output.getvalue())
 
     def test_qq_provision_rejects_invalid_group_allowlist_without_echoing_it(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -280,6 +374,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 Path(tmp),
                 textwrap.dedent(
                     f"""\
+                    export CHATCOPILOT_CHAT_API_KEY="sk-test"
                     export QQ_ACCOUNT="10001"
                     export QQ_ACCESS_TOKEN="ffffffffffffffffffffffffffffffff"
                     export QQ_AT_ALL_COUNTS="{legacy_value}"
@@ -322,6 +417,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            (bot_dir / "local.env").chmod(0o600)
             bot_yaml = bot_dir / "bot.yaml"
             bot_yaml.write_text(
                 textwrap.dedent(
@@ -395,6 +491,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            (bot_dir / "local.env").chmod(0o600)
             bot_yaml = bot_dir / "bot.yaml"
             bot_yaml.write_text(
                 textwrap.dedent(
@@ -452,6 +549,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            (bot_dir / "local.env").chmod(0o600)
             bot_yaml = bot_dir / "bot.yaml"
             bot_yaml.write_text(
                 textwrap.dedent(
@@ -503,6 +601,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            (bot_dir / "local.env").chmod(0o600)
             bot_yaml = bot_dir / "bot.yaml"
             bot_yaml.write_text(
                 textwrap.dedent(

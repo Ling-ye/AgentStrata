@@ -5,6 +5,7 @@
 
 - ``bot list``            列出 ``bots/`` 实例与当前支持的平台类型。
 - ``bot new``             scaffold 一个新的 ``bots/<id>/``（BotSpec + prompts v2）。
+- ``bot configure``       从可信 TTY 引导填写 BotSpec 派生的私有配置。
 - ``bot doctor``          按平台 adapter 声明的 ``required_secrets`` 校验 env 是否齐全。
 - ``bot external-check``  在 Agent/Evaluation 外检查平台连接与受认证动作。
 - ``bot render-cc-config`` 从 env + bot.yaml 渲染完整 cc-connect ``config.toml``
@@ -20,6 +21,8 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import datetime
+import getpass
+import json
 import os
 import re
 import shlex
@@ -28,7 +31,17 @@ import sys
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from chatcopilot.botspec.loader import load_botspec, validate_botspec
+from chatcopilot.botspec.loader import is_valid_bot_id, load_botspec, validate_botspec
+from chatcopilot.botspec.provisioning import (
+    ProvisioningError,
+    build_provision_plan,
+    is_allowed_llm_base_url,
+    patch_local_env,
+    read_local_env_for_provision,
+    read_private_env_file,
+    validate_provision_candidate,
+    write_private_env_text,
+)
 from chatcopilot.botspec.runtime_env import (
     llm_runtime_env_defaults,
     load_research_llm_config,
@@ -63,6 +76,7 @@ _SESSION_ENV_IDENTITY_KEYS = SESSION_ENV_IDENTITY_KEYS
 _MAX_SESSION_ATTESTATIONS = MAX_SESSION_ATTESTATIONS
 _SESSION_ATTESTATION_TTL_NS = SESSION_ATTESTATION_TTL_NS
 _SessionEnvSecurityError = SessionEnvSecurityError
+_CC_CONNECT_VERSION = "1.4.0-beta.3"
 
 
 def _repo_root() -> Path:
@@ -119,11 +133,45 @@ _RESPONSE_STYLE_PROMPT_TEMPLATE = """# 回复风格
 在此填写默认语言、语气、节奏、篇幅和排版；不要在这里声明权限或工具能力。
 """
 
+_REFUSAL_STYLE_PROMPT_TEMPLATE = """# 无法完成请求时的回复风格
+
+直接说明无法完成的部分和原因，并在存在安全替代方案时给出下一步。不要虚构已经执行、
+保存、发送或验证的结果。
+"""
+
+_STARTER_LOCAL_ENV_TEMPLATE = """# Generic QQ starter private configuration.
+# Copy to local.env only when configuring manually. The guided deployment writes
+# local.env securely and never prints secret values.
+
+export CHATCOPILOT_CHAT_API_KEY=""
+export CHATCOPILOT_CHAT_BASE_URL=""
+export CHATCOPILOT_CHAT_MODEL=""
+export CHATCOPILOT_ADD_OWNER_IDS=""
+
+export QQ_ACCOUNT=""
+export QQ_WS_URL="ws://127.0.0.1:3001"
+export QQ_ACCESS_TOKEN=""
+export QQ_ALLOW_FROM=""
+export QQ_ALLOW_GROUPS=""
+export QQ_AT_PROXY_URL="ws://127.0.0.1:3002"
+export QQ_WEBUI_PORT="6099"
+"""
 
 def _cmd_new(args: argparse.Namespace) -> int:
     bot_id = args.id.strip()
     platform_type = args.platform.strip().lower()
     display_name = (args.display_name or bot_id).strip()
+    preset = str(args.preset or "minimal").strip().lower()
+
+    if not is_valid_bot_id(bot_id):
+        print("[ERR] bot id 必须为 2–63 字符、以小写字母开头的 kebab-case")
+        return 2
+    if not display_name or any(character in display_name for character in ("\r", "\n", "\x00")):
+        print("[ERR] display name 必须是单行非空文本")
+        return 2
+    if preset == "starter" and platform_type != "qq":
+        print("[ERR] starter preset 当前只支持 platform=qq")
+        return 2
 
     if not _registry.is_supported(platform_type):
         print(
@@ -141,7 +189,13 @@ def _cmd_new(args: argparse.Namespace) -> int:
     (target / "prompts").mkdir(parents=True, exist_ok=True)
     bot_yaml = target / "bot.yaml"
     bot_yaml.write_text(
-        _render_bot_yaml(bot_id, platform_type, adapter, display_name),
+        _render_bot_yaml(
+            bot_id,
+            platform_type,
+            adapter,
+            display_name,
+            preset=preset,
+        ),
         encoding="utf-8",
     )
     (target / "prompts" / "identity.md").write_text(
@@ -152,11 +206,23 @@ def _cmd_new(args: argparse.Namespace) -> int:
         _RESPONSE_STYLE_PROMPT_TEMPLATE,
         encoding="utf-8",
     )
+    if preset == "starter":
+        (target / "prompts" / "refusal-style.md").write_text(
+            _REFUSAL_STYLE_PROMPT_TEMPLATE,
+            encoding="utf-8",
+        )
+        (target / "local.env.example").write_text(
+            _STARTER_LOCAL_ENV_TEMPLATE,
+            encoding="utf-8",
+        )
 
     print(f"[OK] 已生成机器人骨架：{target}")
     print(f"     bot.yaml      {bot_yaml}")
     print("     prompts/identity.md")
     print("     prompts/response-style.md")
+    if preset == "starter":
+        print("     prompts/refusal-style.md")
+        print("     local.env.example")
     secrets = adapter.required_secrets()
     if secrets:
         print("\n下一步：在该实例的 env 文件里配置平台凭据：")
@@ -169,11 +235,33 @@ def _cmd_new(args: argparse.Namespace) -> int:
 
 
 def _render_bot_yaml(
-    bot_id: str, platform_type: str, adapter: PlatformAdapter, display_name: str
+    bot_id: str,
+    platform_type: str,
+    adapter: PlatformAdapter,
+    display_name: str,
+    *,
+    preset: str = "minimal",
 ) -> str:
+    starter = preset == "starter"
+    prompt_refusal = "  refusal_style: prompts/refusal-style.md\n" if starter else ""
+    packs = (
+        "  packs:\n"
+        "  - workspace.read_write\n"
+        "  - memory.chat\n"
+        if starter
+        else "  packs: []\n"
+    )
+    features = (
+        "  features:\n"
+        "  - chat.file_uploads\n"
+        "  - chat.private_workspace\n"
+        if starter
+        else "  features: []\n"
+    )
+    access = "\naccess:\n  owner_only_project_access: true\n" if starter else ""
     return (
         f"id: {bot_id}\n"
-        f"display_name: {display_name}\n"
+        f"display_name: {json.dumps(display_name, ensure_ascii=False)}\n"
         "\n"
         "platform:\n"
         f"  type: {platform_type}\n"
@@ -187,10 +275,11 @@ def _render_bot_yaml(
         "  schema_version: 2\n"
         "  identity: prompts/identity.md\n"
         "  response_style: prompts/response-style.md\n"
+        f"{prompt_refusal}"
         "\n"
         "tools:\n"
-        "  packs: []\n"
-        "  features: []\n"
+        f"{packs}"
+        f"{features}"
         "\n"
         "context:\n"
         "  memory_store:\n"
@@ -213,60 +302,304 @@ def _render_bot_yaml(
         f"  env_file: ~/.chatcopilot-{bot_id}.env\n"
         f"  cc_connect_config_dir: ~/.chatcopilot-runtime/{bot_id}/.cc-connect\n"
         f"  project_name: chatcopilot-{bot_id}\n"
+        f"{access}"
     )
+
+
+# ---------------------------------------------------------------------------
+# bot configure
+# ---------------------------------------------------------------------------
+_GUIDED_PROMPT_FIELDS = (
+    "chat_base_url",
+    "chat_model",
+    "chat_api_key",
+    "qq_account",
+    "add_owner_ids",
+    "qq_allow_groups",
+)
+
+
+def _cmd_configure(args: argparse.Namespace) -> int:
+    try:
+        spec = load_botspec(args.bot)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERR] BotSpec 加载失败：{_safe_error_code(exc)}")
+        return 1
+    issues = [item for item in validate_botspec(spec) if item.level == "error"]
+    if issues:
+        print(f"[ERR] BotSpec 校验失败（{len(issues)} 个 error）")
+        return 1
+
+    adapter = _registry.get_adapter(spec.platform.type)
+    local_env_path = spec.base_dir / "local.env"
+    if args.dry_run:
+        plan = build_provision_plan(spec, adapter)
+        print(
+            json.dumps(
+                {
+                    "schema_version": plan.schema_version,
+                    "bot_id": plan.bot_id,
+                    "target": str(local_env_path),
+                    "write": False,
+                    "fields": [item.to_dict() for item in plan.fields],
+                },
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    try:
+        existing = read_local_env_for_provision(
+            local_env_path,
+            allowed_parent=spec.base_dir,
+        )
+    except ProvisioningError as exc:
+        print(f"[ERR] {_safe_error_code(exc)}")
+        return 1
+    plan = build_provision_plan(spec, adapter, existing)
+
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print("[ERR] bot configure 只能在可信交互式终端中运行")
+        return 3
+    if spec.platform.type != "qq":
+        print("[ERR] 引导式 configure 当前只支持 QQ")
+        return 2
+    if spec.agents.backend != "native" or "dev.code_tasks" in spec.tools.packs:
+        print("[ERR] 该 Bot 含高级 backend 或代码任务配置，请使用 docs/deployment.md 高级流程")
+        return 2
+
+    by_id = {item.field: item for item in plan.fields}
+    updates: dict[str, str] = {}
+    print("请填写 QQ 与 OpenAI-compatible LLM 配置。已配置字段留空表示保留。")
+    try:
+        for field_id in _GUIDED_PROMPT_FIELDS:
+            item = by_id.get(field_id)
+            if item is None:
+                continue
+            label = item.label
+            suffix = " [已配置，留空保留]" if item.configured else ""
+            if item.secret:
+                value = getpass.getpass(f"{label}{suffix}: ").strip()
+            else:
+                value = input(f"{label}{suffix}: ").strip()
+            updates[field_id] = value
+    except (EOFError, KeyboardInterrupt):
+        print("\n[INFO] 已取消，local.env 未修改")
+        return 3
+
+    effective = dict(existing)
+    for field_id, value in updates.items():
+        item = by_id[field_id]
+        if value:
+            effective[item.env_key] = value
+    prefix = spec.llm.env_prefix
+    base_url = str(effective.get(f"{prefix}_BASE_URL", "") or "").strip()
+    model = str(effective.get(f"{prefix}_MODEL", "") or "").strip()
+    owner_id = str(effective.get("CHATCOPILOT_ADD_OWNER_IDS", "") or "").strip()
+    if not base_url:
+        print("[ERR] LLM Base URL 必填；local.env 未修改")
+        return 1
+    if not is_allowed_llm_base_url(base_url):
+        print("[ERR] LLM Base URL 只允许 HTTPS，或回环地址的 HTTP；local.env 未修改")
+        return 1
+    if not model:
+        print("[ERR] LLM 模型 ID 必填；local.env 未修改")
+        return 1
+    if not owner_id.isdigit():
+        print("[ERR] Owner QQ 号必须是稳定数字 ID；local.env 未修改")
+        return 1
+
+    try:
+        receipt = patch_local_env(
+            local_env_path,
+            plan,
+            updates,
+            adapter=adapter,
+            allowed_parent=spec.base_dir,
+        )
+    except ProvisioningError as exc:
+        print(f"[ERR] {_safe_error_code(exc)}；local.env 未修改")
+        return 1
+
+    print(
+        json.dumps(
+            receipt.to_dict(),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+        )
+    )
+    return 0
 
 
 # ---------------------------------------------------------------------------
 # bot doctor
 # ---------------------------------------------------------------------------
 def _cmd_doctor(args: argparse.Namespace) -> int:
-    spec = load_botspec(args.bot)
-    issues = validate_botspec(spec)
-    errors = [i for i in issues if i.level == "error"]
-    for issue in issues:
-        print(f"[{issue.level.upper()}] {issue.field}: {issue.message}")
-    if errors:
-        print(f"[ERR] BotSpec 校验失败（{len(errors)} 个 error）")
+    json_output = bool(getattr(args, "json", False))
+    checks: list[dict[str, str]] = []
+    try:
+        spec = load_botspec(args.bot)
+    except Exception as exc:  # noqa: BLE001
+        if json_output:
+            _print_doctor_json(
+                bot_id=Path(args.bot).parent.name,
+                overall="failed",
+                checks=[_doctor_check("botspec", "fail", _safe_error_code(exc), "修复 bot.yaml 后重试")],
+            )
+        else:
+            print(f"[ERR] BotSpec 加载失败：{_safe_error_code(exc)}")
         return 1
 
-    local_env_path = (
-        Path(args.config).expanduser()
-        if args.config
-        else spec.base_dir / "local.env"
-    )
+    issues = validate_botspec(spec)
+    errors = [item for item in issues if item.level == "error"]
+    if errors:
+        checks.append(
+            _doctor_check(
+                "botspec",
+                "fail",
+                f"BotSpec 存在 {len(errors)} 个错误",
+                f"python -m chatcopilot botspec validate {spec.source_path}",
+            )
+        )
+    else:
+        checks.append(_doctor_check("botspec", "pass", "BotSpec 有效", ""))
+
+    local_env_path = Path(args.config).expanduser() if args.config else spec.base_dir / "local.env"
+    local_env: dict[str, str] = {}
+    config_error = ""
     try:
-        local_env = _load_local_env(local_env_path) if local_env_path.is_file() else {}
-    except ValueError as exc:
-        print(f"[ERR] {exc}")
-        return 1
-    effective_env = dict(local_env)
-    effective_env.update(os.environ)
+        local_env = read_private_env_file(
+            local_env_path,
+            allowed_parent=local_env_path.parent,
+            missing_ok=True,
+        )
+    except (OSError, ProvisioningError, ValueError) as exc:
+        config_error = _safe_error_code(exc)
 
     adapter = _registry.get_adapter(spec.platform.type)
-    missing_required: list[str] = []
-    for secret in adapter.required_secrets():
-        value = effective_env.get(secret.env_key, "").strip()
-        if value:
-            print(f"[OK] {secret.env_key} 已设置")
-        elif secret.required:
-            missing_required.append(secret.env_key)
-            print(f"[ERR] 缺少必填凭据 {secret.env_key}：{secret.description}")
-        else:
-            default = f"（将使用默认 {secret.default}）" if secret.default else ""
-            print(f"[INFO] {secret.env_key} 未设置{default}")
+    effective_env = {
+        item.env_key: item.default
+        for item in adapter.required_secrets()
+        if item.default is not None
+    }
+    effective_env.update(llm_runtime_env_defaults(spec.llm))
+    effective_env.update(local_env)
+    effective_env.update(os.environ)
+    plan = build_provision_plan(spec, adapter, effective_env)
+    missing = [
+        item.env_key
+        for item in plan.fields
+        if item.required and not str(effective_env.get(item.env_key, "") or "").strip()
+    ]
+    platform_errors = (
+        tuple(adapter.validate_runtime_env(effective_env))
+        if not config_error and not missing
+        else ()
+    )
+    provision_errors = (
+        validate_provision_candidate(plan, effective_env)
+        if not config_error and not missing
+        else ()
+    )
 
-    platform_errors = adapter.validate_runtime_env(effective_env)
-    for error in platform_errors:
-        print(f"[ERR] {error}")
-
-    if missing_required or platform_errors:
-        print(
-            f"[ERR] platform.type={spec.platform.type} 配置无效"
-            + ("；缺少必填凭据：" + ", ".join(missing_required) if missing_required else "")
+    if config_error:
+        checks.append(
+            _doctor_check(
+                "private_config",
+                "fail",
+                config_error,
+                f"python -m chatcopilot bot configure --bot {spec.source_path}",
+            )
         )
-        return 1
-    print(f"[OK] platform.type={spec.platform.type} 凭据齐全")
-    return 0
+    elif missing:
+        checks.append(
+            _doctor_check(
+                "private_config",
+                "fail",
+                "缺少必填字段：" + ", ".join(missing),
+                f"python -m chatcopilot bot configure --bot {spec.source_path}",
+            )
+        )
+    else:
+        checks.append(_doctor_check("private_config", "pass", "必填配置已设置", ""))
+
+    validation_errors = tuple(platform_errors) + tuple(provision_errors)
+    if validation_errors:
+        checks.append(
+            _doctor_check(
+                "runtime_config",
+                "fail",
+                ", ".join(_safe_error_code(item) for item in validation_errors),
+                f"python -m chatcopilot bot configure --bot {spec.source_path}",
+            )
+        )
+    elif not config_error and not missing:
+        checks.append(_doctor_check("runtime_config", "pass", "运行时配置有效", ""))
+
+    checks.extend(
+        (
+            _doctor_check("llm_live_call", "not_tested", "未调用付费模型", "部署后手工发送一条消息"),
+            _doctor_check("qq_external_send", "not_tested", "未向 QQ 发送外部消息", "部署后手工发送一条消息"),
+            _doctor_check(
+                "qq_inbound_agent_roundtrip",
+                "not_tested",
+                "未执行真实 QQ 入站 Agent 往返",
+                "私聊机器人或在群内明确 @ 机器人",
+            ),
+        )
+    )
+    has_failure = bool(errors or config_error or missing or validation_errors)
+    overall = "needs_user_action" if (missing and not errors and not validation_errors) else (
+        "failed" if has_failure else "ready"
+    )
+    if json_output:
+        _print_doctor_json(bot_id=spec.id, overall=overall, checks=checks)
+    else:
+        for issue in issues:
+            print(f"[{issue.level.upper()}] {issue.field}: {issue.message}")
+        for check in checks:
+            label = "OK" if check["status"] == "pass" else (
+                "INFO" if check["status"] == "not_tested" else "ERR"
+            )
+            print(f"[{label}] {check['id']}: {check['message']}")
+        if has_failure:
+            print(f"[ERR] platform.type={spec.platform.type} 配置无效")
+        else:
+            print(f"[OK] platform.type={spec.platform.type} 凭据齐全")
+    return 1 if has_failure else 0
+
+
+def _doctor_check(check_id: str, status: str, message: str, remediation: str) -> dict[str, str]:
+    return {
+        "id": check_id,
+        "status": status,
+        "message": message[:512],
+        "remediation": remediation[:512],
+    }
+
+
+def _print_doctor_json(*, bot_id: str, overall: str, checks: list[dict[str, str]]) -> None:
+    print(
+        json.dumps(
+            {
+                "schema_version": "agentstrata-deployment-check/v1",
+                "overall": overall,
+                "bot_id": bot_id,
+                "checks": checks,
+            },
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+        )
+    )
+
+
+def _safe_error_code(error: object) -> str:
+    text = str(error).strip()
+    return (text.split(":", 1)[0] or type(error).__name__)[:160]
 
 
 def _cmd_external_check(args: argparse.Namespace) -> int:
@@ -579,9 +912,24 @@ def _runtime_env_values(spec, local_env: Mapping[str, str]) -> dict[str, str]:
     except ValueError:
         runtime_bot_spec = str(spec.source_path)
 
-    values = _tool_pack_runtime_defaults(spec.tools.packs)
+    adapter = _registry.get_adapter(spec.platform.type)
+    values = {
+        item.env_key: item.default
+        for item in adapter.required_secrets()
+        if item.default is not None
+    }
+    values.update(_tool_pack_runtime_defaults(spec.tools.packs))
     values.update(llm_runtime_env_defaults(spec.llm))
     values.update(local_env)
+    cc_connect_bin = str(values.get("CHATCOPILOT_CC_CONNECT_BIN", "") or "").strip()
+    if not cc_connect_bin:
+        cc_connect_bin = _private_cc_connect_bin()
+    if (
+        any(character in cc_connect_bin for character in ("\r", "\n", "\x00"))
+        or not Path(cc_connect_bin).is_absolute()
+    ):
+        raise ValueError("cc_connect_bin_invalid")
+    values["CHATCOPILOT_CC_CONNECT_BIN"] = cc_connect_bin
     values.update(
         {
             "CHATCOPILOT_INSTANCE_ID": instance_id,
@@ -599,6 +947,27 @@ def _runtime_env_values(spec, local_env: Mapping[str, str]) -> dict[str, str]:
         }
     )
     return values
+
+
+def _private_cc_connect_bin() -> str:
+    runtime_root_value = os.environ.get("AGENTSTRATA_RUNTIME_ROOT", "").strip()
+    if runtime_root_value:
+        runtime_root_value = _expand_home_path(runtime_root_value)
+        if any(character in runtime_root_value for character in ("\r", "\n", "\x00")):
+            raise ValueError("agentstrata_runtime_root_invalid")
+        runtime_root = Path(runtime_root_value)
+        if not runtime_root.is_absolute():
+            raise ValueError("agentstrata_runtime_root_invalid")
+    else:
+        runtime_root = Path.home() / ".local" / "share" / "agentstrata"
+    return str(
+        runtime_root
+        / "node-tools"
+        / f"cc-connect-{_CC_CONNECT_VERSION}"
+        / "node_modules"
+        / ".bin"
+        / "cc-connect"
+    )
 
 
 def _tool_pack_runtime_defaults(tool_packs: Iterable[str]) -> dict[str, str]:
@@ -663,18 +1032,25 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
     spec = load_botspec(args.bot)
     local_env_path = Path(args.config).expanduser() if args.config else spec.base_dir / "local.env"
     try:
-        local_env = _load_local_env(local_env_path)
+        local_env = read_private_env_file(
+            local_env_path,
+            allowed_parent=local_env_path.parent,
+        )
     except FileNotFoundError:
         example = spec.base_dir / "local.env.example"
         print(f"[ERR] 找不到本地私有配置：{local_env_path}")
         print("      请复制模板并填写真实值：")
         print(f"      cp {example} {local_env_path}")
         return 1
-    except ValueError as exc:
-        print(f"[ERR] {exc}")
+    except (ProvisioningError, ValueError) as exc:
+        print(f"[ERR] {_safe_error_code(exc)}")
         return 1
 
-    values = _runtime_env_values(spec, local_env)
+    try:
+        values = _runtime_env_values(spec, local_env)
+    except ValueError as exc:
+        print(f"[ERR] {_safe_error_code(exc)}")
+        return 1
     missing = [key for key in _required_env_keys(spec) if not values.get(key, "").strip()]
     if missing:
         print("[ERR] 缺少必填配置：" + ", ".join(missing))
@@ -700,6 +1076,7 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
         "CHATCOPILOT_CC_CONNECT_CONFIG_DIR",
         "CHATCOPILOT_CC_PROJECT_NAME",
         "CHATCOPILOT_DISPLAY_NAME",
+        "CHATCOPILOT_CC_CONNECT_BIN",
         "CHATCOPILOT_HTTP_ROUTE_MODULES",
         "CHATCOPILOT_CODEBASE_CHATCOPILOT_ROOT",
         "CHATCOPILOT_CODEBASE_CACHE_ROOT",
@@ -744,6 +1121,18 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
         print("[DRY-RUN] keys: " + ", ".join(key for key in ordered if values.get(key)))
         return 0
 
+    rendered_env = _render_runtime_env(values, ordered)
+    try:
+        env_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        write_private_env_text(
+            env_file,
+            rendered_env,
+            allowed_parent=env_file.parent,
+        )
+    except (OSError, ProvisioningError, ValueError) as exc:
+        print(f"[ERR] runtime_env_write_failed:{_safe_error_code(exc)}")
+        return 1
+
     from chatcopilot.botspec.backend_state import prepare_backend_deployment
 
     transition = prepare_backend_deployment(
@@ -758,9 +1147,6 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
             f"{transition.target_backend}"
         )
 
-    env_file.parent.mkdir(parents=True, exist_ok=True)
-    env_file.write_text(_render_runtime_env(values, ordered), encoding="utf-8")
-    _chmod_600(env_file)
     print(f"[OK] runtime env 已写入：{env_file} (chmod 600)")
     print(f"     source: {local_env_path}")
     return 0
@@ -1078,10 +1464,21 @@ def main(argv: list[str]) -> int:
     p_new.add_argument("id", help="新机器人 id（kebab-case）")
     p_new.add_argument("--platform", required=True, help="平台类型（如 feishu / qq）")
     p_new.add_argument("--display-name", default=None, help="展示名（默认等于 id）")
+    p_new.add_argument(
+        "--preset",
+        choices=("minimal", "starter"),
+        default="minimal",
+        help="生成最小骨架或 QQ 新手 starter（默认 minimal）",
+    )
+
+    p_configure = sub.add_parser("configure", help="从交互式终端安全写入 local.env")
+    p_configure.add_argument("--bot", required=True, help="bot.yaml 路径")
+    p_configure.add_argument("--dry-run", action="store_true", help="输出无秘密字段计划，不读取或写入配置")
 
     p_doctor = sub.add_parser("doctor", help="校验 BotSpec + 平台凭据是否齐全")
     p_doctor.add_argument("--bot", required=True, help="bot.yaml 路径")
     p_doctor.add_argument("--config", default=None, help="可选 local.env 路径")
+    p_doctor.add_argument("--json", action="store_true", help="输出标准化、无秘密部署检查 JSON")
 
     p_external_check = sub.add_parser(
         "external-check",
@@ -1165,6 +1562,7 @@ def main(argv: list[str]) -> int:
     handlers = {
         "list": _cmd_list,
         "new": _cmd_new,
+        "configure": _cmd_configure,
         "doctor": _cmd_doctor,
         "external-check": _cmd_external_check,
         "route-explain": _cmd_route_explain,

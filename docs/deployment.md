@@ -1,212 +1,216 @@
-# Linux / WSL 部署
+# Linux / WSL 首次部署
 
-AgentStrata 的生产脚本以 WSL/Linux 为运行面。本文只说明部署拓扑、首次安装、安全边界
-和数据位置；安装完成后的更新、重启、日志、平台网关和诊断命令统一见
-[`operations.md`](operations.md)。
+本文是 AgentStrata 首次安装的唯一事实源。面向新用户的推荐入口是终端向导；安装完成后的
+更新、启停、日志、QQ gateway、Console 和 Evaluation 操作统一见
+[`operations.md`](operations.md)，只有正常入口无法恢复时才使用
+[`../deploy/wsl/README_WSL.md`](../deploy/wsl/README_WSL.md) 的异常排障步骤。
 
-## 拓扑与事实源
+AgentStrata 的生产运行面是 Linux 或 WSL2，不支持 Windows 原生部署。Console 是可选管理面，
+不是 QQ 首次部署的依赖。
+
+## 准备什么
+
+### 支持的主机
+
+| 项目 | 支持范围 |
+| --- | --- |
+| 发行版 | Ubuntu 22.04 / 24.04 / 26.04；Debian 11 / 12 / 13 |
+| 架构 | amd64（x86_64）；arm64（aarch64） |
+| WSL | WSL2，PID 1 为 systemd，当前用户的 systemd bus 可用 |
+| Windows 原生 | 不支持 |
+
+衍生发行版、未知版本和其他架构会拒绝自动安装。不要修改检测结果或跳过检查；先按脚本给出的
+人工前置条件准备环境。WSL 源仓必须位于 Linux 文件系统，例如 `$HOME/AgentStrata`，不要把
+仓库放在 `/mnt/c` 后运行部署。`\\wsl.localhost` 是 Windows 访问 WSL 文件的桥接地址，
+不能作为 Windows 进程直接运行本项目的部署路径。
+
+需要提前准备：
+
+- Git 和可访问公开下载源的网络。
+- 一个支持 OpenAI-compatible API 的模型 Base URL、模型 ID 和 API Key。
+- 一个用于登录 NapCat 的 QQ 账号，以及 Owner 的稳定数字 QQ 号。
+- 可选的稳定数字 QQ 群号；不填则仅按 Owner 用户准入。
+- 执行系统包安装时可使用 `sudo`。向导会先显示精确变更，再请求确认。
+
+向导使用固定校验和的用户级 Python、Node 和 cc-connect，不覆盖系统 Python/Node，不修改
+shell profile，也不默认安装 Console、桌面、测试、飞书或第三方 MCP/Skill 依赖。
+
+## 三条命令开始
+
+```bash
+git clone https://github.com/Ling-ye/AgentStrata.git
+cd AgentStrata
+bash deploy/wsl/quickstart.sh
+```
+
+默认创建 `my-assistant-qq`，展示名为“我的助手”。向导会：
+
+1. 只读检查发行版、架构、磁盘、网络、systemd、用户 bus 和 Docker。
+2. 展示待下载的运行时、系统包、Docker 仓库与目标路径；任何特权变更都先确认。
+3. 创建不含搜索、MCP、人格、Codex 和代码任务的通用 QQ/Native starter。
+4. 在终端采集 LLM、机器人 QQ、Owner 和可选群号；API Key 使用隐藏输入，强 OneBot token
+   由本机生成，秘密不会出现在命令行参数、JSON 或部署摘要中。
+5. 启动 NapCat bootstrap，并只在当前交互式终端显示一次本地 WebUI 登录链接。
+6. 等待你在浏览器扫码并回到终端确认，然后执行 token 同步和经过认证的 OneBot 状态检查。
+7. 只调用一次统一实例更新入口，最后输出有界的检查结果与修复命令。
+
+浏览器只用于本机 NapCat WebUI 扫码；整个流程不要求 Console。
+
+### 预览、自定义和恢复
+
+只读预览不会提示秘密或写入文件：
+
+```bash
+bash deploy/wsl/quickstart.sh --dry-run
+```
+
+指定公开 Bot ID 和展示名：
+
+```bash
+bash deploy/wsl/quickstart.sh \
+  --bot-id my-assistant-qq \
+  --display-name "我的助手"
+```
+
+WSL systemd、Docker group 或扫码登录需要暂停时，按输出完成动作后从实际机器状态恢复：
+
+```bash
+bash deploy/wsl/quickstart.sh --resume
+```
+
+向导不维护第二份流程状态文件。`--resume` 会检查 BotSpec、私有 env、Docker、NapCat 和
+systemd 的当前状态；空的秘密输入表示保留现有值。它只接受由引导流程管理的 QQ/Native
+starter，遇到 Codex、`dev.code_tasks` 或其他高级配置会拒绝覆盖。
+
+如果 Docker 已由操作者或 Docker Desktop WSL 集成提供，但当前不可用，可禁止自动安装：
+
+```bash
+bash deploy/wsl/quickstart.sh --no-install-docker
+```
+
+退出码固定为：
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 本地部署边界 ready |
+| `1` | 部署失败；按错误修复后重试 |
+| `2` | 参数或使用方式错误 |
+| `3` | needs_user_action；需要重启 WSL、重新登录终端、扫码或显式确认 |
+
+非交互 stdin 不能确认系统变更，也不会输出带 WebUI token 的链接。
+
+## WSL systemd
+
+向导不会尝试在当前 shell 中伪造 systemd 修复。若 PID 1 不是 systemd，按 Microsoft
+官方 WSL systemd 文档在 `/etc/wsl.conf` 中启用：
+
+```ini
+[boot]
+systemd=true
+```
+
+随后从 Windows PowerShell 执行 `wsl --shutdown`，重新打开 WSL，验证：
+
+```bash
+ps -p 1 -o comm=
+systemctl --user is-system-running
+```
+
+再运行 `bash deploy/wsl/quickstart.sh --resume`。systemd user unit 被 enable 只表示发行版
+启动后实例可自启，不代表 Windows 冷启动会主动唤醒尚未运行的 WSL 发行版。
+
+## Docker 权限边界
+
+可用的 `docker info`（包括 Docker Desktop WSL 集成）会被直接复用。Docker 缺失时，向导
+只在支持的发行版上使用 Docker 官方 Ubuntu 或 Debian 安装步骤配置 apt 仓库，
+安装 Docker Engine、CLI、containerd、Buildx 和 Compose 插件；不执行 convenience script。
+
+- apt source、keyring 和软件包会在执行前列出。
+- 发现 `docker.io`、旧 Compose、`podman-docker`、独立 containerd/runc 等冲突时，
+  必须单独确认精确移除列表；脚本不 purge、不删除镜像、容器、volume 或 Docker 数据目录。
+- 加入 `docker` group 近似授予 root 权限，因此需要独立确认。新组权限未生效时退出
+  `needs_user_action`，重新打开终端后使用 `--resume`；不要修改 Docker socket 权限。
+- OneBot `3001` 和 NapCat WebUI `6099` 始终只发布到 `127.0.0.1`。
+
+## QQ 登录与准入
+
+引导流程的固定顺序是：
 
 ```text
-AgentStrata 源仓
-  -> 唯一应提交的工作区；BotSpec、prompt、代码、部署脚本
-
-共享基础设施
-  -> Evaluation service（UDS + managed worker lifecycle）
-  -> Console UI/BFF、BotSpec 所需的隔离 Docker 服务、平台 gateway
-
-实例副本（deploy.wsl_home）
-  -> 实例 venv、渲染 env、cc-connect、ACP runtime、systemd user service
+bootstrap -> 本地 WebUI 登录 -> sync-token -> authenticated status -> update_instance
 ```
 
-源仓通过 `deploy/wsl/sync_code.sh` 单向同步到实例副本。运行时 env 由
-`bots/<id>/local.env` 与 BotSpec 生成；不要手工修改实例副本或
-`~/.chatcopilot-<id>.env`。`local.env` 是机器私有文件，不进入 Git。
+`QQ_ACCESS_TOKEN` 是由主机生成的 32–128 位 URL-safe 强 token。NapCat WebUI 管理 token
+是另一凭据，只用于 localhost 管理面板；带 token 的 URL 只显示在可信交互式终端，不写入
+普通日志、配置或摘要。QQ Owner 与群准入只使用稳定数字 ID，昵称不参与授权；默认
+`QQ_ALLOW_FROM` 只包含 Owner，群列表默认为空。
 
- `chatcopilot` namespace、`CHATCOPILOT_*` 环境变量、systemd unit 名
-与默认 `~/ChatCopilot*` 实例路径是兼容契约。它们不是当前产品品牌，不能为了统一
-文案直接重命名。
+空/弱 token、非回环 URL、未登录 NapCat、认证动作失败或配置不完整都会在 Agent 部署前
+失败关闭。QQ/NapCat 日常启停和修复命令见
+[`operations.md#qq--napcat`](operations.md#qq--napcat)。
 
-## 前置条件
+## 如何理解“ready”
 
-- Linux，或启用了 systemd 的 WSL 发行版。
-- Python 3.10–3.13、Git、可用的模型与聊天平台账号。
-- 使用 Console 时需要 Node/npm；使用 SearXNG、Playwright、小红书或平台 gateway 等
-  隔离服务时需要 Docker。Tavily / Brave 等薄 Web API provider 不要求独立容器。
-- 所有项目命令在 Linux/WSL 源仓中运行，不从 `\\wsl.localhost\...` 作为 Windows
-  进程当前目录启动。
+最终结果使用 `agentstrata-deployment-check/v1`，总状态是 `ready`、
+`needs_user_action` 或 `failed`，每项检查都提供有界说明和修复动作。
 
-Python 依赖以根目录 `pyproject.toml` 为事实源。分层 `requirements.txt` 是由
-`scripts/sync_requirements.py` 生成的部署兼容清单，不应手工修改。
+`ready` 只证明当前机器上的配置、systemd 主实例、Relay、cc-connect、NapCat 和经过认证的
+只读 OneBot 边界就绪。默认流程不会消耗模型额度，也不会发送 QQ 消息，因此必须保留：
 
-## 首次安装
+```text
+llm_live_call=not_tested
+qq_external_send=not_tested
+qq_inbound_agent_roundtrip=not_tested
+```
 
-准备源仓 venv、Node/npm、cc-connect、Console 依赖，并安装 Console 与
-Evaluation 两个 systemd user service：
+最后请自行向机器人发送普通私聊，或在获准群内明确 @ 机器人，确认真实的
+“QQ 用户 -> NapCat -> Relay -> cc-connect -> Agent/模型 -> QQ 回复”链路。自动化、本地
+合成 QQ flow、只读平台探针或机器人主动发送都不能替代独立账号的入站往返证据。
+
+维护者可在不启动 AgentStrata、NapCat、systemd 或 QQ gateway 的前提下，用一次性容器复核
+六个受支持发行版的锁定运行时和 BotSpec smoke；该检查会拉取容器和运行时下载物到本机 Docker
+缓存，但不会修改宿主 Python、Node 或部署实例：
 
 ```bash
-bash deploy/wsl/install_wsl_env.sh --with-console
+bash scripts/verify_guided_runtime_matrix.sh --all
 ```
 
-一键部署 Console、按 BotSpec 对账的共享 Docker 服务和内置实例：
+脚本还会读取固定 NapCat digest 的 manifest，并要求同时包含 `linux/amd64` 与 `linux/arm64`。
+没有 ARM runner 时，这只证明发布的多架构清单，不等于 ARM 运行时端到端验证。
 
-```bash
-bash deploy/wsl/deploy_all.sh
-```
-
-先预览，或跳过暂不需要的组件：
-
-```bash
-bash deploy/wsl/deploy_all.sh --dry-run
-bash deploy/wsl/deploy_all.sh --skip-docker
-bash deploy/wsl/deploy_all.sh --skip-bots
-bash deploy/wsl/deploy_all.sh --docker-timeout 60
-```
-
-等价的手动顺序：
-
-```bash
-bash deploy/wsl/install_wsl_env.sh --with-console
-bash deploy/docker/services.sh start
-
-bash deploy/wsl/update_instance.sh --instance lingye-copilot-qq --enable
-
-bash console/systemd/register.sh --enable lingye-copilot-qq
-
-bash console/scripts/ctl.sh start lingye-copilot-qq
-```
-
-Bot 是否自启由 `systemctl --user enable chatcopilot@<id>` 决定。托管 unit 每次启动或重启都会
-先通过 `start.sh --apply-config` 从当前 BotSpec 重渲染运行时配置，渲染失败则不启动旧配置。
-一键脚本或 installer 失败后不要跳过失败阶段继续；按输出修复后重跑相同入口。
-
-## 平台上线边界
-
-### QQ / OneBot
-
- OneBot `3001` 和 NapCat WebUI `6099` 只绑定 `127.0.0.1`。
-`QQ_ACCESS_TOKEN` 必须是 32–128 位 URL-safe 强 token；WebUI 管理 token 是另一个
-凭据，只用于登录 localhost 管理面板。
-
-首次上线按“bootstrap → WebUI 登录 → sync-token → gateway start → instance update”
-执行，完整命令见 [`operations.md#qq--napcat`](operations.md#qq--napcat)。
-`sync-token` 只原子更新 Bot 私有 env 的对应键并保留其他配置。正式 start、restart、
-status 和实例启用都必须通过双向 OneBot 动作探针；空/弱 token、非回环 URL、未登录
-NapCat 或认证失败时 fail closed，不能先停止健康服务再尝试修复。
-
-### Codex backend
-
- managed `worktree` / `workspace` 使用实例私有的
-`CHATCOPILOT_CODEX_BOT_HOME`。main 和 worker 拥有不同的权威 `auth.json`，必须分别
-完成 device auth；不得导入或回退桌面/个人 `.codex`。Owner `worktree` 还必须在 ignored
-`local.env` 配置 GitHub repository、fine-grained token 与 Git author，并重新执行
-`console/systemd/register.sh`，让部署流程把 token 物化为 worker 专用 mode `0600` 文件。
-完整登录、token 权限与重注册命令见
-[`operations.md#codex-main--worker-认证`](operations.md#codex-main--worker-认证)。
- `host` 与 `auto_publish` 已删除；code-worker 只从远端干净基线交付草稿 PR，不覆盖源仓、不 merge、不部署或重启。角色、credential generation 或 caller 策略变化会使旧 resume ID 失效。
-
-### Evaluation service
-
-Evaluation 是与 Console 同仓库、同版本部署的独立本机服务。
-`chatcopilot-evaluation.service` 先于 `chatcopilot-console.service` 启动，在
-`XDG_RUNTIME_DIR/agentstrata-evaluation/service.sock` 创建当前用户私有的
-Unix socket。父目录与 socket 的权限分别为 `0700` 和 `0600`；该服务
-不监听 TCP，不对其他用户提供 API。
-
-Evaluation application 是 activity claim、lifecycle state 和 managed worker 的唯一
-owner。Console 只通过 UDS client 提供 UI/BFF；重启或更新 Console 不会
-杀死正在运行的 Evaluation。Managed worker 使用独立 session，自行写
-脱敏 `run.log`，不依赖 Console 的 cgroup、lifespan 或 stdout pipe。Service
-重启后会用 claim、state 和精确的 worker argv 身份重新观察存活进程。
-
-`CHATCOPILOT_EVALUATION_SOCKET` 可为客户端和服务端指定其他本机 socket，
-`CHATCOPILOT_EVALUATION_ROOT` 可显式指定 artifact root。部署脚本使用源仓
-`reports/evals/evaluations/` 作为默认 root，不在代码或 BotSpec 中写机器
-绝对路径。日常状态、日志和显式重启命令见
-[`operations.md#evaluation`](operations.md#evaluation)。
-
-不带参数的 `deploy_console.sh` 先安装/修复 Console，再发现全部 `bots/*/bot.yaml`，按
-`deploy.instance_id` 逐个调用统一实例更新入口。单个 Bot 更新失败不会阻断后续 Bot，最终
-汇总失败并返回非零；`--skip-bots` 可显式执行 Console-only 安装修复。
-
-`deploy_console.sh --restart-only` 只重启 Console。`--update-only` 和已安装环境的
-安装修复先通过 UDS 原子获取 maintenance lease：service 在与创建 Evaluation
-相同的跨进程锁内证明 lifecycle、claim 和 worker 均可确认空闲，随后持久化
-`.maintenance.json`；marker 存在期间所有新建 Evaluation 都返回 conflict。租约
-贯穿“构建 Console web → 重启 Evaluation service → UDS health → 重启 Console”，
-最后才释放。存在 queued/running Evaluation、未知状态、遗留 claim、身份不明
-worker、service 不可达或已安装 unit 未运行时都在任何依赖与构建更新前失败关闭。
-这避免空闲检查与新建请求之间的竞态，也避免新 service 接管已加载旧代码的 worker。
-
-## Windows 冷启动唤醒 WSL
-
- WSL 内的 systemd、user linger 和 Docker restart policy 不会唤醒尚未
-启动的发行版。installer 在当前用户的 HKCU Run 下注册隐藏 PowerShell launcher；它只
-执行 `wsl.exe -d Ubuntu-22.04 --exec /bin/true`，不保存密码、不使用 SYSTEM/最高权限，
-也不直接启动某个 Bot。
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File "\\wsl.localhost\Ubuntu-22.04\home\<user>\ChatCopilot\deploy\wsl\win\install-wsl-autostart.ps1"
-
-# 检查、探针或卸载
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File "\\wsl.localhost\Ubuntu-22.04\home\<user>\ChatCopilot\deploy\wsl\win\install-wsl-autostart.ps1" -Status
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File "\\wsl.localhost\Ubuntu-22.04\home\<user>\ChatCopilot\deploy\wsl\win\install-wsl-autostart.ps1" -Probe
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File "\\wsl.localhost\Ubuntu-22.04\home\<user>\ChatCopilot\deploy\wsl\win\install-wsl-autostart.ps1" -Uninstall
-```
-
-上述 `ChatCopilot` 路径是既有默认部署路径；仓库位于其他位置时替换为真实 WSL
-路径。launcher 只唤醒发行版，Bot 是否自启仍由 systemd user unit 决定。QQ 强 token
-尚未验收时应保持相应 unit disabled。
-
-## 数据与路径
-
-以 `<id>` 表示实例：
+## 配置、数据与 Secret
 
 | 类型 | 位置 | 所有者 |
 | --- | --- | --- |
 | 源 BotSpec | `bots/<id>/bot.yaml` | Git 源仓 |
-| 私有 env | `bots/<id>/local.env` | 操作者；不进 Git |
-| 实例副本 | `deploy.wsl_home`，默认 `~/ChatCopilot-<id>` | 部署脚本 |
+| 私有 env | `bots/<id>/local.env` | 操作者；mode `0600`；不进 Git |
+| 实例副本 | BotSpec 的 `deploy.wsl_home` | 部署脚本 |
 | 运行时 env | `~/.chatcopilot-<id>.env` | `provision-env` |
 | workspace | `~/chatcopilot-workspaces/<id>` | 运行时 |
 | 日志 | `~/chatcopilot-logs/<id>` | cc-connect / runtime |
 | cc-connect home | `~/.chatcopilot-runtime/<id>` | cc-connect |
-| 受管 Evaluation | `reports/evals/evaluations/<evaluation-id>/` | Application 写 request/state/claim；Core 写 result/progress/trials；worker 写脱敏日志 |
 
-不要在代码或版本化 YAML 中写机器绝对路径。机器路径经 BotSpec 的 `root_env` 或私有
-env 提供。
+`local.env` 是机器私有事实源。配置写入先在内存中构造并验证候选，只修改受管字段，保留
+未知键和注释，再用同目录 mode `0600` 临时文件原子替换；符号链接、非普通文件、错误 owner
+和多硬链接会被拒绝。`provision-env` 不 source 或执行文件，只解析简单赋值，并且只确定性
+展开值开头的 `~`、`$HOME` 或 `${HOME}`。不要手工修改实例副本或运行时 env。
 
-## Secret 与第三方能力
+BotSpec、示例和文档不得包含真实 API Key、平台 token、账号/群号、私有端点或机器绝对路径。
+第三方 MCP/Skill 不会由引导流程自动下载、安装或启用。
 
-- `provision-env` 不 source 或执行 `local.env`；只解析简单的 `KEY=value` /
-  `export KEY=value`。值开头的 `~`、`$HOME`、`${HOME}` 会确定性展开，其他变量引用
-  和命令替换保持字面量。
-- secret 只放 `bots/<id>/local.env`、`deploy/docker/.env` 或机器 credential store。
-- MCP YAML 使用 `${ENV_NAME}` 引用 secret，不写真实值。
-- `local.env.example` 与 `.env.example` 只提供变量名和安全占位符。
-- AgentStrata 不自动下载、安装或启用第三方 MCP/Skill。操作者审核源码、许可证、
-  启动方式、secret 引用和远端写行为后，手工安装并绑定已审阅服务。
-- Evaluation service 不会自动安装外部评测引擎、实验追踪平台、
-  remote evaluator 或 exporter。
+## 高级实例与可选 Console
 
-## 部署验收
+`lingye-copilot-qq` 是展示 Codex、搜索、MCP、私有 Wiki 和隔离代码任务的高级内置实例，
+不是新手向导的默认机器人。高级 BotSpec、Codex main/worker 认证、共享 Docker 服务、Console
+与 Evaluation 的安装和维护见 [`operations.md`](operations.md)；不要把高级实例的
+`local.env.example` 复制到 starter。
 
-```bash
-python -m chatcopilot botspec validate bots/lingye-copilot-qq/bot.yaml
-bash deploy/wsl/deploy_console.sh --status
-python -m chatcopilot.evals.service health --json
-bash deploy/docker/services.sh status
-python -m console.control list --json
-```
-
-广泛修改运行时、打包、部署或 Console 后，再运行：
+可选 Console 与终端命令消费同一份 BotSpec provisioning plan 和安全 env writer。Console
+可以填写配置并查看状态，但 QQ bootstrap/扫码/systemd 首次部署仍交回：
 
 ```bash
-.venv/bin/python scripts/check_repo.py full
+bash deploy/wsl/quickstart.sh --bot-id <id> --resume
 ```
 
-安装后的日常操作统一回到 [`operations.md`](operations.md)。只有正常入口无法恢复时，
-再使用 [`../deploy/wsl/README_WSL.md`](../deploy/wsl/README_WSL.md) 的手动排障步骤。
+部署入口内部只调用一次 `update_instance.sh`；不要在其后再手工调用 register/start。安装后的
+更新、状态和日志统一回到 [`operations.md`](operations.md)。

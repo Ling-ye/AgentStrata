@@ -37,8 +37,8 @@ warn() { printf "\033[1;33m[WARN]\033[0m %s\n" "$*"; }
 err()  { printf "\033[1;31m[ERR]\033[0m %s\n" "$*" >&2; }
 
 # ---------- PATH + env 兜底 ----------
-# 非交互非登录 shell 不会读 .bashrc，PATH 里可能没有 ~/.npm-global/bin、
-# FEISHU_APP_ID/SECRET 也拿不到。统一通过 _load_env.sh 的两个 helper 处理。
+# 非交互非登录 shell 不会读 .bashrc；实例配置和兼容 PATH 统一由
+# _load_env.sh 的两个 helper 处理。
 # shellcheck source=./_load_env.sh
 source "$(dirname "$0")/_load_env.sh"
 ccp_prepend_user_bins
@@ -56,7 +56,12 @@ LOG_DIR="${CHATCOPILOT_LOG_DIR:-$CCP_LOG_DIR_DEFAULT}"
 CC_HOME="${CHATCOPILOT_CC_HOME:-$CCP_CC_HOME_DEFAULT}"
 CC_CONFIG_DIR="${CHATCOPILOT_CC_CONNECT_CONFIG_DIR:-$CC_HOME/.cc-connect}"
 CC_CONFIG="$CC_CONFIG_DIR/config.toml"
-CC_CONNECT_BIN="${CHATCOPILOT_CC_CONNECT_BIN:-$HOME/.npm-global/bin/cc-connect}"
+CC_CONNECT_BIN="${CHATCOPILOT_CC_CONNECT_BIN:-$HOME/.local/share/agentstrata/node-tools/cc-connect-1.4.0-beta.3/node_modules/.bin/cc-connect}"
+NODE_BIN="$(ccp_resolve_private_node)" || {
+    err "项目私有 Node.js 24.20.0 缺失或完整性校验失败"
+    err "  请重新运行 deploy/wsl/install_wsl_env.sh；不会回退到系统 Node"
+    exit 1
+}
 
 # ---------- 可选：重新渲染配置 ----------
 if [ "$APPLY_CONFIG" = "1" ]; then
@@ -106,22 +111,25 @@ fi
 # ---------- 校验固定 cc-connect 可执行 ----------
 if [ "${CC_CONNECT_BIN#/}" = "$CC_CONNECT_BIN" ] || [ ! -x "$CC_CONNECT_BIN" ]; then
     err "CHATCOPILOT_CC_CONNECT_BIN 必须是绝对且可执行的用户级 cc-connect：$CC_CONNECT_BIN"
-    err "  请确认 $HOME/.npm-global/bin/cc-connect 存在，或显式执行安装流程"
+    err "  请重新运行 deploy/wsl/install_wsl_env.sh，或显式配置项目私有 cc-connect 路径"
     exit 1
 fi
 CC_CONNECT_BIN="$(readlink -f "$CC_CONNECT_BIN")"
-case "$CC_CONNECT_BIN" in
-    /usr/bin/*|/usr/local/bin/*)
-        err "拒绝启动系统级 cc-connect wrapper：$CC_CONNECT_BIN"
-        err "  升级只能显式执行 npm install -g cc-connect@1.4.0-beta.3"
-        exit 1
-        ;;
-esac
+EXPECTED_CC_CONNECT_ENTRY="$HOME/.local/share/agentstrata/node-tools/cc-connect-1.4.0-beta.3/node_modules/cc-connect/run.js"
+if [ "$CC_CONNECT_BIN" != "$EXPECTED_CC_CONNECT_ENTRY" ] \
+    || [ ! -f "$CC_CONNECT_BIN" ] || [ -L "$CC_CONNECT_BIN" ] \
+    || [ "$(stat -c '%u' "$CC_CONNECT_BIN" 2>/dev/null || true)" != "$(id -u)" ] \
+    || [ "$(stat -c '%h' "$CC_CONNECT_BIN" 2>/dev/null || true)" != "1" ]; then
+    err "cc-connect 入口必须是锁定的项目私有文件：$EXPECTED_CC_CONNECT_ENTRY"
+    err "  请通过 deploy/wsl/install_wsl_env.sh 恢复锁定安装"
+    exit 1
+fi
 
 # ---------- 前台启动 ----------
 echo
 step "前台启动 cc-connect（日志直接输出到本终端，Ctrl+C 停止）"
 echo "    可执行文件：$CC_CONNECT_BIN"
+echo "    Node.js:    $NODE_BIN"
 echo "    instance:   ${CHATCOPILOT_INSTANCE_ID:-default}"
 echo "    cc HOME:    ${CC_HOME}"
 echo "    config:     ${CC_CONFIG}"
@@ -180,5 +188,8 @@ echo "    >>> 关闭本终端即停止服务 <<<"
 echo
 
 # 把 CC_LOG_FILE 显式注入子进程 env，cc-connect 与 ACP runtime 都靠它定位日志。
-exec env -u QQ_ALLOW_FROM -u QQ_ALLOW_GROUPS \
-    HOME="$CC_HOME" CC_LOG_FILE="${CC_LOG_FILE:-/tmp/cc-connect.log}" "$CC_CONNECT_BIN"
+exec env -u QQ_ALLOW_FROM -u QQ_ALLOW_GROUPS -u NODE_OPTIONS -u NODE_PATH \
+    -u NPM_CONFIG_USERCONFIG -u NPM_CONFIG_GLOBALCONFIG \
+    HOME="$CC_HOME" PATH="$(dirname "$NODE_BIN"):$PATH" \
+    CC_LOG_FILE="${CC_LOG_FILE:-/tmp/cc-connect.log}" \
+    "$NODE_BIN" "$CC_CONNECT_BIN"

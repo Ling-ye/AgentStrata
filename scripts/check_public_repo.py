@@ -44,8 +44,10 @@ PUBLIC_URL_HOSTS = frozenset(
         "docs.python.org",
         "docs.searxng.org",
         "docs.unity3d.com",
+        "download.docker.com",
         "en.wikipedia.org",
         "example.feishu.cn",
+        "files.pythonhosted.org",
         "github.com",
         "gorilla.cs.berkeley.edu",
         "huggingface.co",
@@ -118,6 +120,7 @@ FORBIDDEN_BACKUP_PATHSPECS = tuple(
 PUBLIC_CODE_REPOSITORIES = frozenset(
     {
         "github.com/acme/project",
+        "github.com/astral-sh/uv",
         "github.com/arc53/docsgpt",
         "github.com/brave/brave-search-mcp-server",
         "github.com/example/docs",
