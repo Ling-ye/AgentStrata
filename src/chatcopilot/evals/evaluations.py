@@ -3721,7 +3721,11 @@ def _runnable_request_dict(request: EvaluationRequest) -> dict[str, Any]:
         "kind": request.kind,
         "bot": request.bot,
         "suite": request.suite,
-        "case_ids": list(request.case_ids),
+        "case_ids": (
+            list(request.case_ids)
+            if request.preset in {"", "custom"}
+            else []
+        ),
         "preset": request.preset,
         "repetitions": request.repetitions,
         "max_wall_seconds": request.max_wall_seconds,

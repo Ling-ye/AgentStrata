@@ -1098,6 +1098,26 @@ def test_managed_suite_bootstrap_includes_complete_effective_request(
     assert stored_request["seed"] == 7
 
 
+def test_named_suite_runnable_request_reselects_cases_from_the_preset() -> None:
+    parsed = parse_evaluation_request(
+        {
+            "evaluation_id": "eval-named-suite-preset",
+            "kind": "suite",
+            "bot": "bots/lingye-copilot-qq/bot.yaml",
+            "suite": "agentstrata-capabilities-v1",
+            "preset": "quick",
+            "dry_run": True,
+        }
+    )
+
+    runnable = evaluation_module._runnable_request_dict(parsed)
+
+    assert len(parsed.case_ids) == 10
+    assert runnable["preset"] == "quick"
+    assert runnable["case_ids"] == []
+    assert parse_evaluation_request(runnable).case_ids == parsed.case_ids
+
+
 def test_orchestrator_uses_seeded_complete_target_groups_and_canonical_state(
     tmp_path: Path,
 ) -> None:

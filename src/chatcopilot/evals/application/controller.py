@@ -316,11 +316,17 @@ def _core_request(
             )
         return value
     if kind == "suite":
+        preset = str(request.get("preset") or "")
+        case_ids = list(request.get("case_ids") or ())
+        # Named presets own their Case selection. Stored resolved Cases remain
+        # descriptive metadata and must not become explicit Core input.
+        if preset and preset != "custom":
+            case_ids = []
         return {
             **common,
             "suite": str(request.get("suite_id") or request.get("suite") or ""),
-            "case_ids": list(request.get("case_ids") or ()),
-            "preset": str(request.get("preset") or ""),
+            "case_ids": case_ids,
+            "preset": preset,
             "repetitions": request.get("repetitions", 1),
             "max_wall_seconds": request.get("max_wall_seconds", 0),
             "seed": request.get("seed", 0),
@@ -2086,12 +2092,16 @@ class EvaluationApplication:
                 ):
                     request[key] = stored.get(key)
             return request
+        preset = str(stored.get("preset") or "")
+        case_ids = list(stored.get("case_ids") or ())
+        if preset and preset != "custom":
+            case_ids = []
         return {
             "kind": "suite",
             "bot_id": str(stored.get("bot_id") or ""),
             "suite_id": str(stored.get("suite_id") or ""),
-            "case_ids": list(stored.get("case_ids") or ()),
-            "preset": str(stored.get("preset") or ""),
+            "case_ids": case_ids,
+            "preset": preset,
             "repetitions": int(stored.get("repetitions") or 1),
             "max_wall_seconds": float(stored.get("max_wall_seconds") or 0),
             "seed": int(stored.get("seed") or 0),

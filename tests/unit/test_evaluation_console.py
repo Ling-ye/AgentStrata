@@ -529,6 +529,57 @@ def test_application_rejects_non_boolean_external_write_confirmation_before_crea
     spawn.assert_not_called()
 
 
+def test_named_suite_preset_keeps_resolved_cases_out_of_core_request(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "evaluations"
+    selected_cases = ["dialogue-strict-json", "tool-allowed-exact-call"]
+
+    def validator(
+        _bot: BotInstance,
+        request: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        assert request["preset"] == "quick"
+        assert request["case_ids"] == []
+        return {
+            "ready": True,
+            "checks": [{"code": "suite", "ok": True}],
+            "effective_request": {
+                "suite": request["suite_id"],
+                "case_ids": selected_cases,
+                "preset": "quick",
+                "repetitions": 1,
+                "max_wall_seconds": 0,
+                "seed": 0,
+                "options": {},
+                "confirm_external_write": False,
+                "dry_run": False,
+                "llm_judge": False,
+            },
+            "targets": [],
+        }
+
+    manager = EvaluationApplication(root, validator=validator)
+    with patch.object(manager, "_spawn"):
+        created = manager.start(
+            bot_id=_instance().instance_id,
+            request={
+                "kind": "suite",
+                "suite_id": "agentstrata-capabilities-v1",
+                "case_ids": [],
+                "preset": "quick",
+            },
+        )
+
+    stored = json.loads(
+        (root / created["evaluation_id"] / "request.json").read_text(encoding="utf-8")
+    )
+    assert stored["preset"] == "quick"
+    assert stored["case_ids"] == selected_cases
+    assert stored["core_request"]["preset"] == "quick"
+    assert stored["core_request"]["case_ids"] == []
+
+
 def test_startup_failure_is_sanitized_before_any_error_is_persisted(
     tmp_path: Path,
 ) -> None:
@@ -1818,12 +1869,13 @@ def test_suite_rerun_does_not_reuse_legacy_external_write_confirmation() -> None
             "bot_id": "lingye-copilot-qq",
             "suite_id": "agentstrata-capabilities-v1",
             "preset": "full",
-            "case_ids": [],
+            "case_ids": ["dialogue-strict-json", "tool-allowed-exact-call"],
             "confirm_external_write": True,
         }
     )
 
     assert cloned["confirm_external_write"] is False
+    assert cloned["case_ids"] == []
 
 
 def test_terminal_state_with_live_claim_blocks_delete_rerun_and_new_start(
