@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# _start_qq_proxy.sh — 启动【当前实例】的 QQ OneBot @ Relay。
+# _start_qq_proxy.sh — 已移除的 QQ OneBot @ Relay legacy 实现。
+# 当前 Gateway/systemd/quickstart/update 路径均不调用本文件；仅保留旧部署取证。
 #
-# QQ 实例固定启动；非 QQ 实例直接 no-op 退出 0。
-# 由 start.sh 在 `exec cc-connect` 之前调用：
+# 仅供维护者复现或清理旧部署；受支持的入口不会调用。legacy 行为如下：
+# 旧 QQ 实例启动 Relay，非 QQ 实例直接 no-op 退出 0。
 #   - 成功（或非 QQ）→ 退出 0；
 #   - Relay 起不来（端口占用 / 崩溃）→ 退出 3，阻止 QQ 实例启动；
 #   - OneBot token / 回环地址 / 双向认证探针失败 → 退出 4，阻止 QQ 实例启动。

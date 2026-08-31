@@ -9,6 +9,7 @@ from chatcopilot.contracts.agent_backend import (
     BackendCapabilities,
     BackendSessionRef,
 )
+from chatcopilot.contracts.cancellation import CancellationProbe, CancellationRequested
 from chatcopilot.contracts.prompt import PromptPlan
 
 
@@ -41,8 +42,33 @@ class BackendAgentSession:
     def backend_id(self) -> str:
         return self.backend_session_ref.backend
 
-    def run_task(self, task: AgentTask, *, on_event: EventSink) -> AgentResult:
-        result = self.backend.stream_turn(self._session_ref, task, on_event=on_event)
+    def run_task(
+        self,
+        task: AgentTask,
+        *,
+        on_event: EventSink,
+        cancellation: CancellationProbe | None = None,
+    ) -> AgentResult:
+        try:
+            if cancellation is None:
+                result = self.backend.stream_turn(
+                    self._session_ref,
+                    task,
+                    on_event=on_event,
+                )
+            else:
+                result = self.backend.stream_turn(
+                    self._session_ref,
+                    task,
+                    on_event=on_event,
+                    cancellation=cancellation,
+                )
+        except CancellationRequested:
+            return AgentResult(
+                final_text="",
+                stop_reason="cancelled",
+                message_count=self.message_count,
+            )
         self.backend_session_ref
         return result
 

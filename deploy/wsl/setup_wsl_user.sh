@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# setup_wsl_user.sh — 用户态部分。Cursor 会代你跑。
-# 用法：bash ~/setup_wsl_user.sh
+# setup_wsl_user.sh — Feishu legacy edge 的旧用户态安装入口。
+# 用法：仅对明确的 Feishu legacy Bot 运行 bash ~/setup_wsl_user.sh
 #   - 配 npm 全局 prefix 到 ~/.npm-global，免后续 sudo
 #   - 装 cc-connect / lark-cli（不再装 cursor-agent CLI——已改用 ACP 协议自建 ACP server）
 #   - 在 ~/ChatCopilot 下建 venv 并装 Python 依赖（含 src/chatcopilot/middleware/acp 的 ACP SDK）
@@ -33,6 +33,7 @@ fi
 # 根据 BotSpec 的 platform.type 决定要装的 cc-connect 通道与是否需要 lark-cli。
 # 当前 BOT_SPEC 由 ccp_apply_bot_deploy_config 设置；若不存在则按多 bot.yaml 探测。
 PLATFORM_TYPE_FOR_SETUP=""
+GATEWAY_SETUP_DETECTED=0
 _CANDIDATE_BOTS=()
 if [ -n "${CHATCOPILOT_BOT_SPEC:-}" ] && [ -f "$CHATCOPILOT_BOT_SPEC" ]; then
     _CANDIDATE_BOTS+=("$CHATCOPILOT_BOT_SPEC")
@@ -45,6 +46,11 @@ if [ -d "$_CANDIDATE_DIR" ]; then
 fi
 for _bot in "${_CANDIDATE_BOTS[@]}"; do
     [ -f "$_bot" ] || continue
+    if declare -F ccp_bot_uses_gateway >/dev/null 2>&1 \
+        && ccp_bot_uses_gateway "$_bot"; then
+        GATEWAY_SETUP_DETECTED=1
+        break
+    fi
     _t="$(BOT_SPEC="$_bot" python3 - <<'PY'
 import os
 from pathlib import Path
@@ -69,8 +75,18 @@ PY
         feishu) [ -z "$PLATFORM_TYPE_FOR_SETUP" ] && PLATFORM_TYPE_FOR_SETUP="feishu" ;;
     esac
 done
+if [ "$GATEWAY_SETUP_DETECTED" -eq 1 ]; then
+    err "setup_wsl_user.sh 只保留给 Feishu legacy edge。"
+    err "QQ Gateway 请运行 deploy/wsl/quickstart.sh；不会安装 Node 或 cc-connect。"
+    exit 2
+fi
+if [ "$PLATFORM_TYPE_FOR_SETUP" = "qq" ]; then
+    err "旧 platform.type=qq 拓扑已移除，不能通过 legacy 安装器恢复。"
+    err "请迁移为 gateway + channels.qq 后运行 deploy/wsl/quickstart.sh --resume。"
+    exit 2
+fi
 PLATFORM_TYPE_FOR_SETUP="${PLATFORM_TYPE_FOR_SETUP:-feishu}"
-log "检测到 platform.type=$PLATFORM_TYPE_FOR_SETUP（多个实例时优先 qq，确保 cc-connect@beta 通道可用）"
+log "检测到 Feishu legacy platform.type=$PLATFORM_TYPE_FOR_SETUP"
 
 if [ "$(id -u)" -eq 0 ]; then
     err "本脚本不要用 sudo 跑；它装的是用户态全局包。"

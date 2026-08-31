@@ -1,4 +1,4 @@
-"""Run one BotSpec-defined AgentStrata instance."""
+"""Run one BotSpec-defined AgentStrata instance through its declared host."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from chatcopilot.botspec import (
 )
 from chatcopilot.botspec.runtime_env import apply_runtime_env
 from chatcopilot.core.settings import set_bot_spec_env
-from chatcopilot.middleware.acp.server import main as acp_main
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
         "--transport",
         default="acp",
         choices=("acp",),
-        help="Runtime transport. Only ACP is currently implemented.",
+        help=argparse.SUPPRESS,
     )
     args = parser.parse_args(argv)
 
@@ -41,7 +40,26 @@ def main(argv: list[str] | None = None) -> int:
     runtime = assemble_runtime_context(load_botspec(bot_path))
     set_bot_spec_env(runtime.source_path)
     apply_runtime_env(runtime)
+    if runtime.gateway is not None and runtime.channels.qq is not None:
+        return _run_gateway(runtime)
     _start_codebase_index_warmup(runtime)
+    return _run_legacy_acp(runtime)
+
+
+def _run_gateway(runtime: BotRuntimeContext) -> int:
+    from chatcopilot.gateway.runtime import main as gateway_main
+
+    return gateway_main(
+        runtime,
+        after_build=lambda: _start_codebase_index_warmup(runtime),
+    )
+
+
+def _run_legacy_acp(runtime: BotRuntimeContext) -> int:
+    """Keep non-Gateway platforms on the isolated legacy ACP host."""
+
+    from chatcopilot.middleware.acp.server import main as acp_main
+
     return acp_main(runtime)
 
 

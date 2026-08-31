@@ -1,9 +1,9 @@
-"""QQ 平台适配器（cc-connect@beta, OneBot v11 / NapCat）。
+"""QQ deployment adapter for the Gateway-owned OneBot v11 Channel.
 
-链路：``QQ Client <-> NapCat -> QQ @ Relay -> cc-connect -> ACP server``。
-平台层只承载 QQ 会话身份解析、文件回传与部署渲染；具体机器人实例是否启用
-per-user workspace 附件流水线，由 ``bots/<bot-id>/bot.yaml`` 的 ``tools.features``
-（如 ``chat.file_uploads`` / ``chat.private_workspace``）决定。
+The production path is ``QQ Client <-> external OneBot provider <-> Gateway``.
+The Gateway owns transport and Channel lifecycle; authorization remains in the
+host policy layer. Legacy runtime helpers remain isolated during the cutover and
+are not selected by a Gateway BotSpec.
 
 后台任务通知通过 NapCat OneBot v11 ``send_msg`` 主动发送到 workspace 对应的原私聊或群聊。
 
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 
 class QQAdapter(PlatformAdapter):
-    """基于 cc-connect OneBot v11（NapCat）通道的 QQ 适配器。"""
+    """Expose QQ provisioning and external checks for the Gateway Channel."""
 
     name = "qq"
     adapter_id = "qq_acp"
@@ -144,17 +144,31 @@ class QQAdapter(PlatformAdapter):
     def required_secrets(self) -> tuple[SecretSpec, ...]:
         return (
             SecretSpec(
+                "CHATCOPILOT_GATEWAY_PORT",
+                required=False,
+                default="18789",
+                label="Gateway 端口",
+                description="每个 Bot 的回环 Gateway 监听端口",
+            ),
+            SecretSpec(
+                "CHATCOPILOT_GATEWAY_TOKEN",
+                required=True,
+                label="Gateway Access Token",
+                description="Gateway 客户端凭据（32–128 位 URL-safe 字符）",
+                host_generated=True,
+            ),
+            SecretSpec(
                 "QQ_ACCOUNT",
                 required=True,
                 label="机器人 QQ 号",
-                description="用于 @ 识别与 NapCat 登录的稳定数字 ID",
+                description="用于账号校验与结构化 @ 识别的稳定数字 ID",
             ),
             SecretSpec(
-                "QQ_WS_URL",
+                "CHATCOPILOT_QQ_ONEBOT_WS_URL",
                 required=False,
                 default="ws://127.0.0.1:3001",
                 label="OneBot WebSocket 地址",
-                description="NapCat 正向 WebSocket 地址（OneBot v11）",
+                description="外部 OneBot v11 provider 的回环 WebSocket 地址",
             ),
             SecretSpec(
                 "QQ_ACCESS_TOKEN",
@@ -168,21 +182,14 @@ class QQAdapter(PlatformAdapter):
                 required=False,
                 default="",
                 label="允许接入的 QQ 用户",
-                description="ACP QQ 用户准入名单（空值不授予权限）",
+                description="Gateway QQ 用户准入名单（空值不授予权限）",
             ),
             SecretSpec(
                 "QQ_ALLOW_GROUPS",
                 required=False,
                 default="",
                 label="允许接入的 QQ 群",
-                description="ACP QQ 群准入名单（空值不授予权限）",
-            ),
-            SecretSpec(
-                "QQ_AT_PROXY_URL",
-                required=False,
-                default="ws://127.0.0.1:3002",
-                label="QQ @ Relay 地址",
-                description="QQ @ Relay 监听地址；cc-connect 固定连接此回环地址",
+                description="Gateway QQ 群准入名单（空值不授予权限）",
             ),
             SecretSpec(
                 "QQ_WEBUI_PORT",
@@ -209,9 +216,22 @@ class QQAdapter(PlatformAdapter):
 
     def validate_runtime_env(self, env: Mapping[str, str]) -> tuple[str, ...]:
         errors: list[str] = []
+        for legacy_key in (
+            "QQ_WS_URL",
+            "QQ_AT_PROXY_URL",
+            "CHATCOPILOT_CC_CONNECT_BIN",
+            "CHATCOPILOT_CC_HOME",
+            "CHATCOPILOT_CC_CONNECT_CONFIG_DIR",
+            "CHATCOPILOT_SESSION_ENV_DIR",
+        ):
+            if legacy_key in env:
+                errors.append(
+                    "qq_legacy_gateway_env_removed: "
+                    f"{legacy_key} is not accepted by the Gateway QQ runtime"
+                )
         if not is_numeric_platform_id(env.get("QQ_ACCOUNT")):
             errors.append(
-                "qq_account_invalid: QQ_ACCOUNT must be a numeric QQ account for the mention relay"
+                "qq_account_invalid: QQ_ACCOUNT must be a numeric QQ account"
             )
         for legacy_key in ("QQ_REQUIRE_AT_IN_GROUP", "QQ_AT_ALL_COUNTS"):
             if legacy_key in env:
@@ -227,20 +247,34 @@ class QQAdapter(PlatformAdapter):
             require_access_token(env.get("QQ_ACCESS_TOKEN"))
         except QQBoundaryError as exc:
             errors.append(f"{exc.error_code}: {exc}")
+        gateway_token = str(env.get("CHATCOPILOT_GATEWAY_TOKEN", "") or "").strip()
+        try:
+            require_access_token(gateway_token)
+        except QQBoundaryError:
+            errors.append(
+                "gateway_access_token_invalid: CHATCOPILOT_GATEWAY_TOKEN must be "
+                "32-128 URL-safe characters"
+            )
+        if gateway_token and gateway_token == str(env.get("QQ_ACCESS_TOKEN", "") or "").strip():
+            errors.append(
+                "gateway_token_reused: CHATCOPILOT_GATEWAY_TOKEN must differ from QQ_ACCESS_TOKEN"
+            )
         try:
             require_loopback_websocket_url(
-                env.get("QQ_WS_URL") or "ws://127.0.0.1:3001",
-                env_key="QQ_WS_URL",
+                env.get("CHATCOPILOT_QQ_ONEBOT_WS_URL") or "ws://127.0.0.1:3001",
+                env_key="CHATCOPILOT_QQ_ONEBOT_WS_URL",
             )
         except QQBoundaryError as exc:
             errors.append(f"{exc.error_code}: {exc}")
+        port_text = str(env.get("CHATCOPILOT_GATEWAY_PORT", "18789") or "").strip()
         try:
-            require_loopback_websocket_url(
-                env.get("QQ_AT_PROXY_URL") or "ws://127.0.0.1:3002",
-                env_key="QQ_AT_PROXY_URL",
+            port = int(port_text)
+        except ValueError:
+            port = 0
+        if not 1 <= port <= 65535:
+            errors.append(
+                "gateway_port_invalid: CHATCOPILOT_GATEWAY_PORT must be an integer from 1 to 65535"
             )
-        except QQBoundaryError as exc:
-            errors.append(f"{exc.error_code}: {exc}")
         return tuple(errors)
 
     def materialize_host_generated_secret(
@@ -248,7 +282,7 @@ class QQAdapter(PlatformAdapter):
         env_key: str,
         current_value: str,
     ) -> str:
-        if env_key != "QQ_ACCESS_TOKEN":
+        if env_key not in {"QQ_ACCESS_TOKEN", "CHATCOPILOT_GATEWAY_TOKEN"}:
             return super().materialize_host_generated_secret(env_key, current_value)
         try:
             require_access_token(current_value)

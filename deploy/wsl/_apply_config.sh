@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# _apply_config.sh — 渲染 cc-connect 配置到 WSL HOME。
+# _apply_config.sh — 仅为 legacy edge 渲染 cc-connect 配置。
 #
 # 平台特定知识（需要哪些凭据、cc-connect [[projects.platforms]] 片段、额外配置
 # 文件如飞书 .lark-cli/config.json）已下沉到 src/chatcopilot/platforms/<type>/adapter.py。
@@ -41,8 +41,6 @@ if [ ! -f "$BOT_SPEC" ]; then
     exit 1
 fi
 
-mkdir -p "$CC_CONFIG_DIR" "$WS_DEFAULT/downloads" "$WS_DEFAULT/results" "$WS_DEFAULT/uploads" "$WS_DEFAULT/.cc-connect/attachments" "$LOG_DIR"
-
 # ---------- 把已解析的部署路径/标识导出给 CLI（保证与 bash 计算结果一致） ----------
 export CHATCOPILOT_HOME="$MT_HOME"
 export CHATCOPILOT_WORKSPACE_ROOT="$WS_ROOT"
@@ -66,6 +64,16 @@ if [ -z "${PY:-}" ]; then
     exit 1
 fi
 export PYTHONPATH="$MT_HOME/src${PYTHONPATH:+:$PYTHONPATH}"
+
+if ccp_bot_uses_gateway "$BOT_SPEC"; then
+    echo "[OK] Gateway-backed instance does not render cc-connect/session-env configuration."
+    echo "  instance: ${CHATCOPILOT_INSTANCE_ID:-default}"
+    echo "  bot spec: $BOT_SPEC"
+    echo "  runtime:  python -m chatcopilot run --bot $BOT_SPEC"
+    exit 0
+fi
+
+mkdir -p "$CC_CONFIG_DIR" "$WS_DEFAULT/downloads" "$WS_DEFAULT/results" "$WS_DEFAULT/uploads" "$WS_DEFAULT/.cc-connect/attachments" "$LOG_DIR"
 
 # ---------- 1. 校验平台凭据（adapter.required_secrets 驱动，平台无关） ----------
 if ! "$PY" -m chatcopilot bot doctor --bot "$BOT_SPEC"; then

@@ -6,6 +6,7 @@ import { useBotActions } from "../features/bots/useBotActions";
 import { useBotsOverview } from "../features/bots/useBotsOverview";
 import BotTaskFlowPanel from "../features/bots/BotTaskFlowPanel";
 import BotRuntimePanel from "../features/bots/BotRuntimePanel";
+import { taskFlowAvailability } from "../features/bots/taskFlowModel";
 import { api, streamLogs, streamTask } from "../api";
 import type { BotInstance, BotStatus, Task } from "../types";
 import { useEventStreamLines } from "../shared/hooks/useEventStreamLines";
@@ -25,7 +26,7 @@ function rosterState(status: BotStatus | undefined) {
   if (status.active_state === "failed") return { label: "失败", color: "red" };
   if (!status.systemd_available) return { label: "systemd 不可用", color: "orange" };
   if (!status.registered) return { label: "未注册", color: "orange" };
-  if (status.running && status.ws_connected === false) return { label: "连接异常", color: "orange" };
+  if (status.running && status.channel_connected === false) return { label: "Channel 异常", color: "orange" };
   if (status.running) return { label: "运行中", color: "green" };
   return { label: "已停止", color: "gray" };
 }
@@ -158,8 +159,13 @@ export default function BotsPage({ loadError, visible = true }: Props) {
   const openLogs = useCallback(
     (bot: BotInstance) => {
       logStream.start(
-        (onLine, onStatus) => streamLogs(bot.instance_id, "cc", onLine, onStatus),
-        { title: `${bot.display_name} · cc-connect 日志` },
+        (onLine, onStatus) => streamLogs(
+          bot.instance_id,
+          bot.runtime_kind === "gateway" ? "gateway" : "cc",
+          onLine,
+          onStatus,
+        ),
+        { title: `${bot.display_name} · ${bot.runtime_kind === "gateway" ? "Gateway" : "legacy edge"} 日志` },
       );
     },
     [logStream],
@@ -201,6 +207,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
               {bots.map((bot) => {
                 const state = rosterState(statuses[bot.instance_id]);
                 const activity = activityMap[bot.instance_id];
+                const taskFlow = taskFlowAvailability(bot.runtime_kind);
                 return (
                   <button
                     key={bot.instance_id}
@@ -213,13 +220,22 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                       <Tag size="small" color={state.color}>{state.label}</Tag>
                     </span>
                     <span className="bot-instance-roster-id">{bot.platform || "?"} · {bot.instance_id}</span>
-                    <span className="bot-instance-roster-stats">
-                      <span>活跃 <strong>{activity?.active_count ?? 0}</strong></span>
-                      <span className={(activity?.failed_recent_count ?? 0) > 0 ? "has-failure" : ""}>
-                        24h 失败 <strong>{activity?.failed_recent_count ?? 0}</strong>
-                      </span>
-                    </span>
-                    <span className="bot-instance-roster-last">最近任务 {rosterAge(activity?.last_activity_at)}</span>
+                    {taskFlow.available ? (
+                      <>
+                        <span className="bot-instance-roster-stats">
+                          <span>活跃 <strong>{activity?.active_count ?? 0}</strong></span>
+                          <span className={(activity?.failed_recent_count ?? 0) > 0 ? "has-failure" : ""}>
+                            24h 失败 <strong>{activity?.failed_recent_count ?? 0}</strong>
+                          </span>
+                        </span>
+                        <span className="bot-instance-roster-last">最近任务 {rosterAge(activity?.last_activity_at)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="bot-instance-roster-stats">Gateway 任务流未接入</span>
+                        <span className="bot-instance-roster-last">未读取 legacy ACP 任务</span>
+                      </>
+                    )}
                   </button>
                 );
               })}

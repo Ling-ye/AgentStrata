@@ -1,7 +1,18 @@
-import type { BotTask, TaskFlowTransition, TasksResponse } from "../../types";
+import type { BotInstance, BotTask, TaskFlowTransition, TasksResponse } from "../../types";
 
 const ACTIVE_TASK_STATUSES = new Set(["queued", "running", "delegated", "cancel_requested"]);
 const TERMINAL_TASK_STATUSES = new Set(["succeeded", "failed", "error", "cancelled"]);
+
+export function taskFlowAvailability(runtimeKind: BotInstance["runtime_kind"]) {
+  if (runtimeKind === "gateway") {
+    return {
+      available: false,
+      code: "gateway_task_flow_unavailable",
+      message: "Gateway 的受限任务流投影尚未接入；Console 不会回退展示旧 Relay、cc-connect 或 ACP 任务证据。",
+    } as const;
+  }
+  return { available: true, code: null, message: "" } as const;
+}
 
 export function updateExpandedStepIds(
   current: ReadonlySet<string>,

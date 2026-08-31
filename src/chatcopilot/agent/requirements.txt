@@ -6,6 +6,7 @@ PyYAML>=6.0
 jsonschema>=4.26,<5
 Requests>=2.32,<3
 mcp-server-git>=0.6
+websockets>=12
 openai>=1.40.0
 mcp>=1.27,<2
 langgraph>=1.2,<2

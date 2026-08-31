@@ -36,6 +36,7 @@ dependencies = [
     "jsonschema>=4.26,<5",
     "Requests>=2.32,<3",
     "mcp-server-git>=0.6",
+    "websockets>=12",
 ]
 
 [project.optional-dependencies]
@@ -46,7 +47,6 @@ agent = [
 ]
 acp = [
     "agent-client-protocol>=0.10.0",
-    "websockets>=12",
 ]
 desktop = [
     "numpy>=2.2,<2.3",

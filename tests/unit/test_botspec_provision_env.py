@@ -133,6 +133,12 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
         bot_dir.mkdir()
         runtime_env = base / "qq-runtime.env"
         (bot_dir / "persona.md").write_text("qq bot\n", encoding="utf-8")
+        if "CHATCOPILOT_GATEWAY_TOKEN" not in local_env:
+            local_env += (
+                'export CHATCOPILOT_GATEWAY_TOKEN="'
+                + ("g" * 64)
+                + '"\n'
+            )
         (bot_dir / "local.env").write_text(local_env, encoding="utf-8")
         (bot_dir / "local.env").chmod(0o600)
         bot_yaml = bot_dir / "bot.yaml"
@@ -141,9 +147,21 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 f"""\
                 id: qq-bot
                 display_name: QQ Bot
-                platform:
-                  type: qq
-                  adapter: qq_acp
+                gateway:
+                  protocol_version: 1
+                  host: 127.0.0.1
+                  port_env: CHATCOPILOT_GATEWAY_PORT
+                  token_env: CHATCOPILOT_GATEWAY_TOKEN
+                  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT
+                channels:
+                  qq:
+                    type: qq_personal
+                    provider: onebot_v11
+                    channel_id: qq
+                    endpoint_env: CHATCOPILOT_QQ_ONEBOT_WS_URL
+                    access_token_env: QQ_ACCESS_TOKEN
+                    account_env: QQ_ACCOUNT
+                    mention_only_groups: true
                 prompts:
                   schema_version: 2
                   identity: persona.md
@@ -193,7 +211,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                     export CHATCOPILOT_CHAT_API_KEY="sk-test"
                     export QQ_ACCOUNT="10001"
                     export QQ_ACCESS_TOKEN="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                    export QQ_WS_URL="ws://{private_host}:3001"
+                    export CHATCOPILOT_QQ_ONEBOT_WS_URL="ws://{private_host}:3001"
                     """
                 ),
             )
@@ -215,8 +233,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                     export CHATCOPILOT_CHAT_API_KEY="sk-test"
                     export QQ_ACCOUNT="10001"
                     export QQ_ACCESS_TOKEN="{token}"
-                    export QQ_WS_URL="ws://127.0.0.1:3001"
-                    export QQ_AT_PROXY_URL="ws://localhost:3002"
+                    export CHATCOPILOT_QQ_ONEBOT_WS_URL="ws://127.0.0.1:3001"
                     export QQ_ALLOW_GROUPS="30003"
                     """
                 ),
@@ -229,16 +246,16 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             rendered = runtime_env.read_text(encoding="utf-8")
             self.assertIn(f"export QQ_ACCESS_TOKEN={token}", rendered)
             self.assertIn("export QQ_ALLOW_GROUPS=30003", rendered)
+            values = load_local_env_values(runtime_env)
             self.assertEqual(
-                load_local_env_values(runtime_env)["CHATCOPILOT_CC_CONNECT_BIN"],
-                str(
-                    Path.home()
-                    / ".local/share/agentstrata/node-tools"
-                    / "cc-connect-1.4.0-beta.3/node_modules/.bin/cc-connect"
-                ),
+                values["CHATCOPILOT_QQ_ONEBOT_WS_URL"],
+                "ws://127.0.0.1:3001",
             )
+            self.assertEqual(values["CHATCOPILOT_GATEWAY_URL"], "ws://127.0.0.1:18789")
+            self.assertNotIn("CHATCOPILOT_CC_CONNECT_BIN", values)
+            self.assertNotIn("CHATCOPILOT_CC_CONNECT_CONFIG_DIR", values)
 
-    def test_provision_env_rejects_relative_cc_connect_override(self) -> None:
+    def test_provision_env_rejects_removed_cc_connect_override(self) -> None:
         with TemporaryDirectory() as tmp:
             private_value = "private-relative-cc-connect"
             bot_yaml, runtime_env = self._write_qq_bot(
@@ -259,10 +276,10 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             self.assertFalse(runtime_env.exists())
-            self.assertIn("cc_connect_bin_invalid", output.getvalue())
+            self.assertIn("qq_legacy_gateway_env_removed", output.getvalue())
             self.assertNotIn(private_value, output.getvalue())
 
-    def test_provision_env_uses_configured_agentstrata_runtime_root(self) -> None:
+    def test_qq_gateway_state_root_does_not_use_legacy_runtime_root(self) -> None:
         with TemporaryDirectory() as tmp:
             base = Path(tmp)
             runtime_root = base / "private-runtime"
@@ -284,14 +301,12 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
 
             self.assertEqual(code, 0)
+            values = load_local_env_values(runtime_env)
             self.assertEqual(
-                load_local_env_values(runtime_env)["CHATCOPILOT_CC_CONNECT_BIN"],
-                str(
-                    runtime_root
-                    / "node-tools/cc-connect-1.4.0-beta.3"
-                    / "node_modules/.bin/cc-connect"
-                ),
+                values["CHATCOPILOT_GATEWAY_STATE_ROOT"],
+                str(Path.home() / ".local/state/agentstrata/qq-bot/gateway"),
             )
+            self.assertNotIn(str(runtime_root), runtime_env.read_text(encoding="utf-8"))
 
     def test_qq_provision_rejects_symlink_runtime_env_without_overwriting_target(self) -> None:
         with TemporaryDirectory() as tmp:

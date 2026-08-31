@@ -82,7 +82,7 @@ sudo systemctl start "user@$(id -u).service"
 systemctl --user is-system-running
 ```
 
-引导安装与 `setup_wsl_root.sh` 会安装 `dbus-user-session`；
+引导安装会安装 `dbus-user-session`；`setup_wsl_root.sh --legacy-feishu` 只用于 Feishu legacy edge。
 `console/setup_console.sh` 在注册服务前会拒绝缺包或不可达的 user bus。
 
 ## 实例启动失败
@@ -130,19 +130,17 @@ journalctl --user -u chatcopilot@<id>.service -n 120 --no-page
   [`../../docs/operations.md#qq--napcat`](../../docs/operations.md#qq--napcat)
   执行 `sync-token`，不要手工拼接 token 同步命令。
 - 启动报告 `QQ_REQUIRE_AT_IN_GROUP` 或 `QQ_AT_ALL_COUNTS` 已废弃：从 bot-local
-  `local.env` 删除该键，再更新实例；群聊明确 @ 是 Relay 的固定触发条件，不再提供开关。
+  `local.env` 删除该键，再更新实例；群聊明确 @ 是 Gateway Channel 的固定触发条件。
 - 配置群号后仍只有个别用户可用：确认群号写在私有 `QQ_ALLOW_GROUPS`，没有误写到只
-  接受发送者 QQ 号的 `QQ_ALLOW_FROM`，再更新实例并检查 ACP task 的
-  `middleware.access_decision`。
-- gateway 健康但 Bot service 失败：检查主 service 日志中的 ACP、模型和 cc-connect
-  错误。健康链路通常包含 `qq: connected to OneBot`、`qq: logged in` 和
-  `cc-connect is running`。
+  接受发送者 QQ 号的 `QQ_ALLOW_FROM`，再更新实例并检查 Gateway 的授权与 task evidence。
+- OneBot 健康但 Bot service 失败：检查主 service 的 journald 中 Gateway、模型和 Channel
+  错误，并确认 systemd `MainPID` 是当前实例的 `python -m chatcopilot run --bot ...`。
 
-## cc-connect 用户态修复
+## Feishu legacy edge 的 cc-connect 修复
 
 出现 `EACCES`、`Auto-install failed`、系统 Node 版本漂移或
-`/usr/lib/node_modules/cc-connect` 时，不要改用 root/global npm。引导部署使用固定版本的
-项目私有 Node 与 cc-connect；重新对账该用户级工具链：
+`/usr/lib/node_modules/cc-connect` 时，不要改用 root/global npm。此段只适用于明确部署的
+Feishu legacy edge；QQ Gateway 路径不会安装或启动 Node/cc-connect。重新对账 legacy 工具链：
 
 ```bash
 bash deploy/wsl/install_wsl_env.sh

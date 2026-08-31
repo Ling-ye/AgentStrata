@@ -82,7 +82,7 @@ def test_stop_ignores_stale_pidfiles_pointing_to_unrelated_process(
 
         assert completed.returncode == 0, completed.stdout + completed.stderr
         assert unrelated.poll() is None
-        assert "忽略未绑定当前实例的残留 QQ Relay" in completed.stdout
+        assert "忽略未绑定当前实例的残留 QQ Relay" in completed.stderr
         assert "忽略未绑定当前实例的残留 cc-connect" in completed.stderr
         assert not (cc_home / "qq-at-proxy.pid").exists()
         assert not (cc_home / "cc-connect.pid").exists()
@@ -246,6 +246,48 @@ def test_stop_still_terminates_processes_bound_to_current_instance(
     finally:
         _terminate(relay_process)
         _terminate(cc_process)
+
+
+def test_stop_finds_instance_relay_when_legacy_pidfile_is_missing(
+    tmp_path: Path,
+) -> None:
+    _, stop_script, cc_home, env = _fixture(tmp_path)
+    relay = tmp_path / "relay-fixture"
+    _write_executable(
+        relay,
+        "#!/usr/bin/env bash\n"
+        "trap 'exit 0' TERM INT\n"
+        "while :; do /bin/sleep 0.05; done\n",
+    )
+    relay_process = subprocess.Popen(
+        [str(relay), "-m", "chatcopilot", "qq-at-proxy"],
+        env={
+            **env,
+            "CHATCOPILOT_INSTANCE_ID": "test-bot",
+            "CHATCOPILOT_CC_HOME": str(cc_home),
+        },
+    )
+    fake_bin = Path(env["PATH"].split(":", 1)[0])
+    _write_executable(
+        fake_bin / "pgrep",
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$RELAY_PID"\n',
+    )
+    try:
+        time.sleep(0.1)
+        completed = subprocess.run(
+            ["bash", str(stop_script)],
+            env={**env, "RELAY_PID": str(relay_process.pid)},
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        relay_process.wait(timeout=3)
+        assert "停止 QQ @ Relay" in completed.stdout
+    finally:
+        _terminate(relay_process)
 
 
 def test_status_rejects_stale_pidfile_pointing_to_unrelated_process(

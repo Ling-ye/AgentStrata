@@ -1,6 +1,12 @@
 """BotSpec subsystem: model, loading/validation, registry, and runtime assembly."""
 from chatcopilot.botspec.loader import load_botspec, validate_botspec
-from chatcopilot.botspec.model import BotSpec, ValidationIssue
+from chatcopilot.botspec.model import (
+    BotSpec,
+    ChannelsSpec,
+    GatewaySpec,
+    QQChannelSpec,
+    ValidationIssue,
+)
 from chatcopilot.botspec.mcp import McpServerConfig
 from chatcopilot.botspec.rag import RagSourceConfig
 from chatcopilot.botspec.registry import resolve_bot_spec_path
@@ -12,6 +18,9 @@ from chatcopilot.botspec.runtime import (
 
 __all__ = [
     "BotSpec",
+    "GatewaySpec",
+    "ChannelsSpec",
+    "QQChannelSpec",
     "ValidationIssue",
     "McpServerConfig",
     "RagSourceConfig",

@@ -25,6 +25,7 @@ from chatcopilot.contracts.model_selection import (
 from chatcopilot.botspec.model import (
     AccessSpec,
     BotSpec,
+    ChannelsSpec,
     CodebaseSpec,
     CodeLLMSpec,
     ContextSpec,
@@ -32,12 +33,14 @@ from chatcopilot.botspec.model import (
     DeploySpec,
     DevShellSpec,
     DevSpec,
+    GatewaySpec,
     LLMSpec,
     McpSpec,
     MemorySpec,
     PackagingSpec,
     PlatformSpec,
     PromptSpec,
+    QQChannelSpec,
     RagSpec,
     SkillsSpec,
     SubagentBudgetSpec,
@@ -56,6 +59,21 @@ from chatcopilot.botspec.registry import known_tool_feature_names, known_tool_pa
 _BOT_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 _ENV_PREFIX_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _SUPPORTED_DEPLOY_TARGETS = {"wsl", "wsl2"}
+_GATEWAY_FIELDS = frozenset(
+    {"protocol_version", "host", "port_env", "token_env", "state_root_env"}
+)
+_CHANNELS_FIELDS = frozenset({"qq"})
+_QQ_CHANNEL_FIELDS = frozenset(
+    {
+        "type",
+        "provider",
+        "channel_id",
+        "endpoint_env",
+        "access_token_env",
+        "account_env",
+        "mention_only_groups",
+    }
+)
 _SUBAGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 _CODE_MODEL_PROFILE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 _SEARCH_PROVIDER_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
@@ -144,6 +162,7 @@ def validate_botspec(spec: BotSpec) -> list[ValidationIssue]:
                 "platform",
             )
         )
+    _validate_gateway_channels(spec, issues)
     prompt_raw = spec.raw.get("prompts", {}) if isinstance(spec.raw, dict) else {}
     prompt_keys = set(prompt_raw) if isinstance(prompt_raw, dict) else set()
     allowed_prompt_keys = {
@@ -301,6 +320,180 @@ def validate_botspec(spec: BotSpec) -> list[ValidationIssue]:
     return issues
 
 
+def _validate_gateway_channels(
+    spec: BotSpec,
+    issues: list[ValidationIssue],
+) -> None:
+    raw = spec.raw if isinstance(spec.raw, dict) else {}
+    raw_platform = raw.get("platform")
+    raw_gateway = raw.get("gateway")
+    raw_channels = raw.get("channels")
+
+    if isinstance(raw_gateway, dict):
+        unknown = sorted(set(raw_gateway) - _GATEWAY_FIELDS)
+        if unknown:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "gateway 包含未知字段: " + ", ".join(unknown),
+                    "gateway",
+                )
+            )
+    if isinstance(raw_channels, dict):
+        unknown = sorted(set(raw_channels) - _CHANNELS_FIELDS)
+        if unknown:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "channels 包含未知 Channel: " + ", ".join(unknown),
+                    "channels",
+                )
+            )
+        raw_qq = raw_channels.get("qq")
+        if isinstance(raw_qq, dict):
+            unknown = sorted(set(raw_qq) - _QQ_CHANNEL_FIELDS)
+            if unknown:
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "channels.qq 包含未知字段: " + ", ".join(unknown),
+                        "channels.qq",
+                    )
+                )
+
+    raw_platform_present = "platform" in raw
+    raw_qq_platform = isinstance(raw_platform, dict) and (
+        str(raw_platform.get("type", "")).strip().lower() == "qq"
+        or str(raw_platform.get("adapter", "")).strip().lower() == "qq_acp"
+    )
+    if raw_qq_platform:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "QQ 已迁移到 Gateway Channel；删除 platform.type=qq / "
+                "platform.adapter=qq_acp，并声明顶层 gateway 与 channels.qq。",
+                "platform",
+            )
+        )
+
+    qq = spec.channels.qq
+    if qq is not None and raw_platform_present:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "channels.qq 不能与 platform 同时声明；QQ 只使用 gateway + channels.qq。",
+                "channels.qq",
+            )
+        )
+    if qq is not None and spec.gateway is None:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "channels.qq 必须同时声明顶层 gateway。",
+                "gateway",
+            )
+        )
+    if qq is not None and (
+        spec.platform.type != "qq" or spec.platform.adapter != "gateway"
+    ):
+        issues.append(
+            ValidationIssue(
+                "error",
+                "channels.qq 的 platform 兼容投影必须为 qq/gateway。",
+                "channels.qq",
+            )
+        )
+
+    gateway = spec.gateway
+    if gateway is not None:
+        if type(gateway.protocol_version) is not int or gateway.protocol_version != 1:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "gateway.protocol_version 仅支持 1。",
+                    "gateway.protocol_version",
+                )
+            )
+        if gateway.host not in {"127.0.0.1", "::1"}:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "gateway.host 必须精确为 127.0.0.1 或 ::1。",
+                    "gateway.host",
+                )
+            )
+        for field, value in (
+            ("gateway.port_env", gateway.port_env),
+            ("gateway.token_env", gateway.token_env),
+            ("gateway.state_root_env", gateway.state_root_env),
+        ):
+            if not _ENV_PREFIX_RE.fullmatch(value):
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        f"{field} 必须是大写环境变量名。",
+                        field,
+                    )
+                )
+
+    if qq is not None:
+        if qq.type != "qq_personal":
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "channels.qq.type 仅支持 qq_personal。",
+                    "channels.qq.type",
+                )
+            )
+        if qq.provider != "onebot_v11":
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "channels.qq.provider 仅支持 onebot_v11。",
+                    "channels.qq.provider",
+                )
+            )
+        if qq.channel_id != "qq":
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "channels.qq.channel_id 必须为 qq。",
+                    "channels.qq.channel_id",
+                )
+            )
+        for field, value in (
+            ("channels.qq.endpoint_env", qq.endpoint_env),
+            ("channels.qq.access_token_env", qq.access_token_env),
+            ("channels.qq.account_env", qq.account_env),
+        ):
+            if not _ENV_PREFIX_RE.fullmatch(value):
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        f"{field} 必须是大写环境变量名。",
+                        field,
+                    )
+                )
+        if qq.mention_only_groups is not True:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "channels.qq.mention_only_groups 必须为 true。",
+                    "channels.qq.mention_only_groups",
+                )
+            )
+
+    if (qq is not None or raw_qq_platform) and spec.deploy.cc_connect_config_dir:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "QQ Gateway Channel 不接受 deploy.cc_connect_config_dir；"
+                "新路径不启动 cc-connect。",
+                "deploy.cc_connect_config_dir",
+            )
+        )
+
+
 def _validate_llm_spec(spec: BotSpec, issues: list[ValidationIssue]) -> None:
     if not _ENV_PREFIX_RE.fullmatch(spec.llm.env_prefix):
         issues.append(
@@ -447,6 +640,28 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
     platform = _mapping(data.get("platform"), "platform")
+    gateway_value = data.get("gateway", _MISSING)
+    gateway_configured = gateway_value is not _MISSING
+    if gateway_value is _MISSING:
+        gateway: dict[str, Any] = {}
+    elif isinstance(gateway_value, dict):
+        gateway = gateway_value
+    else:
+        raise ValueError("gateway 必须是 mapping")
+    channels_value = data.get("channels", _MISSING)
+    if channels_value is _MISSING:
+        channels: dict[str, Any] = {}
+    elif isinstance(channels_value, dict):
+        channels = channels_value
+    else:
+        raise ValueError("channels 必须是 mapping")
+    qq_value = channels.get("qq", _MISSING)
+    if qq_value is _MISSING:
+        qq_channel: dict[str, Any] | None = None
+    elif isinstance(qq_value, dict):
+        qq_channel = qq_value
+    else:
+        raise ValueError("channels.qq 必须是 mapping")
     prompts = _mapping(data.get("prompts"), "prompts")
     tools = _mapping(data.get("tools", {}), "tools")
     llm = _mapping(data.get("llm", {}), "llm")
@@ -479,13 +694,88 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
     )
 
     bot_id = str(data.get("id", "")).strip()
+    platform_projection = (
+        PlatformSpec(type="qq", adapter="gateway")
+        if qq_channel is not None
+        else PlatformSpec(
+            type=str(platform.get("type", "")).strip(),
+            adapter=str(platform.get("adapter", "")).strip(),
+        )
+    )
     return BotSpec(
         id=bot_id,
         display_name=str(data.get("display_name", "")).strip(),
         source_path=source_path,
-        platform=PlatformSpec(
-            type=str(platform.get("type", "")).strip(),
-            adapter=str(platform.get("adapter", "")).strip(),
+        platform=platform_projection,
+        gateway=(
+            GatewaySpec(
+                protocol_version=_strict_integer(
+                    gateway.get("protocol_version"),
+                    "gateway.protocol_version",
+                    1,
+                ),
+                host=_strict_string(
+                    gateway.get("host", "127.0.0.1"),
+                    "gateway.host",
+                ),
+                port_env=_strict_string(
+                    gateway.get("port_env", "CHATCOPILOT_GATEWAY_PORT"),
+                    "gateway.port_env",
+                ),
+                token_env=_strict_string(
+                    gateway.get("token_env", "CHATCOPILOT_GATEWAY_TOKEN"),
+                    "gateway.token_env",
+                ),
+                state_root_env=_strict_string(
+                    gateway.get(
+                        "state_root_env",
+                        "CHATCOPILOT_GATEWAY_STATE_ROOT",
+                    ),
+                    "gateway.state_root_env",
+                ),
+            )
+            if gateway_configured
+            else None
+        ),
+        channels=ChannelsSpec(
+            qq=(
+                QQChannelSpec(
+                    type=_strict_string(
+                        qq_channel.get("type", "qq_personal"),
+                        "channels.qq.type",
+                    ).lower(),
+                    provider=_strict_string(
+                        qq_channel.get("provider", "onebot_v11"),
+                        "channels.qq.provider",
+                    ).lower(),
+                    channel_id=_strict_string(
+                        qq_channel.get("channel_id", "qq"),
+                        "channels.qq.channel_id",
+                    ).lower(),
+                    endpoint_env=_strict_string(
+                        qq_channel.get(
+                            "endpoint_env",
+                            "CHATCOPILOT_QQ_ONEBOT_WS_URL",
+                        ),
+                        "channels.qq.endpoint_env",
+                    ),
+                    access_token_env=_strict_string(
+                        qq_channel.get("access_token_env", "QQ_ACCESS_TOKEN"),
+                        "channels.qq.access_token_env",
+                    ),
+                    account_env=_strict_string(
+                        qq_channel.get("account_env", "QQ_ACCOUNT"),
+                        "channels.qq.account_env",
+                    ),
+                    mention_only_groups=_strict_bool(
+                        qq_channel.get("mention_only_groups", _MISSING),
+                        "channels.qq.mention_only_groups",
+                        True,
+                    ),
+                )
+                if qq_channel is not None
+                else None
+            )
         ),
         llm=LLMSpec(
             env_prefix=chat_env_prefix,

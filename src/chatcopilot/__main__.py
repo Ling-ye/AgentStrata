@@ -24,6 +24,13 @@ def main(argv: list[str] | None = None) -> int:
         from chatcopilot.run import main as run_main
 
         return run_main(args)
+    if command == "acp-edge":
+        if args:
+            parser = argparse.ArgumentParser(prog="python -m chatcopilot acp-edge")
+            parser.error(f"unexpected arguments: {' '.join(args)}")
+        from chatcopilot.protocols.acp import main_from_env
+
+        return main_from_env()
     if command == "mcp-server":
         if args:
             parser = argparse.ArgumentParser(prog="python -m chatcopilot mcp-server")
@@ -74,6 +81,7 @@ def _print_help() -> None:
         "  agentstrata bot render-cc-config --bot bots/<bot-id>/bot.yaml --out config.toml\n"
         "  agentstrata bot render-session-env --bot bots/<bot-id>/bot.yaml --session-key <key>\n"
         "  agentstrata run --bot bots/<bot-id>/bot.yaml\n"
+        "  agentstrata acp-edge\n"
         "  agentstrata mcp-server\n"
         "  agentstrata mcp-session-gateway <session-config.json>\n"
         "  agentstrata evals list\n"

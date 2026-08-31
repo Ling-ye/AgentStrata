@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -468,6 +469,7 @@ class DevLifecycleToolTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 timeout=30,
+                env={**os.environ, "AGENTSTRATA_DEPLOY_PYTHON": sys.executable},
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)

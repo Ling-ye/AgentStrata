@@ -2,7 +2,7 @@
 
 支持两类外部服务：
 - compose: docker-compose 管理（SearXNG engine / 小红书 / Playwright MCP）
-- standalone: 独立 docker 容器（NapCat QQ Gateway）
+- standalone: 独立 docker 容器（外部 NapCat OneBot provider）
 
 Bot 级内嵌工具包（Feishu Tools / workspace 等）不在此 catalog，
 由 status API 的 tool_packs 字段从 BotSpec 读取并按 namespace 分组返回。
@@ -120,7 +120,7 @@ SERVICES: tuple[ServiceDef, ...] = (
     ),
     ServiceDef(
         id="napcat",
-        display_name="NapCat QQ Gateway",
+        display_name="NapCat OneBot Provider",
         service_type="standalone",
         container_prefix="napcat-",
         bound_instance_ids=("lingye-copilot-qq",),
@@ -428,7 +428,7 @@ def standalone_status(svc: ServiceDef, instance_id: str) -> dict[str, Any]:
 def standalone_action(svc: ServiceDef, instance_id: str, verb: str) -> dict[str, Any]:
     container = _standalone_container(svc, instance_id)
     if svc.id == "napcat" and verb in {"start", "restart"}:
-        return _qq_gateway_action(instance_id, verb)
+        return _napcat_provider_action(instance_id, verb)
     if verb == "start":
         return _docker_simple(["docker", "start", container])
     if verb == "stop":
@@ -438,10 +438,10 @@ def standalone_action(svc: ServiceDef, instance_id: str, verb: str) -> dict[str,
     return {"ok": False, "error": f"不支持的动作：{verb}"}
 
 
-def _qq_gateway_action(instance_id: str, action: str) -> dict[str, Any]:
-    """Run a guarded NapCat lifecycle action through the WSL gateway script."""
+def _napcat_provider_action(instance_id: str, action: str) -> dict[str, Any]:
+    """Run a guarded external NapCat provider lifecycle action."""
     if action not in {"bootstrap", "start", "restart", "sync-token"}:
-        return {"ok": False, "error": f"unsupported NapCat gateway action: {action}"}
+        return {"ok": False, "error": f"unsupported NapCat provider action: {action}"}
     script = repo_root() / "deploy" / "wsl" / "qq_gateway.sh"
     try:
         cp = subprocess.run(

@@ -76,38 +76,8 @@ def overview(instances: Iterable[BotInstance], task_provider: TaskSnapshotProvid
 
 def _bot_status(inst: BotInstance) -> dict[str, Any]:
     status = operations.status(inst, include_services=False)
-    checks: list[dict[str, Any]] = []
-    reasons: list[str] = []
-
-    def add(name: str, ok: bool, severity: str, message: str) -> None:
-        checks.append({"name": name, "ok": ok, "severity": severity, "message": message})
-        if not ok:
-            reasons.append(message)
-
-    add("deployed", bool(status.get("is_deployed")), "critical", "Instance files are not deployed.")
-    add("registered", bool(status.get("registered")), "critical", "systemd unit is not registered.")
-    add("running", bool(status.get("running")), "critical", "bot process is not running.")
-    if status.get("running") and status.get("ws_connected") is False:
-        add("platform_connection", False, "critical", "platform websocket is not connected.")
-    elif status.get("running") and status.get("ws_connected") is True:
-        add("platform_connection", True, "info", "platform websocket is connected.")
-    cc_age = status.get("cc_log_age_s")
-    if status.get("cc_log_size") is not None:
-        age_text = f" Last updated {int(float(cc_age))}s ago." if cc_age is not None else ""
-        add("fresh_logs", True, "info", f"cc-connect log is available.{age_text}")
-    error_count = int(status.get("error_count") or 0)
-    if error_count > 0:
-        summary = str(status.get("error_summary") or "").strip()
-        suffix = f": {summary}" if summary else "."
-        add("log_errors", False, "warning", f"cc-connect tail contains {error_count} error line(s){suffix}")
-    relay_error_count = int(status.get("qq_relay_error_count") or 0)
-    if relay_error_count > 0:
-        summary = str(status.get("qq_relay_error_summary") or "").strip()
-        suffix = f": {summary}" if summary else "."
-        add("qq_relay", False, "critical", f"QQ @ Relay has {relay_error_count} upstream error line(s){suffix}")
-
-    status["checks"] = checks
-    status["reasons"] = reasons
+    status["checks"] = list(status.get("checks") or [])
+    status["reasons"] = list(status.get("reasons") or [])
     return status
 
 

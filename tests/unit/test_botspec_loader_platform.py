@@ -52,15 +52,17 @@ class BotSpecPlatformWhitelistTests(unittest.TestCase):
             ]
             self.assertEqual(errors, [], msg="feishu 应当通过 platform.type 白名单")
 
-    def test_qq_passes_platform_check(self) -> None:
+    def test_legacy_qq_platform_reports_gateway_migration(self) -> None:
         with TemporaryDirectory() as tmp:
             spec = load_botspec(_write_bot(Path(tmp), platform_type="qq"))
             errors = [
                 issue
                 for issue in validate_botspec(spec)
-                if issue.level == "error" and issue.field == "platform.type"
+                if issue.level == "error" and issue.field == "platform"
             ]
-            self.assertEqual(errors, [], msg="qq 应当通过 platform.type 白名单")
+            self.assertEqual(len(errors), 1)
+            self.assertIn("gateway", errors[0].message.lower())
+            self.assertIn("channels.qq", errors[0].message)
 
     def test_unknown_platform_reports_error(self) -> None:
         with TemporaryDirectory() as tmp:

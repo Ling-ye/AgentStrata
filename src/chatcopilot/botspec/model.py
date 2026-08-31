@@ -35,6 +35,37 @@ class PlatformSpec:
 
 
 @dataclass(frozen=True)
+class GatewaySpec:
+    """Per-Bot loopback Gateway configuration by environment reference."""
+
+    protocol_version: int = 1
+    host: str = "127.0.0.1"
+    port_env: str = "CHATCOPILOT_GATEWAY_PORT"
+    token_env: str = "CHATCOPILOT_GATEWAY_TOKEN"
+    state_root_env: str = "CHATCOPILOT_GATEWAY_STATE_ROOT"
+
+
+@dataclass(frozen=True)
+class QQChannelSpec:
+    """Personal QQ Channel backed by an external OneBot v11 provider."""
+
+    type: str = "qq_personal"
+    provider: str = "onebot_v11"
+    channel_id: str = "qq"
+    endpoint_env: str = "CHATCOPILOT_QQ_ONEBOT_WS_URL"
+    access_token_env: str = "QQ_ACCESS_TOKEN"
+    account_env: str = "QQ_ACCOUNT"
+    mention_only_groups: bool = True
+
+
+@dataclass(frozen=True)
+class ChannelsSpec:
+    """Transport Channels owned by the Bot's Gateway."""
+
+    qq: QQChannelSpec | None = None
+
+
+@dataclass(frozen=True)
 class CodeLLMSpec:
     """Versioned non-secret policy for the Codex mutation route."""
 
@@ -204,6 +235,8 @@ class BotSpec:
     platform: PlatformSpec
     prompts: PromptSpec
     source_path: Path
+    gateway: GatewaySpec | None = None
+    channels: ChannelsSpec = field(default_factory=ChannelsSpec)
     llm: LLMSpec = field(default_factory=LLMSpec)
     tools: ToolSpec = field(default_factory=ToolSpec)
     agents: SubagentSpec = field(default_factory=SubagentSpec)

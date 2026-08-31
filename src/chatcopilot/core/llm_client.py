@@ -22,6 +22,10 @@ from chatcopilot.core.image_content import (
     normalize_image_media_type,
     validate_image_file,
 )
+from chatcopilot.contracts.cancellation import (
+    CancellationProbe,
+    CancellationRequested,
+)
 from chatcopilot.project import CHAT_ENV_PREFIX
 
 _LOGGER = logging.getLogger("chatcopilot.core.llm_client")
@@ -112,8 +116,11 @@ class LLMClient:
         max_retries: int = 2,
         model: Optional[str] = None,
         timeout: Optional[float] = None,
+        cancellation: CancellationProbe | None = None,
     ) -> ChatResult:
         """统一入口；首选流式，失败时自动降级非流式。"""
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         outbound_messages = _expand_local_image_blocks(messages)
         with self._limiter.slot():
             if stream:
@@ -126,16 +133,20 @@ class LLMClient:
                         max_retries=max_retries,
                         model=model,
                         timeout=timeout,
+                        cancellation=cancellation,
                     )
                 except _StreamUnsupported:
                     pass
-            return self._chat_blocking(
+            result = self._chat_blocking(
                 outbound_messages,
                 tools,
                 max_retries=max_retries,
                 model=model,
                 timeout=timeout,
             )
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
+            return result
 
     def _chat_blocking(
         self,
@@ -198,6 +209,7 @@ class LLMClient:
         max_retries: int,
         model: Optional[str] = None,
         timeout: Optional[float] = None,
+        cancellation: CancellationProbe | None = None,
     ) -> ChatResult:
         kwargs: Dict[str, Any] = {
             "model": model or self._cfg.model,
@@ -218,8 +230,15 @@ class LLMClient:
                 if not include_usage:
                     kwargs.pop("stream_options", None)
                 stream = self._client.chat.completions.create(**kwargs)
-                return self._consume_stream(stream, on_content_delta, on_tool_call_started)
+                return self._consume_stream(
+                    stream,
+                    on_content_delta,
+                    on_tool_call_started,
+                    cancellation=cancellation,
+                )
             except _StreamUnsupported:
+                raise
+            except CancellationRequested:
                 raise
             except Exception as exc:  # noqa: BLE001
                 if include_usage and _looks_like_stream_usage_unsupported(exc):
@@ -227,8 +246,15 @@ class LLMClient:
                     kwargs.pop("stream_options", None)
                     try:
                         stream = self._client.chat.completions.create(**kwargs)
-                        return self._consume_stream(stream, on_content_delta, on_tool_call_started)
+                        return self._consume_stream(
+                            stream,
+                            on_content_delta,
+                            on_tool_call_started,
+                            cancellation=cancellation,
+                        )
                     except _StreamUnsupported:
+                        raise
+                    except CancellationRequested:
                         raise
                     except Exception as fallback_exc:  # noqa: BLE001
                         exc = fallback_exc
@@ -244,6 +270,8 @@ class LLMClient:
         stream,
         on_content_delta: Optional[Callable[[str], None]],
         on_tool_call_started: Optional[Callable[[int, str], None]],
+        *,
+        cancellation: CancellationProbe | None = None,
     ) -> ChatResult:
         content_buf: List[str] = []
         reasoning_buf: List[str] = []
@@ -254,6 +282,8 @@ class LLMClient:
 
         try:
             for chunk in stream:
+                if cancellation is not None:
+                    cancellation.raise_if_cancelled()
                 chunk_usage = _normalize_usage(getattr(chunk, "usage", None))
                 if chunk_usage is not None:
                     usage = chunk_usage
@@ -275,6 +305,8 @@ class LLMClient:
                         if on_content_delta is not None:
                             try:
                                 on_content_delta(text)
+                            except CancellationRequested:
+                                raise
                             except Exception:
                                 pass
 
@@ -310,6 +342,8 @@ class LLMClient:
                             ):
                                 try:
                                     on_tool_call_started(idx, slot["function"]["name"])
+                                except CancellationRequested:
+                                    raise
                                 except Exception:
                                     pass
                                 announced.add(idx)
@@ -323,6 +357,9 @@ class LLMClient:
                 stream.close()
             except Exception:
                 pass
+
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
 
         ordered_tool_calls = [tool_calls[i] for i in sorted(tool_calls.keys())]
         return ChatResult(

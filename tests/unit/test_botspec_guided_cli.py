@@ -49,11 +49,27 @@ def test_starter_scaffold_is_valid_and_contains_only_beginner_capabilities(tmp_p
     example = (bot_yaml.parent / "local.env.example").read_text(encoding="utf-8")
     payload = yaml.safe_load(bot_yaml.read_text(encoding="utf-8"))
     assert payload["tools"]["packs"] == ["workspace.read_write", "memory.chat"]
+    assert "platform" not in payload
+    assert payload["gateway"]["protocol_version"] == 1
+    assert payload["channels"]["qq"] == {
+        "type": "qq_personal",
+        "provider": "onebot_v11",
+        "channel_id": "qq",
+        "endpoint_env": "CHATCOPILOT_QQ_ONEBOT_WS_URL",
+        "access_token_env": "QQ_ACCESS_TOKEN",
+        "account_env": "QQ_ACCOUNT",
+        "mention_only_groups": True,
+    }
+    assert "cc_connect_config_dir" not in payload["deploy"]
     assert "YOUR_" not in example
     assert "CODEX" not in example
     assert "TAVILY" not in example
     assert "BRAVE" not in example
     assert "CHATCOPILOT_CC_CONNECT_BIN" not in example
+    assert "QQ_WS_URL" not in example
+    assert "QQ_AT_PROXY_URL" not in example
+    assert "CHATCOPILOT_QQ_ONEBOT_WS_URL" in example
+    assert "CHATCOPILOT_GATEWAY_TOKEN" in example
     assert "NAPCAT_SHM_SIZE" not in example
 
 
@@ -126,6 +142,8 @@ def test_guided_configure_writes_mode_0600_and_doctor_json_is_secret_free(
     assert values["QQ_ALLOW_FROM"] == "20002"
     assert values["QQ_ALLOW_GROUPS"] == "30003,30004"
     assert 32 <= len(values["QQ_ACCESS_TOKEN"]) <= 128
+    assert 32 <= len(values["CHATCOPILOT_GATEWAY_TOKEN"]) <= 128
+    assert values["CHATCOPILOT_GATEWAY_TOKEN"] != values["QQ_ACCESS_TOKEN"]
 
     output = StringIO()
     with redirect_stdout(output):
@@ -142,6 +160,7 @@ def test_guided_configure_writes_mode_0600_and_doctor_json_is_secret_free(
     }
     assert "private-api-key" not in rendered
     assert values["QQ_ACCESS_TOKEN"] not in rendered
+    assert values["CHATCOPILOT_GATEWAY_TOKEN"] not in rendered
 
 
 def test_invalid_guided_base_url_leaves_local_env_absent(tmp_path: Path) -> None:

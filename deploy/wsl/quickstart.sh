@@ -381,8 +381,7 @@ show_plan() {
     printf '  bot:        bots/%s (display=%s)\n' "$BOT_ID" "$DISPLAY_NAME"
     printf '  apt:        %s\n' "${MISSING_PACKAGES[*]:-(none)}"
     printf '  Python:     uv 0.12.5 managed CPython 3.13.15 -> %s/.venv\n' "$REPO_ROOT"
-    printf '  Node:       24.20.0 -> %s/.local/share/agentstrata/node\n' "$HOME"
-    printf '  cc-connect: 1.4.0-beta.3 via npm ci -> %s/.local/share/agentstrata/node-tools\n' "$HOME"
+    printf '  transport:  Python Gateway host (no Node/cc-connect/Relay)\n'
     if docker info >/dev/null 2>&1; then
         printf '  Docker:     reuse current working Docker context\n'
     elif [ "$INSTALL_DOCKER" -eq 0 ]; then
@@ -688,8 +687,11 @@ validate_guided_env_value() {
         QQ_ALLOW_FROM|QQ_ALLOW_GROUPS)
             valid_guided_numeric_list "$trimmed" 1
             ;;
-        QQ_WS_URL|QQ_AT_PROXY_URL)
+        CHATCOPILOT_QQ_ONEBOT_WS_URL)
             [ -z "$trimmed" ] || valid_guided_loopback_ws_url "$trimmed"
+            ;;
+        CHATCOPILOT_GATEWAY_PORT)
+            [ -z "$trimmed" ] || valid_guided_port "$trimmed"
             ;;
         QQ_WEBUI_PORT)
             [ -z "$trimmed" ] || valid_guided_port "$trimmed"
@@ -744,13 +746,16 @@ validate_resume_paths() {
             local_env_keys["$key"]=1
             case "$key" in
                 CHATCOPILOT_CHAT_API_KEY|CHATCOPILOT_CHAT_BASE_URL|CHATCOPILOT_CHAT_MODEL|\
-                CHATCOPILOT_ADD_OWNER_IDS|QQ_ACCOUNT|QQ_WS_URL|QQ_ACCESS_TOKEN|\
-                QQ_ALLOW_FROM|QQ_ALLOW_GROUPS|QQ_AT_PROXY_URL|QQ_WEBUI_PORT|\
+                CHATCOPILOT_ADD_OWNER_IDS|CHATCOPILOT_GATEWAY_PORT|\
+                CHATCOPILOT_GATEWAY_TOKEN|CHATCOPILOT_GATEWAY_STATE_ROOT|QQ_ACCOUNT|\
+                CHATCOPILOT_QQ_ONEBOT_WS_URL|QQ_ACCESS_TOKEN|\
+                QQ_ALLOW_FROM|QQ_ALLOW_GROUPS|QQ_WEBUI_PORT|\
                 QQ_IMAGE_MAX_BYTES|QQ_IMAGE_SEND_TIMEOUT_SECONDS) ;;
                 *)
                     local key_label="$key"
-                    if [[ "$key" == "CHATCOPILOT_CC_CONNECT_BIN" ]]; then
-                        key_label="cc-connect executable override ($key)"
+                    if [[ "$key" == "CHATCOPILOT_CC_CONNECT_BIN" \
+                        || "$key" == "QQ_WS_URL" || "$key" == "QQ_AT_PROXY_URL" ]]; then
+                        key_label="legacy transport override ($key)"
                     fi
                     finish_failed "starter_profile" "新手恢复流程不接受高级配置键：$key_label" \
                         "移除 $key，或改用 docs/deployment.md 的高级流程"
@@ -834,7 +839,8 @@ validate_resume_text_shape() {
                 display_name_count++
                 next
             }
-            if ($0 == "platform:") { section = "platform"; platform_section++; next }
+            if ($0 == "gateway:") { section = "gateway"; gateway_section++; next }
+            if ($0 == "channels:") { section = "channels"; channels_section++; next }
             if ($0 == "llm:") { section = "llm"; llm_section++; next }
             if ($0 == "prompts:") { section = "prompts"; prompts_section++; next }
             if ($0 == "tools:") { section = "tools"; tools_section++; next }
@@ -846,9 +852,23 @@ validate_resume_text_shape() {
             fail()
         }
 
-        section == "platform" {
-            if ($0 == "  type: qq") { platform_type++; next }
-            if ($0 == "  adapter: qq_acp") { platform_adapter++; next }
+        section == "gateway" {
+            if ($0 == "  protocol_version: 1") { gateway_protocol++; next }
+            if ($0 == "  host: 127.0.0.1") { gateway_host++; next }
+            if ($0 == "  port_env: CHATCOPILOT_GATEWAY_PORT") { gateway_port++; next }
+            if ($0 == "  token_env: CHATCOPILOT_GATEWAY_TOKEN") { gateway_token++; next }
+            if ($0 == "  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT") { gateway_state++; next }
+            fail()
+        }
+        section == "channels" {
+            if ($0 == "  qq:") { subsection = "qq"; channel_qq++; next }
+            if (subsection == "qq" && $0 == "    type: qq_personal") { channel_type++; next }
+            if (subsection == "qq" && $0 == "    provider: onebot_v11") { channel_provider++; next }
+            if (subsection == "qq" && $0 == "    channel_id: qq") { channel_id++; next }
+            if (subsection == "qq" && $0 == "    endpoint_env: CHATCOPILOT_QQ_ONEBOT_WS_URL") { channel_endpoint++; next }
+            if (subsection == "qq" && $0 == "    access_token_env: QQ_ACCESS_TOKEN") { channel_token++; next }
+            if (subsection == "qq" && $0 == "    account_env: QQ_ACCOUNT") { channel_account++; next }
+            if (subsection == "qq" && $0 == "    mention_only_groups: true") { channel_mention++; next }
             fail()
         }
         section == "llm" {
@@ -912,9 +932,6 @@ validate_resume_text_shape() {
             }
             if ($0 == "  log_dir: ~/chatcopilot-logs/" bot_id) { deploy_log++; next }
             if ($0 == "  env_file: ~/.chatcopilot-" bot_id ".env") { deploy_env++; next }
-            if ($0 == "  cc_connect_config_dir: ~/.chatcopilot-runtime/" bot_id "/.cc-connect") {
-                deploy_cc_config++; next
-            }
             if ($0 == "  project_name: chatcopilot-" bot_id) { deploy_project++; next }
             fail()
         }
@@ -927,10 +944,15 @@ validate_resume_text_shape() {
         END {
             if (invalid) exit 1
             if (bot_id_count != 1 || display_name_count != 1 \
-                || platform_section != 1 || llm_section != 1 || prompts_section != 1 \
+                || gateway_section != 1 || channels_section != 1 \
+                || llm_section != 1 || prompts_section != 1 \
                 || tools_section != 1 || context_section != 1 || agents_section != 1 \
                 || workspace_section != 1 || deploy_section != 1 || access_section != 1 \
-                || platform_type != 1 || platform_adapter != 1 \
+                || gateway_protocol != 1 || gateway_host != 1 || gateway_port != 1 \
+                || gateway_token != 1 || gateway_state != 1 \
+                || channel_qq != 1 || channel_type != 1 || channel_provider != 1 \
+                || channel_id != 1 || channel_endpoint != 1 || channel_token != 1 \
+                || channel_account != 1 || channel_mention != 1 \
                 || llm_chat != 1 || llm_prefix != 1 \
                 || prompt_schema != 1 || prompt_identity != 1 || prompt_response != 1 \
                 || prompt_refusal != 1 || packs_section != 1 || features_section != 1 \
@@ -940,7 +962,7 @@ validate_resume_text_shape() {
                 || backend != 1 || presets != 1 || workspace_root != 1 \
                 || deploy_target != 1 || deploy_instance != 1 || deploy_home != 1 \
                 || deploy_workspace != 1 || deploy_log != 1 || deploy_env != 1 \
-                || deploy_cc_config != 1 || deploy_project != 1 || owner_access != 1) exit 1
+                || deploy_project != 1 || owner_access != 1) exit 1
         }
     ' "$BOT_DIR/bot.yaml"
 }
@@ -975,7 +997,7 @@ webui_command() {
         "$@" --container "napcat-$BOT_ID" --host localhost --port "$WEBUI_PORT" --json
 }
 
-probe_relay_boundary() {
+probe_onebot_boundary() {
     PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$REPO_ROOT/src" \
         "$PYTHON_BIN" - "$BOT_DIR/local.env" <<'PY'
 import asyncio
@@ -994,8 +1016,8 @@ try:
     values = read_local_env_for_provision(path, allowed_parent=path.parent)
     token = require_access_token(values.get("QQ_ACCESS_TOKEN"))
     url = require_loopback_websocket_url(
-        values.get("QQ_AT_PROXY_URL") or "ws://127.0.0.1:3002",
-        env_key="QQ_AT_PROXY_URL",
+        values.get("CHATCOPILOT_QQ_ONEBOT_WS_URL") or "ws://127.0.0.1:3001",
+        env_key="CHATCOPILOT_QQ_ONEBOT_WS_URL",
     )
     asyncio.run(probe_onebot_boundary(url, token))
 except Exception:
@@ -1003,34 +1025,31 @@ except Exception:
 PY
 }
 
-probe_cc_connect_main_process() {
-    local unit="$1" first_pid second_pid expected_node expected_entry expected_home node_arch
-    case "$APT_ARCH" in
-        amd64) node_arch="x64" ;;
-        arm64) node_arch="arm64" ;;
-        *) return 1 ;;
-    esac
-    expected_node="$HOME/.local/share/agentstrata/node/node-v24.20.0-linux-$node_arch/bin/node"
-    expected_entry="$(readlink -f "$HOME/.local/share/agentstrata/node-tools/cc-connect-1.4.0-beta.3/node_modules/.bin/cc-connect" 2>/dev/null)" \
+probe_gateway_main_process() {
+    local unit="$1" first_pid second_pid expected_python expected_bot
+    expected_python="$(readlink -f "$HOME/ChatCopilot-$BOT_ID/.venv/bin/python" 2>/dev/null)" \
         || return 1
-    expected_home="$HOME/.chatcopilot-runtime/$BOT_ID"
+    expected_bot="$HOME/ChatCopilot-$BOT_ID/bots/$BOT_ID/bot.yaml"
 
     first_pid="$(systemctl --user show "$unit" --property=MainPID --value 2>/dev/null)" \
         || return 1
     [[ "$first_pid" =~ ^[1-9][0-9]*$ ]] || return 1
     [ "$(stat -c '%u' "/proc/$first_pid" 2>/dev/null || true)" = "$(id -u)" ] \
         || return 1
-    tr '\0' '\n' < "/proc/$first_pid/cmdline" 2>/dev/null \
-        | grep -Fxq "$expected_node" || return 1
-    tr '\0' '\n' < "/proc/$first_pid/cmdline" 2>/dev/null \
-        | grep -Fxq "$expected_entry" || return 1
-    tr '\0' '\n' < "/proc/$first_pid/environ" 2>/dev/null \
-        | grep -Fxq "HOME=$expected_home" || return 1
+    [ "$(readlink -f "/proc/$first_pid/exe" 2>/dev/null || true)" = "$expected_python" ] \
+        || return 1
+    mapfile -d '' -t _gateway_argv < "/proc/$first_pid/cmdline" || return 1
+    [ "${#_gateway_argv[@]}" -eq 6 ] \
+        && [ "${_gateway_argv[1]}" = "-m" ] \
+        && [ "${_gateway_argv[2]}" = "chatcopilot" ] \
+        && [ "${_gateway_argv[3]}" = "run" ] \
+        && [ "${_gateway_argv[4]}" = "--bot" ] \
+        && [ "${_gateway_argv[5]}" = "$expected_bot" ] || return 1
     tr '\0' '\n' < "/proc/$first_pid/environ" 2>/dev/null \
         | grep -Fxq "CHATCOPILOT_INSTANCE_ID=$BOT_ID" || return 1
 
     # Type=simple can be briefly active before exec fails. Require the same
-    # instance-bound Node/cc-connect MainPID to survive a bounded observation.
+    # instance-bound Gateway MainPID to survive a bounded observation.
     sleep 2
     systemctl --user is-active --quiet "$unit" || return 1
     second_pid="$(systemctl --user show "$unit" --property=MainPID --value 2>/dev/null)" \
@@ -1099,9 +1118,9 @@ check_docker_endpoint
 show_plan
 
 if [ "$DRY_RUN" -eq 1 ]; then
-    if ! bash "$SCRIPT_DIR/install_wsl_env.sh" --no-system-packages --dry-run --no-verify; then
+    if ! bash "$SCRIPT_DIR/install_wsl_env.sh" --no-system-packages --skip-cc-connect --dry-run --no-verify; then
         finish_failed "isolated_runtime_plan" "无法生成隔离运行时零写入预览" \
-            "检查 uv.lock 与 deploy/wsl/node-tools 锁文件"
+            "检查 uv.lock 和 Python 运行时下载信息"
     fi
     add_check "deployment_mutation" "not_tested" "dry-run 未执行任何写入" "确认预览后运行：$RESUME_COMMAND"
     emit_report "needs_user_action"
@@ -1123,13 +1142,13 @@ if [ "$NETWORK_READY" -ne 1 ]; then
     check_network after-install
 fi
 
-if ! bash "$SCRIPT_DIR/install_wsl_env.sh" --no-system-packages; then
-    finish_failed "isolated_runtime" "用户级 Python/Node/cc-connect 安装失败" "检查下载和校验和错误后运行：$RESUME_COMMAND"
+if ! bash "$SCRIPT_DIR/install_wsl_env.sh" --no-system-packages --skip-cc-connect; then
+    finish_failed "isolated_runtime" "用户级 Python Gateway 运行时安装失败" "检查下载和校验和错误后运行：$RESUME_COMMAND"
 fi
 PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
 [ -x "$PYTHON_BIN" ] \
-    || finish_failed "isolated_runtime" "缺少项目隔离 Python" "bash deploy/wsl/install_wsl_env.sh --no-system-packages"
-add_check "isolated_runtime" "pass" "固定用户级 Python/Node/cc-connect 已就绪" ""
+    || finish_failed "isolated_runtime" "缺少项目隔离 Python" "bash deploy/wsl/install_wsl_env.sh --no-system-packages --skip-cc-connect"
+add_check "isolated_runtime" "pass" "固定用户级 Python Gateway 运行时已就绪；未安装 Node/cc-connect" ""
 
 if [ "$RESUME_HAS_BOT" -eq 1 ]; then
     validate_resume_bot \
@@ -1189,17 +1208,17 @@ if ! systemctl --user is-enabled --quiet "$MAIN_UNIT" \
 fi
 add_check "systemd_main_unit" "pass" "$MAIN_UNIT enabled/active" ""
 
-if ! probe_cc_connect_main_process "$MAIN_UNIT"; then
-    finish_failed "cc_connect_process" "cc-connect 未以固定私有 Node 形成稳定且绑定当前实例的 MainPID" \
+if ! probe_gateway_main_process "$MAIN_UNIT"; then
+    finish_failed "gateway_process" "Gateway 未以实例 Python 形成稳定且绑定当前实例的 MainPID" \
         "journalctl --user -u $MAIN_UNIT -n 100"
 fi
-add_check "cc_connect_process" "pass" "cc-connect 以固定私有 Node 运行，MainPID 在有界观察内稳定且绑定当前实例" ""
+add_check "gateway_process" "pass" "Gateway host MainPID 在有界观察内稳定且绑定当前实例" ""
 
-if ! probe_relay_boundary; then
-    finish_failed "qq_relay" "QQ @ Relay 未通过回环认证与只读 OneBot 探针" \
+if ! probe_onebot_boundary; then
+    finish_failed "onebot_boundary" "外部 NapCat OneBot 未通过回环认证与只读探针" \
         "journalctl --user -u $MAIN_UNIT -n 100"
 fi
-add_check "qq_relay" "pass" "QQ @ Relay 通过回环认证与只读 OneBot 探针" ""
+add_check "onebot_boundary" "pass" "外部 NapCat OneBot 通过回环认证与只读探针" ""
 
 add_check "llm_live_call" "not_tested" "未调用付费模型" "手工向机器人发送一条消息"
 add_check "qq_external_send" "not_tested" "未向 QQ 发送外部消息" "手工向机器人发送一条消息"

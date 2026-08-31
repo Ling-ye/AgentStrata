@@ -34,6 +34,7 @@ export interface BotInstance {
   env_file: string;
   cc_home: string;
   project_name: string;
+  runtime_kind: "gateway" | "legacy";
   unit: string;
   is_deployed: boolean;
 }
@@ -66,6 +67,7 @@ export interface BotStatus {
   instance_id: string;
   display_name: string;
   platform: string;
+  runtime_kind: "gateway" | "legacy";
   is_deployed: boolean;
   unit: string;
   systemd_available: boolean;
@@ -77,10 +79,12 @@ export interface BotStatus {
   pid: number | null;
   since: string | null;
   running: boolean;
-  cc_log: string | null;
-  cc_log_age_s: number | null;
-  cc_log_size: number | null;
-  ws_connected: boolean | null;
+  main_process_kind: "gateway" | "legacy_edge";
+  main_process_verified: boolean | null;
+  runtime_log: string | null;
+  runtime_log_age_s: number | null;
+  runtime_log_size: number | null;
+  channel_connected: boolean | null;
   error_count: number;
   mcp_services?: McpServiceStatus[];
   enabled_services?: BotEnabledService[];
@@ -707,6 +711,8 @@ export interface TasksResponse {
   instance_id: string;
   workspace_root: string;
   workspace_exists: boolean;
+  task_flow_available: boolean;
+  task_flow_unavailable_reason: string | null;
   count: number;
   total_count: number;
   summary: {

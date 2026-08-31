@@ -14,6 +14,7 @@ from chatcopilot.contracts.agent_backend import (
     CAPABILITY_TOOLS,
     require_backend_capabilities,
 )
+from chatcopilot.contracts.cancellation import CancellationProbe
 
 
 class InProcessAgentBackend:
@@ -48,8 +49,15 @@ class InProcessAgentBackend:
         task: AgentTask,
         *,
         on_event: EventSink,
+        cancellation: CancellationProbe | None = None,
     ) -> AgentResult:
-        return self.native_session(session).run_task(task, on_event=on_event)
+        if cancellation is None:
+            return self.native_session(session).run_task(task, on_event=on_event)
+        return self.native_session(session).run_task(
+            task,
+            on_event=on_event,
+            cancellation=cancellation,
+        )
 
     def close_session(self, session: BackendSessionRef) -> None:
         concrete = self._sessions.pop(session.value, None)

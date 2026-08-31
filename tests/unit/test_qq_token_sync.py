@@ -24,9 +24,21 @@ def _write_starter_bot(tmp_path: Path, extra_lines: str = "") -> tuple[Path, Pat
             """\
             id: token-test-qq
             display_name: Token Test
-            platform:
-              type: qq
-              adapter: qq_acp
+            gateway:
+              protocol_version: 1
+              host: 127.0.0.1
+              port_env: CHATCOPILOT_GATEWAY_PORT
+              token_env: CHATCOPILOT_GATEWAY_TOKEN
+              state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT
+            channels:
+              qq:
+                type: qq_personal
+                provider: onebot_v11
+                channel_id: qq
+                endpoint_env: CHATCOPILOT_QQ_ONEBOT_WS_URL
+                access_token_env: QQ_ACCESS_TOKEN
+                account_env: QQ_ACCOUNT
+                mention_only_groups: true
             llm:
               chat:
                 env_prefix: CHATCOPILOT_CHAT
@@ -49,6 +61,16 @@ def _write_starter_bot(tmp_path: Path, extra_lines: str = "") -> tuple[Path, Pat
             agents:
               backend: native
               presets: []
+            workspace:
+              root_env: CHATCOPILOT_WORKSPACE_ROOT
+            deploy:
+              target: wsl2
+              instance_id: token-test-qq
+              wsl_home: ~/ChatCopilot-token-test-qq
+              workspace_root: ~/chatcopilot-workspaces/token-test-qq
+              log_dir: ~/chatcopilot-logs/token-test-qq
+              env_file: ~/.chatcopilot-token-test-qq.env
+              project_name: chatcopilot-token-test-qq
             access:
               owner_only_project_access: true
             """
@@ -63,9 +85,15 @@ def _write_starter_bot(tmp_path: Path, extra_lines: str = "") -> tuple[Path, Pat
             export CHATCOPILOT_CHAT_BASE_URL="https://example.invalid/v1"
             export CHATCOPILOT_CHAT_MODEL="test-model"
             export CHATCOPILOT_ADD_OWNER_IDS="20002"
+            export CHATCOPILOT_WORKSPACE_ROOT="~/chatcopilot-workspaces/token-test-qq"
+            export CHATCOPILOT_GATEWAY_PORT="18789"
+            export CHATCOPILOT_GATEWAY_TOKEN="{'g' * 64}"
+            export CHATCOPILOT_GATEWAY_STATE_ROOT="~/.local/state/agentstrata/token-test-qq/gateway"
             export QQ_ACCOUNT="10001"
+            export CHATCOPILOT_QQ_ONEBOT_WS_URL="ws://127.0.0.1:3001"
             export QQ_ACCESS_TOKEN="{'c' * 64}"
             export QQ_ALLOW_FROM="20002"
+            export QQ_ALLOW_GROUPS=""
             {extra_lines}
             """
         ),

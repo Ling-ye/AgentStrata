@@ -9,6 +9,10 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict, cast
 
 from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
+from chatcopilot.contracts.cancellation import (
+    CancellationProbe,
+    CancellationRequested,
+)
 from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.turn import TurnOps, TurnState
 
@@ -22,16 +26,32 @@ class LangGraphAgentSession(AgentSession):
 
     backend_name = "langgraph"
 
-    def run_task(self, task: AgentTask, *, on_event: EventSink) -> AgentResult:
+    def run_task(
+        self,
+        task: AgentTask,
+        *,
+        on_event: EventSink,
+        cancellation: CancellationProbe | None = None,
+    ) -> AgentResult:
         """Run one task through a directed LangGraph LLM/tool graph."""
-        ops = TurnOps(session=self, task=task, on_event=on_event)
-        graph = self._compile_graph(ops)
-        recursion_limit = max(8, self.hard_iteration_cap * 3 + 6)
-        final_graph_state = graph.invoke(
-            {"turn": ops.initial_state()},
-            config={"recursion_limit": recursion_limit},
+        ops = TurnOps(
+            session=self,
+            task=task,
+            on_event=on_event,
+            cancellation=cancellation,
         )
-        return ops.result_from_state(final_graph_state["turn"])
+        state: TurnState | None = None
+        try:
+            state = ops.initial_state()
+            graph = self._compile_graph(ops)
+            recursion_limit = max(8, self.hard_iteration_cap * 3 + 6)
+            final_graph_state = graph.invoke(
+                {"turn": state},
+                config={"recursion_limit": recursion_limit},
+            )
+            return ops.result_from_state(final_graph_state["turn"])
+        except CancellationRequested:
+            return ops.cancelled_result(state)
 
     def _compile_graph(self, ops: TurnOps):
         try:

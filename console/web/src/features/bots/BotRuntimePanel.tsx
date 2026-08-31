@@ -27,9 +27,9 @@ function serviceState(status?: BotStatus): { label: string; color: string; tone:
 }
 
 function connectionState(status?: BotStatus): { label: string; color: string; tone: string } {
-  if (status?.ws_connected === true) return { label: "已连接", color: "green", tone: "success" };
-  if (status?.ws_connected === false) return { label: "未连接", color: "orange", tone: "warning" };
-  return { label: "未知", color: "gray", tone: "muted" };
+  if (status?.channel_connected === true) return { label: "有连接证据", color: "green", tone: "success" };
+  if (status?.channel_connected === false) return { label: "未见连接证据", color: "orange", tone: "warning" };
+  return { label: "未观测", color: "gray", tone: "muted" };
 }
 
 function systemdState(status?: BotStatus): ReactNode {
@@ -59,7 +59,14 @@ export default function BotRuntimePanel({ bot, status }: Props) {
       label: "服务状态",
       value: status ? `${status.active_state || "—"} / ${status.sub_state || "—"}` : "—",
     },
-    { label: "日志更新", value: logAge(status?.cc_log_age_s) },
+    { label: "运行日志更新", value: logAge(status?.runtime_log_age_s) },
+    { label: "运行拓扑", value: status?.main_process_kind || bot.runtime_kind },
+    {
+      label: "MainPID 身份",
+      value: status?.main_process_verified == null
+        ? "legacy / 未适用"
+        : (status.main_process_verified ? "已验证 Gateway" : "不匹配"),
+    },
     { label: "开机启用", value: status?.enabled || "—" },
     { label: "服务单元", value: <Text code className="bot-runtime-code">{status?.unit || bot.unit || "—"}</Text> },
     { label: "运行开始", value: status?.since || "—" },
@@ -71,7 +78,7 @@ export default function BotRuntimePanel({ bot, status }: Props) {
         <div className="bot-runtime-section-heading">
           <div>
             <Title id="bot-runtime-overview-title" heading={5}>运行概览</Title>
-            <Text type="secondary">查看服务、平台连接和近期使用状态。</Text>
+            <Text type="secondary">查看 Gateway 进程与 Channel 观测证据；不等同于真实 QQ/模型/客户端 E2E。</Text>
           </div>
           <Tag className="cc-status-tag" color={service.color}>{service.label}</Tag>
         </div>
@@ -82,7 +89,7 @@ export default function BotRuntimePanel({ bot, status }: Props) {
             value={<Tag size="small" color={service.color}>{service.label}</Tag>}
           />
           <Metric
-            label="长连接"
+            label="Channel"
             tone={connection.tone}
             value={<Tag size="small" color={connection.color}>{connection.label}</Tag>}
           />

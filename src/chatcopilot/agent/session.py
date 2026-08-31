@@ -36,6 +36,10 @@ from chatcopilot.contracts.agent import (
     FinalText,
     TextDelta,
 )
+from chatcopilot.contracts.cancellation import (
+    CancellationProbe,
+    CancellationRequested,
+)
 from chatcopilot.agent.response_integrity import (
     ResponseIntegrityCheck,
     ResponseIntegrityResult,
@@ -43,7 +47,7 @@ from chatcopilot.agent.response_integrity import (
 from chatcopilot.contracts.prompt import PromptPlan
 from chatcopilot.agent.rag.provider import Retriever, render_rag_snippet
 from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.agent.turn import TurnOps
+from chatcopilot.agent.turn import TurnOps, TurnState
 from chatcopilot.agent.turn_support import (
     EMPTY_MODEL_REPLY_TEXT as _EMPTY_MODEL_REPLY_TEXT,
     paths_to_resources as _paths_to_resources,
@@ -126,15 +130,32 @@ class AgentSession:
     # ------------------------------------------------------------------
     # 公共入口：跑一轮（AgentTask → LLM ↔ 工具循环 → AgentResult）
     # ------------------------------------------------------------------
-    def run_task(self, task: AgentTask, *, on_event: EventSink) -> AgentResult:
+    def run_task(
+        self,
+        task: AgentTask,
+        *,
+        on_event: EventSink,
+        cancellation: CancellationProbe | None = None,
+    ) -> AgentResult:
         """同步跑一整轮对话；返回结构化结果。
 
         上层一般用 ``asyncio.to_thread`` 把本函数挂到线程池；``on_event`` 回调
         内部可通过 ``run_coroutine_threadsafe`` 把事件投回主 event loop。
         """
-        ops = TurnOps(session=self, task=task, on_event=on_event)
-        state = ops.initial_state()
+        ops = TurnOps(
+            session=self,
+            task=task,
+            on_event=on_event,
+            cancellation=cancellation,
+        )
+        state: TurnState | None = None
+        try:
+            state = ops.initial_state()
+            return self._run_task_loop(ops, state)
+        except CancellationRequested:
+            return ops.cancelled_result(state)
 
+    def _run_task_loop(self, ops: TurnOps, state: TurnState) -> AgentResult:
         while state.iteration < self.hard_iteration_cap:
             # --- hard timeout: unconditional stop ---
             if self._hard_timed_out(state.started_at):

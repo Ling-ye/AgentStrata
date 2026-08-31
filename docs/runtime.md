@@ -9,14 +9,21 @@ bot.yaml
   → load_botspec / validate
   → assemble_runtime_context
   → apply_runtime_env
-  → platform adapter + tool registry + backend
-  → ACP server
-  → SessionState
-  → AgentTask / AgentEvent / AgentResult
+  → Gateway state + singleton lease
+  → tool registry + backend + application runtime
+  → writer generation / durable recovery / authorization / Channel prepare
+  → authenticated WebSocket bind
+  → Channel activation
+  → Gateway session/run → actor SessionState
+  → AgentTask / AgentEvent / AgentResult → durable outbound / receipt
 ```
 
-`python -m chatcopilot run --bot bots/<id>/bot.yaml` 是运行入口。CLI 只接受 ACP
-transport；平台连接由 cc-connect 和对应 adapter 处理。
+`python -m chatcopilot run --bot bots/<id>/bot.yaml` 是运行入口。带顶层 `gateway` 的
+BotSpec 启动每实例长期 Gateway；QQ Channel 由该进程直接连接认证 OneBot provider。
+ACP 另以 stdio edge 连接 Gateway，不再作为 runtime host。没有 `gateway` 的 Feishu
+实例继续走隔离的 legacy ACP/adapter 路径。Gateway 在组装 Agent、推进 writer generation、
+连接 Channel 或监听端口前必须取得同 state root 的非阻塞进程 lease；重复实例和不安全的
+lock 文件直接失败，正常停止以及构建、启动、取消和回滚失败路径都释放 descriptor。
 
 ## Turn runtime
 
@@ -97,81 +104,59 @@ provenance，任务保持可轮询直到最后一个 child 收口后以 failed �
 共享 turn runtime 管理的主 Agent 与 subagent 模型边界，不能解释为进程内所有
 `LLMClient.chat`。
 
-## Session 与 workspace
+## Gateway session、actor 与 workspace
 
-平台 adapter 先声明群 conversation 采用 actor scope 还是 chat scope。运行时把稳定会话
-范围表示为 `ConversationIdentity(platform, chat_kind, chat_id)`，把当前消息来源表示为
-`TurnIdentity(sender_user_id, sender_user_name, message_id, source)`；conversation 与当前
-说话人不是同一个权限对象。
+Gateway session 是持久 RPC/路由资源；`ConversationIdentity` 描述稳定平台、chat kind 与
+chat ID，当前 `Principal` 另行绑定 channel/account/user/role/conversation。二者不能合并：
+同一群共享 conversation，并不共享 actor executor、backend resume、role、工具或 job 控制。
 
-QQ 群使用 chat scope：`qq:g:<group-id>` 共享 session key 只标识群，cc-connect 必须在每个
-prompt 首行注入 sender envelope，并由同步 `message.received` hook 把真实 transport actor 与
-原始正文摘要追加到实例私有、有界加锁的 JSON attestation 队列。state/lock 位于实例 `0700`
-session-env 目录，按 exact session key 的 SHA-256 命名且自身为 `0600`；wrapper 通过严格 JSON
-白名单 loader 只传递稳定 conversation 字段，绝不 shell source。Middleware 在 identity/admission、
-附件导入、task 创建、工具或模型执行前交叉校验 envelope 的平台/群/发送者与 hook 的发送者/
-正文摘要。cc-connect 在 hook 之后追加的完整文件/图片路径尾缀会先转换为结构化资源引用，
-再用剩余 canonical 用户正文参与摘要校验；用户自行伪造同形尾缀会因 hook 正文不匹配而失败关闭。
-校验通过后按随机记录 ID 精确消费一条；缺失、陈旧、
-畸形、跨群或不匹配均失败关闭。稳定发送者 ID继续用于准入和角色计算，显示名不参与授权。共享群聊不再依赖刷新临时 env 后销毁并重建
-单一 `SessionState`；每轮选择当前 actor 绑定的执行 session，避免权限 filter、file sender、
-caller identity 或 Codex resume state 跨成员复用。群 actor 在同一 live execution session 内
-保留 Codex resume；LRU 逐出或进程重启后不恢复旧 native thread，而是从有界 journal 建立新线程，
-避免内存 cursor 归零后重复注入旧历史。部署必须同时渲染 cc-connect 的
-shared-channel session、sender injection 与同步 hook；systemd 托管实例每次启动前必须从当前
-BotSpec 重新渲染配置，避免 cc-connect 在重启后继续读取旧 hook 集。本地合成 ingress 测试只覆盖本机边界，不代表
-真实两账号 QQ ingress E2E。
+QQ Channel 从认证 OneBot 结构化帧生成 `CanonicalInboundEvent`。transport evidence 绑定
+connection generation、Bot account、event/message ID、sender、conversation 与 frame digest；
+显示名、用户正文和 provider 实现名都不能建立权限。Gateway 执行顺序是：
+
+```text
+transport verification
+  → identity / admission / bounded authorization audit
+  → durable admitted ingress
+  → actor activation / command authorization / approval resolution
+  → resource materialization
+  → task + Agent execution
+  → durable outbound
+  → provider receipt
+  → group journal commit
+  → task/run terminal state
+```
+
+被拒绝的消息不保存正文或 provider URL。准入后的完整 event 与 exact Principal 先写入私有
+Gateway SQLite，再由 generation-fenced claim 执行。进程重启只恢复尚未 claim 的
+`accepted` ingress；中断的 `processing` 变成 `recovery_required`，不自动重复模型、工具或
+其它不幂等副作用。ACP 产生的 `chat.send` 通过稳定 idempotency key、原始 params、
+`runs.get` / `runs.latest` 恢复；新 prompt 不会替代旧 run 输入。
 
 Workspace 与 conversation scope 一致：
 
-- QQ 群：`<workspace-root>/group_<safe-chat-id>/shared/`，同群成员共享普通文件、已经明确
-  归属该群的附件/结果和 conversation-local 职业数据。
-- QQ 私聊：`<workspace-root>/p2p_<safe-user-id>/`，继续按用户隔离。
-- 不同 QQ 群、QQ 私聊和其它平台彼此隔离；非 QQ adapter 默认保留 actor-scoped 群目录。
-- 旧 `group_<id>/user_<id>/` 不自动迁移，shared root 不能枚举或穿越这些目录。
+- QQ 群：`<workspace-root>/group_<safe-chat-id>/shared/`，同群成员只共享普通文件和明确
+  归属该 conversation 的数据。
+- QQ 私聊：`<workspace-root>/p2p_<safe-user-id>/`，按用户隔离。
+- 不同群、私聊和其它平台彼此隔离；旧 `group_<id>/user_<id>/` 不自动迁移。
 
-群 conversation 的已接受交换写入 shared root 的受保护兄弟目录 `.conversation-state/`
-内的有界 journal；配对 metadata 持久化 epoch、单调 sequence 高水位、记录范围与内容摘要，
-删除、截断或旧快照回退会让整个群 actor cache/backend 失败关闭，而不会从 sequence 1 静默重启。
-journal 记录授权/审计使用的原始稳定 actor 与 transport source；模型侧只看到
-conversation-scoped actor reference、明确标为不可信的有界历史与运行时生成的当前来源附录。
-actor-scoped backend state 和 transcript 也位于该保护目录。拒绝准入或身份无效的消息不写入。
-成员可写的 shared root 不保存权威 `IDENTITY.json`；群 scope 与逐轮 actor 只存在于 runtime
-contract 和受保护状态中，不会被最后一个说话人或同名符号链接改写。QQ 群不在 member-writable
-shared root 创建 `MEMORY.md`，而是按稳定群身份使用 `.conversation-state/persistent/memory/group/<digest>/MEMORY.md`；所有准入成员可读写，只有 Owner 可整份清空。member-visible `task_...` diagnostics 仍禁用；已接受回合的 Console task 记录按 actor
-写入 `.conversation-state/task-actors/<actor-digest>/tasks/`，原始 actor ID 不形成路径段，群内
-`get_task_status` 与 workspace 工具均不能读取。已准入 task 的 summary/turn 保存经过可观测性
-脱敏和大小限制的当前 canonical 正文；模型历史、subagent transcript/result 与 delegated-job
-自由文本仍省略。准入拒绝的消息仍在该 actor 分区写通用终态 task，
-但不会创建 actor 执行 session；身份无效的消息只在 `.conversation-state/task-intake/tasks/`
-写入不含原始正文、sender envelope、发送者账号或共享 session 残留 actor reference 的脱敏失败 task。ACP 在准入、附件、模型和工具
-副作用前要求任务记录创建成功；存储不可用时失败关闭。
-普通成员不能启动后台 job；Owner 的后台
-job 控制面按 actor 写入 `.conversation-state/jobs/`，不会暴露到 `shared/jobs`。当前群交流风格
-使用 `.conversation-state/persistent/persona/global/PERSONA.md` 与 `persona/group/<digest>/PERSONA.md`
-保护层。启用 `tools.packs: persona.control` 时，Owner 主 Agent 获得 session-bound
-`persona_manage`；自然语言与 `/persona` 原样进入主 Agent，由它选择
-`show/set/append/research/refresh/clear/confirm/cancel`。工具在执行时再次校验真实 Owner、当前
-scope 和可信原文；命名人物/角色通过统一搜索 registry 完成消歧、来源验证和完整草案，再执行
-一次原子写。搜索、来源或草案失败时旧人格不变。clear 和主 Agent 标记为需确认的请求只建立
-actor/chat/hash/TTL 提案，随后当前 raw message 精确等于 `/persona confirm` 才能写。只有
-结构化结果中的 `committed=true` receipt 能证明保存或清空。群聊默认 `scope=group`；User/Admin
-既看不到也不能执行该工具，群聊 show 只返回层级和哈希。
-所有同群成员的后续 prompt 都按
-`global → group` 获得最新人格，并获得当前群 memory，但不会获得任何 actor 的私聊 memory、
-user persona 或私有 Wiki/RAG。
+群 conversation journal、persona/memory、actor backend state 和 Owner job 位于 shared root
+之外的 `.conversation-state/` 保护域。Journal 只在 provider acknowledgement 后写入，并以
+稳定 outbound identity 幂等；未确认投递、取消、失败或 stale generation 会逐出本轮 group
+actor session，避免下一轮看到未公开回答。SQLite 的 `gateway_accepted`、
+`provider_submitted`、`provider_acknowledged`、`delivery_unknown` 等 receipt 可以通过
+`deliveries.get` 查询，但没有更强平台证据时不能声称 QQ 客户端已显示或用户已读。
 
-纯文本附件兜底只识别本地文件引用，先排除 `http://` 和 `https://` URL。文件回传、
-后台通知、payload 过滤和任务提交都通过 hook 注入 Agent。
+QQ media 先转换为 event-bound `ResourceTicket`。只有 Principal、conversation、event、类型和
+字节预算全部授权后，resource materializer 才执行 DNS pinning、公开地址、TLS hostname/peer、
+domain allowlist、无 redirect 与大小限制的下载。QQ Gateway 不读取 cc-connect 静态 inbox、
+文本路径尾缀或 sender envelope。Feishu legacy edge 继续使用自己的文件流水线，不能作为 QQ
+资源归属证据。
 
-Feishu 支持用户文件流水线；附件最终进入当前会话 workspace 的
-`.cc-connect/attachments/`。公开文档不假设任何具体机器人名称或 tenant。
-
-cc-connect 的静态 `default/.cc-connect/attachments` inbox 只按 basename 落盘，没有 chat
-或 message 绑定。QQ shared-group 因而拒绝从这个 legacy inbox 猜测导入，也不会把 shared
-attachments 中同名旧文件认作本次上传；该 turn 会同步记录一次明确拒绝，不安排必然超时的
-异步 ack。已经明确属于当前群的普通文件仍可通过共享空间清单与 workspace 工具使用；新的群
-附件要等 transport 提供 message-bound 路径或令牌后才能安全启用。
+当前群 persona 按 `global → group`，群 memory 按稳定群摘要寻址。`persona_manage` 只投影给
+可信 Owner 主 Agent；User/Admin、subagent 和普通群成员不能读取或修改 persona，Owner 在群内
+也不能绕过 `private_chat_only` 工具。只有结构化 `committed=true` mutation receipt 能证明
+持久化完成。
 
 ## 工具与 subagent
 
@@ -234,9 +219,13 @@ breaker、deadline、结果归一化和相关性过滤。URL 深读先静态 fet
 - `task_...`：单轮对话任务，查询 `get_task_status`。
 - `job_...`：后台长任务，查询 `get_job_status`。
 
-ACP 对完整状态 ID 使用确定性回复，避免状态查询消耗 Agent 工具预算。
-QQ shared-group 不创建上述两类 artifact；这既避免把 actor-bound 延迟执行错误地变成群级
-能力，也防止普通 shared root 暴露工具参数、错误细节或绝对路径。
+`task_...` 只在消息通过 Gateway admission 后创建；准入拒绝只有独立、有界、无正文的
+authorization decision audit。`task_...` 证明 AgentStrata application 的执行过程，不能代替
+Gateway ingress、run、outbox 或 provider receipt。Gateway 原生 task-flow 尚未接入 Console
+前，页面会显式标为不可用，而不是复用 legacy ACP 证据。
+
+ACP 对 Gateway run/cancel/recovery 使用 typed RPC；legacy edge 的完整状态 ID 仍可使用既有
+确定性回复。QQ 群 artifact 与 Owner job 位于受保护 actor state，不暴露在普通 shared root。
 
 ## HTTP runtime
 
@@ -248,6 +237,8 @@ QQ shared-group 不创建上述两类 artifact；这既避免把 actor-bound 延
 
 ```bash
 python -m chatcopilot botspec validate bots/lingye-copilot-qq/bot.yaml
+python -m pytest tests/unit/test_gateway_*.py tests/unit/test_qq_onebot_driver.py -q
+python -m pytest tests/integration/test_gateway_onebot_roundtrip.py -q
 python -m pytest tests/unit/test_bot_session.py tests/unit/test_main_agent_backend_unification.py -q
 python -m pytest tests/integration/test_acp_streaming_updates.py -q
 ```

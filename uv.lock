@@ -29,13 +29,13 @@ dependencies = [
     { name = "pyyaml" },
     { name = "requests" },
     { name = "ruamel-yaml" },
+    { name = "websockets", version = "16.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "websockets", version = "17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [package.optional-dependencies]
 acp = [
     { name = "agent-client-protocol" },
-    { name = "websockets", version = "16.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "websockets", version = "17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 agent = [
     { name = "langgraph" },
@@ -91,7 +91,7 @@ requires-dist = [
     { name = "types-pyyaml", marker = "extra == 'dev'" },
     { name = "types-requests", marker = "extra == 'dev'" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.29" },
-    { name = "websockets", marker = "extra == 'acp'", specifier = ">=12" },
+    { name = "websockets", specifier = ">=12" },
     { name = "wheel", marker = "extra == 'dev'", specifier = "==0.47.0" },
 ]
 provides-extras = ["agent", "acp", "desktop", "test", "dev"]

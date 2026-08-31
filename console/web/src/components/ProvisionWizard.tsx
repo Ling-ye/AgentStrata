@@ -370,7 +370,7 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
                     className="block-gap-top"
                   />
                   <Text type="secondary" className="cc-text-small form-help-text">
-                    终端向导会从现有 local.env 恢复；Console 不会直接启动 QQ gateway。
+                    终端向导会从现有 local.env 恢复，先配置外部 NapCat/OneBot，再启动 AgentStrata Gateway。
                   </Text>
                 </div>
               )}

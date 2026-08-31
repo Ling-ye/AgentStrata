@@ -90,9 +90,22 @@ def _canonical_starter_text(bot_id: str = "my-assistant-qq") -> str:
         f"id: {bot_id}\n"
         'display_name: "Test Assistant"\n'
         "\n"
-        "platform:\n"
-        "  type: qq\n"
-        "  adapter: qq_acp\n"
+        "gateway:\n"
+        "  protocol_version: 1\n"
+        "  host: 127.0.0.1\n"
+        "  port_env: CHATCOPILOT_GATEWAY_PORT\n"
+        "  token_env: CHATCOPILOT_GATEWAY_TOKEN\n"
+        "  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT\n"
+        "\n"
+        "channels:\n"
+        "  qq:\n"
+        "    type: qq_personal\n"
+        "    provider: onebot_v11\n"
+        "    channel_id: qq\n"
+        "    endpoint_env: CHATCOPILOT_QQ_ONEBOT_WS_URL\n"
+        "    access_token_env: QQ_ACCESS_TOKEN\n"
+        "    account_env: QQ_ACCOUNT\n"
+        "    mention_only_groups: true\n"
         "\n"
         "llm:\n"
         "  chat:\n"
@@ -131,7 +144,6 @@ def _canonical_starter_text(bot_id: str = "my-assistant-qq") -> str:
         f"  workspace_root: ~/chatcopilot-workspaces/{bot_id}\n"
         f"  log_dir: ~/chatcopilot-logs/{bot_id}\n"
         f"  env_file: ~/.chatcopilot-{bot_id}.env\n"
-        f"  cc_connect_config_dir: ~/.chatcopilot-runtime/{bot_id}/.cc-connect\n"
         f"  project_name: chatcopilot-{bot_id}\n"
         "\n"
         "access:\n"
@@ -177,7 +189,8 @@ def test_dry_run_is_zero_write_and_never_prompts_for_secrets(tmp_path: Path) -> 
     assert "WebUI 链接" not in completed.stdout
     assert "uv 0.12.5" in completed.stdout
     assert "CPython 3.13.15" in completed.stdout
-    assert "Node:       24.20.0" in completed.stdout
+    assert "Python Gateway host (no Node/cc-connect/Relay)" in completed.stdout
+    assert "Node:" not in completed.stdout
 
 
 def test_dry_run_disables_user_curl_config_before_network_probe(tmp_path: Path) -> None:
@@ -903,7 +916,7 @@ def test_resume_rejects_cc_connect_executable_override_before_mutation(
     assert not Path(env["HOME"]).exists()
     report = _last_json(completed.stdout)
     assert report["checks"][-1]["id"] == "starter_profile"
-    assert "cc-connect" in report["checks"][-1]["message"]
+    assert "legacy transport" in report["checks"][-1]["message"]
 
 
 def test_resume_rejects_unmanaged_runtime_module_override_before_mutation(
@@ -940,9 +953,9 @@ def test_resume_rejects_unmanaged_runtime_module_override_before_mutation(
         ("CHATCOPILOT_CHAT_BASE_URL", "http://remote.example.invalid/v1"),
         ("QQ_ACCOUNT", "not-a-numeric-id"),
         ("QQ_ALLOW_FROM", "10001,not-a-numeric-id"),
-        ("QQ_AT_PROXY_URL", "wss://remote.example.invalid:3002/ws"),
+        ("CHATCOPILOT_QQ_ONEBOT_WS_URL", "wss://remote.example.invalid:3001/ws"),
     ),
-    ids=("remote-http-llm", "qq-account", "qq-allowlist", "remote-relay"),
+    ids=("remote-http-llm", "qq-account", "qq-allowlist", "remote-onebot"),
 )
 def test_resume_rejects_invalid_env_value_before_system_mutation(
     tmp_path: Path,
@@ -1177,14 +1190,14 @@ def test_resume_rejects_unreadable_prompt_before_system_mutation(
 @pytest.mark.parametrize(
     ("old", "new"),
     (
-        ("  adapter: qq_acp\n", "  adapter: qq_acp\n  legacy: true\n"),
+        ("    provider: onebot_v11\n", "    provider: onebot_v11\n    legacy: true\n"),
         ("access:\n", "advanced: true\n\naccess:\n"),
         ("  features:\n", "  mcp: {}\n  features:\n"),
-        ("  adapter: qq_acp\n", "  adapter: qq_acp\n  legacy: &legacy qq\n"),
-        ("  adapter: qq_acp\n", "  adapter: qq_acp\n  legacy: !str qq\n"),
-        ("  adapter: qq_acp\n", "  adapter: qq_acp\n  <<: *legacy\n"),
-        ("  adapter: qq_acp\n", "  adapter: qq_acp\n  adapter: qq_acp\n"),
-        ("  adapter: qq_acp\n", "  adapter: qq_acp\n\tlegacy: true\n"),
+        ("    provider: onebot_v11\n", "    provider: onebot_v11\n    legacy: &legacy qq\n"),
+        ("    provider: onebot_v11\n", "    provider: onebot_v11\n    legacy: !str qq\n"),
+        ("    provider: onebot_v11\n", "    provider: onebot_v11\n    <<: *legacy\n"),
+        ("    provider: onebot_v11\n", "    provider: onebot_v11\n    provider: onebot_v11\n"),
+        ("    provider: onebot_v11\n", "    provider: onebot_v11\n\tlegacy: true\n"),
     ),
     ids=(
         "unknown-platform-field",
@@ -1236,16 +1249,16 @@ def test_resume_rejects_noncanonical_text_before_any_mutation(
     ("old", "new"),
     (
         (
-            "  adapter: qq_acp\n",
-            "  adapter: qq_acp\n  adapter: qq_acp\n",
+            "    provider: onebot_v11\n",
+            "    provider: onebot_v11\n    provider: onebot_v11\n",
         ),
         (
-            "  adapter: qq_acp\n",
-            "  adapter: &adapter qq_acp\n",
+            "    provider: onebot_v11\n",
+            "    provider: &provider onebot_v11\n",
         ),
         (
-            "  adapter: qq_acp\n",
-            "  adapter: qq_acp\n  <<: {adapter: qq_acp}\n",
+            "    provider: onebot_v11\n",
+            "    provider: onebot_v11\n    <<: {provider: onebot_v11}\n",
         ),
     ),
     ids=("duplicate-key", "anchor", "merge-key"),
@@ -1320,10 +1333,10 @@ def test_supported_matrix_docker_safety_and_qq_order_are_locked() -> None:
     assert start < login < sync < status < update
 
 
-def test_final_ready_requires_authenticated_relay_boundary_probe() -> None:
+def test_final_ready_requires_authenticated_onebot_boundary_probe() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
     probe_definition = text[
-        text.index("probe_relay_boundary() {") : text.index("read_webui_url() {")
+        text.index("probe_onebot_boundary() {") : text.index("probe_gateway_main_process() {")
     ]
     assert "require_access_token" in probe_definition
     assert "require_loopback_websocket_url" in probe_definition
@@ -1332,36 +1345,37 @@ def test_final_ready_requires_authenticated_relay_boundary_probe() -> None:
 
     update = text.index('if ! bash "$SCRIPT_DIR/update_instance.sh"')
     unit_active = text.index("systemctl --user is-active", update)
-    relay_probe = text.index("if ! probe_relay_boundary; then", unit_active)
-    relay_pass = text.index('add_check "qq_relay" "pass"', relay_probe)
-    ready = text.index('emit_report "ready"', relay_pass)
-    assert update < unit_active < relay_probe < relay_pass < ready
+    onebot_probe = text.index("if ! probe_onebot_boundary; then", unit_active)
+    onebot_pass = text.index('add_check "onebot_boundary" "pass"', onebot_probe)
+    ready = text.index('emit_report "ready"', onebot_pass)
+    assert update < unit_active < onebot_probe < onebot_pass < ready
 
-    final_health_check = text[unit_active:relay_pass]
+    final_health_check = text[unit_active:onebot_pass]
     assert "kill -0" not in final_health_check
     assert "pidfile" not in final_health_check.lower()
 
 
-def test_final_ready_requires_stable_instance_bound_cc_connect_mainpid() -> None:
+def test_final_ready_requires_stable_instance_bound_gateway_mainpid() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
     definition = text[
-        text.index("probe_cc_connect_main_process() {") : text.index(
+        text.index("probe_gateway_main_process() {") : text.index(
             "read_webui_url() {"
         )
     ]
     assert "systemctl --user show" in definition
     assert "--property=MainPID" in definition
-    assert 'grep -Fxq "$expected_node"' in definition
-    assert 'grep -Fxq "$expected_entry"' in definition
-    assert 'grep -Fxq "HOME=$expected_home"' in definition
+    assert 'readlink -f "/proc/$first_pid/exe"' in definition
+    assert '[ "${_gateway_argv[2]}" = "chatcopilot" ]' in definition
+    assert '[ "${_gateway_argv[3]}" = "run" ]' in definition
+    assert '[ "${_gateway_argv[4]}" = "--bot" ]' in definition
     assert 'grep -Fxq "CHATCOPILOT_INSTANCE_ID=$BOT_ID"' in definition
     assert 'sleep 2' in definition
     assert '[ "$second_pid" = "$first_pid" ]' in definition
 
     update = text.index('if ! bash "$SCRIPT_DIR/update_instance.sh"')
     process_probe = text.index(
-        'if ! probe_cc_connect_main_process "$MAIN_UNIT"', update
+        'if ! probe_gateway_main_process "$MAIN_UNIT"', update
     )
-    relay_probe = text.index("if ! probe_relay_boundary; then", process_probe)
-    ready = text.index('emit_report "ready"', relay_probe)
-    assert update < process_probe < relay_probe < ready
+    onebot_probe = text.index("if ! probe_onebot_boundary; then", process_probe)
+    ready = text.index('emit_report "ready"', onebot_probe)
+    assert update < process_probe < onebot_probe < ready

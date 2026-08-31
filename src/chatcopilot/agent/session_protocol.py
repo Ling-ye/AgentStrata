@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
+from chatcopilot.contracts.cancellation import CancellationProbe
 from chatcopilot.contracts.prompt import PromptPlan
 
 
@@ -26,7 +27,13 @@ class AgentSessionProtocol(Protocol):
     def prompt_prefix_length(self) -> int:
         """Host-recorded renderer prefix length for provenance-aware views."""
 
-    def run_task(self, task: AgentTask, *, on_event: EventSink) -> AgentResult:
+    def run_task(
+        self,
+        task: AgentTask,
+        *,
+        on_event: EventSink,
+        cancellation: CancellationProbe | None = None,
+    ) -> AgentResult:
         """Run one user task and return the final structured result."""
 
     def set_prompt_plan(self, plan: PromptPlan) -> None:

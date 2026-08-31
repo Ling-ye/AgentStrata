@@ -1,4 +1,4 @@
-"""``python -m chatcopilot bot ...`` —— 机器人实例的声明式管理 CLI。
+"""``python -m chatcopilot bot ...`` — declarative Bot instance management.
 
 把“新机器人上线到渠道平台”从手工部署收敛成可编程命令；运维控制台与部署脚本
 复用同一套函数，避免逻辑分裂：
@@ -8,12 +8,11 @@
 - ``bot configure``       从可信 TTY 引导填写 BotSpec 派生的私有配置。
 - ``bot doctor``          按平台 adapter 声明的 ``required_secrets`` 校验 env 是否齐全。
 - ``bot external-check``  在 Agent/Evaluation 外检查平台连接与受认证动作。
-- ``bot render-cc-config`` 从 env + bot.yaml 渲染完整 cc-connect ``config.toml``
-                          （平台片段由 adapter 提供），替代部署脚本里的平台分支逻辑。
-- ``bot render-session-env`` 从 cc-connect hook/session key 解析当前会话身份 env。
+- ``bot render-cc-config`` and ``bot render-session-env`` are retained only for
+  legacy non-QQ edges. Gateway-backed QQ rejects both commands.
 
-平台特定知识（需要哪些凭据、cc-connect 配置片段、额外配置文件）全部下沉到
-``platforms/<name>/adapter.py``；本 CLI 只做平台无关的骨架渲染与编排。
+QQ transport is declared under ``gateway`` and ``channels.qq``. Platform
+adapter deployment helpers remain only for isolated legacy edges.
 """
 
 from __future__ import annotations
@@ -148,12 +147,15 @@ export CHATCOPILOT_CHAT_BASE_URL=""
 export CHATCOPILOT_CHAT_MODEL=""
 export CHATCOPILOT_ADD_OWNER_IDS=""
 
+export CHATCOPILOT_GATEWAY_PORT="18789"
+export CHATCOPILOT_GATEWAY_TOKEN=""
+export CHATCOPILOT_GATEWAY_STATE_ROOT="$HOME/.local/state/agentstrata/{bot_id}/gateway"
+
 export QQ_ACCOUNT=""
-export QQ_WS_URL="ws://127.0.0.1:3001"
+export CHATCOPILOT_QQ_ONEBOT_WS_URL="ws://127.0.0.1:3001"
 export QQ_ACCESS_TOKEN=""
 export QQ_ALLOW_FROM=""
 export QQ_ALLOW_GROUPS=""
-export QQ_AT_PROXY_URL="ws://127.0.0.1:3002"
 export QQ_WEBUI_PORT="6099"
 """
 
@@ -212,7 +214,7 @@ def _cmd_new(args: argparse.Namespace) -> int:
             encoding="utf-8",
         )
         (target / "local.env.example").write_text(
-            _STARTER_LOCAL_ENV_TEMPLATE,
+            _STARTER_LOCAL_ENV_TEMPLATE.format(bot_id=bot_id),
             encoding="utf-8",
         )
 
@@ -259,13 +261,40 @@ def _render_bot_yaml(
         else "  features: []\n"
     )
     access = "\naccess:\n  owner_only_project_access: true\n" if starter else ""
+    if platform_type == "qq":
+        transport = (
+            "gateway:\n"
+            "  protocol_version: 1\n"
+            "  host: 127.0.0.1\n"
+            "  port_env: CHATCOPILOT_GATEWAY_PORT\n"
+            "  token_env: CHATCOPILOT_GATEWAY_TOKEN\n"
+            "  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT\n"
+            "\n"
+            "channels:\n"
+            "  qq:\n"
+            "    type: qq_personal\n"
+            "    provider: onebot_v11\n"
+            "    channel_id: qq\n"
+            "    endpoint_env: CHATCOPILOT_QQ_ONEBOT_WS_URL\n"
+            "    access_token_env: QQ_ACCESS_TOKEN\n"
+            "    account_env: QQ_ACCOUNT\n"
+            "    mention_only_groups: true\n"
+        )
+        legacy_deploy = ""
+    else:
+        transport = (
+            "platform:\n"
+            f"  type: {platform_type}\n"
+            f"  adapter: {adapter.adapter_id}\n"
+        )
+        legacy_deploy = (
+            f"  cc_connect_config_dir: ~/.chatcopilot-runtime/{bot_id}/.cc-connect\n"
+        )
     return (
         f"id: {bot_id}\n"
         f"display_name: {json.dumps(display_name, ensure_ascii=False)}\n"
         "\n"
-        "platform:\n"
-        f"  type: {platform_type}\n"
-        f"  adapter: {adapter.adapter_id}\n"
+        f"{transport}"
         "\n"
         "llm:\n"
         "  chat:\n"
@@ -300,7 +329,7 @@ def _render_bot_yaml(
         f"  workspace_root: ~/chatcopilot-workspaces/{bot_id}\n"
         f"  log_dir: ~/chatcopilot-logs/{bot_id}\n"
         f"  env_file: ~/.chatcopilot-{bot_id}.env\n"
-        f"  cc_connect_config_dir: ~/.chatcopilot-runtime/{bot_id}/.cc-connect\n"
+        f"{legacy_deploy}"
         f"  project_name: chatcopilot-{bot_id}\n"
         f"{access}"
     )
@@ -903,9 +932,12 @@ def _runtime_env_values(spec, local_env: Mapping[str, str]) -> dict[str, str]:
     )
     log_dir = _expand_deploy_path(deploy.log_dir) or str(Path.home() / "chatcopilot-logs" / instance_id)
     env_file = _expand_deploy_path(deploy.env_file) or str(Path.home() / f".chatcopilot-{instance_id}.env")
-    cc_config_dir = _expand_deploy_path(deploy.cc_connect_config_dir) or str(
-        Path.home() / ".chatcopilot-runtime" / instance_id / ".cc-connect"
-    )
+    qq_gateway = spec.channels.qq is not None
+    cc_config_dir = ""
+    if not qq_gateway:
+        cc_config_dir = _expand_deploy_path(deploy.cc_connect_config_dir) or str(
+            Path.home() / ".chatcopilot-runtime" / instance_id / ".cc-connect"
+        )
     try:
         bot_rel = spec.source_path.relative_to(_repo_root())
         runtime_bot_spec = str(Path(wsl_home) / bot_rel)
@@ -921,15 +953,6 @@ def _runtime_env_values(spec, local_env: Mapping[str, str]) -> dict[str, str]:
     values.update(_tool_pack_runtime_defaults(spec.tools.packs))
     values.update(llm_runtime_env_defaults(spec.llm))
     values.update(local_env)
-    cc_connect_bin = str(values.get("CHATCOPILOT_CC_CONNECT_BIN", "") or "").strip()
-    if not cc_connect_bin:
-        cc_connect_bin = _private_cc_connect_bin()
-    if (
-        any(character in cc_connect_bin for character in ("\r", "\n", "\x00"))
-        or not Path(cc_connect_bin).is_absolute()
-    ):
-        raise ValueError("cc_connect_bin_invalid")
-    values["CHATCOPILOT_CC_CONNECT_BIN"] = cc_connect_bin
     values.update(
         {
             "CHATCOPILOT_INSTANCE_ID": instance_id,
@@ -940,12 +963,41 @@ def _runtime_env_values(spec, local_env: Mapping[str, str]) -> dict[str, str]:
             "CHATCOPILOT_WORKSPACE_ROOT": workspace_root,
             "WORKSPACE_ROOT": workspace_root,
             "CHATCOPILOT_LOG_DIR": log_dir,
-            "CHATCOPILOT_CC_HOME": _cc_home_from_config_dir(cc_config_dir),
-            "CHATCOPILOT_CC_CONNECT_CONFIG_DIR": cc_config_dir,
-            "CHATCOPILOT_CC_PROJECT_NAME": deploy.project_name or f"chatcopilot-{instance_id}",
             "CHATCOPILOT_DISPLAY_NAME": spec.display_name,
         }
     )
+    if qq_gateway:
+        assert spec.gateway is not None
+        gateway_port = str(values.get(spec.gateway.port_env, "18789") or "").strip()
+        state_root = str(values.get(spec.gateway.state_root_env, "") or "").strip()
+        if not state_root:
+            state_root = str(
+                Path.home() / ".local" / "state" / "agentstrata" / instance_id / "gateway"
+            )
+        values[spec.gateway.port_env] = gateway_port
+        values[spec.gateway.state_root_env] = state_root
+        host = spec.gateway.host
+        url_host = f"[{host}]" if host == "::1" else host
+        values["CHATCOPILOT_GATEWAY_URL"] = f"ws://{url_host}:{gateway_port}"
+    else:
+        cc_connect_bin = str(values.get("CHATCOPILOT_CC_CONNECT_BIN", "") or "").strip()
+        if not cc_connect_bin:
+            cc_connect_bin = _private_cc_connect_bin()
+        if (
+            any(character in cc_connect_bin for character in ("\r", "\n", "\x00"))
+            or not Path(cc_connect_bin).is_absolute()
+        ):
+            raise ValueError("cc_connect_bin_invalid")
+        values.update(
+            {
+                "CHATCOPILOT_CC_CONNECT_BIN": cc_connect_bin,
+                "CHATCOPILOT_CC_HOME": _cc_home_from_config_dir(cc_config_dir),
+                "CHATCOPILOT_CC_CONNECT_CONFIG_DIR": cc_config_dir,
+                "CHATCOPILOT_CC_PROJECT_NAME": (
+                    deploy.project_name or f"chatcopilot-{instance_id}"
+                ),
+            }
+        )
     return values
 
 
@@ -1076,6 +1128,10 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
         "CHATCOPILOT_CC_CONNECT_CONFIG_DIR",
         "CHATCOPILOT_CC_PROJECT_NAME",
         "CHATCOPILOT_DISPLAY_NAME",
+        "CHATCOPILOT_GATEWAY_PORT",
+        "CHATCOPILOT_GATEWAY_TOKEN",
+        "CHATCOPILOT_GATEWAY_STATE_ROOT",
+        "CHATCOPILOT_GATEWAY_URL",
         "CHATCOPILOT_CC_CONNECT_BIN",
         "CHATCOPILOT_HTTP_ROUTE_MODULES",
         "CHATCOPILOT_CODEBASE_CHATCOPILOT_ROOT",
@@ -1103,7 +1159,7 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
         "FEISHU_APP_ID",
         "FEISHU_APP_SECRET",
         "QQ_ACCOUNT",
-        "QQ_WS_URL",
+        "CHATCOPILOT_QQ_ONEBOT_WS_URL",
         "QQ_ACCESS_TOKEN",
         "QQ_ALLOW_FROM",
         "QQ_ALLOW_GROUPS",
@@ -1190,6 +1246,12 @@ def _mcp_env_ref_keys(spec) -> tuple[str, ...]:
 
 def _cmd_render_cc_config(args: argparse.Namespace) -> int:
     spec = load_botspec(args.bot)
+    if spec.channels.qq is not None:
+        print(
+            "[ERR] qq_gateway_has_no_cc_connect_config: "
+            "Gateway QQ 不生成或启动 cc-connect 配置"
+        )
+        return 2
     platform_type = spec.platform.type
     adapter = _registry.get_adapter(platform_type)
     env = dict(os.environ)
@@ -1275,6 +1337,13 @@ def _read_private_session_env(*, directory: str | Path, session_key: str) -> dic
 
 def _cmd_render_session_env(args: argparse.Namespace) -> int:
     spec = load_botspec(args.bot)
+    if spec.channels.qq is not None:
+        print(
+            "[ERR] qq_gateway_has_no_session_env: "
+            "Gateway QQ 身份来自结构化 Channel 事件，不读取 cc-connect hook",
+            file=sys.stderr,
+        )
+        return 2
     adapter = _registry.get_adapter(spec.platform.type)
     session_key = (
         args.session_key
@@ -1317,6 +1386,14 @@ def _cmd_render_session_env(args: argparse.Namespace) -> int:
 
 
 def _cmd_exec_session_runtime(args: argparse.Namespace) -> int:
+    spec = load_botspec(args.bot)
+    if spec.channels.qq is not None:
+        print(
+            "[ERR] qq_gateway_has_no_session_runtime: "
+            "Gateway QQ 不从 cc-connect session env 启动运行时",
+            file=sys.stderr,
+        )
+        return 2
     try:
         values = _read_private_session_env(
             directory=args.session_env_dir,

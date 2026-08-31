@@ -26,14 +26,33 @@ def _inst(tmp_path: Path, *, platform: str, env_prefix: str = "CHATCOPILOT_CHAT"
     bot_dir = tmp_path / "bots" / instance_id
     bot_dir.mkdir(parents=True)
     bot_yaml = bot_dir / "bot.yaml"
+    transport = (
+        [
+            "gateway:",
+            "  protocol_version: 1",
+            "  host: 127.0.0.1",
+            "  port_env: CHATCOPILOT_GATEWAY_PORT",
+            "  token_env: CHATCOPILOT_GATEWAY_TOKEN",
+            "  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT",
+            "channels:",
+            "  qq:",
+            "    type: qq_personal",
+            "    provider: onebot_v11",
+            "    channel_id: qq",
+            "    endpoint_env: CHATCOPILOT_QQ_ONEBOT_WS_URL",
+            "    access_token_env: QQ_ACCESS_TOKEN",
+            "    account_env: QQ_ACCOUNT",
+            "    mention_only_groups: true",
+        ]
+        if platform == "qq"
+        else ["platform:", f"  type: {platform}", f"  adapter: {platform}_acp"]
+    )
     bot_yaml.write_text(
         "\n".join(
             [
                 f"id: {instance_id}",
                 f"display_name: {instance_id}",
-                "platform:",
-                f"  type: {platform}",
-                f"  adapter: {platform}_acp",
+                *transport,
                 "llm:",
                 "  chat:",
                 f"    env_prefix: {env_prefix}",
@@ -65,6 +84,7 @@ def _inst(tmp_path: Path, *, platform: str, env_prefix: str = "CHATCOPILOT_CHAT"
         bot_spec=str(bot_yaml),
         display_name=instance_id,
         platform=platform,
+        runtime_kind="gateway" if platform == "qq" else "legacy_edge",
         wsl_home=f"/srv/test/AgentStrata-{instance_id}",
         workspace_root=f"/srv/test/agentstrata-workspaces/{instance_id}",
         log_dir=f"/srv/test/agentstrata-logs/{instance_id}",
@@ -81,9 +101,21 @@ def _starter_inst(tmp_path: Path) -> BotInstance:
     bot_yaml.write_text(
         "id: sample-qq\n"
         "display_name: sample-qq\n"
-        "platform:\n"
-        "  type: qq\n"
-        "  adapter: qq_acp\n"
+        "gateway:\n"
+        "  protocol_version: 1\n"
+        "  host: 127.0.0.1\n"
+        "  port_env: CHATCOPILOT_GATEWAY_PORT\n"
+        "  token_env: CHATCOPILOT_GATEWAY_TOKEN\n"
+        "  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT\n"
+        "channels:\n"
+        "  qq:\n"
+        "    type: qq_personal\n"
+        "    provider: onebot_v11\n"
+        "    channel_id: qq\n"
+        "    endpoint_env: CHATCOPILOT_QQ_ONEBOT_WS_URL\n"
+        "    access_token_env: QQ_ACCESS_TOKEN\n"
+        "    account_env: QQ_ACCOUNT\n"
+        "    mention_only_groups: true\n"
         "llm:\n"
         "  chat:\n"
         "    env_prefix: CHATCOPILOT_CHAT\n"
@@ -115,7 +147,6 @@ def _starter_inst(tmp_path: Path) -> BotInstance:
         "  workspace_root: ~/chatcopilot-workspaces/sample-qq\n"
         "  log_dir: ~/chatcopilot-logs/sample-qq\n"
         "  env_file: ~/.chatcopilot-sample-qq.env\n"
-        "  cc_connect_config_dir: ~/.chatcopilot-runtime/sample-qq/.cc-connect\n"
         "  project_name: chatcopilot-sample-qq\n"
         "access:\n"
         "  owner_only_project_access: true\n",
@@ -146,7 +177,7 @@ def test_qq_provision_uses_botspec_llm_prefix_and_secret_free_receipt(
             {
                 "chat_api_key": "sk-test",
                 "QQ_ACCOUNT": "123456789",
-                "QQ_WS_URL": "ws://127.0.0.1:3001",
+                    "CHATCOPILOT_QQ_ONEBOT_WS_URL": "ws://127.0.0.1:3001",
                 "QQ_ACCESS_TOKEN": "a" * 32,
                 "QQ_ALLOW_FROM": "987654321",
             },
@@ -198,16 +229,21 @@ def test_starter_console_generates_token_and_defaults_owner_admission(
     assert res["ok"] is True
     values = load_local_env_values(Path(str(res["local_env_file"])))
     access_token = values["QQ_ACCESS_TOKEN"]
+    gateway_token = values["CHATCOPILOT_GATEWAY_TOKEN"]
     assert 32 <= len(access_token) <= 128
     assert re.fullmatch(r"[A-Za-z0-9_-]+", access_token)
+    assert 32 <= len(gateway_token) <= 128
+    assert gateway_token != access_token
     assert values["QQ_ALLOW_FROM"] == "987654321"
     assert access_token not in str(res)
     assert "QQ_ACCESS_TOKEN" in res["written_keys"]
+    assert "CHATCOPILOT_GATEWAY_TOKEN" in res["written_keys"]
     assert "QQ_ALLOW_FROM" in res["written_keys"]
 
     schema = operations.provision_schema(inst)
     platform_by_key = {field["env_key"]: field for field in schema["fields"]}
     assert platform_by_key["QQ_ACCESS_TOKEN"]["host_generated"] is True
+    assert platform_by_key["CHATCOPILOT_GATEWAY_TOKEN"]["host_generated"] is True
     assert platform_by_key["QQ_ACCESS_TOKEN"]["configured"] is True
     assert platform_by_key["QQ_ALLOW_FROM"]["required"] is False
 

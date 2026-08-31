@@ -38,7 +38,12 @@ def _gateway_test_root(tmpdir: str) -> Path:
     bot_dir = root / "bots" / "test-assistant"
     bot_dir.mkdir(parents=True)
     (bot_dir / "bot.yaml").write_text(
-        "id: test-assistant\nplatform: qq\n",
+        "id: test-assistant\n"
+        "gateway:\n"
+        "  protocol_version: 1\n"
+        "channels:\n"
+        "  qq:\n"
+        "    type: qq_personal\n",
         encoding="utf-8",
     )
     local_env = bot_dir / "local.env"
@@ -174,6 +179,33 @@ class QQBoundaryValidationTests(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("name@sha256:<64hex>", completed.stderr)
 
+    def test_provider_manager_rejects_legacy_qq_topology(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _gateway_test_root(tmpdir)
+            bot_spec = root / "bots" / "test-assistant" / "bot.yaml"
+            bot_spec.write_text(
+                "id: test-assistant\nplatform:\n  type: qq\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(root / "deploy" / "wsl" / "qq_gateway.sh"),
+                    "logs",
+                    "--instance",
+                    "test-assistant",
+                ],
+                cwd=root,
+                env={**os.environ, "HOME": tmpdir},
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 78)
+        self.assertIn("旧 platform=qq + cc-connect/Relay 拓扑已移除", completed.stderr)
+
     def test_gateway_rejects_malformed_account_before_any_docker_call(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = _gateway_test_root(tmpdir)
@@ -302,13 +334,14 @@ class QQBoundaryValidationTests(unittest.TestCase):
         self.assertNotIn(" stop napcat-test-assistant", f" {docker_calls}")
         self.assertNotIn(" rm napcat-test-assistant", f" {docker_calls}")
 
-    def test_service_start_fails_closed_when_mention_proxy_fails(self) -> None:
+    def test_service_start_fails_closed_when_legacy_cleanup_fails(self) -> None:
         script = (
             Path(__file__).resolve().parents[2] / "deploy" / "wsl" / "start.sh"
         ).read_text(encoding="utf-8")
-        self.assertIn("拒绝启动 cc-connect", script)
+        self.assertIn("拒绝启动 Gateway，避免双重投递", script)
+        self.assertIn('exec "$PY" -m chatcopilot run --bot "$BOT_SPEC"', script)
+        self.assertNotIn("_start_qq_proxy.sh", script)
         self.assertNotIn("降级：cc-connect 直连 NapCat", script)
-        self.assertNotIn('sed -i "s#^ws_url =', script)
 
 
 class QQBoundaryProbeTests(unittest.IsolatedAsyncioTestCase):

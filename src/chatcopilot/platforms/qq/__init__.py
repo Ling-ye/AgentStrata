@@ -1,6 +1,5 @@
-"""QQ platform adapter.
+"""Legacy QQ adapter helpers retained for diagnostics and migration.
 
-The runtime path is ``NapCat -> QQ @ Relay -> cc-connect -> ACP``. The Relay
-keeps the authenticated loopback boundary and explicit group-mention trigger;
-ACP owns admission, roles, and all AgentStrata capability projection.
+The production path is ``OneBot provider -> Gateway Channel``. Relay and
+cc-connect helpers in this package are not part of the Gateway runtime.
 """

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# status.sh — cc-connect 健康检查（进程 / WebSocket / 配置 / 日志 / 环境）
+# status.sh — 实例健康检查（Gateway host 或 legacy cc-connect edge）
 #
 # 用法：
 #   bash status.sh         # 一次性输出
@@ -83,9 +83,16 @@ if [ -n "$INSTANCE" ] && [ "$CHATCOPILOT_INSTANCE_ID" != "$INSTANCE" ]; then
 fi
 ccp_prepend_user_bins
 
-# 解析当前 BotSpec 的 platform.type，决定后面如何展示凭据 / 健康标志
+# Gateway 是运行拓扑，platform 只为 legacy edge 保留。
+RUNTIME_KIND="legacy"
 PLATFORM_TYPE_FOR_STATUS=""
 if [ -n "${CHATCOPILOT_BOT_SPEC:-}" ] && [ -f "$CHATCOPILOT_BOT_SPEC" ]; then
+    if ccp_bot_uses_gateway "$CHATCOPILOT_BOT_SPEC"; then
+        RUNTIME_KIND="gateway"
+        PLATFORM_TYPE_FOR_STATUS="qq"
+    fi
+fi
+if [ "$RUNTIME_KIND" = "legacy" ] && [ -n "${CHATCOPILOT_BOT_SPEC:-}" ] && [ -f "$CHATCOPILOT_BOT_SPEC" ]; then
     PLATFORM_TYPE_FOR_STATUS="$(BOT_SPEC="$CHATCOPILOT_BOT_SPEC" python3 - <<'PY'
 import os
 from pathlib import Path
@@ -109,7 +116,7 @@ PY
 )"
 fi
 if [ -z "$PLATFORM_TYPE_FOR_STATUS" ]; then
-    echo "[ERR] BotSpec 未声明可识别的 platform.type：$CHATCOPILOT_BOT_SPEC" >&2
+    echo "[ERR] BotSpec 未声明可识别的 Gateway Channel 或 platform.type：$CHATCOPILOT_BOT_SPEC" >&2
     exit 2
 fi
 
@@ -185,6 +192,94 @@ human_age() {
     elif [ "$age_s" -lt 86400 ]; then echo "$((age_s / 3600))h"
     else echo "$((age_s / 86400))d"
     fi
+}
+
+_status_gateway_pid_matches_instance() {
+    local pid="${1:-}" expected_python expected_bot
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    [ "$(stat -c '%u' "/proc/$pid" 2>/dev/null || true)" = "$(id -u)" ] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    expected_python="$(readlink -f "$MT_HOME/.venv/bin/python" 2>/dev/null || true)"
+    expected_bot="$MT_HOME/bots/$CHATCOPILOT_INSTANCE_ID/bot.yaml"
+    [ -n "$expected_python" ] \
+        && [ "$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)" = "$expected_python" ] \
+        || return 1
+    mapfile -d '' -t _status_gateway_argv < "/proc/$pid/cmdline" || return 1
+    [ "${#_status_gateway_argv[@]}" -eq 6 ] \
+        && [ "${_status_gateway_argv[1]}" = "-m" ] \
+        && [ "${_status_gateway_argv[2]}" = "chatcopilot" ] \
+        && [ "${_status_gateway_argv[3]}" = "run" ] \
+        && [ "${_status_gateway_argv[4]}" = "--bot" ] \
+        && [ "${_status_gateway_argv[5]}" = "$expected_bot" ] \
+        && _status_process_has_env "$pid" "CHATCOPILOT_INSTANCE_ID=$CHATCOPILOT_INSTANCE_ID"
+}
+
+_status_probe_onebot() {
+    local python_bin="$MT_HOME/.venv/bin/python"
+    [ -x "$python_bin" ] || return 1
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$MT_HOME/src${PYTHONPATH:+:$PYTHONPATH}" \
+        QQ_ACCESS_TOKEN="${QQ_ACCESS_TOKEN:-}" \
+        "$python_bin" -m chatcopilot.platforms.qq.gateway_health \
+        probe --url "${CHATCOPILOT_QQ_ONEBOT_WS_URL:-ws://127.0.0.1:3001}" \
+        --url-env-key CHATCOPILOT_QQ_ONEBOT_WS_URL >/dev/null 2>&1
+}
+
+print_gateway_status() {
+    local unit="chatcopilot@${CHATCOPILOT_INSTANCE_ID}.service" pid="" state="unknown"
+    printf "\033[1m▣ AgentStrata Gateway 状态 — instance=%s — %s\033[0m\n" \
+        "$CHATCOPILOT_INSTANCE_ID" "$(date '+%F %T')"
+
+    bold "▶ Gateway host（systemd MainPID）"
+    if command -v systemctl >/dev/null 2>&1; then
+        state="$(systemctl --user is-active "$unit" 2>/dev/null || true)"
+        pid="$(systemctl --user show "$unit" --property=MainPID --value 2>/dev/null || true)"
+    fi
+    if [ "$state" = "active" ] && _status_gateway_pid_matches_instance "$pid"; then
+        ok "$unit active；MainPID=$pid 为当前实例 Python Gateway host"
+        dim "$(ps -o args= -p "$pid" 2>/dev/null | sed 's/^ *//')"
+    else
+        bad "$unit 未形成可验证的实例 Gateway MainPID（state=${state:-unknown}, pid=${pid:-0}）"
+        dim "查看：journalctl --user -u $unit -n 100"
+    fi
+
+    bold "▶ Gateway 配置证据"
+    if [[ "${CHATCOPILOT_GATEWAY_PORT:-}" =~ ^[0-9]{1,5}$ ]] \
+        && [ "$((10#$CHATCOPILOT_GATEWAY_PORT))" -ge 1 ] \
+        && [ "$((10#$CHATCOPILOT_GATEWAY_PORT))" -le 65535 ]; then
+        ok "Gateway listener = ws://127.0.0.1:$CHATCOPILOT_GATEWAY_PORT（BotSpec 固定 loopback）"
+    else
+        bad "CHATCOPILOT_GATEWAY_PORT 缺失或无效"
+    fi
+    if [[ "${CHATCOPILOT_GATEWAY_TOKEN:-}" =~ ^[A-Za-z0-9_-]{32,128}$ ]]; then
+        ok "Gateway client credential 已配置（值不显示）"
+    else
+        bad "CHATCOPILOT_GATEWAY_TOKEN 缺失或格式无效"
+    fi
+    if [ -n "${CHATCOPILOT_GATEWAY_STATE_ROOT:-}" ]; then
+        ok "Gateway durable state root 已配置"
+        dim "CHATCOPILOT_GATEWAY_STATE_ROOT=$CHATCOPILOT_GATEWAY_STATE_ROOT"
+    else
+        bad "CHATCOPILOT_GATEWAY_STATE_ROOT 未配置"
+    fi
+
+    bold "▶ 外部 QQ provider（NapCat / OneBot v11）"
+    dim "endpoint=${CHATCOPILOT_QQ_ONEBOT_WS_URL:-ws://127.0.0.1:3001}"
+    if [ "$state" = "active" ] && _status_probe_onebot; then
+        ok "OneBot 通过 token 拒绝/接受的认证只读探针"
+    else
+        bad "OneBot 认证只读探针未通过"
+        dim "这只证明 provider 边界，不代表真实 QQ 消息、Agent、模型或客户端 E2E。"
+    fi
+
+    bold "▶ 证据边界"
+    dim "active MainPID 只证明 Gateway host 进程；OneBot probe 只证明回环 provider 认证。"
+    dim "未由本命令验证：真实 QQ 入站、模型调用、外部发送、用户端展示或 ACP client。"
+
+    bold "▶ 常用命令"
+    echo "  systemctl --user status $unit"
+    echo "  journalctl --user -u $unit -f"
+    echo "  bash $MT_HOME/deploy/wsl/qq_gateway.sh status --instance $CHATCOPILOT_INSTANCE_ID"
+    echo
 }
 
 _status_process_has_env() {
@@ -518,10 +613,18 @@ EOF
 if [ "$WATCH" = 1 ]; then
     while true; do
         clear
-        print_status
+        if [ "$RUNTIME_KIND" = "gateway" ]; then
+            print_gateway_status
+        else
+            print_status
+        fi
         printf "\033[2m(每 %ss 刷新；Ctrl+C 退出)\033[0m\n" "$INTERVAL"
         sleep "$INTERVAL"
     done
 else
-    print_status
+    if [ "$RUNTIME_KIND" = "gateway" ]; then
+        print_gateway_status
+    else
+        print_status
+    fi
 fi

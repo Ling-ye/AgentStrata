@@ -27,13 +27,15 @@ def test_code_worker_unit_keeps_wsl_compatible_hardening() -> None:
         assert directive in unit
 
 
-def test_bot_unit_renders_runtime_config_before_every_start() -> None:
+def test_bot_unit_runs_gateway_as_the_systemd_main_process() -> None:
     unit = _read("console/systemd/chatcopilot@.service")
 
     assert (
         "ExecStart=/usr/bin/env bash ${CCP_WSL_HOME}/deploy/wsl/start.sh "
         "--apply-config"
     ) in unit
+    assert "原位 exec Python" in unit
+    assert "cc-connect" not in unit
 
 
 def test_registration_accepts_exported_worker_values_and_pins_main_instance() -> None:

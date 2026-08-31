@@ -357,10 +357,16 @@ print_runtime_plan() {
     info "uv sha256: $UV_SHA256"
     info "uv target: $UV_INSTALL_DIR"
     info "managed Python: $PYTHON_VERSION -> $PYTHON_INSTALL_DIR"
-    info "Node.js $NODE_VERSION: $NODE_URL"
-    info "Node.js sha256: $NODE_SHA256"
-    info "Node.js target: $NODE_INSTALL_DIR"
-    info "cc-connect $CC_CONNECT_VERSION target: $CC_CONNECT_DIR"
+    if [ "$INSTALL_CC_CONNECT" -eq 1 ] || [ "$INSTALL_CONSOLE" -eq 1 ]; then
+        info "Node.js $NODE_VERSION: $NODE_URL"
+        info "Node.js sha256: $NODE_SHA256"
+        info "Node.js target: $NODE_INSTALL_DIR"
+    else
+        info "Node.js/cc-connect: not required by the Gateway QQ runtime"
+    fi
+    if [ "$INSTALL_CC_CONNECT" -eq 1 ]; then
+        info "cc-connect $CC_CONNECT_VERSION target: $CC_CONNECT_DIR"
+    fi
     info "Python environment target: $VENV_DIR"
 }
 
@@ -562,8 +568,8 @@ verify_installation() {
     fi
 
     local py="$VENV_DIR/bin/python"
-    info "checking Agent and ACP imports"
-    "$py" -c "from chatcopilot.run import main; from chatcopilot.middleware.acp.server import main as acp_main; print('ok')" >/dev/null
+    info "checking Agent, Gateway, and optional ACP edge imports"
+    "$py" -c "from chatcopilot.run import main; from chatcopilot.gateway.server import GatewayWebSocketServer; from chatcopilot.protocols.acp.server import GatewayAcpAgent; print('ok')" >/dev/null
     info "validating BotSpec files"
     "$py" -m chatcopilot botspec validate "$REPO_ROOT/bots/lingye-copilot-qq/bot.yaml"
     ok "verification passed"

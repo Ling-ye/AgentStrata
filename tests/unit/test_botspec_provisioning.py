@@ -9,11 +9,14 @@ from chatcopilot.botspec.model import (
     AccessSpec,
     BotSpec,
     ContextSpec,
+    ChannelsSpec,
     DeploySpec,
+    GatewaySpec,
     LLMSpec,
     MemorySpec,
     PlatformSpec,
     PromptSpec,
+    QQChannelSpec,
     ToolSpec,
     WorkspaceSpec,
 )
@@ -32,7 +35,9 @@ def _starter_spec(tmp_path: Path) -> BotSpec:
     return BotSpec(
         id="my-assistant-qq",
         display_name="我的助手",
-        platform=PlatformSpec(type="qq", adapter="qq_acp"),
+        platform=PlatformSpec(type="qq", adapter="gateway"),
+        gateway=GatewaySpec(),
+        channels=ChannelsSpec(qq=QQChannelSpec()),
         prompts=PromptSpec(
             schema_version=2,
             identity="prompts/identity.md",
@@ -60,9 +65,6 @@ def _starter_spec(tmp_path: Path) -> BotSpec:
             workspace_root="~/chatcopilot-workspaces/my-assistant-qq",
             log_dir="~/chatcopilot-logs/my-assistant-qq",
             env_file="~/.chatcopilot-my-assistant-qq.env",
-            cc_connect_config_dir=(
-                "~/.chatcopilot-runtime/my-assistant-qq/.cc-connect"
-            ),
             project_name="chatcopilot-my-assistant-qq",
         ),
         access=AccessSpec(owner_only_project_access=True),
@@ -90,6 +92,7 @@ def test_plan_uses_real_llm_prefix_and_worker_condition(tmp_path: Path) -> None:
     assert by_id["chat_api_key"].env_key == "CHATCOPILOT_CHAT_API_KEY"
     assert by_id["qq_account"].group == "platform"
     assert by_id["qq_access_token"].host_generated is True
+    assert by_id["gateway_token"].host_generated is True
     assert by_id["qq_allow_from"].required is False
     assert starter.requires_code_worker is False
     assert "codex_bin" not in by_id
@@ -102,6 +105,7 @@ def test_plan_uses_real_llm_prefix_and_worker_condition(tmp_path: Path) -> None:
     assert advanced_by_id["chat_api_key"].env_key == "CHATCOPILOT_LINGYE_API_KEY"
     assert advanced.requires_code_worker is True
     assert advanced_by_id["qq_access_token"].host_generated is False
+    assert advanced_by_id["gateway_token"].host_generated is True
     assert "codex_bin" in advanced_by_id
     assert "tavily_api_key" in advanced_by_id
 
@@ -113,7 +117,8 @@ def test_guided_starter_rejects_unknown_top_level_configuration(
     raw = {
         "id": spec.id,
         "display_name": spec.display_name,
-        "platform": {"type": "qq", "adapter": "qq_acp"},
+        "gateway": {"protocol_version": 1},
+        "channels": {"qq": {"type": "qq_personal"}},
         "advanced": True,
     }
     object.__setattr__(spec, "raw", raw)
@@ -141,12 +146,41 @@ def test_starter_generates_access_token_and_defaults_allow_from_to_owner(
 
     rendered = load_local_env_values(path)
     access_token = rendered["QQ_ACCESS_TOKEN"]
+    gateway_token = rendered["CHATCOPILOT_GATEWAY_TOKEN"]
     assert 32 <= len(access_token) <= 128
+    assert 32 <= len(gateway_token) <= 128
     assert re.fullmatch(r"[A-Za-z0-9_-]+", access_token)
+    assert re.fullmatch(r"[A-Za-z0-9_-]+", gateway_token)
+    assert access_token != gateway_token
     assert rendered["QQ_ALLOW_FROM"] == rendered["CHATCOPILOT_ADD_OWNER_IDS"] == "20002"
     assert "qq_access_token" in receipt.changed_fields
+    assert "gateway_token" in receipt.changed_fields
     assert "qq_allow_from" in receipt.changed_fields
     assert access_token not in str(receipt.to_dict())
+    assert gateway_token not in str(receipt.to_dict())
+
+
+def test_starter_replaces_reused_gateway_and_onebot_token(tmp_path: Path) -> None:
+    path = tmp_path / "local.env"
+    reused = "r" * 32
+    values = _complete_values()
+    values["gateway_token"] = reused
+    values["qq_access_token"] = reused
+    adapter = registry.get_adapter("qq")
+    plan = build_provision_plan(_starter_spec(tmp_path), adapter)
+
+    receipt = patch_local_env(
+        path,
+        plan,
+        values,
+        adapter=adapter,
+        allowed_parent=tmp_path,
+    )
+
+    rendered = load_local_env_values(path)
+    assert rendered["QQ_ACCESS_TOKEN"] == reused
+    assert rendered["CHATCOPILOT_GATEWAY_TOKEN"] != reused
+    assert "gateway_token" in receipt.changed_fields
 
 
 def test_starter_repairs_existing_invalid_host_token_without_echoing_it(

@@ -29,6 +29,7 @@ import {
   isLiveTask,
   nextTaskIdAfterDelete,
   shouldRefreshTerminalFlow,
+  taskFlowAvailability,
   taskDeleteAvailability,
   taskStatusLabel,
   withoutTaskRecord,
@@ -53,6 +54,20 @@ const EVIDENCE_META: Record<
 };
 
 export default function BotTaskFlowPanel({ bot, visible = true }: Props) {
+  const availability = taskFlowAvailability(bot.runtime_kind);
+  if (!availability.available) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        content={availability.message}
+      />
+    );
+  }
+  return <LegacyBotTaskFlowPanel bot={bot} visible={visible} />;
+}
+
+function LegacyBotTaskFlowPanel({ bot, visible = true }: Props) {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");

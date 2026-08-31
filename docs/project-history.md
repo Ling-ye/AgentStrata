@@ -26,8 +26,9 @@ flowchart LR
     K["QQ 群级共享会话<br/>conversation scope · turn identity · actor-bound execution"]
     L["统一上下文可观测性<br/>effective input · provider boundary · safe artifacts"]
     M["架构边界加固<br/>trust partitions · static DAG · zero multi-module SCCs"]
+    N["QQ Gateway 收敛<br/>direct OneBot channel · optional ACP edge"]
 
-    A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L --> M
+    A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L --> M --> N
 ```
 
 这些阶段按主要架构变化划分，实际开发时间存在重叠。
@@ -730,6 +731,20 @@ Console、实例更新和 QQ gateway 的命令又分散在多份文档中。高�
 
 相关规格：[`guided-first-deployment`](../specs/guided-first-deployment/spec.md)。
 
+## 21. QQ Gateway 收敛：从外部桥接链转向实例运行宿主
+
+QQ 的旧运行路径把 NapCat、Relay、cc-connect 与 ACP 串成一条外部桥接链，导致平台连接、
+实例生命周期、权限与证据边界分散。当前 BotSpec 改为显式 `gateway` 与 `channels.qq`，每个
+systemd Bot unit 直接以前台 Python 运行唯一 Gateway，Gateway 连接用户独立维护的回环
+NapCat/OneBot provider，并在进入 Agent 前完成身份、准入、权限审核和任务持久化。
+
+QQ 推荐部署不再安装或启动 Node、cc-connect 和 Relay；Feishu legacy edge 保持隔离可选。
+ACP 降为本地 Gateway client edge，不拥有 Channel 或 Agent runtime。Console 和 quickstart
+分别按精确 MainPID、Gateway/OneBot evidence 报告状态，并继续把真实 QQ 入站、模型行为、
+客户端展示和用户已读标记为尚未由本地检查证明的独立边界。
+
+相关规格：[`gateway-acp-runtime-boundary`](../specs/gateway-acp-runtime-boundary/spec.md)。
+
 ## 当前架构的收敛结果
 
 | 关注点 | 当前做法 |
@@ -739,12 +754,12 @@ Console、实例更新和 QQ gateway 的命令又分散在多份文档中。高�
 | 跨层类型 | 由 `chatcopilot.contracts` 统一拥有 |
 | 运行与控制面读取 | 通过 `core` 和 `component_catalog` 提供稳定入口 |
 | 主 Agent | Native、LangGraph、Codex 共享 task/event/result、模型上下文快照与 turn lifecycle |
-| 会话身份 | QQ 群共享 conversation/普通文件，journal 与 backend state 受保护，逐轮权限按 actor 绑定 |
+| 会话身份 | Gateway 从结构化 OneBot 事件绑定 conversation 与 actor；群共享普通数据但不共享执行权限 |
 | 源码修改 | 主会话只读，异步 worker 隔离执行，验证后交付 Draft PR |
 | 搜索 | 统一入口、直接 provider、统一 deadline/circuit/result policy |
 | 工具注册 | catalog 只定位显式 provider，静态与会话动态工具统一进入 Registry 快照 |
 | 评测 | Console 只展示直接 Agent 与 QQ 后链路两轨；Comparison/benchmark 保留 CLI，全部复用统一 Evaluation 生命周期 |
-| 首次部署 | 单一终端向导生成通用 QQ starter；特权变更确认、扫码暂停与外部证据边界显式化 |
+| 首次部署 | 单一终端向导生成 Gateway QQ starter；NapCat 外置，QQ 路径无 Node/cc-connect/Relay |
 | 公开维护 | 公开仓库是源码、规格和发布流程的唯一事实源 |
 
 进一步的组件关系、依赖方向和运行时细节分别见

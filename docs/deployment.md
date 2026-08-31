@@ -32,8 +32,9 @@ AgentStrata 的生产运行面是 Linux 或 WSL2，不支持 Windows 原生部�
 - 可选的稳定数字 QQ 群号；不填则仅按 Owner 用户准入。
 - 执行系统包安装时可使用 `sudo`。向导会先显示精确变更，再请求确认。
 
-向导使用固定校验和的用户级 Python、Node 和 cc-connect，不覆盖系统 Python/Node，不修改
-shell profile，也不默认安装 Console、桌面、测试、飞书或第三方 MCP/Skill 依赖。
+向导使用固定校验和的用户级 Python，不覆盖系统 Python，不修改 shell profile，也不默认
+安装 Console、桌面、测试、飞书或第三方 MCP/Skill 依赖。QQ 推荐路径不安装 Node 或
+cc-connect；只有单独部署可选 Console 前端或 Feishu legacy edge 时才需要对应工具链。
 
 ## 三条命令开始
 
@@ -48,8 +49,8 @@ bash deploy/wsl/quickstart.sh
 1. 只读检查发行版、架构、磁盘、网络、systemd、用户 bus 和 Docker。
 2. 展示待下载的运行时、系统包、Docker 仓库与目标路径；任何特权变更都先确认。
 3. 创建不含搜索、MCP、人格、Codex 和代码任务的通用 QQ/Native starter。
-4. 在终端采集 LLM、机器人 QQ、Owner 和可选群号；API Key 使用隐藏输入，强 OneBot token
-   由本机生成，秘密不会出现在命令行参数、JSON 或部署摘要中。
+4. 在终端采集 LLM、机器人 QQ、Owner 和可选群号；API Key 使用隐藏输入，Gateway token
+   与 OneBot token 分别由本机生成，二者不能复用，秘密不会出现在命令行参数、JSON 或部署摘要中。
 5. 启动 NapCat bootstrap，并只在当前交互式终端显示一次本地 WebUI 登录链接。
 6. 等待你在浏览器扫码并回到终端确认，然后执行 token 同步和经过认证的 OneBot 状态检查。
 7. 只调用一次统一实例更新入口，最后输出有界的检查结果与修复命令。
@@ -145,6 +146,11 @@ bootstrap -> 本地 WebUI 登录 -> sync-token -> authenticated status -> update
 普通日志、配置或摘要。QQ Owner 与群准入只使用稳定数字 ID，昵称不参与授权；默认
 `QQ_ALLOW_FROM` 只包含 Owner，群列表默认为空。
 
+NapCat 是用户独立维护的外部 OneBot provider。每个 Bot 的 systemd unit 直接以前台
+`python -m chatcopilot run --bot <deployed-bot.yaml>` 运行唯一 Gateway host，Gateway 直接
+连接 `CHATCOPILOT_QQ_ONEBOT_WS_URL`。ACP 只是可选的本地协议 edge，通过 Gateway 的认证协议
+接入；它不是 QQ transport，也不拥有平台身份、权限策略或运行生命周期。
+
 空/弱 token、非回环 URL、未登录 NapCat、认证动作失败或配置不完整都会在 Agent 部署前
 失败关闭。QQ/NapCat 日常启停和修复命令见
 [`operations.md#qq--napcat`](operations.md#qq--napcat)。
@@ -154,8 +160,9 @@ bootstrap -> 本地 WebUI 登录 -> sync-token -> authenticated status -> update
 最终结果使用 `agentstrata-deployment-check/v1`，总状态是 `ready`、
 `needs_user_action` 或 `failed`，每项检查都提供有界说明和修复动作。
 
-`ready` 只证明当前机器上的配置、systemd 主实例、Relay、cc-connect、NapCat 和经过认证的
-只读 OneBot 边界就绪。默认流程不会消耗模型额度，也不会发送 QQ 消息，因此必须保留：
+`ready` 只证明当前机器上的配置、systemd Gateway MainPID、NapCat 和经过认证的只读 OneBot
+边界就绪。它不证明真实 QQ 客户端展示、模型调用或用户已读。默认流程不会消耗模型额度，
+也不会发送 QQ 消息，因此必须保留：
 
 ```text
 llm_live_call=not_tested
@@ -164,12 +171,12 @@ qq_inbound_agent_roundtrip=not_tested
 ```
 
 最后请自行向机器人发送普通私聊，或在获准群内明确 @ 机器人，确认真实的
-“QQ 用户 -> NapCat -> Relay -> cc-connect -> Agent/模型 -> QQ 回复”链路。自动化、本地
+“QQ 用户 -> 外部 NapCat/OneBot -> AgentStrata Gateway -> Agent/模型 -> QQ 回复”链路。自动化、本地
 合成 QQ flow、只读平台探针或机器人主动发送都不能替代独立账号的入站往返证据。
 
-维护者可在不启动 AgentStrata、NapCat、systemd 或 QQ gateway 的前提下，用一次性容器复核
-六个受支持发行版的锁定运行时和 BotSpec smoke；该检查会拉取容器和运行时下载物到本机 Docker
-缓存，但不会修改宿主 Python、Node 或部署实例：
+维护者可在不启动 AgentStrata、NapCat、systemd 或 Gateway 的前提下，用一次性容器复核
+六个受支持发行版的锁定 Python 运行时和 BotSpec smoke；该检查会拉取容器和运行时下载物到本机
+Docker 缓存，但不会修改宿主 Python 或部署实例：
 
 ```bash
 bash scripts/verify_guided_runtime_matrix.sh --all
@@ -187,8 +194,8 @@ bash scripts/verify_guided_runtime_matrix.sh --all
 | 实例副本 | BotSpec 的 `deploy.wsl_home` | 部署脚本 |
 | 运行时 env | `~/.chatcopilot-<id>.env` | `provision-env` |
 | workspace | `~/chatcopilot-workspaces/<id>` | 运行时 |
-| 日志 | `~/chatcopilot-logs/<id>` | cc-connect / runtime |
-| cc-connect home | `~/.chatcopilot-runtime/<id>` | cc-connect |
+| 日志 | systemd journal；可选 `~/chatcopilot-logs/<id>/gateway` | Gateway runtime |
+| Gateway 状态 | BotSpec `gateway.state_root_env` 指向的私有目录 | Gateway |
 
 `local.env` 是机器私有事实源。配置写入先在内存中构造并验证候选，只修改受管字段，保留
 未知键和注释，再用同目录 mode `0600` 临时文件原子替换；符号链接、非普通文件、错误 owner

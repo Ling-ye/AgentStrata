@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# setup_wsl_root.sh — 需要 sudo 的部分。用户跑一次即可。
-# 用法：在 WSL2 终端里 `sudo bash ~/setup_wsl_root.sh`（输一次密码）。
-# 装完后再回 PowerShell，Cursor 会自动接管后续步骤。
+# setup_wsl_root.sh — Feishu legacy edge 的 root 依赖入口。
+# QQ Gateway 必须使用 quickstart；只有明确维护 legacy edge 时传 --legacy-feishu。
 set -euo pipefail
+
+if [ "${1:-}" != "--legacy-feishu" ]; then
+    echo "[ERR] 此脚本只保留给 Feishu legacy edge：sudo bash $0 --legacy-feishu" >&2
+    echo "[ERR] QQ Gateway 请运行 deploy/wsl/quickstart.sh；不会安装系统 Node/cc-connect。" >&2
+    exit 2
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "[ERR] 本脚本需要用 sudo 跑：sudo bash $0" >&2

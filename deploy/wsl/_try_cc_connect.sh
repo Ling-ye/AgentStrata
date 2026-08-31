@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# _try_cc_connect.sh — 启动 cc-connect 8 秒看能否连飞书；之后自动退出。
+# _try_cc_connect.sh — Feishu legacy edge 的 cc-connect 8 秒连通性探针。
 # 如果看到 "connected to wss://" 说明飞书侧 WebSocket 联通成功。
 # 看到 "InvalidAppId" / "InvalidAppSecret" / "InvalidEventSubscription" 等错误说明
 # 飞书开放平台侧权限/订阅没配齐。

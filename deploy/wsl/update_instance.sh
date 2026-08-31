@@ -95,6 +95,19 @@ print("1" if "dev.code_tasks" in packs else "0")
 PY
 }
 
+bot_uses_gateway() {
+    local bot_path="$1"
+    [ -r "$bot_path" ] || return 1
+    awk '
+        /^[^[:space:]#][^:]*:[[:space:]]*$/ {
+            key = $0
+            sub(/:.*/, "", key)
+            if (key == "gateway") found = 1
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$bot_path"
+}
+
 # Compare the inputs that can change the installed Python environment. Source
 # code itself is loaded from the synchronized runtime tree, so only the locked
 # dependency inputs trigger another frozen runtime sync.
@@ -254,6 +267,14 @@ if [ -n "$CHANGED_FILES" ] && [ ! -f "$CHANGED_FILES" ]; then
 fi
 
 VENV_PY="$SRC/.venv/bin/python"
+GATEWAY_BACKED=0
+if bot_uses_gateway "$BOT_FOR_CMD"; then
+    GATEWAY_BACKED=1
+fi
+RUNTIME_INSTALL_ARGS=(--no-system-packages --venv "$DST/.venv" --no-verify)
+if [ "$GATEWAY_BACKED" -eq 1 ]; then
+    RUNTIME_INSTALL_ARGS+=(--skip-cc-connect)
+fi
 select_update_mode
 if [ -n "$UPDATE_ERROR" ]; then
     echo "[ERR] $UPDATE_ERROR" >&2
@@ -278,9 +299,14 @@ if [ "$DRY_RUN" = 1 ]; then
     if [ "$UPDATE_MODE" = "full" ]; then
         echo "[DRY-RUN] would run full rebuild: CHATCOPILOT_BOT_SPEC='$INSTANCE_BOT' CHATCOPILOT_INSTANCE_ID='$INSTANCE' bash '$DST/deploy/wsl/bootstrap_wsl.sh'"
     else
-        echo "[DRY-RUN] would reconcile the locked runtime before rendering config"
-        echo "[DRY-RUN] would run: bash '$DST/deploy/wsl/install_wsl_env.sh' --no-system-packages --venv '$DST/.venv' --no-verify"
-        echo "[DRY-RUN] would run fast config render: CHATCOPILOT_BOT_SPEC='$INSTANCE_BOT' CHATCOPILOT_INSTANCE_ID='$INSTANCE' bash '$DST/deploy/wsl/_apply_config.sh'"
+        echo "[DRY-RUN] would reconcile the locked runtime before runtime-config check"
+        if [ "$GATEWAY_BACKED" -eq 1 ]; then
+            echo "[DRY-RUN] would run: bash '$DST/deploy/wsl/install_wsl_env.sh' --no-system-packages --venv '$DST/.venv' --no-verify --skip-cc-connect"
+            echo "[DRY-RUN] Gateway path does not render cc-connect/session-env configuration"
+        else
+            echo "[DRY-RUN] would run: bash '$DST/deploy/wsl/install_wsl_env.sh' --no-system-packages --venv '$DST/.venv' --no-verify"
+            echo "[DRY-RUN] would run legacy config render: CHATCOPILOT_BOT_SPEC='$INSTANCE_BOT' CHATCOPILOT_INSTANCE_ID='$INSTANCE' bash '$DST/deploy/wsl/_apply_config.sh'"
+        fi
     fi
     echo "[DRY-RUN] would run: bash '$SRC/console/scripts/ctl.sh' restart '$INSTANCE'"
     if [ "$ENABLE_SERVICE" = 1 ]; then
@@ -344,7 +370,7 @@ if [ "$UPDATE_MODE" = "full" ]; then
         fail_stage "rebuild environment" "$rc"
     fi
 else
-    echo "[update] step 3/4: reconcile locked runtime and render config"
+    echo "[update] step 3/4: reconcile locked runtime and runtime config"
     RUNTIME_INSTALLER="$DST/deploy/wsl/install_wsl_env.sh"
     APPLY_CONFIG="$DST/deploy/wsl/_apply_config.sh"
     if [ ! -f "$RUNTIME_INSTALLER" ]; then
@@ -357,9 +383,13 @@ else
     fi
     (
         cd "$DST" || exit 1
-        bash "$RUNTIME_INSTALLER" --no-system-packages --venv "$DST/.venv" --no-verify \
+        bash "$RUNTIME_INSTALLER" "${RUNTIME_INSTALL_ARGS[@]}" \
             || exit $?
-        CHATCOPILOT_BOT_SPEC="$INSTANCE_BOT" CHATCOPILOT_INSTANCE_ID="$INSTANCE" bash "$APPLY_CONFIG"
+        if [ "$GATEWAY_BACKED" -eq 1 ]; then
+            echo "[update] Gateway instance: no cc-connect/session-env render"
+        else
+            CHATCOPILOT_BOT_SPEC="$INSTANCE_BOT" CHATCOPILOT_INSTANCE_ID="$INSTANCE" bash "$APPLY_CONFIG"
+        fi
     )
     rc=$?
     if [ "$rc" -ne 0 ]; then

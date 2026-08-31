@@ -62,26 +62,6 @@ class AdapterCapabilityTests(unittest.TestCase):
         self.assertEqual(result, "sent")
         legacy_send.assert_called_once_with(files, message="done")
 
-    def test_qq_workspace_file_delivery_receives_exact_workspace(self) -> None:
-        adapter = registry.get_adapter("qq")
-        files = [Path("report.txt")]
-        with mock.patch(
-            "chatcopilot.platforms.qq.adapter._sender.send_via_cc_connect",
-            return_value="sent",
-        ) as qq_send:
-            result = adapter.send_workspace_files(
-                mock.sentinel.workspace,
-                files,
-                message="done",
-            )
-        self.assertEqual(result, "sent")
-        qq_send.assert_called_once_with(
-            files,
-            message="done",
-            workspace=mock.sentinel.workspace,
-        )
-
-
 class DeployRenderTests(unittest.TestCase):
     def test_feishu_required_secrets(self) -> None:
         keys = [s.env_key for s in registry.get_adapter("feishu").required_secrets()]
@@ -112,16 +92,28 @@ class DeployRenderTests(unittest.TestCase):
     def test_qq_required_secrets_schema(self) -> None:
         secrets = registry.get_adapter("qq").required_secrets()
         by_key = {secret.env_key: secret for secret in secrets}
+        self.assertEqual(
+            set(by_key),
+            {
+                "CHATCOPILOT_GATEWAY_PORT",
+                "CHATCOPILOT_GATEWAY_TOKEN",
+                "CHATCOPILOT_QQ_ONEBOT_WS_URL",
+                "QQ_ACCESS_TOKEN",
+                "QQ_ACCOUNT",
+                "QQ_ALLOW_FROM",
+                "QQ_ALLOW_GROUPS",
+                "QQ_IMAGE_MAX_BYTES",
+                "QQ_IMAGE_SEND_TIMEOUT_SECONDS",
+                "QQ_WEBUI_PORT",
+            },
+        )
+        self.assertFalse(by_key["CHATCOPILOT_GATEWAY_PORT"].required)
+        self.assertTrue(by_key["CHATCOPILOT_GATEWAY_TOKEN"].required)
+        self.assertTrue(by_key["CHATCOPILOT_GATEWAY_TOKEN"].host_generated)
         self.assertTrue(by_key["QQ_ACCOUNT"].required)
         self.assertTrue(by_key["QQ_ACCESS_TOKEN"].required)
-        self.assertFalse(by_key["QQ_WS_URL"].required)
-        self.assertIn("QQ_ALLOW_FROM", by_key)
-        self.assertIn("QQ_ALLOW_GROUPS", by_key)
-        self.assertIn("QQ_AT_PROXY_URL", by_key)
-        self.assertNotIn("QQ_REQUIRE_AT_IN_GROUP", by_key)
-        self.assertIn("QQ_WEBUI_PORT", by_key)
-        self.assertIn("QQ_IMAGE_MAX_BYTES", by_key)
-        self.assertIn("QQ_IMAGE_SEND_TIMEOUT_SECONDS", by_key)
+        self.assertTrue(by_key["QQ_ACCESS_TOKEN"].host_generated)
+        self.assertFalse(by_key["CHATCOPILOT_QQ_ONEBOT_WS_URL"].required)
 
     def test_qq_setup_actions_expose_gateway(self) -> None:
         actions = registry.get_adapter("qq").setup_actions()
@@ -140,50 +132,20 @@ class DeployRenderTests(unittest.TestCase):
         self.assertIn("{verb}", actions[0].command)
         self.assertIn("{instance_id}", actions[0].command)
 
-    def test_qq_render_cc_connect_section_defaults(self) -> None:
-        token = "a" * 32
-        section = registry.get_adapter("qq").render_cc_connect_section(
-            {"QQ_ACCOUNT": "10001", "QQ_ACCESS_TOKEN": token}
-        )
-        self.assertIn('type = "qq"', section)
-        self.assertIn('ws_url = "ws://127.0.0.1:3002"', section)
-        self.assertIn(f'token = "{token}"', section)
-        self.assertIn('allow_from = "*"', section)
-
-    def test_qq_render_always_uses_relay_and_unrestricted_cc_connect(self) -> None:
-        token = "safe_token-" + ("x" * 22)
-        section = registry.get_adapter("qq").render_cc_connect_section(
+    def test_qq_gateway_runtime_env_accepts_new_contract(self) -> None:
+        errors = registry.get_adapter("qq").validate_runtime_env(
             {
+                "CHATCOPILOT_GATEWAY_PORT": "18789",
+                "CHATCOPILOT_GATEWAY_TOKEN": "g" * 32,
+                "CHATCOPILOT_QQ_ONEBOT_WS_URL": "ws://127.0.0.1:3001",
                 "QQ_ACCOUNT": "10001",
-                "QQ_WS_URL": "ws://127.0.0.1:6700",
-                "QQ_AT_PROXY_URL": "ws://127.0.0.1:6701",
-                "QQ_ACCESS_TOKEN": token,
-                "QQ_ALLOW_FROM": "123,456",
-            }
-        )
-        self.assertIn('ws_url = "ws://127.0.0.1:6701"', section)
-        self.assertNotIn('ws_url = "ws://127.0.0.1:6700"', section)
-        self.assertIn(f'token = "{token}"', section)
-        self.assertIn('allow_from = "*"', section)
-        self.assertNotIn('allow_from = "123,456"', section)
-
-    def test_qq_group_allowlist_is_not_rendered_into_external_tool_config(self) -> None:
-        token = "safe_token-" + ("x" * 22)
-        section = registry.get_adapter("qq").render_cc_connect_section(
-            {
-                "QQ_ACCOUNT": "10001",
-                "QQ_WS_URL": "ws://127.0.0.1:6700",
-                "QQ_AT_PROXY_URL": "ws://127.0.0.1:6701",
-                "QQ_ACCESS_TOKEN": token,
+                "QQ_ACCESS_TOKEN": "q" * 32,
                 "QQ_ALLOW_FROM": "20002",
                 "QQ_ALLOW_GROUPS": "30003",
             }
         )
-        self.assertIn('ws_url = "ws://127.0.0.1:6701"', section)
-        self.assertIn('allow_from = "*"', section)
-        self.assertNotIn('allow_from = "20002"', section)
-        self.assertNotIn("20002", section)
-        self.assertNotIn("30003", section)
+
+        self.assertEqual(errors, ())
 
     def test_qq_allowlist_validation_does_not_echo_private_value(self) -> None:
         private_value = "invalid-private-group"
@@ -199,31 +161,78 @@ class DeployRenderTests(unittest.TestCase):
 
     def test_qq_removed_ingress_switches_are_rejected(self) -> None:
         adapter = registry.get_adapter("qq")
-        base = {"QQ_ACCOUNT": "10001", "QQ_ACCESS_TOKEN": "x" * 32}
+        base = {
+            "CHATCOPILOT_GATEWAY_TOKEN": "g" * 32,
+            "QQ_ACCOUNT": "10001",
+            "QQ_ACCESS_TOKEN": "q" * 32,
+        }
         for key in ("QQ_REQUIRE_AT_IN_GROUP", "QQ_AT_ALL_COUNTS"):
             errors = adapter.validate_runtime_env({**base, key: "false"})
             self.assertTrue(any("qq_legacy_ingress_env_removed" in item for item in errors))
 
-    def test_qq_render_rejects_missing_weak_token_and_non_loopback_url(self) -> None:
+    def test_qq_removed_cc_connect_runtime_env_is_rejected(self) -> None:
         adapter = registry.get_adapter("qq")
-        private_host = ".".join(("10", "0", "0", "1"))
-        cases = (
-            {},
-            {"QQ_ACCOUNT": "10001", "QQ_ACCESS_TOKEN": "short"},
+        base = {
+            "CHATCOPILOT_GATEWAY_TOKEN": "g" * 32,
+            "QQ_ACCOUNT": "10001",
+            "QQ_ACCESS_TOKEN": "q" * 32,
+        }
+        for key in (
+            "QQ_WS_URL",
+            "QQ_AT_PROXY_URL",
+            "CHATCOPILOT_CC_CONNECT_BIN",
+            "CHATCOPILOT_CC_HOME",
+            "CHATCOPILOT_CC_CONNECT_CONFIG_DIR",
+            "CHATCOPILOT_SESSION_ENV_DIR",
+        ):
+            with self.subTest(key=key):
+                errors = adapter.validate_runtime_env({**base, key: "legacy-value"})
+                self.assertTrue(
+                    any("qq_legacy_gateway_env_removed" in item for item in errors)
+                )
+
+    def test_qq_gateway_tokens_must_be_strong_and_distinct(self) -> None:
+        adapter = registry.get_adapter("qq")
+        weak = adapter.validate_runtime_env(
             {
+                "CHATCOPILOT_GATEWAY_TOKEN": "short",
+                "QQ_ACCOUNT": "10001",
+                "QQ_ACCESS_TOKEN": "short",
+            }
+        )
+        reused = adapter.validate_runtime_env(
+            {
+                "CHATCOPILOT_GATEWAY_TOKEN": "x" * 32,
                 "QQ_ACCOUNT": "10001",
                 "QQ_ACCESS_TOKEN": "x" * 32,
-                "QQ_WS_URL": f"ws://{private_host}:3001",
-            },
+            }
         )
-        for env in cases:
-            with self.subTest(env_keys=sorted(env)), self.assertRaises(ValueError):
-                adapter.render_cc_connect_section(env)
+
+        self.assertTrue(any("gateway_access_token_invalid" in item for item in weak))
+        self.assertTrue(any("qq_access_token_invalid" in item for item in weak))
+        self.assertTrue(any("gateway_token_reused" in item for item in reused))
+
+    def test_qq_gateway_rejects_non_loopback_onebot_endpoint(self) -> None:
+        private_host = ".".join(("10", "0", "0", "1"))
+        errors = registry.get_adapter("qq").validate_runtime_env(
+            {
+                "CHATCOPILOT_GATEWAY_TOKEN": "g" * 32,
+                "CHATCOPILOT_QQ_ONEBOT_WS_URL": f"ws://{private_host}:3001",
+                "QQ_ACCOUNT": "10001",
+                "QQ_ACCESS_TOKEN": "q" * 32,
+            }
+        )
+
+        self.assertTrue(any("qq_websocket_url_not_loopback" in item for item in errors))
 
     def test_qq_validation_does_not_echo_invalid_secret(self) -> None:
         secret = 'bad"token'
         errors = registry.get_adapter("qq").validate_runtime_env(
-            {"QQ_ACCOUNT": "10001", "QQ_ACCESS_TOKEN": secret}
+            {
+                "CHATCOPILOT_GATEWAY_TOKEN": "g" * 32,
+                "QQ_ACCOUNT": "10001",
+                "QQ_ACCESS_TOKEN": secret,
+            }
         )
         self.assertTrue(errors)
         self.assertNotIn(secret, "\n".join(errors))

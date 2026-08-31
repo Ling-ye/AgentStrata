@@ -28,6 +28,7 @@ from console.control.observability import (
     delete_task,
     follow_console_log,
     follow_log,
+    follow_unit_log,
     jobs,
     resolve_log_files,
     tail_log,
@@ -53,6 +54,7 @@ __all__ = [
     "delete_task",
     "follow_console_log",
     "follow_log",
+    "follow_unit_log",
     "jobs",
     "resolve_log_files",
     "tail_log",
@@ -62,9 +64,9 @@ __all__ = [
     "tasks",
 ]
 
-_WS_MARKERS = {
+_CHANNEL_MARKERS = {
     "feishu": "connected to wss",
-    "qq": "connected to OneBot",
+    "qq": "onebot.connected",
 }
 _XHS_MCP_REF = "xiaohongshu-search"
 _XHS_MCP_CONTAINER = "chatcopilot-xiaohongshu-mcp"
@@ -212,9 +214,7 @@ def _summarize_error_lines(lines: list[str]) -> str:
         return ""
     last = lines[-1]
     if "qq: ws read error" in last and "websocket: close 1000 (normal)" in last:
-        return "QQ OneBot websocket is closing immediately; check NapCat and qq-at-proxy upstream."
-    if "upstream connect failed" in last:
-        return "QQ @ Relay cannot reach NapCat OneBot upstream."
+        return "QQ OneBot websocket is closing immediately; check the external NapCat provider."
     if "panic:" in last:
         return "Runtime panic detected in log tail."
     if "[ERR]" in last:
@@ -222,46 +222,49 @@ def _summarize_error_lines(lines: list[str]) -> str:
     return last.strip()[-240:]
 
 
-def _qq_relay_log_file(inst: BotInstance) -> Path | None:
-    if inst.platform != "qq" or not inst.log_dir:
-        return None
-    return Path(inst.log_dir) / "qq-at-proxy" / f"{time.strftime('%Y-%m-%d')}.log"
-
-
 def _log_signal(inst: BotInstance) -> Dict[str, object]:
-    cc_log = inst.cc_log_file()
+    runtime_log = inst.primary_log_file()
     info: Dict[str, object] = {
-        "cc_log": cc_log,
-        "cc_log_age_s": None,
-        "cc_log_size": None,
-        "ws_connected": None,
+        "runtime_log": runtime_log,
+        "runtime_log_age_s": None,
+        "runtime_log_size": None,
+        "channel_connected": None,
         "error_count": 0,
         "error_summary": "",
-        "qq_relay_error_count": 0,
-        "qq_relay_error_summary": "",
     }
-    if cc_log and Path(cc_log).is_file():
-        st = Path(cc_log).stat()
-        info["cc_log_age_s"] = int(time.time() - st.st_mtime)
-        info["cc_log_size"] = st.st_size
-        marker = _WS_MARKERS.get(inst.platform)
-        text = _read_tail_text(Path(cc_log))
+    if runtime_log and Path(runtime_log).is_file():
+        st = Path(runtime_log).stat()
+        info["runtime_log_age_s"] = int(time.time() - st.st_mtime)
+        info["runtime_log_size"] = st.st_size
+        marker = _CHANNEL_MARKERS.get(inst.platform)
+        text = _read_tail_text(Path(runtime_log))
         if marker:
-            info["ws_connected"] = marker in text
+            info["channel_connected"] = marker in text
         error_lines = _log_error_lines(text)
         info["error_count"] = len(error_lines)
         info["error_summary"] = _summarize_error_lines(error_lines)
-    relay_log = _qq_relay_log_file(inst)
-    if relay_log and relay_log.is_file():
-        relay_text = _read_tail_text(relay_log)
-        relay_errors = _log_error_lines(relay_text)
-        upstream_errors = [ln for ln in relay_text.splitlines() if "upstream connect failed" in ln]
-        relevant_errors = upstream_errors or relay_errors
-        info["qq_relay_error_count"] = len(relevant_errors)
-        info["qq_relay_error_summary"] = _summarize_error_lines(relevant_errors)
-        if upstream_errors:
-            info["ws_connected"] = False
     return info
+
+
+def _gateway_main_process_matches(inst: BotInstance, pid: int) -> bool:
+    if inst.runtime_kind != "gateway" or pid <= 0 or not inst.wsl_home:
+        return False
+    proc = Path("/proc") / str(pid)
+    try:
+        if proc.stat().st_uid != os.getuid():
+            return False
+        expected_python = (Path(inst.wsl_home) / ".venv" / "bin" / "python").resolve(strict=True)
+        actual_python = (proc / "exe").resolve(strict=True)
+        argv = (proc / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+        environ = set((proc / "environ").read_bytes().rstrip(b"\0").split(b"\0"))
+    except OSError:
+        return False
+    expected_bot = str(Path(inst.wsl_home) / "bots" / inst.instance_id / "bot.yaml").encode()
+    return (
+        actual_python == expected_python
+        and argv[1:] == [b"-m", b"chatcopilot", b"run", b"--bot", expected_bot]
+        and f"CHATCOPILOT_INSTANCE_ID={inst.instance_id}".encode() in environ
+    )
 
 
 def _mcp_services_status() -> list[dict[str, object]]:
@@ -398,10 +401,16 @@ def status(inst: BotInstance, *, include_services: bool = True) -> Dict[str, obj
         pid_int = int(main_pid)
     except ValueError:
         pid_int = 0
+    gateway_process_verified = (
+        _gateway_main_process_matches(inst, pid_int)
+        if inst.runtime_kind == "gateway" and active_state == "active"
+        else None
+    )
     result: Dict[str, object] = {
         "instance_id": inst.instance_id,
         "display_name": inst.display_name,
         "platform": inst.platform,
+        "runtime_kind": inst.runtime_kind,
         "is_deployed": inst.is_deployed,
         "unit": inst.unit_short,
         "systemd_available": sd_ok,
@@ -412,7 +421,9 @@ def status(inst: BotInstance, *, include_services: bool = True) -> Dict[str, obj
         "enabled": props.get("UnitFileState", ""),
         "pid": pid_int or None,
         "since": props.get("ActiveEnterTimestamp", "") or None,
-        "running": active_state == "active" and pid_int > 0,
+        "main_process_kind": "gateway" if inst.runtime_kind == "gateway" else "legacy_edge",
+        "main_process_verified": gateway_process_verified,
+        "running": active_state == "active" and pid_int > 0 and gateway_process_verified is not False,
     }
     result.update(_log_signal(inst))
     if include_services:
@@ -439,24 +450,26 @@ def _status_checks(status_data: Dict[str, object]) -> tuple[list[dict[str, objec
     add("deployed", bool(status_data.get("is_deployed")), "critical", "Instance files are not deployed.")
     add("registered", bool(status_data.get("registered")), "critical", "systemd unit is not registered.")
     add("running", bool(status_data.get("running")), "critical", "bot process is not running.")
-    if status_data.get("running") and status_data.get("ws_connected") is False:
-        add("platform_connection", False, "critical", "platform websocket is not connected.")
-    elif status_data.get("running") and status_data.get("ws_connected") is True:
-        add("platform_connection", True, "info", "platform websocket is connected.")
-    cc_age = status_data.get("cc_log_age_s")
-    if status_data.get("cc_log_size") is not None:
-        age_text = f" Last updated {int(float(cc_age))}s ago." if cc_age is not None else ""
-        add("fresh_logs", True, "info", f"cc-connect log is available.{age_text}")
+    if status_data.get("runtime_kind") == "gateway":
+        add(
+            "gateway_main_process",
+            status_data.get("main_process_verified") is True,
+            "critical",
+            "systemd MainPID is not the exact instance Gateway process.",
+        )
+    if status_data.get("running") and status_data.get("channel_connected") is False:
+        add("channel_connection", False, "critical", "configured Channel is not connected.")
+    elif status_data.get("running") and status_data.get("channel_connected") is True:
+        add("channel_connection", True, "info", "configured Channel is connected.")
+    runtime_age = status_data.get("runtime_log_age_s")
+    if status_data.get("runtime_log_size") is not None:
+        age_text = f" Last updated {int(float(runtime_age))}s ago." if runtime_age is not None else ""
+        add("runtime_logs", True, "info", f"runtime file log is available.{age_text}")
     error_count = int(status_data.get("error_count") or 0)
     if error_count > 0:
         summary = str(status_data.get("error_summary") or "").strip()
         suffix = f": {summary}" if summary else "."
-        add("log_errors", False, "warning", f"cc-connect tail contains {error_count} error line(s){suffix}")
-    relay_error_count = int(status_data.get("qq_relay_error_count") or 0)
-    if relay_error_count > 0:
-        summary = str(status_data.get("qq_relay_error_summary") or "").strip()
-        suffix = f": {summary}" if summary else "."
-        add("qq_relay", False, "critical", f"QQ @ Relay has {relay_error_count} upstream error line(s){suffix}")
+        add("log_errors", False, "warning", f"runtime log tail contains {error_count} error line(s){suffix}")
     return checks, reasons
 
 

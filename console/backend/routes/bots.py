@@ -14,6 +14,13 @@ from console.control.discovery import discover_instances, repo_root
 router = APIRouter(prefix="/api/bots", tags=["bots"])
 
 
+def _task_flow_http_error(exc: observability.TaskFlowUnavailableError) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={"code": exc.code, "message": str(exc)},
+    )
+
+
 @router.get("")
 def list_bots():
     return [i.to_dict() for i in discover_instances()]
@@ -43,6 +50,8 @@ def bot_tasks(instance_id: str, limit: int = 50):
 def bot_task_detail(instance_id: str, task_id: str):
     try:
         result = operations.task_detail(get_instance(instance_id), task_id)
+    except observability.TaskFlowUnavailableError as exc:
+        raise _task_flow_http_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result is None:
@@ -54,6 +63,8 @@ def bot_task_detail(instance_id: str, task_id: str):
 def delete_bot_task(instance_id: str, task_id: str):
     try:
         result = operations.delete_task(get_instance(instance_id), task_id)
+    except observability.TaskFlowUnavailableError as exc:
+        raise _task_flow_http_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except observability.TaskDeletionConflictError as exc:
@@ -74,6 +85,8 @@ def bot_task_events(
 ):
     try:
         result = operations.task_events(get_instance(instance_id), task_id, limit=limit)
+    except observability.TaskFlowUnavailableError as exc:
+        raise _task_flow_http_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result is None:
@@ -90,6 +103,8 @@ def bot_task_flow(
 ):
     try:
         result = operations.task_flow(get_instance(instance_id), task_id)
+    except observability.TaskFlowUnavailableError as exc:
+        raise _task_flow_http_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result is None:
@@ -111,6 +126,8 @@ def bot_task_context(
             task_id,
             snapshot_id,
         )
+    except observability.TaskFlowUnavailableError as exc:
+        raise _task_flow_http_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except observability.UnsafeContextSnapshotError as exc:
@@ -252,8 +269,10 @@ def update_bot_tools(
 
 
 @router.get("/{instance_id}/logs/stream")
-def stream_logs(instance_id: str, source: str = "cc", lines: int = 200):
+def stream_logs(instance_id: str, source: str = "gateway", lines: int = 200):
     inst = get_instance(instance_id)
+    if source == "gateway" and inst.runtime_kind == "gateway":
+        return sse(operations.follow_unit_log(inst.unit, from_end_lines=lines))
     paths = operations.resolve_log_files(inst, source)
     if not paths:
         raise HTTPException(status_code=404, detail="no log file is available for this instance")

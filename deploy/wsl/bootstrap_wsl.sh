@@ -2,7 +2,7 @@
 # bootstrap_wsl.sh — 在 WSL 实例副本中重建运行时（venv + 依赖 + 配置渲染）。
 #
 # 典型上下文：控制台「更新代码并重启」已经把 WSL 源仓同步到实例副本，
-# 现在需要重建 venv 与 cc-connect 配置，跑这一条命令就能回到
+# 现在需要重建 venv 与当前实例的运行配置，跑这一条命令就能回到
 # "可以 bash start.sh 启动"的状态。
 #
 # 用法：
@@ -59,6 +59,13 @@ MT_HOME="${CHATCOPILOT_HOME:-$CCP_HOME_DEFAULT}"
 DEPLOY_DIR="$MT_HOME/deploy/wsl"
 INSTALL_SCRIPT="$DEPLOY_DIR/install_wsl_env.sh"
 APPLY_SCRIPT="$DEPLOY_DIR/_apply_config.sh"
+BOOTSTRAP_BOT_SPEC="${CHATCOPILOT_BOT_SPEC:-}"
+if [ -z "$BOOTSTRAP_BOT_SPEC" ] && [ -n "${CHATCOPILOT_INSTANCE_ID:-}" ]; then
+    BOOTSTRAP_BOT_SPEC="$MT_HOME/bots/$CHATCOPILOT_INSTANCE_ID/bot.yaml"
+fi
+if [ -z "$BOOTSTRAP_BOT_SPEC" ] && [ -f "$MT_HOME/bots/lingye-copilot-qq/bot.yaml" ]; then
+    BOOTSTRAP_BOT_SPEC="$MT_HOME/bots/lingye-copilot-qq/bot.yaml"
+fi
 
 echo
 printf "%s=== AgentStrata · WSL bootstrap ===%s\n" "$C_BOLD" "$C_END"
@@ -88,9 +95,19 @@ step "仓库就位：$MT_HOME"
 # 1) 重建 venv + 装 Python 依赖
 # ----------------------------------------------------------------------------
 echo
-step "[1/2] 通过 uv.lock 同步隔离 Python/Node/cc-connect 运行时"
+_install_args=(--no-system-packages --venv "$MT_HOME/.venv" --no-verify)
+if ccp_bot_uses_gateway "$BOOTSTRAP_BOT_SPEC"; then
+    _install_args+=(--skip-cc-connect)
+    step "[1/2] 通过 uv.lock 同步隔离 Python Gateway 运行时"
+elif ccp_bot_is_legacy_qq "$BOOTSTRAP_BOT_SPEC"; then
+    err "旧 platform=qq + cc-connect/Relay 拓扑已移除；拒绝安装 legacy Node 运行时。"
+    err "请先把该 BotSpec 迁移为 gateway + channels.qq，再重新 bootstrap。"
+    exit 78
+else
+    step "[1/2] 通过 uv.lock 同步隔离 Python/Node/cc-connect legacy 运行时"
+fi
 echo
-if ! bash "$INSTALL_SCRIPT" --no-system-packages --venv "$MT_HOME/.venv" --no-verify; then
+if ! bash "$INSTALL_SCRIPT" "${_install_args[@]}"; then
     err "install_wsl_env.sh 执行失败"
     err "  请检查 uv/Node 制品下载、校验和或 uv.lock 同步错误"
     exit 1
@@ -164,7 +181,7 @@ fi
 ok "机密 env 就位：$ENV_FILE"
 
 # ----------------------------------------------------------------------------
-# 2) 渲染 cc-connect 配置
+# 2) Gateway 无需渲染；legacy edge 渲染 cc-connect 配置
 # ----------------------------------------------------------------------------
 if [ "$SKIP_APPLY" -eq 1 ]; then
     echo
@@ -172,14 +189,14 @@ if [ "$SKIP_APPLY" -eq 1 ]; then
     warn "  之后跑 bash start.sh --apply-config 再渲染"
 else
     echo
-    step "[2/2] 渲染 cc-connect 配置（~/.cc-connect/config.toml）"
+    step "[2/2] 对账实例运行配置"
     echo
     if ! bash "$APPLY_SCRIPT"; then
         err "_apply_config.sh 执行失败"
         err "  常见原因：FEISHU_APP_ID / FEISHU_APP_SECRET 没设（看上面错误信息）"
         exit 1
     fi
-    ok "cc-connect 配置已渲染"
+    ok "实例运行配置已对账"
 fi
 
 # ----------------------------------------------------------------------------

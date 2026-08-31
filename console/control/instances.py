@@ -37,6 +37,7 @@ class BotInstance:
     cc_connect_config_dir: str = ""
     cc_home: str = ""
     project_name: str = ""
+    runtime_kind: str = "legacy"
 
     # systemd 模板服务名
     @property
@@ -70,6 +71,22 @@ class BotInstance:
             return str(today)
         return "/tmp/cc-connect.log"
 
+    def gateway_log_file(self) -> Optional[str]:
+        """Optional file log for a Gateway host; journald remains authoritative."""
+        if not self.log_dir:
+            return None
+        gateway_dir = Path(self.log_dir) / "gateway"
+        today = gateway_dir / f"{date.today().isoformat()}.log"
+        if today.exists():
+            return str(today)
+        current = gateway_dir / "current.log"
+        if current.exists():
+            return str(current)
+        return str(today) if gateway_dir.is_dir() else None
+
+    def primary_log_file(self) -> Optional[str]:
+        return self.gateway_log_file() if self.runtime_kind == "gateway" else self.cc_log_file()
+
     def runtime_log_file(self) -> Optional[str]:
         if not self.log_dir:
             return None
@@ -91,6 +108,7 @@ class BotInstance:
         platform: str,
         deploy: Dict[str, str],
         home: Path,
+        runtime_kind: str = "legacy",
     ) -> "BotInstance":
         wsl_home = _expand(deploy.get("wsl_home", ""), home) or str(home / f"ChatCopilot-{instance_id}")
         cc_cfg = _expand(deploy.get("cc_connect_config_dir", ""), home)
@@ -111,4 +129,5 @@ class BotInstance:
             cc_connect_config_dir=cc_cfg,
             cc_home=cc_home,
             project_name=deploy.get("project_name", ""),
+            runtime_kind=runtime_kind,
         )

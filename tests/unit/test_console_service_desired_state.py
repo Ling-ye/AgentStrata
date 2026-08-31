@@ -32,7 +32,7 @@ def test_service_catalog_matches_retained_runtime_boundaries() -> None:
     }
 
 
-def test_napcat_doctor_runs_external_platform_check_via_gateway_status(
+def test_napcat_doctor_runs_external_onebot_provider_check(
     monkeypatch,
 ) -> None:
     napcat = services.find_service("napcat")
@@ -50,7 +50,7 @@ def test_napcat_doctor_runs_external_platform_check_via_gateway_status(
     output = list(services.doctor_streaming(napcat, "example-instance"))
 
     assert captured["args"][-3:] == ["status", "--instance", "example-instance"]
-    assert captured["intro"] == "[external-check] NapCat QQ Gateway: example-instance"
+    assert captured["intro"] == "[external-check] NapCat OneBot Provider: example-instance"
     assert output == ["external-check fixture", "__EXIT__ 0"]
 
 

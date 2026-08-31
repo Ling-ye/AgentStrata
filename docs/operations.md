@@ -2,7 +2,7 @@
 
 这份手册是日常运维命令的唯一集中入口，覆盖安装后的状态检查、更新、重启、日志、
 平台网关、Codex 认证、共享 Docker 服务、评测和诊断。首次安装的拓扑与安全设计见
-[`deployment.md`](deployment.md)；遇到 systemd user bus、cc-connect 或 WSL/Windows
+[`deployment.md`](deployment.md)；遇到 systemd user bus、Gateway 或 WSL/Windows
 边界问题时再进入 [`../deploy/wsl/README_WSL.md`](../deploy/wsl/README_WSL.md)。
 
 ## 使用约定
@@ -47,7 +47,7 @@ python -m chatcopilot bot doctor --bot bots/<id>/bot.yaml
 
 首次安装只使用 [`deployment.md`](deployment.md) 说明的引导入口；本手册不复制安装、
 Docker 配置或 NapCat 扫码顺序。引导流程完成后，先保存输出中的 Bot ID，再确认实例与
-QQ gateway 的本地状态：
+Gateway 与外部 OneBot provider 的本地状态：
 
 ```bash
 python -m chatcopilot bot doctor --bot bots/<id>/bot.yaml --json
@@ -111,20 +111,19 @@ journalctl --user -u chatcopilot-code-worker@<id>.service -n 120 --no-page
 
 ### 聊天内 Owner 运维指令
 
-Bot 接入 ACP 后，用户正文去除前导空白后，以 ASCII `/name` 开头且后接空白或正文结束的
-消息统一视为斜杠指令，并且只接受 transport attestation、平台准入和本轮身份激活共同确认
-的可信 Owner；`/tmp/report.txt` 一类绝对路径、URL、`//name` 和正文中间的 slash 不属于指令。
-群名单命中、昵称、
-历史 Owner 回合或共享 session 都不会授予该权限。准入与身份激活完成后，ACP 会在附件发现
-或导入以及 Session、Agent、模型、工具副作用之前执行这道门禁；非 Owner 的斜杠消息确定性
-拒绝。
+用户正文去除前导空白后，以 ASCII `/name` 开头且后接空白或正文结束的消息统一视为
+斜杠指令；`/tmp/report.txt` 一类绝对路径、URL、`//name` 和正文中间的 slash 不属于指令。
+Gateway QQ 只接受本轮认证 `Principal`、准入和身份激活共同确认的可信 Owner；Feishu
+legacy edge 继续使用其经过 transport 证明的 Owner。群名单命中、昵称、历史 Owner 回合或
+共享 session 都不会授予权限。Application 在准入与身份激活后、资源 materialization 以及
+Session、Agent、模型、工具副作用前执行统一门禁；非 Owner 的斜杠消息确定性拒绝。
 
 当前内置运维指令：
 
 | 指令 | 行为 |
 | --- | --- |
 | `/help` | 按当前 Bot 配置和运行能力列出实际可用的斜杠指令；不会把未启用能力列为可用。 |
-| `/state` | 只读查看当前 ACP 会话与当前 Bot systemd 实例的有界、脱敏状态。 |
+| `/state` | 只读查看当前会话与当前 Bot systemd 实例的有界、脱敏状态。 |
 | `/restart` | 请求只重启当前 Bot systemd unit；不接受实例或 unit 参数。 |
 
 `/state` 的会话部分包括当前 backend、模型 profile、assistant mode 和 debug 状态等已有
@@ -133,7 +132,8 @@ Bot 接入 ACP 后，用户正文去除前导空白后，以 ASCII `/name` 开�
 环境变量、机器路径、完整准入名单、原始平台身份、其他 actor 会话或内部 traceback。
 
 `/restart` 只执行进程级重启，不清理 workspace 文件、conversation journal、受保护 memory、
-persona、backend resume state 或持久化 task/job 记录，也不重启 QQ Gateway 或 NapCat。它不保证
+persona、backend resume state 或持久化 task/job 记录。对 Gateway Bot，这会重启当前 Gateway
+systemd unit，但不会启动、停止或重启外部 NapCat/OneBot provider。它不保证
 其他正在执行的进程内回合跨重启继续运行。机器人先验证当前 unit 正在运行且 user systemd 与
 detached scheduler 可用，再回复“已接受重启请求”；只有该回复已送达且当前指令 task 的终态已
 持久化，宿主才通过 Bot service cgroup 外的 systemd transient unit 延迟重启当前绑定实例。同一
@@ -145,7 +145,7 @@ systemd 操作仍是独立控制入口，竞态会表现为最终调度或状态
 从宿主核验，绝不声称“已撤销”。
 
 这些聊天指令与本节前面的宿主命令操作同一个 Bot 实例，但不替代断连时的宿主排障入口。
-QQ Gateway 的状态和重启属于下文独立操作，不能用 `/restart` 代替。完整契约见
+外部 OneBot provider 的状态和重启属于下文独立操作，不能用 `/restart` 代替。完整契约见
 [`../specs/owner-operator-commands/spec.md`](../specs/owner-operator-commands/spec.md)。
 
 ## 运维控制台
@@ -230,7 +230,7 @@ bash deploy/wsl/qq_gateway.sh bootstrap --instance <id>
 ```
 
 在 `http://localhost:6099` 完成 NapCat 登录后，同步或生成强 OneBot token，再启动
-gateway 和实例：
+外部 provider 和实例 Gateway：
 
 ```bash
 bash deploy/wsl/qq_gateway.sh sync-token --instance <id>
@@ -252,20 +252,17 @@ bash deploy/wsl/qq_gateway.sh logs --instance <id>
 动作的双向探针；只完成 WebSocket 握手不算认证成功。
 
 QQ 访问名单只在 `bots/<bot-id>/local.env` 中维护：`QQ_ALLOW_FROM` 是发送者 QQ
-号，`QQ_ALLOW_GROUPS` 是允许整群使用的群号。两者由 ACP 独占解释，Relay 和 cc-connect
-进程不会获得这些变量。缺失或空值不授予权限；只有整个值精确为 `*` 才允许全部，有限
+号，`QQ_ALLOW_GROUPS` 是允许整群使用的群号。两者只由 Gateway 内的授权层解释，不会传给
+外部 NapCat provider 或可选 ACP edge。缺失或空值不授予权限；只有整个值精确为 `*` 才允许全部，有限
 名单只接受逗号分隔的数字 ID，空 token、尾随分隔符、混入 `*` 或非数字值都会阻止启动
 或 doctor。群名单中的成员只在该群获得访问权，不因此获得私聊权限。
 
-Relay 对私聊全部转发；群聊只在 OneBot 结构化 `at` segment 明确指向当前
-`QQ_ACCOUNT` 时转发，`@全体成员`、纯文本名字和伪造 CQ 文本均不触发。Relay 还会在连接
-NapCat 前拒绝未携带同一强 token 的下游 WebSocket，启动健康门会经 Relay 执行未认证拒绝与
-认证 OneBot action 往返。cc-connect 固定
-渲染 `allow_from = "*"`，最终准入与角色解析发生在 ACP。修改配置后运行
-`update_instance.sh` 重新供应 runtime env、渲染 cc-connect 配置并重启实例。
-systemd 托管实例的每次 start/restart 也会先执行 `start.sh --apply-config`，确保当前
-BotSpec 的 shared-session、sender injection 与同步身份见证 hook 在 cc-connect 载入配置前
-同时落盘；渲染失败时实例启动失败关闭。
+Gateway 直接消费 OneBot v11 结构化事件：私聊按稳定发送者处理；群聊只有结构化 `at`
+segment 明确指向当前 `QQ_ACCOUNT` 才进入处理，`@全体成员`、纯文本名字和伪造 CQ 文本均
+不触发。身份、准入、任务持久化和权限审核都在任何 Agent、模型、工具或附件副作用之前
+失败关闭。修改配置后运行 `update_instance.sh` 重新供应 runtime env 并重启精确实例；
+systemd 的 `MainPID` 必须是该实例 Python 执行的 `chatcopilot run --bot ...`，不再渲染
+QQ cc-connect 配置，也不启动 Relay。
 
 BotSpec 选择 `persona.control` 后，Owner 可用自然语言或 `/persona` 提出持续人格要求；两者都会
 原样进入主 Agent，由它调用 Owner-only `persona_manage`。不存在宿主 detector、解释器或直达写入
@@ -457,8 +454,10 @@ Console 测评中心只提供两个入口。`agentstrata-capabilities-v1` 直接
 runtime，不经过 ACP 或 QQ；`quick/full/security` 分别选择 10/23/3 个 Case。
 能力目录保留 25 个 Case；依赖未启用 `experience` 来源的两个来源专用 Case 只允许在启用
 对应受信来源后通过 `custom` 显式选择，因此默认 `full` 实际选择 23 个 Case。
-`agentstrata-qq-message-flow-v1` 从合成 OneBot 帧开始验证 AgentStrata 自有链路，
-`quick/full/security` 分别选择 3/7/4 个 Case。两者只可手动启动；默认
+`agentstrata-qq-message-flow-v1` 当前仍验证重构前的 Relay/attestation/ACP 合成链，
+`quick/full/security` 分别选择 3/7/4 个 Case。它只保留为 legacy regression suite，
+不是新 Gateway 验收；迁移到 fake OneBot → real Channel/Gateway 前不得把名称解释成当前
+推荐运行路径。两者只可手动启动；默认
 `repetitions=1`，只说明本次执行结果，不能作为重复可靠性结论。
 
 两条产品轨道均不接 Git hook、CI、文件监听、部署回调或 Bot 重启回调。
@@ -466,7 +465,8 @@ runtime，不经过 ACP 或 QQ；`quick/full/security` 分别选择 10/23/3 个 
 直接 Agent 的实时汇率 Case 要求搜索最新可用业务日的 ECB USD/CNY 参考值，并由
 Evaluation 独立读取 ECB Data Portal 作为 oracle。oracle 不可用时 Case 记为基础设施
 错误，不会降级为格式或搜索调用通过。QQ 轨道只使用随机合成身份、回环端口、临时保护
-状态和确定性 Agent sentinel，不连接或写入真实 QQ；真实 NapCat/cc-connect/外部用户
+状态和确定性 Agent sentinel，不连接或写入真实 QQ；其中 QQ suite 使用的是 legacy
+ACP path。真实 NapCat/OneBot/外部用户
 往返继续由基础设施检查报告，缺少独立发送账号时仍为 `not_tested`。
 
 代码修改后可先用只读 Advisor 获取建议；它只做 changed-path 到 Preset/Case 的确定性
@@ -522,11 +522,10 @@ QQ/NapCat/OneBot 连通性属于平台与部署检查，不属于 Agent 能力 E
 商用 LLM、不创建 Evaluation、Trial 或 Evaluation 报告，也不影响 Agent verdict。
 默认命令只执行读操作：验证回环 OneBot URL、强 token、未认证拒绝、认证
 `get_status`、`get_login_info` 与配置的 `QQ_ACCOUNT` 一致；配置检查群时再验证 Bot
-可以读取该群信息。随后它会在随机回环端口上临时启动假 NapCat 与真实 QQ @ Relay，
-发送一条未明确 @ 的负例和一条结构化 `@当前机器人` 正例，验证 JSON 解析、固定触发
-条件与 WebSocket 下游转发。Bot/user/group/token 全部为本次随机
-合成值，不复用 bot-local 私有身份。该 hermetic probe 不连接真实 QQ、cc-connect、
-ACP 或模型，结束后销毁全部临时 listener：
+可以读取该群信息。hermetic 检查只会使用随机回环端口、假 OneBot provider 和确定性输入
+验证仓库自有的 OneBot 编解码、结构化 @ 条件与 Gateway Channel 边界。Bot/user/group/token
+全部为本次随机合成值，不复用 bot-local 私有身份。它不连接真实 QQ、ACP edge 或模型，
+结束后销毁全部临时 listener：
 
 ```bash
 export CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID="YOUR_EXTERNAL_CHECK_GROUP_ID"
@@ -536,7 +535,7 @@ python -m chatcopilot bot external-check \
   --json
 ```
 
- 外部检查复用目标 Bot 已有的 `QQ_WS_URL`、`QQ_ACCESS_TOKEN` 和
+ 外部检查复用目标 Bot 已有的 `CHATCOPILOT_QQ_ONEBOT_WS_URL`、`QQ_ACCESS_TOKEN` 和
 `QQ_ACCOUNT`；WebSocket endpoint 仍必须是带显式端口的本机回环地址，token 仍必须是
 32–128 位 URL-safe 强 token。检查群只能来自 ignored `local.env` 的固定
 `CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID`，不能由模型或 Evaluation Case 覆盖。
@@ -558,10 +557,9 @@ message ID，也只证明 OneBot 接受了动作，不证明群成员看到消�
 QQ 号、群号、token、昵称、群名或 message ID，只保留 HMAC/digest 和结构化状态。
 Console 的 NapCat“诊断”按钮运行同一个默认只读检查。
 
-`qq_simulated_gateway_ingress:passed` 只证明当前安装源码中的 QQ @ Relay 能在隔离回环
-拓扑中携带认证连接上游、丢弃负例并把正例逐字节转发给临时下游。它不证明运行中的
-NapCat 产生过该事件，也不证明 cc-connect、ACP 或 Agent 已收到消息；这两种证据不能
-互相替代。
+`qq_simulated_gateway_ingress:passed` 只证明隔离回环中的合成 ingress 契约；它不证明运行
+中的 NapCat 产生过该事件，也不证明 ACP edge、Agent、真实 QQ 客户端展示或用户已读，
+这些证据不能互相替代。
 
 正式 Trial 由 Core 在独立 `spawn` 子进程中执行，不在 Evaluation service/Core 主进程
 内直接运行模型与工具。有效期限取 Case policy 的 `timeout_seconds` 和本次 Evaluation
@@ -625,7 +623,7 @@ bash deploy/wsl/dump.sh --archive
 3. 查看最近 120 行主 service 日志；Codex 任务再检查 code-worker，评测再检查 `chatcopilot-evaluation.service`。
 4. 用 `console.control diagnose` 查询具体 `task_*` / `job_*`。
 5. 收集 `dump.sh --mode quick` 快照。
-6. systemd user bus、cc-connect、WSL 冷启动或 Windows 调用问题进入
+6. systemd user bus、Gateway、Feishu legacy cc-connect、WSL 冷启动或 Windows 调用问题进入
    [`../deploy/wsl/README_WSL.md`](../deploy/wsl/README_WSL.md)。
 
 ## 兼容名称

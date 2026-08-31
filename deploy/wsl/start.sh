@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# start.sh — 在当前 WSL 终端【前台】启动 cc-connect（手动启动模式）
+# start.sh — 在当前 WSL 终端前台启动一个 AgentStrata 实例。
 #
-# start.sh 前台跑。日志直接打到终端，Ctrl+C 即停，关闭终端即停。
-# 只要这个 WSL 终端窗口不关，进程就稳定存活。最适合手动启动场景。
+# Gateway-backed QQ 直接 exec Python Gateway host；legacy Feishu 才进入
+# cc-connect + ACP edge。两条路径都保持前台 MainPID，Ctrl+C 即停。
 #
 # 注意：日常起停推荐走运维控制台（systemd 托管）或 console/scripts/ctl.sh；
 # 本脚本是前台手动启动模式，也是 systemd 单元 chatcopilot@.service 的 ExecStart。
 #
 # 用法（在 WSL 终端里）：
 #   bash ~/ChatCopilot/deploy/wsl/start.sh
-#   bash ~/ChatCopilot/deploy/wsl/start.sh --apply-config   # 启动前先重新渲染所有配置
+#   bash ~/ChatCopilot/deploy/wsl/start.sh --apply-config   # legacy edge 启动前渲染配置
 #
 # 环境变量（在 ~/.bashrc 或 ~/.chatcopilot.env 里 export 即可）：
 #   CHATCOPILOT_HOME    默认 $HOME/ChatCopilot
@@ -43,16 +43,72 @@ err()  { printf "\033[1;31m[ERR]\033[0m %s\n" "$*" >&2; }
 source "$(dirname "$0")/_load_env.sh"
 ccp_prepend_user_bins
 ccp_apply_bot_deploy_config
-# ~/.chatcopilot.env 是运行时权威配置源；每次启动都重新加载，覆盖当前 shell
-# 里可能残留的旧飞书 App，确保 cc-connect 与 Python notifier 使用同一套凭证。
-# QQ_ 必须在父进程加载：Relay、cc-connect 与平台 sender 都需要 OneBot token、
-# 回传目标与 URL。ACP 名单只由 bot_wrapper 从 bot-local env 重新加载。
+# 实例 runtime env 是权威配置源；每次启动都重新加载。Gateway QQ 直接使用
+# OneBot/Gateway 配置，legacy Feishu edge 才由 cc-connect 消费平台凭据。
 ccp_load_env "FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
 ccp_apply_bot_deploy_config
 
 MT_HOME="${CHATCOPILOT_HOME:-$CCP_HOME_DEFAULT}"
 WS_ROOT="${WORKSPACE_ROOT:-${CHATCOPILOT_WORKSPACE_ROOT:-$CCP_WORKSPACE_ROOT_DEFAULT}}"
 LOG_DIR="${CHATCOPILOT_LOG_DIR:-$CCP_LOG_DIR_DEFAULT}"
+PY="${CHATCOPILOT_ACP_PY:-$MT_HOME/.venv/bin/python}"
+BOT_SPEC="${CHATCOPILOT_BOT_SPEC:-$MT_HOME/bots/${CHATCOPILOT_INSTANCE_ID:-lingye-copilot-qq}/bot.yaml}"
+
+if [ ! -x "$PY" ]; then
+    err "项目 Python 不可执行：$PY"
+    exit 127
+fi
+if [ ! -f "$BOT_SPEC" ]; then
+    err "找不到 BotSpec：$BOT_SPEC"
+    exit 1
+fi
+
+if ccp_bot_uses_gateway "$BOT_SPEC"; then
+    if [ "$APPLY_CONFIG" = "1" ]; then
+        step "Gateway QQ 使用已 provision 的实例 env；不渲染 cc-connect 配置"
+    fi
+    mkdir -p "$LOG_DIR" || {
+        err "无法创建日志目录：$LOG_DIR"
+        exit 1
+    }
+    export CHATCOPILOT_HOME="$MT_HOME"
+    export CHATCOPILOT_BOT_SPEC="$BOT_SPEC"
+    export CHATCOPILOT_WORKSPACE_ROOT="$WS_ROOT"
+    export WORKSPACE_ROOT="$WS_ROOT"
+    export PYTHONPATH="$MT_HOME/src${PYTHONPATH:+:$PYTHONPATH}"
+    LEGACY_STOP="$MT_HOME/deploy/wsl/_stop_cc.sh"
+    if [ ! -f "$LEGACY_STOP" ]; then
+        err "缺少 legacy 进程清理脚本：$LEGACY_STOP"
+        exit 1
+    fi
+    step "停止本实例遗留的 cc-connect/QQ Relay（如有）"
+    if ! bash "$LEGACY_STOP"; then
+        err "遗留 cc-connect/QQ Relay 未能安全停止；拒绝启动 Gateway，避免双重投递。"
+        exit 1
+    fi
+    step "前台启动 AgentStrata Gateway host"
+    echo "    python:    $PY"
+    echo "    instance:  ${CHATCOPILOT_INSTANCE_ID:-default}"
+    echo "    bot spec:  $BOT_SPEC"
+    echo "    gateway:   ws://127.0.0.1:${CHATCOPILOT_GATEWAY_PORT:-18789}"
+    echo "    provider:  ${CHATCOPILOT_QQ_ONEBOT_WS_URL:-ws://127.0.0.1:3001} (external NapCat/OneBot)"
+    exec "$PY" -m chatcopilot run --bot "$BOT_SPEC"
+fi
+
+# Legacy non-Gateway edge below is Feishu-only. Old QQ BotSpecs must migrate;
+# they cannot revive the removed cc-connect/Relay topology.
+LEGACY_PLATFORM="$(awk '
+    /^[^[:space:]#][^:]*:[[:space:]]*$/ { section=$0; sub(/:.*/, "", section); next }
+    section == "platform" && /^[[:space:]]+type[[:space:]]*:/ {
+        value=$0; sub(/^[^:]*:[[:space:]]*/, "", value); gsub(/["\047[:space:]]/, "", value); print value; exit
+    }
+' "$BOT_SPEC")"
+if [ "$LEGACY_PLATFORM" != "feishu" ]; then
+    err "非 Gateway 运行拓扑只保留 Feishu legacy edge；platform=${LEGACY_PLATFORM:-unknown}"
+    err "QQ 必须声明 gateway + channels.qq，且不会启动 cc-connect 或 Relay。"
+    exit 78
+fi
+
 CC_HOME="${CHATCOPILOT_CC_HOME:-$CCP_CC_HOME_DEFAULT}"
 CC_CONFIG_DIR="${CHATCOPILOT_CC_CONNECT_CONFIG_DIR:-$CC_HOME/.cc-connect}"
 CC_CONFIG="$CC_CONFIG_DIR/config.toml"
@@ -94,18 +150,6 @@ CHATCOPILOT_CC_HOME="$CC_HOME" bash "$(dirname "$0")/_stop_cc.sh"
 if [ -d "$CC_CONFIG_DIR/sessions" ]; then
     rm -rf "$CC_CONFIG_DIR/sessions"
     echo "    [OK] 已清理 cc-connect sessions 缓存"
-fi
-
-# ---------- QQ 明确 @ 触发：启动 OneBot Relay ----------
-# QQ 固定走 Relay；Relay 或 OneBot 安全边界不可用时 fail-closed，不提供直连降级。
-QQ_RELAY_HELPER="$MT_HOME/deploy/wsl/_start_qq_proxy.sh"
-if [ ! -f "$QQ_RELAY_HELPER" ]; then
-    err "缺少 QQ Relay 启动脚本：$QQ_RELAY_HELPER"
-    exit 1
-fi
-if ! bash "$QQ_RELAY_HELPER"; then
-    err "QQ Relay 或 OneBot 安全边界不可用；拒绝启动 cc-connect"
-    exit 1
 fi
 
 # ---------- 校验固定 cc-connect 可执行 ----------

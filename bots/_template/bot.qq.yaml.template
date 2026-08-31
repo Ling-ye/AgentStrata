@@ -1,9 +1,22 @@
 id: __BOT_ID__
 display_name: __DISPLAY_NAME__
 
-platform:
-  type: qq
-  adapter: qq_acp
+gateway:
+  protocol_version: 1
+  host: 127.0.0.1
+  port_env: CHATCOPILOT_GATEWAY_PORT
+  token_env: CHATCOPILOT_GATEWAY_TOKEN
+  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT
+
+channels:
+  qq:
+    type: qq_personal
+    provider: onebot_v11
+    channel_id: qq
+    endpoint_env: CHATCOPILOT_QQ_ONEBOT_WS_URL
+    access_token_env: QQ_ACCESS_TOKEN
+    account_env: QQ_ACCOUNT
+    mention_only_groups: true
 
 llm:
   chat:
@@ -48,7 +61,6 @@ deploy:
   workspace_root: ~/chatcopilot-workspaces/__BOT_ID__
   log_dir: ~/chatcopilot-logs/__BOT_ID__
   env_file: ~/.chatcopilot-__BOT_ID__.env
-  cc_connect_config_dir: ~/.chatcopilot-runtime/__BOT_ID__/.cc-connect
   project_name: chatcopilot-__BOT_ID__
 
 packaging:

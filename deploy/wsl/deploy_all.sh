@@ -159,7 +159,7 @@ ensure_repo
 check_secret_files
 
 info "step 1/3: prepare WSL source environment and Console"
-run bash "$REPO_ROOT/deploy/wsl/install_wsl_env.sh" --with-console
+run bash "$REPO_ROOT/deploy/wsl/install_wsl_env.sh" --with-console --skip-cc-connect
 
 if [ "$SKIP_DOCKER" -eq 0 ]; then
     info "step 2/3: reconcile shared Docker services"

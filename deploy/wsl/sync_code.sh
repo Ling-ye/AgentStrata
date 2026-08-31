@@ -83,7 +83,7 @@ if ! command -v rsync >/dev/null 2>&1; then
 fi
 
 MANIFEST_PY="$CONTROL_ROOT/src"
-MANIFEST_PYTHON="$CONTROL_ROOT/.venv/bin/python"
+MANIFEST_PYTHON="${AGENTSTRATA_DEPLOY_PYTHON:-$CONTROL_ROOT/.venv/bin/python}"
 if [ ! -f "$MANIFEST_PY/chatcopilot/core/source_manifest.py" ]; then
     echo "[ERR] canonical source manifest module not found: $MANIFEST_PY" >&2
     exit 1

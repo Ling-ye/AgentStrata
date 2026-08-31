@@ -5,6 +5,7 @@ import {
   groupTasks,
   nextTaskIdAfterDelete,
   shouldRefreshTerminalFlow,
+  taskFlowAvailability,
   taskDeleteAvailability,
   updateExpandedStepIds,
   withoutTaskRecord,
@@ -48,6 +49,19 @@ function task(task_id: string, status: string): BotTask {
 }
 
 describe("task flow presentation model", () => {
+  it("disables the legacy task-flow projection for Gateway instances", () => {
+    expect(taskFlowAvailability("gateway")).toEqual({
+      available: false,
+      code: "gateway_task_flow_unavailable",
+      message: "Gateway 的受限任务流投影尚未接入；Console 不会回退展示旧 Relay、cc-connect 或 ACP 任务证据。",
+    });
+    expect(taskFlowAvailability("legacy")).toEqual({
+      available: true,
+      code: null,
+      message: "",
+    });
+  });
+
   it("updates expanded timeline steps without mutating the current selection", () => {
     const current = new Set(["first"]);
     const expanded = updateExpandedStepIds(current, "second", true);
@@ -142,6 +156,8 @@ describe("task flow presentation model", () => {
       instance_id: "bot",
       workspace_root: "/redacted",
       workspace_exists: true,
+      task_flow_available: true,
+      task_flow_unavailable_reason: null,
       count: 2,
       total_count: 2,
       summary: { active_count: 0, failed_recent_count: 1, last_activity_at: 2 },

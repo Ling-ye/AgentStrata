@@ -37,17 +37,20 @@ resulting system structure.
   effective, redacted context. Binary/private omissions and provider-managed
   state that cannot be inspected are labelled partial or opaque instead of
   being presented as complete.
-- **Evidence-labelled task flow.** Bot operations project platform ingress,
-  middleware decisions, Agent/model/capability activity, and the strongest
-  observed reply boundary into one backend-owned flow. Missing transport
-  evidence and hidden provider reasoning remain explicit gaps rather than
-  inferred success.
+- **Evidence-bound runtime.** The Gateway durably separates admitted ingress,
+  authorization decisions, runs, outbox state, and provider receipts. The
+  Console exposes process/provider health today; its legacy ACP task-flow view
+  is not reused for Gateway instances until those durable records have a native
+  projection. Missing transport evidence and hidden provider reasoning remain
+  explicit gaps rather than inferred success.
 - **Purpose-built runtime boundaries.** Thin web-search providers run in the
   Agent process; browser-backed, account-bound, and shared search-engine
   components remain isolated and are started only when an enabled BotSpec
   requires them.
-- **Platform adapters.** QQ / OneBot and Feishu remain outside Agent logic and
-  inject identity, files, notifications, and permissions through contracts.
+- **Channel boundary.** The long-lived Gateway owns QQ / OneBot connection,
+  routing, sessions, runs, and delivery evidence through a typed Channel
+  contract. Feishu remains on an isolated legacy adapter edge; neither path
+  leaks native platform frames into Agent logic.
 - **Owner controls in chat.** A transport-authenticated Owner can list the
   current Bot's slash commands, inspect combined session and instance state,
   and request a state-preserving restart of only that Bot after the reply is
@@ -57,7 +60,7 @@ resulting system structure.
   requests; they do not merge or deploy automatically.
 - **Unified evaluation.** The Console exposes a 25-Case direct-Agent catalog
   whose default `full` preset runs the 23 Cases supported by the built-in Bot,
-  plus 7 synthetic QQ message-flow Cases; Profile comparisons, BFCL, GAIA, and IFEval
+  plus 7 legacy synthetic QQ message-flow Cases; Profile comparisons, BFCL, GAIA, and IFEval
   remain available through the same Evaluation resource and artifact layout.
   Product presets are started manually; BFCL remains a direct-LLM protocol
   calibration. The local service owns managed workers and lifecycle state,
@@ -90,11 +93,12 @@ state instead of starting over:
 bash deploy/wsl/quickstart.sh --resume
 ```
 
-Successful local checks mean configuration, services, Relay, cc-connect and
-the authenticated OneBot boundary are ready. The wizard does not make a paid
-model call or send a QQ message by default, so a real user-to-Agent-to-reply
-roundtrip remains `not_tested` until you send an ordinary private message or an
-explicit group @ mention yourself.
+Successful local checks mean the instance-owned Python Gateway process and the
+authenticated loopback boundary to an external NapCat/OneBot provider are
+ready. QQ no longer installs or starts Node, cc-connect, or the QQ Relay. The
+wizard does not make a paid model call or send a QQ message by default, so a
+real user-to-Agent-to-reply roundtrip remains `not_tested` until you send an
+ordinary private message or an explicit group @ mention yourself.
 
 See the [first-deployment guide](https://github.com/Ling-ye/AgentStrata/blob/main/docs/deployment.md)
 for requirements, permissions and recovery, then use the
@@ -170,25 +174,44 @@ catalog does not embed personal targets.
 ```mermaid
 flowchart TB
     B["BotSpec<br/>prompts · tools · agents · context"]
-    C["Contracts<br/>identity · tasks · events · tools · workspace"]
+    C["Contracts<br/>identity · Gateway events · RPC · Agent · tools · workspace"]
+    Q["QQ provider<br/>NapCat / OneBot"]
+    CH["Trusted Channel<br/>connection · codec · receipts"]
+    AU["Authorization<br/>principal · admission · audit"]
+    A["Application<br/>actor session · workspace · turn"]
+    G["Gateway<br/>routing · session · run · outbox"]
+    ACP["ACP edge<br/>authenticated Gateway client"]
     R["Agent runtime<br/>native · langgraph · codex"]
     X["Capabilities<br/>tool packs · MCP · RAG · memory"]
-    P["Adapters<br/>Feishu · QQ / OneBot"]
+    F["Feishu legacy adapter"]
     O["Operations<br/>deployment · console · evaluations"]
 
+    Q --> CH
+    CH --> AU
+    AU --> G
+    ACP --> G
+    G --> A
+    A --> R
+    R --> G
+    G --> CH
+    B --> G
+    B --> A
     B --> R
     B --> X
-    B --> P
+    F --> A
     C --> R
     C --> X
-    C --> P
-    R --> O
-    X --> O
-    P --> O
+    C --> CH
+    C --> AU
+    C --> A
+    C --> G
+    G --> O
 ```
 
-Dependencies flow from contracts toward assembly and operations. Agent code
-does not import concrete platforms or BotSpec internals. See
+Source dependencies flow from contracts through the trusted domain layers to
+application, Gateway/protocol edges, and operations. Runtime messages travel
+in both directions without reversing those import boundaries. Agent code does
+not import concrete Channels, platforms, Gateway, or BotSpec internals. See
 [architecture.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/architecture.md)
 and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.md).
 
@@ -196,20 +219,22 @@ and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.m
 
 | Area | Support |
 | --- | --- |
-| Platforms | Feishu; QQ through NapCat / OneBot |
+| Platforms | QQ through a Gateway-owned OneBot Channel; Feishu through a legacy adapter edge |
 | Agent backends | Native; LangGraph; Codex |
 | Models | OpenAI-compatible chat/research APIs; Codex CLI device authentication |
 | Capabilities | Local tool packs; in-process web search; reviewed MCP bindings; RAG; memory; private Wiki |
 | Operations | React/FastAPI Console BFF; diagnostics; task/context observability; logs |
 | Deployment | Linux / WSL; Console and Evaluation systemd user services; desired-state Docker infrastructure |
-| Evaluation | Console has two manual tracks: a 25-Case direct-Agent catalog with a 23-Case default `full`, and 7 synthetic QQ message-flow Cases; benchmark/Profile adapters remain available from CLI |
+| Evaluation | Console has two manual tracks: a 25-Case direct-Agent catalog with a 23-Case default `full`, and 7 legacy synthetic QQ message-flow Cases; benchmark/Profile adapters remain available from CLI |
 
-The direct-Agent track bypasses ACP and platform transport. The synthetic QQ
-message-flow track starts after a hypothetical QQ event and validates the
-AgentStrata-owned ingress, identity, permission, session, persona and response
-projection code without external writes. Real QQ/NapCat/OneBot connectivity
-remains a platform external check; neither local track counts as real QQ or
-external-user end-to-end evidence.
+The direct-Agent track bypasses ACP and platform transport. The existing
+synthetic QQ message-flow track exercises the pre-Gateway Relay/attestation/ACP
+path and is retained only as a legacy regression suite; it is not evidence for
+the new Gateway. Gateway contract and integration tests instead use a fake
+loopback OneBot provider, the real Channel/Gateway code, and a deterministic
+Agent. Real QQ/NapCat/OneBot connectivity remains a platform external check;
+none of these local tracks counts as real QQ or external-user end-to-end
+evidence.
 
 Third-party MCP servers and Skills are not downloaded, installed, or enabled
 automatically. Review source, license, command, secret use, and remote write

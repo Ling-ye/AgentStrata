@@ -26,6 +26,11 @@ from chatcopilot.contracts.agent import (
     TurnError,
 )
 from chatcopilot.contracts.agent_backend import AGENT_BACKEND_IDS
+from chatcopilot.contracts.cancellation import (
+    CancellationProbe,
+    CancellationRequested,
+    CancellationToken,
+)
 from chatcopilot.contracts.identity import (
     AssistantMode,
     ConversationIdentity,
@@ -153,6 +158,9 @@ __all__ = [
     "AgentTask",
     "AssistantMode",
     "ConversationIdentity",
+    "CancellationProbe",
+    "CancellationRequested",
+    "CancellationToken",
     "BUILTIN_SUBAGENT_PRESET_NAMES",
     "BUILTIN_SUBAGENT_WORKFLOW_NAMES",
     "BUILTIN_SUBAGENT_WORKFLOWS",

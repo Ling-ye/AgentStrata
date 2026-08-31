@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
 import type { BotInstance, BotInventory, BotStatus, TasksResponse } from "../../types";
+import { taskFlowAvailability } from "./taskFlowModel";
 
 export function useBotsOverview(visible = true) {
   const botsQuery = useQuery({
@@ -33,7 +34,7 @@ export function useBotsOverview(visible = true) {
     queries: bots.map((bot) => ({
       queryKey: ["bot-tasks", bot.instance_id],
       queryFn: () => api.tasks(bot.instance_id),
-      enabled: visible,
+      enabled: visible && taskFlowAvailability(bot.runtime_kind).available,
       refetchInterval: visible ? 10_000 : false,
     })),
   });

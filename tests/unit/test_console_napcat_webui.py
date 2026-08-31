@@ -16,10 +16,10 @@ def _napcat() -> services.ServiceDef:
     return service
 
 
-def test_napcat_restart_delegates_to_prevalidated_gateway_restart() -> None:
+def test_napcat_restart_delegates_to_prevalidated_provider_restart() -> None:
     with (
         patch(
-            "console.control.services._qq_gateway_action",
+            "console.control.services._napcat_provider_action",
             return_value={"ok": False, "error": "token missing"},
         ) as gateway,
         patch("console.control.services._docker_simple") as docker_simple,
@@ -35,7 +35,7 @@ def test_napcat_restart_delegates_to_prevalidated_gateway_restart() -> None:
     docker_simple.assert_not_called()
 
 
-def test_gateway_action_strips_ansi_from_console_errors() -> None:
+def test_provider_action_strips_ansi_from_console_errors() -> None:
     completed = subprocess.CompletedProcess(
         args=[],
         returncode=1,
@@ -43,7 +43,7 @@ def test_gateway_action_strips_ansi_from_console_errors() -> None:
         stderr="\x1b[1;31m[ERR]\x1b[0m token missing",
     )
     with patch("console.control.services.subprocess.run", return_value=completed):
-        result = services._qq_gateway_action("lingye-copilot-qq", "restart")
+        result = services._napcat_provider_action("lingye-copilot-qq", "restart")
 
     assert result["ok"] is False
     assert result["stderr"] == "[ERR] token missing"

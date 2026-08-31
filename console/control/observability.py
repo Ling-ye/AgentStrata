@@ -44,6 +44,10 @@ _TERMINAL_JOB_STATUSES = set(CODE_TASK_TERMINAL_STATUSES)
 _TERMINAL_TASK_STATUSES = {"succeeded", "failed", "error", "cancelled"}
 _FAILED_TASK_STATUSES = {"failed", "error", "cancelled"}
 _RECENT_FAILURE_WINDOW_S = 24 * 60 * 60
+_GATEWAY_TASK_FLOW_UNAVAILABLE_CODE = "gateway_task_flow_unavailable"
+_GATEWAY_TASK_FLOW_UNAVAILABLE_MESSAGE = (
+    "Gateway task-flow projection is not connected; legacy ACP task records are not used"
+)
 
 
 class UnsafeContextSnapshotError(RuntimeError):
@@ -56,6 +60,17 @@ class TaskDeletionConflictError(RuntimeError):
 
 class UnsafeTaskRecordError(RuntimeError):
     """A task record failed the protected-filesystem deletion contract."""
+
+
+class TaskFlowUnavailableError(RuntimeError):
+    """The instance has no trustworthy Console task-flow projection."""
+
+    code = _GATEWAY_TASK_FLOW_UNAVAILABLE_CODE
+
+
+def _require_task_flow_available(inst: BotInstance) -> None:
+    if inst.runtime_kind == "gateway":
+        raise TaskFlowUnavailableError(_GATEWAY_TASK_FLOW_UNAVAILABLE_MESSAGE)
 
 
 def _open_path_without_symlink_ancestors(path: Path, flags: int) -> int:
@@ -480,6 +495,22 @@ def tasks(inst: BotInstance, *, limit: int = 50) -> Dict[str, object]:
     out: List[Dict[str, object]] = []
     workspace_exists = bool(ws and ws.is_dir())
     safe_limit = min(50, max(1, int(limit)))
+    if inst.runtime_kind == "gateway":
+        return {
+            "instance_id": inst.instance_id,
+            "workspace_root": str(ws) if ws else "",
+            "workspace_exists": workspace_exists,
+            "task_flow_available": False,
+            "task_flow_unavailable_reason": _GATEWAY_TASK_FLOW_UNAVAILABLE_CODE,
+            "count": 0,
+            "total_count": 0,
+            "summary": {
+                "active_count": 0,
+                "failed_recent_count": 0,
+                "last_activity_at": None,
+            },
+            "tasks": [],
+        }
     if ws and ws.is_dir():
         for task_file in ws.glob("**/tasks/*/task.json"):
             data = _read_job_json(task_file)
@@ -501,6 +532,8 @@ def tasks(inst: BotInstance, *, limit: int = 50) -> Dict[str, object]:
         "instance_id": inst.instance_id,
         "workspace_root": str(ws) if ws else "",
         "workspace_exists": workspace_exists,
+        "task_flow_available": True,
+        "task_flow_unavailable_reason": None,
         "count": min(len(out), safe_limit),
         "total_count": len(out),
         "summary": {
@@ -727,6 +760,7 @@ def _task_delete_job_status(task_dir: Path, job_id: str) -> str | None:
 def delete_task(inst: BotInstance, task_id: str) -> Dict[str, object] | None:
     """Remove one terminal v2 task record without following filesystem links."""
 
+    _require_task_flow_available(inst)
     candidate = _task_delete_candidate(inst, task_id)
     if candidate is None:
         return None
@@ -1164,6 +1198,7 @@ def _actual_cost(llm_calls: List[object]) -> Dict[str, object]:
 
 
 def task_detail(inst: BotInstance, task_id: str) -> Dict[str, object] | None:
+    _require_task_flow_available(inst)
     resolved = _resolve_task(inst, task_id)
     if resolved is None:
         return None
@@ -1194,6 +1229,7 @@ def task_events(
     *,
     limit: int = _DEFAULT_TASK_EVENT_LIMIT,
 ) -> Dict[str, object] | None:
+    _require_task_flow_available(inst)
     resolved = _resolve_task(inst, task_id)
     if resolved is None:
         return None
@@ -1264,6 +1300,7 @@ def task_events(
 def task_flow(inst: BotInstance, task_id: str) -> Dict[str, object] | None:
     """Return the versioned backend-owned flow projection for one task."""
 
+    _require_task_flow_available(inst)
     detail = task_detail(inst, task_id)
     if detail is None:
         return None
@@ -1298,6 +1335,7 @@ def context_snapshot(
     snapshot_id: str,
 ) -> Dict[str, object] | None:
     """Read one task-bound context artifact without following filesystem links."""
+    _require_task_flow_available(inst)
     if not _CONTEXT_SNAPSHOT_ID_RE.fullmatch(snapshot_id):
         raise ValueError("invalid context snapshot id")
     resolved = _resolve_task(inst, task_id)
@@ -1509,11 +1547,15 @@ def context_snapshot(
 # ---------------------------------------------------------------------------
 # 日志：tail + follow（供 SSE）
 # ---------------------------------------------------------------------------
-def resolve_log_files(inst: BotInstance, source: str = "cc") -> List[str]:
+def resolve_log_files(inst: BotInstance, source: str = "gateway") -> List[str]:
     if source == "runtime":
         f = inst.runtime_log_file()
-    else:
+    elif source in {"gateway", "primary"}:
+        f = inst.primary_log_file()
+    elif source == "cc" and inst.runtime_kind == "legacy":
         f = inst.cc_log_file()
+    else:
+        return []
     return [f] if f else []
 
 
@@ -1558,6 +1600,47 @@ def follow_log(path: str, *, from_end_lines: int = 200, poll_interval: float = 1
         else:
             yield KEEPALIVE
         time.sleep(poll_interval)
+
+
+def follow_unit_log(unit: str, *, from_end_lines: int = 200) -> Iterator[str]:
+    """Stream one trusted systemd user unit; terminate journalctl on disconnect."""
+    if not re.fullmatch(r"chatcopilot@[a-z][a-z0-9-]{1,62}\.service", unit):
+        yield "[ERR] invalid AgentStrata unit"
+        return
+    try:
+        proc = subprocess.Popen(
+            [
+                "journalctl",
+                "--user",
+                "--unit",
+                unit,
+                "--lines",
+                str(max(0, min(from_end_lines, 2000))),
+                "--follow",
+                "--output",
+                "cat",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=systemd._user_env(),
+        )
+    except OSError as exc:
+        yield f"[ERR] journalctl unavailable: {exc}"
+        return
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            yield line.rstrip("\n")
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2.0)
 
 
 def console_log_error() -> Optional[str]:
@@ -1631,12 +1714,14 @@ def follow_console_log(*, from_end_lines: int = 200) -> Iterator[str]:
 
 __all__ = [
     "KEEPALIVE",
+    "TaskFlowUnavailableError",
     "TaskDeletionConflictError",
     "UnsafeTaskRecordError",
     "console_log_error",
     "delete_task",
     "follow_console_log",
     "follow_log",
+    "follow_unit_log",
     "jobs",
     "resolve_log_files",
     "tail_log",

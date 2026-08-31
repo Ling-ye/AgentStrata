@@ -12,7 +12,14 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from chatcopilot.botspec.loader import load_botspec, validate_botspec
-from chatcopilot.botspec.model import AccessSpec, BotSpec, CustomSubagentSpec, SubagentSpec
+from chatcopilot.botspec.model import (
+    AccessSpec,
+    BotSpec,
+    ChannelsSpec,
+    CustomSubagentSpec,
+    GatewaySpec,
+    SubagentSpec,
+)
 from chatcopilot.botspec.mcp import McpServerConfig, load_mcp_server_configs
 from chatcopilot.botspec.rag import RagSourceConfig, load_rag_source_configs
 from chatcopilot.botspec.registry import load_tool_pack_policies, resolve_bot_spec_path
@@ -43,6 +50,8 @@ class BotRuntimeContext:
     workspace_root: str | None
     log_dir: str | None
     source_path: Path
+    gateway: GatewaySpec | None = None
+    channels: ChannelsSpec = field(default_factory=ChannelsSpec)
     agent_backend: str = "native"
     mcp_servers: tuple[McpServerConfig, ...] = ()
     rag_sources: tuple[RagSourceConfig, ...] = ()
@@ -104,6 +113,8 @@ def assemble_runtime_context(spec: BotSpec) -> BotRuntimeContext:
         workspace_root=spec.deploy.workspace_root,
         log_dir=spec.deploy.log_dir,
         source_path=spec.source_path,
+        gateway=spec.gateway,
+        channels=spec.channels,
         agent_backend=spec.agents.backend,
         mcp_servers=load_mcp_server_configs(spec),
         rag_sources=load_rag_source_configs(spec),

@@ -50,6 +50,10 @@ from chatcopilot.contracts.agent import (
     TopicDecisionMade,
     TurnError,
 )
+from chatcopilot.contracts.cancellation import (
+    CancellationProbe,
+    CancellationRequested,
+)
 from chatcopilot.agent.response_integrity import ResponseIntegrityResult
 from chatcopilot.agent.turn_support import (
     DEV_WRITE_TOOLS as _DEV_WRITE_TOOLS,
@@ -119,13 +123,20 @@ class TurnOps:
     session: Any
     task: AgentTask
     on_event: EventSink
+    cancellation: CancellationProbe | None = None
+
+    def raise_if_cancelled(self) -> None:
+        if self.cancellation is not None:
+            self.cancellation.raise_if_cancelled()
 
     def initial_state(self) -> TurnState:
+        self.raise_if_cancelled()
         user_text = frame_task_message(self.task)
         context = (self.task.turn_context or "").strip()
         if context:
             user_text = f"{user_text}\n\n{context}".strip()
         rag_snippet = self.session._retrieve_context(self.task.text)
+        self.raise_if_cancelled()
         if rag_snippet:
             user_text = f"{user_text}\n\n{rag_snippet}".strip()
         user_content = frame_task_content(self.task, text=user_text)
@@ -171,6 +182,8 @@ class TurnOps:
                 )
             )
 
+        self.raise_if_cancelled()
+
         return state
 
     def emit(self, event: Any) -> None:
@@ -195,6 +208,7 @@ class TurnOps:
         return False
 
     def call_llm(self, state: TurnState) -> ChatResult | None:
+        self.raise_if_cancelled()
         call_messages = self._build_llm_call_messages(state)
         self.session._repair_orphan_tool_calls(call_messages)
         iteration = state.iteration
@@ -267,17 +281,23 @@ class TurnOps:
                 context_snapshot_id=snapshot_id,
             )
         )
+        chat_kwargs: dict[str, Any] = {
+            "messages": call_messages,
+            "tools": self.session.tools_schema,
+            "stream": self.session.stream_first_turn and iteration == 0,
+            "on_content_delta": (
+                self._wrap_text_delta()
+                if self.session.stream_first_turn and iteration == 0
+                else None
+            ),
+        }
+        if self.cancellation is not None:
+            chat_kwargs["cancellation"] = self.cancellation
+        self.raise_if_cancelled()
         try:
-            result = self.session.llm.chat(
-                messages=call_messages,
-                tools=self.session.tools_schema,
-                stream=self.session.stream_first_turn and iteration == 0,
-                on_content_delta=(
-                    self._wrap_text_delta()
-                    if self.session.stream_first_turn and iteration == 0
-                    else None
-                ),
-            )
+            result = self.session.llm.chat(**chat_kwargs)
+        except CancellationRequested:
+            raise
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("LLM 调用失败")
             err_text = f"（与模型通信失败：{type(exc).__name__}: {exc}；请稍后再试）"
@@ -306,6 +326,8 @@ class TurnOps:
             self.emit(TurnError(code=type(exc).__name__, message=str(exc)))
             self.finish_text(state, err_text, stop_reason="llm_error")
             return None
+
+        self.raise_if_cancelled()
 
         if image_receipts:
             raw_turn = self.task.metadata.get("eval_turn", 0)
@@ -366,6 +388,7 @@ class TurnOps:
         return list(calls or [])
 
     def execute_tool_call(self, state: TurnState, tool_call: dict[str, Any]) -> None:
+        self.raise_if_cancelled()
         if (
             self.session.max_tool_calls is not None
             and state.tool_calls_used >= self.session.max_tool_calls
@@ -418,6 +441,7 @@ class TurnOps:
                     "请检查参数后再试或换一种问法）"
                 )
                 self.finish_text(state, fail_text, stop_reason="tool_failure_cap")
+            self.raise_if_cancelled()
             return
 
         state.consecutive_failures = 0
@@ -435,6 +459,7 @@ class TurnOps:
                 item = (output, artifact_kind) if isinstance(output, str) else None
                 if item is not None and item not in state.produced_paths:
                     state.produced_paths.append(item)
+        self.raise_if_cancelled()
 
     def finish_without_tool_result(self, state: TurnState, *, result_content: str) -> None:
         final_text = state.final_text or result_content
@@ -511,6 +536,21 @@ class TurnOps:
             lifecycle_intents=tuple(state.lifecycle_intents),
         )
 
+    def cancelled_result(self, state: TurnState | None = None) -> AgentResult:
+        self.session._repair_orphan_tool_calls(self.session._messages)
+        if state is not None:
+            state.final_text = ""
+            state.stop_reason = "cancelled"
+            state.done = True
+        return AgentResult(
+            final_text="",
+            stop_reason="cancelled",
+            produced_resources=(
+                _paths_to_resources(state.produced_paths) if state is not None else ()
+            ),
+            message_count=len(self.session._messages),
+        )
+
     def _build_llm_call_messages(self, state: TurnState) -> list[dict[str, Any]]:
         if state.iteration == 0 and self.session.context_manager is not None:
             state.llm_view = self.session.context_manager.prepare_messages(
@@ -529,8 +569,10 @@ class TurnOps:
 
     def _wrap_text_delta(self):
         def _delta(text: str) -> None:
+            self.raise_if_cancelled()
             if text:
                 self.emit(TextDelta(text=text))
+            self.raise_if_cancelled()
 
         return _delta
 

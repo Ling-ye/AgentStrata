@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# qq_gateway.sh — manage the local NapCat gateway for QQ/OneBot instances.
+# qq_gateway.sh — manage the external local NapCat/OneBot provider.
+#
+# The filename is retained for operator compatibility. This script does not
+# start the AgentStrata Gateway, ACP edge, or any Relay.
 #
 # Usage:
 #   bash deploy/wsl/qq_gateway.sh bootstrap --instance lingye-copilot-qq
@@ -57,12 +60,17 @@ fi
 
 # shellcheck source=./_load_env.sh
 source "$SCRIPT_DIR/_load_env.sh"
+if ! ccp_bot_uses_gateway "$CHATCOPILOT_BOT_SPEC"; then
+    err "qq_gateway.sh 只管理 Gateway BotSpec 的外部 NapCat/OneBot provider。"
+    err "旧 platform=qq + cc-connect/Relay 拓扑已移除。"
+    exit 78
+fi
 ccp_apply_bot_deploy_config
 ccp_load_env "QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
 
 LOCAL_CONFIG="$REPO_ROOT/bots/$INSTANCE/local.env"
 CONTAINER="napcat-$INSTANCE"
-QQ_WS_URL="${QQ_WS_URL:-ws://127.0.0.1:3001}"
+CHATCOPILOT_QQ_ONEBOT_WS_URL="${CHATCOPILOT_QQ_ONEBOT_WS_URL:-ws://127.0.0.1:3001}"
 QQ_WEBUI_PORT="${QQ_WEBUI_PORT:-6099}"
 DEFAULT_NAPCAT_IMAGE="mlikiowa/napcat-docker@sha256:0b4b24114089bfbbefd4729ad08b50a6b9d67044aec674809ede3cf7521c4431"
 NAPCAT_IMAGE="${NAPCAT_IMAGE:-$DEFAULT_NAPCAT_IMAGE}"
@@ -124,11 +132,11 @@ if [ "$ACTION" != "logs" ] && [ ! -x "$BOUNDARY_PY" ]; then
 fi
 if [ -x "$BOUNDARY_PY" ]; then
     WS_PORT="$(
-    QQ_WS_URL="$QQ_WS_URL" "$BOUNDARY_PY" - <<'PY'
+    CHATCOPILOT_QQ_ONEBOT_WS_URL="$CHATCOPILOT_QQ_ONEBOT_WS_URL" "$BOUNDARY_PY" - <<'PY'
 import os
 from urllib.parse import urlparse
 
-url = urlparse(os.environ.get("QQ_WS_URL", "ws://127.0.0.1:3001"))
+url = urlparse(os.environ.get("CHATCOPILOT_QQ_ONEBOT_WS_URL", "ws://127.0.0.1:3001"))
 print(url.port or 3001)
 PY
     )"
@@ -152,29 +160,23 @@ validate_boundary_config() {
     PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
         QQ_ACCESS_TOKEN="${QQ_ACCESS_TOKEN:-}" \
         "$BOUNDARY_PY" -m chatcopilot.platforms.qq.gateway_health \
-        validate --url "$QQ_WS_URL" --url-env-key QQ_WS_URL \
-        && PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
-        QQ_ACCESS_TOKEN="${QQ_ACCESS_TOKEN:-}" \
-        "$BOUNDARY_PY" -m chatcopilot.platforms.qq.gateway_health \
-        validate --url "${QQ_AT_PROXY_URL:-ws://127.0.0.1:3002}" \
-        --url-env-key QQ_AT_PROXY_URL
+        validate --url "$CHATCOPILOT_QQ_ONEBOT_WS_URL" \
+        --url-env-key CHATCOPILOT_QQ_ONEBOT_WS_URL
 }
 
 validate_boundary_urls() {
     PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
         "$BOUNDARY_PY" -m chatcopilot.platforms.qq.gateway_health \
-        validate-url --url "$QQ_WS_URL" --url-env-key QQ_WS_URL \
-        && PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
-        "$BOUNDARY_PY" -m chatcopilot.platforms.qq.gateway_health \
-        validate-url --url "${QQ_AT_PROXY_URL:-ws://127.0.0.1:3002}" \
-        --url-env-key QQ_AT_PROXY_URL
+        validate-url --url "$CHATCOPILOT_QQ_ONEBOT_WS_URL" \
+        --url-env-key CHATCOPILOT_QQ_ONEBOT_WS_URL
 }
 
 probe_boundary() {
     PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
         QQ_ACCESS_TOKEN="${QQ_ACCESS_TOKEN:-}" \
         "$BOUNDARY_PY" -m chatcopilot.platforms.qq.gateway_health \
-        probe --url "$QQ_WS_URL" --url-env-key QQ_WS_URL
+        probe --url "$CHATCOPILOT_QQ_ONEBOT_WS_URL" \
+        --url-env-key CHATCOPILOT_QQ_ONEBOT_WS_URL
 }
 
 run_external_check() {
@@ -581,7 +583,7 @@ case "$ACTION" in
             warn "容器不存在"
             status_rc=1
         fi
-        info "OneBot WS: $QQ_WS_URL"
+        info "OneBot provider WS: $CHATCOPILOT_QQ_ONEBOT_WS_URL"
         info "NapCat WebUI: http://localhost:$QQ_WEBUI_PORT"
         exit "$status_rc"
         ;;
@@ -616,7 +618,7 @@ case "$ACTION" in
         info "WebUI: http://localhost:$QQ_WEBUI_PORT"
         info "如需重新配置正向 WebSocket :3001，请运行 sync-token。"
         if ! probe_boundary_with_retry; then
-            err "QQ OneBot 双向认证探针失败；容器保留运行以便通过 localhost WebUI 修正配置，但 gateway start 失败。"
+            err "QQ OneBot 双向认证探针失败；容器保留运行以便通过 localhost WebUI 修正配置，但 provider start 失败。"
             exit 1
         fi
         ok "QQ OneBot 无 token 拒绝、带 token 接受。"
@@ -642,7 +644,7 @@ case "$ACTION" in
         fi
         info "Crash guard: NAPCAT_DISABLE_BYPASS=$NAPCAT_DISABLE_BYPASS, NAPCAT_DISABLE_MULTI_PROCESS=$NAPCAT_DISABLE_MULTI_PROCESS, shm=$NAPCAT_SHM_SIZE"
         if ! probe_boundary_with_retry; then
-            err "QQ OneBot 双向认证探针失败；容器保留运行以便通过 localhost WebUI 修正配置，但 gateway restart 失败。"
+            err "QQ OneBot 双向认证探针失败；容器保留运行以便通过 localhost WebUI 修正配置，但 provider restart 失败。"
             exit 1
         fi
         ok "QQ OneBot 无 token 拒绝、带 token 接受。"

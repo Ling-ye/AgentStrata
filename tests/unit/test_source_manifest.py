@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -106,7 +107,11 @@ def test_full_sync_uses_git_manifest_and_removes_previous_stale_path(
         capture_output=True,
         text=True,
         timeout=30,
-        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")},
+        env={
+            **os.environ,
+            "AGENTSTRATA_DEPLOY_PYTHON": sys.executable,
+            "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
+        },
     )
 
     assert result.returncode == 0, result.stderr
@@ -147,9 +152,27 @@ def test_status_resolves_explicit_botspec_without_defaulting_platform(
     script = root / "deploy" / "wsl" / "status.sh"
     bot = tmp_path / "bot.yaml"
     bot.write_text(
-        "platform:\n"
-        "  type: qq\n"
+        "id: status-fixture\n"
+        "display_name: Status Fixture\n"
+        "gateway:\n"
+        "  protocol_version: 1\n"
+        "  host: 127.0.0.1\n"
+        "  port_env: CHATCOPILOT_GATEWAY_PORT\n"
+        "  token_env: CHATCOPILOT_GATEWAY_TOKEN\n"
+        "  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT\n"
+        "channels:\n"
+        "  qq:\n"
+        "    type: qq_personal\n"
+        "    provider: onebot_v11\n"
+        "    channel_id: qq\n"
+        "    endpoint_env: CHATCOPILOT_QQ_ONEBOT_WS_URL\n"
+        "    access_token_env: QQ_ACCESS_TOKEN\n"
+        "    account_env: QQ_ACCOUNT\n"
+        "    mention_only_groups: true\n"
+        "workspace:\n"
+        "  root_env: CHATCOPILOT_WORKSPACE_ROOT\n"
         "deploy:\n"
+        "  target: wsl2\n"
         "  instance_id: status-fixture\n"
         f"  wsl_home: {tmp_path / 'runtime'}\n"
         f"  workspace_root: {tmp_path / 'workspace'}\n"
@@ -161,6 +184,7 @@ def test_status_resolves_explicit_botspec_without_defaulting_platform(
         for key, value in os.environ.items()
         if not key.startswith("CHATCOPILOT_")
     }
+    env["AGENTSTRATA_DEPLOY_PYTHON"] = sys.executable
 
     result = subprocess.run(
         ["bash", str(script), "--bot-spec", str(bot)],
@@ -173,4 +197,5 @@ def test_status_resolves_explicit_botspec_without_defaulting_platform(
 
     assert result.returncode == 0, result.stderr
     assert "instance=status-fixture" in result.stdout
-    assert "platform=qq" in result.stdout
+    assert "AgentStrata Gateway 状态" in result.stdout
+    assert "cc-connect 健康检查" not in result.stdout

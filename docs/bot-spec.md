@@ -51,28 +51,73 @@ packaging:
   allowlist: package.allowlist.yaml
 ```
 
+QQ 使用 Gateway/Channel，而不是 `platform.adapter`：
+
+```yaml
+gateway:
+  protocol_version: 1
+  host: 127.0.0.1
+  port_env: CHATCOPILOT_GATEWAY_PORT
+  token_env: CHATCOPILOT_GATEWAY_TOKEN
+  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT
+
+channels:
+  qq:
+    type: qq_personal
+    provider: onebot_v11
+    channel_id: qq
+    endpoint_env: CHATCOPILOT_QQ_ONEBOT_WS_URL
+    access_token_env: QQ_ACCESS_TOKEN
+    account_env: QQ_ACCOUNT
+    mention_only_groups: true
+```
+
+两种形态互斥：QQ Gateway BotSpec 不声明 legacy `platform: qq/qq_acp`，旧 QQ 字段会在
+验证阶段直接拒绝，不会静默回退到 cc-connect/Relay。
+
 ## 顶层字段
 
 ### `platform`
 
-- `type`：当前公开 adapter 为 `qq` 和 `feishu`。
-- `adapter`：对应 `qq_acp` 或 `feishu_acp`。
+- `type` / `adapter`：当前只用于尚未迁移的 Feishu legacy edge（`feishu_acp`）。
 
-平台技术能力由 adapter 声明，实例开关位于 `tools.features`。QQ Owner/Admin 只按
-稳定 `user_id` 授权；Feishu 保留 adapter 的显示名兜底。
+Feishu 保留 adapter 的显示名兜底。新 QQ 配置改用下述 `gateway` / `channels.qq`；
+QQ Owner/Admin 只按稳定 `user_id` 授权。
+
+### `gateway`
+
+- `protocol_version`：当前只接受 `1`。
+- `host`：必须为回环地址；v1 不开放远程 Gateway。
+- `port_env`：Gateway 监听端口的环境变量名。
+- `token_env`：强每实例 Gateway client token 的环境变量名。
+- `state_root_env`：私有 SQLite 状态根的环境变量名。
+
+Gateway 负责 typed WebSocket RPC、session、run、durable ingress/outbox、投递 receipt、
+writer generation 和 Channel lifecycle。ACP credential 只获得显式 session/read scope，不能
+因此获得平台、authorization 或 Gateway admin 权限。
+
+### `channels.qq`
+
+- `type` 固定为 `qq_personal`，`provider` 固定为 `onebot_v11`。
+- `channel_id` 是 AgentStrata 内部稳定 Channel id，不是 provider 名称或账号。
+- `endpoint_env` 指向回环 `ws` / `wss` OneBot endpoint 环境变量。
+- `access_token_env` 与 `account_env` 分别引用 OneBot 强 token 和预期数字 QQ 账号。
+- `mention_only_groups: true` 要求群消息含明确指向当前 Bot 的结构化 `at` segment。
+
+当前实现直接连接用户独立安装的 NapCat/OneBot provider，但不复制、内嵌或分发 NapCat，
+也不会把 provider 实现名写入身份、session 或权限 key。没有自动 provider failover。
 
 ### `access`
 
 `access.owner_only_project_access` 只控制获准消息进入 Agent 后的项目、主机和高级能力
-投影，不参与消息准入。QQ 准入不允许在 BotSpec 中改字段名或开关：ACP 固定读取 bot-local
+投影，不参与消息准入。QQ 准入不允许在 BotSpec 中改字段名或开关：Gateway 固定读取 bot-local
 `local.env` 中的 `QQ_ALLOW_FROM` 与 `QQ_ALLOW_GROUPS`。前者只包含稳定发送者 QQ 号，
 后者只包含稳定群号；缺失或空值不授予权限，只有整个值精确为 `*` 才允许全部，有限
 名单只接受逗号分隔的数字 ID。旧准入字段会直接导致 BotSpec 校验失败。
 
-QQ Relay 不读取这两份名单，也不解析角色：私聊原样转发，群聊只转发 OneBot 结构化
-`at` segment 明确指向当前 `QQ_ACCOUNT` 的消息；未携带同一 OneBot 强 token 的下游连接会在
-连接 NapCat 前被拒绝。cc-connect 固定使用 `allow_from = "*"`，
-白名单与角色语义只由 ACP 解释。
+OneBot provider 不读取这两份名单，也不分配 AgentStrata 角色。Gateway 先认证 transport、
+核对实际登录账号与结构化事件，再在资源下载和 Agent 副作用前解释名单。群命中只授予当前
+群准入，不提升发送者为 Owner/Admin；ACP client 不参与 QQ 准入。
 
 ### `llm`
 
@@ -152,13 +197,14 @@ Codex 主 backend 不创建 Native / LangGraph 的 `search_information`。Evalua
 
 ### `workspace`
 
-`root_env` 只声明环境变量名。Middleware 按平台身份在根目录下创建会话隔离空间，
+`root_env` 只声明环境变量名。Application 按可信 Principal 和 conversation 在根目录下创建会话隔离空间，
 不会把真实运行路径写回 BotSpec。
 
 ### `deploy`
 
-声明实例 id、WSL 部署目录、workspace、日志、runtime env、cc-connect 配置目录和
-project name。`~` 在部署边界展开；其他 shell 变量和命令替换不执行。
+声明实例 id、WSL 部署目录、workspace、日志、runtime env 和 project name。Gateway QQ
+不生成 cc-connect 配置；Feishu legacy edge 可继续使用其隔离配置目录。`~` 在部署边界展开；
+其他 shell 变量和命令替换不执行。
 
 ### `access`
 

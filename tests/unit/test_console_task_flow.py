@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 
-from fastapi import Response
+import pytest
+from fastapi import HTTPException, Response
 
 from console.backend.routes import bots as bot_routes
 from console.control import operations
@@ -9,13 +10,19 @@ from console.control.instances import BotInstance
 from console.control.task_flow import project_task_flow
 
 
-def _instance(workspace_root: Path) -> BotInstance:
+def _instance(
+    workspace_root: Path,
+    *,
+    runtime_kind: str = "legacy",
+    platform: str = "qq",
+) -> BotInstance:
     return BotInstance(
         instance_id="flow-bot",
         bot_spec="bots/flow-bot/bot.yaml",
         display_name="FlowBot",
-        platform="qq",
+        platform=platform,
         workspace_root=str(workspace_root),
+        runtime_kind=runtime_kind,
     )
 
 
@@ -189,6 +196,88 @@ def test_task_flow_projects_runtime_boundaries_without_claiming_qq_display(
     assert layer_coverage["channel"] == "missing"
     assert flow["coverage"]["missing"] == 0
     assert flow["omissions"] == []
+
+
+def test_gateway_task_observability_does_not_fall_back_to_legacy_records(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "workspaces"
+    task_id = "task_legacy_record"
+    task_dir = root / "p2p_actor" / "tasks" / task_id
+    _write_json(
+        task_dir / "task.json",
+        {"schema_version": 2, "task_id": task_id, "status": "succeeded"},
+    )
+    _write_events(
+        task_dir / "events.jsonl",
+        [{"sequence": 1, "event": "task_started", "recorded_at": 100}],
+    )
+    gateway = _instance(root, runtime_kind="gateway")
+    monkeypatch.setattr(bot_routes, "get_instance", lambda _instance_id: gateway)
+
+    listing = bot_routes.bot_tasks("flow-bot")
+
+    assert listing["task_flow_available"] is False
+    assert listing["task_flow_unavailable_reason"] == "gateway_task_flow_unavailable"
+    assert listing["tasks"] == []
+    assert listing["total_count"] == 0
+
+    route_calls = (
+        lambda: bot_routes.bot_task_detail("flow-bot", task_id),
+        lambda: bot_routes.bot_task_events("flow-bot", task_id, Response()),
+        lambda: bot_routes.bot_task_flow("flow-bot", task_id, Response()),
+        lambda: bot_routes.bot_task_context("flow-bot", task_id, "ctx_legacy", Response()),
+        lambda: bot_routes.delete_bot_task("flow-bot", task_id),
+    )
+    for call in route_calls:
+        with pytest.raises(HTTPException) as caught:
+            call()
+        assert caught.value.status_code == 409
+        assert caught.value.detail == {
+            "code": "gateway_task_flow_unavailable",
+            "message": (
+                "Gateway task-flow projection is not connected; "
+                "legacy ACP task records are not used"
+            ),
+        }
+
+    assert task_dir.is_dir()
+
+
+def test_legacy_feishu_task_flow_projection_remains_available(tmp_path: Path) -> None:
+    root = tmp_path / "workspaces"
+    task_id = "task_feishu_legacy"
+    task_dir = root / "p2p_actor" / "tasks" / task_id
+    _write_json(
+        task_dir / "task.json",
+        {"schema_version": 2, "task_id": task_id, "status": "succeeded"},
+    )
+    _write_events(
+        task_dir / "events.jsonl",
+        [
+            {"sequence": 1, "event": "task_started", "recorded_at": 100},
+            {
+                "sequence": 2,
+                "event": "task_finished",
+                "recorded_at": 101,
+                "data": {"status": "succeeded", "final_text": "done"},
+            },
+        ],
+    )
+    legacy_feishu = _instance(root, runtime_kind="legacy", platform="feishu")
+
+    listing = operations.tasks(legacy_feishu)
+    flow = operations.task_flow(legacy_feishu, task_id)
+
+    assert listing["task_flow_available"] is True
+    assert listing["task_flow_unavailable_reason"] is None
+    assert [item["task_id"] for item in listing["tasks"]] == [task_id]
+    assert flow is not None
+    assert [item["kind"] for item in flow["transitions"]] == [
+        "middleware.task_intake",
+        "delivery.agent_result",
+    ]
 
 
 def test_task_flow_marks_absent_transport_and_gateway_evidence_missing() -> None:

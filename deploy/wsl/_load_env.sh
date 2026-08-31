@@ -296,8 +296,8 @@ PY
 
 # ---------------------------------------------------------------------------
 # ccp_prepend_user_bins
-#   把旧实例的 ~/.npm-global/bin 与 ~/.local/bin 幂等 prepend 到 PATH；新手部署的
-#   cc-connect 使用 CHATCOPILOT_CC_CONNECT_BIN 指向项目私有固定版本。
+#   把旧实例的 ~/.npm-global/bin 与 ~/.local/bin 幂等 prepend 到 PATH。Gateway
+#   QQ 不依赖 Node/cc-connect；这些路径只为 legacy edge 保留。
 # ---------------------------------------------------------------------------
 ccp_prepend_user_bins() {
     local _user_bin
@@ -308,6 +308,59 @@ ccp_prepend_user_bins() {
         esac
     done
     export PATH
+}
+
+# ---------------------------------------------------------------------------
+# ccp_bot_uses_gateway <bot.yaml>
+#   只识别 top-level ``gateway:``。调用方据此把 QQ Gateway host 与 legacy
+#   cc-connect edge 完全分路，不从 platform 名称猜测运行拓扑。
+# ---------------------------------------------------------------------------
+ccp_bot_uses_gateway() {
+    local _bot="${1:-${CHATCOPILOT_BOT_SPEC:-}}"
+    [ -r "$_bot" ] || return 1
+    awk '
+        /^[^[:space:]#][^:]*:[[:space:]]*$/ {
+            key = $0
+            sub(/:.*/, "", key)
+            if (key == "gateway") found = 1
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$_bot"
+}
+
+# ---------------------------------------------------------------------------
+# ccp_bot_is_legacy_qq <bot.yaml>
+#   识别旧 ``platform: qq`` / ``platform.type: qq`` BotSpec，使所有部署入口
+#   能在安装 Node/cc-connect 之前拒绝已经移除的 QQ legacy 拓扑。
+# ---------------------------------------------------------------------------
+ccp_bot_is_legacy_qq() {
+    local _bot="${1:-${CHATCOPILOT_BOT_SPEC:-}}"
+    [ -r "$_bot" ] || return 1
+    awk '
+        {
+            line = $0
+            sub(/[[:space:]]+#.*/, "", line)
+            if (line ~ /^[^[:space:]#]/) {
+                key = line
+                sub(/:.*/, "", key)
+                value = line
+                sub(/^[^:]*:/, "", value)
+                gsub(/[[:space:]\"]/, "", value)
+                gsub(/\047/, "", value)
+                in_platform = (key == "platform" && value == "")
+                if (key == "platform" && value == "qq") found = 1
+                next
+            }
+            if (in_platform && line ~ /^[[:space:]]+type[[:space:]]*:/) {
+                value = line
+                sub(/^[[:space:]]*type[[:space:]]*:/, "", value)
+                gsub(/[[:space:]\"]/, "", value)
+                gsub(/\047/, "", value)
+                if (value == "qq") found = 1
+            }
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$_bot"
 }
 
 # ---------------------------------------------------------------------------

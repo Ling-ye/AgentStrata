@@ -15,21 +15,37 @@
 - **服务管理**：调用 `/api/infra` 展示 BotSpec 所需的共享 Docker 服务、平台网关等
   外部依赖，支持启停、重启、Pull、日志、登录和诊断。无参数“全部启动”委托
   `services.sh start` 做 desired-state reconcile，不会启动已禁用服务。
-- **机器人实例**：展示每个 BotSpec 实例的部署、注册、运行、平台连接、日志、任务、更新和诊断入口。
+- **机器人实例**：展示每个 BotSpec 实例的部署、注册、Gateway MainPID、Channel 连接证据、日志、任务、更新和诊断入口。
 - **组件目录**：按 `tools` / `prompts` / `agents` / `context` 四个 surface 只读浏览工具包、运行特性、MCP 服务、提示词、Agent preset、workflow DTO 和上下文来源；数据只来自 `chatcopilot.component_catalog` 的精确 pack/tool 投影，不直接读取 Agent/BotSpec 内部 registry 或自行 import 工具模块。
 - **评测中心**：固定为「新建评测 / 评测记录 / 任务集」三个页签。Agent Profile 对比和 BFCL / GAIA / IFEval Suite 运行统一为 `Evaluation` 资源；记录页负责筛选、查看详情、取消、删除、重跑和导出，任务集页统一展示 Profile、Suite 数据准备状态与 Case coverage。报告统一保存在 `reports/evals/evaluations/<evaluation-id>/`。
 
 Console 后端的进程执行、YAML 投影和 job/task/log 可观测读取分别位于 `process_executor.py`、`yaml_io.py` 和 `observability.py`，`operations.py` 只保留控制面编排与兼容导出。前端路由按页面懒加载；Evals 的详情组件/展示函数位于 `features/evals/`，BotToolEditor 的模型与状态 hook 位于 `features/bots/tool-editor/`。
 - **设置**：控制台自身更新、控制台后端日志等全局维护入口。
 
+Gateway 实例的“运行中”必须同时满足 systemd active、非零 MainPID，以及 `/proc` 中解释器、
+完整 `-m chatcopilot run --bot <exact deployed BotSpec>` 参数和实例环境绑定一致。Gateway 日志
+来自精确 `chatcopilot@<id>.service` 的 journald；页面中的 Channel 状态只是日志或 provider
+探针证据，不等于真实 QQ 入站、模型成功、客户端展示或用户已读。NapCat 单独显示为外部
+OneBot provider，不与 AgentStrata Gateway 混称，也不由 Bot start/stop 隐式启动或停止。
+
 ## 任务可观测工作台
 
-机器人实例页使用“实例列表 + 实例详情”的主从工作台。实例列表消费后端提供的活动任务数、
-最近 24 小时失败数和最后活动时间，不在前端扫描任务推导运行状态。实例详情默认打开
-“任务流”，可直接选择任务并查看外部渠道、NapCat/OneBot/cc-connect、接入网关、ACP
-中间件、主 Agent、模型、工具/子 Agent/流程和回复交付八层证据。详情使用“任务流 / 运行状态 /
-能力与工具”三个同级页签；启动、停止、注册、更新、日志和诊断只集中在详情头部，运行状态页
-展示只读服务与实例信息，能力与工具页继续按 BotSpec surface 管理工具、Prompt、Agent 与上下文来源。
+任务流当前只支持 `runtime_kind=legacy` 的 ACP/adapter task artifact。Gateway 实例不会扫描、
+读取或删除这些旧记录：列表 API 返回 `task_flow_available=false` 与
+`gateway_task_flow_unavailable`，detail/events/flow/context/delete 返回同一稳定错误的 `409`；
+前端不轮询任务 API，只显示“受限任务流投影尚未接入”。systemd、Gateway MainPID、Channel
+与外部 OneBot provider 的状态检查仍正常工作。
+
+这是证据边界，不是 UI 占位。Gateway 原生任务流必须从私有 SQLite 中的 admitted ingress、
+authorization decision、session/run、event、outbox 与 provider receipt 做受限投影后才能开放；
+不能把旧 Relay/cc-connect/ACP 事件套成新 Gateway 证据。以下任务列表、八层转换、上下文、
+删除和轮询说明仅适用于 Feishu 等 legacy edge。
+
+Legacy 实例页使用“实例列表 + 实例详情”的主从工作台。实例列表消费后端提供的活动任务数、
+最近 24 小时失败数和最后活动时间，不在前端扫描任务推导运行状态。实例详情可选择任务并
+查看外部渠道、adapter、ACP、中间件、主 Agent、模型、工具/子 Agent/流程和回复交付证据。
+详情使用“任务流 / 运行状态 / 能力与工具”三个同级页签；启动、停止、注册、更新、日志和
+诊断只集中在详情头部。
 
 任务流中的每次转换均来自后端稳定投影，并标记为 `observed`、`correlated`、`declared`、
 `provider_opaque` 或 `missing`。连续工具/子 Agent/流程调用可在前端折叠，但展开后仍显示
@@ -141,9 +157,10 @@ secret、Authorization/Cookie、URI userinfo、Bearer/inline credential、私钥
 脱敏后的事件和上下文。显式改成非回环监听时，部署方必须另行提供可信代理认证和网络
 边界。HTTP operator 认证仍属于独立的控制面安全变更。
 
-QQ Relay 不产生准入凭据，也不判断用户或群名单。Console 任务流以 ACP 写入的
-`middleware.access_decision` 作为唯一准入结论，并结合 sender envelope 与 transport
-attestation 的身份事件解释消息来源；Relay 的结构化 @ 触发只属于传输层证据。
+Legacy QQ 合成 artifact 中的 Relay、sender envelope、transport attestation 与
+`middleware.access_decision` 只解释旧 ACP 链，不能成为 Gateway 准入或身份依据。Gateway
+实例的准入 owner 是 authorization layer；在 Console 原生读取其 SQLite receipt 前，页面保持
+不可用状态。
 
 ## NapCat WebUI 登录
 
@@ -275,7 +292,7 @@ WSL 终端直接运行不带参数的 `bash deploy/wsl/deploy_console.sh` 是全
 | 更新控制台 | `bash deploy/wsl/deploy_console.sh --update-only` |
 | 实例日志 | `/api/bots/{id}/logs/stream` SSE |
 | 控制台日志 | `/api/console/logs/stream` SSE |
-| 任务流 | `/api/tasks/{task_id}/stream` SSE |
+| Legacy 任务流 | `/api/bots/{id}/tasks` 与 `/api/bots/{id}/tasks/{task_id}/flow`；Gateway 返回明确 unavailable |
 | 实例诊断 | `bash deploy/wsl/dump.sh --instance <id>` |
 | NapCat 登录状态 | Console 只读检查；登录与恢复交给 `bash deploy/wsl/quickstart.sh --bot-id <id> --resume` |
 

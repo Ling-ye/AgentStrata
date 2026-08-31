@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol, runtime_checkable
 
 from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
+from chatcopilot.contracts.cancellation import CancellationProbe
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.prompt import PromptPlan
 
@@ -142,6 +143,7 @@ class AgentBackend(Protocol):
         task: AgentTask,
         *,
         on_event: EventSink,
+        cancellation: CancellationProbe | None = None,
     ) -> AgentResult: ...
 
     def close_session(self, session: BackendSessionRef) -> None: ...

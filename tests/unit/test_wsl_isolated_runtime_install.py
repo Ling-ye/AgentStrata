@@ -11,6 +11,7 @@ INSTALLER = REPO_ROOT / "deploy/wsl/install_wsl_env.sh"
 NODE_TOOLS = REPO_ROOT / "deploy/wsl/node-tools"
 START_SCRIPT = REPO_ROOT / "deploy/wsl/start.sh"
 LOAD_ENV_SCRIPT = REPO_ROOT / "deploy/wsl/_load_env.sh"
+BOOTSTRAP_SCRIPT = REPO_ROOT / "deploy/wsl/bootstrap_wsl.sh"
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -79,6 +80,8 @@ def test_installer_pins_isolated_minimal_runtimes() -> None:
     assert "NPM_CONFIG_USERCONFIG=/dev/null" in script
     assert "NPM_CONFIG_GLOBALCONFIG=/dev/null" in script
     assert "sync --frozen --python \"$PYTHON_VERSION\" --extra agent --extra acp --no-config" in script
+    assert "GatewayAcpAgent" in script
+    assert "GatewayAcpServer" not in script
 
 
 def test_node_tool_lock_contains_only_pinned_cc_connect() -> None:
@@ -171,7 +174,7 @@ def test_installer_scrubs_bot_and_model_secrets_before_child_commands(
     assert secret not in completed.stderr
 
 
-def test_start_executes_cc_connect_with_verified_private_node_without_system_node(
+def test_legacy_feishu_start_executes_cc_connect_with_private_node(
     tmp_path: Path,
 ) -> None:
     runtime = tmp_path / "runtime"
@@ -180,7 +183,10 @@ def test_start_executes_cc_connect_with_verified_private_node_without_system_nod
     for source in (START_SCRIPT, LOAD_ENV_SCRIPT):
         (deploy / source.name).write_bytes(source.read_bytes())
     _write_executable(deploy / "_stop_cc.sh", "#!/usr/bin/env bash\nexit 0\n")
-    _write_executable(deploy / "_start_qq_proxy.sh", "#!/usr/bin/env bash\nexit 0\n")
+    bot_spec = runtime / "bots" / "test-bot" / "bot.yaml"
+    bot_spec.parent.mkdir(parents=True)
+    bot_spec.write_text("id: test-bot\nplatform:\n  type: feishu\n", encoding="utf-8")
+    _write_executable(runtime / ".venv" / "bin" / "python", "#!/usr/bin/env bash\nexit 0\n")
 
     home = tmp_path / "home"
     cc_home = tmp_path / "cc-home"
@@ -231,6 +237,7 @@ def test_start_executes_cc_connect_with_verified_private_node_without_system_nod
             "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
             "CHATCOPILOT_HOME": str(runtime),
             "CHATCOPILOT_INSTANCE_ID": "test-bot",
+            "CHATCOPILOT_BOT_SPEC": str(bot_spec),
             "CHATCOPILOT_CC_HOME": str(cc_home),
             "CHATCOPILOT_CC_CONNECT_CONFIG_DIR": str(cc_home / ".cc-connect"),
             "CHATCOPILOT_CC_CONNECT_BIN": str(cc_entry),
@@ -253,6 +260,76 @@ def test_start_executes_cc_connect_with_verified_private_node_without_system_nod
     assert not system_marker.exists()
     assert not injection_marker.exists()
     assert (tmp_path / "private-node-argument").read_text(encoding="utf-8").strip() == str(cc_entry)
+
+
+def test_gateway_start_executes_python_host_without_node_or_cc_connect(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    deploy = runtime / "deploy" / "wsl"
+    deploy.mkdir(parents=True)
+    for source in (START_SCRIPT, LOAD_ENV_SCRIPT):
+        (deploy / source.name).write_bytes(source.read_bytes())
+    legacy_stop_marker = tmp_path / "legacy-stop-complete"
+    _write_executable(
+        deploy / "_stop_cc.sh",
+        "#!/usr/bin/env bash\n"
+        ': > "$LEGACY_STOP_MARKER"\n',
+    )
+
+    bot_spec = runtime / "bots" / "test-bot" / "bot.yaml"
+    bot_spec.parent.mkdir(parents=True)
+    bot_spec.write_text(
+        "id: test-bot\ngateway:\n  protocol_version: 1\nchannels:\n  qq:\n    type: qq_personal\n",
+        encoding="utf-8",
+    )
+    argv_file = tmp_path / "gateway-argv"
+    env_file = tmp_path / "gateway-env"
+    _write_executable(
+        runtime / ".venv" / "bin" / "python",
+        "#!/usr/bin/env bash\n"
+        '[ -f "$LEGACY_STOP_MARKER" ] || exit 98\n'
+        "printf '%s\\n' \"$@\" > \"$GATEWAY_ARGV_FILE\"\n"
+        "printf '%s\\n' \"${CHATCOPILOT_INSTANCE_ID:-}\" \"${CHATCOPILOT_BOT_SPEC:-}\" "
+        "\"${CHATCOPILOT_WORKSPACE_ROOT:-}\" > \"$GATEWAY_ENV_FILE\"\n",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(deploy / "start.sh"), "--apply-config"],
+        env={
+            **os.environ,
+            "HOME": str(tmp_path / "home"),
+            "CHATCOPILOT_HOME": str(runtime),
+            "CHATCOPILOT_INSTANCE_ID": "test-bot",
+            "CHATCOPILOT_BOT_SPEC": str(bot_spec),
+            "CHATCOPILOT_WORKSPACE_ROOT": str(tmp_path / "workspace"),
+            "CHATCOPILOT_LOG_DIR": str(tmp_path / "logs"),
+            "GATEWAY_ARGV_FILE": str(argv_file),
+            "GATEWAY_ENV_FILE": str(env_file),
+            "LEGACY_STOP_MARKER": str(legacy_stop_marker),
+        },
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert legacy_stop_marker.exists()
+    assert argv_file.read_text(encoding="utf-8").splitlines() == [
+        "-m",
+        "chatcopilot",
+        "run",
+        "--bot",
+        str(bot_spec),
+    ]
+    assert env_file.read_text(encoding="utf-8").splitlines() == [
+        "test-bot",
+        str(bot_spec),
+        str(tmp_path / "workspace"),
+    ]
+    assert not (tmp_path / "home" / ".local" / "share" / "agentstrata" / "node").exists()
+    assert not (tmp_path / "runtime" / ".cc-connect").exists()
 
 
 def test_dry_run_with_existing_node_does_not_fill_missing_archive_cache(
@@ -419,3 +496,49 @@ def test_same_version_fake_node_is_rejected_before_npm(tmp_path: Path) -> None:
 
     assert completed.returncode != 0
     assert "private Node failed the locked integrity check" in completed.stderr
+
+
+def test_bootstrap_rejects_legacy_qq_before_installing_node(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    deploy = runtime / "deploy" / "wsl"
+    deploy.mkdir(parents=True)
+    for source in (BOOTSTRAP_SCRIPT, LOAD_ENV_SCRIPT):
+        target = deploy / source.name
+        target.write_bytes(source.read_bytes())
+        target.chmod(0o755)
+
+    install_marker = tmp_path / "installer-called"
+    _write_executable(
+        deploy / "install_wsl_env.sh",
+        "#!/usr/bin/env bash\n"
+        ': > "$INSTALL_MARKER"\n',
+    )
+    bot_spec = runtime / "bots" / "legacy-qq" / "bot.yaml"
+    bot_spec.parent.mkdir(parents=True)
+    bot_spec.write_text(
+        "id: legacy-qq\nplatform:\n  type: qq\n",
+        encoding="utf-8",
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+
+    completed = subprocess.run(
+        ["bash", str(deploy / "bootstrap_wsl.sh"), "--skip-apply"],
+        cwd=runtime,
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "CHATCOPILOT_HOME": str(runtime),
+            "CHATCOPILOT_INSTANCE_ID": "legacy-qq",
+            "CHATCOPILOT_BOT_SPEC": str(bot_spec),
+            "INSTALL_MARKER": str(install_marker),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert completed.returncode == 78
+    assert "拒绝安装 legacy Node 运行时" in completed.stderr
+    assert not install_marker.exists()

@@ -27,6 +27,7 @@ def _parse_bot_yaml(path: Path) -> Optional[BotInstance]:
 
     top: Dict[str, str] = {}
     platform_type = ""
+    runtime_kind = "legacy"
     deploy: Dict[str, str] = {}
     section = ""
 
@@ -41,6 +42,8 @@ def _parse_bot_yaml(path: Path) -> Optional[BotInstance]:
             value = value.strip().strip('"').strip("'")
             if value:
                 top[section] = value
+            if section == "gateway":
+                runtime_kind = "gateway"
             continue
         # 缩进子项
         if raw[:1].isspace() and ":" in line:
@@ -49,6 +52,8 @@ def _parse_bot_yaml(path: Path) -> Optional[BotInstance]:
             value = value.strip().strip('"').strip("'")
             if section == "platform" and key == "type":
                 platform_type = value
+            elif section == "channels" and key == "qq":
+                platform_type = "qq"
             elif section == "deploy":
                 deploy[key] = value
 
@@ -60,6 +65,7 @@ def _parse_bot_yaml(path: Path) -> Optional[BotInstance]:
         platform=platform_type,
         deploy=deploy,
         home=Path.home(),
+        runtime_kind=runtime_kind,
     )
 
 

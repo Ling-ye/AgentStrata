@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# _stop_cc.sh — 优雅停止【当前实例】的 cc-connect（SIGTERM → 等 5s → SIGKILL）。
+# _stop_cc.sh — 清理【当前实例】遗留的 cc-connect/QQ Relay 进程。
+# 新 QQ Gateway 只在切换前调用它做精确实例清理；它不会启动 legacy 拓扑。
 #
 # 与早期版本的差异：
 # - 不再 pkill -f cc-connect 全屏匹配，避免多实例并行时把别的实例一起干掉。
@@ -65,22 +66,48 @@ cc_connect_pid_matches_instance() {
         && process_has_env "$pid" "CHATCOPILOT_INSTANCE_ID=$INSTANCE_ID"
 }
 
-# 先停 QQ @ Relay（若有）。按实例 pidfile 隔离，不误杀别的实例。
+# 先停 QQ @ Relay（若有）。pidfile 与兜底扫描都复检 argv、owner 和实例 env，
+# 即使旧 pidfile 丢失也不能让同实例 Relay 与新 Gateway 并存。
 QQ_PROXY_PIDFILE="$CC_HOME/qq-at-proxy.pid"
-if [ -r "$QQ_PROXY_PIDFILE" ]; then
-    _qpp="$(tr -d ' \t\r\n' < "$QQ_PROXY_PIDFILE" 2>/dev/null || true)"
-    if relay_pid_matches_instance "$_qpp"; then
-        step "停止 QQ @ Relay pid=$_qpp"
-        kill -TERM "$_qpp" 2>/dev/null || true
-        sleep 1
-        if relay_pid_matches_instance "$_qpp"; then
-            kill -KILL "$_qpp" 2>/dev/null || true
+list_instance_relay_pids() {
+    local pids="" pid
+    if [ -r "$QQ_PROXY_PIDFILE" ]; then
+        pid="$(tr -d ' \t\r\n' < "$QQ_PROXY_PIDFILE" 2>/dev/null || true)"
+        if relay_pid_matches_instance "$pid"; then
+            pids="$pid"
+        elif [ -n "$pid" ]; then
+            warn "忽略未绑定当前实例的残留 QQ Relay pid=$pid" >&2
         fi
-    elif [ -n "$_qpp" ]; then
-        warn "忽略未绑定当前实例的残留 QQ Relay pid=$_qpp"
     fi
-    rm -f -- "$QQ_PROXY_PIDFILE"
+    while IFS= read -r pid; do
+        [ -z "$pid" ] && continue
+        if relay_pid_matches_instance "$pid" \
+            && ! echo " $pids " | grep -Fq " $pid "; then
+            pids="${pids:+$pids }$pid"
+        fi
+    done < <(pgrep -f 'qq-at-proxy' 2>/dev/null || true)
+    echo "$pids"
+}
+
+RELAY_PIDS="$(list_instance_relay_pids)"
+if [ -n "$RELAY_PIDS" ]; then
+    step "停止 QQ @ Relay pid=$RELAY_PIDS"
+    for pid in $RELAY_PIDS; do
+        relay_pid_matches_instance "$pid" && kill -TERM "$pid" 2>/dev/null || true
+    done
+    sleep 1
+    RELAY_PIDS="$(list_instance_relay_pids)"
+    for pid in $RELAY_PIDS; do
+        relay_pid_matches_instance "$pid" && kill -KILL "$pid" 2>/dev/null || true
+    done
+    [ -z "$RELAY_PIDS" ] || sleep 1
+    RELAY_PIDS="$(list_instance_relay_pids)"
+    if [ -n "$RELAY_PIDS" ]; then
+        err "仍有 QQ Relay 进程未退出（实例 $CC_HOME）：$RELAY_PIDS"
+        exit 1
+    fi
 fi
+[ -f "$QQ_PROXY_PIDFILE" ] && rm -f -- "$QQ_PROXY_PIDFILE"
 
 # 列出本实例对应的 cc-connect PID 集合（去重 + 校验存活）
 list_instance_pids() {

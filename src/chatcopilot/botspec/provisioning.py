@@ -33,6 +33,10 @@ _SECRET_SUFFIXES = (
 )
 _FIELD_IDS = {
     "CHATCOPILOT_ADD_OWNER_IDS": "add_owner_ids",
+    "CHATCOPILOT_GATEWAY_PORT": "gateway_port",
+    "CHATCOPILOT_GATEWAY_STATE_ROOT": "gateway_state_root",
+    "CHATCOPILOT_GATEWAY_TOKEN": "gateway_token",
+    "CHATCOPILOT_QQ_ONEBOT_WS_URL": "qq_onebot_ws_url",
     "CHATCOPILOT_CODEX_BIN": "codex_bin",
     "CHATCOPILOT_CODEX_BOT_HOME": "codex_bot_home",
     "CHATCOPILOT_CODE_TASK_GITHUB_ACTOR": "code_task_github_actor",
@@ -229,7 +233,16 @@ def build_provision_plan(
         add_secret_spec(
             platform_field,
             add=add,
-            host_generated=starter and platform_field.host_generated,
+            host_generated=(
+                platform_field.host_generated
+                and (
+                    starter
+                    or (
+                        spec.gateway is not None
+                        and platform_field.env_key == spec.gateway.token_env
+                    )
+                )
+            ),
         )
 
     return ProvisionPlan(
@@ -247,7 +260,8 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         allowed_top_level = {
             "id",
             "display_name",
-            "platform",
+            "gateway",
+            "channels",
             "llm",
             "prompts",
             "tools",
@@ -265,9 +279,30 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
             if isinstance(context_raw, dict)
             else {}
         )
+        gateway_raw = raw.get("gateway", {})
+        channels_raw = raw.get("channels", {})
+        qq_raw = channels_raw.get("qq", {}) if isinstance(channels_raw, dict) else {}
         raw_shape_ok = (
             set(raw).issubset(allowed_top_level)
-            and _mapping_keys_at_most(raw, "platform", {"type", "adapter"})
+            and "platform" not in raw
+            and isinstance(gateway_raw, dict)
+            and set(gateway_raw).issubset(
+                {"protocol_version", "host", "port_env", "token_env", "state_root_env"}
+            )
+            and isinstance(channels_raw, dict)
+            and set(channels_raw).issubset({"qq"})
+            and isinstance(qq_raw, dict)
+            and set(qq_raw).issubset(
+                {
+                    "type",
+                    "provider",
+                    "channel_id",
+                    "endpoint_env",
+                    "access_token_env",
+                    "account_env",
+                    "mention_only_groups",
+                }
+            )
             and _mapping_keys_at_most(raw, "llm", {"chat"})
             and isinstance(chat_raw, dict)
             and set(chat_raw).issubset({"env_prefix"})
@@ -292,7 +327,6 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
                     "workspace_root",
                     "log_dir",
                     "env_file",
-                    "cc_connect_config_dir",
                     "project_name",
                 },
             )
@@ -300,7 +334,21 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         )
     return raw_shape_ok and (
         spec.platform.type == "qq"
-        and spec.platform.adapter == "qq_acp"
+        and spec.platform.adapter == "gateway"
+        and spec.gateway is not None
+        and spec.gateway.protocol_version == 1
+        and spec.gateway.host == "127.0.0.1"
+        and spec.gateway.port_env == "CHATCOPILOT_GATEWAY_PORT"
+        and spec.gateway.token_env == "CHATCOPILOT_GATEWAY_TOKEN"
+        and spec.gateway.state_root_env == "CHATCOPILOT_GATEWAY_STATE_ROOT"
+        and spec.channels.qq is not None
+        and spec.channels.qq.type == "qq_personal"
+        and spec.channels.qq.provider == "onebot_v11"
+        and spec.channels.qq.channel_id == "qq"
+        and spec.channels.qq.endpoint_env == "CHATCOPILOT_QQ_ONEBOT_WS_URL"
+        and spec.channels.qq.access_token_env == "QQ_ACCESS_TOKEN"
+        and spec.channels.qq.account_env == "QQ_ACCOUNT"
+        and spec.channels.qq.mention_only_groups is True
         and spec.llm.env_prefix == "CHATCOPILOT_CHAT"
         and spec.prompts.schema_version == 2
         and spec.prompts.identity == "prompts/identity.md"
@@ -342,8 +390,7 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         and spec.deploy.workspace_root == f"~/chatcopilot-workspaces/{spec.id}"
         and spec.deploy.log_dir == f"~/chatcopilot-logs/{spec.id}"
         and spec.deploy.env_file == f"~/.chatcopilot-{spec.id}.env"
-        and spec.deploy.cc_connect_config_dir
-        == f"~/.chatcopilot-runtime/{spec.id}/.cc-connect"
+        and spec.deploy.cc_connect_config_dir is None
         and spec.deploy.project_name == f"chatcopilot-{spec.id}"
         and spec.deploy.secret_json is None
         and spec.access.owner_only_project_access
@@ -484,6 +531,21 @@ def patch_local_env(
             effective_updates[item.env_key] = generated_value
             submitted_ids[item.env_key] = item.field
             preserved = [field for field in preserved if field != item.field]
+
+        if guided_qq:
+            gateway_token = str(candidate.get("CHATCOPILOT_GATEWAY_TOKEN", "") or "").strip()
+            onebot_token = str(candidate.get("QQ_ACCESS_TOKEN", "") or "").strip()
+            if gateway_token and gateway_token == onebot_token:
+                generated_gateway_token = adapter.materialize_host_generated_secret(
+                    "CHATCOPILOT_GATEWAY_TOKEN",
+                    "",
+                )
+                if not generated_gateway_token or generated_gateway_token == onebot_token:
+                    raise ProvisioningError("host_generated_secret_unavailable:gateway_token")
+                candidate["CHATCOPILOT_GATEWAY_TOKEN"] = generated_gateway_token
+                effective_updates["CHATCOPILOT_GATEWAY_TOKEN"] = generated_gateway_token
+                submitted_ids["CHATCOPILOT_GATEWAY_TOKEN"] = "gateway_token"
+                preserved = [field for field in preserved if field != "gateway_token"]
 
         effective_candidate = dict(candidate)
         for item in plan.fields:

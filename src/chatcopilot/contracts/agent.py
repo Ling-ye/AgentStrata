@@ -12,6 +12,7 @@ AgentStopReason: TypeAlias = Literal[
     "tool_call_cap",
     "timeout_cap",
     "llm_error",
+    "cancelled",
 ]
 
 

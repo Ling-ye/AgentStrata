@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import shutil
-from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
 from console.control import health, operations
 from console.control.instances import BotInstance
-
-_TMP_PARENT = Path(__file__).resolve().parents[2] / "scratch_unit_tests" / "console-health"
 
 
 class _EmptyTasks:
@@ -16,122 +12,98 @@ class _EmptyTasks:
         return []
 
 
-def _inst() -> BotInstance:
+def _inst(*, log_dir: str = "/tmp/chatcopilot-logs/sample-bot") -> BotInstance:
     return BotInstance(
         instance_id="sample-bot",
         bot_spec="bots/sample-bot/bot.yaml",
         display_name="SampleBot",
-        platform="feishu",
+        platform="qq",
+        runtime_kind="gateway",
         wsl_home="/tmp/ChatCopilot-sample-bot",
         workspace_root="/tmp/chatcopilot-workspace",
-        log_dir="/tmp/chatcopilot-logs/sample-bot",
+        log_dir=log_dir,
         env_file="/tmp/.chatcopilot-sample-bot.env",
-        cc_connect_config_dir="/tmp/.chatcopilot-runtime/sample-bot/.cc-connect",
-        cc_home="/tmp/.chatcopilot-runtime/sample-bot",
         project_name="chatcopilot-sample-bot",
     )
 
 
-def test_status_checks_keep_stale_cc_log_informational() -> None:
-    status = {
+def _gateway_status(**overrides: object) -> dict[str, object]:
+    value: dict[str, object] = {
         "is_deployed": True,
         "registered": True,
         "running": True,
-        "ws_connected": True,
-        "cc_log": "/tmp/cc-connect.log",
-        "cc_log_age_s": 900,
-        "cc_log_size": 1024,
+        "runtime_kind": "gateway",
+        "main_process_verified": True,
+        "channel_connected": True,
+        "runtime_log": "/tmp/gateway.log",
+        "runtime_log_age_s": 900,
+        "runtime_log_size": 1024,
         "error_count": 0,
     }
+    value.update(overrides)
+    return value
 
-    checks, reasons = operations._status_checks(status)
 
-    fresh = next(item for item in checks if item["name"] == "fresh_logs")
-    assert fresh["ok"] is True
-    assert fresh["severity"] == "info"
-    assert "Last updated 900s ago" in str(fresh["message"])
+def test_status_checks_keep_stale_gateway_log_informational() -> None:
+    checks, reasons = operations._status_checks(_gateway_status())
+
+    runtime_logs = next(item for item in checks if item["name"] == "runtime_logs")
+    assert runtime_logs["ok"] is True
+    assert runtime_logs["severity"] == "info"
+    assert "Last updated 900s ago" in str(runtime_logs["message"])
     assert reasons == []
 
 
-def test_log_signal_reports_qq_relay_upstream_failure() -> None:
-    log_dir = _TMP_PARENT / "logs" / "lingye-copilot-qq"
-    shutil.rmtree(_TMP_PARENT, ignore_errors=True)
-    cc_dir = log_dir / "cc-connect"
-    proxy_dir = log_dir / "qq-at-proxy"
-    cc_dir.mkdir(parents=True)
-    proxy_dir.mkdir(parents=True)
-    today = date.today().isoformat()
-    (cc_dir / f"{today}.log").write_text(
-        "\n".join(
-            [
-                'time=2026-06-26T15:42:13+08:00 level=INFO msg="qq: reconnected"',
-                'time=2026-06-26T15:42:13+08:00 level=ERROR msg="qq: ws read error, reconnecting..." error="websocket: close 1000 (normal)"',
-            ]
-        ),
+def test_log_signal_reports_gateway_channel_evidence(tmp_path: Path) -> None:
+    log_dir = tmp_path / "logs"
+    gateway_log = log_dir / "gateway" / "current.log"
+    gateway_log.parent.mkdir(parents=True)
+    gateway_log.write_text(
+        "onebot.connected\n[ERR] provider connection closed\n",
         encoding="utf-8",
     )
-    (proxy_dir / f"{today}.log").write_text(
-        '[2026-06-26 15:43:37] ERROR chatcopilot.platforms.qq.at_proxy | upstream connect failed (ws://127.0.0.1:3001): did not receive a valid HTTP response\n',
-        encoding="utf-8",
+
+    signal = operations._log_signal(_inst(log_dir=str(log_dir)))
+
+    assert signal["runtime_log"] == str(gateway_log)
+    assert signal["channel_connected"] is True
+    assert signal["error_count"] == 1
+    assert "provider connection closed" in str(signal["error_summary"])
+
+
+def test_status_checks_report_channel_failure_as_critical() -> None:
+    checks, reasons = operations._status_checks(
+        _gateway_status(channel_connected=False)
     )
-    inst = BotInstance(
-        instance_id="lingye-copilot-qq",
-        bot_spec="bots/lingye-copilot-qq/bot.yaml",
-        display_name="Lingye",
-        platform="qq",
-        log_dir=str(log_dir),
+
+    channel = next(item for item in checks if item["name"] == "channel_connection")
+    assert channel["ok"] is False
+    assert channel["severity"] == "critical"
+    assert any("Channel" in reason for reason in reasons)
+
+
+def test_status_checks_reject_unverified_gateway_mainpid() -> None:
+    checks, reasons = operations._status_checks(
+        _gateway_status(main_process_verified=False, running=False)
     )
 
-    try:
-        signal = operations._log_signal(inst)
-
-        assert signal["ws_connected"] is False
-        assert signal["error_count"] == 1
-        assert "websocket is closing immediately" in str(signal["error_summary"])
-        assert signal["qq_relay_error_count"] == 1
-        assert "cannot reach NapCat" in str(signal["qq_relay_error_summary"])
-    finally:
-        shutil.rmtree(_TMP_PARENT, ignore_errors=True)
+    gateway = next(item for item in checks if item["name"] == "gateway_main_process")
+    assert gateway["ok"] is False
+    assert gateway["severity"] == "critical"
+    assert any("exact instance Gateway" in reason for reason in reasons)
 
 
-def test_status_checks_report_qq_relay_failure_as_critical() -> None:
-    status = {
-        "is_deployed": True,
-        "registered": True,
-        "running": True,
-        "ws_connected": False,
-        "error_count": 1,
-        "error_summary": "QQ OneBot websocket is closing immediately.",
-        "qq_relay_error_count": 1,
-        "qq_relay_error_summary": "QQ @ Relay cannot reach NapCat OneBot upstream.",
-    }
-
-    checks, reasons = operations._status_checks(status)
-
-    relay = next(item for item in checks if item["name"] == "qq_relay")
-    assert relay["ok"] is False
-    assert relay["severity"] == "critical"
-    assert "cannot reach NapCat" in relay["message"]
-    assert any("QQ @ Relay" in reason for reason in reasons)
-
-
-def test_overview_does_not_mark_bot_unhealthy_for_stale_cc_log() -> None:
+def test_overview_does_not_mark_bot_unhealthy_for_stale_gateway_log() -> None:
     inst = _inst()
     status = {
+        **_gateway_status(),
         "instance_id": inst.instance_id,
         "display_name": inst.display_name,
         "platform": inst.platform,
-        "is_deployed": True,
-        "registered": True,
-        "running": True,
         "active_state": "active",
         "sub_state": "running",
-        "ws_connected": True,
-        "cc_log": "/tmp/cc-connect.log",
-        "cc_log_age_s": 900,
-        "cc_log_size": 1024,
-        "error_count": 0,
     }
+    status["checks"], status["reasons"] = operations._status_checks(status)
 
     with (
         patch("console.control.operations.status", return_value=status),
@@ -146,23 +118,17 @@ def test_overview_does_not_mark_bot_unhealthy_for_stale_cc_log() -> None:
     assert overview["issues"] == []
 
 
-def test_overview_still_reports_platform_connection_failure() -> None:
+def test_overview_reports_channel_connection_failure() -> None:
     inst = _inst()
     status = {
+        **_gateway_status(channel_connected=False),
         "instance_id": inst.instance_id,
         "display_name": inst.display_name,
         "platform": inst.platform,
-        "is_deployed": True,
-        "registered": True,
-        "running": True,
         "active_state": "active",
         "sub_state": "running",
-        "ws_connected": False,
-        "cc_log": "/tmp/cc-connect.log",
-        "cc_log_age_s": 900,
-        "cc_log_size": 1024,
-        "error_count": 0,
     }
+    status["checks"], status["reasons"] = operations._status_checks(status)
 
     with (
         patch("console.control.operations.status", return_value=status),
@@ -174,4 +140,4 @@ def test_overview_still_reports_platform_connection_failure() -> None:
     assert overview["summary"]["bots_unhealthy"] == 1
     assert overview["summary"]["issues_critical"] == 1
     assert overview["bots"][0]["health_color"] == "red"
-    assert overview["issues"][0]["title"] == "platform websocket is not connected."
+    assert overview["issues"][0]["title"] == "configured Channel is not connected."

@@ -53,6 +53,10 @@ from chatcopilot.contracts.agent_backend import (
     CODEX_ACCESS_WORKTREE,
     require_backend_capabilities,
 )
+from chatcopilot.contracts.cancellation import (
+    CancellationProbe,
+    CancellationRequested,
+)
 from chatcopilot.contracts.model_selection import CodeModelSelection
 from chatcopilot.contracts.tools import ToolDef, build_mcp_schema
 from chatcopilot.core.image_content import (
@@ -322,7 +326,10 @@ class CodexAgentBackend:
         task: AgentTask,
         *,
         on_event: EventSink,
+        cancellation: CancellationProbe | None = None,
     ) -> AgentResult:
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         state = self._resolve(session)
         buffered_delivery_events: list[Any] = []
         event_lock = threading.RLock()
@@ -352,6 +359,7 @@ class CodexAgentBackend:
                     state,
                     task,
                     on_event=emit_during_lease,
+                    cancellation=cancellation,
                 )
         except CredentialError as exc:
             self._clear_native_session(state)
@@ -378,7 +386,10 @@ class CodexAgentBackend:
         task: AgentTask,
         *,
         on_event: EventSink,
+        cancellation: CancellationProbe | None = None,
     ) -> AgentResult:
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         state.messages.append(
             {"role": "user", "content": _safe_task_ledger_message(task)}
         )
@@ -540,6 +551,13 @@ class CodexAgentBackend:
                 if relay_error:
                     raise RuntimeError(f"Codex relay audit failed: {relay_error}")
 
+            def poll_codex_process() -> None:
+                if cancellation is not None:
+                    cancellation.raise_if_cancelled()
+                drain_live_relay_events()
+                if cancellation is not None:
+                    cancellation.raise_if_cancelled()
+
             completed = run_codex_process(
                 command,
                 cwd=state.workdir,
@@ -547,8 +565,10 @@ class CodexAgentBackend:
                 timeout_seconds=self._runtime_config.routing.code_timeout_seconds,
                 env=subprocess_env,
                 on_stdout_line=projector.consume_line,
-                on_poll=drain_live_relay_events,
+                on_poll=poll_codex_process,
             )
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
             audit_error = self._emit_relay_tool_events(
                 turn_relay,
                 on_event,
@@ -577,6 +597,19 @@ class CodexAgentBackend:
                     "Codex CLI final response exceeded the bounded turn output limit"
                 )
             projector.finish(returncode=completed.returncode)
+        except CancellationRequested:
+            if turn_relay is not None and relay_generation is not None:
+                self._emit_relay_tool_events(
+                    turn_relay,
+                    on_event,
+                    generation=relay_generation,
+                    trace_id=trace_id,
+                    parent_span_id=llm_span_id,
+                    require_complete=False,
+                    settle_unknown=True,
+                    successful_operations=successful_operations,
+                )
+            raise
         except Exception as exc:  # noqa: BLE001
             audit_error = ""
             if turn_relay is not None and relay_generation is not None:
@@ -1218,7 +1251,7 @@ class CodexAgentBackend:
             state.prompt_plan,
             user_message=frame_task_message(task),
             execution_policy=self._execution_policy_prompt(state),
-            turn_context=task.turn_context,
+            turn_context=task.turn_context or "",
         )
 
     def _context_tool_schemas(
