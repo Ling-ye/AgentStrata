@@ -69,6 +69,8 @@ class SecretSpec:
     required: bool = True
     default: str | None = None
     description: str = ""
+    label: str = ""
+    host_generated: bool = False
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,8 @@ class SetupActionSpec:
     description: str = ""
     command: tuple[str, ...] = ()
     allowed_verbs: tuple[str, ...] = ("start",)
+    guided_surface: Literal["console", "terminal"] = "console"
+    default_verb: str = "start"
 
 
 ExternalCheckStatus = Literal[
@@ -262,6 +266,16 @@ class PlatformAdapter(abc.ABC):
     def validate_runtime_env(self, env: Mapping[str, str]) -> tuple[str, ...]:
         """校验平台运行配置；错误消息不得包含 secret 原文。"""
         return ()
+
+    def materialize_host_generated_secret(
+        self,
+        env_key: str,
+        current_value: str,
+    ) -> str:
+        """Return a valid host-owned secret, or fail when the adapter cannot create it."""
+
+        del env_key, current_value
+        raise ValueError("host_generated_secret_unsupported")
 
     def setup_actions(self) -> tuple[SetupActionSpec, ...]:
         """Optional platform setup actions for deployment consoles."""

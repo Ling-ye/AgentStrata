@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +24,46 @@ from chatcopilot.platforms.qq.gateway_health import (
 TOKEN = "test_" + ("a" * 32)
 BOT_ACCOUNT = "1" + "0001"
 GROUP_ID = "2" + "0002"
+
+
+def _gateway_test_root(tmpdir: str) -> Path:
+    """Create the minimal file tree needed to reach gateway preflight checks."""
+    source_root = Path(__file__).resolve().parents[2]
+    root = Path(tmpdir) / "repo"
+    scripts = root / "deploy" / "wsl"
+    scripts.mkdir(parents=True)
+    for name in ("qq_gateway.sh", "_load_env.sh"):
+        shutil.copy2(source_root / "deploy" / "wsl" / name, scripts / name)
+
+    bot_dir = root / "bots" / "test-assistant"
+    bot_dir.mkdir(parents=True)
+    (bot_dir / "bot.yaml").write_text(
+        "id: test-assistant\nplatform: qq\n",
+        encoding="utf-8",
+    )
+    local_env = bot_dir / "local.env"
+    local_env.write_text("QQ_ACCOUNT=10001\n", encoding="utf-8")
+    local_env.chmod(0o600)
+    return root
+
+
+def _fake_docker(bin_dir: Path, calls: Path) -> None:
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$FAKE_DOCKER_CALLS\"\n"
+        "case \"${1:-}\" in\n"
+        "  ps) printf '%s\\n' napcat-test-assistant ;;\n"
+        "  inspect)\n"
+        "    case \"$*\" in\n"
+        "      *.Config.Image*) printf '%s\\n' \"$NAPCAT_EXPECTED_IMAGE\" ;;\n"
+        "      *.Config.Env*) printf '%s\\n' \"NAPCAT_DISABLE_BYPASS=1\" \"NAPCAT_DISABLE_MULTI_PROCESS=1\" \"ACCOUNT=10001\" \"NODE_ENV=production\" ;;\n"
+        "      *.HostConfig.ShmSize*) printf '%s\\n' \"${FAKE_DOCKER_SHM_BYTES:-536870912}\" ;;\n"
+        "    esac ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
 
 
 def _external_env(*, group: bool = True) -> dict[str, str]:
@@ -75,6 +119,8 @@ class QQBoundaryValidationTests(unittest.TestCase):
         self.assertIn("bootstrap)", script)
         self.assertIn("restart)", script)
         self.assertIn("sync-token)", script)
+        self.assertIn("-m chatcopilot.botspec.qq_token_sync", script)
+        self.assertNotIn("sync-local-env", script)
         self.assertIn('docker restart "$CONTAINER"', script)
         self.assertIn('CHATCOPILOT_HOME="$REPO_ROOT"', script)
         self.assertIn('--bot "$REPO_ROOT/bots/$INSTANCE/bot.yaml"', script)
@@ -92,6 +138,169 @@ class QQBoundaryValidationTests(unittest.TestCase):
         self.assertIn('if ! run_external_check; then', script)
         self.assertIn('container_volume_name "/app/.config/QQ"', script)
         self.assertIn('container_volume_name "/app/napcat/config"', script)
+        self.assertIn(
+            'DEFAULT_NAPCAT_IMAGE="mlikiowa/napcat-docker@sha256:'
+            '0b4b24114089bfbbefd4729ad08b50a6b9d67044aec674809ede3cf7521c4431"',
+            script,
+        )
+        self.assertIn("container_image_matches", script)
+        self.assertGreaterEqual(script.count('"$NAPCAT_IMAGE"'), 3)
+        self.assertNotIn("mlikiowa/napcat-docker:latest", script)
+        self.assertIn('if ! docker run -d --name "$CONTAINER"', script)
+        self.assertIn('servers = network.setdefault("websocketServers", [])', script)
+        self.assertIn('"name": "agentstrata-websocket-server"', script)
+        self.assertIn('server["host"] = "0.0.0.0"', script)
+        self.assertIn('if ! docker start "$CONTAINER" >/dev/null; then', script)
+        self.assertIn("if ! recreate_container; then", script)
+        self.assertIn('err "创建 NapCat 容器失败：$CONTAINER"', script)
+
+    def test_gateway_script_rejects_mutable_image_override_before_docker(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        completed = subprocess.run(
+            [
+                "bash",
+                str(root / "deploy" / "wsl" / "qq_gateway.sh"),
+                "logs",
+                "--instance",
+                "lingye-copilot-qq",
+            ],
+            cwd=root,
+            env={**os.environ, "NAPCAT_IMAGE": "mlikiowa/napcat-docker:latest"},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("name@sha256:<64hex>", completed.stderr)
+
+    def test_gateway_rejects_malformed_account_before_any_docker_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _gateway_test_root(tmpdir)
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            calls = Path(tmpdir) / "docker.calls"
+            _fake_docker(bin_dir, calls)
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(root / "deploy" / "wsl" / "qq_gateway.sh"),
+                    "bootstrap",
+                    "--instance",
+                    "test-assistant",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "HOME": tmpdir,
+                    "CHATCOPILOT_ENV_FILE": str(Path(tmpdir) / "missing.env"),
+                    "QQ_ACCOUNT": "10001; docker run unexpected",
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                    "FAKE_DOCKER_CALLS": str(calls),
+                },
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            docker_calls = calls.read_text(encoding="utf-8") if calls.exists() else ""
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("QQ_ACCOUNT 必须是纯数字", completed.stderr)
+        self.assertEqual(docker_calls, "")
+
+    def test_gateway_rejects_invalid_shm_override_before_any_docker_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _gateway_test_root(tmpdir)
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            calls = Path(tmpdir) / "docker.calls"
+            _fake_docker(bin_dir, calls)
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(root / "deploy" / "wsl" / "qq_gateway.sh"),
+                    "bootstrap",
+                    "--instance",
+                    "test-assistant",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "HOME": tmpdir,
+                    "CHATCOPILOT_ENV_FILE": str(Path(tmpdir) / "missing.env"),
+                    "QQ_ACCOUNT": "10001",
+                    "NAPCAT_SHM_SIZE": "512mb; docker run unexpected",
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                    "FAKE_DOCKER_CALLS": str(calls),
+                },
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            docker_calls = calls.read_text(encoding="utf-8") if calls.exists() else ""
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("NAPCAT_SHM_SIZE 必须是正整数", completed.stderr)
+        self.assertEqual(docker_calls, "")
+
+    def test_gateway_recreates_when_container_shm_does_not_exactly_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _gateway_test_root(tmpdir)
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            calls = Path(tmpdir) / "docker.calls"
+            _fake_docker(bin_dir, calls)
+            python = root / ".venv" / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [ \"${1:-}\" = \"-\" ]; then\n"
+                "  payload=$(cat)\n"
+                "  case \"$payload\" in *urlparse*) printf '3001\\n' ;; esac\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+            expected_image = (
+                "mlikiowa/napcat-docker@sha256:"
+                "0b4b24114089bfbbefd4729ad08b50a6b9d67044aec674809ede3cf7521c4431"
+            )
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(root / "deploy" / "wsl" / "qq_gateway.sh"),
+                    "start",
+                    "--instance",
+                    "test-assistant",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "HOME": tmpdir,
+                    "CHATCOPILOT_ENV_FILE": str(Path(tmpdir) / "missing.env"),
+                    "QQ_ACCOUNT": "10001",
+                    "QQ_ACCESS_TOKEN": "a" * 32,
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                    "FAKE_DOCKER_CALLS": str(calls),
+                    "FAKE_DOCKER_SHM_BYTES": "268435456",
+                    "NAPCAT_EXPECTED_IMAGE": expected_image,
+                },
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            docker_calls = calls.read_text(encoding="utf-8")
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("重建容器需要可信交互式终端确认", completed.stderr)
+        self.assertIn("inspect napcat-test-assistant --format {{.HostConfig.ShmSize}}", docker_calls)
+        self.assertNotIn(" start napcat-test-assistant", f" {docker_calls}")
+        self.assertNotIn(" stop napcat-test-assistant", f" {docker_calls}")
+        self.assertNotIn(" rm napcat-test-assistant", f" {docker_calls}")
 
     def test_service_start_fails_closed_when_mention_proxy_fails(self) -> None:
         script = (

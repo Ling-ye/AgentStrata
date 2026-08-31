@@ -2,9 +2,9 @@
 # deploy_all.sh - WSL-first full deployment entry for AgentStrata.
 #
 # This script is intended to run from the WSL source checkout. It prepares the
-# source environment, reconciles shared Docker services, updates both bundled
-# bundled bot instance, registers its user systemd unit, starts it, and prints
-# final status checks.
+# source environment, reconciles shared Docker services, delegates each bundled
+# bot's complete register/restart/enable lifecycle to update_instance.sh, and
+# prints final status checks.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -29,7 +29,7 @@ Usage:
 
 Options:
   --skip-docker   Do not reconcile shared Docker services.
-  --skip-bots     Do not update/register/start bundled bot instances.
+  --skip-bots     Do not update bundled bot instances.
   --docker-timeout SECONDS
                   Limit shared Docker service startup; timeout is non-fatal (default: 180).
   --dry-run, -n   Print commands without changing the system.
@@ -158,45 +158,26 @@ echo
 ensure_repo
 check_secret_files
 
-info "step 1/5: prepare WSL source environment and Console"
+info "step 1/3: prepare WSL source environment and Console"
 run bash "$REPO_ROOT/deploy/wsl/install_wsl_env.sh" --with-console
 
 if [ "$SKIP_DOCKER" -eq 0 ]; then
-    info "step 2/5: reconcile shared Docker services"
+    info "step 2/3: reconcile shared Docker services"
     run_docker_start
 else
-    warn "step 2/5 skipped: shared Docker services"
+    warn "step 2/3 skipped: shared Docker services"
 fi
 
-UPDATED_BOTS=()
 if [ "$SKIP_BOTS" -eq 0 ]; then
-    info "step 3/5: update bundled bot instances"
+    info "step 3/3: update and activate bundled bot instances"
     for bot in "${BOTS[@]}"; do
-        if run bash "$REPO_ROOT/deploy/wsl/update_instance.sh" --instance "$bot"; then
-            UPDATED_BOTS+=("$bot")
-        else
-            warn "bot update failed, skipping register/start for this instance: $bot"
-            FAILURES=1
-        fi
-    done
-
-    info "step 4/5: register bundled bot systemd units"
-    for bot in "${UPDATED_BOTS[@]}"; do
-        if ! run bash "$REPO_ROOT/console/systemd/register.sh" --enable "$bot"; then
-            warn "systemd registration failed: $bot"
-            FAILURES=1
-        fi
-    done
-
-    info "step 5/5: start bundled bot services"
-    for bot in "${UPDATED_BOTS[@]}"; do
-        if ! run bash "$REPO_ROOT/console/scripts/ctl.sh" start "$bot"; then
-            warn "bot service start failed: $bot"
+        if ! run bash "$REPO_ROOT/deploy/wsl/update_instance.sh" --instance "$bot" --enable; then
+            warn "bot update/activation failed: $bot"
             FAILURES=1
         fi
     done
 else
-    warn "steps 3/5-5/5 skipped: bot instances"
+    warn "step 3/3 skipped: bot instances"
 fi
 
 status_checks

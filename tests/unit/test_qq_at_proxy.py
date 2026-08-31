@@ -213,7 +213,7 @@ class RelayStartupContractTests(unittest.TestCase):
         )
         timeout_block = proxy_script.split('log "Relay 在 ~10s 内未就绪', maxsplit=1)[1]
         self.assertIn('kill -TERM "$NEW_PID"', timeout_block)
-        self.assertIn('rm -f "$PIDFILE"', timeout_block)
+        self.assertIn('rm -f -- "$PIDFILE"', timeout_block)
 
     def test_relay_readiness_uses_the_validated_listener_host(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]

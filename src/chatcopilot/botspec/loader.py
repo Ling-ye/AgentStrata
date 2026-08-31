@@ -53,7 +53,7 @@ from chatcopilot.botspec.rag import validate_rag_sources
 from chatcopilot.botspec.wiki import validate_wiki_spec
 from chatcopilot.botspec.registry import known_tool_feature_names, known_tool_pack_names
 
-_BOT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
+_BOT_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 _ENV_PREFIX_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _SUPPORTED_DEPLOY_TARGETS = {"wsl", "wsl2"}
 _SUBAGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
@@ -89,6 +89,11 @@ _SUBAGENT_BUDGET_FIELDS = {
 _MISSING = object()
 
 
+def is_valid_bot_id(value: str) -> bool:
+    candidate = str(value or "")
+    return 2 <= len(candidate) <= 63 and _BOT_ID_RE.fullmatch(candidate) is not None
+
+
 def load_botspec(path: str | Path) -> BotSpec:
     """Load a BotSpec from YAML."""
 
@@ -100,7 +105,7 @@ def load_botspec(path: str | Path) -> BotSpec:
 def validate_botspec(spec: BotSpec) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
 
-    if not _BOT_ID_RE.match(spec.id):
+    if not is_valid_bot_id(spec.id):
         issues.append(
             ValidationIssue(
                 level="error",

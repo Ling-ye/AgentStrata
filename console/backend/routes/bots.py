@@ -175,10 +175,15 @@ def bot_provision_schema(instance_id: str):
 @router.post("/{instance_id}/provision/env")
 def bot_provision_env(instance_id: str, body: dict[str, Any]):
     inst = get_instance(instance_id)
+    if any(value is not None and not isinstance(value, str) for value in body.values()):
+        raise HTTPException(
+            status_code=400,
+            detail={"ok": False, "stage": "request", "error": "provision_body_must_be_flat_strings"},
+        )
     secrets = {str(key): "" if value is None else str(value) for key, value in body.items()}
     res = operations.write_instance_env(inst, secrets)
     if not res.get("ok"):
-        raise HTTPException(status_code=400, detail=res.get("error") or "write failed")
+        raise HTTPException(status_code=400, detail=res)
     return res
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -84,6 +85,7 @@ def test_bot_wrapper_uses_current_botspec_chat_env_prefix(tmp_path: Path) -> Non
             f"{extra_env}",
             encoding="utf-8",
         )
+        env_file.chmod(0o600)
         env = {
             key: value
             for key, value in os.environ.items()
@@ -151,3 +153,141 @@ def test_missing_env_guidance_uses_the_current_bot_template() -> None:
         "cp bots/lingye-copilot-qq/local.env.example "
         "bots/lingye-copilot-qq/local.env"
     ) in shared_example
+
+
+def test_bootstrap_reconciles_runtime_before_env_loader_executes_python(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    deploy = runtime / "deploy" / "wsl"
+    deploy.mkdir(parents=True)
+    for source in (BOOTSTRAP_SCRIPT, LOAD_ENV_SCRIPT):
+        target = deploy / source.name
+        target.write_bytes(source.read_bytes())
+        target.chmod(0o755)
+
+    bot_spec = runtime / "bots" / "test-bot" / "bot.yaml"
+    bot_spec.parent.mkdir(parents=True)
+    bot_spec.write_text("id: test-bot\n", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    runtime_env = home / ".chatcopilot-test-bot.env"
+    runtime_env.write_text("CHATCOPILOT_CHAT_API_KEY=test\n", encoding="utf-8")
+    runtime_env.chmod(0o600)
+
+    order_log = tmp_path / "order.log"
+    untrusted_marker = tmp_path / "untrusted-python-executed"
+    untrusted_python = runtime / ".venv" / "bin" / "python"
+    untrusted_python.parent.mkdir(parents=True)
+    untrusted_python.write_text(
+        "#!/usr/bin/env bash\n"
+        'touch "$UNTRUSTED_PYTHON_MARKER"\n'
+        'echo untrusted-python >> "$ORDER_LOG"\n'
+        "exit 97\n",
+        encoding="utf-8",
+    )
+    untrusted_python.chmod(0o755)
+
+    safe_python = tmp_path / "reconciled-python"
+    safe_python.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo reconciled-python >> "$ORDER_LOG"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    safe_python.chmod(0o755)
+    installer = deploy / "install_wsl_env.sh"
+    installer.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo installer >> "$ORDER_LOG"\n'
+        'cp "$SAFE_PYTHON" "$CHATCOPILOT_HOME/.venv/bin/python"\n'
+        'chmod 755 "$CHATCOPILOT_HOME/.venv/bin/python"\n',
+        encoding="utf-8",
+    )
+    installer.chmod(0o755)
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("CHATCOPILOT_")
+        and key != "AGENTSTRATA_DEPLOY_PYTHON"
+    }
+    env.update(
+        {
+            "HOME": str(home),
+            "CHATCOPILOT_HOME": str(runtime),
+            "CHATCOPILOT_INSTANCE_ID": "test-bot",
+            "CHATCOPILOT_BOT_SPEC": str(bot_spec),
+            "CHATCOPILOT_ENV_FILE": str(runtime_env),
+            "ORDER_LOG": str(order_log),
+            "SAFE_PYTHON": str(safe_python),
+            "UNTRUSTED_PYTHON_MARKER": str(untrusted_marker),
+        }
+    )
+
+    completed = subprocess.run(
+        ["bash", str(deploy / "bootstrap_wsl.sh"), "--skip-apply"],
+        cwd=runtime,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert not untrusted_marker.exists()
+    order = order_log.read_text(encoding="utf-8").splitlines()
+    assert order[0] == "installer"
+    assert order[1:] == [
+        "reconciled-python",
+        "reconciled-python",
+        "reconciled-python",
+    ]
+
+
+def test_runtime_env_loader_never_executes_runtime_or_bashrc_text(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    marker = tmp_path / "executed"
+    (home / ".bashrc").write_text(
+        f'export CHATCOPILOT_TEST_VALUE=$(touch "{marker}")\n',
+        encoding="utf-8",
+    )
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text(
+        f"export CHATCOPILOT_TEST_VALUE='$(touch {marker})'\n",
+        encoding="utf-8",
+    )
+    runtime_env.chmod(0o600)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{LOAD_ENV_SCRIPT}"; '
+            'ccp_load_env "CHATCOPILOT_TEST_VALUE"; '
+            'printf "%s" "$CHATCOPILOT_TEST_VALUE"',
+        ],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "CHATCOPILOT_HOME": str(REPO_ROOT),
+            "CHATCOPILOT_ENV_FILE": str(runtime_env),
+            "AGENTSTRATA_DEPLOY_PYTHON": sys.executable,
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    )
+
+    assert completed.stdout == f"$(touch {marker})"
+    assert not marker.exists()
+
+
+def test_qq_gateway_does_not_source_bot_owned_local_env() -> None:
+    script = (REPO_ROOT / "deploy/wsl/qq_gateway.sh").read_text(encoding="utf-8")
+
+    assert 'source "$LOCAL_CONFIG"' not in script
+    assert "provision_runtime_env" in script

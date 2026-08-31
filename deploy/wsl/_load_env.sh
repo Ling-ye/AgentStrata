@@ -15,15 +15,14 @@
 #   # 2) 仅加载 dump 输出根配置
 #   ccp_load_env "CHATCOPILOT_DUMP_ROOT"
 #
-#   # 3) 把 ~/.npm-global/bin / ~/.local/bin 幂等 prepend 到 PATH
+#   # 3) 为旧实例兼容路径和 ~/.local/bin 做幂等 PATH 补充
 #   ccp_prepend_user_bins
 #
 # 设计：
-# - 只从 ~/.bashrc + ~/.chatcopilot.env（推荐 chmod 600）抽 export 行；
-#   抽到独立 tmp 文件 source，避免 ~/.bashrc 里的副作用（alias / function / case）执行。
-# - ~/.chatcopilot.env 是机器人运行时的唯一权威配置源，最后加载，覆盖 shell
-#   里残留的旧 FEISHU_APP_ID / FEISHU_APP_SECRET，避免 cc-connect 和 Python notifier
-#   使用不同飞书应用。
+# - 只从 bot provision-env 生成的 per-instance 运行时 env 读取，不读 ~/.bashrc。
+# - 文件由 Python 的非执行 env parser 解析，再输出 shell-quoted 赋值；原文件从不 source。
+# - ~/.chatcopilot-<instance>.env 是机器人运行时的唯一权威配置源，覆盖
+#   当前 shell 里残留的旧配置，避免不同进程使用不同凭据。
 # - 任何步骤异常都 silently 跳过，让调用方继续——env 缺失仍能 fail-loud 在业务层报错。
 # - 函数名一律 ccp_ 前缀，避免污染调用脚本命名空间。
 # - 反复 source 安全（无副作用 & 幂等）。
@@ -146,7 +145,16 @@ ccp_apply_bot_deploy_config() {
 
     local _tmp
     _tmp="$(mktemp 2>/dev/null)" || return 0
-    python3 - "$_bot" <<'PY' > "$_tmp" 2>/dev/null || true
+    local _python="${AGENTSTRATA_DEPLOY_PYTHON:-${CCP_HOME_DEFAULT}/.venv/bin/python}"
+    case "$_python" in
+        /*) ;;
+        *) rm -f "$_tmp"; return 1 ;;
+    esac
+    if [ ! -x "$_python" ]; then
+        rm -f "$_tmp"
+        return 1
+    fi
+    "$_python" - "$_bot" <<'PY' > "$_tmp" 2>/dev/null || true
 import os
 import pwd
 import shlex
@@ -231,34 +239,65 @@ PY
 
 # ---------------------------------------------------------------------------
 # ccp_load_env <egrep_pattern>
-#   把匹配 ^[[:space:]]*export[[:space:]]+(<pattern>) 的行从已知 env 文件里
-#   抽出，临时 source 到当前 shell。pattern 是 grep -E 的扩展正则，括号 / 管道
-#   要按 ERE 写。
+#   用非执行 parser 读取运行时 env，只将匹配 pattern 的 key 以
+#   shell-quoted 形式投影到当前 shell。
 # ---------------------------------------------------------------------------
 ccp_load_env() {
     local pattern="${1:-}"
     if [ -z "$pattern" ]; then
         return 0
     fi
-    local _envfile _tmp
-    for _envfile in "$HOME/.bashrc" "$CCP_ENV_FILE"; do
-        [ -r "$_envfile" ] || continue
-        _tmp="$(mktemp 2>/dev/null)" || continue
-        grep -E "^[[:space:]]*export[[:space:]]+(${pattern})" "$_envfile" > "$_tmp" 2>/dev/null || true
-        if [ -s "$_tmp" ]; then
-            set -a
-            # shellcheck disable=SC1090
-            source "$_tmp"
-            set +a
-        fi
+    [ -r "$CCP_ENV_FILE" ] || return 0
+    local _tmp _python
+    _tmp="$(mktemp 2>/dev/null)" || return 0
+    _python="${AGENTSTRATA_DEPLOY_PYTHON:-$CCP_HOME_DEFAULT/.venv/bin/python}"
+    case "$_python" in
+        /*) ;;
+        *) rm -f "$_tmp"; return 0 ;;
+    esac
+    if [ ! -x "$_python" ]; then
         rm -f "$_tmp"
-    done
+        return 0
+    fi
+    CHATCOPILOT_ENV_LOAD_FILE="$CCP_ENV_FILE" \
+        CHATCOPILOT_ENV_LOAD_PATTERN="$pattern" \
+        PYTHONPATH="$CCP_HOME_DEFAULT/src${PYTHONPATH:+:$PYTHONPATH}" \
+        "$_python" - <<'PY' > "$_tmp" 2>/dev/null || true
+import os
+from pathlib import Path
+import re
+import shlex
+import stat
+
+from chatcopilot.core.settings import load_local_env_values
+
+path = Path(os.environ["CHATCOPILOT_ENV_LOAD_FILE"])
+info = path.lstat()
+if (
+    not stat.S_ISREG(info.st_mode)
+    or info.st_uid != os.getuid()
+    or info.st_nlink != 1
+    or stat.S_IMODE(info.st_mode) != 0o600
+):
+    raise SystemExit("unsafe runtime env")
+matcher = re.compile(rf"^(?:{os.environ['CHATCOPILOT_ENV_LOAD_PATTERN']})")
+for key, value in load_local_env_values(path, expand_home=True).items():
+    if matcher.search(key):
+        print(f"export {key}={shlex.quote(value)}")
+PY
+    if [ -s "$_tmp" ]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$_tmp"
+        set +a
+    fi
+    rm -f "$_tmp"
 }
 
 # ---------------------------------------------------------------------------
 # ccp_prepend_user_bins
-#   把 ~/.npm-global/bin 与 ~/.local/bin 幂等 prepend 到 PATH（cc-connect 装在
-#   .npm-global/bin/，非交互 shell 默认拿不到）。
+#   把旧实例的 ~/.npm-global/bin 与 ~/.local/bin 幂等 prepend 到 PATH；新手部署的
+#   cc-connect 使用 CHATCOPILOT_CC_CONNECT_BIN 指向项目私有固定版本。
 # ---------------------------------------------------------------------------
 ccp_prepend_user_bins() {
     local _user_bin
@@ -269,4 +308,31 @@ ccp_prepend_user_bins() {
         esac
     done
     export PATH
+}
+
+# ---------------------------------------------------------------------------
+# ccp_resolve_private_node
+#   Resolve and verify the exact project-managed Node binary used by
+#   cc-connect. Callers must fail closed when this function returns non-zero.
+# ---------------------------------------------------------------------------
+ccp_resolve_private_node() {
+    local _arch _expected_sha _node
+    case "$(uname -m)" in
+        x86_64|amd64)
+            _arch="x64"
+            _expected_sha="89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7"
+            ;;
+        aarch64|arm64)
+            _arch="arm64"
+            _expected_sha="23a5637c2470fde09fcc1acc77c1b92e04e3d7e3e6e80ff7df6f5831958d1477"
+            ;;
+        *) return 1 ;;
+    esac
+    _node="$HOME/.local/share/agentstrata/node/node-v24.20.0-linux-${_arch}/bin/node"
+    [ -f "$_node" ] && [ ! -L "$_node" ] && [ -x "$_node" ] || return 1
+    [ "$(stat -c '%u' "$_node" 2>/dev/null || true)" = "$(id -u)" ] || return 1
+    [ "$(stat -c '%h' "$_node" 2>/dev/null || true)" = "1" ] || return 1
+    [ "$(sha256sum "$_node" 2>/dev/null | awk '{print $1}')" = "$_expected_sha" ] || return 1
+    [ "$(env -u NODE_OPTIONS -u NODE_PATH "$_node" --version 2>/dev/null || true)" = "v24.20.0" ] || return 1
+    printf '%s\n' "$_node"
 }

@@ -39,6 +39,11 @@ if [ -z "$INSTANCE" ]; then
     err "必须指定 --instance <id>"
     exit 2
 fi
+if [ "${#INSTANCE}" -lt 2 ] || [ "${#INSTANCE}" -gt 63 ] \
+    || [[ ! "$INSTANCE" =~ ^[a-z][a-z0-9]*(-[a-z0-9]+)*$ ]]; then
+    err "--instance 必须为 2–63 字符、以小写字母开头的 kebab-case"
+    exit 2
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." >/dev/null 2>&1 && pwd)"
@@ -56,35 +61,79 @@ ccp_apply_bot_deploy_config
 ccp_load_env "QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
 
 LOCAL_CONFIG="$REPO_ROOT/bots/$INSTANCE/local.env"
-if [ -r "$LOCAL_CONFIG" ]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$LOCAL_CONFIG"
-    set +a
-fi
-
 CONTAINER="napcat-$INSTANCE"
 QQ_WS_URL="${QQ_WS_URL:-ws://127.0.0.1:3001}"
 QQ_WEBUI_PORT="${QQ_WEBUI_PORT:-6099}"
+DEFAULT_NAPCAT_IMAGE="mlikiowa/napcat-docker@sha256:0b4b24114089bfbbefd4729ad08b50a6b9d67044aec674809ede3cf7521c4431"
+NAPCAT_IMAGE="${NAPCAT_IMAGE:-$DEFAULT_NAPCAT_IMAGE}"
 NAPCAT_DISABLE_BYPASS="${NAPCAT_DISABLE_BYPASS:-1}"
 NAPCAT_DISABLE_MULTI_PROCESS="${NAPCAT_DISABLE_MULTI_PROCESS:-1}"
 NAPCAT_SHM_SIZE="${NAPCAT_SHM_SIZE:-512m}"
 NAPCAT_QQ_DATA_VOLUME="${NAPCAT_QQ_DATA_VOLUME:-napcat-${INSTANCE}-qq-data}"
 NAPCAT_CONFIG_VOLUME="${NAPCAT_CONFIG_VOLUME:-napcat-${INSTANCE}-config}"
 
-WS_PORT="$(
-    QQ_WS_URL="$QQ_WS_URL" python3 - <<'PY'
+NAPCAT_SHM_BYTES=""
+
+parse_napcat_shm_size() {
+    local value="$1" number_text suffix multiplier max_bytes="9223372036854775807"
+    if [[ ! "$value" =~ ^([1-9][0-9]*)([bBkKmMgG]?)$ ]]; then
+        err "NAPCAT_SHM_SIZE 必须是正整数，后缀只能是 b/k/m/g（例如 512m）。"
+        return 1
+    fi
+
+    number_text="${BASH_REMATCH[1]}"
+    suffix="${BASH_REMATCH[2],,}"
+    if [ "${#number_text}" -gt 19 ] \
+        || { [ "${#number_text}" -eq 19 ] && [[ "$number_text" > "$max_bytes" ]]; }; then
+        err "NAPCAT_SHM_SIZE 超出支持的字节范围。"
+        return 1
+    fi
+
+    case "$suffix" in
+        ""|b) multiplier=1 ;;
+        k) multiplier=1024 ;;
+        m) multiplier=1048576 ;;
+        g) multiplier=1073741824 ;;
+    esac
+    local number=$((10#$number_text))
+    if [ "$number" -gt $((max_bytes / multiplier)) ]; then
+        err "NAPCAT_SHM_SIZE 超出支持的字节范围。"
+        return 1
+    fi
+    NAPCAT_SHM_BYTES=$((number * multiplier))
+}
+
+if [[ ! "$NAPCAT_IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$ ]]; then
+    err "NAPCAT_IMAGE 必须是不可变的 name@sha256:<64hex> 引用。"
+    exit 1
+fi
+
+if [[ ! "${QQ_ACCOUNT:-}" =~ ^[0-9]+$ ]]; then
+    err "QQ_ACCOUNT 必须是纯数字的稳定 QQ ID。请先填写 bots/$INSTANCE/local.env，并运行：bash deploy/wsl/update_instance.sh --instance $INSTANCE"
+    exit 1
+fi
+
+if ! parse_napcat_shm_size "$NAPCAT_SHM_SIZE"; then
+    exit 1
+fi
+
+BOUNDARY_PY="$REPO_ROOT/.venv/bin/python"
+if [ "$ACTION" != "logs" ] && [ ! -x "$BOUNDARY_PY" ]; then
+    err "缺少项目隔离 Python：$BOUNDARY_PY。请先运行 install_wsl_env.sh。"
+    exit 1
+fi
+if [ -x "$BOUNDARY_PY" ]; then
+    WS_PORT="$(
+    QQ_WS_URL="$QQ_WS_URL" "$BOUNDARY_PY" - <<'PY'
 import os
 from urllib.parse import urlparse
 
 url = urlparse(os.environ.get("QQ_WS_URL", "ws://127.0.0.1:3001"))
 print(url.port or 3001)
 PY
-)"
-
-if { [ "$ACTION" = "bootstrap" ] || [ "$ACTION" = "sync-token" ] || [ "$ACTION" = "start" ] || [ "$ACTION" = "restart" ]; } && [ -z "${QQ_ACCOUNT:-}" ]; then
-    err "缺少 QQ_ACCOUNT。请先填写 bots/$INSTANCE/local.env，并运行：bash deploy/wsl/update_instance.sh --instance $INSTANCE"
-    exit 1
+    )"
+else
+    WS_PORT="3001"
 fi
 
 if [ "$ACTION" = "bootstrap" ] || [ "$ACTION" = "sync-token" ] || [ "$ACTION" = "start" ] || [ "$ACTION" = "restart" ] || [ "$ACTION" = "status" ]; then
@@ -95,18 +144,6 @@ if [ "$ACTION" = "bootstrap" ] || [ "$ACTION" = "sync-token" ] || [ "$ACTION" = 
     LOCAL_CONFIG_MODE="$(stat -c '%a' "$LOCAL_CONFIG" 2>/dev/null || printf '?')"
     if [ "$LOCAL_CONFIG_MODE" != "600" ]; then
         err "$LOCAL_CONFIG 权限必须为 0600（当前 $LOCAL_CONFIG_MODE）"
-        exit 1
-    fi
-fi
-
-BOUNDARY_PY=""
-if [ "$ACTION" = "bootstrap" ] || [ "$ACTION" = "sync-token" ] || [ "$ACTION" = "start" ] || [ "$ACTION" = "restart" ] || [ "$ACTION" = "status" ]; then
-    BOUNDARY_PY="$REPO_ROOT/.venv/bin/python"
-    if [ ! -x "$BOUNDARY_PY" ]; then
-        BOUNDARY_PY="$(command -v python3 || command -v python || true)"
-    fi
-    if [ -z "${BOUNDARY_PY:-}" ]; then
-        err "未找到 Python，无法校验 QQ OneBot 安全边界。"
         exit 1
     fi
 fi
@@ -192,24 +229,45 @@ container_env_matches() {
     local env_lines
     env_lines="$(docker inspect "$CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)"
     printf '%s\n' "$env_lines" | grep -Fxq "NAPCAT_DISABLE_BYPASS=$NAPCAT_DISABLE_BYPASS" \
-        && printf '%s\n' "$env_lines" | grep -Fxq "NAPCAT_DISABLE_MULTI_PROCESS=$NAPCAT_DISABLE_MULTI_PROCESS"
+        && printf '%s\n' "$env_lines" | grep -Fxq "NAPCAT_DISABLE_MULTI_PROCESS=$NAPCAT_DISABLE_MULTI_PROCESS" \
+        && printf '%s\n' "$env_lines" | grep -Fxq "ACCOUNT=$QQ_ACCOUNT" \
+        && printf '%s\n' "$env_lines" | grep -Fxq "NODE_ENV=production"
 }
 
-container_shm_is_sane() {
+container_image_matches() {
+    [ "$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)" = "$NAPCAT_IMAGE" ]
+}
+
+container_shm_matches_expected() {
     local shm_bytes
     shm_bytes="$(docker inspect "$CONTAINER" --format '{{.HostConfig.ShmSize}}' 2>/dev/null || printf '0')"
-    [ "${shm_bytes:-0}" -ge 268435456 ]
+    [[ "$shm_bytes" =~ ^[0-9]+$ ]] && [ "$shm_bytes" -eq "$NAPCAT_SHM_BYTES" ]
 }
 
 container_ports_are_loopback() {
-    local ws_host webui_host
-    ws_host="$(docker inspect "$CONTAINER" \
-        --format '{{(index (index .HostConfig.PortBindings "3001/tcp") 0).HostIp}}' \
-        2>/dev/null || true)"
-    webui_host="$(docker inspect "$CONTAINER" \
-        --format '{{(index (index .HostConfig.PortBindings "6099/tcp") 0).HostIp}}' \
-        2>/dev/null || true)"
-    [ "$ws_host" = "127.0.0.1" ] && [ "$webui_host" = "127.0.0.1" ]
+    local bindings
+    bindings="$(docker inspect "$CONTAINER" --format '{{json .HostConfig.PortBindings}}' 2>/dev/null)" \
+        || return 1
+    NAPCAT_PORT_BINDINGS="$bindings" NAPCAT_WS_PORT="$WS_PORT" \
+        NAPCAT_WEBUI_PORT="$QQ_WEBUI_PORT" "$BOUNDARY_PY" - <<'PY'
+import json
+import os
+
+bindings = json.loads(os.environ["NAPCAT_PORT_BINDINGS"])
+expected = {
+    "3001/tcp": os.environ["NAPCAT_WS_PORT"],
+    "6099/tcp": os.environ["NAPCAT_WEBUI_PORT"],
+}
+for container_port, host_port in expected.items():
+    entries = bindings.get(container_port)
+    if not isinstance(entries, list) or len(entries) != 1:
+        raise SystemExit(1)
+    entry = entries[0]
+    if not isinstance(entry, dict):
+        raise SystemExit(1)
+    if entry.get("HostIp") != "127.0.0.1" or entry.get("HostPort") != host_port:
+        raise SystemExit(1)
+PY
 }
 
 container_volume_name() {
@@ -219,8 +277,31 @@ container_volume_name() {
         2>/dev/null
 }
 
+container_volumes_are_persistent() {
+    local destination mount
+    for destination in /app/.config/QQ /app/napcat/config; do
+        mount="$(docker inspect "$CONTAINER" \
+            --format "{{range .Mounts}}{{if eq .Destination \"$destination\"}}{{.Type}}:{{.Name}}{{end}}{{end}}" \
+            2>/dev/null || true)"
+        case "$mount" in
+            volume:?*) ;;
+            *) return 1 ;;
+        esac
+    done
+}
+
+container_restart_policy_matches() {
+    [ "$(docker inspect "$CONTAINER" --format '{{.HostConfig.RestartPolicy.Name}}' 2>/dev/null || true)" = "unless-stopped" ]
+}
+
 container_needs_recreate() {
-    container_env_matches && container_shm_is_sane && container_ports_are_loopback && return 1
+    container_image_matches \
+        && container_env_matches \
+        && container_shm_matches_expected \
+        && container_ports_are_loopback \
+        && container_volumes_are_persistent \
+        && container_restart_policy_matches \
+        && return 1
     return 0
 }
 
@@ -234,7 +315,7 @@ create_container() {
     if [ -n "${NAPCAT_QUICK_PASSWORD_MD5:-}" ]; then
         quick_pw_args+=(-e "NAPCAT_QUICK_PASSWORD_MD5=$NAPCAT_QUICK_PASSWORD_MD5")
     fi
-    docker run -d --name "$CONTAINER" \
+    if ! docker run -d --name "$CONTAINER" \
         -e ACCOUNT="$QQ_ACCOUNT" \
         -e NODE_ENV=production \
         -e "NAPCAT_DISABLE_BYPASS=$NAPCAT_DISABLE_BYPASS" \
@@ -246,7 +327,10 @@ create_container() {
         -p "127.0.0.1:$WS_PORT:3001" \
         -p "127.0.0.1:$QQ_WEBUI_PORT:6099" \
         --restart unless-stopped \
-        mlikiowa/napcat-docker:latest >/dev/null
+        "$NAPCAT_IMAGE" >/dev/null; then
+        err "创建 NapCat 容器失败：$CONTAINER"
+        return 1
+    fi
 }
 
 recreate_container() {
@@ -256,24 +340,55 @@ recreate_container() {
     qq_data_volume="${qq_data_volume:-$NAPCAT_QQ_DATA_VOLUME}"
     napcat_config_volume="${napcat_config_volume:-$NAPCAT_CONFIG_VOLUME}"
 
-    warn "检测到旧 NapCat 容器不满足 crash guard 或回环端口绑定要求，将重建容器。"
+    warn "检测到旧 NapCat 容器的账户、镜像、端口、volume 或重启策略不符合当前配置。"
     warn "会保留 Docker volume：QQ 数据=$qq_data_volume，NapCat 配置=$napcat_config_volume。"
-    docker stop "$CONTAINER" >/dev/null 2>&1 || true
-    docker rm "$CONTAINER" >/dev/null
-    create_container "$qq_data_volume" "$napcat_config_volume"
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        err "重建容器需要可信交互式终端确认。"
+        return 1
+    fi
+    printf '确认停止并重建容器 %s？ [y/N] ' "$CONTAINER" > /dev/tty
+    local reply
+    IFS= read -r reply < /dev/tty || return 1
+    if [[ ! "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+        err "用户未确认重建 NapCat 容器。"
+        return 1
+    fi
+    if ! docker image inspect "$NAPCAT_IMAGE" >/dev/null 2>&1 \
+        && ! docker pull "$NAPCAT_IMAGE"; then
+        err "拉取固定 NapCat 镜像失败；旧容器保持运行。"
+        return 1
+    fi
+    if container_running && ! docker stop "$CONTAINER" >/dev/null; then
+        err "停止旧 NapCat 容器失败：$CONTAINER"
+        return 1
+    fi
+    if ! docker rm "$CONTAINER" >/dev/null; then
+        err "删除旧 NapCat 容器失败：$CONTAINER"
+        return 1
+    fi
+    if ! create_container "$qq_data_volume" "$napcat_config_volume"; then
+        return 1
+    fi
     ok "NapCat 容器已重建并启动：$CONTAINER"
 }
 
 ensure_bootstrap_container() {
     if container_exists; then
         if container_needs_recreate; then
-            recreate_container
+            if ! recreate_container; then
+                return 1
+            fi
         else
-            docker start "$CONTAINER" >/dev/null
+            if ! docker start "$CONTAINER" >/dev/null; then
+                err "启动 NapCat 容器失败：$CONTAINER"
+                return 1
+            fi
             ok "NapCat 回环容器已启动：$CONTAINER"
         fi
     else
-        create_container "$NAPCAT_QQ_DATA_VOLUME" "$NAPCAT_CONFIG_VOLUME"
+        if ! create_container "$NAPCAT_QQ_DATA_VOLUME" "$NAPCAT_CONFIG_VOLUME"; then
+            return 1
+        fi
         ok "NapCat 回环容器已创建并启动：$CONTAINER"
     fi
 }
@@ -298,8 +413,9 @@ generate_access_token() {
 sync_local_env_token() {
     printf '%s' "$QQ_ACCESS_TOKEN" \
         | PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
-            "$BOUNDARY_PY" -m chatcopilot.platforms.qq.token_sync \
-            sync-local-env --path "$LOCAL_CONFIG"
+            "$BOUNDARY_PY" -m chatcopilot.botspec.qq_token_sync \
+            --path "$LOCAL_CONFIG" --bot "$CHATCOPILOT_BOT_SPEC" \
+            --bots-root "$REPO_ROOT/bots"
 }
 
 provision_runtime_env() {
@@ -332,14 +448,35 @@ if not account:
     raise SystemExit("ACCOUNT is missing")
 path = Path(f"/app/napcat/config/onebot11_{account}.json")
 config = json.loads(path.read_text(encoding="utf-8"))
-servers = config.get("network", {}).get("websocketServers")
+network = config.setdefault("network", {})
+if not isinstance(network, dict):
+    raise SystemExit("network must be an object")
+servers = network.setdefault("websocketServers", [])
 if not isinstance(servers, list):
-    raise SystemExit("websocketServers is missing")
-targets = [server for server in servers if int(server.get("port", 0)) == 3001]
+    raise SystemExit("websocketServers must be an array")
+targets = [
+    server
+    for server in servers
+    if isinstance(server, dict) and int(server.get("port", 0)) == 3001
+]
 if not targets:
-    raise SystemExit("OneBot websocket server :3001 is missing")
+    server = {
+        "name": "agentstrata-websocket-server",
+        "enable": True,
+        "host": "0.0.0.0",
+        "port": 3001,
+        "messagePostFormat": "array",
+        "reportSelfMessage": False,
+        "token": token,
+        "enableForcePushEvent": True,
+        "debug": False,
+        "heartInterval": 30000,
+    }
+    servers.append(server)
+    targets = [server]
 for server in targets:
     server["enable"] = True
+    server["host"] = "0.0.0.0"
     server["token"] = token
 tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
 tmp.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -348,19 +485,25 @@ os.replace(tmp, path)
 print(json.dumps({"updated": len(targets), "tokenLength": len(token)}))
 '
 
-    docker stop "$CONTAINER" >/dev/null
+    if ! docker stop "$CONTAINER" >/dev/null; then
+        err "停止 NapCat 容器以同步 OneBot token 失败：$CONTAINER"
+        return 1
+    fi
     if ! printf '%s' "$QQ_ACCESS_TOKEN" \
         | docker run --rm -i \
             --entrypoint python3 \
             -e "ACCOUNT=$QQ_ACCOUNT" \
             -v "$napcat_config_volume:/app/napcat/config" \
-            mlikiowa/napcat-docker:latest \
+            "$NAPCAT_IMAGE" \
             -c "$python_script"; then
         err "写入 NapCat OneBot token 失败；正在恢复容器运行。"
         docker start "$CONTAINER" >/dev/null 2>&1 || true
         return 1
     fi
-    docker start "$CONTAINER" >/dev/null
+    if ! docker start "$CONTAINER" >/dev/null; then
+        err "OneBot token 已写入，但恢复 NapCat 容器运行失败：$CONTAINER"
+        return 1
+    fi
 }
 
 sync_gateway_token() {
@@ -391,12 +534,16 @@ sync_gateway_token() {
 
 case "$ACTION" in
     bootstrap)
-        ensure_bootstrap_container
+        if ! ensure_bootstrap_container; then
+            exit 1
+        fi
         warn "bootstrap 仅提供 localhost WebUI，不验证 token，也不启动 QQ Bot service。"
-        info "请在 http://localhost:$QQ_WEBUI_PORT 配置正向 WebSocket :3001 与强 Access Token。"
+        info "请只完成本地 WebUI 扫码；后续 sync-token 会创建并保护正向 WebSocket :3001。"
         ;;
     sync-token)
-        ensure_bootstrap_container
+        if ! ensure_bootstrap_container; then
+            exit 1
+        fi
         if ! sync_gateway_token; then
             exit 1
         fi
@@ -418,7 +565,7 @@ case "$ACTION" in
                 docker inspect "$CONTAINER" --format '{{.HostConfig.ShmSize}}' 2>/dev/null || printf '?'
             ) bytes"
             if container_needs_recreate; then
-                warn "容器不满足 crash guard 或回环端口绑定要求；运行 start 会自动重建。"
+                warn "容器镜像、crash guard 或回环端口绑定不符合当前配置；运行 start 会自动重建。"
                 status_rc=1
             fi
             if container_running; then
@@ -448,19 +595,26 @@ case "$ACTION" in
     start)
         if container_exists; then
             if container_needs_recreate; then
-                recreate_container
+                if ! recreate_container; then
+                    exit 1
+                fi
             else
-                docker start "$CONTAINER" >/dev/null
+                if ! docker start "$CONTAINER" >/dev/null; then
+                    err "启动 NapCat 容器失败：$CONTAINER"
+                    exit 1
+                fi
                 ok "NapCat 容器已启动：$CONTAINER"
             fi
         else
-            create_container "$NAPCAT_QQ_DATA_VOLUME" "$NAPCAT_CONFIG_VOLUME"
+            if ! create_container "$NAPCAT_QQ_DATA_VOLUME" "$NAPCAT_CONFIG_VOLUME"; then
+                exit 1
+            fi
             ok "NapCat 容器已创建并启动：$CONTAINER"
         fi
         info "Crash guard: NAPCAT_DISABLE_BYPASS=$NAPCAT_DISABLE_BYPASS, NAPCAT_DISABLE_MULTI_PROCESS=$NAPCAT_DISABLE_MULTI_PROCESS, shm=$NAPCAT_SHM_SIZE"
         info "首次登录：运行 docker logs -f $CONTAINER，用手机 QQ 扫码。"
         info "WebUI: http://localhost:$QQ_WEBUI_PORT"
-        info "请在 WebUI 启用正向 WebSocket，端口 3001；Access Token 与 QQ_ACCESS_TOKEN 保持一致。"
+        info "如需重新配置正向 WebSocket :3001，请运行 sync-token。"
         if ! probe_boundary_with_retry; then
             err "QQ OneBot 双向认证探针失败；容器保留运行以便通过 localhost WebUI 修正配置，但 gateway start 失败。"
             exit 1
@@ -470,13 +624,20 @@ case "$ACTION" in
     restart)
         if container_exists; then
             if container_needs_recreate; then
-                recreate_container
+                if ! recreate_container; then
+                    exit 1
+                fi
             else
-                docker restart "$CONTAINER" >/dev/null
+                if ! docker restart "$CONTAINER" >/dev/null; then
+                    err "重启 NapCat 容器失败：$CONTAINER"
+                    exit 1
+                fi
                 ok "NapCat 容器已重启：$CONTAINER"
             fi
         else
-            create_container "$NAPCAT_QQ_DATA_VOLUME" "$NAPCAT_CONFIG_VOLUME"
+            if ! create_container "$NAPCAT_QQ_DATA_VOLUME" "$NAPCAT_CONFIG_VOLUME"; then
+                exit 1
+            fi
             ok "NapCat 容器已创建并启动：$CONTAINER"
         fi
         info "Crash guard: NAPCAT_DISABLE_BYPASS=$NAPCAT_DISABLE_BYPASS, NAPCAT_DISABLE_MULTI_PROCESS=$NAPCAT_DISABLE_MULTI_PROCESS, shm=$NAPCAT_SHM_SIZE"

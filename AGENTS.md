@@ -11,6 +11,7 @@
 - 自动生成 commit 描述时用简短中文。
 - AI 不执行 `git commit` / `git push`；提交由用户完成。
 - 改完代码后尽量做快速验证，并同步更新受影响的 `README.md` 和 `AGENTS.md`。`README.md` 只做公开入口，`docs/project-history.md` 记录开发时间线、各阶段的初始设计、问题、架构优化和相关规格，禁止写入私有仓库坐标或运行值；`docs/operations.md` 集中日常命令，`docs/deployment.md` 只讲首次部署与边界，`deploy/wsl/README_WSL.md` 只讲异常排障；组件文档链接事实源，不复制运维流程。
+- QQ 新手首次部署的唯一推荐入口是 `deploy/wsl/quickstart.sh`；其他部署、Console 和运维脚本只提供可复用阶段或安装后操作，不复制另一套扫码、token 同步和实例生命周期编排。
 - 架构、公共契约、部署流程和数据迁移必须先引用或创建 `specs/<id>/spec.md`；普通修复与局部功能直接实现并测试。
 - `spec.md` frontmatter 只允许 `id/type/status/created`，正文固定为 `Summary/Design/Acceptance/Verification`；流程细则见 `docs/sdd.md`，结构检查跑 `python3 scripts/check_sdd_specs.py`。
 

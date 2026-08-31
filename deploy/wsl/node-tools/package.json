@@ -1,0 +1,12 @@
+{
+  "name": "agentstrata-node-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned Node.js tools used by AgentStrata deployments",
+  "allowScripts": {
+    "cc-connect@1.4.0-beta.3": true
+  },
+  "dependencies": {
+    "cc-connect": "1.4.0-beta.3"
+  }
+}

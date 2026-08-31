@@ -130,10 +130,47 @@ CC_LOG="$(_resolve_cc_log_for_status)"
 CC_HOME="${CHATCOPILOT_CC_HOME:-$CCP_CC_HOME_DEFAULT}"
 CC_CONFIG_DIR="${CHATCOPILOT_CC_CONNECT_CONFIG_DIR:-$CC_HOME/.cc-connect}"
 CC_CONF="$CC_CONFIG_DIR/config.toml"
-CC_CONNECT_BIN="${CHATCOPILOT_CC_CONNECT_BIN:-$HOME/.npm-global/bin/cc-connect}"
+CC_CONNECT_BIN="${CHATCOPILOT_CC_CONNECT_BIN:-$HOME/.local/share/agentstrata/node-tools/cc-connect-1.4.0-beta.3/node_modules/.bin/cc-connect}"
 CURSOR_MCP="$HOME/.cursor/mcp.json"
 MT_HOME="${CHATCOPILOT_HOME:-$CCP_HOME_DEFAULT}"
 WS_ROOT="${WORKSPACE_ROOT:-${CHATCOPILOT_WORKSPACE_ROOT:-$CCP_WORKSPACE_ROOT_DEFAULT}}"
+
+_status_bot_requires_code_worker() {
+    local python_bin="$MT_HOME/.venv/bin/python"
+    if [ ! -x "$python_bin" ]; then
+        python_bin="$(command -v python3 || true)"
+    fi
+    if [ -z "$python_bin" ] || ! "$python_bin" -c "import yaml" >/dev/null 2>&1; then
+        return 1
+    fi
+    CHATCOPILOT_STATUS_BOT_SPEC="$CHATCOPILOT_BOT_SPEC" "$python_bin" - <<'PY'
+import os
+from pathlib import Path
+
+import yaml
+
+path = Path(os.environ["CHATCOPILOT_STATUS_BOT_SPEC"])
+data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+if not isinstance(data, dict):
+    raise SystemExit(f"invalid BotSpec mapping: {path}")
+tools = data.get("tools") or {}
+if not isinstance(tools, dict):
+    raise SystemExit(f"invalid tools mapping in BotSpec: {path}")
+packs = tools.get("packs") or []
+if not isinstance(packs, list) or not all(
+    isinstance(pack, str) for pack in packs
+):
+    raise SystemExit(f"invalid tools.packs in BotSpec: {path}")
+print("1" if "dev.code_tasks" in packs else "0")
+PY
+}
+
+CODE_WORKER_REQUIRED="unknown"
+if _resolved_code_worker_required="$(_status_bot_requires_code_worker 2>/dev/null)"; then
+    case "$_resolved_code_worker_required" in
+        0|1) CODE_WORKER_REQUIRED="$_resolved_code_worker_required" ;;
+    esac
+fi
 
 bold() { printf "\n\033[1;34m%s\033[0m\n" "$*"; }
 ok()   { printf "  \033[1;32m✓\033[0m %s\n" "$*"; }
@@ -150,27 +187,44 @@ human_age() {
     fi
 }
 
+_status_process_has_env() {
+    local pid="$1" assignment="$2"
+    tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
+        | awk -v expected="$assignment" '$0 == expected { found = 1 } END { exit(found ? 0 : 1) }'
+}
+
+_status_cc_pid_matches_instance() {
+    local pid="${1:-}" node entry
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    [ "$(stat -c '%u' "/proc/$pid" 2>/dev/null || true)" = "$(id -u)" ] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    node="$(ccp_resolve_private_node 2>/dev/null)" || return 1
+    entry="$(readlink -f "$CC_CONNECT_BIN" 2>/dev/null)" || return 1
+    tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null \
+        | grep -Fxq "$node" || return 1
+    tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null \
+        | grep -Fxq "$entry" || return 1
+    _status_process_has_env "$pid" "HOME=$CC_HOME" \
+        && _status_process_has_env "$pid" "CHATCOPILOT_INSTANCE_ID=$CHATCOPILOT_INSTANCE_ID"
+}
+
 _filter_instance_pids() {
-    # 与 _stop_cc.sh 同款：仅返回 environ HOME=$CC_HOME 的 cc-connect PID；
-    # 多实例并行时避免把别的实例计入"本实例进程"。
+    # pidfile 和扫描候选均绑定精确 Node/cc-connect 参数、owner 与实例 env。
     local pidfile="$CC_HOME/cc-connect.pid"
     local pids=""
     if [ -r "$pidfile" ]; then
         local _p
         _p="$(tr -d ' \t\r\n' < "$pidfile" 2>/dev/null || true)"
-        if [ -n "$_p" ] && kill -0 "$_p" 2>/dev/null; then
+        if _status_cc_pid_matches_instance "$_p"; then
             pids="$_p"
         fi
     fi
-    local pid environ
+    local pid
     while IFS= read -r pid; do
         [ -z "$pid" ] && continue
-        if [ -r "/proc/$pid/environ" ]; then
-            environ="$(tr '\0' '\n' < /proc/$pid/environ 2>/dev/null || true)"
-            if echo "$environ" | grep -Fxq "HOME=$CC_HOME"; then
-                if ! echo " $pids " | grep -Fq " $pid "; then
-                    pids="${pids:+$pids }$pid"
-                fi
+        if _status_cc_pid_matches_instance "$pid"; then
+            if ! echo " $pids " | grep -Fq " $pid "; then
+                pids="${pids:+$pids }$pid"
             fi
         fi
     done < <(pgrep -x cc-connect 2>/dev/null || pgrep -f cc-connect 2>/dev/null || true)
@@ -260,7 +314,7 @@ print_status() {
         fi
         if grep -qE "EACCES: permission denied.*cc-connect|Auto-install failed|/usr/lib/node_modules/cc-connect" "$CC_LOG"; then
             bad "cc-connect failed while updating a root-owned global install"
-            dim "Fix: npm config set prefix $HOME/.npm-global && npm install -g cc-connect@beta && restart the instance"
+            dim "Fix: rerun deploy/wsl/install_wsl_env.sh, then restart the instance"
         fi
 
         echo
@@ -320,7 +374,15 @@ print_status() {
     dim "MT_HOME = $MT_HOME"
 
     bold "▶ 关键工具"
-    if [ "${CC_CONNECT_BIN#/}" != "$CC_CONNECT_BIN" ] && [ -x "$CC_CONNECT_BIN" ]; then
+    local private_node
+    private_node="$(ccp_resolve_private_node 2>/dev/null || true)"
+    if [ -n "$private_node" ]; then
+        ok "Node.js 24.20.0 -> $private_node"
+    else
+        bad "项目私有 Node.js 24.20.0 缺失或完整性校验失败"
+    fi
+    if [ -n "$private_node" ] \
+        && [ "${CC_CONNECT_BIN#/}" != "$CC_CONNECT_BIN" ] && [ -x "$CC_CONNECT_BIN" ]; then
         local resolved_cc
         resolved_cc="$(readlink -f "$CC_CONNECT_BIN")"
         case "$resolved_cc" in
@@ -330,7 +392,8 @@ print_status() {
             *)
                 ok "cc-connect -> $resolved_cc"
                 local cc_version
-                cc_version="$("$resolved_cc" --version 2>&1 | head -n 1)"
+                cc_version="$(PATH="$(dirname "$private_node"):$PATH" \
+                    "$private_node" "$resolved_cc" --version 2>&1 | head -n 1)"
                 dim "version=$cc_version"
                 if [ "$PLATFORM_TYPE_FOR_STATUS" = "qq" ] \
                     && [[ "$cc_version" != *"1.4.0-beta.3"* ]]; then
@@ -356,16 +419,20 @@ print_status() {
             esac
         fi
     done
-    if [ -n "${CHATCOPILOT_CODEX_BIN:-}" ] && [ -x "$CHATCOPILOT_CODEX_BIN" ]; then
-        ok "Codex -> $(readlink -f "$CHATCOPILOT_CODEX_BIN")"
-        dim "version=$("$CHATCOPILOT_CODEX_BIN" --version 2>&1 | head -n 1)"
-    else
-        warn "专用代码任务 Codex 可执行文件未配置或不可执行"
-    fi
-    if [ -n "${CHATCOPILOT_CODEX_BOT_HOME:-}" ]; then
-        ok "专用代码任务凭据目录已配置（路径已脱敏）"
-    else
-        warn "专用代码任务凭据未配置；真实代码任务将 fail-closed"
+    if [ "$CODE_WORKER_REQUIRED" = 1 ]; then
+        if [ -n "${CHATCOPILOT_CODEX_BIN:-}" ] && [ -x "$CHATCOPILOT_CODEX_BIN" ]; then
+            ok "Codex -> $(readlink -f "$CHATCOPILOT_CODEX_BIN")"
+            dim "version=$("$CHATCOPILOT_CODEX_BIN" --version 2>&1 | head -n 1)"
+        else
+            warn "专用代码任务 Codex 可执行文件未配置或不可执行"
+        fi
+        if [ -n "${CHATCOPILOT_CODEX_BOT_HOME:-}" ]; then
+            ok "专用代码任务凭据目录已配置（路径已脱敏）"
+        else
+            warn "专用代码任务凭据未配置；真实代码任务将 fail-closed"
+        fi
+    elif [ "$CODE_WORKER_REQUIRED" = 0 ]; then
+        dim "代码任务工具不适用（BotSpec 未启用 dev.code_tasks）"
     fi
     # ACP server 入口（取代 cursor-agent CLI）
     _venv_py="${CHATCOPILOT_ACP_PY:-$MT_HOME/.venv/bin/python}"
@@ -381,12 +448,18 @@ print_status() {
 
     bold "▶ 隔离代码任务 worker"
     _code_worker_unit="chatcopilot-code-worker@${CHATCOPILOT_INSTANCE_ID}.service"
-    if systemctl --user is-active --quiet "$_code_worker_unit" 2>/dev/null; then
-        ok "$_code_worker_unit active"
+    if [ "$CODE_WORKER_REQUIRED" = 0 ]; then
+        dim "$_code_worker_unit not_applicable（BotSpec 未启用 dev.code_tasks）"
+    elif [ "$CODE_WORKER_REQUIRED" = 1 ]; then
+        if systemctl --user is-active --quiet "$_code_worker_unit" 2>/dev/null; then
+            ok "$_code_worker_unit active"
+        else
+            bad "$_code_worker_unit inactive"
+        fi
     else
-        bad "$_code_worker_unit inactive"
+        bad "无法从 BotSpec 解析 dev.code_tasks；worker 状态未知"
     fi
-    if [ -x "$_venv_py" ]; then
+    if [ "$CODE_WORKER_REQUIRED" = 1 ] && [ -x "$_venv_py" ]; then
         CHATCOPILOT_STATUS_WS="$WS_ROOT" "$_venv_py" - <<'PY'
 import json
 import os

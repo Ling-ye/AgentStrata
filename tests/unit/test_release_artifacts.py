@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import builtins
 import csv
 import hashlib
 import importlib.util
@@ -8,6 +9,7 @@ import io
 import stat
 import sys
 import tarfile
+import types
 import zipfile
 from pathlib import Path
 
@@ -39,6 +41,37 @@ def _load_verifier():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_release_verifier_python310_fallback_uses_public_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = ROOT / "scripts" / "verify_release_artifacts.py"
+    assert "pip._vendor" not in path.read_text(encoding="utf-8")
+
+    fake_tomli = types.ModuleType("tomli")
+    fake_tomli.loads = lambda value: {"source": value}
+    original_import = builtins.__import__
+
+    def import_without_tomllib_or_pip(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "tomllib":
+            raise ModuleNotFoundError(name)
+        if name == "pip" or name.startswith("pip."):
+            raise AssertionError("release verifier must not import pip")
+        return original_import(name, globals, locals, fromlist, level)
+
+    module_name = "verify_release_artifacts_test_python310"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "tomli", fake_tomli)
+    monkeypatch.setitem(sys.modules, module_name, module)
+    monkeypatch.setattr(builtins, "__import__", import_without_tomllib_or_pip)
+    spec.loader.exec_module(module)
+
+    assert module.tomllib is fake_tomli
+    assert module.tomllib.loads("key = 'value'") == {"source": "key = 'value'"}
+    assert module.Requirement.__module__ == "packaging.requirements"
 
 
 def _load_synthetic_sdist_verifier():

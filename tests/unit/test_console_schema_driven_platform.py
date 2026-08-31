@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from console.control import operations
 from console.control.instances import BotInstance
 from chatcopilot.platforms.base import SecretSpec, SetupActionSpec
@@ -26,22 +28,55 @@ class FakeAdapter:
         )
 
 
-def test_provision_schema_is_adapter_driven(monkeypatch) -> None:
+def test_provision_schema_is_adapter_driven(monkeypatch, tmp_path: Path) -> None:
+    bot_dir = tmp_path / "bots" / "mock-bot"
+    bot_dir.mkdir(parents=True)
+    bot_yaml = bot_dir / "bot.yaml"
+    bot_yaml.write_text(
+        "id: mock-bot\n"
+        "display_name: MockBot\n"
+        "platform:\n"
+        "  type: mock\n"
+        "  adapter: mock_acp\n"
+        "llm:\n"
+        "  chat:\n"
+        "    env_prefix: CHATCOPILOT_MOCK\n"
+        "prompts:\n"
+        "  schema_version: 2\n"
+        "  identity: prompts/identity.md\n"
+        "  response_style: prompts/response-style.md\n"
+        "  refusal_style: prompts/refusal-style.md\n"
+        "tools:\n"
+        "  packs: []\n"
+        "  features: []\n"
+        "agents:\n"
+        "  backend: native\n",
+        encoding="utf-8",
+    )
     inst = BotInstance(
         instance_id="mock-bot",
-        bot_spec="bots/mock-bot/bot.yaml",
+        bot_spec=str(bot_yaml),
         display_name="MockBot",
         platform="mock",
     )
+    monkeypatch.setattr(operations, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(operations, "get_adapter", lambda platform: FakeAdapter())
 
     schema = operations.provision_schema(inst)
 
     assert schema["platform"] == "mock"
     assert schema["adapter_id"] == "mock_acp"
+    assert schema["schema_version"] == 2
+    assert schema["common_fields"][0]["env_key"] == "CHATCOPILOT_MOCK_API_KEY"
     assert [field["env_key"] for field in schema["fields"]] == ["MOCK_TOKEN", "MOCK_REGION"]
     assert schema["setup_actions"] == [
-        {"id": "mock-setup", "label": "Mock setup", "description": ""}
+        {
+            "id": "mock-setup",
+            "label": "Mock setup",
+            "description": "",
+            "guided_surface": "console",
+            "default_verb": "start",
+        }
     ]
 
 

@@ -27,11 +27,11 @@ from typing import Any, Iterable
 try:
     import tomllib  # type: ignore[attr-defined]
 except ModuleNotFoundError:  # Python 3.10
-    from pip._vendor import tomli as tomllib  # type: ignore[no-redef]
+    import tomli as tomllib  # type: ignore[no-redef]
 
-from pip._vendor.packaging.markers import Marker
-from pip._vendor.packaging.requirements import InvalidRequirement, Requirement
-from pip._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.markers import Marker
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
 
 
 ROOT = Path(__file__).resolve().parents[1]

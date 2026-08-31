@@ -118,6 +118,7 @@ def test_current_scan_allows_exact_public_and_placeholder_values(tmp_path: Path)
     contents = "\n".join(
         (
             "https://github.com/" + "Ling-ye" + "/AgentStrata",
+            "https://github.com/astral-sh/uv/releases/download/0.12.5/uv.tar.gz",
             "https://github.com/gitleaks/gitleaks/releases",
             "git@github.com:gitleaks/gitleaks.git",
             "ssh://git@github.com/gitleaks/gitleaks.git",
@@ -125,6 +126,8 @@ def test_current_scan_allows_exact_public_and_placeholder_values(tmp_path: Path)
             "https://raw.githubusercontent.com/gitleaks/gitleaks/master/README.md",
             "https://github.com/features/actions",
             "https://api.openai.com/v1/models?token=${TOKEN}",
+            "https://download.docker.com/linux/ubuntu/gpg",
+            "https://files.pythonhosted.org/packages/example.whl",
             "https://assets.example.invalid/file",
             "http://localhost:3000/health",
             "redis://localhost/0",

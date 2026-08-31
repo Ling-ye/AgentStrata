@@ -6,23 +6,20 @@
 # "可以 bash start.sh 启动"的状态。
 #
 # 用法：
-#   bash bootstrap_wsl.sh              # 默认：setup_wsl_user.sh + _apply_config.sh 全跑
+#   bash bootstrap_wsl.sh              # 默认：locked installer + _apply_config.sh 全跑
 #   bash bootstrap_wsl.sh --skip-apply # 只重建 venv，不渲染 cc-connect 配置
 #   bash bootstrap_wsl.sh -h | --help
 #
 # 设计要点：
 # - 仓库自我校验：如果 ~/ChatCopilot/ 不是合法仓库（缺关键文件），早死给清晰提示
-# - 机密 env 校验：~/.chatcopilot.env 不存在时不强行装东西，先给模板再退出
-# - 只编排 setup_wsl_user.sh / _apply_config.sh，自身不重复实现逻辑
+# - 运行时信任边界：先 frozen reconcile，再用项目 Python 解析 BotSpec 和 env
+# - 只编排 install_wsl_env.sh / _apply_config.sh，自身不重复实现逻辑
 # - 不启动服务：start.sh 是前台进程，必须在常驻 WSL 终端里手跑
 
 set -uo pipefail
 
 # shellcheck source=./_load_env.sh
 source "$(dirname "$0")/_load_env.sh"
-ccp_apply_bot_deploy_config
-ccp_load_env "FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|CHATCOPILOT_|WORKSPACE_ROOT"
-ccp_apply_bot_deploy_config
 
 # ----------------------------------------------------------------------------
 # CLI
@@ -60,9 +57,8 @@ err()  { printf "%s[ERR]%s %s\n"  "$C_ERR"  "$C_END" "$*" >&2; }
 # ----------------------------------------------------------------------------
 MT_HOME="${CHATCOPILOT_HOME:-$CCP_HOME_DEFAULT}"
 DEPLOY_DIR="$MT_HOME/deploy/wsl"
-SETUP_SCRIPT="$DEPLOY_DIR/setup_wsl_user.sh"
+INSTALL_SCRIPT="$DEPLOY_DIR/install_wsl_env.sh"
 APPLY_SCRIPT="$DEPLOY_DIR/_apply_config.sh"
-ENV_FILE="$CCP_ENV_FILE"
 
 echo
 printf "%s=== AgentStrata · WSL bootstrap ===%s\n" "$C_BOLD" "$C_END"
@@ -74,8 +70,8 @@ if [ ! -d "$MT_HOME" ]; then
     exit 1
 fi
 
-if [ ! -f "$SETUP_SCRIPT" ]; then
-    err "缺关键脚本：$SETUP_SCRIPT"
+if [ ! -f "$INSTALL_SCRIPT" ]; then
+    err "缺关键脚本：$INSTALL_SCRIPT"
     err "  仓库结构异常或没同步完整。建议重新 sync。"
     exit 1
 fi
@@ -87,6 +83,26 @@ if [ ! -f "$APPLY_SCRIPT" ] && [ "$SKIP_APPLY" -eq 0 ]; then
 fi
 
 step "仓库就位：$MT_HOME"
+
+# ----------------------------------------------------------------------------
+# 1) 重建 venv + 装 Python 依赖
+# ----------------------------------------------------------------------------
+echo
+step "[1/2] 通过 uv.lock 同步隔离 Python/Node/cc-connect 运行时"
+echo
+if ! bash "$INSTALL_SCRIPT" --no-system-packages --venv "$MT_HOME/.venv" --no-verify; then
+    err "install_wsl_env.sh 执行失败"
+    err "  请检查 uv/Node 制品下载、校验和或 uv.lock 同步错误"
+    exit 1
+fi
+ok "venv 与依赖已就位：$MT_HOME/.venv"
+
+# BotSpec 与运行时 env 的解析依赖项目 Python；只能在上面的 frozen
+# reconcile 成功后调用，避免执行实例目录中尚未校验的既存 venv。
+ccp_apply_bot_deploy_config
+ccp_load_env "FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|CHATCOPILOT_|WORKSPACE_ROOT"
+ccp_apply_bot_deploy_config
+ENV_FILE="$CCP_ENV_FILE"
 
 # 机密 env 校验
 if [ ! -f "$ENV_FILE" ]; then
@@ -146,20 +162,6 @@ if [ "$(stat -c %a "$ENV_FILE" 2>/dev/null || echo 600)" != "600" ]; then
     warn "$ENV_FILE 权限已收紧到 600"
 fi
 ok "机密 env 就位：$ENV_FILE"
-
-# ----------------------------------------------------------------------------
-# 1) 重建 venv + 装 Python 依赖
-# ----------------------------------------------------------------------------
-echo
-step "[1/2] 重建 Python 虚拟环境 + 安装依赖（约 2-5 分钟，pip cache 命中会快一些）"
-echo
-if ! bash "$SETUP_SCRIPT"; then
-    err "setup_wsl_user.sh 执行失败"
-    err "  常见原因：pip install 网络不通 / Python3 venv 模块缺失"
-    err "  排查：python3 -m venv --help"
-    exit 1
-fi
-ok "venv 与依赖已就位：$MT_HOME/.venv"
 
 # ----------------------------------------------------------------------------
 # 2) 渲染 cc-connect 配置

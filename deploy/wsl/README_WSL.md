@@ -6,7 +6,24 @@
 [`../../docs/deployment.md`](../../docs/deployment.md)。
 
 所有 Linux 命令默认在 AgentStrata 源仓根目录执行。不要把 Windows 进程的当前目录
-设为 `\\wsl.localhost\...` 后再启动项目命令。
+设为 `\\wsl.localhost\...` 后再启动项目命令。Windows 原生不是受支持的部署面；
+PowerShell 片段只负责进入 WSL 或唤醒发行版。
+
+## 源仓位于 `/mnt/c`
+
+引导部署会拒绝从 Windows 挂载文件系统运行，因为 Unix owner、`0600`、原子替换和
+systemd 使用的路径语义不能在那里得到可靠保证。保留原目录用于备份，在 WSL 的 Linux
+文件系统重新克隆后运行引导入口：
+
+```bash
+cd "$HOME"
+git clone https://github.com/Ling-ye/AgentStrata.git
+cd AgentStrata
+bash deploy/wsl/quickstart.sh
+```
+
+不要通过复制 `local.env` 到公共或 Windows 路径来迁移秘密；在新目录重新运行向导填写，
+或用受限权限的本机秘密传输方式单独迁移。
 
 ## 先收集证据
 
@@ -30,7 +47,17 @@ journalctl --user -u chatcopilot-code-worker@<id>.service -n 120 --no-page
 
 ## systemd user bus 不可用
 
-WSL 的 PID 1 是 systemd，不代表当前用户的 bus 可用：
+先检查 PID 1：
+
+```bash
+ps -p 1 -o comm=
+```
+
+若结果不是 `systemd`，按 [`../../docs/deployment.md#WSL-systemd`](../../docs/deployment.md#wsl-systemd)
+启用 systemd、从 Windows 执行 `wsl --shutdown`，重新打开 WSL 后再运行
+`bash deploy/wsl/quickstart.sh --resume`。不要尝试在当前 shell 内启动一个替代 init。
+
+PID 1 是 systemd 也不代表当前用户的 bus 可用：
 
 ```bash
 systemctl is-system-running
@@ -55,7 +82,7 @@ sudo systemctl start "user@$(id -u).service"
 systemctl --user is-system-running
 ```
 
-`install_wsl_env.sh` 与 `setup_wsl_root.sh` 会安装 `dbus-user-session`；
+引导安装与 `setup_wsl_root.sh` 会安装 `dbus-user-session`；
 `console/setup_console.sh` 在注册服务前会拒绝缺包或不可达的 user bus。
 
 ## 实例启动失败
@@ -86,12 +113,14 @@ bash status.sh --instance <id>
 按顺序检查：
 
 ```bash
-bash deploy/wsl/qq_gateway.sh status --instance lingye-copilot-qq
-bash deploy/wsl/qq_gateway.sh logs --instance lingye-copilot-qq
-systemctl --user status chatcopilot@lingye-copilot-qq.service --no-pager -l
-systemctl --user status chatcopilot-code-worker@lingye-copilot-qq.service --no-pager -l
-journalctl --user -u chatcopilot@lingye-copilot-qq.service -n 120 --no-page
+bash deploy/wsl/qq_gateway.sh status --instance <id>
+bash deploy/wsl/qq_gateway.sh logs --instance <id>
+systemctl --user status chatcopilot@<id>.service --no-pager -l
+journalctl --user -u chatcopilot@<id>.service -n 120 --no-page
 ```
+
+只有 BotSpec 启用 `dev.code_tasks` 时才检查 `chatcopilot-code-worker@<id>.service`；
+通用 starter 不运行 worker。
 
 常见信号：
 
@@ -111,17 +140,17 @@ journalctl --user -u chatcopilot@lingye-copilot-qq.service -n 120 --no-page
 
 ## cc-connect 用户态修复
 
-出现 `EACCES`、`Auto-install failed` 或 `/usr/lib/node_modules/cc-connect` 时：
+出现 `EACCES`、`Auto-install failed`、系统 Node 版本漂移或
+`/usr/lib/node_modules/cc-connect` 时，不要改用 root/global npm。引导部署使用固定版本的
+项目私有 Node 与 cc-connect；重新对账该用户级工具链：
 
 ```bash
-npm config set prefix ~/.npm-global
-export PATH=~/.npm-global/bin:$PATH
-npm install -g cc-connect@1.4.0-beta.3
-bash console/scripts/ctl.sh restart <id>
+bash deploy/wsl/install_wsl_env.sh
+bash deploy/wsl/update_instance.sh --instance <id>
 ```
 
-Bot 私有 env 中的 `CHATCOPILOT_CC_CONNECT_BIN` 应指向用户 npm prefix 下的固定版本
-可执行文件。不要让 systemd 依赖 root 全局 npm 安装。
+Bot 私有 env 中的 `CHATCOPILOT_CC_CONNECT_BIN` 应指向引导安装生成的项目私有固定版本
+可执行文件。不要修改 shell profile，也不要让 systemd 依赖 root 全局 npm 安装。
 
 ## code-worker 启动失败
 

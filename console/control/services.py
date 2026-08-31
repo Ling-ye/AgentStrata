@@ -14,15 +14,18 @@ from __future__ import annotations
 import json
 import os
 import re
-import socket
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Literal
-from urllib.parse import parse_qs, urlencode, urlparse
 
 from console.control.discovery import repo_root
+from chatcopilot.platforms.qq.webui_session import (
+    NapCatWebUiError,
+    check_login_status as check_napcat_login_status,
+    read_webui_session,
+)
 
 ServiceType = Literal["compose", "standalone", "embedded", "remote"]
 
@@ -485,156 +488,30 @@ def standalone_logs(svc: ServiceDef, instance_id: str) -> Iterator[str]:
 
 
 # ---------------------------------------------------------------------------
-# embedded 类型（agent 内嵌，仅状态展示）
+# NapCat WebUI（仅复用共享实现做只读登录状态检查）
 # ---------------------------------------------------------------------------
 
-_WEBUI_TOKEN_RE = re.compile(r"WebUi Token:\s*([^\s]+)")
-_WEBUI_URL_RE = re.compile(r"WebUi User Panel Url:\s*(https?://[^\s]+)")
 
-
-def _token_from_webui_url(url: str) -> str:
-    try:
-        values = parse_qs(urlparse(url).query).get("token", [])
-    except ValueError:
-        return ""
-    return values[-1].strip() if values else ""
-
-
-def _select_webui_url(urls: list[str]) -> str:
-    for url in reversed(urls):
-        if "[::]" not in url:
-            return url
-    return urls[-1] if urls else ""
-
-
-def standalone_webui_token(
+def standalone_webui_login_status(
     svc: ServiceDef,
     instance_id: str,
     *,
     host: str = "localhost",
     port: str = "6099",
 ) -> dict[str, Any]:
-    """Read the latest NapCat WebUI token from container logs on demand."""
+    """Authenticate in memory and return only the bounded QQ login projection."""
     container = _standalone_container(svc, instance_id)
-    info = _docker_inspect(container)
-    if info is None:
-        return {"ok": False, "error": f"NapCat container not found: {container}"}
-    running = bool(info.get("running", False))
-
     try:
-        cp = subprocess.run(
-            ["docker", "logs", "--tail", "300", container],
-            capture_output=True,
-            text=True,
-            timeout=10.0,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"ok": False, "error": f"failed to read NapCat logs: {exc}"}
-    if cp.returncode != 0:
-        return {
-            "ok": False,
-            "error": f"failed to read NapCat logs for {container}",
-        }
-
-    text = "\n".join(part for part in (cp.stdout, cp.stderr) if part)
-    urls = [m.group(1).strip() for m in _WEBUI_URL_RE.finditer(text)]
-    tokens = [m.group(1).strip() for m in _WEBUI_TOKEN_RE.finditer(text)]
-    url = _select_webui_url(urls)
-    token = _token_from_webui_url(url) or (tokens[-1] if tokens else "")
-
-    if not token:
-        return {
-            "ok": False,
-            "error": "NapCat WebUI token was not found in recent container logs; start NapCat and wait for WebUI startup output.",
-            "container": container,
-        }
-    try:
-        url = _local_webui_url(host, port, token)
-    except ValueError as exc:
-        return {"ok": False, "error": str(exc), "container": container}
-
+        session = read_webui_session(container, host=host, port=port)
+        status = check_napcat_login_status(session)
+    except NapCatWebUiError as exc:
+        return {"ok": False, "error": str(exc)}
     return {
         "ok": True,
-        "token": token,
-        "url": url,
-        "container": container,
-        "running": running,
-    }
-
-
-def _local_webui_url(host: str, port: str, token: str) -> str:
-    normalized_host = host.strip().lower()
-    if normalized_host not in {"localhost", "127.0.0.1", "::1"}:
-        raise ValueError("NapCat WebUI host must be loopback")
-    try:
-        normalized_port = int(port)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("NapCat WebUI port must be an integer") from exc
-    if not 1 <= normalized_port <= 65535:
-        raise ValueError("NapCat WebUI port must be between 1 and 65535")
-    rendered_host = f"[{normalized_host}]" if ":" in normalized_host else normalized_host
-    return (
-        f"http://{rendered_host}:{normalized_port}/webui?"
-        f"{urlencode({'token': token})}"
-    )
-
-
-def _webui_port_ready(host: str, port: str) -> bool:
-    try:
-        normalized_port = int(port)
-        with socket.create_connection((host, normalized_port), timeout=0.5):
-            return True
-    except (OSError, TypeError, ValueError):
-        return False
-
-
-def standalone_webui_session(
-    svc: ServiceDef,
-    instance_id: str,
-    *,
-    host: str = "localhost",
-    port: str = "6099",
-    timeout_seconds: float = 20.0,
-) -> dict[str, Any]:
-    """Bootstrap NapCat safely and return a ready, tokenized localhost WebUI URL."""
-    try:
-        _local_webui_url(host, port, "probe")
-    except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
-
-    bootstrap = _qq_gateway_action(instance_id, "bootstrap")
-    if not bootstrap.get("ok"):
-        return {
-            "ok": False,
-            "error": (
-                bootstrap.get("error")
-                or bootstrap.get("stderr")
-                or "NapCat WebUI bootstrap failed"
-            ),
-        }
-
-    deadline = time.monotonic() + timeout_seconds
-    last_error = "NapCat WebUI token is not available yet"
-    while True:
-        result = standalone_webui_token(
-            svc,
-            instance_id,
-            host=host,
-            port=port,
-        )
-        if result.get("ok"):
-            if _webui_port_ready(host, port):
-                return {**result, "running": True, "bootstrapped": True}
-            last_error = "NapCat WebUI port is not ready"
-        else:
-            last_error = str(result.get("error") or last_error)
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(0.25)
-
-    return {
-        "ok": False,
-        "error": f"{last_error}; retry WebUI login after NapCat finishes starting",
+        "logged_in": status.is_login,
+        "is_login": status.is_login,
+        "is_offline": status.is_offline,
+        "login_error": status.login_error,
     }
 
 

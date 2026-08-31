@@ -59,8 +59,18 @@ class FeishuAdapter(PlatformAdapter):
     # -- deploy -------------------------------------------------------------
     def required_secrets(self) -> tuple[SecretSpec, ...]:
         return (
-            SecretSpec("FEISHU_APP_ID", required=True, description="飞书自建应用 App ID（cli_ 开头）"),
-            SecretSpec("FEISHU_APP_SECRET", required=True, description="飞书自建应用 App Secret"),
+            SecretSpec(
+                "FEISHU_APP_ID",
+                required=True,
+                label="飞书 App ID",
+                description="飞书自建应用 App ID（cli_ 开头）",
+            ),
+            SecretSpec(
+                "FEISHU_APP_SECRET",
+                required=True,
+                label="飞书 App Secret",
+                description="飞书自建应用 App Secret",
+            ),
         )
 
     def render_cc_connect_section(self, env: Mapping[str, str]) -> str:

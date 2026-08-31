@@ -4,7 +4,8 @@
 # Runs the adaptive update path for an instance:
 #   1. Generate runtime env from bots/<id>/local.env.
 #   2. Sync code from the control repo to the instance wsl_home.
-#   3. Rebuild dependencies only when their inputs changed; otherwise render config.
+#   3. Reconcile the locked runtime on every update, rebuilding through bootstrap
+#      when dependency inputs changed and using an idempotent frozen sync otherwise.
 #   4. Restart chatcopilot@<id>; with --enable, enable it only after a successful start.
 set -uo pipefail
 
@@ -38,49 +39,22 @@ expand_path() {
 ensure_source_cli_env() {
     local venv_dir="$SRC/.venv"
     local venv_py="$venv_dir/bin/python"
-    local req="$SRC/src/chatcopilot/agent/requirements.txt"
-    local force_refresh="${1:-0}"
-    local rc
-
-    if [ ! -x "$venv_py" ]; then
-        echo "[update] source venv missing, creating: $venv_dir"
-        if ! command -v python3 >/dev/null 2>&1; then
-            echo "[ERR] 未找到 python3，无法创建 $venv_dir" >&2
-            return 1
-        fi
-        python3 -m venv "$venv_dir"
-        rc=$?
-        if [ "$rc" -ne 0 ]; then
-            echo "[ERR] 创建 venv 失败：$venv_dir" >&2
-            echo "      请确认 WSL 已安装 python3-venv，或检查 Python 环境。" >&2
-            return "$rc"
-        fi
+    local installer="$SRC/deploy/wsl/install_wsl_env.sh"
+    if [ ! -f "$installer" ]; then
+        echo "[ERR] locked runtime installer not found: $installer" >&2
+        return 1
     fi
-
-    if [ "$force_refresh" = 1 ] || ! "$venv_py" -c "import yaml" >/dev/null 2>&1; then
-        if [ "$force_refresh" = 1 ]; then
-            echo "[update] refreshing source CLI requirements for full update"
-        else
-            echo "[update] source venv missing required CLI dependencies, installing requirements"
-        fi
-        if [ ! -f "$req" ]; then
-            echo "[ERR] requirements not found: $req" >&2
-            return 1
-        fi
-        "$venv_py" -m pip install --quiet --upgrade pip
-        rc=$?
-        if [ "$rc" -ne 0 ]; then
-            echo "[ERR] pip upgrade failed in $venv_dir" >&2
-            echo "      请检查网络或 pip 源配置。" >&2
-            return "$rc"
-        fi
-        "$venv_py" -m pip install --quiet -r "$req"
-        rc=$?
-        if [ "$rc" -ne 0 ]; then
-            echo "[ERR] 依赖安装失败：$req" >&2
-            echo "      请检查网络或 pip 源配置。" >&2
-            return "$rc"
-        fi
+    echo "[update] reconciling source CLI from uv.lock"
+    bash "$installer" --no-system-packages --skip-cc-connect \
+        --venv "$venv_dir" --no-verify
+    local refresh_rc=$?
+    if [ "$refresh_rc" -ne 0 ]; then
+        echo "[ERR] locked source CLI sync failed: $venv_dir" >&2
+        return "$refresh_rc"
+    fi
+    if [ ! -x "$venv_py" ]; then
+        echo "[ERR] locked source CLI sync did not produce Python: $venv_py" >&2
+        return 1
     fi
 
     PY="$venv_py"
@@ -96,16 +70,41 @@ fail_stage() {
     exit "$rc"
 }
 
+read_code_worker_requirement() {
+    local python_bin="$1"
+    local bot_path="$2"
+    CHATCOPILOT_REQUIREMENT_BOT="$bot_path" "$python_bin" - <<'PY'
+import os
+from pathlib import Path
+
+import yaml
+
+path = Path(os.environ["CHATCOPILOT_REQUIREMENT_BOT"])
+data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+if not isinstance(data, dict):
+    raise SystemExit(f"invalid BotSpec mapping: {path}")
+tools = data.get("tools") or {}
+if not isinstance(tools, dict):
+    raise SystemExit(f"invalid tools mapping in BotSpec: {path}")
+packs = tools.get("packs") or []
+if not isinstance(packs, list) or not all(
+    isinstance(pack, str) for pack in packs
+):
+    raise SystemExit(f"invalid tools.packs in BotSpec: {path}")
+print("1" if "dev.code_tasks" in packs else "0")
+PY
+}
+
 # Compare the inputs that can change the installed Python environment. Source
-# code itself is loaded from the synchronized runtime tree, so it does not need
-# another pip install while the existing venv is healthy.
+# code itself is loaded from the synchronized runtime tree, so only the locked
+# dependency inputs trigger another frozen runtime sync.
 REBUILD_INPUTS=(
     "pyproject.toml"
-    "requirements.txt"
-    "src/chatcopilot/agent/requirements.txt"
-    "src/chatcopilot/middleware/acp/requirements.txt"
+    "uv.lock"
+    "deploy/wsl/install_wsl_env.sh"
+    "deploy/wsl/node-tools/package.json"
+    "deploy/wsl/node-tools/package-lock.json"
     "deploy/wsl/bootstrap_wsl.sh"
-    "deploy/wsl/setup_wsl_user.sh"
 )
 UPDATE_MODE="fast"
 UPDATE_REASON="runtime venv and dependency inputs are unchanged"
@@ -265,14 +264,10 @@ echo "[update] mode:     $UPDATE_MODE ($UPDATE_REASON)"
 
 if [ "$DRY_RUN" = 1 ]; then
     echo "[DRY-RUN] selected update mode: $UPDATE_MODE ($UPDATE_REASON)"
-    echo "[DRY-RUN] would ensure source venv: '$SRC/.venv'"
-    echo "[DRY-RUN] would create missing venv with: python3 -m venv '$SRC/.venv'"
-    echo "[DRY-RUN] would check: '$VENV_PY' -c 'import yaml'"
-    if [ "$UPDATE_MODE" = "full" ]; then
-        echo "[DRY-RUN] would refresh source CLI deps: '$VENV_PY' -m pip install --quiet -r '$SRC/src/chatcopilot/agent/requirements.txt'"
-    else
-        echo "[DRY-RUN] would install missing source CLI deps if required: '$VENV_PY' -m pip install --quiet -r '$SRC/src/chatcopilot/agent/requirements.txt'"
-    fi
+    echo "[DRY-RUN] BotSpec dev.code_tasks requirement: deferred until locked source CLI reconciliation"
+    echo "[DRY-RUN] would ensure source venv from: '$SRC/uv.lock'"
+    echo "[DRY-RUN] would run locked installer: bash '$SRC/deploy/wsl/install_wsl_env.sh' --no-system-packages --skip-cc-connect --venv '$SRC/.venv' --no-verify"
+    echo "[DRY-RUN] would reconcile source CLI with uv sync --frozen before executing '$VENV_PY'"
     echo "[DRY-RUN] would export: PYTHONPATH='$SRC/src\${PYTHONPATH:+:\$PYTHONPATH}'"
     echo "[DRY-RUN] would run: '$VENV_PY' -m chatcopilot bot provision-env --bot '$BOT_FOR_CMD'"
     if [ -n "$CHANGED_FILES" ]; then
@@ -283,6 +278,8 @@ if [ "$DRY_RUN" = 1 ]; then
     if [ "$UPDATE_MODE" = "full" ]; then
         echo "[DRY-RUN] would run full rebuild: CHATCOPILOT_BOT_SPEC='$INSTANCE_BOT' CHATCOPILOT_INSTANCE_ID='$INSTANCE' bash '$DST/deploy/wsl/bootstrap_wsl.sh'"
     else
+        echo "[DRY-RUN] would reconcile the locked runtime before rendering config"
+        echo "[DRY-RUN] would run: bash '$DST/deploy/wsl/install_wsl_env.sh' --no-system-packages --venv '$DST/.venv' --no-verify"
         echo "[DRY-RUN] would run fast config render: CHATCOPILOT_BOT_SPEC='$INSTANCE_BOT' CHATCOPILOT_INSTANCE_ID='$INSTANCE' bash '$DST/deploy/wsl/_apply_config.sh'"
     fi
     echo "[DRY-RUN] would run: bash '$SRC/console/scripts/ctl.sh' restart '$INSTANCE'"
@@ -293,15 +290,22 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 
 echo "[update] step 1/4: provision runtime env"
-if [ "$UPDATE_MODE" = "full" ]; then
-    ensure_source_cli_env 1
-else
-    ensure_source_cli_env
-fi
+ensure_source_cli_env
 rc=$?
 if [ "$rc" -ne 0 ]; then
     fail_stage "provision runtime env" "$rc"
 fi
+if ! REQUIRES_CODE_WORKER="$(read_code_worker_requirement "$PY" "$BOT_FOR_CMD")"; then
+    fail_stage "resolve code worker requirement" 1
+fi
+case "$REQUIRES_CODE_WORKER" in
+    0|1) ;;
+    *)
+        echo "[ERR] invalid code worker requirement for $BOT_FOR_CMD" >&2
+        fail_stage "resolve code worker requirement" 1
+        ;;
+esac
+echo "[update] code worker required: $REQUIRES_CODE_WORKER"
 validate_provision_bot_consistency
 (
     cd "$SRC" || exit 1
@@ -340,19 +344,26 @@ if [ "$UPDATE_MODE" = "full" ]; then
         fail_stage "rebuild environment" "$rc"
     fi
 else
-    echo "[update] step 3/4: render runtime config"
+    echo "[update] step 3/4: reconcile locked runtime and render config"
+    RUNTIME_INSTALLER="$DST/deploy/wsl/install_wsl_env.sh"
     APPLY_CONFIG="$DST/deploy/wsl/_apply_config.sh"
+    if [ ! -f "$RUNTIME_INSTALLER" ]; then
+        echo "[ERR] locked runtime installer not found after sync: $RUNTIME_INSTALLER" >&2
+        fail_stage "reconcile runtime" 1
+    fi
     if [ ! -f "$APPLY_CONFIG" ]; then
         echo "[ERR] config render script not found after sync: $APPLY_CONFIG" >&2
         fail_stage "render runtime config" 1
     fi
     (
         cd "$DST" || exit 1
+        bash "$RUNTIME_INSTALLER" --no-system-packages --venv "$DST/.venv" --no-verify \
+            || exit $?
         CHATCOPILOT_BOT_SPEC="$INSTANCE_BOT" CHATCOPILOT_INSTANCE_ID="$INSTANCE" bash "$APPLY_CONFIG"
     )
     rc=$?
     if [ "$rc" -ne 0 ]; then
-        fail_stage "render runtime config" "$rc"
+        fail_stage "reconcile runtime and render config" "$rc"
     fi
 fi
 
@@ -390,17 +401,34 @@ if ! systemctl --user is-active --quiet "$UNIT"; then
     echo "[ERR] service is not active after restart: $UNIT" >&2
     fail_stage "restart service" 1
 fi
-if [ "$ENABLE_SERVICE" = 1 ]; then
-    if ! systemctl --user enable "$UNIT" "$CODE_WORKER_UNIT"; then
-        echo "[ERR] services started but could not be enabled: $UNIT / $CODE_WORKER_UNIT" >&2
-        fail_stage "enable services" 1
+if [ "$REQUIRES_CODE_WORKER" = 1 ]; then
+    if ! systemctl --user cat "$CODE_WORKER_UNIT" >/dev/null 2>&1; then
+        echo "[ERR] required code worker unit is not registered: $CODE_WORKER_UNIT" >&2
+        fail_stage "restart code worker" 1
     fi
-    echo "[OK] services enabled after successful restart: $UNIT / $CODE_WORKER_UNIT"
-fi
-if systemctl --user cat "$CODE_WORKER_UNIT" >/dev/null 2>&1; then
     if ! systemctl --user restart "$CODE_WORKER_UNIT"; then
         echo "[ERR] code worker failed to restart: $CODE_WORKER_UNIT" >&2
         fail_stage "restart code worker" 1
+    fi
+    if ! systemctl --user is-active --quiet "$CODE_WORKER_UNIT"; then
+        echo "[ERR] code worker is not active after restart: $CODE_WORKER_UNIT" >&2
+        fail_stage "restart code worker" 1
+    fi
+fi
+if [ "$ENABLE_SERVICE" = 1 ]; then
+    if ! systemctl --user enable "$UNIT"; then
+        echo "[ERR] service started but could not be enabled: $UNIT" >&2
+        fail_stage "enable services" 1
+    fi
+    if [ "$REQUIRES_CODE_WORKER" = 1 ] \
+        && ! systemctl --user enable "$CODE_WORKER_UNIT"; then
+        echo "[ERR] code worker started but could not be enabled: $CODE_WORKER_UNIT" >&2
+        fail_stage "enable services" 1
+    fi
+    if [ "$REQUIRES_CODE_WORKER" = 1 ]; then
+        echo "[OK] services enabled after successful restart: $UNIT / $CODE_WORKER_UNIT"
+    else
+        echo "[OK] service enabled after successful restart: $UNIT (code worker not applicable)"
     fi
 fi
 
