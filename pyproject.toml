@@ -42,7 +42,7 @@ dependencies = [
 [project.optional-dependencies]
 agent = [
     "openai>=1.40.0",
-    "mcp>=1.27,<2",
+    "mcp>=1.27,<3",
     "langgraph>=1.2,<2",
 ]
 acp = [
