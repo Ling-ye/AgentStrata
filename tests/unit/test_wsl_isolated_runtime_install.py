@@ -66,6 +66,8 @@ def test_installer_pins_isolated_minimal_runtimes() -> None:
     assert 'sync --frozen --python "$PYTHON_VERSION" --extra agent --extra acp' in script
     assert 'python install --no-bin "$PYTHON_VERSION"' in script
     assert 'RUNTIME_ROOT="${AGENTSTRATA_RUNTIME_ROOT:-$HOME/.local/share/agentstrata}"' in script
+    assert "--retry 5 --retry-all-errors" in script
+    assert "--retry-delay 2 --retry-max-time 180" in script
     assert "npm install -g" not in script
     assert "npm config set prefix" not in script
     assert "nodesource.com" not in script.lower()

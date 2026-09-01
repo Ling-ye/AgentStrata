@@ -193,14 +193,18 @@ bash scripts/verify_guided_runtime_matrix.sh --all
 | 私有 env | `bots/<id>/local.env` | 操作者；mode `0600`；不进 Git |
 | 实例副本 | BotSpec 的 `deploy.wsl_home` | 部署脚本 |
 | 运行时 env | `~/.chatcopilot-<id>.env` | `provision-env` |
-| workspace | `~/chatcopilot-workspaces/<id>` | 运行时 |
+| workspace | `~/chatcopilot-workspaces/<id>` | `provision-env` 建目录；运行时使用 |
+| 私有 Wiki | BotSpec `context.wiki.root_env` 指向的目录 | `provision-env` 建目录；Agent runtime 使用 |
 | 日志 | systemd journal；可选 `~/chatcopilot-logs/<id>/gateway` | Gateway runtime |
-| Gateway 状态 | BotSpec `gateway.state_root_env` 指向的私有目录 | Gateway |
+| Gateway 状态 | BotSpec `gateway.state_root_env` 指向的私有目录 | `provision-env` 建目录；Gateway 写状态 |
 
 `local.env` 是机器私有事实源。配置写入先在内存中构造并验证候选，只修改受管字段，保留
 未知键和注释，再用同目录 mode `0600` 临时文件原子替换；符号链接、非普通文件、错误 owner
 和多硬链接会被拒绝。`provision-env` 不 source 或执行文件，只解析简单赋值，并且只确定性
-展开值开头的 `~`、`$HOME` 或 `${HOME}`。不要手工修改实例副本或运行时 env。
+展开值开头的 `~`、`$HOME` 或 `${HOME}`。对 Gateway 实例，实际执行还会创建并复核
+workspace、Gateway 状态目录和已启用的私有 Wiki：新目录使用 mode `0700`，路径中的符号链接、
+错误 owner、可被 group/world 写入的 workspace/Wiki，以及非 `0700` 的 Gateway 状态目录都会被拒绝。
+`--dry-run` 不创建这些目录或任何文件。不要手工修改实例副本或运行时 env。
 
 BotSpec、示例和文档不得包含真实 API Key、平台 token、账号/群号、私有端点或机器绝对路径。
 第三方 MCP/Skill 不会由引导流程自动下载、安装或启用。

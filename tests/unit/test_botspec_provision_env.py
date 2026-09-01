@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import stat
 import textwrap
 import unittest
 from contextlib import redirect_stdout
@@ -128,6 +129,9 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
     def _write_qq_bot(
         base: Path,
         local_env: str,
+        *,
+        enable_wiki: bool = False,
+        include_gateway_state_root: bool = True,
     ) -> tuple[Path, Path]:
         bot_dir = base / "qq-bot"
         bot_dir.mkdir()
@@ -139,12 +143,20 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 + ("g" * 64)
                 + '"\n'
             )
+        if (
+            include_gateway_state_root
+            and "CHATCOPILOT_GATEWAY_STATE_ROOT" not in local_env
+        ):
+            local_env += (
+                "export CHATCOPILOT_GATEWAY_STATE_ROOT="
+                + shlex.quote(str(base / "gateway-state" / "gateway"))
+                + "\n"
+            )
         (bot_dir / "local.env").write_text(local_env, encoding="utf-8")
         (bot_dir / "local.env").chmod(0o600)
         bot_yaml = bot_dir / "bot.yaml"
-        bot_yaml.write_text(
-            textwrap.dedent(
-                f"""\
+        rendered_bot = textwrap.dedent(
+            f"""\
                 id: qq-bot
                 display_name: QQ Bot
                 gateway:
@@ -174,9 +186,23 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                   workspace_root: {(base / "workspace").as_posix()}
                   env_file: {runtime_env.as_posix()}
                 """
-            ),
-            encoding="utf-8",
         )
+        if enable_wiki:
+            rendered_bot = rendered_bot.replace(
+                "deploy:\n",
+                textwrap.dedent(
+                    """\
+                    context:
+                      wiki:
+                        enabled: true
+                        root_env: CHATCOPILOT_WIKI_ROOT
+
+                    deploy:
+                    """
+                ),
+                1,
+            )
+        bot_yaml.write_text(rendered_bot, encoding="utf-8")
         return bot_yaml, runtime_env
 
     def test_qq_provision_rejects_weak_token_without_echoing_it(self) -> None:
@@ -254,6 +280,111 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             self.assertEqual(values["CHATCOPILOT_GATEWAY_URL"], "ws://127.0.0.1:18789")
             self.assertNotIn("CHATCOPILOT_CC_CONNECT_BIN", values)
             self.assertNotIn("CHATCOPILOT_CC_CONNECT_CONFIG_DIR", values)
+            state_root = Path(values["CHATCOPILOT_GATEWAY_STATE_ROOT"])
+            workspace_root = Path(values["CHATCOPILOT_WORKSPACE_ROOT"])
+            self.assertTrue(state_root.is_dir())
+            self.assertEqual(stat.S_IMODE(state_root.stat().st_mode), 0o700)
+            self.assertTrue(workspace_root.is_dir())
+            self.assertEqual(stat.S_IMODE(workspace_root.stat().st_mode), 0o700)
+
+    def test_qq_provision_creates_enabled_wiki_root_privately(self) -> None:
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            wiki_root = base / "private-wiki"
+            bot_yaml, runtime_env = self._write_qq_bot(
+                base,
+                textwrap.dedent(
+                    f"""\
+                    export CHATCOPILOT_CHAT_API_KEY="sk-test"
+                    export QQ_ACCOUNT="10001"
+                    export QQ_ACCESS_TOKEN="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    export CHATCOPILOT_WIKI_ROOT="{wiki_root}"
+                    """
+                ),
+                enable_wiki=True,
+            )
+
+            code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
+
+            self.assertEqual(code, 0)
+            self.assertTrue(runtime_env.is_file())
+            self.assertTrue(wiki_root.is_dir())
+            self.assertEqual(stat.S_IMODE(wiki_root.stat().st_mode), 0o700)
+
+    def test_qq_provision_requires_enabled_wiki_root(self) -> None:
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bot_yaml, runtime_env = self._write_qq_bot(
+                base,
+                textwrap.dedent(
+                    """\
+                    export CHATCOPILOT_CHAT_API_KEY="sk-test"
+                    export QQ_ACCOUNT="10001"
+                    export QQ_ACCESS_TOKEN="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    """
+                ),
+                enable_wiki=True,
+            )
+            output = StringIO()
+
+            with redirect_stdout(output):
+                code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
+
+            self.assertEqual(code, 1)
+            self.assertFalse(runtime_env.exists())
+            self.assertIn("CHATCOPILOT_WIKI_ROOT", output.getvalue())
+
+    def test_qq_provision_dry_run_does_not_create_runtime_directories(self) -> None:
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bot_yaml, runtime_env = self._write_qq_bot(
+                base,
+                textwrap.dedent(
+                    """\
+                    export CHATCOPILOT_CHAT_API_KEY="sk-test"
+                    export QQ_ACCOUNT="10001"
+                    export QQ_ACCESS_TOKEN="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    """
+                ),
+            )
+
+            code = bot_cli_main(
+                ["provision-env", "--bot", str(bot_yaml), "--dry-run"]
+            )
+
+            self.assertEqual(code, 0)
+            self.assertFalse(runtime_env.exists())
+            self.assertFalse((base / "workspace").exists())
+            self.assertFalse((base / "gateway-state").exists())
+
+    def test_qq_provision_rejects_symlinked_gateway_state_root(self) -> None:
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            state_target = base / "state-target"
+            state_target.mkdir()
+            state_link = base / "state-link"
+            state_link.symlink_to(state_target, target_is_directory=True)
+            bot_yaml, runtime_env = self._write_qq_bot(
+                base,
+                textwrap.dedent(
+                    f"""\
+                    export CHATCOPILOT_CHAT_API_KEY="sk-test"
+                    export QQ_ACCOUNT="10001"
+                    export QQ_ACCESS_TOKEN="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    export CHATCOPILOT_GATEWAY_STATE_ROOT="{state_link / 'gateway'}"
+                    """
+                ),
+            )
+            output = StringIO()
+
+            with redirect_stdout(output):
+                code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
+
+            self.assertEqual(code, 1)
+            self.assertFalse(runtime_env.exists())
+            self.assertFalse((state_target / "gateway").exists())
+            self.assertIn("runtime_directory_prepare_failed", output.getvalue())
+            self.assertIn("runtime_directory_unsafe", output.getvalue())
 
     def test_provision_env_rejects_removed_cc_connect_override(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -292,11 +423,17 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                     export QQ_ACCESS_TOKEN="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
                     """
                 ),
+                include_gateway_state_root=False,
             )
 
+            private_home = base / "home"
+            private_home.mkdir()
             with mock.patch.dict(
                 os.environ,
-                {"AGENTSTRATA_RUNTIME_ROOT": str(runtime_root)},
+                {
+                    "AGENTSTRATA_RUNTIME_ROOT": str(runtime_root),
+                    "HOME": str(private_home),
+                },
             ):
                 code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
 
@@ -304,7 +441,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             values = load_local_env_values(runtime_env)
             self.assertEqual(
                 values["CHATCOPILOT_GATEWAY_STATE_ROOT"],
-                str(Path.home() / ".local/state/agentstrata/qq-bot/gateway"),
+                str(private_home / ".local/state/agentstrata/qq-bot/gateway"),
             )
             self.assertNotIn(str(runtime_root), runtime_env.read_text(encoding="utf-8"))
 

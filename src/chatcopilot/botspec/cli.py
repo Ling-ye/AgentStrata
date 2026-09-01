@@ -1047,6 +1047,8 @@ def _required_env_keys(spec) -> list[str]:
     required.extend(secret.env_key for secret in adapter.required_secrets() if secret.required)
     if spec.platform.type.lower() == "qq":
         required.append("QQ_ACCOUNT")
+    if spec.gateway is not None and spec.context.wiki.enabled:
+        required.append(spec.context.wiki.root_env)
     if (
         spec.agents.backend == "codex"
         and spec.agents.codex.owner_access == "worktree"
@@ -1078,6 +1080,82 @@ def _render_runtime_env(values: Mapping[str, str], ordered_keys: Iterable[str]) 
                 lines.append(f"export {key}={shlex.quote(value)}")
     lines.append("")
     return "\n".join(lines)
+
+
+def _prepare_gateway_runtime_directory(
+    raw_path: str,
+    *,
+    field: str,
+    private: bool,
+) -> Path:
+    path = Path(raw_path)
+    normalized = Path(os.path.normpath(os.fspath(path)))
+    if not path.is_absolute() or path != normalized or path.parent == path:
+        raise ProvisioningError(f"runtime_directory_invalid:{field}")
+
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current /= part
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            try:
+                current.mkdir(mode=0o700)
+                current.chmod(0o700)
+            except FileExistsError:
+                pass
+            except OSError as exc:
+                raise ProvisioningError(
+                    f"runtime_directory_unavailable:{field}"
+                ) from exc
+            try:
+                metadata = current.lstat()
+            except OSError as exc:
+                raise ProvisioningError(
+                    f"runtime_directory_unavailable:{field}"
+                ) from exc
+        except OSError as exc:
+            raise ProvisioningError(
+                f"runtime_directory_unavailable:{field}"
+            ) from exc
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise ProvisioningError(f"runtime_directory_unsafe:{field}")
+
+    try:
+        metadata = path.lstat()
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise ProvisioningError(f"runtime_directory_unavailable:{field}") from exc
+    mode = stat.S_IMODE(metadata.st_mode)
+    if (
+        resolved != path
+        or metadata.st_uid != os.geteuid()
+        or (private and mode != 0o700)
+        or (not private and bool(mode & 0o022))
+    ):
+        raise ProvisioningError(f"runtime_directory_unsafe:{field}")
+    return path
+
+
+def _prepare_gateway_runtime_directories(spec, values: Mapping[str, str]) -> None:
+    if spec.gateway is None:
+        return
+    _prepare_gateway_runtime_directory(
+        values["CHATCOPILOT_WORKSPACE_ROOT"],
+        field="workspace_root",
+        private=False,
+    )
+    _prepare_gateway_runtime_directory(
+        values[spec.gateway.state_root_env],
+        field="gateway_state_root",
+        private=True,
+    )
+    if spec.context.wiki.enabled:
+        _prepare_gateway_runtime_directory(
+            values[spec.context.wiki.root_env],
+            field="wiki_root",
+            private=False,
+        )
 
 
 def _cmd_provision_env(args: argparse.Namespace) -> int:
@@ -1176,6 +1254,12 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
         print(f"[DRY-RUN] target: {env_file}")
         print("[DRY-RUN] keys: " + ", ".join(key for key in ordered if values.get(key)))
         return 0
+
+    try:
+        _prepare_gateway_runtime_directories(spec, values)
+    except (KeyError, ProvisioningError) as exc:
+        print(f"[ERR] runtime_directory_prepare_failed:{_safe_error_code(exc)}")
+        return 1
 
     rendered_env = _render_runtime_env(values, ordered)
     try:

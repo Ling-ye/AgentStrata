@@ -278,7 +278,10 @@ download_verified() {
     local url="$1"
     local expected="$2"
     local destination="$3"
-    curl --disable --fail --location --retry 3 --connect-timeout 20 \
+    # Runtime artifacts are immutable GETs verified below, so retrying TLS EOF
+    # and other transfer failures is safe and keeps transient network errors recoverable.
+    curl --disable --fail --location --retry 5 --retry-all-errors \
+        --retry-delay 2 --retry-max-time 180 --connect-timeout 20 \
         --proto '=https' --tlsv1.2 --output "$destination" "$url"
     local actual
     actual="$(sha256sum "$destination" | awk '{print $1}')"
