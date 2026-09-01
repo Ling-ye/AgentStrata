@@ -11,6 +11,7 @@ Bot 级内嵌工具包（Feishu Tools / workspace 等）不在此 catalog，
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -21,6 +22,16 @@ from dataclasses import dataclass, field
 from typing import Any, Iterator, Literal
 
 from console.control.discovery import repo_root
+from chatcopilot.botspec.loader import is_valid_bot_id
+from chatcopilot.botspec.provisioning import read_local_env_for_provision
+from chatcopilot.platforms.qq.boundary import (
+    require_access_token,
+    require_loopback_websocket_url,
+)
+from chatcopilot.platforms.qq.gateway_health import (
+    OneBotRuntimeStatus,
+    query_onebot_runtime_status,
+)
 from chatcopilot.platforms.qq.webui_session import (
     NapCatWebUiError,
     check_login_status as check_napcat_login_status,
@@ -52,7 +63,7 @@ def get_cached_login_state(service_id: str) -> str | None:
     return None
 
 
-def update_login_cache(service_id: str, state: str) -> None:
+def update_login_cache(service_id: str, state: str | None) -> None:
     """Update login state cache after an explicit check."""
     _LOGIN_STATE_CACHE[service_id] = (state, time.time())
 
@@ -414,6 +425,24 @@ def standalone_status(svc: ServiceDef, instance_id: str) -> dict[str, Any]:
     running = bool(info.get("running", False))
     health = str(info.get("health", "none"))
     state, color = _health_to_color(health, running)
+    runtime_status: OneBotRuntimeStatus | None = None
+    runtime_status_unknown = False
+    if svc.id == "napcat" and running:
+        try:
+            runtime_status = _napcat_onebot_runtime_status(instance_id)
+        except Exception:  # noqa: BLE001 - project a bounded unknown state to Console
+            runtime_status_unknown = True
+            update_login_cache(svc.id, None)
+            state, color = "running", "yellow"
+        else:
+            update_login_cache(
+                svc.id,
+                "logged_in" if runtime_status.online else "logged_out",
+            )
+            if runtime_status.online and runtime_status.good:
+                state, color = "healthy", "green"
+            else:
+                state, color = "unhealthy", "red"
     uptime = _container_uptime_s(str(info.get("started_at", ""))) if running else None
     result = _base_status(svc, state=state, color=color)
     result.update(
@@ -421,7 +450,15 @@ def standalone_status(svc: ServiceDef, instance_id: str) -> dict[str, Any]:
         container=container,
         uptime_s=uptime,
         instance_id=instance_id,
+        account_online=runtime_status.online if runtime_status is not None else None,
+        provider_good=runtime_status.good if runtime_status is not None else None,
     )
+    if runtime_status_unknown:
+        message = "QQ account login state could not be verified."
+        result["checks"].append(
+            {"name": "login", "ok": False, "severity": "warning", "message": message}
+        )
+        result["reasons"].append(message)
     return result
 
 
@@ -488,8 +525,24 @@ def standalone_logs(svc: ServiceDef, instance_id: str) -> Iterator[str]:
 
 
 # ---------------------------------------------------------------------------
-# NapCat WebUI（仅复用共享实现做只读登录状态检查）
+# NapCat 登录状态（优先使用 OneBot，WebUI 仅作 bootstrap fallback）
 # ---------------------------------------------------------------------------
+
+
+def _napcat_onebot_runtime_status(instance_id: str) -> OneBotRuntimeStatus:
+    if not is_valid_bot_id(instance_id):
+        raise ValueError("invalid bot instance id")
+    bot_dir = repo_root() / "bots" / instance_id
+    values = read_local_env_for_provision(
+        bot_dir / "local.env",
+        allowed_parent=bot_dir,
+    )
+    url = require_loopback_websocket_url(
+        values.get("CHATCOPILOT_QQ_ONEBOT_WS_URL") or "ws://127.0.0.1:3001",
+        env_key="CHATCOPILOT_QQ_ONEBOT_WS_URL",
+    )
+    token = require_access_token(values.get("QQ_ACCESS_TOKEN"))
+    return asyncio.run(query_onebot_runtime_status(url, token))
 
 
 def standalone_webui_login_status(
@@ -499,7 +552,22 @@ def standalone_webui_login_status(
     host: str = "localhost",
     port: str = "6099",
 ) -> dict[str, Any]:
-    """Authenticate in memory and return only the bounded QQ login projection."""
+    """Return a bounded QQ login projection without exposing local credentials."""
+
+    try:
+        runtime_status = _napcat_onebot_runtime_status(instance_id)
+    except Exception:  # noqa: BLE001 - WebUI remains available during initial bootstrap
+        runtime_status = None
+    if runtime_status is not None:
+        return {
+            "ok": True,
+            "logged_in": runtime_status.online,
+            "is_login": runtime_status.online,
+            "is_offline": not runtime_status.online,
+            "provider_good": runtime_status.good,
+            "login_error": "" if runtime_status.good else "OneBot provider state is unhealthy",
+        }
+
     container = _standalone_container(svc, instance_id)
     try:
         session = read_webui_session(container, host=host, port=port)
@@ -511,6 +579,7 @@ def standalone_webui_login_status(
         "logged_in": status.is_login,
         "is_login": status.is_login,
         "is_offline": status.is_offline,
+        "provider_good": None,
         "login_error": status.login_error,
     }
 
@@ -576,6 +645,8 @@ def _base_status(svc: ServiceDef, *, state: str, color: str) -> dict[str, Any]:
         "instance_id": None,
         "login_state": get_cached_login_state(svc.id) if svc.has_login else None,
         "login_type": svc.extra.get("login_type") if svc.has_login else None,
+        "account_online": None,
+        "provider_good": None,
         "mcp_refs": list(svc.mcp_refs),
         "search_provider_kinds": list(svc.search_provider_kinds),
         "platforms": list(svc.platforms),

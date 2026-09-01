@@ -521,7 +521,7 @@ runtime；BFCL 明确是 `direct_llm/function_call_protocol` 校准，不进入�
 QQ/NapCat/OneBot 连通性属于平台与部署检查，不属于 Agent 能力 Evaluation。它不调用
 商用 LLM、不创建 Evaluation、Trial 或 Evaluation 报告，也不影响 Agent verdict。
 默认命令只执行读操作：验证回环 OneBot URL、强 token、未认证拒绝、认证
-`get_status`、`get_login_info` 与配置的 `QQ_ACCOUNT` 一致；配置检查群时再验证 Bot
+`get_status` 的 `online=true` 与 `good=true`、`get_login_info` 与配置的 `QQ_ACCOUNT` 一致；配置检查群时再验证 Bot
 可以读取该群信息。hermetic 检查只会使用随机回环端口、假 OneBot provider 和确定性输入
 验证仓库自有的 OneBot 编解码、结构化 @ 条件与 Gateway Channel 边界。Bot/user/group/token
 全部为本次随机合成值，不复用 bot-local 私有身份。它不连接真实 QQ、ACP edge 或模型，
@@ -556,6 +556,8 @@ python -m chatcopilot bot external-check \
 message ID，也只证明 OneBot 接受了动作，不证明群成员看到消息。JSON 输出不包含原始
 QQ 号、群号、token、昵称、群名或 message ID，只保留 HMAC/digest 和结构化状态。
 Console 的 NapCat“诊断”按钮运行同一个默认只读检查。
+基础设施卡片同时自动读取 OneBot 在线状态：容器运行但 QQ 离线时显示“异常 / 未登录”，
+查询失败时显示“运行中 / 登录状态未知”，不会再把容器存活当成账号在线。
 
 `qq_simulated_gateway_ingress:passed` 只证明隔离回环中的合成 ingress 契约；它不证明运行
 中的 NapCat 产生过该事件，也不证明 ACP edge、Agent、真实 QQ 客户端展示或用户已读，

@@ -997,7 +997,7 @@ webui_command() {
         "$@" --container "napcat-$BOT_ID" --host localhost --port "$WEBUI_PORT" --json
 }
 
-probe_onebot_boundary() {
+probe_onebot_ready() {
     PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$REPO_ROOT/src" \
         "$PYTHON_BIN" - "$BOT_DIR/local.env" <<'PY'
 import asyncio
@@ -1009,7 +1009,7 @@ from chatcopilot.platforms.qq.boundary import (
     require_access_token,
     require_loopback_websocket_url,
 )
-from chatcopilot.platforms.qq.gateway_health import probe_onebot_boundary
+from chatcopilot.platforms.qq.gateway_health import probe_onebot_online
 
 path = Path(sys.argv[1])
 try:
@@ -1019,7 +1019,7 @@ try:
         values.get("CHATCOPILOT_QQ_ONEBOT_WS_URL") or "ws://127.0.0.1:3001",
         env_key="CHATCOPILOT_QQ_ONEBOT_WS_URL",
     )
-    asyncio.run(probe_onebot_boundary(url, token))
+    asyncio.run(probe_onebot_online(url, token))
 except Exception:
     raise SystemExit(1) from None
 PY
@@ -1214,11 +1214,11 @@ if ! probe_gateway_main_process "$MAIN_UNIT"; then
 fi
 add_check "gateway_process" "pass" "Gateway host MainPID 在有界观察内稳定且绑定当前实例" ""
 
-if ! probe_onebot_boundary; then
-    finish_failed "onebot_boundary" "外部 NapCat OneBot 未通过回环认证与只读探针" \
+if ! probe_onebot_ready; then
+    finish_failed "onebot_boundary" "外部 NapCat OneBot 未通过回环认证、QQ 在线与 provider 健康检查" \
         "journalctl --user -u $MAIN_UNIT -n 100"
 fi
-add_check "onebot_boundary" "pass" "外部 NapCat OneBot 通过回环认证与只读探针" ""
+add_check "onebot_boundary" "pass" "外部 NapCat OneBot 通过回环认证，QQ 账号在线且 provider 状态正常" ""
 
 add_check "llm_live_call" "not_tested" "未调用付费模型" "手工向机器人发送一条消息"
 add_check "qq_external_send" "not_tested" "未向 QQ 发送外部消息" "手工向机器人发送一条消息"

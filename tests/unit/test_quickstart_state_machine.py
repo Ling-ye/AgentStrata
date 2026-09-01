@@ -1333,19 +1333,19 @@ def test_supported_matrix_docker_safety_and_qq_order_are_locked() -> None:
     assert start < login < sync < status < update
 
 
-def test_final_ready_requires_authenticated_onebot_boundary_probe() -> None:
+def test_final_ready_requires_online_healthy_onebot_provider() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
     probe_definition = text[
-        text.index("probe_onebot_boundary() {") : text.index("probe_gateway_main_process() {")
+        text.index("probe_onebot_ready() {") : text.index("probe_gateway_main_process() {")
     ]
     assert "require_access_token" in probe_definition
     assert "require_loopback_websocket_url" in probe_definition
-    assert "probe_onebot_boundary" in probe_definition
-    assert "asyncio.run(probe_onebot_boundary(url, token))" in probe_definition
+    assert "probe_onebot_online" in probe_definition
+    assert "asyncio.run(probe_onebot_online(url, token))" in probe_definition
 
     update = text.index('if ! bash "$SCRIPT_DIR/update_instance.sh"')
     unit_active = text.index("systemctl --user is-active", update)
-    onebot_probe = text.index("if ! probe_onebot_boundary; then", unit_active)
+    onebot_probe = text.index("if ! probe_onebot_ready; then", unit_active)
     onebot_pass = text.index('add_check "onebot_boundary" "pass"', onebot_probe)
     ready = text.index('emit_report "ready"', onebot_pass)
     assert update < unit_active < onebot_probe < onebot_pass < ready
@@ -1376,6 +1376,6 @@ def test_final_ready_requires_stable_instance_bound_gateway_mainpid() -> None:
     process_probe = text.index(
         'if ! probe_gateway_main_process "$MAIN_UNIT"', update
     )
-    onebot_probe = text.index("if ! probe_onebot_boundary; then", process_probe)
+    onebot_probe = text.index("if ! probe_onebot_ready; then", process_probe)
     ready = text.index('emit_report "ready"', onebot_probe)
     assert update < process_probe < onebot_probe < ready

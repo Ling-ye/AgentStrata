@@ -220,7 +220,7 @@ _status_probe_onebot() {
     PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$MT_HOME/src${PYTHONPATH:+:$PYTHONPATH}" \
         QQ_ACCESS_TOKEN="${QQ_ACCESS_TOKEN:-}" \
         "$python_bin" -m chatcopilot.platforms.qq.gateway_health \
-        probe --url "${CHATCOPILOT_QQ_ONEBOT_WS_URL:-ws://127.0.0.1:3001}" \
+        online --url "${CHATCOPILOT_QQ_ONEBOT_WS_URL:-ws://127.0.0.1:3001}" \
         --url-env-key CHATCOPILOT_QQ_ONEBOT_WS_URL >/dev/null 2>&1
 }
 
@@ -265,14 +265,14 @@ print_gateway_status() {
     bold "▶ 外部 QQ provider（NapCat / OneBot v11）"
     dim "endpoint=${CHATCOPILOT_QQ_ONEBOT_WS_URL:-ws://127.0.0.1:3001}"
     if [ "$state" = "active" ] && _status_probe_onebot; then
-        ok "OneBot 通过 token 拒绝/接受的认证只读探针"
+        ok "OneBot 认证边界通过，QQ 账号在线且 provider 状态正常"
     else
-        bad "OneBot 认证只读探针未通过"
-        dim "这只证明 provider 边界，不代表真实 QQ 消息、Agent、模型或客户端 E2E。"
+        bad "OneBot 认证、QQ 在线状态或 provider 健康检查未通过"
+        dim "请运行 qq_gateway.sh status 区分认证失败、账号离线和 provider 异常。"
     fi
 
     bold "▶ 证据边界"
-    dim "active MainPID 只证明 Gateway host 进程；OneBot probe 只证明回环 provider 认证。"
+    dim "active MainPID 只证明 Gateway host 进程；OneBot probe 额外证明回环认证与账号在线。"
     dim "未由本命令验证：真实 QQ 入站、模型调用、外部发送、用户端展示或 ACP client。"
 
     bold "▶ 常用命令"

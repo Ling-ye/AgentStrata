@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from chatcopilot.platforms.base import (
@@ -29,6 +30,23 @@ _QQ_ID_RE = re.compile(r"^[1-9][0-9]{4,19}$")
 _ENV_GROUP_ID = "CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID"
 _MAX_FRAME_BYTES = 256 * 1024
 _MAX_FRAMES = 8
+
+
+@dataclass(frozen=True)
+class OneBotRuntimeStatus:
+    online: bool
+    good: bool
+
+
+def _runtime_status_from_response(response: Mapping[str, Any]) -> OneBotRuntimeStatus:
+    data = response.get("data")
+    if not isinstance(data, Mapping):
+        raise RuntimeError("OneBot get_status returned no status data")
+    online = data.get("online")
+    good = data.get("good")
+    if not isinstance(online, bool) or not isinstance(good, bool):
+        raise RuntimeError("OneBot get_status returned invalid status flags")
+    return OneBotRuntimeStatus(online=online, good=good)
 
 
 async def _onebot_action(
@@ -90,17 +108,24 @@ async def _onebot_action(
 async def _connect_once(
     url: str,
     token: str | None,
-) -> None:
-    await _onebot_action(
+) -> OneBotRuntimeStatus:
+    response = await _onebot_action(
         url,
         token,
         action="get_status",
         params={},
         echo="chatcopilot-onebot-auth-probe",
     )
+    return _runtime_status_from_response(response)
 
 
-async def probe_onebot_boundary(url: str, token: str) -> None:
+async def query_onebot_runtime_status(url: str, token: str) -> OneBotRuntimeStatus:
+    """Read authenticated provider and QQ account status without testing the auth boundary."""
+
+    return await _connect_once(url, token)
+
+
+async def probe_onebot_boundary(url: str, token: str) -> OneBotRuntimeStatus:
     """Require unauthenticated rejection and authenticated connection success."""
     unauthenticated_rejected = False
     try:
@@ -113,12 +138,29 @@ async def probe_onebot_boundary(url: str, token: str) -> None:
             "OneBot rejected boundary check: unauthenticated WebSocket was accepted",
         )
     try:
-        await _connect_once(url, token)
+        return await _connect_once(url, token)
     except Exception as exc:  # noqa: BLE001 - normalize library/network errors
         raise QQBoundaryError(
             "qq_onebot_authenticated_probe_failed",
             f"authenticated OneBot WebSocket probe failed ({type(exc).__name__})",
         ) from exc
+
+
+async def probe_onebot_online(url: str, token: str) -> OneBotRuntimeStatus:
+    """Require the authenticated OneBot boundary and an online, healthy QQ account."""
+
+    status = await probe_onebot_boundary(url, token)
+    if not status.online:
+        raise QQBoundaryError(
+            "qq_account_offline",
+            "OneBot is reachable but the QQ account is offline",
+        )
+    if not status.good:
+        raise QQBoundaryError(
+            "qq_onebot_unhealthy",
+            "OneBot reports an unhealthy QQ provider state",
+        )
+    return status
 
 
 def _require_qq_id(value: str | None, *, env_key: str) -> str:
@@ -189,8 +231,8 @@ async def run_qq_external_checks(
 
     try:
         url = require_loopback_websocket_url(
-            env.get("QQ_WS_URL") or "ws://127.0.0.1:3001",
-            env_key="QQ_WS_URL",
+            env.get("CHATCOPILOT_QQ_ONEBOT_WS_URL") or "ws://127.0.0.1:3001",
+            env_key="CHATCOPILOT_QQ_ONEBOT_WS_URL",
         )
         token = require_access_token(env.get("QQ_ACCESS_TOKEN"))
         account = _require_qq_id(env.get("QQ_ACCOUNT"), env_key="QQ_ACCOUNT")
@@ -224,8 +266,9 @@ async def run_qq_external_checks(
     )
 
     boundary_passed = False
+    runtime_status: OneBotRuntimeStatus | None = None
     try:
-        await probe_onebot_boundary(url, token)
+        runtime_status = await probe_onebot_boundary(url, token)
     except QQBoundaryError as exc:
         status: ExternalCheckStatus = (
             "failed" if exc.error_code == "qq_onebot_accepts_unauthenticated" else "error"
@@ -251,7 +294,44 @@ async def run_qq_external_checks(
             )
         )
 
-    if boundary_passed:
+    account_ready = bool(
+        boundary_passed
+        and runtime_status is not None
+        and runtime_status.online
+        and runtime_status.good
+    )
+    if boundary_passed and runtime_status is not None:
+        if not runtime_status.online:
+            account_detail = "QQ 账号离线"
+        elif not runtime_status.good:
+            account_detail = "QQ 账号在线，但 OneBot 报告运行状态异常"
+        else:
+            account_detail = "QQ 账号在线且 OneBot 状态正常"
+        checks.append(
+            ExternalCheckItem(
+                check_id="qq_account_online",
+                label="QQ 在线状态",
+                status="passed" if account_ready else "failed",
+                required=True,
+                detail=account_detail,
+                evidence={
+                    "online": runtime_status.online,
+                    "good": runtime_status.good,
+                },
+            )
+        )
+    else:
+        checks.append(
+            ExternalCheckItem(
+                check_id="qq_account_online",
+                label="QQ 在线状态",
+                status="not_tested",
+                required=True,
+                detail="OneBot 认证边界未通过，未确认 QQ 在线状态",
+            )
+        )
+
+    if account_ready:
         try:
             response = await _onebot_action(
                 url,
@@ -295,19 +375,23 @@ async def run_qq_external_checks(
                 )
             )
     else:
+        if not boundary_passed:
+            identity_detail = "OneBot 认证边界未通过，未查询登录账号"
+        else:
+            identity_detail = "QQ 账号未就绪，未查询登录账号"
         checks.append(
             ExternalCheckItem(
                 check_id="qq_login_identity",
                 label="QQ 登录账号",
                 status="not_tested",
                 required=True,
-                detail="OneBot 认证边界未通过，未查询登录账号",
+                detail=identity_detail,
             )
         )
 
     group_raw = str(env.get(_ENV_GROUP_ID) or "").strip()
     group = ""
-    if group_raw and boundary_passed:
+    if group_raw:
         try:
             group = _require_qq_id(group_raw, env_key=_ENV_GROUP_ID)
         except QQBoundaryError as exc:
@@ -321,58 +405,59 @@ async def run_qq_external_checks(
                 )
             )
         else:
-            try:
-                response = await _onebot_action(
-                    url,
-                    token,
-                    action="get_group_info",
-                    params={"group_id": int(group), "no_cache": True},
-                    echo="chatcopilot-external-group-info",
-                )
-                data = response.get("data")
-                actual = str(data.get("group_id") if isinstance(data, dict) else "").strip()
-                matches = actual == group
+            if not account_ready:
                 checks.append(
                     ExternalCheckItem(
                         check_id="qq_group_access",
                         label="QQ 群访问",
-                        status="passed" if matches else "failed",
-                        required=True,
-                        detail="Bot 可访问固定检查群" if matches else "OneBot 返回了非预期群身份",
-                        evidence={
-                            "configured_group_hmac": _identity_hmac(
-                                token,
-                                namespace="qq-group",
-                                value=group,
-                            ),
-                            "observed_group_hmac": _identity_hmac(
-                                token,
-                                namespace="qq-group",
-                                value=actual or "missing",
-                            ),
-                        },
+                        status="not_tested",
+                        required=send_message,
+                        detail="QQ 账号未就绪，未继续访问检查群",
                     )
                 )
-            except Exception as exc:  # noqa: BLE001
-                checks.append(
-                    ExternalCheckItem(
-                        check_id="qq_group_access",
-                        label="QQ 群访问",
-                        status="error",
-                        required=True,
-                        detail=f"get_group_info failed ({type(exc).__name__})",
+            else:
+                try:
+                    response = await _onebot_action(
+                        url,
+                        token,
+                        action="get_group_info",
+                        params={"group_id": int(group), "no_cache": True},
+                        echo="chatcopilot-external-group-info",
                     )
-                )
-    elif group_raw:
-        checks.append(
-            ExternalCheckItem(
-                check_id="qq_group_access",
-                label="QQ 群访问",
-                status="not_tested",
-                required=send_message,
-                detail="OneBot 认证边界未通过，未继续访问检查群",
-            )
-        )
+                    data = response.get("data")
+                    actual = str(data.get("group_id") if isinstance(data, dict) else "").strip()
+                    matches = actual == group
+                    checks.append(
+                        ExternalCheckItem(
+                            check_id="qq_group_access",
+                            label="QQ 群访问",
+                            status="passed" if matches else "failed",
+                            required=True,
+                            detail="Bot 可访问固定检查群" if matches else "OneBot 返回了非预期群身份",
+                            evidence={
+                                "configured_group_hmac": _identity_hmac(
+                                    token,
+                                    namespace="qq-group",
+                                    value=group,
+                                ),
+                                "observed_group_hmac": _identity_hmac(
+                                    token,
+                                    namespace="qq-group",
+                                    value=actual or "missing",
+                                ),
+                            },
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    checks.append(
+                        ExternalCheckItem(
+                            check_id="qq_group_access",
+                            label="QQ 群访问",
+                            status="error",
+                            required=True,
+                            detail=f"get_group_info failed ({type(exc).__name__})",
+                        )
+                    )
     else:
         checks.append(
             ExternalCheckItem(
@@ -515,9 +600,9 @@ def _inbound_not_tested() -> ExternalCheckItem:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Validate/probe the QQ OneBot boundary")
-    parser.add_argument("action", choices=("validate-url", "validate", "probe"))
+    parser.add_argument("action", choices=("validate-url", "validate", "probe", "online"))
     parser.add_argument("--url", required=True)
-    parser.add_argument("--url-env-key", default="QQ_WS_URL")
+    parser.add_argument("--url-env-key", default="CHATCOPILOT_QQ_ONEBOT_WS_URL")
     return parser
 
 
@@ -531,10 +616,17 @@ def main(argv: list[str] | None = None) -> int:
         token = require_access_token(os.environ.get("QQ_ACCESS_TOKEN"))
         if args.action == "probe":
             asyncio.run(probe_onebot_boundary(url, token))
+        elif args.action == "online":
+            asyncio.run(probe_onebot_online(url, token))
     except QQBoundaryError as exc:
         print(f"[ERR] {exc.error_code}: {exc}")
         return 1
-    action = "boundary-probe-ok" if args.action == "probe" else "config-ok"
+    if args.action == "probe":
+        action = "boundary-probe-ok"
+    elif args.action == "online":
+        action = "account-online-ok"
+    else:
+        action = "config-ok"
     print(f"[OK] QQ OneBot {action}; token_length={len(token)}")
     return 0
 
@@ -544,10 +636,13 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "OneBotRuntimeStatus",
     "QQBoundaryError",
     "_onebot_action",
     "main",
     "probe_onebot_boundary",
+    "probe_onebot_online",
+    "query_onebot_runtime_status",
     "require_access_token",
     "require_loopback_websocket_url",
     "run_qq_external_checks",

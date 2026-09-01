@@ -39,7 +39,7 @@ const STATE_BORDER_COLOR: Record<string, string> = {
 };
 
 export default function ServiceCard({ service, busy, onAction, onLogs }: Props) {
-  const running = service.state === "healthy" || service.state === "running";
+  const running = service.state === "healthy" || service.state === "running" || service.state === "unhealthy";
   const isNotFound = service.state === "not_found";
   const borderColor = STATE_BORDER_COLOR[service.color] ?? STATE_BORDER_COLOR.grey;
 

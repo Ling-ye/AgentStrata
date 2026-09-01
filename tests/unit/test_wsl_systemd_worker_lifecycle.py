@@ -188,3 +188,15 @@ def test_status_marks_worker_not_applicable_without_code_task_pack() -> None:
 
     assert '"dev.code_tasks" in packs' in script
     assert "not_applicable（BotSpec 未启用 dev.code_tasks）" in script
+
+
+def test_status_requires_authenticated_online_onebot_account() -> None:
+    script = (REPO_ROOT / "deploy/wsl/status.sh").read_text(encoding="utf-8")
+    probe = script[
+        script.index("_status_probe_onebot() {") : script.index(
+            "print_gateway_status() {"
+        )
+    ]
+
+    assert "online --url" in probe
+    assert "probe --url" not in probe

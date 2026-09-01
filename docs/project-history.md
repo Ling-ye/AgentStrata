@@ -356,6 +356,9 @@ QQ/NapCat/OneBot 连通性则属于部署与平台检查，不应混入 Agent �
   可选群访问，并在随机回环端口用假 NapCat + 真实 QQ @ Relay 验证合成帧正例
   转发和负例丢弃，不创建 Evaluation 或调用模型。可选群消息动作要求双参数单次确认；
   没有独立发送 QQ 时，真实入站 Agent 往返仍明确为 `not_tested`。
+- OneBot `get_status` 的动作成功与 QQ 在线状态分开判定；`online=false` 或 `good=false`
+  会让外部检查失败，Console 也分别展示容器运行、账号离线和状态未知，避免把 Provider
+  进程存活误报成 QQ 可收消息。
 - 正式 Trial 在独立 spawn 子进程运行，期限取 Case timeout 与剩余 max-wall 的最小值；
   取消和预算终止进程组，Linux/WSL 使用父死保护。只有完整 Target 组进入 checkpoint，
   中断的不完整组不参与恢复和结果聚合。

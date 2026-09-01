@@ -106,6 +106,9 @@ export default function LoginPanel({ service }: Props) {
         {loginState === "logged_out" && (
           <Tag size="small" color="red">未登录</Tag>
         )}
+        {loginState === null && (
+          <Tag size="small" color="orange">登录状态未知</Tag>
+        )}
       </Space>
 
       {open && (

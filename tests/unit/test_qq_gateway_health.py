@@ -12,9 +12,11 @@ from types import SimpleNamespace
 from unittest import mock
 
 from chatcopilot.platforms.qq.gateway_health import (
+    OneBotRuntimeStatus,
     QQBoundaryError,
     _connect_once,
     probe_onebot_boundary,
+    probe_onebot_online,
     require_access_token,
     require_loopback_websocket_url,
     run_qq_external_checks,
@@ -24,6 +26,7 @@ from chatcopilot.platforms.qq.gateway_health import (
 TOKEN = "test_" + ("a" * 32)
 BOT_ACCOUNT = "1" + "0001"
 GROUP_ID = "2" + "0002"
+ONLINE_STATUS = OneBotRuntimeStatus(online=True, good=True)
 
 
 def _gateway_test_root(tmpdir: str) -> Path:
@@ -73,7 +76,7 @@ def _fake_docker(bin_dir: Path, calls: Path) -> None:
 
 def _external_env(*, group: bool = True) -> dict[str, str]:
     result = {
-        "QQ_WS_URL": "ws://127.0.0.1:3001",
+        "CHATCOPILOT_QQ_ONEBOT_WS_URL": "ws://127.0.0.1:3001",
         "QQ_ACCESS_TOKEN": TOKEN,
         "QQ_ACCOUNT": BOT_ACCOUNT,
     }
@@ -361,6 +364,7 @@ class QQBoundaryProbeTests(unittest.IsolatedAsyncioTestCase):
                             "status": "ok",
                             "retcode": 0,
                             "echo": "chatcopilot-onebot-auth-probe",
+                            "data": {"online": True, "good": True},
                         }
                     ),
                 )
@@ -369,8 +373,9 @@ class QQBoundaryProbeTests(unittest.IsolatedAsyncioTestCase):
         )
         websockets = SimpleNamespace(connect=mock.AsyncMock(return_value=connection))
         with mock.patch.dict(sys.modules, {"websockets": websockets}):
-            await _connect_once("ws://127.0.0.1:3001", "a" * 32)
+            status = await _connect_once("ws://127.0.0.1:3001", "a" * 32)
 
+        self.assertEqual(status, ONLINE_STATUS)
         request = json.loads(connection.send.await_args.args[0])
         self.assertEqual(request["action"], "get_status")
         self.assertEqual(request["echo"], "chatcopilot-onebot-auth-probe")
@@ -404,10 +409,11 @@ class QQBoundaryProbeTests(unittest.IsolatedAsyncioTestCase):
     async def test_probe_requires_rejection_then_authenticated_success(self) -> None:
         with mock.patch(
             "chatcopilot.platforms.qq.gateway_health._connect_once",
-            new=mock.AsyncMock(side_effect=(RuntimeError("unauthorized"), None)),
+            new=mock.AsyncMock(side_effect=(RuntimeError("unauthorized"), ONLINE_STATUS)),
         ) as connect:
-            await probe_onebot_boundary("ws://127.0.0.1:3001", "a" * 32)
+            status = await probe_onebot_boundary("ws://127.0.0.1:3001", "a" * 32)
 
+        self.assertEqual(status, ONLINE_STATUS)
         self.assertEqual(connect.await_count, 2)
         self.assertEqual(connect.await_args_list[0].args[1], None)
         self.assertEqual(connect.await_args_list[1].args[1], "a" * 32)
@@ -438,6 +444,28 @@ class QQBoundaryProbeTests(unittest.IsolatedAsyncioTestCase):
             "qq_onebot_authenticated_probe_failed",
         )
 
+    async def test_online_probe_rejects_reachable_offline_account(self) -> None:
+        with mock.patch(
+            "chatcopilot.platforms.qq.gateway_health.probe_onebot_boundary",
+            new=mock.AsyncMock(
+                return_value=OneBotRuntimeStatus(online=False, good=True)
+            ),
+        ), self.assertRaises(QQBoundaryError) as caught:
+            await probe_onebot_online("ws://127.0.0.1:3001", "a" * 32)
+
+        self.assertEqual(caught.exception.error_code, "qq_account_offline")
+
+    async def test_online_probe_rejects_unhealthy_provider(self) -> None:
+        with mock.patch(
+            "chatcopilot.platforms.qq.gateway_health.probe_onebot_boundary",
+            new=mock.AsyncMock(
+                return_value=OneBotRuntimeStatus(online=True, good=False)
+            ),
+        ), self.assertRaises(QQBoundaryError) as caught:
+            await probe_onebot_online("ws://127.0.0.1:3001", "a" * 32)
+
+        self.assertEqual(caught.exception.error_code, "qq_onebot_unhealthy")
+
 
 class QQExternalPlatformCheckTests(unittest.IsolatedAsyncioTestCase):
     async def test_read_only_check_is_outside_agent_evaluation_and_secret_free(self) -> None:
@@ -467,7 +495,7 @@ class QQExternalPlatformCheckTests(unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch(
                 "chatcopilot.platforms.qq.gateway_health.probe_onebot_boundary",
-                new=mock.AsyncMock(return_value=None),
+                new=mock.AsyncMock(return_value=ONLINE_STATUS),
             ),
             mock.patch(
                 "chatcopilot.platforms.qq.gateway_health._onebot_action",
@@ -486,6 +514,7 @@ class QQExternalPlatformCheckTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(report.external_write_performed)
         self.assertEqual(onebot_action.await_count, 2)
         checks = {item.check_id: item for item in report.checks}
+        self.assertEqual(checks["qq_account_online"].status, "passed")
         self.assertEqual(checks["qq_simulated_gateway_ingress"].status, "passed")
         self.assertEqual(
             checks["qq_simulated_gateway_ingress"].evidence["mode"],
@@ -506,7 +535,7 @@ class QQExternalPlatformCheckTests(unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch(
                 "chatcopilot.platforms.qq.gateway_health.probe_onebot_boundary",
-                new=mock.AsyncMock(return_value=None),
+                new=mock.AsyncMock(return_value=ONLINE_STATUS),
             ),
             mock.patch(
                 "chatcopilot.platforms.qq.gateway_health._onebot_action",
@@ -579,7 +608,7 @@ class QQExternalPlatformCheckTests(unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch(
                 "chatcopilot.platforms.qq.gateway_health.probe_onebot_boundary",
-                new=mock.AsyncMock(return_value=None),
+                new=mock.AsyncMock(return_value=ONLINE_STATUS),
             ),
             mock.patch(
                 "chatcopilot.platforms.qq.gateway_health._onebot_action",
@@ -632,6 +661,7 @@ class QQExternalPlatformCheckTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.verdict, "error")
         onebot_action.assert_not_awaited()
         checks = {item.check_id: item for item in report.checks}
+        self.assertEqual(checks["qq_account_online"].status, "not_tested")
         self.assertEqual(checks["qq_login_identity"].status, "not_tested")
         self.assertEqual(checks["qq_group_access"].status, "not_tested")
         self.assertEqual(checks["qq_simulated_gateway_ingress"].status, "passed")
@@ -657,7 +687,7 @@ class QQExternalPlatformCheckTests(unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch(
                 "chatcopilot.platforms.qq.gateway_health.probe_onebot_boundary",
-                new=mock.AsyncMock(return_value=None),
+                new=mock.AsyncMock(return_value=ONLINE_STATUS),
             ),
             mock.patch(
                 "chatcopilot.platforms.qq.gateway_health._onebot_action",
@@ -677,6 +707,33 @@ class QQExternalPlatformCheckTests(unittest.IsolatedAsyncioTestCase):
         checks = {item.check_id: item for item in report.checks}
         self.assertEqual(checks["qq_simulated_gateway_ingress"].status, "error")
         self.assertNotIn("fixture failure", checks["qq_simulated_gateway_ingress"].detail)
+
+    async def test_offline_account_fails_before_identity_or_group_actions(self) -> None:
+        with (
+            mock.patch(
+                "chatcopilot.platforms.qq.gateway_health.probe_onebot_boundary",
+                new=mock.AsyncMock(
+                    return_value=OneBotRuntimeStatus(online=False, good=True)
+                ),
+            ),
+            mock.patch(
+                "chatcopilot.platforms.qq.gateway_health._onebot_action",
+                new=mock.AsyncMock(),
+            ) as onebot_action,
+        ):
+            report = await run_qq_external_checks(
+                _external_env(),
+                bot_id="example-qq-bot",
+            )
+
+        self.assertEqual(report.verdict, "failed")
+        onebot_action.assert_not_awaited()
+        checks = {item.check_id: item for item in report.checks}
+        self.assertEqual(checks["onebot_boundary"].status, "passed")
+        self.assertEqual(checks["qq_account_online"].status, "failed")
+        self.assertEqual(checks["qq_account_online"].detail, "QQ 账号离线")
+        self.assertEqual(checks["qq_login_identity"].status, "not_tested")
+        self.assertEqual(checks["qq_group_access"].status, "not_tested")
 
 
 if __name__ == "__main__":

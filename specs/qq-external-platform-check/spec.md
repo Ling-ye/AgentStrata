@@ -35,10 +35,11 @@ env，secret 不写入命令行、日志或结果。
 
 QQ 默认执行只读检查：
 
-1. 校验 `QQ_WS_URL` 为带显式端口的回环 WebSocket URL，`QQ_ACCESS_TOKEN` 为强 token，
-   `QQ_ACCOUNT` 为合法稳定 QQ ID；
-2. 证明未认证连接不能通过 OneBot 边界，并用认证连接执行 `get_status`；
-3. 执行 `get_login_info`，证明登录账号与 `QQ_ACCOUNT` 完全一致；
+1. 校验 `CHATCOPILOT_QQ_ONEBOT_WS_URL` 为带显式端口的回环 WebSocket URL，
+   `QQ_ACCESS_TOKEN` 为强 token，`QQ_ACCOUNT` 为合法稳定 QQ ID；
+2. 证明未认证连接不能通过 OneBot 边界，并用认证连接执行 `get_status`；只有响应中的
+   `online=true` 且 `good=true` 才表示 QQ provider 已就绪，离线或异常必须独立失败；
+3. provider 就绪后执行 `get_login_info`，证明登录账号与 `QQ_ACCOUNT` 完全一致；
 4. 若 bot-local env 配置 `CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID`，执行
    `get_group_info` 证明 Bot 能访问该群；未配置时该检查标为 `not_configured`；
 5. 在两个随机回环端口上运行一次 hermetic gateway ingress probe：假 NapCat 先发送
@@ -65,6 +66,11 @@ token 派生的 HMAC 摘要；不得输出 nickname、群名、token 或原始�
 limitations。`failed` 表示配置或平台拒绝；`error` 表示 transport/协议异常；
 `not_configured` 与 `not_tested` 是覆盖说明，不得计入 Agent 失败。
 
+Console 基础设施页必须分别投影容器状态与 QQ 登录状态。NapCat 容器运行而
+`online=false` 时，服务整体显示异常并明确标记未登录；状态读取失败时显示“登录状态未知”，
+不得沿用旧缓存或显示为健康。Console 的自动轮询和手动登录检查优先读取认证
+`get_status`，不能依赖 WebUI token 恰好仍在最近容器日志中。
+
 `agentstrata-capabilities-v1` 目录固定为 25 个直接 Agent Case，不含 ACP 或 QQ；默认 `full`
 只选择当前内置 Bot 可运行的 23 个，两个来源专用 Case 仅供显式 `custom`。
 `agentstrata-qq-message-flow-v1` 固定为 7 个无外部写的合成后链路 Case。真实 QQ Case、
@@ -84,11 +90,13 @@ limitations。`failed` 表示配置或平台拒绝；`error` 表示 transport/�
   注入 API，也不得把合成消息解释为真实 QQ 或 Agent E2E 通过。
 - 默认检查无外部写；发送探针必须同时具备固定群配置、`--send-message` 和一次性
   `--confirm-external-write`。
-- 未认证 OneBot 被接受、认证动作失败、登录账号不匹配或显式群不可访问时 fail closed。
+- 未认证 OneBot 被接受、认证动作失败、`online=false`、`good=false`、登录账号不匹配或
+  显式群不可访问时 fail closed。
 - 结果和 Console/CLI 输出不包含 token、原始 QQ 账号、原始群号、群名、nickname 或
   原始 message ID。
 - 没有独立发送 QQ 时，入站 Agent 链路始终显示 `not_tested`。
 - Console NapCat “诊断”属于基础设施任务，不进入 Evaluation lifecycle 或 artifact。
+- Console 必须区分容器运行、QQ 已在线、QQ 未登录和登录状态未知；离线或未知不得显示为健康。
 - 旧 Evaluation artifact 仍可读取；定义变化使旧 29-Case 结果不能与新 26-Case 结果
   恢复或错误比较。
 
@@ -96,6 +104,7 @@ limitations。`failed` 表示配置或平台拒绝；`error` 表示 transport/�
 
 - `python3 scripts/check_sdd_specs.py`
 - `.venv/bin/python -m pytest tests/unit/test_qq_gateway_health.py -q`
+- `.venv/bin/python -m pytest tests/unit/test_console_napcat_webui.py -q`
 - `.venv/bin/python -m pytest tests/unit/test_qq_gateway_ingress_probe.py -q`
 - `.venv/bin/python -m pytest tests/unit -q -k "eval or evaluation or qq or external_check"`
 - `.venv/bin/python -m pytest tests/integration -q -k "evaluation or acp or attachment"`
