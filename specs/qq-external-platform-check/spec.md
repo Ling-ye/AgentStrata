@@ -71,6 +71,14 @@ Console 基础设施页必须分别投影容器状态与 QQ 登录状态。NapCa
 不得沿用旧缓存或显示为健康。Console 的自动轮询和手动登录检查优先读取认证
 `get_status`，不能依赖 WebUI token 恰好仍在最近容器日志中。
 
+NapCat 容器运行时，Console 可以按当前 Bot 的 `QQ_WEBUI_PORT` 返回一个无凭据的回环
+`/webui` 入口。前端点击登录按钮后直接在新标签页打开该入口，并与手动登录检查使用同一
+实例端口。入口的 scheme 固定为 HTTP，host 只允许 `localhost`、`127.0.0.1` 或 `::1`，
+路径固定为 `/webui`；不得包含 query、fragment、userinfo、WebUI token 或临时 credential。
+配置缺失、畸形或非回环时不提供链接，
+也不得退回终端命令、远端 URL 或携带 token 的 Console API。浏览器是否已具备 NapCat
+管理会话由 NapCat 自己处理，Console 不绕过其认证边界。
+
 `agentstrata-capabilities-v1` 目录固定为 25 个直接 Agent Case，不含 ACP 或 QQ；默认 `full`
 只选择当前内置 Bot 可运行的 23 个，两个来源专用 Case 仅供显式 `custom`。
 `agentstrata-qq-message-flow-v1` 固定为 7 个无外部写的合成后链路 Case。真实 QQ Case、
@@ -97,6 +105,9 @@ Console 基础设施页必须分别投影容器状态与 QQ 登录状态。NapCa
 - 没有独立发送 QQ 时，入站 Agent 链路始终显示 `not_tested`。
 - Console NapCat “诊断”属于基础设施任务，不进入 Evaluation lifecycle 或 artifact。
 - Console 必须区分容器运行、QQ 已在线、QQ 未登录和登录状态未知；离线或未知不得显示为健康。
+- Console 的 NapCat 登录按钮必须直接打开当前实例的无凭据回环 WebUI；后端与前端都拒绝
+  非回环、非 HTTP、非 `/webui` 或携带 query/fragment/userinfo 的链接，且 Console 不暴露
+  WebUI token 或 credential。
 - 旧 Evaluation artifact 仍可读取；定义变化使旧 29-Case 结果不能与新 26-Case 结果
   恢复或错误比较。
 

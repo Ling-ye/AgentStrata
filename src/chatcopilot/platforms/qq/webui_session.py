@@ -165,9 +165,15 @@ def _token_from_logs(text: str) -> str:
     return next((token for _, token in sorted(tokens, reverse=True) if token), "")
 
 
+def webui_entrypoint_url(host: str, port: int | str) -> str:
+    """Build the tokenless browser entrypoint for one loopback NapCat WebUI."""
+    normalized_host, normalized_port = _validate_endpoint(host, port)
+    rendered_host = f"[{normalized_host}]" if ":" in normalized_host else normalized_host
+    return f"http://{rendered_host}:{normalized_port}/webui"
+
+
 def _local_webui_url(host: str, port: int, token: str) -> str:
-    rendered_host = f"[{host}]" if ":" in host else host
-    return f"http://{rendered_host}:{port}/webui?{urlencode({'token': token})}"
+    return f"{webui_entrypoint_url(host, port)}?{urlencode({'token': token})}"
 
 
 def read_webui_session(

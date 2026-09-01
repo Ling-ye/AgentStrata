@@ -558,6 +558,9 @@ QQ 号、群号、token、昵称、群名或 message ID，只保留 HMAC/digest 
 Console 的 NapCat“诊断”按钮运行同一个默认只读检查。
 基础设施卡片同时自动读取 OneBot 在线状态：容器运行但 QQ 离线时显示“异常 / 未登录”，
 查询失败时显示“运行中 / 登录状态未知”，不会再把容器存活当成账号在线。
+点击“打开 NapCat 登录页”会直接打开当前 Bot `QQ_WEBUI_PORT` 对应的本机 WebUI；Console
+只传递无 token 的回环 `/webui` 地址。如果浏览器尚未建立 NapCat 管理会话，先在 NapCat
+自己的登录页完成认证，再进行 QQ 扫码或手机确认。
 
 `qq_simulated_gateway_ingress:passed` 只证明隔离回环中的合成 ingress 契约；它不证明运行
 中的 NapCat 产生过该事件，也不证明 ACP edge、Agent、真实 QQ 客户端展示或用户已读，

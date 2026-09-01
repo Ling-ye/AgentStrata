@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Input, Message, Space, Spin, Tag, Typography } from "@arco-design/web-react";
+import { Button, Message, Space, Spin, Tag, Typography } from "@arco-design/web-react";
 import { api } from "../api";
+import { openNapcatLoginPage } from "../features/infra/napcatLogin";
 import type { InfraService } from "../types";
 
 const { Text } = Typography;
@@ -17,11 +18,6 @@ export default function LoginPanel({ service }: Props) {
   const [loginState, setLoginState] = useState<"logged_in" | "logged_out" | null>(
     service.login_state,
   );
-  const instanceId = service.instance_id || service.id.split(":", 2)[1] || "";
-  const quickstartCommand = instanceId
-    ? `bash deploy/wsl/quickstart.sh --bot-id ${instanceId} --resume`
-    : "bash deploy/wsl/quickstart.sh --resume";
-
   useEffect(() => {
     setLoginState(service.login_state);
   }, [service.login_state]);
@@ -65,18 +61,11 @@ export default function LoginPanel({ service }: Props) {
     }
   };
 
-  const copyText = async (value: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      Message.success(`${label}\u5df2\u590d\u5236`);
-    } catch {
-      Message.error(`\u590d\u5236${label}\u5931\u8d25`);
-    }
-  };
-
   const handleLoginClick = async () => {
     if (service.login_type === "webui_link") {
-      setOpen(true);
+      if (!openNapcatLoginPage(service.login_url)) {
+        Message.error("NapCat 登录地址不可用，请确认对应实例已启动且 WebUI 端口配置有效");
+      }
     } else if (service.login_type === "qrcode") {
       setOpen(true);
       if (loginState !== "logged_in") {
@@ -98,8 +87,13 @@ export default function LoginPanel({ service }: Props) {
           size="small"
           onClick={handleLoginClick}
         >
-          {service.login_type === "webui_link" ? "终端登录指引" : "登录"}
+          {service.login_type === "webui_link" ? "打开 NapCat 登录页" : "登录"}
         </Button>
+        {service.login_type === "webui_link" && (
+          <Button size="small" loading={checking} onClick={() => void checkStatus()}>
+            检查登录状态
+          </Button>
+        )}
         {loginState === "logged_in" && (
           <Tag size="small" color="green">已登录</Tag>
         )}
@@ -113,30 +107,6 @@ export default function LoginPanel({ service }: Props) {
 
       {open && (
         <div className="login-panel-content">
-          {service.login_type === "webui_link" && (
-            <div className="login-panel-webui">
-              <Text>请在仓库目录运行终端向导，按提示打开本地 WebUI 并扫码：</Text>
-              <Input size="small" readOnly value={quickstartCommand} />
-              <Button size="small" onClick={() => void copyText(quickstartCommand, "命令")}>
-                复制命令
-              </Button>
-              <Button size="small" loading={checking} onClick={() => void checkStatus()}>
-                检查登录状态
-              </Button>
-              <Text type="secondary" className="cc-text-small">
-                WebUI 管理 token 只在可信交互式终端显示一次，不进入 Console HTTP 响应。
-              </Text>
-              <Button
-                size="small"
-                type="text"
-                onClick={() => setOpen(false)}
-                className="stack-action"
-              >
-                收起
-              </Button>
-            </div>
-          )}
-
           {service.login_type === "qrcode" && (
             <div className="login-panel-qrcode">
               {loginState === "logged_in" && !qrImage && (

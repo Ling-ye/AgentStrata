@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -114,8 +113,6 @@ def infra_login_check(service_id: str):
         res = services.standalone_webui_login_status(
             svc,
             inst_id,
-            host=os.environ.get("QQ_WEBUI_HOST", "localhost"),
-            port=os.environ.get("QQ_WEBUI_PORT", "6099"),
         )
     else:
         res = operations.shared_service_xhs_check_login()

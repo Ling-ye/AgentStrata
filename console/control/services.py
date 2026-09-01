@@ -36,6 +36,7 @@ from chatcopilot.platforms.qq.webui_session import (
     NapCatWebUiError,
     check_login_status as check_napcat_login_status,
     read_webui_session,
+    webui_entrypoint_url,
 )
 
 ServiceType = Literal["compose", "standalone", "embedded", "remote"]
@@ -429,6 +430,10 @@ def standalone_status(svc: ServiceDef, instance_id: str) -> dict[str, Any]:
     runtime_status_unknown = False
     if svc.id == "napcat" and running:
         try:
+            login_url = _napcat_webui_entrypoint(instance_id)
+        except Exception:  # noqa: BLE001 - unsafe or missing instance config has no link
+            login_url = None
+        try:
             runtime_status = _napcat_onebot_runtime_status(instance_id)
         except Exception:  # noqa: BLE001 - project a bounded unknown state to Console
             runtime_status_unknown = True
@@ -453,6 +458,8 @@ def standalone_status(svc: ServiceDef, instance_id: str) -> dict[str, Any]:
         account_online=runtime_status.online if runtime_status is not None else None,
         provider_good=runtime_status.good if runtime_status is not None else None,
     )
+    if svc.id == "napcat" and running:
+        result["login_url"] = login_url
     if runtime_status_unknown:
         message = "QQ account login state could not be verified."
         result["checks"].append(
@@ -529,14 +536,26 @@ def standalone_logs(svc: ServiceDef, instance_id: str) -> Iterator[str]:
 # ---------------------------------------------------------------------------
 
 
-def _napcat_onebot_runtime_status(instance_id: str) -> OneBotRuntimeStatus:
+def _napcat_local_env(instance_id: str) -> dict[str, str]:
     if not is_valid_bot_id(instance_id):
         raise ValueError("invalid bot instance id")
     bot_dir = repo_root() / "bots" / instance_id
-    values = read_local_env_for_provision(
+    return read_local_env_for_provision(
         bot_dir / "local.env",
         allowed_parent=bot_dir,
     )
+
+
+def _napcat_webui_port(instance_id: str) -> str:
+    return _napcat_local_env(instance_id).get("QQ_WEBUI_PORT") or "6099"
+
+
+def _napcat_webui_entrypoint(instance_id: str) -> str:
+    return webui_entrypoint_url("localhost", _napcat_webui_port(instance_id))
+
+
+def _napcat_onebot_runtime_status(instance_id: str) -> OneBotRuntimeStatus:
+    values = _napcat_local_env(instance_id)
     url = require_loopback_websocket_url(
         values.get("CHATCOPILOT_QQ_ONEBOT_WS_URL") or "ws://127.0.0.1:3001",
         env_key="CHATCOPILOT_QQ_ONEBOT_WS_URL",
@@ -550,7 +569,7 @@ def standalone_webui_login_status(
     instance_id: str,
     *,
     host: str = "localhost",
-    port: str = "6099",
+    port: str | None = None,
 ) -> dict[str, Any]:
     """Return a bounded QQ login projection without exposing local credentials."""
 
@@ -570,7 +589,11 @@ def standalone_webui_login_status(
 
     container = _standalone_container(svc, instance_id)
     try:
-        session = read_webui_session(container, host=host, port=port)
+        session = read_webui_session(
+            container,
+            host=host,
+            port=port or _napcat_webui_port(instance_id),
+        )
         status = check_napcat_login_status(session)
     except NapCatWebUiError as exc:
         return {"ok": False, "error": str(exc)}
@@ -645,6 +668,7 @@ def _base_status(svc: ServiceDef, *, state: str, color: str) -> dict[str, Any]:
         "instance_id": None,
         "login_state": get_cached_login_state(svc.id) if svc.has_login else None,
         "login_type": svc.extra.get("login_type") if svc.has_login else None,
+        "login_url": None,
         "account_online": None,
         "provider_good": None,
         "mcp_refs": list(svc.mcp_refs),

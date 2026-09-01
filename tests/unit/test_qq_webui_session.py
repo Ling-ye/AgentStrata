@@ -52,6 +52,37 @@ def _session(token: str = "webui-local-token") -> webui_session.WebUiSession:
     )
 
 
+@pytest.mark.parametrize(
+    ("host", "port", "expected"),
+    (
+        ("localhost", "6099", "http://localhost:6099/webui"),
+        ("127.0.0.1", 16099, "http://127.0.0.1:16099/webui"),
+        ("::1", 6099, "http://[::1]:6099/webui"),
+    ),
+)
+def test_webui_entrypoint_is_tokenless_and_loopback_only(
+    host: str,
+    port: int | str,
+    expected: str,
+) -> None:
+    url = webui_session.webui_entrypoint_url(host, port)
+
+    assert url == expected
+    assert "?" not in url
+
+
+@pytest.mark.parametrize(
+    ("host", "port"),
+    (("example.com", 6099), ("localhost", 0), ("localhost", "invalid")),
+)
+def test_webui_entrypoint_rejects_nonloopback_or_invalid_endpoint(
+    host: str,
+    port: int | str,
+) -> None:
+    with pytest.raises(webui_session.NapCatWebUiError):
+        webui_session.webui_entrypoint_url(host, port)
+
+
 def test_reader_uses_only_canonical_container_and_generates_loopback_url() -> None:
     token_key = "to" + "ken"
     completed = [

@@ -12,6 +12,7 @@ export interface InfraService {
   instance_id: string | null;
   login_state: "logged_in" | "logged_out" | null;
   login_type: "qrcode" | "webui_link" | null;
+  login_url: string | null;
   account_online: boolean | null;
   provider_good: boolean | null;
   env_configured?: boolean;

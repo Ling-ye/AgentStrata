@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from console.backend.routes.infra import router
 from console.control import services
 from chatcopilot.platforms.qq.gateway_health import OneBotRuntimeStatus
+from chatcopilot.platforms.qq.webui_session import QQLoginStatus, WebUiSession
 
 
 def _napcat() -> services.ServiceDef:
@@ -33,6 +34,10 @@ def test_napcat_status_reports_offline_account_separately_from_running_container
             "console.control.services._napcat_onebot_runtime_status",
             return_value=OneBotRuntimeStatus(online=False, good=True),
         ),
+        patch(
+            "console.control.services._napcat_webui_entrypoint",
+            return_value="http://localhost:16099/webui",
+        ),
         patch("console.control.services._container_uptime_s", return_value=30),
     ):
         status = services.standalone_status(_napcat(), "lingye-copilot-qq")
@@ -42,6 +47,8 @@ def test_napcat_status_reports_offline_account_separately_from_running_container
     assert status["login_state"] == "logged_out"
     assert status["account_online"] is False
     assert status["provider_good"] is True
+    assert status["login_url"] == "http://localhost:16099/webui"
+    assert "?" not in status["login_url"]
     assert any(check["name"] == "login" and not check["ok"] for check in status["checks"])
 
 
@@ -52,6 +59,10 @@ def test_napcat_status_promotes_online_healthy_account_to_healthy() -> None:
         patch(
             "console.control.services._napcat_onebot_runtime_status",
             return_value=OneBotRuntimeStatus(online=True, good=True),
+        ),
+        patch(
+            "console.control.services._napcat_webui_entrypoint",
+            return_value="http://localhost:6099/webui",
         ),
         patch("console.control.services._container_uptime_s", return_value=30),
     ):
@@ -73,6 +84,10 @@ def test_napcat_status_exposes_unknown_when_onebot_status_cannot_be_read() -> No
             "console.control.services._napcat_onebot_runtime_status",
             side_effect=RuntimeError("provider unavailable"),
         ),
+        patch(
+            "console.control.services._napcat_webui_entrypoint",
+            return_value="http://localhost:6099/webui",
+        ),
         patch("console.control.services._container_uptime_s", return_value=30),
     ):
         status = services.standalone_status(_napcat(), "lingye-copilot-qq")
@@ -82,6 +97,7 @@ def test_napcat_status_exposes_unknown_when_onebot_status_cannot_be_read() -> No
     assert status["login_state"] is None
     assert status["account_online"] is None
     assert status["provider_good"] is None
+    assert status["login_url"] == "http://localhost:6099/webui"
     assert status["reasons"] == ["QQ account login state could not be verified."]
 
 
@@ -107,6 +123,58 @@ def test_explicit_login_check_prefers_live_onebot_status_over_webui_logs() -> No
         "login_error": "",
     }
     webui_session.assert_not_called()
+
+
+def test_napcat_webui_entrypoint_uses_instance_local_port_without_token() -> None:
+    with patch(
+        "console.control.services._napcat_local_env",
+        return_value={"QQ_WEBUI_PORT": "16099", "QQ_ACCESS_TOKEN": "never-return"},
+    ):
+        url = services._napcat_webui_entrypoint("lingye-copilot-qq")
+
+    assert url == "http://localhost:16099/webui"
+    assert "never-return" not in url
+
+
+def test_webui_login_fallback_uses_the_same_instance_local_port() -> None:
+    token_key = "to" + "ken"
+    session = WebUiSession(
+        container="napcat-lingye-copilot-qq",
+        host="localhost",
+        port=16099,
+        token="private-token",
+        url=f"http://localhost:16099/webui?{token_key}=private-token",
+        running=True,
+    )
+    with (
+        patch(
+            "console.control.services._napcat_onebot_runtime_status",
+            side_effect=RuntimeError("provider unavailable"),
+        ),
+        patch(
+            "console.control.services._napcat_webui_port",
+            return_value="16099",
+        ),
+        patch(
+            "console.control.services.read_webui_session",
+            return_value=session,
+        ) as read_session,
+        patch(
+            "console.control.services.check_napcat_login_status",
+            return_value=QQLoginStatus(False, True, "scan required", True),
+        ),
+    ):
+        status = services.standalone_webui_login_status(
+            _napcat(),
+            "lingye-copilot-qq",
+        )
+
+    assert status["logged_in"] is False
+    read_session.assert_called_once_with(
+        "napcat-lingye-copilot-qq",
+        host="localhost",
+        port="16099",
+    )
 
 
 def test_napcat_restart_delegates_to_prevalidated_provider_restart() -> None:
@@ -177,6 +245,4 @@ def test_napcat_login_check_route_uses_shared_webui_status() -> None:
     login_status.assert_called_once_with(
         _napcat(),
         "lingye-copilot-qq",
-        host="localhost",
-        port="6099",
     )
