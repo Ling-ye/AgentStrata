@@ -564,6 +564,27 @@ def _napcat_onebot_runtime_status(instance_id: str) -> OneBotRuntimeStatus:
     return asyncio.run(query_onebot_runtime_status(url, token))
 
 
+def standalone_webui_token(
+    svc: ServiceDef,
+    instance_id: str,
+) -> dict[str, Any]:
+    """Read the current instance's bounded NapCat WebUI token on demand."""
+    if not is_valid_bot_id(instance_id):
+        return {"ok": False, "error": "invalid bot instance id"}
+    container = _standalone_container(svc, instance_id)
+    try:
+        session = read_webui_session(
+            container,
+            host="localhost",
+            port=_napcat_webui_port(instance_id),
+        )
+    except NapCatWebUiError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception:  # noqa: BLE001 - fail closed without exposing private env details
+        return {"ok": False, "error": "NapCat WebUI token could not be read safely"}
+    return {"ok": True, "token": session.token}
+
+
 def standalone_webui_login_status(
     svc: ServiceDef,
     instance_id: str,

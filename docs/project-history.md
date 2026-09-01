@@ -721,7 +721,9 @@ Console、实例更新和 QQ gateway 的命令又分散在多份文档中。高�
 - CLI 与可选 Console 消费同一个 BotSpec-derived provisioning plan 和原子 env writer；秘密不进入
   argv、JSON、日志或 receipt，失败后从机器实际状态 `--resume`，不维护平行流程记录。
 - Console 的 NapCat 登录入口按 Bot 的 `QQ_WEBUI_PORT` 直接打开无凭据的本机 `/webui`，
-  登录状态检查复用同一实例端口；WebUI token 仍不进入 Console API 或浏览器 URL。
+  登录状态检查复用同一实例端口；常态状态 API 和浏览器 URL 均不携带 WebUI token。
+- 用户显式点击后，Console 可经 loopback-only、`no-store` 的 POST 接口读取现有 WebUI token
+  并直接写入剪贴板；前端不显示或持久化 token，旧 token/session 路由继续保持移除。
 - Docker 与系统包在精确变更预览后才允许安装；WSL systemd、docker group 和扫码等无法在当前
   进程安全完成的动作返回 `needs_user_action`，不使用提权或权限降级技巧绕过。
 - 文档按用户状态收敛：README 只给推荐入口，部署文档只讲首次安装，运维手册只讲安装后操作，

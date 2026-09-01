@@ -141,6 +141,11 @@ export const api = {
     req<XhsLoginQrcode>(`/api/infra/${id}/login/qrcode`, { method: "POST" }),
   infraLoginCheck: (id: string) =>
     req<XhsLoginStatus>(`/api/infra/${id}/login/check`, { method: "POST" }),
+  infraLoginToken: (id: string) =>
+    req<{ ok: boolean; token: string }>(`/api/infra/${id}/login/token`, {
+      method: "POST",
+      cache: "no-store",
+    }),
 };
 
 /** 通过 SSE 跟读任务输出。返回 close 函数。 */

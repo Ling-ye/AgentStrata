@@ -560,7 +560,10 @@ Console 的 NapCat“诊断”按钮运行同一个默认只读检查。
 查询失败时显示“运行中 / 登录状态未知”，不会再把容器存活当成账号在线。
 点击“打开 NapCat 登录页”会直接打开当前 Bot `QQ_WEBUI_PORT` 对应的本机 WebUI；Console
 只传递无 token 的回环 `/webui` 地址。如果浏览器尚未建立 NapCat 管理会话，先在 NapCat
-自己的登录页完成认证，再进行 QQ 扫码或手机确认。
+自己的登录页完成认证，再进行 QQ 扫码或手机确认。需要管理 token 时，点击“获取并复制
+Token”；该操作只允许来自本机回环 Console，请求成功后 token 只进入当前浏览器剪贴板，
+不会显示在页面、写入 URL 或持久化。通过 SSH 使用时必须采用本地端口转发；局域网直连会
+被 token 接口拒绝。
 
 `qq_simulated_gateway_ingress:passed` 只证明隔离回环中的合成 ingress 契约；它不证明运行
 中的 NapCat 产生过该事件，也不证明 ACP edge、Agent、真实 QQ 客户端展示或用户已读，

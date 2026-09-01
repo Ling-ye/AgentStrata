@@ -43,7 +43,7 @@ created: 2026-07-23
 -  gateway 提供独立 `bootstrap` 动作：只验证回环 URL、保留 volume 并创建/重建回环容器，供 localhost WebUI 首次配置 token；该动作不启动 Bot service、不要求或改写 token，也不把未认证状态报告为健康。
 -  gateway 健康检查执行无 token 负向探针和带 token 正向探针：无 token 必须被拒绝，带 token 必须成功。
 -  gateway 日志只报告探针状态与 token 长度，不输出 token。
--  控制台的 NapCat WebUI 登录动作调用独立 `bootstrap`，等待 localhost WebUI 就绪，再从容器日志按需恢复 WebUI 管理 token 并返回 `no-store` 登录链接；该 token 不等于 OneBot `QQ_ACCESS_TOKEN`。
+-  控制台直接打开无凭据 localhost WebUI；用户显式点击后，独立 loopback-only POST 才从规范运行容器的有界 WebUI 配置读取唯一 token 字段并返回 `no-store` 响应，停机或解析器不可用时才回退有界日志。它不调用 lifecycle、不会返回带 token URL；该 token 不等于 OneBot `QQ_ACCESS_TOKEN`。
 -  WebUI token 可从已停止容器的历史日志恢复；正式 `start/restart` 仍先校验 OneBot 强 token，校验失败时不得先停止现有容器。
 -  gateway 提供幂等 `sync-token`：复用合法 `QQ_ACCESS_TOKEN`，缺失或非法时在进程内生成 64 位 hex token；以 stdin 传递 token，原子更新 bot-owned `local.env` 且保留所有未知/高级键，再同步 NapCat `3001` WebSocket 配置。
 -  `sync-token` 在更新运行时 env、重启 NapCat 和双向认证探针全部成功后才报告完成；失败状态可安全重跑，日志只输出 token 长度。
@@ -57,7 +57,7 @@ created: 2026-07-23
 -  空/弱 token、非回环 URL 无法通过 provision、渲染或 gateway 校验；合法 token 可安全渲染且不进入诊断输出。
 -  Docker 启动参数只发布回环端口；旧全接口容器被判定需要重建，原数据卷名称保持不变。
 -  `bootstrap` 可在 token 尚未配置时安全提供 localhost WebUI，但 `start/status` 仍拒绝空 token，Bot service 保持停止。
--  控制台点击 WebUI 登录可从停止状态安全启动 NapCat、取得带管理 token 的 localhost 链接；历史日志已有 token 时，停机状态也可读取。
+-  控制台点击 WebUI 登录只打开无凭据 localhost 页面；点击复制 token 时只读取规范容器的有界历史日志，非回环请求在 Docker 读取前被拒绝。
 -  控制台 NapCat `restart` 缺失 OneBot token 时返回失败但不先停止容器；WebUI bootstrap 不削弱正式 OneBot 启动门禁。
 -  `sync-token` 不删除 `local.env` 中的模型、路由、Git、MCP、NapCat quick-login 等现有键；文件权限保持 `0600`，token 不进入 argv、日志或 Git。
 -  同步后源仓 `local.env`、生成的运行时 env 与 NapCat `3001` token 相同且格式合法；gateway 双向认证、实例更新与 systemd 启用成功。
@@ -75,7 +75,7 @@ created: 2026-07-23
 -  真实 `sync-token` 成功复用 64 字符 token，源码 `local.env`、运行时 env 与 NapCat `3001` 配置三者长度均为 64 且完全相同；两个 env 文件权限均为 `0600`。
 -  NapCat WebUI 控制台修复先以 4 个失败测试复现停机 token、bootstrap、restart 与缓存问题；实现后聚焦回归为 `24 passed, 11 subtests passed`，Console production build 与 `bash -n deploy/wsl/qq_gateway.sh` 通过。
 -  最终 `scripts/check_repo.py fast` 通过：`942 passed, 1 skipped, 38 subtests passed`；Ruff、typed contracts、架构、requirements、SDD 与 UTF-8 检查通过。
--  真实 `POST /api/infra/napcat:lingye-copilot-qq/webui-session` 返回 200、`Cache-Control: no-store`、带 token 的 localhost URL；Windows 侧跟随链接返回 200，容器保持 `127.0.0.1:3001/6099` 回环绑定。
+-  历史实现曾验证 `/webui-session` 的 tokenized URL；该路由后来被移除。当前契约改由 `/login/token` 在用户显式点击时返回纯 token，旧 token/session 路由保持 404，验证事实以 `qq-external-platform-check` 为准。
 -  真实缺少 `QQ_ACCESS_TOKEN` 的控制台 restart 返回 409 后，NapCat 容器仍为 running，WebUI 继续可达；证明校验失败不再先停止容器。
 -  当前 Codex 会话未提供浏览器控制接口，因此未执行真实点击与截图；前端交互已通过 TypeScript production build、API 实测和 Windows HTTP 路径验收。
 -  NapCat 4.18.8 实测在握手后发送 `1403` 并关闭未鉴权连接；先以 2 个失败测试复现探针误判，再改为执行 `get_status` 并忽略先到达的 lifecycle 事件。

@@ -1,14 +1,28 @@
 from __future__ import annotations
 
+from ipaddress import ip_address
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from console.backend.routes.common import get_task_manager
 from console.backend.sse import sse
 from console.control import operations, services
 
 router = APIRouter(prefix="/api/infra", tags=["infra"])
+
+
+def _require_loopback_request(request: Request) -> None:
+    client = request.client
+    try:
+        address = ip_address(client.host if client is not None else "")
+    except ValueError:
+        address = None
+    if address is None or not address.is_loopback:
+        raise HTTPException(
+            status_code=403,
+            detail="NapCat WebUI token is available only from a loopback Console request",
+        )
 
 
 @router.get("")
@@ -120,6 +134,37 @@ def infra_login_check(service_id: str):
         raise HTTPException(status_code=502, detail=res.get("error") or "failed to check login")
     services.update_login_cache(svc.id, "logged_in" if res.get("logged_in") else "logged_out")
     return res
+
+
+@router.post("/{service_id}/login/token")
+def infra_login_token(
+    request: Request,
+    response: Response,
+    service_id: str,
+):
+    _require_loopback_request(request)
+    svc, instance_id = _resolve_infra_with_instance(service_id)
+    if (
+        svc.service_type != "standalone"
+        or svc.extra.get("login_type") != "webui_link"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="service does not support WebUI token lookup",
+        )
+    inst_id = instance_id or (svc.bound_instance_ids[0] if svc.bound_instance_ids else "")
+    if not inst_id:
+        raise HTTPException(status_code=400, detail="standalone service needs instance_id")
+    result = services.standalone_webui_token(svc, inst_id)
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=409,
+            detail=result.get("error") or "failed to get WebUI token",
+        )
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return result
 
 
 def _resolve_infra(service_id: str) -> services.ServiceDef:

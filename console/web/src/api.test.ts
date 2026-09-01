@@ -68,6 +68,26 @@ describe("task flow API", () => {
   });
 });
 
+describe("NapCat WebUI token API", () => {
+  it("uses an explicit POST request for the on-demand token", async () => {
+    const token = ["temporary", "webui", "value"].join("-");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, token }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.infraLoginToken("napcat:example-bot")).resolves.toEqual({
+      ok: true,
+      token,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/infra/napcat:example-bot/login/token",
+      { method: "POST", cache: "no-store" },
+    );
+  });
+});
+
 describe("streamTask", () => {
   it("only treats the custom end event as terminal and lets EventSource reconnect", () => {
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource;

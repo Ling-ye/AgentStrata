@@ -19,10 +19,12 @@ _WEBUI_TOKEN_RE = re.compile(r"WebUi Token:\s*([^\s]+)")
 _WEBUI_URL_RE = re.compile(r"WebUi User Panel Url:\s*(https?://[^\s]+)")
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _MAX_LOG_CHARS = 256 * 1024
+_MAX_CONFIG_BYTES = 64 * 1024
 _MAX_HTTP_BODY_BYTES = 64 * 1024
 _MAX_TOKEN_CHARS = 512
 _MAX_CREDENTIAL_CHARS = 16 * 1024
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_WEBUI_CONFIG_PATH = "/app/napcat/config/webui.json"
 
 
 class NapCatWebUiError(RuntimeError):
@@ -135,6 +137,30 @@ def _read_bounded_logs(container: str) -> str:
     return _ANSI_ESCAPE_RE.sub("", text[-_MAX_LOG_CHARS:])
 
 
+def _read_webui_config_token(container: str) -> str | None:
+    script = (
+        "import json,sys;"
+        f"p=open({_WEBUI_CONFIG_PATH!r},'rb');"
+        f"d=p.read({_MAX_CONFIG_BYTES + 1});p.close();"
+        f"len(d)<={_MAX_CONFIG_BYTES} or sys.exit(2);"
+        "v=json.loads(d.decode('utf-8')).get('token','');"
+        "isinstance(v,str) or sys.exit(2);"
+        "print(v,end='')"
+    )
+    try:
+        completed = subprocess.run(
+            ["docker", "exec", container, "python3", "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return _valid_token(completed.stdout)
+
+
 def _valid_token(value: str) -> str:
     token = value.strip()
     if not token or len(token) > _MAX_TOKEN_CHARS:
@@ -182,15 +208,17 @@ def read_webui_session(
     host: str = "localhost",
     port: int | str = 6099,
 ) -> WebUiSession:
-    """Read one token from bounded canonical-container logs and build a loopback URL."""
+    """Read the current canonical-container token and build a loopback URL."""
     normalized_container = _validate_container(container)
     normalized_host, normalized_port = _validate_endpoint(host, port)
     running = _docker_running(normalized_container)
-    token = _token_from_logs(_read_bounded_logs(normalized_container))
+    token = _read_webui_config_token(normalized_container) if running else None
+    if token is None:
+        token = _token_from_logs(_read_bounded_logs(normalized_container))
     if not token:
         raise NapCatWebUiError(
             "token_not_found",
-            "NapCat WebUI token was not found in recent container logs",
+            "NapCat WebUI token was not found in current config or bounded logs",
         )
     return WebUiSession(
         container=normalized_container,

@@ -83,10 +83,34 @@ def test_webui_entrypoint_rejects_nonloopback_or_invalid_endpoint(
         webui_session.webui_entrypoint_url(host, port)
 
 
-def test_reader_uses_only_canonical_container_and_generates_loopback_url() -> None:
+def test_reader_uses_current_bounded_config_token_before_logs() -> None:
+    token = "local/config-token"
+    completed = [
+        subprocess.CompletedProcess(args=[], returncode=0, stdout="true\n", stderr=""),
+        subprocess.CompletedProcess(args=[], returncode=0, stdout=token, stderr=""),
+    ]
+    with patch.object(webui_session.subprocess, "run", side_effect=completed) as run:
+        session = webui_session.read_webui_session(
+            "napcat-example-bot",
+            host="localhost",
+            port="6099",
+        )
+
+    assert session.token == token
+    assert session.url.endswith("local%2Fconfig-token")
+    assert run.call_args_list[1].args[0][0:3] == [
+        "docker",
+        "exec",
+        "napcat-example-bot",
+    ]
+    assert all(call.args[0][1] != "logs" for call in run.call_args_list)
+
+
+def test_reader_falls_back_to_logs_when_config_cannot_be_read() -> None:
     token_key = "to" + "ken"
     completed = [
         subprocess.CompletedProcess(args=[], returncode=0, stdout="true\n", stderr=""),
+        subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="unavailable"),
         subprocess.CompletedProcess(
             args=[],
             returncode=0,
@@ -113,13 +137,27 @@ def test_reader_uses_only_canonical_container_and_generates_loopback_url() -> No
         "{{.State.Running}}",
         "napcat-example-bot",
     ]
-    assert run.call_args_list[1].args[0] == [
+    assert run.call_args_list[2].args[0] == [
         "docker",
         "logs",
         "--tail",
         "300",
         "napcat-example-bot",
     ]
+
+
+def test_reader_does_not_reuse_historical_logs_when_current_config_token_is_empty() -> None:
+    completed = [
+        subprocess.CompletedProcess(args=[], returncode=0, stdout="true\n", stderr=""),
+        subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+    ]
+    with (
+        patch.object(webui_session.subprocess, "run", side_effect=completed) as run,
+        pytest.raises(webui_session.NapCatWebUiError, match="not found"),
+    ):
+        webui_session.read_webui_session("napcat-example-bot")
+
+    assert all(call.args[0][1] != "logs" for call in run.call_args_list)
 
 
 @pytest.mark.parametrize(

@@ -136,6 +136,44 @@ def test_napcat_webui_entrypoint_uses_instance_local_port_without_token() -> Non
     assert "never-return" not in url
 
 
+def test_napcat_webui_token_reads_the_bounded_instance_session_on_demand() -> None:
+    token = "-".join(("temporary", "webui", "value"))
+    session = WebUiSession(
+        container="napcat-lingye-copilot-qq",
+        host="localhost",
+        port=16099,
+        token=token,
+        url="http://localhost:16099/webui",
+        running=True,
+    )
+    with (
+        patch("console.control.services._napcat_webui_port", return_value="16099"),
+        patch(
+            "console.control.services.read_webui_session",
+            return_value=session,
+        ) as read_session,
+    ):
+        result = services.standalone_webui_token(
+            _napcat(),
+            "lingye-copilot-qq",
+        )
+
+    assert result == {"ok": True, "token": token}
+    read_session.assert_called_once_with(
+        "napcat-lingye-copilot-qq",
+        host="localhost",
+        port="16099",
+    )
+
+
+def test_napcat_webui_token_rejects_invalid_instance_before_reading_logs() -> None:
+    with patch("console.control.services.read_webui_session") as read_session:
+        result = services.standalone_webui_token(_napcat(), "invalid/instance")
+
+    assert result == {"ok": False, "error": "invalid bot instance id"}
+    read_session.assert_not_called()
+
+
 def test_webui_login_fallback_uses_the_same_instance_local_port() -> None:
     token_key = "to" + "ken"
     session = WebUiSession(
@@ -210,7 +248,7 @@ def test_provider_action_strips_ansi_from_console_errors() -> None:
     assert result["stderr"] == "[ERR] token missing"
 
 
-def test_console_does_not_expose_napcat_webui_token_routes() -> None:
+def test_deprecated_napcat_webui_token_routes_remain_unavailable() -> None:
     app = FastAPI()
     app.include_router(router)
     client = TestClient(app)
@@ -221,6 +259,51 @@ def test_console_does_not_expose_napcat_webui_token_routes() -> None:
     assert client.post(
         "/api/infra/napcat:lingye-copilot-qq/webui-session"
     ).status_code == 404
+
+
+def test_napcat_token_route_is_loopback_only_and_never_cached() -> None:
+    app = FastAPI()
+    app.include_router(router)
+    token = "-".join(("temporary", "webui", "value"))
+    with patch(
+        "console.backend.routes.infra.services.standalone_webui_token",
+        return_value={"ok": True, "token": token},
+    ) as token_lookup:
+        response = TestClient(
+            app,
+            client=("127.0.0.1", 50000),
+        ).post("/api/infra/napcat:lingye-copilot-qq/login/token")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "token": token}
+    assert response.headers["cache-control"] == "no-store, max-age=0"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    token_lookup.assert_called_once_with(_napcat(), "lingye-copilot-qq")
+
+
+def test_napcat_token_route_rejects_nonloopback_before_reading_logs() -> None:
+    app = FastAPI()
+    app.include_router(router)
+    remote_host = "192.0." + "2.10"
+    with patch(
+        "console.backend.routes.infra.services.standalone_webui_token",
+    ) as token_lookup:
+        response = TestClient(
+            app,
+            client=(remote_host, 50000),
+        ).post(
+            "/api/infra/napcat:lingye-copilot-qq/login/token",
+            headers={
+                "Host": "localhost:8910",
+                "Origin": "http://localhost:8910",
+                "X-Forwarded-For": "127.0.0.1",
+            },
+        )
+
+    assert response.status_code == 403
+    assert "loopback" in response.json()["detail"]
+    token_lookup.assert_not_called()
 
 
 def test_napcat_login_check_route_uses_shared_webui_status() -> None:

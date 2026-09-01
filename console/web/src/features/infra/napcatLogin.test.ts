@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { openNapcatLoginPage, safeNapcatLoginUrl } from "./napcatLogin";
+import {
+  copyNapcatWebUiToken,
+  openNapcatLoginPage,
+  safeNapcatLoginUrl,
+} from "./napcatLogin";
 
 const queryKey = ["to", "ken"].join("");
 const credential = ["user", "password"].join(":");
@@ -48,4 +52,27 @@ describe("safeNapcatLoginUrl", () => {
     ).toBe(false);
     expect(opener).not.toHaveBeenCalled();
   });
+
+  it("copies an on-demand token without returning or storing it", async () => {
+    const token = ["temporary", "webui", "value"].join("-");
+    const loader = vi.fn().mockResolvedValue({ token });
+    const writer = vi.fn().mockResolvedValue(undefined);
+
+    await expect(copyNapcatWebUiToken(loader, writer)).resolves.toBeUndefined();
+    expect(loader).toHaveBeenCalledOnce();
+    expect(writer).toHaveBeenCalledOnce();
+    expect(writer).toHaveBeenCalledWith(token);
+  });
+
+  it.each(["", "contains whitespace", "x".repeat(513)])(
+    "rejects an invalid token without writing the clipboard",
+    async (token) => {
+      const writer = vi.fn();
+
+      await expect(
+        copyNapcatWebUiToken(async () => ({ token }), writer),
+      ).rejects.toThrow("无效");
+      expect(writer).not.toHaveBeenCalled();
+    },
+  );
 });

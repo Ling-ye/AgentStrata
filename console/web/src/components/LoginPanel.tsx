@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Message, Space, Spin, Tag, Typography } from "@arco-design/web-react";
 import { api } from "../api";
-import { openNapcatLoginPage } from "../features/infra/napcatLogin";
+import {
+  copyNapcatWebUiToken,
+  openNapcatLoginPage,
+} from "../features/infra/napcatLogin";
 import type { InfraService } from "../types";
 
 const { Text } = Typography;
@@ -13,6 +16,7 @@ interface Props {
 export default function LoginPanel({ service }: Props) {
   const [open, setOpen] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [tokenLoading, setTokenLoading] = useState(false);
   const [qrImage, setQrImage] = useState<string | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
   const [loginState, setLoginState] = useState<"logged_in" | "logged_out" | null>(
@@ -78,6 +82,18 @@ export default function LoginPanel({ service }: Props) {
     void fetchQrCode();
   };
 
+  const copyWebuiToken = async () => {
+    setTokenLoading(true);
+    try {
+      await copyNapcatWebUiToken(() => api.infraLoginToken(service.id));
+      Message.success("NapCat Token 已复制");
+    } catch (e) {
+      Message.error(`获取 Token 失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setTokenLoading(false);
+    }
+  };
+
   if (!service.has_login) return null;
 
   return (
@@ -89,6 +105,11 @@ export default function LoginPanel({ service }: Props) {
         >
           {service.login_type === "webui_link" ? "打开 NapCat 登录页" : "登录"}
         </Button>
+        {service.login_type === "webui_link" && (
+          <Button size="small" loading={tokenLoading} onClick={() => void copyWebuiToken()}>
+            获取并复制 Token
+          </Button>
+        )}
         {service.login_type === "webui_link" && (
           <Button size="small" loading={checking} onClick={() => void checkStatus()}>
             检查登录状态

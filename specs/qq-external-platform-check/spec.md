@@ -76,8 +76,17 @@ NapCat 容器运行时，Console 可以按当前 Bot 的 `QQ_WEBUI_PORT` 返回�
 实例端口。入口的 scheme 固定为 HTTP，host 只允许 `localhost`、`127.0.0.1` 或 `::1`，
 路径固定为 `/webui`；不得包含 query、fragment、userinfo、WebUI token 或临时 credential。
 配置缺失、畸形或非回环时不提供链接，
-也不得退回终端命令、远端 URL 或携带 token 的 Console API。浏览器是否已具备 NapCat
-管理会话由 NapCat 自己处理，Console 不绕过其认证边界。
+也不得退回终端命令或远端 URL。浏览器是否已具备 NapCat 管理会话由 NapCat 自己处理。
+
+用户主动点击“获取并复制 Token”时，Console 可以通过独立 POST 接口从规范运行中容器的
+WebUI 配置读取现有 token。配置解析在容器内完成，输入限制为 64 KiB，只允许 token 字段离开
+容器；不得复制或返回包含 2FA 等其它字段的完整配置。容器停机或配置解析器不可用时才允许
+回退到有界启动日志；配置明确存在但 token 为空或非法时失败，不能恢复可能已经过期的历史
+token。接口必须在任何 Docker 读取前按实际 client socket 地址拒绝
+非回环请求，不能信任 Host、Origin 或转发头代替 transport 来源；响应设置 `no-store`、
+`no-cache` 和 `no-referrer`，只返回 token，不返回带 token URL，不缓存、不持久化、不写日志，
+也不执行 bootstrap、容器生命周期或 token 生成。前端收到 token 后只写入浏览器剪贴板，
+不渲染、不写 state/storage/URL；旧 `/webui-token` 和 `/webui-session` 接口继续不存在。
 
 `agentstrata-capabilities-v1` 目录固定为 25 个直接 Agent Case，不含 ACP 或 QQ；默认 `full`
 只选择当前内置 Bot 可运行的 23 个，两个来源专用 Case 仅供显式 `custom`。
@@ -107,7 +116,9 @@ NapCat 容器运行时，Console 可以按当前 Bot 的 `QQ_WEBUI_PORT` 返回�
 - Console 必须区分容器运行、QQ 已在线、QQ 未登录和登录状态未知；离线或未知不得显示为健康。
 - Console 的 NapCat 登录按钮必须直接打开当前实例的无凭据回环 WebUI；后端与前端都拒绝
   非回环、非 HTTP、非 `/webui` 或携带 query/fragment/userinfo 的链接，且 Console 不暴露
-  WebUI token 或 credential。
+  带 token URL 或临时 credential。
+- WebUI token 只允许经用户显式点击触发的独立 POST 接口返回；非回环 client 在日志读取前
+  返回 403，成功响应禁止缓存，前端只复制、不显示或持久化，旧 token/session 路由保持 404。
 - 旧 Evaluation artifact 仍可读取；定义变化使旧 29-Case 结果不能与新 26-Case 结果
   恢复或错误比较。
 
@@ -123,3 +134,9 @@ NapCat 容器运行时，Console 可以按当前 Bot 的 `QQ_WEBUI_PORT` 返回�
 - `cd console/web && npm run build`
 - `.venv/bin/python scripts/check_repo.py fast`
 - `git diff --check`
+
+当前实现的聚焦测试覆盖 loopback 成功、非回环来源在 Docker 读取前返回 403、旧路由 404、
+成功响应禁缓存、配置 token 优先、解析失败时日志回退、显式空 token 不复用历史日志，以及
+前端 POST 和剪贴板写入。对当前本机规范容器的只读调用返回 HTTP 200、非空 token 和
+`no-store/no-cache/no-referrer`；测试输出未包含 token。真实浏览器剪贴板权限、NapCat 管理登录、
+QQ 扫码和外部消息往返仍为 `not_tested`。
