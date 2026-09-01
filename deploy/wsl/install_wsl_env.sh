@@ -29,6 +29,7 @@ ARTIFACT_CACHE="$RUNTIME_ROOT/cache/artifacts"
 INSTALL_SYSTEM_PACKAGES=1
 INSTALL_CC_CONNECT=1
 INSTALL_CONSOLE=0
+INSTALL_CONSOLE_DEPS=0
 SKIP_WEB=0
 INIT_ENV=0
 VERIFY=1
@@ -41,6 +42,7 @@ usage() {
 
 Options:
   --with-console          Also install/repair the optional Console service.
+  --with-console-deps     Include the locked Console Python dependencies only.
   --skip-web              Pass --skip-web when --with-console is used.
   --no-system-packages    Do not install apt packages; isolated runtimes are still installed.
   --skip-cc-connect       Do not install the private Node.js/cc-connect toolchain.
@@ -56,7 +58,8 @@ EOF
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --with-console) INSTALL_CONSOLE=1 ;;
+        --with-console) INSTALL_CONSOLE=1; INSTALL_CONSOLE_DEPS=1 ;;
+        --with-console-deps) INSTALL_CONSOLE_DEPS=1 ;;
         --skip-web) SKIP_WEB=1 ;;
         --no-system-packages) INSTALL_SYSTEM_PACKAGES=0 ;;
         --skip-cc-connect) INSTALL_CC_CONNECT=0 ;;
@@ -538,7 +541,14 @@ install_python_env() {
         "UV_PROJECT_ENVIRONMENT=$VENV_DIR"
     )
     run "${uv_env[@]}" "$UV_BIN" python install --no-bin "$PYTHON_VERSION" --no-config
-    run "${uv_env[@]}" "$UV_BIN" sync --frozen --python "$PYTHON_VERSION" --extra agent --extra acp --no-config
+    local sync_args=(
+        sync --frozen --python "$PYTHON_VERSION" --extra agent --extra acp
+    )
+    if [ "$INSTALL_CONSOLE_DEPS" -eq 1 ]; then
+        sync_args+=(--extra console)
+    fi
+    sync_args+=(--no-config)
+    run "${uv_env[@]}" "$UV_BIN" "${sync_args[@]}"
     [ "$DRY_RUN" -eq 1 ] || ok "isolated Python $PYTHON_VERSION environment ready: $VENV_DIR"
 }
 
@@ -586,7 +596,6 @@ install_console() {
     [ "$SKIP_WEB" -eq 1 ] && args+=(--skip-web)
     args+=(--skip-bots)
     info "installing/repairing optional Console"
-    run "$VENV_DIR/bin/python" -m ensurepip --upgrade
     run env PATH="$NODE_COMMAND_PATH" \
         bash "$REPO_ROOT/deploy/wsl/deploy_console.sh" "${args[@]}"
 }

@@ -6,7 +6,7 @@
 # 或 deploy/wsl/update_instance.sh。
 #
 # 做的事：
-#   1. 建 venv + 装 console/requirements.txt
+#   1. 从 uv.lock 对账 Console Python 环境
 #   2. npm ci + build 前端（产物 console/web/dist，后端同源托管）
 #   3. 渲染并安装 Evaluation / Console 两个 systemd --user 单元
 #   4. 开 lingering，先启动并验证 Evaluation，再启动 Console
@@ -129,8 +129,10 @@ running|degraded|starting) ;;
     ;;
 esac
 
-if [ ! -d "$REPO_ROOT/console" ] || [ ! -f "$REPO_ROOT/console/requirements.txt" ]; then
-    err "这里不像 AgentStrata 控制仓库：$REPO_ROOT（缺 console/requirements.txt）"
+RUNTIME_INSTALLER="$REPO_ROOT/deploy/wsl/install_wsl_env.sh"
+if [ ! -d "$REPO_ROOT/console" ] || [ ! -f "$REPO_ROOT/uv.lock" ] || \
+    [ ! -f "$RUNTIME_INSTALLER" ]; then
+    err "这里不像 AgentStrata 控制仓库：$REPO_ROOT（缺 uv.lock 或运行环境安装器）"
     exit 1
 fi
 info "控制仓库：$REPO_ROOT"
@@ -169,17 +171,13 @@ elif [ -d "$EVALUATION_ROOT" ] && \
     err "首次安装前发现活动 claim 或 maintenance marker；拒绝更新运行代码。"
     exit 1
 fi
-if [ ! -x "$VENV/bin/python" ]; then
-    info "建 venv：$VENV"
-    python3 -m venv "$VENV" || { err "python3 -m venv 失败（缺 python3-venv？）"; exit 1; }
-fi
-info "安装控制台依赖..."
-"$VENV/bin/python" -m pip install --upgrade pip >/dev/null 2>&1 || true
-if ! "$VENV/bin/python" -m pip install -r "$REPO_ROOT/console/requirements.txt"; then
-    err "pip install 失败"
+info "从 uv.lock 对账控制仓库与 Console 依赖..."
+if ! bash "$RUNTIME_INSTALLER" --no-system-packages --skip-cc-connect \
+    --with-console-deps --venv "$VENV" --no-verify; then
+    err "锁定 Console Python 环境安装失败"
     exit 1
 fi
-ok "venv 与依赖就位"
+ok "锁定 Python 环境与 Console 依赖就位"
 
 info "控制台 Python 导入自检..."
 if ! PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" "$VENV/bin/python" - <<'PY'

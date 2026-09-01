@@ -48,6 +48,10 @@ agent = [
 acp = [
     "agent-client-protocol>=0.10.0",
 ]
+console = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
 desktop = [
     "numpy>=2.2,<2.3",
     "pandas==2.3.3",
@@ -56,6 +60,7 @@ desktop = [
 test = [
     "pytest",
     "httpx2>=2.0.0,<3",
+    "tomli>=2; python_version < '3.11'",
 ]
 dev = [
     "fastapi>=0.110",
@@ -67,6 +72,7 @@ dev = [
     "mypy>=1.16,<2",
     "types-PyYAML",
     "types-requests",
+    "tomli>=2; python_version < '3.11'",
     "setuptools==83.0.0",
     "wheel==0.47.0",
 ]

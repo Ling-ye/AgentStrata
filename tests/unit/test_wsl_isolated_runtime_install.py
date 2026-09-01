@@ -20,7 +20,12 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
-def _run_dry_run(tmp_path: Path, *, architecture: str | None = None) -> subprocess.CompletedProcess[str]:
+def _run_dry_run(
+    tmp_path: Path,
+    *,
+    architecture: str | None = None,
+    extra_args: tuple[str, ...] = (),
+) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment["HOME"] = str(tmp_path / "home")
     environment["AGENTSTRATA_RUNTIME_ROOT"] = str(tmp_path / "runtime")
@@ -39,6 +44,7 @@ def _run_dry_run(tmp_path: Path, *, architecture: str | None = None) -> subproce
             "--no-system-packages",
             "--dry-run",
             "--no-verify",
+            *extra_args,
         ],
         cwd=REPO_ROOT,
         env=environment,
@@ -81,7 +87,7 @@ def test_installer_pins_isolated_minimal_runtimes() -> None:
     assert '"cc-connect v$CC_CONNECT_VERSION"' in script
     assert "NPM_CONFIG_USERCONFIG=/dev/null" in script
     assert "NPM_CONFIG_GLOBALCONFIG=/dev/null" in script
-    assert "sync --frozen --python \"$PYTHON_VERSION\" --extra agent --extra acp --no-config" in script
+    assert 'sync_args+=(--no-config)' in script
     assert "GatewayAcpAgent" in script
     assert "GatewayAcpServer" not in script
 
@@ -119,6 +125,17 @@ def test_dry_run_maps_aarch64_to_locked_artifacts(tmp_path: Path) -> None:
     assert "9bf43b4d1a07665bf64d4c4e710930b382321a785e0eb10aac07f46471f86a31" in completed.stdout
     assert "5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7" in completed.stdout
     assert not (tmp_path / "runtime").exists()
+
+
+def test_console_dependencies_are_an_explicit_locked_extra(tmp_path: Path) -> None:
+    completed = _run_dry_run(
+        tmp_path,
+        extra_args=("--skip-cc-connect", "--with-console-deps"),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "uv sync --frozen --python 3.13.15 --extra agent --extra acp --extra console" in completed.stdout
+    assert "ensurepip" not in INSTALLER.read_text(encoding="utf-8")
 
 
 def test_installer_scrubs_bot_and_model_secrets_before_child_commands(

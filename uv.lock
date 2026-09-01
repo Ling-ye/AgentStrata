@@ -42,6 +42,10 @@ agent = [
     { name = "mcp" },
     { name = "openai" },
 ]
+console = [
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
 desktop = [
     { name = "numpy" },
     { name = "pandas" },
@@ -55,6 +59,7 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
     { name = "setuptools" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "types-pyyaml" },
     { name = "types-requests" },
     { name = "uvicorn" },
@@ -63,12 +68,14 @@ dev = [
 test = [
     { name = "httpx2" },
     { name = "pytest" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.10.0" },
     { name = "build", marker = "extra == 'dev'", specifier = "==1.5.0" },
+    { name = "fastapi", marker = "extra == 'console'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.110" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.0.0,<3" },
     { name = "httpx2", marker = "extra == 'test'", specifier = ">=2.0.0,<3" },
@@ -88,13 +95,16 @@ requires-dist = [
     { name = "ruamel-yaml", specifier = ">=0.18" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
     { name = "setuptools", marker = "extra == 'dev'", specifier = "==83.0.0" },
+    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'dev'", specifier = ">=2" },
+    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'test'", specifier = ">=2" },
     { name = "types-pyyaml", marker = "extra == 'dev'" },
     { name = "types-requests", marker = "extra == 'dev'" },
+    { name = "uvicorn", marker = "extra == 'console'", specifier = ">=0.29" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.29" },
     { name = "websockets", specifier = ">=12" },
     { name = "wheel", marker = "extra == 'dev'", specifier = "==0.47.0" },
 ]
-provides-extras = ["agent", "acp", "desktop", "test", "dev"]
+provides-extras = ["agent", "acp", "console", "desktop", "test", "dev"]
 
 [[package]]
 name = "altgraph"

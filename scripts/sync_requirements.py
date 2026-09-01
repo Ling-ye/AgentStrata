@@ -10,7 +10,7 @@ from typing import Any
 try:
     import tomllib  # type: ignore[attr-defined]
 except ModuleNotFoundError:  # Python 3.10
-    from pip._vendor import tomli as tomllib  # type: ignore[no-redef]
+    import tomli as tomllib  # type: ignore[no-redef]
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,8 +21,8 @@ TARGETS: dict[str, Target] = {
     "src/chatcopilot/middleware/acp/requirements.txt": (True, ("agent", "acp"), None),
     "console/requirements.txt": (
         True,
-        ("dev",),
-        frozenset({"fastapi", "uvicorn"}),
+        ("console",),
+        None,
     ),
 }
 HEADER = (

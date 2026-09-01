@@ -46,7 +46,7 @@ ensure_source_cli_env() {
     fi
     echo "[update] reconciling source CLI from uv.lock"
     bash "$installer" --no-system-packages --skip-cc-connect \
-        --venv "$venv_dir" --no-verify
+        --with-console-deps --venv "$venv_dir" --no-verify
     local refresh_rc=$?
     if [ "$refresh_rc" -ne 0 ]; then
         echo "[ERR] locked source CLI sync failed: $venv_dir" >&2
@@ -287,7 +287,7 @@ if [ "$DRY_RUN" = 1 ]; then
     echo "[DRY-RUN] selected update mode: $UPDATE_MODE ($UPDATE_REASON)"
     echo "[DRY-RUN] BotSpec dev.code_tasks requirement: deferred until locked source CLI reconciliation"
     echo "[DRY-RUN] would ensure source venv from: '$SRC/uv.lock'"
-    echo "[DRY-RUN] would run locked installer: bash '$SRC/deploy/wsl/install_wsl_env.sh' --no-system-packages --skip-cc-connect --venv '$SRC/.venv' --no-verify"
+    echo "[DRY-RUN] would run locked installer: bash '$SRC/deploy/wsl/install_wsl_env.sh' --no-system-packages --skip-cc-connect --with-console-deps --venv '$SRC/.venv' --no-verify"
     echo "[DRY-RUN] would reconcile source CLI with uv sync --frozen before executing '$VENV_PY'"
     echo "[DRY-RUN] would export: PYTHONPATH='$SRC/src\${PYTHONPATH:+:\$PYTHONPATH}'"
     echo "[DRY-RUN] would run: '$VENV_PY' -m chatcopilot bot provision-env --bot '$BOT_FOR_CMD'"

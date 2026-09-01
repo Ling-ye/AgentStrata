@@ -117,11 +117,7 @@ preflight_common() {
         err "python3 not found. Install: sudo apt install -y python3 python3-venv"
         exit 1
     fi
-    if ! python3 -m venv --help >/dev/null 2>&1; then
-        err "python3 venv is unavailable. Install: sudo apt install -y python3-venv"
-        exit 1
-    fi
-    ok "python3 / venv is available"
+    ok "python3 is available"
 
     check_systemd_available
 

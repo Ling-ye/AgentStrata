@@ -108,8 +108,16 @@ def test_health_cli_and_setup_refuse_code_update_while_evaluation_is_active() ->
     assert "active_count" in health_cli
     assert "maintenance enter" in setup
     idle_check = setup.index("maintenance_enter")
-    dependency_update = setup.index('info "安装控制台依赖..."')
+    dependency_update = setup.index('info "从 uv.lock 对账控制仓库与 Console 依赖..."')
     assert idle_check < dependency_update
+
+
+def test_console_setup_uses_the_locked_console_extra_without_pip() -> None:
+    setup = _read("console/setup_console.sh")
+
+    assert '--with-console-deps --venv "$VENV" --no-verify' in setup
+    assert 'python3 -m venv "$VENV"' not in setup
+    assert " -m pip " not in setup
 
 
 def test_setup_refuses_installed_but_inactive_evaluation_service_before_updates(
@@ -383,6 +391,7 @@ def test_environment_installer_uses_console_only_nested_deploy() -> None:
 
     assert "args+=(--skip-bots)" in install_console
     assert 'deploy/wsl/deploy_console.sh" "${args[@]}"' in install_console
+    assert "ensurepip" not in install_console
 
 
 def test_deploy_default_continues_after_one_bot_update_failure(

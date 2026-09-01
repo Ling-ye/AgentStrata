@@ -272,7 +272,7 @@ def test_update_script_sets_pythonpath_for_provision_env() -> None:
 
     assert 'VENV_PY="$SRC/.venv/bin/python"' in text
     assert 'bash "$installer" --no-system-packages --skip-cc-connect' in text
-    assert '--venv "$venv_dir" --no-verify' in text
+    assert '--with-console-deps --venv "$venv_dir" --no-verify' in text
     assert 'python3 -m venv "$venv_dir"' not in text
     assert ' -m pip install ' not in text
     assert 'export PYTHONPATH="$SRC/src${PYTHONPATH:+:$PYTHONPATH}"' in text
