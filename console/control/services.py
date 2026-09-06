@@ -136,7 +136,7 @@ SERVICES: tuple[ServiceDef, ...] = (
         service_type="standalone",
         container_prefix="napcat-",
         bound_instance_ids=("lingye-copilot-qq",),
-        actions=("start", "stop", "restart"),
+        actions=("start", "stop", "restart", "recreate"),
         has_login=True,
         has_doctor=True,
         platforms=("qq",),
@@ -469,10 +469,27 @@ def standalone_status(svc: ServiceDef, instance_id: str) -> dict[str, Any]:
     return result
 
 
-def standalone_action(svc: ServiceDef, instance_id: str, verb: str) -> dict[str, Any]:
+def standalone_action(
+    svc: ServiceDef,
+    instance_id: str,
+    verb: str,
+    *,
+    confirmation: str | None = None,
+) -> dict[str, Any]:
     container = _standalone_container(svc, instance_id)
     if svc.id == "napcat" and verb in {"start", "restart"}:
         return _napcat_provider_action(instance_id, verb)
+    if svc.id == "napcat" and verb == "recreate":
+        if confirmation != instance_id:
+            return {
+                "ok": False,
+                "error": "NapCat recreate confirmation does not match the instance",
+            }
+        return _napcat_provider_action(
+            instance_id,
+            verb,
+            confirmation=confirmation,
+        )
     if verb == "start":
         return _docker_simple(["docker", "start", container])
     if verb == "stop":
@@ -482,14 +499,27 @@ def standalone_action(svc: ServiceDef, instance_id: str, verb: str) -> dict[str,
     return {"ok": False, "error": f"不支持的动作：{verb}"}
 
 
-def _napcat_provider_action(instance_id: str, action: str) -> dict[str, Any]:
+def _napcat_provider_action(
+    instance_id: str,
+    action: str,
+    *,
+    confirmation: str | None = None,
+) -> dict[str, Any]:
     """Run a guarded external NapCat provider lifecycle action."""
-    if action not in {"bootstrap", "start", "restart", "sync-token"}:
+    if action not in {"bootstrap", "start", "restart", "recreate", "sync-token"}:
         return {"ok": False, "error": f"unsupported NapCat provider action: {action}"}
+    if action == "recreate" and confirmation != instance_id:
+        return {
+            "ok": False,
+            "error": "NapCat recreate confirmation does not match the instance",
+        }
     script = repo_root() / "deploy" / "wsl" / "qq_gateway.sh"
+    args = ["bash", str(script), action, "--instance", instance_id]
+    if action == "recreate":
+        args.extend(["--confirm-recreate", confirmation or ""])
     try:
         cp = subprocess.run(
-            ["bash", str(script), action, "--instance", instance_id],
+            args,
             capture_output=True,
             text=True,
             timeout=120.0,

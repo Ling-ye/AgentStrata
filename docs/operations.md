@@ -246,6 +246,18 @@ bash deploy/wsl/qq_gateway.sh restart --instance <id>
 bash deploy/wsl/qq_gateway.sh logs --instance <id>
 ```
 
+如果 `start/restart` 提示旧容器需要重建，应在可信交互终端确认，或在回环 Console 的
+NapCat 卡片点击“重建并启动”。对应 CLI 的显式确认命令为：
+
+```bash
+bash deploy/wsl/qq_gateway.sh recreate --instance <id> --confirm-recreate <id>
+```
+
+`recreate` 只在容器镜像、端口、volume、crash guard、共享内存或重启策略确实漂移时执行；
+先准备固定 digest 镜像，再保留 QQ 数据卷和 NapCat 配置卷替换容器，最后验证 OneBot 认证。
+拉取镜像遇到 EOF、TLS 超时、连接重置等明确瞬时网络错误时最多尝试三次，其他错误立即失败；
+镜像准备成功前不会替换旧容器。当前容器已符合配置时应继续使用普通 `restart`。
+
  `sync-token` 只原子更新 Bot 私有 `local.env` 中的
 `QQ_ACCESS_TOKEN`，保留其他键，并同步运行时 env 与 NapCat `3001` 配置。
 `start`、`restart` 和 `status` 都必须通过无 token 拒绝、带 token 可执行 OneBot
@@ -558,12 +570,13 @@ QQ 号、群号、token、昵称、群名或 message ID，只保留 HMAC/digest 
 Console 的 NapCat“诊断”按钮运行同一个默认只读检查。
 基础设施卡片同时自动读取 OneBot 在线状态：容器运行但 QQ 离线时显示“异常 / 未登录”，
 查询失败时显示“运行中 / 登录状态未知”，不会再把容器存活当成账号在线。
-点击“打开 NapCat 登录页”会直接打开当前 Bot `QQ_WEBUI_PORT` 对应的本机 WebUI；Console
+点击“打开 NapCat 管理页”会直接打开当前 Bot `QQ_WEBUI_PORT` 对应的本机 WebUI；Console
 只传递无 token 的回环 `/webui` 地址。如果浏览器尚未建立 NapCat 管理会话，先在 NapCat
 自己的登录页完成认证，再进行 QQ 扫码或手机确认。需要管理 token 时，点击“获取并复制
 Token”；该操作只允许来自本机回环 Console，请求成功后 token 只进入当前浏览器剪贴板，
 不会显示在页面、写入 URL 或持久化。通过 SSH 使用时必须采用本地端口转发；局域网直连会
-被 token 接口拒绝。
+被 token 接口拒绝。QQ 账号已经在线时无需再次触发登录；Console 会显示“账号已在线”。
+容器停机时，管理页、Token 和登录检查按钮会禁用，应先启动或按上面的受控流程重建。
 
 `qq_simulated_gateway_ingress:passed` 只证明隔离回环中的合成 ingress 契约；它不证明运行
 中的 NapCat 产生过该事件，也不证明 ACP edge、Agent、真实 QQ 客户端展示或用户已读，

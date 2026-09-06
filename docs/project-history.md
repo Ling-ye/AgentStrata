@@ -724,6 +724,9 @@ Console、实例更新和 QQ gateway 的命令又分散在多份文档中。高�
   登录状态检查复用同一实例端口；常态状态 API 和浏览器 URL 均不携带 WebUI token。
 - 用户显式点击后，Console 可经 loopback-only、`no-store` 的 POST 接口读取现有 WebUI token
   并直接写入剪贴板；前端不显示或持久化 token，旧 token/session 路由继续保持移除。
+- Console 将 NapCat 入口明确为管理页；账号在线时阻止重复登录引导，容器停机时禁用管理与
+  token 操作。旧容器需要迁移时，独立回环重建动作要求精确实例确认，复用 QQ/NapCat 数据卷
+  并在固定镜像启动后重新验证 OneBot 边界，普通 start/restart 不绕过重建确认。
 - Docker 与系统包在精确变更预览后才允许安装；WSL systemd、docker group 和扫码等无法在当前
   进程安全完成的动作返回 `needs_user_action`，不使用提权或权限降级技巧绕过。
 - 文档按用户状态收敛：README 只给推荐入口，部署文档只讲首次安装，运维手册只讲安装后操作，
@@ -744,6 +747,8 @@ QQ 的旧运行路径把 NapCat、Relay、cc-connect 与 ACP 串成一条外部�
 实例生命周期、权限与证据边界分散。当前 BotSpec 改为显式 `gateway` 与 `channels.qq`，每个
 systemd Bot unit 直接以前台 Python 运行唯一 Gateway，Gateway 连接用户独立维护的回环
 NapCat/OneBot provider，并在进入 Agent 前完成身份、准入、权限审核和任务持久化。
+NapCat 容器重建固定使用 digest 镜像，并仅对明确的镜像仓库瞬时网络错误做有界重试；镜像
+准备成功前不替换旧容器，QQ 数据卷与 NapCat 配置卷继续保留。
 
 QQ 推荐部署不再安装或启动 Node、cc-connect 和 Relay；Feishu legacy edge 保持隔离可选。
 ACP 降为本地 Gateway client edge，不拥有 Channel 或 Agent runtime。Console 和 quickstart

@@ -234,6 +234,42 @@ def test_napcat_restart_delegates_to_prevalidated_provider_restart() -> None:
     docker_simple.assert_not_called()
 
 
+def test_napcat_recreate_requires_exact_confirmation_before_provider_action() -> None:
+    with patch("console.control.services._napcat_provider_action") as gateway:
+        rejected = services.standalone_action(
+            _napcat(),
+            "lingye-copilot-qq",
+            "recreate",
+            confirmation="another-instance",
+        )
+
+    assert rejected == {
+        "ok": False,
+        "error": "NapCat recreate confirmation does not match the instance",
+    }
+    gateway.assert_not_called()
+
+
+def test_napcat_recreate_delegates_only_with_exact_instance_confirmation() -> None:
+    with patch(
+        "console.control.services._napcat_provider_action",
+        return_value={"ok": True},
+    ) as gateway:
+        result = services.standalone_action(
+            _napcat(),
+            "lingye-copilot-qq",
+            "recreate",
+            confirmation="lingye-copilot-qq",
+        )
+
+    assert result == {"ok": True}
+    gateway.assert_called_once_with(
+        "lingye-copilot-qq",
+        "recreate",
+        confirmation="lingye-copilot-qq",
+    )
+
+
 def test_provider_action_strips_ansi_from_console_errors() -> None:
     completed = subprocess.CompletedProcess(
         args=[],
@@ -304,6 +340,38 @@ def test_napcat_token_route_rejects_nonloopback_before_reading_logs() -> None:
     assert response.status_code == 403
     assert "loopback" in response.json()["detail"]
     token_lookup.assert_not_called()
+
+
+def test_napcat_recreate_route_is_loopback_only_and_requires_exact_confirmation() -> None:
+    app = FastAPI()
+    app.include_router(router)
+    path = "/api/infra/napcat:lingye-copilot-qq/recreate"
+    with patch(
+        "console.backend.routes.infra.services.standalone_action",
+        return_value={"ok": True},
+    ) as recreate:
+        mismatch = TestClient(app, client=("127.0.0.1", 50000)).post(
+            path,
+            json={"confirmation": "another-instance"},
+        )
+        remote = TestClient(app, client=("192.0.2.10", 50000)).post(
+            path,
+            json={"confirmation": "lingye-copilot-qq"},
+        )
+        accepted = TestClient(app, client=("127.0.0.1", 50000)).post(
+            path,
+            json={"confirmation": "lingye-copilot-qq"},
+        )
+
+    assert mismatch.status_code == 409
+    assert remote.status_code == 403
+    assert accepted.status_code == 200
+    recreate.assert_called_once_with(
+        _napcat(),
+        "lingye-copilot-qq",
+        "recreate",
+        confirmation="lingye-copilot-qq",
+    )
 
 
 def test_napcat_login_check_route_uses_shared_webui_status() -> None:

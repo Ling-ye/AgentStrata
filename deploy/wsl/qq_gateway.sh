@@ -9,6 +9,7 @@
 #   bash deploy/wsl/qq_gateway.sh sync-token --instance lingye-copilot-qq
 #   bash deploy/wsl/qq_gateway.sh start --instance lingye-copilot-qq
 #   bash deploy/wsl/qq_gateway.sh restart --instance lingye-copilot-qq
+#   bash deploy/wsl/qq_gateway.sh recreate --instance lingye-copilot-qq --confirm-recreate lingye-copilot-qq
 #   bash deploy/wsl/qq_gateway.sh status --instance lingye-copilot-qq
 #   bash deploy/wsl/qq_gateway.sh logs --instance lingye-copilot-qq
 set -uo pipefail
@@ -16,10 +17,20 @@ set -uo pipefail
 ACTION="${1:-}"
 [ $# -gt 0 ] && shift || true
 INSTANCE=""
+CONFIRM_RECREATE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --instance|-i) INSTANCE="${2:-}"; shift 2 ;;
+        --instance|-i)
+            [ $# -ge 2 ] || { echo "[ERR] $1 缺少参数" >&2; exit 2; }
+            INSTANCE="$2"
+            shift 2
+            ;;
+        --confirm-recreate)
+            [ $# -ge 2 ] || { echo "[ERR] --confirm-recreate 缺少参数" >&2; exit 2; }
+            CONFIRM_RECREATE="$2"
+            shift 2
+            ;;
         -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
         *) echo "[ERR] 未知参数：$1（用 --help 看用法）" >&2; exit 2 ;;
     esac
@@ -31,10 +42,10 @@ warn() { printf "\033[1;33m[WARN]\033[0m %s\n" "$*"; }
 err()  { printf "\033[1;31m[ERR]\033[0m %s\n" "$*" >&2; }
 
 if [ -z "$ACTION" ]; then
-    err "必须指定动作：bootstrap|sync-token|start|restart|status|logs"
+    err "必须指定动作：bootstrap|sync-token|start|restart|recreate|status|logs"
     exit 2
 fi
-if [ "$ACTION" != "bootstrap" ] && [ "$ACTION" != "sync-token" ] && [ "$ACTION" != "start" ] && [ "$ACTION" != "restart" ] && [ "$ACTION" != "status" ] && [ "$ACTION" != "logs" ]; then
+if [ "$ACTION" != "bootstrap" ] && [ "$ACTION" != "sync-token" ] && [ "$ACTION" != "start" ] && [ "$ACTION" != "restart" ] && [ "$ACTION" != "recreate" ] && [ "$ACTION" != "status" ] && [ "$ACTION" != "logs" ]; then
     err "不支持的动作：$ACTION"
     exit 2
 fi
@@ -45,6 +56,14 @@ fi
 if [ "${#INSTANCE}" -lt 2 ] || [ "${#INSTANCE}" -gt 63 ] \
     || [[ ! "$INSTANCE" =~ ^[a-z][a-z0-9]*(-[a-z0-9]+)*$ ]]; then
     err "--instance 必须为 2–63 字符、以小写字母开头的 kebab-case"
+    exit 2
+fi
+if [ -n "$CONFIRM_RECREATE" ] && [ "$ACTION" != "recreate" ]; then
+    err "--confirm-recreate 只允许用于 recreate 动作。"
+    exit 2
+fi
+if [ "$ACTION" = "recreate" ] && [ "$CONFIRM_RECREATE" != "$INSTANCE" ]; then
+    err "recreate 必须使用 --confirm-recreate 提供完全一致的实例 ID。"
     exit 2
 fi
 
@@ -144,7 +163,7 @@ else
     WS_PORT="3001"
 fi
 
-if [ "$ACTION" = "bootstrap" ] || [ "$ACTION" = "sync-token" ] || [ "$ACTION" = "start" ] || [ "$ACTION" = "restart" ] || [ "$ACTION" = "status" ]; then
+if [ "$ACTION" = "bootstrap" ] || [ "$ACTION" = "sync-token" ] || [ "$ACTION" = "start" ] || [ "$ACTION" = "restart" ] || [ "$ACTION" = "recreate" ] || [ "$ACTION" = "status" ]; then
     if [ ! -r "$LOCAL_CONFIG" ]; then
         err "找不到 QQ 私有配置：$LOCAL_CONFIG"
         exit 1
@@ -207,7 +226,7 @@ if [ "$ACTION" = "bootstrap" ] || [ "$ACTION" = "sync-token" ]; then
         err "QQ OneBot URL 不满足回环边界；拒绝 bootstrap。"
         exit 1
     fi
-elif [ "$ACTION" = "start" ] || [ "$ACTION" = "restart" ] || [ "$ACTION" = "status" ]; then
+elif [ "$ACTION" = "start" ] || [ "$ACTION" = "restart" ] || [ "$ACTION" = "recreate" ] || [ "$ACTION" = "status" ]; then
     if ! validate_boundary_config; then
         err "QQ OneBot 配置不满足安全边界；拒绝 $ACTION。"
         exit 1
@@ -307,6 +326,25 @@ container_needs_recreate() {
     return 0
 }
 
+pull_napcat_image() {
+    local attempt output
+    for attempt in 1 2 3; do
+        if output="$(docker pull "$NAPCAT_IMAGE" 2>&1)"; then
+            printf '%s\n' "$output"
+            return 0
+        fi
+        printf '%s\n' "$output" >&2
+        case "$output" in
+            *EOF*|*"TLS handshake timeout"*|*"i/o timeout"*|*"connection reset by peer"*|*"temporary failure"*|*"context deadline exceeded"*) ;;
+            *) return 1 ;;
+        esac
+        if [ "$attempt" -lt 3 ]; then
+            warn "拉取固定 NapCat 镜像遇到临时网络错误（第 $attempt/3 次），即将重试。"
+        fi
+    done
+    return 1
+}
+
 create_container() {
     local qq_data_volume="$1"
     local napcat_config_volume="$2"
@@ -344,19 +382,21 @@ recreate_container() {
 
     warn "检测到旧 NapCat 容器的账户、镜像、端口、volume 或重启策略不符合当前配置。"
     warn "会保留 Docker volume：QQ 数据=$qq_data_volume，NapCat 配置=$napcat_config_volume。"
-    if [ ! -t 0 ] || [ ! -t 1 ]; then
-        err "重建容器需要可信交互式终端确认。"
-        return 1
-    fi
-    printf '确认停止并重建容器 %s？ [y/N] ' "$CONTAINER" > /dev/tty
-    local reply
-    IFS= read -r reply < /dev/tty || return 1
-    if [[ ! "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]; then
-        err "用户未确认重建 NapCat 容器。"
-        return 1
+    if [ "$ACTION" != "recreate" ] || [ "$CONFIRM_RECREATE" != "$INSTANCE" ]; then
+        if [ ! -t 0 ] || [ ! -t 1 ]; then
+            err "重建容器需要可信交互式终端确认。"
+            return 1
+        fi
+        printf '确认停止并重建容器 %s？ [y/N] ' "$CONTAINER" > /dev/tty
+        local reply
+        IFS= read -r reply < /dev/tty || return 1
+        if [[ ! "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+            err "用户未确认重建 NapCat 容器。"
+            return 1
+        fi
     fi
     if ! docker image inspect "$NAPCAT_IMAGE" >/dev/null 2>&1 \
-        && ! docker pull "$NAPCAT_IMAGE"; then
+        && ! pull_napcat_image; then
         err "拉取固定 NapCat 镜像失败；旧容器保持运行。"
         return 1
     fi
@@ -648,5 +688,24 @@ case "$ACTION" in
             exit 1
         fi
         ok "QQ OneBot 无 token 拒绝、带 token 接受。"
+        ;;
+    recreate)
+        if ! container_exists; then
+            err "NapCat 容器不存在，请使用 start 创建：$CONTAINER"
+            exit 1
+        fi
+        if ! container_needs_recreate; then
+            err "NapCat 容器已符合当前配置，请使用 restart。"
+            exit 1
+        fi
+        if ! recreate_container; then
+            exit 1
+        fi
+        info "Crash guard: NAPCAT_DISABLE_BYPASS=$NAPCAT_DISABLE_BYPASS, NAPCAT_DISABLE_MULTI_PROCESS=$NAPCAT_DISABLE_MULTI_PROCESS, shm=$NAPCAT_SHM_SIZE"
+        if ! probe_boundary_with_retry; then
+            err "NapCat 容器已重建，但 OneBot 双向认证探针失败；容器和数据卷保留，请检查登录与 OneBot 配置。"
+            exit 1
+        fi
+        ok "NapCat 容器已按固定配置重建，QQ 数据与 NapCat 配置 volume 已复用。"
         ;;
 esac

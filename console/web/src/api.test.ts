@@ -86,6 +86,26 @@ describe("NapCat WebUI token API", () => {
       { method: "POST", cache: "no-store" },
     );
   });
+
+  it("sends the exact instance confirmation for an explicit recreate", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      api.infraRecreate("napcat:example-bot", "example-bot"),
+    ).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/infra/napcat:example-bot/recreate",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: "example-bot" }),
+      },
+    );
+  });
 });
 
 describe("streamTask", () => {

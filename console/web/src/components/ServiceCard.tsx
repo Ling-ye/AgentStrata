@@ -102,6 +102,18 @@ export default function ServiceCard({ service, busy, onAction, onLogs }: Props) 
             停止
           </Button>
         )}
+        {service.actions.includes("recreate") && !isNotFound && (
+          <Tooltip content="仅在旧容器配置漂移、普通启动提示需要重建时使用；保留 QQ 与 NapCat 配置数据卷">
+            <Button
+              size="small"
+              status="danger"
+              loading={busy}
+              onClick={() => onAction("recreate")}
+            >
+              {running ? "重建容器" : "重建并启动"}
+            </Button>
+          </Tooltip>
+        )}
         {service.actions.includes("pull") && (
           <Tooltip content="拉取最新 Docker 镜像">
             <Button size="small" type="secondary" loading={busy} onClick={() => onAction("pull")}>拉取镜像</Button>

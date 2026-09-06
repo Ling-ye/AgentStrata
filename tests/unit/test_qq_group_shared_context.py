@@ -2352,6 +2352,59 @@ for name in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'):
     assert completed.returncode == 0, completed.stderr
 
 
+def test_group_codex_mounts_absolute_venv_python_runtime(tmp_path: Path) -> None:
+    python_runtime = tmp_path / "managed-python"
+    runtime_python = python_runtime / "bin" / "python3.13"
+    runtime_python.parent.mkdir(parents=True)
+    runtime_python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    runtime_python.chmod(0o755)
+
+    gateway_venv = tmp_path / "gateway-venv"
+    gateway_bin = gateway_venv / "bin"
+    gateway_bin.mkdir(parents=True)
+    (gateway_bin / "python").symlink_to(runtime_python)
+
+    workdir = tmp_path / "group" / "shared"
+    workdir.mkdir(parents=True)
+    codex_home = tmp_path / "protected" / "codex-home"
+    codex_home.mkdir(parents=True, mode=0o700)
+    codex_home.chmod(0o700)
+    gateway_config = tmp_path / "protected" / "gateway.json"
+    gateway_config.write_text("{}", encoding="utf-8")
+    gateway_config.chmod(0o600)
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_codex.chmod(0o755)
+    state = SimpleNamespace(
+        workdir=workdir.resolve(),
+        codex_home=codex_home.resolve(),
+        gateway_config=gateway_config.resolve(),
+    )
+
+    with (
+        mock.patch("chatcopilot.agent.backends.codex.sys.prefix", str(gateway_venv)),
+        mock.patch(
+            "chatcopilot.agent.backends.codex.sys.base_prefix",
+            str(python_runtime),
+        ),
+    ):
+        command = CodexAgentBackend._wrap_isolated_command(
+            state,  # type: ignore[arg-type]
+            [str(fake_codex)],
+        )
+
+    runtime_mount = [
+        "--ro-bind",
+        str(python_runtime.resolve()),
+        str(python_runtime.resolve()),
+    ]
+    assert any(
+        command[index : index + len(runtime_mount)] == runtime_mount
+        for index in range(len(command) - len(runtime_mount) + 1)
+    )
+    assert command.count(str(tmp_path.resolve())) == 1
+
+
 @pytest.mark.parametrize(
     "project_config_kind",
     ["file", "symlink", "foreign-owner"],

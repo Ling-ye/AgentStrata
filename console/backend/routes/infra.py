@@ -3,7 +3,7 @@ from __future__ import annotations
 from ipaddress import ip_address
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Body, HTTPException, Request, Response
 
 from console.backend.routes.common import get_task_manager
 from console.backend.sse import sse
@@ -21,7 +21,7 @@ def _require_loopback_request(request: Request) -> None:
     if address is None or not address.is_loopback:
         raise HTTPException(
             status_code=403,
-            detail="NapCat WebUI token is available only from a loopback Console request",
+            detail="Sensitive NapCat Console actions are available only from a loopback request",
         )
 
 
@@ -58,6 +58,30 @@ def infra_stop(service_id: str):
 @router.post("/{service_id}/restart")
 def infra_restart(service_id: str):
     return _infra_action(service_id, "restart")
+
+
+@router.post("/{service_id}/recreate")
+def infra_recreate(
+    request: Request,
+    service_id: str,
+    confirmation: str = Body(embed=True, min_length=2, max_length=63),
+):
+    _require_loopback_request(request)
+    svc, instance_id = _resolve_infra_with_instance(service_id)
+    if svc.id != "napcat" or svc.service_type != "standalone":
+        raise HTTPException(
+            status_code=400,
+            detail="service does not support guarded recreation",
+        )
+    inst_id = instance_id or (svc.bound_instance_ids[0] if svc.bound_instance_ids else "")
+    if not inst_id:
+        raise HTTPException(status_code=400, detail="standalone service needs instance_id")
+    if confirmation != inst_id:
+        raise HTTPException(
+            status_code=409,
+            detail="NapCat recreate confirmation does not match the instance",
+        )
+    return _infra_action(service_id, "recreate", confirmation=confirmation)
 
 
 @router.post("/{service_id}/pull")
@@ -184,7 +208,12 @@ def _resolve_infra_with_instance(service_id: str) -> tuple[services.ServiceDef, 
     return svc, instance_id
 
 
-def _infra_action(service_id: str, verb: str):
+def _infra_action(
+    service_id: str,
+    verb: str,
+    *,
+    confirmation: str | None = None,
+):
     svc, instance_id = _resolve_infra_with_instance(service_id)
     if verb not in svc.actions:
         raise HTTPException(status_code=400, detail=f"service {svc.id} does not support action: {verb}")
@@ -194,7 +223,15 @@ def _infra_action(service_id: str, verb: str):
         inst_id = instance_id or (svc.bound_instance_ids[0] if svc.bound_instance_ids else "")
         if not inst_id:
             raise HTTPException(status_code=400, detail="standalone service needs instance_id")
-        res = services.standalone_action(svc, inst_id, verb)
+        if verb == "recreate":
+            res = services.standalone_action(
+                svc,
+                inst_id,
+                verb,
+                confirmation=confirmation,
+            )
+        else:
+            res = services.standalone_action(svc, inst_id, verb)
     else:
         raise HTTPException(status_code=400, detail="embedded service has no lifecycle action")
     services.invalidate_status_cache()

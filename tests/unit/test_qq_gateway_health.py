@@ -244,6 +244,40 @@ class QQBoundaryValidationTests(unittest.TestCase):
         self.assertIn("QQ_ACCOUNT 必须是纯数字", completed.stderr)
         self.assertEqual(docker_calls, "")
 
+    def test_recreate_rejects_missing_confirmation_value_before_docker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _gateway_test_root(tmpdir)
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            calls = Path(tmpdir) / "docker.calls"
+            _fake_docker(bin_dir, calls)
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(root / "deploy" / "wsl" / "qq_gateway.sh"),
+                    "recreate",
+                    "--instance",
+                    "test-assistant",
+                    "--confirm-recreate",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "HOME": tmpdir,
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                    "FAKE_DOCKER_CALLS": str(calls),
+                },
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            docker_calls = calls.read_text(encoding="utf-8") if calls.exists() else ""
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("--confirm-recreate 缺少参数", completed.stderr)
+        self.assertEqual(docker_calls, "")
+
     def test_gateway_rejects_invalid_shm_override_before_any_docker_call(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = _gateway_test_root(tmpdir)
@@ -336,6 +370,150 @@ class QQBoundaryValidationTests(unittest.TestCase):
         self.assertNotIn(" start napcat-test-assistant", f" {docker_calls}")
         self.assertNotIn(" stop napcat-test-assistant", f" {docker_calls}")
         self.assertNotIn(" rm napcat-test-assistant", f" {docker_calls}")
+
+    def test_explicit_recreate_confirmation_reuses_volumes_without_tty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _gateway_test_root(tmpdir)
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            calls = Path(tmpdir) / "docker.calls"
+            _fake_docker(bin_dir, calls)
+            python = root / ".venv" / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [ \"${1:-}\" = \"-\" ]; then\n"
+                "  payload=$(cat)\n"
+                "  case \"$payload\" in *urlparse*) printf '3001\\n' ;; esac\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+            expected_image = (
+                "mlikiowa/napcat-docker@sha256:"
+                "0b4b24114089bfbbefd4729ad08b50a6b9d67044aec674809ede3cf7521c4431"
+            )
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(root / "deploy" / "wsl" / "qq_gateway.sh"),
+                    "recreate",
+                    "--instance",
+                    "test-assistant",
+                    "--confirm-recreate",
+                    "test-assistant",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "HOME": tmpdir,
+                    "CHATCOPILOT_ENV_FILE": str(Path(tmpdir) / "missing.env"),
+                    "QQ_ACCOUNT": "10001",
+                    "QQ_ACCESS_TOKEN": "a" * 32,
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                    "FAKE_DOCKER_CALLS": str(calls),
+                    "FAKE_DOCKER_SHM_BYTES": "268435456",
+                    "NAPCAT_EXPECTED_IMAGE": expected_image,
+                },
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            docker_calls = calls.read_text(encoding="utf-8")
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        docker_call_lines = docker_calls.splitlines()
+        self.assertIn("stop napcat-test-assistant", docker_call_lines)
+        self.assertIn("rm napcat-test-assistant", docker_call_lines)
+        self.assertIn("run -d --name napcat-test-assistant", docker_calls)
+        self.assertIn(
+            "-v napcat-test-assistant-qq-data:/app/.config/QQ",
+            docker_calls,
+        )
+        self.assertIn(
+            "-v napcat-test-assistant-config:/app/napcat/config",
+            docker_calls,
+        )
+
+    def test_recreate_retries_transient_image_pull_before_replacing_container(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _gateway_test_root(tmpdir)
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            calls = Path(tmpdir) / "docker.calls"
+            attempts = Path(tmpdir) / "docker.pull-attempts"
+            docker = bin_dir / "docker"
+            docker.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' \"$*\" >> \"$FAKE_DOCKER_CALLS\"\n"
+                "case \"$*\" in\n"
+                "  'ps -a --format {{.Names}}') printf '%s\\n' napcat-test-assistant ;;\n"
+                "  'ps --format {{.Names}}') : ;;\n"
+                "  *'.Config.Image'*) printf '%s\\n' legacy-image ;;\n"
+                "  *'.Config.Env'*) printf '%s\\n' NAPCAT_DISABLE_BYPASS=1 NAPCAT_DISABLE_MULTI_PROCESS=1 ACCOUNT=10001 NODE_ENV=production ;;\n"
+                "  *'.HostConfig.ShmSize'*) printf '%s\\n' 536870912 ;;\n"
+                "  *'/app/.config/QQ'*) printf '%s\\n' napcat-test-assistant-qq-data ;;\n"
+                "  *'/app/napcat/config'*) printf '%s\\n' napcat-test-assistant-config ;;\n"
+                "  'image inspect '*) exit 1 ;;\n"
+                "  'pull '*)\n"
+                "    attempt=0\n"
+                "    if [ -f \"$FAKE_PULL_ATTEMPTS\" ]; then attempt=$(cat \"$FAKE_PULL_ATTEMPTS\"); fi\n"
+                "    attempt=$((attempt + 1))\n"
+                "    printf '%s' \"$attempt\" > \"$FAKE_PULL_ATTEMPTS\"\n"
+                "    if [ \"$attempt\" -lt 2 ]; then printf '%s\\n' 'failed to fetch anonymous token: EOF' >&2; exit 1; fi ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o755)
+            python = root / ".venv" / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [ \"${1:-}\" = \"-\" ]; then\n"
+                "  payload=$(cat)\n"
+                "  case \"$payload\" in *urlparse*) printf '3001\\n' ;; esac\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(root / "deploy" / "wsl" / "qq_gateway.sh"),
+                    "recreate",
+                    "--instance",
+                    "test-assistant",
+                    "--confirm-recreate",
+                    "test-assistant",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "HOME": tmpdir,
+                    "CHATCOPILOT_ENV_FILE": str(Path(tmpdir) / "missing.env"),
+                    "QQ_ACCOUNT": "10001",
+                    "QQ_ACCESS_TOKEN": "a" * 32,
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                    "FAKE_DOCKER_CALLS": str(calls),
+                    "FAKE_PULL_ATTEMPTS": str(attempts),
+                },
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            docker_calls = calls.read_text(encoding="utf-8")
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(docker_calls.count("pull mlikiowa/napcat-docker@sha256:"), 2)
+        self.assertIn("第 1/3 次", completed.stdout)
+        self.assertLess(
+            docker_calls.index("pull mlikiowa/napcat-docker@sha256:"),
+            docker_calls.index("rm napcat-test-assistant"),
+        )
 
     def test_service_start_fails_closed_when_legacy_cleanup_fails(self) -> None:
         script = (

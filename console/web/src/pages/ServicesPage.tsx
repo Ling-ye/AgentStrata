@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Message, Tag } from "@arco-design/web-react";
+import { Button, Message, Modal, Tag } from "@arco-design/web-react";
 import ServiceCard from "../components/ServiceCard";
 import { api, streamInfraLogs, streamTask } from "../api";
 import type { InfraService, Task } from "../types";
@@ -53,7 +53,7 @@ export default function ServicesPage({ visible = true }: Props) {
     );
   };
 
-  const handleAction = async (service: InfraService, verb: string) => {
+  const executeAction = async (service: InfraService, verb: string) => {
     if (verb === "doctor") return;
     setBusyFor(service.id, true);
     try {
@@ -62,6 +62,11 @@ export default function ServicesPage({ visible = true }: Props) {
         if ("id" in result) {
           openTask(service, verb, result as Task);
         }
+      } else if (verb === "recreate") {
+        if (!service.instance_id) throw new Error("缺少 NapCat 实例 ID");
+        await api.infraRecreate(service.id, service.instance_id);
+        Message.success(`${service.display_name}：已重建并启动`);
+        await servicesQuery.refetch();
       } else {
         await api.infraAction(service.id, verb);
         Message.success(`${service.display_name}：${verb} 成功`);
@@ -72,6 +77,22 @@ export default function ServicesPage({ visible = true }: Props) {
     } finally {
       setBusyFor(service.id, false);
     }
+  };
+
+  const handleAction = (service: InfraService, verb: string) => {
+    if (verb !== "recreate") {
+      void executeAction(service, verb);
+      return;
+    }
+    Modal.confirm({
+      title: "重建并启动 NapCat？",
+      content:
+        "将停止并替换当前容器，改用仓库固定的 NapCat 镜像。QQ 数据卷和 NapCat 配置卷会保留；镜像准备失败时不会停止旧容器。是否继续？",
+      okText: "确认重建",
+      cancelText: "取消",
+      okButtonProps: { status: "danger" },
+      onOk: () => executeAction(service, verb),
+    });
   };
 
   const openLogs = (service: InfraService) => {
@@ -133,7 +154,7 @@ export default function ServicesPage({ visible = true }: Props) {
               <ServiceCard
                 service={service}
                 busy={!!busy[service.id]}
-                onAction={(verb) => void handleAction(service, verb)}
+                onAction={(verb) => handleAction(service, verb)}
                 onLogs={() => openLogs(service)}
               />
             </div>

@@ -72,7 +72,7 @@ Console 基础设施页必须分别投影容器状态与 QQ 登录状态。NapCa
 `get_status`，不能依赖 WebUI token 恰好仍在最近容器日志中。
 
 NapCat 容器运行时，Console 可以按当前 Bot 的 `QQ_WEBUI_PORT` 返回一个无凭据的回环
-`/webui` 入口。前端点击登录按钮后直接在新标签页打开该入口，并与手动登录检查使用同一
+`/webui` 入口。前端点击管理页按钮后直接在新标签页打开该入口，并与手动登录检查使用同一
 实例端口。入口的 scheme 固定为 HTTP，host 只允许 `localhost`、`127.0.0.1` 或 `::1`，
 路径固定为 `/webui`；不得包含 query、fragment、userinfo、WebUI token 或临时 credential。
 配置缺失、畸形或非回环时不提供链接，
@@ -87,6 +87,13 @@ token。接口必须在任何 Docker 读取前按实际 client socket 地址拒�
 `no-cache` 和 `no-referrer`，只返回 token，不返回带 token URL，不缓存、不持久化、不写日志，
 也不执行 bootstrap、容器生命周期或 token 生成。前端收到 token 后只写入浏览器剪贴板，
 不渲染、不写 state/storage/URL；旧 `/webui-token` 和 `/webui-session` 接口继续不存在。
+
+账号已在线时 Console 必须明确提示无需重复登录，不能继续把 WebUI 入口描述成登录动作。
+容器未运行时管理页、Token 和登录检查按钮均不可用，旧登录缓存不得覆盖停机事实。旧容器
+需要迁移到固定镜像或当前端口、volume、crash guard、共享内存、重启策略时，普通启动与重启
+继续失败关闭；独立回环 `recreate` 接口必须校验用户提交的确认值与实例 ID 完全一致，并由
+provider 脚本再次确认确实存在漂移后才允许保留两个数据卷重建和执行认证探针。固定镜像拉取
+只对明确的瞬时网络错误做最多三次尝试，其他错误立即失败，且成功前不得替换旧容器。
 
 `agentstrata-capabilities-v1` 目录固定为 25 个直接 Agent Case，不含 ACP 或 QQ；默认 `full`
 只选择当前内置 Bot 可运行的 23 个，两个来源专用 Case 仅供显式 `custom`。
@@ -114,11 +121,14 @@ token。接口必须在任何 Docker 读取前按实际 client socket 地址拒�
 - 没有独立发送 QQ 时，入站 Agent 链路始终显示 `not_tested`。
 - Console NapCat “诊断”属于基础设施任务，不进入 Evaluation lifecycle 或 artifact。
 - Console 必须区分容器运行、QQ 已在线、QQ 未登录和登录状态未知；离线或未知不得显示为健康。
-- Console 的 NapCat 登录按钮必须直接打开当前实例的无凭据回环 WebUI；后端与前端都拒绝
+- Console 的 NapCat 管理页按钮必须直接打开当前实例的无凭据回环 WebUI；账号在线时提示无需
+  重复登录，容器停机时管理页、Token 和登录检查操作均禁用；后端与前端都拒绝
   非回环、非 HTTP、非 `/webui` 或携带 query/fragment/userinfo 的链接，且 Console 不暴露
   带 token URL 或临时 credential。
 - WebUI token 只允许经用户显式点击触发的独立 POST 接口返回；非回环 client 在日志读取前
   返回 403，成功响应禁止缓存，前端只复制、不显示或持久化，旧 token/session 路由保持 404。
+- 旧容器漂移时，普通启动/重启不自动重建；独立 `recreate` 只接受回环请求、精确实例确认和
+  provider 漂移复检，复用 QQ 与 NapCat 配置 volume，并在完成后通过 OneBot 双向认证。
 - 旧 Evaluation artifact 仍可读取；定义变化使旧 29-Case 结果不能与新 26-Case 结果
   恢复或错误比较。
 

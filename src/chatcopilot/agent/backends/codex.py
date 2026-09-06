@@ -1105,6 +1105,7 @@ class CodexAgentBackend:
             raise RuntimeError("bubblewrap is required for shared-group Codex sessions")
         host_codex = Path(command[0]).expanduser().resolve()
         gateway_venv = Path(sys.prefix).expanduser().resolve()
+        gateway_python_runtime = Path(sys.base_prefix).expanduser().resolve()
         gateway_script = Path(_standalone_gateway.__file__).resolve()
         for path, label in (
             (host_codex, "Codex executable"),
@@ -1114,6 +1115,23 @@ class CodexAgentBackend:
                 raise RuntimeError(f"isolated {label} must be a real file")
         if not gateway_venv.is_dir() or gateway_venv.is_symlink():
             raise RuntimeError("isolated session gateway environment must be a real directory")
+        gateway_python = gateway_venv / "bin" / "python"
+        try:
+            resolved_gateway_python = gateway_python.resolve(strict=True)
+        except OSError as exc:
+            raise RuntimeError(
+                "isolated session gateway Python executable is unavailable"
+            ) from exc
+        if not resolved_gateway_python.is_file():
+            raise RuntimeError("isolated session gateway Python executable must be a file")
+        if not gateway_python_runtime.is_dir() or gateway_python_runtime.is_symlink():
+            raise RuntimeError("isolated session gateway Python runtime must be a real directory")
+        try:
+            resolved_gateway_python.relative_to(gateway_python_runtime)
+        except ValueError as exc:
+            raise RuntimeError(
+                "isolated session gateway Python executable is outside its runtime"
+            ) from exc
         for path, label in (
             (state.codex_home, "Codex runtime home"),
         ):
@@ -1170,7 +1188,25 @@ class CodexAgentBackend:
         ):
             if Path(system_path).exists():
                 wrapped.extend(["--ro-bind", system_path, system_path])
-        wrapped.extend(_sandbox_parent_dirs(state.workdir))
+        runtime_needs_bind = not _covered_by_isolated_system_mount(
+            gateway_python_runtime
+        )
+        parent_targets = (
+            (state.workdir, gateway_python_runtime)
+            if runtime_needs_bind
+            else (state.workdir,)
+        )
+        wrapped.extend(_sandbox_parent_dirs(*parent_targets))
+        if runtime_needs_bind:
+            # A venv may use an absolute Python symlink outside the venv. Mount
+            # that exact base runtime so the fixed in-sandbox venv remains executable.
+            wrapped.extend(
+                [
+                    "--ro-bind",
+                    str(gateway_python_runtime),
+                    str(gateway_python_runtime),
+                ]
+            )
         wrapped.extend(
             [
                 "--ro-bind",
@@ -1581,10 +1617,21 @@ class CodexAgentBackend:
         temp.replace(path)
 
 
-def _sandbox_parent_dirs(path: Path) -> list[str]:
-    """Create only the lexical parents needed for one exact workspace bind."""
-
+def _covered_by_isolated_system_mount(path: Path) -> bool:
     target = path.expanduser().resolve()
+    for raw_root in ("/usr", "/bin", "/lib", "/lib64"):
+        root = Path(raw_root)
+        if not root.exists():
+            continue
+        resolved_root = root.resolve()
+        if target == resolved_root or target.is_relative_to(resolved_root):
+            return True
+    return False
+
+
+def _sandbox_parent_dirs(*paths: Path) -> list[str]:
+    """Create only the lexical parents needed for exact read-only binds."""
+
     precreated = {
         Path("/bin"),
         Path("/dev"),
@@ -1598,10 +1645,14 @@ def _sandbox_parent_dirs(path: Path) -> list[str]:
         Path("/usr"),
     }
     arguments: list[str] = []
-    for parent in reversed(target.parents):
-        if parent == Path("/") or parent in precreated:
-            continue
-        arguments.extend(["--dir", str(parent)])
+    created: set[Path] = set()
+    for path in paths:
+        target = path.expanduser().resolve()
+        for parent in reversed(target.parents):
+            if parent == Path("/") or parent in precreated or parent in created:
+                continue
+            arguments.extend(["--dir", str(parent)])
+            created.add(parent)
     return arguments
 
 

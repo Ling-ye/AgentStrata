@@ -45,6 +45,8 @@ created: 2026-07-23
 -  gateway 日志只报告探针状态与 token 长度，不输出 token。
 -  控制台直接打开无凭据 localhost WebUI；用户显式点击后，独立 loopback-only POST 才从规范运行容器的有界 WebUI 配置读取唯一 token 字段并返回 `no-store` 响应，停机或解析器不可用时才回退有界日志。它不调用 lifecycle、不会返回带 token URL；该 token 不等于 OneBot `QQ_ACCESS_TOKEN`。
 -  WebUI token 可从已停止容器的历史日志恢复；正式 `start/restart` 仍先校验 OneBot 强 token，校验失败时不得先停止现有容器。
+-  Console 不把需要迁移的旧容器伪装成普通 restart：独立 `recreate` 动作只接受回环请求和与当前实例 ID 完全一致的显式确认。脚本只在容器确实漂移时接受该非终端确认，先准备固定 digest 镜像；镜像拉取仅对 EOF、TLS 超时、连接重置等明确瞬时错误做最多三次尝试，其他错误立即失败。镜像准备成功后才保留 QQ 数据与 NapCat 配置 volume 重建并执行 OneBot 双向认证；普通 `start/restart` 继续要求可信终端确认重建。
+-  Console 将 WebUI 入口描述为“管理页”。账号已经在线时先明确提示无需重复登录；容器未运行时禁用管理页、Token 和登录检查操作，避免把停机或旧缓存解释为可登录状态。
 -  gateway 提供幂等 `sync-token`：复用合法 `QQ_ACCESS_TOKEN`，缺失或非法时在进程内生成 64 位 hex token；以 stdin 传递 token，原子更新 bot-owned `local.env` 且保留所有未知/高级键，再同步 NapCat `3001` WebSocket 配置。
 -  `sync-token` 在更新运行时 env、重启 NapCat 和双向认证探针全部成功后才报告完成；失败状态可安全重跑，日志只输出 token 长度。
 -  控制台返回 gateway stderr 前移除 ANSI 控制序列，浏览器错误提示只包含可读诊断。
@@ -59,6 +61,8 @@ created: 2026-07-23
 -  `bootstrap` 可在 token 尚未配置时安全提供 localhost WebUI，但 `start/status` 仍拒绝空 token，Bot service 保持停止。
 -  控制台点击 WebUI 登录只打开无凭据 localhost 页面；点击复制 token 时只读取规范容器的有界历史日志，非回环请求在 Docker 读取前被拒绝。
 -  控制台 NapCat `restart` 缺失 OneBot token 时返回失败但不先停止容器；WebUI bootstrap 不削弱正式 OneBot 启动门禁。
+-  可变镜像或其他运行配置漂移时，普通 Console `start/restart` 不得绕过重建确认；只有回环 Console 的独立 `recreate` 请求、精确实例确认与脚本漂移复检同时满足时才可替换容器。瞬时镜像仓库错误必须有界重试，永久错误不得重试或删除旧容器，两个权威数据卷名称保持不变。
+-  NapCat 账号已在线时 Console 不再引导重复登录；容器停止后不得继续显示可用的管理页或允许读取当前运行配置 Token。
 -  `sync-token` 不删除 `local.env` 中的模型、路由、Git、MCP、NapCat quick-login 等现有键；文件权限保持 `0600`，token 不进入 argv、日志或 Git。
 -  同步后源仓 `local.env`、生成的运行时 env 与 NapCat `3001` token 相同且格式合法；gateway 双向认证、实例更新与 systemd 启用成功。
 -  控制台 restart 失败消息不包含 `\x1b` ANSI 序列。

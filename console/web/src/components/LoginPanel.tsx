@@ -67,8 +67,11 @@ export default function LoginPanel({ service }: Props) {
 
   const handleLoginClick = async () => {
     if (service.login_type === "webui_link") {
+      if (loginState === "logged_in") {
+        Message.info("QQ 账号已经在线，无需重复登录；已打开 NapCat 管理页");
+      }
       if (!openNapcatLoginPage(service.login_url)) {
-        Message.error("NapCat 登录地址不可用，请确认对应实例已启动且 WebUI 端口配置有效");
+        Message.error("NapCat 管理地址不可用，请先启动或重建对应实例");
       }
     } else if (service.login_type === "qrcode") {
       setOpen(true);
@@ -101,27 +104,45 @@ export default function LoginPanel({ service }: Props) {
       <Space wrap>
         <Button
           size="small"
+          disabled={service.login_type === "webui_link" && !service.login_url}
           onClick={handleLoginClick}
         >
-          {service.login_type === "webui_link" ? "打开 NapCat 登录页" : "登录"}
+          {service.login_type === "webui_link" ? "打开 NapCat 管理页" : "登录"}
         </Button>
         {service.login_type === "webui_link" && (
-          <Button size="small" loading={tokenLoading} onClick={() => void copyWebuiToken()}>
+          <Button
+            size="small"
+            loading={tokenLoading}
+            disabled={!service.login_url}
+            onClick={() => void copyWebuiToken()}
+          >
             获取并复制 Token
           </Button>
         )}
         {service.login_type === "webui_link" && (
-          <Button size="small" loading={checking} onClick={() => void checkStatus()}>
+          <Button
+            size="small"
+            loading={checking}
+            disabled={!service.login_url}
+            onClick={() => void checkStatus()}
+          >
             检查登录状态
           </Button>
         )}
-        {loginState === "logged_in" && (
-          <Tag size="small" color="green">已登录</Tag>
+        {service.login_type === "webui_link" && !service.login_url && (
+          <Tag size="small" color="red">容器未运行</Tag>
         )}
-        {loginState === "logged_out" && (
-          <Tag size="small" color="red">未登录</Tag>
+        {(service.login_type !== "webui_link" || service.login_url) && loginState === "logged_in" && (
+          <Tag size="small" color="green">
+            {service.login_type === "webui_link" ? "账号已在线" : "已登录"}
+          </Tag>
         )}
-        {loginState === null && (
+        {(service.login_type !== "webui_link" || service.login_url) && loginState === "logged_out" && (
+          <Tag size="small" color="red">
+            {service.login_type === "webui_link" ? "账号未登录" : "未登录"}
+          </Tag>
+        )}
+        {(service.login_type !== "webui_link" || service.login_url) && loginState === null && (
           <Tag size="small" color="orange">登录状态未知</Tag>
         )}
       </Space>

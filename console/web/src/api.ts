@@ -137,6 +137,12 @@ export const api = {
     req<{ ok: boolean; stdout?: string; stderr?: string }>("/api/infra/compose-up", { method: "POST" }),
   infraAction: (id: string, verb: string) =>
     req<{ ok: boolean } | Task>(`/api/infra/${id}/${verb}`, { method: "POST" }),
+  infraRecreate: (id: string, confirmation: string) =>
+    req<{ ok: boolean }>(`/api/infra/${id}/recreate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation }),
+    }),
   infraLoginQrcode: (id: string) =>
     req<XhsLoginQrcode>(`/api/infra/${id}/login/qrcode`, { method: "POST" }),
   infraLoginCheck: (id: string) =>
