@@ -447,6 +447,8 @@ def test_managed_run_rejects_forged_or_used_service_bootstrap(
     ("request_overrides", "state_overrides", "message"),
     (
         ({"unexpected": True}, {}, "request does not match"),
+        ({"source_revision": {"commit": "a" * 40}}, {}, "source revision fields are invalid"),
+        ({"source_revision": {"status": "recorded", "commit": "a" * 40, "dirty": "false", "captured_at": "2026-09-07T00:00:00Z"}}, {}, "source revision identity is invalid"),
         (
             {"start_request_fingerprint": "g" * 64},
             {},

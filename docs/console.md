@@ -13,11 +13,11 @@
 
 - **运维总览**：调用 `/api/overview` 汇总机器人、基础设施服务和后台任务健康状态，展示摘要指标和「需要关注」问题队列。
 - **服务管理**：调用 `/api/infra` 展示 BotSpec 所需的共享 Docker 服务、平台网关等
-  外部依赖，支持启停、重启、Pull、日志、登录和诊断。无参数“全部启动”委托
+  外部依赖，按 Channel 接入与工具外部能力筛选，展示实例或共享服务关系，支持启停、重启、Pull、日志、登录和诊断。无参数“全部启动”委托
   `services.sh start` 做 desired-state reconcile，不会启动已禁用服务。
 - **机器人实例**：展示每个 BotSpec 实例的部署、注册、Gateway MainPID、Channel 连接证据、日志、任务、更新和诊断入口。
-- **组件目录**：按 `tools` / `prompts` / `agents` / `context` 四个 surface 只读浏览工具包、运行特性、MCP 服务、提示词、Agent preset、workflow DTO 和上下文来源；数据只来自 `chatcopilot.component_catalog` 的精确 pack/tool 投影，不直接读取 Agent/BotSpec 内部 registry 或自行 import 工具模块。
-- **评测中心**：固定为「新建评测 / 评测记录 / 任务集」三个页签。Agent Profile 对比和 BFCL / GAIA / IFEval Suite 运行统一为 `Evaluation` 资源；记录页负责筛选、查看详情、取消、删除、重跑和导出，任务集页统一展示 Profile、Suite 数据准备状态与 Case coverage。报告统一保存在 `reports/evals/evaluations/<evaluation-id>/`。
+- **组件目录**：按 `tools` / `prompts` / `agents` / `context` 四个 surface 以及 application / Agent / 外部能力的职责层筛选，展示实例声明使用关系与工具角色要求，只读浏览工具包、运行特性、MCP 服务、提示词、Agent preset、workflow DTO 和上下文来源；数据只来自 `chatcopilot.component_catalog` 的精确 pack/tool 投影，不直接读取 Agent/BotSpec 内部 registry 或自行 import 工具模块。
+- **评测中心**：提供「开始测试 / 运行记录 / 进步趋势」。单次详情展示通过、失败、异常、跳过和测试点记录；历史曲线按测试条件分组，保留时间、Git 版本及配置变化。两条主测试方向为 Agent 能力与 QQ 链路，继续使用唯一 Evaluation 资源。
 
 Console 后端的进程执行、YAML 投影和 job/task/log 可观测读取分别位于 `process_executor.py`、`yaml_io.py` 和 `observability.py`，`operations.py` 只保留控制面编排与兼容导出。前端路由按页面懒加载；Evals 的详情组件/展示函数位于 `features/evals/`，BotToolEditor 的模型与状态 hook 位于 `features/bots/tool-editor/`。
 - **设置**：控制台自身更新、控制台后端日志等全局维护入口。
@@ -28,24 +28,47 @@ Gateway 实例的“运行中”必须同时满足 systemd active、非零 MainP
 探针证据，不等于真实 QQ 入站、模型成功、客户端展示或用户已读。NapCat 单独显示为外部
 OneBot provider，不与 AgentStrata Gateway 混称，也不由 Bot start/stop 隐式启动或停止。
 
-## 任务可观测工作台
+## 运行观测工作台
 
-任务流当前只支持 `runtime_kind=legacy` 的 ACP/adapter task artifact。Gateway 实例不会扫描、
-读取或删除这些旧记录：列表 API 返回 `task_flow_available=false` 与
-`gateway_task_flow_unavailable`，detail/events/flow/context/delete 返回同一稳定错误的 `409`；
-前端不轮询任务 API，只显示“受限任务流投影尚未接入”。systemd、Gateway MainPID、Channel
-与外部 OneBot provider 的状态检查仍正常工作。
+机器人实例默认进入“运行观测”，与“任务记录”“分层配置”“运行状态”“能力与工具”同级切换。顶部选择实例并查看服务状态，日志统一使用一个“服务日志”入口；页面不展示运行统计或实例 MCP、工具包计数行。任务流占据主区域，从任务输入开始，沿页面逐步查看执行过程，末尾展示任务结果与消息交付。任务记录和分层配置直接在页内展示，桌面与窄屏均不使用辅助抽屉。
 
-这是证据边界，不是 UI 占位。Gateway 原生任务流必须从私有 SQLite 中的 admitted ingress、
-authorization decision、session/run、event、outbox 与 provider receipt 做受限投影后才能开放；
-不能把旧 Relay/cc-connect/ACP 事件套成新 Gateway 证据。以下任务列表、八层转换、上下文、
-删除和轮询说明仅适用于 Feishu 等 legacy edge。
+“分层配置”页签覆盖部署与服务、Gateway 与协议、Channel 与平台、身份与权限、应用与上下文、Agent 与模型、工具与插件、实例配置、协议与数据兼容九组。各组作为标题和定位锚点，组件字段及运行状态直接展示，不再逐层展开配置对象。每个实例的内容由实际 BotSpec、环境引用和运行对象决定。已配置、已加载、已连接、本次可用分别展示；没有独立连接的 Skills 不显示连接状态。配置来源可选“当前配置”“运行中已加载配置”“任务执行时配置”；历史任务默认使用执行时快照，缺失字段显示未记录。编辑尚未应用时显示提示，编辑与应用继续复用现有流程。
 
-Legacy 实例页使用“实例列表 + 实例详情”的主从工作台。实例列表消费后端提供的活动任务数、
-最近 24 小时失败数和最后活动时间，不在前端扫描任务推导运行状态。实例详情可选择任务并
+进入“任务记录”页签查看历史列表，点击任务切换到“运行观测”中的对应流程。默认最近 24 小时，也可选择 7 天、30 天或自定义范围，按状态、配置版本、Backend、模型、组件、错误码、最短耗时和任务 ID 在服务端筛选。每页 50 条，可翻页查询全部索引记录。选中任务与筛选条件按实例保存在当前浏览器会话；新任务和自动刷新不会替换正在查看的历史任务。
+
+任务流沿用纵向连接线、状态点与步骤卡片的阅读方式：左侧显示名称、状态、流转关系及摘要，右侧显示时间、耗时和已记录 Token，窄屏将时间信息排列在摘要下方。点击步骤后，参数和结果在本步下方展开，可以同时展开多步；当前执行及异常步骤默认展开，也可“展开全部 / 收起全部”。用户调整后的展开状态不会被轮询重置。上下文、日志和原始记录一次展开即读取；会话历史与模型可见输入按角色消息分组，桌面并列展示，窄屏上下排列。长正文先显示预览，再按需展开全文。正文只在展开并进入可见区域后请求。
+
+步骤的“查看配置”切换到“分层配置”页签，定位对应组件与该步骤执行时快照；配置中的“定位调用”返回“运行观测”，高亮完整流程里的相关步骤。查看配置、进入编辑并返回时，保留任务、筛选条件、展开状态和阅读位置。模型与工具调用按真实 trace/span 合并开始和结束，parent 关系通过缩进展示，子步骤始终可见。上下文按快照 ID 关联，权限与日志按真实调用标识归属；仅有任务关联的记录留在任务末尾，不按工具名或时间猜测。缺失父阶段或结束事件明确显示。后台代码任务通过工具返回的真实任务 ID 保留关联及调用时状态；独立 code-worker 的完整执行过程尚未接入此索引，界面显示此缺口。
+
+### 持续记录与留存
+
+Gateway 运行进程持续写入独立的 `observability/index.sqlite3` 和按任务保存的详情文件，Console 关闭不影响记录、恢复校对或定期清理。任务生命周期、审批及消息交付由原有业务状态持有者决定，观测只保存投影；诊断失败不改写权限、任务结果或交付事实。成功、失败、取消和等待恢复的任务均记录，准入前拒绝单独进入实例审计。
+
+任务摘要、结构化阶段指标、错误分类和脱敏配置快照长期保留。任务输入输出、工具参数与结果、上下文与提示词正文、关联日志按任务结束时间保留 30 天；运行中与等待恢复的任务不进入到期清理。单条正文上限 64 KiB、上下文每份 8 MiB、每任务详情合计 64 MiB，同时服从统一脱敏器的结构和聚合字符串预算。到期、未采集、已截断、采集失败分别显示。清理只操作观测详情，保留业务任务状态、交付回执原件、会话记忆、人格和工作区文件。
+
+任务日志只采集带真实任务关联的运行日志；“服务日志”仍为独立参考，不并入任务证据。Provider 确认、投递失败、交付未知与任务执行结果分别显示；没有外部回执时不推断平台显示或用户已读。隐藏推理及 Provider 未提供的内部状态不记录。
+
+### 只读接口
+
+- `GET /api/bots/{instance_id}/inspection?run_id=...&event_seq=...`：当前、已加载与任务/阶段执行时配置；阶段必须属于选中任务。
+- `GET /api/bots/{instance_id}/gateway-observation`：分页历史和最多 100 条实例准入审计。筛选参数为 `since/until/state/config_id/backend/model/component/error_code/search/min_ms/page/limit`；时间使用 Unix 秒，单页最多 100 条。
+- `GET /api/bots/{instance_id}/gateway-observation/metrics`：同一筛选范围的聚合指标、组件分组和趋势。
+- `GET /api/bots/{instance_id}/gateway-observation/runs/{run_id}`：任务摘要、首批阶段、审批、出站状态和交付回执。
+- `GET /api/bots/{instance_id}/gateway-observation/runs/{run_id}/events?after=...&limit=...`：按序号增量读取，默认 200 条、最多 500 条。
+- `GET /api/bots/{instance_id}/gateway-observation/runs/{run_id}/details/{body_id}`：按需读取当前实例、当前任务范围内的不透明正文引用。
+
+Console 只读查询观测索引，不复制整份 Gateway 业务状态库，也不受旧 64 MiB 状态快照上限约束。目录、数据库及正文校验 owner、私有权限、普通文件与链接边界；读取使用有界查询和 no-follow descriptor。响应带来源、时间、配置版本、完整性或正文留存状态，并使用 `Cache-Control: no-store`。无法安全读取时返回脱敏错误。Console 不创建 Agent、连接插件、调用模型或推进 writer generation。
+
+已有实例尚未生成观测索引时，仅展示旧 Gateway 中已有的近期记录，并标明历史与详情能力缺失。旧只读接口保留有界临时快照策略；不会从当前配置补造历史快照，也不会将缺失过程填成成功。
+
+### Legacy 任务记录
+
+Legacy `/tasks` 接口继续只服务 ACP/adapter artifact；Gateway 访问它时保持原有 unavailable 契约，前端使用上述原生接口，不回退旧 Relay/cc-connect/ACP 记录。以下任务列表、八层转换、上下文和删除说明仅适用于 legacy edge。
+
+Legacy 实例仍在运行观测中使用原有任务记录组件，不在前端扫描任务推导服务状态。可选择任务并
 查看外部渠道、adapter、ACP、中间件、主 Agent、模型、工具/子 Agent/流程和回复交付证据。
-详情使用“任务流 / 运行状态 / 能力与工具”三个同级页签；启动、停止、注册、更新、日志和
-诊断只集中在详情头部。
+“运行观测”和“任务记录”均复用原有 Legacy 任务组件；分层配置、运行状态与能力配置使用同级页签。
+启动、停止、注册、更新、服务日志和诊断集中在详情头部。
 
 任务流中的每次转换均来自后端稳定投影，并标记为 `observed`、`correlated`、`declared`、
 `provider_opaque` 或 `missing`。连续工具/子 Agent/流程调用可在前端折叠，但展开后仍显示
@@ -56,8 +79,8 @@ Legacy 实例页使用“实例列表 + 实例详情”的主从工作台。实�
 客户端回执。隐藏 chain-of-thought、provider 内部 instructions 和原始平台身份
 不会被采集、重建或展示。
 
-完整任务信息直接位于“任务流”页签，不再使用“完整任务证据”按钮、大型弹窗或
-其他页签中的重复任务入口。左侧只加载最近 50 个 `schema_version=2` 任务，按
+Legacy 完整任务信息由原有任务组件直接展示，不使用“完整任务证据”按钮或大型弹窗。
+左侧只加载最近 50 个 `schema_version=2` 任务，按
 “运行中 / 需要关注 / 最近完成”分组并在浏览器内搜索；旧任务不会进入该列表。右侧在
 八层跨层链路之后继续展示分类耗时、Token/费用、每次模型调用的上下文快照，以及按 Span
 层级组织的路由、模型、工具、Codex activity、subagent 和后台 Job 阶段。任务列表每 5 秒刷新，
@@ -159,8 +182,7 @@ secret、Authorization/Cookie、URI userinfo、Bearer/inline credential、私钥
 
 Legacy QQ 合成 artifact 中的 Relay、sender envelope、transport attestation 与
 `middleware.access_decision` 只解释旧 ACP 链，不能成为 Gateway 准入或身份依据。Gateway
-实例的准入 owner 是 authorization layer；在 Console 原生读取其 SQLite receipt 前，页面保持
-不可用状态。
+实例的准入由 Gateway 调用 authorization layer 判定；Console 只投影已持久化的决定和回执。
 
 ## NapCat WebUI 登录
 
@@ -175,10 +197,21 @@ Legacy QQ 合成 artifact 中的 Relay、sender envelope、transport attestation
 
 `Evaluation` 是唯一运行资源，使用 `evaluation_id` 标识，并以 `kind: comparison | suite` 区分执行方式。生命周期状态固定为 `queued / running / completed / partial / cancelled / interrupted / error`；通过/失败和 Codex/Native/平局只属于结果，不混入生命周期。
 
-- `comparison`：选择 Bot、Profile 与 `quick / standard / custom` preset。Quick 和 Standard 使用服务端固定默认值，不接受执行参数覆盖；Custom 必须显式提供 Targets、Case refs、重复次数、预算和 seed。MVP Profile `agent-comparison-mvp` 仍覆盖 IFEval 指令遵循、GAIA smoke、确定性工具调用和隔离代码修复，不生成“智能总分”。
-- `suite`：选择 BFCL、GAIA 或 IFEval，可指定任意 Case、dry-run 和 GAIA judge。官方 Suite 数据仍按需准备；Profile Case 使用稳定版本化定义，不依赖官方数据缓存。
+机器人选择在页面顶部，对三个页签同时生效：
 
-新建评测只保留一个 Bot 选择器和一个「开始评测」动作。`POST /api/evals/evaluations` 由 Console BFF 完成 HTTP 校验后，通过同 UID Unix socket 调用 Evaluation service。Service 在落盘和启动 worker 前原子执行 fail-closed 预检；阻断响应使用 `code/message/checks`，前端展开具体检查项。同一 Bot 的活动 Evaluation 通过 service 拥有的持久化 claim 跨线程和进程互斥，受管 worker 真正退出前禁止删除、重跑或为同 Bot 创建下一条。
+- **开始测试**：直接 Agent 能力与 QQ 链路分别选择快速、完整或安全范围，手动启动。Comparison Profile、BFCL、GAIA 和 IFEval 保留 CLI 与旧记录读取，不占据主测试入口。
+- **运行记录**：按方向和状态筛选；列表直接显示通过次数、通过率、异常、创建时间和 Git 版本。打开详情后查看能力分组和测试点表格，可筛选结果、搜索测试点，并在原处展开回答、判分理由和错误。每个测试点继承本次评测的代码版本，同时展示自己的开始时间。原始摘要与记录仍可展开，取消、重跑、删除和导出入口保留。
+- **进步趋势**：筛选最近 7 / 30 / 90 天或全部时间，选择测试方向与测试条件，查看通过率或执行耗时。每个点可用鼠标或键盘打开对应评测；曲线显示最近 200 个点，下方分页表格保留当前范围的全部记录。完整结束但含失败、异常或跳过的评测照常计入；取消、中断、不完整、dry-run 或缺少测试定义的记录单独说明未进入曲线的原因。
+
+通过率为通过次数除以全部已记录测试次数，分母包含失败、异常和跳过，每次重复执行分别计数；页面同时显示计划次数，部分结果不作为完整评测进入曲线。`completed` 表示执行结束，不等于测试全部通过；产品门禁 verdict 独立保留，不生成智能总分。
+
+趋势按机器人、Suite、Case 和判分实现、模型/Backend/执行器/推理档位、重复次数、seed、选项及预算分组，不同测试标准不直接连线。代码和运行配置版本作为曲线上的变化记录；同一条件的变化只能说明观测结果发生变化，不能直接归因于一次代码修改。模型提供方更新和外部数据变化仍可能影响结果，现有 CLI compare/resume 的严格校验保持。
+
+新评测在创建时由 Evaluation application 将 Git commit、工作区是否有未提交改动和采集时间写入 `request.json`，不采集分支、remote、作者、文件名或 diff。缺少 Git 的安装环境显示版本未知，历史记录不补写当前版本；只读取历史不会调用 Git。幂等重试保留原版本，重跑重新采集。该快照标识创建时代码，不保证运行期间外部代码未变化。`insights` 和 `source_revision` 是既有列表、详情接口的附加只读字段，Console 不写评测 artifact。列表不加载每条历史记录的完整正文；详情按所选 ID 查询并轮询活动评测。
+
+实现与验收依据见 [`evaluation-progress-history`](../specs/evaluation-progress-history/spec.md)。
+
+`POST /api/evals/evaluations` 由 Console BFF 完成 HTTP 校验后，通过同 UID Unix socket 调用 Evaluation service。Service 在落盘和启动 worker 前原子执行 fail-closed 预检；阻断响应使用 `code/message/checks`，前端展开具体检查项。同一 Bot 的活动 Evaluation 通过 service 拥有的持久化 claim 跨线程和进程互斥，受管 worker 真正退出前禁止删除、重跑或为同 Bot 创建下一条。
 
 创建、重跑、取消和删除在任何状态修改前先由 service 返回绑定操作与 Evaluation ID 的 accepted 帧。创建与重跑使用稳定 Evaluation ID 和请求指纹；accepted 后连接中断时，client 只查询或重放同一个 ID，不会因为普通读取超时让页面显示失败、后台却又生成一条身份未知的 Evaluation。
 
@@ -292,6 +325,7 @@ WSL 终端直接运行不带参数的 `bash deploy/wsl/deploy_console.sh` 是全
 | 更新控制台 | `bash deploy/wsl/deploy_console.sh --update-only` |
 | 实例日志 | `/api/bots/{id}/logs/stream` SSE |
 | 控制台日志 | `/api/console/logs/stream` SSE |
+| Gateway 运行观测 | `/api/bots/{id}/inspection` 与 `gateway-observation` 的历史、阶段、正文和指标接口 |
 | Legacy 任务流 | `/api/bots/{id}/tasks` 与 `/api/bots/{id}/tasks/{task_id}/flow`；Gateway 返回明确 unavailable |
 | 实例诊断 | `bash deploy/wsl/dump.sh --instance <id>` |
 | NapCat 登录状态 | Console 只读检查；登录与恢复交给 `bash deploy/wsl/quickstart.sh --bot-id <id> --resume` |

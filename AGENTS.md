@@ -112,6 +112,7 @@ contracts
 - **Evaluation mutation 交付**：`start` / `rerun` / `cancel` / `delete` 必须在任何 mutation 前由 UDS server 返回绑定 request ID、operation 和 Evaluation ID 的 accepted 帧；未成功发送 accepted 时不得 dispatch。`start` / `rerun` 使用 client 生成的稳定 Evaluation ID 和规范请求指纹实现同请求幂等恢复，同 ID 请求漂移必须 conflict；accepted 后断线只能用同一 ID 有界查询或重试，禁止产生身份未知的重复 Evaluation。Suite 官方数据准备在显式子进程内使用私有环境快照，不得在下载期间修改全局 `os.environ` 或长期持有进程级环境锁。
 - **Standalone Evaluation 隔离**：`evals run` 的真实执行必须显式提供 `--output`，并拒绝写入 `CHATCOPILOT_EVALUATION_ROOT` 或默认 `reports/evals/evaluations/` 受管根；standalone/CI 记录使用 `reports/evals/manual/` 等独立目录，不能绕过 service claim 写受管 artifact。
 - **Evaluation 两轨产品面**：Console 只展示 `agent` 与 `qq_message_flow`。`agentstrata-capabilities-v1` 目录固定 25 个直接 Agent Case，只用 `agent_isolated` / `agent_configured`，不经过 ACP 或 QQ；默认 `full` 只包含当前内置 Bot 可运行的 23 个，依赖未启用 `experience` 来源的两个 Case 仅允许通过显式 `custom` 选择。Suite 包含可信测试人格行为与由独立 ECB oracle 判分的最新 USD/CNY Case。现有 `agentstrata-qq-message-flow-v1` 的 7 个 Case 是 legacy Relay/attestation/ACP 合成链，只用于防止旧能力回归，不是新 Gateway 验收或当前推荐部署证据；迁移到 fake OneBot → real Channel → Gateway 前不得称为当前 QQ message-flow 证明。两轨只允许 Console 按钮或 CLI 手动启动，默认每 Case 1 次，不接 Git hook、CI、文件/部署/重启回调，不发送真实 QQ。Comparison 与 BFCL/GAIA/IFEval 继续保留 CLI/服务兼容但不进入 Console 主测评面；仓库自动化不得描述成真实商用 LLM、真实 QQ、真实 cc-connect/NapCat 或 Canary E2E 通过。
+- **Evaluation 趋势观测**：只读投影既有 Trial；通过率分母包含失败、异常与跳过，部分记录和 dry-run 不进入完整趋势。测试标准与模型变化分组，代码和配置变化保留每点元数据，不放宽 compare/resume。创建时 Git 快照只由 application 写入 request，历史查询不补造版本；契约见 `specs/evaluation-progress-history/spec.md`。
 - **Evaluation Trial 监督**：正式 Trial 必须在独立 `spawn` 子进程执行，期限取 Case timeout 与 Evaluation 剩余 max-wall 的最小值；取消、期限或预算终止并回收 Trial 进程组，Linux/WSL 必须绑定父死保护。只有同一 Case/attempt 的完整 Target 组可写 checkpoint；中断的不完整组及 workspace 必须丢弃，不能参与 resume、compare 或通过率。
 - **评测 backend override 例外**： 只有 Evaluation 执行层可在评测子进程内把同一 Bot 投影为 Codex/Native Target；不得写回 BotSpec、部署实例或复用线上 session。 Profile Case 使用稳定版本化定义，Suite 继续使用官方动态数据和数据准备流程。 Target 必须记录 executor、backend、model、reasoning effort 与包含 Bot runtime 行为摘要的稳定 fingerprint；Case coverage 按 Bot + Case + Target fingerprint 聚合。 Resume 必须在任何写入前核对完整请求、Case 快照、Target fingerprint 和已有 Trial 结构，任一漂移都拒绝；已完成 Evaluation 不可 Resume，未 checkpoint 的 workspace 必须清理后再执行，不能修改请求后复用旧 Trial。 非 Resume 禁止复用已有 Evaluation 证据目录；外部 Case ID 只作领域标识，不得直接形成 workspace 或 artifact 路径，但包含 `/` 时仍须可查询；Evaluation 持久化前必须统一脱敏，禁止落盘原始事件、凭据字段、通用 token、已知 secret 和机器绝对路径；不完整 Target 组不得计入胜负。
 - **Lingye 主 Codex 权限**： `agents.codex` 只配置 `owner_access: worktree` 与 `member_access: workspace`；`host` 和 `auto_publish` 已删除并在 BotSpec 校验时拒绝。 Owner 主会话只读源码，任何源码写入必须调用 Owner-only 的 `start/get/cancel/resume_code_task`；独立 systemd code-worker 从远端默认分支创建任务私有 clone，在 bwrap 中使用固定 Codex 二进制与专用 worker 凭据，不能读取个人 MCP、个人 `CODEX_HOME`、AgentStrata Session Gateway 或 GitHub token。 验证通过后仅由受信宿主提交任务分支、非强制 push 并创建草稿 PR；不覆盖源仓、不修改运行副本、不重启、不部署、不 merge。 GitHub fine-grained PAT 必须在 clone 前和交付前解析为 `local.env` 明确配置的预期 actor；`delivery.json` 绑定 canonical actor，缺失、不匹配或漂移均失败关闭。Git author/committer 使用独立的公开 AgentStrata AI Coding Bot 身份，commit 正文和 Draft PR 顶部保留 repository owner、AI generation 与 human-review-required provenance。 `CHATCOPILOT_CODEX_BOT_HOME` 的 main `auth.json` 与 `worker/auth.json` 必须分别 device auth 并独立 lease；GitHub token 只从 owner-only `0700` 配置目录内的 single-link mode `0600` worker 文件读取，交付进程用 `O_NOFOLLOW` + `fstat` 单次载入；Git askpass 只使用任务期内的临时 `0600` 快照，原始 token 不进入 Codex 沙箱、worker env 或 Git remote。 caller 摘要、角色、策略或 credential generation 变化必须使旧 resume ID 失效，不能只信任 `role_hint`。
@@ -211,7 +212,7 @@ python -m chatcopilot.agent.search.probe --bot bots/lingye-copilot-qq/bot.yaml -
   - **Subagent 自动继承**：subagent 的 `max_model_turns` 作为 soft cap，hard cap 自动计算为 `max(soft+4, soft*2)`；hard timeout 为 soft 的 3 倍。
   - **Env 覆盖**：`CHATCOPILOT_HARD_ITERATION_CAP`、`CHATCOPILOT_HARD_TIMEOUT_SECONDS`、`CHATCOPILOT_STALL_WINDOW_SECONDS`。
 - **Tool call 完整性修复**：`AgentSession._repair_orphan_tool_calls` 扫描 messages，为缺失 tool result 的 `tool_calls` 补全合成 error result（`ok: false, error: aborted`）。三处调用：`_timeout_result`（超时截断后）、tool_call_cap 返回前、每次 `llm.chat()` 前的防御性校验。确保跨 turn 累积的 messages 不会因 orphan `tool_calls` 导致 OpenAI API 400。
-- **任务诊断与 Gateway durable state 分层**：只有经过 transport verification、identity 与 admission 的消息才能创建 `task_...` 并进入 Agent；拒绝只保留有界、无正文的 authorization decision receipt。Gateway SQLite 另行拥有 ingress、session、run、event cursor、outbox 与 delivery receipt，不能把 task JSON 当成平台投递事实。`job_...` 仍是后台长任务，Owner job 按 actor digest 位于受保护状态；群内 workspace 不可读取。Gateway task-flow 投影真正接入 SQLite 前，Console 必须把该视图标为不可用，不能套用 legacy ACP 八层证据。
+- **任务诊断与 Gateway durable state 分层**：只有经过 transport verification、identity 与 admission 的消息才能创建 `task_...` 并进入 Agent；拒绝只保留有界、无正文的 authorization decision receipt。Gateway SQLite 另行拥有 ingress、session、run、event cursor、outbox 与 delivery receipt，不能把 task JSON 当成平台投递事实。`job_...` 仍是后台长任务，Owner job 按 actor digest 位于受保护状态；群内 workspace 不可读取。Gateway 运行端持续写独立观测索引与任务正文，Console 只读查询分层配置快照、分页历史、阶段、指标、审批和回执；正文按终态结束时间保留 30 天，活动及恢复任务不清理，摘要长期保留；禁止推进 generation、读取原始 ingress 或套用 legacy ACP 八层证据。无 run 关联键的准入审计只能作为实例审计；诊断写失败不改变权限或交付结果，历史缺记录与截断必须显示。
 - **ACP 是 Gateway client edge**：`protocols/acp/server.py` 只映射 ACP 帧、session lifecycle、prompt/cancel 与 Gateway typed RPC；它不能 import 或重新拥有 Agent、QQ、BotSpec、authorization、workspace 或 task runtime。连接中断恢复使用原始 params/idempotency key、`runs.get` / `runs.latest` 与 `deliveries.get`，不得以新输入替代旧 run。
 
 ## 快速验证
@@ -293,8 +294,8 @@ Windows 上全量 pytest 可能被旧临时目录 ACL 干扰；优先 targeted t
 | 页面 | 功能 |
 | --- | --- |
 | 总览 | 实例状态汇总 |
-| 服务管理 | BotSpec desired-state Docker 与平台 gateway 等基础设施 |
-| 机器人实例 | 运行状态 / **能力与工具** / 任务 / 日志 |
+| 服务管理 | 按 Channel 接入与外部能力查看服务职责、状态、诊断与日志 |
+| 机器人实例 | 运行观测 / 任务记录 / 分层配置 / 运行状态 / 能力与工具，同级页签；服务日志统一入口 |
 | 组件目录 | 按 tools / prompts / agents / context 四个 surface 统一浏览工具、提示词、Agent 和上下文组件（只读卡片） |
 | 质量评测 | 新建评测 / 评测记录 / 任务集 |
 | 设置 | 控制台本身 |
@@ -303,6 +304,8 @@ Windows 上全量 pytest 可能被旧临时目录 ACL 干扰；优先 targeted t
 
 | 端点 | 方法 | 用途 |
 | --- | --- | --- |
+| `/api/bots/{id}/gateway-observation` | GET | 当前实例 Gateway run 和独立准入审计 |
+| `/api/bots/{id}/gateway-observation/runs/{run_id}` | GET | 当前 run 的诊断事件、审批和交付回执 |
 | `/api/catalog` | GET | 统一组件目录（tools + prompts + agents + context） |
 | `/api/catalog/{item_id}` | GET | 单个目录条目 |
 | `/api/bots/{id}/tools` | GET | 读取实例当前工具配置 |

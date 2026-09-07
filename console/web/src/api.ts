@@ -1,3 +1,5 @@
+import { observationQuery, type ObservationFilters, type Inspection, type ObservationMetrics, type ObservationBody, type EventPage } from "./features/architecture/workbenchModel";
+import type { GatewayOverview, GatewayRunDetail } from "./features/architecture/model";
 import type {
   BotInstance,
   BotInventory,
@@ -50,6 +52,12 @@ async function fireAndForgetReq<T>(url: string, init?: RequestInit, fallback?: T
 }
 
 export const api = {
+  inspection: (id: string, runId?: string, eventSeq?: number) => req<Inspection>(`/api/bots/${encodeURIComponent(id)}/inspection${runId ? `?run_id=${encodeURIComponent(runId)}${eventSeq != null ? `&event_seq=${eventSeq}` : ""}` : ""}`),
+  observationMetrics: (id: string, filters: ObservationFilters) => req<ObservationMetrics>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/metrics${observationQuery(filters)}`),
+  observationEvents: (id: string, runId: string, after = 0) => req<EventPage>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}/events?after=${after}`),
+  observationBody: (id: string, runId: string, bodyId: string, signal?: AbortSignal) => req<ObservationBody>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}/details/${encodeURIComponent(bodyId)}`, { signal }),
+  gatewayObservation: (id: string, filters?: ObservationFilters) => req<GatewayOverview>(`/api/bots/${encodeURIComponent(id)}/gateway-observation${observationQuery(filters)}`),
+  gatewayRun: (id: string, runId: string) => req<GatewayRunDetail>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}`),
   overview: () => req<Overview>("/api/overview"),
   listBots: () => req<BotInstance[]>("/api/bots"),
   status: (id: string) => req<BotStatus>(`/api/bots/${id}/status`),

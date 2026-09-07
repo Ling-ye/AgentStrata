@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Message, Modal, Tag } from "@arco-design/web-react";
+import { Alert, Button, Drawer, Empty, Message, Modal, Space, Spin, Tag } from "@arco-design/web-react";
+import { serviceLayer } from "../features/architecture/model";
+import { healthTagColor, infraStateLabel } from "../shared/ui/status";
 import ServiceCard from "../components/ServiceCard";
 import { api, streamInfraLogs, streamTask } from "../api";
 import type { InfraService, Task } from "../types";
@@ -17,6 +19,8 @@ export default function ServicesPage({ visible = true }: Props) {
   const [services, setServices] = useState<InfraService[]>([]);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [composeUpBusy, setComposeUpBusy] = useState(false);
+  const [layer, setLayer] = useState("");
+  const [selectedService, setSelectedService] = useState("");
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   const logStream = useEventStreamLines();
   const taskStream = useEventStreamLines();
@@ -126,8 +130,8 @@ export default function ServicesPage({ visible = true }: Props) {
   return (
     <>
       <PageSection
-        title="基础设施服务"
-        description="共享 Docker MCP 与平台网关，每张卡片可独立诊断和管理登录。"
+        title="服务管理"
+        description="服务状态、实例关联与运维操作"
         extra={
           <>
             <Button
@@ -148,20 +152,28 @@ export default function ServicesPage({ visible = true }: Props) {
           </>
         }
       >
-        <div className="infra-grid">
-          {servicesData.map((service) => (
-            <div key={service.id} id={`infra-${service.id}`}>
-              <ServiceCard
-                service={service}
-                busy={!!busy[service.id]}
-                onAction={(verb) => handleAction(service, verb)}
-                onLogs={() => openLogs(service)}
-              />
-            </div>
-          ))}
-        </div>
+        <div className="obs-toolbar"><div className="run-layer-filter" aria-label="服务类型">{["", "channel", "capability"].map((id) => <button key={id} type="button" aria-pressed={layer === id} className={layer === id ? "is-selected" : ""} onClick={() => setLayer(id)}>{id === "channel" ? "平台接入" : id === "capability" ? "工具服务" : "全部服务"}<small>{servicesData.filter((service) => !id || serviceLayer(service) === id).length}</small></button>)}</div>
+          <Button loading={servicesQuery.isFetching} onClick={() => void servicesQuery.refetch()}>刷新状态</Button></div>
+        {servicesQuery.isLoading && <Spin tip="读取服务状态…" />}
+        {servicesQuery.error && <Alert type="error" content={`服务状态读取失败：${String(servicesQuery.error)}${servicesData.length ? "；下方为上次快照。" : ""}`} />}
+        {!servicesQuery.isLoading && !servicesData.filter((service) => !layer || serviceLayer(service) === layer).length && <Empty description="当前分类没有服务" />}
+        <div className="obs-table-scroll"><table className="obs-table"><thead><tr><th>服务</th><th>类型</th><th>状态</th><th>版本 / 容器</th><th>关联实例</th><th>运行时长</th><th>操作</th></tr></thead>
+          <tbody>{servicesData.filter((service) => !layer || serviceLayer(service) === layer).map((service) => <tr key={service.id} id={`infra-${service.id}`}>
+            <td><button className="obs-link" onClick={() => setSelectedService(service.id)}>{service.display_name}</button><small>{service.id}</small></td>
+            <td>{service.service_type === "standalone" ? "平台接入" : "工具服务"}</td>
+            <td><Tag color={healthTagColor(service.color)}>{infraStateLabel(service.state)}</Tag></td>
+            <td>{String(service.extra?.version ?? service.extra?.image ?? service.container ?? "未记录")}</td>
+            <td>{service.instance_id ? <a href={`#bots?instance=${encodeURIComponent(service.instance_id)}&entity=${encodeURIComponent(service.service_type === "standalone" ? "channel:qq" : `mcp:${service.id}`)}`}>{service.instance_id}</a> : "共享服务"}</td>
+            <td>{service.uptime_s == null ? "—" : `${Math.floor(service.uptime_s / 60)} min`}</td>
+            <td><Space size="small"><Button size="small" onClick={() => setSelectedService(service.id)}>管理</Button><Button size="small" onClick={() => openLogs(service)}>日志</Button></Space></td>
+          </tr>)}</tbody></table></div>
       </PageSection>
 
+      <Drawer title="服务详情" visible={!!selectedService} width="min(780px, 96vw)" footer={null} onCancel={() => setSelectedService("")}>
+        {servicesData.filter((service) => service.id === selectedService).map((service) => <div className="obs-service-details" key={service.id}>
+          <ServiceCard service={service} busy={!!busy[service.id]} onAction={(verb) => handleAction(service, verb)} onLogs={() => openLogs(service)} />
+        </div>)}
+      </Drawer>
       <LogDrawer
         title={logStream.title}
         visible={logStream.open}

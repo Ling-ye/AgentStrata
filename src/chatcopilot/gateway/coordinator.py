@@ -49,6 +49,7 @@ from chatcopilot.contracts.identity import ConversationIdentity, TurnIdentity
 
 from .application import GatewayApplicationError, GatewaySessionService
 from .events import GatewayEventPublisher
+from .observations import RunObserver
 from .server import GatewayClientContext, GatewayDispatchError
 from .state_store import (
     GatewayStateStore,
@@ -106,15 +107,18 @@ class _AgentEventForwarder:
         session_id: str,
         run_id: str,
         cancellation: CancellationToken,
+        observer: RunObserver,
     ) -> None:
         self._events = events
         self._session_id = session_id
         self._run_id = run_id
         self._cancellation = cancellation
         self._forwarded_chars = 0
+        self._observer = observer
 
     def __call__(self, event: AgentEvent) -> None:
         self._cancellation.raise_if_cancelled()
+        self._observer(event)
         if not isinstance(event, TextDelta) or not event.text:
             return
         remaining = _MAX_STREAM_TEXT - self._forwarded_chars
@@ -302,7 +306,12 @@ class GatewayTurnCoordinator:
         )
         self._tokens[run_id] = token
         try:
+            observer = RunObserver(self._state_store, self._generation, run_id)
+            observer.record("principal_bound", "channel", "gateway", "succeeded",
+                            gate="authenticated_principal_binding", outcome="allowed")
             resources = await self._materialize_resources(event, principal)
+            observer.record("resources_materialized", "gateway", "application", "succeeded",
+                            resource_count=len(resources))
             task = asyncio.create_task(
                 self._execute_channel_run(
                     event=event,
@@ -517,7 +526,10 @@ class GatewayTurnCoordinator:
                     run_id=run_id,
                     reply_to_message_id=event.evidence.message_id,
                 )
+                observer = RunObserver(self._state_store, self._generation, run_id)
+                observer.record("response_dispatch", "gateway", "channel", "running")
                 await runtime.send(envelope)
+                observer.record("channel_returned", "channel", "gateway", "succeeded")
                 result = self._actor_executor.commit_exchange(
                     request,
                     result,
@@ -566,17 +578,25 @@ class GatewayTurnCoordinator:
             run_id=run_id,
             now=self._now(),
         )
+        observer = RunObserver(self._state_store, self._generation, run_id)
         forwarder = _AgentEventForwarder(
             events=self._events,
             session_id=session_id,
             run_id=run_id,
             cancellation=cancellation,
+            observer=observer,
         )
-        return await self._actor_executor.execute(
-            request,
-            on_event=forwarder,
-            cancellation=cancellation,
-        )
+        observer.record("actor_execution", "application", "agent", "running")
+        observer.prepare(request)
+        with observer.scope():
+            result = await self._actor_executor.execute(
+                request,
+                on_event=forwarder,
+                cancellation=cancellation,
+            )
+        observer.record("actor_returned", "application", "gateway",
+                        "aborted" if result.result.stop_reason == "cancelled" else "succeeded")
+        return result
 
     async def _complete_without_channel(
         self,

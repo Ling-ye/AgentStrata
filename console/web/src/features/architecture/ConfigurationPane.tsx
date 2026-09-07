@@ -1,0 +1,74 @@
+import { useEffect, useRef, useState } from "react";
+import { Alert, Button, Empty, Input, Select, Spin, Tag } from "@arco-design/web-react";
+import type { Configuration, Inspection, InspectionEntity } from "./workbenchModel";
+import { dateTime } from "./workbenchModel";
+import { ConfigFields, FIELD_NAMES } from "./ObservationContent";
+
+type Source = "current" | "loaded" | "execution";
+
+function EntityState({ entity }: { entity: InspectionEntity }) {
+  return <span className="obs-entity-states">
+    <Tag size="small" color={entity.configured ? "blue" : "gray"}>{entity.configured == null ? "配置未记录" : entity.configured ? "已配置" : "未启用"}</Tag>
+    {entity.loaded != null && <Tag size="small" color={entity.loaded ? "green" : "orange"}>{entity.loaded ? "已加载" : "未加载"}</Tag>}
+    {entity.connected != null && <Tag size="small" color={entity.connected ? "green" : "red"}>{entity.connected ? "已连接" : "未连接"}</Tag>}
+    {entity.available != null && <Tag size="small" color={entity.available ? "green" : "gray"}>{entity.available ? "本次可用" : "本次不可用"}</Tag>}
+  </span>;
+}
+
+export default function ConfigurationPane({ inspection, loading, error, runId, selectedEntity, revealVersion, onLocate, onEdit, callableEntities }: {
+  inspection?: Inspection; loading: boolean; error: Error | null; runId: string;
+  selectedEntity: string; revealVersion: number; onLocate: (entity: string) => void; onEdit: () => void; callableEntities: Set<string>;
+}) {
+  const [source, setSource] = useState<Source>(runId ? "execution" : "current");
+  const [search, setSearch] = useState("");
+  const pane = useRef<HTMLElement>(null);
+  const config: Configuration | null | undefined = inspection?.[source];
+  const selectedLayer = config?.entities.find((item) => item.id === selectedEntity)?.layer;
+  useEffect(() => {
+    if (!selectedEntity || !selectedLayer) return;
+    const target = Array.from(pane.current?.querySelectorAll<HTMLElement>("[data-entity-id]") ?? [])
+      .find((element) => element.dataset.entityId === selectedEntity);
+    const frame = requestAnimationFrame(() => {
+      target?.scrollIntoView({ block: "start" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedEntity, selectedLayer, source, revealVersion]);
+  return <section ref={pane} className="obs-configuration" aria-label="分层配置">
+    <div className="obs-config-toolbar"><div className="obs-pane-heading"><Select aria-label="配置来源" value={source} onChange={setSource} options={[
+      { value: "execution", label: "任务执行时配置", disabled: !runId },
+      { value: "loaded", label: "运行中已加载配置" }, { value: "current", label: "当前配置" },
+    ]} /><Button size="small" onClick={onEdit}>编辑配置</Button></div>
+      <div className="obs-config-version"><span>版本 {config?.configuration_revision?.slice(0, 10) ?? "未记录"}</span>
+        {source === "loaded" && <span>{dateTime(inspection?.loaded_meta?.observed_at)}</span>}</div></div>
+    {inspection?.pending_changes && <Alert type="warning" content="当前配置存在尚未应用的变更" />}
+    {source === "loaded" && inspection?.loaded_stale && <Alert type="warning" content="运行快照已过期，当前状态未确认" />}
+    {error && <Alert type="error" content={"配置读取失败：" + error.message} />}
+    {loading ? <Spin /> : !config ? <Empty description={source === "execution" ? "此任务未记录执行时配置" : "未取得配置快照"} /> : <>
+      {!!config.validation?.length && <Alert type="warning" content={config.validation.map((item) => item.field + "：" + item.message).join("；")} />}
+      {selectedEntity && !selectedLayer && <Alert type="info" content={"未记录此组件的配置：" + selectedEntity} />}
+      <Input aria-label="搜索配置组件" placeholder="搜索配置、模型或组件" allowClear value={search} onChange={setSearch} />
+      <nav className="obs-config-anchors" aria-label="配置分组">{config.layers.map((layer) =>
+        <button type="button" className="obs-link" key={layer.id} onClick={() => {
+          setSearch(""); requestAnimationFrame(() => Array.from(pane.current?.querySelectorAll<HTMLElement>("[data-layer-id]") ?? [])
+            .find((element) => element.dataset.layerId === layer.id)?.scrollIntoView({ block: "start" }));
+        }}>{layer.name}</button>)}</nav>
+      <div className="obs-layer-list">{config.layers.map((layer) => {
+        const entities = config.entities.filter((entity) => entity.layer === layer.id &&
+          (entity.name + " " + entity.id).toLowerCase().includes(search.toLowerCase()));
+        if (search && !entities.length) return null;
+        return <section key={layer.id} data-layer-id={layer.id} className="obs-layer">
+          <h3>{layer.name}<small>{entities.length}</small></h3>
+          {!entities.length && <p className="obs-muted">未配置组件</p>}
+          {entities.map((entity) => <article key={entity.id} data-entity-id={entity.id} className={"obs-entity" + (selectedEntity === entity.id ? " is-selected" : "")}>
+            <div className="obs-pane-heading"><strong>{FIELD_NAMES[entity.name] ?? entity.name}</strong>
+              {callableEntities.has(entity.id) && <Button size="mini" onClick={() => onLocate(entity.id)}>定位调用</Button>}</div>
+            <EntityState entity={entity} />
+            <ConfigFields value={entity.config} />
+            {entity.runtime && <><h4>运行信息</h4><ConfigFields value={entity.runtime} /></>}
+            {entity.environment && Object.keys(entity.environment).length > 0 && <><h4>环境配置</h4><ConfigFields value={entity.environment} /></>}
+          </article>)}
+        </section>;
+      })}</div>
+    </>}
+  </section>;
+}

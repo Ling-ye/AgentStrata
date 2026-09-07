@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -37,8 +37,11 @@ import {
 } from "../features/evals/model";
 import type { ColumnProps } from "../shared/ui/arcoTypes";
 import PageSection from "../shared/ui/PageSection";
+import EvaluationTrends from "../features/evals/EvaluationTrends";
+import { EvaluationResults } from "../features/evals/EvaluationResults";
+import { dateLabel, evaluationSuiteId, modelLabel, rateLabel, revisionLabel } from "../features/evals/insightsModel";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Text } = Typography;
 
 type EvaluationTrack = "agent" | "qq_message_flow";
 
@@ -92,10 +95,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 function suiteId(record: EvaluationRecord): string {
-  const requestSuite = record.request.suite_id;
-  if (typeof requestSuite === "string") return requestSuite;
-  const result = record.result;
-  return result && typeof result.suite === "string" ? result.suite : "";
+  return evaluationSuiteId(record);
 }
 
 function trackForRecord(record: EvaluationRecord): TrackDefinition | null {
@@ -115,13 +115,6 @@ function formatDuration(value: number | null | undefined): string {
   return `${Math.floor(value / 60)} 分 ${Math.round(value % 60)} 秒`;
 }
 
-function resultSummary(record: EvaluationRecord): Record<string, unknown> {
-  const summary = record.result?.summary;
-  return typeof summary === "object" && summary !== null && !Array.isArray(summary)
-    ? summary as Record<string, unknown>
-    : {};
-}
-
 function presetOptions(suite: EvaluationSuite | null): SuitePreset[] {
   const declared = (suite?.presets ?? [])
     .map((item) => item.preset_id)
@@ -137,6 +130,7 @@ function presetDescription(suite: EvaluationSuite | null, preset: SuitePreset): 
 
 export default function EvalsPage({ visible = true }: Props) {
   const queryClient = useQueryClient();
+  const detailTop = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState("start");
   const [botId, setBotId] = useState("");
   const [selectedTrack, setSelectedTrack] = useState<EvaluationTrack>("agent");
@@ -145,7 +139,9 @@ export default function EvalsPage({ visible = true }: Props) {
     qq_message_flow: "quick",
   });
   const [problem, setProblem] = useState<ApiProblem | null>(null);
-  const [selectedRecord, setSelectedRecord] = useState<EvaluationRecord | null>(null);
+  const [selectedEvaluation, setSelectedEvaluation] = useState<EvaluationRecord | null>(null);
+  const [recordTrack, setRecordTrack] = useState("all");
+  const [recordStatus, setRecordStatus] = useState("all");
 
   const botsQuery = useQuery({
     queryKey: ["bots"],
@@ -170,6 +166,18 @@ export default function EvalsPage({ visible = true }: Props) {
   const bots = botsQuery.data ?? [];
   const suites = suitesQuery.data ?? [];
   const records = recordsQuery.data ?? [];
+  const latestSelected = records.find(
+    (record) => record.evaluation_id === selectedEvaluation?.evaluation_id,
+  ) ?? selectedEvaluation;
+  const detailQuery = useQuery({
+    queryKey: ["evaluation-detail", selectedEvaluation?.evaluation_id],
+    queryFn: ({ signal }) => evaluationApi.get(selectedEvaluation!.evaluation_id, signal),
+    enabled: visible && Boolean(selectedEvaluation),
+    refetchInterval: query => ACTIVE_STATUSES.has(query.state.data?.status ?? latestSelected?.status ?? "error") ? 2000 : false,
+  });
+  const selectedRecord = detailQuery.data ?? latestSelected;
+  const filteredRecords = records.filter(record => (recordTrack === "all" || trackForRecord(record)?.id === recordTrack)
+    && (recordStatus === "all" || record.status === recordStatus));
   const suitesByTrack = useMemo(() => {
     const mapped = new Map<EvaluationTrack, EvaluationSuite>();
     for (const suite of suites) {
@@ -218,7 +226,7 @@ export default function EvalsPage({ visible = true }: Props) {
     },
     onSuccess: async (record) => {
       Message.success(`已启动 ${trackForRecord(record)?.shortTitle ?? "评测"}`);
-      setSelectedRecord(record);
+      setSelectedEvaluation(record);
       setTab("records");
       await queryClient.invalidateQueries({ queryKey: ["evaluation-records"] });
     },
@@ -242,8 +250,10 @@ export default function EvalsPage({ visible = true }: Props) {
             ? "已创建重跑"
             : "评测记录已删除",
       );
-      if (variables.action === "delete") setSelectedRecord(null);
+      if (variables.action === "delete") setSelectedEvaluation(null);
+      if (variables.action === "rerun" && "evaluation_id" in _result) setSelectedEvaluation(_result);
       await queryClient.invalidateQueries({ queryKey: ["evaluation-records"] });
+      await queryClient.invalidateQueries({ queryKey: ["evaluation-detail"] });
     },
     onError: (error) => Message.error(formatApiError(error)),
   });
@@ -253,6 +263,7 @@ export default function EvalsPage({ visible = true }: Props) {
       queryClient.invalidateQueries({ queryKey: ["bots"] }),
       queryClient.invalidateQueries({ queryKey: ["evaluation-suites"] }),
       queryClient.invalidateQueries({ queryKey: ["evaluation-records"] }),
+      queryClient.invalidateQueries({ queryKey: ["evaluation-detail"] }),
     ]);
   };
 
@@ -272,6 +283,19 @@ export default function EvalsPage({ visible = true }: Props) {
       dataIndex: "status",
       width: 110,
       render: (value: string) => <Tag color={STATUS_COLORS[value] ?? "gray"}>{value}</Tag>,
+    },
+    {
+      title: "通过情况",
+      width: 200,
+      render: (_value, record) => record.insights.counts ? (
+        <Space size={4} wrap>
+          <Text bold>{rateLabel(record.insights.pass_rate)}</Text>
+          <Text type="secondary">{record.insights.counts.passed}/{record.insights.observed}</Text>
+          {record.insights.counts.failed > 0 && <Tag color="red">失败 {record.insights.counts.failed}</Tag>}
+          {record.insights.counts.error > 0 && <Tag color="orange">异常 {record.insights.counts.error}</Tag>}
+          {!record.insights.complete && <Tag color="gray">部分</Tag>}
+        </Space>
+      ) : <Text type="secondary">未记录</Text>,
     },
     {
       title: "进度",
@@ -297,10 +321,15 @@ export default function EvalsPage({ visible = true }: Props) {
       render: (value: number | null) => formatDuration(value),
     },
     {
+      title: "Git 版本",
+      width: 230,
+      render: (_value, record) => <span title={record.source_revision.commit ?? ""}>{revisionLabel(record)}</span>,
+    },
+    {
       title: "操作",
       width: 90,
       render: (_value, record) => (
-        <Button type="text" size="small" onClick={() => setSelectedRecord(record)}>
+        <Button type="text" size="small" onClick={() => setSelectedEvaluation(record)}>
           详情
         </Button>
       ),
@@ -312,39 +341,19 @@ export default function EvalsPage({ visible = true }: Props) {
   return (
     <PageSection
       title="测评中心"
-      description="只回答两个问题：Agent 本身会不会，以及 QQ 消息进入后链路对不对。"
+      description="查看 Agent 能力与 QQ 链路的测试结果、版本记录和历史变化。"
       extra={<Button size="small" onClick={() => void refresh()}>刷新</Button>}
     >
+      <div className="eval-history-filters eval-bot-selection">
+        <Text bold>机器人</Text>
+        <Select aria-label="评测机器人" value={botId || undefined} placeholder="选择机器人" loading={botsQuery.isLoading}
+          options={bots.map(bot => ({ label: bot.display_name, value: bot.instance_id }))}
+          onChange={value => { setBotId(String(value ?? "")); setSelectedEvaluation(null); setProblem(null); }} />
+        <Text type="secondary">手动启动 · 每个测试点默认 1 次 · 同一机器人同时运行一条评测</Text>
+      </div>
       <Tabs activeTab={tab} onChange={setTab}>
         <Tabs.TabPane key="start" title="开始测试">
           <div className="eval-center-stack">
-            <Card className="eval-create-card">
-              <div className="eval-create-header">
-                <label>
-                  <Text bold>Bot</Text>
-                  <Select
-                    value={botId || undefined}
-                    placeholder="选择要测试的 Bot"
-                    loading={botsQuery.isLoading}
-                    options={bots.map((bot) => ({
-                      label: bot.display_name,
-                      value: bot.instance_id,
-                    }))}
-                    onChange={(value) => {
-                      setBotId(String(value ?? ""));
-                      setProblem(null);
-                    }}
-                  />
-                </label>
-                <div>
-                  <Text bold>统一约束</Text>
-                  <Paragraph type="secondary" style={{ margin: "6px 0 0" }}>
-                    手动启动、每个 Case 默认 1 次；同一 Bot 同时只运行一条评测。
-                  </Paragraph>
-                </div>
-              </div>
-            </Card>
-
             {activeForBot && (
               <Alert
                 type="warning"
@@ -445,33 +454,54 @@ export default function EvalsPage({ visible = true }: Props) {
 
         <Tabs.TabPane key="records" title="运行记录">
           <Card className="eval-create-card">
+            <div className="eval-history-filters">
+              <Select aria-label="记录测试方向" value={recordTrack} onChange={setRecordTrack} options={[
+                { value: "all", label: "全部方向" }, ...TRACKS.map(track => ({ value: track.id, label: track.shortTitle })),
+              ]} />
+              <Select aria-label="记录状态" value={recordStatus} onChange={setRecordStatus} options={[
+                { value: "all", label: "全部状态" }, ...Object.keys(STATUS_COLORS).map(value => ({ value, label: value })),
+              ]} />
+              <Text type="secondary">{filteredRecords.length} 条评测</Text>
+            </div>
             {recordsQuery.isLoading ? (
               <Spin style={{ display: "block", margin: "40px auto" }} />
             ) : recordsQuery.isError ? (
               <Alert type="error" content={formatApiError(recordsQuery.error)} />
-            ) : records.length ? (
+            ) : filteredRecords.length ? (
               <Table
                 rowKey="evaluation_id"
                 columns={columns}
-                data={records}
+                data={filteredRecords}
                 pagination={{ pageSize: 12 }}
-                scroll={{ x: 900 }}
+                scroll={{ x: 1350 }}
               />
             ) : (
               <Empty description="还没有评测记录" />
             )}
           </Card>
         </Tabs.TabPane>
+        <Tabs.TabPane key="trends" title="进步趋势">
+          <Card className="eval-create-card">
+            {recordsQuery.isLoading ? <Spin /> : recordsQuery.isError
+              ? <Alert type="error" content={formatApiError(recordsQuery.error)} />
+              : <EvaluationTrends key={botId} records={records} onOpen={setSelectedEvaluation} />}
+          </Card>
+        </Tabs.TabPane>
       </Tabs>
 
       <Drawer
-        width={720}
+        width="min(1080px, 100vw)"
+        unmountOnExit
+        escToExit
+        autoFocus={false}
+        afterOpen={() => detailTop.current?.focus({ preventScroll: true })}
         title="评测详情"
         visible={Boolean(selectedRecord)}
-        onCancel={() => setSelectedRecord(null)}
+        onCancel={() => setSelectedEvaluation(null)}
         footer={null}
       >
         {selectedRecord && (
+          <div ref={detailTop} tabIndex={-1} className="eval-detail-content">
           <Space direction="vertical" size={16} style={{ width: "100%" }}>
             <Descriptions
               column={1}
@@ -497,15 +527,17 @@ export default function EvalsPage({ visible = true }: Props) {
                 { label: "创建", value: formatTime(selectedRecord.created_at) },
                 { label: "完成", value: formatTime(selectedRecord.finished_at) },
                 { label: "耗时", value: formatDuration(selectedRecord.duration_seconds) },
+                { label: "创建时 Git", value: <span title={selectedRecord.source_revision.commit ?? ""}>{revisionLabel(selectedRecord)}</span> },
+                { label: "版本采集时间", value: dateLabel(selectedRecord.source_revision.captured_at) },
+                { label: "模型", value: modelLabel(selectedRecord) },
+                { label: "配置 / 实现指纹", value: <code className="eval-fingerprint">{selectedRecord.insights.configuration_fingerprint || "未记录"}</code> },
               ]}
             />
             {selectedRecord.error && <Alert type="error" content={selectedRecord.error} />}
-            <div>
-              <Title heading={6}>结果摘要</Title>
-              <pre className="eval-answer-block">
-                {JSON.stringify(resultSummary(selectedRecord), null, 2) || "尚无结果"}
-              </pre>
-            </div>
+            {detailQuery.isLoading && <Spin tip="正在读取测试点结果…" />}
+            {detailQuery.isError && <Alert type="error" content={`详情读取失败：${formatApiError(detailQuery.error)}`}
+              action={<Button size="small" onClick={() => void detailQuery.refetch()}>重试</Button>} />}
+            <EvaluationResults key={selectedRecord.evaluation_id} record={selectedRecord} />
             <Space wrap>
               {ACTIVE_STATUSES.has(selectedRecord.status) && (
                 <Button
@@ -553,6 +585,7 @@ export default function EvalsPage({ visible = true }: Props) {
               )}
             </Space>
           </Space>
+          </div>
         )}
       </Drawer>
     </PageSection>

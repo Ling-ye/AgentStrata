@@ -2805,6 +2805,10 @@ def _validate_managed_bootstrap(
     ):
         raise ValueError("Evaluation service BotSpec snapshot digest is invalid")
     expected["bot_spec_sha256"] = bot_spec_digest
+    if "source_revision" in stored_request:
+        from chatcopilot.evals.source_revision import validate_source_revision
+
+        expected["source_revision"] = validate_source_revision(stored_request["source_revision"])
     if (
         not isinstance(stored_request.get("created_at"), str)
         or not str(stored_request["created_at"]).strip()

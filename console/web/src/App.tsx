@@ -13,7 +13,13 @@ const { Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
 export default function App() {
-  const [page, setPage] = useState<PageKey>("overview");
+  const [page, setPage] = useState<PageKey>(() => { const candidate = window.location.hash.slice(1).split("?")[0]; return ["overview", "services", "bots", "tools", "evals", "settings"].includes(candidate) ? candidate as PageKey : "overview"; });
+  const navigate = useCallback((next: PageKey) => { window.location.hash = next; setPage(next); }, []);
+  useEffect(() => {
+    const update = () => { const next = window.location.hash.slice(1).split("?")[0]; if (["overview", "services", "bots", "tools", "evals", "settings"].includes(next)) setPage(next as PageKey); };
+    window.addEventListener("hashchange", update);
+    return () => window.removeEventListener("hashchange", update);
+  }, []);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const checkBackend = useCallback(async () => {
@@ -31,16 +37,16 @@ export default function App() {
 
   return (
     <Layout className="console-layout">
-      <Sider className="console-sider">
+      <Sider className="console-sider" width="var(--cc-sidebar-width)">
         <div className="console-logo">
           <Title heading={5} className="console-logo-title">AgentStrata</Title>
           <Text type="secondary" className="cc-text-small">运维控制台</Text>
         </div>
-        <Sidebar current={page} onChange={setPage} />
+        <Sidebar current={page} onChange={navigate} />
       </Sider>
       <Content className="console-content">
         <Suspense fallback={<Spin dot tip="正在加载页面…" />}>
-          {page === "overview" && <OverviewPage onNavigate={setPage} visible />}
+          {page === "overview" && <OverviewPage onNavigate={navigate} visible />}
           {page === "services" && <ServicesPage visible />}
           {page === "bots" && <BotsPage loadError={loadError} visible />}
           {page === "tools" && <ToolsPage visible />}

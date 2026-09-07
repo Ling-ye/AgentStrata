@@ -6,6 +6,8 @@ import errno
 import hashlib
 import hmac
 import json
+import logging
+from functools import wraps
 import math
 import os
 import re
@@ -280,6 +282,28 @@ class GatewayInstanceLease:
             raise GatewayStateError("Gateway instance lease could not be released") from exc
 
 
+def _project_observation(method):
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        result = method(self, *args, **kwargs)
+        recorder = getattr(self, "observation_recorder", None)
+        if recorder is not None:
+            try:
+                run_id = kwargs.get("run_id")
+                if not run_id and kwargs.get("envelope") is not None:
+                    run_id = kwargs["envelope"].run_id
+                if not run_id and kwargs.get("request") is not None:
+                    run_id = getattr(kwargs["request"], "run_id", None)
+                if not run_id and kwargs.get("outbound_id"):
+                    outbound = self.get_outbound(kwargs["outbound_id"])
+                    run_id = outbound.envelope.get("run_id") if outbound else None
+                recorder.reconcile(run_id)
+            except Exception:
+                logging.getLogger(__name__).warning("Observation projection unavailable")
+        return result
+    return invoke
+
+
 class GatewayStateStore:
     """Fail-closed state owner for one Bot instance Gateway.
 
@@ -299,6 +323,7 @@ class GatewayStateStore:
     ) -> None:
         if Path(database_name).name != database_name or database_name in {"", ".", ".."}:
             raise ValueError("database_name must be one plain filename")
+        self.observation_recorder: Any = None
         self.root = Path(os.path.abspath(os.fspath(root)))
         configured_anchor = trusted_anchor if trusted_anchor is not None else self.root.parent
         self.trusted_anchor = Path(os.path.abspath(os.fspath(configured_anchor)))
@@ -313,6 +338,7 @@ class GatewayStateStore:
         _validate_private_root(self.root, trusted_anchor=self.trusted_anchor)
         return _acquire_instance_lease(self.root / _INSTANCE_LEASE_FILENAME)
 
+    @_project_observation
     def acquire_writer_generation(self, *, now: float | None = None) -> int:
         observed_at = _timestamp(now)
         with self._write_connection() as connection:
@@ -775,6 +801,7 @@ class GatewayStateStore:
                 updated_at=observed_at,
             )
 
+    @_project_observation
     def begin_run(
         self,
         *,
@@ -848,6 +875,7 @@ class GatewayStateStore:
                 updated_at=observed_at,
             )
 
+    @_project_observation
     def start_run(
         self,
         *,
@@ -880,6 +908,7 @@ class GatewayStateStore:
                 updated_at=observed_at,
             )
 
+    @_project_observation
     def request_abort(
         self,
         *,
@@ -917,6 +946,7 @@ class GatewayStateStore:
                 updated_at=observed_at,
             )
 
+    @_project_observation
     def finish_run(
         self,
         *,
@@ -995,6 +1025,7 @@ class GatewayStateStore:
                 updated_at=observed_at,
             )
 
+    @_project_observation
     def resolve_run_recovery(
         self,
         *,
@@ -1112,6 +1143,7 @@ class GatewayStateStore:
             ).fetchall()
         return tuple(_run_record(str(row[0]), row[1:]) for row in rows)
 
+    @_project_observation
     def create_approval(
         self,
         *,
@@ -1371,6 +1403,7 @@ class GatewayStateStore:
             else None
         )
 
+    @_project_observation
     def resolve_approval_once(
         self,
         *,
@@ -1653,6 +1686,7 @@ class GatewayStateStore:
             raise GatewayStateError("recovered ingress disappeared")
         return record
 
+    @_project_observation
     def enqueue_outbound(
         self,
         *,
@@ -1720,6 +1754,7 @@ class GatewayStateStore:
                 updated_at=created_at,
             )
 
+    @_project_observation
     def begin_outbound_submission(
         self,
         *,
@@ -1738,6 +1773,7 @@ class GatewayStateStore:
             if cursor.rowcount != 1:
                 raise GatewayStateError("outbound is not pending")
 
+    @_project_observation
     def mark_outbound_submitted(
         self,
         *,
@@ -1768,6 +1804,7 @@ class GatewayStateStore:
                 detail={},
             )
 
+    @_project_observation
     def acknowledge_outbound(
         self,
         *,
@@ -1824,6 +1861,7 @@ class GatewayStateStore:
                 detail={},
             )
 
+    @_project_observation
     def fail_outbound(
         self,
         *,
@@ -2009,6 +2047,27 @@ class GatewayStateStore:
             )
             return cursor.rowcount
 
+    def append_run_observation(
+        self, *, generation: int, run_id: str, payload: Mapping[str, Any],
+    ) -> bool:
+        """Retain at most 1000 diagnostic events and one explicit overflow marker per run."""
+        encoded = _json_dump(payload)
+        with self._write_connection() as connection:
+            self._assert_generation(connection, generation)
+            self._require_run(connection, run_id)
+            count = connection.execute(
+                "SELECT COUNT(*) FROM run_observations WHERE run_id = ?", (run_id,)
+            ).fetchone()[0]
+            if count > 1000:
+                return False
+            if count == 1000:
+                encoded = _json_dump({"kind": "observations_truncated"})
+            connection.execute(
+                "INSERT INTO run_observations(run_id, payload_json, created_at) VALUES(?, ?, ?)",
+                (run_id, encoded, _timestamp(None)),
+            )
+        return count < 1000
+
     def delivery_receipts(self, outbound_id: str) -> tuple[DeliveryReceipt, ...]:
         with self._read_connection() as connection:
             rows = connection.execute(
@@ -2187,6 +2246,14 @@ class GatewayStateStore:
                     error_code TEXT,
                     detail_json TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS run_observations(
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL REFERENCES runs(run_id),
+                    payload_json TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS run_observations_run
+                    ON run_observations(run_id, seq);
                 CREATE TABLE IF NOT EXISTS gateway_events(
                     seq INTEGER PRIMARY KEY AUTOINCREMENT,
                     event TEXT NOT NULL,

@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+from chatcopilot.core.observation_context import observe
+
 import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -241,6 +243,14 @@ class AgentRuntime:
             (build_openai_schema(tool) for tool in visible_tools),
             key=lambda entry: str((entry.get("function") or {}).get("name") or ""),
         )
+        visible_names = {tool.name for tool in visible_tools}
+        observe("session_registry", tools=[{
+            "name": tool.name, "pack": snapshot.sources[tool.name].pack_id,
+            "provider": snapshot.sources[tool.name].provider_id,
+            "mcp_server_id": tool.metadata.get("mcp_server_id"),
+            "available": tool.name in visible_names, "requires_role": tool.requires_role,
+            "parameters": tool.input_schema,
+        } for tool in merged_tools])
         effective_model = (
             str(self.runtime_config.routing.code_model or "").strip() or None
             if backend_id == "codex"

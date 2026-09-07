@@ -108,7 +108,7 @@ _NAMESPACE_LABELS: dict[str, str] = {
 
 def _bot_tool_packs(bot_data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
     """Return (tool pack detail list, hidden tool list)."""
-    from chatcopilot.component_catalog import get_tool_pack_entry
+    from chatcopilot.component_catalog import get_tool_pack_entry, iter_tool_pack_tools
 
     tools_section = bot_data.get("tools") if isinstance(bot_data.get("tools"), dict) else {}
     include = tools_section.get("packs", []) if isinstance(tools_section, dict) else []
@@ -126,7 +126,7 @@ def _bot_tool_packs(bot_data: dict[str, Any]) -> tuple[list[dict[str, Any]], lis
             "namespace": ns,
             "label": _NAMESPACE_LABELS.get(ns, ns),
             "description": str(entry.description) if entry else "",
-            "has_tools": bool(entry and entry.tool_modules),
+            "has_tools": bool(entry and (entry.dynamic or tuple(iter_tool_pack_tools(cap_id)))),
             "has_prompts": bool(entry and entry.policy_module),
         })
 
@@ -255,6 +255,11 @@ def _bot_config(bot_data: dict[str, Any], base_dir: Path) -> dict[str, Any]:
         }
 
     return {
+        "identity": _file_entry(base_dir, prompts.get("identity")),
+        "response_style": _file_entry(base_dir, prompts.get("response_style")),
+        "refusal_style": _file_entry(base_dir, prompts.get("refusal_style")),
+        "role_styles": {str(key): _file_entry(base_dir, value) for key, value in (prompts.get("role_styles") or {}).items()},
+        "mode_styles": {str(key): _file_entry(base_dir, value) for key, value in (prompts.get("mode_styles") or {}).items()},
         "persona": _file_entry(base_dir, prompts.get("persona")),
         "refusal": _file_entry(base_dir, prompts.get("refusal")),
         "safety": _file_entry(base_dir, prompts.get("safety")),
@@ -284,6 +289,7 @@ def bot_inventory(inst: BotInstance) -> dict[str, Any]:
 
     return {
         "instance_id": inst.instance_id,
+        "structure": _structure_config(bot_data),
         "display_name": inst.display_name,
         "platform": inst.platform,
         "mcp_services": _bot_mcp_bindings(inst),
@@ -293,4 +299,17 @@ def bot_inventory(inst: BotInstance) -> dict[str, Any]:
         "agent_presets": agent_presets,
         "workflows": workflows,
         "config": _bot_config(bot_data, base_dir),
+    }
+
+
+def _structure_config(data: dict[str, Any]) -> dict[str, Any]:
+    agents = data.get("agents") if isinstance(data.get("agents"), dict) else {}
+    prompts = data.get("prompts") if isinstance(data.get("prompts"), dict) else {}
+    context = data.get("context") if isinstance(data.get("context"), dict) else {}
+    backend = agents.get("backend")
+    return {
+        "backend": backend if backend in {"native", "langgraph", "codex"} else "unknown",
+        "prompt_schema_version": prompts.get("schema_version") if type(prompts.get("schema_version")) is int else None,
+        "prompt_sections": [key for key in ("identity", "response_style", "refusal_style", "role_styles", "mode_styles") if prompts.get(key)],
+        "context_sources": [key for key in ("rag", "wiki", "memory_store", "codebases", "playbooks", "dev") if context.get(key)],
     }

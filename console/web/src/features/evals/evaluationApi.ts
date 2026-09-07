@@ -49,7 +49,7 @@ function evaluationList(value: unknown): EvaluationRecord[] {
   return value.map(normalizeEvaluation);
 }
 
-function normalizeTrial(value: unknown): EvaluationTrial {
+export function normalizeTrial(value: unknown): EvaluationTrial {
   const item =
     typeof value === "object" && value !== null && !Array.isArray(value)
       ? value as Record<string, unknown>
@@ -159,10 +159,11 @@ export const evaluationApi = {
       ),
     ),
 
-  get: async (evaluationId: string) =>
+  get: async (evaluationId: string, signal?: AbortSignal) =>
     normalizeEvaluation(
       await requestJson<unknown>(
         `/api/evals/evaluations/${encodeURIComponent(evaluationId)}`,
+        { signal },
       ),
     ),
 

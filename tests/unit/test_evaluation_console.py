@@ -259,6 +259,7 @@ def _persist_evaluation(
     bot_id: str = "lingye-copilot-qq",
     lifecycle_status: str = "completed",
     trials: list[dict[str, Any]] | None = None,
+    summary: dict[str, Any] | None = None,
 ) -> None:
     directory = root / evaluation_id
     created_at = "2026-07-26T00:00:00+00:00"
@@ -314,7 +315,7 @@ def _persist_evaluation(
             "kind": kind,
             "status": lifecycle_status,
             "trials": trials or [],
-            "summary": {},
+            "summary": summary if summary is not None else {},
             "duration_seconds": 60.0,
         },
     )
@@ -836,10 +837,12 @@ def test_unified_api_lists_records_and_old_resources_are_gone(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "evaluations"
+    summary = {"outcomes": {"passed": 0, "failed": 2}}
     _persist_evaluation(
         root,
         evaluation_id="eval-api",
         lifecycle_status="completed",
+        summary=summary,
     )
     manager = EvaluationApplication(root)
     with _use_manager(manager):
@@ -854,9 +857,12 @@ def test_unified_api_lists_records_and_old_resources_are_gone(
     assert profiles.json()[0]["profile_id"] == "agent-comparison-mvp"
     assert records.status_code == 200
     assert records.json()[0]["evaluation_id"] == "eval-api"
+    assert records.json()[0]["summary"] == summary
+    assert "result" not in records.json()[0]
     assert detail.status_code == 200
     assert detail.json()["status"] == "completed"
     assert detail.json()["result"]["trials"] == []
+    assert detail.json()["result"]["summary"] == summary
     assert runs.status_code == 404
     assert experiments.status_code == 404
 
@@ -2455,3 +2461,27 @@ def test_case_stream_export_and_delete_share_one_evaluation_resource(
     assert export.text == "# Evaluation\n"
     assert removed.status_code == 200
     assert not directory.exists()
+
+
+def test_creation_captures_version_once_and_rerun_captures_new_version(tmp_path: Path) -> None:
+    manager = EvaluationApplication(tmp_path / "evaluations", validator=_ready_validator())
+    first_revision = {"status": "recorded", "commit": "a" * 40, "dirty": True, "captured_at": "2026-09-01T00:00:00Z"}
+    second_revision = {**first_revision, "commit": "b" * 40, "captured_at": "2026-09-02T00:00:00Z"}
+    request = {"kind": "comparison", "profile_id": "agent-comparison-mvp", "preset": "quick"}
+    with (
+        patch.object(manager, "_spawn"),
+        patch("chatcopilot.evals.application.controller.capture_source_revision", side_effect=[first_revision, second_revision]) as capture,
+    ):
+        first = manager.start(bot_id=_instance().instance_id, request=request, evaluation_id="eval-version-first")
+        retry = manager.start(bot_id=_instance().instance_id, request=request, evaluation_id="eval-version-first")
+        assert retry["source_revision"] == first_revision
+        assert capture.call_count == 1
+        state_path = manager.root / first["evaluation_id"] / "state.json"
+        state = json.loads(state_path.read_text())
+        state["status"] = "completed"
+        _write_json(state_path, state)
+        manager._release_claim(_instance().instance_id, first["evaluation_id"])
+        rerun = manager.clone(first["evaluation_id"], new_evaluation_id="eval-version-rerun")
+    assert rerun["source_revision"] == second_revision
+    assert manager.get(first["evaluation_id"])["source_revision"] == first_revision
+    assert capture.call_count == 2

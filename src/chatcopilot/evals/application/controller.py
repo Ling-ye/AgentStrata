@@ -28,6 +28,11 @@ from chatcopilot.evals.application.bots import (
     temporary_eval_env,
 )
 from chatcopilot.evals.redaction import collect_env_secrets, sanitize_text
+from chatcopilot.evals.application.insights import (
+    capture_source_revision,
+    result_insights,
+    source_revision,
+)
 
 ACTIVE_STATUSES = {"queued", "running"}
 TERMINAL_STATUSES = {
@@ -588,6 +593,7 @@ class EvaluationApplication:
                 ),
                 "bot_spec_sha256": bot_spec_digest,
                 "created_at": created_at,
+                "source_revision": capture_source_revision(self.repository_root),
             }
             core_request = _core_request(
                 bot,
@@ -849,6 +855,10 @@ class EvaluationApplication:
             ),
             "summary": result.get("summary") if isinstance(result.get("summary"), Mapping) else {},
             "selection": self._selection_summary(request),
+            "source_revision": source_revision(request),
+            "insights": result_insights(
+                request, result, status=str(state.get("status") or ""), planned=total,
+            ),
         }
         if include_result:
             response["request"] = request

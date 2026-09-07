@@ -13,6 +13,8 @@ import io
 import json
 import os
 import sys
+from chatcopilot.core.observation_context import permission_phase
+
 import traceback
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional
@@ -153,7 +155,8 @@ class ToolExecutor:
             )
 
         if self._permission_filter is not None:
-            reject = self._permission_filter(tool)
+            with permission_phase("execution"):
+                reject = self._permission_filter(tool)
             if reject:
                 return ToolResult(
                     ok=False,

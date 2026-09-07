@@ -18,6 +18,7 @@ from chatcopilot.application.resources import ResourceMaterializationService
 from chatcopilot.application.sessions import SessionManager
 from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
 from chatcopilot.botspec.runtime import BotRuntimeContext
+from chatcopilot.botspec.inspection import source_revision, declared_configuration
 from chatcopilot.channels.base import ChannelDriver, ChannelHealth
 from chatcopilot.channels.qq_onebot import (
     OneBotChannelConfig,
@@ -31,6 +32,9 @@ from chatcopilot.contracts.identity import Role
 from chatcopilot.core.access import get_admins, get_owners
 from chatcopilot.core.config import load_config
 
+from .observation_runtime import ObservationRecorder, runtime_configuration
+from chatcopilot.core.inspection import plain, fingerprint
+from chatcopilot.core.observability_redaction import collect_observability_secrets, redact_observability_payload
 from .application import GatewaySessionService
 from .approvals import GatewayApprovalService
 from .channels import ChannelRuntimeHealth, ChannelRuntimeManager
@@ -344,6 +348,12 @@ class GatewayRuntimeHost:
                     "Gateway runtime could not start atomically",
                 ) from exc
             self._state = "ready"
+            recorder = getattr(self.state_store, "observation_recorder", None)
+            if recorder is not None:
+                try:
+                    recorder.start()
+                except Exception:
+                    _LOGGER.warning("Gateway observation maintenance unavailable")
 
     async def stop(self) -> None:
         async with self._lifecycle_lock:
@@ -402,6 +412,12 @@ class GatewayRuntimeHost:
         if self._internal_closed:
             return []
         failures: list[str] = []
+        recorder = getattr(self.state_store, "observation_recorder", None)
+        if recorder is not None:
+            try:
+                recorder.close()
+            except Exception:
+                _LOGGER.warning("Gateway observation shutdown unavailable")
         try:
             try:
                 self.actor_factory.close()
@@ -690,6 +706,34 @@ def build_gateway_runtime_host(
             server_generation=generation,
         )
         readiness.bind_server(server)
+        try:
+            loaded_revision = source_revision(runtime.spec)
+            declared = declared_configuration(runtime.source_path, values)
+            effective_revision = fingerprint({"source": loaded_revision, "parameters": redact_observability_payload(
+                plain(agent_runtime.runtime_config), secrets=collect_observability_secrets(values)).value})
+            def observation_snapshot():
+                snapshot = runtime_configuration(runtime, agent_runtime, values)
+                snapshot["source_revision"] = loaded_revision
+                snapshot["configuration_revision"] = effective_revision
+                loaded_ids = {entity["id"] for entity in snapshot["entities"]}
+                for entity in declared["entities"]:
+                    if entity["id"] not in loaded_ids:
+                        snapshot["entities"].append({**entity, "loaded": False})
+                for entity in snapshot["entities"]:
+                    if entity["id"] == "gateway:instance":
+                        entity["runtime"] = plain(server.health())
+                    elif entity["id"].startswith("channel:"):
+                        health = plain(channel_runtime.health())
+                        for channel in health.get("channels", []):
+                            channel.pop("account", None)
+                        entity["runtime"] = health
+                return snapshot
+            ObservationRecorder(state_store, generation,
+                configuration=observation_snapshot(), secrets=tuple(collect_observability_secrets(values)),
+                snapshot_provider=observation_snapshot)
+        except Exception:
+            state_store.observation_recorder = None
+            _LOGGER.warning("Gateway observation recorder unavailable")
         return GatewayRuntimeHost(
             generation=generation,
             state_store=state_store,

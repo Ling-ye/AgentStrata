@@ -198,12 +198,12 @@ function fileStatus(entry: FileEntry | null | undefined): React.ReactNode {
 export function PromptConfigOverview({ config }: { config: BotInventory["config"] }) {
   const items: { label: string; value: React.ReactNode }[] = [];
 
-  items.push({ label: "Persona", value: fileStatus(config.persona) });
-  items.push({ label: "Refusal", value: fileStatus(config.refusal) });
-  items.push({ label: "Safety", value: fileStatus(config.safety) });
+  items.push({ label: "身份提示词", value: fileStatus(config.identity ?? null) });
+  items.push({ label: "拒绝风格", value: fileStatus(config.refusal_style ?? null) });
+  items.push({ label: "回复风格", value: fileStatus(config.response_style ?? null) });
 
-  if (config.roles) {
-    for (const [role, entry] of Object.entries(config.roles)) {
+  if (config.role_styles) {
+    for (const [role, entry] of Object.entries(config.role_styles)) {
       items.push({ label: `Role: ${role}`, value: fileStatus(entry) });
     }
   } else {
@@ -245,12 +245,12 @@ export function ContextConfigOverview({ config }: { config: BotInventory["config
 export function InventoryConfigOverview({ config }: { config: BotInventory["config"] }) {
   const items: { label: string; value: React.ReactNode }[] = [];
 
-  items.push({ label: "Persona", value: fileStatus(config.persona) });
-  items.push({ label: "Refusal", value: fileStatus(config.refusal) });
-  if (config.safety) items.push({ label: "Safety", value: fileStatus(config.safety) });
+  items.push({ label: "身份提示词", value: fileStatus(config.identity ?? null) });
+  items.push({ label: "拒绝风格", value: fileStatus(config.refusal_style ?? null) });
+  if (config.response_style) items.push({ label: "回复风格", value: fileStatus(config.response_style) });
 
-  if (config.roles) {
-    for (const [role, entry] of Object.entries(config.roles)) {
+  if (config.role_styles) {
+    for (const [role, entry] of Object.entries(config.role_styles)) {
       items.push({ label: `Role: ${role}`, value: fileStatus(entry) });
     }
   }

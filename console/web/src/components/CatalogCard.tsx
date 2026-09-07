@@ -72,6 +72,7 @@ export default function CatalogCard({ item, extra }: Props) {
                   <div key={tool.name} className="catalog-tool-item">
                     <Text code className="cc-text-small">{tool.name}</Text>
                     <Text type="secondary" className="cc-text-small" style={{ marginLeft: 8 }}>{tool.summary}</Text>
+                    <Tag size="small" color={tool.requires_role === "owner" ? "orange" : "gray"}>角色要求：{tool.requires_role || "以运行时策略为准"}</Tag>
                   </div>
                 ))}
               </div>

@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Button, Drawer, Empty, Message, Space, Spin, Tabs, Tag, Tooltip, Typography } from "@arco-design/web-react";
+import { Alert, Button, Drawer, Empty, Message, Space, Spin, Select, Tabs, Tag, Tooltip, Typography } from "@arco-design/web-react";
 import BotToolEditor from "../components/BotToolEditor";
 import ProvisionWizard from "../components/ProvisionWizard";
 import { useBotActions } from "../features/bots/useBotActions";
 import { useBotsOverview } from "../features/bots/useBotsOverview";
-import BotTaskFlowPanel from "../features/bots/BotTaskFlowPanel";
+import ObservationWorkbench from "../features/architecture/ObservationWorkbench";
 import BotRuntimePanel from "../features/bots/BotRuntimePanel";
-import { taskFlowAvailability } from "../features/bots/taskFlowModel";
 import { api, streamLogs, streamTask } from "../api";
 import type { BotInstance, BotStatus, Task } from "../types";
 import { useEventStreamLines } from "../shared/hooks/useEventStreamLines";
@@ -19,7 +18,14 @@ interface Props {
   visible?: boolean;
 }
 
-const { Text, Title } = Typography;
+const { Title } = Typography;
+
+function tabFromLocation() {
+  const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+  const tab = params.get("tab");
+  return ["observation", "history", "configuration", "runtime", "capabilities"].includes(tab ?? "")
+    ? tab! : params.has("entity") ? "configuration" : "observation";
+}
 
 function rosterState(status: BotStatus | undefined) {
   if (!status) return { label: "加载中", color: "gray" };
@@ -31,21 +37,11 @@ function rosterState(status: BotStatus | undefined) {
   return { label: "已停止", color: "gray" };
 }
 
-function rosterAge(epoch: number | null | undefined) {
-  if (!epoch) return "暂无任务";
-  const seconds = Math.max(0, Math.round(Date.now() / 1000 - epoch));
-  if (seconds < 60) return `${seconds}s 前`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m 前`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h 前`;
-  return `${Math.floor(seconds / 86400)}d 前`;
-}
-
 export default function BotsPage({ loadError, visible = true }: Props) {
   const {
     bots,
     statuses,
     inventoryMap,
-    activityMap,
     loading,
     runningBotCount,
     deployedBotCount,
@@ -57,8 +53,20 @@ export default function BotsPage({ loadError, visible = true }: Props) {
   const [provisionBot, setProvisionBot] = useState<BotInstance | null>(null);
   const [taskResultStatus, setTaskResultStatus] = useState<Task["status"] | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
-  const [selectedBotId, setSelectedBotId] = useState("");
+  const [selectedBotId, setSelectedBotId] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("instance") || "");
+  const [activeTab, setActiveTab] = useState(tabFromLocation);
   const activeTaskId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const navigate = () => {
+      const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+      const instance = params.get("instance");
+      if (instance) setSelectedBotId(instance);
+      setActiveTab(tabFromLocation());
+    };
+    window.addEventListener("hashchange", navigate);
+    return () => window.removeEventListener("hashchange", navigate);
+  }, []);
 
   useEffect(() => {
     if (bots.length === 0) {
@@ -73,6 +81,15 @@ export default function BotsPage({ loadError, visible = true }: Props) {
   const selectedBot = bots.find((bot) => bot.instance_id === selectedBotId) ?? null;
   const selectedStatus = selectedBot ? statuses[selectedBot.instance_id] : undefined;
   const selectedInventory = selectedBot ? inventoryMap[selectedBot.instance_id] : undefined;
+
+  const navigateTab = (tab: string) => {
+    setActiveTab(tab);
+    const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+    params.set("instance", selectedBotId);
+    params.set("tab", tab);
+    if (tab !== "configuration") params.delete("entity");
+    window.history.replaceState(null, "", "#bots?" + params);
+  };
 
   const openTask = useCallback(
     (
@@ -175,7 +192,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
     <>
       <PageSection
         title="机器人实例"
-        description="以机器人为入口查看运行状态、能力配置与每条消息跨层流转证据。"
+        description="实例运行、配置与任务记录。"
         extra={
           <>
             <Tag className="cc-status-tag" color="green">运行 {runningBotCount}</Tag>
@@ -198,48 +215,13 @@ export default function BotsPage({ loadError, visible = true }: Props) {
         ) : bots.length === 0 ? (
           <Empty description="未发现机器人，检查仓库 bots/*/bot.yaml" style={{ marginTop: 80 }} />
         ) : (
-          <div className="bot-instance-workspace">
-            <aside className="bot-instance-roster" aria-label="机器人实例列表">
-              <div className="bot-instance-roster-title">
-                <span>实例</span>
-                <Text type="secondary">{bots.length}</Text>
-              </div>
-              {bots.map((bot) => {
-                const state = rosterState(statuses[bot.instance_id]);
-                const activity = activityMap[bot.instance_id];
-                const taskFlow = taskFlowAvailability(bot.runtime_kind);
-                return (
-                  <button
-                    key={bot.instance_id}
-                    type="button"
-                    className={`bot-instance-roster-item${selectedBotId === bot.instance_id ? " is-selected" : ""}`}
-                    onClick={() => setSelectedBotId(bot.instance_id)}
-                  >
-                    <span className="bot-instance-roster-head">
-                      <strong title={bot.display_name}>{bot.display_name}</strong>
-                      <Tag size="small" color={state.color}>{state.label}</Tag>
-                    </span>
-                    <span className="bot-instance-roster-id">{bot.platform || "?"} · {bot.instance_id}</span>
-                    {taskFlow.available ? (
-                      <>
-                        <span className="bot-instance-roster-stats">
-                          <span>活跃 <strong>{activity?.active_count ?? 0}</strong></span>
-                          <span className={(activity?.failed_recent_count ?? 0) > 0 ? "has-failure" : ""}>
-                            24h 失败 <strong>{activity?.failed_recent_count ?? 0}</strong>
-                          </span>
-                        </span>
-                        <span className="bot-instance-roster-last">最近任务 {rosterAge(activity?.last_activity_at)}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="bot-instance-roster-stats">Gateway 任务流未接入</span>
-                        <span className="bot-instance-roster-last">未读取 legacy ACP 任务</span>
-                      </>
-                    )}
-                  </button>
-                );
-              })}
-            </aside>
+          <div className="bot-instance-workspace obs-instance-workspace">
+            <div className="obs-instance-selector"><span>机器人实例</span><Select aria-label="选择机器人实例" value={selectedBotId} onChange={(id) => {
+              setSelectedBotId(id);
+              window.history.replaceState(null, "", "#bots?" + new URLSearchParams({ instance: id, tab: activeTab }));
+            }}
+              options={bots.map((bot) => ({ value: bot.instance_id, label: `${bot.display_name} · ${rosterState(statuses[bot.instance_id]).label}` }))} />
+              <Tag>{bots.length} 个实例</Tag></div>
 
             {selectedBot && (
               <section className="bot-instance-detail">
@@ -252,10 +234,6 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                       </Tag>
                       <Tag className="cc-tag-meta">{selectedBot.platform || "?"}</Tag>
                     </Space>
-                    <Text type="secondary" className="bot-instance-detail-meta">
-                      {selectedBot.instance_id} · MCP {selectedInventory?.mcp_services.length ?? "—"}
-                      {" · "}工具包 {selectedInventory?.tool_packs.length ?? "—"}
-                    </Text>
                   </div>
                   <div className="bot-instance-detail-actions">
                     {!selectedBot.is_deployed ? (
@@ -297,7 +275,6 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                             更新并重启
                           </Button>
                         </Tooltip>
-                        <Button onClick={() => openLogs(selectedBot)}>实时日志</Button>
                         <Tooltip content="生成一份只读诊断快照。">
                           <Button
                             loading={isBusy(selectedBot.instance_id)}
@@ -308,16 +285,14 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                         </Tooltip>
                       </Space>
                     )}
+                    <Button onClick={() => openLogs(selectedBot)}>服务日志</Button>
                   </div>
                 </header>
 
-                <Tabs type="line" defaultActiveTab="flow" className="bot-instance-tabs">
-                  <Tabs.TabPane title="任务流" key="flow">
-                    <BotTaskFlowPanel
-                      bot={selectedBot}
-                      visible={visible}
-                    />
-                  </Tabs.TabPane>
+                <Tabs type="line" activeTab={activeTab} onChange={navigateTab} className="bot-instance-tabs">
+                  <Tabs.TabPane title="运行观测" key="observation" />
+                  <Tabs.TabPane title="任务记录" key="history" />
+                  <Tabs.TabPane title="分层配置" key="configuration" />
                   <Tabs.TabPane title="运行状态" key="runtime">
                     <BotRuntimePanel
                       bot={selectedBot}
@@ -328,7 +303,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                     <div className="bot-capability-panel">
                       <div className="bot-capability-heading">
                         <Title heading={5}>能力配置</Title>
-                        <Text type="secondary">按 BotSpec surface 管理工具、Prompt、Agent 与上下文来源。</Text>
+                        <Button onClick={() => navigateTab("observation")}>返回运行观测</Button>
                       </div>
                       <BotToolEditor
                         instanceId={selectedBot.instance_id}
@@ -339,6 +314,10 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                     </div>
                   </Tabs.TabPane>
                 </Tabs>
+                <ObservationWorkbench key={selectedBot.instance_id} bot={selectedBot}
+                  view={activeTab === "history" || activeTab === "configuration" ? activeTab : "observation"}
+                  visible={visible && ["observation", "history", "configuration"].includes(activeTab)}
+                  onNavigate={navigateTab} onEdit={() => navigateTab("capabilities")} />
               </section>
             )}
           </div>

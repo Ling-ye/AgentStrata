@@ -216,44 +216,16 @@ def _collect_workflows() -> list[CatalogItem]:
 # ---------------------------------------------------------------------------
 
 def _collect_prompt_items() -> list[CatalogItem]:
-    return [
-        CatalogItem(
-            id="prompts:persona",
-            kind="prompt",
-            surface="prompts",
-            name="Persona",
-            description="机器人身份、边界、领域范围和主要交互风格提示词。",
-            category="提示词",
-            has_prompts=True,
-        ),
-        CatalogItem(
-            id="prompts:refusal",
-            kind="prompt",
-            surface="prompts",
-            name="Refusal",
-            description="拒答策略提示词；未配置时使用框架默认策略。",
-            category="提示词",
-            has_prompts=True,
-        ),
-        CatalogItem(
-            id="prompts:safety",
-            kind="prompt",
-            surface="prompts",
-            name="Safety",
-            description="安全提示词覆盖；用于替换框架内置安全默认文本。",
-            category="提示词",
-            has_prompts=True,
-        ),
-        CatalogItem(
-            id="prompts:roles",
-            kind="prompt",
-            surface="prompts",
-            name="Roles",
-            description="owner/admin/user 等角色行为提示词覆盖。",
-            category="角色",
-            has_prompts=True,
-        ),
-    ]
+    definitions = (
+        ("identity", "身份设定", "机器人的身份与行为定位。"),
+        ("response_style", "回复风格", "回复的语言、格式与表达要求。"),
+        ("refusal_style", "拒绝表达", "权限拒绝时的表达方式。"),
+        ("role_styles", "角色风格", "按已认证角色选择回复风格。"),
+        ("mode_styles", "模式风格", "按运行模式选择回复风格。"),
+    )
+    return [CatalogItem(id=f"prompts:{key}", kind="prompt", surface="prompts", name=name,
+                        description=description, category="提示词", has_prompts=True)
+            for key, name, description in definitions]
 
 
 def _collect_context_items() -> list[CatalogItem]:

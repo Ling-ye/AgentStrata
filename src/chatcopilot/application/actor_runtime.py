@@ -30,6 +30,7 @@ from chatcopilot.application.sessions import (
     SessionManager,
     SessionManagerError,
 )
+from chatcopilot.core.observation_context import observe
 from chatcopilot.application.tool_authorization import (
     DecisionSink,
     build_tool_payload_filter,
@@ -579,6 +580,10 @@ class ActorTurnExecutor:
                     "The actor Agent session is unavailable",
                 )
             agent_session = cast(AgentSessionProtocol, state.agent_session)
+            capabilities = getattr(agent_session, "capabilities", None)
+            if capabilities is not None:
+                observe("session_capabilities", tools=sorted(capabilities.tool_names),
+                        role=request.principal.role.value, workspace_scope=state.workspace.scope)
             task = AgentTask(
                 text=str(request.canonical_text),
                 resources=tuple(request.resource_refs),

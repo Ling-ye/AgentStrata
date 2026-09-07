@@ -39,10 +39,12 @@ resulting system structure.
   being presented as complete.
 - **Evidence-bound runtime.** The Gateway durably separates admitted ingress,
   authorization decisions, runs, outbox state, and provider receipts. The
-  Console exposes process/provider health today; its legacy ACP task-flow view
-  is not reused for Gateway instances until those durable records have a native
-  projection. Missing transport evidence and hidden provider reasoning remain
-  explicit gaps rather than inferred success.
+  Console pairs instance configuration snapshots with task traces in a runtime
+  observation workbench. Runtime-owned recording supports indexed history,
+  component metrics, approvals and delivery receipts even while Console is closed;
+  detailed bodies expire after 30 days while summaries remain queryable. Legacy ACP task evidence remains separate.
+  Missing transport evidence and hidden provider reasoning remain explicit gaps
+  rather than inferred success.
 - **Purpose-built runtime boundaries.** Thin web-search providers run in the
   Agent process; browser-backed, account-bound, and shared search-engine
   components remain isolated and are started only when an enabled BotSpec
@@ -62,6 +64,8 @@ resulting system structure.
   whose default `full` preset runs the 23 Cases supported by the built-in Bot,
   plus 7 legacy synthetic QQ message-flow Cases; Profile comparisons, BFCL, GAIA, and IFEval
   remain available through the same Evaluation resource and artifact layout.
+  Results show per-case outcomes and historical pass-rate/duration trends grouped
+  by test conditions, with creation-time Git and runtime-configuration metadata.
   Product presets are started manually; BFCL remains a direct-LLM protocol
   calibration. The local service owns managed workers and lifecycle state,
   while the Console is its UI/BFF over a same-user Unix socket.

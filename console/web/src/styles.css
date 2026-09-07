@@ -1,3 +1,9 @@
 @import "./styles/tokens.css";
 @import "./styles/layout.css";
 @import "./styles/components.css";
+
+@import "./styles/architecture.css";
+
+@import "./styles/observation.css";
+
+@import "./styles/evaluation.css";

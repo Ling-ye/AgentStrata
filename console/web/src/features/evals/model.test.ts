@@ -297,6 +297,33 @@ describe("coverage filters", () => {
 });
 
 describe("Evaluation record adapter", () => {
+  it("preserves the list summary without inventing a full result", () => {
+    const summary = { verdict: "failed", outcomes: { passed: 0, failed: 2 } };
+    const record = normalizeEvaluation({
+      evaluation_id: "eval-list-summary",
+      kind: "suite",
+      status: "completed",
+      summary,
+    });
+    expect(record.summary).toEqual(summary);
+    expect(record.result).toBeNull();
+  });
+
+  it("reads the summary from a full result when no list projection is supplied", () => {
+    const summary = { outcomes: { passed: 2 } };
+    expect(normalizeEvaluation({ result: { summary } }).summary).toEqual(summary);
+  });
+
+  it("keeps an explicitly empty summary and rejects malformed summary values", () => {
+    expect(normalizeEvaluation({
+      summary: {},
+      result: { summary: { outcomes: { passed: 2 } } },
+    }).summary).toEqual({});
+    for (const summary of [undefined, null, [], "", 0]) {
+      expect(normalizeEvaluation({ summary }).summary).toEqual({});
+    }
+  });
+
   it("normalizes progress and keeps lifecycle separate from result", () => {
     expect(normalizeEvaluation({
       evaluation_id: "eval_123",

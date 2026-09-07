@@ -1,3 +1,5 @@
+import { normalizeInsights, normalizeSourceRevision, type EvaluationInsights, type SourceRevision } from "./insightsModel";
+
 export type EvaluationKind = "comparison" | "suite";
 
 export type EvaluationStatus =
@@ -188,6 +190,9 @@ export interface EvaluationRecord {
   selection: Record<string, unknown>;
   request: Record<string, unknown>;
   result: Record<string, unknown> | null;
+  summary: Record<string, unknown>;
+  insights: EvaluationInsights;
+  source_revision: SourceRevision;
   error: string;
 }
 
@@ -723,6 +728,9 @@ export function normalizeEvaluation(value: unknown): EvaluationRecord {
     selection: asRecord(item.selection),
     request,
     result,
+    summary: isRecord(item.summary) ? item.summary : asRecord(result?.summary),
+    insights: normalizeInsights(item.insights),
+    source_revision: normalizeSourceRevision(item.source_revision),
     error: asString(item.error),
   };
 }

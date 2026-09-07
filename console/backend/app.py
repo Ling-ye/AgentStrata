@@ -11,6 +11,7 @@ from console.bootstrap import ensure_src_path
 ensure_src_path()
 
 from console.backend.routes import (  # noqa: E402
+    architecture,
     bots,
     catalog,
     console_self,
@@ -38,6 +39,7 @@ app.state.tasks = TaskManager()
 app.state.evaluations = EvaluationServiceClient()
 
 app.include_router(overview.router)
+app.include_router(architecture.router)
 app.include_router(bots.router)
 app.include_router(catalog.router)
 app.include_router(console_self.router)

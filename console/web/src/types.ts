@@ -193,6 +193,11 @@ export interface FileEntry {
 }
 
 export interface BotConfig {
+  identity?: FileEntry | null;
+  response_style?: FileEntry | null;
+  refusal_style?: FileEntry | null;
+  role_styles?: Record<string, FileEntry | null>;
+  mode_styles?: Record<string, FileEntry | null>;
   persona: FileEntry | null;
   refusal: FileEntry | null;
   safety: FileEntry | null;
@@ -207,6 +212,7 @@ export interface BotConfig {
 }
 
 export interface BotInventory {
+  structure?: { backend: string; prompt_schema_version: number | null; prompt_sections: string[]; context_sources: string[] };
   instance_id: string;
   display_name: string;
   platform: string;

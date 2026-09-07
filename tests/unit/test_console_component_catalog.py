@@ -140,6 +140,16 @@ def test_console_no_longer_reads_mcp_catalog_yaml_directly() -> None:
         assert "chatcopilot.botspec.mcp_catalog" not in text
 
 
+def test_inventory_with_enabled_pack_uses_current_catalog_contract(tmp_path) -> None:
+    from console.control import inventory
+    bot_yaml = tmp_path / "bot.yaml"
+    bot_yaml.write_text("tools:\n  packs: [workspace.read_write]\nagents:\n  backend: codex\nprompts:\n  schema_version: 2\n  identity: prompts/identity.md\n")
+    result = inventory.bot_inventory(BotInstance(instance_id="test-bot", bot_spec=str(bot_yaml)))
+    assert result["tool_packs"][0]["has_tools"] is True
+    assert result["structure"]["backend"] == "codex"
+    assert result["structure"]["prompt_sections"] == ["identity"]
+
+
 def test_console_does_not_own_tool_module_import_logic() -> None:
     text = (ROOT / "console/control/catalog.py").read_text(encoding="utf-8")
 

@@ -16,6 +16,9 @@ from chatcopilot.contracts.authorization import (
     Principal,
     stable_payload_digest,
 )
+from chatcopilot.core.observation_context import current_permission_phase, observe
+from chatcopilot.agent.trace import current_trace
+from chatcopilot.contracts.agent import ToolAuthorizationChecked
 from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.contracts.workspace import WorkspaceView
 
@@ -70,6 +73,17 @@ def build_tool_permission_filter(
             tool=tool,
             agent_backend=agent_backend,
         )
+        trace = current_trace()
+        evidence = dict(name=tool_name, phase=current_permission_phase(), allowed=decision.allowed,
+                        code=decision.code, policy_version=policy_version, role=principal.role.value,
+                        trace_id=trace.trace_id if trace else None, span_id=trace.span_id if trace else None)
+        if trace and trace.sink:
+            try:
+                trace.sink(ToolAuthorizationChecked(**evidence))
+            except Exception:
+                pass
+        else:
+            observe("tool_authorization", **evidence)
         if on_decision is not None:
             on_decision(decision)
         if decision.allowed:

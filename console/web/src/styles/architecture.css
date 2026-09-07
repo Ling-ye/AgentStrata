@@ -1,0 +1,4 @@
+.run-layer-filter { display: flex; gap: 8px; flex-wrap: wrap; margin-block: 16px; }
+.run-layer-filter button { border: 1px solid var(--color-border-2); background: var(--color-bg-2); color: var(--color-text-2); border-radius: 6px; padding: 9px 12px; cursor: pointer; }
+.run-layer-filter button.is-selected { border-color: rgb(var(--primary-6)); color: rgb(var(--primary-6)); background: var(--color-primary-light-1); }
+.run-layer-filter small { margin-left: 8px; opacity: .65; }

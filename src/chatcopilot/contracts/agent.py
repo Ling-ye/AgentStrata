@@ -71,6 +71,18 @@ class ToolFinished:
 
 
 @dataclass(frozen=True)
+class ToolAuthorizationChecked:
+    name: str
+    phase: str
+    allowed: bool
+    code: str
+    policy_version: str
+    role: str
+    trace_id: str | None = None
+    span_id: str | None = None
+
+
+@dataclass(frozen=True)
 class SpanStarted:
     name: str
     kind: str
@@ -207,6 +219,7 @@ class TurnError:
 
 
 AgentEvent = Union[
+    ToolAuthorizationChecked,
     TextDelta,
     FinalText,
     ToolStarted,

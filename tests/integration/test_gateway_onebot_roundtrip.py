@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import websockets
+import pytest
 
 from chatcopilot.application.sessions import SessionManager
 from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
@@ -36,6 +37,9 @@ from chatcopilot.gateway.protocol import (
     GatewayCredentialBinding,
     StaticGatewayCredentialAuthority,
 )
+from chatcopilot.gateway.read_model import gateway_run, gateway_runs
+from chatcopilot.gateway.observation_runtime import ObservationRecorder
+from chatcopilot.gateway.observation_queries import detail as observation_detail
 from chatcopilot.gateway.server import GatewayServerConfig, GatewayWebSocketServer
 from chatcopilot.gateway.state_store import GatewayStateStore
 from chatcopilot.protocols.gateway_client import (
@@ -140,7 +144,8 @@ class _FakeOneBotProvider:
                 self.errors.append(exc)
 
 
-def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path) -> None:
+@pytest.mark.parametrize("record_observations", [False, True])
+def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record_observations: bool) -> None:
     async def scenario() -> None:
         workspace_root = tmp_path / "workspace"
         workspace_root.mkdir(mode=0o700)
@@ -152,6 +157,7 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path) -> Non
 
         state = GatewayStateStore(tmp_path / "gateway-state")
         generation = state.acquire_writer_generation(now=1.0)
+        recorder = ObservationRecorder(state, generation) if record_observations else None
         session_manager = SessionManager(writer_generation=generation)
         sessions = GatewaySessionService(
             state_store=state,
@@ -307,6 +313,18 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path) -> Non
                 "provider_submitted",
                 "provider_acknowledged",
             ]
+            qq_run = next(run for run in gateway_runs(state.root)["runs"] if run["channel"] == "qq")
+            projection = observation_detail(recorder.store, qq_run["run_id"]) if recorder else gateway_run(state.root, qq_run["run_id"])
+            assert [item["kind"] for item in projection["observations"] if item["kind"] != "run_state"] == [
+                "principal_bound", "resources_materialized", "actor_execution", "actor_returned",
+                "response_dispatch", "channel_returned",
+            ]
+            assert [item["stage"] for item in projection["receipts"]] == receipt_stages
+            assert "hello from qq" not in json.dumps(projection)
+            if recorder:
+                run = projection["run"]
+                assert run["capture_state"] == "recorded"
+                assert recorder.store.body(qq_run["run_id"], run["input_ref"])["payload"]["text"] == "hello from qq"
             assert provider.errors == []
         finally:
             if client is not None:
