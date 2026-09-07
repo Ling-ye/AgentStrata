@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 import hashlib
 import math
 from pathlib import Path
@@ -22,7 +23,7 @@ from chatcopilot.application.resources import (
 from chatcopilot.application.sessions import SessionManagerError
 from chatcopilot.application.workspaces import build_actor_workspace
 from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
-from chatcopilot.channels.base import ChannelDeliveryError
+from chatcopilot.channels.base import ChannelDeliveryError, ChannelDeliveryUnknownError
 from chatcopilot.contracts.agent import AgentEvent, ResourceRef, TextDelta
 from chatcopilot.contracts.authorization import (
     AuthorizationDecision,
@@ -34,6 +35,7 @@ from chatcopilot.contracts.authorization import (
 from chatcopilot.contracts.cancellation import CancellationProbe, CancellationToken
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
+    DeliveryReceipt,
     MessageSegment,
     OutboundEnvelope,
 )
@@ -49,7 +51,7 @@ from chatcopilot.contracts.identity import ConversationIdentity, TurnIdentity
 
 from .application import GatewayApplicationError, GatewaySessionService
 from .events import GatewayEventPublisher
-from .observations import RunObserver
+from .observations import ACTOR_SPAN_ID, RunObserver, response_outbound_id
 from .server import GatewayClientContext, GatewayDispatchError
 from .state_store import (
     GatewayStateStore,
@@ -88,7 +90,7 @@ class ActorTurnExecutorPort(Protocol):
 
 
 class ChannelOutboundPort(Protocol):
-    async def send(self, envelope: OutboundEnvelope) -> object: ...
+    async def send(self, envelope: OutboundEnvelope) -> DeliveryReceipt: ...
 
 
 class GatewayTurnCoordinatorError(RuntimeError):
@@ -517,7 +519,7 @@ class GatewayTurnCoordinator:
                 )
             if final_text:
                 envelope = OutboundEnvelope(
-                    outbound_id=_outbound_id(run_id),
+                    outbound_id=response_outbound_id(run_id),
                     account=event.evidence.account,
                     conversation=event.evidence.conversation,
                     segments=(MessageSegment(kind="text", text=final_text),),
@@ -527,9 +529,16 @@ class GatewayTurnCoordinator:
                     reply_to_message_id=event.evidence.message_id,
                 )
                 observer = RunObserver(self._state_store, self._generation, run_id)
-                observer.record("response_dispatch", "gateway", "channel", "running")
-                await runtime.send(envelope)
-                observer.record("channel_returned", "channel", "gateway", "succeeded")
+                observer.record("response_dispatch", "gateway", "channel", "running", outbound_id=envelope.outbound_id)
+                try:
+                    receipt = await runtime.send(envelope)
+                except (Exception, asyncio.CancelledError) as exc:
+                    status = "delivery_unknown" if isinstance(exc, (ChannelDeliveryUnknownError, asyncio.CancelledError)) else "failed"
+                    observer.record("channel_returned", "channel", "gateway", status,
+                                    outbound_id=envelope.outbound_id, code=getattr(exc, "code", "channel_send_interrupted"))
+                    raise
+                observer.record("channel_returned", "channel", "gateway", receipt.stage,
+                                outbound_id=envelope.outbound_id, receipt_id=receipt.receipt_id, stage=receipt.stage)
                 result = self._actor_executor.commit_exchange(
                     request,
                     result,
@@ -564,6 +573,8 @@ class GatewayTurnCoordinator:
         run_id: str,
         cancellation: CancellationToken,
     ) -> ActorTurnOutcome:
+        request = replace(request, metadata={**(request.metadata or {}),
+                          "trace_id": run_id, "parent_span_id": ACTOR_SPAN_ID})
         session_id = request.session_id
         run = self._state_store.get_run(run_id)
         if run is None:
@@ -858,10 +869,6 @@ def _channel_run_id(event: CanonicalInboundEvent) -> str:
         ).encode("utf-8")
     ).hexdigest()[:32]
     return "run_" + digest
-
-
-def _outbound_id(run_id: str) -> str:
-    return "outbound_" + hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]
 
 
 def _bounded_final_text(value: object) -> str:

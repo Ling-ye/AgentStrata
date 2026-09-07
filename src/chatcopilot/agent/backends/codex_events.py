@@ -60,7 +60,7 @@ class CodexJsonlProjector:
     iteration: int
     trace_id: str
     llm_span_id: str
-    parent_span_id: str
+    parent_span_id: str | None
     context_snapshot_id: str
     on_event: EventSink
     on_thread_started: Callable[[str], None]

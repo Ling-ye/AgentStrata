@@ -43,16 +43,14 @@ function renderField(field: ProvisionField) {
   const placeholder = field.configured
     ? "已配置；留空将保留现有值"
     : field.description || field.default || "";
-  const control = field.secret
-    ? <Input.Password placeholder={placeholder} />
-    : <Input placeholder={placeholder} />;
+  const control = <Input placeholder={placeholder} autoComplete="off" />;
 
   return (
     <Form.Item
       key={field.env_key}
       field={field.field}
       label={field.label || field.env_key}
-      initialValue={field.configured ? undefined : field.default || undefined}
+      initialValue={field.value ?? (field.configured ? undefined : field.default || undefined)}
       rules={field.required && !field.configured ? [{ required: true, message: "必填" }] : []}
     >
       {control}
@@ -337,6 +335,10 @@ export default function ProvisionWizard({ bot, onClose, onChanged }: Props) {
           ) : (
             <Text type="secondary">正在读取平台配置...</Text>
           )}
+          {[...(schema?.fields ?? []), ...(schema?.common_fields ?? [])].filter((field) => field.host_generated).map((field) =>
+            <Form.Item key={field.env_key} label={field.label || field.env_key}>
+              <Text copyable={!!field.value}>{field.value ?? "尚未生成"}</Text>
+            </Form.Item>)}
           <Space className="panel-action-row">
             <Button
               type="primary"

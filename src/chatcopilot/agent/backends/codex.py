@@ -1306,7 +1306,7 @@ class CodexAgentBackend:
         task: AgentTask,
         *,
         prompt: str,
-    ) -> tuple[str, str, str, str]:
+    ) -> tuple[str, str | None, str, str]:
         explicit_trace = str(task.metadata.get("trace_id") or "").strip()
         if explicit_trace:
             trace_id = explicit_trace
@@ -1322,9 +1322,7 @@ class CodexAgentBackend:
             trace_id = "trace_" + hashlib.sha256(
                 trace_seed.encode("utf-8")
             ).hexdigest()[:16]
-        parent_span_id = "span_" + hashlib.sha256(
-            f"{trace_id}\0codex-root".encode("utf-8")
-        ).hexdigest()[:12]
+        parent_span_id = (str(task.metadata.get("parent_span_id") or "").strip() or None) if explicit_trace else None
         llm_span_id = "span_" + hashlib.sha256(
             f"{trace_id}\0codex-llm\00".encode("utf-8")
         ).hexdigest()[:12]

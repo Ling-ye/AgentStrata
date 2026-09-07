@@ -890,7 +890,7 @@ class CodexBackendResumeTests(TestCase):
             ):
                 result = backend.stream_turn(
                     ref,
-                    AgentTask("inspect context", metadata={"trace_id": "trace-request-1"}),
+                    AgentTask("inspect context", metadata={"trace_id": "trace-request-1", "parent_span_id": "host:actor"}),
                     on_event=events.append,
                 )
 
@@ -904,6 +904,9 @@ class CodexBackendResumeTests(TestCase):
             self.assertEqual(context.coverage, "adapter_visible")
             self.assertEqual(context.omitted, ("provider_internal_instructions",))
             self.assertEqual(context.trace_id, "trace-request-1")
+            self.assertEqual(context.parent_span_id, "host:actor")
+            self.assertEqual(started.parent_span_id, "host:actor")
+            self.assertEqual(finished.parent_span_id, "host:actor")
             self.assertEqual(context.snapshot_id, started.context_snapshot_id)
             self.assertEqual(context.snapshot_id, finished.context_snapshot_id)
             self.assertEqual(context.session_messages[-1]["role"], "user")

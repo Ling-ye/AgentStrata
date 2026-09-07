@@ -315,6 +315,7 @@ export interface ProvisionField {
   required: boolean;
   secret: boolean;
   configured: boolean;
+  value?: string | null;
   /** The host generates this value; it remains visible in schema but is never submitted by Console. */
   host_generated?: boolean;
   default?: string | null;

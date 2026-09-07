@@ -1,9 +1,50 @@
 import { describe, expect, it } from "vitest";
-import { buildRunTree, buildRunView, stepIsOpen, observationQuery, related, duration, runDuration, bodyState } from "./workbenchModel";
-import type { GatewayObservation, GatewayRun } from "./model";
+import { buildRunTree, buildRunView, stepIsOpen, stepState, observationQuery, related, duration, runDuration, bodyState } from "./workbenchModel";
+import type { GatewayObservation, GatewayRun, GatewayRunDetail } from "./model";
 
 const event = (seq: number, props: Partial<GatewayObservation>): GatewayObservation => ({ seq, kind: "ToolStarted", created_at: seq, ...props });
 describe("run observation workbench", () => {
+  it("links model calls to the recorded actor and retains the key when its finish arrives", () => {
+    const actor = event(1, { kind: "actor_execution", trace_id: "run", span_id: "host:actor", phase: "start" });
+    const model = event(2, { kind: "LlmCallStarted", trace_id: "run", span_id: "model", parent_span_id: "host:actor", phase: "start" });
+    const initial = buildRunView([actor, model]);
+    const refreshed = buildRunView([actor, model,
+      event(3, { kind: "LlmCallFinished", trace_id: "run", span_id: "model", parent_span_id: "host:actor", phase: "finish", status: "succeeded" }),
+      event(4, { kind: "actor_returned", trace_id: "run", span_id: "host:actor", phase: "finish", status: "succeeded" }),
+    ]);
+    expect(refreshed.steps.map((step) => [step.key, step.depth, step.missingParent])).toEqual(
+      initial.steps.map((step) => [step.key, step.depth, false]));
+    expect(refreshed.steps[1].depth).toBe(1);
+  });
+  it("pairs Channel dispatch and return while updating from the exact outbound receipt before event refresh", () => {
+    const start = event(1, { kind: "response_dispatch", trace_id: "run", span_id: "delivery-a", phase: "start", status: "running", data: { outbound_id: "a" } });
+    const receipts: GatewayRunDetail["receipts"] = [{ receipt_id: "ack", outbound_id: "a", stage: "provider_acknowledged", observed_at: 2, error_code: null }];
+    const active = buildRunView([start]).steps[0];
+    expect(stepState(active, false).status).toBe("running");
+    const received = buildRunView([start], { receipts, outbox: [] }).steps[0];
+    expect(received.key).toBe(active.key);
+    expect(stepState(received, true)).toMatchObject({ status: "provider_acknowledged", label: "Provider 已确认", incomplete: false });
+    const finished = buildRunView([start, event(2, { kind: "channel_returned", trace_id: "run", span_id: "delivery-a", phase: "finish", status: "provider_acknowledged", data: { outbound_id: "a" } })], { receipts, outbox: [] });
+    expect(finished.steps).toHaveLength(1);
+    expect(finished.steps[0].key).toBe(active.key);
+  });
+  it("never promotes unrelated delivery or task completion to a successful dispatch", () => {
+    const start = event(1, { kind: "response_dispatch", trace_id: "run", span_id: "delivery-a", phase: "start", status: "running", data: { outbound_id: "a" } });
+    const delivery = { receipts: [{ receipt_id: "other", outbound_id: "b", stage: "provider_acknowledged", observed_at: 2, error_code: null }], outbox: [] };
+    const [step] = buildRunView([start], delivery).steps;
+    expect(stepState(step, true).label).toBe("结束未记录");
+    expect(stepState(step, false).status).toBe("running");
+    const [historical] = buildRunView([event(1, { kind: "response_dispatch", status: "running" })], delivery).steps;
+    expect(stepState(historical, true).label).toBe("结束未记录");
+  });
+  it.each(["failed", "delivery_unknown", "pending"])("uses the authoritative %s outbound state without borrowing another reply's acknowledgement", (status) => {
+    const [step] = buildRunView([event(1, { kind: "response_dispatch", phase: "start", status: "running", data: { outbound_id: "a" } })], {
+      receipts: [{ receipt_id: "ack", outbound_id: "b", stage: "provider_acknowledged", observed_at: 3, error_code: null }],
+      outbox: [{ outbound_id: "a", state: status, created_at: 1, updated_at: 2, error_code: "fixture-code" }],
+    }).steps;
+    expect(stepState(step, true).status).toBe(status);
+    expect(step.delivery?.errorCode).toBe("fixture-code");
+  });
   it("pairs only identical trace and span IDs and preserves parallel children", () => {
     const tree = buildRunTree([
       event(1, { trace_id: "one", span_id: "root", phase: "start" }),

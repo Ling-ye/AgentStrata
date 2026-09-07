@@ -28,6 +28,14 @@ from console.backend.tasks import TaskManager  # noqa: E402
 
 app = FastAPI(title="AgentStrata Console", version="1.0")
 
+@app.middleware("http")
+async def private_api_responses(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

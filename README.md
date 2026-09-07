@@ -34,7 +34,9 @@ resulting system structure.
   task, event, and result contracts.
 - **Backend-neutral context observability.** The Console shows the
   AgentStrata-known conversation and each main-agent or subagent turn call's
-  effective, redacted context. Binary/private omissions and provider-managed
+  effective, host-visible context. The private operator view shows original
+  configuration and recorded values; legacy shared artifacts retain their original
+  redaction. Binary omissions and provider-managed
   state that cannot be inspected are labelled partial or opaque instead of
   being presented as complete.
 - **Evidence-bound runtime.** The Gateway durably separates admitted ingress,

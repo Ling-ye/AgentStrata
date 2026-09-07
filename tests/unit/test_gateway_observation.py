@@ -225,7 +225,7 @@ def test_malformed_record_fails_closed_and_extra_fields_are_not_public(state):
         gateway_run(store.root, run)
 
 
-def test_instance_binding_redacts_private_env_and_api_has_no_store(state, tmp_path, monkeypatch):
+def test_operator_reads_original_private_values_and_api_has_no_store(state, tmp_path, monkeypatch):
     store, generation, run = state
     bot_file = tmp_path / "bot.yaml"
     bot_file.write_text("gateway:\n  state_root_env: FIXTURE_STATE_ROOT\n")
@@ -237,7 +237,8 @@ def test_instance_binding_redacts_private_env_and_api_has_no_store(state, tmp_pa
     store.finish_run(generation=generation, session_id="session-one", run_id=run,
                      outcome="completed", result={"final_text": private})
     instance = BotInstance("fixture", str(bot_file), env_file=str(env_file), runtime_kind="gateway")
-    assert private not in json.dumps(snapshot(instance, run))
+    assert snapshot(instance, run)['run']['final_text'] == private
+    assert private not in json.dumps(gateway_run(store.root, run, secrets=(private,)))
     monkeypatch.setattr(architecture, "get_instance", lambda _: instance)
     response = Response()
     result = architecture.gateway_run_snapshot("fixture", run, response)

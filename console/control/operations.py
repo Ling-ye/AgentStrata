@@ -970,9 +970,10 @@ def _provision_context(inst: BotInstance):
 
 
 def provision_schema(inst: BotInstance) -> Dict[str, object]:
-    _bot_yaml, _local_env, adapter, plan = _provision_context(inst)
+    _bot_yaml, local_env, adapter, plan = _provision_context(inst)
     plan_payload = plan.to_dict()
-    rendered_fields = list(plan_payload.get("fields", []))
+    values = read_local_env_for_provision(local_env, allowed_parent=local_env.parent)
+    rendered_fields = [{**field, "value": values.get(field["env_key"])} for field in plan_payload.get("fields", [])]
     return {
         "schema_version": 2,
         "platform": plan.platform,

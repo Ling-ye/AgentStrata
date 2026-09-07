@@ -1006,7 +1006,7 @@ def test_task_detail_merges_job_stages_and_events(tmp_path: Path) -> None:
     assert events["events"][-1]["job_id"] == job_id
 
 
-def test_console_redacts_legacy_job_status_event_and_stdout_payloads(
+def test_console_preserves_legacy_job_status_event_and_stdout_values(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1076,18 +1076,17 @@ def test_console_redacts_legacy_job_status_event_and_stdout_payloads(
     assert events is not None
     serialized_detail = json.dumps(detail)
     serialized_events = json.dumps(events)
-    assert encoded_value not in serialized_detail
-    assert encoded_value not in serialized_events
-    assert "[REDACTED]" in serialized_detail
-    assert "[REDACTED]" in serialized_events
-    assert events["events"][0]["sanitization"]["redacted_for_console"] is True
+    assert auth_message in serialized_detail
+    assert auth_message in serialized_events
+    assert "[REDACTED]" not in serialized_detail
+    assert "[REDACTED]" not in serialized_events
+    assert events["events"][0]["sanitization"]["redacted_for_console"] is False
     progress_tail = str(jobs["jobs"][0]["progress_tail"])
-    assert encoded_value not in progress_tail
-    assert uri_password not in progress_tail
-    assert env_value not in progress_tail
-    assert str(job_dir) not in progress_tail
-    assert "[REDACTED]" in progress_tail
-    assert "$WORKSPACE" in progress_tail
+    assert auth_message in progress_tail
+    assert uri_password in progress_tail
+    assert env_value in progress_tail
+    assert str(job_dir) in progress_tail
+    assert "[REDACTED]" not in progress_tail
 
 
 def test_task_job_symlink_alias_cannot_rebind_status_or_events(tmp_path: Path) -> None:
@@ -1472,10 +1471,10 @@ def test_context_snapshot_reads_task_bound_regular_json(tmp_path: Path) -> None:
     assert snapshot["task_id"] == "task_context"
     assert snapshot["snapshot_id"] == "ctx_call_1"
     assert snapshot["coverage"] == "exact_model_input"
-    assert snapshot["sanitization"]["redacted_for_console"] is True
+    assert snapshot["sanitization"]["redacted_for_console"] is False
 
 
-def test_context_snapshot_redacts_new_environment_secrets_on_read(
+def test_context_snapshot_keeps_existing_values_when_environment_changes(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1490,9 +1489,9 @@ def test_context_snapshot_redacts_new_environment_secrets_on_read(
     snapshot = observability.context_snapshot(inst, "task_context", "ctx_call_1")
 
     assert snapshot is not None
-    assert late_value not in json.dumps(snapshot)
-    assert snapshot["sanitization"]["redacted_for_console"] is True
-    assert snapshot["sanitization"]["console_replacement_count"] == 1
+    assert snapshot['session_messages'][0]['content'] == late_value
+    assert snapshot["sanitization"]["redacted_for_console"] is False
+    assert snapshot["sanitization"]["console_replacement_count"] == 0
 
 
 def test_context_snapshot_route_is_no_store(tmp_path: Path, monkeypatch) -> None:

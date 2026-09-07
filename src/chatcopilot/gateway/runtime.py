@@ -34,7 +34,6 @@ from chatcopilot.core.config import load_config
 
 from .observation_runtime import ObservationRecorder, runtime_configuration
 from chatcopilot.core.inspection import plain, fingerprint
-from chatcopilot.core.observability_redaction import collect_observability_secrets, redact_observability_payload
 from .application import GatewaySessionService
 from .approvals import GatewayApprovalService
 from .channels import ChannelRuntimeHealth, ChannelRuntimeManager
@@ -709,11 +708,12 @@ def build_gateway_runtime_host(
         try:
             loaded_revision = source_revision(runtime.spec)
             declared = declared_configuration(runtime.source_path, values)
-            effective_revision = fingerprint({"source": loaded_revision, "parameters": redact_observability_payload(
-                plain(agent_runtime.runtime_config), secrets=collect_observability_secrets(values)).value})
+            effective_revision = fingerprint({"source": loaded_revision, "environment": declared["environment_revision"],
+                                              "parameters": plain(agent_runtime.runtime_config)})
             def observation_snapshot():
                 snapshot = runtime_configuration(runtime, agent_runtime, values)
                 snapshot["source_revision"] = loaded_revision
+                snapshot["environment_revision"] = declared["environment_revision"]
                 snapshot["configuration_revision"] = effective_revision
                 loaded_ids = {entity["id"] for entity in snapshot["entities"]}
                 for entity in declared["entities"]:
@@ -724,12 +724,10 @@ def build_gateway_runtime_host(
                         entity["runtime"] = plain(server.health())
                     elif entity["id"].startswith("channel:"):
                         health = plain(channel_runtime.health())
-                        for channel in health.get("channels", []):
-                            channel.pop("account", None)
                         entity["runtime"] = health
                 return snapshot
             ObservationRecorder(state_store, generation,
-                configuration=observation_snapshot(), secrets=tuple(collect_observability_secrets(values)),
+                configuration=observation_snapshot(),
                 snapshot_provider=observation_snapshot)
         except Exception:
             state_store.observation_recorder = None

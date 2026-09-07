@@ -415,6 +415,7 @@ def test_provision_schema_v2_is_dynamic_and_reports_configured_fields(
         "description": "OpenAI-compatible API key",
         "configured": True,
         "host_generated": False,
+        "value": "configured",
     }
     platform_by_key = {field["env_key"]: field for field in schema["fields"]}
     assert platform_by_key["QQ_ACCOUNT"]["required"] is True

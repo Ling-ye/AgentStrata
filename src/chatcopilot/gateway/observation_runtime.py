@@ -39,10 +39,10 @@ class _RunLogHandler(logging.Handler):
 
 class ObservationRecorder:
     def __init__(self, state_store: Any, generation: int, *, configuration: dict[str, Any] | None = None,
-                 secrets: tuple[str, ...] = (), snapshot_provider: Any = None) -> None:
+                 snapshot_provider: Any = None) -> None:
         self.state_store = state_store
         self.generation = generation
-        self.store = ObservationStore(state_store.root, writable=True, secrets=secrets)
+        self.store = ObservationStore(state_store.root, writable=True)
         self.configuration = configuration or {"layers": [], "entities": []}
         self.snapshot_provider = snapshot_provider
         self._stop = threading.Event()
@@ -140,8 +140,6 @@ class ObservationRecorder:
 
     def prepare(self, run_id: str, request: Any) -> None:
         self.refresh()
-        private_ids = (request.principal.user_id, request.principal.account_id, request.principal.conversation.chat_id)
-        self.store.secrets = tuple(set(self.store.secrets) | {value for value in private_ids if value})
         role = request.principal.role.value
         self.store.bind_run(run_id, config_id=self.config_id, role=role,
                             backend=str(self.configuration.get("backend", "")), model=str(self.configuration.get("model", "")))

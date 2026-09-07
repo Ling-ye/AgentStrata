@@ -1,4 +1,5 @@
-import type { GatewayObservation, GatewayRun } from "./model";
+import type { GatewayObservation, GatewayRun, GatewayRunDetail } from "./model";
+import { runState } from "./model";
 
 export interface InspectionEntity {
   id: string; layer: string; name: string; refs?: string[];
@@ -8,12 +9,15 @@ export interface InspectionEntity {
 export interface Configuration {
   layers: Array<{ id: string; name: string }>; entities: InspectionEntity[];
   configuration_revision?: string; backend?: string; model?: string;
+  environment_revision?: string; visibility?: "operator";
+  capture_state?: string;
   validation?: Array<{ field: string; level: string; message: string }>;
 }
 export interface Inspection {
   current: Configuration | null; loaded: Configuration | null; execution: Configuration | null;
   loaded_meta: { config_id: string; observed_at: number; generation: number } | null;
   loaded_stale: boolean; pending_changes: boolean; generated_at: number;
+  sanitization_truncated?: boolean;
   errors: Array<{ source: string; code: string; message: string }>;
 }
 export interface ObservationFilters {
@@ -79,9 +83,10 @@ export function buildRunTree(events: GatewayObservation[]): RunStep[] {
 
 export interface DisplayStep extends RunStep {
   depth: number; contexts: GatewayObservation[]; permissions: GatewayObservation[]; logs: GatewayObservation[];
+  delivery?: { status: string; observedAt: number; errorCode?: string | null };
 }
 
-export function buildRunView(events: GatewayObservation[]) {
+export function buildRunView(events: GatewayObservation[], delivery?: Pick<GatewayRunDetail, "receipts" | "outbox">) {
   const unique = [...new Map(events.map((event) => [event.seq, event])).values()].sort((a, b) => a.seq - b.seq);
   const supplemental = new Set(["ContextSnapshotPrepared", "tool_authorization", "log", "run_state"]);
   const steps: DisplayStep[] = [];
@@ -106,6 +111,14 @@ export function buildRunView(events: GatewayObservation[]) {
   flatten(buildRunTree([...core, ...contextual.filter((event) => !usedContexts.has(event.seq))]));
   for (const step of steps) {
     step.contexts = contextsByCall.get(JSON.stringify([step.event.trace_id, step.event.span_id])) ?? [];
+    if (!["response_dispatch", "channel_returned"].includes(step.event.kind)) continue;
+    const outbound = step.event.data?.outbound_id ?? step.start?.data?.outbound_id;
+    if (typeof outbound !== "string") continue;
+    const outbox = delivery?.outbox.find((item) => item.outbound_id === outbound);
+    const receipts = delivery?.receipts.filter((item) => item.outbound_id === outbound) ?? [];
+    const receipt = receipts[receipts.length - 1];
+    if (outbox) step.delivery = { status: outbox.state, observedAt: outbox.updated_at, errorCode: outbox.error_code };
+    else if (receipt) step.delivery = { status: receipt.stage, observedAt: receipt.observed_at, errorCode: receipt.error_code };
   }
   const permissions: GatewayObservation[] = [];
   const logs: GatewayObservation[] = [];
@@ -119,6 +132,14 @@ export function buildRunView(events: GatewayObservation[]) {
     else (collection === "logs" ? logs : permissions).push(event);
   }
   return { steps, permissions, logs, states: unique.filter((event) => event.kind === "run_state") };
+}
+
+export function stepState(step: DisplayStep, terminal: boolean) {
+  const status = step.delivery?.status ?? step.event.status ?? "unknown";
+  const ended = ["provider_acknowledged", "platform_displayed", "user_read", "failed", "delivery_unknown"].includes(status);
+  const incomplete = terminal && !step.delivery && !ended && !step.finish && (!!step.start || status === "running");
+  return { status: incomplete ? "unknown" : status, incomplete,
+    ...(incomplete ? { label: "结束未记录", color: "orange" } : runState(status)) };
 }
 
 export function stepIsOpen(step: RunStep, overrides: Record<string, boolean>, terminal: boolean) {

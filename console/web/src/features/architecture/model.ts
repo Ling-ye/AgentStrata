@@ -44,6 +44,11 @@ export const RUN_STATES: Record<string, { label: string; color: string }> = {
   abort_requested: { label: "取消中", color: "orange" }, recovery_required: { label: "等待恢复", color: "orange" },
   completed: { label: "已完成", color: "green" }, aborted: { label: "已取消", color: "gray" },
   failed: { label: "失败", color: "red" }, succeeded: { label: "已完成", color: "green" },
+  provider_acknowledged: { label: "Provider 已确认", color: "green" },
+  platform_displayed: { label: "平台已显示", color: "green" }, user_read: { label: "用户已读", color: "green" },
+  delivery_unknown: { label: "交付结果未知", color: "orange" },
+  pending: { label: "等待投递", color: "blue" }, submitting: { label: "投递中", color: "blue" },
+  gateway_accepted: { label: "等待投递", color: "blue" }, provider_submitted: { label: "等待 Provider 确认", color: "blue" },
 };
 export const runState = (state: string) => RUN_STATES[state] ?? { label: "状态未知", color: "gray" };
 

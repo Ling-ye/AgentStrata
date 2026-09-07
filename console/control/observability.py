@@ -21,10 +21,8 @@ from chatcopilot.contracts.code_tasks import (
     CODE_TASK_TERMINAL_STATUSES,
 )
 from chatcopilot.core.observability_redaction import (
-    collect_observability_secrets,
-    default_observability_roots,
     load_bounded_observability_json,
-    redact_observability_payload,
+    bound_observability_payload,
 )
 
 
@@ -140,11 +138,7 @@ def _read_job_json(path: Path) -> Dict[str, object]:
         return {}
     if not isinstance(data, dict):
         return {}
-    redaction = redact_observability_payload(
-        data,
-        secrets=collect_observability_secrets(),
-        roots=default_observability_roots(path.parent.parent.parent),
-    )
+    redaction = bound_observability_payload(data)
     if not isinstance(redaction.value, dict):
         return {}
     safe = dict(redaction.value)
@@ -255,11 +249,7 @@ def _read_stdout_tail(
             return "", modified_at, False
     chunk = raw_chunk.decode("utf-8", errors="replace")
     tail = "\n".join(chunk.splitlines()[-max_lines:]).strip()
-    redaction = redact_observability_payload(
-        tail,
-        secrets=collect_observability_secrets(),
-        roots=default_observability_roots(path.parent.parent.parent),
-    )
+    redaction = bound_observability_payload(tail)
     tail = redaction.value if isinstance(redaction.value, str) else ""
     if len(tail) > max_chars:
         tail = tail[-max_chars:]
@@ -855,11 +845,9 @@ def _read_json_lines(path: Path) -> List[Dict[str, object]]:
         path,
         limit=_MAX_TASK_EVENT_LIMIT,
     )
-    secrets = collect_observability_secrets()
-    roots = default_observability_roots(path.parent.parent.parent)
     safe_events: List[Dict[str, object]] = []
     for event in events:
-        redaction = redact_observability_payload(event, secrets=secrets, roots=roots)
+        redaction = bound_observability_payload(event)
         if isinstance(redaction.value, dict):
             safe_events.append(redaction.value)
     return safe_events
@@ -1267,11 +1255,7 @@ def task_events(
     safe_events: List[Dict[str, object]] = []
     for event in events:
         event.pop("_merge_recorded_at", None)
-        redaction = redact_observability_payload(
-            event,
-            secrets=collect_observability_secrets(),
-            roots=default_observability_roots(task_dir.parent.parent),
-        )
+        redaction = bound_observability_payload(event)
         if isinstance(redaction.value, dict):
             sanitization = (
                 dict(redaction.value.get("sanitization"))
@@ -1280,7 +1264,7 @@ def task_events(
             )
             sanitization.update(
                 {
-                    "redacted_for_console": True,
+                    "redacted_for_console": False,
                     "redacted": bool(sanitization.get("redacted"))
                     or redaction.replacement_count > 0,
                 }
@@ -1504,11 +1488,7 @@ def context_snapshot(
         raise UnsafeContextSnapshotError(
             "context snapshot lacks redaction provenance"
         )
-    redaction = redact_observability_payload(
-        decoded,
-        secrets=collect_observability_secrets(),
-        roots=default_observability_roots(task_dir.parent.parent),
-    )
+    redaction = bound_observability_payload(decoded)
     if not isinstance(redaction.value, dict):
         raise UnsafeContextSnapshotError("context snapshot could not be normalized safely")
     safe_sanitization = (
@@ -1518,7 +1498,7 @@ def context_snapshot(
     )
     safe_sanitization.update(
         {
-            "redacted_for_console": True,
+            "redacted_for_console": False,
             "redacted": bool(safe_sanitization.get("redacted"))
             or redaction.replacement_count > 0,
             "console_replacement_count": redaction.replacement_count,

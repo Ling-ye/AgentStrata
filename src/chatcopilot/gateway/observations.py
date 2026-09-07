@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import hashlib
 from dataclasses import asdict
 import logging
 import time
@@ -14,11 +15,33 @@ from chatcopilot.contracts.agent import (
 )
 from chatcopilot.core.observability_redaction import (
     collect_observability_secrets, default_observability_roots, redact_observability_payload,
-    omit_private_reasoning_messages, omit_local_resource_paths,
+    omit_private_reasoning_messages,
 )
 from .state_store import GatewayStateStore
 
 _LOG = logging.getLogger(__name__)
+ACTOR_SPAN_ID = "host:actor"
+
+
+def response_outbound_id(run_id: str) -> str:
+    return "outbound_" + hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]
+
+
+def bind_host_observation(run_id: str, event: dict[str, Any]) -> dict[str, Any]:
+    """Bind single-per-run host operations, including records written without span fields."""
+    phases = {"actor_execution": "start", "actor_returned": "finish",
+              "response_dispatch": "start", "channel_returned": "finish"}
+    kind = event.get("kind")
+    if kind not in phases or event.get("span_id") or event.get("trace_id"):
+        return event
+    data = dict(event.get("data") or {})
+    delivery = kind in {"response_dispatch", "channel_returned"}
+    if delivery:
+        data.setdefault("outbound_id", response_outbound_id(run_id))
+    span_id = f"host:delivery:{data['outbound_id']}" if delivery else ACTOR_SPAN_ID
+    return {**event, "trace_id": run_id, "span_id": span_id, "phase": phases[kind],
+            "layer": "channel" if delivery else "application",
+            "entity_id": "channel:qq" if delivery else "workspace:instance", "data": data}
 
 
 class RunObserver:
@@ -46,17 +69,15 @@ class RunObserver:
             layer = {"model": "agent", "capability": "capability"}.get(target, target)
             entity = {"gateway": "gateway:instance", "application": "workspace:instance", "agent": "agent:main",
                       "channel": "channel:qq", "authorization": "policy:instance"}.get(layer)
-            if kind in {"actor_execution", "actor_returned"}:
-                data.update(trace_id=self.run_id, span_id="host:actor")
-                layer, entity = "application", "workspace:instance"
-            phase = "start" if kind == "actor_execution" else "finish" if kind == "actor_returned" else ""
-            self.recorder.record(self.run_id, {"kind": kind, "layer": layer, "entity_id": entity,
-                "source": source, "target": target, "status": status, "phase": phase, "data": data})
+            self.recorder.record(self.run_id, bind_host_observation(self.run_id,
+                {"kind": kind, "layer": layer, "entity_id": entity,
+                 "source": source, "target": target, "status": status, "data": data}))
             return
         if self._full:
             return
         safe = redact_observability_payload(
-            {"kind": kind, "source": source, "target": target, "status": status, "data": data},
+            bind_host_observation(self.run_id,
+                {"kind": kind, "source": source, "target": target, "status": status, "data": data}),
             secrets=self._secrets, roots=self._roots,
         ).value
         safe["data"] = {key: value[:160] if isinstance(value, str) else value
@@ -153,8 +174,9 @@ class RunObserver:
             layer, entity = "application", "workspace:instance"
             body = asdict(event)
             for key in ("session_messages", "effective_messages"):
-                messages = omit_private_reasoning_messages(body[key]).messages
-                body[key] = omit_local_resource_paths(messages).messages
+                omitted = omit_private_reasoning_messages(body[key])
+                body[key] = omitted.messages
+                body["private_reasoning_omission_count"] += omitted.omission_count
             data["snapshot_id"] = event.snapshot_id
         elif isinstance(event, TurnError):
             status = "failed"

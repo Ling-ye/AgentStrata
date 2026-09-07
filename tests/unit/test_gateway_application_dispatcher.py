@@ -12,7 +12,7 @@ import pytest
 
 from chatcopilot.application.sessions import SessionManager
 from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
-from chatcopilot.channels.base import ChannelDefinitelyNotSubmittedError, ChannelHealth
+from chatcopilot.channels.base import ChannelDefinitelyNotSubmittedError, ChannelDeliveryUnknownError, ChannelHealth
 from chatcopilot.contracts.agent import AgentResult
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
@@ -45,6 +45,8 @@ from chatcopilot.gateway import (
 )
 from chatcopilot.gateway.channels import ChannelRuntimeManager
 from chatcopilot.gateway.protocol import request_fingerprint
+from chatcopilot.gateway.observation_runtime import ObservationRecorder
+from chatcopilot.gateway.observation_queries import detail as observation_detail
 
 
 def _async_test(function):
@@ -182,6 +184,53 @@ class _FailingDriver(_Driver):
             "provider_rejected",
             "Provider rejected the outbound message",
         )
+
+
+class _UnknownDeliveryDriver(_Driver):
+    async def send(self, envelope):
+        raise ChannelDeliveryUnknownError("provider_timeout", "Provider acknowledgement timed out")
+
+
+@pytest.mark.parametrize("driver_type, status", [
+    (_Driver, "provider_acknowledged"), (_FailingDriver, "failed"), (_UnknownDeliveryDriver, "delivery_unknown"),
+])
+@_async_test
+async def test_observed_delivery_closes_the_same_call_and_preserves_actual_receipts(tmp_path, driver_type, status):
+    state, generation, _, _, _, channels, _, _, actor = _runtime(tmp_path)
+    recorder = ObservationRecorder(state, generation)
+    driver = driver_type()
+    channels.register(driver)
+    await channels.start()
+    await channels.activate()
+    try:
+        if driver_type is _Driver:
+            await channels.handle_inbound(_event(event_id="observed-delivery", sender="20002"))
+        else:
+            with pytest.raises((ChannelDefinitelyNotSubmittedError, ChannelDeliveryUnknownError)):
+                await channels.handle_inbound(_event(event_id="observed-delivery", sender="20002"))
+        request = actor.requests[0]
+        run_id = request.metadata['trace_id']
+        record = observation_detail(recorder.store, run_id)
+        events = record['observations']
+        actor_start = next(event for event in events if event['kind'] == 'actor_execution')
+        assert request.metadata['parent_span_id'] == actor_start['span_id']
+        assert actor_start['trace_id'] == run_id
+        calls = [event for event in events if event['kind'] in {'response_dispatch', 'channel_returned'}]
+        assert len(calls) == 2
+        start, finish = calls
+        assert start['trace_id'] == finish['trace_id'] == run_id
+        assert start['span_id'] == finish['span_id']
+        assert (start['phase'], finish['phase']) == ('start', 'finish')
+        assert finish['status'] == status
+        assert finish['elapsed_ms'] >= 0
+        outbound = start['data']['outbound_id']
+        assert finish['data']['outbound_id'] == outbound
+        assert record['outbox'][0]['outbound_id'] == outbound
+        assert record['outbox'][0]['state'] == status
+        assert record['receipts'][-1]['stage'] == status
+    finally:
+        await channels.stop()
+        recorder.close()
 
 
 def _runtime(

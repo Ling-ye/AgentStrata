@@ -10,13 +10,12 @@ import re
 import sqlite3
 import threading
 import time
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator
 import uuid
 
 from chatcopilot.core.inspection import fingerprint
 from chatcopilot.core.observability_redaction import (
-    collect_observability_secrets, default_observability_roots,
-    load_bounded_observability_json, redact_observability_payload,
+    load_bounded_observability_json, bound_observability_payload,
 )
 from .state_store import (
     GatewayStateError, _ensure_private_database_file, _ensure_private_root,
@@ -82,14 +81,11 @@ def encoded(value: Any) -> str:
 
 
 class ObservationStore:
-    def __init__(self, state_root: Path, *, writable: bool = False,
-                 secrets: tuple[str, ...] = (), roots: Mapping[str, Any] | None = None) -> None:
+    def __init__(self, state_root: Path, *, writable: bool = False) -> None:
         self.anchor = Path(os.path.abspath(state_root))
         self.root = self.anchor / "observability"
         self.database = self.root / "index.sqlite3"
         self.writable = writable
-        self.secrets = tuple(set(secrets) | set(collect_observability_secrets()))
-        self.roots = roots or default_observability_roots(state_root)
         self.lock = threading.RLock()
         if writable:
             _ensure_private_root(self.root, trusted_anchor=self.anchor)
@@ -137,10 +133,13 @@ class ObservationStore:
             _validate_sqlite_files(self.database)
 
     def safe(self, payload: Any) -> Any:
-        return redact_observability_payload(payload, secrets=self.secrets, roots=self.roots).value
+        return bound_observability_payload(payload).value
 
     def put_configuration(self, payload: dict[str, Any]) -> str:
-        safe = self.safe(payload)
+        bounded = bound_observability_payload(payload)
+        safe = bounded.value
+        if bounded.truncated:
+            safe = {**safe, "capture_state": "truncated", "truncation_reasons": list(bounded.truncation_reasons)}
         key = fingerprint(safe)
         raw = encoded(safe)
         if len(raw.encode()) > CONTEXT_LIMIT:
@@ -228,9 +227,9 @@ class ObservationStore:
 
     def put_body(self, run_id: str, kind: str, payload: Any, *, limit: int = BODY_LIMIT) -> tuple[str | None, str]:
         checked_run_id(run_id)
-        redacted = redact_observability_payload(payload, secrets=self.secrets, roots=self.roots)
-        raw = encoded(redacted.value).encode()
-        state = "truncated" if redacted.truncated else "available"
+        bounded = bound_observability_payload(payload)
+        raw = encoded(bounded.value).encode()
+        state = "truncated" if bounded.truncated else "available"
         if len(raw) > limit:
             raw = encoded({"preview": raw[:limit // 4].decode("utf-8", "ignore"), "truncated": True}).encode()
             state = "truncated"

@@ -93,7 +93,7 @@ class TurnState:
     messages: list[dict[str, Any]]
     started_at: float
     trace_id: str
-    root_span: str
+    root_span: str | None
     context_kind: str = "sliding_window"
     topic_decision: TopicDecision | None = None
     llm_view: list[dict[str, Any]] | None = None
@@ -143,7 +143,10 @@ class TurnOps:
         self.session._messages.append({"role": "user", "content": user_content})
 
         trace_id = self.session.trace_id or _task_trace_id(self.task) or new_trace_id()
-        root_span = self.session.trace_parent_span_id or new_span_id()
+        root_span = self.session.trace_parent_span_id or (
+            str(self.task.metadata.get("parent_span_id") or "").strip() or None
+            if _task_trace_id(self.task) == trace_id else None
+        )
         started_at = time.monotonic()
         state = TurnState(
             messages=self.session._messages,

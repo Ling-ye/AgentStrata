@@ -1,9 +1,10 @@
-"""Stable, redacted configuration entities shared by runtime and Console projections."""
+"""Instance configuration values for private runtime and operator projections."""
 from __future__ import annotations
 
 from dataclasses import fields, is_dataclass
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -27,7 +28,7 @@ def plain(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [plain(item) for item in value]
     if isinstance(value, Path):
-        return value.name
+        return str(value)
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
@@ -59,10 +60,7 @@ def configuration_projection(
     add("channel", "platform:instance", "平台", data.get("platform", {}))
     access = dict(data.get("access") or {})
     for name in ("QQ_ALLOW_FROM", "QQ_ALLOW_GROUPS", "CHATCOPILOT_OWNERS", "CHATCOPILOT_ADMINS"):
-        if name in values:
-            raw = values[name].strip()
-            access[name] = {"configured": bool(raw), "mode": "all" if raw == "*" else "list",
-                            "count": len([item for item in raw.split(",") if item.strip()]) if raw != "*" else None}
+        access[name] = values.get(name)
     add("authorization", "policy:instance", "权限策略", access)
     add("application", "workspace:instance", "工作区", data.get("workspace", {}))
     for name, config in (data.get("context") or {}).items():
@@ -107,22 +105,30 @@ def configuration_projection(
         "gateway": (data.get("gateway") or {}).get("protocol_version"),
         "prompts": (data.get("prompts") or {}).get("schema_version"), "observation": 1,
     })
-    # Resolve references to presence or safe configuration values, never to credentials or account identities.
     for entity in entities:
-        entity["environment"] = _environment_status(entity["config"], values)
-    result = {"layers": [{"id": key, "name": name} for key, name in LAYERS], "entities": entities}
+        entity["environment"] = _environment_values(entity["config"], values)
+    result = {"layers": [{"id": key, "name": name} for key, name in LAYERS], "entities": entities,
+              "visibility": "operator",
+              "environment_revision": fingerprint({"access": access, "environment": {
+                  entity["id"]: entity["environment"] for entity in entities}})}
     return result
 
 
-def _environment_status(value: Any, values: Mapping[str, str]) -> dict[str, Any]:
+def _environment_values(value: Any, values: Mapping[str, str]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     if isinstance(value, dict):
         for key, item in value.items():
             if key.endswith("_env") and isinstance(item, str):
-                result[item] = {"configured": bool(values.get(item)), "reference": item}
+                if item:
+                    result[item] = values.get(item)
+            elif key.endswith("env_prefix") and isinstance(item, str) and item:
+                result.update({name: raw for name, raw in values.items() if name.startswith(item + "_")})
             else:
-                result.update(_environment_status(item, values))
+                result.update(_environment_values(item, values))
     elif isinstance(value, list):
         for item in value:
-            result.update(_environment_status(item, values))
+            result.update(_environment_values(item, values))
+    elif isinstance(value, str):
+        for name in re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value):
+            result[name] = values.get(name)
     return result

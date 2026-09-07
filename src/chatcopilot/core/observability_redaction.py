@@ -403,6 +403,20 @@ def default_observability_roots(workspace_root: str | Path | None) -> dict[str, 
     return roots
 
 
+def bound_observability_payload(value: Any) -> RedactionResult:
+    """Copy private operator data with structural limits, without masking values.
+
+    Callers must enforce private storage/access and omit provider-private reasoning before calling.
+    """
+    budget = _TraversalBudget()
+    try:
+        copied, _ = _copy_observability_value(value, budget=budget, depth=0, seen=set(), strip_reasoning=False)
+    except Exception:  # noqa: BLE001 - observation failure must not affect execution
+        budget.mark("copy_error")
+        copied = _JSON_LIMIT_MARKER
+    return RedactionResult(copied, 0, budget.truncated, budget.ordered_reasons)
+
+
 def omit_private_reasoning_messages(
     messages: Iterable[Mapping[str, Any]],
 ) -> ReasoningOmissionResult:

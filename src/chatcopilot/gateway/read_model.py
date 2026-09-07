@@ -11,6 +11,7 @@ import time
 from typing import Any, Iterator
 
 from chatcopilot.core.observability_redaction import load_bounded_observability_json, redact_observability_payload
+from .observations import bind_host_observation
 from .state_store import (
     GatewayStateError, SCHEMA_VERSION, _validate_private_root, _validate_sqlite_files,
     _validate_private_file_metadata,
@@ -104,13 +105,14 @@ def _object(raw: str | None) -> dict[str, Any]:
     return loaded.value
 
 
-def _metadata(data: Any, secrets: tuple[str, ...]) -> dict[str, Any]:
+def _metadata(data: Any, secrets: tuple[str, ...], *, operator: bool = False) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {}
     safe: dict[str, Any] = {}
-    for key in ("model", "backend", "name", "span_id", "parent_span_id", "coverage", "code", "gate", "outcome"):
+    for key in ("model", "backend", "name", "trace_id", "span_id", "parent_span_id", "coverage", "code", "gate", "outcome",
+                "outbound_id", "receipt_id", "stage"):
         if isinstance(data.get(key), str):
-            safe[key] = redact_observability_payload(data[key], secrets=secrets).value[:160]
+            safe[key] = (data[key] if operator else redact_observability_payload(data[key], secrets=secrets).value)[:160]
     for key in ("iteration", "depth", "input_message_count", "input_estimated_tokens", "tool_schema_count", "message_count", "resource_count"):
         value = data.get(key)
         if type(value) is int and 0 <= value <= 10**12:
@@ -143,7 +145,7 @@ def gateway_runs(root: Path) -> dict[str, Any]:
                 "generated_at": time.time()}
 
 
-def gateway_run(root: Path, run_id: str, *, secrets: tuple[str, ...] = ()) -> dict[str, Any] | None:
+def gateway_run(root: Path, run_id: str, *, secrets: tuple[str, ...] = (), operator: bool = False) -> dict[str, Any] | None:
     if not _RUN_ID.fullmatch(run_id):
         raise ValueError("Invalid Gateway run ID")
     with _reader(root) as connection:
@@ -155,7 +157,9 @@ def gateway_run(root: Path, run_id: str, *, secrets: tuple[str, ...] = ()) -> di
             return None
         run = dict(row)
         result = _object(run.pop("result_json"))
-        final_text = redact_observability_payload(str(result.get("final_text") or ""), secrets=secrets).value
+        final_text = str(result.get("final_text") or "")
+        if not operator:
+            final_text = redact_observability_payload(final_text, secrets=secrets).value
         run["final_text"] = final_text[:8000]
         run["final_text_truncated"] = len(final_text) > 8000
         session_id = run.pop("session_id")
@@ -182,8 +186,9 @@ def gateway_run(root: Path, run_id: str, *, secrets: tuple[str, ...] = ()) -> di
         for item in reversed(observations[:300]):
             payload = _object(item.pop("payload_json"))
             # Only the diagnostic schema is public; arbitrary stored keys never escape.
-            events.append({**item, **{key: str(payload[key])[:120] for key in ("kind", "source", "target", "status") if key in payload},
-                           "data": _metadata(payload.get("data"), secrets)})
+            events.append(bind_host_observation(run_id, {**item, **{key: str(payload[key])[:160]
+                for key in ("kind", "source", "target", "status", "phase", "trace_id", "span_id", "layer", "entity_id") if key in payload},
+                "data": _metadata(payload.get("data"), secrets, operator=operator)}))
         wire = _rows(connection,
                      "SELECT seq, event, created_at, json_object("
                      "'stop_reason',json_extract(payload_json,'$.stop_reason'),"

@@ -95,7 +95,7 @@ class AgentTraceTests(unittest.TestCase):
                 events: list[object] = []
 
                 session.run_task(
-                    AgentTask(text="go", metadata={"trace_id": f"trace-{backend}"}),
+                    AgentTask(text="go", metadata={"trace_id": f"trace-{backend}", "parent_span_id": "host:actor"}),
                     on_event=events.append,
                 )
 
@@ -112,8 +112,23 @@ class AgentTraceTests(unittest.TestCase):
                     snapshot = snapshots[started.context_snapshot_id]
                     self.assertEqual(snapshot.backend, backend)
                     self.assertEqual(snapshot.span_id, started.span_id)
+                    self.assertEqual(started.parent_span_id, "host:actor")
+                    self.assertEqual(snapshot.parent_span_id, "host:actor")
                 self.assertEqual(snapshot.trace_id, started.trace_id)
                 self.assertEqual(started.backend, backend)
+
+    def test_top_level_calls_do_not_reference_an_unrecorded_root(self) -> None:
+        for session_type in (AgentSession, LangGraphAgentSession):
+            with self.subTest(backend=session_type.__name__):
+                session = session_type(
+                    session_id="standalone", llm=_ScriptedLLM([ChatResult(content="done")]),
+                    executor=ToolExecutor(tools=[]), tools_schema=[], prompt_plan=prompt_plan("baseline"),
+                )
+                events = []
+                session.run_task(AgentTask(text="go"), on_event=events.append)
+                calls = [event for event in events if isinstance(event, (LlmCallStarted, LlmCallFinished, ContextSnapshotPrepared))]
+                self.assertTrue(calls)
+                self.assertTrue(all(event.parent_span_id is None for event in calls))
 
     def test_native_and_langgraph_close_failed_llm_calls_with_snapshot_correlation(
         self,

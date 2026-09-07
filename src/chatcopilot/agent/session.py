@@ -83,7 +83,7 @@ class AgentSession:
     stream_first_turn: bool = True
     retriever: Optional[Retriever] = None
     response_integrity: ResponseIntegrityCheck = field(default_factory=ResponseIntegrityCheck)
-    # 链路追踪：主会话留空（自动生成 trace_id + root span）；嵌套 subagent 由 runner
+    # 链路追踪：主会话留空（使用任务关联或生成 trace_id）；嵌套 subagent 由 runner
     # 注入父 trace_id 与父 span（让内部工具 span 挂到主调用树上）。
     trace_id: Optional[str] = None
     trace_parent_span_id: Optional[str] = None
