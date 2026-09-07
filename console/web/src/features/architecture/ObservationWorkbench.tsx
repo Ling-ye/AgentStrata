@@ -7,7 +7,7 @@ import BotTaskFlowPanel from "../bots/BotTaskFlowPanel";
 import ConfigurationPane from "./ConfigurationPane";
 import RunInspector from "./RunInspector";
 import { runState } from "./model";
-import { bodyState, buildRunView, dateTime, duration, runDuration, type ObservationFilters } from "./workbenchModel";
+import { bodyState, dateTime, duration, runDuration, type ObservationFilters } from "./workbenchModel";
 
 type ObservationView = "observation" | "history" | "configuration";
 
@@ -26,16 +26,10 @@ export default function ObservationWorkbench({ bot, visible, view, onNavigate, o
   const initial = useMemo(() => initialState(bot.instance_id), [bot.instance_id]);
   const [selected, setSelected] = useState(initial.selected);
   const [filters, setFilters] = useState<ObservationFilters>(initial.filters);
-  const linkedEntity = new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("entity") || "";
-  const [entity, setEntity] = useState(linkedEntity);
+  const [entity, setEntity] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("entity") || "");
   const readingPosition = useRef(0);
-  const locating = useRef(false);
   const flowVisible = visible && view === "observation";
-  const [focusRequest, setFocusRequest] = useState<{ entity: string; revision: number; runId: string }>();
   const [configReveal, setConfigReveal] = useState(0);
-  const [selectedEvent, setSelectedEvent] = useState<{ runId: string; seq?: number }>();
-  const eventSeq = selectedEvent?.runId === selected ? selectedEvent.seq : undefined;
-  useEffect(() => setSelectedEvent(undefined), [selected]);
   const [range, setRange] = useState(initial.range);
   const [customStart, setCustomStart] = useState(initial.customStart);
   const [customEnd, setCustomEnd] = useState(initial.customEnd);
@@ -47,8 +41,8 @@ export default function ObservationWorkbench({ bot, visible, view, onNavigate, o
       if (page !== "bots" || params.get("instance") && params.get("instance") !== bot.instance_id) return;
       const run = params.get("run");
       if (run) setSelected(run);
-      const component = params.get("entity");
-      if (component) { setEntity(component); setSelectedEvent(undefined); setConfigReveal((value) => value + 1); }
+      setEntity(params.get("entity") || "");
+      setConfigReveal((value) => value + 1);
     };
     window.addEventListener("hashchange", navigate);
     return () => window.removeEventListener("hashchange", navigate);
@@ -56,8 +50,7 @@ export default function ObservationWorkbench({ bot, visible, view, onNavigate, o
   useEffect(() => {
     if (!flowVisible) return;
     const frame = requestAnimationFrame(() => {
-      if (!locating.current) window.scrollTo(0, readingPosition.current);
-      locating.current = false;
+      window.scrollTo(0, readingPosition.current);
     });
     const remember = () => { readingPosition.current = window.scrollY; };
     window.addEventListener("scroll", remember, { passive: true });
@@ -75,15 +68,13 @@ export default function ObservationWorkbench({ bot, visible, view, onNavigate, o
     queryFn: () => api.gatewayObservation(bot.instance_id, filters), enabled: visible && isGateway, refetchInterval: visible ? 5000 : false });
   const detail = useQuery({ queryKey: ["observation-run", bot.instance_id, selected], queryFn: () => api.gatewayRun(bot.instance_id, selected),
     enabled: visible && isGateway && !!selected, refetchInterval: visible ? 5000 : false });
-  const inspection = useQuery({ queryKey: ["inspection", bot.instance_id, selected, eventSeq], queryFn: () => api.inspection(bot.instance_id, selected || undefined, eventSeq),
-    enabled: visible && view === "configuration", refetchInterval: visible && view === "configuration" ? 5000 : false });
+  const inspection = useQuery({ queryKey: ["inspection", bot.instance_id], queryFn: () => api.inspection(bot.instance_id),
+    enabled: visible && view === "configuration", staleTime: 0, refetchInterval: visible && view === "configuration" ? 5000 : false });
   const eventPages = useInfiniteQuery({ queryKey: ["observation-events", bot.instance_id, selected], initialPageParam: 0,
     queryFn: ({ pageParam }) => api.observationEvents(bot.instance_id, selected, pageParam),
     getNextPageParam: (last) => last.has_more ? last.next_cursor : undefined,
     enabled: visible && !!selected && detail.data?.source === "observation_index", refetchInterval: visible ? 5000 : false });
   const events = useMemo(() => eventPages.data?.pages.flatMap((page) => page.observations) ?? detail.data?.observations ?? [], [eventPages.data, detail.data]);
-  const callableEntities = useMemo(() => new Set(buildRunView(events).steps.flatMap((step) =>
-    [step.event.entity_id, ...(step.event.refs ?? []), step.start?.entity_id, ...(step.start?.refs ?? [])].filter((id): id is string => !!id))), [events]);
   useEffect(() => { if (!selected && overview.data?.runs.length) setSelected(overview.data.runs[0].run_id); }, [selected, overview.data]);
   useEffect(() => { try { sessionStorage.setItem(`obs:${bot.instance_id}`, JSON.stringify({ selected, filters, range, customStart, customEnd })); } catch { /* Private browsing may disable storage. */ } }, [bot.instance_id, selected, filters, range, customStart, customEnd]);
   const changeFilters = (change: Partial<ObservationFilters>) => setFilters((previous) => ({ ...previous, page: 1, ...change }));
@@ -112,17 +103,10 @@ export default function ObservationWorkbench({ bot, visible, view, onNavigate, o
           detail.isLoading && selected ? <Spin tip="读取任务记录…" /> : detail.data && selected ? <>
             {eventPages.error && <Alert type="warning" content="后续事件读取失败，当前展示已取得的记录。" />}
             <RunInspector key={`${bot.instance_id}:${selected}`} instanceId={bot.instance_id} detail={detail.data} events={events} visible={flowVisible}
-              focusRequest={focusRequest?.runId === selected ? focusRequest : undefined}
-              onViewConfig={(event) => {
-                readingPosition.current = window.scrollY;
-                setEntity(event.entity_id ?? ""); setSelectedEvent({ runId: selected, seq: event.seq }); onNavigate("configuration");
-              }}
               onMore={() => void eventPages.fetchNextPage()} hasMore={!!eventPages.hasNextPage} fetchingMore={eventPages.isFetchingNextPage} />
           </> : <Empty description="当前时间范围没有任务记录" />}</main>
-    {visible && view === "configuration" && <ConfigurationPane key={`${selected}:${eventSeq ?? "run"}:${entity}`} inspection={inspection.data} loading={inspection.isLoading} error={inspection.error} runId={selected}
-        selectedEntity={entity} revealVersion={configReveal} callableEntities={callableEntities}
-        onLocate={(id) => { locating.current = true; setFocusRequest({ entity: id, revision: Date.now(), runId: selected }); onNavigate("observation"); }}
-        onEdit={onEdit} />}
+    {visible && view === "configuration" && <ConfigurationPane inspection={inspection.data} loading={inspection.isLoading} error={inspection.error}
+        selectedEntity={entity} revealVersion={configReveal} onEdit={onEdit} />}
     <section className="obs-history" aria-label="任务记录" hidden={view !== "history" || !isGateway}>
       <div className="obs-range-filter"><Select aria-label="观测时间范围" value={range} onChange={(value) => {
         setRange(value); if (value !== "custom") changeFilters({ since: Date.now() / 1000 - Number(value) * 86400, until: undefined });

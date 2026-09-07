@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Empty, Space, Tag } from "@arco-design/web-react";
 import type { GatewayObservation, GatewayRunDetail } from "./model";
 import { DELIVERY_STAGES, layerName, OBSERVATION_NAMES, runState } from "./model";
-import { bodyState, buildRunView, dateTime, duration, related, runDuration, stepIsOpen, type DisplayStep, type ObservationBody } from "./workbenchModel";
+import { bodyState, buildRunView, dateTime, duration, runDuration, stepIsOpen, stepState, type DisplayStep, type ObservationBody } from "./workbenchModel";
 import { ConfigFields, Disclosure, ObservationPayload, TextPreview } from "./ObservationContent";
+import ExecutionConfiguration from "./ExecutionConfiguration";
 
 const EVENT_LABELS: Record<string, string> = {
   actor_execution: "Agent 执行", actor_returned: "Agent 执行",
+  response_dispatch: "Channel 投递", channel_returned: "Channel 投递",
   ContextSnapshotPrepared: "准备上下文", session_capabilities: "本次可用能力",
   InputResourcesDispatched: "输入资源", TurnError: "任务异常",
 };
@@ -41,28 +43,29 @@ function Logs({ events, scope }: { events: GatewayObservation[]; scope: BodyScop
   </Disclosure>)}</>;
 }
 
-function StepCard({ step, index, open, terminal, scope, highlighted, onToggle, onConfig }: {
-  step: DisplayStep; index: number; open: boolean; terminal: boolean; scope: BodyScope; highlighted: boolean;
-  onToggle: (key: string, value: boolean) => void; onConfig: (event: GatewayObservation) => void;
+function StepCard({ step, index, open, terminal, scope, onToggle }: {
+  step: DisplayStep; index: number; open: boolean; terminal: boolean; scope: BodyScope;
+  onToggle: (key: string, value: boolean) => void;
 }) {
   const event = step.event;
   const cached = useQuery<ObservationBody>({ queryKey: ["observation-body", scope.instanceId, scope.runId, event.body_ref], enabled: false });
   const body = !scope.expired && cached.data?.payload && typeof cached.data.payload === "object" ?
     cached.data.payload as Record<string, unknown> : {};
-  const error = String(body.error || body.message && event.status === "failed" && body.message || event.data?.code || "");
+  const error = String(step.delivery?.errorCode || body.error || body.message && event.status === "failed" && body.message || event.data?.code || "");
   const summary = String(body.summary || event.data?.summary || event.data?.finish_reason ||
     (event.data?.tool_count != null ? "本次可用工具 " + event.data.tool_count + " 个" : ""));
-  const incomplete = !!step.start && !step.finish && terminal;
-  const state = incomplete ? { label: "结束未记录", color: "orange" } : runState(event.status ?? "unknown");
+  const state = stepState(step, terminal);
   const elapsed = event.elapsed_ms ?? (step.start && step.finish ? Math.max(0, step.finish.created_at - step.start.created_at) * 1000 :
+    step.start && step.delivery && !["pending", "submitting", "gateway_accepted", "provider_submitted"].includes(step.delivery.status) ?
+      (step.delivery.observedAt >= step.start.created_at ? (step.delivery.observedAt - step.start.created_at) * 1000 : null) :
     step.start && !terminal ? (Date.now() / 1000 - step.start.created_at) * 1000 : null);
   const usage = event.data?.usage as Record<string, number> | undefined;
   const tokens = event.total_tokens ?? usage?.total_tokens;
   const estimated = step.start?.data?.input_estimated_tokens ?? event.data?.input_estimated_tokens;
   const boundary = step.start ?? event;
   const payloadEvents = [step.start, step.finish ?? (!step.start ? event : undefined)].filter((item): item is GatewayObservation => !!item);
-  return <article data-step-key={step.key} data-entity-id={event.entity_id} data-status={incomplete ? "unknown" : event.status}
-    className={"obs-step-card" + (highlighted ? " is-highlighted" : "") + (event.status === "failed" ? " is-failed" : "")}
+  return <article data-step-key={step.key} data-entity-id={event.entity_id} data-status={state.status}
+    className={"obs-step-card" + (state.status === "failed" ? " is-failed" : "")}
     style={{ "--step-depth": Math.min(step.depth, 6) } as CSSProperties}>
     <div className="obs-step-header">
       <button type="button" className="obs-step-toggle" aria-expanded={open} aria-controls={"obs-step-body-" + event.seq}
@@ -72,7 +75,6 @@ function StepCard({ step, index, open, terminal, scope, highlighted, onToggle, o
           <span className="obs-step-route">{event.source && event.target ? layerName(event.source) + " → " + layerName(event.target) : layerName(event.layer ?? event.target ?? "gateway")}</span>
           {summary && <span className="obs-step-summary">{summary}</span>}
           {error && <span className="obs-step-error">{error}</span>}
-          {step.missingParent && <span className="obs-step-gap">父阶段未记录</span>}
           {step.finish && !step.start && <span className="obs-step-gap">开始未记录</span>}
         </span>
         <span className="obs-step-facts"><span>{dateTime(step.start?.created_at ?? event.created_at)}</span><strong>{duration(elapsed)}</strong>
@@ -80,10 +82,11 @@ function StepCard({ step, index, open, terminal, scope, highlighted, onToggle, o
           {typeof estimated === "number" && estimated > 0 && <span>输入估算 {estimated.toLocaleString()} Token</span>}</span>
         <span className="obs-step-chevron" aria-hidden>{open ? "−" : "+"}</span>
       </button>
-      {boundary.entity_id && <Button size="mini" className="obs-step-config" onClick={() => onConfig(boundary)}>查看配置</Button>}
     </div>
     {step.permissions.length > 0 && <div className="obs-step-permissions"><Permissions events={step.permissions} scope={scope} /></div>}
     {open && <div className="obs-step-body" id={"obs-step-body-" + event.seq}>
+      {step.missingParent && <p className="obs-muted">上级调用未采集，本步骤的输入、结果和状态可独立查看。</p>}
+      {step.delivery && <p className="obs-muted">投递状态来自此消息的交付记录 · {dateTime(step.delivery.observedAt)}</p>}
       {event.data?.relation === "background_task" && <Alert type="info" content={"后台任务 " + String(event.data.related_task_id) + " · " + String(event.data.related_task_state ?? "状态未记录") + "。独立执行过程尚未接入。"} />}
       <div className="obs-step-payloads">{payloadEvents.map((item) => <section key={item.seq}>
         {item.body_ref || item.body_state && item.body_state !== "not_recorded" ?
@@ -96,6 +99,7 @@ function StepCard({ step, index, open, terminal, scope, highlighted, onToggle, o
         <EventBody event={context} scope={scope} title="模型可见上下文" />
       </Disclosure>)}
       {event.kind.startsWith("LlmCall") && !step.contexts.length && <p className="obs-muted">未记录可关联的上下文快照</p>}
+      {(boundary.entity_id || boundary.refs?.length) && <ExecutionConfiguration {...scope} event={boundary} />}
       {!!step.logs.length && <section aria-label="步骤日志"><h4>步骤日志</h4><Logs events={step.logs} scope={scope} /></section>}
       <Disclosure title="阶段原始记录"><TextPreview text={JSON.stringify({ start: step.start, finish: step.finish, event: !step.start && !step.finish ? event : undefined }, null, 2)} /></Disclosure>
     </div>}
@@ -110,17 +114,15 @@ function loadExpanded(key: string): Record<string, boolean> {
   } catch { return {}; }
 }
 
-export default function RunInspector({ instanceId, detail, events, visible, focusRequest, onViewConfig, onMore, hasMore, fetchingMore }: {
+export default function RunInspector({ instanceId, detail, events, visible, onMore, hasMore, fetchingMore }: {
   instanceId: string; detail: GatewayRunDetail; events: GatewayObservation[]; visible: boolean;
-  focusRequest?: { entity: string; revision: number }; onViewConfig: (event: GatewayObservation) => void;
   onMore: () => void; hasMore: boolean; fetchingMore: boolean;
 }) {
   const run = detail.run;
   const storageKey = "obs:steps:" + instanceId + ":" + run.run_id;
   const [expanded, setExpanded] = useState(() => loadExpanded(storageKey));
   const [, tick] = useState(0);
-  const container = useRef<HTMLElement>(null);
-  const view = useMemo(() => buildRunView(events), [events]);
+  const view = useMemo(() => buildRunView(events, detail), [events, detail]);
   const terminal = ["completed", "failed", "aborted"].includes(run.state);
   const scope: BodyScope = { instanceId, runId: run.run_id, expired: !!run.details_expired, active: visible };
   useEffect(() => { try { sessionStorage.setItem(storageKey, JSON.stringify(expanded)); } catch { /* Browser storage can be disabled. */ } }, [expanded, storageKey]);
@@ -129,21 +131,8 @@ export default function RunInspector({ instanceId, detail, events, visible, focu
     const timer = window.setInterval(() => tick((value) => value + 1), 1000);
     return () => window.clearInterval(timer);
   }, [terminal, visible]);
-  useEffect(() => {
-    if (!focusRequest) return;
-    const matching = view.steps.filter((step) => related(step.event, focusRequest.entity) || step.start && related(step.start, focusRequest.entity));
-    setExpanded((current) => ({ ...current, ...Object.fromEntries(matching.map((step) => [step.key, true])) }));
-    const target = Array.from(container.current?.querySelectorAll<HTMLElement>("[data-step-key]") ?? [])
-      .find((element) => element.dataset.stepKey === matching[0]?.key);
-    const frame = requestAnimationFrame(() => {
-      target?.scrollIntoView({ block: "start" });
-      target?.querySelector<HTMLButtonElement>(".obs-step-toggle")?.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(frame);
-    // A locator action scrolls once; polling must not move the reader.
-  }, [focusRequest]);
   const toggle = (key: string, value: boolean) => setExpanded((current) => ({ ...current, [key]: value }));
-  return <section ref={container} className="obs-run" aria-label="任务运行过程">
+  return <section className="obs-run" aria-label="任务运行过程">
     <header className="obs-run-heading"><div><strong>任务运行</strong><code title={run.run_id}>{run.run_id}</code></div>
       <Tag color={runState(run.state).color}>{runState(run.state).label}</Tag></header>
     <div className="obs-run-meta"><span>开始 {dateTime(run.started_at ?? run.created_at)}</span><span>耗时 {duration(runDuration(run))}</span>
@@ -155,13 +144,14 @@ export default function RunInspector({ instanceId, detail, events, visible, focu
     {detail.legacy && <Alert type="info" content="历史记录未包含执行时配置及完整调用详情。" />}
     {(detail.truncated || detail.sanitization_truncated) && <Alert type="warning" content="当前响应包含截断记录，不能视为完整过程。" />}
     <ObservationPayload {...scope} reference={run.input_ref} title="任务输入" />
+    <Disclosure title="执行时配置"><ExecutionConfiguration {...scope} /></Disclosure>
     <div className="obs-flow-toolbar"><strong>执行过程 · {view.steps.length} 步{hasMore ? "（还有后续记录）" : ""}</strong><Space size="small">
       <Button size="mini" onClick={() => setExpanded((current) => ({ ...current, ...Object.fromEntries(view.steps.map((step) => [step.key, true])) }))}>展开全部</Button>
       <Button size="mini" onClick={() => setExpanded((current) => ({ ...current, ...Object.fromEntries(view.steps.map((step) => [step.key, false])) }))}>收起全部</Button>
     </Space></div>
     <div className="obs-flow" aria-label="执行时间轴">{view.steps.length ? view.steps.map((step, index) =>
       <StepCard key={step.key} step={step} index={index} open={stepIsOpen(step, expanded, terminal)} terminal={terminal} scope={scope}
-        highlighted={!!focusRequest && related(step.event, focusRequest.entity)} onToggle={toggle} onConfig={onViewConfig} />) :
+        onToggle={toggle} />) :
       <Empty description="尚未记录执行阶段" />}</div>
     {hasMore && <Button long loading={fetchingMore} onClick={onMore}>加载后续记录</Button>}
     <section className="obs-run-result">

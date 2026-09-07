@@ -6,7 +6,7 @@
 #   - 控制台「日志」按钮         实时跟流（SSE），机器人正在跑想看新日志
 #   - update_instance.sh       WSL 源仓 → 实例副本，同步代码并重启实例
 #   - start.sh --apply-config  渲染 cc-connect 配置并启动
-#   - dump.sh                  唯一权威"出 bug 一键全拍"入口（控制台「诊断」按钮调它）
+#   - dump.sh                  命令行离线快照；采集 legacy 文件日志，不包含 Gateway journald 或观测索引
 #
 # 输出布局（多实例时按 instance_id 分子目录，单实例同样保持，路径一致）：
 #   _wsl_debug/<YYYY-MM-DD_HHMMSS>/

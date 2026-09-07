@@ -275,14 +275,6 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                             更新并重启
                           </Button>
                         </Tooltip>
-                        <Tooltip content="生成一份只读诊断快照。">
-                          <Button
-                            loading={isBusy(selectedBot.instance_id)}
-                            onClick={() => void handleAction(selectedBot, "dump")}
-                          >
-                            诊断
-                          </Button>
-                        </Tooltip>
                       </Space>
                     )}
                     <Button onClick={() => openLogs(selectedBot)}>服务日志</Button>

@@ -18,13 +18,12 @@
 .obs-step-card::before { position: absolute; left: calc(-13px - var(--step-depth, 0) * 18px); top: 26px; width: calc(13px + var(--step-depth, 0) * 18px); border-top: var(--cc-border); content: ""; }
 .obs-step-card.is-failed { border-color: rgb(var(--danger-4)); }
 .obs-step-card[data-status="running"] { border-color: rgb(var(--warning-4)); }
-.obs-step-card.is-highlighted { outline: 2px solid var(--cc-primary); outline-offset: 1px; }
 .obs-step-header { display: flex; gap: 8px; align-items: flex-start; }
 .obs-step-toggle { flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto 12px; align-items: start; gap: 12px; padding: 13px 14px; color: var(--cc-text-primary); background: transparent; border: none; text-align: left; cursor: pointer; font: inherit; }
 .obs-step-dot { position: absolute; left: -18px; top: 21px; z-index: 1; width: 10px; height: 10px; box-sizing: border-box; border: 2px solid var(--cc-meta); border-radius: 50%; background: var(--cc-bg-card); }
-.obs-step-card[data-status="succeeded"] .obs-step-dot, .obs-step-card[data-status="completed"] .obs-step-dot { border-color: var(--cc-success); }
+.obs-step-card:is([data-status="succeeded"], [data-status="completed"], [data-status="provider_acknowledged"], [data-status="platform_displayed"], [data-status="user_read"]) .obs-step-dot { border-color: var(--cc-success); }
 .obs-step-card[data-status="failed"] .obs-step-dot { border-color: var(--cc-danger); }
-.obs-step-card[data-status="running"] .obs-step-dot { border-color: var(--cc-warning); }
+.obs-step-card:is([data-status="running"], [data-status="pending"], [data-status="submitting"], [data-status="gateway_accepted"], [data-status="provider_submitted"], [data-status="delivery_unknown"]) .obs-step-dot { border-color: var(--cc-warning); }
 .obs-step-toggle:hover { background: var(--cc-bg-subtle); }
 .obs-step-toggle:focus-visible, .obs-link:focus-visible, .obs-disclosure > summary:focus-visible { outline: 2px solid var(--cc-primary); outline-offset: -2px; }
 .obs-step-index { flex: none; color: var(--cc-text-tertiary); font: 12px/22px ui-monospace, monospace; }
@@ -39,7 +38,6 @@
 .obs-step-error { color: var(--cc-danger); }
 .obs-step-gap { color: var(--cc-warning); }
 .obs-step-chevron { color: var(--cc-text-tertiary); font-size: 16px; flex: none; line-height: 22px; }
-.obs-step-config { flex: none; margin: 13px 12px 0 0; }
 .obs-step-body { padding: 0 14px 12px; border-top: var(--cc-border); background: var(--cc-bg-subtle); }
 .obs-step-payloads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .obs-step-payloads > section { min-width: 0; }
@@ -77,7 +75,10 @@
 .obs-workbench .arco-tag { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
 .obs-configuration { display: flex; flex-direction: column; gap: 12px; min-width: 0; font-size: 12px; }
 .obs-config-toolbar { position: sticky; top: 0; z-index: 2; padding: 10px 0; background: var(--cc-bg-card); border-bottom: var(--cc-border); }
-.obs-config-toolbar .arco-select { max-width: 240px; }
+.obs-config-toolbar .obs-pane-heading { flex-wrap: wrap; }
+.obs-execution-config { margin: 14px 0; padding: 12px; border: var(--cc-border); border-radius: 4px; background: var(--cc-bg-card); }
+.obs-execution-config-item { margin-top: 12px; }
+.obs-execution-config-item + .obs-execution-config-item { padding-top: 8px; border-top: var(--cc-border); }
 .obs-config-toolbar .obs-config-version { margin-top: 8px; }
 .obs-config-version { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 5px; color: var(--cc-text-tertiary); font-variant-numeric: tabular-nums; }
 .obs-config-anchors { display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 10px 0; border-top: var(--cc-border); border-bottom: var(--cc-border); }
@@ -121,7 +122,6 @@
   .obs-step-toggle { flex-basis: 100%; grid-template-columns: minmax(0, 1fr) 12px; padding: 10px 8px; gap: 7px; }
   .obs-step-facts { grid-column: 1; grid-row: 2; display: flex; flex-wrap: wrap; text-align: left; gap: 5px 12px; }
   .obs-step-chevron { grid-column: 2; grid-row: 1; }
-  .obs-step-config { margin: 0 10px 10px auto; }
   .obs-step-body, .obs-step-permissions { padding-left: 10px; padding-right: 10px; }
   .obs-step-card { margin-left: calc(var(--step-depth, 0) * 4px); }
   .obs-step-card::before { left: calc(-13px - var(--step-depth, 0) * 4px); width: calc(13px + var(--step-depth, 0) * 4px); }

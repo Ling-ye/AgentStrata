@@ -4,7 +4,7 @@ import { api } from "../../api";
 import { useBusyMap } from "../../shared/hooks/useBusyMap";
 import type { BotInstance, Task } from "../../types";
 
-export type ActionVerb = "start" | "stop" | "restart" | "update" | "dump";
+export type ActionVerb = "start" | "stop" | "restart" | "update";
 
 interface Options {
   bots: BotInstance[];
@@ -29,12 +29,8 @@ export function useBotActions({ bots, refreshStatuses, openTask }: Options) {
           Message.success(`${bot.display_name}：${verb} 成功`);
           await refreshStatuses(bots);
         } else {
-          const task =
-            verb === "update"
-              ? await api.update(bot.instance_id)
-              : await api.dump(bot.instance_id);
-          const label = verb === "update" ? "更新并重启" : "诊断快照";
-          openTask(bot, label, task, { resolveFinalStatus: verb === "update" });
+          const task = await api.update(bot.instance_id);
+          openTask(bot, "更新并重启", task, { resolveFinalStatus: true });
         }
       } catch (e) {
         Message.error(`${bot.display_name}：${e instanceof Error ? e.message : String(e)}`);

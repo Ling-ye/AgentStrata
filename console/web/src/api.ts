@@ -92,7 +92,6 @@ export const api = {
   rebuild: (id: string, restart = true) =>
     req<Task>(`/api/bots/${id}/rebuild?restart=${restart}`, { method: "POST" }),
   update: (id: string) => req<Task>(`/api/bots/${id}/update`, { method: "POST" }),
-  dump: (id: string) => req<Task>(`/api/bots/${id}/dump`, { method: "POST" }),
 
   // 首次部署
   provisionSchema: (id: string) => req<ProvisionSchema>(`/api/bots/${id}/provision/schema`),

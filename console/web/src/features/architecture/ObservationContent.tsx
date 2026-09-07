@@ -44,11 +44,12 @@ function fieldRows(value: unknown, limit: number, path: string[] = [], rows: Arr
   return rows;
 }
 
-export function ConfigFields({ value }: { value: unknown }) {
+export function ConfigFields({ value, missingLabel = "未记录" }: { value: unknown; missingLabel?: string }) {
   const [limit, setLimit] = useState(60);
   const rows = fieldRows(value, limit);
   return <><dl className="obs-fields">{rows.slice(0, limit).map(([key, item], index) => <div key={`${key}:${index}`}>
-    {key && <dt>{key}</dt>}<dd>{item == null ? <span className="obs-muted">未记录</span> :
+    {key && <dt>{key}</dt>}<dd>{item == null ? <span className="obs-muted">{missingLabel}</span> :
+      item === "" ? <span className="obs-muted">已留空</span> :
       <TextPreview text={typeof item === "boolean" ? item ? "是" : "否" : typeof item === "object" ? "无" : String(item)} />}</dd>
   </div>)}</dl>{rows.length > limit && <Button size="small" onClick={() => setLimit(limit + 60)}>显示更多字段</Button>}</>;
 }
@@ -87,7 +88,7 @@ export function Disclosure({ title, children }: { title: ReactNode; children: Re
   </details>;
 }
 
-function useInView() {
+export function useInView() {
   const ref = useRef<HTMLElement>(null);
   const [visible, setVisible] = useState(false);
   useEffect(() => {

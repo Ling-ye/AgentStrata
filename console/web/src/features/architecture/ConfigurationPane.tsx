@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Empty, Input, Select, Spin, Tag } from "@arco-design/web-react";
-import type { Configuration, Inspection, InspectionEntity } from "./workbenchModel";
+import { Alert, Button, Empty, Input, Spin, Tag } from "@arco-design/web-react";
+import type { Inspection, InspectionEntity } from "./workbenchModel";
 import { dateTime } from "./workbenchModel";
 import { ConfigFields, FIELD_NAMES } from "./ObservationContent";
-
-type Source = "current" | "loaded" | "execution";
+import { latestConfiguration } from "./configurationModel";
 
 function EntityState({ entity }: { entity: InspectionEntity }) {
   return <span className="obs-entity-states">
@@ -15,14 +14,13 @@ function EntityState({ entity }: { entity: InspectionEntity }) {
   </span>;
 }
 
-export default function ConfigurationPane({ inspection, loading, error, runId, selectedEntity, revealVersion, onLocate, onEdit, callableEntities }: {
-  inspection?: Inspection; loading: boolean; error: Error | null; runId: string;
-  selectedEntity: string; revealVersion: number; onLocate: (entity: string) => void; onEdit: () => void; callableEntities: Set<string>;
+export default function ConfigurationPane({ inspection, loading, error, selectedEntity, revealVersion, onEdit }: {
+  inspection?: Inspection; loading: boolean; error: Error | null; selectedEntity: string;
+  revealVersion: number; onEdit: () => void;
 }) {
-  const [source, setSource] = useState<Source>(runId ? "execution" : "current");
   const [search, setSearch] = useState("");
   const pane = useRef<HTMLElement>(null);
-  const config: Configuration | null | undefined = inspection?.[source];
+  const config = latestConfiguration(inspection);
   const selectedLayer = config?.entities.find((item) => item.id === selectedEntity)?.layer;
   useEffect(() => {
     if (!selectedEntity || !selectedLayer) return;
@@ -32,18 +30,18 @@ export default function ConfigurationPane({ inspection, loading, error, runId, s
       target?.scrollIntoView({ block: "start" });
     });
     return () => cancelAnimationFrame(frame);
-  }, [selectedEntity, selectedLayer, source, revealVersion]);
+  }, [selectedEntity, selectedLayer, revealVersion]);
   return <section ref={pane} className="obs-configuration" aria-label="分层配置">
-    <div className="obs-config-toolbar"><div className="obs-pane-heading"><Select aria-label="配置来源" value={source} onChange={setSource} options={[
-      { value: "execution", label: "任务执行时配置", disabled: !runId },
-      { value: "loaded", label: "运行中已加载配置" }, { value: "current", label: "当前配置" },
-    ]} /><Button size="small" onClick={onEdit}>编辑配置</Button></div>
+    <div className="obs-config-toolbar"><div className="obs-pane-heading"><strong>当前配置</strong>
+      <Button size="small" onClick={onEdit}>编辑配置</Button></div>
       <div className="obs-config-version"><span>版本 {config?.configuration_revision?.slice(0, 10) ?? "未记录"}</span>
-        {source === "loaded" && <span>{dateTime(inspection?.loaded_meta?.observed_at)}</span>}</div></div>
-    {inspection?.pending_changes && <Alert type="warning" content="当前配置存在尚未应用的变更" />}
-    {source === "loaded" && inspection?.loaded_stale && <Alert type="warning" content="运行快照已过期，当前状态未确认" />}
+        {inspection && <span>更新于 {dateTime(inspection.generated_at)}</span>}</div></div>
+    {inspection?.pending_changes && <Alert type="warning" content="最新配置尚未应用到服务。" />}
+    {inspection && (!inspection.loaded || inspection.loaded_stale) && <Alert type="info" content="运行状态暂未更新，配置内容已按当前保存的设置展示。" />}
+    {!!inspection?.errors.length && <Alert type="warning" content={inspection.errors.map((item) => item.message).join("；")} />}
+    {inspection?.sanitization_truncated && <Alert type="warning" content="配置响应已截断，当前仅显示已取得的字段。" />}
     {error && <Alert type="error" content={"配置读取失败：" + error.message} />}
-    {loading ? <Spin /> : !config ? <Empty description={source === "execution" ? "此任务未记录执行时配置" : "未取得配置快照"} /> : <>
+    {loading ? <Spin /> : !config ? <Empty description="未取得当前配置" /> : <>
       {!!config.validation?.length && <Alert type="warning" content={config.validation.map((item) => item.field + "：" + item.message).join("；")} />}
       {selectedEntity && !selectedLayer && <Alert type="info" content={"未记录此组件的配置：" + selectedEntity} />}
       <Input aria-label="搜索配置组件" placeholder="搜索配置、模型或组件" allowClear value={search} onChange={setSearch} />
@@ -54,18 +52,17 @@ export default function ConfigurationPane({ inspection, loading, error, runId, s
         }}>{layer.name}</button>)}</nav>
       <div className="obs-layer-list">{config.layers.map((layer) => {
         const entities = config.entities.filter((entity) => entity.layer === layer.id &&
-          (entity.name + " " + entity.id).toLowerCase().includes(search.toLowerCase()));
+          (entity.name + " " + entity.id + " " + JSON.stringify(entity.config) + " " + JSON.stringify(entity.environment)).toLowerCase().includes(search.toLowerCase()));
         if (search && !entities.length) return null;
         return <section key={layer.id} data-layer-id={layer.id} className="obs-layer">
           <h3>{layer.name}<small>{entities.length}</small></h3>
           {!entities.length && <p className="obs-muted">未配置组件</p>}
           {entities.map((entity) => <article key={entity.id} data-entity-id={entity.id} className={"obs-entity" + (selectedEntity === entity.id ? " is-selected" : "")}>
-            <div className="obs-pane-heading"><strong>{FIELD_NAMES[entity.name] ?? entity.name}</strong>
-              {callableEntities.has(entity.id) && <Button size="mini" onClick={() => onLocate(entity.id)}>定位调用</Button>}</div>
+            <div className="obs-pane-heading"><strong>{FIELD_NAMES[entity.name] ?? entity.name}</strong></div>
             <EntityState entity={entity} />
-            <ConfigFields value={entity.config} />
+            <ConfigFields value={entity.config} missingLabel="未设置" />
             {entity.runtime && <><h4>运行信息</h4><ConfigFields value={entity.runtime} /></>}
-            {entity.environment && Object.keys(entity.environment).length > 0 && <><h4>环境配置</h4><ConfigFields value={entity.environment} /></>}
+            {entity.environment && Object.keys(entity.environment).length > 0 && <><h4>环境配置</h4><ConfigFields value={entity.environment} missingLabel="未设置" /></>}
           </article>)}
         </section>;
       })}</div>
