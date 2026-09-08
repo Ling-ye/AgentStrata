@@ -37,6 +37,21 @@ afterEach(() => {
 });
 
 describe("task flow API", () => {
+  it.each(["list", "run", "events"])("cancels an abandoned observation %s request", async (kind) => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = kind === "list" ? api.gatewayObservation("bot-a", { page: 2 }, controller.signal) :
+      kind === "run" ? api.gatewayRun("bot-a", "run/17", controller.signal) :
+        api.observationEvents("bot-a", "run/17", 200, controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/bots/bot-a/gateway-observation");
+    if (kind !== "list") expect(fetchMock.mock.calls[0][0]).toContain("/runs/run%2F17");
+  });
+
   it("uses the instance-scoped encoded flow endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

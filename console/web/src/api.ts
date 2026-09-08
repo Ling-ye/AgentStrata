@@ -54,10 +54,10 @@ async function fireAndForgetReq<T>(url: string, init?: RequestInit, fallback?: T
 export const api = {
   inspection: (id: string, runId?: string, eventSeq?: number) => req<Inspection>(`/api/bots/${encodeURIComponent(id)}/inspection${runId ? `?run_id=${encodeURIComponent(runId)}${eventSeq != null ? `&event_seq=${eventSeq}` : ""}` : ""}`),
   observationMetrics: (id: string, filters: ObservationFilters) => req<ObservationMetrics>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/metrics${observationQuery(filters)}`),
-  observationEvents: (id: string, runId: string, after = 0) => req<EventPage>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}/events?after=${after}`),
+  observationEvents: (id: string, runId: string, after = 0, signal?: AbortSignal) => req<EventPage>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}/events?after=${after}`, { signal }),
   observationBody: (id: string, runId: string, bodyId: string, signal?: AbortSignal) => req<ObservationBody>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}/details/${encodeURIComponent(bodyId)}`, { signal }),
-  gatewayObservation: (id: string, filters?: ObservationFilters) => req<GatewayOverview>(`/api/bots/${encodeURIComponent(id)}/gateway-observation${observationQuery(filters)}`),
-  gatewayRun: (id: string, runId: string) => req<GatewayRunDetail>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}`),
+  gatewayObservation: (id: string, filters?: ObservationFilters, signal?: AbortSignal) => req<GatewayOverview>(`/api/bots/${encodeURIComponent(id)}/gateway-observation${observationQuery(filters)}`, { signal }),
+  gatewayRun: (id: string, runId: string, signal?: AbortSignal) => req<GatewayRunDetail>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}`, { signal }),
   overview: () => req<Overview>("/api/overview"),
   listBots: () => req<BotInstance[]>("/api/bots"),
   status: (id: string) => req<BotStatus>(`/api/bots/${id}/status`),

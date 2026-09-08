@@ -5,6 +5,7 @@ import ProvisionWizard from "../components/ProvisionWizard";
 import { useBotActions } from "../features/bots/useBotActions";
 import { useBotsOverview } from "../features/bots/useBotsOverview";
 import ObservationWorkbench from "../features/architecture/ObservationWorkbench";
+import { botTabFromParams } from "../features/architecture/taskWorkspaceState";
 import BotRuntimePanel from "../features/bots/BotRuntimePanel";
 import { api, streamLogs, streamTask } from "../api";
 import type { BotInstance, BotStatus, Task } from "../types";
@@ -21,10 +22,7 @@ interface Props {
 const { Title } = Typography;
 
 function tabFromLocation() {
-  const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
-  const tab = params.get("tab");
-  return ["observation", "history", "configuration", "runtime", "capabilities"].includes(tab ?? "")
-    ? tab! : params.has("entity") ? "configuration" : "observation";
+  return botTabFromParams(new URLSearchParams(window.location.hash.split("?")[1] ?? ""));
 }
 
 function rosterState(status: BotStatus | undefined) {
@@ -59,11 +57,18 @@ export default function BotsPage({ loadError, visible = true }: Props) {
 
   useEffect(() => {
     const navigate = () => {
+      if (window.location.hash.split("?")[0] !== "#bots") return;
       const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
       const instance = params.get("instance");
       if (instance) setSelectedBotId(instance);
-      setActiveTab(tabFromLocation());
+      const tab = botTabFromParams(params);
+      setActiveTab(tab);
+      if (params.get("tab") !== tab) {
+        params.set("tab", tab);
+        window.history.replaceState(null, "", "#bots?" + params);
+      }
     };
+    navigate();
     window.addEventListener("hashchange", navigate);
     return () => window.removeEventListener("hashchange", navigate);
   }, []);
@@ -83,10 +88,10 @@ export default function BotsPage({ loadError, visible = true }: Props) {
   const selectedInventory = selectedBot ? inventoryMap[selectedBot.instance_id] : undefined;
 
   const navigateTab = (tab: string) => {
-    setActiveTab(tab);
     const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
     params.set("instance", selectedBotId);
     params.set("tab", tab);
+    setActiveTab(botTabFromParams(params));
     if (tab !== "configuration") params.delete("entity");
     window.history.replaceState(null, "", "#bots?" + params);
   };
@@ -282,8 +287,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                 </header>
 
                 <Tabs type="line" activeTab={activeTab} onChange={navigateTab} className="bot-instance-tabs">
-                  <Tabs.TabPane title="运行观测" key="observation" />
-                  <Tabs.TabPane title="任务记录" key="history" />
+                  <Tabs.TabPane title="任务" key="tasks" />
                   <Tabs.TabPane title="分层配置" key="configuration" />
                   <Tabs.TabPane title="运行状态" key="runtime">
                     <BotRuntimePanel
@@ -295,7 +299,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                     <div className="bot-capability-panel">
                       <div className="bot-capability-heading">
                         <Title heading={5}>能力配置</Title>
-                        <Button onClick={() => navigateTab("observation")}>返回运行观测</Button>
+                        <Button onClick={() => navigateTab("tasks")}>返回任务</Button>
                       </div>
                       <BotToolEditor
                         instanceId={selectedBot.instance_id}
@@ -307,9 +311,9 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                   </Tabs.TabPane>
                 </Tabs>
                 <ObservationWorkbench key={selectedBot.instance_id} bot={selectedBot}
-                  view={activeTab === "history" || activeTab === "configuration" ? activeTab : "observation"}
-                  visible={visible && ["observation", "history", "configuration"].includes(activeTab)}
-                  onNavigate={navigateTab} onEdit={() => navigateTab("capabilities")} />
+                  view={activeTab === "configuration" ? "configuration" : "tasks"}
+                  visible={visible && ["tasks", "configuration"].includes(activeTab)}
+                  onEdit={() => navigateTab("capabilities")} />
               </section>
             )}
           </div>

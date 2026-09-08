@@ -1,142 +1,125 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Alert, Button, Empty, Input, Pagination, Select, Spin, Tag } from "@arco-design/web-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { Alert, Button, Empty, Spin } from "@arco-design/web-react";
 import { api } from "../../api";
 import type { BotInstance } from "../../types";
 import BotTaskFlowPanel from "../bots/BotTaskFlowPanel";
 import ConfigurationPane from "./ConfigurationPane";
 import RunInspector from "./RunInspector";
-import { runState } from "./model";
-import { bodyState, dateTime, duration, runDuration, type ObservationFilters } from "./workbenchModel";
+import TaskRecordList from "./TaskRecordList";
+import { dateTime, type ObservationFilters } from "./workbenchModel";
+import { readSessionValue, saveSessionValue, taskWorkspaceState } from "./taskWorkspaceState";
+import { useTaskReadingPosition } from "./useTaskReadingPosition";
 
-type ObservationView = "observation" | "history" | "configuration";
-
-function initialState(instanceId: string): { selected: string; filters: ObservationFilters; range: string; customStart: string; customEnd: string } {
-  const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(`obs:${instanceId}`) || "{}");
-    return { selected: params.get("run") || saved.selected || "", filters: { ...saved.filters, ...(saved.range === "custom" ? {} : { since: Date.now() / 1000 - Number(saved.range || "1") * 86400, until: undefined }) }, range: saved.range || "1", customStart: saved.customStart || "", customEnd: saved.customEnd || "" };
-  } catch { return { selected: params.get("run") || "", filters: { since: Date.now() / 1000 - 86400, page: 1 }, range: "1", customStart: "", customEnd: "" }; }
-}
-
-export default function ObservationWorkbench({ bot, visible, view, onNavigate, onEdit }: {
-  bot: BotInstance; visible: boolean; view: ObservationView;
-  onNavigate: (view: ObservationView) => void; onEdit: () => void;
+export default function ObservationWorkbench({ bot, visible, view, onEdit }: {
+  bot: BotInstance; visible: boolean; view: "tasks" | "configuration"; onEdit: () => void;
 }) {
-  const initial = useMemo(() => initialState(bot.instance_id), [bot.instance_id]);
+  const initial = useMemo(() => taskWorkspaceState(bot.instance_id,
+    new URLSearchParams(window.location.hash.split("?")[1] ?? ""), readSessionValue(`obs:${bot.instance_id}`)), [bot.instance_id]);
   const [selected, setSelected] = useState(initial.selected);
   const [filters, setFilters] = useState<ObservationFilters>(initial.filters);
-  const [entity, setEntity] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("entity") || "");
-  const readingPosition = useRef(0);
-  const flowVisible = visible && view === "observation";
-  const [configReveal, setConfigReveal] = useState(0);
   const [range, setRange] = useState(initial.range);
   const [customStart, setCustomStart] = useState(initial.customStart);
   const [customEnd, setCustomEnd] = useState(initial.customEnd);
+  const [entity, setEntity] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("entity") || "");
+  const [configReveal, setConfigReveal] = useState(0);
+  const [wide, setWide] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
+  const workspace = useRef<HTMLDivElement>(null);
+  const taskPane = useRef<HTMLElement>(null);
+  const tasksVisible = visible && view === "tasks";
   const isGateway = bot.runtime_kind === "gateway";
+  const querying = tasksVisible && isGateway;
+  const flowVisible = tasksVisible && (wide || !listOpen && !!selected);
+  useLayoutEffect(() => {
+    if (tasksVisible && !wide && listOpen) workspace.current?.scrollIntoView({ block: "start", behavior: "instant" });
+  }, [tasksVisible, wide, listOpen]);
+  useEffect(() => {
+    const element = workspace.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => { if (entry.contentRect.width > 0) setWide(entry.contentRect.width >= 960); });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     const navigate = () => {
       const [page, query] = window.location.hash.slice(1).split("?");
       const params = new URLSearchParams(query);
       if (page !== "bots" || params.get("instance") && params.get("instance") !== bot.instance_id) return;
-      const run = params.get("run");
-      if (run) setSelected(run);
-      setEntity(params.get("entity") || "");
-      setConfigReveal((value) => value + 1);
+      if (params.get("run")) { setSelected(params.get("run")!); setListOpen(false); }
+      setEntity(params.get("entity") || ""); setConfigReveal((value) => value + 1);
     };
     window.addEventListener("hashchange", navigate);
     return () => window.removeEventListener("hashchange", navigate);
   }, [bot.instance_id]);
+  useEffect(() => { if (visible && view === "configuration") setConfigReveal((value) => value + 1); }, [visible, view]);
   useEffect(() => {
-    if (!flowVisible) return;
-    const frame = requestAnimationFrame(() => {
-      window.scrollTo(0, readingPosition.current);
-    });
-    const remember = () => { readingPosition.current = window.scrollY; };
-    window.addEventListener("scroll", remember, { passive: true });
-    return () => { cancelAnimationFrame(frame); window.removeEventListener("scroll", remember); };
-  }, [flowVisible]);
-  useEffect(() => {
-    if (visible && view === "configuration") setConfigReveal((value) => value + 1);
-  }, [visible, view]);
-  useEffect(() => {
-    if (!visible || range === "custom") return;
+    if (!querying || range === "custom") return;
     const timer = window.setInterval(() => setFilters((value) => ({ ...value, since: Date.now() / 1000 - Number(range) * 86400, until: undefined })), 60_000);
     return () => window.clearInterval(timer);
-  }, [visible, range]);
+  }, [querying, range]);
   const overview = useQuery({ queryKey: ["observation-history", bot.instance_id, filters],
-    queryFn: () => api.gatewayObservation(bot.instance_id, filters), enabled: visible && isGateway, refetchInterval: visible ? 5000 : false });
-  const detail = useQuery({ queryKey: ["observation-run", bot.instance_id, selected], queryFn: () => api.gatewayRun(bot.instance_id, selected),
-    enabled: visible && isGateway && !!selected, refetchInterval: visible ? 5000 : false });
+    queryFn: ({ signal }) => api.gatewayObservation(bot.instance_id, filters, signal), placeholderData: keepPreviousData,
+    enabled: querying, refetchInterval: querying ? 5000 : false });
+  const detail = useQuery({ queryKey: ["observation-run", bot.instance_id, selected],
+    queryFn: ({ signal }) => api.gatewayRun(bot.instance_id, selected, signal), enabled: querying && !!selected, refetchInterval: querying ? 5000 : false });
   const inspection = useQuery({ queryKey: ["inspection", bot.instance_id], queryFn: () => api.inspection(bot.instance_id),
     enabled: visible && view === "configuration", staleTime: 0, refetchInterval: visible && view === "configuration" ? 5000 : false });
+  const selectedDetail = detail.data?.run.run_id === selected ? detail.data : undefined;
   const eventPages = useInfiniteQuery({ queryKey: ["observation-events", bot.instance_id, selected], initialPageParam: 0,
-    queryFn: ({ pageParam }) => api.observationEvents(bot.instance_id, selected, pageParam),
+    queryFn: ({ pageParam, signal }) => api.observationEvents(bot.instance_id, selected, pageParam, signal),
     getNextPageParam: (last) => last.has_more ? last.next_cursor : undefined,
-    enabled: visible && !!selected && detail.data?.source === "observation_index", refetchInterval: visible ? 5000 : false });
-  const events = useMemo(() => eventPages.data?.pages.flatMap((page) => page.observations) ?? detail.data?.observations ?? [], [eventPages.data, detail.data]);
-  useEffect(() => { if (!selected && overview.data?.runs.length) setSelected(overview.data.runs[0].run_id); }, [selected, overview.data]);
-  useEffect(() => { try { sessionStorage.setItem(`obs:${bot.instance_id}`, JSON.stringify({ selected, filters, range, customStart, customEnd })); } catch { /* Private browsing may disable storage. */ } }, [bot.instance_id, selected, filters, range, customStart, customEnd]);
-  const changeFilters = (change: Partial<ObservationFilters>) => setFilters((previous) => ({ ...previous, page: 1, ...change }));
-  const selectRun = (runId: string) => {
-    setSelected(runId); readingPosition.current = 0;
-    const params = new URLSearchParams({ instance: bot.instance_id, run: runId });
+    enabled: querying && !!selected && selectedDetail?.source === "observation_index", refetchInterval: querying ? 5000 : false });
+  const events = useMemo(() => eventPages.data?.pages.flatMap((page) => page.observations) ?? selectedDetail?.observations ?? [], [eventPages.data, selectedDetail]);
+  useEffect(() => { if (querying && !selected && overview.data?.runs.length) setSelected(overview.data.runs[0].run_id); }, [querying, selected, overview.data]);
+  useEffect(() => saveSessionValue(`obs:${bot.instance_id}`, { selected, filters, range, customStart, customEnd }),
+    [bot.instance_id, selected, filters, range, customStart, customEnd]);
+  useEffect(() => {
+    if (!querying || !selected) return;
+    const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+    params.set("instance", bot.instance_id); params.set("run", selected); params.set("tab", "tasks"); params.delete("entity");
     window.history.replaceState(null, "", "#bots?" + params);
-    onNavigate("observation");
-  };
+  }, [querying, bot.instance_id, selected]);
+  useTaskReadingPosition({ instanceId: bot.instance_id, runId: selected, active: flowVisible && isGateway,
+    ready: !!selectedDetail && (selectedDetail.source !== "observation_index" || !!eventPages.data || !!eventPages.error),
+    container: taskPane, pages: eventPages.data?.pages.length ?? 1, hasMore: !!eventPages.hasNextPage,
+    fetchingMore: eventPages.isFetchingNextPage, fetchMore: eventPages.fetchNextPage });
+  const changeFilters = (change: Partial<ObservationFilters>) => setFilters((previous) => ({ ...previous, page: 1, ...change }));
   const refresh = () => {
-    if (view === "configuration") void inspection.refetch();
-    if (isGateway) void overview.refetch();
-    if (isGateway && selected) void detail.refetch();
-    if (selected && detail.data?.source === "observation_index") void eventPages.refetch();
+    if (view === "configuration") { void inspection.refetch(); return; }
+    if (!isGateway) return;
+    void overview.refetch(); if (selected) void detail.refetch();
+    if (selectedDetail?.source === "observation_index") void eventPages.refetch();
   };
-  return <div className="obs-workbench" hidden={!visible}>
-    <div className="obs-toolbar"><Button loading={view === "configuration" ? inspection.isFetching : overview.isFetching} onClick={refresh}>刷新</Button></div>
-    <div hidden={view !== "observation"}>
-    {!!overview.data?.audit.length && <details className="obs-instance-audit"><summary>实例准入审计 · 最近 {overview.data.audit.length} 条</summary>
-      <table className="obs-table"><thead><tr><th>时间</th><th>决定</th><th>原因</th><th>策略版本</th></tr></thead><tbody>{overview.data.audit.map((item, index) => <tr key={index}><td>{dateTime(item.observed_at)}</td><td>{item.allowed ? "允许" : "拒绝"}</td><td>{item.code}</td><td>{item.policy_version}</td></tr>)}</tbody></table>
-      {overview.data.audit_truncated && <p className="obs-muted">此处显示最近 100 条实例审计。</p>}</details>}
-    {overview.error && <Alert type="warning" content={`任务记录读取失败：${overview.error.message}`} />}
-    </div>
-      <main className="obs-task-pane" hidden={isGateway ? view !== "observation" : view === "configuration"}>{!isGateway ? <BotTaskFlowPanel bot={bot} visible={visible && view !== "configuration"} /> :
-        detail.error ? <Alert type="error" content={`任务详情读取失败：${detail.error.message}`} /> :
-          detail.isLoading && selected ? <Spin tip="读取任务记录…" /> : detail.data && selected ? <>
-            {eventPages.error && <Alert type="warning" content="后续事件读取失败，当前展示已取得的记录。" />}
-            <RunInspector key={`${bot.instance_id}:${selected}`} instanceId={bot.instance_id} detail={detail.data} events={events} visible={flowVisible}
+  const outsideList = !!selected && !!overview.data && !overview.isPlaceholderData && !overview.error && !overview.data.runs.some((run) => run.run_id === selected);
+  return <div ref={workspace} className="obs-workbench" hidden={!visible}>
+    <div className="obs-toolbar">{tasksVisible && isGateway && !wide && selected &&
+      <Button onClick={() => setListOpen((value) => !value)}>{listOpen ? "返回任务" : "任务列表"}</Button>}
+      <Button loading={view === "configuration" ? inspection.isFetching : overview.isFetching} onClick={refresh}>刷新</Button></div>
+    <div hidden={!tasksVisible}>
+      {!!overview.data?.audit.length && <details className="obs-instance-audit"><summary>实例准入审计 · 最近 {overview.data.audit.length} 条</summary>
+        <table className="obs-table"><thead><tr><th>时间</th><th>决定</th><th>原因</th><th>策略版本</th></tr></thead><tbody>{overview.data.audit.map((item, index) => <tr key={index}><td>{dateTime(item.observed_at)}</td><td>{item.allowed ? "允许" : "拒绝"}</td><td>{item.code}</td><td>{item.policy_version}</td></tr>)}</tbody></table>
+        {overview.data.audit_truncated && <p className="obs-muted">此处显示最近 100 条实例审计。</p>}</details>}
+      {!isGateway ? <BotTaskFlowPanel bot={bot} visible={tasksVisible} /> : <div className="obs-tasks-layout" data-wide={wide}>
+        <div className="obs-list-column" hidden={!wide && !listOpen && !!selected}>
+          <TaskRecordList instanceId={bot.instance_id} selected={selected} data={overview.data} loading={overview.isFetching} error={overview.error}
+            filters={filters} range={range} customStart={customStart} customEnd={customEnd} onStart={setCustomStart} onEnd={setCustomEnd}
+            onRange={(value) => { setRange(value); if (value !== "custom") changeFilters({ since: Date.now() / 1000 - Number(value) * 86400, until: undefined }); }}
+            onFilter={changeFilters} onReset={() => { setRange("1"); setFilters({ since: Date.now() / 1000 - 86400, page: 1 }); }}
+            onPage={(page) => setFilters((value) => ({ ...value, page }))} onSelect={(id) => { setSelected(id); setListOpen(false); }} onRetry={() => void overview.refetch()} />
+        </div>
+        <main ref={taskPane} className="obs-task-pane" hidden={!wide && (listOpen || !selected)}>
+          {outsideList && <p className="obs-selection-notice">当前任务不在此列表中</p>}
+          {detail.error && <Alert type="warning" content={<><span>任务详情读取失败：{detail.error.message}</span><Button size="mini" onClick={() => void detail.refetch()}>重试</Button></>} />}
+          {selectedDetail && selected ? <>
+            {eventPages.error && <Alert type="warning" content={<><span>后续事件读取失败，当前展示已取得的记录。</span><Button size="mini" onClick={() => void eventPages.refetch()}>重试</Button></>} />}
+            <RunInspector key={`${bot.instance_id}:${selected}`} instanceId={bot.instance_id} detail={selectedDetail} events={events} visible={flowVisible}
               onMore={() => void eventPages.fetchNextPage()} hasMore={!!eventPages.hasNextPage} fetchingMore={eventPages.isFetchingNextPage} />
-          </> : <Empty description="当前时间范围没有任务记录" />}</main>
+          </> : detail.isLoading && selected ? <Spin tip="读取任务记录…" /> : !detail.error && <Empty description="选择任务查看运行过程" />}
+        </main>
+      </div>}
+    </div>
     {visible && view === "configuration" && <ConfigurationPane inspection={inspection.data} loading={inspection.isLoading} error={inspection.error}
-        selectedEntity={entity} revealVersion={configReveal} onEdit={onEdit} />}
-    <section className="obs-history" aria-label="任务记录" hidden={view !== "history" || !isGateway}>
-      <div className="obs-range-filter"><Select aria-label="观测时间范围" value={range} onChange={(value) => {
-        setRange(value); if (value !== "custom") changeFilters({ since: Date.now() / 1000 - Number(value) * 86400, until: undefined });
-      }} style={{ width: 150 }} options={[{ value: "1", label: "最近 24 小时" }, { value: "7", label: "最近 7 天" }, { value: "30", label: "最近 30 天" }, { value: "custom", label: "自定义时间" }]} />
-      {range === "custom" && <><input aria-label="开始时间" type="datetime-local" value={customStart} onChange={(event) => setCustomStart(event.target.value)} />
-        <input aria-label="结束时间" type="datetime-local" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} />
-        <Button disabled={!customStart || !customEnd || customStart > customEnd} onClick={() => changeFilters({ since: new Date(customStart).getTime() / 1000, until: new Date(customEnd).getTime() / 1000 })}>应用</Button></>}
-      </div>
-      <div className="obs-history-filters"><Input aria-label="搜索任务 ID" placeholder="搜索任务 ID" allowClear value={filters.search ?? ""} onChange={(search) => changeFilters({ search })} />
-        <Select aria-label="任务状态" placeholder="全部状态" value={filters.state || ""} onChange={(state) => changeFilters({ state })} options={[
-          { value: "", label: "全部状态" }, ...["accepted", "running", "completed", "failed", "aborted", "recovery_required"].map((value) => ({ value, label: runState(value).label }))]} />
-        <Input aria-label="配置版本筛选" placeholder="配置版本" allowClear value={filters.config_id ?? ""} onChange={(config_id) => changeFilters({ config_id })} />
-        <Input aria-label="模型筛选" placeholder="模型" allowClear value={filters.model ?? ""} onChange={(model) => changeFilters({ model })} />
-        <Input aria-label="组件筛选" placeholder="工具 / 插件 ID" allowClear value={filters.component ?? ""} onChange={(component) => changeFilters({ component })} />
-        <Input aria-label="错误码筛选" placeholder="错误码" allowClear value={filters.error_code ?? ""} onChange={(error_code) => changeFilters({ error_code })} />
-        <Select aria-label="后端筛选" value={filters.backend || ""} onChange={(backend) => changeFilters({ backend })} options={[{ value: "", label: "全部 Backend" }, ...["native", "langgraph", "codex"].map((value) => ({ value, label: value }))]} />
-        <Input aria-label="最短耗时" placeholder="最短耗时（毫秒）" value={filters.min_ms == null ? "" : String(filters.min_ms)} onChange={(value) => { if (!value || /^\d+$/.test(value)) changeFilters({ min_ms: value ? Number(value) : undefined }); }} />
-        <Button onClick={() => { setRange("1"); setFilters({ since: Date.now() / 1000 - 86400, page: 1 }); }}>重置筛选</Button>
-      </div>
-      {overview.error && <Alert type="warning" content={`任务记录读取失败：${overview.error.message}`} />}
-      {overview.data?.legacy && <Alert type="warning" content="实例尚未生成新的观测索引，当前仅显示已有近期记录。" />}
-      {overview.isFetching && <Spin size={14} />}
-      <div className="obs-table-scroll"><table className="obs-table"><thead><tr><th>任务</th><th>状态</th><th>开始时间</th><th>耗时</th><th>模型 / 配置</th><th>Token</th><th>详情</th></tr></thead>
-        <tbody>{overview.data?.runs.map((run) => <tr key={run.run_id} className={run.run_id === selected ? "is-selected" : ""}>
-          <td><button className="obs-link" onClick={() => selectRun(run.run_id)}>{run.run_id}</button></td>
-          <td><Tag color={runState(run.state).color}>{runState(run.state).label}</Tag></td><td>{dateTime(run.started_at ?? run.created_at)}</td><td>{duration(runDuration(run))}</td>
-          <td><span>{run.model ?? "未记录"}</span><small>{(run.config_revision ?? run.config_id)?.slice(0, 10) ?? "未记录版本"}</small></td><td>{run.total_tokens?.toLocaleString() ?? "未记录"}</td><td>{run.details_expired ? "已到期" : bodyState(run.capture_state ?? "not_recorded")}</td>
-        </tr>)}</tbody></table></div>
-      {!overview.data?.runs.length && <Empty description="没有符合筛选条件的任务" />}
-      {overview.data?.source === "observation_index" && <Pagination current={filters.page ?? 1} total={overview.data.total ?? 0} pageSize={50} showTotal onChange={(page) => setFilters((value) => ({ ...value, page }))} />}
-    </section>
+      selectedEntity={entity} revealVersion={configReveal} onEdit={onEdit} />}
   </div>;
 }
