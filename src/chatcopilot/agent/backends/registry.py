@@ -15,9 +15,9 @@ def backend_ids() -> frozenset[str]:
 def build_backend(backend_id: str, **kwargs) -> AgentBackend:
     normalized = str(backend_id or "native").strip().lower()
     if normalized in {"native", "langgraph"}:
-        from chatcopilot.agent.backends.inprocess import InProcessAgentBackend
+        from chatcopilot.agent.backends.inprocess import build_inprocess_backend
 
-        return InProcessAgentBackend(normalized, tool_names=set(kwargs["tool_names"]))
+        return build_inprocess_backend(normalized, **kwargs)
     if normalized == "codex":
         from chatcopilot.agent.backends.codex import CodexAgentBackend
 

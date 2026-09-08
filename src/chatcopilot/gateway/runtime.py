@@ -1,4 +1,4 @@
-"""Production composition and lifecycle for one Bot-owned Gateway."""
+"""Compose one Bot instance and own its process lifecycle outside the message-processing layers."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ from .protocol import (
     MUTATION_METHODS,
     StaticGatewayCredentialAuthority,
 )
-from .resources import QqCdnResourceFetcher
+from chatcopilot.channels.qq_onebot.resources import QqCdnResourceFetcher
 from .server import (
     GatewayClientContext,
     GatewayDispatchError,
@@ -246,7 +246,7 @@ class _ReadinessGuardedDispatcher:
 
 
 class GatewayRuntimeHost:
-    """Own the one-way startup and reverse-order shutdown of a composed Gateway."""
+    """Own one Bot instance, including startup and reverse-order shutdown of its runtime components."""
 
     def __init__(
         self,
@@ -624,7 +624,8 @@ def build_gateway_runtime_host(
             policy_version=config.policy_version,
             on_authorization_decision=record_authorization_decision,
         )
-        actor_executor = ActorTurnExecutor(actor_factory)
+        actor_executor = ActorTurnExecutor(actor_factory, resource_materializer=ResourceMaterializationService(
+            QqCdnResourceFetcher()))
         coordinator = GatewayTurnCoordinator(
             state_store=state_store,
             sessions=sessions,
@@ -640,15 +641,11 @@ def build_gateway_runtime_host(
                 policy_version=config.policy_version,
             ),
             generation=generation,
-            workspace_root=config.workspace_root,
-            resource_materializer=ResourceMaterializationService(
-                QqCdnResourceFetcher()
-            ),
             on_admission_decision=record_authorization_decision,
         )
         channel_runtime = ChannelRuntimeManager(
             state_store=state_store,
-            application_ingress=coordinator,
+            gateway_ingress=coordinator,
             event_sink=events,
             writer_generation=generation,
         )

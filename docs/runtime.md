@@ -1,8 +1,12 @@
 # AgentStrata 运行时
 
-运行时把 BotSpec、平台身份、模型配置、工具、上下文和权限装配成一个可持续多轮会话。
+机器人运行时按 Channel → Gateway → Application → Agent 四层处理消息，并通过结构化
+契约返回结果、协调投递。实例启动装配、Console 与 Evaluation 位于消息层之外；四层职责
+与源码依赖分别见 [architecture.md](architecture.md)。
 
 ## 启动路径
+
+以下是同一机器人宿主的启动过程，尚未执行用户消息：
 
 ```text
 bot.yaml
@@ -12,18 +16,24 @@ bot.yaml
   → Gateway state + singleton lease
   → tool registry + backend + application runtime
   → writer generation / durable recovery / authorization / Channel prepare
-  → authenticated WebSocket bind
+  → Gateway WebSocket bind
   → Channel activation
-  → Gateway session/run → actor SessionState
-  → AgentTask / AgentEvent / AgentResult → durable outbound / receipt
 ```
 
-`python -m chatcopilot run --bot bots/<id>/bot.yaml` 是运行入口。带顶层 `gateway` 的
-BotSpec 启动每实例长期 Gateway；QQ Channel 由该进程直接连接认证 OneBot provider。
+`python -m chatcopilot run --bot bots/<id>/bot.yaml` 是运行入口。`run.py` 解析 BotSpec 和
+环境，`gateway/runtime.py` 的 `build_gateway_runtime_host()` 负责唯一生产组装，
+`GatewayRuntimeHost` 负责启动与停止；`application/agent_runtime.py` 提供共享 Agent 装配。
+这些装配职责不属于四层消息处理，不要求独立服务。带顶层 `gateway` 的 BotSpec 启动每实例
+长期 Gateway；QQ Channel 由该宿主管理，直接连接认证 OneBot provider。
 ACP 另以 stdio edge 连接 Gateway，不再作为 runtime host。没有 `gateway` 的 Feishu
 实例继续走隔离的 legacy ACP/adapter 路径。Gateway 在组装 Agent、推进 writer generation、
 连接 Channel 或监听端口前必须取得同 state root 的非阻塞进程 lease；重复实例和不安全的
 lock 文件直接失败，正常停止以及构建、启动、取消和回滚失败路径都释放 descriptor。
+
+Channel 的 `start()` 准备连接和有界 worker，Gateway server 就绪后才 activate 消息接入。
+停止时先关闭 Channel 与 Gateway server，再取消并收束在途执行、关闭 actor 与 Agent 资源，
+最后释放实例 lease。具体连接重连由 Channel driver 处理。Console 继续使用独立的配置、
+观测和控制入口；Evaluation 继续由独立服务创建隔离执行，不依赖这条生产启动路径。
 
 ## Turn runtime
 
@@ -110,22 +120,27 @@ Gateway session 是持久 RPC/路由资源；`ConversationIdentity` 描述稳定
 chat ID，当前 `Principal` 另行绑定 channel/account/user/role/conversation。二者不能合并：
 同一群共享 conversation，并不共享 actor executor、backend resume、role、工具或 job 控制。
 
-QQ Channel 从认证 OneBot 结构化帧生成 `CanonicalInboundEvent`。transport evidence 绑定
-connection generation、Bot account、event/message ID、sender、conversation 与 frame digest；
-显示名、用户正文和 provider 实现名都不能建立权限。Gateway 执行顺序是：
+QQ Channel 先完成 provider 连接认证和 `get_login_info` 账号核验，再校验结构化平台事件、
+群消息的明确 @ 与 sender 字段，生成 `CanonicalInboundEvent`。transport evidence 绑定
+connection generation、Bot account、event/message ID、sender、conversation 与 frame digest。
+这些字段提供平台事件及其连接来源证据；用户白名单、群白名单和 Owner/Admin 角色由 Gateway 调用授权
+策略决定，显示名、用户正文和 provider 实现名都不能建立权限。普通消息的端到端主路径是：
 
 ```text
-transport verification
-  → identity / admission / bounded authorization audit
-  → durable admitted ingress
-  → actor activation / command authorization / approval resolution
-  → resource materialization
-  → task + Agent execution
-  → durable outbound
-  → provider receipt
-  → group journal commit
-  → task/run terminal state
+Channel：连接与结构化事件校验 → CanonicalInboundEvent
+  → Gateway：主体采信 / 准入 / 有界审计 → 持久 ingress、session/run
+  → Application：工作区与资源准备 → actor 会话、上下文和执行请求
+  → Agent：AgentTask → 模型、工具与委托 → AgentEvent / AgentResult
+  → Application：TurnOutcome(result, exchange)
+  → Gateway：持久 outbound → Channel：实际投递、provider receipt
+  → Gateway：保存并核对交付事实、取消状态和 writer generation
+  → Application：提交或丢弃本轮交换
+  → Gateway：run 终态
 ```
+
+这些箭头是职责与数据流，不是 Python import 方向。Channel 使用 Gateway 注入的回调上报
+事件，不导入 Gateway。执行结果和交付状态分开保存；失败、取消或缺少确认时不会沿成功
+路径提交群 journal。
 
 被拒绝的消息不保存正文或 provider URL。准入后的完整 event 与 exact Principal 先写入私有
 Gateway SQLite，再由 generation-fenced claim 执行。进程重启只恢复尚未 claim 的
@@ -148,8 +163,9 @@ actor session，避免下一轮看到未公开回答。SQLite 的 `gateway_accep
 `deliveries.get` 查询，但没有更强平台证据时不能声称 QQ 客户端已显示或用户已读。
 
 QQ media 先转换为 event-bound `ResourceTicket`。只有 Principal、conversation、event、类型和
-字节预算全部授权后，resource materializer 才执行 DNS pinning、公开地址、TLS hostname/peer、
-domain allowlist、无 redirect 与大小限制的下载。QQ Gateway 不读取 cc-connect 静态 inbox、
+字节预算全部授权后，Application 才通过 `ResourceFetcherPort` 调用 QQ Channel 下载实现。
+下载保持 DNS pinning、公开地址、TLS hostname/peer、domain allowlist、无 redirect 与大小限制，
+Application 负责 actor/workspace 绑定及文件发布。QQ Gateway 不读取 cc-connect 静态 inbox、
 文本路径尾缀或 sender envelope。Feishu legacy edge 继续使用自己的文件流水线，不能作为 QQ
 资源归属证据。
 
@@ -164,7 +180,8 @@ domain allowlist、无 redirect 与大小限制的下载。QQ Gateway 不读取 
 in-process `ToolExecutor`；MCP client 只负责外部连接。
 
 Subagent 接收 TaskPack，使用受限 selector 和预算，最后必须调用 `submit_result`。
-主 Agent 负责向用户解释、合并和交付；subagent 不能直接承担最终答复。
+主 Agent 负责解释、合并并生成最终答复；QQ 消息由 Gateway 协调 Channel 投递，subagent
+不能直接承担最终答复。
 
 ## Codex 主 backend 与代码任务
 

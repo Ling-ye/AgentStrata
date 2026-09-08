@@ -5,13 +5,12 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
-import os
 import socket
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from chatcopilot.agent.search.relevance import filter_relevant_items
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
@@ -279,6 +278,7 @@ class SearchProviderRegistry:
         tools: Sequence[ToolDef],
         raw_mcp_tools: Sequence[ToolDef] = (),
         provider_specs: Sequence[SearchProviderSpec] = (),
+        provider_credentials: Mapping[str, str] | None = None,
     ) -> "SearchProviderRegistry":
         tool_dict = {tool.name: tool for tool in tools}
         raw: dict[str, list[ToolDef]] = {}
@@ -303,7 +303,7 @@ class SearchProviderRegistry:
             credential_env = spec.credential_env
             if credential_env is None:
                 credential_env = DEFAULT_PROVIDER_CREDENTIAL_ENVS.get(spec.kind, "")
-            credential = os.environ.get(credential_env, "").strip() if credential_env else ""
+            credential = (provider_credentials or {}).get(spec.id, "")
             if credential_env and not credential:
                 unavailable[spec.id] = "search_credential_missing"
                 continue

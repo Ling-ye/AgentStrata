@@ -33,11 +33,12 @@ def build_provider(
         and str(tool.metadata.get("mcp_risk", "")) == "search"
     )
     return build_search_provider(
-        main_llm=context.research_llm,
+        main_llm=context.search_llm or context.research_llm,
         budget=context.subagents.research_budget,
         tools=(*accessible_base_tools, *accessible_contributed_tools),
         raw_mcp_tools=raw_mcp_search_tools,
         provider_specs=context.subagents.search_providers,
+        provider_credentials=dict(context.search_provider_credentials),
         turn_timeout_seconds=context.runtime_config.runtime.turn_timeout_seconds,
         circuit=context.search_circuit,
     )

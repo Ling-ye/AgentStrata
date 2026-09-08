@@ -20,8 +20,8 @@ The target runtime follows OpenClaw's Gateway shape: every Bot instance has one
 long-lived, loopback-only Gateway that owns Channel connections, typed control
 RPC, routing, sessions, runs, durable ingress/outbound state, delivery evidence,
 and health. ACP becomes a separate Gateway client. Authorization, approval, and
-audit are explicit host-owned layers between verified Channel evidence and Agent
-execution. The first QQ Channel keeps the existing personal QQ account by
+audit are explicit host-owned support services used between verified Channel evidence
+and Agent execution. The first QQ Channel keeps the existing personal QQ account by
 talking directly to an independently installed NapCat OneBot v11 service.
 cc-connect and the QQ mention Relay leave the QQ runtime path.
 
@@ -33,16 +33,31 @@ available through an isolated legacy edge until it receives a native Channel.
 
 ## Design
 
-The source dependency direction is `contracts <- agent/channels/authorization
-<- application <- gateway/protocol edges <- deploy/console/CLI`. Contracts are
-immutable and platform-neutral. A Channel owns native connection lifecycle,
-codec, capability discovery, and provider receipts, but cannot assign an
-AgentStrata role or authorize a tool, workspace, attachment, command, or
-lifecycle mutation. Authorization derives a trusted principal from transport
-evidence and remains the sole owner of admission and role policy. Application
-owns the typed turn pipeline and Agent invocation. The Gateway composes these
-trusted layers in one daemon; ACP runs as a separate stdio process and uses only
-the Gateway client contract.
+The current responsibility definition is **Channel → Gateway → Application →
+Agent**, with results returning across those boundaries; see
+[runtime-four-layer-definition](../runtime-four-layer-definition/spec.md).
+These arrows describe message processing, not Python imports. Gateway imports
+Channel ports and supplies the inbound callback; Channel does not import
+Gateway, Application, or authorization policy implementations. Application
+invokes Agent without importing native Channel or Gateway implementations.
+Contracts remain immutable and platform-neutral; the architecture checker
+enforces the source dependency rules separately.
+
+A Channel owns native connection lifecycle, structured event validation, codec,
+capability discovery, platform resource fetching, and provider receipts, but
+cannot assign an AgentStrata role or authorize a tool, workspace, attachment,
+command, or lifecycle mutation. Gateway uses authorization policies to derive
+the trusted principal and decide admission and roles. Application owns actor
+sessions, workspace and context preparation, Agent invocation, and exchange
+commit/discard. Agent owns Backend, model and tool execution, and delegation.
+
+Assembly and lifecycle belong to the instance host outside the four message
+layers. The existing GatewayRuntimeHost assembles and manages them in one bot
+process; this classification adds no process or factory. Console uses existing
+read and control interfaces, while Evaluation has its own lifecycle and
+isolated execution. Neither must route all operations through Gateway. ACP
+runs as a separate stdio client and connects directly to the Gateway contract;
+the existing legacy adapter path remains separate.
 
 The Gateway WebSocket protocol is versioned independently from OpenClaw. The
 server sends `connect.challenge`; the first client request must be `connect`

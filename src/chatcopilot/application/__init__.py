@@ -4,8 +4,6 @@ from chatcopilot.application.actor_runtime import (
     ActorRuntimeError,
     ActorSessionFactory,
     ActorTurnExecutor,
-    ActorTurnOutcome,
-    ActorTurnRequest,
 )
 from chatcopilot.application.agent_runtime import (
     AgentRuntimeAssemblyProfile,
@@ -33,8 +31,6 @@ __all__ = [
     "AgentRuntimeProjection",
     "ActorSessionFactory",
     "ActorTurnExecutor",
-    "ActorTurnOutcome",
-    "ActorTurnRequest",
     "ActorWorkspaceBinding",
     "ApplicationWorkspace",
     "GroupConversationJournal",

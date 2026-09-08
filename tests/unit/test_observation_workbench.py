@@ -10,7 +10,7 @@ import pytest
 
 from chatcopilot.contracts.agent import ContextSnapshotPrepared, LlmCallStarted, LlmCallFinished, ToolStarted, ToolFinished
 from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef
-from chatcopilot.core.inspection import configuration_projection
+from chatcopilot.botspec.inspection import configuration_projection
 from chatcopilot.gateway.observation_queries import RunFilter, detail, events, history, metrics
 from chatcopilot.gateway.observation_runtime import ObservationRecorder
 from chatcopilot.gateway.observation_store import BODY_LIMIT, ObservationStore, RETENTION_SECONDS

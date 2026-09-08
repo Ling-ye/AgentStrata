@@ -17,7 +17,8 @@ from chatcopilot.core.observation_context import observe
 import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, cast
+from types import MappingProxyType
+from typing import Any, Dict, Mapping, Optional, Sequence, cast
 
 from chatcopilot.core.config import ChatConfig, LLMConfig
 from chatcopilot.agent.capabilities import (
@@ -26,15 +27,13 @@ from chatcopilot.agent.capabilities import (
     materialize_runtime_providers,
     materialize_session_providers,
 )
-from chatcopilot.agent.context.manager import ContextManager
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder
-from chatcopilot.agent.context.topic import TopicLlm, TopicPolicy, TopicRelevanceClassifier
 from chatcopilot.core.llm_client import LLMClient
 from chatcopilot.agent.mcp.client import McpToolProvider
 from chatcopilot.agent.rag.provider import LocalTextRetriever, Retriever
 from chatcopilot.agent.search.coordinator import SearchCoordinator
 from chatcopilot.agent.search.tool import build_search_coordinator
-from chatcopilot.agent.session import AgentSession, ToolPayloadFilter
+from chatcopilot.agent.session import ToolPayloadFilter
 from chatcopilot.agent.session_protocol import AgentSessionProtocol
 from chatcopilot.agent.backends import BackendAgentSession, build_backend
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
@@ -43,7 +42,7 @@ from chatcopilot.agent.tools.file_delivery import FileSender
 from chatcopilot.agent.tools.registry import ToolRegistry
 from chatcopilot.agent.tools.workspace_context import WorkspaceService
 from chatcopilot.contracts.runtime import McpServerConfig, RagSourceConfig
-from chatcopilot.contracts.agent_backend import BackendOpenRequest
+from chatcopilot.contracts.agent_backend import BackendOpenRequest, BackendSessionOptions
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.skills import SkillIndexEntry
@@ -97,10 +96,17 @@ class AgentRuntime:
     exclude_tools: tuple[str, ...] = ()
     assembly_profile: ToolPackProjectionProfile = "interactive"
     session_capability_packs: tuple[str, ...] = ()
+    search_llm: LLMClient | None = None
+    subagent_llms: Mapping[str, LLMClient] = field(default_factory=dict, repr=False)
+    search_provider_credentials: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.research_llm is None:
             self.research_llm = self.llm
+        if self.search_llm is None:
+            self.search_llm = self.research_llm
+        self.subagent_llms = MappingProxyType(dict(self.subagent_llms))
         if self.tool_registry is None:
             registry = ToolRegistry()
             if self.tools:
@@ -115,9 +121,12 @@ class AgentRuntime:
             self.tool_registry = registry
 
     def close(self) -> None:
-        """Release long-lived resources (MCP runners, retriever, etc.)."""
-        if self.mcp_provider is not None:
-            self.mcp_provider.close()
+        """Release instance resources, including aliased model clients, once."""
+        if self._closed:
+            return
+        self._closed = True
+        _close_resources((self.mcp_provider, self.retriever, self.llm,
+                          self.research_llm, self.search_llm, *self.subagent_llms.values()))
 
     def build_unified_search_coordinator(
         self,
@@ -140,7 +149,7 @@ class AgentRuntime:
             and str(tool.metadata.get("mcp_risk", "")) == "search"
         )
         return build_search_coordinator(
-            main_llm=self.research_llm or self.llm,
+            main_llm=self.search_llm or self.research_llm or self.llm,
             budget=self.subagents.research_budget,
             tools=self.tools,
             raw_mcp_tools=raw_mcp_search_tools,
@@ -149,6 +158,7 @@ class AgentRuntime:
             max_wall_seconds=max_wall_seconds,
             circuit=self.search_circuit,
             semantic_rerank=False,
+            provider_credentials=dict(self.search_provider_credentials),
         )
 
     def new_session(
@@ -203,6 +213,9 @@ class AgentRuntime:
                 main_llm=self.llm,
                 research_llm=self.research_llm or self.llm,
                 runtime_config=self.runtime_config,
+                search_llm=self.search_llm,
+                subagent_llms=self.subagent_llms,
+                search_provider_credentials=self.search_provider_credentials,
                 subagents=self.subagents,
                 base_tools=self.tools,
                 subagent_tools=self.subagent_tools,
@@ -275,43 +288,6 @@ class AgentRuntime:
             caller_role_hint=caller_role_hint,
         )
 
-        rt = self.runtime_config.runtime
-        _defaults = ContextManager()
-        ctx_mgr = ContextManager(
-            max_context_tokens=getattr(rt, "max_context_tokens", _defaults.max_context_tokens),
-            sliding_window_turns=getattr(rt, "sliding_window_turns", _defaults.sliding_window_turns),
-            tool_result_summary_max_tokens=getattr(
-                rt, "tool_result_summary_max_tokens", _defaults.tool_result_summary_max_tokens
-            ),
-        )
-        topic_policy = TopicPolicy(
-            enabled=bool(getattr(rt, "topic_classifier_enabled", False)),
-            mode=getattr(rt, "topic_classifier_mode", "off"),
-            model=getattr(rt, "topic_model", "") or None,
-            uncertain_mode=getattr(rt, "topic_uncertain_mode", "continue"),
-            related_threshold=getattr(rt, "topic_related_threshold", 0.70),
-            unrelated_threshold=getattr(rt, "topic_unrelated_threshold", 0.75),
-            current_max_chars=getattr(rt, "topic_current_max_chars", 1200),
-            previous_user_max_chars=getattr(rt, "topic_previous_user_max_chars", 800),
-            previous_assistant_max_chars=getattr(rt, "topic_previous_assistant_max_chars", 800),
-            decision_cache_size=getattr(rt, "topic_decision_cache_size", 256),
-            decision_cache_ttl_seconds=getattr(rt, "topic_decision_cache_ttl_seconds", 300),
-        )
-        topic_classifier = (
-            TopicRelevanceClassifier(cast(TopicLlm, self.llm), topic_policy)
-            if topic_policy.active
-            else None
-        )
-
-        _defaults_rt = ChatConfig().runtime
-        session_cls: type[AgentSession] | None = None
-        if backend_id == "native":
-            session_cls = AgentSession
-        elif backend_id == "langgraph":
-            from chatcopilot.agent.langgraph_session import LangGraphAgentSession
-
-            session_cls = LangGraphAgentSession
-
         workspace_root = None
         backend_state_root = None
         isolate_backend_state = False
@@ -377,8 +353,11 @@ class AgentRuntime:
             tool_executor=executor,
             tool_payload_filter=payload_filter,
             backend_policy=self.subagents.codex,
+            llm=self.llm,
+            tools_schema=merged_schema,
+            retriever=effective_retriever,
         )
-        options: dict[str, Any] = {
+        options: BackendSessionOptions = {
             "workspace_root": workspace_root,
             "backend_state_root": backend_state_root,
             "isolate_backend_state": isolate_backend_state,
@@ -391,63 +370,6 @@ class AgentRuntime:
             "restore_persisted_native_session": not isolate_backend_state,
             "role_hint": caller_role_hint or "user",
         }
-        if session_cls is not None:
-            selected_session_cls = session_cls
-
-            def session_factory() -> AgentSession:
-                return selected_session_cls(
-                    session_id=session_id,
-                    llm=self.llm,
-                    executor=executor,
-                    tools_schema=merged_schema,
-                    prompt_plan=prompt_plan,
-                    tool_payload_filter=payload_filter,
-                    context_manager=ctx_mgr,
-                    topic_classifier=topic_classifier,
-                    max_tool_iterations=max(
-                        1,
-                        getattr(
-                            rt,
-                            "max_tool_iterations",
-                            _defaults_rt.max_tool_iterations,
-                        ),
-                    ),
-                    hard_iteration_cap=max(
-                        1,
-                        getattr(
-                            rt,
-                            "hard_iteration_cap",
-                            _defaults_rt.hard_iteration_cap,
-                        ),
-                    ),
-                    max_tool_calls=getattr(
-                        rt,
-                        "max_tool_calls",
-                        _defaults_rt.max_tool_calls,
-                    ),
-                    timeout_seconds=getattr(
-                        rt,
-                        "turn_timeout_seconds",
-                        _defaults_rt.turn_timeout_seconds,
-                    ),
-                    hard_timeout_seconds=getattr(
-                        rt,
-                        "hard_timeout_seconds",
-                        _defaults_rt.hard_timeout_seconds,
-                    ),
-                    stall_window_seconds=max(
-                        10,
-                        getattr(
-                            rt,
-                            "stall_window_seconds",
-                            _defaults_rt.stall_window_seconds,
-                        ),
-                    ),
-                    max_consecutive_tool_failures=max(1, rt.max_tool_retries),
-                    retriever=effective_retriever,
-                )
-
-            options["session_factory"] = session_factory
         session_ref = backend.open_session(
             BackendOpenRequest(
                 session_id=session_id,
@@ -468,6 +390,10 @@ def build_agent_runtime(
     *,
     chat_config: ChatConfig,
     research_llm_config: LLMConfig | None = None,
+    search_llm_config: LLMConfig | None = None,
+    subagent_llm_configs: Sequence[tuple[str, LLMConfig]] = (),
+    search_provider_credentials: tuple[tuple[str, str], ...] = (),
+    search_quota_max_ttl: float = 86400,
     tool_packs: Optional[Sequence[str]] = None,
     exclude_tools: Optional[Sequence[str]] = None,
     runtime_providers: Sequence[ToolProvider] = (),
@@ -490,11 +416,25 @@ def build_agent_runtime(
         rag_sources: BotSpec 声明的本地 RAG 知识源；为空时检索能力 no-op。
         mcp_servers: BotSpec 声明的 MCP server 绑定。
         subagents: BotSpec 声明的委托 Agent 配置。
-        agent_backend: 主 Agent 实现选择；当前支持 native / langgraph。
+        agent_backend: 主 Agent 实现选择；当前支持 native / langgraph / codex。
         assembly_profile: 宿主信任边界对应的能力投影；直接调用默认保持交互行为。
     """
     if assembly_profile not in TOOL_PACK_PROJECTION_PROFILES:
         raise ValueError(f"unknown Agent runtime assembly profile: {assembly_profile}")
+    configured_subagents = subagents or SubagentSpec()
+    budgets = [configured_subagents.agents.get(name, configured_subagents.defaults)
+               for name in configured_subagents.include]
+    budgets.extend(custom.budget for custom in configured_subagents.custom)
+    if any(server.risk == "search" for server in mcp_servers):
+        budgets.append(configured_subagents.search_budget)
+    resolved_prefixes = {prefix for prefix, _ in subagent_llm_configs}
+    if any(budget.model_env_prefix and budget.model_env_prefix not in resolved_prefixes
+           for budget in budgets):
+        raise ValueError("subagent model profile has not been resolved by the runtime host")
+    if (configured_subagents.research_enabled
+            and configured_subagents.research_budget.model_env_prefix
+            and search_llm_config is None):
+        raise ValueError("search model profile has not been resolved by the runtime host")
     for provider in runtime_providers:
         if not isinstance(provider, ToolProvider):
             continue
@@ -563,16 +503,27 @@ def build_agent_runtime(
         audience=TOOL_AUDIENCE_SUBAGENT,
     )
 
-    llm = LLMClient(chat_config.llm)
-    effective_research_config = research_llm_config or chat_config.llm
-    research_llm = (
-        llm
-        if effective_research_config == chat_config.llm
-        else LLMClient(effective_research_config)
-    )
-    retriever = LocalTextRetriever(rag_sources) if rag_sources else None
-    mcp_provider = McpToolProvider(tuple(mcp_servers)) if mcp_servers else None
+    clients: list[tuple[LLMConfig, LLMClient]] = []
+
+    def model_client(config: LLMConfig) -> LLMClient:
+        for existing_config, client in clients:
+            if config == existing_config:
+                return client
+        client = LLMClient(config)
+        clients.append((replace(config), client))
+        return client
+
+    retriever = None
+    mcp_provider = None
     try:
+        llm = model_client(chat_config.llm)
+        effective_research_config = research_llm_config or chat_config.llm
+        research_llm = model_client(effective_research_config)
+        search_llm = model_client(search_llm_config or effective_research_config)
+        subagent_llms = {prefix: model_client(config) for prefix, config in subagent_llm_configs}
+        search_circuit = SearchCircuitBreaker(quota_max_ttl=search_quota_max_ttl)
+        retriever = LocalTextRetriever(rag_sources) if rag_sources else None
+        mcp_provider = McpToolProvider(tuple(mcp_servers)) if mcp_servers else None
         mcp_runtime_provider = (
             mcp_provider.load_provider() if mcp_provider is not None else None
         )
@@ -610,9 +561,13 @@ def build_agent_runtime(
             tools_schema=snapshot.openai_schema,
             runtime_config=chat_config,
             research_llm=research_llm,
+            search_llm=search_llm,
+            subagent_llms=subagent_llms,
+            search_provider_credentials=search_provider_credentials,
+            search_circuit=search_circuit,
             retriever=retriever,
             skill_index=tuple(skill_index),
-            subagents=subagents or SubagentSpec(),
+            subagents=configured_subagents,
             subagent_tools=subagent_snapshot.tools,
             mcp_provider=mcp_provider,
             mcp_configs=tuple(mcp_servers),
@@ -624,12 +579,29 @@ def build_agent_runtime(
             session_capability_packs=session_capability_packs,
         )
     except BaseException:
-        if mcp_provider is not None:
-            try:
-                mcp_provider.close()
-            except Exception:  # noqa: BLE001 - preserve the assembly failure
-                _LOGGER.exception("MCP cleanup failed after AgentRuntime assembly error")
+        try:
+            _close_resources((mcp_provider, retriever, *(client for _, client in clients)))
+        except Exception:  # noqa: BLE001 - preserve the assembly failure
+            _LOGGER.exception("Resource cleanup failed after AgentRuntime assembly error")
         raise
+
+
+def _close_resources(resources: Sequence[object]) -> None:
+    seen: set[int] = set()
+    failure: Exception | None = None
+    for resource in resources:
+        if resource is None or id(resource) in seen:
+            continue
+        seen.add(id(resource))
+        close = getattr(resource, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as exc:
+                if failure is None:
+                    failure = exc
+    if failure is not None:
+        raise failure
 
 
 def _hidden_by_search_entry(tool: ToolDef) -> bool:

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Callable, Sequence
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
-from chatcopilot.core.config import ChatConfig, load_llm_profile
+from chatcopilot.core.config import ChatConfig
 from chatcopilot.contracts.development import (
     DevelopmentTaskScope,
     development_task_scope,
@@ -81,6 +82,7 @@ class SubagentRunner:
         main_llm: LLMClient,
         main_config: ChatConfig,
         tools: Sequence[ToolDef],
+        llm_profiles: Mapping[str, LLMClient] | None = None,
         background_submitter: BackgroundSubmitter | None = None,
         permission_filter: PermissionFilter | None = None,
         file_sender: FileSender | None = None,
@@ -89,6 +91,7 @@ class SubagentRunner:
         retriever: Retriever | None = None,
     ) -> None:
         self._main_llm = main_llm
+        self._llm_profiles = MappingProxyType(dict(llm_profiles or {}))
         self._main_config = main_config
         self._tools = tuple(tools)
         self._background_submitter = background_submitter
@@ -434,11 +437,10 @@ class SubagentRunner:
     def _resolve_llm(self, model_env_prefix: str | None) -> LLMClient:
         if not model_env_prefix:
             return self._main_llm
-        fallback = getattr(self._main_llm, "config", None) or self._main_config.llm
-        profile = load_llm_profile(model_env_prefix, fallback=fallback)
-        if profile == fallback:
-            return self._main_llm
-        return LLMClient(profile)
+        try:
+            return self._llm_profiles[model_env_prefix]
+        except KeyError as exc:
+            raise ValueError(f"subagent LLM profile was not materialized: {model_env_prefix}") from exc
 
 
 def _extract_partial_findings(session: AgentSession) -> list[dict]:

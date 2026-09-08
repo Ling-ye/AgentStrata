@@ -1,8 +1,7 @@
 """Admission-gated materialization of provider resources into actor workspaces."""
 
+from chatcopilot.contracts.resources import FetchedResource, ResourceFetcherPort
 from chatcopilot.application.resources.service import (
-    FetchedResource,
-    ResourceFetcherPort,
     ResourceMaterializationError,
     ResourceMaterializationLimits,
     ResourceMaterializationService,

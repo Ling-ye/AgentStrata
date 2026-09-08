@@ -14,7 +14,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from chatcopilot.project import CHAT_ENV_PREFIX, DEFAULT_CONFIG_DIR
 from chatcopilot.contracts.model_selection import (
@@ -589,7 +589,12 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
     return cfg
 
 
-def load_llm_profile(env_prefix: str, *, fallback: LLMConfig) -> LLMConfig:
+def load_llm_profile(
+    env_prefix: str,
+    *,
+    fallback: LLMConfig,
+    environment: Mapping[str, str] | None = None,
+) -> LLMConfig:
     """Overlay one optional model slot on an existing LLM configuration."""
 
     cfg = LLMConfig(
@@ -598,11 +603,12 @@ def load_llm_profile(env_prefix: str, *, fallback: LLMConfig) -> LLMConfig:
         api_key=fallback.api_key,
         timeout=fallback.timeout,
     )
+    env = os.environ if environment is None else environment
     values = {
-        "base_url": os.environ.get(f"{env_prefix}_BASE_URL"),
-        "model": os.environ.get(f"{env_prefix}_MODEL"),
-        "api_key": os.environ.get(f"{env_prefix}_API_KEY"),
-        "timeout": os.environ.get(f"{env_prefix}_TIMEOUT"),
+        "base_url": env.get(f"{env_prefix}_BASE_URL"),
+        "model": env.get(f"{env_prefix}_MODEL"),
+        "api_key": env.get(f"{env_prefix}_API_KEY"),
+        "timeout": env.get(f"{env_prefix}_TIMEOUT"),
     }
     if values["base_url"]:
         cfg.base_url = str(values["base_url"]).strip()

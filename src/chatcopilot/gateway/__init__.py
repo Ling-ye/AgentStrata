@@ -13,7 +13,7 @@ from .application import (
 )
 
 from .channels import (
-    ApplicationIngressPort,
+    GatewayIngressPort,
     ChannelRuntimeError,
     ChannelRuntimeHealth,
     ChannelRuntimeManager,
@@ -91,7 +91,7 @@ __all__ = [
     "ApprovalRecord",
     "AuthorizationDecisionRecord",
     "ActorTurnExecutorPort",
-    "ApplicationIngressPort",
+    "GatewayIngressPort",
     "CLIENT_CHANNEL",
     "ChannelOutboundPort",
     "ChannelRuntimeError",

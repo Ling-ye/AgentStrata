@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import importlib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import ModuleType
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 from chatcopilot.agent.rag.provider import Retriever
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
@@ -65,6 +65,9 @@ class SessionCapabilityContext:
     memory_snapshot: str
     retriever: Retriever | None
     search_circuit: SearchCircuitBreaker
+    search_llm: LLMClient | None = None
+    subagent_llms: Mapping[str, LLMClient] = field(default_factory=dict)
+    search_provider_credentials: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     background_submitter: BackgroundSubmitter | None = None
     permission_filter: PermissionFilter | None = None
     file_sender: FileSender | None = None

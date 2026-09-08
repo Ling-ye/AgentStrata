@@ -2,6 +2,8 @@
 
 运维控制台是 AgentStrata 在 WSL 中管理多机器人实例的 Web 入口。默认地址是 `http://localhost:8910`，后端由 `chatcopilot-console.service` 托管，前端产物位于 `console/web/dist` 并由 FastAPI 同源挂载。Evaluation 生命周期不在 Console 进程中，而是由独立的 `chatcopilot-evaluation.service` 管理。日常启停、更新、日志和诊断命令统一见 [`operations.md`](operations.md)。
 
+机器人运行时按渠道适配、Gateway、Application、Agent 四个消息处理职责层组织，定义见 [`architecture.md`](architecture.md)。Console 是运行时之外的控制与观测入口，通过现有接口读取状态和发起运维操作。
+
 ## 技术栈
 
 - 前端：React 18 + Rsbuild/Rspack + Arco Design + TanStack Query。
@@ -16,7 +18,7 @@
   外部依赖，按 Channel 接入与工具外部能力筛选，展示实例或共享服务关系，支持启停、重启、Pull、日志、登录和诊断。无参数“全部启动”委托
   `services.sh start` 做 desired-state reconcile，不会启动已禁用服务。
 - **机器人实例**：展示每个 BotSpec 实例的部署、注册、Gateway MainPID、Channel 连接证据、日志、任务和更新入口。
-- **组件目录**：按 `tools` / `prompts` / `agents` / `context` 四个 surface 以及 application / Agent / 外部能力的职责层筛选，展示实例声明使用关系与工具角色要求，只读浏览工具包、运行特性、MCP 服务、提示词、Agent preset、workflow DTO 和上下文来源；数据只来自 `chatcopilot.component_catalog` 的精确 pack/tool 投影，不直接读取 Agent/BotSpec 内部 registry 或自行 import 工具模块。
+- **组件目录**：按 `tools` / `prompts` / `agents` / `context` 四个 surface 以及 application / Agent / 外部能力的组件分组筛选，展示实例声明使用关系与工具角色要求，只读浏览工具包、运行特性、MCP 服务、提示词、Agent preset、workflow DTO 和上下文来源；数据只来自 `chatcopilot.component_catalog` 的精确 pack/tool 投影，不直接读取 Agent/BotSpec 内部 registry 或自行 import 工具模块。
 - **评测中心**：提供「开始测试 / 运行记录 / 进步趋势」。单次详情展示通过、失败、异常、跳过和测试点记录；历史曲线按测试条件分组，保留时间、Git 版本及配置变化。两条主测试方向为 Agent 能力与 QQ 链路，继续使用唯一 Evaluation 资源。
 
 Console 后端的进程执行、YAML 投影和 job/task/log 可观测读取分别位于 `process_executor.py`、`yaml_io.py` 和 `observability.py`，`operations.py` 只保留控制面编排与兼容导出。前端路由按页面懒加载；Evals 的详情组件/展示函数位于 `features/evals/`，BotToolEditor 的模型与状态 hook 位于 `features/bots/tool-editor/`。
@@ -32,7 +34,7 @@ OneBot provider，不与 AgentStrata Gateway 混称，也不由 Bot start/stop �
 
 机器人实例默认进入“任务”，与“分层配置”“运行状态”“能力与工具”组成四个同级入口。顶部选择实例并查看服务状态，日志统一使用一个“服务日志”入口；页面不展示运行统计或实例 MCP、工具包计数行。工作台可用宽度达到 960px 时，左侧为 300px 任务列表，右侧从任务输入开始，沿页面逐步展示执行过程，末尾展示任务结果与消息交付。左侧随页面滚动保持可见，列表自身滚动；右侧不设置固定高度。宽度不足 960px 时只显示列表或详情，通过“任务列表”按钮返回，选中任务后显示流程，不使用辅助抽屉或拖动分隔条。
 
-“分层配置”展示当前实例的基础设置，按以下分组直接阅读：
+“分层配置”展示当前实例的基础设置，按以下分组直接阅读。配置与观测分组用于组织运维信息，其数量和内容独立于四个消息处理职责层：
 
 | 分组 | 内容 |
 | --- | --- |
@@ -87,6 +89,8 @@ Gateway 运行进程持续写入独立的 `observability/index.sqlite3` 和按�
 - `GET /api/bots/{instance_id}/gateway-observation/runs/{run_id}/details/{body_id}`：按需读取当前实例、当前任务范围内的不透明正文引用。
 
 Console 只读查询观测索引，不复制整份 Gateway 业务状态库，也不受旧 64 MiB 状态快照上限约束。目录、数据库及正文校验 owner、私有权限、普通文件与链接边界；读取使用有界查询和 no-follow descriptor。响应带来源、时间、配置版本、完整性或正文留存状态，并使用 `Cache-Control: no-store`。无法安全读取时返回脱敏错误。Console 不创建 Agent、连接插件、调用模型或推进 writer generation。
+
+接口中的 `layer` 继续使用既有配置与观测分组标识；实体 ID、配置指纹和历史快照保持原有含义。运行时四层职责定义不触发这些字段或历史记录的迁移。
 
 已有实例尚未生成观测索引时，仅展示旧 Gateway 中已有的近期记录，并标明历史与详情能力缺失。旧只读接口保留有界临时快照策略；不会从当前配置补造历史快照，也不会将缺失过程填成成功。
 
@@ -211,7 +215,7 @@ secret、Authorization/Cookie、URI userinfo、Bearer/inline credential、私钥
 
 Legacy QQ 合成 artifact 中的 Relay、sender envelope、transport attestation 与
 `middleware.access_decision` 只解释旧 ACP 链，不能成为 Gateway 准入或身份依据。Gateway
-实例的准入由 Gateway 调用 authorization layer 判定；Console 只投影已持久化的决定和回执。
+实例的准入由 Gateway 调用授权模块判定；Console 只投影已持久化的决定和回执。
 
 ## NapCat WebUI 登录
 

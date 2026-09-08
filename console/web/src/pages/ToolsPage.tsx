@@ -91,7 +91,7 @@ export default function ToolsPage({ visible }: Props) {
     <PageSection title="组件目录" description="工具、插件与实例配置">
       <Space direction="vertical" style={{ width: "100%" }} size={12}>
         <div className="obs-catalog-summary"><span>{catalog?.length ?? "—"} 个组件</span><Tag>{bots.data?.length ?? "—"} 个实例</Tag></div>
-        <div className="run-layer-filter" aria-label="按后端层筛选组件">{["", "application", "agent", "capability"].map((id) => <button type="button" key={id} aria-pressed={layer === id} className={layer === id ? "is-selected" : ""} onClick={() => { setLayer(id); setCategoryTab(ALL_CATEGORY); }}>{id ? layerName(id) : "全部层"}<small>{catalog?.filter((item) => !id || catalogLayer(item) === id).length ?? 0}</small></button>)}</div>
+        <div className="run-layer-filter" aria-label="按组件分组筛选">{["", "application", "agent", "capability"].map((id) => <button type="button" key={id} aria-pressed={layer === id} className={layer === id ? "is-selected" : ""} onClick={() => { setLayer(id); setCategoryTab(ALL_CATEGORY); }}>{id ? layerName(id) : "全部分组"}<small>{catalog?.filter((item) => !id || catalogLayer(item) === id).length ?? 0}</small></button>)}</div>
         <Input
           prefix={<IconSearch />}
           placeholder="搜索组件名、描述、分类..."

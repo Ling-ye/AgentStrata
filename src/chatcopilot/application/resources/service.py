@@ -10,9 +10,9 @@ from pathlib import Path
 import re
 import secrets
 import stat
-from typing import Protocol
 
 from chatcopilot.contracts.agent import ResourceRef
+from chatcopilot.contracts.resources import FetchedResource, ResourceFetcherPort
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
     MessageSegment,
@@ -65,21 +65,6 @@ class ResourceMaterializationLimits:
                 raise ValueError(f"{name} must be a positive integer")
         if self.max_file_bytes > self.max_total_bytes:
             raise ValueError("max_file_bytes cannot exceed max_total_bytes")
-
-
-@dataclass(frozen=True)
-class FetchedResource:
-    """Bounded provider result; paths and URLs are deliberately absent."""
-
-    data: bytes
-    name: str | None = None
-    media_type: str | None = None
-
-
-class ResourceFetcherPort(Protocol):
-    """Channel-owned fetch port that must stop reading after ``max_bytes``."""
-
-    async def fetch(self, ticket: ResourceTicket, *, max_bytes: int) -> FetchedResource: ...
 
 
 @dataclass(frozen=True)

@@ -162,7 +162,6 @@ def test_client_refuses_malicious_credential_endpoint_before_network() -> None:
 def test_direct_provider_falls_back_in_declared_order_without_exposing_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("TAVILY_API_KEY", "tvly-never-print-this")
     specs = (
         _spec("tavily", credential_env="TAVILY_API_KEY"),
         _spec("searxng"),
@@ -184,7 +183,10 @@ def test_direct_provider_falls_back_in_declared_order_without_exposing_secret(
         }
 
     monkeypatch.setattr(providers, "_request_json", request_json)
-    registry = SearchProviderRegistry.from_tools((), provider_specs=specs)
+    registry = SearchProviderRegistry.from_tools(
+        (), provider_specs=specs,
+        provider_credentials={"tavily": "tvly-never-print-this"},
+    )
 
     result = DirectSearchProvider(registry=registry).search(
         logical_source="web",
@@ -203,7 +205,7 @@ def test_direct_provider_falls_back_in_declared_order_without_exposing_secret(
 def test_missing_credential_is_skipped_without_hiding_available_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setenv("TAVILY_API_KEY", "other-instance-credential")
     monkeypatch.setattr(
         providers,
         "_request_json",

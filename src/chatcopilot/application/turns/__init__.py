@@ -1,20 +1,4 @@
-"""Application-owned turn contracts and orchestration primitives."""
+"""Prepare authorized input before actor execution."""
+from chatcopilot.application.turns.preparation import prepare_channel_turn, prepare_client_turn
 
-from chatcopilot.application.turns.model import (
-    StageResult,
-    TURN_STAGE_ORDER,
-    TurnContext,
-    TurnDirective,
-    TurnStage,
-)
-from chatcopilot.application.turns.pipeline import CallbackTurnHandler, OrderedTurnPipeline
-
-__all__ = [
-    "CallbackTurnHandler",
-    "OrderedTurnPipeline",
-    "StageResult",
-    "TURN_STAGE_ORDER",
-    "TurnContext",
-    "TurnDirective",
-    "TurnStage",
-]
+__all__ = ["prepare_channel_turn", "prepare_client_turn"]

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 from dataclasses import replace
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Mapping, Sequence
 
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.llm_client import LLMClient
@@ -61,6 +61,7 @@ def build_subagent_tools(
     main_llm: LLMClient,
     main_config: ChatConfig,
     base_tools: Sequence[ToolDef],
+    llm_profiles: Mapping[str, LLMClient] | None = None,
     mcp_configs: Sequence[McpServerConfig] = (),
     background_submitter: BackgroundSubmitter | None = None,
     permission_filter: PermissionFilter | None = None,
@@ -76,6 +77,7 @@ def build_subagent_tools(
     runner = SubagentRunner(
         main_llm=main_llm,
         main_config=main_config,
+        llm_profiles=llm_profiles,
         tools=base_tools,
         background_submitter=background_submitter,
         permission_filter=permission_filter,

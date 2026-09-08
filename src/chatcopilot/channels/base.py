@@ -49,7 +49,7 @@ class ChannelHealth:
 
 
 class ChannelDriver(Protocol):
-    """Minimal lifecycle and delivery surface owned by the Gateway."""
+    """Channel driver lifecycle and delivery surface managed by the instance host through the Gateway."""
 
     @property
     def channel_id(self) -> str: ...

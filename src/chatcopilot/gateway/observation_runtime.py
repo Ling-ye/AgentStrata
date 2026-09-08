@@ -11,7 +11,8 @@ import threading
 import time
 from typing import Any, Iterator, Mapping
 
-from chatcopilot.core.inspection import configuration_projection, fingerprint, plain
+from chatcopilot.botspec.inspection import configuration_projection
+from chatcopilot.core.inspection import fingerprint, plain
 from chatcopilot.core.observation_context import observation_scope
 from .observation_store import ObservationStore, decoded
 

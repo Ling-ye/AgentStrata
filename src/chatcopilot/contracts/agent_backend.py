@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol, runtime_checkable
+from pathlib import Path
+from typing import Protocol, TypedDict, runtime_checkable
 
 from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
 from chatcopilot.contracts.cancellation import CancellationProbe
@@ -91,6 +92,15 @@ class BackendSessionRef:
     value: str
 
 
+class BackendSessionOptions(TypedDict, total=False):
+    workspace_root: str | Path | None
+    source_root: str | Path | None
+    backend_state_root: str | Path | None
+    isolate_backend_state: bool
+    restore_persisted_native_session: bool
+    role_hint: str
+
+
 @dataclass(frozen=True)
 class BackendOpenRequest:
     session_id: str
@@ -98,7 +108,7 @@ class BackendOpenRequest:
     allowed_tool_names: frozenset[str] = frozenset()
     required_capabilities: frozenset[str] = frozenset({CAPABILITY_CHAT})
     caller_identity: SessionIdentity | None = None
-    options: Mapping[str, Any] = field(default_factory=dict)
+    options: BackendSessionOptions = field(default_factory=BackendSessionOptions)
 
 
 class BackendCapabilityError(RuntimeError):
@@ -156,6 +166,7 @@ __all__ = [
     "BackendCapabilityError",
     "BackendOpenRequest",
     "BackendSessionRef",
+    "BackendSessionOptions",
     "CAPABILITY_CHAT",
     "CAPABILITY_NATIVE_RESUME",
     "CAPABILITY_REPOSITORY_MUTATION",

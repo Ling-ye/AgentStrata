@@ -19,6 +19,7 @@ def build_provider(
         subagents=context.subagents,
         main_llm=context.main_llm,
         main_config=context.runtime_config,
+        llm_profiles=context.subagent_llms,
         base_tools=context.subagent_tools or context.base_tools,
         mcp_configs=context.mcp_configs,
         background_submitter=context.background_submitter,

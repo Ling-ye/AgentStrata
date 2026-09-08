@@ -103,7 +103,7 @@ class ResourceTicket:
 
 @dataclass(frozen=True)
 class CanonicalInboundEvent:
-    """Canonical inbound event durable before authorization or Agent execution."""
+    """Canonical inbound event persisted after admission and before execution."""
 
     evidence: TransportEvidence
     segments: tuple[MessageSegment, ...]

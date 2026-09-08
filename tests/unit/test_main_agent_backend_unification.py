@@ -48,6 +48,7 @@ from chatcopilot.contracts.model_selection import (
 )
 from chatcopilot.core.model_selection import CODE_MODEL_SELECTION_METADATA_KEY
 from chatcopilot.core.config import ChatConfig
+from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.external_tools.codex_cli.credentials import (
     CredentialError,
@@ -131,6 +132,36 @@ class BackendRegistryTests(TestCase):
             )
         self.assertEqual(caught.exception.error_code, "backend_capability_missing")
         self.assertIn("agents.backend", str(caught.exception))
+
+    def test_inprocess_factory_binds_each_open_request_and_isolates_messages(self) -> None:
+        for backend_id in ("native", "langgraph"):
+            with self.subTest(backend=backend_id):
+                llm = mock.Mock(model="fixture-model")
+                llm.chat.return_value = ChatResult(content="completed")
+                backend = build_backend(
+                    backend_id, tool_names=set(), llm=llm,
+                    runtime_config=ChatConfig(), tool_executor=ToolExecutor(tools=[]),
+                    tools_schema=[],
+                )
+                first = backend.open_session(BackendOpenRequest(
+                    session_id="session-first", prompt_plan=prompt_plan("first")))
+                second = backend.open_session(BackendOpenRequest(
+                    session_id="session-second", prompt_plan=prompt_plan("second")))
+                first_session = backend.native_session(first)
+                second_session = backend.native_session(second)
+                self.assertIsNot(first_session, second_session)
+                self.assertEqual(first_session.session_id, "session-first")
+                self.assertEqual(second_session.session_id, "session-second")
+                second_messages = second_session.snapshot_messages()
+                result = backend.stream_turn(first, AgentTask("only first"), on_event=lambda _: None)
+                self.assertEqual(result.final_text, "completed")
+                self.assertEqual(second_session.snapshot_messages(), second_messages)
+                backend.close_session(first)
+                with self.assertRaises(KeyError):
+                    backend.native_session(first)
+                self.assertIs(backend.native_session(second), second_session)
+                backend.close_session(second)
+                llm.close.assert_not_called()
 
 
 class CodexBackendResumeTests(TestCase):

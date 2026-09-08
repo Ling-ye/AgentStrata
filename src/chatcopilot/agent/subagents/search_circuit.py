@@ -1,18 +1,17 @@
 """Search-source circuit breaker shared by subagent and direct-search paths."""
 from __future__ import annotations
 
-import os
+import math
 import threading
 import time
 from typing import Callable
 
 _SEARCH_FAILURE_TTLS = {
-    "mcp_quota_exceeded": 3600.0,  # base; escalates via _QUOTA_MAX_TTL
+    "mcp_quota_exceeded": 3600.0,
     "mcp_unavailable": 120.0,
     "mcp_timeout": 120.0,
     "mcp_busy": 120.0,
 }
-_QUOTA_MAX_TTL = float(os.environ.get("CHATCOPILOT_SEARCH_QUOTA_MAX_TTL", 86400))
 
 
 class SearchCircuitBreaker:
@@ -20,12 +19,18 @@ class SearchCircuitBreaker:
 
     Quota failures (``mcp_quota_exceeded``) use **escalating TTL**: each
     consecutive quota failure for the same server doubles the block duration up
-    to ``_QUOTA_MAX_TTL`` (default 24 h, env-overridable).  A single success
+    to the configured cap (default 24 h).  A single success
     resets both the block and the strike counter.
     """
 
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self, *, clock: Callable[[], float] = time.monotonic,
+        quota_max_ttl: float = 86400,
+    ) -> None:
+        if not math.isfinite(quota_max_ttl) or quota_max_ttl <= 0:
+            raise ValueError("search quota TTL must be finite and positive")
         self._clock = clock
+        self._quota_max_ttl = quota_max_ttl
         self._entries: dict[str, tuple[float, str]] = {}
         self._quota_strikes: dict[str, int] = {}
         self._lock = threading.Lock()
@@ -49,7 +54,7 @@ class SearchCircuitBreaker:
             if error_code == "mcp_quota_exceeded":
                 strikes = self._quota_strikes.get(server_id, 0) + 1
                 self._quota_strikes[server_id] = strikes
-                ttl = min(base_ttl * (2 ** (strikes - 1)), _QUOTA_MAX_TTL)
+                ttl = min(base_ttl * (2 ** (strikes - 1)), self._quota_max_ttl)
             else:
                 ttl = base_ttl
             self._entries[server_id] = (self._clock() + ttl, str(error_code))

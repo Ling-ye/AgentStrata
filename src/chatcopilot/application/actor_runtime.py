@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 import hashlib
 from pathlib import Path
 import threading
+from weakref import WeakKeyDictionary
 from typing import Any, cast
 
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder
@@ -22,6 +23,10 @@ from chatcopilot.application.conversation_journal import (
     GroupConversationJournalError,
     render_turn_identity_context,
 )
+from chatcopilot.application.resources import ResourceMaterializationService
+from chatcopilot.application.turns import prepare_channel_turn, prepare_client_turn
+from chatcopilot.contracts.gateway import CanonicalInboundEvent, DeliveryReceipt, OutboundEnvelope
+from chatcopilot.contracts.turns import ExchangeRef, PreparedTurn, TurnOutcome
 from chatcopilot.application.sessions import (
     ActorEvictionError,
     ActorExecutionState,
@@ -42,7 +47,7 @@ from chatcopilot.application.workspaces import (
     build_actor_workspace,
 )
 from chatcopilot.botspec.runtime import BotRuntimeContext
-from chatcopilot.contracts.agent import AgentEvent, AgentResult, AgentTask, ResourceRef
+from chatcopilot.contracts.agent import AgentEvent, AgentResult, AgentTask
 from chatcopilot.contracts.authorization import Principal
 from chatcopilot.contracts.cancellation import CancellationProbe, CancellationRequested
 from chatcopilot.contracts.identity import Role, SessionIdentity, TurnIdentity, role_ge, role_value
@@ -70,24 +75,12 @@ class ActorRuntimeError(RuntimeError):
         super().__init__(message)
 
 
-@dataclass(frozen=True)
-class ActorTurnRequest:
-    """Authorized canonical input accepted by the actor executor."""
-
-    session_id: str
-    principal: Principal
-    canonical_text: str
-    resource_refs: tuple[ResourceRef, ...] = ()
-    turn_context: str = ""
-    message_id: str | None = None
-    sender_display_name: str | None = None
-    metadata: Mapping[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class ActorTurnOutcome:
+@dataclass
+class _PendingExchange:
+    request: PreparedTurn
     result: AgentResult
-    actor_state: ActorExecutionState
+    state: ActorExecutionState | None
+    delivered: tuple[str, str] | None = None
 
 
 class _ActorPersonaToolPort(PersonaToolPort):
@@ -556,16 +549,29 @@ class ActorSessionFactory:
 class ActorTurnExecutor:
     """Execute canonical turns while preserving conversation order and actor isolation."""
 
-    def __init__(self, factory: ActorSessionFactory) -> None:
+    def __init__(self, factory: ActorSessionFactory, *,
+                 resource_materializer: ResourceMaterializationService | None = None) -> None:
         self.factory = factory
+        self._resource_materializer = resource_materializer
+        self._exchanges: WeakKeyDictionary[ExchangeRef, _PendingExchange] = WeakKeyDictionary()
+
+    prepare_client = staticmethod(prepare_client_turn)
+
+    async def prepare_channel(self, *, event: CanonicalInboundEvent, principal: Principal,
+                              session_id: str, run_id: str, canonical_text: str,
+                              now: float) -> PreparedTurn:
+        return await prepare_channel_turn(
+            workspace_root=self.factory.workspace_root,
+            resource_materializer=self._resource_materializer, event=event, principal=principal,
+            session_id=session_id, run_id=run_id, canonical_text=canonical_text, now=now)
 
     async def execute(
         self,
-        request: ActorTurnRequest,
+        request: PreparedTurn,
         *,
         on_event: Callable[[AgentEvent], None],
         cancellation: CancellationProbe | None = None,
-    ) -> ActorTurnOutcome:
+    ) -> TurnOutcome:
         identity = _turn_identity(request)
         lane = self.factory.session_manager.conversation_lane(request.session_id)
         async with lane:
@@ -609,60 +615,69 @@ class ActorTurnExecutor:
                     "actor_execution_failed",
                     "The actor Agent turn failed before returning a result",
                 ) from exc
-            return ActorTurnOutcome(result=result, actor_state=state)
+            reference = ExchangeRef()
+            self._exchanges[reference] = _PendingExchange(request, result, state)
+            return TurnOutcome(result=result, exchange=reference)
 
-    def commit_exchange(
-        self,
-        request: ActorTurnRequest,
-        outcome: ActorTurnOutcome,
-        *,
-        exchange_id: str | None = None,
-    ) -> ActorTurnOutcome:
-        """Publish one generated exchange to shared history after delivery evidence."""
+    def _exchange(self, request: PreparedTurn, outcome: TurnOutcome) -> _PendingExchange:
+        pending = self._exchanges.get(outcome.exchange) if outcome.exchange is not None else None
+        if pending is None or pending.request != request or pending.result != outcome.result:
+            raise ActorRuntimeError("actor_delivery_binding_mismatch",
+                                    "Exchange is not bound to this run, session and actor")
+        return pending
 
-        state = outcome.actor_state
-        if outcome.result.stop_reason == "cancelled":
+    def commit_exchange(self, request: PreparedTurn, outcome: TurnOutcome, *,
+                        envelope: OutboundEnvelope, receipt: DeliveryReceipt) -> TurnOutcome:
+        """Commit only a receipt bound by the Gateway to this run's outbound message."""
+        pending = self._exchange(request, outcome)
+        outbound_id = envelope.outbound_id
+        principal = request.principal
+        if (envelope.run_id != request.run_id or envelope.session_id != request.session_id
+                or envelope.account.channel != principal.channel
+                or envelope.account.account_id != principal.account_id
+                or envelope.conversation.kind != principal.conversation.chat_kind
+                or envelope.conversation.conversation_id != principal.conversation.chat_id):
+            raise ActorRuntimeError("actor_delivery_binding_mismatch", "Outbound is not bound to the executed turn")
+        if (receipt.outbound_id != outbound_id or not outbound_id or not receipt.receipt_id
+                or receipt.stage != "provider_acknowledged"
+                or outcome.result.stop_reason == "cancelled"):
+            raise ActorRuntimeError("actor_delivery_unconfirmed", "Exchange delivery is not confirmed")
+        delivered = (outbound_id, receipt.receipt_id)
+        if pending.delivered is not None:
+            if pending.delivered != delivered:
+                raise ActorRuntimeError("actor_delivery_binding_mismatch", "Exchange delivery identity changed")
             return outcome
-        if (
-            state.key.gateway_session_id != request.session_id
-            or state.principal != request.principal
-        ):
-            raise ActorRuntimeError(
-                "actor_delivery_binding_mismatch",
-                "Delivered exchange is not bound to the executed actor turn",
-            )
-        updated = self.factory.commit_group_exchange(
-            state=state,
-            identity=_turn_identity(request),
-            user_text=request.canonical_text,
-            assistant_text=outcome.result.final_text,
-            exchange_id=exchange_id,
-        )
-        return replace(outcome, actor_state=updated)
+        state = pending.state
+        if state is None:
+            raise ActorRuntimeError("actor_exchange_discarded", "Exchange has already been discarded")
+        self.factory.commit_group_exchange(
+            state=state, identity=_turn_identity(request), user_text=request.canonical_text,
+            assistant_text=outcome.result.final_text, exchange_id=outbound_id)
+        pending.delivered = delivered
+        pending.state = None
+        return outcome
 
-    def discard_exchange(
-        self,
-        request: ActorTurnRequest,
-        outcome: ActorTurnOutcome,
-    ) -> None:
-        """Discard group actor state whose generated reply was not delivered."""
-
-        state = outcome.actor_state
-        if (
-            state.key.gateway_session_id != request.session_id
-            or state.principal != request.principal
-        ):
-            raise ActorRuntimeError(
-                "actor_delivery_binding_mismatch",
-                "Discarded exchange is not bound to the executed actor turn",
-            )
-        workspace = state.workspace
-        if workspace is None or workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
+    def discard_exchange(self, request: PreparedTurn, outcome: TurnOutcome) -> None:
+        if outcome.exchange is None and outcome.result.stop_reason == "cancelled":
             return
-        self.factory.evict(state.key)
+        pending = self._exchange(request, outcome)
+        state = pending.state
+        if state is not None:
+            workspace = state.workspace
+            if workspace is not None and workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+                self.factory.evict(state.key)
+            pending.state = None
+
+    def close(self) -> None:
+        for pending in tuple(self._exchanges.values()):
+            state = pending.state
+            if state is not None:
+                self.factory.evict(state.key)
+                pending.state = None
+        self._exchanges.clear()
 
 
-def _turn_identity(request: ActorTurnRequest) -> TurnIdentity:
+def _turn_identity(request: PreparedTurn) -> TurnIdentity:
     display_name = str(request.sender_display_name or "").strip() or None
     if display_name is not None:
         display_name = display_name[:120]
@@ -826,8 +841,8 @@ __all__ = [
     "ActorRuntimeError",
     "ActorSessionFactory",
     "ActorTurnExecutor",
-    "ActorTurnOutcome",
-    "ActorTurnRequest",
+    "TurnOutcome",
+    "PreparedTurn",
     "BackgroundSubmitterFactory",
     "FileSenderFactory",
 ]

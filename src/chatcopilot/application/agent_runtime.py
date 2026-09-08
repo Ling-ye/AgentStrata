@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import copy
+import math
+import os
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Mapping
 
 from chatcopilot.agent.runtime import AgentRuntime, build_agent_runtime
+from chatcopilot.agent.search.providers import DEFAULT_PROVIDER_CREDENTIAL_ENVS
 from chatcopilot.botspec.runtime import BotRuntimeContext
 from chatcopilot.botspec.runtime_env import load_research_llm_config
 from chatcopilot.contracts.runtime import McpServerConfig, RagSourceConfig
 from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.tool_packs import ToolPackProjectionProfile, ToolProvider
-from chatcopilot.core.config import ChatConfig, LLMConfig
+from chatcopilot.core.config import ChatConfig, LLMConfig, load_llm_profile
 from chatcopilot.tool_packs.catalog import project_tool_pack_names
 
 
@@ -41,6 +46,10 @@ class AgentRuntimeProjection:
 
     chat_config: ChatConfig
     research_llm_config: LLMConfig
+    search_llm_config: LLMConfig
+    subagent_llm_configs: tuple[tuple[str, LLMConfig], ...]
+    search_provider_credentials: tuple[tuple[str, str], ...] = field(repr=False)
+    search_quota_max_ttl: float
     tool_packs: tuple[str, ...]
     exclude_tools: tuple[str, ...]
     runtime_providers: tuple[ToolProvider, ...]
@@ -58,10 +67,31 @@ def project_agent_runtime(
     chat_config: ChatConfig,
     profile: AgentRuntimeAssemblyProfile = AgentRuntimeAssemblyProfile.INTERACTIVE,
     overrides: AgentRuntimeOverrides | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> AgentRuntimeProjection:
     """Resolve one immutable Bot-to-Agent projection without materializing clients."""
 
     selected = overrides or AgentRuntimeOverrides()
+    env = dict(os.environ if environment is None else environment)
+    chat_config = copy.deepcopy(chat_config)
+    subagents = copy.deepcopy(runtime.subagents if selected.subagents is None else selected.subagents)
+    research_llm_config = load_research_llm_config(
+        runtime.spec.llm, fallback=chat_config.llm, environment=env,
+    )
+    router_prefix = subagents.research_budget.model_env_prefix if subagents.research_enabled else None
+    search_llm_config = (
+        load_llm_profile(router_prefix, fallback=research_llm_config, environment=env)
+        if router_prefix else copy.copy(research_llm_config)
+    )
+    budgets = [subagents.agents.get(name, subagents.defaults) for name in subagents.include]
+    budgets.extend(custom.budget for custom in subagents.custom)
+    mcp_servers = tuple(runtime.mcp_servers) if selected.mcp_servers is None else tuple(selected.mcp_servers)
+    if any(getattr(server, "risk", "") == "search" for server in mcp_servers):
+        budgets.append(subagents.search_budget)
+    prefixes = sorted({budget.model_env_prefix for budget in budgets if budget.model_env_prefix})
+    quota_max_ttl = float(env.get("CHATCOPILOT_SEARCH_QUOTA_MAX_TTL") or 86400)
+    if not math.isfinite(quota_max_ttl) or quota_max_ttl <= 0:
+        raise ValueError("CHATCOPILOT_SEARCH_QUOTA_MAX_TTL must be finite and positive")
     candidate_packs = tuple(runtime.tool_packs) if selected.tool_packs is None else tuple(selected.tool_packs)
     projected_packs = project_tool_pack_names(
         candidate_packs,
@@ -69,10 +99,25 @@ def project_agent_runtime(
     )
     return AgentRuntimeProjection(
         chat_config=chat_config,
-        research_llm_config=load_research_llm_config(
-            runtime.spec.llm,
-            fallback=chat_config.llm,
+        research_llm_config=research_llm_config,
+        search_llm_config=search_llm_config,
+        subagent_llm_configs=tuple(
+            (prefix, load_llm_profile(prefix, fallback=chat_config.llm, environment=env))
+            for prefix in prefixes
         ),
+        search_provider_credentials=tuple(
+            (
+                provider.id,
+                env.get(
+                    provider.credential_env
+                    if provider.credential_env is not None
+                    else DEFAULT_PROVIDER_CREDENTIAL_ENVS.get(provider.kind, ""),
+                    "",
+                ).strip(),
+            )
+            for provider in subagents.search_providers if provider.enabled
+        ),
+        search_quota_max_ttl=quota_max_ttl,
         tool_packs=projected_packs,
         exclude_tools=tuple(runtime.exclude_tools),
         runtime_providers=tuple(selected.runtime_providers),
@@ -82,12 +127,8 @@ def project_agent_runtime(
             if selected.rag_sources is None
             else tuple(selected.rag_sources)
         ),
-        mcp_servers=(
-            tuple(runtime.mcp_servers)
-            if selected.mcp_servers is None
-            else tuple(selected.mcp_servers)
-        ),
-        subagents=runtime.subagents if selected.subagents is None else selected.subagents,
+        mcp_servers=mcp_servers,
+        subagents=subagents,
         agent_backend=(
             str(runtime.agent_backend)
             if selected.agent_backend is None
@@ -103,6 +144,10 @@ def materialize_agent_runtime(projection: AgentRuntimeProjection) -> AgentRuntim
     return build_agent_runtime(
         chat_config=projection.chat_config,
         research_llm_config=projection.research_llm_config,
+        search_llm_config=projection.search_llm_config,
+        subagent_llm_configs=projection.subagent_llm_configs,
+        search_provider_credentials=projection.search_provider_credentials,
+        search_quota_max_ttl=projection.search_quota_max_ttl,
         tool_packs=projection.tool_packs,
         exclude_tools=projection.exclude_tools,
         runtime_providers=projection.runtime_providers,
@@ -121,6 +166,7 @@ def assemble_agent_runtime(
     chat_config: ChatConfig,
     profile: AgentRuntimeAssemblyProfile = AgentRuntimeAssemblyProfile.INTERACTIVE,
     overrides: AgentRuntimeOverrides | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> AgentRuntime:
     """Project and materialize one Agent runtime through the application boundary."""
 
@@ -130,6 +176,7 @@ def assemble_agent_runtime(
             chat_config=chat_config,
             profile=profile,
             overrides=overrides,
+            environment=environment,
         )
     )
 

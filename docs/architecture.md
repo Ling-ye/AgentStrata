@@ -5,44 +5,65 @@ AgentStrata 是单代码库、多机器人运行平台。`bots/<bot-id>/bot.yaml
 
 ## 分层与依赖
 
+机器人运行时按四个职责层组织，消息入站顺序如下，结果沿相邻边界返回：
+
 ```text
-deploy / console / CLI
+Channel
   ↓
-gateway / protocols
+Gateway
   ↓
-application
+Application
   ↓
-agent / channels / authorization / external_tools / platforms / botspec
-  ↓
-contracts
+Agent
 ```
 
-依赖只允许从上层面向下层契约：
+| 层 | 职责 |
+| --- | --- |
+| Channel | 原生连接、结构化平台事件校验与转换、provider capability、平台资源获取实现和实际投递；不分配 AgentStrata 角色或工具权限 |
+| Gateway | 主体采信、准入和角色策略调用、持久 session/run、取消、ingress/outbox、delivery receipt、typed RPC 与 writer generation |
+| Application | actor 执行会话、workspace、资源 materialization、上下文准备、Agent 调用和本轮交换提交或丢弃 |
+| Agent | Backend、模型与工具循环、上下文窗口处理、搜索与 subagent 委托 |
 
-- `contracts` 定义身份、workspace、Agent task/event/result、工具、MCP、Skill、
-  subagent、runtime 和 tool-pack DTO。
-- `agent` 实现主循环、backend、上下文、工具执行、搜索与 subagent，不 import
-  BotSpec、middleware 或具体平台。
+四层表示消息处理职责，不要求所有调用依次穿过四层。Application 在资源授权后可经
+`ResourceFetcherPort` 调用 Channel 的下载实现；Gateway 持久化 outbound 后才请求
+Channel 投递，取得可信回执后再请求 Application 提交交换。授权、模型访问、工具和存储
+通过契约支撑运行；`contracts` 与 `core` 提供基础类型和通用实现。当前职责定义见
+[机器人运行时四层职责定义](../specs/runtime-four-layer-definition/spec.md)，此前的配置集中与
+会话交接实现见[分层职责精简重构](../specs/runtime-layer-responsibility-refactor/spec.md)。
+
+消息方向与 Python import 方向分别约束。Gateway 依赖 Channel 端口并注入入站回调，
+Channel 不导入 Gateway；Gateway 调用 Application，Application 调用 Agent。
+`scripts/check_architecture.py` 检查静态依赖，四层箭头不替代该检查：
+
+- `channels` 只依赖基础模块，不 import Gateway、Application 或授权策略实现。
+- `application` 不 import Channel、Gateway、protocols、middleware 或具体平台实现。
+- `agent` 不 import BotSpec、Application、Gateway、Channel、middleware 或具体平台。
 - `external_tools` 实现领域工具，只依赖 contracts、core 或 shared helper。
-- `channels` 实现 Gateway 原生传输的连接、codec、capability 与 provider receipt，
-  不分配 AgentStrata 角色或工具权限。
-- `authorization` 从可信 transport evidence 生成 `Principal`，唯一负责准入、角色策略、
-  approval binding 与审计 receipt。
-- `platforms` 保留尚未迁移到 Channel 的 legacy adapter；新 Gateway 平台不再经此层接入。
-- `botspec` 解析实例声明并组装 runtime；它不把实例类型硬编码进 Agent。
-- `application` 拥有 actor session、workspace、资源 materialization、turn pipeline，
-  并把 `BotRuntimeContext` 唯一投影为 Agent runtime；它以 catalog 驱动的
+- `authorization` 提供 Principal 构造、准入与角色策略、approval binding 和审计契约；
+  Gateway 调用这些策略决定准入，各执行入口保留自己的权限复检。
+- `contracts` 定义身份、workspace、Agent task/event/result、工具、MCP、Skill、
+  subagent、runtime 和 tool-pack DTO；`botspec` 解析实例及环境配置并生成配置投影。
+
+启动装配、控制观测和独立测评是四层之外的配套职责：
+
+- `run.py` 和 `gateway/runtime.py` 的唯一构建入口在机器人进程内完成启动装配；
+  `GatewayRuntimeHost` 管理实例启停，不是第五个消息层。`AgentRuntime` 指 Agent 执行引擎。
+  装配属于外部职责不要求另起进程，也不要求移动现有模块。
+- `application/agent_runtime.py` 保留共享装配入口，将 `BotRuntimeContext` 投影为
+  Agent 运行输入；它以 catalog 驱动的
   `interactive` / `detached` profile 和 typed overrides 表达 ACP、后台任务与
   Evaluation 的运行边界；新的 session capability 默认关闭、需显式选择，只有既有
   delegation/search 保留经审计的兼容默认。两个 profile 不提供推测性别名；受信
   capability factory 模块统一导出固定的 `build_provider`，runtime/session 生命周期入口
   只共享内部物化与校验逻辑。
-- `gateway` 组合 Channel、authorization 与 application，拥有长期 session、run、
-  durable ingress/outbox、delivery receipt、typed RPC 和 writer generation。
-- `protocols` 是 ACP 等本地协议 edge；ACP 只作为认证 Gateway client，不拥有平台、
+- `console` 通过现有配置、运行投影和控制入口工作，不创建 Agent、模型客户端或 MCP 连接；
+  历史观测读取不要求机器人进程在线。
+- `evals` 拥有独立 service、worker、生命周期和记录；隔离 Agent 测试复用共享装配，
+  不经过线上 Gateway session 或真实 Channel 投递。
+- `protocols` 是 ACP 等本地协议 edge；ACP 可直接作为认证 Gateway client，不拥有平台、
   authorization、Agent 或 workspace runtime。
-- `middleware` 只保留尚未迁移的 legacy edge 和与 Gateway 无关的既有能力。
-- `deploy`、`console` 与 CLI 是操作面，不定义跨层业务契约。
+- `platforms` 与 `middleware` 保留尚未迁移的 legacy edge 和既有能力；新 Gateway
+  平台通过 Channel 实现并在装配入口显式接线，不扩展 legacy adapter 路径。
 
 核心契约入口：
 
@@ -51,10 +72,12 @@ contracts
 | 身份、角色与 conversation/turn 来源 | `contracts/identity.py` |
 | Workspace | `contracts/workspace.py` |
 | Agent task/event/result | `contracts/agent.py` |
+| 已准备回合、执行结果与交换引用 | `contracts/turns.py` |
 | 工具 | `contracts/tools.py` |
 | Adapter approval | `contracts/adapter_approval.py` |
 | Principal、authorization 与 approval | `contracts/authorization.py` |
 | Gateway event、resource、outbound 与 delivery | `contracts/gateway.py` |
+| 有界资源字节与 Channel fetch port | `contracts/resources.py` |
 | Gateway wire frames / typed RPC | `contracts/{gateway_protocol,gateway_rpc}.py` |
 | Cooperative cancellation | `contracts/cancellation.py` |
 | Runtime、subagent、Skill、tool pack | `contracts/{runtime,subagents,skills,tool_packs}.py` |
@@ -64,7 +87,7 @@ contracts
 
 每个实例由四个主要表面和运行包络组成：
 
-- `prompts`：persona、refusal、role 和 mode 提示词。
+- `prompts`：identity/style、refusal、role 和 mode 提示词。
 - `tools`：本地 tool pack、MCP binding、运行特性和隐藏工具。
 - `agents`：`native` / `langgraph` / `codex` 主 backend，preset、预算和 Codex
   访问策略。
@@ -77,6 +100,17 @@ BotSpec 只声明 tool-pack id。具体目录在 `tool_packs/catalog.py`，catal
 `ToolProvider` 模块，精确工具成员由领域 provider 自己声明；builtin 与 external 使用
 同一注册机制。静态和会话动态工具统一进入 `agent/tools/registry`，Agent 与 Console 通过
 同源 Registry 快照或 `component_catalog` 投影读取工具面。
+
+Application 的 `project_agent_runtime()` 在组装边界捕获环境值，复制配置并解析研究、搜索和
+子 Agent 的模型覆盖及搜索凭据；`materialize_agent_runtime()` 再据此创建运行对象。
+逐轮搜索与委托复用实例持有的模型客户端，不重新解析这些环境覆盖。相同模型配置在同一 runtime
+中复用客户端；`AgentRuntime.close()` 去重关闭模型客户端、MCP 和检索资源，组装失败也
+回收已经创建的资源。`LLMClient` 和共享限流仍使用现有 Core 入口。
+
+`botspec/inspection.py` 拥有 BotSpec 字段解释、环境引用和配置实体投影；
+`core/inspection.py` 只提供通用序列化和指纹。Console 的分层配置展示当前基础配置，
+记忆、RAG、MCP 与子 Agent 留在此页；Wiki、Skills、搜索 Provider、工具包和具体工具在
+能力与工具页。历史任务保持执行时快照，页面分组不改变事件实体 ID 或配置指纹。
 
 Playbook reader 在 runtime 物化时绑定当前 Bot 的不可变 Skill 索引，不存在进程级
 Skill registry。会话 payload filter 与后台提交器由宿主在 `new_session()` 时显式传入，
@@ -103,6 +137,10 @@ Codex envelope 使用 schema v2；render receipt 记录四个分区、各 layer 
 三个 backend 共享 `AgentTask`、`AgentEvent`、`AgentResult` 和 turn runtime。backend
 只在实例配置中选择，不按角色或单轮文本自动切换。
 
+通用 `AgentRuntime` 准备 PromptPlan、工具与调用者输入，具体 session 由 backend adapter
+创建。Native/LangGraph 的构造位于 `agent/backends/inprocess.py`；`BackendOpenRequest`
+的类型化 options 仅传递目录、隔离、恢复与角色提示等实际参数，不传 session factory。
+
 - Native：内置模型/工具循环。
 - LangGraph：使用同一契约的图执行器。
 - Codex：实例主会话使用 Codex；Owner 源码写入通过独立 code-worker 与草稿 PR
@@ -111,7 +149,7 @@ Codex envelope 使用 schema v2；render receipt 记录四个分区、各 layer 
   shared root，禁用可直接写入的内建 shell/`apply_patch` 等路径，文件 mutation 只能通过
   actor-bound、workspace-scoped Session Gateway MCP 执行。
 
-主 Agent 是唯一向用户交付结果的执行者。Subagent 只通过 delegate 工具运行并用
+主 Agent 生成面向用户的结果，由宿主负责交付；Subagent 只通过 delegate 工具运行并用
 `submit_result` 返回结构化结果。
 
 ## 工具、MCP 与搜索
@@ -131,9 +169,11 @@ MCP/Skill。`risk: search` 的 MCP binding 可产生只读搜索来源；统一�
 
 ## Gateway、Channel 与会话
 
-每个启用 `gateway` 的 Bot 由一个长期、回环监听的 Gateway 进程拥有 Channel 生命周期、
-typed WebSocket RPC、session、run、事件游标、durable ingress/outbox、delivery receipt 和
-writer generation。进程先以 state root 下的 `0600` 普通文件取得非阻塞 POSIX singleton
+每个启用 `gateway` 的 Bot 由同一实例宿主装配四层运行对象。现有 `GatewayRuntimeHost`
+在机器人进程内管理启动与停止；Gateway 管理 Channel 的准备、启用、停止和健康状态，
+Channel driver 管理具体连接、收发与重连。Gateway 的回环服务继续拥有 typed WebSocket RPC、
+session、run、事件游标、durable ingress/outbox、delivery receipt 和 writer generation。
+宿主先以 state root 下的 `0600` 普通文件取得非阻塞 POSIX singleton
 lease，再组装 Agent、推进 writer generation、连接 Channel 或监听端口；竞争、符号链接、
 硬链接、owner/mode/inode 漂移均失败关闭，所有构建失败、取消、回滚和 shutdown 路径都释放
 descriptor。客户端先接收 `connect.challenge`，再用一次性 nonce、版本范围、client
@@ -146,8 +186,8 @@ QQ v1 Channel 直接连接用户独立维护的回环 OneBot v11 provider。强 
 generation、account、event/message ID、sender、conversation 和 frame digest。群触发只接受
 明确指向当前 Bot 账号的结构化 `at` segment；`at all`、显示名文本和 CQ-looking 文本均无效。
 
-Authorization 在任何资源下载、task、Agent、模型、工具或 journal 副作用前，从该 evidence
-构造可信 `Principal` 并解释 `QQ_ALLOW_FROM` / `QQ_ALLOW_GROUPS`。稳定群号只形成
+Gateway 在任何资源下载、task、Agent、模型、工具或 journal 副作用前，调用 authorization
+策略从该 evidence 构造可信 `Principal` 并解释 `QQ_ALLOW_FROM` / `QQ_ALLOW_GROUPS`。稳定群号只形成
 `ConversationIdentity`，当前稳定 sender 决定 actor 与 role；群白名单只授予准入，不能提升
 Owner/Admin。拒绝仅保存有界、无正文的授权审计 receipt，不保留 provider URL；通过后才把
 完整 canonical event 与 Principal 持久化为 ingress。新 writer 只恢复从未 claim 的
@@ -157,9 +197,18 @@ Owner/Admin。拒绝仅保存有界、无正文的授权审计 receipt，不保�
 journal；QQ 私聊、不同群与其它平台继续隔离。执行 session、role、caller identity、Codex
 resume、task/job control、persona/memory authority 与工具权限始终按 actor 分离。群 Agent
 生成回复后，Gateway 先持久化 outbound，再请求 provider；只有取得 provider acknowledgement
-才把交换写入 journal。未确认投递、取消、失败或 stale generation 会逐出本次 live actor
-session，避免下一轮继承未公开的回答；journal 以稳定 outbound identity 幂等，便于补偿而不
-重复历史。SQLite provider receipt 仍不等于 QQ 客户端展示或用户已读。
+并复查 writer generation，才通知 Application 提交交换。Application 的 `commit_exchange()`
+复检本轮、session、Principal、outbound 和 receipt 绑定后，将交换按 outbound identity 幂等
+写入 journal。未确认投递、取消、失败或 stale generation 通过 `discard_exchange()` 丢弃
+未确认群交换并逐出对应 live actor session，避免下一轮继承未公开的回答。Provider 已确认而
+journal 写入失败时保留交付事实和提交错误，不自动重发。SQLite provider receipt 仍不等于
+QQ 客户端展示或用户已读。
+
+`ActorTurnExecutor.prepare_client()` / `prepare_channel()` 负责创建 `PreparedTurn`；Channel
+路径的工作区与资源准备由 Application 执行。`execute()` 只向 Gateway 返回
+`TurnOutcome(result, exchange)`，其中 `ExchangeRef` 仅在创建它的进程内有效；actor 状态与
+待确认交换由 Application 私有持有。Gateway 不访问 actor 内部状态，继续拥有准入、run、
+取消、outbox 与交付事实。
 
 成员可写 shared root 不保存权威 `IDENTITY.json`、`MEMORY.md`、backend state、job/task
 控制记录或 persona。群 memory/persona 和 Owner job 位于 `.conversation-state/` 的保护域；
@@ -170,6 +219,10 @@ OneBot media 先成为 event-bound `ResourceTicket`，包含允许大小、类�
 绑定；只有 admission 与资源授权通过后才按 DNS pinning、公开地址、TLS hostname/peer、
 domain allowlist、无 redirect 和字节上限下载或 materialize。旧 cc-connect basename inbox、
 文本尾缀和 sender envelope 不进入 QQ Gateway。
+
+QQ CDN 下载实现位于 `channels/qq_onebot/resources.py`，通过
+`contracts/resources.py` 的 `ResourceFetcherPort` 返回有界 `FetchedResource`；Application
+负责票据与 actor/workspace 绑定、文件验证和原子发布，Channel 不依赖 Application。
 
 工具授权保持三层：Registry 可见 schema、executor-time filter、domain-handler revalidation。
 Gateway 已提供 durable approval storage、精确 actor/conversation/operation/params/policy binding
@@ -187,6 +240,10 @@ Feishu 继续通过隔离的 legacy adapter edge 提供文档、表格、多维�
 变量是 `CHATCOPILOT_HTTP_API_TOKEN`，route handler 不应绕过 service 层实现业务。
 
 ## Evaluation
+
+Evaluation 在机器人四层消息链之外拥有独立生命周期。直接 Agent Trial 使用共享装配入口
+创建隔离 Agent，会话、workspace 与记录均属于本次测评；需要验证消息链时使用对应的受控
+测评路径，不复用线上实例的会话或交付状态。
 
 Profile comparison 与 BFCL / GAIA / IFEval Suite 统一使用 `Evaluation`，以 `kind`
 区分。生命周期状态只表示排队、运行和终态；Trial outcome 和 Case

@@ -757,12 +757,39 @@ ACP 降为本地 Gateway client edge，不拥有 Channel 或 Agent runtime。Con
 
 相关规格：[`gateway-acp-runtime-boundary`](../specs/gateway-acp-runtime-boundary/spec.md)。
 
+## 22. 分层职责精简：集中装配，收紧会话交接
+
+搜索和子 Agent 的模型覆盖原先在执行路径中解析，具体 session 构造与 actor 内部状态也跨越了
+Backend、Application 和 Gateway 边界。实例装配现在一次解析模型配置并管理客户端复用与关闭，
+各 Backend 创建自己的 session；Application 准备工作区和资源，向 Gateway 返回执行结果与
+交换引用。Gateway 仍持有准入、run、取消和交付事实，只有真实 Provider 确认且运行代际有效时
+才请求提交交换，journal 失败不会触发重复投递。
+
+BotSpec 配置投影归入 BotSpec，QQ 资源抓取归入 QQ Channel，共享资源和执行交接类型归入
+Contracts。此次调整沿用原有主链与三个 Backend，不增加串行层级、模型注册中心或通用阶段
+框架，也不改变 Console 布局、配置格式、历史记录和 Evaluation 生命周期。
+
+相关规格：[`runtime-layer-responsibility-refactor`](../specs/runtime-layer-responsibility-refactor/spec.md)。
+
+## 23. 四层职责定义：区分消息运行与配套部分
+
+将装配、控制台与消息处理写在同一条分层链上，容易混淆实例生命周期、源码依赖和逐轮执行。
+机器人运行时现定义为渠道适配、网关、应用和 Agent 四层；启动装配、控制观测和独立测评单列。
+实例宿主继续负责构建和启停，四层间沿用已有结构化契约及回调，不增加进程或通用宿主框架。
+
+Gateway 入站接口采用与准入归属一致的名称，入站事件说明明确准入后、执行前持久化。
+Console 的配置与观测分类仍是展示分组，保留字段归属、实体标识、历史快照和配置指纹。
+
+相关规格：[`runtime-four-layer-definition`](../specs/runtime-four-layer-definition/spec.md)。
+
 ## 当前架构的收敛结果
 
 | 关注点 | 当前做法 |
 | --- | --- |
 | 实例差异 | 由 BotSpec 声明，不进入共享 Agent 分支 |
-| 平台差异 | 由 adapter 实现，通过 registry 发现 |
+| 运行分层 | 渠道适配 → 网关 → 应用 → Agent，以结构化契约协作 |
+| 配套部分 | 启动装配与实例宿主、控制观测、独立测评；不作为消息必经层 |
+| 平台差异 | 原生 Channel 在装配入口显式接线；Legacy adapter 保留原有发现方式 |
 | 跨层类型 | 由 `chatcopilot.contracts` 统一拥有 |
 | 运行与控制面读取 | 通过 `core` 和 `component_catalog` 提供稳定入口 |
 | 主 Agent | Native、LangGraph、Codex 共享 task/event/result、模型上下文快照与 turn lifecycle |

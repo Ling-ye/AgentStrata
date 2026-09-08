@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from chatcopilot.botspec.inspection import declared_configuration, expected_configuration
+from chatcopilot.botspec.inspection import configuration_projection, declared_configuration, expected_configuration
 from chatcopilot.contracts.agent import ContextSnapshotPrepared, ToolFinished, ToolStarted
 from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef
 from chatcopilot.contracts.identity import Role
-from chatcopilot.core.inspection import configuration_projection, plain
+from chatcopilot.core.inspection import plain
 from chatcopilot.core.observability_redaction import bound_observability_payload, redact_observability_payload
 from chatcopilot.gateway.observation_runtime import ObservationRecorder
 from chatcopilot.gateway.observations import RunObserver
@@ -69,6 +70,11 @@ def test_bounded_operator_copy_keeps_original_keys_but_public_redaction_still_ma
 
 
 def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(tmp_path, monkeypatch):
+    # Keep snapshot freshness independent of host wall-clock corrections.
+    wall_start, monotonic_start = time.time(), time.monotonic()
+    clock = SimpleNamespace(time=lambda: wall_start + time.monotonic() - monotonic_start)
+    monkeypatch.setattr('chatcopilot.gateway.observation_runtime.time', clock)
+    monkeypatch.setattr('console.control.gateway_observability.time', clock)
     instances, recorders, states, environments = {}, [], [], []
     for key in ('QQ_ALLOW_GROUPS', 'QQ_ALLOW_FROM', 'CHATCOPILOT_OWNERS', 'CHATCOPILOT_ADMINS'):
         monkeypatch.delenv(key, raising=False)

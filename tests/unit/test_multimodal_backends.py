@@ -76,6 +76,7 @@ def _image_resource(path: Path) -> ResourceRef:
 
 def _llm_client(completions: _Completions) -> LLMClient:
     client = object.__new__(LLMClient)
+    client._closed = False
     client._cfg = SimpleNamespace(model="vision-test")
     client._client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     client._limiter = _Limiter()

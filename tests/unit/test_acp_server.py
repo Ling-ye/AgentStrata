@@ -13,6 +13,7 @@ import pytest
 from chatcopilot.application.agent_runtime import AgentRuntimeAssemblyProfile
 from chatcopilot.contracts.agent import AgentResult, FinalText, TurnError
 from chatcopilot.contracts.model_selection import CodeModelSelection
+from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.model_selection import CODE_MODEL_SELECTION_METADATA_KEY
 from chatcopilot.middleware.acp.server import AcpChatAgent
@@ -30,7 +31,7 @@ def _runtime() -> SimpleNamespace:
         exclude_tools=(),
         rag_sources=(),
         mcp_servers=(object(),),
-        subagents=SimpleNamespace(),
+        subagents=SubagentSpec(),
         agent_backend="native",
         spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_LAZYTEST")),
     )

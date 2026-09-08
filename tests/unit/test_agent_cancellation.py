@@ -251,12 +251,13 @@ class CancellationContractTests(unittest.TestCase):
     def test_inprocess_backend_propagates_probe_to_native_session(self) -> None:
         llm = _FakeLLM([ChatResult(content="must not run")])
         native = _make_session(llm)
-        backend = InProcessAgentBackend("native", tool_names=set())
+        backend = InProcessAgentBackend(
+            "native", tool_names=set(), session_factory=lambda _request: native,
+        )
         ref = backend.open_session(
             BackendOpenRequest(
                 session_id="sid",
                 prompt_plan=prompt_plan("system"),
-                options={"session_factory": lambda: native},
             )
         )
         session = BackendAgentSession(backend, ref)

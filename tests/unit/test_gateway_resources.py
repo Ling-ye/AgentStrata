@@ -12,7 +12,7 @@ from chatcopilot.contracts.gateway import (
     ConversationRef,
     ResourceTicket,
 )
-from chatcopilot.gateway.resources import (
+from chatcopilot.channels.qq_onebot.resources import (
     GatewayResourceFetchError,
     QqCdnResourceFetcher,
     _PinnedHttpsConnection,
@@ -194,11 +194,11 @@ def test_default_https_connection_pins_validated_ip_but_keeps_hostname_for_tls()
     context = _TlsContext("1.1.1.1")
     with (
         patch(
-            "chatcopilot.gateway.resources.ssl.create_default_context",
+            "chatcopilot.channels.qq_onebot.resources.ssl.create_default_context",
             return_value=context,
         ),
         patch(
-            "chatcopilot.gateway.resources.socket.create_connection",
+            "chatcopilot.channels.qq_onebot.resources.socket.create_connection",
             return_value=raw,
         ) as create_connection,
     ):
@@ -221,11 +221,11 @@ def test_default_https_connection_rejects_peer_ip_drift() -> None:
     context = _TlsContext("8.8.8.8")
     with (
         patch(
-            "chatcopilot.gateway.resources.ssl.create_default_context",
+            "chatcopilot.channels.qq_onebot.resources.ssl.create_default_context",
             return_value=context,
         ),
         patch(
-            "chatcopilot.gateway.resources.socket.create_connection",
+            "chatcopilot.channels.qq_onebot.resources.socket.create_connection",
             return_value=raw,
         ),
     ):

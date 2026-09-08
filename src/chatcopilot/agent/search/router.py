@@ -11,7 +11,6 @@ import time
 from collections import OrderedDict
 from typing import Any, Sequence
 
-from chatcopilot.core.config import load_llm_profile
 from chatcopilot.core.llm_client import LLMClient
 from chatcopilot.agent.search.models import (
     LOGICAL_SOURCES,
@@ -86,6 +85,8 @@ Domain-aware strategy:
 
 
 class SearchRouter:
+    """Route with the instance-owned client already resolved for this budget."""
+
     def __init__(
         self,
         *,
@@ -94,7 +95,6 @@ class SearchRouter:
     ) -> None:
         self._main_llm = main_llm
         self._budget = budget
-        self._router_llm: LLMClient | None = None
         self._cache: OrderedDict[str, tuple[float, SearchPlan]] = OrderedDict()
 
     def route(
@@ -246,16 +246,7 @@ class SearchRouter:
         )
 
     def resolve_llm(self) -> LLMClient:
-        prefix = self._budget.model_env_prefix
-        if not prefix:
-            return self._main_llm
-        if self._router_llm is None:
-            fallback = self._main_llm.config
-            profile = load_llm_profile(prefix, fallback=fallback)
-            if profile == fallback:
-                return self._main_llm
-            self._router_llm = LLMClient(profile)
-        return self._router_llm
+        return self._main_llm
 
     def _cache_key(
         self, request: SearchRequest, available: tuple[str, ...]

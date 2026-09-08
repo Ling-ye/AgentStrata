@@ -43,7 +43,7 @@ _IDENTITY_RE = re.compile(r"^[^\x00\r\n]{1,256}$")
 _ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 
 
-class ApplicationIngressPort(Protocol):
+class GatewayIngressPort(Protocol):
     """Admission boundary split from execution so rejected payloads are never persisted."""
 
     def authorize_inbound(self, event: CanonicalInboundEvent) -> Principal: ...
@@ -96,7 +96,7 @@ class ChannelRuntimeManager:
         self,
         *,
         state_store: GatewayStateStore,
-        application_ingress: ApplicationIngressPort,
+        gateway_ingress: GatewayIngressPort,
         event_sink: DeliveryEventSinkPort | None = None,
         writer_generation: int | None = None,
         ingress_retention_limit: int = 10_000,
@@ -113,7 +113,7 @@ class ChannelRuntimeManager:
         ):
             raise ValueError("ingress_retention_limit must be between 1 and 1000000")
         self._state_store = state_store
-        self._application_ingress = application_ingress
+        self._gateway_ingress = gateway_ingress
         self._event_sink = event_sink
         self._configured_writer_generation = writer_generation
         self._ingress_retention_limit = ingress_retention_limit
@@ -353,7 +353,7 @@ class ChannelRuntimeManager:
                     )
                 if existing.state != "accepted":
                     return
-            principal = self._application_ingress.authorize_inbound(event)
+            principal = self._gateway_ingress.authorize_inbound(event)
             reservation = self._state_store.reserve_ingress(
                 generation=generation,
                 event=event,
@@ -372,7 +372,7 @@ class ChannelRuntimeManager:
             if not claimed:
                 return
         try:
-            await self._application_ingress.handle_authorized_inbound(event, principal)
+            await self._gateway_ingress.handle_authorized_inbound(event, principal)
         except BaseException as exc:
             try:
                 self._state_store.finish_ingress(
@@ -541,7 +541,7 @@ class ChannelRuntimeManager:
                 if not claimed:
                     continue
                 try:
-                    await self._application_ingress.handle_authorized_inbound(
+                    await self._gateway_ingress.handle_authorized_inbound(
                         record.event,
                         record.principal,
                     )
@@ -766,7 +766,7 @@ def _valid_provider_ack(receipt: object, *, outbound_id: str) -> bool:
 
 
 __all__ = [
-    "ApplicationIngressPort",
+    "GatewayIngressPort",
     "ChannelRuntimeError",
     "ChannelRuntimeHealth",
     "ChannelRuntimeManager",

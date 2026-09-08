@@ -215,7 +215,7 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
         self.sink = _Sink()
         self.manager = ChannelRuntimeManager(
             state_store=self.state_store,
-            application_ingress=self.ingress,
+            gateway_ingress=self.ingress,
             event_sink=self.sink,
         )
         self.log: list[str] = []
@@ -243,7 +243,7 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
     async def test_partial_start_rolls_back_started_drivers_without_secret_health(self) -> None:
         manager = ChannelRuntimeManager(
             state_store=self.state_store,
-            application_ingress=self.ingress,
+            gateway_ingress=self.ingress,
         )
         first = _Driver("first", ACCOUNT, self.log)
         failing = _Driver(
@@ -269,7 +269,7 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
         generation = self.state_store.acquire_writer_generation(now=100.0)
         manager = ChannelRuntimeManager(
             state_store=self.state_store,
-            application_ingress=self.ingress,
+            gateway_ingress=self.ingress,
             writer_generation=generation,
         )
         manager.register(_Driver("preacquired", OTHER_ACCOUNT, self.log))
@@ -289,7 +289,7 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
         self.state_store.acquire_writer_generation(now=101.0)
         manager = ChannelRuntimeManager(
             state_store=self.state_store,
-            application_ingress=self.ingress,
+            gateway_ingress=self.ingress,
             writer_generation=generation,
         )
         manager.register(_Driver("stale", OTHER_ACCOUNT, self.log))
@@ -391,7 +391,7 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
     async def test_runtime_bounds_terminal_ingress_without_deleting_active(self) -> None:
         manager = ChannelRuntimeManager(
             state_store=self.state_store,
-            application_ingress=self.ingress,
+            gateway_ingress=self.ingress,
             ingress_retention_limit=2,
         )
         manager.register(_Driver("bounded", ACCOUNT, self.log))
@@ -492,7 +492,7 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
         replacement_ingress = _Ingress()
         replacement = ChannelRuntimeManager(
             state_store=self.state_store,
-            application_ingress=replacement_ingress,
+            gateway_ingress=replacement_ingress,
         )
         replacement_driver = _Driver("replacement", ACCOUNT, self.log)
         replacement.register(replacement_driver)
@@ -562,7 +562,7 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
         recovered = _Ingress()
         replacement = ChannelRuntimeManager(
             state_store=self.state_store,
-            application_ingress=recovered,
+            gateway_ingress=recovered,
         )
         replacement.register(_Driver("recovery", ACCOUNT, self.log))
         await replacement.start()
@@ -608,7 +608,7 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
         replacement_ingress.handle_authorized_inbound = fence_after_claim  # type: ignore[method-assign]
         replacement = ChannelRuntimeManager(
             state_store=self.state_store,
-            application_ingress=replacement_ingress,
+            gateway_ingress=replacement_ingress,
         )
         replacement.register(_Driver("recovery-fenced", ACCOUNT, self.log))
         await replacement.start()
@@ -626,7 +626,7 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
         final_ingress = _Ingress()
         final = ChannelRuntimeManager(
             state_store=self.state_store,
-            application_ingress=final_ingress,
+            gateway_ingress=final_ingress,
         )
         final.register(_Driver("recovery-final", ACCOUNT, self.log))
         await final.start()
@@ -691,7 +691,7 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
         failing_sink = _Sink(fail=True)
         manager = ChannelRuntimeManager(
             state_store=self.state_store,
-            application_ingress=self.ingress,
+            gateway_ingress=self.ingress,
             event_sink=failing_sink,
         )
         driver = _Driver("sink", ACCOUNT, self.log)

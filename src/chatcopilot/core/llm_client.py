@@ -62,9 +62,16 @@ class LLMClient:
     """OpenAI SDK 的薄封装。"""
 
     def __init__(self, cfg: LLMConfig) -> None:
-        self._cfg = cfg
-        self._client = self._build_client()
+        self._cfg = copy.copy(cfg)
         self._limiter = build_llm_limiter()
+        self._client = self._build_client()
+        self._closed = False
+
+    def close(self) -> None:
+        """Release the instance-owned SDK transport once after its users stop."""
+        if not self._closed:
+            self._closed = True
+            self._client.close()
 
     @property
     def model(self) -> str:
@@ -119,6 +126,8 @@ class LLMClient:
         cancellation: CancellationProbe | None = None,
     ) -> ChatResult:
         """统一入口；首选流式，失败时自动降级非流式。"""
+        if self._closed:
+            raise RuntimeError("LLM client is closed")
         if cancellation is not None:
             cancellation.raise_if_cancelled()
         outbound_messages = _expand_local_image_blocks(messages)

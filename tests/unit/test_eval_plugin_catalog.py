@@ -1009,6 +1009,15 @@ def test_runtime_implementation_snapshot_covers_real_agent_and_capability_depend
     native = implementation_catalog.runtime_implementation_snapshot("native")
     codex = implementation_catalog.runtime_implementation_snapshot("codex")
     common_modules = {
+        "chatcopilot.application.agent_runtime",
+        "chatcopilot.botspec.runtime_env",
+        "chatcopilot.core.config",
+        "chatcopilot.core.llm_client",
+        "chatcopilot.agent.capabilities.assembly",
+        "chatcopilot.agent.capabilities.delegation",
+        "chatcopilot.agent.capabilities.unified_search",
+        "chatcopilot.agent.search.tool",
+        "chatcopilot.agent.subagents.search_circuit",
         "chatcopilot.agent.runtime",
         "chatcopilot.agent.turn",
         "chatcopilot.agent.tools.registry",

@@ -38,7 +38,8 @@ def test_interactive_projection_preserves_selected_bot_runtime() -> None:
 
     projection = project_agent_runtime(_runtime(), chat_config=chat_config)
 
-    assert projection.chat_config is chat_config
+    assert projection.chat_config == chat_config
+    assert projection.chat_config is not chat_config
     assert projection.research_llm_config.model == "research-model"
     assert projection.tool_packs == (
         "workspace.read_write",
@@ -72,7 +73,8 @@ def test_detached_profile_and_overrides_are_explicit() -> None:
     assert projection.tool_packs == ("workspace.read_write", "memory.chat")
     assert projection.rag_sources == ()
     assert projection.mcp_servers == ()
-    assert projection.subagents is replacement_subagents
+    assert projection.subagents == replacement_subagents
+    assert projection.subagents is not replacement_subagents
     assert projection.agent_backend == "native"
     assert projection.assembly_profile == "detached"
 
@@ -119,6 +121,10 @@ def test_materialization_forwards_the_complete_projection(monkeypatch) -> None:
     assert captured == {
         "chat_config": projection.chat_config,
         "research_llm_config": projection.research_llm_config,
+        "search_llm_config": projection.search_llm_config,
+        "subagent_llm_configs": projection.subagent_llm_configs,
+        "search_provider_credentials": projection.search_provider_credentials,
+        "search_quota_max_ttl": projection.search_quota_max_ttl,
         "tool_packs": projection.tool_packs,
         "exclude_tools": projection.exclude_tools,
         "runtime_providers": projection.runtime_providers,

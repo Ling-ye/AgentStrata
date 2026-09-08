@@ -11,7 +11,7 @@ import ssl
 from typing import Protocol
 from urllib.parse import urlsplit
 
-from chatcopilot.application.resources import FetchedResource
+from chatcopilot.contracts.resources import FetchedResource
 from chatcopilot.contracts.gateway import ResourceTicket
 
 

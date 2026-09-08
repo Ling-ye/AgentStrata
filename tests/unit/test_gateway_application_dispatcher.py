@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import pytest
 
 from chatcopilot.application.sessions import SessionManager
+from chatcopilot.application.turns import prepare_channel_turn, prepare_client_turn
+from chatcopilot.contracts.turns import ExchangeRef, TurnOutcome
 from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
 from chatcopilot.channels.base import ChannelDefinitelyNotSubmittedError, ChannelDeliveryUnknownError, ChannelHealth
 from chatcopilot.contracts.agent import AgentResult
@@ -77,7 +79,18 @@ def _client(client_id: str, *, admin: bool = False) -> GatewayClientContext:
     )
 
 
-class _ImmediateExecutor:
+class _PreparedExecutor:
+    prepare_client = staticmethod(prepare_client_turn)
+
+    async def prepare_channel(self, **kwargs):
+        return await prepare_channel_turn(workspace_root=Path("unused-workspace"),
+                                          resource_materializer=None, **kwargs)
+
+    def close(self):
+        pass
+
+
+class _ImmediateExecutor(_PreparedExecutor):
     def __init__(self) -> None:
         self.requests = []
         self.commits = []
@@ -88,10 +101,10 @@ class _ImmediateExecutor:
         if cancellation is not None:
             cancellation.raise_if_cancelled()
         on_event(SimpleNamespace())
-        return SimpleNamespace(result=AgentResult("answer", "end_turn"))
+        return TurnOutcome(AgentResult("answer", "end_turn"), ExchangeRef())
 
-    def commit_exchange(self, request, outcome, *, exchange_id=None):
-        del exchange_id
+    def commit_exchange(self, request, outcome, *, envelope, receipt):
+        del envelope, receipt
         self.commits.append((request, outcome))
         return outcome
 
@@ -99,7 +112,7 @@ class _ImmediateExecutor:
         self.discards.append((request, outcome))
 
 
-class _BlockingExecutor:
+class _BlockingExecutor(_PreparedExecutor):
     def __init__(self) -> None:
         self.started = asyncio.Event()
 
@@ -109,17 +122,17 @@ class _BlockingExecutor:
         while True:
             await asyncio.sleep(0)
             if cancellation is not None and getattr(cancellation, "is_cancelled", False):
-                return SimpleNamespace(result=AgentResult("", "cancelled"))
+                return TurnOutcome(AgentResult("", "cancelled"))
 
-    def commit_exchange(self, request, outcome, *, exchange_id=None):
-        del request, exchange_id
+    def commit_exchange(self, request, outcome, *, envelope, receipt):
+        del request, envelope, receipt
         return outcome
 
     def discard_exchange(self, request, outcome):
         del request, outcome
 
 
-class _ThreadedCancellationExecutor:
+class _ThreadedCancellationExecutor(_PreparedExecutor):
     def __init__(self) -> None:
         self.started = threading.Event()
         self.stopped = threading.Event()
@@ -132,12 +145,12 @@ class _ThreadedCancellationExecutor:
             while cancellation is None or not cancellation.is_cancelled:
                 time.sleep(0.001)
             self.stopped.set()
-            return SimpleNamespace(result=AgentResult("", "cancelled"))
+            return TurnOutcome(AgentResult("", "cancelled"))
 
         return await asyncio.to_thread(run)
 
-    def commit_exchange(self, request, outcome, *, exchange_id=None):
-        del request, exchange_id
+    def commit_exchange(self, request, outcome, *, envelope, receipt):
+        del request, envelope, receipt
         return outcome
 
     def discard_exchange(self, request, outcome):
@@ -271,13 +284,12 @@ def _runtime(
             policy_version="policy-v1",
         ),
         generation=generation,
-        workspace_root=tmp_path / "workspace",
         on_admission_decision=admission_sink,
         clock=lambda: 10.0,
     )
     channels = ChannelRuntimeManager(
         state_store=state,
-        application_ingress=coordinator,
+        gateway_ingress=coordinator,
         event_sink=events,
         writer_generation=generation,
         ingress_retention_limit=ingress_retention_limit,
@@ -946,12 +958,11 @@ async def test_admission_rejection_precedes_session_and_agent_side_effects(tmp_p
             policy_version="policy-v1",
         ),
         generation=generation,
-        workspace_root=tmp_path / "workspace",
         on_admission_decision=decisions.append,
     )
     channels = ChannelRuntimeManager(
         state_store=state,
-        application_ingress=coordinator,
+        gateway_ingress=coordinator,
         writer_generation=generation,
     )
     driver = _Driver()

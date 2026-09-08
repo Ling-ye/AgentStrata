@@ -19,6 +19,7 @@ from chatcopilot.agent.tools.registry import ToolMaterializationError
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.component_catalog.audit import audit_component_catalog
 from chatcopilot.contracts.subagents import SubagentSpec
+from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.tool_packs import ToolPackEntry, ToolProvider
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.core.config import ChatConfig, LLMConfig
@@ -393,7 +394,7 @@ def test_runtime_closes_mcp_when_loaded_provider_fails_validation(
         runtime_module.build_agent_runtime(
             chat_config=ChatConfig(llm=LLMConfig(api_key="test-key")),
             tool_packs=(),
-            mcp_servers=(cast(Any, object()),),
+            mcp_servers=(McpServerConfig(id="invalid-provider"),),
         )
 
     assert lifecycle == {"loaded": 1, "closed": 1}
@@ -424,7 +425,7 @@ def test_successful_runtime_owns_mcp_until_close(
     runtime = runtime_module.build_agent_runtime(
         chat_config=ChatConfig(llm=LLMConfig(api_key="test-key")),
         tool_packs=(),
-        mcp_servers=(cast(Any, object()),),
+        mcp_servers=(McpServerConfig(id="valid-provider"),),
     )
 
     assert lifecycle == {"loaded": 1, "closed": 0}

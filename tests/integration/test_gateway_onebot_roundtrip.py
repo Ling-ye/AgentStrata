@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import websockets
 import pytest
 
 from chatcopilot.application.sessions import SessionManager
+from chatcopilot.application.turns import prepare_channel_turn, prepare_client_turn
+from chatcopilot.contracts.turns import ExchangeRef, TurnOutcome
 from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
 from chatcopilot.channels.qq_onebot import (
     OneBotChannelConfig,
@@ -55,7 +56,18 @@ _ONEBOT_TOKEN = "o" * 32
 _GATEWAY_TOKEN = "g" * 32
 
 
-class _DeterministicExecutor:
+class _PreparedExecutor:
+    prepare_client = staticmethod(prepare_client_turn)
+
+    async def prepare_channel(self, **kwargs):
+        return await prepare_channel_turn(workspace_root=Path("unused-workspace"),
+                                          resource_materializer=None, **kwargs)
+
+    def close(self):
+        pass
+
+
+class _DeterministicExecutor(_PreparedExecutor):
     def __init__(self) -> None:
         self.requests: list[Any] = []
         self.commits: list[tuple[Any, Any]] = []
@@ -65,10 +77,10 @@ class _DeterministicExecutor:
         if cancellation is not None:
             cancellation.raise_if_cancelled()
         del on_event
-        return SimpleNamespace(result=AgentResult("gateway-answer", "end_turn"))
+        return TurnOutcome(AgentResult("gateway-answer", "end_turn"), ExchangeRef())
 
-    def commit_exchange(self, request, outcome, *, exchange_id=None):
-        del exchange_id
+    def commit_exchange(self, request, outcome, *, envelope, receipt):
+        del envelope, receipt
         self.commits.append((request, outcome))
         return outcome
 
@@ -186,11 +198,10 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record
                 policy_version="policy-v1",
             ),
             generation=generation,
-            workspace_root=workspace_root,
         )
         channels = ChannelRuntimeManager(
             state_store=state,
-            application_ingress=coordinator,
+            gateway_ingress=coordinator,
             event_sink=events,
             writer_generation=generation,
         )

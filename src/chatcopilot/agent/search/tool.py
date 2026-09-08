@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from chatcopilot.agent.search.reranker import ResultReranker
 from chatcopilot.agent.search.coordinator import SearchCoordinator
@@ -31,6 +31,7 @@ def build_search_tool(
     tools: Sequence[ToolDef],
     raw_mcp_tools: Sequence[ToolDef] = (),
     provider_specs: Sequence[SearchProviderSpec] = (),
+    provider_credentials: Mapping[str, str] | None = None,
     turn_timeout_seconds: float | None = None,
     circuit: SearchCircuitBreaker | None = None,
 ) -> ToolDef | None:
@@ -40,6 +41,7 @@ def build_search_tool(
         tools=tools,
         raw_mcp_tools=raw_mcp_tools,
         provider_specs=provider_specs,
+        provider_credentials=provider_credentials,
         turn_timeout_seconds=turn_timeout_seconds,
         circuit=circuit,
     )
@@ -180,6 +182,7 @@ def build_search_coordinator(
     tools: Sequence[ToolDef],
     raw_mcp_tools: Sequence[ToolDef] = (),
     provider_specs: Sequence[SearchProviderSpec] = (),
+    provider_credentials: Mapping[str, str] | None = None,
     turn_timeout_seconds: float | None = None,
     max_wall_seconds: float | None = None,
     circuit: SearchCircuitBreaker | None = None,
@@ -191,6 +194,7 @@ def build_search_coordinator(
         tools,
         raw_mcp_tools=raw_mcp_tools,
         provider_specs=provider_specs,
+        provider_credentials=provider_credentials,
     )
     if not registry.available_sources():
         return None

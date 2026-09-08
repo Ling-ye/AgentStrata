@@ -87,7 +87,12 @@ def llm_runtime_env_defaults(llm: LLMSpec) -> dict[str, str]:
     return values
 
 
-def load_research_llm_config(llm: LLMSpec, *, fallback: LLMConfig) -> LLMConfig:
+def load_research_llm_config(
+    llm: LLMSpec,
+    *,
+    fallback: LLMConfig,
+    environment: Mapping[str, str] | None = None,
+) -> LLMConfig:
     """Resolve the versioned research model default, then apply machine overrides."""
 
     configured = LLMConfig(
@@ -97,7 +102,10 @@ def load_research_llm_config(llm: LLMSpec, *, fallback: LLMConfig) -> LLMConfig:
         timeout=fallback.timeout,
     )
     prefix = getattr(llm, "research_env_prefix", None)
-    return load_llm_profile(prefix, fallback=configured) if prefix else configured
+    return (
+        load_llm_profile(prefix, fallback=configured, environment=environment)
+        if prefix else configured
+    )
 
 
 def _source_root(source_path: Path) -> Path:

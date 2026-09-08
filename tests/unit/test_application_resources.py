@@ -9,11 +9,11 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, mock
 
 from chatcopilot.application.resources import (
-    FetchedResource,
     ResourceMaterializationError,
     ResourceMaterializationLimits,
     ResourceMaterializationService,
 )
+from chatcopilot.contracts.resources import FetchedResource
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
     ChannelAccountRef,

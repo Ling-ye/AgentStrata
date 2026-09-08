@@ -51,14 +51,15 @@ resulting system structure.
   Agent process; browser-backed, account-bound, and shared search-engine
   components remain isolated and are started only when an enabled BotSpec
   requires them.
-- **Channel boundary.** The long-lived Gateway owns QQ / OneBot connection,
-  routing, sessions, runs, and delivery evidence through a typed Channel
-  contract. Feishu remains on an isolated legacy adapter edge; neither path
-  leaks native platform frames into Agent logic.
-- **Owner controls in chat.** A transport-authenticated Owner can list the
-  current Bot's slash commands, inspect combined session and instance state,
-  and request a state-preserving restart of only that Bot after the reply is
-  delivered.
+- **Channel boundary.** The Channel owns QQ / OneBot connection, native event
+  validation, and delivery. The Gateway controls its lifecycle and owns
+  admission, routing, sessions, runs, and delivery evidence. Feishu remains on
+  an isolated legacy adapter edge; neither path leaks native platform frames
+  into Agent logic.
+- **Owner controls in chat.** An Owner verified by Gateway identity and
+  admission policies can list the current Bot's slash commands, inspect combined
+  session and instance state, and request a state-preserving restart of only
+  that Bot after the reply is delivered.
 - **Controlled development.** Codex-backed owner sessions dispatch repository
   mutation to isolated code tasks that validate and prepare draft pull
   requests; they do not merge or deploy automatically.
@@ -177,47 +178,50 @@ catalog does not embed personal targets.
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    B["BotSpec<br/>prompts · tools · agents · context"]
-    C["Contracts<br/>identity · Gateway events · RPC · Agent · tools · workspace"]
-    Q["QQ provider<br/>NapCat / OneBot"]
-    CH["Trusted Channel<br/>connection · codec · receipts"]
-    AU["Authorization<br/>principal · admission · audit"]
-    A["Application<br/>actor session · workspace · turn"]
-    G["Gateway<br/>routing · session · run · outbox"]
-    ACP["ACP edge<br/>authenticated Gateway client"]
-    R["Agent runtime<br/>native · langgraph · codex"]
-    X["Capabilities<br/>tool packs · MCP · RAG · memory"]
-    F["Feishu legacy adapter"]
-    O["Operations<br/>deployment · console · evaluations"]
+Bot messages pass through four responsibility layers: **Channel → Gateway →
+Application → Agent**. Execution results return through Application and
+Gateway; Channel reports provider acknowledgements to Gateway. Assembly,
+Console, and Evaluation sit outside these message-processing layers.
 
-    Q --> CH
-    CH --> AU
-    AU --> G
-    ACP --> G
-    G --> A
-    A --> R
-    R --> G
-    G --> CH
-    B --> G
-    B --> A
-    B --> R
-    B --> X
-    F --> A
-    C --> R
-    C --> X
-    C --> CH
-    C --> AU
-    C --> A
-    C --> G
-    G --> O
+```mermaid
+flowchart LR
+    subgraph Runtime["Bot runtime · message flow"]
+        direction LR
+        CH["Channel<br/>connection · codec · delivery"]
+        G["Gateway<br/>admission · session · run · outbox"]
+        A["Application<br/>actor · workspace · context · exchange"]
+        R["Agent<br/>backend · model · tools · delegation"]
+        CH <--> G <--> A <--> R
+    end
+    AU["Authorization<br/>principal · admission · audit"]
+    AU -. policy .-> G
+    subgraph Surroundings["Outside the message layers"]
+        S["Assembly / instance host<br/>BotSpec · startup · shutdown"]
+        C["Console<br/>configuration · control · observation"]
+        E["Evaluation<br/>isolated trials · records"]
+    end
+    S -. lifecycle .-> Runtime
+    C -. "state / control" .-> Runtime
+    C -. "Evaluation API" .-> E
+    E -. "isolated execution" .-> R
 ```
 
-Source dependencies flow from contracts through the trusted domain layers to
-application, Gateway/protocol edges, and operations. Runtime messages travel
-in both directions without reversing those import boundaries. Agent code does
-not import concrete Channels, platforms, Gateway, or BotSpec internals. See
+Solid arrows show message and result flow; dotted arrows show supporting
+relationships, not required message stages. Authorization, contracts, model
+access, tools, and storage support the four layers. The Channel verifies its
+provider connection and structured events; the Gateway uses authorization
+policies to decide admission and roles.
+
+The instance host assembles and starts the runtime in the bot process; assembly
+does not require another service. Console uses existing configuration, durable
+observation, and control interfaces. Evaluation owns an independent lifecycle
+and reuses shared Agent assembly for isolated trials. Neither requires every
+operation to traverse the message chain. ACP is an authenticated local client
+that connects directly to Gateway; Feishu retains its legacy adapter path.
+
+Message arrows are not Python import arrows: Gateway imports the Channel port
+and injects its inbound callback, while Channel does not import Gateway. Agent
+code does not import concrete Channels, platforms, Gateway, or BotSpec internals. See
 [architecture.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/architecture.md)
 and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.md).
 

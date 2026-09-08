@@ -7,24 +7,15 @@ from collections.abc import Callable
 from dataclasses import replace
 import hashlib
 import math
-from pathlib import Path
 import re
 import time
-from typing import Protocol, cast
+from typing import Protocol
 
-from chatcopilot.application.actor_runtime import (
-    ActorTurnOutcome,
-    ActorTurnRequest,
-)
-from chatcopilot.application.resources import (
-    ResourceMaterializationError,
-    ResourceMaterializationService,
-)
 from chatcopilot.application.sessions import SessionManagerError
-from chatcopilot.application.workspaces import build_actor_workspace
+from chatcopilot.contracts.turns import PreparedTurn, TurnOutcome
 from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
 from chatcopilot.channels.base import ChannelDeliveryError, ChannelDeliveryUnknownError
-from chatcopilot.contracts.agent import AgentEvent, ResourceRef, TextDelta
+from chatcopilot.contracts.agent import AgentEvent, AgentResult, TextDelta
 from chatcopilot.contracts.authorization import (
     AuthorizationDecision,
     AuthorizationOperation,
@@ -68,25 +59,25 @@ _ERROR_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 class ActorTurnExecutorPort(Protocol):
     async def execute(
         self,
-        request: ActorTurnRequest,
+        request: PreparedTurn,
         *,
         on_event: Callable[[AgentEvent], None],
         cancellation: CancellationProbe | None = None,
-    ) -> ActorTurnOutcome: ...
+    ) -> TurnOutcome: ...
 
-    def commit_exchange(
-        self,
-        request: ActorTurnRequest,
-        outcome: ActorTurnOutcome,
-        *,
-        exchange_id: str | None = None,
-    ) -> ActorTurnOutcome: ...
+    def prepare_client(self, *, session_id: str, run_id: str, principal: Principal,
+                       canonical_text: str, message_id: str | None, request_id: str) -> PreparedTurn: ...
 
-    def discard_exchange(
-        self,
-        request: ActorTurnRequest,
-        outcome: ActorTurnOutcome,
-    ) -> None: ...
+    async def prepare_channel(self, *, event: CanonicalInboundEvent, principal: Principal,
+                              session_id: str, run_id: str, canonical_text: str,
+                              now: float) -> PreparedTurn: ...
+
+    def commit_exchange(self, request: PreparedTurn, outcome: TurnOutcome, *,
+                        envelope: OutboundEnvelope, receipt: DeliveryReceipt) -> TurnOutcome: ...
+
+    def discard_exchange(self, request: PreparedTurn, outcome: TurnOutcome) -> None: ...
+
+    def close(self) -> None: ...
 
 
 class ChannelOutboundPort(Protocol):
@@ -155,8 +146,6 @@ class GatewayTurnCoordinator:
         identity_policy: IdentityPolicy,
         admission_policy: AdmissionPolicy,
         generation: int,
-        workspace_root: Path,
-        resource_materializer: ResourceMaterializationService | None = None,
         channel_runtime: ChannelOutboundPort | None = None,
         on_admission_decision: Callable[[AuthorizationDecision], None] | None = None,
         clock: Callable[[], float] = time.time,
@@ -170,8 +159,6 @@ class GatewayTurnCoordinator:
         self._identity_policy = identity_policy
         self._admission_policy = admission_policy
         self._generation = generation
-        self._workspace_root = Path(workspace_root)
-        self._resource_materializer = resource_materializer
         self._channel_runtime = channel_runtime
         self._on_admission_decision = on_admission_decision
         self._clock = clock
@@ -311,17 +298,20 @@ class GatewayTurnCoordinator:
             observer = RunObserver(self._state_store, self._generation, run_id)
             observer.record("principal_bound", "channel", "gateway", "succeeded",
                             gate="authenticated_principal_binding", outcome="allowed")
-            resources = await self._materialize_resources(event, principal)
+            request = await self._actor_executor.prepare_channel(
+                event=event, principal=principal, session_id=session.session_id,
+                run_id=run_id, canonical_text=canonical_text, now=self._now())
+            request = replace(request, metadata={**(request.metadata or {}),
+                              "trace_id": run_id, "parent_span_id": ACTOR_SPAN_ID})
             observer.record("resources_materialized", "gateway", "application", "succeeded",
-                            resource_count=len(resources))
+                            resource_count=len(request.resource_refs))
             task = asyncio.create_task(
                 self._execute_channel_run(
                     event=event,
                     session_id=session.session_id,
                     run_id=run_id,
                     principal=principal,
-                    canonical_text=canonical_text,
-                    resources=resources,
+                    request=request,
                     cancellation=token,
                 ),
                 name=f"gateway-channel-run:{run_id}",
@@ -366,6 +356,7 @@ class GatewayTurnCoordinator:
         tasks = tuple(self._tasks.values())
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        self._actor_executor.close()
 
     def _authorize_inbound(self, event: CanonicalInboundEvent) -> Principal:
         evidence = event.evidence
@@ -413,37 +404,6 @@ class GatewayTurnCoordinator:
             )
         return principal
 
-    async def _materialize_resources(
-        self,
-        event: CanonicalInboundEvent,
-        principal: Principal,
-    ) -> tuple[ResourceRef, ...]:
-        if not event.resource_tickets:
-            return ()
-        if self._resource_materializer is None:
-            raise GatewayTurnCoordinatorError(
-                "resource_materializer_unavailable",
-                "Inbound resources cannot be materialized",
-            )
-        try:
-            binding = build_actor_workspace(
-                workspace_root=self._workspace_root,
-                principal=principal,
-            )
-            return await self._resource_materializer.materialize(
-                event=event,
-                actor_id=principal.user_id,
-                workspace=binding.workspace,
-                now=self._now(),
-            )
-        except ResourceMaterializationError as exc:
-            raise GatewayTurnCoordinatorError(exc.code, str(exc)) from exc
-        except Exception as exc:
-            raise GatewayTurnCoordinatorError(
-                "resource_materialization_failed",
-                "Inbound resources could not be materialized",
-            ) from exc
-
     async def _execute_client_run(
         self,
         *,
@@ -455,15 +415,15 @@ class GatewayTurnCoordinator:
         request_id: str,
         cancellation: CancellationToken,
     ) -> None:
+        request = self._actor_executor.prepare_client(
+            run_id=run_id, session_id=session_id, principal=principal,
+            canonical_text=canonical_text, message_id=message_id, request_id=request_id)
+        request = replace(request, metadata={**(request.metadata or {}),
+                          "trace_id": run_id, "parent_span_id": ACTOR_SPAN_ID})
+        result = None
         try:
             result = await self._execute_actor(
-                request=ActorTurnRequest(
-                    session_id=session_id,
-                    principal=principal,
-                    canonical_text=canonical_text,
-                    message_id=message_id,
-                    metadata={"gateway_request_id": request_id},
-                ),
+                request=request,
                 run_id=run_id,
                 cancellation=cancellation,
             )
@@ -476,6 +436,9 @@ class GatewayTurnCoordinator:
             return
         except Exception as exc:
             self._fail_run(session_id=session_id, run_id=run_id, error=exc)
+        finally:
+            if result is not None:
+                self._actor_executor.discard_exchange(request, result)
 
     async def _execute_channel_run(
         self,
@@ -484,29 +447,18 @@ class GatewayTurnCoordinator:
         session_id: str,
         run_id: str,
         principal: Principal,
-        canonical_text: str,
-        resources: tuple[ResourceRef, ...],
+        request: PreparedTurn,
         cancellation: CancellationToken,
     ) -> None:
-        request: ActorTurnRequest | None = None
-        result: ActorTurnOutcome | None = None
+        result: TurnOutcome | None = None
         exchange_committed = False
         try:
-            request = ActorTurnRequest(
-                session_id=session_id,
-                principal=principal,
-                canonical_text=canonical_text,
-                message_id=event.evidence.message_id,
-                resource_refs=resources,
-                metadata={"gateway_event_id": event.evidence.event_id},
-                sender_display_name=event.evidence.sender.display_name,
-            )
             result = await self._execute_actor(
                 request=request,
                 run_id=run_id,
                 cancellation=cancellation,
             )
-            if result.result.stop_reason == "cancelled":
+            if result.result.stop_reason == "cancelled" or cancellation.is_cancelled:
                 self._actor_executor.discard_exchange(request, result)
                 self._finish_aborted(session_id=session_id, run_id=run_id)
                 return
@@ -539,11 +491,14 @@ class GatewayTurnCoordinator:
                     raise
                 observer.record("channel_returned", "channel", "gateway", receipt.stage,
                                 outbound_id=envelope.outbound_id, receipt_id=receipt.receipt_id, stage=receipt.stage)
+                self._sessions.assert_current_generation()
+                if cancellation.is_cancelled:
+                    self._actor_executor.discard_exchange(request, result)
+                    self._finish_aborted(session_id=session_id, run_id=run_id)
+                    return
                 result = self._actor_executor.commit_exchange(
-                    request,
-                    result,
-                    exchange_id=envelope.outbound_id,
-                )
+                    request, result, envelope=envelope, receipt=receipt)
+
                 exchange_committed = True
             else:
                 self._actor_executor.discard_exchange(request, result)
@@ -552,13 +507,13 @@ class GatewayTurnCoordinator:
                 run_id=run_id,
                 final_text=final_text,
             )
-        except StaleWriterGeneration:
-            if request is not None and result is not None and not exchange_committed:
+        except (StaleWriterGeneration, asyncio.CancelledError):
+            if result is not None and not exchange_committed:
                 self._actor_executor.discard_exchange(request, result)
             raise
         except Exception as error:
             failure = error
-            if request is not None and result is not None and not exchange_committed:
+            if result is not None and not exchange_committed:
                 try:
                     self._actor_executor.discard_exchange(request, result)
                 except Exception as discard_error:
@@ -569,12 +524,10 @@ class GatewayTurnCoordinator:
     async def _execute_actor(
         self,
         *,
-        request: ActorTurnRequest,
+        request: PreparedTurn,
         run_id: str,
         cancellation: CancellationToken,
-    ) -> ActorTurnOutcome:
-        request = replace(request, metadata={**(request.metadata or {}),
-                          "trace_id": run_id, "parent_span_id": ACTOR_SPAN_ID})
+    ) -> TurnOutcome:
         session_id = request.session_id
         run = self._state_store.get_run(run_id)
         if run is None:
@@ -582,7 +535,7 @@ class GatewayTurnCoordinator:
         if cancellation.is_cancelled or run.state == "abort_requested":
             cancellation.cancel()
             self._finish_aborted(session_id=session_id, run_id=run_id)
-            return cast(ActorTurnOutcome, _CancelledOutcome())
+            return TurnOutcome(AgentResult("", "cancelled"))
         self._state_store.start_run(
             generation=self._generation,
             session_id=session_id,
@@ -614,7 +567,7 @@ class GatewayTurnCoordinator:
         *,
         session_id: str,
         run_id: str,
-        result: ActorTurnOutcome,
+        result: TurnOutcome,
     ) -> None:
         if result.result.stop_reason == "cancelled":
             self._finish_aborted(session_id=session_id, run_id=run_id)
@@ -756,15 +709,6 @@ class GatewayTurnCoordinator:
         return float(value)
 
 
-class _CancelledResult:
-    stop_reason = "cancelled"
-    final_text = ""
-
-
-class _CancelledOutcome:
-    result = _CancelledResult()
-
-
 def _client_text(segments: tuple[object, ...]) -> str:
     texts: list[str] = []
     for segment in segments:
@@ -885,8 +829,6 @@ def _error_code(error: Exception) -> str:
     if isinstance(candidate, str) and _ERROR_CODE_RE.fullmatch(candidate):
         return candidate
     if isinstance(error, ChannelDeliveryError):
-        return error.code
-    if isinstance(error, ResourceMaterializationError):
         return error.code
     if isinstance(error, GatewayApplicationError):
         return error.code

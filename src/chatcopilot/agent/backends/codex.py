@@ -209,7 +209,7 @@ class CodexAgentBackend:
         )
         session_key = hashlib.sha256(request.session_id.encode("utf-8")).hexdigest()[:24]
         stable_id = f"acp-{session_key}"
-        options = dict(request.options)
+        options = request.options
         role_hint = str(options.get("role_hint") or "user").strip().lower()
         access_mode = self._policy.access_for_role(role_hint)
         if access_mode not in CODEX_ACCESS_MODES:
