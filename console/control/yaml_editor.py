@@ -85,9 +85,10 @@ def update_mcp_servers(
     if data is None:
         data = {}
 
-    entries = []
+    existing = {str(item["ref"]): item for item in data.get("servers", []) if isinstance(item, dict) and item.get("ref")}
+    entries = [item for item in data.get("servers", []) if isinstance(item, dict) and not item.get("ref")]
     for ref_item in server_refs:
-        entry: dict[str, Any] = {"ref": ref_item["ref"]}
+        entry: dict[str, Any] = existing.get(str(ref_item["ref"]), {"ref": ref_item["ref"]})
         enabled = ref_item.get("enabled", True)
         if not enabled:
             entry["enabled"] = False
@@ -179,6 +180,12 @@ def apply_tool_config(
     files_modified: list[str] = []
     warnings: list[str] = []
 
+    original = _load(bot_yaml_path) or {}
+    servers_reference = ((original.get("tools") or {}).get("mcp") or {}).get("servers") or "mcp/servers.yaml"
+    servers_yaml_path = (bot_yaml_path.parent / servers_reference).resolve()
+    if not servers_yaml_path.is_relative_to(bot_yaml_path.parent.resolve()):
+        raise ValueError("MCP 配置文件必须位于当前机器人配置目录内")
+
     update_bot_tools(
         bot_yaml_path,
         packs=tool_packs or [],
@@ -188,7 +195,6 @@ def apply_tool_config(
     files_modified.append(str(bot_yaml_path))
 
     if mcp_servers is not None:
-        servers_yaml_path = bot_yaml_path.parent / "mcp" / "servers.yaml"
         should_write_mcp = bool(mcp_servers) or servers_yaml_path.exists() or _has_mcp_section(bot_yaml_path)
         if should_write_mcp:
             _ensure_mcp_section(bot_yaml_path)

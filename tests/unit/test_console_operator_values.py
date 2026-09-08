@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from chatcopilot.botspec.inspection import declared_configuration
+from chatcopilot.botspec.inspection import declared_configuration, expected_configuration
 from chatcopilot.contracts.agent import ContextSnapshotPrepared, ToolFinished, ToolStarted
 from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef
 from chatcopilot.contracts.identity import Role
@@ -90,7 +90,10 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
         env.write_text(''.join(f'{key}={value}\n' for key, value in values.items()))
         env.chmod(0o600)
         environments.append(values)
-        recorder = ObservationRecorder(state, generation, configuration=declared_configuration(spec, values))
+        current = expected_configuration(spec, values, home=Path.home())
+        loaded = declared_configuration(spec, values)
+        loaded["environment_revision"] = current["effective_environment_revision"]
+        recorder = ObservationRecorder(state, generation, configuration=loaded)
         recorders.append(recorder)
         states.append(state)
         instance = BotInstance(f'fixture-{index}', str(spec), env_file=str(env), runtime_kind='gateway')
@@ -118,6 +121,8 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
                          result={'final_text': values['QQ_ALLOW_FROM']})
     monkeypatch.setattr(architecture, 'get_instance', lambda identity: instances[identity])
     with TestClient(app) as client:
+        for recorder in recorders:
+            recorder.refresh()
         base = '/api/bots/fixture-0'
         current = client.get(base + '/inspection')
         assert current.headers['cache-control'] == 'no-store'
@@ -145,8 +150,9 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
         before = client.get(base + '/inspection?run_id=run-values').json()['execution']
         env = Path(instances['fixture-0'].env_file)
         env.write_text(env.read_text().replace(environments[0]['QQ_ALLOW_GROUPS'], '*'))
+        recorders[0].refresh()
         after = client.get(base + '/inspection?run_id=run-values').json()
-        assert after['pending_changes']
+        assert after['pending_changes'], after['configuration_status_reason']
         assert entity(after['current'], 'policy:instance')['config']['QQ_ALLOW_GROUPS'] == '*'
         assert after['execution'] == before
         deployed_env = tmp_path / '0' / 'runtime.env'
@@ -158,7 +164,7 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
         assert entity(removed['current'], 'policy:instance')['config']['QQ_ALLOW_GROUPS'] is None
         monkeypatch.setenv('QQ_ALLOW_GROUPS', '100' + '999001')
         overridden = client.get(base + '/inspection').json()
-        assert entity(overridden['current'], 'policy:instance')['config']['QQ_ALLOW_GROUPS'] == '100' + '999001'
+        assert entity(overridden['current'], 'policy:instance')['config']['QQ_ALLOW_GROUPS'] is None
         assert client.get('/api/not-found').headers['cache-control'] == 'no-store'
         deployed_env.chmod(0o644)
         unsafe = client.get(base + '/inspection')

@@ -106,15 +106,15 @@ def configuration_projection(
         "prompts": (data.get("prompts") or {}).get("schema_version"), "observation": 1,
     })
     for entity in entities:
-        entity["environment"] = _environment_values(entity["config"], values)
+        entity["environment"] = environment_values(entity["config"], values)
     result = {"layers": [{"id": key, "name": name} for key, name in LAYERS], "entities": entities,
-              "visibility": "operator",
+              "visibility": "operator", "environment_revision_version": 2,
               "environment_revision": fingerprint({"access": access, "environment": {
                   entity["id"]: entity["environment"] for entity in entities}})}
     return result
 
 
-def _environment_values(value: Any, values: Mapping[str, str]) -> dict[str, Any]:
+def environment_values(value: Any, values: Mapping[str, str]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     if isinstance(value, dict):
         for key, item in value.items():
@@ -124,11 +124,12 @@ def _environment_values(value: Any, values: Mapping[str, str]) -> dict[str, Any]
             elif key.endswith("env_prefix") and isinstance(item, str) and item:
                 result.update({name: raw for name, raw in values.items() if name.startswith(item + "_")})
             else:
-                result.update(_environment_values(item, values))
+                result.update(environment_values(item, values))
     elif isinstance(value, list):
         for item in value:
-            result.update(_environment_values(item, values))
+            result.update(environment_values(item, values))
     elif isinstance(value, str):
-        for name in re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value):
+        for match in re.finditer(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}|\$([A-Za-z_][A-Za-z0-9_]*)", value):
+            name = match.group(1) or match.group(2)
             result[name] = values.get(name)
     return result

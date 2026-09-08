@@ -1,389 +1,78 @@
-import { Alert, Button, Space, Spin, Switch, Tabs, Tag, Typography } from "@arco-design/web-react";
-import { IconDelete, IconPlus } from "@arco-design/web-react/icon";
-import { healthTagColor, infraStateLabel } from "../shared/ui/status";
-import {
-  SURFACE_TEXT,
-  type BotToolEditorProps,
-  type SurfaceKey,
-} from "../features/bots/tool-editor/model";
-import { PromptConfigOverview, ContextConfigOverview, RiskBadge } from "./InventoryPanel";
+import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Alert, Button, Space, Switch, Tag } from "@arco-design/web-react";
+import { api } from "../api";
+import type { BotToolEditorProps } from "../features/bots/tool-editor/model";
 import ToolPickerModal from "./ToolPickerModal";
 import { useBotToolEditor } from "../features/bots/tool-editor/useBotToolEditor";
+import ConfigurationPane from "../features/architecture/ConfigurationPane";
+import { latestConfiguration } from "../features/architecture/configurationModel";
+import { configurationTabForEntity, configurationViews, type ConfigurationTab, type DisplayEntity } from "../features/architecture/configurationPresentation";
 
-const { Text, Title } = Typography;
-
-export default function BotToolEditor({ instanceId, isDeployed = false, inventory, onApplyTask }: BotToolEditorProps) {
-  const {
-    activeSurface,
-    catalogByKind,
-    dirty,
-    draft,
-    featureList,
-    handlePickerConfirm,
-    handleSave,
-    isLoading,
-    mcpByRef,
-    mcpCatalogByRef,
-    pickerItems,
-    pickerSelected,
-    pickerTarget,
-    removeAgentPreset,
-    removeFeature,
-    removeHiddenTool,
-    removeMcp,
-    removeToolPack,
-    removeWorkflow,
-    saving,
-    setActiveSurface,
-    setPickerTarget,
-    subagentByName,
-    toggleMcp,
-    toolPackById,
-  } = useBotToolEditor({ instanceId, isDeployed, inventory, onApplyTask });
-
-  if (isLoading || !draft) {
-    return <div className="panel-spinner"><Spin /></div>;
-  }
-
-  return (
-    <div className="bot-tool-editor">
-      <Tabs
-        type="capsule"
-        size="small"
-        activeTab={activeSurface}
-        onChange={(key) => setActiveSurface(key as SurfaceKey)}
-      >
-        <Tabs.TabPane
-          key="tools"
-          title={`${SURFACE_TEXT.tools} ${draft.tools.packs.length + featureList.length + draft.tools.mcp.servers.length}`}
-        >
-          <div className="tool-surface-heading">
-            <Title heading={6} style={{ margin: 0 }}>{SURFACE_TEXT.tools}</Title>
-            <Text type="secondary" className="cc-text-small">{SURFACE_TEXT.toolsHelp}</Text>
-          </div>
-
-          <div className="tool-section">
-            <Space className="tool-section-header">
-              <Title heading={6} style={{ margin: 0 }}>{SURFACE_TEXT.localCapabilities}</Title>
-              <Button size="small" icon={<IconPlus />} onClick={() => setPickerTarget("capability")}>
-                {SURFACE_TEXT.addCapability}
-              </Button>
-            </Space>
-            <div className="tool-item-list">
-              {draft.tools.packs.map((cap) => {
-                const info = catalogByKind.tool_pack?.find((i) => i.name === cap);
-                const inv = toolPackById.get(cap);
-                const description = inv?.description || info?.description || "";
-                const hasTools = inv?.has_tools ?? info?.has_tools;
-                const hasPrompts = inv?.has_prompts ?? info?.has_prompts;
-                return (
-                  <div key={cap} className="tool-item-row tool-item-row-rich">
-                    <div className="tool-item-content">
-                      <div className="tool-item-title-row">
-                        <Text code className="cc-text-small tool-item-code">{cap}</Text>
-                        <Space size={4} wrap>
-                          <Tag size="small" color="arcoblue">Pack</Tag>
-                          {inv?.label && <Tag size="small" color="light-blue" title={inv.label}>{inv.label}</Tag>}
-                          {hasTools && <Tag size="small" className="cc-tag-meta">{SURFACE_TEXT.toolTag}</Tag>}
-                          {hasPrompts && <Tag size="small" className="cc-tag-meta">Prompt</Tag>}
-                        </Space>
-                      </div>
-                      {description && (
-                        <Text type="secondary" className="cc-text-small tool-item-description">
-                          {description}
-                        </Text>
-                      )}
-                    </div>
-                    <Button
-                      size="mini"
-                      type="text"
-                      status="danger"
-                      icon={<IconDelete />}
-                      className="tool-item-action"
-                      onClick={() => removeToolPack(cap)}
-                    />
-                  </div>
-                );
-              })}
-              {featureList.map((feature) => {
-                const info = catalogByKind.tool_feature?.find((i) => i.name === feature);
-                return (
-                  <div key={feature} className="tool-item-row tool-item-row-rich">
-                    <div className="tool-item-content">
-                      <div className="tool-item-title-row">
-                        <Text code className="cc-text-small tool-item-code">{feature}</Text>
-                        <Tag size="small" color="green">{SURFACE_TEXT.runtimeFeatures}</Tag>
-                        {info?.category && <Tag size="small" color="light-blue" title={info.category}>{info.category}</Tag>}
-                      </div>
-                      {info?.description && (
-                        <Text type="secondary" className="cc-text-small tool-item-description">
-                          {info.description}
-                        </Text>
-                      )}
-                    </div>
-                    <Button
-                      size="mini"
-                      type="text"
-                      status="danger"
-                      icon={<IconDelete />}
-                      className="tool-item-action"
-                      onClick={() => removeFeature(feature)}
-                    />
-                  </div>
-                );
-              })}
-              {draft.tools.packs.length === 0 && featureList.length === 0 && (
-                <Text type="secondary">{SURFACE_TEXT.empty}</Text>
-              )}
-            </div>
-          </div>
-
-          <div className="tool-section">
-            <Space className="tool-section-header">
-              <Title heading={6} style={{ margin: 0 }}>{SURFACE_TEXT.mcpServices}</Title>
-              <Button size="small" icon={<IconPlus />} onClick={() => setPickerTarget("mcp")}>
-                {SURFACE_TEXT.addMcp}
-              </Button>
-            </Space>
-            <div className="tool-item-list">
-              {draft.tools.mcp.servers.map((srv) => {
-                const info = mcpCatalogByRef.get(srv.ref);
-                const inv = mcpByRef.get(srv.ref);
-                const title = inv?.title || info?.name || srv.ref;
-                const risk = inv?.risk || info?.risk || "";
-                return (
-                  <div key={srv.ref} className="tool-item-row tool-item-row-rich">
-                    <Switch
-                      size="small"
-                      checked={srv.enabled}
-                      onChange={(on) => toggleMcp(srv.ref, on)}
-                    />
-                    <div className="tool-item-content">
-                      <div className="tool-item-title-row">
-                        <Text code className="cc-text-small tool-item-code">{srv.ref}</Text>
-                        <Text bold className="cc-text-small">{title}</Text>
-                        <Space size={4} wrap>
-                          {!srv.enabled && <Tag size="small" color="gray">{SURFACE_TEXT.disabled}</Tag>}
-                          <RiskBadge risk={risk} />
-                          {inv?.infra_state && (
-                            <Tag size="small" className="cc-status-tag" color={healthTagColor(inv.infra_color)}>
-                              {infraStateLabel(inv.infra_state)}
-                            </Tag>
-                          )}
-                        </Space>
-                      </div>
-                      <div className="tool-item-meta">
-                        {inv?.transport && <Tag size="small" className="cc-tag-meta" title={inv.transport}>{inv.transport}</Tag>}
-                        {inv?.exposure && <Tag size="small" color="blue" title={inv.exposure}>{inv.exposure}</Tag>}
-                        {inv?.infra_service_id && <Tag size="small" className="cc-tag-meta" title={`infra: ${inv.infra_service_id}`}>infra: {inv.infra_service_id}</Tag>}
-                        {inv?.allowed_subagents.map((name) => (
-                          <Tag key={name} size="small" color="cyan" title={name}>{name}</Tag>
-                        ))}
-                      </div>
-                    </div>
-                    <Button
-                      size="mini"
-                      type="text"
-                      status="danger"
-                      icon={<IconDelete />}
-                      className="tool-item-action"
-                      onClick={() => removeMcp(srv.ref)}
-                    />
-                  </div>
-                );
-              })}
-              {draft.tools.mcp.servers.length === 0 && <Text type="secondary">{SURFACE_TEXT.empty}</Text>}
-            </div>
-          </div>
-
-          {draft.tools.hide.length > 0 && (
-            <div className="tool-section">
-              <Title heading={6} style={{ margin: 0 }}>{SURFACE_TEXT.hiddenTools}</Title>
-              <div className="tool-item-list">
-                {draft.tools.hide.map((toolName) => (
-                  <div key={toolName} className="tool-item-row tool-item-row-rich">
-                    <div className="tool-item-content">
-                      <Text code className="cc-text-small tool-item-code">{toolName}</Text>
-                    </div>
-                    <Button
-                      size="mini"
-                      type="text"
-                      status="danger"
-                      icon={<IconDelete />}
-                      className="tool-item-action"
-                      onClick={() => removeHiddenTool(toolName)}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </Tabs.TabPane>
-
-        <Tabs.TabPane key="prompts" title={SURFACE_TEXT.prompts}>
-          <div className="tool-surface-heading">
-            <Title heading={6} style={{ margin: 0 }}>{SURFACE_TEXT.prompts}</Title>
-            <Text type="secondary" className="cc-text-small">{SURFACE_TEXT.promptsHelp}</Text>
-          </div>
-          <div className="tool-section">
-            {inventory ? (
-              <PromptConfigOverview config={inventory.config} />
-            ) : (
-              <Alert type="info" content={SURFACE_TEXT.promptsLoading} />
-            )}
-          </div>
-        </Tabs.TabPane>
-
-        <Tabs.TabPane
-          key="agents"
-          title={`Agent ${draft.agents.presets.length + draft.agents.workflows.length}`}
-        >
-          <div className="tool-surface-heading">
-            <Title heading={6} style={{ margin: 0 }}>Agent</Title>
-            <Text type="secondary" className="cc-text-small">{SURFACE_TEXT.agentsHelp}</Text>
-          </div>
-
-          <div className="tool-section">
-            <Space className="tool-section-header">
-              <Title heading={6} style={{ margin: 0 }}>{SURFACE_TEXT.subagents}</Title>
-              <Button size="small" icon={<IconPlus />} onClick={() => setPickerTarget("subagent")}>
-                {SURFACE_TEXT.addSubagent}
-              </Button>
-            </Space>
-            <div className="tool-item-list">
-              {draft.agents.presets.map((name) => {
-                const info = catalogByKind.subagent?.find((i) => i.name === name);
-                const inv = subagentByName.get(name);
-                const summary = inv?.summary || info?.description || "";
-                const budget = inv?.budget ?? {};
-                return (
-                  <div key={name} className="tool-item-row tool-item-row-rich">
-                    <div className="tool-item-content">
-                      <div className="tool-item-title-row">
-                        <Text code className="cc-text-small tool-item-code">{name}</Text>
-                        <Space size={4} wrap>
-                          {inv?.kind && <Tag size="small" color="blue" title={inv.kind}>{inv.kind}</Tag>}
-                          {inv?.tool_name && <Tag size="small" className="cc-tag-meta" title={`tool: ${inv.tool_name}`}>tool: {inv.tool_name}</Tag>}
-                          {(inv?.workflow_tags ?? []).map((tag) => (
-                            <Tag key={tag} size="small" color="purple" title={tag}>{tag}</Tag>
-                          ))}
-                        </Space>
-                      </div>
-                      {summary && (
-                        <Text type="secondary" className="cc-text-small tool-item-description">
-                          {summary}
-                        </Text>
-                      )}
-                      <div className="tool-item-meta">
-                        {budget.max_model_turns != null && <Tag size="small" className="cc-tag-meta">turns: {budget.max_model_turns}</Tag>}
-                        {budget.max_tool_calls != null && <Tag size="small" className="cc-tag-meta">calls: {budget.max_tool_calls}</Tag>}
-                        {budget.timeout_seconds != null && <Tag size="small" className="cc-tag-meta">timeout: {budget.timeout_seconds}s</Tag>}
-                        {budget.max_output_chars != null && <Tag size="small" className="cc-tag-meta">output: {budget.max_output_chars}</Tag>}
-                      </div>
-                    </div>
-                    <Button
-                      size="mini"
-                      type="text"
-                      status="danger"
-                      icon={<IconDelete />}
-                      className="tool-item-action"
-                      onClick={() => removeAgentPreset(name)}
-                    />
-                  </div>
-                );
-              })}
-              {draft.agents.presets.length === 0 && <Text type="secondary">{SURFACE_TEXT.empty}</Text>}
-            </div>
-          </div>
-
-          <div className="tool-section">
-            <Space className="tool-section-header">
-              <Title heading={6} style={{ margin: 0 }}>Workflow</Title>
-              <Button size="small" icon={<IconPlus />} onClick={() => setPickerTarget("workflow")}>
-                {SURFACE_TEXT.addWorkflow}
-              </Button>
-            </Space>
-            <div className="tool-item-list">
-              {draft.agents.workflows.map((name) => {
-                const info = catalogByKind.workflow?.find((i) => i.name === name);
-                return (
-                  <div key={name} className="tool-item-row tool-item-row-rich">
-                    <div className="tool-item-content">
-                      <div className="tool-item-title-row">
-                        <Text code className="cc-text-small tool-item-code">{name}</Text>
-                        {info?.category && <Tag size="small" color="blue" title={info.category}>{info.category}</Tag>}
-                      </div>
-                      {info?.description && (
-                        <Text type="secondary" className="cc-text-small tool-item-description">
-                          {info.description}
-                        </Text>
-                      )}
-                    </div>
-                    <Button
-                      size="mini"
-                      type="text"
-                      status="danger"
-                      icon={<IconDelete />}
-                      className="tool-item-action"
-                      onClick={() => removeWorkflow(name)}
-                    />
-                  </div>
-                );
-              })}
-              {draft.agents.workflows.length === 0 && <Text type="secondary">{SURFACE_TEXT.empty}</Text>}
-            </div>
-          </div>
-        </Tabs.TabPane>
-
-        <Tabs.TabPane key="context" title={SURFACE_TEXT.context}>
-          <div className="tool-surface-heading">
-            <Title heading={6} style={{ margin: 0 }}>{SURFACE_TEXT.context}</Title>
-            <Text type="secondary" className="cc-text-small">{SURFACE_TEXT.contextHelp}</Text>
-          </div>
-          <div className="tool-section">
-            {inventory ? (
-              <ContextConfigOverview config={inventory.config} />
-            ) : (
-              <Alert type="info" content={SURFACE_TEXT.contextLoading} />
-            )}
-          </div>
-        </Tabs.TabPane>
-      </Tabs>
-
-      {dirty && (
-        <Alert
-          type="warning"
-          content="配置已修改。「保存并重启」将把配置同步到运行实例目录并重启服务。"
-          style={{ marginTop: 12 }}
-        />
-      )}
-
-      {/* Action bar */}
-      <div className="card-action-row" style={{ marginTop: 12 }}>
-        <Space>
-          <Button type="primary" loading={saving} disabled={!dirty} onClick={() => handleSave(false)}>
-            保存配置
-          </Button>
-          <Button type="primary" status="success" loading={saving} disabled={!dirty} onClick={() => handleSave(true)}>
-            保存并重启
-          </Button>
-        </Space>
-      </div>
-
-      <ToolPickerModal
-        visible={pickerTarget !== null}
-        title={
-          pickerTarget === "capability" ? "添加能力"
-            : pickerTarget === "mcp" ? "添加 MCP 服务"
-              : pickerTarget === "subagent" ? "添加子代理"
-                : pickerTarget === "workflow" ? "添加 Workflow"
-                : ""
-        }
-        items={pickerItems}
-        selected={pickerSelected}
-        onConfirm={handlePickerConfirm}
-        onCancel={() => setPickerTarget(null)}
-      />
-    </div>
-  );
+export default function BotToolEditor(props: BotToolEditorProps & { view: ConfigurationTab; visible: boolean; running?: boolean }) {
+  const { instanceId, view, visible } = props;
+  const editor = useBotToolEditor(props);
+  const inspection = useQuery({ queryKey: ["inspection", instanceId], queryFn: ({ signal }) => api.inspection(instanceId, undefined, undefined, signal),
+    enabled: visible, refetchInterval: visible ? 5000 : false });
+  const [selectedEntity, setSelectedEntity] = useState(() => new URLSearchParams(window.location.hash.split("?")[1]).get("entity") || "");
+  const [revealVersion, setRevealVersion] = useState(0);
+  const container = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const update = () => { setSelectedEntity(new URLSearchParams(window.location.hash.split("?")[1]).get("entity") || ""); setRevealVersion((value) => value + 1); };
+    if (visible) update();
+    window.addEventListener("hashchange", update);
+    return () => window.removeEventListener("hashchange", update);
+  }, [visible, view]);
+  const expired = !!inspection.data?.loaded_meta && Date.now() / 1000 - inspection.data.loaded_meta.observed_at > 15;
+  const data = inspection.data && (props.running === false || inspection.isError || expired) ? { ...inspection.data, loaded_stale: true, configuration_status: "unknown" as const,
+    configuration_status_reason: props.running === false ? "服务已停止，运行状态暂无法确认" : "运行快照过期或读取失败，暂无法确认应用状态" } : inspection.data;
+  const config = latestConfiguration(data);
+  const entities = config ? configurationViews(config, editor.draft) : [];
+  const navigate = (id: string) => {
+    const params = new URLSearchParams(window.location.hash.split("?")[1]);
+    params.set("instance", instanceId); params.set("tab", configurationTabForEntity(id)); params.set("entity", id);
+    window.location.hash = "bots?" + params;
+  };
+  const remove = (label: string, action: () => void) => <Button size="mini" status="danger" disabled={editor.saving} onClick={action} aria-label={`移除 ${label}`}>移除</Button>;
+  const actions = (entity: DisplayEntity) => {
+    const name = entity.id.slice(entity.id.indexOf(":") + 1);
+    const refs = entity.refs ?? [];
+    return <Space wrap>
+      {entity.id.startsWith("mcp:") && (() => {
+        const ref = String(entity.config?.catalog_ref ?? entity.config?.ref ?? name);
+        const server = editor.draft?.tools.mcp.servers.find((item) => item.ref === ref);
+        const tool = entities.find((item) => item.group === "tools" && item.refs?.includes(entity.id));
+        return <>{tool && <Button size="mini" onClick={() => navigate(tool.id)}>查看工具</Button>}{server && <>
+          <Switch size="small" aria-label={`启用 ${name}`} disabled={editor.saving} checked={server.enabled} onChange={(enabled) => editor.toggleMcp(ref, enabled)} />
+          {remove(name, () => editor.removeMcp(ref))}</>}</>;
+      })()}
+      {entity.id.startsWith("pack:") && editor.draft?.tools.packs.includes(name) && remove(name, () => editor.removeToolPack(name))}
+      {entity.id.startsWith("feature:") && editor.draft?.tools.features.includes(name) && remove(name, () => editor.removeFeature(name))}
+      {entity.id.startsWith("subagent:") && editor.draft?.agents.presets.includes(name) && remove(name, () => editor.removeAgentPreset(name))}
+      {entity.id.startsWith("workflow:") && editor.draft?.agents.workflows.includes(name) && remove(name, () => editor.removeWorkflow(name))}
+      {entity.id.startsWith("tool:") && refs.map((id) => <Button key={id} size="mini" onClick={() => navigate(id)}>{id.startsWith("mcp:") ? "服务器配置" : id.startsWith("subagent:") ? "委托配置" : "工具包配置"}</Button>)}
+    </Space>;
+  };
+  const groupActions = (group: string) => <Space wrap>
+    {group === "mcp" && <Button size="small" disabled={!editor.draft || editor.saving} onClick={() => editor.setPickerTarget("mcp")}>添加 MCP</Button>}
+    {group === "delegation" && <><Button size="small" disabled={!editor.draft || editor.saving} onClick={() => editor.setPickerTarget("subagent")}>添加子 Agent</Button>
+      <Button size="small" disabled={!editor.draft || editor.saving} onClick={() => editor.setPickerTarget("workflow")}>添加 Workflow</Button></>}
+    {["packs", "features"].includes(group) && <Button size="small" disabled={!editor.draft || editor.saving} onClick={() => editor.setPickerTarget("capability")}>添加能力</Button>}
+  </Space>;
+  return <div ref={container} hidden={!visible} className="bot-tool-editor">
+    {visible && <>
+      {editor.error && <Alert type="error" content={"编辑配置读取失败：" + editor.error.message} />}
+      {editor.dirty && <Alert type="warning" content="有未保存的配置修改，切换页签后仍保留。" />}
+      <ConfigurationPane inspection={data} entities={entities} loading={inspection.isLoading} error={inspection.error}
+        selectedEntity={selectedEntity} revealVersion={revealVersion} view={view} onRefresh={() => void inspection.refetch()}
+        groupActions={groupActions} entityActions={actions} groupFooter={(group) => group === "tools" && !!editor.draft?.tools.hide.length && <div className="obs-hidden-tools"><h4>隐藏工具</h4>
+          {editor.draft.tools.hide.map((name) => <div key={name}><Tag>{name}</Tag><Button size="mini" disabled={editor.saving} onClick={() => editor.removeHiddenTool(name)}>恢复 {name}</Button></div>)}</div>} />
+      <div className="obs-config-save"><span>{editor.dirty ? "有未保存修改" : "配置已保存"}</span><Space wrap>
+        <Button type="primary" loading={editor.saving} disabled={!editor.dirty} onClick={() => void editor.handleSave(false)}>保存配置</Button>
+        <Button loading={editor.saving} disabled={!editor.dirty && data?.configuration_status !== "pending"} onClick={() => void editor.handleSave(true)}>保存并重启</Button>
+      </Space></div>
+      <ToolPickerModal visible={editor.pickerTarget !== null} title={editor.pickerTarget === "mcp" ? "添加 MCP" : editor.pickerTarget === "subagent" ? "添加子 Agent" : editor.pickerTarget === "workflow" ? "添加 Workflow" : "添加能力"}
+        items={editor.pickerItems} selected={editor.pickerSelected} onConfirm={editor.handlePickerConfirm} onCancel={() => editor.setPickerTarget(null)} />
+    </>}
+  </div>;
 }

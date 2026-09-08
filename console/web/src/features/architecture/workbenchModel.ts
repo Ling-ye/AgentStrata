@@ -2,8 +2,10 @@ import type { GatewayObservation, GatewayRun, GatewayRunDetail } from "./model";
 import { runState } from "./model";
 
 export interface InspectionEntity {
-  id: string; layer: string; name: string; refs?: string[];
+  id: string; layer: string; name: string; refs?: string[]; runtime_stale?: boolean;
   configured: boolean | null; loaded: boolean | null; connected: boolean | null; available: boolean | null;
+  source_config?: Record<string, unknown> | null; source_environment?: Record<string, unknown>;
+  effective_environment?: Record<string, unknown>; effective_config?: Record<string, unknown> | null;
   config: Record<string, unknown> | null; runtime?: Record<string, unknown>; environment?: Record<string, unknown>;
 }
 export interface Configuration {
@@ -16,6 +18,7 @@ export interface Configuration {
 export interface Inspection {
   current: Configuration | null; loaded: Configuration | null; execution: Configuration | null;
   loaded_meta: { config_id: string; observed_at: number; generation: number } | null;
+  configuration_status?: "applied" | "pending" | "unknown"; configuration_status_reason?: string;
   loaded_stale: boolean; pending_changes: boolean; generated_at: number;
   sanitization_truncated?: boolean;
   errors: Array<{ source: string; code: string; message: string }>;

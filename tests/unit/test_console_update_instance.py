@@ -1103,8 +1103,8 @@ def test_bot_tool_editor_applies_config_via_unified_update() -> None:
     assert "onRestart" not in component + hook
     task_branch = hook.split('if ("id" in result)', 1)[1].split("return;", 1)[0]
     assert "onApplyTask?.(result, () => {" in task_branch
-    assert task_branch.index("onApplyTask?.") < task_branch.index("setDirty(false)")
-    assert "void refetch()" in task_branch
+    assert "void refresh()" in task_branch
+    assert "await refresh()" in task_branch
 
 
 def test_bot_update_task_resolves_terminal_state_in_drawer() -> None:

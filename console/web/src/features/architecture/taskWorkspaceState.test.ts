@@ -11,7 +11,7 @@ describe("task workspace navigation", () => {
   });
   it("defaults to tasks and keeps direct component links in configuration", () => {
     expect(botTabFromParams(new URLSearchParams())).toBe("tasks");
-    expect(botTabFromParams(new URLSearchParams("entity=tool:lookup"))).toBe("configuration");
+    expect(botTabFromParams(new URLSearchParams("entity=tool:lookup"))).toBe("capabilities");
     expect(botTabFromParams(new URLSearchParams("tab=runtime"))).toBe("runtime");
     expect(botTabFromParams(new URLSearchParams("tab=capabilities"))).toBe("capabilities");
   });

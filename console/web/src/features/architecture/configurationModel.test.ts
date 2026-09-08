@@ -37,7 +37,10 @@ describe("current settings and historical configuration text", () => {
   });
 
   it.each([null, inspection.loaded])("never presents absent or stale connection data as current", (loaded) => {
-    expect(latestConfiguration({ ...inspection, loaded, loaded_stale: true })).toBe(inspection.current);
+    const current = latestConfiguration({ ...inspection, loaded, loaded_stale: true })!;
+    expect(current.entities[0].config).toEqual(inspection.current!.entities[0].config);
+    expect(current.entities.every((entity) => entity.loaded == null && entity.connected == null)).toBe(true);
+    if (loaded) expect(current.entities.find((entity) => entity.id === "tool:lookup")?.runtime_stale).toBe(true);
   });
 
   it("does not fill failed current configuration reads with an older snapshot", () => {

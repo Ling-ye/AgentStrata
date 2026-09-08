@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from chatcopilot.botspec.model import BotSpec, ValidationIssue
 from chatcopilot.contracts.runtime import RagSourceConfig
@@ -15,7 +15,7 @@ _DEFAULT_MAX_CHUNK_CHARS = 1200
 
 
 
-def load_rag_source_configs(spec: BotSpec) -> tuple[RagSourceConfig, ...]:
+def load_rag_source_configs(spec: BotSpec, *, environment: Mapping[str, str] | None = None) -> tuple[RagSourceConfig, ...]:
     """Load resolved RAG source configs for runtime use."""
 
     path = spec.resolve_path(spec.context.rag.sources)
@@ -29,13 +29,13 @@ def load_rag_source_configs(spec: BotSpec) -> tuple[RagSourceConfig, ...]:
     out: list[RagSourceConfig] = []
     for idx, item in enumerate(raw_sources):
         raw = item if isinstance(item, dict) else {"path": item}
-        cfg = _parse_source(raw, spec=spec, field=f"rag.sources[{idx}]", validate=False)
+        cfg = _parse_source(raw, spec=spec, field=f"rag.sources[{idx}]", validate=False, environment=environment)
         if cfg is not None:
             out.append(cfg)
     return tuple(out)
 
 
-def validate_rag_sources(spec: BotSpec) -> list[ValidationIssue]:
+def validate_rag_sources(spec: BotSpec, *, environment: Mapping[str, str] | None = None) -> list[ValidationIssue]:
     """Validate optional RAG source declarations."""
 
     path = spec.resolve_path(spec.context.rag.sources)
@@ -58,20 +58,20 @@ def validate_rag_sources(spec: BotSpec) -> list[ValidationIssue]:
             continue
         raw = item if isinstance(item, dict) else {"path": item}
         try:
-            _parse_source(raw, spec=spec, field=field, validate=True)
+            _parse_source(raw, spec=spec, field=field, validate=True, environment=environment)
         except ValueError as exc:
             issues.append(ValidationIssue("error", str(exc), field))
     return issues
 
 
-def _parse_source(raw: dict[str, Any], *, spec: BotSpec, field: str, validate: bool) -> RagSourceConfig | None:
+def _parse_source(raw: dict[str, Any], *, spec: BotSpec, field: str, validate: bool, environment: Mapping[str, str] | None = None) -> RagSourceConfig | None:
     raw_path = str(raw.get("path", "")).strip()
     if not raw_path:
         if validate:
             raise ValueError("RAG source path 不能为空")
         return None
 
-    path = _resolve_source_path(raw_path, spec=spec, validate=validate)
+    path = _resolve_source_path(raw_path, spec=spec, validate=validate, environment=environment)
     if path is None:
         return None
 
@@ -93,9 +93,10 @@ def _parse_source(raw: dict[str, Any], *, spec: BotSpec, field: str, validate: b
     )
 
 
-def _resolve_source_path(raw_path: str, *, spec: BotSpec, validate: bool) -> Path | None:
+def _resolve_source_path(raw_path: str, *, spec: BotSpec, validate: bool, environment: Mapping[str, str] | None = None) -> Path | None:
     uses_env = bool(_ENV_REF_RE.search(raw_path))
-    expanded = os.path.expandvars(raw_path)
+    expanded = os.path.expandvars(raw_path) if environment is None else _ENV_REF_RE.sub(
+        lambda match: environment.get(match.group().strip("${}%"), match.group()), raw_path)
     if uses_env and _ENV_REF_RE.search(expanded):
         if validate:
             raise ValueError(f"RAG source path 引用了未设置的环境变量: {raw_path}")

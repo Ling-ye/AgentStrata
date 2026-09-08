@@ -5,6 +5,21 @@ import { api } from "../../api";
 import { bodyState } from "./workbenchModel";
 
 export const FIELD_NAMES: Record<string, string> = {
+  target: "部署环境", cc_connect_config_dir: "Legacy 接入配置目录", project_name: "项目名称", secret_json: "凭据配置引用",
+  file_access: "文件访问", isolation: "隔离方式", scope: "作用范围", format: "格式", repository_id: "仓库 ID",
+  read_only: "只读", auth: "认证", protocol_version: "协议版本", listen: "监听", credential: "凭据",
+  port: "监听端口", state_root: "状态存储目录", token: "认证令牌", account: "账号", ws_url: "连接地址",
+  wsl_home: "运行目录", env_file: "环境配置文件", source_spec: "BotSpec 来源", source_root: "源配置目录",
+  workspace_root: "工作区目录", log_dir: "日志目录", instance_id: "实例 ID", display_name: "显示名称",
+  defaults: "默认预算", agents: "子 Agent 预算", overrides: "覆盖配置", custom: "自定义子 Agent",
+  allowed_paths: "允许路径", denied_paths: "禁止路径", shell: "命令执行", timeout_default: "默认超时（秒）", timeout_max: "最大超时（秒）",
+  include: "包含规则", exclude: "排除规则", sources: "数据源清单", path: "路径", label: "名称", registry: "仓库清单",
+  include_globs: "包含规则", deny_globs: "排除规则", allow_extensions: "文件类型", max_read_bytes: "读取上限（字节）",
+  command: "启动命令", args: "启动参数", env: "进程环境", headers: "请求头", url: "连接地址",
+  allowed_subagents: "允许的子 Agent", owner_access: "Owner 访问策略", member_access: "成员访问策略",
+  require_at_in_group: "群聊需要 @", max_output_chars: "输出长度上限", max_workflow_depth: "Workflow 深度上限",
+  identity: "身份提示词", response_style: "回复风格", refusal_style: "拒答风格", role_styles: "角色风格", mode_styles: "模式风格",
+  description: "说明", body_path: "内容来源", schema_version: "配置版本", max_chunk_chars: "分块字符上限",
   version: "运行版本", ready_at: "就绪时间（Unix 秒）", pid: "进程 PID", backend: "执行后端", model: "模型",
   timeout_seconds: "超时（秒）", max_concurrency: "最大并发", enabled: "启用", requires_role: "最低角色",
   private_chat_only: "仅私聊", read_role: "读取角色", max_results: "最大结果数", reasoning_effort: "推理强度",

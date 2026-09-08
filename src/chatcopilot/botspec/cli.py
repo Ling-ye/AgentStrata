@@ -23,13 +23,13 @@ import datetime
 import getpass
 import json
 import os
-import re
 import shlex
 import stat
 import sys
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from chatcopilot.botspec.deployment_env import deployment_environment, exported_environment, runtime_environment_keys, legacy_configuration_home
 from chatcopilot.botspec.loader import is_valid_bot_id, load_botspec, validate_botspec
 from chatcopilot.botspec.provisioning import (
     ProvisioningError,
@@ -52,7 +52,6 @@ from chatcopilot.botspec.session_env import (
 )
 from chatcopilot.core.config import load_config
 from chatcopilot.core.model_selection import code_task_model_selection
-from chatcopilot.core.mcp_catalog import resolve_catalog_server
 from chatcopilot.core.session_env_store import (
     MAX_SESSION_ATTESTATIONS,
     SESSION_ATTESTATION_TTL_NS,
@@ -75,7 +74,6 @@ _SESSION_ENV_IDENTITY_KEYS = SESSION_ENV_IDENTITY_KEYS
 _MAX_SESSION_ATTESTATIONS = MAX_SESSION_ATTESTATIONS
 _SESSION_ATTESTATION_TTL_NS = SESSION_ATTESTATION_TTL_NS
 _SessionEnvSecurityError = SessionEnvSecurityError
-_CC_CONNECT_VERSION = "1.4.0-beta.3"
 
 
 def _repo_root() -> Path:
@@ -908,13 +906,7 @@ def _expand_deploy_path(value: str | None) -> str:
 
 
 def _cc_home_from_config_dir(config_dir: str) -> str:
-    normalized = config_dir.replace("\\", "/")
-    suffix = "/.cc-connect"
-    if normalized.endswith(suffix):
-        return normalized[: -len(suffix)] or str(Path.home())
-    if config_dir:
-        return str(Path(config_dir).expanduser().parent)
-    return ""
+    return legacy_configuration_home(config_dir, home=Path.home())
 
 
 def _load_local_env(path: Path) -> dict[str, str]:
@@ -923,122 +915,8 @@ def _load_local_env(path: Path) -> dict[str, str]:
 
 
 def _runtime_env_values(spec, local_env: Mapping[str, str]) -> dict[str, str]:
-    deploy = spec.deploy
-    local_env = {key: _expand_home_path(value) for key, value in local_env.items()}
-    instance_id = deploy.instance_id or spec.id
-    wsl_home = _expand_deploy_path(deploy.wsl_home) or str(Path.home() / f"ChatCopilot-{instance_id}")
-    workspace_root = _expand_deploy_path(deploy.workspace_root) or str(
-        Path.home() / "chatcopilot-workspaces" / instance_id
-    )
-    log_dir = _expand_deploy_path(deploy.log_dir) or str(Path.home() / "chatcopilot-logs" / instance_id)
-    env_file = _expand_deploy_path(deploy.env_file) or str(Path.home() / f".chatcopilot-{instance_id}.env")
-    qq_gateway = spec.channels.qq is not None
-    cc_config_dir = ""
-    if not qq_gateway:
-        cc_config_dir = _expand_deploy_path(deploy.cc_connect_config_dir) or str(
-            Path.home() / ".chatcopilot-runtime" / instance_id / ".cc-connect"
-        )
-    try:
-        bot_rel = spec.source_path.relative_to(_repo_root())
-        runtime_bot_spec = str(Path(wsl_home) / bot_rel)
-    except ValueError:
-        runtime_bot_spec = str(spec.source_path)
-
-    adapter = _registry.get_adapter(spec.platform.type)
-    values = {
-        item.env_key: item.default
-        for item in adapter.required_secrets()
-        if item.default is not None
-    }
-    values.update(_tool_pack_runtime_defaults(spec.tools.packs))
-    values.update(llm_runtime_env_defaults(spec.llm))
-    values.update(local_env)
-    values.update(
-        {
-            "CHATCOPILOT_INSTANCE_ID": instance_id,
-            "CHATCOPILOT_HOME": wsl_home,
-            "CHATCOPILOT_BOT_SPEC": runtime_bot_spec,
-            "CHATCOPILOT_SOURCE_BOT_SPEC": str(spec.source_path),
-            "CHATCOPILOT_ENV_FILE": env_file,
-            "CHATCOPILOT_WORKSPACE_ROOT": workspace_root,
-            "WORKSPACE_ROOT": workspace_root,
-            "CHATCOPILOT_LOG_DIR": log_dir,
-            "CHATCOPILOT_DISPLAY_NAME": spec.display_name,
-        }
-    )
-    if qq_gateway:
-        assert spec.gateway is not None
-        gateway_port = str(values.get(spec.gateway.port_env, "18789") or "").strip()
-        state_root = str(values.get(spec.gateway.state_root_env, "") or "").strip()
-        if not state_root:
-            state_root = str(
-                Path.home() / ".local" / "state" / "agentstrata" / instance_id / "gateway"
-            )
-        values[spec.gateway.port_env] = gateway_port
-        values[spec.gateway.state_root_env] = state_root
-        host = spec.gateway.host
-        url_host = f"[{host}]" if host == "::1" else host
-        values["CHATCOPILOT_GATEWAY_URL"] = f"ws://{url_host}:{gateway_port}"
-    else:
-        cc_connect_bin = str(values.get("CHATCOPILOT_CC_CONNECT_BIN", "") or "").strip()
-        if not cc_connect_bin:
-            cc_connect_bin = _private_cc_connect_bin()
-        if (
-            any(character in cc_connect_bin for character in ("\r", "\n", "\x00"))
-            or not Path(cc_connect_bin).is_absolute()
-        ):
-            raise ValueError("cc_connect_bin_invalid")
-        values.update(
-            {
-                "CHATCOPILOT_CC_CONNECT_BIN": cc_connect_bin,
-                "CHATCOPILOT_CC_HOME": _cc_home_from_config_dir(cc_config_dir),
-                "CHATCOPILOT_CC_CONNECT_CONFIG_DIR": cc_config_dir,
-                "CHATCOPILOT_CC_PROJECT_NAME": (
-                    deploy.project_name or f"chatcopilot-{instance_id}"
-                ),
-            }
-        )
-    return values
-
-
-def _private_cc_connect_bin() -> str:
-    runtime_root_value = os.environ.get("AGENTSTRATA_RUNTIME_ROOT", "").strip()
-    if runtime_root_value:
-        runtime_root_value = _expand_home_path(runtime_root_value)
-        if any(character in runtime_root_value for character in ("\r", "\n", "\x00")):
-            raise ValueError("agentstrata_runtime_root_invalid")
-        runtime_root = Path(runtime_root_value)
-        if not runtime_root.is_absolute():
-            raise ValueError("agentstrata_runtime_root_invalid")
-    else:
-        runtime_root = Path.home() / ".local" / "share" / "agentstrata"
-    return str(
-        runtime_root
-        / "node-tools"
-        / f"cc-connect-{_CC_CONNECT_VERSION}"
-        / "node_modules"
-        / ".bin"
-        / "cc-connect"
-    )
-
-
-def _tool_pack_runtime_defaults(tool_packs: Iterable[str]) -> dict[str, str]:
-    """Derive runtime env from explicitly selected tool packs."""
-    from chatcopilot.botspec.registry import get_tool_pack_entry
-
-    http_modules: list[str] = []
-    for tool_pack in tool_packs:
-        entry = get_tool_pack_entry(tool_pack)
-        if entry is None:
-            continue
-        for module in entry.http_route_modules:
-            if module not in http_modules:
-                http_modules.append(module)
-
-    values: dict[str, str] = {}
-    if http_modules:
-        values["CHATCOPILOT_HTTP_ROUTE_MODULES"] = ",".join(http_modules)
-    return values
+    return deployment_environment(spec, local_env, source_root=_repo_root(), home=Path.home(),
+                                  runtime_root=os.environ.get("AGENTSTRATA_RUNTIME_ROOT", "").strip())
 
 
 def _required_env_keys(spec) -> list[str]:
@@ -1063,6 +941,8 @@ def _required_env_keys(spec) -> list[str]:
 
 
 def _render_runtime_env(values: Mapping[str, str], ordered_keys: Iterable[str]) -> str:
+    ordered_keys = tuple(ordered_keys)
+    values = exported_environment(values, ordered_keys)
     lines = ["# AgentStrata runtime env (generated by bot provision-env)", ""]
     seen: set[str] = set()
     for key in ordered_keys:
@@ -1193,59 +1073,7 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
             print(f"[ERR] {error}")
         print(f"      请检查：{local_env_path}")
         return 1
-    ordered = tuple(dict.fromkeys((
-        "CHATCOPILOT_INSTANCE_ID",
-        "CHATCOPILOT_HOME",
-        "CHATCOPILOT_BOT_SPEC",
-        "CHATCOPILOT_SOURCE_BOT_SPEC",
-        "CHATCOPILOT_ENV_FILE",
-        "CHATCOPILOT_WORKSPACE_ROOT",
-        "WORKSPACE_ROOT",
-        "CHATCOPILOT_LOG_DIR",
-        "CHATCOPILOT_CC_HOME",
-        "CHATCOPILOT_CC_CONNECT_CONFIG_DIR",
-        "CHATCOPILOT_CC_PROJECT_NAME",
-        "CHATCOPILOT_DISPLAY_NAME",
-        "CHATCOPILOT_GATEWAY_PORT",
-        "CHATCOPILOT_GATEWAY_TOKEN",
-        "CHATCOPILOT_GATEWAY_STATE_ROOT",
-        "CHATCOPILOT_GATEWAY_URL",
-        "CHATCOPILOT_CC_CONNECT_BIN",
-        "CHATCOPILOT_HTTP_ROUTE_MODULES",
-        "CHATCOPILOT_CODEBASE_CHATCOPILOT_ROOT",
-        "CHATCOPILOT_CODEBASE_CACHE_ROOT",
-        "CHATCOPILOT_GIT_AUTHOR_NAME",
-        "CHATCOPILOT_GIT_AUTHOR_EMAIL",
-        f"{spec.llm.env_prefix}_API_KEY",
-        f"{spec.llm.env_prefix}_BASE_URL",
-        f"{spec.llm.env_prefix}_MODEL",
-        f"{spec.llm.env_prefix}_TIMEOUT",
-        f"{spec.llm.env_prefix}_ROUTER_ENABLED",
-        f"{spec.llm.env_prefix}_ROUTER_MODE",
-        f"{spec.llm.env_prefix}_ROUTER_CODE_PREFIXES",
-        f"{spec.llm.env_prefix}_ROUTER_CHAT_PREFIXES",
-        f"{spec.llm.env_prefix}_CODE_PROVIDER",
-        f"{spec.llm.env_prefix}_CODE_MODEL",
-        f"{spec.llm.env_prefix}_CODE_REASONING_EFFORT",
-        f"{spec.llm.env_prefix}_CODE_PROFILES_JSON",
-        f"{spec.llm.env_prefix}_CODE_TASK_PROFILE",
-        f"{spec.llm.env_prefix}_CODE_COMMAND",
-        f"{spec.llm.env_prefix}_CODE_WORKDIR_ENV",
-        f"{spec.llm.env_prefix}_CODE_TIMEOUT_SECONDS",
-        f"{spec.llm.env_prefix}_CODE_ALLOWED_ROLES",
-        "CHATCOPILOT_ADD_OWNER_IDS",
-        "FEISHU_APP_ID",
-        "FEISHU_APP_SECRET",
-        "QQ_ACCOUNT",
-        "CHATCOPILOT_QQ_ONEBOT_WS_URL",
-        "QQ_ACCESS_TOKEN",
-        "QQ_ALLOW_FROM",
-        "QQ_ALLOW_GROUPS",
-        "QQ_WEBUI_PORT",
-        "TAVILY_API_KEY",
-        "GITHUB_MCP_AUTHORIZATION",
-        *_mcp_env_ref_keys(spec),
-    )))
+    ordered = runtime_environment_keys(spec)
 
     env_file = Path(values["CHATCOPILOT_ENV_FILE"]).expanduser()
     if args.dry_run:
@@ -1290,42 +1118,6 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
     print(f"[OK] runtime env 已写入：{env_file} (chmod 600)")
     print(f"     source: {local_env_path}")
     return 0
-
-
-def _mcp_env_ref_keys(spec) -> tuple[str, ...]:
-    if not spec.tools.mcp.servers:
-        return ()
-    path = spec.resolve_path(spec.tools.mcp.servers)
-    if path is None or not path.is_file():
-        return ()
-    try:
-        import yaml
-
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return ()
-    servers = data.get("servers", []) if isinstance(data, dict) else []
-    if not isinstance(servers, list):
-        return ()
-    keys: list[str] = []
-    seen: set[str] = set()
-    for item in servers:
-        if not isinstance(item, dict):
-            continue
-        item = resolve_catalog_server(item) or item
-        for field in ("env", "headers"):
-            mapping = item.get(field, {})
-            if not isinstance(mapping, dict):
-                continue
-            for value in mapping.values():
-                match = re.match(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$", str(value).strip())
-                if not match:
-                    continue
-                key = match.group(1)
-                if key not in seen:
-                    seen.add(key)
-                    keys.append(key)
-    return tuple(keys)
 
 
 def _cmd_render_cc_config(args: argparse.Namespace) -> int:

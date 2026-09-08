@@ -157,3 +157,11 @@
   .obs-flow-toolbar { gap: 6px; flex-wrap: wrap; }
   .obs-fields > div { grid-template-columns: minmax(60px, 30%) minmax(0, 1fr); gap: 8px; }
 }
+
+.obs-config-search { display: flex; gap: 12px; }
+.obs-config-search > .arco-select { max-width: 220px; }
+.obs-config-save { position: sticky; bottom: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; background: var(--color-bg-2); border-top: 1px solid var(--color-border-2); }
+.obs-hidden-tools > div { display: flex; justify-content: space-between; gap: 8px; margin: 8px 0; }
+.obs-parameter-table { overflow-x: auto; }
+.obs-entity .obs-pane-heading { flex-wrap: wrap; gap: 8px; }
+@media (max-width: 600px) { .obs-config-search, .obs-config-save { flex-direction: column; align-items: stretch; } .obs-config-search > .arco-select { max-width: none; } }

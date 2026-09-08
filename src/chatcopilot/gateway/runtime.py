@@ -714,6 +714,8 @@ def build_gateway_runtime_host(
                 snapshot = runtime_configuration(runtime, agent_runtime, values)
                 snapshot["source_revision"] = loaded_revision
                 snapshot["environment_revision"] = declared["environment_revision"]
+                snapshot["reference_revision"] = declared["reference_revision"]
+                snapshot["environment_revision_version"] = declared["environment_revision_version"]
                 snapshot["configuration_revision"] = effective_revision
                 loaded_ids = {entity["id"] for entity in snapshot["entities"]}
                 for entity in declared["entities"]:

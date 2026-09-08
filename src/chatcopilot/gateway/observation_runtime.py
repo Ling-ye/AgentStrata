@@ -280,6 +280,9 @@ def runtime_configuration(runtime: Any, agent: Any, environment: Mapping[str, st
             server_id = tool.metadata.get("mcp_server_id")
             if server_id:
                 references.append(f"mcp:{server_id}")
+            for kind in ("subagent", "workflow"):
+                if tool.metadata.get(kind):
+                    references.append(f"{kind}:{tool.metadata[kind]}")
             config["tool_bindings"][tool.name] = references
             config["entities"].append({"id": f"tool:{tool.name}", "layer": "capability", "name": tool.name,
                 "configured": True, "loaded": True, "connected": None, "available": None, "refs": references,

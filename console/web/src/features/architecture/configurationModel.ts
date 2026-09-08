@@ -3,17 +3,18 @@ import type { Configuration, Inspection } from "./workbenchModel";
 
 export function latestConfiguration(inspection?: Inspection): Configuration | null | undefined {
   const current = inspection?.current;
-  if (!current || !inspection.loaded || inspection.loaded_stale) return current;
+  if (!current || !inspection.loaded) return current;
   const live = new Map(inspection.loaded.entities.map((entity) => [entity.id, entity]));
   const declared = new Set(current.entities.map((entity) => entity.id));
   return { ...current, entities: [
     ...current.entities.map((entity) => {
       const runtime = live.get(entity.id);
-      return { ...entity, loaded: runtime?.loaded ?? null, connected: runtime?.connected ?? null,
-        runtime: runtime?.runtime };
+      return { ...entity, loaded: inspection.loaded_stale ? null : runtime?.loaded ?? null, connected: inspection.loaded_stale ? null : runtime?.connected ?? null,
+        runtime: inspection.loaded_stale ? undefined : runtime?.runtime };
     }),
     ...inspection.loaded.entities.filter((entity) => !declared.has(entity.id))
-      .map((entity) => ({ ...entity, configured: null, available: null })),
+      .map((entity) => ({ ...entity, configured: null, available: null,
+        ...(inspection.loaded_stale ? { loaded: null, connected: null, runtime: undefined, runtime_stale: true } : {}) })),
   ] };
 }
 

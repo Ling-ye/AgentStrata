@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Message } from "@arco-design/web-react";
 
 import { api } from "../../../api";
@@ -9,7 +10,6 @@ import {
   indexBy,
   type BotToolEditorProps,
   type PickerTarget,
-  type SurfaceKey,
 } from "./model";
 
 export function useBotToolEditor({
@@ -19,12 +19,14 @@ export function useBotToolEditor({
   onApplyTask,
 }: BotToolEditorProps) {
   const { data: catalogData } = useCatalog();
-  const { data: toolConfig, isLoading, refetch } = useBotToolConfig(instanceId);
+  const { data: toolConfig, isLoading, refetch, error } = useBotToolConfig(instanceId);
   const [draft, setDraft] = useState<BotToolConfig | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [pickerTarget, setPickerTarget] = useState<PickerTarget>(null);
-  const [activeSurface, setActiveSurface] = useState<SurfaceKey>("tools");
+  const queryClient = useQueryClient();
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   useEffect(() => {
     if (toolConfig && !dirty) setDraft({ ...toolConfig });
@@ -146,29 +148,35 @@ export function useBotToolEditor({
   }, [draft, pickerTarget, catalogByKind]);
 
   const handleSave = useCallback(async (apply: boolean) => {
-    if (!draft) return;
+    if (!draft || saving) return;
+    const submitted = draft;
+    const refresh = async () => {
+      const refreshed = await refetch();
+      if (draftRef.current === submitted) {
+        setDraft(refreshed.data ?? submitted);
+        setDirty(false);
+      }
+      await Promise.all(["inspection", "bot-inventory", "bot-status"].map((key) => queryClient.invalidateQueries({ queryKey: [key, instanceId] })));
+    };
     setSaving(true);
     try {
       const result = await api.updateBotTools(instanceId, draft, { apply: apply && isDeployed });
       if ("warnings" in result && result.warnings?.length) Message.warning(result.warnings.join("; "));
       if ("id" in result) {
         Message.info("保存并更新任务已启动…");
-        onApplyTask?.(result, () => {
-          setDirty(false);
-          void refetch();
-        });
+        onApplyTask?.(result, () => { void refresh(); });
+        await refresh();
         return;
       }
       Message.success("配置已保存");
-      setDirty(false);
-      void refetch();
+      await refresh();
       if (apply && !isDeployed) Message.warning("实例尚未部署，配置仅写入源仓。");
     } catch (error) {
       Message.error(`保存失败: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setSaving(false);
     }
-  }, [draft, instanceId, isDeployed, onApplyTask, refetch]);
+  }, [draft, instanceId, isDeployed, onApplyTask, refetch, queryClient, saving]);
 
   const toolPackSet = new Set(draft?.tools.packs ?? []);
   const featureList = draft?.tools.features ?? [];
@@ -189,7 +197,7 @@ export function useBotToolEditor({
         : pickerTarget === "workflow" ? workflowSet : new Set<string>();
 
   return {
-    activeSurface,
+    error,
     catalogByKind,
     dirty,
     draft,
@@ -209,7 +217,6 @@ export function useBotToolEditor({
     removeToolPack,
     removeWorkflow,
     saving,
-    setActiveSurface,
     setPickerTarget,
     subagentByName,
     toggleMcp,

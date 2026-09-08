@@ -74,6 +74,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
   }, []);
 
   useEffect(() => {
+    if (loading) return;
     if (bots.length === 0) {
       setSelectedBotId("");
       return;
@@ -81,7 +82,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
     if (!selectedBotId || !bots.some((bot) => bot.instance_id === selectedBotId)) {
       setSelectedBotId(bots[0].instance_id);
     }
-  }, [bots, selectedBotId]);
+  }, [bots, selectedBotId, loading]);
 
   const selectedBot = bots.find((bot) => bot.instance_id === selectedBotId) ?? null;
   const selectedStatus = selectedBot ? statuses[selectedBot.instance_id] : undefined;
@@ -91,8 +92,8 @@ export default function BotsPage({ loadError, visible = true }: Props) {
     const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
     params.set("instance", selectedBotId);
     params.set("tab", tab);
+    params.delete("entity");
     setActiveTab(botTabFromParams(params));
-    if (tab !== "configuration") params.delete("entity");
     window.history.replaceState(null, "", "#bots?" + params);
   };
 
@@ -295,25 +296,14 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                       status={selectedStatus}
                     />
                   </Tabs.TabPane>
-                  <Tabs.TabPane title="能力与工具" key="capabilities">
-                    <div className="bot-capability-panel">
-                      <div className="bot-capability-heading">
-                        <Title heading={5}>能力配置</Title>
-                        <Button onClick={() => navigateTab("tasks")}>返回任务</Button>
-                      </div>
-                      <BotToolEditor
-                        instanceId={selectedBot.instance_id}
-                        isDeployed={selectedBot.is_deployed}
-                        inventory={selectedInventory}
-                        onApplyTask={(task, onSuccess) => openApplyToolConfig(selectedBot, task, onSuccess)}
-                      />
-                    </div>
-                  </Tabs.TabPane>
+                  <Tabs.TabPane title="能力与工具" key="capabilities" />
                 </Tabs>
-                <ObservationWorkbench key={selectedBot.instance_id} bot={selectedBot}
-                  view={activeTab === "configuration" ? "configuration" : "tasks"}
-                  visible={visible && ["tasks", "configuration"].includes(activeTab)}
-                  onEdit={() => navigateTab("capabilities")} />
+                <BotToolEditor key={`config:${selectedBot.instance_id}`} instanceId={selectedBot.instance_id}
+                  isDeployed={selectedBot.is_deployed} inventory={selectedInventory} running={selectedStatus?.running}
+                  view={activeTab === "capabilities" ? "capabilities" : "configuration"}
+                  visible={visible && ["configuration", "capabilities"].includes(activeTab)}
+                  onApplyTask={(task, onSuccess) => openApplyToolConfig(selectedBot, task, onSuccess)} />
+                <ObservationWorkbench key={selectedBot.instance_id} bot={selectedBot} visible={visible && activeTab === "tasks"} />
               </section>
             )}
           </div>

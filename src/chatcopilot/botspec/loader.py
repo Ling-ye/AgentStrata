@@ -120,7 +120,7 @@ def load_botspec(path: str | Path) -> BotSpec:
     return _parse_botspec(data, source_path)
 
 
-def validate_botspec(spec: BotSpec) -> list[ValidationIssue]:
+def validate_botspec(spec: BotSpec, *, environment: dict[str, str] | None = None) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
 
     if not is_valid_bot_id(spec.id):
@@ -236,9 +236,9 @@ def validate_botspec(spec: BotSpec) -> list[ValidationIssue]:
     _check_file_exists(spec, spec.context.playbooks.manifest, "context.playbooks.manifest", issues, required=False)
     _validate_skills_manifest(spec, issues)
     issues.extend(validate_mcp_servers(spec))
-    issues.extend(validate_rag_sources(spec))
+    issues.extend(validate_rag_sources(spec, environment=environment))
     issues.extend(validate_wiki_spec(spec))
-    issues.extend(validate_codebase_registry(spec))
+    issues.extend(validate_codebase_registry(spec, environment=environment))
 
     known = known_tool_pack_names()
     for name in spec.tools.packs:

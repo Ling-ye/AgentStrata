@@ -97,20 +97,21 @@ def load_registry(
     path: str | Path | None = None,
     *,
     force_reload: bool = False,
+    environment: Mapping[str, str] | None = None,
 ) -> CodebaseRegistry:
     global _cached_path, _cached_registry
 
     resolved_path = (
         Path(path).expanduser().resolve() if path is not None else registry_path_from_env()
     )
-    if not force_reload and _cached_registry is not None and _cached_path == resolved_path:
+    if environment is None and not force_reload and _cached_registry is not None and _cached_path == resolved_path:
         return _cached_registry
     if not resolved_path.is_file():
         raise FileNotFoundError(f"codebase registry not found: {resolved_path}")
 
     with resolved_path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
-    expanded = expand_in_tree(raw)
+    expanded = expand_in_tree(raw, environ=environment)
     if not isinstance(expanded, dict):
         raise ValueError("codebase registry root must be a mapping")
     entries = expanded.get("repositories")
@@ -127,8 +128,9 @@ def load_registry(
         repositories[repository.repository_id] = repository
 
     registry = CodebaseRegistry(repositories=repositories)
-    _cached_path = resolved_path
-    _cached_registry = registry
+    if environment is None:
+        _cached_path = resolved_path
+        _cached_registry = registry
     return registry
 
 

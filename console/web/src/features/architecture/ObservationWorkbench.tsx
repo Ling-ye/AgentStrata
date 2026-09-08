@@ -4,15 +4,14 @@ import { Alert, Button, Empty, Spin } from "@arco-design/web-react";
 import { api } from "../../api";
 import type { BotInstance } from "../../types";
 import BotTaskFlowPanel from "../bots/BotTaskFlowPanel";
-import ConfigurationPane from "./ConfigurationPane";
 import RunInspector from "./RunInspector";
 import TaskRecordList from "./TaskRecordList";
-import { dateTime, type ObservationFilters } from "./workbenchModel";
+import { type ObservationFilters } from "./workbenchModel";
 import { readSessionValue, saveSessionValue, taskWorkspaceState } from "./taskWorkspaceState";
 import { useTaskReadingPosition } from "./useTaskReadingPosition";
 
-export default function ObservationWorkbench({ bot, visible, view, onEdit }: {
-  bot: BotInstance; visible: boolean; view: "tasks" | "configuration"; onEdit: () => void;
+export default function ObservationWorkbench({ bot, visible }: {
+  bot: BotInstance; visible: boolean;
 }) {
   const initial = useMemo(() => taskWorkspaceState(bot.instance_id,
     new URLSearchParams(window.location.hash.split("?")[1] ?? ""), readSessionValue(`obs:${bot.instance_id}`)), [bot.instance_id]);
@@ -21,13 +20,11 @@ export default function ObservationWorkbench({ bot, visible, view, onEdit }: {
   const [range, setRange] = useState(initial.range);
   const [customStart, setCustomStart] = useState(initial.customStart);
   const [customEnd, setCustomEnd] = useState(initial.customEnd);
-  const [entity, setEntity] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("entity") || "");
-  const [configReveal, setConfigReveal] = useState(0);
   const [wide, setWide] = useState(false);
   const [listOpen, setListOpen] = useState(false);
   const workspace = useRef<HTMLDivElement>(null);
   const taskPane = useRef<HTMLElement>(null);
-  const tasksVisible = visible && view === "tasks";
+  const tasksVisible = visible;
   const isGateway = bot.runtime_kind === "gateway";
   const querying = tasksVisible && isGateway;
   const flowVisible = tasksVisible && (wide || !listOpen && !!selected);
@@ -47,12 +44,10 @@ export default function ObservationWorkbench({ bot, visible, view, onEdit }: {
       const params = new URLSearchParams(query);
       if (page !== "bots" || params.get("instance") && params.get("instance") !== bot.instance_id) return;
       if (params.get("run")) { setSelected(params.get("run")!); setListOpen(false); }
-      setEntity(params.get("entity") || ""); setConfigReveal((value) => value + 1);
     };
     window.addEventListener("hashchange", navigate);
     return () => window.removeEventListener("hashchange", navigate);
   }, [bot.instance_id]);
-  useEffect(() => { if (visible && view === "configuration") setConfigReveal((value) => value + 1); }, [visible, view]);
   useEffect(() => {
     if (!querying || range === "custom") return;
     const timer = window.setInterval(() => setFilters((value) => ({ ...value, since: Date.now() / 1000 - Number(range) * 86400, until: undefined })), 60_000);
@@ -63,8 +58,6 @@ export default function ObservationWorkbench({ bot, visible, view, onEdit }: {
     enabled: querying, refetchInterval: querying ? 5000 : false });
   const detail = useQuery({ queryKey: ["observation-run", bot.instance_id, selected],
     queryFn: ({ signal }) => api.gatewayRun(bot.instance_id, selected, signal), enabled: querying && !!selected, refetchInterval: querying ? 5000 : false });
-  const inspection = useQuery({ queryKey: ["inspection", bot.instance_id], queryFn: () => api.inspection(bot.instance_id),
-    enabled: visible && view === "configuration", staleTime: 0, refetchInterval: visible && view === "configuration" ? 5000 : false });
   const selectedDetail = detail.data?.run.run_id === selected ? detail.data : undefined;
   const eventPages = useInfiniteQuery({ queryKey: ["observation-events", bot.instance_id, selected], initialPageParam: 0,
     queryFn: ({ pageParam, signal }) => api.observationEvents(bot.instance_id, selected, pageParam, signal),
@@ -86,7 +79,6 @@ export default function ObservationWorkbench({ bot, visible, view, onEdit }: {
     fetchingMore: eventPages.isFetchingNextPage, fetchMore: eventPages.fetchNextPage });
   const changeFilters = (change: Partial<ObservationFilters>) => setFilters((previous) => ({ ...previous, page: 1, ...change }));
   const refresh = () => {
-    if (view === "configuration") { void inspection.refetch(); return; }
     if (!isGateway) return;
     void overview.refetch(); if (selected) void detail.refetch();
     if (selectedDetail?.source === "observation_index") void eventPages.refetch();
@@ -95,11 +87,8 @@ export default function ObservationWorkbench({ bot, visible, view, onEdit }: {
   return <div ref={workspace} className="obs-workbench" hidden={!visible}>
     <div className="obs-toolbar">{tasksVisible && isGateway && !wide && selected &&
       <Button onClick={() => setListOpen((value) => !value)}>{listOpen ? "返回任务" : "任务列表"}</Button>}
-      <Button loading={view === "configuration" ? inspection.isFetching : overview.isFetching} onClick={refresh}>刷新</Button></div>
+      <Button loading={overview.isFetching} onClick={refresh}>刷新</Button></div>
     <div hidden={!tasksVisible}>
-      {!!overview.data?.audit.length && <details className="obs-instance-audit"><summary>实例准入审计 · 最近 {overview.data.audit.length} 条</summary>
-        <table className="obs-table"><thead><tr><th>时间</th><th>决定</th><th>原因</th><th>策略版本</th></tr></thead><tbody>{overview.data.audit.map((item, index) => <tr key={index}><td>{dateTime(item.observed_at)}</td><td>{item.allowed ? "允许" : "拒绝"}</td><td>{item.code}</td><td>{item.policy_version}</td></tr>)}</tbody></table>
-        {overview.data.audit_truncated && <p className="obs-muted">此处显示最近 100 条实例审计。</p>}</details>}
       {!isGateway ? <BotTaskFlowPanel bot={bot} visible={tasksVisible} /> : <div className="obs-tasks-layout" data-wide={wide}>
         <div className="obs-list-column" hidden={!wide && !listOpen && !!selected}>
           <TaskRecordList instanceId={bot.instance_id} selected={selected} data={overview.data} loading={overview.isFetching} error={overview.error}
@@ -119,7 +108,5 @@ export default function ObservationWorkbench({ bot, visible, view, onEdit }: {
         </main>
       </div>}
     </div>
-    {visible && view === "configuration" && <ConfigurationPane inspection={inspection.data} loading={inspection.isLoading} error={inspection.error}
-      selectedEntity={entity} revealVersion={configReveal} onEdit={onEdit} />}
   </div>;
 }

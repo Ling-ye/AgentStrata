@@ -10,8 +10,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Mapping
 
-from chatcopilot.botspec.model import LLMSpec
+from chatcopilot.botspec.model import BotSpec, LLMSpec
 from chatcopilot.botspec.runtime import BotRuntimeContext
 from chatcopilot.core.config import LLMConfig, load_llm_profile
 from chatcopilot.project import ENV_PREFIX
@@ -40,16 +41,14 @@ def apply_runtime_env(runtime: BotRuntimeContext) -> None:
     os.environ.setdefault(_SOURCE_ROOT_ENV, str(source_root))
     os.environ.setdefault(_RUNTIME_ROOT_ENV, str(runtime_root))
     os.environ.setdefault(_CHATCOPILOT_CODEBASE_ROOT_ENV, str(source_root))
-    for key, value in llm_runtime_env_defaults(runtime.spec.llm).items():
-        os.environ.setdefault(key, value)
 
     codebase_registry = runtime.spec.resolve_path(runtime.spec.context.codebases.registry)
     if codebase_registry is not None:
         os.environ[f"{ENV_PREFIX}_CODEBASE_REGISTRY"] = str(codebase_registry.resolve())
         _reset_codebase_registry_cache()
 
-    _apply_dev_env(runtime, source_root)
-    _apply_wiki_env(runtime)
+    os.environ.update(resolve_runtime_environment(runtime.spec, os.environ, source_root=source_root))
+    _reset_dev_config_cache()
 
 
 def llm_runtime_env_defaults(llm: LLMSpec) -> dict[str, str]:
@@ -128,48 +127,35 @@ def _runtime_root(runtime: BotRuntimeContext) -> Path:
     return _source_root(runtime.source_path)
 
 
-def _apply_dev_env(runtime: BotRuntimeContext, source_root: Path) -> None:
-    """Inject ``context.dev`` declarations into process env for ``DevConfig``."""
-
-    dev = runtime.spec.context.dev
-    canonical_root_env = f"{ENV_PREFIX}_DEV_ROOT"
-
-    # Bridge custom root_env → CHATCOPILOT_DEV_ROOT so DevConfig.from_env()
-    # always finds it under the canonical name.
-    configured_root = os.environ.get(dev.root_env, "").strip()
+def resolve_runtime_environment(spec: BotSpec, environment: Mapping[str, str], *, source_root: Path) -> dict[str, str]:
+    """Resolve startup defaults without changing process environment or tool caches."""
+    values = dict(environment)
+    for key, value in llm_runtime_env_defaults(spec.llm).items():
+        values.setdefault(key, value)
+    values.setdefault(_SOURCE_ROOT_ENV, str(source_root))
+    values.setdefault(_CHATCOPILOT_CODEBASE_ROOT_ENV, str(source_root))
+    registry = spec.resolve_path(spec.context.codebases.registry)
+    if registry is not None:
+        values[f"{ENV_PREFIX}_CODEBASE_REGISTRY"] = str(registry.resolve())
+    dev = spec.context.dev
+    configured_root = values.get(dev.root_env, "").strip()
     if configured_root:
-        os.environ[canonical_root_env] = configured_root
+        values[f"{ENV_PREFIX}_DEV_ROOT"] = configured_root
     else:
-        # Dev tools operate on the source checkout by default; runtime copies
-        # are updated only through finalize_self_update/update_instance.
-        os.environ.setdefault(canonical_root_env, str(source_root))
-
+        values.setdefault(f"{ENV_PREFIX}_DEV_ROOT", str(source_root))
     if dev.allowed_paths:
-        os.environ.setdefault(
-            f"{ENV_PREFIX}_DEV_ALLOWED_PATHS", ",".join(dev.allowed_paths)
-        )
+        values.setdefault(f"{ENV_PREFIX}_DEV_ALLOWED_PATHS", ",".join(dev.allowed_paths))
     if dev.denied_paths:
-        os.environ.setdefault(
-            f"{ENV_PREFIX}_DEV_DENIED_PATHS", ",".join(dev.denied_paths)
-        )
+        values.setdefault(f"{ENV_PREFIX}_DEV_DENIED_PATHS", ",".join(dev.denied_paths))
     if dev.shell.timeout_max != 300:
-        os.environ.setdefault(
-            f"{ENV_PREFIX}_DEV_SHELL_TIMEOUT_MAX", str(dev.shell.timeout_max)
-        )
-    _reset_dev_config_cache()
-
-
-def _apply_wiki_env(runtime: BotRuntimeContext) -> None:
-    """Bridge a bot-specific Wiki root variable to the canonical tool env."""
-
-    wiki = runtime.spec.context.wiki
-    if not wiki.enabled:
-        return
-    canonical_root_env = f"{ENV_PREFIX}_WIKI_ROOT"
-    configured_root = os.environ.get(wiki.root_env, "").strip()
-    if configured_root:
-        os.environ[canonical_root_env] = configured_root
-    os.environ[f"{ENV_PREFIX}_WIKI_MAX_CHUNK_CHARS"] = str(wiki.max_chunk_chars)
+        values.setdefault(f"{ENV_PREFIX}_DEV_SHELL_TIMEOUT_MAX", str(dev.shell.timeout_max))
+    wiki = spec.context.wiki
+    if wiki.enabled:
+        configured_root = values.get(wiki.root_env, "").strip()
+        if configured_root:
+            values[f"{ENV_PREFIX}_WIKI_ROOT"] = configured_root
+        values[f"{ENV_PREFIX}_WIKI_MAX_CHUNK_CHARS"] = str(wiki.max_chunk_chars)
+    return values
 
 
 def _reset_codebase_registry_cache() -> None:

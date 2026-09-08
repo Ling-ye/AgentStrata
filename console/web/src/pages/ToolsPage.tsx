@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Button, Drawer, Empty, Input, Space, Spin, Tabs, Tag, Typography } from "@arco-design/web-react";
 import { useQueries, useQuery } from "@tanstack/react-query";
+import { configurationTabForEntity } from "../features/architecture/configurationPresentation";
 import { api } from "../api";
 import { catalogLayer, layerName } from "../features/architecture/model";
 import { IconSearch } from "@arco-design/web-react/icon";
@@ -138,7 +139,7 @@ export default function ToolsPage({ visible }: Props) {
             return <tr key={item.id}><td><button className="obs-link" onClick={() => setSelectedItem(item)}>{item.name}</button><small>{item.id}</small></td>
               <td>{layerName(catalogLayer(item))}<small>{item.category}</small></td>
               <td>{bots.isLoading || inspections.some((query) => query.isLoading) ? "读取中" : bots.isError || inspections.some((query) => query.isError) ? "读取失败" : assigned.length ?
-                <Space wrap>{assigned.map(({ bot, entityId: identity }) => <a key={bot.instance_id} href={`#bots?instance=${encodeURIComponent(bot.instance_id)}&entity=${encodeURIComponent(identity)}`}>{bot.display_name}</a>)}</Space> : "未配置"}</td>
+                <Space wrap>{assigned.map(({ bot, entityId: identity }) => <a key={bot.instance_id} href={`#bots?instance=${encodeURIComponent(bot.instance_id)}&tab=${configurationTabForEntity(identity)}&entity=${encodeURIComponent(identity)}`}>{bot.display_name}</a>)}</Space> : "未配置"}</td>
               <td>{loaded.length ? <Tag color="green">{loaded.length} 个实例已加载</Tag> : assigned.length ? <Tag>未确认</Tag> : "—"}</td>
               <td><Button size="small" onClick={() => setSelectedItem(item)}>详情</Button></td></tr>;
           })}</tbody></table></div>
