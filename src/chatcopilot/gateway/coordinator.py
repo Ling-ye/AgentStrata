@@ -14,7 +14,7 @@ from typing import Protocol
 from chatcopilot.application.sessions import SessionManagerError
 from chatcopilot.contracts.turns import PreparedTurn, TurnOutcome
 from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
-from chatcopilot.channels.base import ChannelDeliveryError, ChannelDeliveryUnknownError
+from chatcopilot.channels.base import ChannelDeliveryError
 from chatcopilot.contracts.agent import AgentEvent, AgentResult, TextDelta
 from chatcopilot.contracts.authorization import (
     AuthorizationDecision,
@@ -39,6 +39,9 @@ from chatcopilot.contracts.gateway_rpc import (
     TextRpcSegment,
 )
 from chatcopilot.contracts.identity import ConversationIdentity, TurnIdentity
+from chatcopilot.core.runtime_observation import (
+    channel_input_summary, inbound_summary, result_summary, runtime_stage, turn_summary,
+)
 
 from .application import GatewayApplicationError, GatewaySessionService
 from .events import GatewayEventPublisher
@@ -205,6 +208,15 @@ class GatewayTurnCoordinator:
                 principal=principal,
             ),
         )
+        observer = RunObserver(self._state_store, self._generation, run_id)
+        observer.accepted(canonical_text, principal.role.value)
+        with observer.scope():
+            with runtime_stage("gateway.accept", "gateway", trace_id=run_id,
+                               input={"text": canonical_text, "request_id": request_id},
+                               source="gateway", target="application", entrypoint="client",
+                               duration_recorded=False) as stage:
+                stage.complete({"run_id": run_id, "session_id": session_id, "role": principal.role.value,
+                                "admission": "allowed", "channel": "not_traversed"})
         self._tokens[run_id] = token
         task = asyncio.create_task(
             self._execute_client_run(
@@ -294,38 +306,52 @@ class GatewayTurnCoordinator:
             ),
         )
         self._tokens[run_id] = token
+        observer = RunObserver(self._state_store, self._generation, run_id)
+        observer.accepted(canonical_text, principal.role.value)
         try:
-            observer = RunObserver(self._state_store, self._generation, run_id)
-            observer.record("principal_bound", "channel", "gateway", "succeeded",
-                            gate="authenticated_principal_binding", outcome="allowed")
-            request = await self._actor_executor.prepare_channel(
-                event=event, principal=principal, session_id=session.session_id,
-                run_id=run_id, canonical_text=canonical_text, now=self._now())
-            request = replace(request, metadata={**(request.metadata or {}),
-                              "trace_id": run_id, "parent_span_id": ACTOR_SPAN_ID})
-            observer.record("resources_materialized", "gateway", "application", "succeeded",
-                            resource_count=len(request.resource_refs))
-            task = asyncio.create_task(
-                self._execute_channel_run(
-                    event=event,
-                    session_id=session.session_id,
-                    run_id=run_id,
-                    principal=principal,
-                    request=request,
-                    cancellation=token,
-                ),
-                name=f"gateway-channel-run:{run_id}",
-            )
-            self._tasks[run_id] = task
-            task.add_done_callback(
-                lambda completed: self._task_finished(run_id, completed)
-            )
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                token.cancel()
-                await task
-                raise
+            with observer.scope():
+                native = channel_input_summary(event)
+                with runtime_stage("channel.receive", "channel", trace_id=run_id, input=native,
+                                   source="channel", target="gateway", event_id=event.evidence.event_id,
+                                   occurred_at=event.evidence.observed_at, duration_recorded=False) as stage:
+                    stage.complete(inbound_summary(event))
+                with runtime_stage("gateway.accept", "gateway", trace_id=run_id,
+                                   input={"text": canonical_text, "event_id": event.evidence.event_id},
+                                   source="channel", target="application", duration_recorded=False,
+                                   entrypoint="channel") as stage:
+                    stage.complete({"run_id": run_id, "session_id": session.session_id,
+                                    "role": principal.role.value, "admission": "allowed",
+                                    "policy_version": self._admission_policy.policy_version})
+                with runtime_stage("application.prepare", "application", trace_id=run_id,
+                                   input={"text": canonical_text, "resources": inbound_summary(event).get("resources", [])},
+                                   source="gateway", target="application") as stage:
+                    request = await self._actor_executor.prepare_channel(
+                        event=event, principal=principal, session_id=session.session_id,
+                        run_id=run_id, canonical_text=canonical_text, now=self._now())
+                    stage.complete(turn_summary(request), resource_count=len(request.resource_refs))
+                request = replace(request, metadata={**(request.metadata or {}),
+                                  "trace_id": run_id, "parent_span_id": ACTOR_SPAN_ID})
+                task = asyncio.create_task(
+                    self._execute_channel_run(
+                        event=event,
+                        session_id=session.session_id,
+                        run_id=run_id,
+                        principal=principal,
+                        request=request,
+                        cancellation=token,
+                    ),
+                    name=f"gateway-channel-run:{run_id}",
+                )
+                self._tasks[run_id] = task
+                task.add_done_callback(
+                    lambda completed: self._task_finished(run_id, completed)
+                )
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    token.cancel()
+                    await task
+                    raise
         except StaleWriterGeneration:
             raise
         except Exception as exc:
@@ -415,30 +441,35 @@ class GatewayTurnCoordinator:
         request_id: str,
         cancellation: CancellationToken,
     ) -> None:
-        request = self._actor_executor.prepare_client(
-            run_id=run_id, session_id=session_id, principal=principal,
-            canonical_text=canonical_text, message_id=message_id, request_id=request_id)
-        request = replace(request, metadata={**(request.metadata or {}),
-                          "trace_id": run_id, "parent_span_id": ACTOR_SPAN_ID})
-        result = None
-        try:
-            result = await self._execute_actor(
-                request=request,
-                run_id=run_id,
-                cancellation=cancellation,
-            )
-            await self._complete_without_channel(
-                session_id=session_id,
-                run_id=run_id,
-                result=result,
-            )
-        except StaleWriterGeneration:
-            return
-        except Exception as exc:
-            self._fail_run(session_id=session_id, run_id=run_id, error=exc)
-        finally:
-            if result is not None:
-                self._actor_executor.discard_exchange(request, result)
+        observer = RunObserver(self._state_store, self._generation, run_id)
+        with observer.scope():
+            with runtime_stage("application.prepare", "application", trace_id=run_id,
+                               input={"text": canonical_text}, source="gateway", target="application") as stage:
+                request = self._actor_executor.prepare_client(
+                    run_id=run_id, session_id=session_id, principal=principal,
+                    canonical_text=canonical_text, message_id=message_id, request_id=request_id)
+                stage.complete(turn_summary(request), resource_count=len(request.resource_refs))
+            request = replace(request, metadata={**(request.metadata or {}),
+                              "trace_id": run_id, "parent_span_id": ACTOR_SPAN_ID})
+            result = None
+            try:
+                result = await self._execute_actor(
+                    request=request,
+                    run_id=run_id,
+                    cancellation=cancellation,
+                )
+                await self._complete_without_channel(
+                    session_id=session_id,
+                    run_id=run_id,
+                    result=result,
+                )
+            except StaleWriterGeneration:
+                return
+            except Exception as exc:
+                self._fail_run(session_id=session_id, run_id=run_id, error=exc)
+            finally:
+                if result is not None:
+                    self._actor_executor.discard_exchange(request, result)
 
     async def _execute_channel_run(
         self,
@@ -480,17 +511,7 @@ class GatewayTurnCoordinator:
                     run_id=run_id,
                     reply_to_message_id=event.evidence.message_id,
                 )
-                observer = RunObserver(self._state_store, self._generation, run_id)
-                observer.record("response_dispatch", "gateway", "channel", "running", outbound_id=envelope.outbound_id)
-                try:
-                    receipt = await runtime.send(envelope)
-                except (Exception, asyncio.CancelledError) as exc:
-                    status = "delivery_unknown" if isinstance(exc, (ChannelDeliveryUnknownError, asyncio.CancelledError)) else "failed"
-                    observer.record("channel_returned", "channel", "gateway", status,
-                                    outbound_id=envelope.outbound_id, code=getattr(exc, "code", "channel_send_interrupted"))
-                    raise
-                observer.record("channel_returned", "channel", "gateway", receipt.stage,
-                                outbound_id=envelope.outbound_id, receipt_id=receipt.receipt_id, stage=receipt.stage)
+                receipt = await runtime.send(envelope)
                 self._sessions.assert_current_generation()
                 if cancellation.is_cancelled:
                     self._actor_executor.discard_exchange(request, result)
@@ -542,7 +563,7 @@ class GatewayTurnCoordinator:
             run_id=run_id,
             now=self._now(),
         )
-        observer = RunObserver(self._state_store, self._generation, run_id)
+        observer = RunObserver(self._state_store, self._generation, run_id, agent_stage_span_id=ACTOR_SPAN_ID)
         forwarder = _AgentEventForwarder(
             events=self._events,
             session_id=session_id,
@@ -550,7 +571,6 @@ class GatewayTurnCoordinator:
             cancellation=cancellation,
             observer=observer,
         )
-        observer.record("actor_execution", "application", "agent", "running")
         observer.prepare(request)
         with observer.scope():
             result = await self._actor_executor.execute(
@@ -558,8 +578,12 @@ class GatewayTurnCoordinator:
                 on_event=forwarder,
                 cancellation=cancellation,
             )
-        observer.record("actor_returned", "application", "gateway",
-                        "aborted" if result.result.stop_reason == "cancelled" else "succeeded")
+        with observer.scope():
+            with runtime_stage("application.result", "application", trace_id=run_id,
+                               input=result_summary(result.result), source="agent", target="gateway",
+                               duration_recorded=False) as stage:
+                stage.complete({**result_summary(result.result), "exchange_pending": result.exchange is not None},
+                               stop_reason=result.result.stop_reason)
         return result
 
     async def _complete_without_channel(
@@ -613,6 +637,7 @@ class GatewayTurnCoordinator:
             run_id,
             generation=self._generation,
         )
+        self._observe_terminal(run_id, "completed")
         segments = (TextRpcSegment(final_text),) if final_text else ()
         self._events.emit(
             "chat.final",
@@ -652,6 +677,7 @@ class GatewayTurnCoordinator:
             run_id,
             generation=self._generation,
         )
+        self._observe_terminal(run_id, "aborted")
         self._events.emit(
             "chat.final",
             ChatFinalEvent(
@@ -682,6 +708,7 @@ class GatewayTurnCoordinator:
                 run_id,
                 generation=self._generation,
             )
+            self._observe_terminal(run_id, "failed", code=code)
             self._events.emit(
                 "chat.error",
                 ChatErrorEvent(
@@ -695,6 +722,16 @@ class GatewayTurnCoordinator:
             )
         except StaleWriterGeneration:
             return
+
+    def _observe_terminal(self, run_id: str, state: str, *, code: str | None = None) -> None:
+        observer = RunObserver(self._state_store, self._generation, run_id)
+        with observer.scope():
+            with runtime_stage("gateway.finish", "gateway", trace_id=run_id,
+                               input={"run_id": run_id}, duration_recorded=False,
+                               source="gateway", target="gateway") as stage:
+                stage.complete({"state": state, "error_code": code},
+                               status="succeeded" if state == "completed" else state,
+                               code=code, run_state=state)
 
     def _task_finished(self, run_id: str, task: asyncio.Task[None]) -> None:
         self._tasks.pop(run_id, None)

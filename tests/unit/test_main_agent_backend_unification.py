@@ -940,6 +940,10 @@ class CodexBackendResumeTests(TestCase):
             self.assertEqual(finished.parent_span_id, "host:actor")
             self.assertEqual(context.snapshot_id, started.context_snapshot_id)
             self.assertEqual(context.snapshot_id, finished.context_snapshot_id)
+            self.assertEqual(finished.visible_response["content"], "done")
+            self.assertEqual(finished.visible_response["coverage"], "adapter_visible")
+            self.assertEqual(finished.visible_response["tool_calls"], [])
+            self.assertIn("provider_internal_turns", finished.visible_response["omitted"])
             self.assertEqual(context.session_messages[-1]["role"], "user")
             self.assertIn("inspect context", context.session_messages[-1]["content"])
             self.assertEqual(context.effective_messages[0]["role"], "user")
@@ -967,7 +971,7 @@ class CodexBackendResumeTests(TestCase):
             )
             self.assertEqual(len(span_starts), len(span_finishes))
             self.assertTrue(all(event.parent_span_id == started.span_id for event in span_starts))
-            portable_events = repr(span_starts + span_finishes)
+            portable_events = repr([*span_starts, *span_finishes, finished.visible_response])
             for private_value in (
                 "private-command-output",
                 "provider-private-reasoning",

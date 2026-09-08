@@ -79,6 +79,37 @@ def _call(name: str, args: dict, call_id: str = "c1") -> ChatResult:
 
 
 class AgentTraceTests(unittest.TestCase):
+    def test_native_and_langgraph_record_each_public_model_response(self) -> None:
+        for session_type in (AgentSession, LangGraphAgentSession):
+            with self.subTest(backend=session_type.__name__):
+                tool = _tool("ping", category="agent")
+                first = _call("ping", {"reasoning": "public tool argument"}, call_id="first-call")
+                first.content = "先查询工具"
+                first.reasoning_content = "provider-private-thought"
+                first.tool_calls[0]["provider_state"] = "provider-private-state"
+                session = session_type(
+                    session_id="visible-responses", llm=_ScriptedLLM([first, ChatResult(content="最终回答")]),
+                    executor=ToolExecutor(tools=[tool]), tools_schema=[build_openai_schema(tool)],
+                    prompt_plan=prompt_plan("baseline"),
+                )
+                events = []
+                outcome = session.run_task(AgentTask("go"), on_event=events.append)
+                finishes = [event for event in events if isinstance(event, LlmCallFinished)]
+                self.assertEqual(len(finishes), 2)
+                first_body, final_body = [event.visible_response for event in finishes]
+                self.assertEqual(first_body["content"], "先查询工具")
+                self.assertEqual(first_body["tool_calls"][0]["id"], "first-call")
+                self.assertEqual(json.loads(first_body["tool_calls"][0]["function"]["arguments"]),
+                                 {"reasoning": "public tool argument"})
+                self.assertEqual(first_body["coverage"], "model_response")
+                self.assertEqual(final_body["content"], "最终回答")
+                self.assertEqual(final_body["tool_calls"], [])
+                self.assertEqual(outcome.final_text, "最终回答")
+                self.assertNotEqual(finishes[0].span_id, finishes[1].span_id)
+                self.assertNotIn("provider-private", repr([event.visible_response for event in finishes]))
+                first.tool_calls[0]["function"]["arguments"] = "mutated after recording"
+                self.assertIn("public tool argument", first_body["tool_calls"][0]["function"]["arguments"])
+
     def test_native_and_langgraph_share_context_snapshot_conformance(self) -> None:
         for session_type, backend in (
             (AgentSession, "native"),
@@ -163,6 +194,7 @@ class AgentTraceTests(unittest.TestCase):
                 self.assertEqual(len(finishes), 1)
                 self.assertFalse(finishes[0].ok)
                 self.assertEqual(finishes[0].finish_reason, "failed")
+                self.assertIsNone(finishes[0].visible_response)
                 self.assertEqual(finishes[0].backend, backend)
                 self.assertEqual(finishes[0].trace_id, starts[0].trace_id)
                 self.assertEqual(finishes[0].span_id, starts[0].span_id)

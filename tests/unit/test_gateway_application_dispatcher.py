@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+from dataclasses import replace
 from pathlib import Path
 import threading
 import time
@@ -204,12 +205,20 @@ class _UnknownDeliveryDriver(_Driver):
         raise ChannelDeliveryUnknownError("provider_timeout", "Provider acknowledgement timed out")
 
 
+class _InvalidReceiptDriver(_Driver):
+    async def send(self, envelope):
+        receipt = await super().send(envelope)
+        return replace(receipt, outbound_id='another-outbound')
+
+
 @pytest.mark.parametrize("driver_type, status", [
     (_Driver, "provider_acknowledged"), (_FailingDriver, "failed"), (_UnknownDeliveryDriver, "delivery_unknown"),
+    (_InvalidReceiptDriver, "delivery_unknown"),
 ])
 @_async_test
 async def test_observed_delivery_closes_the_same_call_and_preserves_actual_receipts(tmp_path, driver_type, status):
-    state, generation, _, _, _, channels, _, _, actor = _runtime(tmp_path)
+    state, generation, _, _, coordinator, channels, _, _, actor = _runtime(tmp_path)
+    coordinator._clock = time.time
     recorder = ObservationRecorder(state, generation)
     driver = driver_type()
     channels.register(driver)
@@ -225,10 +234,9 @@ async def test_observed_delivery_closes_the_same_call_and_preserves_actual_recei
         run_id = request.metadata['trace_id']
         record = observation_detail(recorder.store, run_id)
         events = record['observations']
-        actor_start = next(event for event in events if event['kind'] == 'actor_execution')
-        assert request.metadata['parent_span_id'] == actor_start['span_id']
-        assert actor_start['trace_id'] == run_id
-        calls = [event for event in events if event['kind'] in {'response_dispatch', 'channel_returned'}]
+        assert request.metadata['parent_span_id'] == 'host:actor'
+        assert not any(event['kind'] in {'actor_execution', 'actor_returned', 'response_dispatch', 'channel_returned'} for event in events)
+        calls = [event for event in events if event['data'].get('operation') == 'channel.deliver']
         assert len(calls) == 2
         start, finish = calls
         assert start['trace_id'] == finish['trace_id'] == run_id
@@ -241,6 +249,76 @@ async def test_observed_delivery_closes_the_same_call_and_preserves_actual_recei
         assert record['outbox'][0]['outbound_id'] == outbound
         assert record['outbox'][0]['state'] == status
         assert record['receipts'][-1]['stage'] == status
+        returned = next(event for event in events if event['data'].get('operation') == 'application.result' and event['phase'] == 'finish')
+        assert recorder.store.body(run_id, returned['body_ref'])['payload']['output']['final_text'] == 'answer'
+        if driver_type is _InvalidReceiptDriver:
+            assert not any(event['status'] == 'provider_acknowledged' for event in calls)
+    finally:
+        await channels.stop()
+        recorder.close()
+
+
+@_async_test
+async def test_admitted_resource_failure_keeps_input_and_failed_preparation(tmp_path):
+    from chatcopilot.application.resources import ResourceMaterializationError
+    state, generation, _, _, coordinator, channels, _, _, actor = _runtime(tmp_path)
+    coordinator._clock = time.time
+    recorder = ObservationRecorder(state, generation)
+    driver = _Driver()
+    channels.register(driver)
+    await channels.start()
+    await channels.activate()
+    event = _event(event_id='resource-failure', sender='20002')
+    evidence = event.evidence
+    ticket = ResourceTicket('ticket-failure', evidence.account, evidence.conversation,
+        evidence.sender.sender_id, evidence.event_id, evidence.message_id, 'image',
+        provider_ref={'url': 'https://provider.example/private-input'})
+    event = replace(event, resource_tickets=(ticket,))
+    try:
+        with pytest.raises(ResourceMaterializationError):
+            await channels.handle_inbound(event)
+        from chatcopilot.gateway.coordinator import _channel_run_id
+        run = state.get_run(_channel_run_id(event))
+        record = observation_detail(recorder.store, run.run_id)
+        assert record['run']['state'] == 'failed'
+        assert recorder.store.body(run.run_id, record['run']['input_ref'])['payload']['text']
+        rows = record['observations']
+        preparation = [row for row in rows if row['data'].get('operation') == 'application.prepare']
+        assert [row['phase'] for row in preparation] == ['start', 'finish']
+        assert preparation[-1]['status'] == 'failed'
+        assert not any(row['data'].get('operation') == 'agent.execute' for row in rows)
+        assert actor.requests == []
+        for row in rows:
+            if row['body_ref']:
+                assert 'https://provider.example/private-input' not in str(recorder.store.body(run.run_id, row['body_ref']))
+    finally:
+        await channels.stop()
+        recorder.close()
+
+
+@_async_test
+async def test_mismatched_native_projection_is_omitted_without_rejecting_valid_event(tmp_path):
+    from chatcopilot.contracts.gateway import ChannelInputObservation, ChannelInputSegment
+    state, generation, _, _, coordinator, channels, _, _, actor = _runtime(tmp_path)
+    coordinator._clock = time.time
+    recorder = ObservationRecorder(state, generation)
+    driver = _Driver()
+    channels.register(driver)
+    await channels.start()
+    await channels.activate()
+    event = _event(event_id='wrong-native-projection', sender='20002')
+    event = replace(event, input_observation=ChannelInputObservation('onebot', 'group', 1.0,
+        'b' * 64, 40, (ChannelInputSegment('text', text='another-event-private-body'),)))
+    try:
+        await channels.handle_inbound(event)
+        run_id = actor.requests[0].run_id
+        record = observation_detail(recorder.store, run_id)
+        assert record['run']['state'] == 'completed'
+        received = next(row for row in record['observations'] if row['data'].get('operation') == 'channel.receive' and row['phase'] == 'start')
+        assert received['body_state'] == 'capture_failed'
+        body = recorder.store.body(run_id, received['body_ref'])
+        assert 'another-event-private-body' not in str(body)
+        assert body['payload']['input']['omitted'] == ['input_event_binding_mismatch']
     finally:
         await channels.stop()
         recorder.close()

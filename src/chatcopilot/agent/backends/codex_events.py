@@ -1,9 +1,8 @@
 """Project Codex CLI JSONL onto the shared Agent event protocol.
 
-The projector deliberately records lifecycle metadata, not provider-private
-reasoning text, command output, MCP arguments/results, or raw diagnostics.  The
-Codex CLI remains the source of those provider-native details; AgentStrata gets
-the portable trace shape needed by the Console.
+The projector records portable lifecycles and adapter-visible response text.
+Provider-private reasoning, command output, MCP arguments/results and raw
+diagnostics are excluded.
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ from chatcopilot.contracts.agent import (
     SpanFinished,
     SpanStarted,
 )
+from chatcopilot.core.visible_model_response import project_visible_response
 from chatcopilot.external_tools.codex_cli.process_runner import (
     STREAM_LINE_OMISSION_NOTICE,
 )
@@ -469,6 +469,11 @@ class CodexJsonlProjector:
                 context_kind=self.context_kind,
                 context_snapshot_id=self.context_snapshot_id,
                 ok=ok,
+                visible_response=project_visible_response(
+                    self.final_text, coverage="adapter_visible",
+                    omitted=("provider_internal_turns", "provider_private_reasoning"),
+                    truncated=self.final_text_truncated or bool(self.stream_omission_count),
+                ),
             )
         )
 

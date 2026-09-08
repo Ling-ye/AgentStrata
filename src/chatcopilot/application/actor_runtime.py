@@ -36,6 +36,9 @@ from chatcopilot.application.sessions import (
     SessionManagerError,
 )
 from chatcopilot.core.observation_context import observe
+from chatcopilot.core.runtime_observation import (
+    AGENT_EXECUTION_SPAN_ID, capture_payload, receipt_summary, result_summary, runtime_stage, turn_summary,
+)
 from chatcopilot.application.tool_authorization import (
     DecisionSink,
     build_tool_payload_filter,
@@ -575,46 +578,58 @@ class ActorTurnExecutor:
         identity = _turn_identity(request)
         lane = self.factory.session_manager.conversation_lane(request.session_id)
         async with lane:
-            state = self.factory.materialize(
-                session_id=request.session_id,
-                principal=request.principal,
-                turn_identity=identity,
-            )
-            if state.agent_session is None:
-                raise ActorRuntimeError(
-                    "actor_session_unavailable",
-                    "The actor Agent session is unavailable",
+            with runtime_stage("application.session", "application", trace_id=request.run_id,
+                               input=turn_summary(request), source="application", target="agent") as stage:
+                state = self.factory.materialize(
+                    session_id=request.session_id,
+                    principal=request.principal,
+                    turn_identity=identity,
                 )
-            agent_session = cast(AgentSessionProtocol, state.agent_session)
-            capabilities = getattr(agent_session, "capabilities", None)
-            if capabilities is not None:
-                observe("session_capabilities", tools=sorted(capabilities.tool_names),
-                        role=request.principal.role.value, workspace_scope=state.workspace.scope)
-            task = AgentTask(
-                text=str(request.canonical_text),
-                resources=tuple(request.resource_refs),
-                turn_context=str(request.turn_context or "") or None,
-                metadata=dict(request.metadata or {}),
-            )
-            try:
-                result = await asyncio.to_thread(
-                    agent_session.run_task,
-                    task,
-                    on_event=on_event,
-                    cancellation=cancellation,
+                if state.agent_session is None:
+                    raise ActorRuntimeError(
+                        "actor_session_unavailable",
+                        "The actor Agent session is unavailable",
+                    )
+                agent_session = cast(AgentSessionProtocol, state.agent_session)
+                capabilities = getattr(agent_session, "capabilities", None)
+                if capabilities is not None:
+                    observe("session_capabilities", tools=sorted(capabilities.tool_names),
+                            role=request.principal.role.value, workspace_scope=state.workspace.scope)
+                task = AgentTask(
+                    text=str(request.canonical_text),
+                    resources=tuple(request.resource_refs),
+                    turn_context=str(request.turn_context or "") or None,
+                    metadata=dict(request.metadata or {}),
                 )
-            except CancellationRequested:
-                result = AgentResult(
-                    final_text="",
-                    stop_reason="cancelled",
-                    message_count=agent_session.message_count,
-                )
-            except Exception as exc:
-                self.factory.evict(state.key)
-                raise ActorRuntimeError(
-                    "actor_execution_failed",
-                    "The actor Agent turn failed before returning a result",
-                ) from exc
+                stage.complete(capture_payload(lambda: {
+                    "session_id": request.session_id, "role": request.principal.role.value,
+                    "workspace_scope": state.workspace.scope,
+                    "available_tools": sorted(capabilities.tool_names) if capabilities is not None else [],
+                }))
+            with runtime_stage("agent.execute", "agent", trace_id=request.run_id,
+                               span_id=AGENT_EXECUTION_SPAN_ID, input=turn_summary(request),
+                               source="application", target="agent") as stage:
+                try:
+                    result = await asyncio.to_thread(
+                        agent_session.run_task,
+                        task,
+                        on_event=on_event,
+                        cancellation=cancellation,
+                    )
+                except CancellationRequested:
+                    result = AgentResult(
+                        final_text="",
+                        stop_reason="cancelled",
+                        message_count=agent_session.message_count,
+                    )
+                except Exception as exc:
+                    self.factory.evict(state.key)
+                    raise ActorRuntimeError(
+                        "actor_execution_failed",
+                        "The actor Agent turn failed before returning a result",
+                    ) from exc
+                stage.complete(result_summary(result), stop_reason=result.stop_reason,
+                               status="aborted" if result.stop_reason == "cancelled" else "failed" if result.stop_reason == "llm_error" else "succeeded")
             reference = ExchangeRef()
             self._exchanges[reference] = _PendingExchange(request, result, state)
             return TurnOutcome(result=result, exchange=reference)
@@ -629,44 +644,54 @@ class ActorTurnExecutor:
     def commit_exchange(self, request: PreparedTurn, outcome: TurnOutcome, *,
                         envelope: OutboundEnvelope, receipt: DeliveryReceipt) -> TurnOutcome:
         """Commit only a receipt bound by the Gateway to this run's outbound message."""
-        pending = self._exchange(request, outcome)
-        outbound_id = envelope.outbound_id
-        principal = request.principal
-        if (envelope.run_id != request.run_id or envelope.session_id != request.session_id
-                or envelope.account.channel != principal.channel
-                or envelope.account.account_id != principal.account_id
-                or envelope.conversation.kind != principal.conversation.chat_kind
-                or envelope.conversation.conversation_id != principal.conversation.chat_id):
-            raise ActorRuntimeError("actor_delivery_binding_mismatch", "Outbound is not bound to the executed turn")
-        if (receipt.outbound_id != outbound_id or not outbound_id or not receipt.receipt_id
-                or receipt.stage != "provider_acknowledged"
-                or outcome.result.stop_reason == "cancelled"):
-            raise ActorRuntimeError("actor_delivery_unconfirmed", "Exchange delivery is not confirmed")
-        delivered = (outbound_id, receipt.receipt_id)
-        if pending.delivered is not None:
-            if pending.delivered != delivered:
-                raise ActorRuntimeError("actor_delivery_binding_mismatch", "Exchange delivery identity changed")
+        with runtime_stage("application.exchange", "application", trace_id=request.run_id,
+                           input={"action": "commit", "receipt": receipt_summary(receipt)},
+                           source="gateway", target="application", outbound_id=envelope.outbound_id) as stage:
+            pending = self._exchange(request, outcome)
+            outbound_id = envelope.outbound_id
+            principal = request.principal
+            if (envelope.run_id != request.run_id or envelope.session_id != request.session_id
+                    or envelope.account.channel != principal.channel
+                    or envelope.account.account_id != principal.account_id
+                    or envelope.conversation.kind != principal.conversation.chat_kind
+                    or envelope.conversation.conversation_id != principal.conversation.chat_id):
+                raise ActorRuntimeError("actor_delivery_binding_mismatch", "Outbound is not bound to the executed turn")
+            if (receipt.outbound_id != outbound_id or not outbound_id or not receipt.receipt_id
+                    or receipt.stage != "provider_acknowledged"
+                    or outcome.result.stop_reason == "cancelled"):
+                raise ActorRuntimeError("actor_delivery_unconfirmed", "Exchange delivery is not confirmed")
+            delivered = (outbound_id, receipt.receipt_id)
+            if pending.delivered is not None:
+                if pending.delivered != delivered:
+                    raise ActorRuntimeError("actor_delivery_binding_mismatch", "Exchange delivery identity changed")
+                stage.complete({"action": "already_committed", "outbound_id": outbound_id})
+                return outcome
+            state = pending.state
+            if state is None:
+                raise ActorRuntimeError("actor_exchange_discarded", "Exchange has already been discarded")
+            self.factory.commit_group_exchange(
+                state=state, identity=_turn_identity(request), user_text=request.canonical_text,
+                assistant_text=outcome.result.final_text, exchange_id=outbound_id)
+            pending.delivered = delivered
+            pending.state = None
+            stage.complete({"action": "committed" if state.workspace is not None and state.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED else "not_applicable",
+                            "outbound_id": outbound_id, "receipt_id": receipt.receipt_id})
             return outcome
-        state = pending.state
-        if state is None:
-            raise ActorRuntimeError("actor_exchange_discarded", "Exchange has already been discarded")
-        self.factory.commit_group_exchange(
-            state=state, identity=_turn_identity(request), user_text=request.canonical_text,
-            assistant_text=outcome.result.final_text, exchange_id=outbound_id)
-        pending.delivered = delivered
-        pending.state = None
-        return outcome
 
     def discard_exchange(self, request: PreparedTurn, outcome: TurnOutcome) -> None:
-        if outcome.exchange is None and outcome.result.stop_reason == "cancelled":
-            return
-        pending = self._exchange(request, outcome)
-        state = pending.state
-        if state is not None:
-            workspace = state.workspace
-            if workspace is not None and workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
-                self.factory.evict(state.key)
-            pending.state = None
+        with runtime_stage("application.exchange", "application", trace_id=request.run_id,
+                           input={"action": "discard"}, source="gateway", target="application") as stage:
+            if outcome.exchange is None and outcome.result.stop_reason == "cancelled":
+                stage.complete({"action": "not_applicable", "reason": "execution_not_started"})
+                return
+            pending = self._exchange(request, outcome)
+            state = pending.state
+            if state is not None:
+                workspace = state.workspace
+                if workspace is not None and workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+                    self.factory.evict(state.key)
+                pending.state = None
+            stage.complete({"action": "discarded" if state is not None and state.workspace is not None and state.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED else "not_applicable"})
 
     def close(self) -> None:
         for pending in tuple(self._exchanges.values()):

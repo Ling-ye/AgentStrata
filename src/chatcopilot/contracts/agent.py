@@ -144,6 +144,7 @@ class LlmCallFinished:
     context_snapshot_id: str = ""
     ok: bool = True
     backend: str = ""
+    visible_response: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)

@@ -225,6 +225,108 @@ def test_log_capture_only_in_bound_run_scope(recorded, caplog):
     assert recorder.store.body(run, logs[0]['body_ref'])['payload']['message'] == 'task-record'
 
 
+def test_runtime_stage_preserves_boundary_bodies_timing_and_call_binding(recorded, caplog):
+    from chatcopilot.core.runtime_observation import runtime_stage
+    from chatcopilot.contracts.agent import InputResourceReceipt, InputResourcesDispatched, TurnError
+    _, _, recorder = recorded
+    run = make_run(recorded)
+    observer = RunObserver(recorded[0], recorded[1], run, agent_stage_span_id='host:actor')
+    caplog.set_level(logging.INFO, logger='fixture.execution')
+    recorder.start()
+    try:
+        with observer.scope():
+            with runtime_stage('channel.receive', 'channel', trace_id=run,
+                               input={'text': 'original-body'}, source='channel', target='gateway',
+                               occurred_at=123.0, duration_recorded=False) as stage:
+                stage.complete({'text': 'canonical-body'})
+            with runtime_stage('agent.execute', 'agent', trace_id=run, span_id='host:actor',
+                               input={'text': 'execute-input'}) as stage:
+                observer(LlmCallStarted('fixture', 1, trace_id=run, span_id='call-1', parent_span_id='host:actor'))
+                observer(LlmCallFinished('fixture', 1, trace_id=run, span_id='call-1', parent_span_id='host:actor',
+                    visible_response={'content': 'model-visible-body', 'coverage': 'model_response', 'capture_state': 'available'}))
+                observer(InputResourcesDispatched('native', 0, 'call-1', (InputResourceReceipt(1, 'image/png', 12, 'a' * 64),)))
+                observer(TurnError('fixture_error', 'Agent-visible error'))
+                logging.getLogger('fixture.execution').warning('stage-bound-log')
+                stage.complete({'final_text': 'agent-visible-body'})
+    finally:
+        recorder.close()
+    rows = events(recorder.store, run)['observations']
+    channel = [item for item in rows if item['data'].get('operation') == 'channel.receive']
+    assert [item['created_at'] for item in channel] == [123.0, 123.0]
+    assert channel[1]['elapsed_ms'] is None
+    assert channel[0]['data']['captured_at'] > 123.0
+    assert channel[0]['data']['source'] == channel[1]['data']['source'] == 'channel'
+    assert recorder.store.body(run, channel[0]['body_ref'])['payload'] == {'input': {'text': 'original-body'}}
+    model = next(item for item in rows if item['kind'] == 'LlmCallFinished')
+    assert model['data']['stage_span_id'] == 'host:actor'
+    assert model['span_id'] == 'call-1'
+    assert recorder.store.body(run, model['body_ref'])['payload']['visible_response']['content'] == 'model-visible-body'
+    resources = next(item for item in rows if item['kind'] == 'InputResourcesDispatched')
+    assert resources['data']['request_id'] == 'call-1'
+    assert recorder.store.body(run, resources['body_ref'])['payload']['resources'][0]['sha256'] == 'a' * 64
+    log = next(item for item in rows if item['kind'] == 'log')
+    assert log['data']['stage_span_id'] == 'host:actor'
+    assert log['data']['runtime_layer'] == 'agent'
+    error = next(item for item in rows if item['kind'] == 'TurnError')
+    assert (error['trace_id'], error['data']['stage_span_id'], error['span_id']) == (run, 'host:actor', None)
+    assert all('original-body' not in json.dumps(item) and 'model-visible-body' not in json.dumps(item) for item in rows)
+
+
+@pytest.mark.parametrize('upstream', ['truncated', 'not_recorded', 'capture_failed'])
+def test_upstream_capture_state_and_storage_failure_do_not_hide_each_other(recorded, monkeypatch, upstream):
+    _, _, recorder = recorded
+    run = make_run(recorded)
+    event = {'kind': 'RuntimeStageStarted', 'layer': 'channel', 'data': {}, 'body_state': upstream}
+    recorder.store.append(run, event, body={'input': {'capture_state': upstream}})
+    first = [row for row in events(recorder.store, run)['observations'] if row['kind'] == 'RuntimeStageStarted'][0]
+    assert first['body_state'] == upstream
+    assert recorder.store.body(run, first['body_ref'])['state'] == upstream
+    monkeypatch.setattr(os, 'fsync', lambda *_: (_ for _ in ()).throw(OSError('disk failure')))
+    recorder.store.append(run, event, body={'input': {'capture_state': upstream}})
+    second = [row for row in events(recorder.store, run)['observations'] if row['kind'] == 'RuntimeStageStarted'][1]
+    assert second['body_state'] == 'capture_failed'
+    assert second['body_ref'] is None
+
+
+def test_task_capture_failure_is_not_downgraded_by_later_truncation(recorded):
+    _, _, recorder = recorded
+    run = make_run(recorded)
+    for state in ('capture_failed', 'truncated'):
+        recorder.store.append(run, {'kind': 'RuntimeStageStarted', 'layer': 'channel', 'data': {}, 'body_state': state},
+                              body={'input': {'capture_state': state}})
+    rows = [row for row in events(recorder.store, run)['observations'] if row['kind'] == 'RuntimeStageStarted']
+    assert [row['body_state'] for row in rows] == ['capture_failed', 'truncated']
+    assert [recorder.store.body(run, row['body_ref'])['state'] for row in rows] == ['capture_failed', 'truncated']
+    assert detail(recorder.store, run)['run']['capture_state'] == 'capture_failed'
+
+
+@pytest.mark.parametrize('failure', ['scope_entry', 'scope_exit', 'record', 'payload'])
+def test_runtime_observation_failure_preserves_business_exception_and_context(recorded, monkeypatch, failure):
+    from contextlib import contextmanager
+    from chatcopilot.core.runtime_observation import current_runtime_stage, result_summary, runtime_stage
+    _, _, recorder = recorded
+    run = make_run(recorded)
+    observer = RunObserver(recorded[0], recorded[1], run)
+    if failure in {'scope_entry', 'scope_exit'}:
+        @contextmanager
+        def broken_scope(_run):
+            if failure == 'scope_entry':
+                raise OSError('scope entry')
+            yield
+            raise OSError('scope exit')
+        monkeypatch.setattr(recorder, 'scope', broken_scope)
+    elif failure == 'record':
+        monkeypatch.setattr(recorder, 'record', lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError('record')))
+    with pytest.raises(ValueError, match='business-failure'):
+        with observer.scope():
+            with runtime_stage('agent.execute', 'agent', trace_id=run, input={'text': 'input'}) as stage:
+                if failure == 'payload':
+                    assert result_summary(object()) == {'capture_state': 'capture_failed'}
+                stage.complete({'text': 'output'})
+                raise ValueError('business-failure')
+    assert current_runtime_stage() is None
+
+
 def test_configuration_instances_have_different_entities_and_values():
     one = configuration_projection({'agents': {'backend': 'native'}, 'tools': {'packs': ['workspace.read_write']}})
     two = configuration_projection({'agents': {'backend': 'codex'}, 'tools': {'packs': ['memory.chat']}})

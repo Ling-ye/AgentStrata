@@ -14,6 +14,7 @@ from typing import Any, Iterator, Mapping
 from chatcopilot.botspec.inspection import configuration_projection
 from chatcopilot.core.inspection import fingerprint, plain
 from chatcopilot.core.observation_context import observation_scope
+from chatcopilot.core.runtime_observation import current_runtime_stage
 from .observation_store import ObservationStore, decoded
 
 _LOG = logging.getLogger(__name__)
@@ -30,9 +31,13 @@ class _RunLogHandler(logging.Handler):
         if not active or active[0] is not self.recorder or record.name.startswith("chatcopilot.gateway.observation"):
             return
         try:
+            stage = current_runtime_stage()
+            stage_data = ({"flow_version": 1, "runtime_layer": stage.runtime_layer,
+                           "stage_span_id": stage.span_id, "trace_id": stage.trace_id}
+                          if stage is not None else {})
             self.recorder.record(active[1], {"kind": "log", "layer": "application", "entity_id": "workspace:instance",
                 "status": "failed" if record.levelno >= logging.ERROR else "recorded", "created_at": record.created,
-                "data": {"level": record.levelname, "logger": record.name}},
+                "data": {"level": record.levelname, "logger": record.name, **stage_data}},
                 body={"message": record.getMessage(), "level": record.levelname, "logger": record.name})
         except Exception:
             pass
@@ -130,7 +135,7 @@ class ObservationRecorder:
                 self.store.project_run(run)
                 if overflow:
                     with self.store.connection(write=True) as observed:
-                        observed.execute("UPDATE runs SET capture_state='truncated' WHERE run_id=?", (selected,))
+                        observed.execute("UPDATE runs SET capture_state='truncated' WHERE run_id=? AND capture_state!='capture_failed'", (selected,))
                 if run_id and run["state"] == "accepted":
                     self.store.bind_run(selected, config_id=self.config_id, backend=str(self.configuration.get("backend", "")),
                                         model=str(self.configuration.get("model", "")))
@@ -146,6 +151,11 @@ class ObservationRecorder:
                             backend=str(self.configuration.get("backend", "")), model=str(self.configuration.get("model", "")))
         self.store.attach_body(run_id, "input", {"text": request.canonical_text})
 
+    def accepted(self, run_id: str, text: str, role: str) -> None:
+        self.store.bind_run(run_id, config_id=self.config_id, role=role,
+                            backend=str(self.configuration.get("backend", "")), model=str(self.configuration.get("model", "")))
+        self.store.attach_body(run_id, "input", {"text": text})
+
     @contextmanager
     def scope(self, run_id: str) -> Iterator[None]:
         token = _ACTIVE.set((self, run_id))
@@ -156,6 +166,25 @@ class ObservationRecorder:
             _ACTIVE.reset(token)
 
     def host_event(self, run_id: str, kind: str, data: dict[str, Any]) -> None:
+        data = dict(data)
+        stage = current_runtime_stage()
+        if kind == "runtime_stage":
+            body = data.pop("body", None)
+            phase = data.pop("phase")
+            layer = data["runtime_layer"]
+            content = body.get("input" if phase == "start" else "output") if isinstance(body, dict) else None
+            body_state = content.get("capture_state") if isinstance(content, dict) else None
+            entity = {"channel": "channel:qq", "gateway": "gateway:instance",
+                      "application": "workspace:instance", "agent": "agent:main"}[layer]
+            self.record(run_id, {"kind": "RuntimeStageStarted" if phase == "start" else "RuntimeStageFinished",
+                "layer": layer, "entity_id": entity, "phase": phase,
+                "status": data.pop("status"), "created_at": data.pop("observed_at"), "data": data,
+                "body_state": body_state}, body=body)
+            return
+        if stage is not None:
+            data.update(flow_version=1, runtime_layer=stage.runtime_layer,
+                        stage_span_id=stage.span_id)
+            data.setdefault("trace_id", stage.trace_id)
         name = data.get("name", "")
         if kind == "tool_authorization":
             self.record(run_id, {"kind": kind, "layer": "authorization", "entity_id": f"tool:{name}",
@@ -196,11 +225,15 @@ class ObservationRecorder:
             with self.store.connection(write=True) as connection:
                 connection.execute("UPDATE runs SET config_id=? WHERE run_id=?", (key, run_id))
             self.record(run_id, {"kind": kind, "layer": "agent", "entity_id": "agent:main", "status": "succeeded",
-                                "data": {"tool_count": len(allowed), "role": data.get("role"), "configuration_id": key}})
+                                "data": {"tool_count": len(allowed), "role": data.get("role"), "configuration_id": key,
+                                         **{name: data[name] for name in ("flow_version", "runtime_layer", "stage_span_id", "trace_id") if name in data}}})
 
     def record(self, run_id: str, event: dict[str, Any], *, body: Any = None, context: bool = False) -> None:
         try:
             data = event.get("data", {})
+            for key in ("source", "target", "parent_span_id"):
+                if key in event:
+                    data.setdefault(key, event[key])
             with self.store.connection() as connection:
                 recorded = connection.execute("SELECT config_id FROM runs WHERE run_id=?", (run_id,)).fetchone()
             if recorded and recorded[0]:

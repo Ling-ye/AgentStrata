@@ -29,6 +29,7 @@ from chatcopilot.agent.lifecycle import (
     set_lifecycle_intent_collector,
 )
 from chatcopilot.core.llm_client import ChatResult
+from chatcopilot.core.visible_model_response import project_visible_response
 from chatcopilot.core.observability_redaction import (
     omit_local_resource_paths,
     omit_private_reasoning_messages,
@@ -351,6 +352,10 @@ class TurnOps:
                 backend=str(getattr(self.session, "backend_name", "native")),
                 finish_reason=result.finish_reason,
                 usage=result.usage,
+                visible_response=project_visible_response(
+                    result.content, result.tool_calls,
+                    omitted=("provider_private_reasoning",) if result.reasoning_content else (),
+                ),
                 trace_id=state.trace_id,
                 span_id=call_span_id,
                 parent_span_id=state.root_span,

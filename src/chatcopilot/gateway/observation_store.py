@@ -225,7 +225,8 @@ class ObservationStore:
             os.close(directory)
         return {**provenance, "body_id": body_id, "state": row["state"], "payload": payload}
 
-    def put_body(self, run_id: str, kind: str, payload: Any, *, limit: int = BODY_LIMIT) -> tuple[str | None, str]:
+    def put_body(self, run_id: str, kind: str, payload: Any, *, limit: int = BODY_LIMIT,
+                 capture_state: str | None = None) -> tuple[str | None, str]:
         checked_run_id(run_id)
         bounded = bound_observability_payload(payload)
         raw = encoded(bounded.value).encode()
@@ -233,6 +234,8 @@ class ObservationStore:
         if len(raw) > limit:
             raw = encoded({"preview": raw[:limit // 4].decode("utf-8", "ignore"), "truncated": True}).encode()
             state = "truncated"
+        if capture_state == "capture_failed" or (state == "available" and capture_state in {"truncated", "not_recorded"}):
+            state = capture_state
         directory = None
         body_id = None
         created = False
@@ -244,7 +247,7 @@ class ObservationStore:
                 if run["details_expired"]:
                     return None, "expired"
                 if run["body_bytes"] + len(raw) > RUN_BODY_LIMIT:
-                    connection.execute("UPDATE runs SET capture_state='truncated' WHERE run_id=?", (run_id,))
+                    connection.execute("UPDATE runs SET capture_state='truncated' WHERE run_id=? AND capture_state!='capture_failed'", (run_id,))
                     return None, "truncated"
                 folder = self._body_directory(run_id)
                 _ensure_private_root(folder, trusted_anchor=self.root)
@@ -298,15 +301,18 @@ class ObservationStore:
             body_ref, body_state = None, "not_recorded"
             if body is not None:
                 try:
-                    body_ref, body_state = self.put_body(run_id, event["kind"], body, limit=CONTEXT_LIMIT if context else BODY_LIMIT)
+                    body_ref, body_state = self.put_body(run_id, event["kind"], body,
+                        limit=CONTEXT_LIMIT if context else BODY_LIMIT, capture_state=event.get("body_state"))
                 except (OSError, ValueError, sqlite3.Error, GatewayStateError):
                     body_state = "capture_failed"
+            elif event.get("body_state") in {"not_recorded", "truncated", "capture_failed"}:
+                body_state = event["body_state"]
             usage = data.get("usage") or {}
             def count(*names: str) -> int | None:
                 return next((usage[key] for key in names if type(usage.get(key)) is int and usage[key] >= 0), None)
             with self.connection(write=True) as connection:
                 elapsed = None
-                if phase == "finish" and span:
+                if phase == "finish" and span and data.get("duration_recorded") is not False:
                     start = connection.execute("SELECT created_at FROM events WHERE run_id=? AND trace_id IS ? "
                                                "AND span_id=? AND phase='start' ORDER BY seq LIMIT 1", (run_id, trace, span)).fetchone()
                     if start:
@@ -322,7 +328,8 @@ class ObservationStore:
                      count("cached_tokens", "cache_read_tokens"), count("total_tokens"), encoded(data), body_ref, body_state, event_key),
                 )
                 if body_state in {"capture_failed", "truncated"}:
-                    connection.execute("UPDATE runs SET capture_state=? WHERE run_id=?", (body_state, run_id))
+                    connection.execute("UPDATE runs SET capture_state=CASE WHEN capture_state='capture_failed' "
+                                       "THEN capture_state ELSE ? END WHERE run_id=?", (body_state, run_id))
                 return cursor.lastrowid
 
     def expire(self, *, now: float | None = None) -> int:

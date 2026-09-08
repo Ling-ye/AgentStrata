@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Mapping
 
 
@@ -102,12 +102,51 @@ class ResourceTicket:
 
 
 @dataclass(frozen=True)
+class ChannelInputSegment:
+    """Selected native message fields without provider resource locators."""
+
+    kind: str
+    text: str | None = None
+    target: str | None = None
+    name: str | None = None
+    size_bytes: int | None = None
+
+
+@dataclass(frozen=True)
+class ChannelInputObservation:
+    """Bounded in-memory projection; never part of durable ingress or authority."""
+
+    provider: str
+    message_type: str
+    observed_at: float
+    frame_sha256: str
+    frame_size_bytes: int
+    segments: tuple[ChannelInputSegment, ...] = ()
+    capture_state: Literal["available", "truncated", "capture_failed"] = "available"
+    omitted: tuple[str, ...] = ()
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"coverage": "platform_projection", **asdict(self)}
+
+
+@dataclass(frozen=True)
 class CanonicalInboundEvent:
     """Canonical inbound event persisted after admission and before execution."""
 
     evidence: TransportEvidence
     segments: tuple[MessageSegment, ...]
     resource_tickets: tuple[ResourceTicket, ...] = ()
+    input_observation: ChannelInputObservation | None = field(default=None, repr=False, compare=False)
+
+
+def canonical_inbound_payload(event: CanonicalInboundEvent) -> dict[str, Any]:
+    """Serialize only authority-bearing ingress fields for persistence and fingerprints."""
+
+    return {
+        "evidence": asdict(event.evidence),
+        "segments": tuple(asdict(segment) for segment in event.segments),
+        "resource_tickets": tuple(asdict(ticket) for ticket in event.resource_tickets),
+    }
 
 
 @dataclass(frozen=True)
@@ -140,7 +179,10 @@ class DeliveryReceipt:
 
 __all__ = [
     "CanonicalInboundEvent",
+    "canonical_inbound_payload",
     "ChannelAccountRef",
+    "ChannelInputObservation",
+    "ChannelInputSegment",
     "ConversationRef",
     "DeliveryReceipt",
     "DeliveryStage",

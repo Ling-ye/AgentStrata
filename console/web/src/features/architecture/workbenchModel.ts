@@ -89,6 +89,96 @@ export interface DisplayStep extends RunStep {
   delivery?: { status: string; observedAt: number; errorCode?: string | null };
 }
 
+export const RUNTIME_LAYERS = { channel: "渠道适配", gateway: "网关", application: "应用", agent: "Agent" } as const;
+export type RuntimeLayer = keyof typeof RUNTIME_LAYERS;
+export const RUNTIME_OPERATIONS: Record<string, string> = {
+  "channel.receive": "接收消息", "gateway.accept": "准入与受理", "application.prepare": "准备工作区与资源",
+  "application.session": "准备执行会话", "agent.execute": "Agent 执行", "application.result": "接收执行结果",
+  "gateway.dispatch": "准备回复投递", "channel.deliver": "投递消息", "gateway.delivery": "记录交付结果",
+  "application.exchange": "处理会话交换", "gateway.finish": "结束任务",
+};
+function runtimeLayer(value: unknown): RuntimeLayer | undefined {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(RUNTIME_LAYERS, value) ? value as RuntimeLayer : undefined;
+}
+export function stepRuntimeLayer(step: RunStep): RuntimeLayer | undefined {
+  const event = step.start ?? step.event;
+  if (event.data?.flow_version === 1) return runtimeLayer(event.data.runtime_layer);
+  const known: Record<string, RuntimeLayer> = {
+    principal_bound: "gateway", resources_materialized: "application", actor_execution: "agent", actor_returned: "agent",
+    response_dispatch: "channel", channel_returned: "channel", ContextSnapshotPrepared: "agent",
+    session_capabilities: "application", InputResourcesDispatched: "agent", TurnError: "agent",
+    LlmCallStarted: "agent", LlmCallFinished: "agent", ToolStarted: "agent", ToolFinished: "agent",
+  };
+  return known[event.kind];
+}
+export function runtimeStage(event: GatewayObservation) {
+  if (!["RuntimeStageStarted", "RuntimeStageFinished"].includes(event.kind) || event.data?.flow_version !== 1 ||
+      !event.trace_id || !event.span_id) return undefined;
+  const layer = runtimeLayer(event.data.runtime_layer);
+  const operation = event.data.operation;
+  return layer && typeof operation === "string" && operation ? { layer, operation } : undefined;
+}
+export interface FlowItem {
+  kind: "stage" | "step"; step: DisplayStep; layer?: RuntimeLayer; operation?: string;
+  stageKey?: string; missingStage: boolean;
+}
+
+function withoutCoveredAggregates(events: GatewayObservation[]) {
+  const stages = events.filter((event) => runtimeStage(event));
+  const operations: Record<string, string[]> = {
+    principal_bound: ["gateway.accept"], resources_materialized: ["application.prepare"],
+    actor_execution: ["agent.execute"], actor_returned: ["agent.execute"],
+    response_dispatch: ["channel.deliver"], channel_returned: ["channel.deliver"],
+  };
+  return events.filter((event) => !operations[event.kind] || !stages.some((stage) =>
+    event.trace_id && event.trace_id === stage.trace_id && operations[event.kind].includes(String(stage.data?.operation)) &&
+    (event.span_id && event.span_id === stage.span_id || event.data?.stage_span_id === stage.span_id ||
+      typeof event.data?.outbound_id === "string" && event.data.outbound_id === stage.data?.outbound_id)));
+}
+
+function buildFlowItems(steps: DisplayStep[]): FlowItem[] {
+  const stageSteps = steps.filter((step) => runtimeStage(step.start ?? step.event));
+  if (!stageSteps.length) return steps.map((step) => ({ kind: "step", step, layer: stepRuntimeLayer(step),
+    missingStage: typeof (step.start ?? step.event).data?.stage_span_id === "string" }));
+  const byKey = new Map(steps.map((step) => [step.key, step]));
+  const stageKeys = new Set(stageSteps.map((step) => step.key));
+  const stageFor = (step: DisplayStep): string | undefined => {
+    const event = step.start ?? step.event;
+    const explicit = event.data?.stage_span_id ?? step.finish?.data?.stage_span_id;
+    if (typeof explicit === "string" && event.trace_id) return JSON.stringify([event.trace_id, explicit]);
+    let cursor: DisplayStep | undefined = step;
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor.key)) {
+      seen.add(cursor.key);
+      const parent: string | undefined = cursor.event.parent_span_id ?? cursor.start?.parent_span_id;
+      const key: string | undefined = parent && cursor.event.trace_id ? JSON.stringify([cursor.event.trace_id, parent]) : undefined;
+      if (key && stageKeys.has(key)) return key;
+      cursor = key ? byKey.get(key) : undefined;
+    }
+    return undefined;
+  };
+  const blocks: Array<{ seq: number; items: FlowItem[] }> = [];
+  const content = new Map<string, FlowItem[]>();
+  for (const step of stageSteps) {
+    const info = runtimeStage(step.start ?? step.event)!;
+    const items: FlowItem[] = [{ kind: "stage", step: { ...step, depth: 0 }, ...info, missingStage: false }];
+    content.set(step.key, items);
+    blocks.push({ seq: step.start?.seq ?? step.event.seq, items });
+  }
+  for (const step of steps) {
+    if (stageKeys.has(step.key)) continue;
+    const stageKey = stageFor(step);
+    const parentStage = stageKey && byKey.get(stageKey);
+    const item: FlowItem = { kind: "step", step: parentStage && stageKeys.has(parentStage.key) ?
+      { ...step, depth: Math.max(0, step.depth - parentStage.depth - 1) } : step,
+      layer: stepRuntimeLayer(step), stageKey, missingStage: !!stageKey && !stageKeys.has(stageKey) };
+    const block = stageKey && content.get(stageKey);
+    if (block) block.push(item);
+    else blocks.push({ seq: step.start?.seq ?? step.event.seq, items: [item] });
+  }
+  return blocks.sort((a, b) => a.seq - b.seq).flatMap((block) => block.items);
+}
+
 export function buildRunView(events: GatewayObservation[], delivery?: Pick<GatewayRunDetail, "receipts" | "outbox">) {
   const unique = [...new Map(events.map((event) => [event.seq, event])).values()].sort((a, b) => a.seq - b.seq);
   const supplemental = new Set(["ContextSnapshotPrepared", "tool_authorization", "log", "run_state"]);
@@ -98,7 +188,7 @@ export function buildRunView(events: GatewayObservation[], delivery?: Pick<Gatew
     flatten(node.children, depth + 1);
   });
   const contextual = unique.filter((event) => event.kind === "ContextSnapshotPrepared");
-  const core = unique.filter((event) => !supplemental.has(event.kind));
+  const core = withoutCoveredAggregates(unique.filter((event) => !supplemental.has(event.kind)));
   const usedContexts = new Set<number>();
   const contextsByCall = new Map<string, GatewayObservation[]>();
   for (const event of core) {
@@ -114,7 +204,8 @@ export function buildRunView(events: GatewayObservation[], delivery?: Pick<Gatew
   flatten(buildRunTree([...core, ...contextual.filter((event) => !usedContexts.has(event.seq))]));
   for (const step of steps) {
     step.contexts = contextsByCall.get(JSON.stringify([step.event.trace_id, step.event.span_id])) ?? [];
-    if (!["response_dispatch", "channel_returned"].includes(step.event.kind)) continue;
+    if (!["response_dispatch", "channel_returned"].includes(step.event.kind) &&
+        (step.start ?? step.event).data?.operation !== "channel.deliver") continue;
     const outbound = step.event.data?.outbound_id ?? step.start?.data?.outbound_id;
     if (typeof outbound !== "string") continue;
     const outbox = delivery?.outbox.find((item) => item.outbound_id === outbound);
@@ -134,15 +225,24 @@ export function buildRunView(events: GatewayObservation[], delivery?: Pick<Gatew
     if (candidates.length === 1) candidates[0][collection].push(event);
     else (collection === "logs" ? logs : permissions).push(event);
   }
-  return { steps, permissions, logs, states: unique.filter((event) => event.kind === "run_state") };
+  const flow = buildFlowItems(steps);
+  return { steps, flow, permissions, logs, states: unique.filter((event) => event.kind === "run_state") };
 }
 
-export function stepState(step: DisplayStep, terminal: boolean) {
+export function stepState(step: DisplayStep, terminal: boolean, hasMore = false) {
   const status = step.delivery?.status ?? step.event.status ?? "unknown";
   const ended = ["provider_acknowledged", "platform_displayed", "user_read", "failed", "delivery_unknown"].includes(status);
   const incomplete = terminal && !step.delivery && !ended && !step.finish && (!!step.start || status === "running");
   return { status: incomplete ? "unknown" : status, incomplete,
-    ...(incomplete ? { label: "结束未记录", color: "orange" } : runState(status)) };
+    ...(incomplete ? { label: hasMore ? "结束记录尚未取得" : "结束未记录", color: "orange" } : runState(status)) };
+}
+
+export function stepDuration(step: DisplayStep, terminal: boolean, now = Date.now() / 1000) {
+  if ((step.start ?? step.event).data?.duration_recorded === false || step.event.data?.duration_recorded === false) return null;
+  return step.event.elapsed_ms ?? (step.start && step.finish ? Math.max(0, step.finish.created_at - step.start.created_at) * 1000 :
+    step.start && step.delivery && !["pending", "submitting", "gateway_accepted", "provider_submitted"].includes(step.delivery.status) ?
+      (step.delivery.observedAt >= step.start.created_at ? (step.delivery.observedAt - step.start.created_at) * 1000 : null) :
+    step.start && !terminal ? Math.max(0, now - step.start.created_at) * 1000 : null);
 }
 
 export function stepIsOpen(step: RunStep, overrides: Record<string, boolean>, terminal: boolean) {
@@ -162,4 +262,4 @@ export function runDuration(run: GatewayRun, now = Date.now() / 1000) {
   return run.started_at == null ? null : Math.max(0, ((run.finished_at ?? now) - run.started_at) * 1000);
 }
 export const dateTime = (epoch: number | null | undefined) => epoch == null ? "未记录" : new Date(epoch * 1000).toLocaleString();
-export const bodyState = (state: string) => ({ available: "已记录", expired: "已到期", truncated: "已截断", not_recorded: "未采集", capture_failed: "采集失败", recording: "采集中", recorded: "已记录" }[state] ?? state);
+export const bodyState = (state: string) => ({ available: "已记录", expired: "已到期", truncated: "已截断", not_recorded: "未采集", capture_failed: "采集失败", recording: "采集中", recorded: "已记录", not_loaded: "尚未取得", pending: "尚未记录输出" }[state] ?? state);

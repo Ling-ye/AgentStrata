@@ -110,13 +110,16 @@ def _metadata(data: Any, secrets: tuple[str, ...], *, operator: bool = False) ->
         return {}
     safe: dict[str, Any] = {}
     for key in ("model", "backend", "name", "trace_id", "span_id", "parent_span_id", "coverage", "code", "gate", "outcome",
-                "outbound_id", "receipt_id", "stage"):
+                "outbound_id", "receipt_id", "stage", "runtime_layer", "operation", "stage_span_id",
+                "source", "target", "entrypoint", "run_state"):
         if isinstance(data.get(key), str):
             safe[key] = (data[key] if operator else redact_observability_payload(data[key], secrets=secrets).value)[:160]
-    for key in ("iteration", "depth", "input_message_count", "input_estimated_tokens", "tool_schema_count", "message_count", "resource_count"):
+    for key in ("iteration", "depth", "input_message_count", "input_estimated_tokens", "tool_schema_count", "message_count", "resource_count", "flow_version"):
         value = data.get(key)
         if type(value) is int and 0 <= value <= 10**12:
             safe[key] = value
+    if type(data.get("duration_recorded")) is bool:
+        safe["duration_recorded"] = data["duration_recorded"]
     if isinstance(data.get("usage"), dict):
         safe["usage"] = {key: value for key, value in data["usage"].items()
                          if key in {"prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens"}
@@ -187,7 +190,7 @@ def gateway_run(root: Path, run_id: str, *, secrets: tuple[str, ...] = (), opera
             payload = _object(item.pop("payload_json"))
             # Only the diagnostic schema is public; arbitrary stored keys never escape.
             events.append(bind_host_observation(run_id, {**item, **{key: str(payload[key])[:160]
-                for key in ("kind", "source", "target", "status", "phase", "trace_id", "span_id", "layer", "entity_id") if key in payload},
+                for key in ("kind", "source", "target", "status", "phase", "trace_id", "span_id", "layer", "entity_id", "body_state") if key in payload},
                 "data": _metadata(payload.get("data"), secrets, operator=operator)}))
         wire = _rows(connection,
                      "SELECT seq, event, created_at, json_object("

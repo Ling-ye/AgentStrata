@@ -41,7 +41,8 @@ resulting system structure.
   being presented as complete.
 - **Evidence-bound runtime.** The Gateway durably separates admitted ingress,
   authorization decisions, runs, outbox state, and provider receipts. The
-  Console pairs instance configuration snapshots with task traces in a runtime
+  Console shows Channel, Gateway, Application, and Agent handoffs with recorded
+  inputs, outputs, and inline call details, alongside configuration snapshots in a runtime
   observation workbench. Runtime-owned recording supports indexed history,
   component metrics, approvals and delivery receipts even while Console is closed;
   detailed bodies expire after 30 days while summaries remain queryable. Legacy ACP task evidence remains separate.

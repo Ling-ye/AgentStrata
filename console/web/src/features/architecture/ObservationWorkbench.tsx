@@ -76,7 +76,7 @@ export default function ObservationWorkbench({ bot, visible }: {
   useTaskReadingPosition({ instanceId: bot.instance_id, runId: selected, active: flowVisible && isGateway,
     ready: !!selectedDetail && (selectedDetail.source !== "observation_index" || !!eventPages.data || !!eventPages.error),
     container: taskPane, pages: eventPages.data?.pages.length ?? 1, hasMore: !!eventPages.hasNextPage,
-    fetchingMore: eventPages.isFetchingNextPage, fetchMore: eventPages.fetchNextPage });
+    fetchingMore: eventPages.isFetchingNextPage, fetchMore: eventPages.fetchNextPage, contentRevision: events });
   const changeFilters = (change: Partial<ObservationFilters>) => setFilters((previous) => ({ ...previous, page: 1, ...change }));
   const refresh = () => {
     if (!isGateway) return;

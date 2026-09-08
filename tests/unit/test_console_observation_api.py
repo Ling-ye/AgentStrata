@@ -69,3 +69,57 @@ def test_observation_http_scope_filter_snapshot_and_no_store(tmp_path, monkeypat
     database.chmod(0o644)
     unsafe = client.get(base)
     assert unsafe.status_code == 409 and unsafe.headers['cache-control'] == 'no-store'
+
+
+def test_runtime_stage_events_page_without_body_and_keep_run_scope(tmp_path, monkeypatch):
+    from chatcopilot.core.runtime_observation import runtime_stage
+
+    instances = {}
+    recorders = []
+    for index in range(2):
+        folder = tmp_path / str(index)
+        folder.mkdir(mode=0o700)
+        state = GatewayStateStore(folder / 'gateway')
+        generation = state.acquire_writer_generation()
+        recorder = ObservationRecorder(state, generation)
+        recorders.append(recorder)
+        state.create_session(generation=generation, session_id='session',
+                             account=ChannelAccountRef('fixture', 'account'),
+                             conversation=ConversationRef('p2p', 'chat'))
+        state.begin_run(generation=generation, session_id='session', run_id='run-stage',
+                        input_fingerprint=hashlib.sha256(b'stage').hexdigest())
+        env = folder / 'local.env'
+        env.write_text('CHATCOPILOT_GATEWAY_STATE_ROOT=' + str(state.root) + '\n')
+        env.chmod(0o600)
+        instances[str(index)] = BotInstance(str(index), str(folder / 'bot.yaml'), env_file=str(env), runtime_kind='gateway')
+        with recorder.scope('run-stage'):
+            with runtime_stage('application.prepare', 'application', trace_id='run-stage', span_id='prepare',
+                               source='gateway', target='agent', input={'text': 'private stage input'}) as stage:
+                stage.complete({'text': f'instance-{index}-prepared'})
+    monkeypatch.setattr(architecture, 'get_instance', lambda identity: instances[identity])
+    app = FastAPI()
+    app.include_router(architecture.router)
+    client = TestClient(app)
+    base = '/api/bots/0/gateway-observation/runs/run-stage'
+    response = client.get(base)
+    assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+    stages = [item for item in response.json()['observations'] if item['kind'].startswith('RuntimeStage')]
+    assert [item['kind'] for item in stages] == ['RuntimeStageStarted', 'RuntimeStageFinished']
+    for event in stages:
+        assert event['data']['runtime_layer'] == 'application'
+        assert event['data']['source'] == 'gateway'
+        assert event['data']['target'] == 'agent'
+        assert event['trace_id'] == 'run-stage' and event['span_id'] == 'prepare'
+    assert 'private stage input' not in response.text and 'instance-0-prepared' not in response.text
+    page = client.get(base + '/events', params={'after': stages[0]['seq'] - 1, 'limit': 1}).json()
+    assert page['has_more'] and page['observations'][0]['kind'] == 'RuntimeStageStarted'
+    finish_page = client.get(base + '/events', params={'after': page['next_cursor'], 'limit': 1}).json()
+    assert finish_page['observations'][0]['span_id'] == 'prepare'
+    assert finish_page['observations'][0]['kind'] == 'RuntimeStageFinished'
+    reference = stages[1]['body_ref']
+    body = client.get(base + '/details/' + reference)
+    assert body.status_code == 200 and body.headers['cache-control'] == 'no-store'
+    assert body.json()['payload']['output'] == {'text': 'instance-0-prepared'}
+    cross_instance = client.get('/api/bots/1/gateway-observation/runs/run-stage/details/' + reference)
+    assert cross_instance.status_code == 404
+    assert client.get('/api/bots/0/gateway-observation/runs/run-other/details/' + reference).status_code == 404

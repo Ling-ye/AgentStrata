@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import FrozenInstanceError
 
 import pytest
 
@@ -206,6 +207,55 @@ def test_group_trigger_accepts_only_structured_exact_self_mention() -> None:
         _, _, result = _decode(event)
         assert result.code == "group_mention_missing"
         assert result.event is None
+
+
+def test_input_observation_selects_native_message_fields_without_provider_locators() -> None:
+    credential = "fixture" + "-provider-credential"
+    event = _group([
+        {"type": "at", "data": {"qq": BOT}},
+        {"type": "text", "data": {"text": "检查这个附件", "extra": credential}},
+        {"type": "image", "data": {"url": "https://provider.invalid/a?" + "token=" + credential,
+                                     "name": "sample.png", "file_size": 42}},
+    ], authorization=credential, raw_message=credential, extra={"secret": credential})
+    _, frame, decoded = _decode(event)
+    observation = decoded.event.input_observation
+    assert observation.capture_state == "available"
+    assert observation.frame_sha256 == frame.frame_sha256
+    assert observation.frame_size_bytes == frame.size_bytes
+    assert observation.segments[0].kind == "at" and observation.segments[0].target == BOT
+    assert observation.segments[1].text == "检查这个附件"
+    assert observation.segments[2].name == "sample.png" and observation.segments[2].size_bytes == 42
+    payload = json.dumps(observation.to_payload(), ensure_ascii=False)
+    assert credential not in payload and "provider.invalid" not in payload
+    assert "authorization" not in payload and "raw_message" not in payload
+    with pytest.raises(FrozenInstanceError):
+        observation.segments[0].target = "other"
+
+
+@pytest.mark.parametrize("message", [
+    [{"type": "text", "data": {"text": "正文" * 8192}}],
+    [{"type": "text", "data": {"text": "x"}}] * 80,
+])
+def test_input_observation_is_bounded_without_changing_canonical_message(message) -> None:
+    _, _, decoded = _decode(_group([{"type": "at", "data": {"qq": BOT}}, *message]))
+    observation = decoded.event.input_observation
+    assert observation.capture_state == "truncated"
+    assert len(observation.segments) <= 64
+    assert sum(len((segment.text or "").encode()) for segment in observation.segments) <= 16 * 1024
+    assert len(decoded.event.segments) == len(message) + 1
+    assert decoded.event.segments[1].text == message[0]["data"]["text"]
+
+
+def test_input_observation_failure_does_not_fail_decoding(monkeypatch) -> None:
+    def unavailable(*_args):
+        raise MemoryError("fixture projection failed")
+    monkeypatch.setattr("chatcopilot.channels.qq_onebot.codec.project_message", unavailable)
+    _, _, decoded = _decode(_group([{"type": "at", "data": {"qq": BOT}},
+                                    {"type": "text", "data": {"text": "accepted input"}}]))
+    assert decoded.code == "accepted"
+    assert decoded.event.segments[-1].text == "accepted input"
+    assert decoded.event.input_observation.capture_state == "capture_failed"
+    assert decoded.event.input_observation.segments == ()
 
 
 def test_private_cq_looking_text_stays_untrusted_text_and_needs_no_mention() -> None:

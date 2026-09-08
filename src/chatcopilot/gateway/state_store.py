@@ -28,6 +28,7 @@ from chatcopilot.contracts.authorization import (
 )
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
+    canonical_inbound_payload,
     ChannelAccountRef,
     ConversationRef,
     DeliveryReceipt,
@@ -1479,7 +1480,7 @@ class GatewayStateStore:
         _required_identity(evidence.event_id, "event_id", max_chars=256)
         _require_sha256(evidence.frame_sha256, "frame_sha256")
         _validate_ingress_principal(principal, event)
-        payload_json = _json_dump(asdict(event))
+        payload_json = _json_dump(canonical_inbound_payload(event))
         principal_json = _json_dump(asdict(principal))
         with self._write_connection() as connection:
             self._assert_generation(connection, generation)
@@ -3167,7 +3168,7 @@ def _canonical_inbound_event(payload: Mapping[str, Any]) -> CanonicalInboundEven
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise GatewayStateError("Gateway ingress payload is corrupt") from exc
-    if _json_dump(asdict(event)) != _json_dump(payload):
+    if _json_dump(canonical_inbound_payload(event)) != _json_dump(payload):
         raise GatewayStateError("Gateway ingress payload shape is corrupt")
     return event
 

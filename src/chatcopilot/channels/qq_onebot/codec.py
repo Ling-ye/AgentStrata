@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
     ChannelAccountRef,
+    ChannelInputObservation,
     ConversationRef,
     MessageSegment,
     OutboundEnvelope,
@@ -23,6 +24,7 @@ from chatcopilot.contracts.gateway import (
     SenderClaim,
     TransportEvidence,
 )
+from .input_observation import project_message
 
 
 _QQ_ID_RE = re.compile(r"^[1-9][0-9]{4,19}$")
@@ -217,14 +219,39 @@ def decode_inbound_message(
     )
     if not segments:
         return InboundDecodeResult("empty_message")
+    observation = _input_observation(frame, evidence, native_message, tickets, message_type)
     return InboundDecodeResult(
         "accepted",
         CanonicalInboundEvent(
             evidence=evidence,
             segments=segments,
             resource_tickets=tickets,
+            input_observation=observation,
         ),
     )
+
+
+def _input_observation(
+    frame: ParsedOneBotFrame,
+    evidence: TransportEvidence,
+    message: Any,
+    tickets: tuple[ResourceTicket, ...],
+    message_type: str,
+) -> ChannelInputObservation:
+    omitted = ("unselected_native_fields", "resource_locators", "provider_credentials")
+    try:
+        segments, truncated = project_message(message, tickets)
+        return ChannelInputObservation(
+            provider="onebot_v11", message_type=message_type, observed_at=evidence.observed_at,
+            frame_sha256=frame.frame_sha256, frame_size_bytes=frame.size_bytes,
+            segments=segments, capture_state="truncated" if truncated else "available", omitted=omitted,
+        )
+    except Exception:
+        return ChannelInputObservation(
+            provider="onebot_v11", message_type=message_type, observed_at=evidence.observed_at,
+            frame_sha256=frame.frame_sha256, frame_size_bytes=frame.size_bytes,
+            capture_state="capture_failed", omitted=(*omitted, "projection_failed"),
+        )
 
 
 def encode_action_request(action: str, params: Mapping[str, Any], *, echo: str) -> str:

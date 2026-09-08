@@ -1,7 +1,7 @@
 """Bounded diagnostics; authority remains with the run, policy and outbox owners."""
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager
 import hashlib
 from dataclasses import asdict
 import logging
@@ -17,10 +17,12 @@ from chatcopilot.core.observability_redaction import (
     collect_observability_secrets, default_observability_roots, redact_observability_payload,
     omit_private_reasoning_messages,
 )
+from chatcopilot.core.runtime_observation import AGENT_EXECUTION_SPAN_ID, current_runtime_stage
+from chatcopilot.core.observation_context import observation_scope
 from .state_store import GatewayStateStore
 
 _LOG = logging.getLogger(__name__)
-ACTOR_SPAN_ID = "host:actor"
+ACTOR_SPAN_ID = AGENT_EXECUTION_SPAN_ID
 
 
 def response_outbound_id(run_id: str) -> str:
@@ -45,7 +47,8 @@ def bind_host_observation(run_id: str, event: dict[str, Any]) -> dict[str, Any]:
 
 
 class RunObserver:
-    def __init__(self, store: GatewayStateStore, generation: int, run_id: str) -> None:
+    def __init__(self, store: GatewayStateStore, generation: int, run_id: str,
+                 *, agent_stage_span_id: str | None = None) -> None:
         self.store = store
         self.generation = generation
         self.run_id = run_id
@@ -53,6 +56,14 @@ class RunObserver:
         self._full = False
         self._secrets = collect_observability_secrets()
         self._roots = default_observability_roots(store.root)
+        self.agent_stage_span_id = agent_stage_span_id
+
+    def accepted(self, text: str, role: str) -> None:
+        if self.recorder is not None:
+            try:
+                self.recorder.accepted(self.run_id, text, role)
+            except Exception:
+                _LOG.warning("Gateway accepted input observation unavailable")
 
     def prepare(self, request: Any) -> None:
         if self.recorder is not None:
@@ -61,8 +72,40 @@ class RunObserver:
             except Exception:
                 _LOG.warning("Gateway configuration observation unavailable")
 
+    @contextmanager
     def scope(self):
-        return self.recorder.scope(self.run_id) if self.recorder is not None else nullcontext()
+        try:
+            context = self.recorder.scope(self.run_id) if self.recorder is not None else observation_scope(self._fallback_stage)
+            context.__enter__()
+        except Exception:
+            _LOG.warning("Gateway observation scope unavailable")
+            yield
+            return
+        try:
+            yield
+        finally:
+            try:
+                context.__exit__(None, None, None)
+            except Exception:
+                _LOG.warning("Gateway observation scope cleanup unavailable")
+
+    def _fallback_stage(self, kind: str, data: dict[str, Any]) -> None:
+        if kind != "runtime_stage" or self._full:
+            return
+        metadata = {key: value for key, value in data.items()
+                    if key not in {"body", "phase", "status", "observed_at"}}
+        safe = redact_observability_payload({
+            "kind": "RuntimeStageStarted" if data["phase"] == "start" else "RuntimeStageFinished",
+            "layer": data["runtime_layer"], "phase": data["phase"], "status": data["status"],
+            "trace_id": data["trace_id"], "span_id": data["span_id"], "parent_span_id": data.get("parent_span_id"),
+            "created_at": data["observed_at"], "body_state": "not_recorded", "data": metadata,
+        }, secrets=self._secrets, roots=self._roots).value
+        try:
+            self._full = not self.store.append_run_observation(
+                generation=self.generation, run_id=self.run_id, payload=safe)
+        except Exception:
+            self._full = True
+            _LOG.warning("Gateway run observation unavailable")
 
     def record(self, kind: str, source: str, target: str, status: str, **data: Any) -> None:
         if self.recorder is not None:
@@ -93,13 +136,18 @@ class RunObserver:
 
     def __call__(self, event: AgentEvent) -> None:
         if self.recorder is not None:
-            self._record_event(event)
+            try:
+                self._record_event(event)
+            except Exception:
+                _LOG.warning("Gateway Agent observation unavailable")
             return
         data: dict[str, Any] = {}
-        for name in ("model", "backend", "name", "span_id", "parent_span_id", "coverage", "code"):
+        for name in ("model", "backend", "name", "trace_id", "span_id", "parent_span_id", "coverage", "code"):
             value = getattr(event, name, None)
             if isinstance(value, str):
                 data[name] = value
+        if self.agent_stage_span_id:
+            data.update(flow_version=1, runtime_layer="agent", stage_span_id=self.agent_stage_span_id)
         for name in ("iteration", "depth", "input_message_count", "input_estimated_tokens", "tool_schema_count"):
             value = getattr(event, name, None)
             if type(value) is int and 0 <= value <= 10**12:
@@ -131,7 +179,10 @@ class RunObserver:
 
     def _record_event(self, event: AgentEvent) -> None:
         if isinstance(event, ToolAuthorizationChecked):
-            self.recorder.host_event(self.run_id, "tool_authorization", asdict(event))
+            data = asdict(event)
+            if self.agent_stage_span_id:
+                data.update(flow_version=1, runtime_layer="agent", stage_span_id=self.agent_stage_span_id)
+            self.recorder.host_event(self.run_id, "tool_authorization", data)
             return
         if not isinstance(event, (LlmCallStarted, LlmCallFinished, ToolStarted, ToolFinished,
                                   SpanStarted, SpanFinished, ContextSnapshotPrepared, InputResourcesDispatched, TurnError)):
@@ -139,8 +190,15 @@ class RunObserver:
         data = {key: getattr(event, key) for key in (
             "name", "model", "backend", "trace_id", "span_id", "parent_span_id", "depth", "iteration",
             "coverage", "omitted", "code", "input_message_count", "input_estimated_tokens", "context_snapshot_id",
-            "context_kind", "finish_reason", "estimated_tokens", "model_selection",
+            "context_kind", "finish_reason", "estimated_tokens", "model_selection", "tool_schema_count",
+            "system_estimated_tokens", "tool_schema_estimated_tokens", "estimator_version",
         ) if hasattr(event, key)}
+        stage = current_runtime_stage()
+        stage_id = stage.span_id if stage is not None and stage.runtime_layer == "agent" else self.agent_stage_span_id
+        if stage_id:
+            data.update(flow_version=1, runtime_layer="agent", stage_span_id=stage_id)
+            if stage is not None and stage.runtime_layer == "agent" and not data.get("trace_id"):
+                data["trace_id"] = stage.trace_id
         finished = isinstance(event, (LlmCallFinished, ToolFinished, SpanFinished))
         started = isinstance(event, (LlmCallStarted, ToolStarted, SpanStarted))
         status = ("succeeded" if event.ok else "failed") if finished else "running" if started else "succeeded"
@@ -159,6 +217,8 @@ class RunObserver:
                                 relation="background_task", relation_capture="summary_only")
         elif isinstance(event, (LlmCallStarted, LlmCallFinished)):
             entity = f"model:{event.model}"
+            if isinstance(event, LlmCallFinished) and event.visible_response is not None:
+                body = {"visible_response": event.visible_response}
             if isinstance(event, LlmCallFinished) and event.usage:
                 usage = dict(event.usage)
                 details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
@@ -181,11 +241,18 @@ class RunObserver:
         elif isinstance(event, TurnError):
             status = "failed"
             body = {"code": event.code, "message": event.message}
+        elif isinstance(event, InputResourcesDispatched):
+            data.update(request_id=event.request_id, trace_id=self.run_id, resource_count=len(event.resources))
+            body = {"backend": event.backend, "request_id": event.request_id,
+                    "turn_index": event.turn_index, "resources": [asdict(item) for item in event.resources]}
         elif isinstance(event, (SpanStarted, SpanFinished)):
             if event.kind in {"subagent", "workflow"} and event.name.startswith(event.kind + ":"):
                 entity = event.name
             body = asdict(event) if finished else None
         observed_at = getattr(event, "finished_at", None) or getattr(event, "started_at", None) or time.time()
+        body_state = None
+        if isinstance(event, LlmCallFinished) and event.visible_response is not None:
+            body_state = event.visible_response.get("capture_state")
         self.recorder.record(self.run_id, {"kind": type(event).__name__, "layer": layer, "entity_id": entity,
             "phase": "finish" if finished else "start" if started else "", "status": status,
-            "created_at": observed_at, "data": data}, body=body, context=context)
+            "created_at": observed_at, "data": data, "body_state": body_state}, body=body, context=context)

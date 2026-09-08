@@ -1,8 +1,38 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Spin } from "@arco-design/web-react";
 import { api } from "../../api";
 import { bodyState } from "./workbenchModel";
+import { readSessionValue, saveSessionValue } from "./taskWorkspaceState";
+
+type DetailValue = boolean | number;
+const DetailState = createContext<{ prefix: string; values: Record<string, DetailValue>; set: (key: string, value: DetailValue) => void } | null>(null);
+
+export function TaskDetailState({ instanceId, runId, children }: { instanceId: string; runId: string; children: ReactNode }) {
+  const storageKey = `obs:details:${instanceId}:${runId}`;
+  const [values, setValues] = useState<Record<string, DetailValue>>(() => {
+    const saved = readSessionValue(storageKey);
+    return saved && typeof saved === "object" && !Array.isArray(saved) ? Object.fromEntries(Object.entries(saved)
+      .filter(([, value]) => typeof value === "boolean" || typeof value === "number" && Number.isFinite(value) && value >= 0)) : {};
+  });
+  useEffect(() => saveSessionValue(storageKey, values), [storageKey, values]);
+  return <DetailState.Provider value={{ prefix: "task", values,
+    set: (key, value) => setValues((current) => current[key] === value ? current : { ...current, [key]: value }) }}>{children}</DetailState.Provider>;
+}
+
+export function DetailScope({ id, children }: { id: string; children: ReactNode }) {
+  const state = useContext(DetailState);
+  return state ? <DetailState.Provider value={{ ...state, prefix: state.prefix + "/" + JSON.stringify(id) }}>{children}</DetailState.Provider> : <>{children}</>;
+}
+
+function useDetailValue<T extends DetailValue>(key: string, initial: T): [T, (value: T) => void] {
+  const state = useContext(DetailState);
+  const [local, setLocal] = useState<T>(initial);
+  const fullKey = state?.prefix + "/" + key;
+  const saved = state?.values[fullKey];
+  return [state && typeof saved === typeof initial ? saved as T : state ? initial : local,
+    (value) => { if (state) state.set(fullKey, value); else setLocal(value); }];
+}
 
 export const FIELD_NAMES: Record<string, string> = {
   target: "部署环境", cc_connect_config_dir: "Legacy 接入配置目录", project_name: "项目名称", secret_json: "凭据配置引用",
@@ -39,10 +69,13 @@ export const FIELD_NAMES: Record<string, string> = {
   iteration: "调用轮次", code: "原因码", error_code: "错误码", name: "名称", level: "级别", logger: "日志来源",
   ok: "执行成功", model_selection: "模型配置", tool_count: "可用工具数", channel: "通道", state: "状态",
   operation: "操作", accepted: "已接受", created_at: "创建时间（Unix 秒）", decided_at: "决定时间（Unix 秒）",
+  input: "输入", output: "输出", visible_response: "本轮模型公开输出", stop_reason: "结束原因",
+  canonical_text: "规范消息正文", segments: "消息内容", tool_calls: "工具调用建议", receipt: "交付回执",
+  request_id: "请求 ID", exchange: "会话交换", outcome: "处理结果", native_message: "渠道消息", entrypoint: "任务入口",
 };
 
-export function TextPreview({ text }: { text: string }) {
-  const [full, setFull] = useState(false);
+export function TextPreview({ text, stateKey = "text" }: { text: string; stateKey?: string }) {
+  const [full, setFull] = useDetailValue<boolean>(stateKey, false);
   return <><div className="obs-text-value">{full ? text : text.slice(0, 1200)}</div>
     {text.length > 1200 && <Button size="mini" type="text" onClick={() => setFull(!full)}>
       {full ? "收起正文" : `展开全文（${text.length.toLocaleString()} 字符）`}</Button>}</>;
@@ -60,28 +93,28 @@ function fieldRows(value: unknown, limit: number, path: string[] = [], rows: Arr
 }
 
 export function ConfigFields({ value, missingLabel = "未记录" }: { value: unknown; missingLabel?: string }) {
-  const [limit, setLimit] = useState(60);
+  const [limit, setLimit] = useDetailValue<number>("field-limit", 60);
   const rows = fieldRows(value, limit);
   return <><dl className="obs-fields">{rows.slice(0, limit).map(([key, item], index) => <div key={`${key}:${index}`}>
     {key && <dt>{key}</dt>}<dd>{item == null ? <span className="obs-muted">{missingLabel}</span> :
       item === "" ? <span className="obs-muted">已留空</span> :
-      <TextPreview text={typeof item === "boolean" ? item ? "是" : "否" : typeof item === "object" ? "无" : String(item)} />}</dd>
+      <TextPreview stateKey={`field:${index}`} text={typeof item === "boolean" ? item ? "是" : "否" : typeof item === "object" ? "无" : String(item)} />}</dd>
   </div>)}</dl>{rows.length > limit && <Button size="small" onClick={() => setLimit(limit + 60)}>显示更多字段</Button>}</>;
 }
 
 function ContextMessages({ value }: { value: unknown }) {
-  const [limit, setLimit] = useState(20);
+  const [limit, setLimit] = useDetailValue<number>("message-limit", 20);
   if (!Array.isArray(value)) return <ConfigFields value={value} />;
   if (!value.length) return <p className="obs-muted">未记录消息</p>;
   return <div className="obs-context-messages">{value.slice(0, limit).map((item, index) => {
     const message = item && typeof item === "object" ? item as Record<string, unknown> : null;
     const role = String(message?.role ?? "消息");
     const extra = message ? Object.fromEntries(Object.entries(message).filter(([key]) => !["role", "content"].includes(key))) : {};
-    return <article className="obs-context-message" key={index}>
+    return <DetailScope id={`message:${index}`} key={index}><article className="obs-context-message">
       <header><strong>{({ user: "用户", assistant: "助手", system: "系统", developer: "开发者", tool: "工具" } as Record<string, string>)[role] ?? role}</strong><span>{index + 1}</span></header>
       {typeof message?.content === "string" ? <TextPreview text={message.content} /> : <ConfigFields value={message ? message.content : item} />}
-      {!!Object.keys(extra).length && <ConfigFields value={extra} />}
-    </article>;
+      {!!Object.keys(extra).length && <DetailScope id="extra"><ConfigFields value={extra} /></DetailScope>}
+    </article></DetailScope>;
   })}{value.length > limit && <Button size="small" onClick={() => setLimit(limit + 20)}>显示更多消息（剩余 {value.length - limit} 条）</Button>}</div>;
 }
 
@@ -91,15 +124,15 @@ function PayloadContent({ value }: { value: unknown }) {
   const messageKeys = ["session_messages", "effective_messages"].filter((key) => key in fields);
   if (!messageKeys.length) return <ConfigFields value={value} />;
   const other = Object.fromEntries(Object.entries(fields).filter(([key]) => !messageKeys.includes(key)));
-  return <><div className="obs-context-grid">{messageKeys.map((key) => <section key={key}>
+  return <><div className="obs-context-grid">{messageKeys.map((key) => <DetailScope id={key} key={key}><section>
     <h4>{FIELD_NAMES[key]}</h4><ContextMessages value={fields[key]} />
-  </section>)}</div>{!!Object.keys(other).length && <ConfigFields value={other} />}</>;
+  </section></DetailScope>)}</div>{!!Object.keys(other).length && <DetailScope id="metadata"><ConfigFields value={other} /></DetailScope>}</>;
 }
 
-export function Disclosure({ title, children }: { title: ReactNode; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+export function Disclosure({ title, children, stateKey }: { title: ReactNode; children: ReactNode; stateKey?: string }) {
+  const [open, setOpen] = useDetailValue<boolean>("disclosure:" + (stateKey ?? String(title)), false);
   return <details className="obs-disclosure" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary>{title}</summary>{open && <div className="obs-disclosure-content">{children}</div>}
+    <summary>{title}</summary>{open && <DetailScope id={stateKey ?? String(title)}><div className="obs-disclosure-content">{children}</div></DetailScope>}
   </details>;
 }
 
@@ -122,8 +155,9 @@ const BODY_METADATA = new Set(["name", "trace_id", "span_id", "parent_span_id", 
   "snapshot_id", "context_snapshot_id", "iteration", "private_reasoning_omission_count", "resource_path_omission_count"]);
 const COVERAGE: Record<string, string> = { exact_model_input: "精确模型输入", adapter_visible: "仅适配器可见部分", partial: "部分采集", provider_opaque: "Provider 未公开" };
 
-export function ObservationPayload({ instanceId, runId, reference, expired = false, captureState, title, active = true }: {
+export function ObservationPayload({ instanceId, runId, reference, expired = false, captureState, title, active = true, bodyField }: {
   instanceId: string; runId: string; reference?: string; expired?: boolean; captureState?: string; title: string; active?: boolean;
+  bodyField?: "input" | "output";
 }) {
   const { ref, visible } = useInView();
   const query = useQuery({ queryKey: ["observation-body", instanceId, runId, reference],
@@ -134,13 +168,19 @@ export function ObservationPayload({ instanceId, runId, reference, expired = fal
   const content = payload && typeof payload === "object" && !Array.isArray(payload) ?
     Object.fromEntries(Object.entries(payload).filter(([key, value]) => !BODY_METADATA.has(key) && value !== "")
       .map(([key, value]) => [key, key === "coverage" && typeof value === "string" ? COVERAGE[value] ?? value : value])) : payload;
-  return <section ref={ref} className="obs-payload" aria-label={title}>
+  const fields = content && typeof content === "object" && !Array.isArray(content) ? content as Record<string, unknown> : undefined;
+  const selected = bodyField && fields && bodyField in fields ? fields[bodyField] : content;
+  const primary = bodyField === "output" && selected && typeof selected === "object" && !Array.isArray(selected) &&
+    (selected as Record<string, unknown>).channel === "not_traversed" ? { ...selected, channel: "未经过" } : selected;
+  const extra = bodyField && fields && bodyField in fields ? Object.fromEntries(Object.entries(fields).filter(([key]) => key !== bodyField)) : {};
+  return <section ref={ref} className="obs-payload" aria-label={title}><DetailScope id={"body:" + (reference ?? title)}>
     <div className="obs-pane-heading"><strong>{title}</strong><span>{bodyState(state)}</span></div>
     {state === "expired" ? <p className="obs-muted">详细正文已到期，结构化记录仍保留。</p> : query.error ?
       <Alert type="error" content={<span>详情读取失败：{query.error.message} <Button size="mini" onClick={() => void query.refetch()}>重试</Button></span>} /> :
       query.isFetching ? <Spin size={16} /> : payload != null ? <>
-        <PayloadContent value={content} />
+        <PayloadContent value={primary} />
+        {!!Object.keys(extra).length && <DetailScope id="metadata"><ConfigFields value={extra} /></DetailScope>}
         <Disclosure title="原始记录"><TextPreview text={JSON.stringify(payload, null, 2)} /></Disclosure>
       </> : <p className="obs-muted">{reference && !visible ? "滚动到此处时加载" : reference ? "等待读取" : bodyState(state)}</p>}
-  </section>;
+  </DetailScope></section>;
 }

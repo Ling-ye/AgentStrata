@@ -440,6 +440,9 @@ class OneBotDriverTests(IsolatedAsyncioTestCase):
         await asyncio.wait_for(emitted.wait(), timeout=1)
         assert received[-1].segments[-1].text == "after reconnect"
         assert received[-1].evidence.connection_generation == health.connection_generation
+        assert received[-1].input_observation is not None
+        assert received[-1].input_observation.segments[-1].text == "after reconnect"
+        assert received[-1].input_observation.frame_sha256 == received[-1].evidence.frame_sha256
         await channel.stop()
 
     async def test_stop_cancels_pending_reconnect(self) -> None:

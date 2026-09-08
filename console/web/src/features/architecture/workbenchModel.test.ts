@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRunTree, buildRunView, stepIsOpen, stepState, observationQuery, related, duration, runDuration, bodyState } from "./workbenchModel";
+import { buildRunTree, buildRunView, stepIsOpen, stepState, stepDuration, stepRuntimeLayer, observationQuery, related, duration, runDuration, bodyState } from "./workbenchModel";
 import type { GatewayObservation, GatewayRun, GatewayRunDetail } from "./model";
 
 const event = (seq: number, props: Partial<GatewayObservation>): GatewayObservation => ({ seq, kind: "ToolStarted", created_at: seq, ...props });
@@ -153,5 +153,122 @@ describe("run observation workbench", () => {
     const failed = { ...active, event: { ...active.event, status: "failed" } };
     expect(stepIsOpen(failed, {}, true)).toBe(true);
     expect(stepIsOpen(failed, { [active.key]: false }, true)).toBe(false);
+  });
+});
+
+const stage = (seq: number, span: string, layer: string, operation: string, phase = "start", extra: Partial<GatewayObservation> = {}): GatewayObservation =>
+  event(seq, { kind: phase === "start" ? "RuntimeStageStarted" : "RuntimeStageFinished", phase, trace_id: "run", span_id: span,
+    status: phase === "start" ? "running" : "succeeded", body_ref: `body-${seq}`,
+    ...extra, data: { flow_version: 1, runtime_layer: layer, operation, ...extra.data } });
+
+describe("four-layer task flow", () => {
+  it("distinguishes a terminal stage whose finish is on an unread page from a missing finish", () => {
+    const view = buildRunView([stage(1, "host:actor", "agent", "agent.execute")]);
+    expect(stepState(view.steps[0], true, true)).toMatchObject({ incomplete: true, status: "unknown", label: "结束记录尚未取得" });
+    expect(stepState(view.steps[0], true, false)).toMatchObject({ incomplete: true, status: "unknown", label: "结束未记录" });
+  });
+  it("keeps repeated layer visits in their recorded order with input and output paired once", () => {
+    const events = [
+      stage(1, "receive", "channel", "channel.receive"), stage(2, "receive", "channel", "channel.receive", "finish"),
+      stage(3, "accept", "gateway", "gateway.accept"), stage(4, "accept", "gateway", "gateway.accept", "finish"),
+      stage(5, "prepare", "application", "application.prepare"), stage(6, "prepare", "application", "application.prepare", "finish"),
+      stage(7, "host:actor", "agent", "agent.execute"), stage(8, "host:actor", "agent", "agent.execute", "finish"),
+      stage(9, "dispatch", "gateway", "gateway.dispatch"), stage(10, "dispatch", "gateway", "gateway.dispatch", "finish"),
+      stage(11, "deliver", "channel", "channel.deliver"), stage(12, "deliver", "channel", "channel.deliver", "finish"),
+      stage(13, "exchange", "application", "application.exchange"), stage(14, "exchange", "application", "application.exchange", "finish"),
+    ];
+    const view = buildRunView(events);
+    expect(view.flow.map((item) => [item.kind, item.layer])).toEqual([
+      ["stage", "channel"], ["stage", "gateway"], ["stage", "application"], ["stage", "agent"],
+      ["stage", "gateway"], ["stage", "channel"], ["stage", "application"],
+    ]);
+    expect(view.flow[0].step.start?.body_ref).toBe("body-1");
+    expect(view.flow[0].step.finish?.body_ref).toBe("body-2");
+  });
+
+  it("places simultaneous same-name calls and their nested children under only their real stage", () => {
+    const call = (seq: number, span: string, parent: string, phase = "start") => event(seq, {
+      kind: phase === "start" ? "ToolStarted" : "ToolFinished", trace_id: "run", span_id: span, parent_span_id: parent,
+      phase, entity_id: "tool:lookup", name: "lookup", body_ref: `call-${span}-${phase}`,
+      data: { flow_version: 1, runtime_layer: "agent", stage_span_id: "host:actor" },
+    });
+    const view = buildRunView([
+      stage(1, "host:actor", "agent", "agent.execute"), call(2, "a", "host:actor"), call(3, "b", "host:actor"),
+      call(4, "nested", "a"), call(5, "a", "host:actor", "finish"), call(6, "b", "host:actor", "finish"),
+      stage(7, "host:actor", "agent", "agent.execute", "finish"),
+      event(8, { kind: "tool_authorization", trace_id: "run", span_id: "b", entity_id: "tool:lookup", data: { allowed: false, phase: "execution" } }),
+      event(9, { kind: "log", trace_id: "run", span_id: "nested" }), event(10, { kind: "log", data: { logger: "lookup" } }),
+    ]);
+    expect(view.flow.map((item) => [item.step.event.span_id, item.step.depth])).toEqual([["host:actor", 0], ["a", 0], ["nested", 1], ["b", 0]]);
+    expect(view.flow[1].step.finish?.body_ref).toBe("call-a-finish");
+    expect(view.flow[3].step.permissions.map((entry) => entry.seq)).toEqual([8]);
+    expect(view.flow[2].step.logs.map((entry) => entry.seq)).toEqual([9]);
+    expect(view.logs.map((entry) => entry.seq)).toEqual([10]);
+  });
+
+  it("deduplicates old actor and dispatch aggregates only with a recorded shared span or outbound", () => {
+    const view = buildRunView([
+      stage(1, "host:actor", "agent", "agent.execute"),
+      event(2, { kind: "actor_execution", trace_id: "run", span_id: "host:actor", phase: "start" }),
+      event(3, { kind: "actor_returned", trace_id: "run", span_id: "host:actor", phase: "finish" }),
+      stage(4, "host:actor", "agent", "agent.execute", "finish"),
+      stage(5, "delivery", "channel", "channel.deliver", "start", { data: { outbound_id: "one" } }),
+      event(6, { kind: "response_dispatch", trace_id: "run", span_id: "old-delivery", phase: "start", data: { outbound_id: "one" } }),
+      event(7, { kind: "channel_returned", trace_id: "other-run", span_id: "other-delivery", phase: "finish", data: { outbound_id: "one" } }),
+      event(8, { kind: "response_dispatch", trace_id: "run", span_id: "unrelated", phase: "start", data: { outbound_id: "two" } }),
+    ]);
+    expect(view.steps.map((step) => step.event.seq)).toEqual([4, 5, 7, 8]);
+  });
+
+  it("retains call keys when a late stage and parent arrive on another page", () => {
+    const model = event(2, { kind: "LlmCallStarted", trace_id: "run", span_id: "model", parent_span_id: "host:actor", phase: "start",
+      data: { flow_version: 1, runtime_layer: "agent", stage_span_id: "host:actor", context_snapshot_id: "snapshot" } });
+    const first = buildRunView([model]);
+    const later = buildRunView([stage(1, "host:actor", "agent", "agent.execute"), model, model,
+      event(3, { kind: "ContextSnapshotPrepared", trace_id: "run", data: { snapshot_id: "snapshot" }, body_ref: "context-body" }),
+      event(4, { kind: "LlmCallFinished", trace_id: "run", span_id: "model", phase: "finish", body_ref: "visible-response" }),
+      stage(5, "host:actor", "agent", "agent.execute", "finish")]);
+    expect(first.flow[0].missingStage).toBe(true);
+    expect(later.flow[1].step.key).toBe(first.flow[0].step.key);
+    expect(later.flow[1].missingStage).toBe(false);
+    expect(later.flow[1].step.contexts.map((context) => context.body_ref)).toEqual(["context-body"]);
+    expect(later.flow[1].step.finish?.body_ref).toBe("visible-response");
+    expect(stepIsOpen(later.flow[1].step, { [first.flow[0].step.key]: false }, true)).toBe(false);
+  });
+
+  it("never substitutes a same-named stage from another trace or a configuration layer", () => {
+    const view = buildRunView([
+      stage(1, "host:actor", "agent", "agent.execute"),
+      event(2, { kind: "ToolStarted", trace_id: "other", span_id: "tool", phase: "start", layer: "capability",
+        data: { flow_version: 1, runtime_layer: "agent", stage_span_id: "host:actor" } }),
+      event(3, { kind: "custom", layer: "authorization", status: "succeeded" }),
+    ]);
+    expect(view.flow[1].missingStage).toBe(true);
+    expect(view.flow[2].layer).toBeUndefined();
+    const old = buildRunView([event(1, { kind: "LlmCallStarted", layer: "capability", phase: "start" })]);
+    expect(old.flow[0].kind).toBe("step");
+    expect(old.flow[0].layer).toBe("agent");
+    expect(old.flow[0].step.start?.body_ref).toBeUndefined();
+  });
+
+  it("uses the start owner after a finish changes its direction and preserves unknown delivery", () => {
+    const started = stage(1, "delivery", "channel", "channel.deliver", "start", { data: { source: "gateway", target: "channel", outbound_id: "one" } });
+    const ended = stage(2, "delivery", "channel", "channel.deliver", "finish", { data: { source: "channel", target: "gateway", outbound_id: "one" } });
+    const view = buildRunView([started, ended], { outbox: [{ outbound_id: "one", state: "delivery_unknown", created_at: 1, updated_at: 2, error_code: null }],
+      receipts: [{ receipt_id: "other", outbound_id: "two", observed_at: 3, stage: "provider_acknowledged", error_code: null }] });
+    expect(view.flow[0].layer).toBe("channel");
+    expect(stepRuntimeLayer(view.steps[0])).toBe("channel");
+    expect(stepState(view.steps[0], true)).toMatchObject({ status: "delivery_unknown", label: "交付结果未知" });
+  });
+
+  it("does not manufacture durations for retrospective facts or add parallel call durations", () => {
+    const facts = buildRunView([
+      stage(1, "receive", "channel", "channel.receive", "start", { data: { duration_recorded: false } }),
+      stage(4, "receive", "channel", "channel.receive", "finish", { data: { duration_recorded: false } }),
+      stage(5, "prepare", "application", "application.prepare"), stage(8, "prepare", "application", "application.prepare", "finish", { elapsed_ms: 25 }),
+    ]);
+    expect(stepDuration(facts.steps[0], true)).toBeNull();
+    expect(stepDuration(facts.steps[1], true)).toBe(25);
+    expect(runDuration({ started_at: 1, finished_at: 4 } as GatewayRun)).toBe(3000);
   });
 });

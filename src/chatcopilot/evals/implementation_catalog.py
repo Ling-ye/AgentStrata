@@ -85,6 +85,8 @@ _COMMON_RUNTIME_IMPLEMENTATIONS = (
     "chatcopilot.botspec.runtime_env",
     "chatcopilot.core.config",
     "chatcopilot.core.llm_client",
+    "chatcopilot.core.visible_model_response",
+    "chatcopilot.contracts.agent",
     "chatcopilot.agent.backends.registry",
     "chatcopilot.agent.capabilities.assembly",
     "chatcopilot.agent.capabilities.delegation",
@@ -105,6 +107,7 @@ _COMMON_RUNTIME_IMPLEMENTATIONS = (
 _BACKEND_RUNTIME_IMPLEMENTATIONS: dict[str, tuple[str, ...]] = {
     "codex": (
         "chatcopilot.agent.backends.codex",
+        "chatcopilot.agent.backends.codex_events",
         "chatcopilot.agent.backends.session_relay",
     ),
     "direct": ("chatcopilot.core.llm_client",),

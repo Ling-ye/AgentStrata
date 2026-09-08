@@ -1013,6 +1013,8 @@ def test_runtime_implementation_snapshot_covers_real_agent_and_capability_depend
         "chatcopilot.botspec.runtime_env",
         "chatcopilot.core.config",
         "chatcopilot.core.llm_client",
+        "chatcopilot.core.visible_model_response",
+        "chatcopilot.contracts.agent",
         "chatcopilot.agent.capabilities.assembly",
         "chatcopilot.agent.capabilities.delegation",
         "chatcopilot.agent.capabilities.unified_search",
@@ -1034,6 +1036,7 @@ def test_runtime_implementation_snapshot_covers_real_agent_and_capability_depend
     assert common_modules.issubset(codex["modules"])
     assert "chatcopilot.agent.backends.inprocess" in native["modules"]
     assert "chatcopilot.agent.backends.codex" in codex["modules"]
+    assert "chatcopilot.agent.backends.codex_events" in codex["modules"]
     assert "chatcopilot.agent.backends.session_relay" in codex["modules"]
     assert "chatcopilot.agent.backends.session_relay" not in native["modules"]
     assert "chatcopilot.middleware.acp.admission" not in native["modules"]

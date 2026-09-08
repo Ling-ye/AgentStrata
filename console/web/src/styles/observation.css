@@ -48,6 +48,17 @@
 .obs-step-card { position: relative; margin: 0 0 10px calc(var(--step-depth, 0) * 18px); border: var(--cc-border); border-radius: var(--cc-card-radius); scroll-margin-top: 14px; background: var(--cc-bg-card); }
 .obs-step-card::before { position: absolute; left: calc(-13px - var(--step-depth, 0) * 18px); top: 26px; width: calc(13px + var(--step-depth, 0) * 18px); border-top: var(--cc-border); content: ""; }
 .obs-step-card.is-failed { border-color: rgb(var(--danger-4)); }
+.obs-runtime-stage { position: relative; margin: 22px 0 12px; padding: 16px; border: var(--cc-border); border-top: 3px solid var(--cc-primary); border-radius: var(--cc-card-radius); background: var(--cc-bg-card); scroll-margin-top: 14px; }
+.obs-runtime-stage::before { position: absolute; left: -13px; top: 26px; width: 13px; border-top: var(--cc-border); content: ""; }
+.obs-runtime-stage[data-status="failed"] { border-color: rgb(var(--danger-4)); }
+.obs-stage-heading, .obs-stage-heading > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.obs-stage-heading { justify-content: space-between; row-gap: 10px; margin-bottom: 8px; }
+.obs-stage-heading strong { font-size: 14px; }
+.obs-stage-layer { padding: 2px 6px; border-radius: 3px; background: var(--color-primary-light-1); color: var(--cc-primary); font-size: 12px; }
+.obs-stage-facts { color: var(--cc-text-tertiary); font-size: 11px; }
+.obs-stage-facts strong { font-size: 12px; color: var(--cc-text-secondary); }
+.obs-stage-payloads { padding-top: 8px; }
+.obs-stage-payloads .obs-payload { margin: 0; }
 .obs-step-card[data-status="running"] { border-color: rgb(var(--warning-4)); }
 .obs-step-header { display: flex; gap: 8px; align-items: flex-start; }
 .obs-step-toggle { flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto 12px; align-items: start; gap: 12px; padding: 13px 14px; color: var(--cc-text-primary); background: transparent; border: none; text-align: left; cursor: pointer; font: inherit; }
@@ -135,6 +146,7 @@
 .obs-service-details { max-width: 760px; }
 .obs-service-details .service-card { border-left: none !important; box-shadow: none; }
 @container task-flow (max-width: 720px) {
+  .obs-runtime-stage { padding: 12px; }
   .obs-step-payloads, .obs-context-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
 }
 @media (max-width: 860px) {

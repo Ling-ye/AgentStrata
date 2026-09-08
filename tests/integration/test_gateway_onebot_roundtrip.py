@@ -326,16 +326,44 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record
             ]
             qq_run = next(run for run in gateway_runs(state.root)["runs"] if run["channel"] == "qq")
             projection = observation_detail(recorder.store, qq_run["run_id"]) if recorder else gateway_run(state.root, qq_run["run_id"])
-            assert [item["kind"] for item in projection["observations"] if item["kind"] != "run_state"] == [
-                "principal_bound", "resources_materialized", "actor_execution", "actor_returned",
-                "response_dispatch", "channel_returned",
+            stages = [item for item in projection["observations"]
+                      if item["kind"] == "RuntimeStageStarted"]
+            assert [item["data"]["operation"] for item in stages] == [
+                "channel.receive", "gateway.accept", "application.prepare", "application.result",
+                "gateway.dispatch", "channel.deliver", "gateway.delivery", "gateway.finish",
             ]
+            assert all(item["data"]["flow_version"] == 1 for item in stages)
+            assert not any(item["kind"] in {"principal_bound", "actor_execution", "response_dispatch"}
+                           for item in projection["observations"])
+            client_projection = (observation_detail(recorder.store, accepted.run_id) if recorder
+                                 else gateway_run(state.root, accepted.run_id))
+            assert not any(item.get("data", {}).get("runtime_layer") == "channel"
+                           for item in client_projection["observations"])
             assert [item["stage"] for item in projection["receipts"]] == receipt_stages
             assert "hello from qq" not in json.dumps(projection)
             if recorder:
                 run = projection["run"]
                 assert run["capture_state"] == "recorded"
                 assert recorder.store.body(qq_run["run_id"], run["input_ref"])["payload"]["text"] == "hello from qq"
+                for started in stages:
+                    finished = [item for item in projection["observations"]
+                                if item["kind"] == "RuntimeStageFinished"
+                                and item["trace_id"] == started["trace_id"]
+                                and item["span_id"] == started["span_id"]]
+                    assert len(finished) == 1
+                    assert started["data"].get("source") in {"channel", "gateway", "application", "agent"}
+                    assert started["data"].get("target") in {"channel", "gateway", "application", "agent"}
+                incoming = stages[0]
+                original = recorder.store.body(qq_run["run_id"], incoming["body_ref"])["payload"]["input"]
+                assert original["coverage"] == "platform_projection"
+                assert any(segment["text"] == "hello from qq" for segment in original["segments"])
+                assert _ONEBOT_TOKEN not in json.dumps(original)
+                final = next(item for item in projection["observations"]
+                             if item["kind"] == "RuntimeStageFinished"
+                             and item["data"]["operation"] == "application.result")
+                produced = recorder.store.body(qq_run["run_id"], final["body_ref"])["payload"]["output"]
+                assert produced["final_text"] == "gateway-answer"
+                assert produced["stop_reason"] == "end_turn"
             assert provider.errors == []
         finally:
             if client is not None:

@@ -25,6 +25,7 @@ from chatcopilot.contracts.gateway import (
     OutboundEnvelope,
 )
 from chatcopilot.contracts.gateway_protocol import EventFrame
+from chatcopilot.core.runtime_observation import capture_payload, outbound_summary, receipt_summary, runtime_stage
 from chatcopilot.contracts.gateway_rpc import DeliveryUpdatedEvent
 
 from .rpc_validation import serialize_event_payload
@@ -400,49 +401,67 @@ class ChannelRuntimeManager:
     async def send(self, envelope: OutboundEnvelope) -> DeliveryReceipt:
         """Submit one newly durable outbound exactly once through its registered account."""
 
-        generation = self._active_generation()
-        existing = self._state_store.get_outbound(envelope.outbound_id)
-        self._state_store.enqueue_outbound(generation=generation, envelope=envelope)
-        if existing is not None:
-            return self._latest_receipt(envelope.outbound_id)
+        with runtime_stage("gateway.dispatch", "gateway", trace_id=envelope.run_id or "",
+                           input=outbound_summary(envelope), source="gateway", target="channel",
+                           outbound_id=envelope.outbound_id) as stage:
+            generation = self._active_generation()
+            existing = self._state_store.get_outbound(envelope.outbound_id)
+            self._state_store.enqueue_outbound(generation=generation, envelope=envelope)
+            if existing is not None:
+                receipt = self._latest_receipt(envelope.outbound_id)
+                stage.complete({"reused": True, "receipt": receipt_summary(receipt)}, status=receipt.stage)
+                return receipt
 
-        self._publish_receipts(envelope, offset=0)
-        registered = self._drivers_by_account.get(envelope.account)
-        if registered is None:
-            unavailable = ChannelDefinitelyNotSubmittedError(
-                "channel_account_unavailable",
-                "Outbound account is not registered",
-            )
-            self._finish_delivery_failure(
-                envelope,
-                generation=generation,
-                error=unavailable,
-                definitely_not_submitted=True,
-            )
-            raise unavailable
-        try:
-            self._validate_ready_driver(registered)
-        except ChannelRuntimeError as exc:
-            unavailable = ChannelDefinitelyNotSubmittedError(
-                exc.code,
-                "Channel is unavailable",
-            )
-            self._finish_delivery_failure(
-                envelope,
-                generation=generation,
-                error=unavailable,
-                definitely_not_submitted=True,
-            )
-            raise unavailable from exc
+            self._publish_receipts(envelope, offset=0)
+            registered = self._drivers_by_account.get(envelope.account)
+            if registered is None:
+                unavailable = ChannelDefinitelyNotSubmittedError(
+                    "channel_account_unavailable",
+                    "Outbound account is not registered",
+                )
+                self._finish_delivery_failure(
+                    envelope,
+                    generation=generation,
+                    error=unavailable,
+                    definitely_not_submitted=True,
+                )
+                raise unavailable
+            try:
+                self._validate_ready_driver(registered)
+            except ChannelRuntimeError as exc:
+                unavailable = ChannelDefinitelyNotSubmittedError(
+                    exc.code,
+                    "Channel is unavailable",
+                )
+                self._finish_delivery_failure(
+                    envelope,
+                    generation=generation,
+                    error=unavailable,
+                    definitely_not_submitted=True,
+                )
+                raise unavailable from exc
 
-        self._state_store.begin_outbound_submission(
-            generation=generation,
-            outbound_id=envelope.outbound_id,
-            now=self._now(),
-        )
+            self._state_store.begin_outbound_submission(
+                generation=generation,
+                outbound_id=envelope.outbound_id,
+                now=self._now(),
+            )
+            stage.complete({"outbound_id": envelope.outbound_id, "state": "provider_submitted"})
         receipt_offset = len(self._state_store.delivery_receipts(envelope.outbound_id))
         try:
-            receipt = await registered.driver.send(envelope)
+            with runtime_stage("channel.deliver", "channel", trace_id=envelope.run_id or "",
+                               span_id=f"host:delivery:{envelope.outbound_id}", input=outbound_summary(envelope),
+                               source="gateway", target="channel", outbound_id=envelope.outbound_id) as stage:
+                try:
+                    receipt = await registered.driver.send(envelope)
+                except ChannelDefinitelyNotSubmittedError:
+                    stage.status = "failed"
+                    raise
+                except BaseException:
+                    stage.status = "delivery_unknown"
+                    raise
+                stage.complete(receipt_summary(receipt),
+                               status=receipt.stage if _valid_provider_ack(receipt, outbound_id=envelope.outbound_id) else "delivery_unknown")
         except ChannelDefinitelyNotSubmittedError as exc:
             self._finish_delivery_failure(
                 envelope,
@@ -501,14 +520,19 @@ class ChannelRuntimeManager:
                 offset=receipt_offset,
             )
             raise invalid_receipt
-        self._state_store.acknowledge_outbound(
-            generation=generation,
-            outbound_id=envelope.outbound_id,
-            provider_message_id=receipt.provider_message_id,
-            now=receipt.observed_at,
-        )
-        self._publish_receipts(envelope, offset=receipt_offset)
-        return self._latest_receipt(envelope.outbound_id)
+        with runtime_stage("gateway.delivery", "gateway", trace_id=envelope.run_id or "",
+                           input=receipt_summary(receipt), source="channel", target="gateway",
+                           outbound_id=envelope.outbound_id) as stage:
+            self._state_store.acknowledge_outbound(
+                generation=generation,
+                outbound_id=envelope.outbound_id,
+                provider_message_id=receipt.provider_message_id,
+                now=receipt.observed_at,
+            )
+            self._publish_receipts(envelope, offset=receipt_offset)
+            receipt = self._latest_receipt(envelope.outbound_id)
+            stage.complete(receipt_summary(receipt), status=receipt.stage)
+            return receipt
 
     async def _recover_accepted_ingress(self) -> None:
         """Replay only intake durably admitted before any application side effect."""
@@ -677,14 +701,19 @@ class ChannelRuntimeManager:
         definitely_not_submitted: bool,
         offset: int = 1,
     ) -> None:
-        self._state_store.fail_outbound(
-            generation=generation,
-            outbound_id=envelope.outbound_id,
-            error_code=error.code,
-            definitely_not_submitted=definitely_not_submitted,
-            now=self._now(),
-        )
-        self._publish_receipts(envelope, offset=offset)
+        with runtime_stage("gateway.delivery", "gateway", trace_id=envelope.run_id or "",
+                           input={"error_code": error.code}, source="channel", target="gateway",
+                           outbound_id=envelope.outbound_id) as stage:
+            self._state_store.fail_outbound(
+                generation=generation,
+                outbound_id=envelope.outbound_id,
+                error_code=error.code,
+                definitely_not_submitted=definitely_not_submitted,
+                now=self._now(),
+            )
+            self._publish_receipts(envelope, offset=offset)
+            stage.complete(capture_payload(lambda: receipt_summary(self._latest_receipt(envelope.outbound_id))),
+                           status="failed" if definitely_not_submitted else "delivery_unknown", code=error.code)
 
     def _publish_receipts(self, envelope: OutboundEnvelope, *, offset: int) -> None:
         receipts = self._state_store.delivery_receipts(envelope.outbound_id)

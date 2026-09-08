@@ -209,6 +209,64 @@ def _factory(
     return factory, agent, root
 
 
+@pytest.mark.parametrize('kind, action, expected', [
+    ('group', 'commit', 'committed'), ('p2p', 'commit', 'not_applicable'), ('group', 'discard', 'discarded'),
+])
+def test_real_application_stages_match_actor_execution_and_exchange(tmp_path, kind, action, expected):
+    from chatcopilot.core.observation_context import observation_scope
+    factory, _, _ = _factory(tmp_path, manager=_manager(kind=kind))
+    executor = ActorTurnExecutor(factory)
+    principal = _principal('20002', kind=kind)
+    request = _turn(session_id='session-1', principal=principal, canonical_text='actual input',
+                    message_id='stage-test', metadata={'trace_id': 'run-stage-test', 'parent_span_id': 'host:actor'})
+    recorded = []
+    try:
+        with observation_scope(lambda event, payload: recorded.append((event, payload))):
+            result = asyncio.run(executor.execute(request, on_event=lambda _event: None))
+            before = [payload for event, payload in recorded if event == 'runtime_stage' and payload['phase'] == 'finish']
+            assert [item['operation'] for item in before] == ['application.session', 'agent.execute']
+            assert before[-1]['body']['output']['final_text'] == 'reply:actual input'
+            assert before[-1]['span_id'] == 'host:actor'
+            state = _actor_state(factory, principal)
+            assert state.journal_cursor == 0
+            if action == 'commit':
+                _commit(executor, request, result)
+            else:
+                executor.discard_exchange(request, result)
+        finished = [payload for event, payload in recorded if event == 'runtime_stage' and payload['phase'] == 'finish']
+        assert finished[-1]['operation'] == 'application.exchange'
+        assert finished[-1]['body']['output']['action'] == expected
+        assert finished[-1]['status'] == 'succeeded'
+        if expected == 'committed':
+            assert _actor_state(factory, principal).journal_cursor > 0
+        elif expected == 'discarded':
+            assert factory.session_manager.get_actor(state.key) is None
+        else:
+            assert _actor_state(factory, principal).journal_cursor == 0
+    finally:
+        executor.close()
+        factory.close()
+
+
+def test_real_application_observation_failure_does_not_change_result_or_commit(tmp_path):
+    from chatcopilot.core.observation_context import observation_scope
+    factory, _, _ = _factory(tmp_path)
+    executor = ActorTurnExecutor(factory)
+    principal = _principal('20002')
+    request = _turn(session_id='session-1', principal=principal, canonical_text='input', message_id='failed-capture')
+    def unavailable(*_args):
+        raise OSError('observation unavailable')
+    try:
+        with observation_scope(unavailable):
+            result = asyncio.run(executor.execute(request, on_event=lambda _event: None))
+            _commit(executor, request, result)
+        assert result.result.final_text == 'reply:input'
+        assert _actor_state(factory, principal).journal_cursor > 0
+    finally:
+        executor.close()
+        factory.close()
+
+
 def test_real_actor_execution_boundary_isolated_by_actor_and_shares_journal(
     tmp_path: Path,
 ) -> None:

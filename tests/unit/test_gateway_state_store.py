@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sqlite3
 import stat
 import subprocess
 import sys
-from dataclasses import fields
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 
 import pytest
@@ -15,12 +16,15 @@ from chatcopilot.contracts.authorization import AuthorizationDecision, Principal
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
     ChannelAccountRef,
+    ChannelInputObservation,
+    ChannelInputSegment,
     ConversationRef,
     MessageSegment,
     OutboundEnvelope,
     ResourceTicket,
     SenderClaim,
     TransportEvidence,
+    canonical_inbound_payload,
 )
 from chatcopilot.contracts.identity import ConversationIdentity, Role
 from chatcopilot.gateway.state_store import (
@@ -442,6 +446,35 @@ def test_ingress_is_durable_deduplicated_and_generation_owned(tmp_path: Path) ->
         store.reserve_ingress(
             generation=generation, event=drifted, principal=_principal(drifted)
         )
+
+
+def test_ingress_observation_never_changes_durable_payload_or_recovery(tmp_path: Path) -> None:
+    store = GatewayStateStore(tmp_path / "state")
+    generation = store.acquire_writer_generation()
+    plain = _inbound()
+    observation = ChannelInputObservation(
+        provider="fixture", message_type="group", observed_at=100.0,
+        frame_sha256=plain.evidence.frame_sha256, frame_size_bytes=128,
+        segments=(ChannelInputSegment(kind="text", text="ephemeral native detail"),),
+    )
+    event = replace(plain, input_observation=observation)
+    assert event == plain
+    assert "ephemeral native detail" not in repr(event)
+    legacy = {key: value for key, value in asdict(plain).items() if key != "input_observation"}
+    expected = json.dumps(legacy, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+    assert canonical_inbound_payload(event) == legacy
+    assert store.reserve_ingress(generation=generation, event=event, principal=_principal(event)).state == "reserved"
+    changed = replace(event, input_observation=replace(observation, capture_state="capture_failed", segments=()))
+    assert store.reserve_ingress(generation=generation, event=changed, principal=_principal(changed)).state == "accepted"
+    with store._read_connection() as connection:
+        raw = connection.execute("SELECT payload_json FROM ingress").fetchone()[0]
+    assert raw.encode() == expected.encode()
+    assert store.claim_ingress(generation=generation, channel=plain.evidence.account.channel,
+                               account_id=plain.evidence.account.account_id, event_id=plain.evidence.event_id)
+    store.acquire_writer_generation()
+    recovered = store.list_ingress(states=("recovery_required",))
+    assert len(recovered) == 1
+    assert recovered[0].event == plain and recovered[0].event.input_observation is None
 
 
 def test_terminal_ingress_retention_is_bounded_and_never_deletes_active_rows(
