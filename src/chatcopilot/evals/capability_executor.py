@@ -2,7 +2,7 @@
 
 The executor resolves the authoritative Case definition from its digest-pinned
 suite manifest, produces one normalized ``TrialObservation``, and delegates all
-scoring to ``judge_capability_trial``.  Unsupported Cases and infrastructure
+scoring to ``verify_capability_facts``.  Unsupported Cases and infrastructure
 failures return structured ``error`` results; they are never converted into a
 passing observation.
 """
@@ -56,11 +56,12 @@ from chatcopilot.contracts.tools import (
 from chatcopilot.core.access import get_admins, get_owners
 from chatcopilot.core.config import load_config
 from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService, Workspace
+from chatcopilot.evals.trial_capture import capture_case, record_turn, set_phase
 from chatcopilot.evals.capability_scenarios import (
     CapabilityScenarioContext,
     run_capability_scenario,
 )
-from chatcopilot.evals.capability_verifiers import judge_capability_trial
+from chatcopilot.evals.capability_verifiers import verify_capability_facts
 from chatcopilot.evals.capability_verifiers import get_trusted_capability_verifier
 from chatcopilot.evals.event_projection import project_evaluation_event
 from chatcopilot.evals.fx_oracle import fetch_latest_usd_cny
@@ -307,6 +308,10 @@ def validate_capability_definition(definition: EvalCaseDefinition) -> None:
                 f"trusted verifier is not registered: {assertion.assertion_id}",
             ) from exc
 
+    if definition.driver_id in {"agent_isolated", "agent_configured"}:
+        from chatcopilot.evals.deepeval_engine import quality_policy
+
+        quality_policy(definition)
     if definition.policy.side_effect == "external_write":
         raise CapabilityExecutionError(
             "capability_side_effect_policy_invalid",
@@ -318,6 +323,10 @@ def _preflight_definition(definition: EvalCaseDefinition, *, bot: str) -> None:
     """Reject unsupported work before creating a Case workspace or staging fixtures."""
 
     validate_capability_definition(definition)
+    if definition.driver_id in {"agent_isolated", "agent_configured"}:
+        from chatcopilot.evals.deepeval_engine import preflight
+
+        preflight([definition])
 
     if definition.driver_id in {"acp_scenario", "qq_message_flow"}:
         if not str(bot or "").strip():
@@ -2895,11 +2904,18 @@ def _execute_agent_definition(
                 "eval_turn": turn_index,
             },
         )
+        captured_turn = {"turn_index": turn_index, "conversation_id": workspace.chat_id,
+            "input": text, "resources": [{"id": item, "name": resources_by_id[item].name,
+                "media_type": resources_by_id[item].media_type} for item in resource_ids],
+            "completed": False}
+        record_turn(captured_turn)
         with _workspace_environment(workspace):
             result = session.run_task(
                 task,
                 on_event=lambda event: raw_events.append(_event_dict(event)),
             )
+        record_turn({**captured_turn, "completed": True, "final_text": result.final_text,
+            "stop_reason": result.stop_reason})
         final_text = result.final_text
         stop_reason = result.stop_reason
         turn_stop_reasons.append(result.stop_reason)
@@ -2907,6 +2923,8 @@ def _execute_agent_definition(
         state.extra_evidence.append(
             {
                 "kind": "agent_turn_result",
+                "input": text,
+                "conversation_id": workspace.chat_id,
                 "turn_index": turn_index,
                 "final_text": result.final_text,
                 "stop_reason": result.stop_reason,
@@ -3132,6 +3150,7 @@ def _error_result(
     )
 
 
+@capture_case
 def execute_capability_case(
     case: EvalCase,
     *,
@@ -3189,8 +3208,15 @@ def execute_capability_case(
             )
         else:  # pragma: no cover - preflight_definition fails closed first
             raise AssertionError("capability driver changed after preflight")
-        judge, judge_evidence = judge_capability_trial(definition, observation)
-        status: RunStatus = "passed" if judge.passed else "failed"
+        agent_duration = time.monotonic() - started
+        if definition.driver_id in {"agent_isolated", "agent_configured"}:
+            from chatcopilot.evals.deepeval_engine import score
+
+            set_phase("judging")
+            judge, judge_evidence = score(definition, observation)
+        else:
+            judge, judge_evidence = verify_capability_facts(definition, observation)
+        status: RunStatus = "error" if judge_evidence.get("error") else ("passed" if judge.passed else "failed")
         roots = {"workspace": workspace, "evaluation": Path(workspace_root).resolve()}
         secrets = collect_env_secrets()
         events = redact_payload(list(observation.events), secrets=secrets, roots=roots)
@@ -3205,6 +3231,7 @@ def execute_capability_case(
                 "post_state": observation.post_state,
                 "usage": observation.usage,
                 "structured_error": observation.structured_error,
+                "agent_duration_seconds": agent_duration,
             },
             secrets=secrets,
             roots=roots,
@@ -3222,6 +3249,7 @@ def execute_capability_case(
             finished_at=_utc_now(),
             events=tuple(events),
             judge=judge,
+            error=sanitize_text(str(judge_evidence.get("error") or ""), secrets=secrets, roots=roots),
             metadata=metadata,
         )
     except CapabilityExecutionError as exc:

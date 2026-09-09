@@ -203,3 +203,27 @@ def test_source_revision_metadata_is_strictly_validated(changes):
     assert validate_source_revision(value) == value
     with pytest.raises(ValueError, match="source revision"):
         validate_source_revision({**value, **changes})
+
+
+def test_target_metrics_and_quality_coverage_do_not_mix_targets():
+    request, result = fixture_result()
+    result["trials"][0]["evidence"] = {"agent_duration_seconds": 3, "judge_evidence": {
+        "quality_applicable": True, "metrics": [{"kind": "quality", "score": 0.9, "error": None}]}}
+    result["trials"][1]["evidence"] = {"agent_duration_seconds": 5, "judge_evidence": {
+        "quality_applicable": True, "metrics": [{"kind": "quality", "score": None, "error": "timeout"}]}}
+    value = insight(request, result)
+    assert value["quality"] == {"score": 0.9, "scored": 1, "expected": 2}
+    lane = value["targets"][0]
+    assert lane["pass_rate"] == 0.5 and lane["agent_duration_seconds"] == 8
+    assert len(lane["cases"]) == 2
+    assert lane["cases"][1]["quality"]["score"] is None
+
+
+def test_trial_preview_contains_actual_input_and_output_without_tool_bodies():
+    from chatcopilot.evals.application.insights import trial_preview
+    value = trial_preview({"trial_id": "one", "final_text": "answer" * 1000,
+        "evidence": {"execution": {"state": "recorded", "turns": [{"input": "actual input"}]},
+                     "tool_calls": [{"result": "large private body"}]}})
+    assert value["input_preview"] == "actual input" and len(value["final_text"]) == 400
+    assert value["body_available"] is True
+    assert "large private body" not in json.dumps(value)

@@ -15,7 +15,7 @@ files:
   - path: cases.yaml
     role: cases
     media_type: application/yaml
-    sha256: 48e899680329f977a8ee7cf1771177b1164f38bb676bd7f2edc5c48f40749278
+    sha256: 90704c58767cba389ebeb9432ca12c11dd2d0523bdba4d7fe63ddca3a1d6e436
   - path: fixtures/order-card.png
     role: fixture
     resource_id: order-card

@@ -236,3 +236,29 @@ def test_rejects_replaced_output_directory_even_though_pinned_fd_survives(tmp_pa
         root.rename(moved)
         _evaluation_root(tmp_path)
         _assert_violation(guard)
+
+
+def test_core_can_publish_observation_without_changing_resume_artifacts(tmp_path):
+    root = _evaluation_root(tmp_path)
+    original = (root / "result.json").read_bytes()
+    with ArtifactIntegrityGuard.capture(root, evaluation_id="eval-guard") as guard:
+        guard.publish_observation({"evaluation_id": "eval-guard", "execution": {"input": "actual", "output": "answer"}})
+        guard.verify()
+        guard.publish_observation({"evaluation_id": "eval-guard", "execution": {"output": "updated answer"}})
+        guard.verify()
+    assert (root / "result.json").read_bytes() == original
+    assert json.loads((root / "observation.json").read_text())["execution"]["output"] == "updated answer"
+    assert (root / "observation.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_observation_publish_cannot_mask_child_mutations(tmp_path):
+    root = _evaluation_root(tmp_path)
+    with ArtifactIntegrityGuard.capture(root, evaluation_id="eval-guard") as guard:
+        guard.publish_observation({"evaluation_id": "eval-guard"})
+        _private_file(root / "observation.json", b'{}')
+        with pytest.raises(ArtifactIntegrityError):
+            guard.publish_observation({"evaluation_id": "eval-guard"})
+    with ArtifactIntegrityGuard.capture(root, evaluation_id="eval-guard") as guard:
+        _private_file(root / "state.json", b'{}')
+        with pytest.raises(ArtifactIntegrityError):
+            guard.publish_observation({"evaluation_id": "eval-guard"})

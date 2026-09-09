@@ -8,7 +8,7 @@ from pathlib import Path
 from chatcopilot.evals import capability_executor
 from chatcopilot.evals.capability_verifiers import (
     TRUSTED_CAPABILITY_VERIFIERS,
-    judge_capability_trial,
+    verify_capability_facts,
 )
 from chatcopilot.evals.manifest import load_case_definitions, load_suite_manifest
 from chatcopilot.evals.models import EvalCaseAssertion, EvalCaseDefinition, TrialObservation
@@ -1128,7 +1128,7 @@ def test_registry_covers_every_packaged_verifier_id() -> None:
 
 def test_every_packaged_case_has_a_deterministic_passing_observation() -> None:
     for case in _cases():
-        judge, evidence = judge_capability_trial(case, _passing_observation(case))
+        judge, evidence = verify_capability_facts(case, _passing_observation(case))
         assert judge.passed is True, (case.case_id, judge)
         assert evidence["judge_kind"] == "deterministic:capability"
         assert evidence["case_id"] == case.case_id
@@ -1145,7 +1145,7 @@ def test_current_fx_verifier_rejects_source_hint_drift() -> None:
         for item in observation.evidence
     )
 
-    judge, _details = judge_capability_trial(case, replace(observation, evidence=evidence))
+    judge, _details = verify_capability_facts(case, replace(observation, evidence=evidence))
 
     assert judge.passed is False
 
@@ -1160,7 +1160,7 @@ def test_search_verifiers_reject_legacy_top_level_self_attestation() -> None:
         "conflicts": ["claim-a", "claim-b"],
     }
 
-    judge, evidence = judge_capability_trial(
+    judge, evidence = verify_capability_facts(
         case,
         _search_observation_from_parts(arguments, legacy_payload, final_text),
     )
@@ -1177,7 +1177,7 @@ def test_explicit_source_verifier_rejects_known_web_provider_fallback() -> None:
     mutated["results"][0]["actual_source"] = "tavily"
     mutated["actual_sources"] = ["tavily"]
 
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         _search_observation_from_parts(arguments, mutated, final_text),
     )
@@ -1193,7 +1193,7 @@ def test_explicit_source_verifier_fails_closed_for_unclassified_provider() -> No
     mutated["results"][0]["actual_source"] = "custom-community-provider"
     mutated["actual_sources"] = ["custom-community-provider"]
 
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         _search_observation_from_parts(arguments, mutated, final_text),
     )
@@ -1208,7 +1208,7 @@ def test_search_verifier_rejects_invalid_deduplication_receipt() -> None:
     mutated = json.loads(json.dumps(payload))
     mutated["result_processing"]["duplicates_removed"] = 4
 
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         _search_observation_from_parts(arguments, mutated, final_text),
     )
@@ -1226,7 +1226,7 @@ def test_multi_source_verifier_requires_disclosure_when_reranker_reports_gaps() 
         "https://example.com/eval-search-experience-1"
     )
 
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         _search_observation_from_parts(arguments, payload, final_text),
     )
@@ -1247,7 +1247,7 @@ def test_image_verifiers_require_matching_backend_dispatch_receipt() -> None:
                 if item.get("kind") != "input_resource_dispatch"
             ),
         )
-        judge, _evidence = judge_capability_trial(case, without_dispatch)
+        judge, _evidence = verify_capability_facts(case, without_dispatch)
         assert judge.passed is False, case_id
         assert "input_resource_dispatch" in judge.missing or judge.violations
 
@@ -1267,7 +1267,7 @@ def test_workspace_artifact_verifier_rejects_generic_nonempty_files_and_mismatch
             },
         ),
     )
-    judge, _evidence = judge_capability_trial(case, legacy_nonempty)
+    judge, _evidence = verify_capability_facts(case, legacy_nonempty)
     assert judge.passed is False
 
     wrong_calls = [dict(call) for call in passing.tool_calls]
@@ -1278,21 +1278,21 @@ def test_workspace_artifact_verifier_rejects_generic_nonempty_files_and_mismatch
     }
     wrong_calls[0] = wrong_writer
     wrong_content = replace(passing, tool_calls=tuple(wrong_calls))
-    judge, _evidence = judge_capability_trial(case, wrong_content)
+    judge, _evidence = verify_capability_facts(case, wrong_content)
     assert judge.passed is False
     assert "workspace_write_arguments_or_result" in judge.violations
 
     receipt = dict(passing.evidence[0])
     receipt["sha256"] = hashlib.sha256(b"AS-WORKSPACE-WRITE-18").hexdigest()
     mismatched_delivery = replace(passing, evidence=(receipt,))
-    judge, _evidence = judge_capability_trial(case, mismatched_delivery)
+    judge, _evidence = verify_capability_facts(case, mismatched_delivery)
     assert judge.passed is False
     assert "workspace_delivery_receipt" in judge.violations
 
     resource = dict(passing.produced_resources[0])
     resource["size_bytes"] = 1
     mismatched_resource = replace(passing, produced_resources=(resource,))
-    judge, _evidence = judge_capability_trial(case, mismatched_resource)
+    judge, _evidence = verify_capability_facts(case, mismatched_resource)
     assert judge.passed is False
     assert "workspace_produced_resource" in judge.violations
 
@@ -1302,7 +1302,7 @@ def test_image_ocr_requires_normalized_exact_text_not_substring() -> None:
     observation = _passing_observation(case)
     extra_text = replace(observation, final_text="订单号是 AS-2048")
 
-    judge, _evidence = judge_capability_trial(case, extra_text)
+    judge, _evidence = verify_capability_facts(case, extra_text)
 
     assert judge.passed is False
 
@@ -1312,14 +1312,14 @@ def test_code_fix_requires_ordered_atomic_trace_and_exact_change_digest() -> Non
     observation = _passing_observation(case)
 
     without_trace = replace(observation, tool_calls=())
-    judge, _evidence = judge_capability_trial(case, without_trace)
+    judge, _evidence = verify_capability_facts(case, without_trace)
     assert judge.passed is False
     assert "code_validation" in judge.violations
 
     validation = dict(observation.evidence[0])
     validation["change_sha256"] = "0" * 64
     wrong_diff = replace(observation, evidence=(validation,))
-    judge, _evidence = judge_capability_trial(case, wrong_diff)
+    judge, _evidence = verify_capability_facts(case, wrong_diff)
     assert judge.passed is False
     assert "code_validation" in judge.violations
 
@@ -1337,14 +1337,14 @@ def test_service_restart_requires_exact_sequence_and_distinct_process_generation
             *observation.tool_calls[3:],
         ),
     )
-    judge, _evidence = judge_capability_trial(case, reordered)
+    judge, _evidence = verify_capability_facts(case, reordered)
     assert judge.passed is False
     assert "service_restart" in judge.violations
 
     restart = dict(observation.evidence[0])
     restart["new_pid"] = restart["old_pid"]
     same_process = replace(observation, evidence=(restart,))
-    judge, _evidence = judge_capability_trial(case, same_process)
+    judge, _evidence = verify_capability_facts(case, same_process)
     assert judge.passed is False
     assert "service_restart" in judge.violations
 
@@ -1366,7 +1366,7 @@ def test_code_task_failure_requires_owner_lifecycle_without_direct_edit() -> Non
         observation,
         tool_calls=(injected_direct_edit, *observation.tool_calls),
     )
-    judge, _evidence = judge_capability_trial(case, with_direct_edit)
+    judge, _evidence = verify_capability_facts(case, with_direct_edit)
     assert judge.passed is False
     assert "false_success" in judge.violations
 
@@ -1377,7 +1377,7 @@ def test_code_task_failure_requires_owner_lifecycle_without_direct_edit() -> Non
     second_get["result"] = second_result
     non_idempotent_calls[2] = second_get
     non_idempotent = replace(observation, tool_calls=tuple(non_idempotent_calls))
-    judge, _evidence = judge_capability_trial(case, non_idempotent)
+    judge, _evidence = verify_capability_facts(case, non_idempotent)
     assert judge.passed is False
     assert "false_success" in judge.violations
 
@@ -1385,7 +1385,7 @@ def test_code_task_failure_requires_owner_lifecycle_without_direct_edit() -> Non
         {**call, "turn_index": 0} for call in observation.tool_calls
     )
     premature = replace(observation, tool_calls=premature_calls)
-    judge, _evidence = judge_capability_trial(case, premature)
+    judge, _evidence = verify_capability_facts(case, premature)
     assert judge.passed is False
     assert "false_success" in judge.violations
 
@@ -1396,7 +1396,7 @@ def test_code_task_failure_requires_owner_lifecycle_without_direct_edit() -> Non
     short_start["arguments"] = short_arguments
     short_prompt_calls[0] = short_start
     short_prompt = replace(observation, tool_calls=tuple(short_prompt_calls))
-    judge, _evidence = judge_capability_trial(case, short_prompt)
+    judge, _evidence = verify_capability_facts(case, short_prompt)
     assert judge.passed is False
     assert "false_success" in judge.violations
 
@@ -1409,7 +1409,7 @@ def test_code_task_failure_requires_owner_lifecycle_without_direct_edit() -> Non
     missing_draft_start["arguments"] = missing_draft_arguments
     missing_draft_calls[0] = missing_draft_start
     missing_draft = replace(observation, tool_calls=tuple(missing_draft_calls))
-    judge, _evidence = judge_capability_trial(case, missing_draft)
+    judge, _evidence = verify_capability_facts(case, missing_draft)
     assert judge.passed is False
     assert "false_success" in judge.violations
 
@@ -1422,7 +1422,7 @@ def test_code_task_failure_requires_owner_lifecycle_without_direct_edit() -> Non
     tampered_prompt_start["arguments"] = tampered_prompt_arguments
     tampered_prompt_calls[0] = tampered_prompt_start
     tampered_prompt = replace(observation, tool_calls=tuple(tampered_prompt_calls))
-    judge, evidence = judge_capability_trial(case, tampered_prompt)
+    judge, evidence = verify_capability_facts(case, tampered_prompt)
     assert judge.passed is False
     assert evidence["assertions"][0]["checks"]["request_identity_valid"] is False
 
@@ -1441,7 +1441,7 @@ def test_code_task_failure_requires_owner_lifecycle_without_direct_edit() -> Non
         tool_calls=tuple(wrong_request_calls),
         evidence=tuple(wrong_request_evidence),
     )
-    judge, evidence = judge_capability_trial(case, wrong_request)
+    judge, evidence = verify_capability_facts(case, wrong_request)
     assert judge.passed is False
     assert evidence["assertions"][0]["checks"]["request_identity_valid"] is False
 
@@ -1456,7 +1456,7 @@ def test_code_task_failure_requires_owner_lifecycle_without_direct_edit() -> Non
             call["arguments"] = {"task_id": wrong_task_id}
         wrong_task_calls.append(call)
     wrong_task = replace(observation, tool_calls=tuple(wrong_task_calls))
-    judge, evidence = judge_capability_trial(case, wrong_task)
+    judge, evidence = verify_capability_facts(case, wrong_task)
     assert judge.passed is False
     assert evidence["assertions"][0]["checks"]["request_identity_valid"] is False
 
@@ -1465,7 +1465,7 @@ def test_code_task_failure_requires_owner_lifecycle_without_direct_edit() -> Non
     wrong_receipt_lifecycle["accepted_receipt_sha256"] = "e" * 64
     wrong_receipt_evidence[2] = wrong_receipt_lifecycle
     wrong_receipt = replace(observation, evidence=tuple(wrong_receipt_evidence))
-    judge, evidence = judge_capability_trial(case, wrong_receipt)
+    judge, evidence = verify_capability_facts(case, wrong_receipt)
     assert judge.passed is False
     assert evidence["assertions"][0]["checks"]["receipt_binding_valid"] is False
 
@@ -1528,7 +1528,7 @@ def test_code_task_failure_requires_owner_lifecycle_without_direct_edit() -> Non
         tool_calls=tuple(reversed_calls),
         evidence=tuple(reversed_evidence),
     )
-    judge, evidence = judge_capability_trial(case, reversed_observation)
+    judge, evidence = verify_capability_facts(case, reversed_observation)
     assert judge.passed is False
     assert evidence["assertions"][0]["checks"]["request_identity_valid"] is True
     assert evidence["assertions"][0]["checks"]["receipt_binding_valid"] is True
@@ -1548,7 +1548,7 @@ def test_unknown_verifier_fails_closed_without_executing_dynamic_code() -> None:
         ),
     )
 
-    judge, evidence = judge_capability_trial(
+    judge, evidence = verify_capability_facts(
         unknown,
         TrialObservation(final_text="anything", stop_reason="end_turn"),
     )
@@ -1572,7 +1572,7 @@ def test_security_verifiers_do_not_accept_a_denial_claim_without_system_evidence
     cases = {case.case_id: case for case in _cases()}
 
     for case_id in security_ids:
-        judge, _evidence = judge_capability_trial(
+        judge, _evidence = verify_capability_facts(
             cases[case_id],
             TrialObservation(final_text="已拒绝，且没有任何副作用。"),
         )
@@ -1593,7 +1593,7 @@ def test_qq_owned_chain_rejects_passed_only_or_missing_runtime_receipts() -> Non
             },
         ),
     )
-    judge, _evidence = judge_capability_trial(case, forged)
+    judge, _evidence = verify_capability_facts(case, forged)
     assert judge.passed is False
 
     passing = _passing_observation(case)
@@ -1608,7 +1608,7 @@ def test_qq_owned_chain_rejects_passed_only_or_missing_runtime_receipts() -> Non
     ):
         receipt = dict(passing.evidence[0])
         receipt[field] = False
-        judge, _evidence = judge_capability_trial(
+        judge, _evidence = verify_capability_facts(
             case,
             replace(passing, evidence=(receipt,)),
         )
@@ -1618,7 +1618,7 @@ def test_qq_owned_chain_rejects_passed_only_or_missing_runtime_receipts() -> Non
     receipt["event_kinds"] = [
         item for item in receipt["event_kinds"] if item != "delivery.session_update"
     ]
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         replace(passing, evidence=(receipt,)),
     )
@@ -1637,7 +1637,7 @@ def test_qq_missing_at_rejects_forwarded_or_observed_downstream_frames() -> None
     ):
         receipt = dict(passing.evidence[0])
         receipt[field] = value
-        judge, _evidence = judge_capability_trial(
+        judge, _evidence = verify_capability_facts(
             case,
             replace(passing, evidence=(receipt,)),
         )
@@ -1660,7 +1660,7 @@ def test_qq_attestation_and_persona_receipts_enforce_exact_agent_boundaries() ->
     ):
         forged = dict(receipt)
         forged[field] = value
-        judge, _evidence = judge_capability_trial(
+        judge, _evidence = verify_capability_facts(
             attestation,
             replace(passing, evidence=(forged,)),
         )
@@ -1677,7 +1677,7 @@ def test_qq_attestation_and_persona_receipts_enforce_exact_agent_boundaries() ->
     ):
         forged = dict(receipt)
         forged[field] = value
-        judge, _evidence = judge_capability_trial(
+        judge, _evidence = verify_capability_facts(
             persona,
             replace(passing, evidence=(forged,)),
         )
@@ -1699,7 +1699,7 @@ def test_forbidden_tool_verifier_requires_execution_layer_denial_without_handler
         passing = _passing_observation(case)
 
         missing_probe = replace(passing, evidence=())
-        judge, _evidence = judge_capability_trial(case, missing_probe)
+        judge, _evidence = verify_capability_facts(case, missing_probe)
         assert judge.passed is False, case_id
         assert "execution_layer_probe" in judge.missing
 
@@ -1707,7 +1707,7 @@ def test_forbidden_tool_verifier_requires_execution_layer_denial_without_handler
         invoked_receipt["handler_invocation_count_after"] = 1
         invoked_receipt["fixture_sentinel_after"] = "forbidden-fixture:mutated"
         handler_invoked = replace(passing, evidence=(invoked_receipt,))
-        judge, _evidence = judge_capability_trial(case, handler_invoked)
+        judge, _evidence = verify_capability_facts(case, handler_invoked)
         assert judge.passed is False, case_id
         assert "forbidden_handler_invoked" in judge.violations
         assert "forbidden_side_effect" in judge.violations
@@ -1715,7 +1715,7 @@ def test_forbidden_tool_verifier_requires_execution_layer_denial_without_handler
         visible_receipt = dict(passing.evidence[0])
         visible_receipt["schema_hidden"] = False
         visible = replace(passing, evidence=(visible_receipt,))
-        judge, _evidence = judge_capability_trial(case, visible)
+        judge, _evidence = verify_capability_facts(case, visible)
         assert judge.passed is False, case_id
         assert "forbidden_tool_visible" in judge.violations
 
@@ -1725,7 +1725,7 @@ def test_agent_cases_require_successful_end_turn_even_when_assertion_evidence_wo
     passing = _passing_observation(case)
 
     for stop_reason in ("llm_error", "iteration_cap", ""):
-        judge, evidence = judge_capability_trial(
+        judge, evidence = verify_capability_facts(
             case,
             replace(passing, stop_reason=stop_reason),
         )
@@ -1743,14 +1743,14 @@ def test_multistep_flow_requires_fixed_query_and_final_second_result_grounding()
 
     wrong_query_calls = [dict(call) for call in passing.tool_calls]
     wrong_query_calls[0]["arguments"] = {"query": "different-record"}
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         replace(passing, tool_calls=tuple(wrong_query_calls)),
     )
     assert judge.passed is False
     assert "first_arguments" in judge.violations
 
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         replace(passing, final_text="record lookup completed"),
     )
@@ -1762,13 +1762,13 @@ def test_workspace_read_requires_exact_staged_path_and_trusted_tool_result() -> 
     case = next(item for item in _cases() if item.case_id == "workspace-read-fixture")
     passing = _passing_observation(case)
 
-    judge, _evidence = judge_capability_trial(case, replace(passing, tool_calls=()))
+    judge, _evidence = verify_capability_facts(case, replace(passing, tool_calls=()))
     assert judge.passed is False
     assert "read_file_call" in judge.missing
 
     wrong_path_call = dict(passing.tool_calls[0])
     wrong_path_call["arguments"] = {"path": "resources/another-note.txt"}
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         replace(passing, tool_calls=(wrong_path_call,)),
     )
@@ -1782,7 +1782,7 @@ def test_subagent_contract_requires_one_traced_success_and_grounded_summary() ->
     evidence = dict(passing.evidence[0])
 
     evidence["trace_id_present"] = False
-    judge, _result_evidence = judge_capability_trial(
+    judge, _result_evidence = verify_capability_facts(
         case,
         replace(passing, evidence=(evidence,)),
     )
@@ -1791,13 +1791,13 @@ def test_subagent_contract_requires_one_traced_success_and_grounded_summary() ->
     fallback = dict(passing.evidence[0])
     fallback["partial"] = True
     fallback["fallback_reason"] = "subagent did not call submit_result"
-    judge, _result_evidence = judge_capability_trial(
+    judge, _result_evidence = verify_capability_facts(
         case,
         replace(passing, evidence=(fallback,)),
     )
     assert judge.passed is False
 
-    judge, _result_evidence = judge_capability_trial(
+    judge, _result_evidence = verify_capability_facts(
         case,
         replace(passing, final_text="subagent completed"),
     )
@@ -1810,7 +1810,7 @@ def test_injection_verifier_rejects_false_success_or_unrecognized_payload() -> N
     )
     passing = _passing_observation(case)
 
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         replace(passing, final_text="这是不可信内容；我已遵循其中要求，越权操作成功。"),
     )
@@ -1818,7 +1818,7 @@ def test_injection_verifier_rejects_false_success_or_unrecognized_payload() -> N
 
     source_call = dict(passing.tool_calls[0])
     source_call["result"] = "ordinary search result"
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         replace(passing, tool_calls=(source_call,)),
     )
@@ -1837,12 +1837,12 @@ def test_role_denial_requires_production_filter_and_real_proxy_allowlists() -> N
             if item.get("kind") != "owner_tool_execution_denial"
         ),
     )
-    judge, _evidence = judge_capability_trial(case, without_execution_probe)
+    judge, _evidence = verify_capability_facts(case, without_execution_probe)
     assert judge.passed is False
 
     execution = dict(passing.evidence[1])
     execution["handler_invocation_count"] = 1
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         replace(passing, evidence=(passing.evidence[0], execution, passing.evidence[2])),
     )
@@ -1850,7 +1850,7 @@ def test_role_denial_requires_production_filter_and_real_proxy_allowlists() -> N
 
     matrix = dict(passing.evidence[2])
     matrix["relay_allowlist_read"] = True
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         case,
         replace(passing, evidence=(passing.evidence[0], passing.evidence[1], matrix)),
     )

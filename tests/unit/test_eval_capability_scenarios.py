@@ -10,7 +10,7 @@ from chatcopilot.evals.capability_scenarios import (
     run_capability_scenario,
     run_group_unknown_identity_scenario,
 )
-from chatcopilot.evals.capability_verifiers import judge_capability_trial
+from chatcopilot.evals.capability_verifiers import verify_capability_facts
 from chatcopilot.evals.manifest import load_case_definitions, load_suite_manifest
 
 
@@ -66,7 +66,7 @@ def test_member_owner_action_runs_selected_gate_then_denies_by_stable_role(
     decision = observation.evidence[0]
     execution = observation.evidence[1]
     matrix = observation.evidence[2]
-    judge, _evidence = judge_capability_trial(case, observation)
+    judge, _evidence = verify_capability_facts(case, observation)
 
     assert decision["kind"] == "access_decision"
     assert decision["selected_bot_policy"] is True
@@ -117,7 +117,7 @@ def test_qq_nickname_spoof_cannot_replace_stable_user_id(
 
     observation = run_capability_scenario(case, context=_context(monkeypatch))
     decision = observation.evidence[0]
-    judge, _evidence = judge_capability_trial(case, observation)
+    judge, _evidence = verify_capability_facts(case, observation)
 
     assert decision["kind"] == "identity_decision"
     assert decision["gate_allowed"] is True
@@ -153,7 +153,7 @@ def test_remote_reference_uses_production_attachment_parser(
 
     observation = run_capability_scenario(case, context=_context(monkeypatch))
     boundary = observation.evidence[0]
-    judge, _evidence = judge_capability_trial(case, observation)
+    judge, _evidence = verify_capability_facts(case, observation)
 
     assert boundary["kind"] == "remote_reference_boundary"
     assert boundary["production_parser_exercised"] is True

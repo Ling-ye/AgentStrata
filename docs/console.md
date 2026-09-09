@@ -244,15 +244,19 @@ Legacy QQ 合成 artifact 中的 Relay、sender envelope、transport attestation
 
 `Evaluation` 是唯一运行资源，使用 `evaluation_id` 标识，并以 `kind: comparison | suite` 区分执行方式。生命周期状态固定为 `queued / running / completed / partial / cancelled / interrupted / error`；通过/失败和 Codex/Native/平局只属于结果，不混入生命周期。
 
-机器人选择在页面顶部，对三个页签同时生效：
+页面保留开始测试、运行记录和进步趋势。顶部机器人选择用于启动与运行记录；趋势有独立的多选范围。
 
-- **开始测试**：直接 Agent 能力与 QQ 链路分别选择快速、完整或安全范围，手动启动。Comparison Profile、BFCL、GAIA 和 IFEval 保留 CLI 与旧记录读取，不占据主测试入口。
-- **运行记录**：按方向和状态筛选；列表直接显示通过次数、通过率、异常、创建时间和 Git 版本。打开详情后查看能力分组和测试点表格，可筛选结果、搜索测试点，并在原处展开回答、判分理由和错误。每个测试点继承本次评测的代码版本，同时展示自己的开始时间。原始摘要与记录仍可展开，取消、重跑、删除和导出入口保留。
-- **进步趋势**：筛选最近 7 / 30 / 90 天或全部时间，选择测试方向与测试条件，查看通过率或执行耗时。每个点可用鼠标或键盘打开对应评测；曲线显示最近 200 个点，下方分页表格保留当前范围的全部记录。完整结束但含失败、异常或跳过的评测照常计入；取消、中断、不完整、dry-run 或缺少测试定义的记录单独说明未进入曲线的原因。
+- **开始测试**：直接 Agent 能力与 QQ 链路分别选择快速、完整或安全范围，手动启动，不增加模型或 Agent 启动参数面板。Comparison Profile、BFCL、GAIA 和 IFEval 保留原有入口。
+- **运行记录**：详情顶部显示通过率、通过/失败/异常/跳过和质量分覆盖情况。Case 表格常显实际输入与最终输出预览，原处展开全文、多轮交互、附件信息、工具证据和每项判分理由。多个测试点可以同时展开；完整正文按需读取，不要求逐层展开 JSON。Agent 执行失败与判分异常分别展示。判分前 Core 保存 `observation.json` 中的实际交互，判分取消或超时仍可阅读；这份记录不计入完成样本，也不能用于 resume。
+- **进步趋势**：默认最近 30 天、当前机器人，支持 7 / 30 / 90 天、全部和自定义时间。机器人、模型、测试规模与测试点支持多选；勾选 Agent、模型、测试规模决定拆线，全部取消时合为一条时间曲线。每点代表一次 Evaluation 的一个 Target。Git 与严格比较指纹不自动拆线。通过率、质量分、Agent 执行耗时分别绘制，可用鼠标或键盘打开记录；关闭详情保留趋势条件。每页读取 50 条记录，通过“加载更多历史记录”继续查看，没有静默的 200 点截断。
 
-通过率为通过次数除以全部已记录测试次数，分母包含失败、异常和跳过，每次重复执行分别计数；页面同时显示计划次数，部分结果不作为完整评测进入曲线。`completed` 表示执行结束，不等于测试全部通过；产品门禁 verdict 独立保留，不生成智能总分。
+Agent 能力轨道由 DeepEval 4.2.2 执行指标。工具、权限、隔离、文件和回执由确定性事实指标验证，适用 Case 默认追加 GEval 或 ConversationalGEval 质量判分，阈值默认 0.7；两类必要条件均通过才算通过。固定步骤、参考标准与阈值随 Case 定义版本保存。质量分不能覆盖事实失败，评分异常不能算通过。
 
-趋势按机器人、Suite、Case 和判分实现、模型/Backend/执行器/推理档位、重复次数、seed、选项及预算分组，不同测试标准不直接连线。代码和运行配置版本作为曲线上的变化记录；同一条件的变化只能说明观测结果发生变化，不能直接归因于一次代码修改。模型提供方更新和外部数据变化仍可能影响结果，现有 CLI compare/resume 的严格校验保持。
+通过率分母包含失败、异常和跳过，重复执行分别计数。质量均分只统计适用且成功判分的样本，并显示已评分/应评分数；旧记录未采集质量分时不补零。完整有效、非 dry-run 的记录才进入趋势，部分记录仍可查看。选中特定 Case 后，点指标只汇总这些 Case；规模标签仍说明原评测规模。不同测试条件可按用户选择连线，点详情保留版本、模型、规模和样本量；不能据此自动归因于一次代码修改。CLI compare/resume 的严格指纹校验保持。
+
+独立评分模型使用 Evaluation 服务的 `~/.config/agentstrata/evaluation.env`，示例见 [`evaluation.env.example`](../deploy/wsl/evaluation.env.example)，配置步骤见 [Evaluation 运维](operations.md#evaluation)。该模型不随被测机器人切换，不使用机器人本地环境补齐。缺少依赖或评分配置时创建前预检失败，不自动关闭判分。SDK 只在 Trial 内运行，禁用 dotenv、遥测、Confident Cloud 上报、评测缓存和交互提示；Token 与评分耗时独立记录。模型调用仍使用所配置服务，会产生其相应费用。
+
+新记录保存实际执行时替换参数后的请求。历史仅展示已采集输入，或明确标注“当时用例定义；实际发送未记录”，不查当前定义补写历史。预览截短可以展开，采集上限导致的丢失显示“已截断”；继续遵守单 Trial 2 MiB 等保护边界。
 
 新评测在创建时由 Evaluation application 将 Git commit、工作区是否有未提交改动和采集时间写入 `request.json`，不采集分支、remote、作者、文件名或 diff。缺少 Git 的安装环境显示版本未知，历史记录不补写当前版本；只读取历史不会调用 Git。幂等重试保留原版本，重跑重新采集。该快照标识创建时代码，不保证运行期间外部代码未变化。`insights` 和 `source_revision` 是既有列表、详情接口的附加只读字段，Console 不写评测 artifact。列表不加载每条历史记录的完整正文；详情按所选 ID 查询并轮询活动评测。
 
@@ -270,7 +274,7 @@ CLI 的 prepare、validate 和 run 命令统一见 [`operations.md#evaluation`](
 
 Evaluation 目录的写入权按文件固定分配：application service 写 `request.json`、`state.json`、activity claim、maintenance lease 和合作式取消标记；Core 写 `result.json`、`summary.md`、`progress.jsonl` 和逐 Trial 证据；managed worker 自行写脱敏 `run.log`；Console 不写任何 Evaluation artifact。Evaluation 目录、activity claim、maintenance marker、取消标记和权威 artifact 不接受符号链接，并校验 owner、类型、权限、单硬链接与 `evaluation_id`；遗留 worker 只有在 argv 精确包含 managed-worker 模块、且唯一 `--output` 与记录目录规范路径相等时才可发送信号。JSON/Markdown 导出从 UDS 到 HTTP 均按块传输，不在 Console 中完整缓冲报告。事件、回答、工具参数、启动错误和报告在写 checkpoint 前过滤凭据字段、通用 token、已知 secret 和机器绝对路径。
 
-该边界只实现 AgentStrata 同仓库、同版本的本机 Evaluation 服务，不引入外部评测引擎、实验追踪平台、远程 evaluator 或第二套报告存储。
+该边界只实现 AgentStrata 同仓库、同版本的本机 Evaluation 服务，通过本地 DeepEval SDK 执行 Agent 指标，不引入实验追踪平台、远程调度器或第二套报告存储。
 
 评测 API：
 
@@ -280,8 +284,8 @@ Evaluation 目录的写入权按文件固定分配：application service 写 `re
 - `POST /api/evals/suites/{suite_id}/prepare`
 - `GET /api/evals/cases/coverage`
 - `POST/GET /api/evals/evaluations`
-- `GET /api/evals/evaluations/{evaluation_id}`
-- `GET /api/evals/evaluations/{evaluation_id}/cases/{case_ref}`
+- `GET /api/evals/evaluations/{evaluation_id}`（`include_bodies=false` 返回 Case 预览）
+- `GET /api/evals/evaluations/{evaluation_id}/cases/{case_ref}`（可按 `trial_id/target_id/attempt` 精确读取）
 - `GET /api/evals/evaluations/{evaluation_id}/stream`
 - `POST /api/evals/evaluations/{evaluation_id}/cancel`
 - `POST /api/evals/evaluations/{evaluation_id}/rerun`

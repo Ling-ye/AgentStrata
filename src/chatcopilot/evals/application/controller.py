@@ -29,6 +29,7 @@ from chatcopilot.evals.application.bots import (
 )
 from chatcopilot.evals.redaction import collect_env_secrets, sanitize_text
 from chatcopilot.evals.application.insights import (
+    trial_preview,
     capture_source_revision,
     result_insights,
     source_revision,
@@ -177,7 +178,7 @@ def _reject_symlink_components(path: Path) -> None:
             raise ValueError(f"Evaluation path cannot contain a symlink: {current}")
 
 
-def _read_json(path: Path) -> dict[str, Any]:
+def _read_json(path: Path, *, max_bytes: int | None = None) -> dict[str, Any]:
     flags = os.O_RDONLY
     flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -190,7 +191,13 @@ def _read_json(path: Path) -> dict[str, Any]:
         _validate_private_file_metadata(os.fstat(descriptor), path)
         with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
             descriptor = -1
-            value = json.load(handle)
+            if max_bytes is not None:
+                raw = handle.read(max_bytes + 1)
+                if len(raw.encode("utf-8")) > max_bytes:
+                    raise ValueError("Evaluation observation exceeds read limit")
+                value = json.loads(raw)
+            else:
+                value = json.load(handle)
     except json.JSONDecodeError:
         return {}
     finally:
@@ -523,6 +530,9 @@ class EvaluationApplication:
                     env_values=effective_env,
                 )
             )
+            from chatcopilot.evals.deepeval_engine import scoring_snapshot
+
+            scoring = scoring_snapshot() if clean_request.get("suite_id") == "agentstrata-capabilities-v1" else None
         if _bot_spec_sha256(bot, self.repository_root) != bot_spec_digest:
             raise EvaluationBlocked(
                 {
@@ -594,6 +604,7 @@ class EvaluationApplication:
                 "bot_spec_sha256": bot_spec_digest,
                 "created_at": created_at,
                 "source_revision": capture_source_revision(self.repository_root),
+                **({"scoring": scoring} if scoring is not None else {}),
             }
             core_request = _core_request(
                 bot,
@@ -659,7 +670,22 @@ class EvaluationApplication:
         bot_id: str | None = None,
         target: str | None = None,
         status: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+        bot_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        if type(offset) is not int or offset < 0 or (limit is not None and (type(limit) is not int or not 1 <= limit <= 200)):
+            raise ValueError("invalid Evaluation pagination")
+        if bot_ids is not None and (not isinstance(bot_ids, list) or len(bot_ids) > 100 or not all(isinstance(v, str) and v for v in bot_ids)):
+            raise ValueError("invalid Evaluation bot selection")
+        if any(value is not None and not isinstance(value, str) for value in (since, until)):
+            raise ValueError("Evaluation time bounds must be ISO strings")
+        lower = datetime.fromisoformat(since).timestamp() if since else None
+        upper = datetime.fromisoformat(until).timestamp() if until else None
+        if lower is not None and upper is not None and lower > upper:
+            raise ValueError("invalid Evaluation time range")
         self._verify_private_root()
         values: list[dict[str, Any]] = []
         for path in self.root.iterdir():
@@ -673,6 +699,15 @@ class EvaluationApplication:
                 continue
             if bot_id and item.get("bot_id") != bot_id:
                 continue
+            if bot_ids and item.get("bot_id") not in bot_ids:
+                continue
+            if lower is not None or upper is not None:
+                try:
+                    timestamp = datetime.fromisoformat(str(item.get("started_at") or item.get("created_at"))).timestamp()
+                except ValueError:
+                    continue
+                if (lower is not None and timestamp < lower) or (upper is not None and timestamp > upper):
+                    continue
             if status and item.get("status") != status:
                 continue
             if target and target not in {
@@ -686,7 +721,7 @@ class EvaluationApplication:
             key=lambda value: str(value.get("created_at") or ""),
             reverse=True,
         )
-        return values
+        return values[offset:offset + limit] if limit is not None else values[offset:]
 
     def active_count(self) -> int:
         """Count active lifecycle records without reading large Core results."""
@@ -815,6 +850,7 @@ class EvaluationApplication:
         evaluation_id: str,
         *,
         include_result: bool = True,
+        include_bodies: bool = True,
     ) -> dict[str, Any]:
         # The worker finalizer writes terminal state and releases the Bot claim
         # under this same lock.  Read that boundary atomically so callers never
@@ -862,6 +898,14 @@ class EvaluationApplication:
         }
         if include_result:
             response["request"] = request
+            if not include_bodies:
+                result = {**result, "trials": [trial_preview(t) for t in trial_values if isinstance(t, Mapping)],
+                    "config_snapshot": {"definition_snapshot": result.get("config_snapshot", {}).get("definition_snapshot", {})}}
+            observation = _read_json(directory / "observation.json", max_bytes=1024 * 1024)
+            if observation:
+                if observation.get("evaluation_id") != evaluation_id:
+                    raise ValueError("Evaluation observation identity mismatch")
+                result = {**result, "execution_observation": observation}
             response["result"] = result
         return response
 
@@ -869,7 +913,15 @@ class EvaluationApplication:
         self,
         evaluation_id: str,
         case_ref: str,
+        *,
+        trial_id: str | None = None,
+        target_id: str | None = None,
+        attempt: int | None = None,
     ) -> dict[str, Any]:
+        if any(value is not None and (not isinstance(value, str) or not value or len(value) > 256) for value in (trial_id, target_id)):
+            raise ValueError("invalid Trial selection")
+        if attempt is not None and (type(attempt) is not int or attempt < 1):
+            raise ValueError("invalid Trial attempt")
         directory = self._verified_evaluation_dir(evaluation_id)
         result = self._verified_result(
             evaluation_id,
@@ -900,12 +952,23 @@ class EvaluationApplication:
                 str(value.get("case_id") or ""),
             }
         ]
-        if not trials and comparison is None:
+        trials = [t for t in trials if (trial_id is None or t.get("trial_id") == trial_id)
+            and (target_id is None or t.get("target_id") == target_id)
+            and (attempt is None or t.get("attempt") == attempt)]
+        observation = _read_json(directory / "observation.json", max_bytes=1024 * 1024)
+        if observation and observation.get("evaluation_id") != evaluation_id:
+            raise ValueError("Evaluation observation identity mismatch")
+        observation = observation if case_ref in {observation.get("case_id"), observation.get("case_ref")} and (
+            trial_id is None or trial_id == observation.get("trial_id")) and (
+            target_id is None or target_id == observation.get("target_id")) and (
+            attempt is None or attempt == observation.get("attempt")) else {}
+        if not trials and comparison is None and not observation:
             raise KeyError(case_ref)
         return {
             "case_ref": case_ref,
             "comparison": comparison,
             "trials": trials,
+            "execution_observation": observation,
         }
 
     def active_for_bot(self, bot_id: str) -> dict[str, Any] | None:

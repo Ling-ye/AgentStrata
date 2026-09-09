@@ -131,7 +131,7 @@ def _series(request: Mapping[str, Any], result: Mapping[str, Any]) -> tuple[str 
         lanes.append({key: lane.get(key, "") for key in (
             "target_id", "executor", "backend", "model", "reasoning_effort",
         )})
-    # Runtime/configuration changes are observations; benchmark changes split the series.
+    # Retained as descriptive comparison identity; UI grouping is selected explicitly.
     for key in ("target_fingerprint", "environment_identity", "base_fingerprint"):
         definition.pop(key, None)
     material = {
@@ -225,4 +225,77 @@ def result_insights(
         "exclusion_reason": reason,
         "configuration_fingerprint": _digest(configuration) if any(configuration.values()) else None,
         "benchmark_fingerprint": snapshot.get("case_hash"),
+        "quality": quality_summary(trials),
+        "targets": target_summaries(result, request),
+    }
+
+
+def _nonnegative_number(value: Any) -> float | None:
+    if type(value) not in (int, float):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def quality_summary(trials: list[Any]) -> dict[str, Any]:
+    values: list[float] = []
+    expected = 0
+    for trial in trials:
+        judging = _mapping(_mapping(_mapping(trial).get("evidence")).get("judge_evidence"))
+        if judging.get("quality_applicable") is not True:
+            continue
+        expected += 1
+        metrics = judging.get("metrics", [])
+        quality = [m for m in metrics if isinstance(m, Mapping) and m.get("kind") == "quality"] if isinstance(metrics, list) else []
+        scores = [_nonnegative_number(m.get("score")) for m in quality if not m.get("error")]
+        valid_scores = [score for score in scores if score is not None and score <= 1]
+        if valid_scores and len(valid_scores) == len(quality):
+            values.append(sum(valid_scores) / len(valid_scores))
+    return {"score": sum(values) / len(values) if values else None, "scored": len(values), "expected": expected}
+
+
+def _agent_duration(trials: list[Any]) -> float | None:
+    values = [_nonnegative_number(_mapping(_mapping(t).get("evidence")).get("agent_duration_seconds")) for t in trials]
+    known = [value for value in values if value is not None]
+    return sum(known) if known and len(known) == len(values) else None
+
+
+def target_summaries(result: Mapping[str, Any], request: Mapping[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    all_trials = result.get("trials", [])
+    if not isinstance(all_trials, list):
+        return rows
+    for target in result.get("targets", []):
+        lane = _mapping(target)
+        trials = [t for t in all_trials if _mapping(t).get("target_id") == lane.get("target_id")]
+        counts, valid = _trial_counts(trials)
+        cases = sorted({str(_mapping(t).get("case_id") or "") for t in trials})
+        rows.append({
+            "target_id": lane.get("target_id"), "backend": lane.get("backend"),
+            "model": lane.get("model"), "reasoning_effort": lane.get("reasoning_effort", ""),
+            "counts": counts, "observed": len(trials),
+            "pass_rate": counts["passed"] / len(trials) if trials and valid else None,
+            "quality": quality_summary(trials), "agent_duration_seconds": _agent_duration(trials),
+            "case_ids": cases, "repetitions": request.get("repetitions", result.get("repetitions")),
+            "cases": [{"case_id": case_id, "counts": _trial_counts(selected)[0],
+                "quality": quality_summary(selected), "agent_duration_seconds": _agent_duration(selected)}
+                for case_id in cases if (selected := [t for t in trials if _mapping(t).get("case_id") == case_id])],
+            "scoring": _mapping(_mapping(result.get("config_snapshot")).get("definition_snapshot")).get("scoring"),
+        })
+    return rows
+
+
+def trial_preview(trial: Mapping[str, Any]) -> dict[str, Any]:
+    evidence = _mapping(trial.get("evidence"))
+    execution = _mapping(evidence.get("execution"))
+    turns = execution.get("turns", [])
+    first = _mapping(turns[0]) if isinstance(turns, list) and turns else {}
+    judging = _mapping(evidence.get("judge_evidence"))
+    return {
+        **{key: trial.get(key) for key in ("trial_id", "case_id", "case_ref", "target_id", "attempt",
+            "outcome", "duration_seconds", "started_at", "stop_reason", "error", "score", "max_score", "passed")},
+        "final_text": str(trial.get("final_text") or "")[:400],
+        "input_preview": str(first.get("input") or "")[:400],
+        "body_available": True, "capture_state": execution.get("state", "not_recorded"),
+        "evidence": {"judge_evidence": {key: judging.get(key) for key in ("quality_applicable", "quality_reason", "metrics", "error")}},
     }

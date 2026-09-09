@@ -26,11 +26,15 @@ _COMMON_SUITE_MODULES = (
 )
 _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("generic-agent", "agent_isolated"): (
+        "chatcopilot.evals.deepeval_engine",
+        "chatcopilot.evals.trial_capture",
         "chatcopilot.evals.capability_executor",
         "chatcopilot.evals.capability_verifiers",
         "chatcopilot.evals.isolated_executor",
     ),
     ("generic-agent", "agent_configured"): (
+        "chatcopilot.evals.deepeval_engine",
+        "chatcopilot.evals.trial_capture",
         "chatcopilot.evals.capability_executor",
         "chatcopilot.evals.capability_verifiers",
         "chatcopilot.evals.fx_oracle",

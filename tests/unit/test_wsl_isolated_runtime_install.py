@@ -134,7 +134,7 @@ def test_console_dependencies_are_an_explicit_locked_extra(tmp_path: Path) -> No
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "uv sync --frozen --python 3.13.15 --extra agent --extra acp --extra console" in completed.stdout
+    assert "uv sync --frozen --python 3.13.15 --extra agent --extra acp --extra console --extra evaluation" in completed.stdout
     assert "ensurepip" not in INSTALLER.read_text(encoding="utf-8")
 
 

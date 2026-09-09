@@ -11,7 +11,7 @@ from chatcopilot.evals.capability_scenarios import (
     CapabilityScenarioContext,
     run_capability_scenario,
 )
-from chatcopilot.evals.capability_verifiers import judge_capability_trial
+from chatcopilot.evals.capability_verifiers import verify_capability_facts
 from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 from chatcopilot.evals.manifest import load_case_definitions, load_suite_manifest
 from chatcopilot.evals.qq_flow_scenarios import run_qq_flow_scenario
@@ -60,7 +60,7 @@ def test_owned_roundtrip_traverses_acp_task_and_client_chain_without_private_inp
         workspace_root=workspace,
     )
     receipt = next(item for item in observation.evidence if item["kind"] == "qq_owned_chain")
-    judge, _judge_evidence = judge_capability_trial(
+    judge, _judge_evidence = verify_capability_facts(
         _case("qq-synthetic-roundtrip"),
         observation,
     )
@@ -131,7 +131,7 @@ def test_attestation_mismatch_records_zero_main_agent_invocations(
     receipt = next(
         item for item in observation.evidence if item["kind"] == "qq_attestation_mismatch"
     )
-    judge, _evidence = judge_capability_trial(_case(case_id), observation)
+    judge, _evidence = verify_capability_facts(_case(case_id), observation)
 
     assert judge.passed is True
     assert receipt["agent_invocation_count"] == 0
@@ -155,7 +155,7 @@ def test_persona_roundtrip_uses_main_agent_tool_then_loads_next_host_prompt_plan
         workspace_root=workspace,
     )
     receipt = next(item for item in observation.evidence if item["kind"] == "qq_persona_flow")
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         _case("qq-persona-persistence-next-turn"),
         observation,
     )
@@ -220,7 +220,7 @@ def test_persona_draft_failure_preserves_old_hash_and_cannot_pass(
         workspace_root=workspace,
     )
     receipt = next(item for item in observation.evidence if item["kind"] == "qq_persona_flow")
-    judge, _evidence = judge_capability_trial(
+    judge, _evidence = verify_capability_facts(
         _case("qq-persona-persistence-next-turn"),
         observation,
     )

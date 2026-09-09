@@ -99,6 +99,8 @@ def bot_env(bot: EvaluationBotRef, repository_root: Path) -> dict[str, str]:
         )
     )
     local_values = normalize_eval_env(local_values)
+    local_values = {key: value for key, value in local_values.items()
+                    if not key.startswith("CHATCOPILOT_EVALUATION_JUDGE_")}
     return _effective_environment_snapshot(local_values)
 
 

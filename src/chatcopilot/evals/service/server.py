@@ -108,6 +108,7 @@ class EvaluationServiceRuntime:
                 bot_id=_optional_text(payload, "bot_id"),
                 target=_optional_text(payload, "target"),
                 status=_optional_text(payload, "status"),
+                **{key: payload[key] for key in ("since", "until", "offset", "limit", "bot_ids") if key in payload},
             )
         if operation == "evaluations.get":
             return self.application.get(
@@ -117,11 +118,13 @@ class EvaluationServiceRuntime:
                     "include_result",
                     default=True,
                 ),
+                **({"include_bodies": _optional_bool(payload, "include_bodies", default=True)} if "include_bodies" in payload else {}),
             )
         if operation == "evaluations.case":
             return self.application.case_detail(
                 _required_text(payload, "evaluation_id"),
                 _required_text(payload, "case_ref"),
+                **{key: payload[key] for key in ("trial_id", "target_id", "attempt") if key in payload},
             )
         if operation == "evaluations.rerun":
             return self.application.clone(

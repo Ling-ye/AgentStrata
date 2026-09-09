@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from chatcopilot.evals.capability_verifiers import judge_capability_trial
+from chatcopilot.evals.capability_verifiers import verify_capability_facts
 from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 from chatcopilot.evals.manifest import load_case_definitions, load_suite_manifest
 from chatcopilot.evals.qq_flow_scenarios import run_qq_flow_scenario
@@ -57,7 +57,7 @@ def test_every_qq_message_flow_scenario_produces_a_passing_structured_receipt(
             runtime=runtime,
             workspace_root=workspace,
         )
-        judge, evidence = judge_capability_trial(definition, observation)
+        judge, evidence = verify_capability_facts(definition, observation)
 
         assert judge.passed is True, (definition.case_id, evidence)
         assert observation.post_state["sentinel_before"] == observation.post_state["sentinel_after"]

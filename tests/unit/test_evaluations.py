@@ -615,6 +615,7 @@ def test_validation_exposes_fingerprinted_executor_targets() -> None:
     assert all(len(item["fingerprint"]) == 64 for item in result["targets"])
 
 
+@pytest.mark.usefixtures("deepeval_judge")
 def test_codex_preflight_uses_explicit_binary_outside_service_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -643,6 +644,7 @@ def test_codex_preflight_uses_explicit_binary_outside_service_path(
     assert "command=available" in executor["detail"]
 
 
+@pytest.mark.usefixtures("deepeval_judge")
 def test_codex_preflight_rejects_unusable_configured_binary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -678,6 +680,7 @@ def test_codex_preflight_rejects_unusable_configured_binary(
         assert "command=missing" in executor["detail"]
 
 
+@pytest.mark.usefixtures("deepeval_judge")
 def test_codex_preflight_rejects_malformed_positional_command_template(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

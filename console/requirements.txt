@@ -9,3 +9,4 @@ mcp-server-git>=0.6
 websockets>=12
 fastapi>=0.110
 uvicorn>=0.29
+deepeval==4.2.2

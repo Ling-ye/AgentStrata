@@ -545,7 +545,7 @@ install_python_env() {
         sync --frozen --python "$PYTHON_VERSION" --extra agent --extra acp
     )
     if [ "$INSTALL_CONSOLE_DEPS" -eq 1 ]; then
-        sync_args+=(--extra console)
+        sync_args+=(--extra console --extra evaluation)
     fi
     sync_args+=(--no-config)
     run "${uv_env[@]}" "$UV_BIN" "${sync_args[@]}"

@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from chatcopilot.evals.capability_verifiers import judge_capability_trial
+from chatcopilot.evals.capability_verifiers import verify_capability_facts
 from chatcopilot.evals.fx_oracle import fetch_latest_usd_cny
 from chatcopilot.evals.manifest import load_case_definitions
 from chatcopilot.evals.models import TrialObservation
@@ -87,6 +87,6 @@ def test_current_fx_verifier_requires_date_source_value_and_independent_oracle()
         ),
     )
 
-    judge, _evidence = judge_capability_trial(definition, observation)
+    judge, _evidence = verify_capability_facts(definition, observation)
 
     assert judge.passed is True

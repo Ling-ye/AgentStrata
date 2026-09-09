@@ -187,6 +187,7 @@ class EvalCaseDefinition:
     policy: EvalCasePolicy
     assertions: tuple[EvalCaseAssertion, ...]
     judge_mode: Literal["all", "any"] = "all"
+    quality: dict[str, Any] = field(default_factory=dict)
     presets: tuple[str, ...] = ()
     severity: Literal["required", "critical", "observational"] = "required"
     resources: tuple[EvalCaseResource, ...] = ()

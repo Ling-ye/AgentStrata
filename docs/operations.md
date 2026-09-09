@@ -413,7 +413,12 @@ HTTP route 由 `chatcopilot.http_routes` registry 发现。registry 为空时健
 
 ## Evaluation
 
-控制台中的「新建评测 / 评测记录 / 任务集」全部通过
+
+Agent 轨道使用 DeepEval 4.2.2。Console 安装/更新流程对账 `evaluation` 可选依赖；开发环境可运行 `python -m pip install -e ".[agent,evaluation,dev]"`。评分模型独立配置，先从 [`evaluation.env.example`](../deploy/wsl/evaluation.env.example) 复制非秘密模板至服务用户的 `~/.config/agentstrata/evaluation.env`，目录使用 `0700`、文件使用 `0600`，填写 `CHATCOPILOT_EVALUATION_JUDGE_MODEL`、`BASE_URL`、`API_KEY` 和可选 `TIMEOUT`（默认 60 秒）。模板不包含默认商业模型或凭据。
+
+Evaluation systemd unit 读取该文件；配置更新按既有维护流程在服务 idle 时应用，不需要修改或重启机器人。命令行独立执行时显式提供同名环境变量。预检缺少评分配置会阻止创建正式 Agent 评测；不会借用被测模型。每次判分也受 Case 和 Evaluation 剩余时间约束。DeepEval 只使用本地 SDK，结果留在现有 Evaluation 根；正常模型 Provider 调用费用与 Agent 测试调用分开记录。
+
+控制台中的「开始测试 / 运行记录 / 进步趋势」通过
 `chatcopilot-evaluation.service` 执行。服务是 activity claim、lifecycle state 和
 managed worker 的唯一 owner；Console 只是 UI/BFF。先检查本机服务：
 

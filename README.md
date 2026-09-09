@@ -245,7 +245,7 @@ and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.m
 | Capabilities | Local tool packs; in-process web search; reviewed MCP bindings; RAG; memory; private Wiki |
 | Operations | React/FastAPI Console BFF; diagnostics; task/context observability; logs |
 | Deployment | Linux / WSL; Console and Evaluation systemd user services; desired-state Docker infrastructure |
-| Evaluation | Console has two manual tracks: a 25-Case direct-Agent catalog with a 23-Case default `full`, and 7 legacy synthetic QQ message-flow Cases; benchmark/Profile adapters remain available from CLI |
+| Evaluation | DeepEval-backed Agent scoring, readable Case inputs/outputs, and freely grouped progress trends. Console has two manual tracks: a 25-Case direct-Agent catalog with a 23-Case default `full`, and 7 legacy synthetic QQ message-flow Cases; benchmark/Profile adapters remain available from CLI |
 
 The direct-Agent track bypasses ACP and platform transport. The existing
 synthetic QQ message-flow track exercises the pre-Gateway Relay/attestation/ACP
@@ -260,9 +260,10 @@ Third-party MCP servers and Skills are not downloaded, installed, or enabled
 automatically. Review source, license, command, secret use, and remote write
 behavior before adding a binding.
 
-The Evaluation service is part of this repository and release. It does not
-bundle an external evaluation engine, experiment tracker, remote evaluator, or
-second report store; those integrations require a separate reviewed design.
+The Evaluation service is part of this repository and release. Direct Agent
+scoring uses the pinned DeepEval SDK inside isolated Trial processes, with an
+independently configured judge model. It does not add an experiment tracker,
+remote evaluation scheduler, or second report store.
 Console-only restarts leave managed evaluations running. Code updates require
 an atomic service-owned maintenance lease: the service proves idle and blocks
 new Evaluations for the entire build and restart window, so a new supervisor
@@ -326,7 +327,7 @@ files and private reports never belong in Git.
 ## Development
 
 ```bash
-python -m pip install -e ".[agent,acp,dev]"
+python -m pip install -e ".[agent,acp,dev,evaluation]"
 .venv/bin/python scripts/check_repo.py fast
 ```
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeEvaluation } from "./model";
-import { evaluationSuiteId, normalizeInsights, rateLabel, revisionLabel, trendSeries, versionChanges } from "./insightsModel";
+import { evaluationSuiteId, normalizeInsights, rateLabel, revisionLabel, versionChanges } from "./insightsModel";
 
 const record = (id: string, time: string, overrides: Record<string, unknown> = {}) => normalizeEvaluation({
   evaluation_id: id, created_at: time, kind: "suite", status: "completed",
@@ -24,21 +24,6 @@ describe("evaluation progress presentation", () => {
     const item = record("a", "2026-09-01T00:00:00Z");
     expect(evaluationSuiteId(item)).toBe("agentstrata-capabilities-v1");
     expect(item.result).toBeNull();
-  });
-  it("orders points chronologically and keeps different benchmark conditions separate", () => {
-    const old = record("old", "2026-09-01T00:00:00Z");
-    const recent = record("recent", "2026-09-03T00:00:00Z");
-    const different = record("other", "2026-09-02T00:00:00Z", { insights: { series_key: "different-model", trend_eligible: true } });
-    const groups = trendSeries([recent, different, old]);
-    expect(groups[0].records.map(item => item.evaluation_id)).toEqual(["old", "recent"]);
-    expect(groups[1].records.map(item => item.evaluation_id)).toEqual(["other"]);
-  });
-  it("excludes partial and unidentified records and handles a single point", () => {
-    const full = record("full", "2026-09-01T00:00:00Z");
-    const partial = record("partial", "2026-09-02T00:00:00Z", { insights: { series_key: "fixture-series", trend_eligible: false } });
-    const invalidTime = record("bad-time", "unknown");
-    expect(trendSeries([full, partial, invalidTime])[0].records.map(item => item.evaluation_id)).toEqual(["full"]);
-    expect(trendSeries([partial])).toEqual([]);
   });
   it("labels unknown historical versions and annotates code/configuration changes", () => {
     const before = record("before", "2026-09-01T00:00:00Z");

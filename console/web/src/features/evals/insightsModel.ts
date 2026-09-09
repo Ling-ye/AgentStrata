@@ -1,6 +1,14 @@
 import type { EvaluationRecord } from "./model";
 
 export type OutcomeCounts = Record<"passed" | "failed" | "error" | "skipped", number>;
+export interface QualitySummary { score: number | null; scored: number; expected: number }
+export interface TargetSummary {
+  target_id: string; backend: string; model: string; reasoning_effort: string;
+  counts: OutcomeCounts; observed: number; pass_rate: number | null;
+  quality: QualitySummary; agent_duration_seconds: number | null;
+  case_ids: string[]; repetitions: number; scoring: Record<string, unknown>;
+  cases: Array<{ case_id: string; counts: OutcomeCounts; quality: QualitySummary; agent_duration_seconds: number | null }>;
+}
 export interface EvaluationInsights {
   counts: OutcomeCounts | null;
   observed: number | null;
@@ -15,6 +23,8 @@ export interface EvaluationInsights {
   exclusion_reason: string;
   configuration_fingerprint: string | null;
   benchmark_fingerprint: string | null;
+  quality: QualitySummary;
+  targets: TargetSummary[];
 }
 export interface SourceRevision {
   status: string;
@@ -33,6 +43,22 @@ function counts(value: unknown): OutcomeCounts | null {
   if (!keys.every(key => number(item[key]) !== null && Number.isInteger(item[key]))) return null;
   return Object.fromEntries(keys.map(key => [key, item[key]])) as OutcomeCounts;
 }
+function quality(value: unknown): QualitySummary {
+  const item = object(value);
+  return { score: number(item.score), scored: number(item.scored) ?? 0, expected: number(item.expected) ?? 0 };
+}
+function targetSummary(value: unknown): TargetSummary {
+  const item = object(value);
+  return { target_id: text(item.target_id) ?? "", backend: text(item.backend) ?? "", model: text(item.model) ?? "",
+    reasoning_effort: text(item.reasoning_effort) ?? "", counts: counts(item.counts) ?? { passed: 0, failed: 0, error: 0, skipped: 0 },
+    observed: number(item.observed) ?? 0, pass_rate: number(item.pass_rate), quality: quality(item.quality),
+    agent_duration_seconds: number(item.agent_duration_seconds), repetitions: number(item.repetitions) ?? 1,
+    case_ids: Array.isArray(item.case_ids) ? item.case_ids.filter((x): x is string => typeof x === "string") : [],
+    scoring: object(item.scoring), cases: Array.isArray(item.cases) ? item.cases.map(raw => {
+      const c = object(raw); return { case_id: text(c.case_id) ?? "", counts: counts(c.counts) ?? { passed: 0, failed: 0, error: 0, skipped: 0 },
+        quality: quality(c.quality), agent_duration_seconds: number(c.agent_duration_seconds) };
+    }) : [] };
+}
 export function normalizeInsights(value: unknown): EvaluationInsights {
   const item = object(value);
   return {
@@ -45,6 +71,7 @@ export function normalizeInsights(value: unknown): EvaluationInsights {
     series_key: text(item.series_key), trend_eligible: item.trend_eligible === true,
     exclusion_reason: text(item.exclusion_reason) ?? "missing_definition",
     configuration_fingerprint: text(item.configuration_fingerprint), benchmark_fingerprint: text(item.benchmark_fingerprint),
+    quality: quality(item.quality), targets: Array.isArray(item.targets) ? item.targets.map(targetSummary) : [],
   };
 }
 export function normalizeSourceRevision(value: unknown): SourceRevision {
@@ -84,20 +111,6 @@ export function dateLabel(value: string | null | undefined): string {
 }
 export function durationLabel(value: number | null): string {
   return value === null ? "—" : value < 60 ? `${value.toFixed(1)} 秒` : `${(value / 60).toFixed(1)} 分`;
-}
-export interface TrendSeries { key: string; records: EvaluationRecord[]; label: string }
-export function trendSeries(records: EvaluationRecord[]): TrendSeries[] {
-  const groups = new Map<string, EvaluationRecord[]>();
-  for (const record of records) {
-    const key = record.insights.series_key;
-    if (!key || !record.insights.trend_eligible || !Number.isFinite(recordTime(record))) continue;
-    const items = groups.get(key) ?? []; items.push(record); groups.set(key, items);
-  }
-  return [...groups].map(([key, items]) => {
-    items.sort((a, b) => recordTime(a) - recordTime(b) || a.evaluation_id.localeCompare(b.evaluation_id));
-    const last = items[items.length - 1];
-    return { key, records: items, label: `${modelLabel(last)} · ${last.insights.planned ?? "—"} 次 · ${key.slice(0, 8)} · ${items.length} 条` };
-  }).sort((a, b) => recordTime(b.records[b.records.length - 1]) - recordTime(a.records[a.records.length - 1]));
 }
 export function versionChanges(previous: EvaluationRecord | undefined, current: EvaluationRecord): string[] {
   if (!previous) return [];

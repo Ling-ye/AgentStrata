@@ -1,102 +1,134 @@
 import { useMemo, useState } from "react";
-import { Alert, Button, Empty, Select, Space, Table, Tag, Typography } from "@arco-design/web-react";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { Alert, Button, Checkbox, Empty, Select, Space, Spin, Table, Tag, Typography } from "@arco-design/web-react";
 import type { EvaluationRecord } from "./model";
-import { dateLabel, durationLabel, evaluationSuiteId, EXCLUSION_LABELS, rateLabel, recordTime, revisionLabel, trendSeries, versionChanges } from "./insightsModel";
+import { evaluationApi } from "./evaluationApi";
+import { dateLabel, durationLabel, evaluationSuiteId, EXCLUSION_LABELS, rateLabel, revisionLabel } from "./insightsModel";
+import { buildTrendPoints, groupTrendPoints, linePaths, pointModel, pointScale, pointValue, type SplitDimension, type TrendMetric, type TrendPoint } from "./trendModel";
 
 const { Text } = Typography;
-const SUITES = [
-  { value: "agentstrata-capabilities-v1", label: "Agent 能力" },
-  { value: "agentstrata-qq-message-flow-v1", label: "QQ 链路" },
-];
-export default function EvaluationTrends({ records, onOpen }: { records: EvaluationRecord[]; onOpen: (record: EvaluationRecord) => void }) {
-  const [suite, setSuite] = useState(SUITES[0].value);
+const COLORS = ["#165dff", "#00a870", "#d46b08", "#722ed1", "#d91ad9", "#08979c", "#cf1322"];
+const METRICS = [{ value: "pass_rate", label: "通过率" }, { value: "quality", label: "质量分" }, { value: "duration", label: "Agent 执行耗时" }];
+
+export default function EvaluationTrends({ initialBot, bots, visible, onOpen }: {
+  initialBot: string; bots: string[]; visible: boolean; onOpen: (record: EvaluationRecord) => void;
+}) {
+  const [selectedBots, setSelectedBots] = useState<string[] | null>(null);
   const [days, setDays] = useState(30);
-  const [seriesKey, setSeriesKey] = useState("");
-  const [metric, setMetric] = useState("pass_rate");
-  const [focusedId, setFocusedId] = useState("");
-  const scoped = useMemo(() => records.filter(record => evaluationSuiteId(record) === suite
-    && (!days || recordTime(record) >= Date.now() - days * 86400000)), [records, suite, days]);
-  const series = useMemo(() => trendSeries(scoped), [scoped]);
-  const activeSeries = series.find(item => item.key === seriesKey) ?? series[0];
-  const points = activeSeries?.records ?? [];
-  const focused = points.find(record => record.evaluation_id === focusedId) ?? points[points.length - 1];
-  const valueOf = (record: EvaluationRecord) => metric === "pass_rate" ? record.insights.pass_rate === null ? null : record.insights.pass_rate * 100 : record.duration_seconds;
-  const chartPoints = points.slice(-200);
-  const values = chartPoints.map(valueOf).filter((value): value is number => value !== null && value >= 0);
-  const max = metric === "pass_rate" ? 100 : Math.max(1, ...values) * 1.1;
-  const start = chartPoints.length ? recordTime(chartPoints[0]) : 0;
-  const end = chartPoints.length ? recordTime(chartPoints[chartPoints.length - 1]) : 0;
-  const x = (record: EvaluationRecord) => end === start ? 450 : 55 + (recordTime(record) - start) / (end - start) * 795;
-  const y = (value: number) => 210 - value / max * 180;
-  const segments: string[] = [];
-  let path = "";
-  for (const record of chartPoints) {
-    const value = valueOf(record);
-    if (value === null) { if (path) segments.push(path); path = ""; continue; }
-    path += `${path ? " L" : "M"}${x(record)},${y(value)}`;
-  }
-  if (path) segments.push(path);
-  const excluded = scoped.filter(record => !record.insights.trend_eligible || !Number.isFinite(recordTime(record)));
-  const first = points[0], last = points[points.length - 1];
-  const change = first && last && first.insights.pass_rate !== null && last.insights.pass_rate !== null
-    ? (last.insights.pass_rate - first.insights.pass_rate) * 100 : null;
+  const [anchor, setAnchor] = useState(() => Date.now());
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [suite, setSuite] = useState("agentstrata-capabilities-v1");
+  const [models, setModels] = useState<string[]>([]);
+  const [scales, setScales] = useState<string[]>([]);
+  const [cases, setCases] = useState<string[]>([]);
+  const [dimensions, setDimensions] = useState<SplitDimension[]>(["agent", "model"]);
+  const [metric, setMetric] = useState<TrendMetric>("pass_rate");
+  const [focusedKey, setFocusedKey] = useState("");
+  const botIds = selectedBots ?? (initialBot ? [initialBot] : []);
+  const from = days === -1 ? Date.parse(customFrom) : days ? anchor - days * 86400000 : null;
+  const to = days === -1 ? Date.parse(customTo) : anchor;
+  const validRange = (from === null || Number.isFinite(from)) && Number.isFinite(to) && (from === null || from <= to);
+  const since = from !== null && Number.isFinite(from) ? new Date(from).toISOString() : undefined;
+  const until = Number.isFinite(to) ? new Date(to).toISOString() : undefined;
+  const query = useInfiniteQuery({
+    queryKey: ["evaluation-trends", botIds, since, until],
+    initialPageParam: 0,
+    queryFn: ({ pageParam, signal }) => evaluationApi.listPage({ since, until, bot_ids: botIds, offset: pageParam, limit: 51 }, signal),
+    getNextPageParam: (last, _pages, offset) => last.length > 50 ? offset + 50 : undefined,
+    enabled: visible && validRange,
+    staleTime: 30000,
+  });
+  const records = useMemo(() => {
+    const unique = new Map<string, EvaluationRecord>();
+    for (const page of query.data?.pages ?? []) for (const record of page.slice(0, 50)) unique.set(record.evaluation_id, record);
+    return [...unique.values()].filter(record => evaluationSuiteId(record) === suite);
+  }, [query.data, suite]);
+  const allPoints = useMemo(() => buildTrendPoints(records), [records]);
+  const modelOptions = [...new Set(allPoints.map(pointModel))];
+  const scaleOptions = [...new Set(allPoints.map(pointScale))];
+  const caseOptions = [...new Set(allPoints.flatMap(p => p.case_ids))].sort();
+  const points = useMemo(() => buildTrendPoints(records, cases).filter(p => (!models.length || models.includes(pointModel(p)))
+    && (!scales.length || scales.includes(pointScale(p)))), [records, cases, models, scales]);
+  const lines = useMemo(() => groupTrendPoints(points, dimensions), [points, dimensions]);
+  const focused = points.find(point => point.key === focusedKey) ?? points[points.length - 1];
+  const numeric = points.map(p => pointValue(p, metric)).filter((v): v is number => v !== null);
+  const maximum = metric === "duration" ? Math.max(1, ...numeric) * 1.1 : 1;
+  const start = points[0]?.timestamp ?? anchor;
+  const end = points[points.length - 1]?.timestamp ?? anchor;
+  const x = (point: TrendPoint) => end === start ? 450 : 55 + (point.timestamp - start) / (end - start) * 795;
+  const y = (value: number) => 210 - value / maximum * 180;
+  const labelValue = (point: TrendPoint) => metric === "duration" ? durationLabel(pointValue(point, metric)) : rateLabel(pointValue(point, metric));
+  const excluded = records.filter(record => !record.insights.trend_eligible);
+  const options = (values: string[]) => values.map(value => ({ value, label: value }));
   return <div className="eval-trends">
-    <div className="eval-history-filters">
-      <Select aria-label="趋势测试方向" value={suite} onChange={value => { setSuite(value); setSeriesKey(""); }} options={SUITES} />
-      <Select aria-label="趋势时间范围" value={days} onChange={setDays} options={[
-        { value: 7, label: "最近 7 天" }, { value: 30, label: "最近 30 天" }, { value: 90, label: "最近 90 天" }, { value: 0, label: "全部时间" },
-      ]} />
-      <Select aria-label="趋势测试条件" className="eval-series-select" value={activeSeries?.key} placeholder="暂无可用测试条件" onChange={setSeriesKey}
-        options={series.map(item => ({ value: item.key, label: item.label }))} />
-      <Select aria-label="趋势指标" value={metric} onChange={setMetric} options={[{ value: "pass_rate", label: "通过率" }, { value: "duration", label: "执行耗时" }]} />
+    <div className="eval-trend-controls">
+      <label>时间范围<Select aria-label="趋势时间范围" value={days} onChange={setDays} options={[
+        { value: 7, label: "最近 7 天" }, { value: 30, label: "最近 30 天" }, { value: 90, label: "最近 90 天" },
+        { value: 0, label: "全部时间" }, { value: -1, label: "自定义" },
+      ]} /></label>
+      <label>机器人<Select aria-label="趋势机器人" mode="multiple" value={botIds} onChange={setSelectedBots} allowClear placeholder="全部机器人" options={options(bots)} /></label>
+      <label>测试方向<Select aria-label="趋势测试方向" value={suite} onChange={setSuite} options={[
+        { value: "agentstrata-capabilities-v1", label: "Agent 能力" }, { value: "agentstrata-qq-message-flow-v1", label: "QQ 链路" },
+      ]} /></label>
+      <label>模型<Select aria-label="趋势模型" mode="multiple" value={models} onChange={setModels} options={options(modelOptions)} allowClear placeholder="全部模型" /></label>
+      <label>测试规模<Select aria-label="趋势测试规模" mode="multiple" value={scales} onChange={setScales} options={options(scaleOptions)} allowClear placeholder="全部规模" /></label>
+      <label>测试点<Select aria-label="趋势测试点" mode="multiple" value={cases} onChange={setCases} options={options(caseOptions)} allowClear placeholder="全部测试点" /></label>
     </div>
-    {points.length ? <>
-      <div className="eval-trend-totals">
-        <div><span>完整评测</span><strong>{points.length} 次</strong></div>
-        <div><span>最近通过率</span><strong>{rateLabel(last.insights.pass_rate)}</strong></div>
-        <div><span>较本范围首条</span><strong>{points.length > 1 && change !== null ? `${change > 0 ? "+" : ""}${change.toFixed(1)} 个百分点` : "—"}</strong></div>
-      </div>
+    {days === -1 && <Space wrap><label>开始时间<input aria-label="趋势开始时间" type="datetime-local" value={customFrom} onChange={e => setCustomFrom(e.target.value)} /></label>
+      <label>结束时间<input aria-label="趋势结束时间" type="datetime-local" value={customTo} onChange={e => setCustomTo(e.target.value)} /></label></Space>}
+    <Space wrap className="eval-split-controls"><Text>按以下维度拆线</Text>
+      {([['agent', 'Agent'], ['model', '模型'], ['scale', '测试规模']] as const).map(([key, label]) => <Checkbox key={key} checked={dimensions.includes(key)}
+        onChange={checked => setDimensions(current => checked ? [...current, key] : current.filter(d => d !== key))}>{label}</Checkbox>)}
+      <Select aria-label="趋势指标" style={{ width: 160 }} value={metric} onChange={setMetric} options={METRICS} />
+      <Button onClick={() => { setAnchor(Date.now()); if (days === -1) void query.refetch(); }}>刷新</Button>
+    </Space>
+    {!validRange && <Alert type="info" content="请选择有效的开始和结束时间。" />}
+    {query.isError && <Alert type="error" content={String(query.error)} action={<Button onClick={() => void query.refetch()}>重试</Button>} />}
+    {query.isLoading && validRange ? <Spin /> : points.length ? <>
+      <Space wrap>{lines.map((line, index) => <Tag key={line.key} color={COLORS[index % COLORS.length]}>{line.label} · {line.points.length} 点</Tag>)}</Space>
       <div className="eval-trend-chart">
-        <svg viewBox="0 0 900 250" role="group" aria-label={metric === "pass_rate" ? "评测通过率变化曲线" : "评测耗时变化曲线"}>
-          {[0, 0.25, 0.5, 0.75, 1].map(ratio => <g key={ratio}>
-            <line x1="55" x2="850" y1={y(ratio * max)} y2={y(ratio * max)} className="eval-chart-grid" />
-            <text x="45" y={y(ratio * max) + 4} textAnchor="end">{metric === "pass_rate" ? `${ratio * 100}%` : `${(ratio * max).toFixed(0)}s`}</text>
+        <svg viewBox="0 0 900 250" role="group" aria-label="评测进步曲线">
+          {[0, .25, .5, .75, 1].map(ratio => <g key={ratio}>
+            <line x1="55" x2="850" y1={y(ratio * maximum)} y2={y(ratio * maximum)} className="eval-chart-grid" />
+            <text x="45" y={y(ratio * maximum) + 4} textAnchor="end">{metric === "duration" ? `${(ratio * maximum).toFixed(0)}s` : `${ratio * 100}%`}</text>
           </g>)}
-          {segments.map((d, index) => <path d={d} key={index} className="eval-chart-line" />)}
-          {chartPoints.map(record => {
-            const value = valueOf(record); if (value === null) return null;
-            const label = `${dateLabel(record.started_at || record.created_at)}，${revisionLabel(record)}，${metric === "pass_rate" ? rateLabel(record.insights.pass_rate) : durationLabel(record.duration_seconds)}`;
-            return <circle key={record.evaluation_id} cx={x(record)} cy={y(value)} r={focused?.evaluation_id === record.evaluation_id ? 7 : 5}
-              className="eval-chart-point" role="button" tabIndex={0} aria-label={`查看评测 ${record.evaluation_id}，${label}`}
-              onMouseEnter={() => setFocusedId(record.evaluation_id)} onFocus={() => setFocusedId(record.evaluation_id)}
-              onClick={() => onOpen(record)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(record); } }}>
-              <title>{label}</title>
-            </circle>;
-          })}
+          {lines.map((line, index) => <g key={line.key}>
+            {linePaths(line.points, metric, x, y).map((d, pathIndex) => <path key={pathIndex} d={d} className="eval-chart-line" style={{ stroke: COLORS[index % COLORS.length] }} />)}
+            {line.points.map(point => pointValue(point, metric) === null ? null : <circle key={point.key} cx={x(point)} cy={y(pointValue(point, metric)!)}
+              r={point.key === focused?.key ? 7 : 5} className="eval-chart-point" style={{ fill: COLORS[index % COLORS.length] }} role="button" tabIndex={0}
+              aria-label={`查看评测 ${point.record.evaluation_id} ${point.target_id} ${labelValue(point)}`}
+              onMouseEnter={() => setFocusedKey(point.key)} onFocus={() => setFocusedKey(point.key)} onClick={() => onOpen(point.record)}
+              onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(point.record); } }}>
+              <title>{`${point.record.bot_id} · ${pointModel(point)} · ${pointScale(point)}\n${dateLabel(point.record.started_at || point.record.created_at)}\n${point.record.source_revision.commit || 'Git 未记录'}\n${labelValue(point)}`}</title>
+            </circle>)}
+          </g>)}
           <text x="55" y="238">{new Date(start).toLocaleDateString("zh-CN")}</text>
           <text x="850" y="238" textAnchor="end">{new Date(end).toLocaleDateString("zh-CN")}</text>
         </svg>
-        {focused && <div className="eval-trend-point-detail">
-          <Space wrap><Text>{dateLabel(focused.started_at || focused.created_at)}</Text><Tag>{revisionLabel(focused)}</Tag>
-            <Text>通过 {focused.insights.counts?.passed} / {focused.insights.observed} · {rateLabel(focused.insights.pass_rate)}</Text>
-            <Button size="small" type="text" onClick={() => onOpen(focused)}>查看本次评测</Button></Space>
-        </div>}
+        {!numeric.length && <Empty description="所选记录未采集此指标。" />}
+        {focused && <div className="eval-trend-point-detail"><Space wrap>
+          <Text>{dateLabel(focused.record.started_at || focused.record.created_at)}</Text><Text>{focused.record.bot_id} / {focused.backend}</Text>
+          <Text>{pointModel(focused)} · {pointScale(focused)}</Text><Tag>{revisionLabel(focused.record)}</Tag>
+          <Text>通过 {focused.counts.passed} / {focused.observed}</Text><Text>质量 {rateLabel(focused.quality.score)} · 已评分 {focused.quality.scored} / {focused.quality.expected}</Text>
+          <Text>评分模型：{String((focused.scoring.judge as Record<string, unknown> | undefined)?.model ?? "未记录")}</Text>
+          <Button type="text" onClick={() => onOpen(focused.record)}>查看本次评测</Button>
+        </Space></div>}
       </div>
-      <Text type="secondary">同一测试条件内按执行时间排列，{points.length > 200 ? "曲线显示最近 200 个点，完整记录见下表。" : "每个点对应一次完整评测。"}代码和配置变化见记录标记；模型提供方更新及外部数据变化仍可能影响结果。</Text>
-      <Table rowKey="evaluation_id" size="small" data={[...points].reverse()} pagination={{ pageSize: 10 }} scroll={{ x: 1050 }} columns={[
-        { title: "评测时间", width: 190, render: (_, record) => <Button type="text" size="small" onClick={() => onOpen(record)}>{dateLabel(record.started_at || record.created_at)}</Button> },
-        { title: "通过率", width: 100, render: (_, record) => rateLabel(record.insights.pass_rate) },
-        { title: "通过 / 全部", width: 115, render: (_, record) => `${record.insights.counts?.passed ?? "—"} / ${record.insights.observed ?? "—"}` },
-        { title: "Git 版本", width: 220, render: (_, record) => <span title={record.source_revision.commit ?? ""}>{revisionLabel(record)}</span> },
-        { title: "配置 / 实现", width: 140, render: (_, record) => <code title={record.insights.configuration_fingerprint ?? ""}>{record.insights.configuration_fingerprint?.slice(0, 10) || "未记录"}</code> },
-        { title: "耗时", width: 110, render: (_, record) => durationLabel(record.duration_seconds) },
-        { title: "变化", width: 230, render: (_, record) => versionChanges(points[points.indexOf(record) - 1], record).join(" · ") || "—" },
+      <Text type="secondary">已加载 {points.length} 个测试点。每点为一次评测中的一个执行目标；版本和测试条件变化保留在记录中。</Text>
+      <Table rowKey="key" size="small" data={[...points].reverse()} pagination={{ pageSize: 10 }} scroll={{ x: 1000 }} columns={[
+        { title: "评测时间", width: 180, render: (_, p) => <Button size="small" type="text" onClick={() => onOpen(p.record)}>{dateLabel(p.record.started_at || p.record.created_at)}</Button> },
+        { title: "Agent / 模型", width: 230, render: (_, p) => `${p.record.bot_id} / ${p.backend} / ${pointModel(p)}` },
+        { title: "规模", width: 115, render: (_, p) => pointScale(p) },
+        { title: "通过率", width: 110, render: (_, p) => `${rateLabel(p.pass_rate)} (${p.counts.passed}/${p.observed})` },
+        { title: "质量分", width: 140, render: (_, p) => `${rateLabel(p.quality.score)} (${p.quality.scored}/${p.quality.expected})` },
+        { title: "Git 版本", width: 190, render: (_, p) => <span title={p.record.source_revision.commit ?? ""}>{revisionLabel(p.record)}</span> },
+        { title: "Agent 耗时", width: 120, render: (_, p) => durationLabel(p.agent_duration_seconds) },
       ]} />
-    </> : <Empty description="该范围内没有可绘制的完整评测。完成相同测试条件的评测后，这里会记录变化。" />}
-    {excluded.length > 0 && <details className="eval-excluded"><summary>{excluded.length} 条记录未进入曲线</summary>
-      {excluded.map(record => <div key={record.evaluation_id}><Button type="text" size="small" onClick={() => onOpen(record)}>{dateLabel(record.created_at)}</Button>
-        <Text>{EXCLUSION_LABELS[record.insights.exclusion_reason] || "缺少有效时间"} · {record.evaluation_id}</Text></div>)}
-    </details>}
-    {points.length === 1 && <Alert type="info" content="当前条件只有一次完整评测；再次执行相同测试后即可观察变化。" />}
+    </> : !query.isLoading && <Empty description="当前范围没有可绘制的完整评测。可调整筛选或继续加载记录。" />}
+    {query.hasNextPage && <Button loading={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>加载更多历史记录</Button>}
+    {excluded.length > 0 && <details><summary>{excluded.length} 条记录未进入曲线</summary>{excluded.map(record => <div key={record.evaluation_id}>
+      <Button type="text" onClick={() => onOpen(record)}>{dateLabel(record.created_at)}</Button><Text>{EXCLUSION_LABELS[record.insights.exclusion_reason] || "记录不完整"}</Text>
+    </div>)}</details>}
   </div>;
 }

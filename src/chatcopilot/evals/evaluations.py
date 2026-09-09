@@ -604,7 +604,10 @@ def _execute_trial_in_fork(
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     try:
         os.setsid()
-        trial = executor(request)
+        from chatcopilot.evals.trial_capture import capture
+
+        with capture(lambda observation: _send_trial_ipc_frame(sender, {"kind": "observation", "execution": observation})):
+            trial = executor(request)
         if not isinstance(trial, EvaluationTrial):
             raise TypeError("Trial executor did not return EvaluationTrial")
         _assert_bounded_trial(trial)
@@ -639,13 +642,17 @@ def _execute_trial_in_fork(
         sender.close()
 
 
-def _await_inner_trial_frame(receiver: Any, executor_pid: int) -> dict[str, Any] | None:
+def _await_inner_trial_frame(receiver: Any, executor_pid: int, outer_sender: Any = None) -> dict[str, Any] | None:
     """Wait for inner evidence while remaining responsive to parent death."""
 
     while not _trial_supervisor_stop_requested:
         try:
             if receiver.poll(0.05):
-                return _recv_trial_ipc_frame(receiver)
+                frame = _recv_trial_ipc_frame(receiver)
+                if frame.get("kind") == "observation" and outer_sender is not None:
+                    _send_trial_ipc_frame(outer_sender, frame)
+                    continue
+                return frame
         except (EOFError, OSError, ValueError) as exc:
             return {
                 "kind": "error",
@@ -724,7 +731,7 @@ def _trial_process_main(
                 os._exit(0)
         inner_sender.close()
         inner_sender = None
-        frame = _await_inner_trial_frame(inner_receiver, executor_pid)
+        frame = _await_inner_trial_frame(inner_receiver, executor_pid, sender)
         cleanup_attempted = True
         try:
             _cleanup_trial_subtree()
@@ -829,6 +836,7 @@ def _execute_supervised_trial(
     budget: _TrialExecutionBudget,
     cancel_check: CancelCheck | None,
     executor: TrialExecutor | None = None,
+    observation_callback: Callable[[dict[str, Any]], None] | None = None,
     _context: Any | None = None,
 ) -> EvaluationTrial:
     """Execute one production Trial in a spawn-isolated, killable process."""
@@ -891,6 +899,13 @@ def _execute_supervised_trial(
                         _terminate_trial_process(process, receiver=receiver)
                         raise RuntimeError("supervised Trial returned an invalid ready frame")
                     ready = True
+                    continue
+                if kind == "observation":
+                    execution = message.get("execution")
+                    if not ready or set(message) != {"kind", "execution"} or not isinstance(execution, dict):
+                        raise RuntimeError("supervised Trial returned an invalid observation")
+                    if observation_callback is not None:
+                        observation_callback(execution)
                     continue
                 if kind in {"startup_error", "error", "definition_drift"}:
                     _await_clean_trial_supervisor_exit(process)
@@ -980,12 +995,23 @@ def _execute_trial_with_artifact_guard(
         evaluation_id=request.evaluation_id,
         claim_path=authority_claim_path,
     ) as guard:
+        def publish(execution: dict[str, Any]) -> None:
+            turns = execution.get("turns")
+            if not isinstance(turns, list) or len(turns) > 64 or not all(isinstance(t, dict) for t in turns):
+                raise ValueError("invalid Trial execution observation")
+            payload = {"evaluation_id": request.evaluation_id, "trial_id": _trial_id(request),
+                "case_id": request.case.case_id, "case_ref": f"{request.suite_id}:{request.case.case_id}",
+                "target_id": request.target.target_id, "attempt": request.attempt,
+                "execution": execution, "captured_at": _utc_now()}
+            guard.publish_observation(_sanitize(payload, output=request.output))
+
         try:
             trial = (
                 _execute_supervised_trial(
                     request,
                     budget=budget,
                     cancel_check=cancel_check,
+                    observation_callback=publish,
                 )
                 if supervise
                 else execute(request)
@@ -2043,6 +2069,16 @@ def _validate_suite(
         )
         return ()
 
+    if manifest.track == "agent" and not request.dry_run:
+        from chatcopilot.evals.deepeval_engine import preflight
+
+        try:
+            preflight([capability_definitions[case.case_id] for case in selected])
+            checks.append(_check("deepeval", "DeepEval 与独立评分模型", True, "ready"))
+        except ValueError as exc:
+            checks.append(_check("deepeval", "DeepEval 与独立评分模型", False, str(exc), "安装 evaluation 依赖并配置独立评分模型"))
+            return ()
+
     if request.dry_run:
         target = _make_target(
             target_id="dry-run",
@@ -2524,10 +2560,14 @@ def _trial_from_case_result(
     result: EvalCaseResult,
 ) -> EvaluationTrial:
     metadata = result.metadata if isinstance(result.metadata, dict) else {}
-    usage = metadata.get("usage_totals")
+    usage = metadata.get("usage_totals", metadata.get("usage"))
     if not isinstance(usage, dict):
         usage = {}
     evidence = {key: value for key, value in metadata.items() if key != "usage_totals"}
+    quality = _case_definition(request.case).get("quality", {})
+    if isinstance(quality, dict) and quality:
+        evidence.setdefault("judge_evidence", {"quality_applicable": quality.get("enabled"),
+            "quality_reason": quality.get("reason", ""), "metrics": [], "error": result.error})
     return EvaluationTrial(
         trial_id=_trial_id(request),
         evaluation_id=request.evaluation_id,
@@ -2809,6 +2849,12 @@ def _validate_managed_bootstrap(
         from chatcopilot.evals.source_revision import validate_source_revision
 
         expected["source_revision"] = validate_source_revision(stored_request["source_revision"])
+    if "scoring" in stored_request:
+        from chatcopilot.evals.deepeval_engine import scoring_snapshot
+
+        if not isinstance(request, SuiteEvaluationRequest) or request.suite != "agentstrata-capabilities-v1":
+            raise ValueError("scoring snapshot is only valid for direct Agent evaluations")
+        expected["scoring"] = scoring_snapshot()
     if (
         not isinstance(stored_request.get("created_at"), str)
         or not str(stored_request["created_at"]).strip()
@@ -3871,6 +3917,17 @@ def _error_trial(
     exc: Exception,
 ) -> EvaluationTrial:
     now = _utc_now()
+    execution: dict[str, Any] = {}
+    path = request.output / "observation.json"
+    if path.exists():
+        observed = _read_private_json_object(path, "Trial observation")
+        if observed.get("evaluation_id") != request.evaluation_id:
+            raise ValueError("Trial observation is outside Evaluation")
+        if observed.get("trial_id") == _trial_id(request):
+            execution = observed.get("execution", {})
+    turns = execution.get("turns", [])
+    last = turns[-1] if turns and isinstance(turns[-1], dict) and turns[-1].get("completed") else {}
+    quality = _case_definition(request.case).get("quality", {})
     return EvaluationTrial(
         trial_id=_trial_id(request),
         evaluation_id=request.evaluation_id,
@@ -3894,6 +3951,10 @@ def _error_trial(
         attempt=request.attempt,
         order=request.order,
         outcome="error",
+        final_text=str(last.get("final_text") or ""), stop_reason=str(last.get("stop_reason") or ""),
+        evidence={"execution": execution, "judge_evidence": {"quality_applicable": quality.get("enabled"),
+            "quality_reason": quality.get("reason", ""), "metrics": [],
+            "error": str(exc) if execution.get("phase") == "judging" else ""}},
         started_at=now,
         finished_at=now,
         error=f"{type(exc).__name__}: {exc}",

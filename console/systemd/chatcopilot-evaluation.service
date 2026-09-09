@@ -15,6 +15,7 @@ UMask=0077
 Environment=CHATCOPILOT_SOURCE_ROOT=%h/ChatCopilot
 Environment=CHATCOPILOT_EVALUATION_ROOT=%h/ChatCopilot/reports/evals/evaluations
 Environment=CHATCOPILOT_EVALUATION_SOCKET=%t/agentstrata-evaluation/service.sock
+EnvironmentFile=-%h/.config/agentstrata/evaluation.env
 Environment=PYTHONPATH=%h/ChatCopilot/src
 NoNewPrivileges=true
 PrivateTmp=true

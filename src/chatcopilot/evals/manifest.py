@@ -123,7 +123,7 @@ _POLICY_FIELDS = {
     "allowed_tools",
     "forbidden_tools",
 }
-_JUDGE_FIELDS = {"mode", "assertions"}
+_JUDGE_FIELDS = {"mode", "assertions", "quality"}
 _ASSERTION_FIELDS = {"kind", "id", "arguments"}
 _HTTP_URL_RE = re.compile(r"(?i)(?<![A-Za-z0-9])https?://")
 _FILE_URI_RE = re.compile(r"(?i)(?<![A-Za-z0-9])file://")
@@ -428,6 +428,9 @@ def _parse_case_definition(value: Any, *, source: str, index: int) -> EvalCaseDe
         policy=policy,
         assertions=assertions,
         judge_mode=judge_mode,  # type: ignore[arg-type]
+        quality=_canonical_assertion_arguments(
+            _strict_mapping(value["judge"].get("quality", {}), source, f"{field}.judge.quality"),
+            source=source, field=f"{field}.judge.quality"),
         presets=_string_list(value.get("preset"), source, f"{field}.preset", identifiers=True),
         severity=_choice(
             value.get("severity"),
@@ -652,9 +655,14 @@ def suite_definition_snapshot(
         {
             "case_id": case.case_id,
             "definition_sha256": _case_definition_digest(case),
+            "input": case.input,
+            "turns": case.metadata.get("case_definition", {}).get("turns", []),
+            "quality": case.metadata.get("case_definition", {}).get("quality", {}),
         }
         for case in cases
     ]
+    from chatcopilot.evals.deepeval_engine import scoring_snapshot
+
     return {
         "schema": 2,
         "manifest": to_jsonable(manifest),
@@ -664,6 +672,8 @@ def suite_definition_snapshot(
             "scorer": plugin_protocol.SCORER_PROTOCOL_VERSION,
         },
         "case_plugin_bindings": case_plugin_bindings,
+        **({"scoring": scoring_snapshot()}
+           if manifest.track == "agent" else {}),
         "execution_implementations": suite_implementation_snapshot(implementation_bindings),
         "cases": case_records,
         "target_fingerprint": to_jsonable(dict(target_fingerprint or {})),

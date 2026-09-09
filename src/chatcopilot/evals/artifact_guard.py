@@ -14,12 +14,13 @@ rather than trying to recover or infer which process made the change.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import stat
+import uuid
 from typing import Final, Mapping
 
 
@@ -32,6 +33,7 @@ _AUTHORITY_FILES: Final = (
     "result.json",
     "summary.md",
     "progress.jsonl",
+    "observation.json",
 )
 _DEFAULT_CANCEL_MARKER: Final = ".cancel-requested.json"
 
@@ -216,6 +218,38 @@ class ArtifactIntegrityGuard:
         self._verify_claim()
 
     compare = verify
+
+    def publish_observation(self, payload: Mapping[str, object]) -> None:
+        """Publish Core-owned read evidence without blessing any child mutation.
+
+        Every frozen entry is checked first. Only the exact bytes written here
+        may replace the observation baseline; resume artifacts stay frozen.
+        """
+        self.verify()
+        encoded = (json.dumps(dict(payload), ensure_ascii=False, allow_nan=False) + "\n").encode()
+        if len(encoded) > 1024 * 1024:
+            raise ValueError("Trial observation exceeds 1 MiB")
+        temporary = ".observation-" + uuid.uuid4().hex
+        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                             0o600, dir_fd=self._root_fd)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                os.fchmod(handle.fileno(), 0o600)
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, "observation.json", src_dir_fd=self._root_fd, dst_dir_fd=self._root_fd)
+            current = _snapshot_file_at(self._root_fd, "observation.json", self._output / "observation.json")
+            if current.sha256 != sha256(encoded).hexdigest():
+                raise _violation("Core observation write changed unexpectedly", self._output / "observation.json")
+            self._snapshot = replace(self._snapshot, files={**self._snapshot.files, "observation.json": current})
+            os.fsync(self._root_fd)
+            self.verify()
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=self._root_fd)
+            except FileNotFoundError:
+                pass
 
     def close(self) -> None:
         """Release the pinned directory descriptors; safe to call repeatedly."""

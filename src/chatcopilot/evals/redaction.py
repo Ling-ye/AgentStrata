@@ -14,7 +14,7 @@ _SECRET_KEY = re.compile(
 )
 _INLINE_SECRET = re.compile(
     r"(?i)(api[_-]?key|access[_-]?token|authorization|credential|password|secret|"
-    r"session[_-]?token|(?:[A-Za-z0-9_-]+[_-])?token)\s*[:=]\s*([^\s,;]+)"
+    r"session[_-]?token|(?<![A-Za-z0-9_-])[A-Za-z0-9_-]*token)\s*[:=]\s*([^\s,;]+)"
 )
 _BEARER = re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}")
 _FILE_URI = re.compile(r"(?i)file:///(?:[^\s'\"`,;|<>()\[\]{}]+)")

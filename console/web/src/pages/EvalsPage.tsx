@@ -342,15 +342,15 @@ export default function EvalsPage({ visible = true }: Props) {
     <PageSection
       title="测评中心"
       description="查看 Agent 能力与 QQ 链路的测试结果、版本记录和历史变化。"
-      extra={<Button size="small" onClick={() => void refresh()}>刷新</Button>}
+      extra={tab !== "trends" ? <Button size="small" onClick={() => void refresh()}>刷新</Button> : undefined}
     >
-      <div className="eval-history-filters eval-bot-selection">
+      {tab !== "trends" && <div className="eval-history-filters eval-bot-selection">
         <Text bold>机器人</Text>
         <Select aria-label="评测机器人" value={botId || undefined} placeholder="选择机器人" loading={botsQuery.isLoading}
           options={bots.map(bot => ({ label: bot.display_name, value: bot.instance_id }))}
           onChange={value => { setBotId(String(value ?? "")); setSelectedEvaluation(null); setProblem(null); }} />
         <Text type="secondary">手动启动 · 每个测试点默认 1 次 · 同一机器人同时运行一条评测</Text>
-      </div>
+      </div>}
       <Tabs activeTab={tab} onChange={setTab}>
         <Tabs.TabPane key="start" title="开始测试">
           <div className="eval-center-stack">
@@ -482,9 +482,7 @@ export default function EvalsPage({ visible = true }: Props) {
         </Tabs.TabPane>
         <Tabs.TabPane key="trends" title="进步趋势">
           <Card className="eval-create-card">
-            {recordsQuery.isLoading ? <Spin /> : recordsQuery.isError
-              ? <Alert type="error" content={formatApiError(recordsQuery.error)} />
-              : <EvaluationTrends key={botId} records={records} onOpen={setSelectedEvaluation} />}
+            <EvaluationTrends initialBot={botId} bots={bots.map(bot => bot.instance_id)} visible={visible && tab === "trends"} onOpen={setSelectedEvaluation} />
           </Card>
         </Tabs.TabPane>
       </Tabs>
@@ -503,6 +501,10 @@ export default function EvalsPage({ visible = true }: Props) {
         {selectedRecord && (
           <div ref={detailTop} tabIndex={-1} className="eval-detail-content">
           <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Space wrap><Tag color={STATUS_COLORS[selectedRecord.status] ?? "gray"}>{selectedRecord.status}</Tag>
+              <Text>{selectedRecord.bot_id} · {modelLabel(selectedRecord)}</Text><Text>{dateLabel(selectedRecord.started_at || selectedRecord.created_at)}</Text>
+              <Tag>{revisionLabel(selectedRecord)}</Tag></Space>
+            <details className="eval-record-metadata"><summary>评测信息</summary>
             <Descriptions
               column={1}
               data={[
@@ -533,6 +535,7 @@ export default function EvalsPage({ visible = true }: Props) {
                 { label: "配置 / 实现指纹", value: <code className="eval-fingerprint">{selectedRecord.insights.configuration_fingerprint || "未记录"}</code> },
               ]}
             />
+            </details>
             {selectedRecord.error && <Alert type="error" content={selectedRecord.error} />}
             {detailQuery.isLoading && <Spin tip="正在读取测试点结果…" />}
             {detailQuery.isError && <Alert type="error" content={`详情读取失败：${formatApiError(detailQuery.error)}`}

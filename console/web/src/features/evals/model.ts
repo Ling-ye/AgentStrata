@@ -309,6 +309,10 @@ export interface EvaluationCaseDescriptor extends EvaluationCaseSummary {
 }
 
 export interface EvaluationTrial {
+  input_preview?: string;
+  body_available?: boolean;
+  capture_state?: string;
+  started_at?: string;
   trial_id: string;
   case_ref: string;
   case_id: string;

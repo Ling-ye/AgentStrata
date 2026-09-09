@@ -57,6 +57,10 @@ export function normalizeTrial(value: unknown): EvaluationTrial {
   const nullableNumber = (input: unknown) =>
     typeof input === "number" && Number.isFinite(input) ? input : null;
   return {
+    input_preview: typeof item.input_preview === "string" ? item.input_preview : "",
+    body_available: item.body_available === true,
+    capture_state: typeof item.capture_state === "string" ? item.capture_state : "",
+    started_at: typeof item.started_at === "string" ? item.started_at : "",
     trial_id: typeof item.trial_id === "string" ? item.trial_id : "",
     case_ref: typeof item.case_ref === "string" ? item.case_ref : "",
     case_id: typeof item.case_id === "string" ? item.case_id : "",
@@ -162,18 +166,27 @@ export const evaluationApi = {
   get: async (evaluationId: string, signal?: AbortSignal) =>
     normalizeEvaluation(
       await requestJson<unknown>(
-        `/api/evals/evaluations/${encodeURIComponent(evaluationId)}`,
+        `/api/evals/evaluations/${encodeURIComponent(evaluationId)}?include_bodies=false`,
         { signal },
       ),
     ),
 
-  caseDetail: async (evaluationId: string, caseRef: string) => {
+  listPage: async (filters: { since?: string; until?: string; offset: number; limit: number; bot_ids: string[] }, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ offset: String(filters.offset), limit: String(filters.limit) });
+    if (filters.since) params.set("since", filters.since);
+    if (filters.until) params.set("until", filters.until);
+    for (const bot of filters.bot_ids) params.append("bot_ids", bot);
+    return evaluationList(await requestJson<unknown>(`/api/evals/evaluations?${params}`, { signal }));
+  },
+
+  caseDetail: async (evaluationId: string, caseRef: string, selection: { trial_id?: string; target_id?: string; attempt?: string } = {}, signal?: AbortSignal) => {
     const response = await requestJson<{
       case_ref?: string;
       comparison?: Record<string, unknown> | null;
       trials?: unknown[];
     }>(
-      `/api/evals/evaluations/${encodeURIComponent(evaluationId)}/cases/${encodeURIComponent(caseRef)}`,
+      `/api/evals/evaluations/${encodeURIComponent(evaluationId)}/cases/${encodeURIComponent(caseRef)}${queryString(selection)}`,
+      { signal },
     );
     return {
       case_ref: response.case_ref ?? caseRef,

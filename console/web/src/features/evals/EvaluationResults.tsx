@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
-import { Alert, Button, Empty, Input, Select, Space, Table, Tag, Typography } from "@arco-design/web-react";
+import { useQuery } from "@tanstack/react-query";
+import { Alert, Button, Empty, Input, Select, Space, Spin, Table, Tag, Typography } from "@arco-design/web-react";
 import type { EvaluationRecord, EvaluationTrial } from "./model";
-import { normalizeTrial } from "./evaluationApi";
-import { dateLabel, durationLabel, EXCLUSION_LABELS, OUTCOME_LABELS, rateLabel, revisionLabel, VERDICT_LABELS } from "./insightsModel";
+import { evaluationApi, normalizeTrial } from "./evaluationApi";
+import { durationLabel, EXCLUSION_LABELS, OUTCOME_LABELS, rateLabel, VERDICT_LABELS } from "./insightsModel";
+
+import { asObject, asText, captureLabel, executionTurns, objectList, qualityLabel, recordedInput, trialMetrics } from "./trialModel";
 
 const { Text, Title } = Typography;
 const COLORS: Record<string, string> = { passed: "green", failed: "red", error: "orange", skipped: "gray" };
@@ -20,6 +23,7 @@ export function ResultOverview({ record }: { record: EvaluationRecord }) {
     </Space>
     <div className="eval-outcome-metrics">
       <div><span>通过率</span><strong>{rateLabel(insights.pass_rate)}</strong></div>
+      <div><span>质量分</span><strong>{rateLabel(insights.quality.score)}</strong><Text type="secondary">已评分 {insights.quality.scored} / {insights.quality.expected}</Text></div>
       {Object.entries(OUTCOME_LABELS).map(([key, label]) => <div key={key} className={`eval-outcome-${key}`}>
         <span>{label}</span><strong>{insights.counts?.[key as keyof typeof insights.counts]}</strong>
       </div>)}
@@ -40,61 +44,97 @@ export function ResultOverview({ record }: { record: EvaluationRecord }) {
 function BoundedText({ value }: { value: string }) {
   const [expanded, setExpanded] = useState(false);
   const limit = 2400;
-  return <div><pre className="eval-trial-text">{expanded ? value : value.slice(0, limit)}</pre>
-    {value.length > limit && <button type="button" className="eval-text-action" onClick={() => setExpanded(!expanded)}>{expanded ? "收起正文" : `展开全文（${value.length} 字符）`}</button>}
+  return <div className="eval-text-block"><pre className="eval-trial-text">{expanded ? value : value.slice(0, limit)}</pre>
+    <Space><Button size="mini" onClick={() => void navigator.clipboard.writeText(value)}>复制</Button>
+      {value.length > limit && <Button size="mini" type="text" onClick={() => setExpanded(!expanded)}>{expanded ? "收起正文" : `展开已采集全文（${value.length} 字符）`}</Button>}</Space>
   </div>;
 }
-function judgeReasons(trial: EvaluationTrial): string {
-  const judge = trial.judge;
-  if (!judge) return "";
-  return ["reasons", "missing", "violations"].flatMap(key => {
-    const value = judge[key];
-    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : typeof value === "string" ? [value] : [];
-  }).join("\n");
+
+function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: EvaluationTrial }) {
+  const active = record.status === "running" || record.status === "queued";
+  const query = useQuery({
+    queryKey: ["evaluation-case-body", record.evaluation_id, preview.trial_id, preview.target_id, preview.attempt],
+    queryFn: ({ signal }) => evaluationApi.caseDetail(record.evaluation_id, preview.case_ref || preview.case_id,
+      { trial_id: preview.trial_id, target_id: preview.target_id, attempt: String(preview.attempt) }, signal),
+    enabled: preview.body_available === true,
+    retry: false,
+    staleTime: active ? 1000 : Infinity,
+    refetchInterval: active ? 2000 : false,
+  });
+  const trial = query.data?.trials.find(t => t.trial_id === preview.trial_id) ?? preview;
+  const input = recordedInput(record, trial);
+  const turns = executionTurns(trial);
+  const judging = asObject(trial.evidence.judge_evidence);
+  const status = captureLabel(asText(asObject(trial.evidence.execution).state) || trial.capture_state || "");
+  return <div className="eval-trial-detail">
+    {query.isLoading && <Spin tip="正在读取输入输出…" />}
+    {query.isError && <Alert type="error" content="读取本条测试详情失败，其他测试点仍可查看。" action={<Button onClick={() => void query.refetch()}>重试</Button>} />}
+    {trial.error && <Alert type="error" content={trial.error} />}
+    {status && <Tag color="orange">{status}</Tag>}
+    <div className="eval-io-grid">
+      <section><Text bold>{input.source}</Text>{input.text ? <BoundedText value={input.text} /> : <Text type="secondary"> 未记录</Text>}</section>
+      <section><Text bold>Agent 最终输出</Text>{trial.final_text ? <BoundedText value={trial.final_text} /> : <Text type="secondary"> 未记录最终输出</Text>}</section>
+    </div>
+    {turns.length > 1 && <section><Text bold>多轮交互</Text>{turns.map((turn, index) => <div key={`${turn.conversation_id}:${turn.turn_index}`} className="eval-conversation-turn">
+      <Space><Text>第 {index + 1} 轮</Text><Text type="secondary">会话 {asText(turn.conversation_id)}</Text>{captureLabel(asText(turn.state)) && <Tag>{captureLabel(asText(turn.state))}</Tag>}</Space>
+      <div className="eval-io-grid"><section><Text bold>发送</Text><BoundedText value={asText(turn.input)} /></section>
+        <section><Text bold>{turn.completed === false ? "等待返回" : "收到的回答"}</Text><BoundedText value={asText(turn.final_text)} /></section></div>
+    </div>)}</section>}
+    {turns.some(t => objectList(t.resources).length) && <section><Text bold>输入资源</Text>{turns.flatMap((turn, index) => objectList(turn.resources).map(resource =>
+      <div key={`${index}:${resource.id}`}>{asText(resource.name) || asText(resource.id)} · {asText(resource.media_type)}</div>))}</section>}
+    <section><Text bold>判分结果</Text>{trialMetrics(trial).map((metric, index) => <div className="eval-metric-row" key={`${metric.name}:${index}`}>
+      <Space wrap><Text bold>{asText(metric.name)}</Text><Tag color={metric.error ? "orange" : metric.passed ? "green" : "red"}>{metric.error ? "判分异常" : metric.passed ? "通过" : "未通过"}</Tag>
+        <Text>得分 {typeof metric.score === "number" ? metric.score.toFixed(2) : "—"} / 阈值 {typeof metric.threshold === "number" ? metric.threshold.toFixed(2) : "—"}</Text></Space>
+      <div>{asText(metric.error) || asText(metric.reason)}</div>
+    </div>)}
+      {judging.quality_applicable === false && <Text type="secondary">{asText(judging.quality_reason) || "本测试点使用确定性判分。"}</Text>}
+      {!trialMetrics(trial).length && <div>{objectList(judging.assertions).map((a, index) => <div key={index}>{asText(a.id)} · {a.passed ? "通过" : "未通过"}</div>)}
+        {Array.isArray(trial.judge?.reasons) && <BoundedText value={trial.judge.reasons.join("\n")} />}</div>}
+    </section>
+    {trial.stop_reason && <Text type="secondary">Agent 结束原因：{trial.stop_reason}</Text>}
+    <details><summary>工具与执行证据</summary>{objectList(trial.evidence.tool_calls).map((tool, index) => <section className="eval-conversation-turn" key={index}>
+      <Text bold>{asText(tool.name)}</Text><div className="eval-io-grid"><section><Text>参数</Text><BoundedText value={JSON.stringify(tool.arguments ?? {}, null, 2)} /></section>
+        <section><Text>结果</Text><BoundedText value={JSON.stringify(tool.result ?? tool.output ?? tool, null, 2)} /></section></div>
+    </section>)}<BoundedText value={JSON.stringify(trial.evidence.observation_evidence ?? [], null, 2)} /></details>
+    <details><summary>原始测试记录</summary><BoundedText value={JSON.stringify(trial, null, 2)} /></details>
+  </div>;
 }
+
 export function EvaluationResults({ record }: { record: EvaluationRecord }) {
   const [outcome, setOutcome] = useState("all");
   const [search, setSearch] = useState("");
-  const rows = useMemo(() => {
-    const values = Array.isArray(record.result?.trials) ? record.result.trials : [];
-    return values.map((raw, index) => {
-      const trial = normalizeTrial(raw);
-      const value = raw as Record<string, unknown>;
-      return { ...trial, row_id: `${trial.trial_id}:${index}`, started_at: typeof value?.started_at === "string" ? value.started_at : null };
-    });
-  }, [record.result]);
+  const [expanded, setExpanded] = useState<string[]>([]);
+  const rows = useMemo(() => objectList(record.result?.trials).map(normalizeTrial), [record.result]);
   const filtered = rows.filter(trial => (outcome === "all" || trial.outcome === outcome)
-    && `${trial.case_id} ${trial.case_ref} ${trial.dimension}`.toLowerCase().includes(search.toLowerCase()));
+    && `${trial.case_id} ${trial.case_ref} ${trial.dimension} ${recordedInput(record, trial).text}`.toLowerCase().includes(search.toLowerCase()));
+  const observation = asObject(record.result?.execution_observation);
+  const observedTurns = objectList(asObject(observation.execution).turns);
+  const showObservation = observedTurns.length > 0 && !rows.some(t => t.trial_id === observation.trial_id);
   return <Space direction="vertical" size={16} style={{ width: "100%" }}>
     <ResultOverview record={record} />
+    {showObservation && <section><Text bold>尚未形成完整结果：{asText(observation.case_id)}</Text><Alert type="info" content="以下为实际执行记录，不计入完成样本或通过率。" />
+      {observedTurns.map((turn, index) => <div className="eval-io-grid" key={index}><section><Text>实际输入</Text><BoundedText value={asText(turn.input)} /></section>
+        <section><Text>已收到的回答</Text><BoundedText value={asText(turn.final_text)} /></section></div>)}</section>}
     {!!record.result && <section className="eval-case-results">
       <Title heading={6}>测试点结果</Title>
-      <div className="eval-history-filters">
-        <Select aria-label="测试点结果筛选" value={outcome} onChange={setOutcome} options={[
-          { label: "全部结果", value: "all" }, ...Object.entries(OUTCOME_LABELS).map(([value, label]) => ({ label, value })),
-        ]} />
-        <Input aria-label="搜索测试点" placeholder="搜索测试点" value={search} onChange={setSearch} allowClear />
-        <Text type="secondary">{filtered.length} 条</Text>
-      </div>
-      <Table rowKey="row_id" size="small" data={filtered} pagination={{ pageSize: 10 }} scroll={{ x: 680 }}
-        expandProps={{ icon: ({ expanded, record: trial }) => <Button size="mini" type="text"
-          aria-expanded={expanded} aria-label={`${expanded ? "收起" : "展开"}测试点 ${trial.case_id}`}>{expanded ? "−" : "+"}</Button> }}
+      <div className="eval-history-filters"><Select aria-label="测试点结果筛选" value={outcome} onChange={setOutcome} options={[
+        { label: "全部结果", value: "all" }, ...Object.entries(OUTCOME_LABELS).map(([value, label]) => ({ label, value })),
+      ]} /><Input aria-label="搜索测试点" placeholder="搜索测试点或输入" value={search} onChange={setSearch} allowClear /><Text type="secondary">{filtered.length} 条</Text></div>
+      <Table rowKey="trial_id" size="small" data={filtered} pagination={{ pageSize: 10 }} scroll={{ x: 800 }}
+        expandedRowKeys={expanded} onExpandedRowsChange={keys => setExpanded(keys.map(String))}
+        expandProps={{ icon: ({ expanded, record: trial }) => <Button size="mini" type="text" aria-expanded={expanded}
+          aria-label={`${expanded ? "收起" : "展开"}测试点 ${trial.case_id}`}>{expanded ? "−" : "+"}</Button> }}
         columns={[
-          { title: "测试点", dataIndex: "case_id", width: 220, render: (_, row) => <span title={row.case_ref}>{row.case_id || row.case_ref || "标识未记录"}</span> },
-          { title: "结果", dataIndex: "outcome", width: 85, render: value => <Tag color={COLORS[value] || "gray"}>{OUTCOME_LABELS[value] || "未知"}</Tag> },
-          { title: "执行器 / 轮次", width: 135, render: (_, row) => `${row.target_id || "未记录"} / ${row.attempt || "—"}` },
-          { title: "耗时", dataIndex: "duration_seconds", width: 95, render: durationLabel },
-          { title: "开始时间", dataIndex: "started_at", width: 180, render: dateLabel },
+          { title: "测试点", width: 175, render: (_, row) => <span title={row.case_ref}>{row.case_id || row.case_ref || "标识未记录"}<small className="eval-trial-meta">{row.target_id} · 第 {row.attempt} 次</small></span> },
+          { title: "输入", width: 210, render: (_, row) => <span className="eval-cell-preview" title={recordedInput(record, row).source}>{recordedInput(record, row).text || "未记录"}</span> },
+          { title: "Agent 最终输出", width: 240, render: (_, row) => <span className="eval-cell-preview">{row.final_text || "未记录"}</span> },
+          { title: "结果", width: 80, render: (_, row) => <Tag color={COLORS[row.outcome] || "gray"}>{OUTCOME_LABELS[row.outcome] || "未知"}</Tag> },
+          { title: "质量分", width: 80, render: (_, row) => qualityLabel(row) },
+          { title: "耗时", width: 85, render: (_, row) => durationLabel(row.duration_seconds) },
         ]}
-        expandedRowRender={row => <div className="eval-trial-detail">
-          <Text type="secondary">{revisionLabel(record)} · {dateLabel(row.started_at)}</Text>
-          {row.error && <Alert type="error" content={row.error} />}
-          {judgeReasons(row) && <div><Text bold>判分记录</Text><BoundedText value={judgeReasons(row)} /></div>}
-          <div><Text bold>Agent 回答</Text>{row.final_text ? <BoundedText value={row.final_text} /> : <Text type="secondary"> 未记录回答正文</Text>}</div>
-          {row.stop_reason && <Text type="secondary">结束原因：{row.stop_reason}</Text>}
-          <details><summary>原始测试记录</summary><BoundedText value={JSON.stringify(row, null, 2)} /></details>
-        </div>} />
+        expandedRowRender={row => <TrialDetail record={record} preview={row} />} />
     </section>}
     {Object.keys(record.summary).length > 0 && <details className="eval-raw-summary"><summary>原始结果摘要</summary><BoundedText value={JSON.stringify(record.summary, null, 2)} /></details>}
   </Space>;
+
 }

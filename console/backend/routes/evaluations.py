@@ -113,6 +113,9 @@ def list_evaluations(
     bot_id: str | None = Query(default=None),
     target: str | None = Query(default=None),
     status: str | None = Query(default=None),
+    since: str | None = Query(default=None), until: str | None = Query(default=None),
+    offset: int = Query(default=0, ge=0), limit: int | None = Query(default=None, ge=1, le=200),
+    bot_ids: list[str] | None = Query(default=None),
 ):
     try:
         return get_evaluation_client(request).list(
@@ -120,15 +123,18 @@ def list_evaluations(
             bot_id=bot_id,
             target=target,
             status=status,
+            **({"since": since} if since else {}), **({"until": until} if until else {}),
+            **({"offset": offset} if offset else {}), **({"limit": limit} if limit is not None else {}),
+            **({"bot_ids": bot_ids} if bot_ids else {}),
         )
     except EvaluationServiceError as exc:
         raise_evaluation_service_error(exc)
 
 
 @router.get("/evaluations/{evaluation_id}")
-def get_evaluation(request: Request, evaluation_id: str):
+def get_evaluation(request: Request, evaluation_id: str, include_bodies: bool = Query(default=True)):
     try:
-        return get_evaluation_client(request).get(evaluation_id)
+        return get_evaluation_client(request).get(evaluation_id, **({"include_bodies": False} if not include_bodies else {}))
     except EvaluationServiceError as exc:
         raise_evaluation_service_error(exc)
 
@@ -138,11 +144,15 @@ def get_evaluation_case(
     request: Request,
     evaluation_id: str,
     case_ref: str,
+    trial_id: str | None = Query(default=None), target_id: str | None = Query(default=None),
+    attempt: int | None = Query(default=None, ge=1),
 ):
     try:
         return get_evaluation_client(request).case_detail(
             evaluation_id,
             case_ref,
+            **({"trial_id": trial_id} if trial_id else {}), **({"target_id": target_id} if target_id else {}),
+            **({"attempt": attempt} if attempt is not None else {}),
         )
     except EvaluationServiceError as exc:
         raise_evaluation_service_error(exc)

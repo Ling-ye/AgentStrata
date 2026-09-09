@@ -653,8 +653,9 @@ class _FakeAgentRuntime:
 
 
 @pytest.fixture
-def fake_agent(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+def fake_agent(monkeypatch: pytest.MonkeyPatch, deepeval_judge, request) -> list[Any]:
     tasks: list[Any] = []
+    selected_backend = getattr(request, "param", "native")
     runtime = SimpleNamespace(
         spec=SimpleNamespace(
             context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")
@@ -665,7 +666,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
         rag_sources=("configured-rag",),
         mcp_servers=("configured-mcp",),
         subagents=SubagentSpec(),
-        agent_backend="native",
+        agent_backend=selected_backend,
         platform_type="qq",
         prompt_profile=BotPromptProfile(identity="system", response_style="concise"),
         capability_policies=(),
@@ -677,7 +678,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 
     def build_runtime(runtime_context: Any, **kwargs: Any) -> _FakeAgentRuntime:
         projection = project_agent_runtime(runtime_context, **kwargs)
-        if projection.agent_backend != "native":
+        if projection.agent_backend != selected_backend:
             raise AssertionError("selected Bot backend was not preserved")
         tools = tuple(
             tool
@@ -738,7 +739,8 @@ def test_all_generic_agent_cases_execute_through_fake_selected_runtime(
     assert result.status == "passed", (case_id, result.error, result.judge)
     assert result.judge is not None and result.judge.passed is True
     assert result.metadata["driver"] in {"agent_isolated", "agent_configured"}
-    assert result.metadata["judge_evidence"]["judge_kind"] == "deterministic:capability"
+    assert result.metadata["judge_evidence"]["judge_kind"] == "deepeval"
+    assert result.metadata["judge_evidence"]["metrics"][0]["kind"] == "deterministic"
     assert fake_agent
     if case_id == "image-ocr-order-number":
         accepted = result.metadata["observation_evidence"][0]
@@ -1121,7 +1123,7 @@ def test_assertion_failure_is_failed_not_infrastructure_error(
     assert result.error == ""
 
 
-def test_all_manifest_cases_pass_executor_preflight() -> None:
+def test_all_manifest_cases_pass_executor_preflight(deepeval_judge) -> None:
     definitions = load_case_definitions(get_manifest(SUITE_ID))
 
     for definition in definitions:
@@ -1426,3 +1428,14 @@ def test_multiple_turns_reuse_one_agent_session(
 
     assert len(fake_agent) == 2
     assert observation.final_text == '{"name":"fixture","value":7}'
+
+
+@pytest.mark.parametrize("fake_agent", ["native", "langgraph", "codex"], indirect=True)
+def test_selected_backend_input_output_reaches_deepeval(fake_agent, tmp_path):
+    result = executor.execute_capability_case(_case("dialogue-strict-json"), suite_id=SUITE_ID,
+        bot="selected-bot", workspace_root=tmp_path, options={}, confirm_external_write=False)
+    assert result.status == "passed", result.error
+    assert result.metadata["judge_evidence"]["judge_kind"] == "deepeval"
+    turn = result.metadata["execution"]["turns"][0]
+    assert turn["input"] == fake_agent[0].text
+    assert turn["final_text"] == result.final_text

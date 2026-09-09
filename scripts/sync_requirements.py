@@ -21,7 +21,7 @@ TARGETS: dict[str, Target] = {
     "src/chatcopilot/middleware/acp/requirements.txt": (True, ("agent", "acp"), None),
     "console/requirements.txt": (
         True,
-        ("console",),
+        ("console", "evaluation"),
         None,
     ),
 }

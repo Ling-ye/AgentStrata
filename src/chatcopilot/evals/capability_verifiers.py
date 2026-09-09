@@ -2063,7 +2063,7 @@ def get_trusted_capability_verifier(assertion_id: str) -> Verifier:
         raise ValueError(f"unknown trusted capability verifier: {normalized!r}") from exc
 
 
-def judge_capability_trial(
+def verify_capability_facts(
     case: EvalCaseDefinition,
     observation: TrialObservation,
 ) -> tuple[JudgeResult, dict[str, Any]]:
@@ -2146,5 +2146,5 @@ __all__ = [
     "AssertionOutcome",
     "TRUSTED_CAPABILITY_VERIFIERS",
     "get_trusted_capability_verifier",
-    "judge_capability_trial",
+    "verify_capability_facts",
 ]

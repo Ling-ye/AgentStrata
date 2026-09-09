@@ -177,6 +177,8 @@ class EvaluationServiceClient:
         bot_id: str | None = None,
         target: str | None = None,
         status: str | None = None,
+        since: str | None = None, until: str | None = None,
+        offset: int = 0, limit: int | None = None, bot_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         return self._mapping_list(
             self._call(
@@ -186,6 +188,9 @@ class EvaluationServiceClient:
                     "bot_id": bot_id,
                     "target": target,
                     "status": status,
+                    **({"since": since} if since else {}), **({"until": until} if until else {}),
+                    **({"offset": offset} if offset else {}), **({"limit": limit} if limit is not None else {}),
+                    **({"bot_ids": bot_ids} if bot_ids else {}),
                 },
             )
         )
@@ -195,6 +200,7 @@ class EvaluationServiceClient:
         evaluation_id: str,
         *,
         include_result: bool = True,
+        include_bodies: bool = True,
     ) -> dict[str, Any]:
         return self._mapping(
             self._call(
@@ -202,15 +208,19 @@ class EvaluationServiceClient:
                 {
                     "evaluation_id": evaluation_id,
                     "include_result": include_result,
+                    **({"include_bodies": False} if not include_bodies else {}),
                 },
             )
         )
 
-    def case_detail(self, evaluation_id: str, case_ref: str) -> dict[str, Any]:
+    def case_detail(self, evaluation_id: str, case_ref: str, *, trial_id: str | None = None,
+                    target_id: str | None = None, attempt: int | None = None) -> dict[str, Any]:
         return self._mapping(
             self._call(
                 "evaluations.case",
-                {"evaluation_id": evaluation_id, "case_ref": case_ref},
+                {"evaluation_id": evaluation_id, "case_ref": case_ref,
+                 **({"trial_id": trial_id} if trial_id else {}), **({"target_id": target_id} if target_id else {}),
+                 **({"attempt": attempt} if attempt is not None else {})},
             )
         )
 

@@ -40,6 +40,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+evaluation = [
+    "deepeval==4.2.2",
+]
 agent = [
     "openai>=1.40.0",
     "mcp>=1.27,<2",
@@ -118,6 +121,10 @@ chatcopilot = [
 target-version = "py310"
 line-length = 100
 extend-exclude = ["scratch_unit_tests"]
+
+[tool.pytest.ini_options]
+addopts = "-p no:deepeval"
+testpaths = ["tests"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
