@@ -53,14 +53,16 @@ class OwnerWorkspaceInventoryTests(unittest.TestCase):
 
 class OwnerWorkspaceToolTests(unittest.TestCase):
     def test_user_cannot_call_owner_list_workspaces(self) -> None:
-        result = ToolExecutor(tools=TOOLS, workspace_service=_WS_SERVICE).execute(
+        result = ToolExecutor(
+            caller_role_hint="owner", tools=TOOLS, workspace_service=_WS_SERVICE
+        ).execute(
             "owner_list_workspaces",
             {},
             role=Role.USER,
         )
 
         self.assertFalse(result.ok)
-        self.assertIn("需要 owner", result.error or "")
+        self.assertIn("Owner", result.error or "")
 
     def test_owner_can_list_workspaces_with_plain_user_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -84,7 +86,9 @@ class OwnerWorkspaceToolTests(unittest.TestCase):
                 {"CHATCOPILOT_WORKSPACE_ROOT": str(root)},
                 clear=False,
             ):
-                result = ToolExecutor(tools=TOOLS, workspace_service=_WS_SERVICE).execute(
+                result = ToolExecutor(
+                    caller_role_hint="owner", tools=TOOLS, workspace_service=_WS_SERVICE
+                ).execute(
                     "owner_list_workspaces",
                     {},
                     role=Role.OWNER,
@@ -107,7 +111,9 @@ class OwnerWorkspaceToolTests(unittest.TestCase):
                 {"CHATCOPILOT_WORKSPACE_ROOT": str(root)},
                 clear=False,
             ):
-                result = ToolExecutor(tools=TOOLS, workspace_service=_WS_SERVICE).execute(
+                result = ToolExecutor(
+                    caller_role_hint="owner", tools=TOOLS, workspace_service=_WS_SERVICE
+                ).execute(
                     "owner_read_workspace_file",
                     {
                         "workspace_path": "p2p_ou_visible",
@@ -131,7 +137,9 @@ class OwnerWorkspaceToolTests(unittest.TestCase):
                 {"CHATCOPILOT_WORKSPACE_ROOT": str(root)},
                 clear=False,
             ):
-                result = ToolExecutor(tools=TOOLS, workspace_service=_WS_SERVICE).execute(
+                result = ToolExecutor(
+                    caller_role_hint="owner", tools=TOOLS, workspace_service=_WS_SERVICE
+                ).execute(
                     "owner_read_workspace_file",
                     {
                         "workspace_path": "p2p_ou_visible",

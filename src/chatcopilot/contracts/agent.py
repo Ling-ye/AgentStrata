@@ -46,6 +46,39 @@ class FinalText:
 
 
 @dataclass(frozen=True)
+class ToolCatalogObserved:
+    phase: str
+    tools: tuple[str, ...]
+    trace_id: str
+    parent_span_id: str
+    span_id: str | None = None
+    observed_at: float | None = None
+    source: str = "session_gateway"
+    backend: str = "codex"
+    error_code: str = ""
+
+
+@dataclass(frozen=True)
+class AgentMessageObserved:
+    """An observation snapshot, never a request to deliver text to a channel."""
+
+    text: str
+    message_id: str
+    trace_id: str
+    span_id: str
+    parent_span_id: str | None
+    revision: int
+    phase: Literal["update", "finish"] = "finish"
+    status: str = "succeeded"
+    message_kind: str = "response"
+    backend: str = ""
+    source: str = "host"
+    depth: int = 0
+    observed_at: float | None = None
+    capture_state: str = "available"
+
+
+@dataclass(frozen=True)
 class ToolStarted:
     name: str
     arguments: Mapping[str, Any]
@@ -54,6 +87,10 @@ class ToolStarted:
     parent_span_id: str | None = None
     depth: int = 0
     started_at: float | None = None
+    tool_call_id: str | None = None
+    model_span_id: str | None = None
+    backend: str = ""
+    source: str = "host"
 
 
 @dataclass(frozen=True)
@@ -68,6 +105,12 @@ class ToolFinished:
     depth: int = 0
     data: Mapping[str, Any] | None = None
     finished_at: float | None = None
+    tool_call_id: str | None = None
+    model_span_id: str | None = None
+    model_result: Mapping[str, Any] | None = None
+    execution_result: Mapping[str, Any] | None = None
+    backend: str = ""
+    source: str = "host"
 
 
 @dataclass(frozen=True)
@@ -90,6 +133,25 @@ class SpanStarted:
     span_id: str | None = None
     parent_span_id: str | None = None
     depth: int = 0
+    data: Mapping[str, Any] | None = None
+    backend: str = ""
+    source: str = "host"
+    observed_at: float | None = None
+
+
+@dataclass(frozen=True)
+class SpanUpdated:
+    name: str
+    kind: str
+    trace_id: str
+    span_id: str
+    parent_span_id: str | None
+    revision: int
+    depth: int = 0
+    data: Mapping[str, Any] | None = None
+    backend: str = ""
+    source: str = "host"
+    observed_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +165,9 @@ class SpanFinished:
     parent_span_id: str | None = None
     depth: int = 0
     data: Mapping[str, Any] | None = None
+    backend: str = ""
+    source: str = "host"
+    observed_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +187,8 @@ class LlmCallStarted:
     context_kind: str = ""
     context_snapshot_id: str = ""
     backend: str = ""
+    execution_kind: str = "model_call"
+    request_parameters: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -145,6 +212,7 @@ class LlmCallFinished:
     ok: bool = True
     backend: str = ""
     visible_response: Mapping[str, Any] | None = None
+    execution_kind: str = "model_call"
 
 
 @dataclass(frozen=True)
@@ -220,6 +288,9 @@ class TurnError:
 
 
 AgentEvent = Union[
+    ToolCatalogObserved,
+    AgentMessageObserved,
+    SpanUpdated,
     ToolAuthorizationChecked,
     TextDelta,
     FinalText,
@@ -259,6 +330,8 @@ __all__ = [
     "AgentTask",
     "ResourceRef",
     "AgentEvent",
+    "ToolCatalogObserved",
+    "AgentMessageObserved",
     "AgentResult",
     "AgentStopReason",
     "DeferredLifecycleIntent",
@@ -268,6 +341,7 @@ __all__ = [
     "ToolStarted",
     "ToolFinished",
     "SpanStarted",
+    "SpanUpdated",
     "SpanFinished",
     "LlmCallStarted",
     "LlmCallFinished",

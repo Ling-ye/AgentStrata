@@ -3,15 +3,19 @@ import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Empty, Space, Tag } from "@arco-design/web-react";
 import type { GatewayObservation, GatewayRunDetail } from "./model";
 import { DELIVERY_STAGES, layerName, OBSERVATION_NAMES, runState } from "./model";
-import { bodyState, buildRunView, dateTime, duration, runDuration, stepDuration, stepIsOpen, stepState, RUNTIME_LAYERS, RUNTIME_OPERATIONS, type FlowItem, type ObservationBody } from "./workbenchModel";
+import { bodyState, buildRunView, dateTime, duration, runDuration, stepDuration, stepIsOpen, stepState, rememberOpenedSteps, RUNTIME_LAYERS, RUNTIME_OPERATIONS, type FlowItem, type ObservationBody } from "./workbenchModel";
 import { ConfigFields, DetailScope, Disclosure, ObservationPayload, TaskDetailState, TextPreview } from "./ObservationContent";
 import ExecutionConfiguration from "./ExecutionConfiguration";
+import { agentProcess } from "./agentProcessModel";
 
 const EVENT_LABELS: Record<string, string> = {
   ContextSnapshotPrepared: "准备上下文", session_capabilities: "本次可用能力",
   InputResourcesDispatched: "输入资源", TurnError: "任务异常",
+  AgentProcessCaptureFailed: "执行过程采集失败",
+  ToolCatalogObserved: "MCP 工具接入",
 };
 function label(event: GatewayObservation) {
+  if (event.kind === "ToolCatalogObserved") return event.data?.catalog_phase === "failed" ? "MCP 工具接入失败" : event.data?.catalog_phase === "list_response_prepared" ? "已处理 MCP 工具列表请求" : "MCP 服务初始化";
   const name = event.name || event.model || String(event.data?.name || event.data?.model || "");
   if (event.kind.startsWith("LlmCall")) return "模型调用 · " + (name || "未记录模型");
   if (event.kind.startsWith("Tool")) return "工具调用 · " + name;
@@ -67,28 +71,32 @@ function StepCard({ item, index, open, terminal, scope, onToggle, hasMore }: {
   const body = !scope.expired && cached.data?.payload && typeof cached.data.payload === "object" ?
     cached.data.payload as Record<string, unknown> : {};
   const error = errorText(step.delivery?.errorCode || body.error || body.message && event.status === "failed" && body.message || event.data?.code);
-  const summary = String(body.summary || event.data?.summary || event.data?.finish_reason ||
-    (event.data?.tool_count != null ? "本次可用工具 " + event.data.tool_count + " 个" : ""));
+  const rawSummary = String(body.summary || event.data?.summary || event.data?.finish_reason ||
+    (event.data?.catalog_tool_count != null ? "工具列表：" + event.data.catalog_tool_count + " 项" : event.data?.tool_count != null ? "本次可用工具 " + event.data.tool_count + " 个" : ""));
+  const summary = ["completed", "in_progress", "stop"].includes(rawSummary) ? "" : rawSummary;
   const state = stepState(step, terminal, hasMore);
   const elapsed = stepDuration(step, terminal);
   const usage = event.data?.usage as Record<string, number> | undefined;
   const tokens = event.total_tokens ?? usage?.total_tokens;
   const estimated = step.start?.data?.input_estimated_tokens ?? event.data?.input_estimated_tokens;
   const boundary = step.start ?? event;
+  const process = agentProcess(step);
   const payloadEvents = [step.start, step.finish ?? (!step.start ? event : undefined)].filter((item): item is GatewayObservation => !!item);
   return <DetailScope id={`step:${step.key}`}><article data-step-key={step.key} data-entity-id={event.entity_id} data-status={state.status}
-    data-runtime-layer={item.layer} data-stage-key={item.stageKey}
+    data-runtime-layer={item.layer} data-stage-key={item.stageKey} data-process-kind={process.kind}
     className={"obs-step-card" + (state.status === "failed" ? " is-failed" : "")}
     style={{ "--step-depth": Math.min(step.depth, 6) } as CSSProperties}>
     <div className="obs-step-header">
       <button type="button" className="obs-step-toggle" aria-expanded={open} aria-controls={"obs-step-body-" + event.seq}
         onClick={() => onToggle(step.key, !open)}>
         <span className="obs-step-dot" aria-hidden />
-        <span className="obs-step-main"><span className="obs-step-title"><span className="obs-step-index">{String(index + 1).padStart(2, "0")}</span><strong>{label(event)}</strong><Tag size="small" color={state.color}>{state.label}</Tag></span>
-          <span className="obs-step-route">{item.layer && <b>{RUNTIME_LAYERS[item.layer]} · </b>}{route(boundary) || (!item.layer ? "职责归属未记录" : "层内调用")}</span>
+        <span className="obs-step-main"><span className="obs-step-title"><span className="obs-step-index">{String(index + 1).padStart(2, "0")}</span><strong>{process.supported ? process.title : label(event)}</strong><Tag size="small" color={state.color}>{state.label}</Tag></span>
+          {!process.supported && <span className="obs-step-route">{item.layer && <b>{RUNTIME_LAYERS[item.layer]} · </b>}{route(boundary) || (!item.layer ? "职责归属未记录" : "层内调用")}</span>}
           {summary && <span className="obs-step-summary">{summary}</span>}
+          {process.supported && <span className="obs-step-route">{step.agentName}{process.source ? " · " + process.source : ""}{event.data?.backend ? " · " + String(event.data.backend) : ""}
+            {step.modelIteration != null ? ` · 来自第 ${step.modelIteration + 1} 轮模型调用` : ""}</span>}
           {error && <span className="obs-step-error">{error}</span>}
-          {step.finish && !step.start && <span className="obs-step-gap">{hasMore ? "开始记录尚未取得" : "开始未记录"}</span>}
+          {step.finish && !step.start && !process.message && <span className="obs-step-gap">{hasMore ? "开始记录尚未取得" : "开始未记录"}</span>}
         </span>
         <span className="obs-step-facts"><span>{dateTime(step.start?.created_at ?? event.created_at)}</span><strong>{duration(elapsed)}</strong>
           {tokens != null && <span>实际 {tokens.toLocaleString()} Token</span>}
@@ -96,20 +104,29 @@ function StepCard({ item, index, open, terminal, scope, onToggle, hasMore }: {
         <span className="obs-step-chevron" aria-hidden>{open ? "−" : "+"}</span>
       </button>
     </div>
+    {process.supported && <div className="obs-step-payloads obs-process-panels">{process.panels.filter((panel) => !panel.secondary).map((panel) =>
+      <DetailScope id={panel.id} key={panel.id}><ObservationPayload {...scope}
+        reference={panel.event?.body_ref} captureState={panel.event?.body_state ?? (!terminal && panel.id === "output" ? "pending" : "not_recorded")}
+        title={panel.title} select={panel.select} preview={!open} messages={panel.messages} contentId={panel.id} />
+      </DetailScope>)}</div>}
     {step.permissions.length > 0 && <div className="obs-step-permissions"><Permissions events={step.permissions} scope={scope} /></div>}
     {open && <div className="obs-step-body" id={"obs-step-body-" + event.seq}>
       {step.missingParent && <p className="obs-muted">{hasMore ? "上级调用尚未取得，还有后续记录可加载。" : "上级调用未采集，本步骤的输入、结果和状态可独立查看。"}</p>}
       {item.missingStage && <p className="obs-muted">{hasMore ? "所属阶段尚未取得。" : "所属阶段未记录，本步骤保留原始关联。"}</p>}
       {step.delivery && <p className="obs-muted">投递状态来自此消息的交付记录 · {dateTime(step.delivery.observedAt)}</p>}
       {event.data?.relation === "background_task" && <Alert type="info" content={"后台任务 " + String(event.data.related_task_id) + " · " + String(event.data.related_task_state ?? "状态未记录") + "。独立执行过程尚未接入。"} />}
-      <div className="obs-step-payloads">{payloadEvents.map((item) => <DetailScope key={item.seq} id={`event:${item.seq}`}><section>
+      {!process.supported && <div className="obs-step-payloads">{payloadEvents.map((item) => <DetailScope key={item.seq} id={`event:${item.seq}`}><section>
         {item.body_ref || item.body_state && item.body_state !== "not_recorded" ?
           <EventBody event={item} scope={scope} title={item.phase === "start" ? "调用参数" : item.phase === "finish" ? "调用结果" : "阶段数据"} /> :
           <><h4>{item.phase === "start" ? "调用输入" : item.phase === "finish" ? "调用结果" : "阶段数据"}</h4>
             <ConfigFields value={visibleMetadata(item)} />
             {item.kind.startsWith("LlmCall") && <p className="obs-muted">{item.phase === "start" ? "输入正文见下方关联上下文。" : "此阶段未记录模型返回正文。"}</p>}</>}
-      </section></DetailScope>)}</div>
-      {step.contexts.map((context) => <Disclosure key={context.seq} stateKey={`context:${context.seq}`} title="上下文">
+      </section></DetailScope>)}</div>}
+      {process.supported && process.panels.filter((panel) => panel.secondary).map((panel) => <Disclosure key={panel.id} stateKey={panel.id} title={panel.title}>
+        <ObservationPayload {...scope} reference={panel.event?.body_ref} captureState={panel.event?.body_state}
+          title={panel.title} select={panel.select} messages={panel.messages} contentId={panel.id} />
+      </Disclosure>)}
+      {!process.supported && step.contexts.map((context) => <Disclosure key={context.seq} stateKey={`context:${context.seq}`} title="上下文">
         <EventBody event={context} scope={scope} title="模型可见上下文" />
       </Disclosure>)}
       {event.kind.startsWith("LlmCall") && !step.contexts.length && <p className="obs-muted">未记录可关联的上下文快照</p>}
@@ -172,6 +189,7 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
   const stageCount = view.flow.filter((item) => item.kind === "stage").length;
   const terminal = ["completed", "failed", "aborted"].includes(run.state);
   const scope: BodyScope = { instanceId, runId: run.run_id, expired: !!run.details_expired, active: visible };
+  useEffect(() => { setExpanded((current) => rememberOpenedSteps(view.steps, current, terminal)); }, [view.steps, terminal]);
   useEffect(() => { try { sessionStorage.setItem(storageKey, JSON.stringify(expanded)); } catch { /* Browser storage can be disabled. */ } }, [expanded, storageKey]);
   useEffect(() => {
     if (terminal || !visible) return;

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.botspec.model import ContextSpec
+
 import os
 from types import SimpleNamespace
 from unittest import mock
@@ -14,7 +16,7 @@ def test_code_task_service_derives_worker_model_from_effective_profile() -> None
         instance_id="demo",
         tool_packs=("dev.code_tasks",),
         spec=SimpleNamespace(
-            llm=SimpleNamespace(env_prefix="CHATCOPILOT_DEMO")
+            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_DEMO")
         ),
     )
     config = SimpleNamespace(
@@ -74,7 +76,7 @@ def test_code_task_service_keeps_non_code_instance_idle_without_profile() -> Non
         instance_id="demo",
         tool_packs=(),
         spec=SimpleNamespace(
-            llm=SimpleNamespace(env_prefix="CHATCOPILOT_DEMO")
+            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_DEMO")
         ),
     )
 

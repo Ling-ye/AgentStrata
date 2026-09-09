@@ -180,3 +180,51 @@ def test_private_cross_area_check_covers_direct_imports_private_modules_and_cons
         "chatcopilot.external_tools._helpers",
         "chatcopilot.external_tools._private",
     )
+
+
+def test_retired_imports_are_rejected_even_from_compatibility_tests(tmp_path, monkeypatch) -> None:
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("architecture_retired_imports", ROOT / "scripts/check_architecture.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    source_root = tmp_path / "src/chatcopilot"
+    (source_root / "agent").mkdir(parents=True)
+    (source_root / "agent/current.py").write_text("from . import config\n", encoding="utf-8")
+    tests = tmp_path / "tests/unit"
+    tests.mkdir(parents=True)
+    (tests / "test_compatibility_exports.py").write_text(
+        "from chatcopilot.agent.protocol import AgentTask\n", encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "SRC", source_root)
+
+    failures = module._compatibility_import_checks()["compatibility_surfaces_are_not_internal_dependencies"]
+
+    assert failures["src/chatcopilot/agent/current.py"] == ["chatcopilot.agent.config"]
+    assert any(name.startswith("chatcopilot.agent.protocol") for name in failures["tests/unit/test_compatibility_exports.py"])
+
+
+def test_empty_retired_modules_and_replacement_packages_are_rejected(tmp_path, monkeypatch) -> None:
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("architecture_retired_sources", ROOT / "scripts/check_architecture.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    source_root = tmp_path / "src/chatcopilot"
+    for name in ("agent/config.py", "core/workspace/__init__.py", "middleware/runtime/workspace/replacement.py"):
+        path = source_root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "SRC", source_root)
+
+    rejected = module._semantic_invariants()["removed_legacy_sources_do_not_return"]["repository"]
+
+    assert "src/chatcopilot/agent/config.py" in rejected
+    assert "src/chatcopilot/core/workspace/__init__.py" in rejected
+    assert "src/chatcopilot/middleware/runtime/workspace/replacement.py" in rejected

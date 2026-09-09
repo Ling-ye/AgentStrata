@@ -1,8 +1,8 @@
 """通用工具调度器：按工具名查 ``ToolDef``、调 handler、包装成 ``ToolResult``。
 
 设计要点：
-- 不再感知 ``Role`` 概念，权限拦截通过上层注入的 ``permission_filter`` 实现
-  （middleware 在 build session 时绑好当前 role）。
+- 宿主注入绑定身份的 ``permission_filter``；独立调用使用相同 owner/member 规则，
+  没有可信调用者时不授予 Owner 权限。
 - 后台执行策略通过上层注入的 ``background_submitter`` 实现，背景 worker 进程
   内通过 env ``CHATCOPILOT_BACKGROUND_WORKER=1`` 抑制再次后台化。
 - ``_capture_streams`` 把业务 stdout/stderr Tee 到原始流 + 累积到 console 字段。
@@ -29,6 +29,7 @@ from chatcopilot.agent.tools.file_delivery import (
 )
 from chatcopilot.agent.tools.registry import discover_tools
 from chatcopilot.agent.tools.workspace_context import WorkspaceService, bind_workspace_service
+from chatcopilot.contracts.execution_scope import bind_execution_scope
 from chatcopilot.core.caller_context import bind_caller_role
 from chatcopilot.contracts.tools import (
     EXECUTION_SYNC,
@@ -121,26 +122,13 @@ class ToolExecutor:
         # 期间经 contextvar 暴露给 send_files_to_user 工具，避免 agent 直接 import 平台。
         self._file_sender = file_sender
         self._workspace_service = workspace_service
-        self._caller_role_hint = caller_role_hint or "user"
+        self._caller_role_hint = caller_role_hint or "unknown"
         self._job_context = job_context
 
-    def execute(
-        self,
-        tool_name: str,
-        arguments: Dict[str, Any],
-        *,
-        role: Any = None,
-        request_text: str = "",
-    ) -> ToolResult:
-        """执行工具。
-
-        Args:
-            tool_name: 目标工具名。
-            arguments: 入参字典。
-            role: 调用方角色（``Role`` 实例）。可选；传入时会按 ``ToolDef.requires_role``
-                做最低角色校验。middleware 在装配 executor 时若已注入 ``permission_filter``
-                则优先走 filter，role 参数仅作为简化兜底通道。
-        """
+    def validate_call(
+        self, tool_name: str, arguments: Dict[str, Any], *, role: Any = None
+    ) -> ToolResult | None:
+        """Validate normal and deferred calls through the same host rule."""
         tool = self._by_name.get(tool_name)
         if tool is None:
             return ToolResult(
@@ -168,20 +156,15 @@ class ToolExecutor:
                     error_code="tool_permission_denied",
                     stage="permission",
                 )
-        elif role is not None and tool.requires_role is not None:
-            from chatcopilot.contracts import role_ge, role_value
+        else:
+            from chatcopilot.contracts.tools import tool_access_allowed
 
-            if not role_ge(role, tool.requires_role):
+            if not tool_access_allowed(
+                role if role is not None else self._caller_role_hint, tool.access
+            ):
                 return ToolResult(
                     ok=False,
-                    summary="",
-                    outputs=[],
-                    console="",
-                    doc_links=[],
-                    error=(
-                        f"工具 {tool_name} 需要 {role_value(tool.requires_role)} 及以上权限；"
-                        f"当前用户角色 {role_value(role)}，拒绝执行。"
-                    ),
+                    error="该工具仅限 Owner。",
                     error_code="tool_permission_denied",
                     stage="permission",
                 )
@@ -196,9 +179,41 @@ class ToolExecutor:
                 stage="input_validation",
             )
 
+        return None
+
+    def execute(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        *,
+        role: Any = None,
+        request_text: str = "",
+    ) -> ToolResult:
+        """执行工具。
+
+        Args:
+            tool_name: 目标工具名。
+            arguments: 入参字典。
+            role: 调用方角色（``Role`` 实例）。可选；传入时会按 ``ToolDef.access``
+                做 owner/member 校验。middleware 在装配 executor 时若已注入 ``permission_filter``
+                则优先走 filter，role 参数仅作为简化兜底通道。
+        """
+        rejected = self.validate_call(tool_name, arguments, role=role)
+        if rejected is not None:
+            return rejected
+        tool = self._by_name[tool_name]
+
+        actual_role = self._caller_role_hint
+        if self._permission_filter is None and role is not None:
+            actual_role = str(getattr(role, "value", role))
+
         if self._should_submit_background(tool):
             try:
-                submitted = self._background_submitter(tool, arguments or {})  # type: ignore[misc]
+                with (
+                    bind_caller_role(self._caller_role_hint),
+                    bind_execution_scope(getattr(self._workspace_service, "execution_scope", None)),
+                ):
+                    submitted = self._background_submitter(tool, arguments or {})  # type: ignore[misc]
                 if not isinstance(submitted, ToolResult):
                     raise TypeError(
                         "background_submitter 必须返回 ToolResult，"
@@ -219,10 +234,15 @@ class ToolExecutor:
                     stage="background_submit",
                 )
 
-        tool_context = self._build_tool_context(request_text=request_text)
+        tool_context = self._build_tool_context(request_text=request_text, caller_role=actual_role)
         sender_token = set_current_file_sender(self._file_sender)
         try:
-            with bind_workspace_service(self._workspace_service), bind_caller_role(self._caller_role_hint), _capture_streams() as buf:
+            with (
+                bind_workspace_service(self._workspace_service),
+                bind_caller_role(actual_role),
+                bind_execution_scope(getattr(self._workspace_service, "execution_scope", None)),
+                _capture_streams() as buf,
+            ):
                 try:
                     if tool.weight == "heavy" and not _is_background_worker():
                         with self._heavy_tool_limiter.slot():
@@ -313,8 +333,9 @@ class ToolExecutor:
         finally:
             reset_current_file_sender(sender_token)
 
-
-    def _build_tool_context(self, *, request_text: str = "") -> ToolContext:
+    def _build_tool_context(
+        self, *, request_text: str = "", caller_role: str | None = None
+    ) -> ToolContext:
         workspace = None
         workspace_root = None
         persistent_state = None
@@ -340,7 +361,8 @@ class ToolExecutor:
             workspace_root=workspace_root,
             file_sender=self._file_sender,
             background_submitter=self._background_submitter,
-            caller_role=self._caller_role_hint,
+            caller_role=caller_role or self._caller_role_hint,
+            execution_scope=getattr(self._workspace_service, "execution_scope", None),
             job=self._job_context,
             persistent_state=persistent_state,
             request_text=request_text,

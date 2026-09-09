@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.botspec.model import ContextSpec
+
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -285,9 +287,9 @@ class _FakeSession:
         tool = self.tools[name]
         on_event(ToolStarted(name, arguments, trace_id=trace_id))
         if name == "send_files_to_user":
-            result = ToolExecutor(tools=[tool], file_sender=self.file_sender).execute(
-                name, arguments
-            )
+            result = ToolExecutor(
+                caller_role_hint="owner", tools=[tool], file_sender=self.file_sender
+            ).execute(name, arguments)
             summary = result.summary
             paths = result.outputs
             error = None if result.ok else result.error
@@ -654,7 +656,9 @@ class _FakeAgentRuntime:
 def fake_agent(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     tasks: list[Any] = []
     runtime = SimpleNamespace(
-        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")),
+        spec=SimpleNamespace(
+            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")
+        ),
         tool_packs=("dev.files", "persona.control"),
         exclude_tools=(),
         skills=(),
@@ -1207,7 +1211,9 @@ def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
     config.llm.api_key = "eval-local-placeholder"
     config.routing.code_workdir_env = custom_workdir_env
     runtime = SimpleNamespace(
-        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")),
+        spec=SimpleNamespace(
+            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")
+        ),
         tool_packs=(),
         exclude_tools=(),
         skills=(),
@@ -1263,7 +1269,7 @@ def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
 
     request = captured["request"]
     assert observation.final_text == '{"name":"fixture","value":7}'
-    assert captured["policy"].owner_access == "workspace"
+    assert request.options["execution_scope"].project_roots == (evaluation_workspace,)
     assert request.options["workspace_root"] == evaluation_workspace
     assert request.options["backend_state_root"] == (
         evaluation_workspace / ".backend-sessions"
@@ -1364,7 +1370,7 @@ def test_workspace_proof_writer_rejects_arbitrary_nonempty_content(tmp_path: Pat
         for tool in executor._extra_tools(_definition("workspace-write-contained"), tmp_path, state)
         if tool.name == "write_capability_proof"
     )
-    result = ToolExecutor(tools=[tool]).execute(
+    result = ToolExecutor(caller_role_hint="owner", tools=[tool]).execute(
         "write_capability_proof",
         {
             "path": "outputs/capability-proof.txt",

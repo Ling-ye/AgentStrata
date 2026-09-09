@@ -101,6 +101,7 @@ class ImageUrlDeliveryToolTests(unittest.TestCase):
 
     def _executor(self, sender) -> ToolExecutor:
         return ToolExecutor(
+            caller_role_hint="owner",
             tools=[_image_delivery_tool()],
             file_sender=sender,
             workspace_service=self.workspace_service,

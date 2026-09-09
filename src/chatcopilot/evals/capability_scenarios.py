@@ -320,11 +320,11 @@ def _role_denial(
             required=("message",),
         ),
         handler=owner_only_handler,
-        requires_role="owner",
+        access="owner",
         category="eval.security.fixture",
         owner="evals",
     )
-    permission_filter = build_permission_filter(role, agent_backend="native")
+    permission_filter = build_permission_filter(role)
     visibility_denial = permission_filter(owner_tool)
     execution_result = (
         ToolExecutor(
@@ -357,7 +357,7 @@ def _role_denial(
                 "production_permission_filter_exercised": True,
                 "execution_path": "ToolExecutor.execute",
                 "executor_class": "ToolExecutor",
-                "tool_requires_role": Role.OWNER.value,
+                "tool_access": Role.OWNER.value,
                 "caller_role": role.value,
                 "schema_hidden": bool(visibility_denial),
                 "permission_filter_denied": bool(visibility_denial),

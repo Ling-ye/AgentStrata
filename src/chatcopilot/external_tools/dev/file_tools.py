@@ -6,7 +6,11 @@ pathlib/subprocess.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import subprocess
+from chatcopilot.core.scoped_process import sandbox_command
+from chatcopilot.core.scoped_files import read_text, write_text, delete_file
 from typing import Any
 
 from chatcopilot.external_tools.dev.config import get_dev_config
@@ -28,7 +32,7 @@ _MAX_SEARCH_RESULTS = 50
 
 
 def _handle_read_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
-    config = get_dev_config()
+    config = get_dev_config(require_scope=True)
     path_str = str(args.get("path") or "").strip()
     resolved, normalized = ensure_readable(config, path_str)
 
@@ -44,7 +48,7 @@ def _handle_read_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
     end_line = args.get("end_line")
 
     try:
-        content = resolved.read_text(encoding="utf-8", errors="replace")
+        content = read_text(resolved)
     except OSError as e:
         return ToolResult(
             ok=False,
@@ -85,13 +89,12 @@ def _handle_read_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
 
 
 def _handle_write_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
-    config = get_dev_config()
+    config = get_dev_config(require_scope=True)
     path_str = str(args.get("path") or "").strip()
     content = str(args.get("content") or "")
     resolved, normalized = ensure_writable(config, path_str)
 
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    resolved.write_text(content, encoding="utf-8")
+    write_text(resolved, content)
 
     lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
     return ToolResult(
@@ -103,7 +106,7 @@ def _handle_write_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
 
 
 def _handle_edit_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
-    config = get_dev_config()
+    config = get_dev_config(require_scope=True)
     path_str = str(args.get("path") or "").strip()
     old_text = str(args.get("old_text") or "")
     new_text = str(args.get("new_text") or "")
@@ -124,7 +127,7 @@ def _handle_edit_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
             stage="validation",
         )
 
-    content = resolved.read_text(encoding="utf-8", errors="replace")
+    content = read_text(resolved)
     new_content = _apply_edit(content, old_text, new_text)
 
     if new_content is None:
@@ -138,7 +141,7 @@ def _handle_edit_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
             stage="execution",
         )
 
-    resolved.write_text(new_content, encoding="utf-8")
+    write_text(resolved, new_content)
     return ToolResult(
         ok=True,
         summary=f"Edited {normalized}",
@@ -180,7 +183,7 @@ def _apply_edit(content: str, old_text: str, new_text: str) -> str | None:
 
 
 def _handle_delete_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
-    config = get_dev_config()
+    config = get_dev_config(require_scope=True)
     path_str = str(args.get("path") or "").strip()
     resolved, normalized = ensure_writable(config, path_str)
 
@@ -192,16 +195,23 @@ def _handle_delete_file(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
             stage="execution",
         )
 
-    resolved.unlink()
+    delete_file(resolved)
     return ToolResult(ok=True, summary=f"Deleted {normalized}", data={"path": normalized})
 
 
 def _handle_list_directory(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
-    config = get_dev_config()
+    config = get_dev_config(require_scope=True)
     path_str = str(args.get("path") or "").strip()
     resolved, normalized = ensure_listable(config, path_str)
     recursive = bool(args.get("recursive"))
     glob_pattern = str(args.get("glob") or "").strip()
+    if Path(glob_pattern).is_absolute() or ".." in Path(glob_pattern).parts:
+        return ToolResult(
+            ok=False,
+            error="glob must stay within the requested directory",
+            error_code="path_access_denied",
+            stage="validation",
+        )
 
     if not resolved.is_dir():
         return ToolResult(
@@ -217,7 +227,13 @@ def _handle_list_directory(args: dict[str, Any], _ctx: ToolContext) -> ToolResul
     if glob_pattern:
         pattern = f"**/{glob_pattern}" if recursive else glob_pattern
         for p in sorted(resolved.glob(pattern))[:max_entries]:
-            rel = p.relative_to(config.repo_root)
+            if _ctx.execution_scope is not None and not _ctx.execution_scope.permits(p):
+                continue
+            rel = (
+                p.relative_to(config.repo_root)
+                if p.is_relative_to(config.repo_root)
+                else p.relative_to(resolved)
+            )
             suffix = "/" if p.is_dir() else ""
             entries.append(f"{rel.as_posix()}{suffix}")
     elif recursive:
@@ -227,12 +243,24 @@ def _handle_list_directory(args: dict[str, Any], _ctx: ToolContext) -> ToolResul
                 for part in p.parts
             ):
                 continue
-            rel = p.relative_to(config.repo_root)
+            if _ctx.execution_scope is not None and not _ctx.execution_scope.permits(p):
+                continue
+            rel = (
+                p.relative_to(config.repo_root)
+                if p.is_relative_to(config.repo_root)
+                else p.relative_to(resolved)
+            )
             suffix = "/" if p.is_dir() else ""
             entries.append(f"{rel.as_posix()}{suffix}")
     else:
         for p in sorted(resolved.iterdir())[:max_entries]:
-            rel = p.relative_to(config.repo_root)
+            if _ctx.execution_scope is not None and not _ctx.execution_scope.permits(p):
+                continue
+            rel = (
+                p.relative_to(config.repo_root)
+                if p.is_relative_to(config.repo_root)
+                else p.relative_to(resolved)
+            )
             suffix = "/" if p.is_dir() else ""
             entries.append(f"{rel.as_posix()}{suffix}")
 
@@ -256,7 +284,7 @@ def _handle_list_directory(args: dict[str, Any], _ctx: ToolContext) -> ToolResul
 
 
 def _handle_search_content(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
-    config = get_dev_config()
+    config = get_dev_config(require_scope=True)
     pattern = str(args.get("pattern") or "").strip()
     if not pattern:
         return ToolResult(
@@ -273,22 +301,33 @@ def _handle_search_content(args: dict[str, Any], _ctx: ToolContext) -> ToolResul
     if search_path:
         try:
             target, _ = ensure_readable(config, search_path)
-        except DevPathAccessError:
-            target = config.repo_root
+        except DevPathAccessError as exc:
+            return ToolResult(
+                ok=False, error=str(exc), error_code="path_access_denied", stage="validation"
+            )
     else:
         target = config.repo_root
 
     cmd = ["rg", "--no-heading", "--line-number", "--color=never", f"--max-count={max_results}"]
     if glob_filter:
         cmd.extend(["--glob", glob_filter])
-    cmd.extend([pattern, str(target)])
+    cmd.extend(["--", pattern, str(target)])
+    if _ctx.execution_scope is not None:
+        cmd = sandbox_command(cmd, scope=_ctx.execution_scope, cwd=config.repo_root)
 
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=30, cwd=str(config.repo_root)
         )
     except FileNotFoundError:
-        cmd_grep = ["grep", "-rn", "--include", glob_filter or "*", pattern, str(target)]
+        if _ctx.execution_scope is not None:
+            return ToolResult(
+                ok=False,
+                error="scoped search requires rg",
+                error_code="search_backend_unavailable",
+                stage="execution",
+            )
+        cmd_grep = ["grep", "-rn", "--include", glob_filter or "*", "--", pattern, str(target)]
         try:
             result = subprocess.run(
                 cmd_grep, capture_output=True, text=True, timeout=30
@@ -339,13 +378,23 @@ _PATH_RESULT_SCHEMA = object_schema(
 
 TOOLS: list[ToolDef] = [
     ToolDef(
+        access="member",
         name="read_file",
         summary="Read a file's contents with line numbers. Supports line range selection.",
-        input_schema=object_schema({
-            "path": {"type": "string", "description": "Relative path from project root"},
-            "start_line": {"type": "integer", "description": "First line to read (1-based, default 1)"},
-            "end_line": {"type": "integer", "description": "Last line to read (inclusive, default start+2000)"},
-        }, required=("path",)),
+        input_schema=object_schema(
+            {
+                "path": {"type": "string", "description": "Relative path from project root"},
+                "start_line": {
+                    "type": "integer",
+                    "description": "First line to read (1-based, default 1)",
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "Last line to read (inclusive, default start+2000)",
+                },
+            },
+            required=("path",),
+        ),
         output_schema=object_schema(
             {
                 "path": {"type": "string"},
@@ -365,12 +414,16 @@ TOOLS: list[ToolDef] = [
         artifact_kinds=(),
     ),
     ToolDef(
+        access="member",
         name="write_file",
         summary="Create or overwrite a file with the given content.",
-        input_schema=object_schema({
-            "path": {"type": "string", "description": "Relative path from project root"},
-            "content": {"type": "string", "description": "Full file content to write"},
-        }, required=("path", "content")),
+        input_schema=object_schema(
+            {
+                "path": {"type": "string", "description": "Relative path from project root"},
+                "content": {"type": "string", "description": "Full file content to write"},
+            },
+            required=("path", "content"),
+        ),
         output_schema=object_schema(
             {"path": {"type": "string"}, "lines": {"type": "integer"}},
             required=("path", "lines"),
@@ -379,52 +432,67 @@ TOOLS: list[ToolDef] = [
         category="dev.files",
         owner="dev",
         module=__name__,
-        requires_role="owner",
         artifact_kinds=("file",),
     ),
     ToolDef(
+        access="member",
         name="edit_file",
         summary=(
             "Edit a file by replacing old_text with new_text. Uses fuzzy matching "
             "to handle minor whitespace/indentation differences."
         ),
-        input_schema=object_schema({
-            "path": {"type": "string", "description": "Relative path from project root"},
-            "old_text": {"type": "string", "description": "Existing text to find (must be unique enough to match)"},
-            "new_text": {"type": "string", "description": "Replacement text"},
-        }, required=("path", "old_text", "new_text")),
+        input_schema=object_schema(
+            {
+                "path": {"type": "string", "description": "Relative path from project root"},
+                "old_text": {
+                    "type": "string",
+                    "description": "Existing text to find (must be unique enough to match)",
+                },
+                "new_text": {"type": "string", "description": "Replacement text"},
+            },
+            required=("path", "old_text", "new_text"),
+        ),
         output_schema=_PATH_RESULT_SCHEMA,
         handler=_handle_edit_file,
         category="dev.files",
         owner="dev",
         module=__name__,
-        requires_role="owner",
         artifact_kinds=("file",),
-        metadata={"execution_boundary": "codex"},
     ),
     ToolDef(
+        access="member",
         name="delete_file",
         summary="Delete a file from the project.",
-        input_schema=object_schema({
-            "path": {"type": "string", "description": "Relative path from project root"},
-        }, required=("path",)),
+        input_schema=object_schema(
+            {
+                "path": {"type": "string", "description": "Relative path from project root"},
+            },
+            required=("path",),
+        ),
         output_schema=_PATH_RESULT_SCHEMA,
         handler=_handle_delete_file,
         category="dev.files",
         owner="dev",
         module=__name__,
-        requires_role="owner",
         artifact_kinds=(),
-        metadata={"execution_boundary": "codex"},
     ),
     ToolDef(
+        access="member",
         name="list_directory",
         summary="List files and directories. Supports glob patterns and recursive listing.",
-        input_schema=object_schema({
-            "path": {"type": "string", "description": "Relative directory path (empty or '.' for project root)"},
-            "recursive": {"type": "boolean", "description": "List recursively (default false)"},
-            "glob": {"type": "string", "description": "Glob pattern to filter (e.g. '*.py', '**/*.yaml')"},
-        }),
+        input_schema=object_schema(
+            {
+                "path": {
+                    "type": "string",
+                    "description": "Relative directory path (empty or '.' for project root)",
+                },
+                "recursive": {"type": "boolean", "description": "List recursively (default false)"},
+                "glob": {
+                    "type": "string",
+                    "description": "Glob pattern to filter (e.g. '*.py', '**/*.yaml')",
+                },
+            }
+        ),
         output_schema=object_schema(
             {
                 "path": {"type": "string"},
@@ -441,14 +509,24 @@ TOOLS: list[ToolDef] = [
         artifact_kinds=(),
     ),
     ToolDef(
+        access="member",
         name="search_content",
         summary="Search file contents using regex pattern (ripgrep). Returns matching lines with file paths and line numbers.",
-        input_schema=object_schema({
-            "pattern": {"type": "string", "description": "Regex pattern to search for"},
-            "path": {"type": "string", "description": "Subdirectory to search in (default: project root)"},
-            "glob": {"type": "string", "description": "File glob filter (e.g. '*.py')"},
-            "max_results": {"type": "integer", "description": "Maximum matches to return (default 50, max 200)"},
-        }, required=("pattern",)),
+        input_schema=object_schema(
+            {
+                "pattern": {"type": "string", "description": "Regex pattern to search for"},
+                "path": {
+                    "type": "string",
+                    "description": "Subdirectory to search in (default: project root)",
+                },
+                "glob": {"type": "string", "description": "File glob filter (e.g. '*.py')"},
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum matches to return (default 50, max 200)",
+                },
+            },
+            required=("pattern",),
+        ),
         output_schema=object_schema(
             {
                 "pattern": {"type": "string"},

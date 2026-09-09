@@ -192,14 +192,13 @@ Subagent 接收 TaskPack，使用受限 selector 和预算，最后必须调用 
 
 公开内置 QQ 实例使用 Codex backend：
 
-- Owner 私聊和群聊主会话都保持 Owner Codex 投影并可只读访问源码 worktree，但源码
-  mutation 必须调用 `start_code_task`；群聊工具 payload 仍按公开受众脱敏。
-- QQ 群 User/Admin 只获得当前 shared workspace 与成员级 Codex 投影。私聊目录继续按用户
-  隔离；群准入和共享目录都不会提升普通成员角色。
-- QQ 群 Codex 必须运行在 fail-closed bubblewrap 中：精确 shared root 只读、actor state 与
-  audit 独立、继承环境清空，项目 `.codex` 配置/规则被隐藏；内建 shell/`apply_patch` 等路径
-  不能直接写群目录。所有 mutation 经 actor-bound、workspace-scoped Session Gateway MCP
-  回到宿主侧复核权限与 containment。隔离或 gateway 配置失败时不降级运行。
+- Owner 私聊、群聊与三个 Backend 使用同一业务授权，可直接修改宿主绑定的实例工作区和已配置项目。
+  后台代码任务是可选执行方式。普通写文件不触发或强制自更新；显式自更新仍通过原有交付后生命周期流程。Git 发布仍服从既有独立授权。
+- Admin/User 只拥有当前会话普通文件、公共查询与记忆读取和追加；不拥有项目、人格、清空或后台任务权限。
+- Application 生成 ExecutionScope，文件操作检查同一范围，命令通过 bubblewrap 落实隔离。
+  Owner Codex 使用可写策略；成员原生执行面只读，通过宿主文件工具写入当前会话。
+  actor 状态、群 journal 和恢复标识继续隔离；项目配置隐藏、环境清理和隔离失败关闭继续保留。
+- 群聊 payload 按公开受众处理，但调用者仍是原身份；权限增加不自动载入别的会话私聊内容。
 - Owner 群后台任务的控制记录写入 actor-scoped `.conversation-state/jobs/`，不写
   member-writable `shared/jobs`；普通群成员不能发现、查询、取消或重放。
 - code-worker 从远端默认分支创建任务私有 clone，在隔离环境验证。
@@ -267,3 +266,15 @@ python -m pytest tests/integration/test_acp_streaming_updates.py -q
 
 架构边界见 [architecture.md](architecture.md)，部署与运维见
 [deployment.md](deployment.md) 和 [operations.md](operations.md)。
+
+权限定义及旧字段迁移以 [runtime-permissions-simplification](../specs/runtime-permissions-simplification/spec.md) 为准。
+人格操作规则由 `persona.control` 包进入唯一 PromptPlan。设置、补充、研究人格应调用 `persona_manage`；
+当前群默认写群人格，只有 `committed=true` 回执能表示保存成功。原生文件可写与该管理工具的权限无关。
+
+## Python 导入路径
+
+L01 已删除 15 个无生产调用方的转发文件：旧 `agent.config`、`agent.concurrency`、
+`agent.llm_client`、`agent.protocol`、`botspec.mcp_catalog`、`core.workspace`、
+`agent.subagents.presets`、`agent.tools.builtin.mcp_tools` 和 `middleware.runtime.workspace`。
+完整替换关系见 [L01 导入迁移表](../specs/legacy-l01-import-removal/spec.md)。外部脚本需修改导入；
+运行配置、消息链和历史数据不迁移。L02 的活跃转发及 `agent.research` 继续留待后续逐项处理。

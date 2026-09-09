@@ -25,7 +25,6 @@ def make_workflow_tool(
     module_name: str = __name__,
 ) -> ToolDef:
     def _handler(args: dict, ctx: ToolContext) -> ToolResult:
-        del ctx
         task_args = dict(args)
         extension_inputs: list[str] = []
         if workflow.name == "coding":
@@ -45,6 +44,7 @@ def make_workflow_tool(
         result = workflow_runner.run(
             session_id=session_id,
             workflow=workflow,
+            caller_role=ctx.caller_role,
             task=task,
         )
         try:
@@ -110,7 +110,7 @@ def make_workflow_tool(
         owner="agent",
         module=module_name,
         artifact_kinds=("file", "directory"),
-        requires_role="owner" if workflow.name == "coding" else None,
+        access="owner",
         weight="heavy" if workflow.name == "coding" else "light",
         execution_policy=(
             EXECUTION_USER_SERIAL_BACKGROUND if workflow.name == "coding" else "sync"

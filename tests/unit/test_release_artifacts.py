@@ -651,3 +651,23 @@ def test_release_sdist_description_rejects_relative_markdown_target(
         match="sdist PKG-INFO Description contains relative Markdown target",
     ):
         verifier.validate_sdist(sdist)
+
+
+@pytest.mark.parametrize("relative", ("agent/config.py", "core/workspace/__init__.py", "middleware/runtime/workspace/inventory.py"))
+def test_wheel_rejects_retired_l01_modules(tmp_path: Path, relative: str) -> None:
+    verifier = _load_verifier()
+    wheel = tmp_path / "agentstrata-1.0-py3-none-any.whl"
+    _write_test_wheel(wheel, verifier, extra_members={"chatcopilot/" + relative: b""})
+    with pytest.raises(verifier.VerificationError, match="wheel contains retired L01 modules"):
+        verifier.validate_wheel(wheel)
+
+
+@pytest.mark.parametrize("relative", ("agent/protocol.py", "agent/subagents/presets.py", "middleware/runtime/workspace/__init__.py"))
+def test_sdist_rejects_retired_l01_modules(tmp_path: Path, relative: str) -> None:
+    verifier = _load_synthetic_sdist_verifier()
+    identity = verifier._source_identity()
+    root = f"{identity.name}-{identity.version}"
+    sdist = tmp_path / f"{root}.tar.gz"
+    _write_test_sdist(sdist, verifier, extra_members={f"{root}/src/chatcopilot/{relative}": b""})
+    with pytest.raises(verifier.VerificationError, match="sdist contains retired L01 modules"):
+        verifier.validate_sdist(sdist)

@@ -28,10 +28,10 @@ def test_owner_direct_tools_and_remaining_mutations_have_expected_boundaries() -
 
     for name in ("write_file", "run_command"):
         assert dev[name].metadata.get("execution_boundary") is None
-        assert dev[name].requires_role == "owner"
+        assert dev[name].access == ("owner" if name == "run_command" else "member")
     for name in ("edit_file", "delete_file"):
-        assert dev[name].metadata.get("execution_boundary") == "codex"
-    assert admin["approve_mcp_server"].metadata.get("execution_boundary") == "codex"
+        assert dev[name].metadata.get("execution_boundary") is None
+    assert admin["approve_mcp_server"].metadata.get("execution_boundary") is None
     assert set(admin) == {
         "approve_mcp_server",
         "discover_mcp_server",
@@ -45,14 +45,15 @@ def test_owner_direct_tools_are_allowed_only_for_owner() -> None:
     owner_filter = _make_permission_filter(Role.OWNER)
     user_filter = _make_permission_filter(Role.USER)
 
-    for name in ("write_file", "run_command"):
+    for name in ("run_command",):
         assert owner_filter(dev[name]) is None
-        assert "需要 owner" in str(user_filter(dev[name]))
+        assert "Owner" in str(user_filter(dev[name]))
     assert owner_filter(web_fetch_page) is None
-    assert "需要 owner" in str(user_filter(web_fetch_page))
+    assert user_filter(web_fetch_page) is None
+    assert user_filter(dev["write_file"]) is None
 
 
-def test_execution_boundary_is_backend_aware_and_role_filter_still_applies() -> None:
+def test_retired_backend_metadata_does_not_restrict_owner() -> None:
     called = mock.Mock()
 
     def handler(_args: dict, _context: ToolContext) -> ToolResult:
@@ -65,12 +66,12 @@ def test_execution_boundary_is_backend_aware_and_role_filter_still_applies() -> 
         input_schema=object_schema(),
         output_schema=object_schema(),
         handler=handler,
-        requires_role="owner",
+        access="owner",
         metadata={"execution_boundary": "codex"},
     )
-    permission_filter = _make_permission_filter(Role.OWNER, agent_backend="native")
-    codex_owner_filter = _make_permission_filter(Role.OWNER, agent_backend="codex")
-    codex_user_filter = _make_permission_filter(Role.USER, agent_backend="codex")
+    permission_filter = _make_permission_filter(Role.OWNER)
+    codex_owner_filter = _make_permission_filter(Role.OWNER)
+    codex_user_filter = _make_permission_filter(Role.USER)
 
     rejection = permission_filter(tool)
     result = ToolExecutor(tools=[tool], permission_filter=permission_filter).execute(
@@ -78,16 +79,14 @@ def test_execution_boundary_is_backend_aware_and_role_filter_still_applies() -> 
         {},
     )
 
-    assert rejection is not None
-    assert "Codex" in rejection
-    assert result.ok is False
-    assert "Codex" in result.error
+    assert rejection is None
+    assert result.ok is True
     assert codex_owner_filter(tool) is None
-    assert "owner" in str(codex_user_filter(tool))
-    called.assert_not_called()
+    assert "Owner" in str(codex_user_filter(tool))
+    called.assert_called_once()
 
 
-def test_write_capable_delegates_are_codex_only() -> None:
+def test_write_capable_delegates_are_owner_tools_for_every_backend() -> None:
     config = SubagentRuntimeConfig(
         model_env_prefix=None,
         max_model_turns=1,
@@ -103,9 +102,9 @@ def test_write_capable_delegates_are_codex_only() -> None:
             config,
             lambda _tool: True,
         )
-        assert tool.metadata.get("execution_boundary") == "codex"
+        assert tool.metadata.get("execution_boundary") is None
         if name == "adapter_forge":
-            assert tool.requires_role == "owner"
+            assert tool.access == "owner"
 
 
 def test_adapter_forge_can_dispatch_code_task_but_cannot_write_directly() -> None:

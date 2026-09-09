@@ -161,14 +161,21 @@ _PAYLOAD_SCHEMA = {"type": "object", "additionalProperties": True}
 
 TOOLS = [
     ToolDef(
+        access="member",
         name="career_watchlist_update",
         summary="更新当前用户关注的公司、岗位关键词和城市；默认与现有列表合并。",
-        input_schema=object_schema({
-            "companies": {**_STRING_ARRAY, "description": "公司规范名或别名。"},
-            "keywords": {**_STRING_ARRAY, "description": "岗位检索关键词。"},
-            "locations": {**_STRING_ARRAY, "description": "可选城市过滤。"},
-            "replace": {"type": "boolean", "description": "为 true 时替换传入的非空维度。", "default": False},
-        }),
+        input_schema=object_schema(
+            {
+                "companies": {**_STRING_ARRAY, "description": "公司规范名或别名。"},
+                "keywords": {**_STRING_ARRAY, "description": "岗位检索关键词。"},
+                "locations": {**_STRING_ARRAY, "description": "可选城市过滤。"},
+                "replace": {
+                    "type": "boolean",
+                    "description": "为 true 时替换传入的非空维度。",
+                    "default": False,
+                },
+            }
+        ),
         output_schema=_PAYLOAD_SCHEMA,
         handler=_watchlist_update,
         category="career.intelligence",
@@ -177,114 +184,192 @@ TOOLS = [
         metadata={"tags": ["career", "write"]},
     ),
     ToolDef(
+        access="member",
         name="career_watchlist_show",
         summary="查看当前用户的 AI 岗位情报关注公司、关键词和城市。",
-        input_schema=object_schema(), output_schema=_PAYLOAD_SCHEMA, handler=_watchlist_show,
-        category="career.intelligence", owner="career", module=__name__,
+        input_schema=object_schema(),
+        output_schema=_PAYLOAD_SCHEMA,
+        handler=_watchlist_show,
+        category="career.intelligence",
+        owner="career",
+        module=__name__,
     ),
     ToolDef(
+        access="member",
         name="search_company_ai_jobs",
         summary=(
             "按用户指定公司查询公开招聘源，保存快照并返回新增、变化、疑似下线岗位，"
             "以及需要统一搜索入口执行的 fallback_query。"
         ),
-        input_schema=object_schema({
-            "companies": {**_STRING_ARRAY, "description": "留空使用 watchlist。"},
-            "keywords": {**_STRING_ARRAY, "description": "留空使用 watchlist。"},
-            "locations": {**_STRING_ARRAY, "description": "留空使用 watchlist。"},
-            "posted_within_days": {"type": "integer", "description": "只保留最近多少天发布的岗位。", "default": 30},
-            "limit_per_company": {"type": "integer", "description": "每家公司最多返回数，1-50。", "default": 20},
-        }),
-        output_schema=_PAYLOAD_SCHEMA, handler=_search_jobs,
-        category="career.intelligence", owner="career", module=__name__, weight="heavy",
+        input_schema=object_schema(
+            {
+                "companies": {**_STRING_ARRAY, "description": "留空使用 watchlist。"},
+                "keywords": {**_STRING_ARRAY, "description": "留空使用 watchlist。"},
+                "locations": {**_STRING_ARRAY, "description": "留空使用 watchlist。"},
+                "posted_within_days": {
+                    "type": "integer",
+                    "description": "只保留最近多少天发布的岗位。",
+                    "default": 30,
+                },
+                "limit_per_company": {
+                    "type": "integer",
+                    "description": "每家公司最多返回数，1-50。",
+                    "default": 20,
+                },
+            }
+        ),
+        output_schema=_PAYLOAD_SCHEMA,
+        handler=_search_jobs,
+        category="career.intelligence",
+        owner="career",
+        module=__name__,
+        weight="heavy",
         metadata={"tags": ["career", "search", "write"]},
     ),
     ToolDef(
+        access="member",
         name="career_jobs_ingest",
         summary=(
             "把统一搜索入口从用户指定公司的官方招聘链接找到的岗位写入快照。"
             "搜索摘要、社区帖子和面经链接不能作为岗位来源；fallback 快照不会判定岗位下线。"
         ),
-        input_schema=object_schema({
-            "records": {
-                "type": "array",
-                "items": {
+        input_schema=object_schema(
+            {
+                "records": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "company": {"type": "string"},
+                            "title": {"type": "string"},
+                            "location": {"type": "string"},
+                            "source_url": {"type": "string"},
+                            "source_job_id": {"type": "string"},
+                            "responsibilities": {"type": "string"},
+                            "requirements": {"type": "string"},
+                            "published_at": {"type": "string", "description": "可解析的发布日期。"},
+                        },
+                        "required": ["company", "title", "source_url", "published_at"],
+                    },
+                },
+                "scan_scope": {
                     "type": "object",
                     "properties": {
-                        "company": {"type": "string"},
-                        "title": {"type": "string"},
-                        "location": {"type": "string"},
-                        "source_url": {"type": "string"},
-                        "source_job_id": {"type": "string"},
-                        "responsibilities": {"type": "string"},
-                        "requirements": {"type": "string"},
-                        "published_at": {"type": "string", "description": "可解析的发布日期。"},
+                        "keywords": _STRING_ARRAY,
+                        "locations": _STRING_ARRAY,
+                        "posted_within_days": {"type": "integer", "default": 30},
+                        "source_name": {"type": "string", "default": "search_information"},
                     },
-                    "required": ["company", "title", "source_url", "published_at"],
+                    "required": ["keywords", "posted_within_days", "source_name"],
                 },
             },
-            "scan_scope": {
-                "type": "object",
-                "properties": {
-                    "keywords": _STRING_ARRAY,
-                    "locations": _STRING_ARRAY,
-                    "posted_within_days": {"type": "integer", "default": 30},
-                    "source_name": {"type": "string", "default": "search_information"},
-                },
-                "required": ["keywords", "posted_within_days", "source_name"],
-            },
-        }, required=("records", "scan_scope")),
-        output_schema=_PAYLOAD_SCHEMA, handler=_ingest_jobs,
-        category="career.intelligence", owner="career", module=__name__,
+            required=("records", "scan_scope"),
+        ),
+        output_schema=_PAYLOAD_SCHEMA,
+        handler=_ingest_jobs,
+        category="career.intelligence",
+        owner="career",
+        module=__name__,
         metadata={"tags": ["career", "write"]},
     ),
     ToolDef(
+        access="member",
         name="career_intel_ingest",
         summary=(
             "保存联网研究得到的薪资、待遇、面试流程或面试问题证据。每条必须包含公开链接、"
             "来源等级 A-D 和置信度；不得只写无法拆解的推测总包。"
         ),
-        input_schema=object_schema({
-            "records": {
-                "type": "array",
-                "description": "结构化证据数组。",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "kind": {"type": "string", "enum": ["salary", "benefits", "interview_process", "interview_question", "workplace"]},
-                        "company": {"type": "string"},
-                        "role_family": {"type": "string"},
-                        "topic": {"type": "string"},
-                        "normalized_key": {"type": "string", "description": "面试题归一化键；同题不同表述使用相同值。"},
-                        "source_name": {"type": "string"},
-                        "source_url": {"type": "string"},
-                        "source_type": {"type": "string", "enum": ["official", "complete_experience", "community_post", "search_snippet", "repost"]},
-                        "source_grade": {"type": "string", "enum": ["A", "B", "C", "D"]},
-                        "published_at": {"type": "string"},
-                        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-                        "payload": {"type": "object", "additionalProperties": True},
+        input_schema=object_schema(
+            {
+                "records": {
+                    "type": "array",
+                    "description": "结构化证据数组。",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": [
+                                    "salary",
+                                    "benefits",
+                                    "interview_process",
+                                    "interview_question",
+                                    "workplace",
+                                ],
+                            },
+                            "company": {"type": "string"},
+                            "role_family": {"type": "string"},
+                            "topic": {"type": "string"},
+                            "normalized_key": {
+                                "type": "string",
+                                "description": "面试题归一化键；同题不同表述使用相同值。",
+                            },
+                            "source_name": {"type": "string"},
+                            "source_url": {"type": "string"},
+                            "source_type": {
+                                "type": "string",
+                                "enum": [
+                                    "official",
+                                    "complete_experience",
+                                    "community_post",
+                                    "search_snippet",
+                                    "repost",
+                                ],
+                            },
+                            "source_grade": {"type": "string", "enum": ["A", "B", "C", "D"]},
+                            "published_at": {"type": "string"},
+                            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                            "payload": {"type": "object", "additionalProperties": True},
+                        },
+                        "required": [
+                            "kind",
+                            "company",
+                            "source_name",
+                            "source_url",
+                            "source_type",
+                            "source_grade",
+                            "published_at",
+                            "confidence",
+                        ],
                     },
-                    "required": ["kind", "company", "source_name", "source_url", "source_type", "source_grade", "published_at", "confidence"],
-                },
-            }
-        }, required=("records",)),
-        output_schema=_PAYLOAD_SCHEMA, handler=_ingest,
-        category="career.intelligence", owner="career", module=__name__,
+                }
+            },
+            required=("records",),
+        ),
+        output_schema=_PAYLOAD_SCHEMA,
+        handler=_ingest,
+        category="career.intelligence",
+        owner="career",
+        module=__name__,
         metadata={"tags": ["career", "write"]},
     ),
     ToolDef(
+        access="member",
         name="career_intel_query",
         summary="查询已保存的岗位、市场证据、高频面试题和最近一次扫描状态。",
-        input_schema=object_schema({
-            "companies": {**_STRING_ARRAY, "description": "可选公司过滤。"},
-            "kind": {"type": "string", "enum": ["all", "jobs", "evidence"], "default": "all"},
-            "limit": {"type": "integer", "default": 50},
-            "since_days": {"type": "integer", "description": "仅查询最近多少天，默认 365。", "default": 365},
-            "role_family": {"type": "string", "description": "可选岗位族过滤。"},
-            "detail": {"type": "boolean", "description": "是否返回完整 JD/证据细节。", "default": False},
-        }),
-        output_schema=_PAYLOAD_SCHEMA, handler=_query,
-        category="career.intelligence", owner="career", module=__name__,
+        input_schema=object_schema(
+            {
+                "companies": {**_STRING_ARRAY, "description": "可选公司过滤。"},
+                "kind": {"type": "string", "enum": ["all", "jobs", "evidence"], "default": "all"},
+                "limit": {"type": "integer", "default": 50},
+                "since_days": {
+                    "type": "integer",
+                    "description": "仅查询最近多少天，默认 365。",
+                    "default": 365,
+                },
+                "role_family": {"type": "string", "description": "可选岗位族过滤。"},
+                "detail": {
+                    "type": "boolean",
+                    "description": "是否返回完整 JD/证据细节。",
+                    "default": False,
+                },
+            }
+        ),
+        output_schema=_PAYLOAD_SCHEMA,
+        handler=_query,
+        category="career.intelligence",
+        owner="career",
+        module=__name__,
     ),
 ]
 

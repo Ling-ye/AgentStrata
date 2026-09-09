@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from chatcopilot.core.scoped_process import sandbox_command
 from chatcopilot.contracts.development import current_development_task_scope
 from chatcopilot.external_tools.dev.config import get_dev_config, DevConfig
 from chatcopilot.external_tools.dev.path_guard import DevPathAccessError
@@ -117,6 +118,13 @@ def _resolve_cwd(config: DevConfig, cwd_raw: str | None) -> Path:
         target = config.repo_root / target
 
     resolved = target.resolve()
+    from chatcopilot.contracts.execution_scope import current_execution_scope
+
+    scope = current_execution_scope()
+    if scope is not None:
+        if not scope.permits(resolved):
+            raise DevPathAccessError("cwd is outside the bound execution resources")
+        return resolved
     try:
         resolved.relative_to(config.repo_root)
     except ValueError:
@@ -127,7 +135,7 @@ def _resolve_cwd(config: DevConfig, cwd_raw: str | None) -> Path:
 
 
 def _handle_run_command(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
-    config = get_dev_config()
+    config = get_dev_config(require_scope=True)
     command = str(args.get("command") or "").strip()
     if not command:
         return ToolResult(
@@ -164,14 +172,17 @@ def _handle_run_command(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
         timeout = max(1, timeout)
 
     try:
+        if _ctx.execution_scope is None:
+            raise RuntimeError("execution resources are not bound to this command")
+        argv = sandbox_command(["/bin/bash", "--noprofile", "--norc", "-c", command], scope=_ctx.execution_scope, cwd=cwd)
         result = subprocess.run(
-            command,
-            shell=True,
+            argv,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=timeout,
             cwd=str(cwd),
-            env=None,  # inherit parent env
+            env=None,  # bubblewrap clears the child environment
         )
     except subprocess.TimeoutExpired:
         return ToolResult(
@@ -180,7 +191,7 @@ def _handle_run_command(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
             error_code="command_timeout",
             stage="execution",
         )
-    except OSError as e:
+    except (OSError, ValueError, RuntimeError) as e:
         return ToolResult(
             ok=False,
             error=f"Command execution failed: {e}",
@@ -221,11 +232,20 @@ TOOLS: list[ToolDef] = [
             "Use for running tests, builds, linters, or other dev tasks. "
             "Commands are restricted to the project root."
         ),
-        input_schema=object_schema({
-            "command": {"type": "string", "description": "Shell command to execute"},
-            "cwd": {"type": "string", "description": "Working directory relative to project root (default: project root)"},
-            "timeout_seconds": {"type": "integer", "description": "Timeout in seconds (default 60, max 300)"},
-        }, required=("command",)),
+        input_schema=object_schema(
+            {
+                "command": {"type": "string", "description": "Shell command to execute"},
+                "cwd": {
+                    "type": "string",
+                    "description": "Working directory relative to project root (default: project root)",
+                },
+                "timeout_seconds": {
+                    "type": "integer",
+                    "description": "Timeout in seconds (default 60, max 300)",
+                },
+            },
+            required=("command",),
+        ),
         output_schema=object_schema(
             {
                 "command": {"type": "string"},
@@ -238,7 +258,7 @@ TOOLS: list[ToolDef] = [
         category="dev.shell",
         owner="dev",
         module=__name__,
-        requires_role="owner",
+        access="owner",
         weight="heavy",
     ),
 ]

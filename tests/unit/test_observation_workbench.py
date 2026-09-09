@@ -402,8 +402,16 @@ def test_execution_authorization_retains_exact_trace_and_separates_visibility(re
     principal = Principal(channel='fixture', account_id='account', user_id='actor',
                           conversation=ConversationIdentity('fixture', 'p2p', 'chat'), role=Role.USER,
                           evidence_digest=stable_payload_digest({'event': 'fixture'}))
-    check = build_tool_permission_filter(principal, policy_version='v1', agent_backend='native')
-    tool = ToolDef('search_public', 'search', {}, {}, handler=lambda *_: None, category='agent.search')
+    check = build_tool_permission_filter(principal, policy_version="v1")
+    tool = ToolDef(
+        "search_public",
+        "search",
+        {},
+        {},
+        handler=lambda *_: None,
+        category="agent.search",
+        access="member",
+    )
     with recorder.scope(run):
         assert check(tool) is None
     token = set_trace(TraceContext('trace', 'tool-call', 0, observer))

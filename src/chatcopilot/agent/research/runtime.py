@@ -54,7 +54,7 @@ def build_research_tool(
         module=__name__,
         aliases=search_tool.aliases,
         doc_anchors=search_tool.doc_anchors,
-        requires_role=search_tool.requires_role,
+        access=search_tool.access,
         artifact_kinds=search_tool.artifact_kinds,
         weight=search_tool.weight,
         execution_policy=search_tool.execution_policy,

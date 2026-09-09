@@ -408,7 +408,7 @@ def test_search_information_skips_tavily_quota_and_uses_brave() -> None:
     )
     assert search is not None
 
-    result = ToolExecutor(tools=[search]).execute(
+    result = ToolExecutor(caller_role_hint="owner", tools=[search]).execute(
         "search_information",
         {"objective": "package release", "verification": "none"},
     )
@@ -448,7 +448,7 @@ def test_searxng_results_are_filtered_for_relevance() -> None:
     )
     assert search is not None
 
-    result = ToolExecutor(tools=[search]).execute(
+    result = ToolExecutor(caller_role_hint="owner", tools=[search]).execute(
         "search_information",
         {"objective": "Unity package release", "verification": "none"},
     )
@@ -487,7 +487,7 @@ def test_xiaohongshu_direct_search_uses_keyword_and_extracts_wrapped_content() -
     )
     assert search is not None
 
-    result = ToolExecutor(tools=[search]).execute(
+    result = ToolExecutor(caller_role_hint="owner", tools=[search]).execute(
         "search_information",
         {"objective": "上海 二郎拉面 探店", "verification": "none"},
     )
@@ -527,7 +527,7 @@ def test_explicit_xiaohongshu_request_forces_experience_over_web() -> None:
     assert search is not None
 
     objective = "使用小红书 MCP 搜索上海市的青山制面的地址和评价"
-    result = ToolExecutor(tools=[search]).execute(
+    result = ToolExecutor(caller_role_hint="owner", tools=[search]).execute(
         "search_information",
         {"objective": objective, "verification": "none"},
     )
@@ -586,7 +586,7 @@ def test_search_result_deep_read_uses_dynamic_browser_when_static_page_is_shell(
     )
     assert search is not None
 
-    result = ToolExecutor(tools=[search]).execute(
+    result = ToolExecutor(caller_role_hint="owner", tools=[search]).execute(
         "search_information",
         {"objective": "Cultist warrior health", "verification": "none"},
     )

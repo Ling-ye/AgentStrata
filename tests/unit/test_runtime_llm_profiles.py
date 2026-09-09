@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.botspec.model import ContextSpec
+
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -31,11 +33,17 @@ from chatcopilot.core.llm_client import LLMClient
 
 def _runtime() -> SimpleNamespace:
     return SimpleNamespace(
-        spec=SimpleNamespace(llm=SimpleNamespace(
-            research_model="research-default", research_env_prefix="RESEARCH",
-        )),
+        spec=SimpleNamespace(
+            context=ContextSpec(),
+            llm=SimpleNamespace(
+                research_model="research-default",
+                research_env_prefix="RESEARCH",
+            ),
+        ),
         tool_packs=("search.unified", "agent.delegation"),
-        exclude_tools=(), skills=(), rag_sources=(),
+        exclude_tools=(),
+        skills=(),
+        rag_sources=(),
         mcp_servers=(McpServerConfig(id="search-source"),),
         subagents=SubagentSpec(
             include=("developer",),
@@ -43,11 +51,15 @@ def _runtime() -> SimpleNamespace:
             search_budget=SubagentBudgetSpec(model_env_prefix="SEARCH_AGENT"),
             research_enabled=True,
             research_budget=SubagentBudgetSpec(model_env_prefix="ROUTER"),
-            custom=(CustomSubagentSpec(
-                name="custom", tool_name="custom_agent", summary="Test agent",
-                selector=ToolSelectorSpec(),
-                budget=SubagentBudgetSpec(model_env_prefix="CUSTOM"),
-            ),),
+            custom=(
+                CustomSubagentSpec(
+                    name="custom",
+                    tool_name="custom_agent",
+                    summary="Test agent",
+                    selector=ToolSelectorSpec(),
+                    budget=SubagentBudgetSpec(model_env_prefix="CUSTOM"),
+                ),
+            ),
             search_providers=(SearchProviderSpec(id="web", kind="tavily"),),
         ),
         agent_backend="native",

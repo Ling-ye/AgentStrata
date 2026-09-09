@@ -130,8 +130,8 @@ class DebugModeAccessTests(unittest.TestCase):
         self.assertTrue(can_toggle_debug(Role.OWNER, "p2p"))
         self.assertTrue(can_toggle_debug(Role.OWNER, "p2p_msg", "oc_private"))
         self.assertTrue(can_toggle_debug(Role.OWNER, "", "oc_private"))
-        self.assertFalse(can_toggle_debug(Role.OWNER, "group"))
-        self.assertFalse(can_toggle_debug(Role.OWNER, "group_at_msg", "oc_group"))
+        self.assertTrue(can_toggle_debug(Role.OWNER, "group"))
+        self.assertTrue(can_toggle_debug(Role.OWNER, "group_at_msg", "oc_group"))
         self.assertFalse(can_toggle_debug(Role.ADMIN, "p2p"))
         self.assertFalse(can_toggle_debug(Role.USER, "p2p"))
 
@@ -144,8 +144,8 @@ class DebugModeAccessTests(unittest.TestCase):
         self.assertTrue(can_select_general_mode(Role.OWNER, "p2p"))
         self.assertTrue(can_select_general_mode(Role.OWNER, "p2p_msg", "oc_private"))
         self.assertTrue(can_select_general_mode(Role.OWNER, "", "oc_private"))
-        self.assertFalse(can_select_general_mode(Role.OWNER, "group"))
-        self.assertFalse(can_select_general_mode(Role.OWNER, "group_at_msg", "oc_group"))
+        self.assertTrue(can_select_general_mode(Role.OWNER, "group"))
+        self.assertTrue(can_select_general_mode(Role.OWNER, "group_at_msg", "oc_group"))
         self.assertFalse(can_select_general_mode(Role.ADMIN, "p2p"))
         self.assertFalse(can_select_general_mode(Role.USER, "p2p"))
 
@@ -252,9 +252,9 @@ class DebugModeAccessTests(unittest.TestCase):
         reply = _handle_debug_command(session, "/debug on")
 
         self.assertFalse(session.debug_mode)
-        self.assertIn("仅限 Owner 私聊", reply or "")
+        self.assertIn("仅限 Owner", reply or "")
 
-    def test_group_owner_cannot_enable_debug_with_slash_command(self) -> None:
+    def test_group_owner_can_enable_debug_with_slash_command(self) -> None:
         session = self._session_stub(
             role=Role.OWNER,
             debug_mode=False,
@@ -264,10 +264,10 @@ class DebugModeAccessTests(unittest.TestCase):
 
         reply = _handle_debug_command(session, "/debug on")
 
-        self.assertFalse(session.debug_mode)
-        self.assertIn("群聊固定", reply or "")
+        self.assertTrue(session.debug_mode)
+        self.assertIn("已开启" if "debug" in self._testMethodName else "通用模式", reply or "")
 
-    def test_group_owner_cannot_enable_debug_with_natural_language(self) -> None:
+    def test_group_owner_can_enable_debug_with_natural_language(self) -> None:
         session = self._session_stub(
             role=Role.OWNER,
             debug_mode=False,
@@ -277,8 +277,8 @@ class DebugModeAccessTests(unittest.TestCase):
 
         reply = _handle_debug_command(session, "@SampleGame性能助手 开启debug模式")
 
-        self.assertFalse(session.debug_mode)
-        self.assertIn("群聊固定", reply or "")
+        self.assertTrue(session.debug_mode)
+        self.assertIn("已开启" if "debug" in self._testMethodName else "通用模式", reply or "")
 
     def _build_mode_session(
         self,
@@ -317,7 +317,7 @@ class DebugModeAccessTests(unittest.TestCase):
         agent_session = AgentSession(
             session_id="sid",
             llm=_FakeLLM(llm_results),
-            executor=ToolExecutor(tools=tools),
+            executor=ToolExecutor(tools=tools, caller_role_hint=role.value),
             tools_schema=[build_openai_schema(tool) for tool in tools],
             prompt_plan=_test_prompt_plan(
                 ws,
@@ -388,7 +388,7 @@ class DebugModeAccessTests(unittest.TestCase):
                         )
                     ]
                 ),
-                ChatResult(content="通用模式仅限 Owner 私聊可用。"),
+                ChatResult(content="通用模式仅限 Owner可用。"),
             ],
         )
 
@@ -396,9 +396,9 @@ class DebugModeAccessTests(unittest.TestCase):
 
         self.assertEqual(session.assistant_mode, AssistantMode.PERFORMANCE)
         self.assertIn("SampleGame 性能分析模式", _rendered_session_prompt(session))
-        self.assertIn("通用模式仅限 Owner 私聊", reply or "")
+        self.assertIn("通用模式仅限 Owner", reply or "")
 
-    def test_group_owner_cannot_switch_to_general_mode_via_llm_tool_call(self) -> None:
+    def test_group_owner_can_switch_to_general_mode_via_llm_tool_call(self) -> None:
         session = self._build_mode_session(
             role=Role.OWNER,
             assistant_mode=AssistantMode.GENERAL,
@@ -419,11 +419,11 @@ class DebugModeAccessTests(unittest.TestCase):
 
         reply = session.session.run_task(AgentTask(text="切到通用模式"), on_event=lambda e: None).final_text
 
-        self.assertEqual(session.assistant_mode, AssistantMode.PERFORMANCE)
-        self.assertIn("SampleGame 性能分析模式", _rendered_session_prompt(session))
+        self.assertEqual(session.assistant_mode, AssistantMode.GENERAL)
+        self.assertIn("SampleGame 通用模式", _rendered_session_prompt(session))
         self.assertIn("群聊固定", reply or "")
 
-    def test_group_owner_cannot_switch_to_general_mode_with_natural_language(self) -> None:
+    def test_group_owner_can_switch_to_general_mode_with_natural_language(self) -> None:
         session = self._build_mode_session(
             role=Role.OWNER,
             assistant_mode=AssistantMode.PERFORMANCE,
@@ -438,9 +438,9 @@ class DebugModeAccessTests(unittest.TestCase):
             refresh_prompt_plan=_refresh_session_prompt_plan,
         )
 
-        self.assertEqual(session.assistant_mode, AssistantMode.PERFORMANCE)
-        self.assertIn("SampleGame 性能分析模式", _rendered_session_prompt(session))
-        self.assertIn("群聊固定", reply or "")
+        self.assertEqual(session.assistant_mode, AssistantMode.GENERAL)
+        self.assertIn("SampleGame 通用模式", _rendered_session_prompt(session))
+        self.assertIn("已开启" if "debug" in self._testMethodName else "通用模式", reply or "")
 
     def test_owner_can_switch_back_to_performance_mode_via_llm_tool_call(self) -> None:
         session = self._build_mode_session(
@@ -500,16 +500,16 @@ class DebugModeAccessTests(unittest.TestCase):
                         )
                     ]
                 ),
-                ChatResult(content="调试模式仅限 Owner 私聊开启。"),
+                ChatResult(content="调试模式仅限 Owner开启。"),
             ],
         )
 
         reply = session.session.run_task(AgentTask(text="开启调试模式"), on_event=lambda e: None).final_text
 
         self.assertFalse(session.debug_mode)
-        self.assertIn("仅限 Owner 私聊", reply or "")
+        self.assertIn("仅限 Owner", reply or "")
 
-    def test_group_owner_cannot_enable_debug_mode_via_llm_tool_call(self) -> None:
+    def test_group_owner_can_enable_debug_mode_via_llm_tool_call(self) -> None:
         session = self._build_mode_session(
             role=Role.OWNER,
             assistant_mode=AssistantMode.PERFORMANCE,
@@ -524,14 +524,14 @@ class DebugModeAccessTests(unittest.TestCase):
                         )
                     ]
                 ),
-                ChatResult(content="群聊固定为性能分析模式，调试模式保持关闭。"),
+                ChatResult(content="调试模式已开启。"),
             ],
         )
 
         reply = session.session.run_task(AgentTask(text="开启调试模式"), on_event=lambda e: None).final_text
 
-        self.assertFalse(session.debug_mode)
-        self.assertIn("群聊固定", reply or "")
+        self.assertTrue(session.debug_mode)
+        self.assertIn("已开启" if "debug" in self._testMethodName else "通用模式", reply or "")
 
     def test_persona_changes_by_assistant_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

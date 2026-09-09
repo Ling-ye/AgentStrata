@@ -9,6 +9,7 @@ from __future__ import annotations
 import fnmatch
 from pathlib import Path, PurePosixPath
 
+from chatcopilot.contracts.execution_scope import current_execution_scope
 from chatcopilot.contracts.development import current_development_task_scope
 from chatcopilot.external_tools.dev.config import DevConfig
 
@@ -30,12 +31,19 @@ def resolve_path(config: DevConfig, raw_path: str) -> tuple[Path, str]:
     candidate = Path(raw)
     if candidate.is_absolute():
         resolved = candidate.resolve()
-        try:
-            rel = resolved.relative_to(config.repo_root)
-        except ValueError:
-            raise DevPathAccessError(
-                f"absolute path is outside dev workspace: {raw}"
+        scope = current_execution_scope()
+        root = (
+            next(
+                (r for r in scope.readable_roots if resolved == r or r in resolved.parents),
+                config.repo_root,
             )
+            if scope
+            else config.repo_root
+        )
+        try:
+            rel = resolved.relative_to(root)
+        except ValueError:
+            raise DevPathAccessError(f"absolute path is outside dev workspace: {raw}")
         normalized = rel.as_posix()
     else:
         parts: list[str] = []
@@ -59,6 +67,9 @@ def resolve_path(config: DevConfig, raw_path: str) -> tuple[Path, str]:
 def ensure_readable(config: DevConfig, raw_path: str) -> tuple[Path, str]:
     """Validate path is allowed for reading."""
     resolved, normalized = resolve_path(config, raw_path)
+    scope = current_execution_scope()
+    if scope is not None and not scope.permits(resolved):
+        raise DevPathAccessError("path is outside the bound execution resources")
     _check_denied(config, normalized, raw_path)
     return resolved, normalized
 
@@ -66,8 +77,20 @@ def ensure_readable(config: DevConfig, raw_path: str) -> tuple[Path, str]:
 def ensure_writable(config: DevConfig, raw_path: str) -> tuple[Path, str]:
     """Validate path is allowed for writing."""
     resolved, normalized = resolve_path(config, raw_path)
+    scope = current_execution_scope()
+    if scope is not None and not scope.permits(resolved):
+        raise DevPathAccessError("path is outside the bound execution resources")
     _check_denied(config, normalized, raw_path)
     _check_allowed(config, normalized, raw_path)
+    scope = current_execution_scope()
+    if scope is not None and not scope.permits(resolved, write=True):
+        raise DevPathAccessError("path is outside writable execution resources")
+    if resolved.exists() and resolved.is_file() and resolved.stat().st_nlink != 1:
+        raise DevPathAccessError("writes to hardlinked files are not supported")
+    if current_development_task_scope() is not None and not resolved.resolve().is_relative_to(
+        config.repo_root
+    ):
+        raise DevPathAccessError("delegated write scope belongs to its project")
     _check_task_scope(normalized, raw_path)
     return resolved, normalized
 

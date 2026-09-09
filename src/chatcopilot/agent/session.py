@@ -220,8 +220,7 @@ class AgentSession:
                 return ops.result_from_state(state)
 
             if not result.tool_calls:
-                # self-update enforcement appended a required user instruction;
-                # continue so the model can call finalize_self_update.
+                # A completed response has already returned through state.done.
                 continue
 
             if state.wrapup_injected:

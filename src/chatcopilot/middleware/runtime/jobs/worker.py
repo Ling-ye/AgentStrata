@@ -80,6 +80,15 @@ def run_worker(request_path: Path) -> int:
             from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService
 
             workspace_service = MiddlewareWorkspaceService()
+            from chatcopilot.application.execution_scope import execution_scope
+            project_roots = request.get("project_roots", [])
+            if not isinstance(project_roots, list) or not all(isinstance(value, str) and Path(value).is_absolute() for value in project_roots):
+                raise ValueError("background execution resources are invalid")
+            workspace_service.execution_scope = execution_scope(
+                str(request.get("caller_role") or "unknown"),
+                workspace_service.resolve_workspace(create=True).root,
+                tuple(Path(value) for value in project_roots),
+            )
             def update_job_stage(
                 stage: str,
                 message: str,
@@ -104,6 +113,7 @@ def run_worker(request_path: Path) -> int:
             )
             executor, agent_runtime = _build_background_executor(
                 tool_name=tool_name,
+                caller_role=str(request.get("caller_role") or "unknown"),
                 job_id=job_id,
                 workspace_service=workspace_service,
                 job_context=job_context,
@@ -228,12 +238,14 @@ def _build_background_executor(
     job_id: str,
     workspace_service: Any,
     job_context: Any = None,
+    caller_role: str = "user",
 ):
     from chatcopilot.agent.tools.executor import ToolExecutor
 
     if tool_name != 'run_coding_workflow':
         return ToolExecutor(
             workspace_service=workspace_service,
+            caller_role_hint=caller_role,
             job_context=job_context,
         ), None
 
@@ -260,14 +272,14 @@ def _build_background_executor(
             profile=runtime_context.prompt_profile,
             backend=runtime_context.agent_backend,
             model=None,
-            role="owner",
+            role=caller_role,
             channel_kind="private",
             session_policy="这是受保护的后台工具任务会话；只执行已持久化的当前任务。",
             capability_policies=runtime_context.capability_policies,
             skill_index=runtime_context.skills,
         ),
         workspace_service=workspace_service,
-        caller_role_hint="owner",
+        caller_role_hint=caller_role,
     )
     return session.tool_executor, agent_runtime
 

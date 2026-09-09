@@ -88,8 +88,10 @@ class AgentTraceTests(unittest.TestCase):
                 first.reasoning_content = "provider-private-thought"
                 first.tool_calls[0]["provider_state"] = "provider-private-state"
                 session = session_type(
-                    session_id="visible-responses", llm=_ScriptedLLM([first, ChatResult(content="最终回答")]),
-                    executor=ToolExecutor(tools=[tool]), tools_schema=[build_openai_schema(tool)],
+                    session_id="visible-responses",
+                    llm=_ScriptedLLM([first, ChatResult(content="最终回答")]),
+                    executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
+                    tools_schema=[build_openai_schema(tool)],
                     prompt_plan=prompt_plan("baseline"),
                 )
                 events = []
@@ -119,7 +121,7 @@ class AgentTraceTests(unittest.TestCase):
                 session = session_type(
                     session_id=f"sid-{backend}",
                     llm=_ScriptedLLM([ChatResult(content="完成")]),
-                    executor=ToolExecutor(tools=[]),
+                    executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                     tools_schema=[],
                     prompt_plan=prompt_plan("baseline"),
                 )
@@ -152,8 +154,11 @@ class AgentTraceTests(unittest.TestCase):
         for session_type in (AgentSession, LangGraphAgentSession):
             with self.subTest(backend=session_type.__name__):
                 session = session_type(
-                    session_id="standalone", llm=_ScriptedLLM([ChatResult(content="done")]),
-                    executor=ToolExecutor(tools=[]), tools_schema=[], prompt_plan=prompt_plan("baseline"),
+                    session_id="standalone",
+                    llm=_ScriptedLLM([ChatResult(content="done")]),
+                    executor=ToolExecutor(caller_role_hint="owner", tools=[]),
+                    tools_schema=[],
+                    prompt_plan=prompt_plan("baseline"),
                 )
                 events = []
                 session.run_task(AgentTask(text="go"), on_event=events.append)
@@ -172,7 +177,7 @@ class AgentTraceTests(unittest.TestCase):
                 session = session_type(
                     session_id=f"sid-failed-{backend}",
                     llm=_FailingLLM(),
-                    executor=ToolExecutor(tools=[]),
+                    executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                     tools_schema=[],
                     prompt_plan=prompt_plan("baseline"),
                 )
@@ -194,7 +199,7 @@ class AgentTraceTests(unittest.TestCase):
                 self.assertEqual(len(finishes), 1)
                 self.assertFalse(finishes[0].ok)
                 self.assertEqual(finishes[0].finish_reason, "failed")
-                self.assertIsNone(finishes[0].visible_response)
+                self.assertEqual(finishes[0].visible_response["error"]["code"], "RuntimeError")
                 self.assertEqual(finishes[0].backend, backend)
                 self.assertEqual(finishes[0].trace_id, starts[0].trace_id)
                 self.assertEqual(finishes[0].span_id, starts[0].span_id)
@@ -214,7 +219,7 @@ class AgentTraceTests(unittest.TestCase):
         session = AgentSession(
             session_id="sid-private-reasoning",
             llm=_ScriptedLLM([first, ChatResult(content="完成")]),
-            executor=ToolExecutor(tools=[ping]),
+            executor=ToolExecutor(caller_role_hint="owner", tools=[ping]),
             tools_schema=[build_openai_schema(ping)],
             prompt_plan=prompt_plan("baseline"),
         )
@@ -239,7 +244,7 @@ class AgentTraceTests(unittest.TestCase):
         session = AgentSession(
             session_id="sid",
             llm=llm,
-            executor=ToolExecutor(tools=[ping]),
+            executor=ToolExecutor(caller_role_hint="owner", tools=[ping]),
             tools_schema=[build_openai_schema(ping)],
             prompt_plan=prompt_plan("baseline"),
         )
@@ -311,7 +316,7 @@ class AgentTraceTests(unittest.TestCase):
         session = AgentSession(
             session_id="sid",
             llm=main_llm,
-            executor=ToolExecutor(tools=[delegate]),
+            executor=ToolExecutor(caller_role_hint="owner", tools=[delegate]),
             tools_schema=[build_openai_schema(delegate)],
             prompt_plan=prompt_plan("baseline"),
         )

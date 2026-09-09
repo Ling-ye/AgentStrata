@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.botspec.model import ContextSpec
+
 from tests.prompt_plan_fixture import prompt_input
 
 import asyncio
@@ -20,7 +22,7 @@ from unittest import mock
 import pytest
 from acp import PromptResponse
 
-from chatcopilot.botspec.model import AccessSpec
+
 from chatcopilot.agent.backends.codex import CodexAgentBackend
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.tools.builtin import workspace_tools
@@ -979,7 +981,6 @@ def test_access_denied_sender_is_tracked_without_activating_actor_execution(
     monkeypatch.setenv("QQ_ALLOW_GROUPS", "")
     runtime = SimpleNamespace(
         platform_type="qq",
-        access=AccessSpec(),
     )
     shared_workspace = Workspace(
         root=tmp_path / f"group_{_GROUP_ID}" / "shared",
@@ -1104,8 +1105,9 @@ def test_full_group_allowlist_denial_only_writes_redacted_protected_task(
         mcp_servers=(),
         subagents=SimpleNamespace(),
         agent_backend="native",
-        access=AccessSpec(),
-        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_GROUPDENIAL")),
+        spec=SimpleNamespace(
+            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_GROUPDENIAL")
+        ),
     )
     agent = AcpChatAgent.__new__(AcpChatAgent)
     agent._runtime = runtime
@@ -1510,7 +1512,6 @@ def test_group_owner_permission_surface_keeps_owner_tools_and_shared_files(
     permission_filter = _make_permission_filter(
         Role.OWNER,
         workspace,
-        owner_only_project_access=False,
     )
     background = ToolDef(
         name="background_workspace_tool",
@@ -1525,7 +1526,7 @@ def test_group_owner_permission_surface_keeps_owner_tools_and_shared_files(
     assert permission_filter(tools["list_workspace"]) is None
     assert permission_filter(tools["read_text_head"]) is None
     assert permission_filter(tools["get_job_status"]) is None
-    assert permission_filter(tools["get_task_status"])
+    assert permission_filter(tools["get_task_status"]) is None
     assert permission_filter(background) is None
 
     allowed = workspace.root / "report.txt"
@@ -1716,7 +1717,7 @@ def test_group_turn_tasks_and_owner_jobs_use_protected_actor_storage(
         execution_policy=EXECUTION_USER_SERIAL_BACKGROUND,
     )
     member_filter = _make_permission_filter(Role.USER, member_workspace)
-    assert "不启动后台任务" in str(member_filter(background))
+    assert "Owner" in str(member_filter(background))
 
     owner_workspace = Workspace(
         root=member_workspace.root,
@@ -2172,7 +2173,7 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
             input_schema=object_schema(),
             output_schema=object_schema(),
             handler=_ok_tool_handler,
-            requires_role="owner",
+            access="owner",
             category="filesystem.windows.read",
         )
         assert captured["permission_filter"](owner_only_tool) is None
@@ -2256,6 +2257,7 @@ def test_group_codex_command_has_read_only_namespace_and_strict_config(
         runtime_config=SimpleNamespace(routing=routing),
     )
     state = SimpleNamespace(
+        execution_scope=None,
         isolate_backend_state=True,
         access_mode="workspace",
         allowed_tool_names=frozenset(),
@@ -2376,6 +2378,7 @@ def test_group_codex_mounts_absolute_venv_python_runtime(tmp_path: Path) -> None
     fake_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     fake_codex.chmod(0o755)
     state = SimpleNamespace(
+        execution_scope=None,
         workdir=workdir.resolve(),
         codex_home=codex_home.resolve(),
         gateway_config=gateway_config.resolve(),
@@ -2449,6 +2452,7 @@ def test_group_codex_rejects_unsafe_project_config_mountpoint(
     fake_codex = tmp_path / "codex"
     fake_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     state = SimpleNamespace(
+        execution_scope=None,
         workdir=workdir.resolve(),
         codex_home=codex_home.resolve(),
         gateway_config=gateway_config.resolve(),

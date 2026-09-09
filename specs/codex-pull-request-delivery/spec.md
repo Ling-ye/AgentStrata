@@ -26,6 +26,9 @@ are removed rather than retained as migration shims. Native and LangGraph retain
 the canonical `RepositoryTaskService`; generic background jobs and
 `finalize_self_update` retain their existing contracts.
 
+当前主会话权限由 [runtime-permissions-simplification](../runtime-permissions-simplification/spec.md) 取代旧只读要求。
+本规格的独立代码任务隔离、Git 发布授权和交付回执继续有效；后台任务不再是 Owner 修改项目的唯一路径。
+
 ## Design
 
  `agents.codex.owner_access` accepts `worktree` or `workspace`, while

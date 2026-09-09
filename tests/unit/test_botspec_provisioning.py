@@ -6,7 +6,6 @@ import pytest
 
 from chatcopilot.botspec.loader import load_botspec
 from chatcopilot.botspec.model import (
-    AccessSpec,
     BotSpec,
     ContextSpec,
     ChannelsSpec,
@@ -67,7 +66,6 @@ def _starter_spec(tmp_path: Path) -> BotSpec:
             env_file="~/.chatcopilot-my-assistant-qq.env",
             project_name="chatcopilot-my-assistant-qq",
         ),
-        access=AccessSpec(owner_only_project_access=True),
     )
 
 

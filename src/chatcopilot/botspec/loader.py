@@ -23,7 +23,6 @@ from chatcopilot.contracts.model_selection import (
     CodeModelProfile,
 )
 from chatcopilot.botspec.model import (
-    AccessSpec,
     BotSpec,
     ChannelsSpec,
     CodebaseSpec,
@@ -183,14 +182,24 @@ def validate_botspec(spec: BotSpec, *, environment: dict[str, str] | None = None
                 "prompts",
             )
         )
+    raw_dev = (spec.raw.get("context") or {}).get("dev") or {}
+    retired_paths = set(raw_dev) & {"allowed_paths", "denied_paths"}
+    if retired_paths:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "请删除 context.dev 的旧路径权限字段；项目 root_env 定义资源范围，Owner 可直接操作。",
+                "context.dev",
+            )
+        )
     access_raw = spec.raw.get("access", {}) if isinstance(spec.raw, dict) else {}
     access_keys = set(access_raw) if isinstance(access_raw, dict) else set()
-    unknown_access_keys = sorted(access_keys - {"owner_only_project_access"})
+    unknown_access_keys = sorted(access_keys)
     if unknown_access_keys:
         issues.append(
             ValidationIssue(
                 "error",
-                "access 只接受能力投影字段；已废弃或未知字段: "
+                "权限现固定为 Owner/member，请删除 access 旧权限字段: "
                 + ", ".join(unknown_access_keys),
                 "access",
             )
@@ -280,16 +289,8 @@ def validate_botspec(spec: BotSpec, *, environment: dict[str, str] | None = None
             )
         )
 
-    _has_dev_pack = any(p.startswith("dev.") for p in spec.tools.packs)
-    if _has_dev_pack and not spec.context.dev.allowed_paths:
-        issues.append(
-            ValidationIssue(
-                "warning",
-                "启用了 dev 工具包但未声明 context.dev.allowed_paths，dev 工具可写整个仓库。",
-                "context.dev.allowed_paths",
-            )
-        )
     dev = spec.context.dev
+
     if "/" in dev.root_env or "\\" in dev.root_env:
         issues.append(
             ValidationIssue(
@@ -668,6 +669,10 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
     llm_chat = _mapping(llm.get("chat", {}), "llm.chat")
     llm_research = _mapping(llm.get("research", {}), "llm.research")
     llm_code = _mapping(llm.get("code", {}), "llm.code")
+    if "allowed_roles" in llm_code:
+        raise ValueError(
+            "llm.code.allowed_roles is retired; remove it. Model control is Owner-only."
+        )
     tools_mcp = _mapping(tools.get("mcp", {}), "tools.mcp")
     context = _mapping(data.get("context", {}), "context")
     rag = _mapping(context.get("rag", {}), "context.rag")
@@ -680,7 +685,6 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
     workspace = _mapping(data.get("workspace", {}), "workspace")
     deploy = _mapping(data.get("deploy", {}), "deploy")
     packaging = _mapping(data.get("packaging", {}), "packaging")
-    access = _mapping(data.get("access", {}), "access")
     chat_env_prefix = str(
         llm_chat.get("env_prefix", llm.get("env_prefix", "CHATCOPILOT_CHAT"))
     ).strip() or "CHATCOPILOT_CHAT"
@@ -841,9 +845,6 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
                     "llm.code.timeout_seconds",
                     900,
                 ),
-                allowed_roles=tuple(
-                    _str_list(llm_code.get("allowed_roles", ["owner", "admin"]))
-                ),
             ),
         ),
         prompts=PromptSpec(
@@ -889,8 +890,6 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
             dev=DevSpec(
                 root_env=str(dev.get("root_env", "CHATCOPILOT_DEV_ROOT")).strip()
                 or "CHATCOPILOT_DEV_ROOT",
-                allowed_paths=tuple(_str_list(dev.get("allowed_paths", []))),
-                denied_paths=tuple(_str_list(dev.get("denied_paths", []))),
                 shell=DevShellSpec(
                     timeout_default=_as_int(dev_shell.get("timeout_default"), 60),
                     timeout_max=_as_int(dev_shell.get("timeout_max"), 300),
@@ -913,13 +912,6 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
             secret_json=_optional_str(deploy.get("secret_json")),
         ),
         packaging=PackagingSpec(allowlist=_optional_str(packaging.get("allowlist"))),
-        access=AccessSpec(
-            owner_only_project_access=_strict_bool(
-                access.get("owner_only_project_access", _MISSING),
-                "access.owner_only_project_access",
-                False,
-            ),
-        ),
         agents=agents,
         raw=dict(data),
     )
@@ -1162,12 +1154,11 @@ def _parse_codex_main_session_policy(
     field_prefix: str,
 ) -> CodexMainSessionPolicy:
     block = _mapping(raw.get("codex", {}), f"{field_prefix}.codex")
-    return CodexMainSessionPolicy(
-        owner_access=str(block.get("owner_access", "workspace") or "workspace")
-        .strip().lower(),
-        member_access=str(block.get("member_access", "workspace") or "workspace")
-        .strip().lower(),
-    )
+    if block:
+        raise ValueError(
+            f"{field_prefix}.codex uses retired permission fields; remove this block. Owner/member access is derived by the host."
+        )
+    return CodexMainSessionPolicy()
 
 
 def _with_model_env_prefix(
@@ -1493,22 +1484,6 @@ def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
         )
 
     policy = spec.agents.codex
-    if policy.owner_access not in {"workspace", "worktree"}:
-        issues.append(
-            ValidationIssue(
-                "error",
-                "agents.codex.owner_access must be one of: workspace, worktree",
-                "agents.codex.owner_access",
-            )
-        )
-    if policy.member_access != "workspace":
-        issues.append(
-            ValidationIssue(
-                "error",
-                "agents.codex.member_access must be workspace",
-                "agents.codex.member_access",
-            )
-        )
     raw_agents = spec.raw.get("agents") if isinstance(spec.raw, dict) else None
     raw_codex = raw_agents.get("codex") if isinstance(raw_agents, dict) else None
     removed_keys = (

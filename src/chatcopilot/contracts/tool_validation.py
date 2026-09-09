@@ -21,7 +21,6 @@ from chatcopilot.contracts.tools import (
 
 
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_ROLES = frozenset({None, "user", "admin", "owner"})
 _EXECUTION_POLICIES = frozenset(
     {
         EXECUTION_SYNC,
@@ -189,15 +188,11 @@ def validate_tool_contract(
                 "ToolDef.handler must accept exactly (arguments, ToolContext).",
             )
 
-    if not (
-        tool.requires_role is None
-        or isinstance(tool.requires_role, str)
-        and tool.requires_role in _ROLES
-    ):
+    if not (isinstance(tool.access, str) and tool.access in {"owner", "member"}):
         add(
-            "tool.requires_role_invalid",
-            "invalid_tool_requires_role",
-            "ToolDef.requires_role must be None, user, admin, or owner.",
+            "tool.access_invalid",
+            "invalid_tool_access",
+            "ToolDef.access must be owner or member.",
         )
     if (
         not isinstance(tool.execution_policy, str)

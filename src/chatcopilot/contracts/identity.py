@@ -8,7 +8,7 @@ from typing import Optional
 
 
 class Role(str, Enum):
-    """Three-level role model used by permissions and prompt assembly."""
+    """Authenticated identity labels; Admin and User share member business access."""
 
     OWNER = "owner"
     ADMIN = "admin"

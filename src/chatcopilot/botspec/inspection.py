@@ -44,7 +44,11 @@ def configuration_projection(
         if config:
             add("channel", f"channel:{name}", name, config)
     add("channel", "platform:instance", "平台", data.get("platform", {}))
-    access = dict(data.get("access") or {})
+    access = {
+        "policy_version": "runtime-access-v2",
+        "owner": "当前实例资源和已配置项目",
+        "member": "公共查询、当前会话文件、记忆读取和追加",
+    }
     for name in ("QQ_ALLOW_FROM", "QQ_ALLOW_GROUPS", "CHATCOPILOT_OWNERS", "CHATCOPILOT_ADMINS"):
         access[name] = values.get(name)
     add("authorization", "policy:instance", "权限策略", access)
@@ -157,10 +161,23 @@ def declared_configuration(path: Path, environment: Mapping[str, str]) -> dict[s
     for pack in spec.tools.packs:
         for tool in iter_tool_pack_tools(pack):
             name = tool.name
-            projection["entities"].append({"id": f"tool:{name}", "layer": "capability", "name": name,
-                "configured": name not in spec.tools.hide, "loaded": None, "available": None,
-                "connected": None, "refs": [f"pack:{pack}"],
-                "config": {"pack": pack, "requires_role": tool.requires_role, "parameters": plain(tool.input_schema)}})
+            projection["entities"].append(
+                {
+                    "id": f"tool:{name}",
+                    "layer": "capability",
+                    "name": name,
+                    "configured": name not in spec.tools.hide,
+                    "loaded": None,
+                    "available": None,
+                    "connected": None,
+                    "refs": [f"pack:{pack}"],
+                    "config": {
+                        "pack": pack,
+                        "access": tool.access,
+                        "parameters": plain(tool.input_schema),
+                    },
+                }
+            )
     _context_details(spec, projection, environment)
     return projection
 

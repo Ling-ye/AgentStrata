@@ -203,7 +203,7 @@ class SearchFallbackTests(unittest.TestCase):
         session = AgentSession(
             session_id="sub",
             llm=_FakeLLM(),
-            executor=ToolExecutor(tools=[]),
+            executor=ToolExecutor(caller_role_hint="owner", tools=[]),
             tools_schema=[],
             prompt_plan=prompt_plan("system"),
         )

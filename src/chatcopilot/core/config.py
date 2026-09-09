@@ -88,7 +88,6 @@ class RoutingConfig:
     code_command: str = 'codex exec --model {model} --cd {workdir}'
     code_workdir_env: str = 'CHATCOPILOT_DEV_ROOT'
     code_timeout_seconds: int = 900
-    code_allowed_roles: tuple[str, ...] = ('owner', 'admin')
 
 @dataclass
 class ChatConfig:
@@ -399,9 +398,8 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
             cfg.routing.code_timeout_seconds,
             field="routing.code_timeout_seconds",
         )
-        cfg.routing.code_allowed_roles = _coerce_csv_tuple(
-            routing_raw.get('code_allowed_roles'), cfg.routing.code_allowed_roles
-        )
+        if "code_allowed_roles" in routing_raw:
+            raise ValueError("routing.code_allowed_roles is retired; model control is Owner-only")
 
     cfg.llm.base_url = os.environ.get(f"{env_prefix}_BASE_URL", cfg.llm.base_url) or cfg.llm.base_url
     cfg.llm.model = os.environ.get(f"{env_prefix}_MODEL", cfg.llm.model) or cfg.llm.model
@@ -571,10 +569,10 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
         cfg.routing.code_timeout_seconds,
         field=f"{env_prefix}_CODE_TIMEOUT_SECONDS",
     )
-    cfg.routing.code_allowed_roles = _coerce_csv_tuple(
-        os.environ.get(f'{env_prefix}_CODE_ALLOWED_ROLES'),
-        cfg.routing.code_allowed_roles,
-    )
+    if f"{env_prefix}_CODE_ALLOWED_ROLES" in os.environ:
+        raise ValueError(
+            f"{env_prefix}_CODE_ALLOWED_ROLES is retired; remove this environment variable"
+        )
 
     if cfg.runtime.default_auto_mode not in {"confirm", "auto"}:
         cfg.runtime.default_auto_mode = "confirm"

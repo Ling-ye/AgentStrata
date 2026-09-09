@@ -600,19 +600,22 @@ TOOLS = [
             "Search the official MCP Registry and the built-in catalog. Discovery is "
             "read-only and never installs or enables a server. Owner only."
         ),
-        input_schema=object_schema({
-            "query": {
-                "type": "string",
-                "description": "MCP name or capability, such as github or docs search.",
+        input_schema=object_schema(
+            {
+                "query": {
+                    "type": "string",
+                    "description": "MCP name or capability, such as github or docs search.",
+                },
+                "registry_max_pages": {
+                    "type": "integer",
+                    "description": "Registry v0.1 pages to inspect; default 5, maximum 20.",
+                },
             },
-            "registry_max_pages": {
-                "type": "integer",
-                "description": "Registry v0.1 pages to inspect; default 5, maximum 20.",
-            },
-        }, required=("query",)),
+            required=("query",),
+        ),
         output_schema=_MCP_ADMIN_RESULT_SCHEMA,
         handler=_handler_discover,
-        requires_role="owner",
+        access="owner",
         category="mcp.admin",
         owner="mcp_admin",
         module=__name__,
@@ -624,32 +627,34 @@ TOOLS = [
             "Enable a reviewed built-in MCP catalog proposal in the current BotSpec. "
             "Unknown registry candidates require manual review and configuration. Owner only."
         ),
-        input_schema=object_schema({
-            "proposal_id": {
-                "type": "string",
-                "description": "An approvable proposal_id returned by discover_mcp_server.",
+        input_schema=object_schema(
+            {
+                "proposal_id": {
+                    "type": "string",
+                    "description": "An approvable proposal_id returned by discover_mcp_server.",
+                },
+                "bot": {
+                    "type": "string",
+                    "description": "Optional bot id or bot.yaml path.",
+                },
+                "server": {
+                    "type": "object",
+                    "description": (
+                        "Legacy manual server proposal payload; retained only so the handler "
+                        "can return the reviewed-catalog requirement explicitly."
+                    ),
+                    "additionalProperties": True,
+                },
             },
-            "bot": {
-                "type": "string",
-                "description": "Optional bot id or bot.yaml path.",
-            },
-            "server": {
-                "type": "object",
-                "description": (
-                    "Legacy manual server proposal payload; retained only so the handler "
-                    "can return the reviewed-catalog requirement explicitly."
-                ),
-                "additionalProperties": True,
-            },
-        }, required=("proposal_id",)),
+            required=("proposal_id",),
+        ),
         output_schema=_MCP_ADMIN_RESULT_SCHEMA,
         handler=_handler_approve,
-        requires_role="owner",
+        access="owner",
         category="mcp.admin",
         owner="mcp_admin",
         module=__name__,
         artifact_kinds=(),
-        metadata={"execution_boundary": "codex"},
     ),
     ToolDef(
         name="probe_mcp_server",
@@ -657,19 +662,22 @@ TOOLS = [
             "Initialize one existing BotSpec MCP binding and list its tool schemas without "
             "calling any remote tool or changing configuration. Owner only."
         ),
-        input_schema=object_schema({
-            "server_id": {
-                "type": "string",
-                "description": "Existing binding id or catalog ref from this BotSpec.",
+        input_schema=object_schema(
+            {
+                "server_id": {
+                    "type": "string",
+                    "description": "Existing binding id or catalog ref from this BotSpec.",
+                },
+                "bot": {
+                    "type": "string",
+                    "description": "Optional bot id or bot.yaml path.",
+                },
             },
-            "bot": {
-                "type": "string",
-                "description": "Optional bot id or bot.yaml path.",
-            },
-        }, required=("server_id",)),
+            required=("server_id",),
+        ),
         output_schema=_MCP_ADMIN_RESULT_SCHEMA,
         handler=_handler_probe,
-        requires_role="owner",
+        access="owner",
         category="mcp.admin",
         owner="mcp_admin",
         module=__name__,
@@ -678,15 +686,17 @@ TOOLS = [
     ToolDef(
         name="list_mcp_servers",
         summary="List MCP bindings and exposure policies for the current bot. Owner only.",
-        input_schema=object_schema({
-            "bot": {
-                "type": "string",
-                "description": "Optional bot id or bot.yaml path.",
+        input_schema=object_schema(
+            {
+                "bot": {
+                    "type": "string",
+                    "description": "Optional bot id or bot.yaml path.",
+                }
             }
-        }),
+        ),
         output_schema=_MCP_ADMIN_RESULT_SCHEMA,
         handler=_handler_list,
-        requires_role="owner",
+        access="owner",
         category="mcp.admin",
         owner="mcp_admin",
         module=__name__,

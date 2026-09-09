@@ -228,17 +228,20 @@ web_fetch_page = ToolDef(
         "or any URL suggested in a previous tool's next_steps). "
         "Does not render JavaScript; works best on article, documentation, and API response pages."
     ),
-    input_schema=object_schema({
-        "url": {
-            "type": "string",
-            "description": "The full URL to fetch (http or https only).",
+    input_schema=object_schema(
+        {
+            "url": {
+                "type": "string",
+                "description": "The full URL to fetch (http or https only).",
+            },
+            "max_chars": {
+                "type": "integer",
+                "description": "Maximum characters of page text to return (100-50000).",
+                "default": _DEFAULT_MAX_CHARS,
+            },
         },
-        "max_chars": {
-            "type": "integer",
-            "description": "Maximum characters of page text to return (100-50000).",
-            "default": _DEFAULT_MAX_CHARS,
-        },
-    }, required=("url",)),
+        required=("url",),
+    ),
     output_schema=object_schema(
         {"url": {"type": "string"}, "content": {"type": "string"}},
         required=("url", "content"),
@@ -247,7 +250,7 @@ web_fetch_page = ToolDef(
     category=_CATEGORY,
     owner=_OWNER,
     module=__name__,
-    requires_role="owner",
+    access="member",
     weight="light",
 )
 

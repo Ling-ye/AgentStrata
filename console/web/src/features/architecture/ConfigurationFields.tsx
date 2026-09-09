@@ -21,6 +21,7 @@ export default function ConfigurationFields({ entity }: { entity: InspectionEnti
         used.add(item);
         return [ENV_NAMES[item] ?? FIELD_NAMES[key.slice(0, -4)] ?? FIELD_NAMES[key] ?? key.slice(0, -4), values[item] ?? null];
       }
+      if (key === "access" && (item === "owner" || item === "member")) return ["使用权限", item === "owner" ? "Owner" : "成员可用"];
       return [ENV_NAMES[key] ?? key, resolve(item)];
     }));
     if (typeof value === "string") return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (match, key: string, fallback?: string) => {

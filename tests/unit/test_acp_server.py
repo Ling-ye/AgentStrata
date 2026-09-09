@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.botspec.model import ContextSpec
+
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -33,7 +35,9 @@ def _runtime() -> SimpleNamespace:
         mcp_servers=(object(),),
         subagents=SubagentSpec(),
         agent_backend="native",
-        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_LAZYTEST")),
+        spec=SimpleNamespace(
+            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_LAZYTEST")
+        ),
     )
 
 

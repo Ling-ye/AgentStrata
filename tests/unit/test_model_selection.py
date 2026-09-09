@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.botspec.model import ContextSpec
+
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -40,7 +42,7 @@ class _Session:
             },
         )
         self.runtime = SimpleNamespace(
-            spec=SimpleNamespace(llm=SimpleNamespace(code=code))
+            spec=SimpleNamespace(context=ContextSpec(), llm=SimpleNamespace(code=code))
         )
         self.role = SimpleNamespace(value=role)
         self.code_model_selection = None
@@ -83,7 +85,6 @@ def test_model_command_uses_effective_routing_config_over_raw_botspec() -> None:
                 reasoning_effort="max",
             )
         },
-        code_allowed_roles=("owner",),
     )
 
     status = handle_model_command(session, "/model")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.botspec.model import ContextSpec
+
 import asyncio
 import json
 import tempfile
@@ -25,9 +27,8 @@ def _session(*, role: Role = Role.OWNER) -> SimpleNamespace:
             agent_backend="codex",
             tool_packs=("dev.code_tasks", "persona.control"),
             spec=SimpleNamespace(
-                llm=SimpleNamespace(
-                    code=SimpleNamespace(enabled=True, allowed_roles=("owner",))
-                )
+                context=ContextSpec(),
+                llm=SimpleNamespace(code=SimpleNamespace(enabled=True, allowed_roles=("owner",))),
             ),
         ),
         workspace=SimpleNamespace(scope="actor", chat_kind="p2p"),

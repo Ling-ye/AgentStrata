@@ -9,6 +9,8 @@ passing observation.
 
 from __future__ import annotations
 
+from chatcopilot.application.execution_scope import execution_scope
+
 import hashlib
 import json
 import os
@@ -599,13 +601,9 @@ def _evaluation_subagents(
         research_enabled=value.research_enabled if search_case else False,
         search_providers=value.search_providers if search_case else (),
         codex=CodexMainSessionPolicy(
-            owner_access="workspace",
-            member_access="workspace",
             network_access=False,
             web_search_mode="disabled",
             sandbox_mode="read-only",
-            allow_delegate_tools=delegate_case,
-            allow_unified_search_tool=search_case,
         ),
     )
 
@@ -781,7 +779,7 @@ def _extra_tools(
                     required=("executed", "operation"),
                 ),
                 handler=forbidden_fixture,
-                requires_role=(
+                access=(
                     "owner" if definition.case_id == "access-forbidden-tool-no-effect" else None
                 ),
                 category="eval.security.fixture",
@@ -1284,7 +1282,7 @@ def _extra_tools(
                 ),
                 output_schema={"type": "object", "additionalProperties": True},
                 handler=start_code_task,
-                requires_role="owner",
+                access="owner",
                 category="eval.code-task.atomic",
                 owner="evals",
                 module=__name__,
@@ -1293,12 +1291,10 @@ def _extra_tools(
             ToolDef(
                 name="get_code_task",
                 summary="Read the controlled evaluation code-task state without mutating it.",
-                input_schema=object_schema(
-                    lifecycle_properties, required=("task_id",)
-                ),
+                input_schema=object_schema(lifecycle_properties, required=("task_id",)),
                 output_schema={"type": "object", "additionalProperties": True},
                 handler=get_code_task,
-                requires_role="owner",
+                access="owner",
                 category="eval.code-task.atomic",
                 owner="evals",
                 module=__name__,
@@ -1307,12 +1303,10 @@ def _extra_tools(
             ToolDef(
                 name="cancel_code_task",
                 summary="Cancel the accepted controlled evaluation code task.",
-                input_schema=object_schema(
-                    lifecycle_properties, required=("task_id",)
-                ),
+                input_schema=object_schema(lifecycle_properties, required=("task_id",)),
                 output_schema={"type": "object", "additionalProperties": True},
                 handler=cancel_code_task,
-                requires_role="owner",
+                access="owner",
                 category="eval.code-task.atomic",
                 owner="evals",
                 module=__name__,
@@ -1324,12 +1318,10 @@ def _extra_tools(
                     "Resume the cancelled controlled evaluation code task and expose its "
                     "deterministic validation failure."
                 ),
-                input_schema=object_schema(
-                    lifecycle_properties, required=("task_id",)
-                ),
+                input_schema=object_schema(lifecycle_properties, required=("task_id",)),
                 output_schema={"type": "object", "additionalProperties": True},
                 handler=resume_code_task,
-                requires_role="owner",
+                access="owner",
                 category="eval.code-task.atomic",
                 owner="evals",
                 module=__name__,
@@ -2194,6 +2186,7 @@ class _EvaluationWorkspaceService(MiddlewareWorkspaceService):
 
     def __init__(self, workspace: Workspace) -> None:
         self._workspace = workspace
+        self.execution_scope = execution_scope("owner", workspace.root, (workspace.root,))
 
     def resolve_workspace(self, *, create: bool = True) -> Workspace:
         return self._workspace.ensure() if create else self._workspace

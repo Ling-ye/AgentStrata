@@ -57,7 +57,7 @@ def _write_bot(tmp_path: Path) -> Path:
 
 
 def _executor() -> ToolExecutor:
-    return ToolExecutor(tools=list(mcp_admin.TOOLS))
+    return ToolExecutor(caller_role_hint="owner", tools=list(mcp_admin.TOOLS))
 
 
 def test_discover_and_approve_playwright_curated_proposal(tmp_path: Path) -> None:

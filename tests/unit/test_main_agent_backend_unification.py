@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.application.execution_scope import execution_scope
+
 from tests.prompt_plan_fixture import prompt_input, prompt_plan
 
 import json
@@ -139,8 +141,11 @@ class BackendRegistryTests(TestCase):
                 llm = mock.Mock(model="fixture-model")
                 llm.chat.return_value = ChatResult(content="completed")
                 backend = build_backend(
-                    backend_id, tool_names=set(), llm=llm,
-                    runtime_config=ChatConfig(), tool_executor=ToolExecutor(tools=[]),
+                    backend_id,
+                    tool_names=set(),
+                    llm=llm,
+                    runtime_config=ChatConfig(),
+                    tool_executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                     tools_schema=[],
                 )
                 first = backend.open_session(BackendOpenRequest(
@@ -643,6 +648,7 @@ class CodexBackendResumeTests(TestCase):
                     prompt_plan=prompt_plan("system"),
                     allowed_tool_names=frozenset({"blocked_tool"}),
                     options={
+                        "role_hint": "owner",
                         "workspace_root": root / "workspace",
                         "backend_state_root": root / "state",
                     },
@@ -966,22 +972,19 @@ class CodexBackendResumeTests(TestCase):
             span_starts = [event for event in events if isinstance(event, SpanStarted)]
             span_finishes = [event for event in events if isinstance(event, SpanFinished)]
             self.assertEqual(
-                {event.kind for event in span_starts},
+                {event.kind for event in span_finishes},
                 {"command", "reasoning", "mcp_tool", "web_search", "file_change", "plan"},
             )
-            self.assertEqual(len(span_starts), len(span_finishes))
+            self.assertEqual([event.kind for event in span_starts], ["command"])
             self.assertTrue(all(event.parent_span_id == started.span_id for event in span_starts))
             portable_events = repr([*span_starts, *span_finishes, finished.visible_response])
             for private_value in (
-                "private-command-output",
                 "provider-private-reasoning",
-                "private-argument",
-                "private-result",
-                "private-query",
-                "/private/path",
-                "private plan step",
             ):
                 self.assertNotIn(private_value, portable_events)
+            for public_value in ("private-command-output", "private-argument", "private-result",
+                                 "private-query", "/private/path", "private plan step"):
+                self.assertIn(public_value, portable_events)
             self.assertEqual(result.final_text, "done")
             self.assertEqual(backend.current_session_ref(ref).value, "observable-thread")
             backend.close_session(ref)
@@ -1306,7 +1309,7 @@ class CodexBackendResumeTests(TestCase):
         self.assertFalse(item_finish.ok)
         self.assertFalse(llm_finish.ok)
         self.assertEqual(llm_finish.finish_reason, "failed")
-        self.assertNotIn("provider detail", repr(events))
+        self.assertEqual(item_finish.data["error"]["message"], "provider detail")
 
         incomplete_events: list[object] = []
         incomplete = CodexJsonlProjector(
@@ -2196,6 +2199,9 @@ class CodexBackendPolicyTests(TestCase):
                     "source_root": root,
                     "backend_state_root": root / "state",
                     "role_hint": role_hint,
+                    "execution_scope": execution_scope(
+                        role_hint, root, (root,) if role_hint == "owner" else ()
+                    ),
                 },
             )
         )
@@ -2226,7 +2232,7 @@ class CodexBackendPolicyTests(TestCase):
             root = Path(tmp).resolve()
             command, prompt = self._command_and_prompt(root)
 
-        self.assertIn("workspace-write", command)
+        self.assertIn("read-only", command)
         self.assertIn("--skip-git-repo-check", command)
         self.assertEqual(command[command.index("--cd") + 1], str(root))
         self.assertTrue(any(f'HOME = "{root}"' in item for item in command))
@@ -2237,18 +2243,15 @@ class CodexBackendPolicyTests(TestCase):
         self.assertIn("--ignore-user-config", command)
         self.assertIn("mcp_servers={}", command)
         self.assertIn('shell_environment_policy.inherit="none"', command)
-        self.assertIn("personal workspace", prompt)
+        self.assertIn("member tools", prompt)
 
-    def test_owner_worktree_policy_is_source_read_only_and_uses_gateway(self) -> None:
-        policy = CodexMainSessionPolicy(
-            owner_access="worktree",
-            member_access="workspace",
-        )
+    def test_owner_scope_is_writable_and_uses_gateway(self) -> None:
+        policy = CodexMainSessionPolicy()
         with TemporaryDirectory() as tmp:
             command, prompt = self._command_and_prompt(Path(tmp), policy, role_hint="owner")
 
-        self.assertIn("read-only", command)
-        self.assertNotIn("--skip-git-repo-check", command)
+        self.assertIn("workspace-write", command)
+        self.assertIn("--skip-git-repo-check", command)
         self.assertIn("--ignore-user-config", command)
         self.assertIn("mcp_servers={}", command)
         self.assertTrue(any("mcp_servers.chatcopilot.command" in item for item in command))
@@ -2264,10 +2267,8 @@ class CodexBackendPolicyTests(TestCase):
         )
         self.assertIn('"dynamic_echo"', enabled_tools)
         self.assertIn('shell_environment_policy.inherit="none"', command)
-        self.assertIn("read-only", prompt)
-        self.assertIn("start_code_task", prompt)
-        self.assertIn("plan without calling start_code_task", prompt)
-        self.assertIn("submit the complete approved plan exactly once", prompt)
+        self.assertIn("directly edit", prompt)
+        self.assertIn("Background code tasks are optional", prompt)
 
     def test_eval_confinement_disables_command_network_and_web_search(self) -> None:
         policy = CodexMainSessionPolicy(
@@ -2292,8 +2293,6 @@ class CodexBackendPolicyTests(TestCase):
             CodexMainSessionPolicy(network_access=False),
             CodexMainSessionPolicy(web_search_mode="disabled"),
             CodexMainSessionPolicy(sandbox_mode="read-only"),
-            CodexMainSessionPolicy(allow_delegate_tools=True),
-            CodexMainSessionPolicy(allow_unified_search_tool=True),
         )
 
         for policy in variants:
@@ -2314,19 +2313,12 @@ class CodexBackendPolicyTests(TestCase):
             ):
                 CodexMainSessionPolicy(**{field_name: 1})
 
-    def test_worktree_policy_cannot_override_read_only_with_writable_sandbox(self) -> None:
-        policy = CodexMainSessionPolicy(
-            owner_access="worktree",
-            sandbox_mode="workspace-write",
-        )
-        with (
-            TemporaryDirectory() as tmp,
-            self.assertRaisesRegex(
-                ValueError,
-                "cannot use a writable sandbox",
-            ),
-        ):
-            self._command_and_prompt(Path(tmp), policy, role_hint="owner")
+    def test_explicit_evaluation_sandbox_is_respected(self) -> None:
+        with TemporaryDirectory() as tmp:
+            command, _ = self._command_and_prompt(
+                Path(tmp), CodexMainSessionPolicy(sandbox_mode="read-only"), role_hint="owner"
+            )
+        self.assertIn("read-only", command)
 
 
 class SessionToolRelayTests(TestCase):
@@ -2364,7 +2356,7 @@ class SessionToolRelayTests(TestCase):
         tool = _dynamic_tool(calls)
         relay = SessionToolRelay(
             tools=(tool,),
-            executor=ToolExecutor(tools=[tool]),
+            executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
         )
         endpoint = relay.start()
         try:
@@ -2412,7 +2404,7 @@ class SessionToolRelayTests(TestCase):
         )
         relay = SessionToolRelay(
             tools=(tool,),
-            executor=ToolExecutor(tools=[tool]),
+            executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
         )
         endpoint = relay.start()
         generation = relay.begin_turn(
@@ -2503,7 +2495,7 @@ class SessionToolRelayTests(TestCase):
 
         relay = SessionToolRelay(
             tools=(tool,),
-            executor=ToolExecutor(tools=[tool]),
+            executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
             payload_filter=sanitize,
         )
         endpoint = relay.start()
@@ -2518,7 +2510,11 @@ class SessionToolRelayTests(TestCase):
         events = relay.drain_tool_events()
         serialized = json.dumps({"response": response, "events": events})
         self.assertIn(private_path, str(seen[0]["error"]))
-        self.assertNotIn(private_path, serialized)
+        self.assertIn(private_path, serialized)
+        self.assertNotIn(private_path, json.dumps(response))
+        finish = next(item for item in events if item["type"] == "tool_finished")
+        self.assertNotIn(private_path, json.dumps(finish["data"]))
+        self.assertIn(private_path, json.dumps(finish["execution_result"]))
         self.assertEqual(
             response["result"],
             {
@@ -2591,7 +2587,7 @@ class SessionToolRelayTests(TestCase):
 
         cases = (
             (ExplodingExecutor(), None),
-            (ToolExecutor(tools=[tool]), exploding_filter),
+            (ToolExecutor(caller_role_hint="owner", tools=[tool]), exploding_filter),
         )
         for executor, payload_filter in cases:
             with self.subTest(payload_filter=payload_filter is not None):
@@ -2673,7 +2669,7 @@ class SessionToolRelayTests(TestCase):
         )
         relay = SessionToolRelay(
             tools=(tool,),
-            executor=ToolExecutor(tools=[tool]),
+            executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
         )
         endpoint = relay.start()
         generation = relay.begin_turn(

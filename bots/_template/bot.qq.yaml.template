@@ -65,6 +65,3 @@ deploy:
 
 packaging:
   allowlist: package.allowlist.yaml
-
-access:
-  owner_only_project_access: true

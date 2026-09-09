@@ -41,7 +41,6 @@ class LlmRuntimeConfigTests(unittest.TestCase):
             prefix + "_CODE_COMMAND": "codex exec --model {model} --cwd {workdir}",
             prefix + "_CODE_WORKDIR_ENV": "CHATCOPILOT_TEST_ROOT",
             prefix + "_CODE_TIMEOUT_SECONDS": "17",
-            prefix + "_CODE_ALLOWED_ROLES": "owner,admin",
         }
         with mock.patch.dict(os.environ, env, clear=False):
             config = load_config(
@@ -55,7 +54,6 @@ class LlmRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(config.routing.code_task_profile, "sol-high")
         self.assertEqual(config.routing.code_workdir_env, "CHATCOPILOT_TEST_ROOT")
         self.assertEqual(config.routing.code_timeout_seconds, 17)
-        self.assertEqual(config.routing.code_allowed_roles, ("owner", "admin"))
 
     def test_invalid_codex_runtime_configuration_fails_visibly(self) -> None:
         prefix = "CHATCOPILOT_ROUTEINVALID"
@@ -98,8 +96,6 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
         spec = load_botspec(_REPO_ROOT / "bots/lingye-copilot-qq/bot.yaml")
 
         self.assertEqual(spec.agents.backend, "codex")
-        self.assertEqual(spec.agents.codex.owner_access, "worktree")
-        self.assertEqual(spec.agents.codex.member_access, "workspace")
         self.assertEqual(spec.agents.include, ())
         self.assertTrue(spec.agents.research_enabled)
         self.assertEqual(
@@ -116,7 +112,6 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
         self.assertNotIn("codebase.change", spec.tools.packs)
         self.assertIn("dev.code_tasks", spec.tools.packs)
         self.assertNotIn("dev.files", spec.tools.packs)
-        self.assertEqual(spec.llm.code.allowed_roles, ("owner",))
         self.assertEqual(spec.llm.code.model, "gpt-5.6-terra")
         self.assertEqual(spec.llm.code.reasoning_effort, "medium")
         self.assertEqual(spec.llm.code.code_task_profile, "sol-max")

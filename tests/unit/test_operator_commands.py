@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.botspec.model import ContextSpec
+
 from types import SimpleNamespace
 
 import pytest
@@ -36,12 +38,13 @@ def _session(
         agent_backend="codex",
         tool_packs=packs,
         spec=SimpleNamespace(
+            context=ContextSpec(),
             llm=SimpleNamespace(
                 code=SimpleNamespace(
                     enabled=code_enabled,
                     allowed_roles=code_roles,
                 )
-            )
+            ),
         ),
     )
     return SimpleNamespace(

@@ -57,9 +57,9 @@ _DEBUG_USAGE = (
     "  /debug status    查看当前模式与切换权限"
 )
 _DEBUG_DENIED_GROUP = "群聊固定为性能分析模式，调试模式保持关闭。"
-_DEBUG_DENIED_P2P = "调试模式仅限 Owner 私聊开启；当前会话固定为「只看最终结论」模式。"
+_DEBUG_DENIED_P2P = "调试模式仅限 Owner 开启；当前会话固定为「只看最终结论」模式。"
 _GENERAL_DENIED_GROUP = "群聊固定为性能分析模式，不能切换到通用模式。"
-_GENERAL_DENIED_P2P = "通用模式仅限 Owner 私聊可用；当前用户只能使用性能分析模式。"
+_GENERAL_DENIED_P2P = "通用模式仅限 Owner 可用；当前用户只能使用性能分析模式。"
 
 _OWNER_GLOBAL_WORKSPACE_INTENT_RE = re.compile(
     r"("
@@ -135,7 +135,7 @@ def _debug_toggle_hint(session: SessionState) -> str:
         return "可切换"
     if _is_group_session(session):
         return "不可切换（群聊固定关闭）"
-    return "不可切换（仅限 Owner 私聊）"
+    return "不可切换（仅限 Owner）"
 
 
 def _force_performance_mode(
@@ -205,19 +205,22 @@ def _build_set_assistant_mode_tool(
             "切换或查询当前飞书会话的业务模式。"
             "当用户要求进入通用模式、回到性能分析模式、询问当前业务模式，"
             "或用自然语言表达类似意图时调用本工具；不要自行声称已切换。"
-            "通用模式仅 Owner 私聊可用，工具会做最终权限校验。"
+            "通用模式仅 Owner 可用，工具会做最终权限校验。"
         ),
-        input_schema=object_schema({
-            "mode": {
-                "type": "string",
-                "enum": [AssistantMode.PERFORMANCE.value, AssistantMode.GENERAL.value],
-                "description": "目标业务模式：performance=性能分析模式；general=通用模式。",
+        input_schema=object_schema(
+            {
+                "mode": {
+                    "type": "string",
+                    "enum": [AssistantMode.PERFORMANCE.value, AssistantMode.GENERAL.value],
+                    "description": "目标业务模式：performance=性能分析模式；general=通用模式。",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "用户请求切换模式的简短原因或原话摘要。",
+                },
             },
-            "reason": {
-                "type": "string",
-                "description": "用户请求切换模式的简短原因或原话摘要。",
-            },
-        }, required=("mode",)),
+            required=("mode",),
+        ),
         output_schema=object_schema(
             {
                 "mode": {
@@ -296,19 +299,22 @@ def _build_set_debug_mode_tool(session_getter: Callable[[], SessionState]) -> To
         summary=(
             "切换或查询当前飞书会话的调试输出模式。"
             "当用户用自然语言要求开启调试、关闭调试、只看最终结论、查看调试模式时调用本工具。"
-            "不要自行声称已经切换；仅 Owner 私聊可切换，工具会做权限校验。"
+            "不要自行声称已经切换；仅 Owner可切换，工具会做权限校验。"
         ),
-        input_schema=object_schema({
-            "mode": {
-                "type": "string",
-                "enum": ["on", "off", "status"],
-                "description": "目标调试模式：on=推送中间过程；off=只推最终结论；status=查询当前状态。",
+        input_schema=object_schema(
+            {
+                "mode": {
+                    "type": "string",
+                    "enum": ["on", "off", "status"],
+                    "description": "目标调试模式：on=推送中间过程；off=只推最终结论；status=查询当前状态。",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "用户请求切换或查询调试模式的简短原因或原话摘要。",
+                },
             },
-            "reason": {
-                "type": "string",
-                "description": "用户请求切换或查询调试模式的简短原因或原话摘要。",
-            },
-        }, required=("mode",)),
+            required=("mode",),
+        ),
         output_schema=object_schema(
             {
                 "mode": {"type": "string", "enum": ["on", "off"]},

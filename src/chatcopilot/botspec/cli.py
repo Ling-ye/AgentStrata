@@ -258,7 +258,7 @@ def _render_bot_yaml(
         if starter
         else "  features: []\n"
     )
-    access = "\naccess:\n  owner_only_project_access: true\n" if starter else ""
+    access = ""
     if platform_type == "qq":
         transport = (
             "gateway:\n"
@@ -929,7 +929,6 @@ def _required_env_keys(spec) -> list[str]:
         required.append(spec.context.wiki.root_env)
     if (
         spec.agents.backend == "codex"
-        and spec.agents.codex.owner_access == "worktree"
     ):
         required.extend(
             [

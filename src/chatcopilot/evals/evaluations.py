@@ -3364,7 +3364,6 @@ _ROUTING_CONFIG_FINGERPRINT_FIELDS = (
     "code_command",
     "code_workdir_env",
     "code_timeout_seconds",
-    "code_allowed_roles",
 )
 
 
@@ -3467,7 +3466,7 @@ def _runtime_behavior_fingerprint(
             "rag_sources": rag_sources,
             "skills": skills,
         },
-        "access": _behavior_json_value(to_jsonable(runtime.access)),
+        "permissions": {"policy_version": "runtime-access-v2"},
     }
     sanitized = redact_payload(
         _behavior_json_value(payload),

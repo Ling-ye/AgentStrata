@@ -3,22 +3,20 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import hashlib
-from dataclasses import asdict
 import logging
-import time
 from typing import Any
 
 from chatcopilot.contracts.agent import (
     AgentEvent, ContextSnapshotPrepared, InputResourcesDispatched,
     LlmCallFinished, LlmCallStarted, SpanFinished, SpanStarted,
-    ToolFinished, ToolStarted, ToolAuthorizationChecked, TurnError,
+    ToolFinished, ToolStarted, TurnError,
 )
 from chatcopilot.core.observability_redaction import (
     collect_observability_secrets, default_observability_roots, redact_observability_payload,
-    omit_private_reasoning_messages,
 )
 from chatcopilot.core.runtime_observation import AGENT_EXECUTION_SPAN_ID, current_runtime_stage
 from chatcopilot.core.observation_context import observation_scope
+from chatcopilot.core.agent_process import AgentProcessAdapter
 from .state_store import GatewayStateStore
 
 _LOG = logging.getLogger(__name__)
@@ -40,6 +38,7 @@ class RunObserver:
         self._secrets = collect_observability_secrets()
         self._roots = default_observability_roots(store.root)
         self.agent_stage_span_id = agent_stage_span_id
+        self.process_adapter = AgentProcessAdapter()
 
     def accepted(self, text: str, role: str) -> None:
         if self.recorder is not None:
@@ -122,6 +121,14 @@ class RunObserver:
                 self._record_event(event)
             except Exception:
                 _LOG.warning("Gateway Agent observation unavailable")
+                try:
+                    self.recorder.record(self.run_id, {
+                        "kind": "AgentProcessCaptureFailed", "layer": "agent", "status": "unknown",
+                        "body_state": "capture_failed", "data": {"flow_version": 1, "runtime_layer": "agent",
+                            "trace_id": self.run_id, "stage_span_id": self.agent_stage_span_id,
+                            "code": "agent_event_projection_failed"}})
+                except Exception:
+                    _LOG.warning("Gateway Agent observation failure could not be recorded")
             return
         data: dict[str, Any] = {}
         for name in ("model", "backend", "name", "trace_id", "span_id", "parent_span_id", "coverage", "code"):
@@ -160,81 +167,15 @@ class RunObserver:
             self.record("turn_error", "agent", "gateway", "failed", **data)
 
     def _record_event(self, event: AgentEvent) -> None:
-        if isinstance(event, ToolAuthorizationChecked):
-            data = asdict(event)
-            if self.agent_stage_span_id:
-                data.update(flow_version=1, runtime_layer="agent", stage_span_id=self.agent_stage_span_id)
-            self.recorder.host_event(self.run_id, "tool_authorization", data)
+        projection = self.process_adapter.project(event)
+        if projection is None:
             return
-        if not isinstance(event, (LlmCallStarted, LlmCallFinished, ToolStarted, ToolFinished,
-                                  SpanStarted, SpanFinished, ContextSnapshotPrepared, InputResourcesDispatched, TurnError)):
-            return
-        data = {key: getattr(event, key) for key in (
-            "name", "model", "backend", "trace_id", "span_id", "parent_span_id", "depth", "iteration",
-            "coverage", "omitted", "code", "input_message_count", "input_estimated_tokens", "context_snapshot_id",
-            "context_kind", "finish_reason", "estimated_tokens", "model_selection", "tool_schema_count",
-            "system_estimated_tokens", "tool_schema_estimated_tokens", "estimator_version",
-        ) if hasattr(event, key)}
+        record = projection.event
+        data = record["data"]
         stage = current_runtime_stage()
         stage_id = stage.span_id if stage is not None and stage.runtime_layer == "agent" else self.agent_stage_span_id
         if stage_id:
             data.update(flow_version=1, runtime_layer="agent", stage_span_id=stage_id)
             if stage is not None and stage.runtime_layer == "agent" and not data.get("trace_id"):
                 data["trace_id"] = stage.trace_id
-        finished = isinstance(event, (LlmCallFinished, ToolFinished, SpanFinished))
-        started = isinstance(event, (LlmCallStarted, ToolStarted, SpanStarted))
-        status = ("succeeded" if event.ok else "failed") if finished else "running" if started else "succeeded"
-        body: Any = None
-        layer, entity = "agent", "agent:main"
-        context = isinstance(event, ContextSnapshotPrepared)
-        if isinstance(event, (ToolStarted, ToolFinished)):
-            layer, entity = "capability", f"tool:{event.name}"
-            body = asdict(event)
-            if isinstance(event, ToolFinished) and isinstance(event.data, dict) and event.data.get("error_code"):
-                data["code"] = str(event.data["error_code"])
-            if isinstance(event, ToolFinished) and event.name in {"start_code_task", "get_code_task", "cancel_code_task", "resume_code_task"}:
-                result = (event.data or {}).get("data") or {}
-                if isinstance(result, dict) and isinstance(result.get("task_id"), str):
-                    data.update(related_task_id=result["task_id"], related_task_state=result.get("status"),
-                                relation="background_task", relation_capture="summary_only")
-        elif isinstance(event, (LlmCallStarted, LlmCallFinished)):
-            entity = f"model:{event.model}"
-            if isinstance(event, LlmCallFinished) and event.visible_response is not None:
-                body = {"visible_response": event.visible_response}
-            if isinstance(event, LlmCallFinished) and event.usage:
-                usage = dict(event.usage)
-                details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
-                if isinstance(details, dict) and type(details.get("cached_tokens")) is int:
-                    usage["cached_tokens"] = details["cached_tokens"]
-                if "total_tokens" not in usage:
-                    incoming = usage.get("input_tokens", usage.get("prompt_tokens"))
-                    outgoing = usage.get("output_tokens", usage.get("completion_tokens"))
-                    if type(incoming) is int and type(outgoing) is int:
-                        usage["total_tokens"] = incoming + outgoing
-                data["usage"] = {key: value for key, value in usage.items() if type(value) is int and value >= 0}
-        elif context:
-            layer, entity = "application", "workspace:instance"
-            body = asdict(event)
-            for key in ("session_messages", "effective_messages"):
-                omitted = omit_private_reasoning_messages(body[key])
-                body[key] = omitted.messages
-                body["private_reasoning_omission_count"] += omitted.omission_count
-            data["snapshot_id"] = event.snapshot_id
-        elif isinstance(event, TurnError):
-            status = "failed"
-            body = {"code": event.code, "message": event.message}
-        elif isinstance(event, InputResourcesDispatched):
-            data.update(request_id=event.request_id, trace_id=self.run_id, resource_count=len(event.resources))
-            body = {"backend": event.backend, "request_id": event.request_id,
-                    "turn_index": event.turn_index, "resources": [asdict(item) for item in event.resources]}
-        elif isinstance(event, (SpanStarted, SpanFinished)):
-            if event.kind in {"subagent", "workflow"} and event.name.startswith(event.kind + ":"):
-                entity = event.name
-            body = asdict(event) if finished else None
-        observed_at = getattr(event, "finished_at", None) or getattr(event, "started_at", None) or time.time()
-        body_state = None
-        if isinstance(event, LlmCallFinished) and event.visible_response is not None:
-            body_state = event.visible_response.get("capture_state")
-        self.recorder.record(self.run_id, {"kind": type(event).__name__, "layer": layer, "entity_id": entity,
-            "phase": "finish" if finished else "start" if started else "", "status": status,
-            "created_at": observed_at, "data": data, "body_state": body_state}, body=body, context=context)
+        self.recorder.record(self.run_id, record, body=projection.body, context=projection.context)

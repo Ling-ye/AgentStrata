@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from chatcopilot.botspec.model import AccessSpec
+
 from chatcopilot.contracts.identity import Role
 from chatcopilot.contracts.identity import AssistantMode
 from chatcopilot.contracts.prompt import BotPromptProfile
@@ -51,7 +51,6 @@ def test_group_persona_merges_global_then_group_without_shared_file(
     state.persona_set("global", "private global persona")
     state.persona_set("group", "current group persona")
     runtime = SimpleNamespace(
-        access=AccessSpec(owner_only_project_access=True),
         platform_type="qq",
     )
 
@@ -72,7 +71,6 @@ def test_every_turn_refreshes_group_persona_and_memory_for_all_actors(
     workspace = _workspace(tmp_path, actor_id="10001")
     runtime = SimpleNamespace(
         platform_type="qq",
-        access=AccessSpec(owner_only_project_access=False),
         prompt_profile=BotPromptProfile(identity="baseline", response_style="concise"),
         capability_policies=(),
         skills=(),

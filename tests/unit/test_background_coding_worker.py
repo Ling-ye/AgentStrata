@@ -195,6 +195,7 @@ class BackgroundCodingWorkerTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=False):
             actual, actual_runtime = _build_background_executor(
                 tool_name="run_coding_workflow",
+                caller_role="owner",
                 job_id="job-1",
                 workspace_service=workspace_service,
             )

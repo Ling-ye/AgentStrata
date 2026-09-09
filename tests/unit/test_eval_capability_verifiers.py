@@ -534,7 +534,7 @@ def _raw_passing_observation(case: EvalCaseDefinition) -> TrialObservation:
                     "production_permission_filter_exercised": True,
                     "execution_path": "ToolExecutor.execute",
                     "executor_class": "ToolExecutor",
-                    "tool_requires_role": "owner",
+                    "tool_access": "owner",
                     "caller_role": "user",
                     "schema_hidden": True,
                     "permission_filter_denied": True,

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, replace
+import json
+import time
+from dataclasses import asdict, dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
@@ -19,11 +21,15 @@ from chatcopilot.agent.lifecycle import defer_lifecycle_intent
 from chatcopilot.core.llm_client import LLMClient
 from chatcopilot.contracts.agent import (
     AgentTask,
+    EventSink,
     DeferredLifecycleIntent,
     SpanFinished,
     SpanStarted,
 )
 from chatcopilot.agent.session import AgentSession
+from chatcopilot.agent.turn_support import safe_emit
+from chatcopilot.core.observability_redaction import omit_private_reasoning_messages
+from chatcopilot.contracts.cancellation import CancellationRequested
 from chatcopilot.agent.subagents.cache import GLOBAL_SUBAGENT_CACHE, build_cache_key
 from chatcopilot.agent.subagents.context_pack import ContextPackBuilder
 from chatcopilot.agent.subagents.result import (
@@ -116,6 +122,97 @@ class SubagentRunner:
         cleanup_tools: Sequence[str] = (),
         unavailable_message: str | None = None,
         output_schema: dict | None = None,
+        caller_role: str = "user",
+    ) -> SubagentRunResult:
+        if not isinstance(task, TaskPack):
+            raise TypeError("subagent task must be a TaskPack")
+        parent = current_trace()
+        trace_id = parent.trace_id if parent is not None else new_trace_id()
+        parent_span = parent.span_id if parent is not None else None
+        sink = parent.sink if parent is not None else (lambda _event: None)
+        span_id = new_span_id()
+        depth = parent.depth + 1 if parent is not None else 0
+        safe_emit(sink, SpanStarted(name=f"subagent:{subagent_name}", kind="subagent",
+            trace_id=trace_id, span_id=span_id, parent_span_id=parent_span, depth=depth,
+            observed_at=time.time(), backend="native",
+            data={"input": task.to_dict(), "configuration": asdict(config)}))
+        details: dict = {}
+        try:
+            result = self._execute(
+                session_id=session_id,
+                subagent_name=subagent_name,
+                task=task,
+                role_prompt=role_prompt,
+                allow_tool=allow_tool,
+                config=config,
+                version=version,
+                context_policy=context_policy,
+                cache_policy=cache_policy,
+                cleanup_tools=cleanup_tools,
+                unavailable_message=unavailable_message,
+                output_schema=output_schema,
+                trace_id=trace_id,
+                subagent_span=span_id,
+                subagent_depth=depth,
+                sink=sink,
+                details=details,
+                caller_role=caller_role,
+            )
+        except BaseException as exc:
+            safe_emit(
+                sink,
+                SpanFinished(
+                    name=f"subagent:{subagent_name}",
+                    kind="subagent",
+                    ok=False,
+                    trace_id=trace_id,
+                    span_id=span_id,
+                    parent_span_id=parent_span,
+                    depth=depth,
+                    observed_at=time.time(),
+                    backend="native",
+                    summary=str(exc),
+                    data={
+                        "status": "cancelled"
+                        if isinstance(exc, CancellationRequested)
+                        else "failed",
+                        "error": {"code": type(exc).__name__, "message": str(exc)},
+                    },
+                ),
+            )
+            raise
+        try:
+            output = json.loads(result.summary)
+        except (ValueError, TypeError):
+            output = result.summary
+        safe_emit(sink, SpanFinished(name=f"subagent:{subagent_name}", kind="subagent", ok=result.ok,
+            trace_id=trace_id, span_id=span_id, parent_span_id=parent_span, depth=depth,
+            observed_at=time.time(), backend="native",
+            summary=str(output.get("summary", "")) if isinstance(output, dict) else str(output),
+            data={"result": output, "cache_status": result.cache_status, "error_code": result.error_code, **details}))
+        return result
+
+    def _execute(
+        self,
+        *,
+        trace_id: str,
+        subagent_span: str,
+        subagent_depth: int,
+        sink: EventSink,
+        details: dict,
+        session_id: str,
+        subagent_name: str,
+        task: TaskPack,
+        role_prompt: str,
+        allow_tool: Callable[[ToolDef], bool],
+        config: SubagentRuntimeConfig,
+        version: str = "1",
+        context_policy: ContextPolicySpec | None = None,
+        cache_policy: CachePolicySpec | None = None,
+        cleanup_tools: Sequence[str] = (),
+        unavailable_message: str | None = None,
+        output_schema: dict | None = None,
+        caller_role: str = "user",
     ) -> SubagentRunResult:
         if not isinstance(task, TaskPack):
             raise TypeError("subagent task must be a TaskPack")
@@ -145,12 +242,18 @@ class SubagentRunner:
                 summary=dump_payload(payload),
             )
 
+        from chatcopilot.contracts.tools import tool_access_allowed
+
         work_tools = [
             tool
             for tool in self._tools
             if allow_tool(tool)
             and _allowed_for_subagent(tool, subagent_name)
-            and (self._permission_filter is None or self._permission_filter(tool) is None)
+            and (
+                self._permission_filter(tool) is None
+                if self._permission_filter is not None
+                else tool_access_allowed(caller_role, tool.access)
+            )
         ]
         if not work_tools and unavailable_message:
             payload = {
@@ -215,6 +318,9 @@ class SubagentRunner:
                 task=task_pack,
                 policy=cache_policy,
             )
+            scope = getattr(self._workspace_service, "execution_scope", None)
+            binding = repr((session_id, caller_role, scope, self._memory_snapshot))
+            cache_key = hashlib.sha256((cache_key + binding).encode()).hexdigest()
             cached = GLOBAL_SUBAGENT_CACHE.get(cache_key)
             if cached is not None:
                 return SubagentRunResult(
@@ -222,24 +328,8 @@ class SubagentRunner:
                     cache_status="hit",
                 )
 
-        parent = current_trace()
-        trace_id = parent.trace_id if parent is not None else new_trace_id()
-        parent_span = parent.span_id if parent is not None else new_span_id()
-        sink = parent.sink if parent is not None else None
-        base_depth = parent.depth if parent is not None else 0
-        subagent_span = new_span_id()
-        subagent_depth = base_depth + 1
-        if sink is not None:
-            sink(
-                SpanStarted(
-                    name=f"subagent:{subagent_name}",
-                    kind="subagent",
-                    trace_id=trace_id,
-                    span_id=subagent_span,
-                    parent_span_id=parent_span,
-                    depth=subagent_depth,
-                )
-            )
+        if cache_skip_reason:
+            details["cache_skip_reason"] = cache_skip_reason
 
         tools_schema = list(tool_snapshot.openai_schema)
         prompt_plan = PromptPlanBuilder().build(
@@ -250,7 +340,7 @@ class SubagentRunner:
                 ),
                 backend="native",
                 model=model_name,
-                role="owner",
+                role=caller_role,
                 channel_kind="private",
                 session_policy="Use only the supplied TaskPack and allowed tools.",
                 memory=self._memory_snapshot or "",
@@ -265,6 +355,7 @@ class SubagentRunner:
             llm=llm,
             executor=ToolExecutor(
                 tools=list(allowed_tools),
+                caller_role_hint=caller_role,
                 background_submitter=self._background_submitter,
                 permission_filter=self._permission_filter,
                 file_sender=self._file_sender,
@@ -388,33 +479,10 @@ class SubagentRunner:
 
         output_warnings = validate_output(payload, output_schema)
         output_validation = "pass" if not output_warnings else "warn"
-
-        span_data: dict = {
-            "result": payload,
-            "transcript": session.snapshot_messages(),
-            "stop_reason": result.stop_reason,
-            "cache_key": cache_key,
-            "cache_status": cache_status,
-            "output_validation": output_validation,
-        }
-        if cache_skip_reason:
-            span_data["cache_skip_reason"] = cache_skip_reason
+        details.update(output_validation=output_validation, stop_reason=result.stop_reason)
+        details["transcript"] = omit_private_reasoning_messages(session.snapshot_messages()).messages
         if output_warnings:
-            span_data["output_warnings"] = output_warnings
-        if sink is not None:
-            sink(
-                SpanFinished(
-                    name=f"subagent:{subagent_name}",
-                    kind="subagent",
-                    ok=bool(payload.get("ok")),
-                    summary=str(payload.get("summary") or ""),
-                    trace_id=trace_id,
-                    span_id=subagent_span,
-                    parent_span_id=parent_span,
-                    depth=subagent_depth,
-                    data=span_data,
-                )
-            )
+            details["output_warnings"] = output_warnings
 
         summary = dump_payload(payload)
         if cache_key and bool(payload.get("ok")):

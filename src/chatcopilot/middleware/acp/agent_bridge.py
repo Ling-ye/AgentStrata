@@ -12,6 +12,8 @@ SessionState"的装配逻辑下沉到本模块，让 server.py 只关心 ACP 协
 
 from __future__ import annotations
 
+from chatcopilot.application.execution_scope import execution_scope
+
 import logging
 import re
 from dataclasses import replace
@@ -25,7 +27,7 @@ from chatcopilot.agent.rag import CompositeRetriever, WikiRetriever
 from chatcopilot.agent.tools.file_delivery import FileDeliveryResult, FileSender
 from chatcopilot.botspec import BotRuntimeContext
 from chatcopilot.botspec.wiki import resolve_wiki_root
-from chatcopilot.contracts import Role, role_ge, role_value
+from chatcopilot.contracts import role_value
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.persona_control import PendingPersonaProposal
 from chatcopilot.contracts.persistent_state import has_meaningful_memory
@@ -436,21 +438,6 @@ def _extract_memory_snippet(
 # ----------------------------------------------------------------------------
 # SessionState assembly
 # ----------------------------------------------------------------------------
-def _owner_only_project_access(runtime: Any) -> bool:
-    access = getattr(runtime, "access", None)
-    if access is None:
-        access = getattr(getattr(runtime, "spec", None), "access", None)
-    return bool(getattr(access, "owner_only_project_access", False))
-
-
-def _effective_project_role(runtime: Any, role: Any, ws: Workspace) -> Any:
-    if _owner_project_access(role):
-        return role
-    if _owner_only_project_access(runtime):
-        return Role.USER
-    return role
-
-
 def _prompt_projection(
     runtime: Any,
     role: Any,
@@ -460,7 +447,7 @@ def _prompt_projection(
         return (), ()
     if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED and not _owner_project_access(role):
         return (), ()
-    if _owner_only_project_access(runtime) and not _owner_project_access(role):
+    if not _owner_project_access(role):
         return (), ()
     return tuple(runtime.capability_policies), tuple(runtime.skills)
 
@@ -520,15 +507,13 @@ def _prompt_input(
 def _authorized_wiki_retriever(
     *, runtime: BotRuntimeContext, role: Any, ws: Workspace
 ) -> WikiRetriever | None:
-    if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED and not _owner_project_access(role):
-        return None
     wiki = runtime.spec.context.wiki
-    if not wiki.enabled or not role_ge(role, wiki.read_role):
+    if (
+        not wiki.enabled
+        or not _owner_project_access(role)
+        or ws.scope == WORKSPACE_SCOPE_GROUP_SHARED
+    ):
         return None
-    if wiki.private_chat_only:
-        kind = normalize_chat_kind(ws.chat_kind, ws.chat_id)
-        if kind != "p2p":
-            return None
     root = resolve_wiki_root(runtime.spec)
     if root is None:
         return None
@@ -607,9 +592,12 @@ def _materialize_session_for_workspace(
     runtime = state.runtime
     platform_type = _runtime_platform_type(runtime)
     adapter = _platform_router.get_adapter(platform_type)
-    effective_role = _effective_project_role(runtime, state.role, state.workspace)
+    effective_role = state.role
     _, visible_skills = _prompt_projection(runtime, state.role, state.workspace)
     workspace_service = _make_workspace_service(state.workspace, platform_type)
+    workspace_service.execution_scope = execution_scope(
+        state.role, state.workspace.root, getattr(agent_runtime, "project_roots", ())
+    )
     persona_snippet = extract_persona_snippet(
         runtime, state.role, state.workspace, workspace_service
     )
@@ -652,9 +640,6 @@ def _materialize_session_for_workspace(
             ),
             _build_set_debug_mode_tool(lambda: state),
         )
-    payload_role = (
-        Role.USER if state.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED else effective_role
-    )
     agent_session = agent_runtime.new_session(
         session_id=state.execution_session_id or state.session_id,
         prompt_input=prompt_input,
@@ -664,12 +649,16 @@ def _materialize_session_for_workspace(
             session_getter=lambda: state,
             local_tools=local_tools,
         ),
-        payload_filter=make_payload_sanitizer(payload_role, state.workspace),
+        payload_filter=make_payload_sanitizer(
+            effective_role,
+            state.workspace,
+            public_output=state.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED,
+        ),
         permission_filter=_make_permission_filter(
             state.role,
             state.workspace,
-            agent_backend=getattr(agent_runtime, "agent_backend", "native"),
-            owner_only_project_access=_owner_only_project_access(runtime),
+            platform=platform_type,
+            account_id=str(getattr(runtime, "instance_id", "local")),
         ),
         background_submitter=background_submitter,
         file_sender=_make_file_sender(adapter, workspace_service),

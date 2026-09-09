@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, TypedDict, runtime_checkable
 
+from chatcopilot.contracts.execution_scope import ExecutionScope
 from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
 from chatcopilot.contracts.cancellation import CancellationProbe
 from chatcopilot.contracts.identity import SessionIdentity
@@ -27,26 +28,17 @@ CODEX_WEB_SEARCH_MODES = frozenset({"disabled", "live"})
 class CodexMainSessionPolicy:
     """Code-owned access and command confinement for the Codex main agent.
 
-    BotSpec only projects ``owner_access`` and ``member_access``. Evaluation and
-    other trusted assembly code may further restrict a session command without
-    exposing those controls as deployment configuration.
+    Production resources arrive through the host-bound ExecutionScope. Evaluation
+    may explicitly restrict its own isolated command execution.
     """
 
-    owner_access: str = CODEX_ACCESS_WORKSPACE
-    member_access: str = CODEX_ACCESS_WORKSPACE
     network_access: bool = True
     web_search_mode: str = "live"
     sandbox_mode: str | None = None
-    allow_delegate_tools: bool = False
-    allow_unified_search_tool: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.network_access, bool):
             raise TypeError("Codex command network_access must be a boolean")
-        if not isinstance(self.allow_delegate_tools, bool):
-            raise TypeError("Codex allow_delegate_tools must be a boolean")
-        if not isinstance(self.allow_unified_search_tool, bool):
-            raise TypeError("Codex allow_unified_search_tool must be a boolean")
         if self.web_search_mode not in CODEX_WEB_SEARCH_MODES:
             raise ValueError(
                 "Codex command web_search_mode must be one of: "
@@ -61,12 +53,6 @@ class CodexMainSessionPolicy:
                 + ", ".join(sorted(CODEX_COMMAND_SANDBOX_MODES))
             )
 
-    def access_for_role(self, role_hint: str) -> str:
-        return (
-            self.owner_access
-            if str(role_hint).strip().lower() == "owner"
-            else self.member_access
-        )
 
 
 @dataclass(frozen=True)
@@ -99,6 +85,7 @@ class BackendSessionOptions(TypedDict, total=False):
     isolate_backend_state: bool
     restore_persisted_native_session: bool
     role_hint: str
+    execution_scope: ExecutionScope | None
 
 
 @dataclass(frozen=True)

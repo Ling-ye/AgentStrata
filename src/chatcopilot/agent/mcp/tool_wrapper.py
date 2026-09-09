@@ -146,7 +146,7 @@ def _wrap_remote_tool(
             required=("server_id", "tool_name", "content"),
         ),
         handler=_handler,
-        requires_role="owner" if config.risk == "write" else None,
+        access="member" if config.risk == "search" else "owner",
         category="mcp",
         owner=config.id,
         module="chatcopilot.agent.mcp.client",

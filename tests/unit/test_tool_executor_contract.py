@@ -35,7 +35,7 @@ def test_executor_validates_input_before_handler_and_binds_request_text() -> Non
             data={"doubled": arguments["value"] * 2},
         )
 
-    executor = ToolExecutor(tools=[_tool(handler)])
+    executor = ToolExecutor(caller_role_hint="owner", tools=[_tool(handler)])
     rejected = executor.execute("structured_demo", {"value": "2"})
 
     assert rejected.ok is False
@@ -58,7 +58,7 @@ def test_executor_rejects_success_data_that_breaks_output_schema() -> None:
     def handler(_arguments: dict, _context: ToolContext) -> ToolResult:
         return ToolResult(ok=True, summary="bad", data={"doubled": "four"})
 
-    result = ToolExecutor(tools=[_tool(handler)]).execute(
+    result = ToolExecutor(caller_role_hint="owner", tools=[_tool(handler)]).execute(
         "structured_demo",
         {"value": 2},
     )
@@ -69,7 +69,7 @@ def test_executor_rejects_success_data_that_breaks_output_schema() -> None:
 
 
 def test_executor_returns_structured_dispatch_permission_and_handler_errors() -> None:
-    unknown = ToolExecutor(tools=[]).execute("missing", {})
+    unknown = ToolExecutor(caller_role_hint="owner", tools=[]).execute("missing", {})
     assert unknown.error_code == "tool_not_found"
     assert unknown.stage == "dispatch"
 
@@ -84,7 +84,7 @@ def test_executor_returns_structured_dispatch_permission_and_handler_errors() ->
     assert denied.error_code == "tool_permission_denied"
     assert denied.stage == "permission"
 
-    executor = ToolExecutor(tools=[_tool(handler)])
+    executor = ToolExecutor(caller_role_hint="owner", tools=[_tool(handler)])
     invalid = executor.execute("structured_demo", {"value": 2})
     assert invalid.error_code == "tool_handler_exception"
     assert invalid.stage == "handler"
@@ -109,7 +109,7 @@ def test_executor_rejects_non_json_success_data() -> None:
         artifact_kinds=(),
     )
 
-    result = ToolExecutor(tools=[tool]).execute("non_json_demo", {})
+    result = ToolExecutor(caller_role_hint="owner", tools=[tool]).execute("non_json_demo", {})
 
     assert result.ok is False
     assert result.error_code == "tool_output_json_invalid"

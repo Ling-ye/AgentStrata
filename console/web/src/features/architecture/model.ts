@@ -44,6 +44,8 @@ export const RUN_STATES: Record<string, { label: string; color: string }> = {
   abort_requested: { label: "取消中", color: "orange" }, recovery_required: { label: "等待恢复", color: "orange" },
   completed: { label: "已完成", color: "green" }, aborted: { label: "已取消", color: "gray" },
   failed: { label: "失败", color: "red" }, succeeded: { label: "已完成", color: "green" },
+  cancelled: { label: "已取消", color: "gray" }, incomplete: { label: "结束未记录", color: "orange" },
+  truncated: { label: "已截断", color: "orange" },
   provider_acknowledged: { label: "Provider 已确认", color: "green" },
   platform_displayed: { label: "平台已显示", color: "green" }, user_read: { label: "用户已读", color: "green" },
   delivery_unknown: { label: "交付结果未知", color: "orange" },

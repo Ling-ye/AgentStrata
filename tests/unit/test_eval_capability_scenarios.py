@@ -79,7 +79,7 @@ def test_member_owner_action_runs_selected_gate_then_denies_by_stable_role(
         "production_permission_filter_exercised": True,
         "execution_path": "ToolExecutor.execute",
         "executor_class": "ToolExecutor",
-        "tool_requires_role": "owner",
+        "tool_access": "owner",
         "caller_role": "user",
         "schema_hidden": True,
         "permission_filter_denied": True,

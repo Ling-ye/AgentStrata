@@ -716,7 +716,7 @@ def build_persona_provider(
             coordinator_factory=coordinator_factory,
         ),
         aliases=["人格管理", "persona"],
-        requires_role="owner",
+        access="owner",
         weight="heavy",
         category="agent.persona",
         owner="agent",

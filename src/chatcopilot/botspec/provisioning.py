@@ -199,7 +199,7 @@ def build_provision_plan(
                 description=f"Credential for enabled search provider {provider.id}",
             )
 
-    if spec.agents.backend == "codex" and spec.agents.codex.owner_access == "worktree":
+    if spec.agents.backend == "codex":
         add(
             "CHATCOPILOT_CODEX_BIN",
             group="backend",
@@ -330,7 +330,7 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
                     "project_name",
                 },
             )
-            and _mapping_keys_at_most(raw, "access", {"owner_only_project_access"})
+            and _mapping_keys_at_most(raw, "access", set())
         )
     return raw_shape_ok and (
         spec.platform.type == "qq"
@@ -378,8 +378,6 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         and not spec.context.wiki.enabled
         and spec.context.codebases.registry is None
         and spec.context.playbooks.manifest is None
-        and not spec.context.dev.allowed_paths
-        and not spec.context.dev.denied_paths
         and spec.context.memory_store.provider == "markdown"
         and spec.context.memory_store.schema is None
         and spec.context.memory_store.namespace in {None, spec.id}
@@ -393,7 +391,6 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         and spec.deploy.cc_connect_config_dir is None
         and spec.deploy.project_name == f"chatcopilot-{spec.id}"
         and spec.deploy.secret_json is None
-        and spec.access.owner_only_project_access
     )
 
 

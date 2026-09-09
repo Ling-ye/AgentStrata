@@ -81,7 +81,6 @@ class CodeLLMSpec:
     command: str = "codex exec --model {model} --cd {workdir}"
     workdir_env: str = "CHATCOPILOT_DEV_ROOT"
     timeout_seconds: int = 900
-    allowed_roles: tuple[str, ...] = ("owner", "admin")
 
 
 @dataclass(frozen=True)
@@ -155,14 +154,6 @@ class PackagingSpec:
 
 
 @dataclass(frozen=True)
-class AccessSpec:
-    """Capability projection policy after a message has been admitted."""
-
-    owner_only_project_access: bool = False
-
-
-
-@dataclass(frozen=True)
 class SkillsSpec:
     """Skill 索引清单声明（manifest 指向 YAML 文件，文件列举本机器人启用的 skill）。"""
 
@@ -205,14 +196,10 @@ class DevSpec:
 
     ``root_env`` names the environment variable holding the project root path;
     the actual path value lives in ``local.env``, never in YAML.
-    ``allowed_paths`` / ``denied_paths`` are glob patterns injected into
-    ``CHATCOPILOT_DEV_ALLOWED_PATHS`` / ``CHATCOPILOT_DEV_DENIED_PATHS`` at
-    process startup so that ``path_guard`` enforces them.
+    The host binds this configured project to Owner execution resources.
     """
 
     root_env: str = "CHATCOPILOT_DEV_ROOT"
-    allowed_paths: tuple[str, ...] = ()
-    denied_paths: tuple[str, ...] = ()
     shell: DevShellSpec = field(default_factory=DevShellSpec)
 
 
@@ -244,7 +231,6 @@ class BotSpec:
     workspace: WorkspaceSpec = field(default_factory=WorkspaceSpec)
     deploy: DeploySpec = field(default_factory=DeploySpec)
     packaging: PackagingSpec = field(default_factory=PackagingSpec)
-    access: AccessSpec = field(default_factory=AccessSpec)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property

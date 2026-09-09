@@ -206,9 +206,7 @@ export interface BotConfig {
   rag: { sources: string } | null;
   codebases: { registry: string } | null;
   skills: { manifest: string } | null;
-  access: {
-    owner_only_project_access: boolean;
-  } | null;
+  permissions?: { owner: "all"; member: "conversation" };
 }
 
 export interface BotInventory {
@@ -234,7 +232,7 @@ export interface ToolBrief {
   summary: string;
   category: string;
   weight: string;
-  requires_role: string | null;
+  access: "owner" | "member";
 }
 
 export interface CatalogItem {

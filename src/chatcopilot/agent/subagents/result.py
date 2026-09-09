@@ -85,75 +85,79 @@ def build_submit_result_tool(holder: SubagentResultHolder) -> ToolDef:
 
     return ToolDef(
         name=SUBMIT_RESULT_TOOL,
+        access="member",
         summary="Submit the final structured result for this subagent task.",
-        input_schema=object_schema({
-            "summary": {
-                "type": "string",
-                "description": "Concise conclusion for the main agent.",
-            },
-            "findings": {
-                "type": "array",
-                "description": "Atomic findings for the main agent.",
-                "items": {"type": "object"},
-            },
-            "evidence": {
-                "type": "array",
-                "description": "Evidence items with claim and source.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "claim": {"type": "string"},
-                        "source": {"type": "string"},
+        input_schema=object_schema(
+            {
+                "summary": {
+                    "type": "string",
+                    "description": "Concise conclusion for the main agent.",
+                },
+                "findings": {
+                    "type": "array",
+                    "description": "Atomic findings for the main agent.",
+                    "items": {"type": "object"},
+                },
+                "evidence": {
+                    "type": "array",
+                    "description": "Evidence items with claim and source.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "claim": {"type": "string"},
+                            "source": {"type": "string"},
+                        },
                     },
                 },
+                "changes": {
+                    "type": "array",
+                    "description": "Files, settings, or external state changed.",
+                    "items": {"type": "object"},
+                },
+                "commands_run": {
+                    "type": "array",
+                    "description": "Commands or tool actions executed.",
+                    "items": {"type": "object"},
+                },
+                "outputs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Artifact file or directory paths for the main agent to handle.",
+                },
+                "risks": {
+                    "type": "array",
+                    "description": "Risks, uncertainties, and review concerns.",
+                    "items": {"type": "object"},
+                },
+                "limits": {
+                    "type": "object",
+                    "description": "Limits, uncertainty, and uncovered scope.",
+                },
+                "next_steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Suggested next steps for the main agent.",
+                },
+                "confidence": {
+                    "type": "string",
+                    "description": "low, medium, or high confidence in the result.",
+                },
+                "cache_summary": {
+                    "type": "string",
+                    "description": "Whether the result was produced from cache or is cacheable.",
+                },
+                "ok": {
+                    "type": "boolean",
+                    "description": "Whether the delegated task reached its goal.",
+                    "default": True,
+                },
+                "error_code": {
+                    "type": "string",
+                    "description": "Stable upstream error code when ok is false.",
+                },
             },
-            "changes": {
-                "type": "array",
-                "description": "Files, settings, or external state changed.",
-                "items": {"type": "object"},
-            },
-            "commands_run": {
-                "type": "array",
-                "description": "Commands or tool actions executed.",
-                "items": {"type": "object"},
-            },
-            "outputs": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Artifact file or directory paths for the main agent to handle.",
-            },
-            "risks": {
-                "type": "array",
-                "description": "Risks, uncertainties, and review concerns.",
-                "items": {"type": "object"},
-            },
-            "limits": {
-                "type": "object",
-                "description": "Limits, uncertainty, and uncovered scope.",
-            },
-            "next_steps": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Suggested next steps for the main agent.",
-            },
-            "confidence": {
-                "type": "string",
-                "description": "low, medium, or high confidence in the result.",
-            },
-            "cache_summary": {
-                "type": "string",
-                "description": "Whether the result was produced from cache or is cacheable.",
-            },
-            "ok": {
-                "type": "boolean",
-                "description": "Whether the delegated task reached its goal.",
-                "default": True,
-            },
-            "error_code": {
-                "type": "string",
-                "description": "Stable upstream error code when ok is false.",
-            },
-        }, required=("summary",)),
+            required=("summary",),
+        ),
         output_schema=object_schema(
             {
                 "submitted": {"type": "boolean", "const": True},

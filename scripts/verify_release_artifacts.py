@@ -70,6 +70,12 @@ REQUIRED_PACKAGE_RESOURCES = frozenset(
         "external_tools/windows_fs/allowlist.yaml",
     }
 )
+# Retired L01 import stems also cover a module restored as a package.
+REMOVED_PACKAGE_STEMS = (
+    "agent/config", "agent/concurrency", "agent/llm_client", "agent/protocol",
+    "botspec/mcp_catalog", "core/workspace", "agent/subagents/presets",
+    "agent/tools/builtin/mcp_tools", "middleware/runtime/workspace",
+)
 _ENV_OVERRIDES = (
     "CHATCOPILOT_UNITY_PROJECTS",
     "CHATCOPILOT_UNITY_SAMPLE_GAME_ROOT",
@@ -115,6 +121,11 @@ from chatcopilot.__main__ import main
 assert main(["--help"]) == 0
 
 package_root = package_init.parent
+for stem in json.loads(sys.argv[3]):
+    retired = package_root.joinpath(*stem.split("/"))
+    assert not retired.is_dir(), stem
+    assert not retired.with_suffix(".py").exists(), stem
+    assert not retired.with_suffix(".pyi").exists(), stem
 resource_paths = json.loads(sys.argv[2])
 assert isinstance(resource_paths, list)
 for relative in resource_paths:
@@ -183,6 +194,16 @@ assert windows_config.denied_patterns
 
 from chatcopilot.evals.suite_loader import load_suite_cases
 assert load_suite_cases("agent-comparison")
+
+from chatcopilot.core.config import ChatConfig
+from chatcopilot.core.llm_client import LLMClient
+from chatcopilot.core.mcp_catalog import load_mcp_catalog
+from chatcopilot.core.workspace_runtime import Workspace
+from chatcopilot.contracts.agent import AgentTask
+from chatcopilot.component_catalog.subagents import BUILTIN_SUBAGENTS
+from chatcopilot.external_tools.mcp_admin.tools import TOOLS
+assert ChatConfig and LLMClient and load_mcp_catalog and Workspace and AgentTask
+assert BUILTIN_SUBAGENTS and TOOLS
 
 print(f"isolated import verified: {package_init}")
 """
@@ -644,6 +665,16 @@ def _package_resources(file_names: Iterable[str], *, prefix: str) -> frozenset[s
     return frozenset(resources)
 
 
+def _reject_retired_modules(file_names: Iterable[str], *, prefix: str, archive_label: str) -> None:
+    retired = sorted(
+        name for name in file_names if name.startswith(prefix)
+        and any(name[len(prefix):] in {stem + ".py", stem + ".pyi"}
+                or name[len(prefix):].startswith(stem + "/") for stem in REMOVED_PACKAGE_STEMS)
+    )
+    if retired:
+        raise VerificationError(f"{archive_label} contains retired L01 modules: {', '.join(retired)}")
+
+
 def _assert_exact_resources(resources: frozenset[str], *, archive_label: str) -> None:
     missing = sorted(REQUIRED_PACKAGE_RESOURCES - resources)
     unexpected = sorted(resources - REQUIRED_PACKAGE_RESOURCES)
@@ -760,6 +791,7 @@ def validate_wheel(wheel: Path) -> ArtifactIdentity:
                 _validate_member_path(normalized_name, archive_label="wheel")
                 _validate_zip_member(info)
             file_names = frozenset(info.filename for info in infos if not info.is_dir())
+            _reject_retired_modules(file_names, prefix="chatcopilot/", archive_label="wheel")
             _assert_exact_resources(
                 _package_resources(file_names, prefix="chatcopilot/"),
                 archive_label="wheel",
@@ -839,6 +871,7 @@ def validate_sdist(sdist: Path) -> ArtifactIdentity:
                     f"sdist root must be {expected_root!r}, found {sorted(roots)!r}"
                 )
             file_names = frozenset(member.name for member in members if member.isfile())
+            _reject_retired_modules(file_names, prefix=f"{expected_root}/src/chatcopilot/", archive_label="sdist")
             _assert_exact_sdist_files(file_names, expected_root=expected_root)
             _assert_exact_resources(
                 _package_resources(
@@ -999,6 +1032,7 @@ def install_and_probe_wheel(
                 probe,
                 str(venv_root),
                 json.dumps(sorted(REQUIRED_PACKAGE_RESOURCES), separators=(",", ":")),
+                json.dumps(REMOVED_PACKAGE_STEMS),
             ),
             cwd=outside_cwd,
             env=env,

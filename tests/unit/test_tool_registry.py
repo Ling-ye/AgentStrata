@@ -194,7 +194,7 @@ def test_registration_rejects_one_argument_handler() -> None:
 @pytest.mark.parametrize(
     ("field_name", "value", "reason"),
     [
-        ("requires_role", "owenr", "invalid_tool_requires_role"),
+        ("access", "owenr", "invalid_tool_access"),
         ("execution_policy", "background", "invalid_tool_execution_policy"),
         ("weight", "medium", "invalid_tool_weight"),
         ("category", " tests.registry", "invalid_tool_category"),

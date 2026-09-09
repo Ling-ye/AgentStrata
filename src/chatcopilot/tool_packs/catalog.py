@@ -221,6 +221,7 @@ _BUILTIN_TOOL_PACKS_DATA: dict[str, ToolPackEntry] = {
         "persona.control",
         "chatcopilot.agent.persona.tools",
         "Owner-only session-bound persona management tool.",
+        policy_module="chatcopilot.external_tools.shared.persona_tool_pack_policies",
         dynamic=True,
         runtime_scope="host_session",
         projection_profiles=("interactive",),

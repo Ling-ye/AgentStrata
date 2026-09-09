@@ -354,7 +354,7 @@ def test_real_actor_execution_boundary_isolated_by_actor_and_shares_journal(
         handler=lambda _args, _context: ToolResult(ok=True),
         category="project." + "internal",
     )
-    assert permission(internal) == "当前角色不能访问项目、主机、配置或内部资料。"
+    assert permission(internal) == "该操作仅限 Owner；成员仅可使用公共查询和当前会话基础能力。"
     assert agent.creations[0]["payload_filter"] is not None
     assert [provider.id for provider in agent.creations[0]["session_providers"]] == ["persona"]
     assert not (_actor_state(factory, first).workspace.root / ".cc-connect").exists()

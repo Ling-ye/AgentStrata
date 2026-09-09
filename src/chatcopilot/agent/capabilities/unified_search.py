@@ -9,10 +9,7 @@ from chatcopilot.contracts.tool_packs import ToolProvider
 def build_provider(
     context: SessionCapabilityContext,
 ) -> ToolProvider | None:
-    direct_codex = context.backend_id == "codex"
-    if not context.subagents.research_enabled or (
-        direct_codex and not context.subagents.codex.allow_unified_search_tool
-    ):
+    if not context.subagents.research_enabled:
         return None
     accessible_base_tools = tuple(
         tool

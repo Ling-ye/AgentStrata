@@ -134,7 +134,7 @@ def test_provider_exposes_one_structured_owner_main_agent_tool() -> None:
     assert tuple(provider.packs) == ("persona.control",)
     (tool,) = provider.packs["persona.control"]
     assert tool.name == "persona_manage"
-    assert tool.requires_role == "owner"
+    assert tool.access == "owner"
     assert tool.audiences == (TOOL_AUDIENCE_MAIN,)
     assert tool.metadata == {}
     assert tool.artifact_kinds == ()

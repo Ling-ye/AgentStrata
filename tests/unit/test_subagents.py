@@ -155,8 +155,6 @@ class SubagentTests(unittest.TestCase):
             [provider.id for provider in spec.agents.search_providers],
             ["tavily", "brave", "searxng"],
         )
-        self.assertEqual(spec.agents.codex.owner_access, "worktree")
-        self.assertEqual(spec.agents.codex.member_access, "workspace")
 
     def test_search_subagent_is_generated_from_mcp_source(self) -> None:
         xhs = _tool("xhs_search_feeds", category="mcp", owner="xiaohongshu")
@@ -248,7 +246,7 @@ class SubagentTests(unittest.TestCase):
             lambda _tool: True,
         )
 
-        result = ToolExecutor(tools=[tool]).execute(
+        result = ToolExecutor(caller_role_hint="owner", tools=[tool]).execute(
             "search_test",
             {"objective": "latest Unity version"},
         )
@@ -337,7 +335,7 @@ class SubagentTests(unittest.TestCase):
             lambda _tool: True,
         )
 
-        result = ToolExecutor(tools=[tool]).execute(
+        result = ToolExecutor(caller_role_hint="owner", tools=[tool]).execute(
             "forge_open_source_adapter",
             {
                 "objective": "Integrate the approved adapter",
@@ -352,8 +350,8 @@ class SubagentTests(unittest.TestCase):
         )
         payload = result.data
 
-        self.assertEqual(tool.requires_role, "owner")
-        self.assertEqual(tool.metadata["execution_boundary"], "codex")
+        self.assertEqual(tool.access, "owner")
+        self.assertNotIn("execution_boundary", tool.metadata)
         self.assertEqual(payload["error_code"], "invalid_adapter_approval")
         self.assertIn("approved_ref", payload["summary"])
         self.assertIn("candidate_digest", payload["summary"])
@@ -414,6 +412,7 @@ class SubagentTests(unittest.TestCase):
                     return workspace.root
 
             result = ToolExecutor(
+                caller_role_hint="owner",
                 tools=[tool],
                 workspace_service=WorkspaceService(),
             ).execute(
@@ -421,6 +420,7 @@ class SubagentTests(unittest.TestCase):
                 args,
             )
             replay = ToolExecutor(
+                caller_role_hint="owner",
                 tools=[tool],
                 workspace_service=WorkspaceService(),
             ).execute(
@@ -479,6 +479,7 @@ class SubagentTests(unittest.TestCase):
                     return workspace.root
 
             result = ToolExecutor(
+                caller_role_hint="owner",
                 tools=[tool],
                 workspace_service=WorkspaceService(),
             ).execute("forge_open_source_adapter", args)
@@ -527,7 +528,7 @@ class SubagentTests(unittest.TestCase):
             )
 
         self.assertIn("forge_open_source_adapter", captured_tool_names)
-        self.assertNotIn("query_approved_sources", captured_tool_names)
+        self.assertIn("query_approved_sources", captured_tool_names)
 
     def test_codex_eval_policy_exposes_all_configured_delegate_tools(self) -> None:
         captured_tool_names: set[str] = set()
@@ -565,7 +566,7 @@ class SubagentTests(unittest.TestCase):
                         max_tool_calls=1,
                     ),
                 },
-                codex=CodexMainSessionPolicy(allow_delegate_tools=True),
+                codex=CodexMainSessionPolicy(),
             ),
             agent_backend="codex",
         )
@@ -626,7 +627,7 @@ class SubagentTests(unittest.TestCase):
             ),
         )
 
-        result = ToolExecutor(tools=list(tools)).execute(
+        result = ToolExecutor(caller_role_hint="owner", tools=list(tools)).execute(
             "delegate_development",
             {"objective": "检查代码", "write_scope": "tests"},
         )
@@ -663,7 +664,7 @@ class SubagentTests(unittest.TestCase):
             base_tools=(_tool("read_file", category="dev.files"),),
         )
 
-        result = ToolExecutor(tools=list(tools)).execute(
+        result = ToolExecutor(caller_role_hint="owner", tools=list(tools)).execute(
             "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
         payload = result.data
@@ -688,7 +689,7 @@ class SubagentTests(unittest.TestCase):
             base_tools=(_tool("read_file", category="dev.files"),),
         )
 
-        result = ToolExecutor(tools=list(tools)).execute(
+        result = ToolExecutor(caller_role_hint="owner", tools=list(tools)).execute(
             "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
         payload = result.data
@@ -734,7 +735,7 @@ class SubagentTests(unittest.TestCase):
             base_tools=(browser_close,),
         )
 
-        result = ToolExecutor(tools=list(tools)).execute(
+        result = ToolExecutor(caller_role_hint="owner", tools=list(tools)).execute(
             "browse_dynamic_page",
             {
                 "objective": "read https://example.com",
@@ -760,7 +761,7 @@ class SubagentTests(unittest.TestCase):
             base_tools=(_tool("read_file", category="dev.files"), sender),
         )
 
-        ToolExecutor(tools=list(tools)).execute(
+        ToolExecutor(caller_role_hint="owner", tools=list(tools)).execute(
             "delegate_development", {"objective": "整理产物", "write_scope": "tests"}
         )
 
@@ -851,7 +852,7 @@ class SubagentTests(unittest.TestCase):
             base_tools=(_tool("read_file", category="dev.files"),),
         )
 
-        result = ToolExecutor(tools=list(tools)).execute(
+        result = ToolExecutor(caller_role_hint="owner", tools=list(tools)).execute(
             "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
         payload = result.data
@@ -895,7 +896,7 @@ class SubagentTests(unittest.TestCase):
             base_tools=(_tool("read_file", category="dev.files"),),
         )
 
-        result = ToolExecutor(tools=list(tools)).execute(
+        result = ToolExecutor(caller_role_hint="owner", tools=list(tools)).execute(
             "delegate_development", {"objective": "检查代码", "write_scope": "tests"}
         )
         payload = result.data

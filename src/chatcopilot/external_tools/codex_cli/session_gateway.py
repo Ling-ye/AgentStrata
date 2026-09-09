@@ -110,9 +110,26 @@ async def _run(config_path: Path) -> int:
         )
     server: Server = Server("chatcopilot-session-gateway")
 
+    def observe_catalog(phase: str) -> None:
+        try:
+            _call_session_relay(
+                relay,
+                {
+                    "action": "catalog_observed",
+                    "phase": phase,
+                    "generation": listed.get("generation"),
+                    "tools": sorted(selected_names),
+                },
+                timeout_seconds=min(2.0, timeout_seconds),
+            )
+        except Exception:
+            pass
+
+    observe_catalog("failed" if unavailable else "initialized")
+
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        return [
+        response = [
             Tool(
                 name=str(tool["name"]),
                 description=str(tool.get("description") or ""),
@@ -120,6 +137,8 @@ async def _run(config_path: Path) -> int:
             )
             for tool in selected
         ]
+        observe_catalog("list_response_prepared")
+        return response
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:

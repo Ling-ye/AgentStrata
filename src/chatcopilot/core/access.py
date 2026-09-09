@@ -62,37 +62,16 @@ def normalize_chat_kind(
     return normalized_kind or None
 
 
-def _is_owner_p2p(
-    role: Role,
-    chat_kind: Optional[str],
-    chat_id: Optional[str] = None,
-) -> bool:
-    """仅私聊 Owner 拥有扩展会话能力。"""
-    return role == Role.OWNER and normalize_chat_kind(chat_kind, chat_id) == "p2p"
-
-
 def can_select_general_mode(
-    role: Role,
-    chat_kind: Optional[str],
-    chat_id: Optional[str] = None,
+    role: Role, chat_kind: Optional[str], chat_id: Optional[str] = None
 ) -> bool:
-    """是否允许从性能分析模式切到通用模式。
-
-    群聊中任何身份都固定为性能分析模式；只有私聊 Owner 可切通用模式。
-    """
-    return _is_owner_p2p(role, chat_kind, chat_id)
+    """Owner can select a configured mode in either channel context."""
+    return role is Role.OWNER
 
 
-def can_toggle_debug(
-    role: Role,
-    chat_kind: Optional[str],
-    chat_id: Optional[str] = None,
-) -> bool:
-    """是否允许通过 ``/debug on/off`` 或 ACP ``set_session_mode`` 切换调试模式。
-
-    群聊中任何身份都固定关闭 debug；只有私聊 Owner 可临时开启。
-    """
-    return _is_owner_p2p(role, chat_kind, chat_id)
+def can_toggle_debug(role: Role, chat_kind: Optional[str], chat_id: Optional[str] = None) -> bool:
+    """Debug access follows the same Owner profile without changing the audience."""
+    return role is Role.OWNER
 
 
 # ----------------------------------------------------------------------------

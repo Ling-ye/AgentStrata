@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import copy
 import math
 import os
@@ -12,7 +14,7 @@ from typing import Mapping
 from chatcopilot.agent.runtime import AgentRuntime, build_agent_runtime
 from chatcopilot.agent.search.providers import DEFAULT_PROVIDER_CREDENTIAL_ENVS
 from chatcopilot.botspec.runtime import BotRuntimeContext
-from chatcopilot.botspec.runtime_env import load_research_llm_config
+from chatcopilot.botspec.runtime_env import load_research_llm_config, project_resource_roots
 from chatcopilot.contracts.runtime import McpServerConfig, RagSourceConfig
 from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.contracts.subagents import SubagentSpec
@@ -59,6 +61,7 @@ class AgentRuntimeProjection:
     subagents: SubagentSpec
     agent_backend: str
     assembly_profile: ToolPackProjectionProfile
+    project_roots: tuple[Path, ...] = ()
 
 
 def project_agent_runtime(
@@ -115,7 +118,8 @@ def project_agent_runtime(
                     "",
                 ).strip(),
             )
-            for provider in subagents.search_providers if provider.enabled
+            for provider in subagents.search_providers
+            if provider.enabled
         ),
         search_quota_max_ttl=quota_max_ttl,
         tool_packs=projected_packs,
@@ -135,6 +139,7 @@ def project_agent_runtime(
             else str(selected.agent_backend)
         ),
         assembly_profile=profile.value,
+        project_roots=project_resource_roots(runtime.spec, env),
     )
 
 
@@ -157,6 +162,7 @@ def materialize_agent_runtime(projection: AgentRuntimeProjection) -> AgentRuntim
         subagents=projection.subagents,
         agent_backend=projection.agent_backend,
         assembly_profile=projection.assembly_profile,
+        project_roots=projection.project_roots,
     )
 
 

@@ -90,6 +90,7 @@ class AgentRuntime:
     mcp_provider: Optional[McpToolProvider] = None
     mcp_configs: tuple[McpServerConfig, ...] = ()
     search_circuit: SearchCircuitBreaker = field(default_factory=SearchCircuitBreaker, repr=False)
+    project_roots: tuple[Path, ...] = ()
     agent_backend: str = "native"
     tool_registry: ToolRegistry | None = field(default=None, repr=False)
     tool_packs: tuple[str, ...] = ()
@@ -193,6 +194,17 @@ class AgentRuntime:
             retriever_override: 会话级 RAG 投影。省略时使用 Bot 级 retriever；
                 显式传 ``None`` 会关闭检索，供共享群等受限会话使用。
         """
+        caller_role_hint = caller_role_hint or prompt_input.role
+        if permission_filter is None:
+            from chatcopilot.contracts.tools import tool_access_allowed
+
+            def permission_filter(tool: ToolDef) -> str | None:
+                return (
+                    None
+                    if tool_access_allowed(caller_role_hint, tool.access)
+                    else "该工具仅限 Owner。"
+                )
+
         memory_snippet = prompt_input.memory
 
         effective_retriever: Retriever | None
@@ -257,13 +269,21 @@ class AgentRuntime:
             key=lambda entry: str((entry.get("function") or {}).get("name") or ""),
         )
         visible_names = {tool.name for tool in visible_tools}
-        observe("session_registry", tools=[{
-            "name": tool.name, "pack": snapshot.sources[tool.name].pack_id,
-            "provider": snapshot.sources[tool.name].provider_id,
-            "mcp_server_id": tool.metadata.get("mcp_server_id"),
-            "available": tool.name in visible_names, "requires_role": tool.requires_role,
-            "parameters": tool.input_schema,
-        } for tool in merged_tools])
+        observe(
+            "session_registry",
+            tools=[
+                {
+                    "name": tool.name,
+                    "pack": snapshot.sources[tool.name].pack_id,
+                    "provider": snapshot.sources[tool.name].provider_id,
+                    "mcp_server_id": tool.metadata.get("mcp_server_id"),
+                    "available": tool.name in visible_names,
+                    "access": tool.access,
+                    "parameters": tool.input_schema,
+                }
+                for tool in merged_tools
+            ],
+        )
         effective_model = (
             str(self.runtime_config.routing.code_model or "").strip() or None
             if backend_id == "codex"
@@ -369,6 +389,7 @@ class AgentRuntime:
             # isolated actor backend is materialized again.
             "restore_persisted_native_session": not isolate_backend_state,
             "role_hint": caller_role_hint or "user",
+            "execution_scope": getattr(workspace_service, "execution_scope", None),
         }
         session_ref = backend.open_session(
             BackendOpenRequest(
@@ -403,6 +424,7 @@ def build_agent_runtime(
     subagents: Optional[SubagentSpec] = None,
     agent_backend: str = "native",
     assembly_profile: ToolPackProjectionProfile = "interactive",
+    project_roots: tuple[Path, ...] = (),
 ) -> AgentRuntime:
     """装配一个 AgentRuntime。
 
@@ -576,6 +598,7 @@ def build_agent_runtime(
             tool_packs=tuple(selected_packs),
             exclude_tools=tuple(exclude_tools or ()),
             assembly_profile=assembly_profile,
+            project_roots=project_roots,
             session_capability_packs=session_capability_packs,
         )
     except BaseException:

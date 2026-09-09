@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from chatcopilot.application.execution_scope import execution_scope
+
 import difflib
 import os
 import subprocess
@@ -151,7 +153,11 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
                     capability_policies=runtime.capability_policies,
                     skill_index=runtime.skills,
                 ),
-                workspace_service=MiddlewareWorkspaceService(),
+                workspace_service=MiddlewareWorkspaceService(
+                    workspace=workspace,
+                    workspace_root=workspace_root,
+                    execution_scope=execution_scope("owner", workspace.root, (workspace.root,)),
+                ),
                 permission_filter=permission_filter(allowed_tools),
                 caller_role_hint="owner",
             )
@@ -241,8 +247,6 @@ def _isolated_subagents(value: SubagentSpec) -> SubagentSpec:
         workflows=(),
         research_enabled=False,
         codex=CodexMainSessionPolicy(
-            owner_access="workspace",
-            member_access="workspace",
             network_access=False,
             web_search_mode="disabled",
             sandbox_mode="read-only",

@@ -17,6 +17,39 @@ _GROUP_RESERVED_PATHS = frozenset(
 )
 
 
+def _handler_write_workspace_file(args: Dict[str, Any], ctx: ToolContext) -> ToolResult:
+    if ctx.workspace is None or ctx.execution_scope is None:
+        raise RuntimeError("conversation execution resources are not bound to this tool call")
+    from chatcopilot.contracts.execution_scope import ExecutionScope, bind_execution_scope
+    from chatcopilot.core.scoped_files import write_text, delete_file
+
+    ws = resolve_workspace(create=True)
+    path = Path(_require(args, "path"))
+    if not path.is_absolute():
+        path = ws.root / path
+    if not ws.is_inside(path.resolve()):
+        raise PermissionError("file must remain inside the current conversation")
+    root = ws.root.resolve()
+    reserved = (*_GROUP_RESERVED_PATHS, ".git", "IDENTITY.json", "MEMORY.md", "PERSONA.md")
+    scope = ExecutionScope((root,), (root,), hidden_roots=tuple(root / name for name in reserved))
+    with bind_execution_scope(scope):
+        if args.get("operation", "write") == "delete":
+            delete_file(path)
+        else:
+            if "content" not in args:
+                raise ValueError("write requires content")
+            write_text(path, str(args["content"]))
+    return ToolResult(
+        ok=True,
+        summary="当前会话文件已更新。",
+        data={
+            "path": ws.relpath(path),
+            "operation": args.get("operation", "write"),
+            "committed": True,
+        },
+    )
+
+
 def _handler_read_text_head(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     raw_path = _require(args, "path")
     kb = int(args.get("kb") or 4)
@@ -58,8 +91,9 @@ def _handler_read_text_head(args: Dict[str, Any], _ctx: ToolContext) -> ToolResu
         raise FileNotFoundError(f"文件不存在: {target}")
 
     size_limit = kb * 1024
-    with target.open("rb") as fp:
-        raw = fp.read(size_limit)
+    from chatcopilot.core.scoped_files import read_bytes
+
+    raw = read_bytes(target, size_limit)
     if b"\x00" in raw:
         raise ValueError(f"疑似二进制文件，拒绝读取: {ws.relpath(target)}")
     text = raw.decode("utf-8", errors="replace")

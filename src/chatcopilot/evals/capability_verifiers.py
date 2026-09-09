@@ -1593,7 +1593,7 @@ def _role_denial_no_effect(
         and execution.get("production_permission_filter_exercised") is True
         and execution.get("execution_path") == "ToolExecutor.execute"
         and execution.get("executor_class") == "ToolExecutor"
-        and execution.get("tool_requires_role") == "owner"
+        and execution.get("tool_access") == "owner"
         and execution.get("caller_role") == "user"
         and execution.get("schema_hidden") is True
         and execution.get("permission_filter_denied") is True

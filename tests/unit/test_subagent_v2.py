@@ -13,6 +13,8 @@ from chatcopilot.agent.subagents.registry import build_subagent_tools
 from chatcopilot.agent.subagents.spec import CachePolicySpec, ContextPolicySpec, ToolMatchRule, ToolSelectorSpec
 from chatcopilot.agent.subagents.task_pack import TaskPack
 from chatcopilot.agent.tools.executor import ToolExecutor
+from chatcopilot.agent.trace import TraceContext, set_trace, reset_trace
+from chatcopilot.contracts.agent import SpanStarted, SpanFinished, LlmCallStarted
 from chatcopilot.botspec.loader import _parse_subagents, load_botspec, validate_botspec
 from chatcopilot.botspec.model import CustomSubagentSpec, SubagentBudgetSpec, SubagentSpec
 from chatcopilot.contracts.tools import (
@@ -244,11 +246,23 @@ class SubagentV2Tests(unittest.TestCase):
             main_config=ChatConfig(),
             base_tools=(_tool("read_file", category="dev.files"),),
         )
-        executor = ToolExecutor(tools=list(tools))
+        executor = ToolExecutor(caller_role_hint="owner", tools=list(tools))
 
         args = {"objective": "same task", "write_scope": "read-only"}
-        first = executor.execute("delegate_cacheable", args).data
-        second = executor.execute("delegate_cacheable", args).data
+        observed = []
+        token = set_trace(TraceContext(trace_id="cache-test", span_id="delegate-call", depth=0, sink=observed.append))
+        try:
+            first = executor.execute("delegate_cacheable", args).data
+            first_count = len(observed)
+            second = executor.execute("delegate_cacheable", args).data
+        finally:
+            reset_trace(token)
+        cached = observed[first_count:]
+        self.assertEqual(sum(isinstance(event, SpanStarted) for event in cached), 1)
+        self.assertFalse(any(isinstance(event, LlmCallStarted) for event in cached))
+        finish = next(event for event in cached if isinstance(event, SpanFinished))
+        self.assertEqual(finish.data["cache_status"], "hit")
+        self.assertEqual(finish.parent_span_id, "delegate-call")
 
         self.assertEqual(first["summary"], "cached_result")
         self.assertEqual(second["summary"], "cached_result")
@@ -281,7 +295,7 @@ class SubagentV2Tests(unittest.TestCase):
         )
 
         payload = (
-            ToolExecutor(tools=list(tools))
+            ToolExecutor(caller_role_hint="owner", tools=list(tools))
             .execute(
                 "delegate_writer",
                 {"objective": "write", "write_scope": "mcp:jira/issues"},

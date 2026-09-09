@@ -1,6 +1,7 @@
 """WorkspaceService implementation backed by middleware workspace resolver."""
 from __future__ import annotations
 
+from chatcopilot.contracts.execution_scope import ExecutionScope
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ class MiddlewareWorkspaceService:
     isolate_backend_state: bool = False
     platform_type: str = "unknown"
     persistent_state: Any = None
+    execution_scope: ExecutionScope | None = None
 
     def resolve_workspace(self, *, create: bool = True) -> Workspace:
         if self.workspace is not None:

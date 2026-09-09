@@ -244,7 +244,6 @@ class BotSpecRuntimeEnvTests(unittest.TestCase):
                             )
                         },
                         code_task_profile="sol-high",
-                        allowed_roles=("owner",),
                     ),
                 ),
             )
@@ -282,7 +281,7 @@ class BotSpecRuntimeEnvTests(unittest.TestCase):
                     os.environ["CHATCOPILOT_DEMO_CODE_TASK_PROFILE"],
                     "sol-high",
                 )
-                self.assertEqual(os.environ["CHATCOPILOT_DEMO_CODE_ALLOWED_ROLES"], "owner")
+                self.assertNotIn("CHATCOPILOT_DEMO_CODE_ALLOWED_ROLES", os.environ)
 
 
 def _runtime(
@@ -320,7 +319,6 @@ def _runtime(
         workspace_root="/tmp/workspace",
         log_dir="/tmp/logs",
         source_path=source_path,
-        access=spec.access,
         subagents=spec.agents,
     )
 

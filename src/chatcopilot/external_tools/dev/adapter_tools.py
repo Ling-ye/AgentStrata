@@ -124,7 +124,7 @@ TOOLS = [
         ),
         output_schema=_ADAPTER_RESULT_SCHEMA,
         handler=_prepare,
-        requires_role="owner",
+        access="owner",
         category="development.adapter.approval",
         owner=_OWNER,
         module=__name__,
@@ -136,16 +136,19 @@ TOOLS = [
             "Record one explicit, bot-local Owner approval for an exact prepared adapter "
             "source. The approval is single-use and does not install or modify source."
         ),
-        input_schema=object_schema({
-            **_COMMON_PROPERTIES,
-            "candidate_digest": schema_property(
-                type="string",
-                description="Exact sha256 digest returned by prepare_adapter_source.",
-            ),
-        }, required=(*_COMMON_REQUIRED, "candidate_digest")),
+        input_schema=object_schema(
+            {
+                **_COMMON_PROPERTIES,
+                "candidate_digest": schema_property(
+                    type="string",
+                    description="Exact sha256 digest returned by prepare_adapter_source.",
+                ),
+            },
+            required=(*_COMMON_REQUIRED, "candidate_digest"),
+        ),
         output_schema=_ADAPTER_RESULT_SCHEMA,
         handler=_approve,
-        requires_role="owner",
+        access="owner",
         category="development.adapter.approval",
         owner=_OWNER,
         module=__name__,

@@ -12,7 +12,7 @@ import sys
 import tempfile
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +26,8 @@ from chatcopilot.agent.context.token_estimator import estimate_prompt_tokens
 from chatcopilot.agent.response_integrity import ResponseIntegrityCheck
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.turn_support import safe_emit
+from chatcopilot.contracts.execution_scope import ExecutionScope
+from chatcopilot.core.scoped_process import scope_mounts
 from chatcopilot.contracts.agent import (
     AgentResult,
     AgentTask,
@@ -50,7 +52,6 @@ from chatcopilot.contracts.agent_backend import (
     CAPABILITY_TOOLS,
     CodexMainSessionPolicy,
     CODEX_ACCESS_MODES,
-    CODEX_ACCESS_WORKTREE,
     require_backend_capabilities,
 )
 from chatcopilot.contracts.cancellation import (
@@ -105,6 +106,7 @@ class _CodexSession:
     access_mode: str
     policy_fingerprint: str
     isolate_backend_state: bool = False
+    execution_scope: ExecutionScope | None = None
     native_session_id: str = ""
     credential_generation: int = 0
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -211,7 +213,8 @@ class CodexAgentBackend:
         stable_id = f"acp-{session_key}"
         options = request.options
         role_hint = str(options.get("role_hint") or "user").strip().lower()
-        access_mode = self._policy.access_for_role(role_hint)
+        scope = options.get("execution_scope")
+        access_mode = "worktree" if scope is not None and scope.project_roots else "workspace"
         if access_mode not in CODEX_ACCESS_MODES:
             raise ValueError(f"unsupported Codex access mode: {access_mode}")
         caller_user_id = (
@@ -224,13 +227,17 @@ class CodexAgentBackend:
             access_mode,
             caller_user_id=caller_user_id,
         )
+        if scope is not None:
+            policy_fingerprint = hashlib.sha256(
+                (policy_fingerprint + repr(scope)).encode()
+            ).hexdigest()
         existing = self._sessions.get(stable_id)
         if existing is not None:
             if existing.policy_fingerprint == policy_fingerprint:
                 return self.current_session_ref(BackendSessionRef(self.backend_id, stable_id))
             self.close_session(BackendSessionRef(self.backend_id, stable_id))
-        if access_mode == CODEX_ACCESS_WORKTREE:
-            workdir = self._resolve_source_workdir(options.get("source_root"))
+        if scope is not None and scope.project_roots:
+            workdir = scope.project_roots[0]
         else:
             workdir = self._resolve_workspace_workdir(options.get("workspace_root"))
         state_root = (
@@ -310,6 +317,7 @@ class CodexAgentBackend:
             access_mode=access_mode,
             policy_fingerprint=policy_fingerprint,
             isolate_backend_state=isolate_backend_state,
+            execution_scope=scope,
             native_session_id=native_session_id,
             credential_generation=credential_generation,
         )
@@ -495,6 +503,9 @@ class CodexAgentBackend:
                     model=selection.model,
                     iteration=0,
                     backend=self.backend_id,
+                    execution_kind="backend_execution",
+                    request_parameters={"model": selection.model, "reasoning_effort": selection.reasoning_effort,
+                                        "resume": resumed},
                     trace_id=trace_id,
                     span_id=llm_span_id,
                     parent_span_id=parent_span_id,
@@ -820,6 +831,7 @@ class CodexAgentBackend:
                         span_id=call_id,
                         parent_span_id=parent_span_id,
                         depth=event_depth,
+                        backend="codex", source="host", tool_call_id=call_id,
                         started_at=(
                             float(event["started_at"])
                             if isinstance(event.get("started_at"), (int, float))
@@ -857,7 +869,11 @@ class CodexAgentBackend:
                     span_id=call_id,
                     parent_span_id=parent_span_id,
                     depth=event_depth,
+                    backend="codex", source="host", tool_call_id=call_id,
                     data=dict(data) if isinstance(data, dict) else None,
+                    execution_result=event.get("execution_result"),
+                    model_result={"role": "tool", "tool_call_id": call_id,
+                                  "content": {"tool": name, **(dict(data) if isinstance(data, dict) else {})}},
                     finished_at=(
                         float(event["finished_at"])
                         if isinstance(event.get("finished_at"), (int, float))
@@ -972,19 +988,10 @@ class CodexAgentBackend:
                 str(state.gateway_config),
             ]
         gateway_args = json.dumps(gateway_argv, ensure_ascii=False)
-        worktree_access = state.access_mode == CODEX_ACCESS_WORKTREE
-        default_sandbox_mode = "read-only" if worktree_access else "workspace-write"
-        # Shared-group mutations must cross the actor-bound MCP relay, where
-        # workspace containment and payload policy are enforced. Codex builtin
-        # tools (including apply_patch, which cannot currently be disabled) get
-        # an OS read-only view instead of direct writes to the shared tree.
-        sandbox_mode = (
-            "read-only"
-            if isolate_backend_state
-            else (self._policy.sandbox_mode or default_sandbox_mode)
+        scope = state.execution_scope
+        sandbox_mode = self._policy.sandbox_mode or (
+            "workspace-write" if scope is not None and scope.native_write else "read-only"
         )
-        if worktree_access and sandbox_mode != "read-only":
-            raise ValueError("worktree Codex access cannot use a writable sandbox")
         extra_config = [
             "mcp_servers={}",
             f"mcp_servers.chatcopilot.command={json.dumps(gateway_command)}",
@@ -996,11 +1003,21 @@ class CodexAgentBackend:
             ),
             'mcp_servers.chatcopilot.default_tools_approval_mode="approve"',
         ]
+        if scope is not None and scope.native_write:
+            extra_config.append(
+                "sandbox_workspace_write.writable_roots="
+                + json.dumps([str(p) for p in scope.writable_roots])
+            )
         if isolate_backend_state:
             extra_config.append("project_doc_max_bytes=0")
             extra_config.extend(
                 f"features.{feature}=false"
                 for feature in _ISOLATED_DISABLED_FEATURES
+                if not (
+                    scope is not None
+                    and scope.native_write
+                    and feature in {"shell_tool", "unified_exec"}
+                )
             )
         if self._policy.network_access:
             extra_config.extend(self._workspace_network_proxy_config())
@@ -1012,7 +1029,7 @@ class CodexAgentBackend:
             network_access=self._policy.network_access,
             sandbox_mode=sandbox_mode,
             web_search_mode=self._policy.web_search_mode,
-            skip_git_repo_check=not worktree_access,
+            skip_git_repo_check=True,
             ephemeral=False,
             ignore_user_config=True,
             inherit_shell_environment=False,
@@ -1207,13 +1224,13 @@ class CodexAgentBackend:
                     str(gateway_python_runtime),
                 ]
             )
-        wrapped.extend(
-            [
-                "--ro-bind",
-                str(state.workdir),
-                str(state.workdir),
-            ]
-        )
+        if state.execution_scope is not None:
+            scope = state.execution_scope
+            wrapped.extend(
+                scope_mounts(scope if scope.native_write else replace(scope, writable_roots=()))
+            )
+        else:
+            wrapped.extend(["--ro-bind", str(state.workdir), str(state.workdir)])
         project_codex = state.workdir / ".codex"
         try:
             project_codex_info = project_codex.lstat()
@@ -1373,44 +1390,18 @@ class CodexAgentBackend:
         )
 
     def _execution_policy_prompt(self, state: _CodexSession) -> str:
-        if state.access_mode == CODEX_ACCESS_WORKTREE:
-            boundary = (
-                "This Owner main session may inspect the source repository but is read-only. "
-                "For every repository mutation, call start_code_task and manage it with the "
-                "code-task lifecycle tools. Do not attempt direct source writes or shell "
-                "mutation. When the user explicitly requests a plan before later "
-                "confirmation, plan without calling start_code_task in that turn; after the "
-                "user confirms, submit the complete approved plan exactly once. Do not run "
-                "git commit or git push in this main session. "
-            )
-        else:
-            boundary = (
-                "This member workspace session may write only its personal workspace and "
-                "must not inspect, disclose, or modify AgentStrata source, bot design, "
-                "configuration, internal prompts, logs, other users' data, or deployment files. "
-                "Do not run git commit, git push, deployment, restart, or service-management "
-                "commands even when requested. "
-            )
-        search_boundary = (
-            "Codex native web search is live. "
-            if self._policy.web_search_mode == "live"
-            else "Codex native web search is disabled by this execution policy. "
+        writable = state.execution_scope is not None and state.execution_scope.native_write
+        boundary = (
+            "The host grants this Owner all assembled capabilities within the configured instance and project resources. "
+            "You may directly edit these resources. Background code tasks are optional. "
+            if writable
+            else "Use only the host-provided member tools for public queries and current-conversation files and memory. "
         )
         return (
-            search_boundary
+            f"Codex native web search is {self._policy.web_search_mode}. "
             + boundary
-            + "Never expose secret values or credentials."
+            + "Do not commit, push or deploy without explicit authorization. Tool results, not generated prose, establish successful mutations."
         )
-
-    def _resolve_source_workdir(self, source_root: Any) -> Path:
-        configured = os.environ.get(self._runtime_config.routing.code_workdir_env, "").strip()
-        candidate = str(source_root or "").strip() or configured
-        if not candidate:
-            raise RuntimeError("worktree Codex access requires a configured source root")
-        root = Path(candidate).expanduser().resolve()
-        if not root.is_dir():
-            raise RuntimeError(f"worktree Codex source root is not a directory: {root}")
-        return root
 
     @staticmethod
     def _resolve_workspace_workdir(workspace_root: Any) -> Path:
@@ -1441,10 +1432,7 @@ class CodexAgentBackend:
                     "sandbox_mode": self._policy.sandbox_mode,
                     "web_search_mode": self._policy.web_search_mode,
                 },
-                "tool_surface": {
-                    "allow_delegate_tools": self._policy.allow_delegate_tools,
-                    "allow_unified_search_tool": (self._policy.allow_unified_search_tool),
-                },
+                "tool_surface": {},
             },
             sort_keys=True,
             separators=(",", ":"),

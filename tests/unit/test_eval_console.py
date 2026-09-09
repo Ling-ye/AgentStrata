@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.botspec.model import ContextSpec
+
 import json
 import os
 import shutil
@@ -215,7 +217,9 @@ def test_agent_runtime_is_closed_when_case_execution_fails() -> None:
         rag_sources=(),
         mcp_servers=(),
         subagents=(),
-        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")),
+        spec=SimpleNamespace(
+            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")
+        ),
     )
     with (
         _test_dir() as root,
@@ -270,7 +274,9 @@ def test_agent_runtime_is_closed_when_prompt_plan_session_creation_fails() -> No
         rag_sources=(),
         mcp_servers=(),
         subagents=(),
-        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")),
+        spec=SimpleNamespace(
+            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")
+        ),
     )
     with (
         patch(

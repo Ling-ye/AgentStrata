@@ -318,11 +318,25 @@ def runtime_configuration(runtime: Any, agent: Any, environment: Mapping[str, st
                 if tool.metadata.get(kind):
                     references.append(f"{kind}:{tool.metadata[kind]}")
             config["tool_bindings"][tool.name] = references
-            config["entities"].append({"id": f"tool:{tool.name}", "layer": "capability", "name": tool.name,
-                "configured": True, "loaded": True, "connected": None, "available": None, "refs": references,
-                "config": {"pack": source.pack_id, "provider": source.provider_id,
-                           "requires_role": plain(tool.requires_role), "private_chat_only": tool.metadata.get("private_chat_only"),
-                           "parameters": plain(tool.input_schema)}})
+            config["entities"].append(
+                {
+                    "id": f"tool:{tool.name}",
+                    "layer": "capability",
+                    "name": tool.name,
+                    "configured": True,
+                    "loaded": True,
+                    "connected": None,
+                    "available": None,
+                    "refs": references,
+                    "config": {
+                        "pack": source.pack_id,
+                        "provider": source.provider_id,
+                        "access": plain(tool.access),
+                        "private_chat_only": tool.metadata.get("private_chat_only"),
+                        "parameters": plain(tool.input_schema),
+                    },
+                }
+            )
     if agent.mcp_provider is not None:
         for status in agent.mcp_provider.status():
             entity = entities.get(f"mcp:{status['id']}")

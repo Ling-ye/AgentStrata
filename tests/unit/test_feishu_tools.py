@@ -177,11 +177,11 @@ class TestSpecDiscovery(unittest.TestCase):
         # 读工具开放
         for n in ("feishu_sheet_read", "feishu_bitable_query", "feishu_wiki_search", "feishu_drive_search", "feishu_api_get"):
             self.assertIn(n, by_name)
-            self.assertIsNone(by_name[n].requires_role)
+            self.assertEqual(by_name[n].access, "owner")
         # 写/发消息工具 owner-only
         for n in ("feishu_doc_create", "feishu_doc_append", "feishu_sheet_write", "feishu_sheet_append",
                   "feishu_bitable_add", "feishu_bitable_update", "feishu_im_send"):
-            self.assertEqual(by_name[n].requires_role, "owner")
+            self.assertEqual(by_name[n].access, "owner")
 
     def test_values_validation(self) -> None:
         from chatcopilot.external_tools.feishu import spec

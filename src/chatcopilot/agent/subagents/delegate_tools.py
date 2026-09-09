@@ -168,6 +168,7 @@ def make_delegate_tool(
         if definition.kind == "search" and date_annotator is not None:
             task = date_annotator(task)
         result = runner.run(
+            caller_role=ctx.caller_role,
             session_id=session_id,
             subagent_name=definition.name,
             task=task,
@@ -233,17 +234,12 @@ def make_delegate_tool(
         owner="agent",
         module=module_name,
         artifact_kinds=("file", "directory"),
-        requires_role="owner" if definition.name == "adapter_forge" else None,
+        access="owner",
         metadata={
             "subagent": definition.name,
             "subagent_kind": definition.kind,
             "subagent_version": definition.version,
             "workflow_tags": list(definition.workflow_tags),
-            **(
-                {"execution_boundary": "codex"}
-                if has_write_selector(definition)
-                else {}
-            ),
         },
     )
 

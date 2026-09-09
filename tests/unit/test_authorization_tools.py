@@ -24,7 +24,7 @@ def _tool(
     name: str,
     *,
     category: str = "agent.workspace",
-    role: str | None = None,
+    role: str = "owner",
     background: bool = False,
     metadata: dict[str, object] | None = None,
 ) -> ToolDef:
@@ -35,7 +35,7 @@ def _tool(
         output_schema=object_schema(),
         handler=lambda _args, _context: ToolResult(ok=True),
         category=category,
-        requires_role=role,
+        access=role,
         execution_policy=(EXECUTION_USER_SERIAL_BACKGROUND if background else "sync"),
         metadata=dict(metadata or {}),
     )
@@ -70,7 +70,7 @@ def test_group_member_receives_only_sync_member_safe_tools() -> None:
     policy = ToolAuthorizationPolicy(policy_version="v1")
     allowed = policy.decide(
         _request(role=Role.USER, target="search_public"),
-        tool=_tool("search_public", category="agent.search"),
+        tool=_tool("search_public", category="agent.search", role="member"),
     )
     background = policy.decide(
         _request(role=Role.USER, target="search_later"),
@@ -82,11 +82,11 @@ def test_group_member_receives_only_sync_member_safe_tools() -> None:
     )
 
     assert allowed.allowed is True
-    assert background.code == "group-background-tool-denied"
-    assert project.code == "project-access-denied"
+    assert background.code == "owner-required"
+    assert project.code == "owner-required"
 
 
-def test_group_owner_keeps_role_but_private_and_codex_rules_still_apply() -> None:
+def test_group_owner_is_not_restricted_by_retired_metadata() -> None:
     policy = ToolAuthorizationPolicy(policy_version="v1")
     private = policy.decide(
         _request(role=Role.OWNER, target="private_control"),
@@ -95,11 +95,10 @@ def test_group_owner_keeps_role_but_private_and_codex_rules_still_apply() -> Non
     codex = policy.decide(
         _request(role=Role.OWNER, target="mutate_source"),
         tool=_tool("mutate_source", metadata={"execution_boundary": "codex"}),
-        agent_backend="native",
     )
 
-    assert private.code == "private-chat-required"
-    assert codex.code == "codex-route-required"
+    assert private.allowed
+    assert codex.allowed
 
 
 def test_tool_decision_rejects_operation_and_target_drift() -> None:

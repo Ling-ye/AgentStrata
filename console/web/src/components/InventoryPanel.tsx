@@ -289,14 +289,6 @@ export function InventoryConfigOverview({ config }: { config: BotInventory["conf
       : <Text type="secondary" className="cc-text-small">—</Text>,
   });
 
-  if (config.access) {
-    items.push({
-      label: "Project access",
-      value: config.access.owner_only_project_access
-        ? <Tag size="small" className="cc-tag-meta">仅 Owner</Tag>
-        : <Text type="secondary" className="cc-text-small">按能力权限投影</Text>,
-    });
-  }
 
   return <Descriptions size="small" column={1} data={items} />;
 }

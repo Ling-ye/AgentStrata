@@ -1,8 +1,8 @@
 """Project Codex CLI JSONL onto the shared Agent event protocol.
 
 The projector records portable lifecycles and adapter-visible response text.
-Provider-private reasoning, command output, MCP arguments/results and raw
-diagnostics are excluded.
+Only explicitly selected public item fields enter private observations;
+provider-private reasoning and raw protocol frames are excluded.
 """
 
 from __future__ import annotations
@@ -10,15 +10,19 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping
 
 from chatcopilot.contracts.agent import (
+    AgentMessageObserved,
     EventSink,
     LlmCallFinished,
     SpanFinished,
     SpanStarted,
+    SpanUpdated,
 )
+from chatcopilot.core.observability_redaction import bound_observability_payload
 from chatcopilot.core.visible_model_response import project_visible_response
 from chatcopilot.external_tools.codex_cli.process_runner import (
     STREAM_LINE_OMISSION_NOTICE,
@@ -91,6 +95,10 @@ class CodexJsonlProjector:
     _untracked_omitted_started_items: int = 0
     _last_complete_final_line: int = 0
     _last_stream_omission_line: int = 0
+    _message_completed: set[str] = field(default_factory=set)
+    _active_messages: dict[str, AgentMessageObserved] = field(default_factory=dict)
+    _revisions: dict[str, int] = field(default_factory=dict)
+    _updated_at: dict[str, float] = field(default_factory=dict)
 
     def consume_line(self, raw_line: str) -> None:
         """Consume one JSONL line. Invalid/non-object lines are ignored."""
@@ -119,25 +127,22 @@ class CodexJsonlProjector:
                 self.on_thread_started(native_id)
             return
 
-        if event_type in {"item.started", "item.completed"}:
+        if event_type in {"item.started", "item.updated", "item.completed"}:
             item = payload.get("item")
             if not isinstance(item, dict):
                 return
             item_type = _normalized_item_type(item.get("type"))
-            if event_type == "item.completed" and item_type in {
-                "agent_message",
-                "message",
-            }:
-                text = _message_text(item)
-                if text:
-                    self._append_final_text(text)
+            identity = _item_identity(item, item_type) or f"unlinked_{self.line_count}"
+            if item_type in {"agent_message", "message"}:
+                self._message_item(identity, item, completed=event_type == "item.completed")
                 return
             kind = _ITEM_KINDS.get(item_type)
             if kind is None:
                 return
-            identity = _item_identity(item, item_type)
             if event_type == "item.started":
                 self._start_item(identity, item, item_type, kind)
+            elif event_type == "item.updated":
+                self._update_item(identity, item, item_type, kind)
             else:
                 self._finish_item(identity, item, item_type, kind)
             return
@@ -367,16 +372,11 @@ class CodexJsonlProjector:
             span_id=_item_span_id(self.trace_id, identity),
         )
         self._active_spans[identity] = projected
-        self.on_event(
-            SpanStarted(
-                name=projected.name,
-                kind=projected.kind,
-                trace_id=self.trace_id,
-                span_id=projected.span_id,
-                parent_span_id=self.llm_span_id,
-                depth=self.depth + 1,
-            )
-        )
+        if not from_completion:
+            self.on_event(SpanStarted(name=projected.name, kind=projected.kind,
+                trace_id=self.trace_id, span_id=projected.span_id, parent_span_id=self.llm_span_id,
+                depth=self.depth + 1, backend="codex", source="provider", observed_at=time.time(),
+                data=_item_payload(item, item_type, completed=False)))
         return projected
 
     def _finish_item(
@@ -411,11 +411,75 @@ class CodexJsonlProjector:
                 span_id=projected.span_id,
                 parent_span_id=self.llm_span_id,
                 depth=self.depth + 1,
-                data=data,
+                data=data, backend="codex", source="provider", observed_at=time.time(),
             )
         )
 
+    def _update_allowed(self, identity: str) -> bool:
+        revision = self._revisions.get(identity, 0)
+        now = time.monotonic()
+        if revision >= 32 or now - self._updated_at.get(identity, 0) < 1:
+            return False
+        self._updated_at[identity] = now
+        return True
+
+    def _revision(self, identity: str) -> int:
+        revision = self._revisions.get(identity, 0) + 1
+        self._revisions[identity] = revision
+        return revision
+
+    def _update_item(self, identity: str, item: Mapping[str, Any], item_type: str, kind: str) -> None:
+        if identity in self._completed_items:
+            return
+        projected = self._active_spans.get(identity) or self._start_item(
+            identity, item, item_type, kind, from_completion=True)
+        if projected is None or not self._update_allowed(identity):
+            return
+        self.on_event(SpanUpdated(name=projected.name, kind=kind,
+            trace_id=self.trace_id, span_id=projected.span_id, parent_span_id=self.llm_span_id,
+            depth=self.depth + 1, backend="codex", source="provider", observed_at=time.time(),
+            revision=self._revision(identity), data=_item_payload(item, item_type, completed=False)))
+
+    def _message_item(self, identity: str, item: Mapping[str, Any], *, completed: bool) -> None:
+        if identity in self._message_completed:
+            return
+        text = _message_text(item)
+        # Delivery assembly precedes telemetry budgets: dropping an observation
+        # must never drop a provider's completed reply.
+        if completed:
+            if len(self._message_completed) < _MAX_PROJECTED_PROVIDER_ITEMS:
+                self._message_completed.add(identity)
+            self._active_messages.pop(identity, None)
+            if text:
+                self._append_final_text(text)
+        if identity not in self._revisions and len(self._revisions) >= _MAX_PROJECTED_PROVIDER_ITEMS:
+            self._mark_provider_item_omitted(identity, from_completion=completed)
+            return
+        if not completed and not self._update_allowed(identity):
+            return
+        if not text:
+            return
+        raw = text.encode("utf-8", errors="replace")
+        event = AgentMessageObserved(text=raw[:48 * 1024].decode("utf-8", errors="ignore"),
+            message_id=identity, trace_id=self.trace_id, span_id=_item_span_id(self.trace_id, identity),
+            parent_span_id=self.llm_span_id, revision=self._revision(identity),
+            phase="finish" if completed else "update", status="succeeded" if completed else "running",
+            message_kind="progress" if item.get("phase") == "commentary" else
+                "final" if item.get("phase") == "final_answer" else "response",
+            backend="codex", source="provider", depth=self.depth + 1, observed_at=time.time(),
+            capture_state="truncated" if len(raw) > 48 * 1024 else "available")
+        if completed:
+            self._active_messages.pop(identity, None)
+        else:
+            self._active_messages[identity] = event
+        self.on_event(event)
+
     def _close_active_spans(self, *, ok: bool, summary: str) -> None:
+        for identity, event in self._active_messages.items():
+            self.on_event(replace(event, phase="finish", revision=self._revision(identity), observed_at=time.time(),
+                status="cancelled" if "cancel" in summary else "incomplete" if "completion not observed" in summary else "failed"))
+            self._message_completed.add(identity)
+        self._active_messages.clear()
         for identity, projected in tuple(self._active_spans.items()):
             self.on_event(
                 SpanFinished(
@@ -427,6 +491,7 @@ class CodexJsonlProjector:
                     span_id=projected.span_id,
                     parent_span_id=self.llm_span_id,
                     depth=self.depth + 1,
+                    backend="codex", source="provider", observed_at=time.time(),
                     data={
                         "status": (
                             "incomplete"
@@ -454,6 +519,7 @@ class CodexJsonlProjector:
                 model=self.model,
                 iteration=self.iteration,
                 backend="codex",
+                execution_kind="backend_execution",
                 finish_reason=finish_reason,
                 usage=usage,
                 trace_id=self.trace_id,
@@ -524,19 +590,11 @@ def _item_identity(item: Mapping[str, Any], item_type: str) -> str:
     if explicit:
         digest = hashlib.sha256(explicit.encode("utf-8", errors="replace")).hexdigest()
         return "provider_" + digest[:24]
-    identity_payload = {
-        "type": item_type,
-        "command": item.get("command"),
-        "server": item.get("server"),
-        "tool": item.get("tool"),
-        "query": item.get("query"),
-    }
-    raw = json.dumps(identity_payload, sort_keys=True, ensure_ascii=False, default=str)
-    return "anonymous_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+    return ""
 
 
 def _item_span_id(trace_id: str, identity: str) -> str:
-    raw = f"{trace_id}\0codex-item\0{identity}".encode("utf-8")
+    raw = f"{trace_id}\0codex-item\0{identity}".encode("utf-8", errors="replace")
     return "span_" + hashlib.sha256(raw).hexdigest()[:12]
 
 
@@ -606,10 +664,44 @@ def _item_completion(
         steps = item.get("plan") or item.get("items")
         if isinstance(steps, list):
             data["step_count"] = len(steps)
-    # Never include reasoning text, process output, queries, arguments, results,
-    # or provider error details in the portable event stream.
+    data.update(_item_payload(item, item_type, completed=True))
     detail = f" ({data['exit_code']})" if "exit_code" in data else ""
     return f"{status}{detail}", data
+
+
+def _item_payload(item: Mapping[str, Any], item_type: str, *, completed: bool) -> dict[str, Any]:
+    fields = {
+        "command_execution": ("command",), "command": ("command",),
+        "mcp_tool_call": ("server", "tool", "arguments"), "mcp_call": ("server", "tool", "arguments"),
+        "web_search": ("query",), "file_change": (), "file_changes": (),
+        "plan_update": (), "todo_list": (), "reasoning": (),
+    }.get(item_type, ())
+    inputs = {key: item[key] for key in fields if key in item}
+    outputs: dict[str, Any] = {}
+    if item_type in {"command_execution", "command"}:
+        keys = ("aggregated_output", "exit_code")
+    elif item_type in {"mcp_tool_call", "mcp_call"}:
+        keys = ("result",)
+    elif item_type in {"file_change", "file_changes"}:
+        keys = ("changes",)
+    elif item_type in {"plan_update", "todo_list"}:
+        keys = ("plan", "items")
+    elif item_type == "web_search":
+        keys = ("results",)
+    else:
+        keys = ()
+    outputs.update({key: item[key] for key in keys if key in item})
+    if item_type == "reasoning":
+        # The public summary field is separate from opaque reasoning text.
+        if isinstance(item.get("summary"), (str, list)):
+            outputs["public_summary"] = item["summary"]
+    payload: dict[str, Any] = {"input": inputs or None, "output": outputs or None}
+    if completed and item.get("error"):
+        error = item["error"]
+        payload["error"] = ({key: error[key] for key in ("code", "message") if key in error}
+                            if isinstance(error, dict) else error if isinstance(error, str) else "provider_error")
+    bounded = bound_observability_payload(payload)
+    return {**bounded.value, "capture_state": "truncated" if bounded.truncated else "available"}
 
 
 def _bounded_text(value: Any, limit: int) -> str:

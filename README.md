@@ -8,12 +8,16 @@
 
 AgentStrata is a self-hosted, single-repository platform for running multiple
 AI bot instances. Each `bots/<bot-id>/` directory declares prompts, tools,
-agents, context, platform, model routing, workspace, access, and deployment;
+agents, context, platform, model routing, workspace, and deployment;
 the instances share contracts, adapters, middleware, operations, and
 evaluations.
 
 > **Status:** alpha source baseline, version `0.1.0.dev0`. The first public
 > state is source-only and does not represent a published `v0.1.0` Release.
+
+运行权限采用 Owner/member 两档：Owner 可使用当前实例资源和已配置项目；成员仅使用公共查询、
+当前会话普通文件及记忆读取和追加。三个 Backend 使用相同业务规则，详见
+[权限与资源范围](https://github.com/Ling-ye/AgentStrata/blob/main/specs/runtime-permissions-simplification/spec.md)。
 
 ## Development history
 
@@ -343,6 +347,11 @@ The public product, distribution, and executable are named `AgentStrata` /
 `agentstrata`. The `chatcopilot` Python namespace, `CHATCOPILOT_*` environment
 variables, systemd unit names, and existing `~/ChatCopilot*` runtime paths
 remain compatibility contracts.
+
+Unused Python forwarding imports were removed in L01. External scripts must use
+the current Core, Contracts and component-catalog modules; see the
+[retired import mapping](https://github.com/Ling-ye/AgentStrata/blob/main/specs/legacy-l01-import-removal/spec.md).
+This does not change bot configuration or migrate existing runtime data.
 
 ```bash
 agentstrata --help

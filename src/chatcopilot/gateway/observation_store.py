@@ -293,7 +293,10 @@ class ObservationStore:
         span = data.get("span_id") or event.get("span_id")
         trace = data.get("trace_id") or event.get("trace_id")
         phase = event.get("phase", "")
-        event_key = fingerprint([run_id, event["kind"], trace, span]) if span and phase else None
+        identity = [run_id, event["kind"], trace, span]
+        if phase == "update":
+            identity.extend([phase, data.get("revision")])
+        event_key = fingerprint(identity) if span and phase else None
         with self.lock:
             with self.connection() as connection:
                 if event_key and connection.execute("SELECT 1 FROM events WHERE event_key=?", (event_key,)).fetchone():

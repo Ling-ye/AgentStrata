@@ -112,8 +112,5 @@ class LingyeBotSpecSmokeTests(unittest.TestCase):
         self.assertIn("persona.control", spec.tools.packs)
         self.assertEqual(spec.llm.research_env_prefix, "CHATCOPILOT_LINGYE_RESEARCH")
         self.assertEqual(spec.llm.research_model, "gpt-5.6-terra")
-        self.assertEqual(spec.agents.codex.owner_access, "worktree")
-        self.assertEqual(spec.agents.codex.member_access, "workspace")
-        self.assertEqual(spec.llm.code.allowed_roles, ("owner",))
         self.assertNotIn("developer", spec.agents.include)
         self.assertEqual(spec.agents.workflows, ())

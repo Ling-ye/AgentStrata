@@ -104,7 +104,7 @@ class LangGraphSessionTests(unittest.TestCase):
         session = LangGraphAgentSession(
             session_id="sid",
             llm=llm,  # type: ignore[arg-type]
-            executor=ToolExecutor(tools=[tool]),
+            executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
             tools_schema=[build_openai_schema(tool)],
             prompt_plan=prompt_plan("system"),
         )

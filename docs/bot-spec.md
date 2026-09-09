@@ -107,13 +107,15 @@ writer generation 和 Channel lifecycle。ACP credential 只获得显式 session
 当前实现直接连接用户独立安装的 NapCat/OneBot provider，但不复制、内嵌或分发 NapCat，
 也不会把 provider 实现名写入身份、session 或权限 key。没有自动 provider failover。
 
-### `access`
+### 权限与准入
 
-`access.owner_only_project_access` 只控制获准消息进入 Agent 后的项目、主机和高级能力
-投影，不参与消息准入。QQ 准入不允许在 BotSpec 中改字段名或开关：Gateway 固定读取 bot-local
-`local.env` 中的 `QQ_ALLOW_FROM` 与 `QQ_ALLOW_GROUPS`。前者只包含稳定发送者 QQ 号，
-后者只包含稳定群号；缺失或空值不授予权限，只有整个值精确为 `*` 才允许全部，有限
-名单只接受逗号分隔的数字 ID。旧准入字段会直接导致 BotSpec 校验失败。
+业务权限固定为 Owner/member，不再配置 `access`。Owner 使用当前实例资源和已配置项目；
+Admin/User 只使用公共查询、当前会话普通文件及记忆读取和追加。工具声明 `access: owner | member`，
+默认 Owner。旧 `access.owner_only_project_access`、`agents.codex.owner_access/member_access` 和 `llm.code.allowed_roles`
+必须删除，校验会明确报出迁移错误，不能通过留空恢复旧模式。部署环境若存在 `<模型前缀>_CODE_ALLOWED_ROLES` 也需移除；模型控制固定为 Owner。
+
+QQ 准入仍由 Gateway 固定读取 `QQ_ALLOW_FROM` 与 `QQ_ALLOW_GROUPS`：分别表示稳定发送者和
+稳定群号。缺失或空值不授予准入，只有整个值精确为 `*` 才允许全部。群名单不能提升角色。
 
 OneBot provider 不读取这两份名单，也不分配 AgentStrata 角色。Gateway 先认证 transport、
 核对实际登录账号与结构化事件，再在资源下载和 Agent 副作用前解释名单。群命中只授予当前
@@ -169,15 +171,13 @@ Registry 快照，Agent 与 Console 使用对应 surface 的同源投影。BotSp
   `mcp_query`。
 - budget/override/custom：限制 model turn、tool call、timeout、selector、context 和
   cache。
-- `unified_search.enabled`：为 Native / LangGraph 启用唯一的 `search_information` 入口。
+- `unified_search.enabled`：为三个 Backend 启用同一 `search_information` 入口。
 - `unified_search.providers`：按顺序声明进程内 Web provider；每项使用
   `id / kind / enabled / endpoint / credential_env / timeout_seconds / max_results`。
   BotSpec 只保存凭据环境变量名，不保存凭据值。Tavily 与 Brave 只接受审核过的官方
   HTTPS endpoint；SearXNG 只接受回环 endpoint。
-- `codex.owner_access`：仅允许 `worktree`。
-- `codex.member_access`：仅允许 `workspace`。
 
-Codex 主 backend 不创建 Native / LangGraph 的 `search_information`。Evaluation 可以在
+Codex 同样装配已启用的统一搜索和委托能力，经 Session Gateway MCP 提供。Evaluation 可以在
 隔离进程把同一 BotSpec 投影为 Native target，但不得写回线上 backend。小红书等
 `risk: search` MCP binding 仍由统一搜索机制作为受限垂直来源执行。
 
@@ -189,7 +189,7 @@ Codex 主 backend 不创建 Native / LangGraph 的 `search_information`。Evalua
 - `playbooks.manifest`：bot-local Skill manifest。
 - `rag`：只读知识源。
 - `codebases`：逻辑仓库注册表，物理路径通过 env 解析。
-- `dev`：源码根 env、允许/拒绝路径和 shell timeout。
+- `dev`：项目根 env 和 shell timeout。`allowed_paths/denied_paths` 旧权限字段必须删除；项目根和 codebases 注册条目形成 Owner 执行资源范围，单次委托的 write_scope 继续约束该任务。
 
 职业情报工具的默认关注公司为空；用户或 workspace watchlist 必须显式提供目标。
 显式目标可以命中经过审阅的公开 provider，未命中或 provider 不可用时返回结构化
@@ -205,11 +205,6 @@ Codex 主 backend 不创建 Native / LangGraph 的 `search_information`。Evalua
 声明实例 id、WSL 部署目录、workspace、日志、runtime env 和 project name。Gateway QQ
 不生成 cc-connect 配置；Feishu legacy edge 可继续使用其隔离配置目录。`~` 在部署边界展开；
 其他 shell 变量和命令替换不执行。
-
-### `access`
-
-声明私聊/群聊白名单和群聊提及要求。Owner/Admin 默认集合为空，角色必须由部署 env
-显式配置。
 
 ## 通用 Feishu tool pack
 

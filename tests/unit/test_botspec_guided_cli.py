@@ -44,7 +44,7 @@ def test_starter_scaffold_is_valid_and_contains_only_beginner_capabilities(tmp_p
     assert spec.agents.backend == "native"
     assert spec.tools.packs == ("workspace.read_write", "memory.chat")
     assert spec.tools.features == ("chat.file_uploads", "chat.private_workspace")
-    assert spec.access.owner_only_project_access is True
+    assert not hasattr(spec, "access")
     assert (bot_yaml.parent / "prompts" / "refusal-style.md").is_file()
     example = (bot_yaml.parent / "local.env.example").read_text(encoding="utf-8")
     payload = yaml.safe_load(bot_yaml.read_text(encoding="utf-8"))

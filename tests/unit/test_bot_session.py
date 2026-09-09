@@ -81,7 +81,7 @@ def _make_session(llm: _FakeLLM, tools: list[ToolDef]) -> AgentSession:
     return AgentSession(
         session_id="sid",
         llm=llm,
-        executor=ToolExecutor(tools=list(tools)),
+        executor=ToolExecutor(caller_role_hint="owner", tools=list(tools)),
         tools_schema=[build_openai_schema(tool) for tool in tools],
         prompt_plan=prompt_plan("system baseline"),
     )
@@ -93,7 +93,7 @@ class AgentSessionTests(unittest.TestCase):
             AgentSession(
                 session_id="sid",
                 llm=_FakeLLM([]),
-                executor=ToolExecutor(tools=[]),
+                executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                 tools_schema=[],
                 prompt_plan=prompt_plan("system baseline"),
                 _messages=[{"role": "user", "content": "bypass"}],
@@ -321,7 +321,7 @@ class AgentSessionTests(unittest.TestCase):
 
         self.assertEqual(result.produced_resources, ())
 
-    def test_dev_write_requires_finalize_before_final_answer(self) -> None:
+    def test_dev_write_finishes_without_implicit_self_update(self) -> None:
         def edit_handler(_args: dict, _context: ToolContext) -> ToolResult:
             return ToolResult(ok=True, summary="已修改文件")
 
@@ -371,19 +371,12 @@ class AgentSessionTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(result.final_text, "已完成")
-        self.assertEqual(final_texts, ["已完成"])
-        self.assertEqual(len(llm.calls), 4)
-        self.assertEqual(len(result.lifecycle_intents), 1)
-        self.assertEqual(result.lifecycle_intents[0].name, "finalize_self_update")
-        self.assertTrue(
-            any(
-                "[SELF-UPDATE REQUIRED]" in (message.get("content") or "")
-                for message in llm.calls[2]["messages"]
-            )
-        )
+        self.assertEqual(result.final_text, "错误地提前完成")
+        self.assertEqual(final_texts, ["错误地提前完成"])
+        self.assertEqual(len(llm.calls), 2)
+        self.assertEqual(result.lifecycle_intents, ())
 
-    def test_dev_write_blocks_submit_result_until_finalize(self) -> None:
+    def test_dev_write_allows_submit_result_and_explicit_finalize(self) -> None:
         submitted: list[dict] = []
 
         def edit_handler(_args: dict, _context: ToolContext) -> ToolResult:
@@ -444,7 +437,7 @@ class AgentSessionTests(unittest.TestCase):
         result = session.run_task(AgentTask(text="改一个文件"), on_event=lambda _: None)
 
         self.assertEqual(result.final_text, "已完成")
-        self.assertEqual(submitted, [{"summary": "最终提交"}])
+        self.assertEqual(submitted, [{"summary": "提前提交"}, {"summary": "最终提交"}])
         self.assertEqual(len(result.lifecycle_intents), 1)
 
     def test_finalize_self_update_requires_user_visible_summary(self) -> None:
@@ -615,7 +608,7 @@ class AgentSessionTests(unittest.TestCase):
         session = AgentSession(
             session_id="sid",
             llm=llm,
-            executor=ToolExecutor(tools=[]),
+            executor=ToolExecutor(caller_role_hint="owner", tools=[]),
             tools_schema=[],
             prompt_plan=prompt_plan("system baseline"),
             context_manager=ContextManager(max_context_tokens=50000, sliding_window_turns=10),
@@ -661,7 +654,7 @@ class AgentSessionTests(unittest.TestCase):
                 session = AgentSession(
                     session_id="sid",
                     llm=llm,
-                    executor=ToolExecutor(tools=[]),
+                    executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                     tools_schema=[],
                     prompt_plan=prompt_plan("system baseline"),
                     context_manager=ContextManager(

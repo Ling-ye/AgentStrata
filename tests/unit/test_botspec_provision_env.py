@@ -783,7 +783,6 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                             model: gpt-5.6-sol
                             reasoning_effort: max
                         code_task_profile: sol-high
-                        allowed_roles: [owner]
                     prompts:
                       schema_version: 2
                       identity: persona.md
@@ -828,7 +827,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 "export CHATCOPILOT_ROUTE_CODE_TASK_PROFILE=sol-max",
                 content,
             )
-            self.assertIn("export CHATCOPILOT_ROUTE_CODE_ALLOWED_ROLES=owner", content)
+            self.assertNotIn("CODE_ALLOWED_ROLES", content)
 
 
 if __name__ == "__main__":

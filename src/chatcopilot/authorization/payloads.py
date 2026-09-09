@@ -18,11 +18,12 @@ def sanitize_tool_payload(
     *,
     role: Role,
     workspace: WorkspaceView | None = None,
+    public_output: bool = False,
 ) -> dict[str, Any]:
     """Return a bounded projection; non-owners never receive host path detail."""
 
     out = dict(payload)
-    if role is Role.OWNER:
+    if role is Role.OWNER and not public_output:
         return out
 
     for key in _USER_STRIP_FIELDS:

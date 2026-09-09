@@ -28,7 +28,7 @@ class ToolBrief:
     summary: str
     category: str = ""
     weight: str = "light"
-    requires_role: str | None = None
+    access: str = "owner"
 
 
 @dataclass
@@ -104,7 +104,7 @@ def _collect_tool_packs() -> list[CatalogItem]:
                 summary=tool.summary,
                 category=tool.category,
                 weight=tool.weight,
-                requires_role=tool.requires_role,
+                access=tool.access,
             )
             for tool in iter_tool_pack_tools(pack_id)
         ]

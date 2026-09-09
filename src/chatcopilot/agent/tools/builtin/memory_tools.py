@@ -93,10 +93,10 @@ def _handler_clear_memory(
             stage="validation",
         )
     state = _persistent_state(ctx)
-    if state.memory_scope == "group" and not _caller_is_owner(ctx):
+    if not _caller_is_owner(ctx):
         return ToolResult(
             ok=False,
-            error="只有 Owner 可以清空当前群的整份长期记忆。",
+            error="只有 Owner 可以清空会话记忆。",
             error_code="memory_clear_owner_required",
             stage="permission",
         )
@@ -120,6 +120,7 @@ _MEMORY_READ_RESULT_SCHEMA = object_schema(
 
 TOOLS: List[ToolDef] = [
     ToolDef(
+        access="member",
         name="read_memory",
         summary=(
             "读取可信运行时自动选择的当前长期记忆：私聊为当前发送者，群聊为当前群。"
@@ -134,6 +135,7 @@ TOOLS: List[ToolDef] = [
         module=__name__,
     ),
     ToolDef(
+        access="member",
         name="append_memory",
         summary=(
             "将未来可复用的信息写入当前私聊用户或当前群记忆。用户明确说“记住/保存为偏好/"
@@ -141,18 +143,21 @@ TOOLS: List[ToolDef] = [
             "常用公开数据源先询问是否保存。不要写临时任务、闲聊、推断、个人结论、秘密、"
             "不适合全群公开的信息，或任何人格/角色/授权/工具指令。"
         ),
-        input_schema=object_schema({
-            "text": {
-                "type": "string",
-                "description": f"要保存的可复用内容（一行内不超过 {MEMORY_MAX_ITEM_CHARS} 字符）。",
+        input_schema=object_schema(
+            {
+                "text": {
+                    "type": "string",
+                    "description": f"要保存的可复用内容（一行内不超过 {MEMORY_MAX_ITEM_CHARS} 字符）。",
+                },
+                "section": {
+                    "type": "string",
+                    "description": "facts=偏好/默认值，decisions=稳定决定，sources=常用公开数据源。",
+                    "enum": list(MEMORY_SECTIONS),
+                    "default": "facts",
+                },
             },
-            "section": {
-                "type": "string",
-                "description": "facts=偏好/默认值，decisions=稳定决定，sources=常用公开数据源。",
-                "enum": list(MEMORY_SECTIONS),
-                "default": "facts",
-            },
-        }, required=("text",)),
+            required=("text",),
+        ),
         output_schema=object_schema(
             {
                 "scope": {"type": "string"},
@@ -169,17 +174,17 @@ TOOLS: List[ToolDef] = [
     ),
     ToolDef(
         name="clear_memory",
-        summary=(
-            "清空当前作用域记忆；私聊用户可清空自己的记忆，群聊只有 Owner 可清空整份群记忆。"
-            "必须显式设置 confirm=true。"
-        ),
-        input_schema=object_schema({
-            "confirm": {
-                "type": "boolean",
-                "description": "必须显式设为 true 才会执行。",
-                "default": False,
+        summary=("Owner 清空当前作用域记忆；成员只能读取和追加。必须显式设置 confirm=true。"),
+        input_schema=object_schema(
+            {
+                "confirm": {
+                    "type": "boolean",
+                    "description": "必须显式设为 true 才会执行。",
+                    "default": False,
+                },
             },
-        }, required=("confirm",)),
+            required=("confirm",),
+        ),
         output_schema=object_schema(
             {"scope": {"type": "string"}, "cleared": {"type": "boolean"}},
             required=("scope", "cleared"),

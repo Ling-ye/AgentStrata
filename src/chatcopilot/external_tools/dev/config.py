@@ -93,8 +93,19 @@ class DevConfig:
 _cached: DevConfig | None = None
 
 
-def get_dev_config(*, force_reload: bool = False) -> DevConfig:
+def get_dev_config(*, force_reload: bool = False, require_scope: bool = False) -> DevConfig:
     global _cached
+    from chatcopilot.contracts.execution_scope import current_execution_scope
+
+    scope = current_execution_scope()
+    if scope is not None:
+        return DevConfig(
+            repo_root=(scope.project_roots or scope.readable_roots)[0],
+            allowed_paths=("**",),
+            denied_paths=(),
+        )
+    if require_scope:
+        raise RuntimeError("execution resources are not bound to this tool call")
     if _cached is None or force_reload:
         _cached = DevConfig.from_env()
     return _cached

@@ -278,7 +278,7 @@ def test_runtime_threads_detached_profile_into_session_materialization(
     with pytest.raises(StopAfterProjection):
         runtime.new_session(
             session_id="session-1",
-            prompt_input=cast(Any, SimpleNamespace(memory="")),
+            prompt_input=cast(Any, SimpleNamespace(memory="", role="owner")),
         )
 
 
@@ -308,7 +308,7 @@ def test_direct_runtime_does_not_select_future_session_capabilities_by_default(
     with pytest.raises(StopAfterProjection):
         runtime.new_session(
             session_id="session-1",
-            prompt_input=cast(Any, SimpleNamespace(memory="")),
+            prompt_input=cast(Any, SimpleNamespace(memory="", role="owner")),
         )
 
 

@@ -88,32 +88,41 @@ TOOLS = [
             "先忠实传入 source_text，再将内容整理为摘要、事实、步骤和待确认项；"
             "不要补造来源中不存在的事实。"
         ),
-        input_schema=object_schema({
-            "title": {"type": "string", "description": "页面标题。"},
-            "summary": {"type": "string", "description": "忠实、简洁的内容摘要。"},
-            "facts": {**_STRING_ARRAY, "description": "来源明确支持的事实；至少一项。"},
-            "procedures": {**_STRING_ARRAY, "description": "步骤、决策或操作方法；可为空。"},
-            "open_questions": {**_STRING_ARRAY, "description": "不确定、冲突或待确认事项；可为空。"},
-            "tags": {**_STRING_ARRAY, "description": "用于检索的少量标签。"},
-            "source_text": {"type": "string", "description": "用户提供的原始文本或 Markdown，保持原意。"},
-            "source_kind": {
-                "type": "string",
-                "enum": ["chat", "text", "markdown"],
-                "description": "原始来源类型。",
-                "default": "chat",
+        input_schema=object_schema(
+            {
+                "title": {"type": "string", "description": "页面标题。"},
+                "summary": {"type": "string", "description": "忠实、简洁的内容摘要。"},
+                "facts": {**_STRING_ARRAY, "description": "来源明确支持的事实；至少一项。"},
+                "procedures": {**_STRING_ARRAY, "description": "步骤、决策或操作方法；可为空。"},
+                "open_questions": {
+                    **_STRING_ARRAY,
+                    "description": "不确定、冲突或待确认事项；可为空。",
+                },
+                "tags": {**_STRING_ARRAY, "description": "用于检索的少量标签。"},
+                "source_text": {
+                    "type": "string",
+                    "description": "用户提供的原始文本或 Markdown，保持原意。",
+                },
+                "source_kind": {
+                    "type": "string",
+                    "enum": ["chat", "text", "markdown"],
+                    "description": "原始来源类型。",
+                    "default": "chat",
+                },
+                "source_ref": {
+                    "type": "string",
+                    "description": "可选稳定来源标识；同一标识内容变化时更新原页面。",
+                },
+                "target_path": {
+                    "type": "string",
+                    "description": "可选 pages/ 内相对 Markdown 路径；仅在明确合并或更新指定页面时传入。",
+                },
             },
-            "source_ref": {
-                "type": "string",
-                "description": "可选稳定来源标识；同一标识内容变化时更新原页面。",
-            },
-            "target_path": {
-                "type": "string",
-                "description": "可选 pages/ 内相对 Markdown 路径；仅在明确合并或更新指定页面时传入。",
-            },
-        }, required=("title", "summary", "facts", "source_text")),
+            required=("title", "summary", "facts", "source_text"),
+        ),
         output_schema=_WIKI_RESULT_SCHEMA,
         handler=_upsert,
-        requires_role="owner",
+        access="owner",
         category="wiki.knowledge",
         owner="wiki",
         module=__name__,
@@ -122,13 +131,16 @@ TOOLS = [
     ToolDef(
         name="wiki_search",
         summary="搜索 owner 私有 Wiki，返回页面、章节、来源标识和相关片段。",
-        input_schema=object_schema({
-            "query": {"type": "string", "description": "检索问题或关键词。"},
-            "top_k": {"type": "integer", "description": "返回结果数，最多 20。", "default": 5},
-        }, required=("query",)),
+        input_schema=object_schema(
+            {
+                "query": {"type": "string", "description": "检索问题或关键词。"},
+                "top_k": {"type": "integer", "description": "返回结果数，最多 20。", "default": 5},
+            },
+            required=("query",),
+        ),
         output_schema=_WIKI_RESULT_SCHEMA,
         handler=_search,
-        requires_role="owner",
+        access="owner",
         category="wiki.knowledge",
         owner="wiki",
         module=__name__,
@@ -143,7 +155,7 @@ TOOLS = [
         ),
         output_schema=_WIKI_RESULT_SCHEMA,
         handler=_read,
-        requires_role="owner",
+        access="owner",
         category="wiki.knowledge",
         owner="wiki",
         module=__name__,
@@ -157,7 +169,7 @@ TOOLS = [
         ),
         output_schema=_WIKI_RESULT_SCHEMA,
         handler=_list,
-        requires_role="owner",
+        access="owner",
         category="wiki.knowledge",
         owner="wiki",
         module=__name__,

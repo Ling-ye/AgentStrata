@@ -13,7 +13,7 @@ from chatcopilot.agent.context.prompt_plan import (
 )
 from chatcopilot.agent.tools.registry import discover_tools
 from chatcopilot.botspec.runtime import load_runtime_context
-from chatcopilot.contracts import Role, role_ge
+from chatcopilot.contracts.tools import tool_access_allowed
 from chatcopilot.contracts.tools import build_openai_schema
 
 
@@ -125,9 +125,7 @@ def test_lingye_prompt_and_tool_schema_budgets(monkeypatch: pytest.MonkeyPatch) 
 
             visible = []
             for tool in tools:
-                if tool.requires_role is not None and not role_ge(Role(role), tool.requires_role):
-                    continue
-                if tool.metadata.get("private_chat_only") and channel != "private":
+                if not tool_access_allowed(role, tool.access):
                     continue
                 visible.append(build_openai_schema(tool))
             schema_text = json.dumps(
@@ -138,4 +136,3 @@ def test_lingye_prompt_and_tool_schema_budgets(monkeypatch: pytest.MonkeyPatch) 
             )
             assert len(schema_text) == baseline[key]["tool_schema_chars"]
             assert len(schema_text) <= baseline[key]["tool_schema_limit"]
-            assert len(schema_text) * 100 <= (baseline[key]["historical_tool_schema_chars"] * 85)

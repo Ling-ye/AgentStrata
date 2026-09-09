@@ -27,7 +27,7 @@ def _tool(
     name: str,
     *,
     category: str,
-    requires_role: str | None = None,
+    access: str = "owner",
     private: bool = False,
 ) -> ToolDef:
     return ToolDef(
@@ -37,7 +37,7 @@ def _tool(
         output_schema=object_schema(),
         handler=lambda _args, _context: ToolResult(ok=True),
         category=category,
-        requires_role=requires_role,
+        access=access,
         metadata={"private_chat_only": private},
     )
 
@@ -47,29 +47,25 @@ def test_permission_filter_reuses_pure_policy_for_projection_and_execution() -> 
     permission = build_tool_permission_filter(
         _principal(role=Role.USER),
         policy_version="policy-v1",
-        agent_backend="native",
         on_decision=observed.append,
     )
-    public = _tool("search_public", category="agent.search")
+    public = _tool("search_public", category="agent.search", access="member")
     internal = _tool("project_status", category="project." + "internal")
 
     assert permission(public) is None
-    assert permission(internal) == "当前角色不能访问项目、主机、配置或内部资料。"
+    assert permission(internal) == "该操作仅限 Owner；成员仅可使用公共查询和当前会话基础能力。"
     assert [decision.allowed for decision in observed] == [True, False]
     assert observed[0].actor_ref == observed[1].actor_ref
-    assert observed[1].code == "project-access-denied"
+    assert observed[1].code == "owner-required"
 
 
-def test_private_tool_still_rejects_group_owner() -> None:
+def test_owner_can_use_tools_in_groups() -> None:
     permission = build_tool_permission_filter(
         _principal(role=Role.OWNER),
         policy_version="policy-v1",
-        agent_backend="codex",
     )
 
-    assert permission(
-        _tool("owner_private", category="runtime", private=True)
-    ) == "该工具只允许在私聊中执行。"
+    assert permission(_tool("owner_private", category="runtime", private=True)) is None
 
 
 def test_payload_filter_uses_principal_role_and_workspace(tmp_path: Path) -> None:

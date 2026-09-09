@@ -21,8 +21,12 @@ def build_workspace_service(
 
     backend_state_root: Path | None = None
     isolate_backend_state = False
-    if workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
-        protected_root = workspace.root.parent / ".conversation-state"
+    if workspace.user_id:
+        protected_root = (
+            workspace.root.parent
+            if workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+            else resolve_workspace_root(workspace)
+        ) / ".conversation-state"
         if protected_root.is_symlink():
             raise RuntimeError("group conversation state directory must not be a symlink")
         protected_root.mkdir(mode=0o700, parents=True, exist_ok=True)

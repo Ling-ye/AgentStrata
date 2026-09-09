@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.botspec.model import ContextSpec
+
 from dataclasses import fields
 from types import SimpleNamespace
 
@@ -18,10 +20,11 @@ from chatcopilot.core.config import ChatConfig
 def _runtime() -> SimpleNamespace:
     return SimpleNamespace(
         spec=SimpleNamespace(
+            context=ContextSpec(),
             llm=SimpleNamespace(
                 research_model="research-model",
                 research_env_prefix=None,
-            )
+            ),
         ),
         tool_packs=("workspace.read_write", "persona.control", "memory.chat"),
         exclude_tools=("hidden_tool",),
@@ -134,6 +137,7 @@ def test_materialization_forwards_the_complete_projection(monkeypatch) -> None:
         "subagents": projection.subagents,
         "agent_backend": projection.agent_backend,
         "assembly_profile": projection.assembly_profile,
+        "project_roots": projection.project_roots,
     }
 
 

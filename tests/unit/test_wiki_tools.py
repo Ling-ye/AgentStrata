@@ -26,7 +26,7 @@ def test_wiki_tools_are_owner_private() -> None:
         "wiki_read_page",
         "wiki_list_pages",
     }
-    assert all(tool.requires_role == "owner" for tool in TOOLS)
+    assert all(tool.access == "owner" for tool in TOOLS)
     assert all(tool.metadata.get("private_chat_only") is True for tool in TOOLS)
 
 

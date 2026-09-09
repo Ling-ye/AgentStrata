@@ -245,21 +245,19 @@ def _bot_config(bot_data: dict[str, Any], base_dir: Path) -> dict[str, Any]:
     skills_raw = context.get("playbooks") if isinstance(context.get("playbooks"), dict) else {}
     skills = {"manifest": str(skills_raw.get("manifest") or "")} if skills_raw.get("manifest") else None
 
-    access_raw = bot_data.get("access") if isinstance(bot_data.get("access"), dict) else {}
-    access = None
-    if access_raw:
-        access = {
-            "owner_only_project_access": bool(
-                access_raw.get("owner_only_project_access", False)
-            ),
-        }
 
     return {
         "identity": _file_entry(base_dir, prompts.get("identity")),
         "response_style": _file_entry(base_dir, prompts.get("response_style")),
         "refusal_style": _file_entry(base_dir, prompts.get("refusal_style")),
-        "role_styles": {str(key): _file_entry(base_dir, value) for key, value in (prompts.get("role_styles") or {}).items()},
-        "mode_styles": {str(key): _file_entry(base_dir, value) for key, value in (prompts.get("mode_styles") or {}).items()},
+        "role_styles": {
+            str(key): _file_entry(base_dir, value)
+            for key, value in (prompts.get("role_styles") or {}).items()
+        },
+        "mode_styles": {
+            str(key): _file_entry(base_dir, value)
+            for key, value in (prompts.get("mode_styles") or {}).items()
+        },
         "persona": _file_entry(base_dir, prompts.get("persona")),
         "refusal": _file_entry(base_dir, prompts.get("refusal")),
         "safety": _file_entry(base_dir, prompts.get("safety")),
@@ -269,7 +267,7 @@ def _bot_config(bot_data: dict[str, Any], base_dir: Path) -> dict[str, Any]:
         "wiki": wiki,
         "codebases": codebases,
         "skills": skills,
-        "access": access,
+        "permissions": {"owner": "all", "member": "conversation"},
     }
 
 

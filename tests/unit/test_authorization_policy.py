@@ -106,11 +106,14 @@ def test_role_policy_rechecks_role_and_private_channel() -> None:
     assert policy.decide(user_request, required_role=Role.OWNER).code == (
         "required-role-not-met"
     )
-    assert policy.decide(
-        owner_group_request,
-        required_role=Role.OWNER,
-        private_chat_only=True,
-    ).code == "private-chat-required"
+    assert (
+        policy.decide(
+            owner_group_request,
+            required_role=Role.OWNER,
+            private_chat_only=True,
+        ).code
+        == "allowed"
+    )
 
 
 def test_malformed_allowlist_fails_before_policy_use() -> None:

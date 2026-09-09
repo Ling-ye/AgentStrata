@@ -27,14 +27,10 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
     member_filter = _make_permission_filter(
         Role.USER,
         workspace,
-        owner_only_project_access=spec.access.owner_only_project_access,
-        agent_backend=spec.agents.backend,
     )
     owner_filter = _make_permission_filter(
         Role.OWNER,
         workspace,
-        owner_only_project_access=spec.access.owner_only_project_access,
-        agent_backend=spec.agents.backend,
     )
     owner_group_filter = _make_permission_filter(
         Role.OWNER,
@@ -45,8 +41,6 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
             user_id="owner",
             scope=WORKSPACE_SCOPE_GROUP_SHARED,
         ).ensure(),
-        owner_only_project_access=spec.access.owner_only_project_access,
-        agent_backend=spec.agents.backend,
     )
     user_group_filter = _make_permission_filter(
         Role.USER,
@@ -57,8 +51,6 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
             user_id="user",
             scope=WORKSPACE_SCOPE_GROUP_SHARED,
         ).ensure(),
-        owner_only_project_access=spec.access.owner_only_project_access,
-        agent_backend=spec.agents.backend,
     )
     member_visible = {tool.name for tool in tools if member_filter(tool) is None}
     owner_visible = {tool.name for tool in tools if owner_filter(tool) is None}
@@ -102,7 +94,7 @@ def test_lingye_bot_member_tool_surface_is_explicit_and_fail_closed(
         "start_code_task",
         "owner_list_workspaces",
     }.issubset(owner_group_visible)
-    assert "wiki_search" not in owner_group_visible
+    assert "wiki_search" in owner_group_visible
     assert {
         "read_memory",
         "append_memory",

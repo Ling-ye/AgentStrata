@@ -35,7 +35,9 @@ class FileDeliveryHookTests(unittest.TestCase):
                 message=message,
             )
 
-        executor = ToolExecutor(tools=[_send_files_tool()], file_sender=fake_sender)
+        executor = ToolExecutor(
+            caller_role_hint="owner", tools=[_send_files_tool()], file_sender=fake_sender
+        )
         result = executor.execute(
             "send_files_to_user", {"files": ["results/a.csv"], "message": "给你"}
         )
@@ -44,13 +46,16 @@ class FileDeliveryHookTests(unittest.TestCase):
         self.assertIn("a.csv", result.summary)
 
     def test_handler_without_sender_fails_clean(self) -> None:
-        executor = ToolExecutor(tools=[_send_files_tool()], file_sender=None)
+        executor = ToolExecutor(
+            caller_role_hint="owner", tools=[_send_files_tool()], file_sender=None
+        )
         result = executor.execute("send_files_to_user", {"files": ["a.csv"]})
         self.assertFalse(result.ok)
         self.assertIn("文件回传通道", result.error or "")
 
     def test_context_is_reset_after_execute(self) -> None:
         executor = ToolExecutor(
+            caller_role_hint="owner",
             tools=[_send_files_tool()],
             file_sender=lambda files, message: FileDeliveryResult((), (), message),
         )

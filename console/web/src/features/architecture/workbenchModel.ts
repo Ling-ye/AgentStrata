@@ -40,6 +40,7 @@ export interface ObservationMetrics {
 }
 export interface RunStep {
   key: string; event: GatewayObservation; start?: GatewayObservation; finish?: GatewayObservation;
+  update?: GatewayObservation;
   children: RunStep[]; missingParent: boolean;
 }
 
@@ -55,11 +56,12 @@ export function buildRunTree(events: GatewayObservation[]): RunStep[] {
   const nodes = new Map<string, RunStep>();
   const spanKey = (trace?: string, span?: string) => trace && span ? JSON.stringify([trace, span]) : undefined;
   for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
-    const key = (event.phase === "start" || event.phase === "finish") && spanKey(event.trace_id, event.span_id) || `event:${event.seq}`;
+    const key = ["start", "update", "finish"].includes(event.phase ?? "") && spanKey(event.trace_id, event.span_id) || `event:${event.seq}`;
     const node = nodes.get(key) ?? { key, event, children: [], missingParent: false };
     if (event.phase === "start") node.start = event;
     if (event.phase === "finish") node.finish = event;
-    node.event = node.finish ?? node.start ?? event;
+    if (event.phase === "update" && Number(event.data?.revision ?? event.seq) > Number(node.update?.data?.revision ?? node.update?.seq ?? -1)) node.update = event;
+    node.event = node.finish ?? node.update ?? node.start ?? event;
     nodes.set(key, node);
   }
   const roots: RunStep[] = [];
@@ -86,6 +88,7 @@ export function buildRunTree(events: GatewayObservation[]): RunStep[] {
 
 export interface DisplayStep extends RunStep {
   depth: number; contexts: GatewayObservation[]; permissions: GatewayObservation[]; logs: GatewayObservation[];
+  agentName?: string; modelIteration?: number;
   delivery?: { status: string; observedAt: number; errorCode?: string | null };
 }
 
@@ -164,9 +167,10 @@ export function buildRunView(events: GatewayObservation[], delivery?: Pick<Gatew
   const unique = [...new Map(events.map((event) => [event.seq, event])).values()].sort((a, b) => a.seq - b.seq);
   const supplemental = new Set(["ContextSnapshotPrepared", "tool_authorization", "log", "run_state"]);
   const steps: DisplayStep[] = [];
-  const flatten = (nodes: RunStep[], depth = 0) => nodes.forEach((node) => {
-    steps.push({ ...node, depth, contexts: [], permissions: [], logs: [] });
-    flatten(node.children, depth + 1);
+  const flatten = (nodes: RunStep[], depth = 0, agentName = "主 Agent") => nodes.forEach((node) => {
+    const owner = node.event.data?.process_kind === "subagent" ? String(node.event.name ?? node.event.data?.name ?? "子 Agent").replace(/^subagent:/, "") : agentName;
+    steps.push({ ...node, depth, agentName: owner, contexts: [], permissions: [], logs: [] });
+    flatten(node.children, depth + 1, owner);
   });
   const current = unique.filter((event) => event.data?.flow_version === 1);
   const contextual = current.filter((event) => event.kind === "ContextSnapshotPrepared");
@@ -186,6 +190,9 @@ export function buildRunView(events: GatewayObservation[], delivery?: Pick<Gatew
   flatten(buildRunTree([...core, ...contextual.filter((event) => !usedContexts.has(event.seq))]));
   for (const step of steps) {
     step.contexts = contextsByCall.get(JSON.stringify([step.event.trace_id, step.event.span_id])) ?? [];
+    const modelSpan = step.event.data?.model_span_id ?? step.start?.data?.model_span_id;
+    const caller = typeof modelSpan === "string" ? steps.find((model) => model.event.trace_id === step.event.trace_id && model.event.span_id === modelSpan) : undefined;
+    if (caller && typeof caller.event.data?.iteration === "number") step.modelIteration = caller.event.data.iteration;
     if ((step.start ?? step.event).data?.operation !== "channel.deliver") continue;
     const outbound = step.event.data?.outbound_id ?? step.start?.data?.outbound_id;
     if (typeof outbound !== "string") continue;
@@ -229,6 +236,11 @@ export function stepDuration(step: DisplayStep, terminal: boolean, now = Date.no
 
 export function stepIsOpen(step: RunStep, overrides: Record<string, boolean>, terminal: boolean) {
   return overrides[step.key] ?? (step.event.status === "failed" || (!terminal && step.event.status === "running"));
+}
+
+export function rememberOpenedSteps(steps: RunStep[], overrides: Record<string, boolean>, terminal: boolean) {
+  const opened = steps.filter((step) => !(step.key in overrides) && stepIsOpen(step, overrides, terminal));
+  return opened.length ? { ...overrides, ...Object.fromEntries(opened.map((step) => [step.key, true])) } : overrides;
 }
 
 export function related(event: GatewayObservation, entity: string) {

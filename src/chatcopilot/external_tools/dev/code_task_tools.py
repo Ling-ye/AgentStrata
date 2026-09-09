@@ -43,7 +43,7 @@ def _tool(**kwargs: Any) -> ToolDef:
     return ToolDef(
         owner=_OWNER,
         module=__name__,
-        requires_role="owner",
+        access="owner",
         metadata={"tags": ["code", "owner", "isolated"]},
         **kwargs,
     )

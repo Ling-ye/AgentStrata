@@ -80,7 +80,6 @@ def llm_runtime_env_defaults(llm: LLMSpec) -> dict[str, str]:
         f"{prefix}_CODE_COMMAND": code.command,
         f"{prefix}_CODE_WORKDIR_ENV": code.workdir_env,
         f"{prefix}_CODE_TIMEOUT_SECONDS": str(code.timeout_seconds),
-        f"{prefix}_CODE_ALLOWED_ROLES": ",".join(code.allowed_roles),
     }
     if code.code_task_profile:
         values[f"{prefix}_CODE_TASK_PROFILE"] = code.code_task_profile
@@ -151,10 +150,7 @@ def resolve_runtime_environment(spec: BotSpec, environment: Mapping[str, str], *
         values[f"{ENV_PREFIX}_DEV_ROOT"] = configured_root
     else:
         values.setdefault(f"{ENV_PREFIX}_DEV_ROOT", str(source_root))
-    if dev.allowed_paths:
-        values.setdefault(f"{ENV_PREFIX}_DEV_ALLOWED_PATHS", ",".join(dev.allowed_paths))
-    if dev.denied_paths:
-        values.setdefault(f"{ENV_PREFIX}_DEV_DENIED_PATHS", ",".join(dev.denied_paths))
+
     if dev.shell.timeout_max != 300:
         values.setdefault(f"{ENV_PREFIX}_DEV_SHELL_TIMEOUT_MAX", str(dev.shell.timeout_max))
     wiki = spec.context.wiki
@@ -185,3 +181,20 @@ def _reset_dev_config_cache() -> None:
 
 
 __all__ = ["apply_runtime_env", "llm_runtime_env_defaults"]
+
+
+def project_resource_roots(spec: BotSpec, env: Mapping[str, str]) -> tuple[Path, ...]:
+    roots = []
+    key = spec.context.dev.root_env
+    if key and env.get(key):
+        roots.append(Path(env[key]).expanduser().resolve())
+    registry = spec.context.codebases.registry
+    if registry:
+        from chatcopilot.external_tools.codebase.config import load_registry
+
+        resolved = spec.resolve_path(registry)
+        roots.extend(
+            item.root.resolve()
+            for item in load_registry(resolved, environment=env).repositories.values()
+        )
+    return tuple(dict.fromkeys(roots))

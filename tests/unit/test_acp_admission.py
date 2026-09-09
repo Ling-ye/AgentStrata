@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from chatcopilot.botspec.loader import load_botspec, validate_botspec
-from chatcopilot.botspec.model import AccessSpec
+
 from chatcopilot.core.allowlists import AllowlistConfigError, parse_numeric_allowlist
 from chatcopilot.middleware.access_control import Role, resolve_role
 from chatcopilot.middleware.acp.admission import AdmissionDecision, evaluate_admission
@@ -45,33 +45,26 @@ def _write_bot_with_access(base: Path, access_block: str) -> Path:
 
 
 class AccessSpecLoaderTests(unittest.TestCase):
-    def test_access_only_keeps_post_admission_projection(self) -> None:
-        block = textwrap.dedent(
-            """\
-            access:
-              owner_only_project_access: true
-            """
-        )
-        with TemporaryDirectory() as tmp:
-            spec = load_botspec(_write_bot_with_access(Path(tmp), block))
+    def test_old_access_values_require_migration(self) -> None:
+        for value in ("true", "false", "invalid", ""):
+            with self.subTest(value=value), TemporaryDirectory() as tmp:
+                spec = load_botspec(
+                    _write_bot_with_access(
+                        Path(tmp), f"access:\n  owner_only_project_access: {value}\n"
+                    )
+                )
+                errors = [issue for issue in validate_botspec(spec) if issue.level == "error"]
+                self.assertTrue(
+                    any(
+                        issue.field == "access" and "Owner/member" in issue.message
+                        for issue in errors
+                    )
+                )
 
-        self.assertEqual(spec.access, AccessSpec(owner_only_project_access=True))
-        self.assertFalse(hasattr(spec.access, "enabled"))
-
-    def test_missing_access_uses_projection_default(self) -> None:
+    def test_missing_access_has_no_legacy_projection(self) -> None:
         with TemporaryDirectory() as tmp:
             spec = load_botspec(_write_bot_with_access(Path(tmp), ""))
-
-        self.assertEqual(spec.access, AccessSpec())
-
-    def test_access_rejects_invalid_boolean(self) -> None:
-        for value in ("invalid", ""):
-            block = f"access:\n  owner_only_project_access: {value}\n"
-            with self.subTest(value=value), TemporaryDirectory() as tmp, self.assertRaisesRegex(
-                ValueError,
-                r"access\.owner_only_project_access",
-            ):
-                load_botspec(_write_bot_with_access(Path(tmp), block))
+        self.assertFalse(hasattr(spec, "access"))
 
     def test_removed_admission_fields_are_validation_errors(self) -> None:
         removed = (
@@ -318,7 +311,7 @@ class OwnerRuntimeInfoQueryTests(unittest.TestCase):
         return SimpleNamespace(
             role=role,
             workspace=SimpleNamespace(chat_kind=chat_kind, chat_id=chat_id),
-            runtime=SimpleNamespace(access=AccessSpec(owner_only_project_access=True)),
+            runtime=SimpleNamespace(),
         )
 
     def test_owner_private_can_list_full_allowlists(self) -> None:

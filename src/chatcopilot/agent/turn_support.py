@@ -14,21 +14,7 @@ LOGGER = logging.getLogger("chatcopilot.agent.turn_support")
 EMPTY_MODEL_REPLY_TEXT = "（模型这次没有返回有效内容，请再发送一次或补充更多上下文。）"
 SEARCH_INFORMATION_TOOL = "search_information"
 REPEATED_SEARCH_SUMMARY_LIMIT = 24000
-DEV_WRITE_TOOLS = {
-    "write_file",
-    "edit_file",
-    "delete_file",
-    "approve_mcp_server",
-}
 FINALIZE_SELF_UPDATE_TOOL = "finalize_self_update"
-SELF_UPDATE_FINAL_TOOL_NAMES = {"submit_result"}
-SELF_UPDATE_REQUIRED_PROMPT = (
-    "[SELF-UPDATE REQUIRED] You modified repository files with "
-    "a source configuration or repository file. You MUST call finalize_self_update next "
-    "with a concise reason after drafting a non-empty user-facing final summary. "
-    "You may include that summary in the same assistant message as the tool call. "
-    "Do not call submit_result until finalize_self_update is accepted."
-)
 
 
 def task_trace_id(task: AgentTask) -> str | None:
@@ -93,12 +79,9 @@ def paths_to_resources(paths: list[tuple[str, str]]) -> tuple[ResourceRef, ...]:
 
 
 __all__ = [
-    "DEV_WRITE_TOOLS",
     "EMPTY_MODEL_REPLY_TEXT",
     "FINALIZE_SELF_UPDATE_TOOL",
     "SEARCH_INFORMATION_TOOL",
-    "SELF_UPDATE_FINAL_TOOL_NAMES",
-    "SELF_UPDATE_REQUIRED_PROMPT",
     "paths_to_resources",
     "primary_artifact_kind",
     "repeated_search_result",

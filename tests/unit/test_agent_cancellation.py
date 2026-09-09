@@ -73,7 +73,7 @@ def _make_session(llm, tools: list[ToolDef] | None = None) -> AgentSession:
     return AgentSession(
         session_id="cancel-test",
         llm=llm,
-        executor=ToolExecutor(tools=selected),
+        executor=ToolExecutor(caller_role_hint="owner", tools=selected),
         tools_schema=[build_openai_schema(tool) for tool in selected],
         prompt_plan=prompt_plan("system"),
     )
@@ -278,7 +278,7 @@ class CancellationContractTests(unittest.TestCase):
         session = LangGraphAgentSession(
             session_id="langgraph-cancel",
             llm=llm,  # type: ignore[arg-type]
-            executor=ToolExecutor(tools=[]),
+            executor=ToolExecutor(caller_role_hint="owner", tools=[]),
             tools_schema=[],
             prompt_plan=prompt_plan("system"),
         )

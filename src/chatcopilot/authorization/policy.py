@@ -11,7 +11,7 @@ from chatcopilot.contracts.authorization import (
     AuthorizationRequest,
     Principal,
 )
-from chatcopilot.contracts.identity import Identity, Role, TurnIdentity, role_ge
+from chatcopilot.contracts.identity import Identity, Role, TurnIdentity
 from chatcopilot.core.allowlists import (
     NumericAllowlist,
     is_numeric_platform_id,
@@ -201,7 +201,11 @@ class RolePolicy:
         required_role: Role = Role.USER,
         private_chat_only: bool = False,
     ) -> AuthorizationDecision:
-        if not role_ge(request.principal.role, required_role):
+        if request.principal.role is Role.OWNER:
+            return _decision(
+                request, allowed=True, code="allowed", policy_version=self.policy_version
+            )
+        if required_role is not Role.USER:
             return _decision(
                 request,
                 allowed=False,

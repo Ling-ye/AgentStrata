@@ -17,7 +17,7 @@ from chatcopilot.external_tools.codebase.config import load_registry, reset_cach
 class CodebaseReadToolPackTests(unittest.TestCase):
     @staticmethod
     def _execute(tool, arguments):
-        return ToolExecutor(tools=[tool]).execute(tool.name, arguments)
+        return ToolExecutor(caller_role_hint="owner", tools=[tool]).execute(tool.name, arguments)
 
     def setUp(self) -> None:
         fixture = Path(__file__).resolve().parents[1] / "fixtures" / "codebase_read"
@@ -69,7 +69,7 @@ class CodebaseReadToolPackTests(unittest.TestCase):
                 "codebase_context",
             },
         )
-        self.assertTrue(all(tool.requires_role == "owner" for tool in tools.values()))
+        self.assertTrue(all(tool.access == "owner" for tool in tools.values()))
 
     def test_registry_and_structure_map_hide_sensitive_files(self) -> None:
         registry = load_registry()

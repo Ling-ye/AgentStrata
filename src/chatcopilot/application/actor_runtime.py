@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from chatcopilot.application.execution_scope import execution_scope
+
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -53,7 +55,7 @@ from chatcopilot.botspec.runtime import BotRuntimeContext
 from chatcopilot.contracts.agent import AgentEvent, AgentResult, AgentTask
 from chatcopilot.contracts.authorization import Principal
 from chatcopilot.contracts.cancellation import CancellationProbe, CancellationRequested
-from chatcopilot.contracts.identity import Role, SessionIdentity, TurnIdentity, role_ge, role_value
+from chatcopilot.contracts.identity import Role, SessionIdentity, TurnIdentity, role_value
 from chatcopilot.contracts.persona_control import PendingPersonaProposal
 from chatcopilot.contracts.persistent_state import has_meaningful_memory
 from chatcopilot.contracts.tool_packs import ToolProvider
@@ -239,10 +241,8 @@ class ActorSessionFactory:
 
         port = _ActorPersonaToolPort(self, key=key, principal=principal)
         session_providers = self._session_providers(port)
-        payload_principal = (
-            replace(principal, role=Role.USER)
-            if binding.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
-            else principal
+        binding.service.execution_scope = execution_scope(
+            principal.role, binding.workspace.root, getattr(self.agent_runtime, "project_roots", ())
         )
         try:
             file_sender = (
@@ -260,20 +260,19 @@ class ActorSessionFactory:
                 prompt_input=prompt_input,
                 session_providers=session_providers,
                 payload_filter=build_tool_payload_filter(
-                    payload_principal,
+                    principal,
                     workspace=binding.workspace,
+                    public_output=binding.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED,
                 ),
                 permission_filter=build_tool_permission_filter(
                     principal,
-                    policy_version=self.policy_version,
-                    agent_backend=str(self.agent_runtime.agent_backend or "native"),
-                    owner_only_project_access=_owner_only_project_access(self.runtime),
+                    policy_version="runtime-access-v2",
                     on_decision=self._decision_sink,
                 ),
                 background_submitter=background_submitter,
                 file_sender=file_sender,
                 workspace_service=binding.service,
-                caller_role_hint=role_value(_effective_project_role(self.runtime, principal.role)),
+                caller_role_hint=role_value(principal.role),
                 caller_identity=SessionIdentity(
                     user_id=principal.user_id,
                     chat_id=principal.conversation.chat_id,
@@ -501,11 +500,11 @@ class ActorSessionFactory:
         workspace: Workspace,
     ) -> WikiRetriever | None:
         wiki = self.runtime.spec.context.wiki
-        if workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED and principal.role is not Role.OWNER:
-            return None
-        if not wiki.enabled or not role_ge(principal.role, wiki.read_role):
-            return None
-        if wiki.private_chat_only and workspace.chat_kind != "p2p":
+        if (
+            not wiki.enabled
+            or principal.role is not Role.OWNER
+            or workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+        ):
             return None
         if self.wiki_root is None:
             return None
@@ -725,7 +724,7 @@ def _prompt_projection(
 ) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
     if workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED and role is not Role.OWNER:
         return (), ()
-    if _owner_only_project_access(runtime) and role is not Role.OWNER:
+    if role is not Role.OWNER:
         return (), ()
     return tuple(runtime.capability_policies), tuple(runtime.skills)
 
@@ -768,16 +767,6 @@ def _effective_model(runtime: BotRuntimeContext, agent_runtime: AgentRuntime) ->
     else:
         candidate = str(getattr(agent_runtime.llm, "model", "") or "").strip()
     return candidate or None
-
-
-def _owner_only_project_access(runtime: BotRuntimeContext) -> bool:
-    return bool(getattr(runtime.access, "owner_only_project_access", False))
-
-
-def _effective_project_role(runtime: BotRuntimeContext, role: Role) -> Role:
-    if role is Role.OWNER or not _owner_only_project_access(runtime):
-        return role
-    return Role.USER
 
 
 def _execution_session_id(key: ActorSessionKey) -> str:

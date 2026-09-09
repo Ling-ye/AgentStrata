@@ -46,7 +46,6 @@ def _executor(
         permission_filter=_make_permission_filter(
             role,
             workspace,
-            owner_only_project_access=False,
         ),
     )
 
@@ -63,13 +62,14 @@ def test_group_members_share_read_and_append_but_cannot_clear(tmp_path: Path) ->
     assert "Owner" in (denied.error or "")
 
 
-def test_owner_can_clear_group_and_private_user_can_clear_self(tmp_path: Path) -> None:
+def test_owner_can_clear_both_scopes_and_private_member_cannot(tmp_path: Path) -> None:
     owner = _executor(tmp_path, role=Role.OWNER, user_id="owner", group_id="group-1")
     private = _executor(tmp_path, role=Role.USER, user_id="member-a")
-    for executor in (owner, private):
+    for executor in (owner, _executor(tmp_path, role=Role.OWNER, user_id="owner-private")):
         assert executor.execute("append_memory", {"text": "可清理内容"}).ok
         assert executor.execute("clear_memory", {"confirm": True}).ok
         assert "尚无长期记忆" in executor.execute("read_memory", {}).summary
+    assert not private.execute("clear_memory", {"confirm": True}).ok
 
 
 def test_duplicate_and_unsafe_memory_content(tmp_path: Path) -> None:

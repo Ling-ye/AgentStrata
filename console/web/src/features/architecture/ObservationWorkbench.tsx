@@ -63,6 +63,14 @@ export default function ObservationWorkbench({ bot, visible }: {
     queryFn: ({ pageParam, signal }) => api.observationEvents(bot.instance_id, selected, pageParam, signal),
     getNextPageParam: (last) => last.has_more ? last.next_cursor : undefined,
     enabled: querying && !!selected && selectedDetail?.source === "observation_index", refetchInterval: querying ? 5000 : false });
+  const tail = useRef({ key: "", reached: false });
+  useEffect(() => {
+    const key = `${bot.instance_id}:${selected}`;
+    if (tail.current.key !== key) tail.current = { key, reached: false };
+    if (!querying || !eventPages.data || eventPages.isFetching || eventPages.error) return;
+    if (!eventPages.hasNextPage) tail.current.reached = true;
+    else if (tail.current.reached) void eventPages.fetchNextPage();
+  }, [bot.instance_id, selected, querying, eventPages.data, eventPages.isFetching, eventPages.error, eventPages.hasNextPage, eventPages.fetchNextPage]);
   const events = useMemo(() => eventPages.data?.pages.flatMap((page) => page.observations) ?? selectedDetail?.observations ?? [], [eventPages.data, selectedDetail]);
   useEffect(() => { if (querying && !selected && overview.data?.runs.length) setSelected(overview.data.runs[0].run_id); }, [querying, selected, overview.data]);
   useEffect(() => saveSessionValue(`obs:${bot.instance_id}`, { selected, filters, range, customStart, customEnd }),

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from chatcopilot.contracts.execution_scope import ExecutionScope
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
@@ -30,6 +31,7 @@ class ToolContext:
     job: Any = None
     persistent_state: Any = None
     request_text: str = ""
+    execution_scope: ExecutionScope | None = None
 
 
 @dataclass
@@ -137,7 +139,7 @@ class ToolDef:
     handler: Handler
     aliases: List[str] = field(default_factory=list)
     doc_anchors: Optional[DocAnchors] = None
-    requires_role: Optional[str] = None
+    access: Literal["owner", "member"] = "owner"
     weight: str = "light"
     execution_policy: str = EXECUTION_SYNC
     category: str = ""
@@ -161,6 +163,12 @@ class ToolDef:
 
         value = self.input_schema.get("required", [])
         return list(value) if isinstance(value, (list, tuple)) else []
+
+
+def tool_access_allowed(role: object, access: str) -> bool:
+    """Two host profiles; role labels other than Owner share member access."""
+    value = getattr(role, "value", role)
+    return value == "owner" or value in {"user", "admin"} and access == "member"
 
 
 _TYPE_MAP: Dict[Any, str] = {

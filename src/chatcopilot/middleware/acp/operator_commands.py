@@ -277,12 +277,7 @@ def _code_model_available(session: SessionState) -> bool:
     code = getattr(llm, "code", None)
     if code is None or not bool(getattr(code, "enabled", False)):
         return False
-    allowed_roles = {
-        str(item).strip().lower()
-        for item in getattr(code, "allowed_roles", ()) or ()
-        if str(item).strip()
-    }
-    return not allowed_roles or Role.OWNER.value in allowed_roles
+    return True
 
 
 def _legacy_command_available(

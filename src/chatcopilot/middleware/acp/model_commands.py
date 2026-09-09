@@ -51,7 +51,7 @@ def handle_model_command(session: SessionState, user_text: str) -> str | None:
     if parsed is None:
         return None
     code = _code_spec(session)
-    if not _is_allowed(session, code.allowed_roles):
+    if not _is_allowed(session):
         return "当前角色无权查看或切换 Codex 开发模型。"
 
     action, values = parsed
@@ -165,7 +165,6 @@ def _code_spec(session: SessionState) -> Any:
             model=routing.code_model,
             reasoning_effort=routing.code_reasoning_effort,
             profiles=routing.code_profiles,
-            allowed_roles=routing.code_allowed_roles,
         )
     runtime = getattr(session, "runtime", None)
     spec = getattr(runtime, "spec", None)
@@ -176,14 +175,8 @@ def _code_spec(session: SessionState) -> Any:
     return code
 
 
-def _is_allowed(session: SessionState, allowed_roles: Any) -> bool:
-    allowed = {
-        str(item).strip().lower()
-        for item in allowed_roles or ()
-        if str(item).strip()
-    }
-    role = str(getattr(getattr(session, "role", None), "value", "") or "").lower()
-    return not allowed or role in allowed
+def _is_allowed(session: SessionState) -> bool:
+    return str(getattr(session.role, "value", session.role)) == "owner"
 
 
 def _default_selection(code: Any) -> CodeModelSelection:

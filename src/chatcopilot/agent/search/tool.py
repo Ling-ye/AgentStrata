@@ -67,6 +67,7 @@ def build_search_tool(
         )
 
     return ToolDef(
+        access="member",
         name="search_information",
         summary=(
             "Unified entry for factual search and URL reading. It routes requests, "
@@ -74,60 +75,63 @@ def build_search_tool(
             "sources, reads static pages, escalates dynamic pages to browser rendering, "
             "reflects on failures, and returns structured evidence."
         ),
-        input_schema=object_schema({
-            "objective": {
-                "type": "string",
-                "description": "The concrete factual question or information objective.",
-            },
-            "urls": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Concrete URLs already known from the user or prior results.",
-            },
-            "source_hints": {
-                "type": "array",
-                "items": {
+        input_schema=object_schema(
+            {
+                "objective": {
                     "type": "string",
-                    "enum": ["web", "experience", "commerce", "github", "url"],
+                    "description": "The concrete factual question or information objective.",
                 },
-                "description": "Explicit logical sources requested by the user.",
+                "urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Concrete URLs already known from the user or prior results.",
+                },
+                "source_hints": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["web", "experience", "commerce", "github", "url"],
+                    },
+                    "description": "Explicit logical sources requested by the user.",
+                },
+                "domain": {
+                    "type": "string",
+                    "enum": ["general", "technical", "game", "consumer", "news"],
+                    "description": (
+                        "Query domain hint. 'technical' for APIs/docs/libraries, "
+                        "'news' for current events, 'game' for game-related info, "
+                        "'consumer' for products/prices."
+                    ),
+                    "default": "general",
+                },
+                "depth": {
+                    "type": "string",
+                    "enum": ["quick", "standard", "thorough"],
+                    "description": (
+                        "Search depth. 'quick': single fast search. 'standard': balanced "
+                        "search with up to 3 steps. 'thorough': query decomposition, "
+                        "up to 5 steps, and result reranking."
+                    ),
+                    "default": "standard",
+                },
+                "time_window": {
+                    "type": "string",
+                    "description": "Concrete freshness requirement.",
+                    "default": "not time-sensitive",
+                },
+                "required_fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Facts every useful result should provide.",
+                },
+                "verification": {
+                    "type": "string",
+                    "enum": ["auto", "required", "none"],
+                    "default": "auto",
+                },
             },
-            "domain": {
-                "type": "string",
-                "enum": ["general", "technical", "game", "consumer", "news"],
-                "description": (
-                    "Query domain hint. 'technical' for APIs/docs/libraries, "
-                    "'news' for current events, 'game' for game-related info, "
-                    "'consumer' for products/prices."
-                ),
-                "default": "general",
-            },
-            "depth": {
-                "type": "string",
-                "enum": ["quick", "standard", "thorough"],
-                "description": (
-                    "Search depth. 'quick': single fast search. 'standard': balanced "
-                    "search with up to 3 steps. 'thorough': query decomposition, "
-                    "up to 5 steps, and result reranking."
-                ),
-                "default": "standard",
-            },
-            "time_window": {
-                "type": "string",
-                "description": "Concrete freshness requirement.",
-                "default": "not time-sensitive",
-            },
-            "required_fields": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Facts every useful result should provide.",
-            },
-            "verification": {
-                "type": "string",
-                "enum": ["auto", "required", "none"],
-                "default": "auto",
-            },
-        }, required=("objective",)),
+            required=("objective",),
+        ),
         output_schema=object_schema(
             {
                 "ok": {"type": "boolean"},

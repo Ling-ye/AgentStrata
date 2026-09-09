@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.application.execution_scope import execution_scope
+
 
 import os
 from dataclasses import replace
@@ -7,14 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from chatcopilot.botspec.model import (
-    AccessSpec,
-    BotSpec,
-    ContextSpec,
-    PlatformSpec,
-    PromptSpec,
-    WikiSpec,
-)
+from chatcopilot.botspec.model import BotSpec, ContextSpec, PlatformSpec, PromptSpec, WikiSpec
 from chatcopilot.contracts import Role
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.contracts.prompt import BotPromptProfile
@@ -24,7 +19,6 @@ from chatcopilot.middleware.acp.agent_bridge import (
     _authorized_wiki_retriever,
     _build_session_for_workspace,
     _compose_workspace_from_identity,
-    _effective_project_role,
     _enrich_workspace_identity,
     _extract_persona_snippet,
     _materialize_session_for_workspace,
@@ -42,7 +36,7 @@ from chatcopilot.core.workspace_runtime import (
 def _tool(
     *,
     category: str = "wiki.knowledge",
-    requires_role: str | None = "owner",
+    access: str | None = "owner",
     metadata: dict | None = None,
 ) -> ToolDef:
     def handler(_args: dict, _context: ToolContext) -> ToolResult:
@@ -54,7 +48,7 @@ def _tool(
         input_schema=object_schema(),
         output_schema=object_schema(),
         handler=handler,
-        requires_role=requires_role,
+        access=access,
         category=category,
         metadata=(metadata if metadata is not None else {"private_chat_only": True}),
     )
@@ -113,8 +107,8 @@ def test_permission_filter_requires_owner_and_private_chat(tmp_path: Path) -> No
     group_ws = _workspace(tmp_path, "group")
 
     assert _make_permission_filter(Role.OWNER, private_ws)(_tool()) is None
-    assert "仅允许在私聊" in str(_make_permission_filter(Role.OWNER, group_ws)(_tool()))
-    assert "需要 owner" in str(_make_permission_filter(Role.USER, private_ws)(_tool()))
+    assert _make_permission_filter(Role.OWNER, group_ws)(_tool()) is None
+    assert "Owner" in str(_make_permission_filter(Role.USER, private_ws)(_tool()))
 
 
 def test_owner_only_project_filter_preserves_owner_role_in_group_chat(
@@ -125,43 +119,39 @@ def test_owner_only_project_filter_preserves_owner_role_in_group_chat(
     user_filter = _make_permission_filter(
         Role.USER,
         owner_private,
-        owner_only_project_access=True,
     )
     owner_private_filter = _make_permission_filter(
         Role.OWNER,
         owner_private,
-        owner_only_project_access=True,
     )
     owner_group_filter = _make_permission_filter(
         Role.OWNER,
         owner_group,
-        owner_only_project_access=True,
     )
     group_user_filter = _make_permission_filter(
         Role.USER,
         owner_group,
-        owner_only_project_access=False,
     )
 
     safe = _tool(
         category="agent.search",
-        requires_role=None,
+        access="member",
         metadata={},
     )
     host = _tool(
         category="filesystem.windows.read",
-        requires_role=None,
+        access="owner",
         metadata={},
     )
-    unknown = _tool(category="new.unclassified", requires_role=None, metadata={})
+    unknown = _tool(category="new.unclassified", access="owner", metadata={})
     mcp_search = _tool(
         category="mcp",
-        requires_role=None,
+        access="member",
         metadata={"mcp_risk": "search"},
     )
     mcp_readonly = _tool(
         category="mcp",
-        requires_role=None,
+        access="owner",
         metadata={"mcp_risk": "readonly"},
     )
 
@@ -182,7 +172,6 @@ def test_restricted_prompt_projection_preserves_owner_role_in_group_chat(
     tmp_path: Path,
 ) -> None:
     runtime = SimpleNamespace(
-        access=AccessSpec(owner_only_project_access=True),
         capability_policies=(ToolPackPolicy(id="internal", content="internal capability"),),
         skills=("internal skill",),
     )
@@ -200,15 +189,14 @@ def test_restricted_prompt_projection_preserves_owner_role_in_group_chat(
         (ToolPackPolicy(id="internal", content="internal capability"),),
         ("internal skill",),
     )
-    assert _effective_project_role(runtime, Role.OWNER, private_ws) == Role.OWNER
-    assert _effective_project_role(runtime, Role.OWNER, group_ws) == Role.OWNER
+    assert execution_scope(Role.OWNER, private_ws.root).native_write
+    assert execution_scope(Role.OWNER, group_ws.root).native_write
 
 
 def test_shared_group_persona_projection_merges_global_then_group(
     tmp_path: Path,
 ) -> None:
     runtime = SimpleNamespace(
-        access=AccessSpec(owner_only_project_access=True),
         platform_type="qq",
     )
     group_ws = Workspace(
@@ -246,7 +234,6 @@ def test_private_persona_projection_uses_only_protected_state(
     tmp_path: Path,
 ) -> None:
     runtime = SimpleNamespace(
-        access=AccessSpec(owner_only_project_access=True),
         platform_type="qq",
     )
     private_ws = Workspace(

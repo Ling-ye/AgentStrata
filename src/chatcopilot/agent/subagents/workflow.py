@@ -53,6 +53,7 @@ class WorkflowRunner:
         session_id: str,
         workflow: WorkflowDef,
         task: TaskPack,
+        caller_role: str = "user",
     ) -> WorkflowRunResult:
         parent = current_trace()
         depth = (parent.depth if parent is not None else 0) + 1
@@ -105,6 +106,7 @@ class WorkflowRunner:
             step_task = _with_prior(task, workflow_name=workflow.name, step_name=step, prior=prior_summaries)
             result = self._runner.run(
                 session_id=session_id,
+                caller_role=caller_role,
                 subagent_name=definition.name,
                 task=step_task,
                 role_prompt=definition.role_prompt,

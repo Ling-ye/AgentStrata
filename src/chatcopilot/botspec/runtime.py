@@ -13,7 +13,6 @@ from pathlib import Path
 
 from chatcopilot.botspec.loader import load_botspec, validate_botspec
 from chatcopilot.botspec.model import (
-    AccessSpec,
     BotSpec,
     ChannelsSpec,
     CustomSubagentSpec,
@@ -55,7 +54,6 @@ class BotRuntimeContext:
     agent_backend: str = "native"
     mcp_servers: tuple[McpServerConfig, ...] = ()
     rag_sources: tuple[RagSourceConfig, ...] = ()
-    access: AccessSpec = AccessSpec()
     skills: tuple[SkillIndexEntry, ...] = ()
     subagents: SubagentSpec = field(default_factory=SubagentSpec)
 
@@ -118,7 +116,6 @@ def assemble_runtime_context(spec: BotSpec) -> BotRuntimeContext:
         agent_backend=spec.agents.backend,
         mcp_servers=load_mcp_server_configs(spec),
         rag_sources=load_rag_source_configs(spec),
-        access=spec.access,
         skills=skills,
         subagents=_resolve_subagents(spec),
     )

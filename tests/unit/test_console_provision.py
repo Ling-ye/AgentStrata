@@ -72,8 +72,6 @@ def _inst(tmp_path: Path, *, platform: str, env_prefix: str = "CHATCOPILOT_CHAT"
                 "  target: wsl2",
                 f"  instance_id: {instance_id}",
                 f"  env_file: ~/.chatcopilot-{instance_id}.env",
-                "access:",
-                "  owner_only_project_access: true",
             ]
         )
         + "\n",
@@ -147,9 +145,7 @@ def _starter_inst(tmp_path: Path) -> BotInstance:
         "  workspace_root: ~/chatcopilot-workspaces/sample-qq\n"
         "  log_dir: ~/chatcopilot-logs/sample-qq\n"
         "  env_file: ~/.chatcopilot-sample-qq.env\n"
-        "  project_name: chatcopilot-sample-qq\n"
-        "access:\n"
-        "  owner_only_project_access: true\n",
+        "  project_name: chatcopilot-sample-qq\n",
         encoding="utf-8",
     )
     prompts = bot_yaml.parent / "prompts"

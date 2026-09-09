@@ -77,6 +77,14 @@ def build_actor_workspace(
     isolate_backend_state = False
     if chat_kind == "p2p":
         workspace_path = _ensure_data_directory(root, f"p2p_{actor_id}")
+        sessions_root = _ensure_private_directory(
+            _ensure_private_directory(root, ".conversation-state"), "backend-sessions"
+        )
+        digest = hashlib.sha256(
+            f"{platform}\0{principal.account_id}\0{actor_id}".encode()
+        ).hexdigest()
+        backend_state_root = _ensure_private_directory(sessions_root, digest)
+        isolate_backend_state = True
         scope = WORKSPACE_SCOPE_ACTOR
     elif chat_kind == "group":
         group_root = _ensure_data_directory(root, f"group_{chat_id}")

@@ -46,7 +46,7 @@ def _tool(**kwargs: Any) -> ToolDef:
         category=_CATEGORY,
         owner=_OWNER,
         module=__name__,
-        requires_role="owner",
+        access="owner",
         **kwargs,
     )
 

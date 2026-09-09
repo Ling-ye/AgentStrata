@@ -175,7 +175,6 @@ def runtime_environment_keys(spec) -> tuple[str, ...]:
         f"{spec.llm.env_prefix}_CODE_COMMAND",
         f"{spec.llm.env_prefix}_CODE_WORKDIR_ENV",
         f"{spec.llm.env_prefix}_CODE_TIMEOUT_SECONDS",
-        f"{spec.llm.env_prefix}_CODE_ALLOWED_ROLES",
         "CHATCOPILOT_ADD_OWNER_IDS",
         "FEISHU_APP_ID",
         "FEISHU_APP_SECRET",

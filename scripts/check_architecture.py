@@ -298,17 +298,22 @@ AREA_IMPORT_EXCEPTIONS = frozenset(
     {("src/chatcopilot/agent/search/probe.py", "chatcopilot.search_probe")}
 )
 
-COMPATIBILITY_IMPORTS = (
+REMOVED_IMPORTS = (
     "chatcopilot.agent.config",
     "chatcopilot.agent.concurrency",
     "chatcopilot.agent.llm_client",
     "chatcopilot.agent.protocol",
-    "chatcopilot.agent.research",
     "chatcopilot.botspec.mcp_catalog",
     "chatcopilot.core.workspace",
-    "chatcopilot.external_tools.shared.tool_spec",
+    "chatcopilot.agent.subagents.presets",
+    "chatcopilot.agent.tools.builtin.mcp_tools",
     "chatcopilot.middleware.runtime.workspace",
 )
+COMPATIBILITY_IMPORTS = (
+    "chatcopilot.agent.research",
+    "chatcopilot.external_tools.shared.tool_spec",
+)
+
 
 def _python_files(root: Path) -> Iterable[Path]:
     if not root.exists():
@@ -407,7 +412,7 @@ def _import_references(
                 references.append(
                     ImportReference(
                         source=record.name,
-                        imported=candidate if candidate in modules else base,
+                        imported=candidate if candidate in modules or _matches(candidate, REMOVED_IMPORTS) else base,
                         target=target,
                     )
                 )
@@ -581,9 +586,6 @@ def _compatibility_allowed(prefix: str, relative_path: str) -> bool:
         return relative_path.startswith("src/chatcopilot/external_tools/")
     package_paths = {
         "chatcopilot.agent.research": "src/chatcopilot/agent/research/",
-        "chatcopilot.middleware.runtime.workspace": (
-            "src/chatcopilot/middleware/runtime/workspace/"
-        ),
     }
     allowed_root = package_paths.get(prefix)
     return allowed_root is not None and relative_path.startswith(allowed_root)
@@ -609,6 +611,9 @@ def _compatibility_import_checks() -> dict[str, dict[str, list[str]]]:
         record = ModuleFile(name=name, path=path, area=_module_area(name), is_package=is_package)
         relative_path = path.relative_to(ROOT).as_posix()
         for reference in _import_references(record, modules):
+            if _matches(reference.imported, REMOVED_IMPORTS):
+                violations.setdefault(relative_path, []).append(reference.imported)
+                continue
             for prefix in COMPATIBILITY_IMPORTS:
                 if not _matches(reference.imported, (prefix,)):
                     continue
@@ -700,6 +705,12 @@ def _semantic_invariants() -> dict[str, dict[str, list[str]]]:
         SRC / "middleware" / "acp" / "route_orchestrator.py",
     )
     present = [path.relative_to(ROOT).as_posix() for path in removed_sources if path.exists()]
+    for module in REMOVED_IMPORTS:
+        stem = SRC.joinpath(*module.split(".")[1:])
+        candidates = [stem.with_suffix(".py"), stem.with_suffix(".pyi")]
+        if stem.is_dir():
+            candidates.extend(path for path in stem.rglob("*") if path.suffix in {".py", ".pyi"})
+        present.extend(path.relative_to(ROOT).as_posix() for path in candidates if path.exists())
     if present:
         violations["removed_legacy_sources_do_not_return"] = {"repository": sorted(present)}
 

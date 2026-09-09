@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { processPreview, structuredText } from "./agentProcessModel";
 import { Alert, Button, Spin } from "@arco-design/web-react";
 import { api } from "../../api";
 import { bodyState } from "./workbenchModel";
@@ -51,7 +52,7 @@ export const FIELD_NAMES: Record<string, string> = {
   identity: "身份提示词", response_style: "回复风格", refusal_style: "拒答风格", role_styles: "角色风格", mode_styles: "模式风格",
   description: "说明", body_path: "内容来源", schema_version: "配置版本", max_chunk_chars: "分块字符上限",
   version: "运行版本", ready_at: "就绪时间（Unix 秒）", pid: "进程 PID", backend: "执行后端", model: "模型",
-  timeout_seconds: "超时（秒）", max_concurrency: "最大并发", enabled: "启用", requires_role: "最低角色",
+  timeout_seconds: "超时（秒）", max_concurrency: "最大并发", enabled: "启用", access: "使用权限",
   private_chat_only: "仅私聊", read_role: "读取角色", max_results: "最大结果数", reasoning_effort: "推理强度",
   profiles: "模型配置档", code_task_profile: "代码任务配置档", env_prefix: "环境变量前缀", tool_prefix: "工具前缀",
   exposure: "可见范围", transport: "传输方式", tools_count: "工具数量", error: "错误", running: "运行中",
@@ -72,6 +73,11 @@ export const FIELD_NAMES: Record<string, string> = {
   input: "输入", output: "输出", visible_response: "本轮模型公开输出", stop_reason: "结束原因",
   canonical_text: "规范消息正文", segments: "消息内容", tool_calls: "工具调用建议", receipt: "交付回执",
   request_id: "请求 ID", exchange: "会话交换", outcome: "处理结果", native_message: "渠道消息", entrypoint: "任务入口",
+  public_summary: "公开说明", aggregated_output: "命令输出", exit_code: "退出码",
+  result: "返回结果", changes: "文件变更", query: "查询", results: "查询结果",
+  configuration: "执行配置", request_parameters: "请求参数", cache_status: "缓存状态",
+  model_result: "交给模型的结果", execution_result: "工具执行结果", tool_call_id: "工具调用 ID",
+  host_policy: "宿主规则", runtime_facts: "运行事实", content_type: "消息类型",
 };
 
 export function TextPreview({ text, stateKey = "text" }: { text: string; stateKey?: string }) {
@@ -112,13 +118,15 @@ function ContextMessages({ value }: { value: unknown }) {
     const extra = message ? Object.fromEntries(Object.entries(message).filter(([key]) => !["role", "content"].includes(key))) : {};
     return <DetailScope id={`message:${index}`} key={index}><article className="obs-context-message">
       <header><strong>{({ user: "用户", assistant: "助手", system: "系统", developer: "开发者", tool: "工具" } as Record<string, string>)[role] ?? role}</strong><span>{index + 1}</span></header>
-      {typeof message?.content === "string" ? <TextPreview text={message.content} /> : <ConfigFields value={message ? message.content : item} />}
+      {typeof message?.content === "string" && typeof structuredText(message.content) === "string" ?
+        <TextPreview text={message.content} /> : <ConfigFields value={structuredText(message ? message.content : item)} />}
       {!!Object.keys(extra).length && <DetailScope id="extra"><ConfigFields value={extra} /></DetailScope>}
     </article></DetailScope>;
   })}{value.length > limit && <Button size="small" onClick={() => setLimit(limit + 20)}>显示更多消息（剩余 {value.length - limit} 条）</Button>}</div>;
 }
 
-function PayloadContent({ value }: { value: unknown }) {
+function PayloadContent({ value, messages = false }: { value: unknown; messages?: boolean }) {
+  if (messages) return <ContextMessages value={Array.isArray(value) || value == null ? value : [value]} />;
   if (!value || typeof value !== "object" || Array.isArray(value)) return <ConfigFields value={value} />;
   const fields = value as Record<string, unknown>;
   const messageKeys = ["session_messages", "effective_messages"].filter((key) => key in fields);
@@ -155,9 +163,11 @@ const BODY_METADATA = new Set(["name", "trace_id", "span_id", "parent_span_id", 
   "snapshot_id", "context_snapshot_id", "iteration", "private_reasoning_omission_count", "resource_path_omission_count"]);
 const COVERAGE: Record<string, string> = { exact_model_input: "精确模型输入", adapter_visible: "仅适配器可见部分", partial: "部分采集", provider_opaque: "Provider 未公开" };
 
-export function ObservationPayload({ instanceId, runId, reference, expired = false, captureState, title, active = true, bodyField }: {
+export function ObservationPayload({ instanceId, runId, reference, expired = false, captureState, title, active = true, bodyField,
+  select, preview = false, messages = false, contentId }: {
   instanceId: string; runId: string; reference?: string; expired?: boolean; captureState?: string; title: string; active?: boolean;
   bodyField?: "input" | "output";
+  select?: (value: unknown) => unknown; preview?: boolean; messages?: boolean; contentId?: string;
 }) {
   const { ref, visible } = useInView();
   const query = useQuery({ queryKey: ["observation-body", instanceId, runId, reference],
@@ -169,18 +179,19 @@ export function ObservationPayload({ instanceId, runId, reference, expired = fal
     Object.fromEntries(Object.entries(payload).filter(([key, value]) => !BODY_METADATA.has(key) && value !== "")
       .map(([key, value]) => [key, key === "coverage" && typeof value === "string" ? COVERAGE[value] ?? value : value])) : payload;
   const fields = content && typeof content === "object" && !Array.isArray(content) ? content as Record<string, unknown> : undefined;
-  const selected = bodyField && fields && bodyField in fields ? fields[bodyField] : content;
+  const overflow = fields?.truncated === true && typeof fields?.preview === "string";
+  const selected = overflow ? fields.preview : select ? select(content) : bodyField && fields && bodyField in fields ? fields[bodyField] : content;
   const primary = bodyField === "output" && selected && typeof selected === "object" && !Array.isArray(selected) &&
     (selected as Record<string, unknown>).channel === "not_traversed" ? { ...selected, channel: "未经过" } : selected;
   const extra = bodyField && fields && bodyField in fields ? Object.fromEntries(Object.entries(fields).filter(([key]) => key !== bodyField)) : {};
-  return <section ref={ref} className="obs-payload" aria-label={title}><DetailScope id={"body:" + (reference ?? title)}>
+  return <section ref={ref} className={"obs-payload" + (preview ? " obs-process-preview" : "")} aria-label={title}><DetailScope id={"body:" + (contentId ?? reference ?? title)}>
     <div className="obs-pane-heading"><strong>{title}</strong><span>{bodyState(state)}</span></div>
     {state === "expired" ? <p className="obs-muted">详细正文已到期，结构化记录仍保留。</p> : query.error ?
       <Alert type="error" content={<span>详情读取失败：{query.error.message} <Button size="mini" onClick={() => void query.refetch()}>重试</Button></span>} /> :
       query.isFetching ? <Spin size={16} /> : payload != null ? <>
-        <PayloadContent value={primary} />
+        {preview ? <div className="obs-process-preview-text">{processPreview(primary)}</div> : <PayloadContent value={primary} messages={messages} />}
         {!!Object.keys(extra).length && <DetailScope id="metadata"><ConfigFields value={extra} /></DetailScope>}
-        <Disclosure title="原始记录"><TextPreview text={JSON.stringify(payload, null, 2)} /></Disclosure>
+        {!preview && <Disclosure title="原始记录"><TextPreview text={JSON.stringify(payload, null, 2)} /></Disclosure>}
       </> : <p className="obs-muted">{reference && !visible ? "滚动到此处时加载" : reference ? "等待读取" : bodyState(state)}</p>}
   </DetailScope></section>;
 }

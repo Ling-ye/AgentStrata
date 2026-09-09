@@ -306,7 +306,7 @@ def test_search_runner_upgrades_javascript_shell_to_browser() -> None:
     )
     assert research is not None
 
-    result = ToolExecutor(tools=[research]).execute(
+    result = ToolExecutor(caller_role_hint="owner", tools=[research]).execute(
         "search_information",
         {
             "objective": "读取邪教徒战士的生命值",
@@ -360,7 +360,7 @@ def test_cross_check_uses_searxng_after_tavily_fallback() -> None:
     )
     assert research is not None
 
-    result = ToolExecutor(tools=[research]).execute(
+    result = ToolExecutor(caller_role_hint="owner", tools=[research]).execute(
         "search_information",
         {"objective": "latest release"},
     )
@@ -440,7 +440,7 @@ def test_native_and_langgraph_expose_search_information_for_direct_provider(
     assert "search_information" in session.capabilities.tool_names
 
 
-def test_codex_backend_does_not_construct_chatcopilot_search_or_delegate_agents() -> None:
+def test_codex_backend_constructs_configured_search_and_delegate_agents() -> None:
     from chatcopilot.contracts.agent_backend import (
         BackendCapabilities,
         BackendSessionRef,
@@ -470,17 +470,19 @@ def test_codex_backend_does_not_construct_chatcopilot_search_or_delegate_agents(
         agent_backend="codex",
     )
 
-    with patch(
-        "chatcopilot.agent.capabilities.delegation.build_subagent_provider"
-    ) as delegates, patch(
-        "chatcopilot.agent.capabilities.unified_search.build_search_provider"
-    ) as search, patch(
-        "chatcopilot.agent.runtime.build_backend", return_value=backend
+    with (
+        patch(
+            "chatcopilot.agent.capabilities.delegation.build_subagent_provider", return_value=None
+        ) as delegates,
+        patch(
+            "chatcopilot.agent.capabilities.unified_search.build_search_provider", return_value=None
+        ) as search,
+        patch("chatcopilot.agent.runtime.build_backend", return_value=backend),
     ):
         session = runtime.new_session(session_id="sid-codex", prompt_input=prompt_input("base"))
 
-    delegates.assert_not_called()
-    search.assert_not_called()
+    delegates.assert_called_once()
+    search.assert_called_once()
     request = backend.open_session.call_args.args[0]
     assert request.allowed_tool_names == frozenset({"normal_tool"})
     assert session.capabilities.tool_names == frozenset({"normal_tool"})
@@ -515,7 +517,7 @@ def test_codex_eval_policy_exposes_real_unified_search_tool() -> None:
                     endpoint="http://127.0.0.1:18064",
                 ),
             ),
-            codex=CodexMainSessionPolicy(allow_unified_search_tool=True),
+            codex=CodexMainSessionPolicy(),
         ),
         agent_backend="codex",
     )

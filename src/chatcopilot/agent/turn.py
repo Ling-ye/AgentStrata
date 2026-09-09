@@ -30,6 +30,7 @@ from chatcopilot.agent.lifecycle import (
 )
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.core.visible_model_response import project_visible_response
+from chatcopilot.agent.process import ProcessMessage
 from chatcopilot.core.observability_redaction import (
     omit_local_resource_paths,
     omit_private_reasoning_messages,
@@ -57,12 +58,9 @@ from chatcopilot.contracts.cancellation import (
 )
 from chatcopilot.agent.response_integrity import ResponseIntegrityResult
 from chatcopilot.agent.turn_support import (
-    DEV_WRITE_TOOLS as _DEV_WRITE_TOOLS,
     EMPTY_MODEL_REPLY_TEXT as _EMPTY_MODEL_REPLY_TEXT,
     FINALIZE_SELF_UPDATE_TOOL as _FINALIZE_SELF_UPDATE_TOOL,
     SEARCH_INFORMATION_TOOL as _SEARCH_INFORMATION_TOOL,
-    SELF_UPDATE_FINAL_TOOL_NAMES as _SELF_UPDATE_FINAL_TOOL_NAMES,
-    SELF_UPDATE_REQUIRED_PROMPT as _SELF_UPDATE_REQUIRED_PROMPT,
     paths_to_resources as _paths_to_resources,
     primary_artifact_kind as _primary_artifact_kind,
     repeated_search_result as _repeated_search_result,
@@ -108,13 +106,13 @@ class TurnState:
     recent_tool_fingerprints: list[str] = field(default_factory=list)
     successful_operations: list[str] = field(default_factory=list)
     lifecycle_intents: list[DeferredLifecycleIntent] = field(default_factory=list)
-    self_update_required: bool = False
     iteration: int = 0
     done: bool = False
     response_integrity: ResponseIntegrityResult | None = None
     last_tool_finish_time: float = 0.0
     wrapup_injected: bool = False
     wrapup_remaining: int = 0
+    model_span_id: str | None = None
 
 
 @dataclass
@@ -218,6 +216,10 @@ class TurnOps:
         iteration = state.iteration
         model = getattr(self.session.llm, "model", "")
         call_span_id = new_span_id()
+        state.model_span_id = call_span_id
+        observed_message = ProcessMessage(self.on_event, trace_id=state.trace_id,
+            parent_span_id=call_span_id, backend=str(getattr(self.session, "backend_name", "native")),
+            depth=self.session.trace_depth)
         image_receipts = validated_image_resource_receipts(self.task)
         prompt_estimate = estimate_prompt_tokens(call_messages, self.session.tools_schema)
         snapshot_id = f"ctx_{call_span_id}"
@@ -283,6 +285,7 @@ class TurnOps:
                 estimator_version=str(prompt_estimate["estimator_version"]),
                 context_kind=state.context_kind,
                 context_snapshot_id=snapshot_id,
+                request_parameters={"model": model, "stream": self.session.stream_first_turn and iteration == 0},
             )
         )
         chat_kwargs: dict[str, Any] = {
@@ -290,7 +293,7 @@ class TurnOps:
             "tools": self.session.tools_schema,
             "stream": self.session.stream_first_turn and iteration == 0,
             "on_content_delta": (
-                self._wrap_text_delta()
+                self._wrap_text_delta(observed_message)
                 if self.session.stream_first_turn and iteration == 0
                 else None
             ),
@@ -301,8 +304,14 @@ class TurnOps:
         try:
             result = self.session.llm.chat(**chat_kwargs)
         except CancellationRequested:
+            observed_message.finish(status="cancelled")
+            self.emit(LlmCallFinished(model=model, iteration=iteration, ok=False, finish_reason="cancelled",
+                trace_id=state.trace_id, span_id=call_span_id, parent_span_id=state.root_span,
+                depth=self.session.trace_depth, backend=str(getattr(self.session, "backend_name", "native")),
+                context_snapshot_id=snapshot_id))
             raise
         except Exception as exc:  # noqa: BLE001
+            observed_message.finish(status="failed")
             _LOGGER.exception("LLM 调用失败")
             err_text = f"（与模型通信失败：{type(exc).__name__}: {exc}；请稍后再试）"
             self.emit(
@@ -325,13 +334,14 @@ class TurnOps:
                     estimator_version=str(prompt_estimate["estimator_version"]),
                     context_kind=state.context_kind,
                     context_snapshot_id=snapshot_id,
+                    visible_response={"error": {"code": type(exc).__name__, "message": str(exc)}},
                 )
             )
             self.emit(TurnError(code=type(exc).__name__, message=str(exc)))
             self.finish_text(state, err_text, stop_reason="llm_error")
             return None
 
-        self.raise_if_cancelled()
+        observed_message.finish(result.content)
 
         if image_receipts:
             raw_turn = self.task.metadata.get("eval_turn", 0)
@@ -371,6 +381,7 @@ class TurnOps:
             )
         )
 
+        self.raise_if_cancelled()
         assistant_msg = result.to_message()
         self.session._messages.append(assistant_msg)
         if state.llm_view is not None and state.llm_view is not self.session._messages:
@@ -378,16 +389,12 @@ class TurnOps:
         state.messages = self.session._messages
         state.iteration = iteration + 1
 
-        blocked_self_update_final = state.self_update_required and not result.tool_calls
-        if result.content and not blocked_self_update_final:
+        if result.content:
             self.emit(FinalText(text=result.content))
             state.final_text = result.content
 
         if not result.tool_calls:
-            if state.self_update_required:
-                self.append_user_instruction(state, _SELF_UPDATE_REQUIRED_PROMPT)
-            else:
-                self.finish_without_tool_result(state, result_content=result.content)
+            self.finish_without_tool_result(state, result_content=result.content)
         return result
 
     def last_assistant_tool_calls(self) -> list[dict[str, Any]]:
@@ -414,6 +421,8 @@ class TurnOps:
                 span_id=span_id,
                 parent_span_id=state.root_span,
                 depth=self.session.trace_depth,
+                tool_call_id=tool_call.get("id"), model_span_id=state.model_span_id,
+                backend=str(getattr(self.session, "backend_name", "native")),
             )
         )
 
@@ -421,7 +430,7 @@ class TurnOps:
         state.tool_calls_used += 1
         state.last_tool_finish_time = time.monotonic()
         state.recent_tool_fingerprints.append(_tool_fingerprint(name, args))
-        self._append_tool_message(state, tool_call, name, tool_result)
+        model_result = self._append_tool_message(state, tool_call, name, tool_result)
 
         self.emit(
             ToolFinished(
@@ -434,6 +443,9 @@ class TurnOps:
                 parent_span_id=state.root_span,
                 depth=self.session.trace_depth,
                 data=tool_result.to_llm_payload(),
+                model_result=model_result,
+                tool_call_id=tool_call.get("id"), model_span_id=state.model_span_id,
+                backend=str(getattr(self.session, "backend_name", "native")),
             )
         )
 
@@ -453,10 +465,6 @@ class TurnOps:
             return
 
         state.consecutive_failures = 0
-        if name in _DEV_WRITE_TOOLS:
-            state.self_update_required = True
-        elif name == _FINALIZE_SELF_UPDATE_TOOL:
-            state.self_update_required = False
         if tool_result.summary:
             state.last_successful_tool_summary = tool_result.summary
             if name == _SEARCH_INFORMATION_TOOL:
@@ -575,10 +583,11 @@ class TurnOps:
             wrapup=state.wrapup_injected,
         )
 
-    def _wrap_text_delta(self):
+    def _wrap_text_delta(self, observed: ProcessMessage):
         def _delta(text: str) -> None:
             self.raise_if_cancelled()
             if text:
+                observed.append(text)
                 self.emit(TextDelta(text=text))
             self.raise_if_cancelled()
 
@@ -593,20 +602,9 @@ class TurnOps:
     ) -> ToolResult:
         if name == _SEARCH_INFORMATION_TOOL and state.last_successful_search_summary:
             return _repeated_search_result(state.last_successful_search_summary)
-        if state.self_update_required and name in _SELF_UPDATE_FINAL_TOOL_NAMES:
-            return ToolResult(
-                ok=False,
-                summary="",
-                outputs=[],
-                console="",
-                doc_links=[],
-                error=(
-                    "self_update_required: call finalize_self_update successfully "
-                    "before submitting the final result"
-                ),
-            )
         if name == _FINALIZE_SELF_UPDATE_TOOL:
-            return self._register_finalize_intent(state, args)
+            rejected = self.session.executor.validate_call(name, args)
+            return rejected if rejected is not None else self._register_finalize_intent(state, args)
 
         bubbled: list[DeferredLifecycleIntent] = []
 
@@ -684,7 +682,7 @@ class TurnOps:
         tool_call: dict[str, Any],
         name: str,
         tool_result: ToolResult,
-    ) -> None:
+    ) -> dict[str, Any]:
         payload = tool_result.to_llm_payload()
         if self.session.tool_payload_filter is not None:
             payload = self.session.tool_payload_filter(payload)
@@ -698,6 +696,7 @@ class TurnOps:
         if state.llm_view is not None and state.llm_view is not self.session._messages:
             state.llm_view.append(tool_msg)
         state.messages = self.session._messages
+        return tool_msg
 
     def _patch_last_assistant_content(self, text: str, state: TurnState) -> None:
         if self.session._messages and self.session._messages[-1].get("role") == "assistant":

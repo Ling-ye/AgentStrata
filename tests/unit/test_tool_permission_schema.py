@@ -11,6 +11,7 @@ from chatcopilot.agent.context.prompt_plan import render_native_prefix
 from chatcopilot.contracts import Role, role_ge, role_value
 from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.contracts.tools import (
+    tool_access_allowed,
     ToolContext,
     ToolDef,
     ToolResult,
@@ -19,7 +20,7 @@ from chatcopilot.contracts.tools import (
 )
 
 
-def _tool(name: str, *, requires_role: str | None = None) -> ToolDef:
+def _tool(name: str, *, access: str = "member") -> ToolDef:
     def handler(_args: dict, _context: ToolContext) -> ToolResult:
         return ToolResult(ok=True, summary="ok")
 
@@ -29,16 +30,16 @@ def _tool(name: str, *, requires_role: str | None = None) -> ToolDef:
         input_schema=object_schema(),
         output_schema=object_schema(),
         handler=handler,
-        requires_role=requires_role,
+        access=access,
     )
 
 
 def _permission_filter(role: Role):
     def _filter(tool: ToolDef) -> str | None:
-        if tool.requires_role is None or role_ge(role, tool.requires_role):
+        if tool_access_allowed(role, tool.access):
             return None
         return (
-            f"工具 {tool.name} 需要 {role_value(tool.requires_role)} 及以上权限；"
+            f"工具 {tool.name} 需要 {role_value(tool.access)} 及以上权限；"
             f"当前用户角色 {role_value(role)}，拒绝执行。"
         )
 
@@ -65,7 +66,7 @@ def _native(session):
 
 
 def test_user_session_cannot_see_or_call_owner_only_tool() -> None:
-    runtime = _runtime(_tool("normal_tool"), _tool("owner_tool", requires_role="owner"))
+    runtime = _runtime(_tool("normal_tool"), _tool("owner_tool", access="owner"))
     session = runtime.new_session(
         session_id="s1",
         prompt_input=prompt_input("baseline"),
@@ -82,7 +83,7 @@ def test_user_session_cannot_see_or_call_owner_only_tool() -> None:
 
 
 def test_owner_session_can_see_and_call_owner_only_tool() -> None:
-    runtime = _runtime(_tool("normal_tool"), _tool("owner_tool", requires_role="owner"))
+    runtime = _runtime(_tool("normal_tool"), _tool("owner_tool", access="owner"))
     session = runtime.new_session(
         session_id="s1",
         prompt_input=prompt_input("baseline"),

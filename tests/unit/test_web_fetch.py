@@ -121,7 +121,7 @@ class TestToolDef:
         assert web_fetch_page.name == "web_fetch_page"
         assert web_fetch_page.category == "web_fetch"
         assert web_fetch_page.owner == "web_fetch"
-        assert web_fetch_page.requires_role == "owner"
+        assert web_fetch_page.access == "member"
 
     def test_tools_list_exported(self):
         assert len(TOOLS) == 1

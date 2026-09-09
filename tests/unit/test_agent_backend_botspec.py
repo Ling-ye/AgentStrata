@@ -41,8 +41,6 @@ class AgentBackendBotSpecTests(unittest.TestCase):
             errors = [issue for issue in validate_botspec(spec) if issue.level == "error"]
 
         self.assertEqual(spec.agents.backend, "native")
-        self.assertEqual(spec.agents.codex.owner_access, "workspace")
-        self.assertEqual(spec.agents.codex.member_access, "workspace")
         self.assertEqual(errors, [])
 
     def test_langgraph_backend_is_parsed_and_assembled(self) -> None:
@@ -61,90 +59,21 @@ class AgentBackendBotSpecTests(unittest.TestCase):
         self.assertEqual(spec.agents.backend, "codex")
         self.assertEqual(runtime.agent_backend, "codex")
 
-    def test_codex_main_session_policy_is_parsed_and_assembled(self) -> None:
-        agents = textwrap.dedent(
-            """
-            backend: codex
-            codex:
-              owner_access: workspace
-              member_access: workspace
-            """
-        )
-        with TemporaryDirectory(dir="/tmp") as tmp:
-            spec = load_botspec(_write_bot(Path(tmp), agents))
-            errors = [issue for issue in validate_botspec(spec) if issue.level == "error"]
-            runtime = assemble_runtime_context(spec)
-
-        self.assertEqual(errors, [])
-        self.assertEqual(spec.agents.codex.owner_access, "workspace")
-        self.assertEqual(spec.agents.codex.member_access, "workspace")
-        self.assertEqual(runtime.subagents.codex, spec.agents.codex)
-
-    def test_worktree_access_is_supported(self) -> None:
-        agents = "backend: codex\ncodex:\n  owner_access: worktree"
-        with TemporaryDirectory(dir="/tmp") as tmp:
-            spec = load_botspec(_write_bot(Path(tmp), agents))
-            errors = [issue for issue in validate_botspec(spec) if issue.level == "error"]
-
-        self.assertEqual(errors, [])
-        self.assertEqual(spec.agents.codex.owner_access, "worktree")
-
-    def test_invalid_codex_main_session_policy_fails_validation(self) -> None:
-        cases = {
-            "unsupported owner access": (
-                "backend: codex\ncodex:\n  owner_access: root",
-                "agents.codex.owner_access",
-            ),
-            "removed host access": (
-                "backend: codex\ncodex:\n  owner_access: host",
-                "agents.codex.owner_access",
-            ),
-            "removed auto publish": (
-                "backend: codex\ncodex:\n  auto_publish: true",
-                "agents.codex",
-            ),
-            "member must use workspace": (
-                "backend: codex\ncodex:\n  member_access: worktree",
-                "agents.codex.member_access",
-            ),
-            "legacy low-level policy rejected": (
-                "backend: codex\ncodex:\n  sandbox: workspace-write",
-                "agents.codex",
-            ),
-            "internal evaluation network policy rejected": (
-                "backend: codex\ncodex:\n  network_access: false",
-                "agents.codex",
-            ),
-            "internal evaluation web policy rejected": (
-                "backend: codex\ncodex:\n  web_search_mode: disabled",
-                "agents.codex",
-            ),
-            "internal evaluation sandbox policy rejected": (
-                "backend: codex\ncodex:\n  sandbox_mode: read-only",
-                "agents.codex",
-            ),
-            "internal evaluation delegate policy rejected": (
-                "backend: codex\ncodex:\n  allow_delegate_tools: true",
-                "agents.codex",
-            ),
-            "internal evaluation unified search policy rejected": (
-                "backend: codex\ncodex:\n  allow_unified_search_tool: true",
-                "agents.codex",
-            ),
-            "cross backend policy rejected": (
-                "backend: native\ncodex:\n  owner_access: worktree",
-                "agents.codex",
-            ),
+    def test_retired_codex_permission_fields_explain_migration(self) -> None:
+        fields = {
+            "owner_access": "worktree",
+            "member_access": "workspace",
+            "sandbox_mode": "read-only",
+            "allow_delegate_tools": "true",
         }
-        for label, (agents, field) in cases.items():
-            with self.subTest(label=label), TemporaryDirectory(dir="/tmp") as tmp:
-                spec = load_botspec(_write_bot(Path(tmp), agents))
-                errors = [
-                    issue
-                    for issue in validate_botspec(spec)
-                    if issue.level == "error" and issue.field == field
-                ]
-            self.assertTrue(errors, label)
+        for name, value in fields.items():
+            with self.subTest(field=name), TemporaryDirectory(dir="/tmp") as tmp:
+                with self.assertRaisesRegex(
+                    ValueError, "retired permission fields; remove this block"
+                ):
+                    load_botspec(
+                        _write_bot(Path(tmp), f"backend: codex\ncodex:\n  {name}: {value}")
+                    )
 
     def test_unknown_agent_backend_is_validation_error(self) -> None:
         with TemporaryDirectory(dir="/tmp") as tmp:

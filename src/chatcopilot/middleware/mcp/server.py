@@ -71,7 +71,17 @@ async def _run_stdio_server() -> int:
         return 2
 
     tools_schema, _spec_index = build_mcp_tools_schema()
-    executor = ToolExecutor()
+    from chatcopilot.application.execution_scope import execution_scope
+    from chatcopilot.contracts.identity import Role
+    from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService
+    from chatcopilot.external_tools.dev.config import get_dev_config
+    import os
+
+    ws = resolve_workspace(create=True)
+    projects = (get_dev_config(force_reload=True).repo_root,) if any(os.environ.get(key) for key in ("CHATCOPILOT_DEV_ROOT", "CHATCOPILOT_CODEBASE_CHATCOPILOT_ROOT")) else ()
+    # This stdio endpoint is launched by its OS operator, not a chat sender.
+    service = MiddlewareWorkspaceService(workspace=ws, execution_scope=execution_scope(Role.OWNER, ws.root, projects))
+    executor = ToolExecutor(caller_role_hint="owner", workspace_service=service)
 
     server: Server = Server(PROJECT_SLUG)
 
@@ -98,7 +108,6 @@ async def _run_stdio_server() -> int:
         _LOGGER.info("call_tool done name=%s ok=%s", name, result.ok)
         return [TextContent(type="text", text=text)]
 
-    ws = resolve_workspace(create=True)
     _LOGGER.info("MCP server starting | %s | tools=%d", describe_workspace(ws), len(tools_schema))
 
     try:

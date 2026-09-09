@@ -238,7 +238,7 @@ def test_tool_security_contract_and_schema_are_checked_without_calling_handler()
     module_name = "chatcopilot.external_tools.tests.security_tools"
     tool = _tool(
         handler=handler,
-        requires_role="owenr",
+        access="owenr",
         input_schema=object_schema(
             {"query": {"type": "string", "default": object()}},
             required=("query",),
@@ -253,7 +253,7 @@ def test_tool_security_contract_and_schema_are_checked_without_calling_handler()
 
     assert calls == []
     assert {issue.code for issue in report.issues} >= {
-        "tool.requires_role_invalid",
+        "tool.access_invalid",
         "tool.schema_invalid",
     }
 
@@ -285,7 +285,7 @@ def test_old_one_argument_handler_is_rejected_without_execution() -> None:
 def test_malformed_runtime_values_become_issues_instead_of_crashing() -> None:
     module_name = "chatcopilot.external_tools.tests.malformed_tools"
     malformed_tool = _tool(
-        requires_role=[],
+        access=[],
         execution_policy=[],
         weight=[],
         audiences=("main", "worker"),
@@ -324,7 +324,7 @@ def test_malformed_runtime_values_become_issues_instead_of_crashing() -> None:
         "tool.artifact_kinds_invalid",
         "tool.audiences_invalid",
         "tool.execution_policy_invalid",
-        "tool.requires_role_invalid",
+        "tool.access_invalid",
         "tool.weight_invalid",
         "tool.input_schema_invalid",
     }

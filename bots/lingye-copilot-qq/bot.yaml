@@ -35,7 +35,6 @@ llm:
         reasoning_effort: max
     code_task_profile: sol-max
     timeout_seconds: 21600
-    allowed_roles: [owner]
 
 prompts:
   schema_version: 2
@@ -65,9 +64,6 @@ tools:
 
 agents:
   backend: codex
-  codex:
-    owner_access: worktree
-    member_access: workspace
   unified_search:
     enabled: true
     providers:
@@ -101,25 +97,6 @@ context:
     max_chunk_chars: 1200
   dev:
     root_env: CHATCOPILOT_DEV_ROOT
-    allowed_paths:
-      - "src/**"
-      - "tests/**"
-      - "console/**"
-      - "scripts/**"
-      - "specs/**"
-      - "bots/**"
-      - "docs/**"
-      - "deploy/**"
-      - ".codex/**"
-      - ".cursor/**"
-      - ".gitattributes"
-      - ".gitignore"
-      - "AGENTS.md"
-      - "LICENSE"
-      - "README.md"
-      - "pyproject.toml"
-      - "requirements.txt"
-    denied_paths: ["**/local.env", "**/.env.*", "**/credentials*", "**/node_modules/**", "**/.git/**"]
     shell:
       timeout_default: 60
       timeout_max: 300
@@ -144,6 +121,3 @@ deploy:
 
 packaging:
   allowlist: package.allowlist.yaml
-
-access:
-  owner_only_project_access: true

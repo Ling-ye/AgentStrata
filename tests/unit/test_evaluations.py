@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.botspec.model import ContextSpec
+
 import hashlib
 import json
 import multiprocessing
@@ -2034,7 +2036,9 @@ def test_private_runtime_fingerprint_binds_group_allowlist_without_persisting_id
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = SimpleNamespace(
-        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST_EVAL_GROUP")),
+        spec=SimpleNamespace(
+            context=ContextSpec(), llm=SimpleNamespace(env_prefix="TEST_EVAL_GROUP")
+        ),
     )
     config = SimpleNamespace(llm=SimpleNamespace(api_key="fallback-eval-key-123456"))
     monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)
@@ -2062,7 +2066,9 @@ def _configure_private_runtime(
     api_key: str = "",
 ) -> None:
     runtime = SimpleNamespace(
-        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST_EVAL_PRIVATE")),
+        spec=SimpleNamespace(
+            context=ContextSpec(), llm=SimpleNamespace(env_prefix="TEST_EVAL_PRIVATE")
+        ),
     )
     config = SimpleNamespace(llm=SimpleNamespace(api_key=api_key))
     monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)

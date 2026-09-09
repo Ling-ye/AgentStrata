@@ -122,3 +122,15 @@ python -m pytest \
 python scripts/check_component_catalog.py
 python scripts/check_architecture.py
 ```
+
+## 统一访问声明
+
+ToolDef 使用 `access="owner" | "member"`，默认 Owner；公共查询和当前会话基础工具显式声明 member。
+`workspace.read_write` 提供 `write_workspace_file`，可写入或删除当前会话普通文本文件；
+人格、记忆、任务、后端状态仍不能通过普通文件工具修改。
+旧最低角色、工具名称特判与 Backend 路由权限不再参与业务授权。可见性和执行复检使用同一规则，
+Admin 与 User 均为成员。ToolContext 保留可信调用者及 ExecutionScope，委托不能提升角色。
+文件与命令必须使用宿主绑定资源，能力装配和输入校验不能冒充权限不足。
+
+`persona.control` 的操作策略经唯一 PromptPlan 注入，正文生成与提交走原人格工具和状态服务。
+详细契约见 [运行权限规格](../specs/runtime-permissions-simplification/spec.md)。

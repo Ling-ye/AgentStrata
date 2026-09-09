@@ -78,14 +78,18 @@ def submit_tool_job(
     queue_name = _queue_name(execution_policy, workspace, tool_name=tool_name)
     request_path = job_dir / _REQUEST_FILENAME
     result_path = job_dir / _RESULT_FILENAME
+    from chatcopilot.core.caller_context import get_caller_role_hint
+    from chatcopilot.contracts.execution_scope import current_execution_scope
+    scope = current_execution_scope()
+
     request = {
+        "caller_role": get_caller_role_hint(),
+        "project_roots": [str(root) for root in scope.project_roots] if scope is not None else [],
         "job_id": job_id,
         "tool_name": tool_name,
         "args": args or {},
         "code_job_contract": (
-            dict(args.get("contract") or {})
-            if isinstance(args.get("contract"), dict)
-            else None
+            dict(args.get("contract") or {}) if isinstance(args.get("contract"), dict) else None
         ),
         "execution_profile": (
             dict(args.get("execution_profile") or {})

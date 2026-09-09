@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from uuid import uuid4
 import socket
 import socketserver
 import threading
@@ -11,7 +12,9 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Sequence
 
+from chatcopilot.contracts.agent import ToolCatalogObserved
 from chatcopilot.agent.trace import TraceContext, reset_trace, set_trace
+from chatcopilot.core.observability_redaction import bound_observability_payload
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.contracts.agent import AgentEvent
 from chatcopilot.contracts.tools import ToolDef
@@ -328,6 +331,7 @@ class SessionToolRelay:
         summary: str,
         error: str | None,
         data: dict[str, Any] | None,
+        execution_result: dict[str, Any] | None = None,
     ) -> None:
         with self._event_lock:
             if call_id in self._abandoned_call_ids:
@@ -352,6 +356,7 @@ class SessionToolRelay:
                         "summary": summary,
                         "error": error,
                         "data": dict(data) if data is not None else None,
+                        "execution_result": execution_result,
                         "finished_at": time.time(),
                     },
                 )
@@ -433,9 +438,47 @@ class SessionToolRelay:
         if not secrets.compare_digest(token, self._token):
             return {"ok": False, "error": "relay authentication failed"}
         action = str(request.get("action") or "")
+        if action == "catalog_observed":
+            names = request.get("tools")
+            phase = request.get("phase")
+            if (
+                phase not in {"initialized", "list_response_prepared", "failed"}
+                or not isinstance(names, list)
+                or not all(isinstance(n, str) and n in self._tools for n in names)
+            ):
+                return {"ok": False, "error": "invalid catalog observation"}
+            with self._event_lock:
+                binding = self._trace_binding
+                if (
+                    binding is not None
+                    and request.get("generation") == binding.generation
+                    and len(self._events) < _MAX_BUFFERED_TOOL_EVENTS
+                ):
+                    self._events.append(
+                        _BufferedRelayEvent(
+                            generation=binding.generation,
+                            payload={
+                                "type": "agent_event",
+                                "generation": binding.generation,
+                                "event": ToolCatalogObserved(
+                                    phase=phase,
+                                    tools=tuple(names),
+                                    trace_id=binding.trace_id,
+                                    parent_span_id=binding.parent_span_id,
+                                    span_id="catalog_" + uuid4().hex,
+                                    observed_at=time.time(),
+                                    error_code="mcp_initialization_failed"
+                                    if phase == "failed"
+                                    else "",
+                                ),
+                            },
+                        )
+                    )
+            return {"ok": True}
         if action == "list_tools":
             return {
                 "ok": True,
+                "generation": self._trace_binding.generation if self._trace_binding else None,
                 "tools": [
                     {
                         "name": tool.name,
@@ -473,6 +516,7 @@ class SessionToolRelay:
                     sink=nested_sink,
                 )
             )
+        execution_result = None
         try:
             result = self._executor.execute(
                 name,
@@ -480,6 +524,9 @@ class SessionToolRelay:
                 request_text=binding.request_text if binding is not None else "",
             )
             result_payload = result.to_llm_payload()
+            captured = bound_observability_payload(result_payload)
+            if isinstance(captured.value, dict):
+                execution_result = captured.value
             if self._payload_filter is not None:
                 result_payload = self._payload_filter(dict(result_payload))
             if not isinstance(result_payload, dict):
@@ -504,6 +551,7 @@ class SessionToolRelay:
             summary=summary,
             error=error,
             data=result_payload,
+            execution_result=execution_result,
         )
         return {"ok": True, "result": {"tool": name, **result_payload}}
 

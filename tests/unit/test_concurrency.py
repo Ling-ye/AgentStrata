@@ -127,9 +127,9 @@ class ToolExecutorLimiterTests(unittest.TestCase):
                 doc_links=[],
             )
 
-        result = ToolExecutor(tools=[tool], background_submitter=submitter).execute(
-            "bg", {"x": 1}
-        )
+        result = ToolExecutor(
+            caller_role_hint="owner", tools=[tool], background_submitter=submitter
+        ).execute("bg", {"x": 1})
 
         self.assertFalse(called)
         self.assertTrue(result.ok)
@@ -160,9 +160,9 @@ class ToolExecutorLimiterTests(unittest.TestCase):
             {"CHATCOPILOT_BACKGROUND_WORKER": "1"},
             clear=False,
         ):
-            result = ToolExecutor(tools=[tool], background_submitter=submitter).execute(
-                "bg", {}
-            )
+            result = ToolExecutor(
+                caller_role_hint="owner", tools=[tool], background_submitter=submitter
+            ).execute("bg", {})
 
         self.assertTrue(called)
         self.assertTrue(result.ok)
@@ -189,6 +189,7 @@ class ToolExecutorLimiterTests(unittest.TestCase):
             return "queued", [], None
 
         result = ToolExecutor(
+            caller_role_hint="owner",
             tools=[tool],
             background_submitter=legacy_submitter,  # type: ignore[arg-type]
         ).execute(tool.name, {})
@@ -230,7 +231,7 @@ class ToolExecutorLimiterTests(unittest.TestCase):
                 },
                 clear=False,
             ):
-                executor = ToolExecutor(tools=[tool])
+                executor = ToolExecutor(caller_role_hint="owner", tools=[tool])
                 threads = [
                     threading.Thread(target=lambda: executor.execute("heavy", {}))
                     for _ in range(3)
