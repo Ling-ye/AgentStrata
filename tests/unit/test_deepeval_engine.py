@@ -149,7 +149,8 @@ def test_missing_framework_metric_is_an_error(monkeypatch, deepeval_judge):
     assert "no complete metric" in detail["error"]
 
 
-def test_real_judge_adapter_builds_prompt_plan_and_scores_with_host_client(monkeypatch):
+@pytest.mark.parametrize("effort", [None, "medium"])
+def test_real_judge_adapter_builds_prompt_plan_and_scores_with_host_client(monkeypatch, effort):
     import json
 
     from chatcopilot.core.llm_client import ChatResult, LLMClient
@@ -160,6 +161,10 @@ def test_real_judge_adapter_builds_prompt_plan_and_scores_with_host_client(monke
         "API_KEY": "controlled-judge-key",
     }.items():
         monkeypatch.setenv("CHATCOPILOT_EVALUATION_JUDGE_" + key, value)
+    if effort is None:
+        monkeypatch.delenv("CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT", raising=False)
+    else:
+        monkeypatch.setenv("CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT", effort)
     requests = []
 
     def chat(client, **kwargs):
@@ -178,9 +183,24 @@ def test_real_judge_adapter_builds_prompt_plan_and_scores_with_host_client(monke
     assert config.model == "configured-judge"
     assert request["max_retries"] == 0
     assert request["timeout"] == 60
+    assert request.get("reasoning_effort") == effort
+    assert details["scoring"]["judge"].get("reasoning_effort") == effort
     system = json.loads(request["messages"][0]["content"])
     assert "evaluation judge" in system["host_policy"]
     content = "\n".join(message["content"] for message in request["messages"])
     assert "AgentStrata evaluation judge." in content
     assert "actual request" in content
     assert "controlled-judge-key" not in content
+
+
+def test_judge_reasoning_config_is_validated_and_changes_snapshot():
+    env = {"CHATCOPILOT_EVALUATION_JUDGE_MODEL": "fixture",
+           "CHATCOPILOT_EVALUATION_JUDGE_BASE_URL": "https://judge.example.test/v1",
+           "CHATCOPILOT_EVALUATION_JUDGE_API_KEY": "fixture-key"}
+    original = engine.JudgeConfig.from_environment(env).public_snapshot()
+    env["CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT"] = "medium"
+    current = engine.JudgeConfig.from_environment(env).public_snapshot()
+    assert current["reasoning_effort"] == "medium" and current != original
+    env["CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT"] = "invalid"
+    with pytest.raises(ValueError, match="REASONING_EFFORT"):
+        engine.JudgeConfig.from_environment(env)

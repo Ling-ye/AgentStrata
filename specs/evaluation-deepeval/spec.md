@@ -17,6 +17,7 @@ Agent 能力轨道使用 DeepEval 4.2.2 执行确定性指标与默认质量判�
 - 现有 Trial 隔离进程运行 Agent 后，将实际请求、返回、工具和证据转换为 DeepEval 用例，经公开 `evaluate()` 接口运行指标。保留现有事实验证函数及 all/any 语义，不保留第二个 Agent 判分引擎或降级分支。
 - 版本化 Case 定义明确质量评分是否适用，单轮 GEval、多轮 ConversationalGEval 使用固定步骤和参考标准，默认阈值 0.7。必需事实条件和必需质量指标都满足才通过；权限和写入事实不能由自然语言高分覆盖。不同 actor 不合成为同一个会话。
 - 固定评分模型通过 `CHATCOPILOT_EVALUATION_JUDGE_*` 配置，客户端和 PromptPlan 使用现有实现。创建前预检依赖与配置，冻结脱敏评分配置和指标版本；秘密不写 artifact。评分异常区别于 Agent 执行失败，评分和 Agent 用量分别计量，预算由原 Trial/ Evaluation 监督。
+- 评分配置可选 `CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT`，以 `reasoning_effort` 传给现有 Chat Completions 客户端；缺省不发送，显式值参与评分配置快照与恢复指纹，不回填历史记录。该设置不修改被测 Agent 的推理强度，Provider 不支持时报告错误，不静默删除参数。
 - 真实输入在 Agent 调用处采集；判分前沿现有有界 Trial IPC 发布仅供阅读的执行证据。它不成为可 resume 的完整 Target 组 checkpoint，也不计入已完成样本。Core 唯一保存权威记录，评分取消或失败仍保留已经生成的回答。
 - DeepEval 在子进程导入前禁用 dotenv、遥测、云上报及结果缓存，临时文件只在隔离临时目录。仓库测试显式禁用其自动 pytest 插件；不启用生产 tracing、Confident Cloud、数据生成或第二个调度器。
 - 现有 artifact 扩展输入、多轮交互、采集状态、指标和评分版本。维持 Trial 2 MiB、单正文 128 Ki 字符等边界，运行中交互观测总量有界为 512 KiB，预览与采集截断分别标识；旧记录不补造实际请求、质量分或 Git。复用 Case 详情读取并按 Trial、Target、attempt 精确选择。

@@ -254,7 +254,7 @@ Agent 能力轨道由 DeepEval 4.2.2 执行指标。工具、权限、隔离、�
 
 通过率分母包含失败、异常和跳过，重复执行分别计数。质量均分只统计适用且成功判分的样本，并显示已评分/应评分数；旧记录未采集质量分时不补零。完整有效、非 dry-run 的记录才进入趋势，部分记录仍可查看。选中特定 Case 后，点指标只汇总这些 Case；规模标签仍说明原评测规模。不同测试条件可按用户选择连线，点详情保留版本、模型、规模和样本量；不能据此自动归因于一次代码修改。CLI compare/resume 的严格指纹校验保持。
 
-独立评分模型使用 Evaluation 服务的 `~/.config/agentstrata/evaluation.env`，示例见 [`evaluation.env.example`](../deploy/wsl/evaluation.env.example)，配置步骤见 [Evaluation 运维](operations.md#evaluation)。该模型不随被测机器人切换，不使用机器人本地环境补齐。缺少依赖或评分配置时创建前预检失败，不自动关闭判分。SDK 只在 Trial 内运行，禁用 dotenv、遥测、Confident Cloud 上报、评测缓存和交互提示；Token 与评分耗时独立记录。模型调用仍使用所配置服务，会产生其相应费用。
+独立评分模型使用 Evaluation 服务的 `~/.config/agentstrata/evaluation.env`，示例见 [`evaluation.env.example`](../deploy/wsl/evaluation.env.example)，配置步骤见 [Evaluation 运维](operations.md#evaluation)。该模型不随被测机器人切换，不使用机器人本地环境补齐。可通过 `CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT=medium` 设置评分推理强度；显式值随评分配置快照保存，历史记录不回填。缺少依赖或评分配置时创建前预检失败，不自动关闭判分。SDK 只在 Trial 内运行，禁用 dotenv、遥测、Confident Cloud 上报、评测缓存和交互提示；Token 与评分耗时独立记录。模型调用仍使用所配置服务，会产生其相应费用。
 
 新记录保存实际执行时替换参数后的请求。历史仅展示已采集输入，或明确标注“当时用例定义；实际发送未记录”，不查当前定义补写历史。预览截短可以展开，采集上限导致的丢失显示“已截断”；继续遵守单 Trial 2 MiB 等保护边界。
 

@@ -32,6 +32,7 @@ class JudgeConfig:
     base_url: str
     api_key: str
     timeout: float = 60
+    reasoning_effort: str | None = None
 
     @classmethod
     def from_environment(cls, env: Mapping[str, str] | None = None) -> JudgeConfig:
@@ -46,7 +47,10 @@ class JudgeConfig:
         timeout = float(values.get(_PREFIX + "TIMEOUT", "60"))
         if not math.isfinite(timeout) or timeout <= 0 or timeout > 600:
             raise ValueError("CHATCOPILOT_EVALUATION_JUDGE_TIMEOUT must be in (0, 600]")
-        return cls(model, base_url, key, timeout)
+        effort = values.get(_PREFIX + "REASONING_EFFORT", "").strip().lower() or None
+        if effort is not None and effort not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT is unsupported")
+        return cls(model, base_url, key, timeout, effort)
 
     def public_snapshot(self) -> dict[str, Any]:
         # Credentials and private endpoints never enter durable scoring metadata.
@@ -56,6 +60,7 @@ class JudgeConfig:
             "model": self.model,
             "endpoint_fingerprint": hashlib.sha256(self.base_url.encode()).hexdigest(),
             "timeout_seconds": self.timeout,
+            **({"reasoning_effort": self.reasoning_effort} if self.reasoning_effort is not None else {}),
         }
 
 
@@ -202,7 +207,8 @@ def _model(config: JudgeConfig) -> Any:
                     }
                 )
             result = cast(LLMClient, self.model).chat(
-                messages=messages, tools=None, stream=False, max_retries=0, timeout=config.timeout
+                messages=messages, tools=None, stream=False, max_retries=0, timeout=config.timeout,
+                reasoning_effort=config.reasoning_effort,
             )
             self.calls += 1
             for key, value in (getattr(result, "usage", None) or {}).items():

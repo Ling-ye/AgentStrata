@@ -124,6 +124,7 @@ class LLMClient:
         model: Optional[str] = None,
         timeout: Optional[float] = None,
         cancellation: CancellationProbe | None = None,
+        reasoning_effort: Optional[str] = None,
     ) -> ChatResult:
         """统一入口；首选流式，失败时自动降级非流式。"""
         if self._closed:
@@ -143,6 +144,7 @@ class LLMClient:
                         model=model,
                         timeout=timeout,
                         cancellation=cancellation,
+                        **({"reasoning_effort": reasoning_effort} if reasoning_effort is not None else {}),
                     )
                 except _StreamUnsupported:
                     pass
@@ -152,6 +154,7 @@ class LLMClient:
                 max_retries=max_retries,
                 model=model,
                 timeout=timeout,
+                **({"reasoning_effort": reasoning_effort} if reasoning_effort is not None else {}),
             )
             if cancellation is not None:
                 cancellation.raise_if_cancelled()
@@ -164,11 +167,14 @@ class LLMClient:
         max_retries: int,
         model: Optional[str] = None,
         timeout: Optional[float] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> ChatResult:
         kwargs: Dict[str, Any] = {
             "model": model or self._cfg.model,
             "messages": messages,
         }
+        if reasoning_effort is not None:
+            kwargs["reasoning_effort"] = reasoning_effort
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
@@ -219,6 +225,7 @@ class LLMClient:
         model: Optional[str] = None,
         timeout: Optional[float] = None,
         cancellation: CancellationProbe | None = None,
+        reasoning_effort: Optional[str] = None,
     ) -> ChatResult:
         kwargs: Dict[str, Any] = {
             "model": model or self._cfg.model,
@@ -226,6 +233,8 @@ class LLMClient:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if reasoning_effort is not None:
+            kwargs["reasoning_effort"] = reasoning_effort
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
