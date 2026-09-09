@@ -2,7 +2,8 @@
 
 机器人运行时按 Channel → Gateway → Application → Agent 四层处理消息，并通过结构化
 契约返回结果、协调投递。实例启动装配、Console 与 Evaluation 位于消息层之外；四层职责
-与源码依赖分别见 [architecture.md](architecture.md)。
+由 [长期 SDD 架构基线](../specs/runtime-four-layer-definition/spec.md)固定，源码依赖与实现说明见
+[architecture.md](architecture.md)。
 
 ## 启动路径
 

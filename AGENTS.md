@@ -13,6 +13,7 @@
 - 改完代码后尽量做快速验证，并同步更新受影响的 `README.md` 和 `AGENTS.md`。`README.md` 只做公开入口，`docs/project-history.md` 记录开发时间线、各阶段的初始设计、问题、架构优化和相关规格，禁止写入私有仓库坐标或运行值；`docs/operations.md` 集中日常命令，`docs/deployment.md` 只讲首次部署与边界，`deploy/wsl/README_WSL.md` 只讲异常排障；组件文档链接事实源，不复制运维流程。
 - QQ 新手首次部署的唯一推荐入口是 `deploy/wsl/quickstart.sh`；其他部署、Console 和运维脚本只提供可复用阶段或安装后操作，不复制另一套扫码、token 同步和实例生命周期编排。
 - 架构、公共契约、部署流程和数据迁移必须先引用或创建 `specs/<id>/spec.md`；普通修复与局部功能直接实现并测试。
+- **SDD 运行时基线**：`specs/runtime-four-layer-definition/spec.md` 是长期架构标准。涉及运行时架构、跨层契约、运行部署或相关数据迁移的规格必须引用它，在现有 `Design` 中说明职责、交接契约和依赖方向；装配、Console、Evaluation 按需说明边界，不增加消息层。冲突设计先明确提出基线变更并单独审议，不能在局部规格中悄悄改层级；普通修复不增加统一填表或额外审批。SDD 脚本检查结构，现有架构脚本检查依赖，两者均在 `fast/full` 中执行。
 - `spec.md` frontmatter 只允许 `id/type/status/created`，正文固定为 `Summary/Design/Acceptance/Verification`；流程细则见 `docs/sdd.md`，结构检查跑 `python3 scripts/check_sdd_specs.py`。
 
 ## 项目一句话
@@ -53,8 +54,8 @@ Agent 层
 注入入站回调，Channel 不反向 import Gateway。授权、模型访问、工具和存储按契约参与，
 `contracts` 与 `core` 是支撑模块。ACP 是可直连 Gateway 的本地协议入口；Legacy edge 保留。
 BotSpec 负责配置解释，Application 的装配函数将配置投影为 Agent 运行输入。Console 配置与观测
-分组不等同于四层，既有 `layer`、实体 ID 和历史快照保持。定义见
-[`runtime-four-layer-definition`](specs/runtime-four-layer-definition/spec.md)。
+分组不等同于四层，既有 `layer`、实体 ID 和历史快照保持。长期基线见
+[`runtime-four-layer-definition`](specs/runtime-four-layer-definition/spec.md)，SDD 遵循方式见 [docs/sdd.md](docs/sdd.md)。
 
 跨层契约只通过这些模块：
 

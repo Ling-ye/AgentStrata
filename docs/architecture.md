@@ -27,9 +27,10 @@ Agent
 四层表示消息处理职责，不要求所有调用依次穿过四层。Application 在资源授权后可经
 `ResourceFetcherPort` 调用 Channel 的下载实现；Gateway 持久化 outbound 后才请求
 Channel 投递，取得可信回执后再请求 Application 提交交换。授权、模型访问、工具和存储
-通过契约支撑运行；`contracts` 与 `core` 提供基础类型和通用实现。当前职责定义见
-[机器人运行时四层职责定义](../specs/runtime-four-layer-definition/spec.md)，此前的配置集中与
+通过契约支撑运行；`contracts` 与 `core` 提供基础类型和通用实现。长期 SDD 架构基线见
+[机器人运行时四层架构基线](../specs/runtime-four-layer-definition/spec.md)，此前的配置集中与
 会话交接实现见[分层职责精简重构](../specs/runtime-layer-responsibility-refactor/spec.md)。
+后续相关规格必须按 [SDD 规范](sdd.md)引用该基线，说明职责、交接契约和依赖方向。
 
 消息方向与 Python import 方向分别约束。Gateway 依赖 Channel 端口并注入入站回调，
 Channel 不导入 Gateway；Gateway 调用 Application，Application 调用 Agent。
@@ -326,7 +327,9 @@ lifecycle owner。详细验收见
 - ACP 等跨域模块不能导入其它 owner 模块的私有符号。
 
 单元测试调用与 CLI 相同的检查入口和规则集合，避免命令行通过而测试只覆盖旧前缀规则。
-当前边界与验收事实源是
+四层职责的长期基线是
+[`runtime-four-layer-definition`](../specs/runtime-four-layer-definition/spec.md)；
+检查器的实现约束与历史硬化记录见
 [`architecture-boundary-hardening`](../specs/architecture-boundary-hardening/spec.md)。
 
 ```bash

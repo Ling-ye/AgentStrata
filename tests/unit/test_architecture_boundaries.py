@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -228,3 +230,110 @@ def test_empty_retired_modules_and_replacement_packages_are_rejected(tmp_path, m
     assert "src/chatcopilot/agent/config.py" in rejected
     assert "src/chatcopilot/core/workspace/__init__.py" in rejected
     assert "src/chatcopilot/middleware/runtime/workspace/replacement.py" in rejected
+
+
+@pytest.fixture
+def runtime_architecture_workspace(tmp_path: Path, monkeypatch):
+    import importlib.util
+    import sys
+    from dataclasses import replace
+
+    spec = importlib.util.spec_from_file_location(
+        "check_four_layer_baseline", ROOT / "scripts/check_architecture.py"
+    )
+    assert spec is not None and spec.loader is not None
+    checker = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = checker
+    spec.loader.exec_module(checker)
+    original_root = checker.ROOT
+    monkeypatch.setattr(checker, "RULES", tuple(
+        replace(rule, root=tmp_path / rule.root.relative_to(original_root))
+        for rule in checker.RULES
+    ))
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    checker.SRC.mkdir(parents=True)
+    return checker
+
+
+@pytest.mark.parametrize(("source_area", "target", "rule"), (
+    ("channels", "gateway.runtime", "channels_do_not_own_domain_authority"),
+    ("channels", "application.actor_runtime", "channels_do_not_own_domain_authority"),
+    ("channels", "authorization.policy", "channels_do_not_own_domain_authority"),
+    ("application", "channels.qq_onebot.codec", "application_has_no_protocol_or_transport_implementation"),
+    ("application", "gateway.runtime", "application_has_no_protocol_or_transport_implementation"),
+    ("application", "protocols.acp.server", "application_has_no_protocol_or_transport_implementation"),
+    ("application", "middleware.acp.server", "application_has_no_protocol_or_transport_implementation"),
+    ("agent", "application.actor_runtime", "agent_no_upper_layers"),
+    ("agent", "gateway.runtime", "agent_no_upper_layers"),
+    ("agent", "channels.qq_onebot.codec", "agent_no_upper_layers"),
+    ("agent", "botspec.model", "agent_no_upper_layers"),
+    ("agent", "platforms.qq.adapter", "agent_no_upper_layers"),
+    ("contracts", "agent.runtime", "contracts_is_pure"),
+    ("core", "application.actor_runtime", "core_no_upper_layers"),
+))
+def test_four_layer_baseline_rejects_reverse_dependencies(
+    runtime_architecture_workspace, source_area: str, target: str, rule: str,
+) -> None:
+    checker = runtime_architecture_workspace
+    source = checker.SRC / source_area / "probe.py"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    imported = "chatcopilot." + target
+    source.write_text(f"import {imported}\n", encoding="utf-8")
+    target_path = checker.SRC.joinpath(*target.split(".")).with_suffix(".py")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("", encoding="utf-8")
+    relative = source.relative_to(checker.ROOT).as_posix()
+
+    assert checker.check_rules()[rule][relative] == [imported]
+    assert relative in checker._graph_checks()["imports_follow_declared_area_dag"]
+
+
+def test_four_layer_baseline_allows_supporting_systems_and_structured_ports(
+    runtime_architecture_workspace,
+) -> None:
+    checker = runtime_architecture_workspace
+    sources = {
+        "channels/inbound.py": "from chatcopilot.contracts.gateway import CanonicalInboundEvent\n",
+        "gateway/coordinator.py": "import chatcopilot.application.actor_runtime\nimport chatcopilot.channels.base\n",
+        "application/actor_runtime.py": "import chatcopilot.agent.runtime\nfrom chatcopilot.contracts.resources import ResourceFetcherPort\n",
+        # The instance host remains outside message responsibilities even in this directory.
+        "gateway/runtime.py": "import chatcopilot.botspec.runtime\nimport chatcopilot.application.agent_runtime\nimport chatcopilot.channels.base\n",
+        "protocols/acp/server.py": "import chatcopilot.protocols.gateway_client\n",
+        "protocols/gateway_client.py": "import chatcopilot.contracts.gateway_rpc\n",
+        "evals/isolated.py": "import chatcopilot.agent.runtime\n",
+        "agent/runtime.py": "from chatcopilot.contracts.agent import AgentTask\n",
+    }
+    for name, body in sources.items():
+        path = checker.SRC / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    for name in ("contracts/gateway.py", "contracts/resources.py", "contracts/gateway_rpc.py",
+                 "contracts/agent.py", "channels/base.py", "botspec/runtime.py", "application/agent_runtime.py"):
+        path = checker.SRC / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    console = checker.ROOT / "console/control/query.py"
+    console.parent.mkdir(parents=True)
+    console.write_text("import chatcopilot.gateway.observation_queries\n", encoding="utf-8")
+    (checker.SRC / "gateway/observation_queries.py").write_text("", encoding="utf-8")
+
+    assert checker.check_rules() == {}
+    assert checker._graph_checks() == {}
+
+
+def test_isolated_agent_evaluation_does_not_require_channel_or_gateway_sources(
+    runtime_architecture_workspace,
+) -> None:
+    checker = runtime_architecture_workspace
+    agent = checker.SRC / "agent/runtime.py"
+    agent.parent.mkdir()
+    agent.write_text("", encoding="utf-8")
+    evaluation = checker.SRC / "evals/trial.py"
+    evaluation.parent.mkdir()
+    evaluation.write_text("import chatcopilot.agent.runtime\n", encoding="utf-8")
+
+    assert checker.check_rules() == {}
+    assert checker._graph_checks() == {}
+    assert not (checker.SRC / "channels").exists()
+    assert not (checker.SRC / "gateway").exists()

@@ -211,6 +211,11 @@ flowchart LR
     E -. "isolated execution" .-> R
 ```
 
+The [four-layer runtime baseline](https://github.com/Ling-ye/AgentStrata/blob/main/specs/runtime-four-layer-definition/spec.md)
+is the standing SDD architecture standard. Related runtime designs must follow it;
+[SDD-lite](https://github.com/Ling-ye/AgentStrata/blob/main/docs/sdd.md) defines when to reference the baseline
+and how existing architecture checks support it.
+
 Solid arrows show message and result flow; dotted arrows show supporting
 relationships, not required message stages. Authorization, contracts, model
 access, tools, and storage support the four layers. The Channel verifies its
