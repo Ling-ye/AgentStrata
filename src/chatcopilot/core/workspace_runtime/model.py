@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from chatcopilot.contracts.persistent_state import MEMORY_INITIAL_TEMPLATE
 
@@ -23,6 +24,15 @@ from chatcopilot.contracts.workspace import (
 _SUBDIRS = WORKSPACE_SUBDIRS
 
 
+def ensure_workspace_directory(path: Path) -> None:
+    """Create missing parents privately; never change permissions of existing directories."""
+    try:
+        path.mkdir(mode=0o700, exist_ok=True)
+    except FileNotFoundError:
+        ensure_workspace_directory(path.parent)
+        path.mkdir(mode=0o700, exist_ok=True)
+
+
 @dataclass(frozen=True)
 class Workspace(WorkspaceView):
     """Conversation workspace plus the current turn's actor metadata."""
@@ -39,7 +49,7 @@ class Workspace(WorkspaceView):
         if self.scope != WORKSPACE_SCOPE_GROUP_SHARED:
             data_subdirs.extend((self.tasks, self.transcripts))
         for sub in data_subdirs:
-            sub.mkdir(parents=True, exist_ok=True)
+            ensure_workspace_directory(sub)
         # MEMORY.md is now only a legacy migration locator.  Never create a new
         # authoritative memory file inside a member-writable workspace.
         # Identity metadata is a best-effort inventory projection, not

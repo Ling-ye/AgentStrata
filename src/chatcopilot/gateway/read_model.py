@@ -11,7 +11,6 @@ import time
 from typing import Any, Iterator
 
 from chatcopilot.core.observability_redaction import load_bounded_observability_json, redact_observability_payload
-from .observations import bind_host_observation
 from .state_store import (
     GatewayStateError, SCHEMA_VERSION, _validate_private_root, _validate_sqlite_files,
     _validate_private_file_metadata,
@@ -189,9 +188,9 @@ def gateway_run(root: Path, run_id: str, *, secrets: tuple[str, ...] = (), opera
         for item in reversed(observations[:300]):
             payload = _object(item.pop("payload_json"))
             # Only the diagnostic schema is public; arbitrary stored keys never escape.
-            events.append(bind_host_observation(run_id, {**item, **{key: str(payload[key])[:160]
+            events.append({**item, **{key: str(payload[key])[:160]
                 for key in ("kind", "source", "target", "status", "phase", "trace_id", "span_id", "layer", "entity_id", "body_state") if key in payload},
-                "data": _metadata(payload.get("data"), secrets, operator=operator)}))
+                "data": _metadata(payload.get("data"), secrets, operator=operator)})
         wire = _rows(connection,
                      "SELECT seq, event, created_at, json_object("
                      "'stop_reason',json_extract(payload_json,'$.stop_reason'),"

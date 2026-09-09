@@ -29,23 +29,6 @@ def response_outbound_id(run_id: str) -> str:
     return "outbound_" + hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]
 
 
-def bind_host_observation(run_id: str, event: dict[str, Any]) -> dict[str, Any]:
-    """Bind single-per-run host operations, including records written without span fields."""
-    phases = {"actor_execution": "start", "actor_returned": "finish",
-              "response_dispatch": "start", "channel_returned": "finish"}
-    kind = event.get("kind")
-    if kind not in phases or event.get("span_id") or event.get("trace_id"):
-        return event
-    data = dict(event.get("data") or {})
-    delivery = kind in {"response_dispatch", "channel_returned"}
-    if delivery:
-        data.setdefault("outbound_id", response_outbound_id(run_id))
-    span_id = f"host:delivery:{data['outbound_id']}" if delivery else ACTOR_SPAN_ID
-    return {**event, "trace_id": run_id, "span_id": span_id, "phase": phases[kind],
-            "layer": "channel" if delivery else "application",
-            "entity_id": "channel:qq" if delivery else "workspace:instance", "data": data}
-
-
 class RunObserver:
     def __init__(self, store: GatewayStateStore, generation: int, run_id: str,
                  *, agent_stage_span_id: str | None = None) -> None:
@@ -112,15 +95,14 @@ class RunObserver:
             layer = {"model": "agent", "capability": "capability"}.get(target, target)
             entity = {"gateway": "gateway:instance", "application": "workspace:instance", "agent": "agent:main",
                       "channel": "channel:qq", "authorization": "policy:instance"}.get(layer)
-            self.recorder.record(self.run_id, bind_host_observation(self.run_id,
+            self.recorder.record(self.run_id,
                 {"kind": kind, "layer": layer, "entity_id": entity,
-                 "source": source, "target": target, "status": status, "data": data}))
+                 "source": source, "target": target, "status": status, "data": data})
             return
         if self._full:
             return
         safe = redact_observability_payload(
-            bind_host_observation(self.run_id,
-                {"kind": kind, "source": source, "target": target, "status": status, "data": data}),
+            {"kind": kind, "source": source, "target": target, "status": status, "data": data},
             secrets=self._secrets, roots=self._roots,
         ).value
         safe["data"] = {key: value[:160] if isinstance(value, str) else value

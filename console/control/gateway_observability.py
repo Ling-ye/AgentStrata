@@ -14,7 +14,6 @@ from chatcopilot.gateway.state_store import GatewayStateError
 from chatcopilot.gateway.observation_store import ObservationStore
 from chatcopilot.gateway import observation_queries
 from chatcopilot.gateway.observation_queries import RunFilter
-from chatcopilot.gateway.read_model import gateway_run, gateway_runs
 from console.control.instances import BotInstance
 from console.control.yaml_io import load_yaml_mapping_or_empty
 
@@ -56,12 +55,7 @@ def snapshot(inst: BotInstance, run_id: str | None = None, filters: RunFilter | 
     if inst.runtime_kind != "gateway":
         raise ValueError("Instance does not use Gateway")
     store = reader(inst)
-    if store.database.exists():
-        result = observation_queries.detail(store, run_id) if run_id else observation_queries.history(store, filters or RunFilter())
-    else:
-        result = gateway_run(store.anchor, run_id, operator=True) if run_id else gateway_runs(store.anchor)
-        if result is not None:
-            result.update(source="gateway_state", legacy=True, history_available=False)
+    result = observation_queries.detail(store, run_id) if run_id else observation_queries.history(store, filters or RunFilter())
     return _safe(inst, result)
 
 

@@ -12,6 +12,7 @@ from fastapi import HTTPException, Response
 from chatcopilot.contracts.agent import ContextSnapshotPrepared, LlmCallFinished, ToolStarted
 from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef, MessageSegment, OutboundEnvelope
 from chatcopilot.gateway.observations import RunObserver
+from chatcopilot.gateway.observation_runtime import ObservationRecorder
 from chatcopilot.gateway import read_model
 from chatcopilot.gateway.read_model import gateway_run, gateway_runs
 from chatcopilot.gateway.state_store import GatewayStateError, GatewayStateStore
@@ -233,16 +234,18 @@ def test_operator_reads_original_private_values_and_api_has_no_store(state, tmp_
     private = "fixture-secret-" + "confidential"
     env_file.write_text(f"FIXTURE_STATE_ROOT={store.root}\nFIXTURE_API_KEY={private}\n")
     env_file.chmod(0o600)
+    recorder = ObservationRecorder(store, generation)
     store.start_run(generation=generation, session_id="session-one", run_id=run)
     store.finish_run(generation=generation, session_id="session-one", run_id=run,
                      outcome="completed", result={"final_text": private})
     instance = BotInstance("fixture", str(bot_file), env_file=str(env_file), runtime_kind="gateway")
-    assert snapshot(instance, run)['run']['final_text'] == private
+    indexed = snapshot(instance, run)['run']
+    assert recorder.store.body(run, indexed['result_ref'])['payload']['final_text'] == private
     assert private not in json.dumps(gateway_run(store.root, run, secrets=(private,)))
     monkeypatch.setattr(architecture, "get_instance", lambda _: instance)
     response = Response()
     result = architecture.gateway_run_snapshot("fixture", run, response)
-    assert result["source"] == "gateway_state"
+    assert result["source"] == "observation_index"
     assert response.headers["Cache-Control"] == "no-store"
     env_file.chmod(0o644)
     with pytest.raises(HTTPException) as error:
@@ -251,3 +254,23 @@ def test_operator_reads_original_private_values_and_api_has_no_store(state, tmp_
     assert error.value.headers["Cache-Control"] == "no-store"
     assert private not in str(error.value.detail)
     assert str(tmp_path) not in str(error.value.detail)
+
+
+def test_console_does_not_fall_back_to_gateway_state_when_index_is_missing(state, tmp_path, monkeypatch):
+    store, _, run = state
+    bot_file = tmp_path / "bot.yaml"
+    bot_file.write_text("gateway:\n  state_root_env: FIXTURE_STATE_ROOT\n")
+    env_file = tmp_path / "local.env"
+    env_file.write_text(f"FIXTURE_STATE_ROOT={store.root}\n")
+    env_file.chmod(0o600)
+    instance = BotInstance("fixture", str(bot_file), env_file=str(env_file), runtime_kind="gateway")
+    monkeypatch.setattr(architecture, "get_instance", lambda _: instance)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Console must not copy or query the Gateway business database")
+    monkeypatch.setattr(read_model, "gateway_run", forbidden)
+    monkeypatch.setattr(read_model, "gateway_runs", forbidden)
+    with pytest.raises(HTTPException) as error:
+        architecture.gateway_run_snapshot("fixture", run, Response())
+    assert error.value.status_code == 409
+    assert error.value.headers["Cache-Control"] == "no-store"
+    assert not (store.root / "observability").exists()

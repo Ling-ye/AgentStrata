@@ -77,7 +77,6 @@ export default function TaskRecordList({ instanceId, selected, data, loading, er
       <Button size="mini" type="text" onClick={onReset}>重置筛选</Button>
     </div>
     {error && <Alert type="warning" content={<><span>任务列表读取失败：{error.message}</span><Button size="mini" onClick={onRetry}>重试</Button></>} />}
-    {data?.legacy && <Alert type="warning" content="当前仅有旧版近期记录" />}
     <div ref={scroll} className="obs-record-scroll" onScroll={remember}>
       <ul className="obs-records">{data?.runs.map((run) => <li key={run.run_id} data-run-id={run.run_id} className={run.run_id === selected ? "is-selected" : ""}>
         <button className="obs-record-select" aria-label={`查看任务 ${run.run_id}`} aria-current={run.run_id === selected ? "true" : undefined} onClick={() => onSelect(run.run_id)}>

@@ -7,7 +7,6 @@ import time
 from typing import Any
 
 from .observation_store import ObservationStore, RETENTION_SECONDS, checked_run_id, decoded
-from .observations import bind_host_observation
 
 
 @dataclass(frozen=True)
@@ -113,7 +112,7 @@ def events(store: ObservationStore, run_id: str, *, after: int = 0, limit: int =
         item = dict(row)
         item["data"] = decoded(item.pop("metadata"))
         item["refs"] = decoded(item["refs"])
-        items.append(bind_host_observation(run_id, item))
+        items.append(item)
     return {"source": "observation_index", "run_id": run_id, "observations": items, "next_cursor": items[-1]["seq"] if items else after,
             "has_more": len(rows) > limit, "generated_at": time.time()}
 

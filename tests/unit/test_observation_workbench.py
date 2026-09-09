@@ -15,7 +15,6 @@ from chatcopilot.gateway.observation_queries import RunFilter, detail, events, h
 from chatcopilot.gateway.observation_runtime import ObservationRecorder
 from chatcopilot.gateway.observation_store import BODY_LIMIT, ObservationStore, RETENTION_SECONDS
 from chatcopilot.gateway.observations import RunObserver
-from chatcopilot.gateway.observations import response_outbound_id
 from chatcopilot.gateway.state_store import GatewayStateError, GatewayStateStore
 
 
@@ -69,7 +68,7 @@ def test_history_search_paginates_all_records_and_preserves_selected_detail(reco
     assert detail(recorder.store, 'run-0')['run']['state'] == 'completed'
 
 
-def test_existing_host_delivery_records_are_paired_without_rewriting_history(recorded):
+def test_unversioned_records_are_read_without_synthetic_call_identifiers(recorded):
     _, _, recorder = recorded
     run_id = make_run(recorded, complete=True)
     for kind, status in [('response_dispatch', 'running'), ('channel_returned', 'succeeded')]:
@@ -80,10 +79,8 @@ def test_existing_host_delivery_records_are_paired_without_rewriting_history(rec
     calls = [event for event in [*page['observations'], *more['observations']]
              if event['kind'] in {'response_dispatch', 'channel_returned'}]
     assert len(calls) == 2
-    assert calls[0]['span_id'] == calls[1]['span_id']
-    assert {event['trace_id'] for event in calls} == {run_id}
-    assert [event['phase'] for event in calls] == ['start', 'finish']
-    assert {event['data']['outbound_id'] for event in calls} == {response_outbound_id(run_id)}
+    assert all(event['span_id'] is None and event['trace_id'] is None for event in calls)
+    assert all(event['phase'] == '' and 'outbound_id' not in event['data'] for event in calls)
     assert recorder.store.database.read_bytes() == before
 
 

@@ -22,6 +22,8 @@ from chatcopilot.contracts.workspace import (
     WORKSPACE_SCOPE_ACTOR,
     WORKSPACE_SCOPE_GROUP_SHARED,
 )
+from chatcopilot.core.workspace_runtime.model import Workspace
+from chatcopilot.core.workspace_runtime.cleanup import clear_workspace_files
 
 
 def _root(tmp_path: Path) -> Path:
@@ -142,6 +144,61 @@ def test_workspace_rejects_relative_traversal_symlink_and_unsafe_state(
             principal=_principal("20002"),
         )
     assert unsafe.value.code == "backend_state_unsafe"
+
+
+@pytest.mark.parametrize("kind", ["p2p", "group"])
+@pytest.mark.parametrize("umask", [0o002, 0o000])
+def test_shared_workspace_creation_satisfies_gateway_permissions(tmp_path: Path, kind: str, umask: int) -> None:
+    root = _root(tmp_path)
+    principal = _principal("20002", kind=kind, chat_id="20002" if kind == "p2p" else "30003")
+    path = root / "p2p_20002" if kind == "p2p" else root / "group_30003" / "shared"
+    workspace = Workspace(root=path, chat_kind=kind, chat_id=principal.conversation.chat_id,
+                          user_id=principal.user_id,
+                          scope=WORKSPACE_SCOPE_ACTOR if kind == "p2p" else WORKSPACE_SCOPE_GROUP_SHARED)
+    previous = os.umask(umask)
+    try:
+        workspace.ensure()
+    finally:
+        os.umask(previous)
+    directories = [path, workspace.downloads, workspace.results, workspace.uploads, workspace.attachments]
+    if kind == "group":
+        directories.extend((path.parent, workspace.attachments.parent))
+    else:
+        directories.extend((workspace.tasks, workspace.transcripts))
+    assert all(stat.S_IMODE(item.stat().st_mode) == 0o700 for item in directories)
+    assert build_actor_workspace(workspace_root=root, principal=principal).workspace.root == path
+
+
+def test_workspace_file_clear_keeps_gateway_directory_permissions(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    principal = _principal("20002", kind="p2p", chat_id="20002")
+    workspace = build_actor_workspace(workspace_root=root, principal=principal).workspace
+    marker = workspace.root / "keep.txt"
+    marker.write_text("keep existing user data")
+    for folder in (workspace.downloads, workspace.results, workspace.uploads, workspace.attachments):
+        (folder / "temporary.txt").write_text("artifact selected for clearing")
+    previous = os.umask(0o002)
+    try:
+        summary = clear_workspace_files(workspace)
+    finally:
+        os.umask(previous)
+    assert all(result["deleted_files"] == 1 for result in summary.values())
+    assert marker.read_text() == "keep existing user data"
+    assert all(stat.S_IMODE(folder.stat().st_mode) == 0o700
+               for folder in (workspace.downloads, workspace.results, workspace.uploads, workspace.attachments))
+    assert build_actor_workspace(workspace_root=root, principal=principal).workspace.root == workspace.root
+
+
+def test_existing_unsafe_workspace_is_not_silently_repaired(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    path = root / "p2p_20002"
+    path.mkdir()
+    path.chmod(0o775)
+    Workspace(root=path, chat_kind="p2p", chat_id="20002", user_id="20002").ensure()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o775
+    with pytest.raises(WorkspaceAssemblyError) as unsafe:
+        build_actor_workspace(workspace_root=root, principal=_principal("20002", kind="p2p", chat_id="20002"))
+    assert unsafe.value.code == "workspace_storage_unsafe"
 
 
 def test_group_journal_is_shared_bounded_and_actor_attributed(tmp_path: Path) -> None:

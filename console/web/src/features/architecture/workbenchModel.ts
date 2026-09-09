@@ -103,13 +103,7 @@ function runtimeLayer(value: unknown): RuntimeLayer | undefined {
 export function stepRuntimeLayer(step: RunStep): RuntimeLayer | undefined {
   const event = step.start ?? step.event;
   if (event.data?.flow_version === 1) return runtimeLayer(event.data.runtime_layer);
-  const known: Record<string, RuntimeLayer> = {
-    principal_bound: "gateway", resources_materialized: "application", actor_execution: "agent", actor_returned: "agent",
-    response_dispatch: "channel", channel_returned: "channel", ContextSnapshotPrepared: "agent",
-    session_capabilities: "application", InputResourcesDispatched: "agent", TurnError: "agent",
-    LlmCallStarted: "agent", LlmCallFinished: "agent", ToolStarted: "agent", ToolFinished: "agent",
-  };
-  return known[event.kind];
+  return undefined;
 }
 export function runtimeStage(event: GatewayObservation) {
   if (!["RuntimeStageStarted", "RuntimeStageFinished"].includes(event.kind) || event.data?.flow_version !== 1 ||
@@ -121,19 +115,6 @@ export function runtimeStage(event: GatewayObservation) {
 export interface FlowItem {
   kind: "stage" | "step"; step: DisplayStep; layer?: RuntimeLayer; operation?: string;
   stageKey?: string; missingStage: boolean;
-}
-
-function withoutCoveredAggregates(events: GatewayObservation[]) {
-  const stages = events.filter((event) => runtimeStage(event));
-  const operations: Record<string, string[]> = {
-    principal_bound: ["gateway.accept"], resources_materialized: ["application.prepare"],
-    actor_execution: ["agent.execute"], actor_returned: ["agent.execute"],
-    response_dispatch: ["channel.deliver"], channel_returned: ["channel.deliver"],
-  };
-  return events.filter((event) => !operations[event.kind] || !stages.some((stage) =>
-    event.trace_id && event.trace_id === stage.trace_id && operations[event.kind].includes(String(stage.data?.operation)) &&
-    (event.span_id && event.span_id === stage.span_id || event.data?.stage_span_id === stage.span_id ||
-      typeof event.data?.outbound_id === "string" && event.data.outbound_id === stage.data?.outbound_id)));
 }
 
 function buildFlowItems(steps: DisplayStep[]): FlowItem[] {
@@ -187,8 +168,9 @@ export function buildRunView(events: GatewayObservation[], delivery?: Pick<Gatew
     steps.push({ ...node, depth, contexts: [], permissions: [], logs: [] });
     flatten(node.children, depth + 1);
   });
-  const contextual = unique.filter((event) => event.kind === "ContextSnapshotPrepared");
-  const core = withoutCoveredAggregates(unique.filter((event) => !supplemental.has(event.kind)));
+  const current = unique.filter((event) => event.data?.flow_version === 1);
+  const contextual = current.filter((event) => event.kind === "ContextSnapshotPrepared");
+  const core = current.filter((event) => !supplemental.has(event.kind));
   const usedContexts = new Set<number>();
   const contextsByCall = new Map<string, GatewayObservation[]>();
   for (const event of core) {
@@ -204,8 +186,7 @@ export function buildRunView(events: GatewayObservation[], delivery?: Pick<Gatew
   flatten(buildRunTree([...core, ...contextual.filter((event) => !usedContexts.has(event.seq))]));
   for (const step of steps) {
     step.contexts = contextsByCall.get(JSON.stringify([step.event.trace_id, step.event.span_id])) ?? [];
-    if (!["response_dispatch", "channel_returned"].includes(step.event.kind) &&
-        (step.start ?? step.event).data?.operation !== "channel.deliver") continue;
+    if ((step.start ?? step.event).data?.operation !== "channel.deliver") continue;
     const outbound = step.event.data?.outbound_id ?? step.start?.data?.outbound_id;
     if (typeof outbound !== "string") continue;
     const outbox = delivery?.outbox.find((item) => item.outbound_id === outbound);
@@ -218,6 +199,7 @@ export function buildRunView(events: GatewayObservation[], delivery?: Pick<Gatew
   const logs: GatewayObservation[] = [];
   for (const event of unique) {
     if (event.kind !== "tool_authorization" && event.kind !== "log") continue;
+    if (event.kind === "tool_authorization" && event.data?.flow_version !== 1) continue;
     const candidates = event.trace_id && event.span_id ? steps.filter((step) =>
       step.event.trace_id === event.trace_id && step.event.span_id === event.span_id &&
       (event.kind !== "tool_authorization" || !event.entity_id || related(step.event, event.entity_id))) : [];

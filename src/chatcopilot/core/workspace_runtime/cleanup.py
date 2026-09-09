@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from chatcopilot.core.workspace_runtime.model import Workspace
+from chatcopilot.core.workspace_runtime.model import Workspace, ensure_workspace_directory
 
 _LOGGER = logging.getLogger("chatcopilot.core.workspace_runtime.cleanup")
 
@@ -156,7 +156,7 @@ def clear_workspace_files(ws: Workspace) -> Dict[str, Dict[str, int]]:
 
         try:
             shutil.rmtree(target)
-            target.mkdir(parents=True, exist_ok=True)
+            ensure_workspace_directory(target)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("clear_workspace_files failed for %s", target)
             remaining, remaining_bytes = collect_files(target)

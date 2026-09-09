@@ -68,14 +68,14 @@ export interface GatewayObservation {
   seq: number; kind: string; source?: string; target?: string; status?: string; created_at: number; data?: Record<string, unknown>;
 }
 export interface GatewayOverview {
-  page?: number; limit?: number; total?: number; has_more?: boolean; legacy?: boolean;
-  instance_id: string; source: "gateway_state" | "observation_index"; generated_at: number; truncated: boolean; sanitization_truncated: boolean;
+  page?: number; limit?: number; total?: number; has_more?: boolean;
+  instance_id: string; source: "observation_index"; generated_at: number; truncated: boolean; sanitization_truncated: boolean;
   runs: GatewayRun[]; summary: { total: number; active: number | null; failed_recent: number | null };
   audit: Array<{ allowed: number; code: string; policy_version: string; observed_at: number }>; audit_truncated: boolean;
 }
 export interface GatewayRunDetail {
-  has_more?: boolean; next_cursor?: number; legacy?: boolean;
-  instance_id: string; source: "gateway_state" | "observation_index"; generated_at: number; truncated: boolean; sanitization_truncated: boolean;
+  has_more?: boolean; next_cursor?: number;
+  instance_id: string; source: "observation_index"; generated_at: number; truncated: boolean; sanitization_truncated: boolean;
   run: GatewayRun; observations: GatewayObservation[]; observations_available: boolean;
   events: Array<{ seq: number; event: string; created_at: number; data: Record<string, unknown> }>;
   approvals: Array<{ operation: string; state: string; accepted: number | null; created_at: number; decided_at: number | null }>;
@@ -84,9 +84,6 @@ export interface GatewayRunDetail {
 }
 
 export const OBSERVATION_NAMES: Record<string, string> = {
-  principal_bound: "认证身份已绑定", resources_materialized: "输入资源已准备", actor_execution: "进入 Actor 执行会话",
-  actor_returned: "执行会话返回", response_dispatch: "发起 Channel 投递", channel_returned: "Channel 投递返回",
-  context_prepared: "上下文已准备", resources_dispatched: "资源已送入模型请求", turn_error: "Agent 回合错误",
   LlmCallStarted: "模型请求", LlmCallFinished: "模型返回", ToolStarted: "工具调用", ToolFinished: "工具返回",
   SpanStarted: "能力活动开始", SpanFinished: "能力活动结束", observations_truncated: "后续诊断记录已截断",
 };

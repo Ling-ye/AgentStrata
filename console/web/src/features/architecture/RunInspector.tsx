@@ -8,8 +8,6 @@ import { ConfigFields, DetailScope, Disclosure, ObservationPayload, TaskDetailSt
 import ExecutionConfiguration from "./ExecutionConfiguration";
 
 const EVENT_LABELS: Record<string, string> = {
-  actor_execution: "Agent 执行", actor_returned: "Agent 执行",
-  response_dispatch: "Channel 投递", channel_returned: "Channel 投递",
   ContextSnapshotPrepared: "准备上下文", session_capabilities: "本次可用能力",
   InputResourcesDispatched: "输入资源", TurnError: "任务异常",
 };
@@ -191,12 +189,10 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
       <span>实际 Token {run.total_tokens?.toLocaleString() ?? "未记录"}</span></div>
     {!!run.details_expired && <Alert type="info" content="详细正文已到期；任务摘要和阶段指标仍保留。" />}
     {["truncated", "capture_failed"].includes(run.capture_state ?? "") && <Alert type="warning" content={"任务记录" + bodyState(run.capture_state!) + "，部分过程或正文不可用。"} />}
-    {detail.legacy && <Alert type="info" content="历史记录未包含执行时配置及完整调用详情。" />}
     {(detail.truncated || detail.sanitization_truncated) && <Alert type="warning" content="当前响应包含截断记录，不能视为完整过程。" />}
     <ObservationPayload {...scope} reference={run.input_ref} title="任务输入" />
     <Disclosure title="执行时配置"><ExecutionConfiguration {...scope} /></Disclosure>
-    {!stageCount && events.length > 0 && <p className="obs-muted">{hasMore ? "当前记录尚未包含四层交接，后续记录仍可加载。" : "此任务未记录四层交接边界，仅展示已记录的步骤和数据。"}</p>}
-    <div className="obs-flow-toolbar"><strong>执行过程 · {stageCount > 0 ? `${stageCount} 段 · ` : ""}{view.steps.length - stageCount} 步{hasMore ? "（还有后续记录）" : ""}</strong><Space size="small">
+    <div className="obs-flow-toolbar"><strong>执行过程 · {stageCount > 0 ? `${stageCount} 段 · ` : ""}{view.flow.length - stageCount} 步{hasMore ? "（还有后续记录）" : ""}</strong><Space size="small">
       <Button size="mini" onClick={() => setExpanded((current) => ({ ...current, ...Object.fromEntries(view.steps.map((step) => [step.key, true])) }))}>展开全部</Button>
       <Button size="mini" onClick={() => setExpanded((current) => ({ ...current, ...Object.fromEntries(view.steps.map((step) => [step.key, false])) }))}>收起全部</Button>
     </Space></div>
@@ -204,7 +200,7 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
       <StageCard key={item.step.key} item={item} terminal={terminal} scope={scope} hasMore={hasMore} /> :
       <StepCard key={item.step.key} item={item} index={stepIndex++} open={stepIsOpen(item.step, expanded, terminal)} terminal={terminal} scope={scope}
         onToggle={toggle} hasMore={hasMore} />) :
-      <Empty description="尚未记录执行阶段" />}</div>
+      <Empty description={hasMore ? "尚未取得四层运行过程，可继续加载" : "未采集四层运行过程"} />}</div>
     {hasMore && <Button long loading={fetchingMore} onClick={onMore}>加载后续记录</Button>}
     <section className="obs-run-result">
       <ObservationPayload {...scope} reference={run.result_ref} title="任务结果" />

@@ -155,6 +155,11 @@ Workspace 与 conversation scope 一致：
 - QQ 私聊：`<workspace-root>/p2p_<safe-user-id>/`，按用户隔离。
 - 不同群、私聊和其它平台彼此隔离；旧 `group_<id>/user_<id>/` 不自动迁移。
 
+新建工作区、缺失的父目录和清空产物后重建的目录显式使用 `0700`，不依赖进程的默认 umask。
+Gateway 拒绝所有者不符、符号链接及带组写或其他用户写权限的工作目录。既有目录不会在普通
+请求中自动修改权限；遇到 `workspace_storage_unsafe` 时，应先核对对应目录的类型、所有者和
+权限，仅修正已确认的路径，保留原有文件、记忆及会话状态。
+
 群 conversation journal、persona/memory、actor backend state 和 Owner job 位于 shared root
 之外的 `.conversation-state/` 保护域。Journal 只在 provider acknowledgement 后写入，并以
 稳定 outbound identity 幂等；未确认投递、取消、失败或 stale generation 会逐出本轮 group
