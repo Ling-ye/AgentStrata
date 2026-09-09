@@ -176,7 +176,10 @@ def _model(config: JudgeConfig) -> Any:
         def generate(self, prompt: str, schema: Any = None, **kwargs: Any) -> Any:
             plan = PromptPlanBuilder().build(
                 PromptBuildInput(
-                    profile=BotPromptProfile(identity="", response_style=""),
+                    profile=BotPromptProfile(
+                        identity="AgentStrata evaluation judge.",
+                        response_style="Concise, structured evaluation responses.",
+                    ),
                     backend="native",
                     model=config.model,
                     role="user",

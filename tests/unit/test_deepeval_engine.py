@@ -147,3 +147,40 @@ def test_missing_framework_metric_is_an_error(monkeypatch, deepeval_judge):
     result, detail = engine.score(case(), observation())
     assert not result.passed
     assert "no complete metric" in detail["error"]
+
+
+def test_real_judge_adapter_builds_prompt_plan_and_scores_with_host_client(monkeypatch):
+    import json
+
+    from chatcopilot.core.llm_client import ChatResult, LLMClient
+
+    for key, value in {
+        "MODEL": "configured-judge",
+        "BASE_URL": "https://judge.example.test/v1",
+        "API_KEY": "controlled-judge-key",
+    }.items():
+        monkeypatch.setenv("CHATCOPILOT_EVALUATION_JUDGE_" + key, value)
+    requests = []
+
+    def chat(client, **kwargs):
+        requests.append((client.config, kwargs))
+        return ChatResult(
+            content='{"score":9,"reason":"The output matches the expected JSON."}',
+            usage={"prompt_tokens": 12, "completion_tokens": 8},
+        )
+
+    monkeypatch.setattr(LLMClient, "chat", chat)
+    result, details = engine.score(case(), observation())
+    assert result.passed, details["error"]
+    assert details["calls"] == 1
+    assert details["usage"] == {"prompt_tokens": 12, "completion_tokens": 8}
+    config, request = requests[0]
+    assert config.model == "configured-judge"
+    assert request["max_retries"] == 0
+    assert request["timeout"] == 60
+    system = json.loads(request["messages"][0]["content"])
+    assert "evaluation judge" in system["host_policy"]
+    content = "\n".join(message["content"] for message in request["messages"])
+    assert "AgentStrata evaluation judge." in content
+    assert "actual request" in content
+    assert "controlled-judge-key" not in content
