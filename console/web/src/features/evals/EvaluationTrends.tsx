@@ -82,7 +82,7 @@ export default function EvaluationTrends({ initialBot, bots, visible, onOpen }: 
       ]} /></div>
       <div className="eval-trend-filter">机器人<Select aria-label="趋势机器人" mode="multiple" value={botIds} onChange={setSelectedBots} allowClear placeholder="全部机器人" options={options(bots)} /></div>
       <div className="eval-trend-filter">测试方向<Select aria-label="趋势测试方向" value={suite} onChange={setSuite} options={[
-        { value: "agentstrata-capabilities-v1", label: "Agent 能力" }, { value: "agentstrata-qq-message-flow-v1", label: "QQ 链路" },
+        { value: "agentstrata-capabilities-v1", label: "Agent 评测" }, { value: "agentstrata-qq-message-flow-v1", label: "QQ 链路" },
       ]} /></div>
       <div className="eval-trend-filter">模型<Select aria-label="趋势模型" mode="multiple" value={models} onChange={setModels} options={options(modelOptions)} allowClear placeholder="全部模型" /></div>
       <div className="eval-trend-filter">测试规模<Select aria-label="趋势测试规模" mode="multiple" value={scales} onChange={setScales} options={options(scaleOptions)} allowClear placeholder="全部规模" /></div>

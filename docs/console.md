@@ -19,7 +19,7 @@
   `services.sh start` 做 desired-state reconcile，不会启动已禁用服务。
 - **机器人实例**：展示每个 BotSpec 实例的部署、注册、Gateway MainPID、Channel 连接证据、日志、任务和更新入口。
 - **组件目录**：按 `tools` / `prompts` / `agents` / `context` 四个 surface 以及 application / Agent / 外部能力的组件分组筛选，展示实例声明使用关系与工具角色要求，只读浏览工具包、运行特性、MCP 服务、提示词、Agent preset、workflow DTO 和上下文来源；数据只来自 `chatcopilot.component_catalog` 的精确 pack/tool 投影，不直接读取 Agent/BotSpec 内部 registry 或自行 import 工具模块。
-- **评测中心**：提供「开始测试 / 运行记录 / 进步趋势」。单次详情展示通过、失败、异常、跳过和测试点记录；历史曲线按测试条件分组，保留时间、Git 版本及配置变化。两条主测试方向为 Agent 能力与 QQ 链路，继续使用唯一 Evaluation 资源。
+- **评测中心**：提供「开始测试 / 运行记录 / 进步趋势」。单次详情展示通过、失败、异常、跳过和测试点记录；历史曲线按测试条件分组，保留时间、Git 版本及配置变化。两条主测试方向为 Agent 评测与 QQ 链路；Agent 评测卡片注明「测评框架：DeepEval」，继续使用唯一 Evaluation 资源。
 
 Console 后端的进程执行、YAML 投影和 job/task/log 可观测读取分别位于 `process_executor.py`、`yaml_io.py` 和 `observability.py`，`operations.py` 只保留控制面编排与兼容导出。前端路由按页面懒加载；Evals 的详情组件/展示函数位于 `features/evals/`，BotToolEditor 的模型与状态 hook 位于 `features/bots/tool-editor/`。
 - **设置**：控制台自身更新、控制台后端日志等全局维护入口。
@@ -246,7 +246,7 @@ Legacy QQ 合成 artifact 中的 Relay、sender envelope、transport attestation
 
 页面保留开始测试、运行记录和进步趋势。顶部机器人选择用于启动与运行记录；趋势有独立的多选范围。
 
-- **开始测试**：直接 Agent 能力与 QQ 链路分别选择快速、完整或安全范围，手动启动，不增加模型或 Agent 启动参数面板。Comparison Profile、BFCL、GAIA 和 IFEval 保留原有入口。
+- **开始测试**：Agent 评测与 QQ 链路分别选择快速、完整或安全范围，手动启动，不增加模型或 Agent 启动参数面板。Comparison Profile、BFCL、GAIA 和 IFEval 保留原有入口。
 - **运行记录**：详情顶部显示通过率、通过/失败/异常/跳过和质量分覆盖情况。Case 表格常显实际输入与最终输出预览，原处展开全文、多轮交互、附件信息、工具证据和每项判分理由。多个测试点可以同时展开；完整正文按需读取，不要求逐层展开 JSON。Agent 执行失败与判分异常分别展示。判分前 Core 保存 `observation.json` 中的实际交互，判分取消或超时仍可阅读；这份记录不计入完成样本，也不能用于 resume。
 - **进步趋势**：默认最近 30 天、当前机器人，支持 7 / 30 / 90 天、全部和自定义时间。机器人、模型、测试规模与测试点支持多选；勾选 Agent、模型、测试规模决定拆线，全部取消时合为一条时间曲线。每点代表一次 Evaluation 的一个 Target。Git 与严格比较指纹不自动拆线。通过率、质量分、Agent 执行耗时分别绘制，可用鼠标或键盘打开记录；关闭详情保留趋势条件。每页读取 50 条记录，通过“加载更多历史记录”继续查看，没有静默的 200 点截断。
 
@@ -254,7 +254,7 @@ Agent 题库包含 63 个测试点：原有 25 个、新增 30 个业务能力�
 
 Case 列表和详情显示“业务能力”或“IFEval 固定子集”。IFEval 详情保留原题 key、固定版本及每条约束的参数和结果，不以这个子集分数宣称完整官方基准成绩。格式检查不调用质量评分模型；语言识别或其他检查器异常显示判分异常。题集扩充不会修改历史记录，旧记录缺少来源时不补造。
 
-Agent 能力轨道由 DeepEval 4.2.2 执行指标。工具、权限、隔离、文件和回执由确定性事实指标验证，适用 Case 默认追加 GEval 或 ConversationalGEval 质量判分，阈值默认 0.7；两类必要条件均通过才算通过。固定步骤、参考标准与阈值随 Case 定义版本保存。质量分不能覆盖事实失败，评分异常不能算通过。
+Agent 评测由 DeepEval 4.2.2 执行指标。工具、权限、隔离、文件和回执由确定性事实指标验证，适用 Case 默认追加 GEval 或 ConversationalGEval 质量判分，阈值默认 0.7；两类必要条件均通过才算通过。固定步骤、参考标准与阈值随 Case 定义版本保存。质量分不能覆盖事实失败，评分异常不能算通过。
 
 进步趋势分开提供三组操作：上方选择数据范围和刷新，中间勾选拆线维度，图表标题旁切换通过率、质量分和累计执行耗时。切换指标不改变分组，勾选维度不改变指标。
 

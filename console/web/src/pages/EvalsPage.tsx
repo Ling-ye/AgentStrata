@@ -54,6 +54,7 @@ interface TrackDefinition {
   title: string;
   shortTitle: string;
   description: string;
+  framework?: string;
   includes: string;
   excludes: string;
   suiteId: string;
@@ -63,11 +64,12 @@ interface TrackDefinition {
 const TRACKS: readonly TrackDefinition[] = [
   {
     id: "agent",
-    title: "直接测试 Agent 能力",
-    shortTitle: "Agent 能力",
-    description: "任务直接提交给所选 Bot 的 Agent runtime，观察模型、工具和回答本身。",
-    includes: "人格表现、工具编排、搜索与证据、当日 USD/CNY、文件、图片、会话和代码恢复",
-    excludes: "不经过 QQ、QQ @ Relay、cc-connect、身份准入或 ACP",
+    title: "Agent 评测",
+    shortTitle: "Agent 评测",
+    description: "评估任务完成、工具使用、多轮交互和协作表现。",
+    framework: "DeepEval",
+    includes: "工具决策、搜索与证据、记忆与上下文、文件与图片、Skills、子 Agent、代码任务及指令遵循",
+    excludes: "QQ 消息接入、网关准入与平台投递",
     suiteId: "agentstrata-capabilities-v1",
     accent: "arcoblue",
   },
@@ -341,7 +343,7 @@ export default function EvalsPage({ visible = true }: Props) {
   return (
     <PageSection
       title="测评中心"
-      description="查看 Agent 能力与 QQ 链路的测试结果、版本记录和历史变化。"
+      description="查看 Agent 评测与 QQ 链路测试的结果、版本记录和历史变化。"
       extra={tab !== "trends" ? <Button size="small" onClick={() => void refresh()}>刷新</Button> : undefined}
     >
       {tab !== "trends" && <div className="eval-history-filters eval-bot-selection">
@@ -404,6 +406,7 @@ export default function EvalsPage({ visible = true }: Props) {
                       column={1}
                       size="small"
                       data={[
+                        ...(track.framework ? [{ label: "测评框架", value: track.framework }] : []),
                         { label: "测试内容", value: track.includes },
                         { label: "明确不含", value: track.excludes },
                       ]}
@@ -436,7 +439,9 @@ export default function EvalsPage({ visible = true }: Props) {
                         disabled={!botId || unavailable || Boolean(activeForBot)}
                         onClick={() => startMutation.mutate(track.id)}
                       >
-                        启动{track.shortTitle}{preset === "full" ? "完整测试" : "测试"}
+                        {track.id === "agent"
+                          ? preset === "full" ? "开始完整评测" : preset === "security" ? "开始安全评测" : "开始评测"
+                          : `启动${track.shortTitle}${preset === "full" ? "完整测试" : "测试"}`}
                       </Button>
                     </div>
                   </Card>
