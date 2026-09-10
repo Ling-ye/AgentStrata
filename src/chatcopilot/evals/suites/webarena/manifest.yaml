@@ -14,3 +14,7 @@ official_url: https://webarena.dev/
 setup_hint: >-
   需要 Agent 浏览器操作工具 + 自建 WebArena Web 应用集群
   （Reddit/GitLab/Shopping Docker）。当前 Agent 无浏览器能力，此 benchmark 暂不可用。
+
+source_type: public_benchmark
+purpose: benchmark
+coverage: 尚未接入

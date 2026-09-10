@@ -3840,3 +3840,33 @@ def test_supervision_preserves_sampled_execution_separately_from_judging(tmp_pat
     timing = frames[-1]['timing']
     assert timing['state'] == ('complete' if judging else 'partial')
     assert .03 <= timing['seconds'] < .3
+
+
+def test_business_preflight_records_primary_plan_and_missing_tool_is_blocked(deepeval_judge):
+    request = {"kind": "suite", "bot": "lingye-copilot-qq", "suite": "project-business-v1",
+               "case_ids": ["business-query-reference"], "options": {}}
+    result = validate_evaluation(request)
+    assert result["ready"], result["checks"]
+    assert result["benchmark"]["scoring"]["primary"] == "llm_judge"
+    assert result["benchmark"]["scoring"]["rubric"]["strict_mode"] is True
+    blocked = validate_evaluation({**request, "case_ids": ["qq-group-members-example"]})
+    assert blocked["ready"] is False
+    assert any(c["code"] == "benchmark_environment" and not c["ok"] for c in blocked["checks"])
+
+
+def test_legacy_judge_flags_normalize_without_overriding_native_result(monkeypatch):
+    monkeypatch.setattr(evaluation_module, "get_cases", lambda *args, **kwargs: ())
+    from chatcopilot.evals.workbench import benchmark_descriptor
+    from chatcopilot.evals.registry import get_manifest
+
+    parsed = parse_evaluation_request({"kind": "suite", "suite": "gaia", "dry_run": True,
+                                       "options": {"llm_judge": True}})
+    assert parsed.options["scoring_mode"] == "native_geval"
+    with pytest.raises(ValueError, match="conflicts"):
+        parse_evaluation_request({"kind": "suite", "suite": "gaia", "dry_run": True,
+                                  "llm_judge": False, "options": {"llm_judge": True}})
+    for suite in ("gaia", "bfcl", "ifeval", "swe-bench-verified", "agentbench-fc"):
+        assert benchmark_descriptor(get_manifest(suite), []) ["default_scoring_mode"] == "native"
+        with pytest.raises(ValueError):
+            parse_evaluation_request({"kind": "suite", "suite": suite, "dry_run": True,
+                                      "options": {"scoring_mode": "geval"}})

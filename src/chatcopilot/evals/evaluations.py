@@ -1861,8 +1861,8 @@ def _parse_suite_request(request: Mapping[str, Any]) -> SuiteEvaluationRequest:
     manifest = get_manifest(suite)
     dry_run = _strict_bool(request.get("dry_run", False), "dry_run")
     llm_judge = _strict_bool(request.get("llm_judge", False), "llm_judge")
-    if llm_judge and suite != "gaia":
-        raise ValueError("llm_judge is supported only for GAIA")
+    if llm_judge and manifest.source_type != "public_benchmark":
+        raise ValueError("llm_judge supplementary scoring requires a public benchmark")
     raw_case_ids = request.get("case_ids")
     requested_case_ids = (
         ()
@@ -1898,11 +1898,23 @@ def _parse_suite_request(request: Mapping[str, Any]) -> SuiteEvaluationRequest:
     if max_wall_seconds > 21600:
         raise ValueError("max_wall_seconds must be at most 21600")
     seed = _integer(request.get("seed", 0), "seed")
-    options = _suite_options(manifest, request.get("options", {}))
+    raw_options = request.get("options", {})
+    options = _suite_options(manifest, raw_options)
+    if "llm_judge" in raw_options:
+        option_judge = _strict_bool(raw_options["llm_judge"], "options.llm_judge")
+        if "llm_judge" in request and option_judge != llm_judge:
+            raise ValueError("llm_judge conflicts with options.llm_judge")
+        llm_judge = option_judge
     if llm_judge:
         if request.get("options", {}).get("scoring_mode") not in {None, "native_geval"}:
             raise ValueError("llm_judge conflicts with scoring_mode")
         options["scoring_mode"] = "native_geval"
+    from chatcopilot.evals.workbench import scoring_mode
+
+    if manifest.status == "implemented":
+        normalized_mode = scoring_mode(manifest, options, llm_judge=llm_judge)
+        if any(item.name == "scoring_mode" for item in manifest.options):
+            options["scoring_mode"] = normalized_mode
     declared_options = {item.name for item in manifest.options}
     if "dry_run" in declared_options:
         options["dry_run"] = dry_run
@@ -2106,7 +2118,7 @@ def _validate_suite(
         )
         return ()
 
-    if manifest.track == "agent" and not request.dry_run:
+    if capability_definitions and not request.dry_run:
         from chatcopilot.evals.deepeval_engine import preflight
 
         try:
@@ -2118,13 +2130,13 @@ def _validate_suite(
             checks.append(_check("deepeval", "DeepEval 与独立评分模型", False, str(exc), "安装 evaluation 依赖并配置独立评分模型"))
             return ()
 
-    from chatcopilot.evals.workbench import EXTERNAL_SUITES, scoring_mode
-    if request.suite in EXTERNAL_SUITES and not request.dry_run:
+    from chatcopilot.evals.workbench import scoring_mode
+    if (manifest.source_type == "public_benchmark" or manifest.purpose == "business_task") and not request.dry_run:
         from chatcopilot.evals.deepeval_engine import JudgeConfig, preflight
 
         try:
             preflight([])
-            if scoring_mode(request.suite, request.options, llm_judge=request.llm_judge) != "native":
+            if scoring_mode(manifest, request.options, llm_judge=request.llm_judge) != "native":
                 JudgeConfig.from_environment()
             checks.append(_check("deepeval", "DeepEval 与评分配置", True, "ready"))
         except ValueError as exc:
@@ -2432,7 +2444,7 @@ def _suite_case_preflight(
             requirements = {}
         plugin_id, driver_id = _case_plugin_driver(manifest, case)
         from chatcopilot.evals.business_cases import missing_requirements
-        missing: list[str] = missing_requirements(case.case_id, runtime)
+        missing: list[str] = [] if manifest.purpose == "business_task" else missing_requirements(case.case_id, runtime)
         capability_definition = definitions.get(case.case_id)
         if definitions:
             if capability_definition is None:

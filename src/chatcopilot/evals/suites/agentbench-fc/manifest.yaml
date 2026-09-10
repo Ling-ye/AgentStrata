@@ -18,10 +18,21 @@ options:
   - name: scoring_mode
     type: enum
     label: 评分方案
-    choices: [native, native_geval, geval]
+    choices: [native, native_geval]
     default: native
   - name: quality_rubric
     type: enum
     label: GEval 量表
     choices: [evidence, task]
     default: evidence
+
+source_type: public_benchmark
+purpose: benchmark
+data_version: 具体版本见题目数据快照；未提供时不推断
+split: 实际载入数据划分
+coverage: FC 环境协议：DB / OS / KG / ALFWorld / WebShop；以本地环境与题目目录为准
+target_scope: Agent runtime · 环境交互
+native_method: 环境原生 success / reward
+scorer_origin: official
+scorer_version: 1.0.0
+execution_scope: agent_runtime

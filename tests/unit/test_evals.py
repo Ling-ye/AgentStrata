@@ -46,6 +46,7 @@ class EvalRegistryTests(unittest.TestCase):
                 "swe-bench-verified",
                 "agentbench-fc",
                 "webarena",
+                "project-business-v1",
             },
             suite_ids,
         )

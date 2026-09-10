@@ -271,3 +271,25 @@ def test_qq_without_model_has_runtime_duration_and_agent_still_requires_model():
     assert target['duration']['kind'] == 'runtime'
     assert target['duration']['total_seconds'] == 1
     assert target['agent_duration_seconds'] is None
+
+
+def test_business_preview_keeps_judgment_kind_without_loading_reference_body():
+    from chatcopilot.evals.application.insights import trial_preview
+
+    preview = trial_preview({"trial_id": "business-a", "outcome": "error", "evidence": {
+        "error_code": "judge_error", "error_stage": "judging", "tool_evidence_state": "recorded",
+        "judge_evidence": {"primary": "llm_judge", "tool_outcome": "no_calls", "tool_evidence_state": "recorded",
+                           "quality_applicable": True, "metrics": [], "judge_input": {"reference": "full reference"}}}})
+    assert preview["evidence"]["judge_evidence"]["primary"] == "llm_judge"
+    assert preview["evidence"]["error_code"] == "judge_error"
+    assert "judge_input" not in preview["evidence"]["judge_evidence"]
+
+
+def test_trend_target_uses_frozen_plan_instead_of_ambient_legacy_judge():
+    from chatcopilot.evals.application.insights import target_summaries
+
+    request, result = fixture_result()
+    plan = {"primary": "llm_judge", "judge": {"model": "frozen-model"}}
+    request["benchmark"] = {"scoring": plan}
+    result["config_snapshot"]["definition_snapshot"]["scoring"] = {"judge": {"model": "ambient-model"}}
+    assert target_summaries(result, request)[0]["scoring"] == plan

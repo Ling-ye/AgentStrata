@@ -102,6 +102,17 @@ class SuiteManifest:
     presets: tuple[SuitePreset, ...] = ()
     default_preset: str = ""
 
+    execution_scope: str = ""
+    source_type: str = "project"
+    purpose: str = "engineering_regression"
+    data_version: str = ""
+    split: str = ""
+    coverage: str = ""
+    target_scope: str = ""
+    native_method: str = "Suite scorer"
+    scorer_origin: str = "project_adapter"
+    scorer_version: str = "1"
+
     def to_standard(self) -> BenchmarkStandard:
         """Project this richer contract onto the legacy public facade."""
 

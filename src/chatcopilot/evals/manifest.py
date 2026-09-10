@@ -75,6 +75,8 @@ _TOP_LEVEL_FIELDS = {
     "options",
     "presets",
     "default_preset",
+    "execution_scope", "source_type", "purpose", "data_version", "split", "coverage", "target_scope",
+    "native_method", "scorer_origin", "scorer_version",
 }
 _FILE_FIELDS = {"path", "role", "media_type", "sha256", "resource_id"}
 _OPTION_FIELDS = {"name", "type", "label", "default", "required", "choices", "minimum", "maximum"}
@@ -224,6 +226,16 @@ def parse_suite_manifest(data: bytes, *, source: str = "manifest.yaml") -> Suite
         options=options,
         presets=presets,
         default_preset=default_preset,
+        execution_scope=_optional_string(raw.get("execution_scope", driver_id), source, "execution_scope", maximum=240),
+        source_type=_choice(raw.get("source_type", "project"), {"project", "public_benchmark"}, source, "source_type"),
+        purpose=_choice(raw.get("purpose", "engineering_regression"), {"business_task", "engineering_regression", "benchmark"}, source, "purpose"),
+        data_version=_optional_string(raw.get("data_version", version), source, "data_version", maximum=120),
+        split=_optional_string(raw.get("split"), source, "split", maximum=120),
+        coverage=_optional_string(raw.get("coverage"), source, "coverage", maximum=1000),
+        target_scope=_optional_string(raw.get("target_scope", driver_id), source, "target_scope", maximum=240),
+        native_method=_optional_string(raw.get("native_method", "Suite scorer"), source, "native_method", maximum=240),
+        scorer_origin=_choice(raw.get("scorer_origin", "project_adapter"), {"official", "project_adapter", "llm_judge"}, source, "scorer_origin"),
+        scorer_version=_optional_string(raw.get("scorer_version", version), source, "scorer_version", maximum=120),
     )
 
 
@@ -656,13 +668,16 @@ def suite_definition_snapshot(
             "case_id": case.case_id,
             "definition_sha256": _case_definition_digest(case),
             "input": case.input,
+            "context": case.context,
+            "expected_behavior": case.expected_behavior,
+            "business": case.metadata.get("business"),
             "turns": case.metadata.get("case_definition", {}).get("turns", []),
             "quality": case.metadata.get("case_definition", {}).get("quality", {}),
         }
         for case in cases
     ]
     from chatcopilot.evals.deepeval_engine import scoring_snapshot
-    from chatcopilot.evals.workbench import EXTERNAL_SUITES, RUBRICS, SCORING_VERSION
+    from chatcopilot.evals.workbench import RUBRICS, SCORING_VERSION
 
     return {
         "schema": 2,
@@ -674,9 +689,9 @@ def suite_definition_snapshot(
         },
         "case_plugin_bindings": case_plugin_bindings,
         **({"scoring": scoring_snapshot()}
-           if manifest.track == "agent" or manifest.suite_id in EXTERNAL_SUITES else {}),
+           if manifest.track == "agent" or manifest.source_type == "public_benchmark" else {}),
         **({"quality_rubrics": RUBRICS, "scoring_version": SCORING_VERSION}
-           if manifest.suite_id in EXTERNAL_SUITES else {}),
+           if manifest.source_type == "public_benchmark" else {}),
         "execution_implementations": suite_implementation_snapshot(implementation_bindings),
         "cases": case_records,
         "target_fingerprint": to_jsonable(dict(target_fingerprint or {})),

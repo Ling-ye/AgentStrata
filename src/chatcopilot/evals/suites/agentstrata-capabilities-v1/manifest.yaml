@@ -1,7 +1,7 @@
 schema: 1
 suite_id: agentstrata-capabilities-v1
 version: '3'
-name: 直接 Agent 能力 v1
+name: AgentStrata 工程回归
 kind: product
 status: implemented
 value: 不经过 ACP 或平台链路，直接验证所选 Bot 的 Agent runtime、工具编排、人格表现和实时信息回答。
@@ -149,3 +149,14 @@ options:
   label: 评分方案
   choices: [native, native_geval]
   default: native_geval
+
+source_type: project
+purpose: engineering_regression
+data_version: '3'
+split: 固定回归集
+coverage: 63 个固定工程回归 Case，保留原有断言及历史 ID
+target_scope: Agent runtime · 不经过 QQ / ACP
+native_method: 执行事实与必需质量门禁
+scorer_origin: project_adapter
+scorer_version: '3'
+execution_scope: direct_agent_runtime/no_acp

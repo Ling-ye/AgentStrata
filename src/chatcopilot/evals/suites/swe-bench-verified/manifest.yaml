@@ -20,10 +20,21 @@ options:
   - name: scoring_mode
     type: enum
     label: 评分方案
-    choices: [native, native_geval, geval]
+    choices: [native, native_geval]
     default: native
   - name: quality_rubric
     type: enum
     label: GEval 量表
     choices: [evidence, task]
     default: evidence
+
+source_type: public_benchmark
+purpose: benchmark
+data_version: 具体版本见题目数据快照；未提供时不推断
+split: 实际载入数据划分
+coverage: 固定数据与容器测试环境
+target_scope: Agent runtime · 隔离代码任务
+native_method: SWE-bench 5.0.2 原生评分 · 受限容器执行
+scorer_origin: official
+scorer_version: 5.0.2
+execution_scope: agent_runtime

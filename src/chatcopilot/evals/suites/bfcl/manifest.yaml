@@ -25,10 +25,21 @@ options:
   - name: scoring_mode
     type: enum
     label: 评分方案
-    choices: [native, native_geval, geval]
+    choices: [native, native_geval]
     default: native
   - name: quality_rubric
     type: enum
     label: GEval 量表
     choices: [evidence, task]
     default: evidence
+
+source_type: public_benchmark
+purpose: benchmark
+data_version: 具体版本见题目数据快照；未提供时不推断
+split: 实际载入数据划分
+coverage: v3 数据格式：simple / multiple / parallel / parallel_multiple / relevance；当前为部分协议校准
+target_scope: 模型函数调用接口 · direct_llm
+native_method: 调用名称与参数匹配（项目适配器）
+scorer_origin: project_adapter
+scorer_version: 1.0.0
+execution_scope: direct_llm/function_call_protocol

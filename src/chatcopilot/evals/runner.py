@@ -755,12 +755,9 @@ def _case_context(case: EvalCase) -> str:
         "## Eval Case Context",
         f"case_id: {case.case_id}",
         f"category: {case.category}",
-        f"expected_behavior: {case.expected_behavior}",
     ]
     if case.context:
         parts.append(f"context: {case.context}")
-    if case.rubric:
-        parts.append(f"rubric: {case.rubric}")
     return "\n".join(parts)
 
 

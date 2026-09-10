@@ -16,7 +16,9 @@ from chatcopilot.evals.application.bots import (
     temporary_eval_env,
 )
 from chatcopilot.evals.models import EvalCase, to_jsonable
-from chatcopilot.evals.workbench import benchmark_descriptor
+from chatcopilot.evals.workbench import benchmark_descriptor, organization_descriptor, scoring_plan
+from chatcopilot.evals.business_dataset import tool_dependencies, reference_material
+from chatcopilot.evals.business_tools import readiness as business_readiness
 from chatcopilot.evals.official_data import suite_data_status
 from chatcopilot.evals.plugins import get_evaluation_plugin
 from chatcopilot.evals.profiles import profile_descriptors
@@ -68,10 +70,12 @@ def list_suite_descriptors(
                         )
                     cases = get_cases(standard.suite_id, auto_prepare=False)
                     if plugin.preflight is not None:
-                        plugin.preflight(cases=cases)
+                        runnable = tuple(case for case in cases if _case_readiness(case)["ready"])
+                        if runnable:
+                            plugin.preflight(cases=runnable)
                 except Exception as exc:  # noqa: BLE001
                     error = f"{type(exc).__name__}: {exc}"
-            ready = implemented and bool(cases) and not error
+            ready = implemented and any(_case_readiness(case)["ready"] for case in cases) and not error
             reason = ""
             if not implemented:
                 reason = "该评测套件当前仅预留 adapter，尚未实现执行链路。"
@@ -94,13 +98,15 @@ def list_suite_descriptors(
                 {
                     **to_jsonable(standard),
                     "version": manifest.version,
+                    **organization_descriptor(manifest),
+                    "runnable_case_count": sum(_case_readiness(case)["ready"] for case in cases),
                     "benchmark": benchmark_descriptor(manifest, cases),
                     "status": manifest.status,
                     "plugin_id": manifest.plugin_id,
                     "driver_id": manifest.driver_id,
                     "driver": manifest.driver_id,
                     "track": manifest.track,
-                    "execution_scope": _suite_execution_scope(manifest.suite_id),
+                    "execution_scope": manifest.execution_scope or manifest.driver_id,
                     "capability_status": _suite_capability_status(manifest.suite_id),
                     "default_preset": manifest.default_preset,
                     "presets": [to_jsonable(item) for item in manifest.presets],
@@ -117,22 +123,14 @@ def list_suite_descriptors(
                     "selection_policy": _suite_selection_policy(standard.suite_id),
                     "level_policy": _suite_level_policy(standard.suite_id),
                     "category_policy": _suite_category_policy(standard.suite_id),
-                    "data_source": data_status.get("source", ""),
+                    "data_source": "project_files" if manifest.source_type == "project" and manifest.files else data_status.get("source", ""),
                     "data_cache_path": data_status.get("cache_path", ""),
                     "uses_smoke_data": bool(data_status.get("uses_smoke", False)),
                 }
             )
-    return descriptors
+    return sorted(descriptors, key=lambda item: (item["status"] != "implemented", item["purpose"] != "business_task", item["name"]))
 
 
-def _suite_execution_scope(suite_id: str) -> str:
-    if suite_id == "bfcl":
-        return "direct_llm/function_call_protocol"
-    if suite_id == "agentstrata-capabilities-v1":
-        return "direct_agent_runtime/no_acp"
-    if suite_id == "agentstrata-qq-message-flow-v1":
-        return "synthetic_qq_owned_chain/no_external_platform"
-    return "agent_runtime" if suite_id in {"gaia", "ifeval"} else "unavailable"
 
 
 def _suite_capability_status(suite_id: str) -> str:
@@ -234,7 +232,9 @@ def get_case_descriptor(
                 "rubric": case.rubric,
                 "expected_behavior": case.expected_behavior,
                 "metadata": _safe_case_metadata(case),
-                "scoring": case.metadata.get("case_definition", {}).get("quality", {}),
+                "scoring": scoring_plan(get_manifest(suite_id), {}) if "business" in case.metadata else case.metadata.get("case_definition", {}).get("quality", {}),
+                "reference_material": reference_material(case),
+                "organization": organization_descriptor(get_manifest(suite_id)),
             }
     raise KeyError(case_id)
 
@@ -244,9 +244,11 @@ def _case_summary(case: EvalCase) -> dict[str, Any]:
     files = case.metadata.get("files") if isinstance(case.metadata, dict) else ()
     return {
         "case_id": case.case_id,
+        "tools": tool_dependencies(case),
+        "readiness": _case_readiness(case),
         "category": case.category,
         "summary": text[:180] + ("…" if len(text) > 180 else ""),
-        "quality_required": case.metadata.get("case_definition", {}).get("quality", {}).get("enabled"),
+        "quality_required": True if "business" in case.metadata else case.metadata.get("case_definition", {}).get("quality", {}).get("enabled"),
         "has_attachments": bool(files),
         "attachment_count": (len(files) if isinstance(files, (list, tuple)) else 0),
         "source": _safe_source(case.metadata.get("source", "")),
@@ -361,3 +363,9 @@ __all__ = [
     "list_suite_descriptors",
     "stream_prepare_suite",
 ]
+
+
+def _case_readiness(case: EvalCase) -> dict[str, Any]:
+    if "business" in case.metadata:
+        return business_readiness(case)
+    return {"ready": True, "state": "ready", "missing_tools": [], "environment": "", "reason": ""}

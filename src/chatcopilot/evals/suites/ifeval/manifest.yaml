@@ -24,10 +24,21 @@ options:
   - name: scoring_mode
     type: enum
     label: 评分方案
-    choices: [native, native_geval, geval]
+    choices: [native, native_geval]
     default: native
   - name: quality_rubric
     type: enum
     label: GEval 量表
     choices: [evidence, task]
     default: evidence
+
+source_type: public_benchmark
+purpose: benchmark
+data_version: 具体版本见题目数据快照；未提供时不推断
+split: 实际载入数据划分
+coverage: 已实现的确定性指令类别
+target_scope: Agent runtime
+native_method: 指令约束检查（支持子集）
+scorer_origin: project_adapter
+scorer_version: 1.0.0
+execution_scope: agent_runtime

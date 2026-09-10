@@ -9,6 +9,7 @@ from typing import Any, Callable, Mapping
 from chatcopilot.evals import deepeval_engine as engine
 from chatcopilot.evals.deepeval_engine import JudgeConfig, _local_sdk
 from chatcopilot.evals.models import EvalCase, JudgeResult, to_jsonable
+from chatcopilot.evals.registry import get_manifest
 from chatcopilot.evals.workbench import RUBRICS, SCORING_VERSION, scoring_mode
 
 
@@ -23,7 +24,7 @@ def score_benchmark(
     tool_calls: list[dict[str, Any]] | None = None,
     judge_model: Any = None,
 ) -> tuple[JudgeResult, dict[str, Any]]:
-    mode = scoring_mode(suite_id, options, llm_judge=llm_judge)
+    mode = scoring_mode(get_manifest(suite_id), options, llm_judge=llm_judge)
     rubric = RUBRICS[str(options.get("quality_rubric", "evidence"))]
     model = judge_model
     native: JudgeResult | None = None

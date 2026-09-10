@@ -1,0 +1,6 @@
+{
+  "facts": {
+    "comparison-token": {"ok": true, "value": "PAIR-42"},
+    "unavailable-record": {"ok": false, "value": "", "error": "preset_query_unavailable"}
+  }
+}

@@ -41,3 +41,14 @@ presets:
       - qq-member-owner-action-denied
       - qq-nickname-spoof-denied
 default_preset: quick
+
+source_type: project
+purpose: engineering_regression
+data_version: '1'
+split: 固定回归集
+coverage: Legacy Relay / attestation / ACP 回归
+target_scope: 合成链路 · 非真实 QQ / 当前 Gateway E2E
+native_method: 确定性链路断言
+scorer_origin: project_adapter
+scorer_version: '1'
+execution_scope: synthetic_qq_owned_chain/no_external_platform

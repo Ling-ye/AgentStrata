@@ -32,12 +32,14 @@ import {
 import type { ColumnProps } from "../shared/ui/arcoTypes";
 import PageSection from "../shared/ui/PageSection";
 import BenchmarkWorkbench from "../features/evals/BenchmarkWorkbench";
+import { asObject } from "../features/evals/trialModel";
 import { BenchmarkSnapshot } from "../features/evals/BenchmarkSnapshot";
 import EvaluationTrends from "../features/evals/EvaluationTrends";
 import { EvaluationResults } from "../features/evals/EvaluationResults";
 import { dateLabel, evaluationSuiteId, modelLabel, rateLabel, revisionLabel } from "../features/evals/insightsModel";
 
 const { Text } = Typography;
+const hasLlmPrimary = (record: EvaluationRecord) => asObject(asObject(record.benchmark).scoring).primary === "llm_judge";
 
 type EvaluationTrack = "agent" | "qq_message_flow";
 
@@ -98,7 +100,7 @@ function suiteId(record: EvaluationRecord): string {
 
 function trackForRecord(record: EvaluationRecord): TrackDefinition | null {
   const id = suiteId(record);
-  return TRACKS.find((track) => track.suiteId === id) ?? (["gaia", "bfcl", "ifeval", "swe-bench-verified", "agentbench-fc"].includes(id) ? TRACKS[0] : null);
+  return TRACKS.find((track) => track.suiteId === id) ?? (id ? TRACKS[0] : null);
 }
 
 function formatTime(value: string | null | undefined): string {
@@ -212,15 +214,15 @@ export default function EvalsPage({ visible = true }: Props) {
       render: (value: string) => <Tag color={STATUS_COLORS[value] ?? "gray"}>{value}</Tag>,
     },
     {
-      title: "基准 / 框架", width: 220, render: (_value, record) => <BenchmarkSnapshot record={record} compact />,
+      title: "测评集 / 框架", width: 220, render: (_value, record) => <BenchmarkSnapshot record={record} compact />,
     },
     {
       title: "通过情况",
       width: 200,
       render: (_value, record) => record.insights.counts ? (
         <Space size={4} wrap>
-          <Text bold>{rateLabel(record.insights.pass_rate)}</Text>
-          <Text type="secondary">{record.insights.counts.passed}/{record.insights.observed}</Text>
+          <Text bold>{rateLabel(hasLlmPrimary(record) ? record.insights.quality.score : record.insights.pass_rate)}</Text>
+          <Text type="secondary">{hasLlmPrimary(record) ? "LLM " : ""}{record.insights.counts.passed}/{hasLlmPrimary(record) ? record.insights.quality.scored : record.insights.observed}</Text>
           {record.insights.counts.failed > 0 && <Tag color="red">失败 {record.insights.counts.failed}</Tag>}
           {record.insights.counts.error > 0 && <Tag color="orange">异常 {record.insights.counts.error}</Tag>}
           {!record.insights.complete && <Tag color="gray">部分</Tag>}
@@ -228,8 +230,8 @@ export default function EvalsPage({ visible = true }: Props) {
       ) : <Text type="secondary">未记录</Text>,
     },
     {
-      title: "GEval 质量", width: 150, render: (_value, record) => <Space direction="vertical" size={2}>
-        <Text>{record.insights.quality.score === null ? "—" : record.insights.quality.score.toFixed(2)}</Text>
+      title: "LLM 评价", width: 150, render: (_value, record) => <Space direction="vertical" size={2}>
+        <Text>{hasLlmPrimary(record) ? "通过 / 不通过判定" : record.insights.quality.score === null ? "—" : record.insights.quality.score.toFixed(2)}</Text>
         <Text type="secondary">已评分 {record.insights.quality.scored} / {record.insights.quality.expected}</Text>
       </Space>,
     },
@@ -277,7 +279,7 @@ export default function EvalsPage({ visible = true }: Props) {
   return (
     <PageSection
       title="测评中心"
-      description="按基准选择题目与评分方法，查看实际结果和可比趋势。"
+      description="按测评集选择题目与评分方法，查看实际结果和可比趋势。"
       extra={tab !== "trends" ? <Button size="small" onClick={() => void refresh()}>刷新</Button> : undefined}
     >
       {tab !== "trends" && <div className="eval-history-filters eval-bot-selection">
@@ -327,7 +329,7 @@ export default function EvalsPage({ visible = true }: Props) {
         </Tabs.TabPane>
         <Tabs.TabPane key="trends" title="进步趋势">
           <Card className="eval-create-card">
-            <EvaluationTrends initialBot={botId} bots={bots.map(bot => bot.instance_id)} visible={visible && tab === "trends"} onOpen={setSelectedEvaluation} />
+            <EvaluationTrends suites={suites} initialBot={botId} bots={bots.map(bot => bot.instance_id)} visible={visible && tab === "trends"} onOpen={setSelectedEvaluation} />
           </Card>
         </Tabs.TabPane>
       </Tabs>

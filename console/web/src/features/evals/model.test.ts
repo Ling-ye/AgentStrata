@@ -149,7 +149,7 @@ describe("evaluation request builders", () => {
       parameters: [],
     };
     expect(suiteSupportsLlmJudge(suite)).toBe(false);
-    expect(suiteSupportsLlmJudge({ ...suite, suite_id: "gaia" })).toBe(true);
+    expect(suiteSupportsLlmJudge({ ...suite, suite_id: "gaia" })).toBe(false);
     expect(suiteSupportsLlmJudge({
       ...suite,
       parameters: [{

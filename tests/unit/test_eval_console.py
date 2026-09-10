@@ -176,6 +176,7 @@ def test_catalog_queries_are_generic_and_hide_answers(
         "swe-bench-verified",
                 "agentbench-fc",
         "webarena",
+        "project-business-v1",
     }
     assert by_id["ifeval"]["ready"] is True
     assert by_id["agentstrata-canary-self-update-v1"]["status"] == "planned"

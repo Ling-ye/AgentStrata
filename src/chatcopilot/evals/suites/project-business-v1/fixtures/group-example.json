@@ -1,0 +1,6 @@
+{
+  "groups": {
+    "GROUP_A": {"members": ["QQ_TEST_01", "QQ_TEST_02", "QQ_TEST_03"]},
+    "GROUP_B": {"members": ["QQ_TEST_04"]}
+  }
+}

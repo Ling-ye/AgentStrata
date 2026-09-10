@@ -650,6 +650,11 @@ def test_direct_llm_runner_uses_non_bfcl_plugin_hooks(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("BFCL judge must not run")),
     )
 
+    from chatcopilot.evals import benchmark_scoring
+    from chatcopilot.evals.registry import get_manifest
+    from dataclasses import replace
+    manifest = replace(get_manifest("bfcl"), suite_id="synthetic-suite", plugin_id=plugin.plugin_id)
+    monkeypatch.setattr(benchmark_scoring, "get_manifest", lambda _suite: manifest)
     results = runner_module._run_direct_llm_cases(
         "synthetic-suite",
         plugin,

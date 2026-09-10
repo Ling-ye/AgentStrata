@@ -20,7 +20,7 @@ def load_declarative_cases(
                 case_id=definition.case_id,
                 input=turn_texts[-1],
                 category=definition.capability,
-                expected_behavior="Pass all declared trusted verifier assertions.",
+                expected_behavior=str(definition.quality.get("expected") or "Pass all declared trusted verifier assertions."),
                 context="\n\n".join(turn_texts[:-1]),
                 rubric=",".join(item.assertion_id for item in definition.assertions),
                 metadata={
@@ -28,7 +28,7 @@ def load_declarative_cases(
                         "key": definition.assertions[0].arguments.get("key"),
                         "revision": definition.assertions[0].arguments.get("revision")}
                         if definition.capability == "ifeval_subset" else
-                        {"kind": "business", "label": "业务能力"}),
+                        {"kind": "engineering_regression", "label": "工程回归"}),
                     "adapter": definition.plugin_id,
                     "case_definition": to_jsonable(definition),
                     "driver": definition.driver_id,

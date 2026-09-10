@@ -24,15 +24,26 @@ options:
     default: false
   - name: llm_judge
     type: boolean
-    label: 启用 LLM Judge
-    default: true
+    label: 启用独立 LLM 附评
+    default: false
   - name: scoring_mode
     type: enum
     label: 评分方案
-    choices: [native, native_geval, geval]
+    choices: [native, native_geval]
     default: native
   - name: quality_rubric
     type: enum
     label: GEval 量表
     choices: [evidence, task]
     default: evidence
+
+source_type: public_benchmark
+purpose: benchmark
+data_version: 具体版本见题目数据快照；未提供时不推断
+split: 实际载入数据划分
+coverage: Level 1 / 2 / 3，以实际载入数据为准
+target_scope: Agent runtime
+native_method: GAIA 官方答案归一化匹配
+scorer_origin: project_adapter
+scorer_version: 1.0.0
+execution_scope: agent_runtime

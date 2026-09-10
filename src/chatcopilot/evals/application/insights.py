@@ -236,12 +236,12 @@ def result_insights(
 def benchmark_comparison_keys(request: Mapping[str, Any], result: Mapping[str, Any]) -> dict[str, str]:
     snapshot = _mapping(result.get("config_snapshot"))
     benchmark = _mapping(request.get("benchmark") or snapshot.get("benchmark"))
-    if benchmark.get("schema") != "evaluation-workbench/v1" or not benchmark.get("case_set_hash"):
+    if benchmark.get("schema") not in {"evaluation-workbench/v1", "evaluation-workbench/v2"} or not benchmark.get("case_set_hash"):
         return {}
     definition = _mapping(snapshot.get("definition_snapshot"))
     implementations = _mapping(_mapping(definition.get("execution_implementations")).get("modules"))
     scoring = _mapping(benchmark.get("scoring"))
-    material = {key: benchmark.get(key) for key in ("suite_id", "adapter_version", "case_set_hash", "environment_contract", "budget")}
+    material = {key: benchmark.get(key) for key in ("suite_id", "adapter_version", "case_set_hash", "environment_contract", "budget", "source_type", "purpose", "data_version", "split", "executor")}
     material["protocols"] = definition.get("protocols")
     material["driver"] = _mapping(definition.get("manifest")).get("driver_id")
     material["native_implementations"] = {key: value for key, value in implementations.items() if ".adapters." in key or key.endswith(("capability_verifiers", "business_verifiers", "ifeval_subset"))}
@@ -262,7 +262,7 @@ def benchmark_comparison_keys(request: Mapping[str, Any], result: Mapping[str, A
         material["observed_environments"] = sorted(set(environments))
     native = _digest(material)
     quality_implementations = {key: value for key, value in implementations.items()
-                               if key.endswith(("deepeval_engine", "benchmark_scoring", "workbench"))}
+                               if key.endswith(("deepeval_engine", "benchmark_scoring", "business_scoring", "business_policy", "deepeval_mapping", "business_tools", "business_dataset", "environment_agent", "workbench"))}
     quality = _digest({**material, "scoring": scoring, "quality_implementations": quality_implementations})
     # Product pass/fail includes required quality, while public native results do not.
     product = benchmark.get("suite_id") == "agentstrata-capabilities-v1"
@@ -331,6 +331,9 @@ def target_summaries(result: Mapping[str, Any], request: Mapping[str, Any]) -> l
     if not isinstance(all_trials, list):
         return rows
     kind = "runtime" if request.get("suite_id", result.get("suite")) == "agentstrata-qq-message-flow-v1" else "agent"
+    snapshot = _mapping(result.get("config_snapshot"))
+    benchmark = _mapping(request.get("benchmark") or snapshot.get("benchmark"))
+    scoring = benchmark.get("scoring") if benchmark else _mapping(snapshot.get("definition_snapshot")).get("scoring")
     for target in result.get("targets", []):
         lane = _mapping(target)
         trials = [t for t in all_trials if _mapping(t).get("target_id") == lane.get("target_id")]
@@ -349,7 +352,7 @@ def target_summaries(result: Mapping[str, Any], request: Mapping[str, Any]) -> l
                 "quality": quality_summary(selected), "duration": execution_duration(selected, kind=kind),
                 "agent_duration_seconds": execution_duration(selected, kind=kind)["total_seconds"] if kind == "agent" else None}
                 for case_id in cases if (selected := [t for t in trials if _mapping(t).get("case_id") == case_id])],
-            "scoring": _mapping(_mapping(result.get("config_snapshot")).get("definition_snapshot")).get("scoring"),
+            "scoring": scoring,
         })
     return rows
 
@@ -366,5 +369,5 @@ def trial_preview(trial: Mapping[str, Any]) -> dict[str, Any]:
         "final_text": str(trial.get("final_text") or "")[:400],
         "input_preview": str(first.get("input") or evidence.get("input") or "")[:400],
         "body_available": True, "capture_state": execution.get("state", "not_recorded"),
-        "evidence": {"case_source": _mapping(evidence.get("case_source")), "judge_evidence": {key: judging.get(key) for key in ("quality_applicable", "quality_reason", "metrics", "error", "native_result", "mode")}},
+        "evidence": {"error_code": evidence.get("error_code"), "error_stage": evidence.get("error_stage"), "tool_evidence_state": evidence.get("tool_evidence_state"), "case_source": _mapping(evidence.get("case_source")), "judge_evidence": {key: judging.get(key) for key in ("quality_applicable", "quality_reason", "metrics", "error", "native_result", "mode", "primary", "tool_outcome", "tool_evidence_state")}},
     }

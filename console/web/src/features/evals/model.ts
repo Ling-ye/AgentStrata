@@ -245,7 +245,14 @@ export interface EvaluationParameter {
   default: boolean;
 }
 
-export interface BenchmarkDescriptor {
+export interface DatasetOrganization {
+  source_type?: string; purpose?: string; data_version?: string; split?: string;
+  executor?: { id: string; driver: string; version: string; target: string };
+  scorer?: { name: string; origin: string; version: string; implementation?: string };
+}
+
+export interface BenchmarkDescriptor extends DatasetOrganization {
+  default_scoring?: Record<string, unknown> | null;
   name: string; framework: string; framework_version: string; adapter_version: string;
   coverage: string; native_method: string; target_scope: string; scoring_modes: string[];
   default_scoring_mode: string; case_set_hash: string;
@@ -253,7 +260,8 @@ export interface BenchmarkDescriptor {
   rubrics: Array<{ id: string; name: string; steps: string[]; threshold: number }>;
 }
 
-export interface EvaluationSuite {
+export interface EvaluationSuite extends DatasetOrganization {
+  runnable_case_count?: number;
   benchmark?: BenchmarkDescriptor;
   suite_id: string;
   name: string;
@@ -296,12 +304,14 @@ export interface EvaluationSuite {
 export function suiteSupportsLlmJudge(suite: EvaluationSuite | null): boolean {
   return Boolean(
     suite &&
-      (suite.suite_id === "gaia" ||
+      (suite.benchmark?.scoring_modes.includes("native_geval") ||
         suite.parameters.some((parameter) => parameter.name === "llm_judge")),
   );
 }
 
 export interface EvaluationCaseSummary {
+  tools?: string[];
+  readiness?: { ready: boolean; state: string; missing_tools: string[]; environment: string; reason: string };
   quality_required?: boolean;
   case_id: string;
   category: string;
@@ -312,6 +322,8 @@ export interface EvaluationCaseSummary {
 }
 
 export interface EvaluationCaseDescriptor extends EvaluationCaseSummary {
+  reference_material?: Record<string, unknown>;
+  organization?: DatasetOrganization;
   input: string;
   context: string;
   rubric: string;

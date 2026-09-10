@@ -51,11 +51,10 @@ def test_native_only_does_not_create_a_judge(monkeypatch):
     assert result.passed and evidence["quality_applicable"] is False
 
 
-def test_custom_quality_does_not_claim_native_result(deepeval_judge):
-    result, evidence = score_benchmark("gaia", example(), "42", lambda: pytest.fail("native scorer called"),
-                                       options={"scoring_mode": "geval"}, judge_model=deepeval_judge)
-    assert result.passed and evidence["native_result"] is None
-    assert [m["kind"] for m in evidence["metrics"]] == ["quality"]
+def test_public_benchmark_cannot_replace_native_scoring(deepeval_judge):
+    with pytest.raises(ValueError, match="unsupported scoring mode"):
+        score_benchmark("gaia", example(), "42", lambda: pytest.fail("native scorer called"),
+                        options={"scoring_mode": "geval"}, judge_model=deepeval_judge)
 
 
 def test_request_freezes_declared_scoring_and_rejects_flag_conflict(monkeypatch):
@@ -92,7 +91,7 @@ def test_descriptor_does_not_present_bfcl_as_full_agent_or_official_score():
     assert "direct_llm" in descriptor["target_scope"]
     assert "部分" in descriptor["coverage"]
     assert "项目适配器" in descriptor["native_method"]
-    assert scoring_plan("gaia", {"scoring_mode": "native"})["judge"] is None
+    assert scoring_plan(get_manifest("gaia"), {"scoring_mode": "native"})["judge"] is None
 
 
 def test_native_metric_respects_passed_independently_of_numeric_score():
@@ -124,3 +123,9 @@ def test_swebench_trends_require_observed_image_identity():
     assert original["pass_rate"] != benchmark_comparison_keys({}, result)["pass_rate"]
     result["trials"][0]["evidence"] = {}
     assert benchmark_comparison_keys({}, result) == {}
+
+
+def test_qq_synthetic_snapshot_reports_actual_checker():
+    plan = scoring_plan(get_manifest("agentstrata-qq-message-flow-v1"), {})
+    assert plan["framework"] == "AgentStrata 链路检查器"
+    assert plan["framework_version"] == ""

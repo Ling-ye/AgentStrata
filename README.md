@@ -246,7 +246,7 @@ and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.m
 | Capabilities | Local tool packs; in-process web search; reviewed MCP bindings; RAG; memory; private Wiki |
 | Operations | React/FastAPI Console BFF; diagnostics; task/context observability; logs |
 | Deployment | Linux / WSL; Console and Evaluation systemd user services; desired-state Docker infrastructure |
-| Evaluation | DeepEval-backed Agent scoring, readable Case inputs/outputs, and freely grouped progress trends. Console has two manual tracks: a 25-Case direct-Agent catalog with a 23-Case default `full`, and 7 legacy synthetic QQ message-flow Cases; benchmark/Profile adapters remain available from CLI |
+| Evaluation | DeepEval-backed Agent scoring, readable Case inputs/outputs, and freely grouped progress trends. Console has two manual tracks: a 63-Case engineering regression catalog with a 61-Case default `full`, and 7 legacy synthetic QQ message-flow Cases; benchmark/Profile adapters remain available from CLI |
 
 The direct-Agent track bypasses ACP and platform transport. The existing
 synthetic QQ message-flow track exercises the pre-Gateway Relay/attestation/ACP
@@ -323,7 +323,7 @@ files and private reports never belong in Git.
 | Understand boundaries and data flow | [Architecture](https://github.com/Ling-ye/AgentStrata/blob/main/docs/architecture.md) · [Runtime](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.md) |
 | Use the Console and Evaluations | [Operations Console](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md) |
 
-Agent 能力测评使用 DeepEval，包含业务能力用例和固定 IFEval 子集；用例范围与使用方式见 [Console 文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md)。
+Agent 能力测评使用 DeepEval，按测评集与 Case 浏览；新业务题使用严格 LLM 判定，63 个既有工程回归题保留程序断言，公开基准保留原生评分。文件维护方法见 [业务 Case 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-business-cases.md)；用例范围与使用方式见 [Console 文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md)。
 | Prepare a later signed release | [Release runbook](https://github.com/Ling-ye/AgentStrata/blob/main/docs/releasing.md) |
 | Contribute changes | [Contributing guide](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md) |
 

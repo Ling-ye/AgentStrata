@@ -220,3 +220,11 @@ def timing_metadata(execution: dict[str, Any]) -> dict[str, float]:
         str(timing.get("kind"))
     )
     return {key: float(seconds)} if key else {}
+
+
+def execution_snapshot() -> dict[str, Any]:
+    """Copy the current bounded observation for the scorer, without creating evidence."""
+    from copy import deepcopy
+
+    with _write_lock.get() or nullcontext():
+        return deepcopy(_current.get() or {"state": "not_recorded", "turns": []})

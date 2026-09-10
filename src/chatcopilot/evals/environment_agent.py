@@ -19,7 +19,8 @@ from chatcopilot.evals.trial_capture import execution_phase, record_turn, sample
 
 
 def run_environment_agent(*, bot: str, workspace_root: Path, task_text: str, provider: ToolProvider,
-                          tool_names: frozenset[str]) -> tuple[str, list[dict[str, Any]]]:
+                          tool_names: frozenset[str], turn_texts: tuple[str, ...] | None = None,
+                          turn_callback: Any = None) -> tuple[str, list[dict[str, Any]]]:
     runtime = load_evaluation_runtime(bot)
     config = load_config(env_prefix=runtime.spec.llm.env_prefix)
     workspace = Workspace(root=workspace_root.resolve(), chat_kind="p2p", chat_id="benchmark",
@@ -27,7 +28,7 @@ def run_environment_agent(*, bot: str, workspace_root: Path, task_text: str, pro
     events: list[dict[str, Any]] = []
     with _trial_environment(workspace, workspace.root):
         agent = assemble_agent_runtime(runtime, chat_config=config, profile=AgentRuntimeAssemblyProfile.DETACHED,
-            overrides=AgentRuntimeOverrides(runtime_providers=(provider,), rag_sources=(), mcp_servers=(),
+            overrides=AgentRuntimeOverrides(tool_packs=(), runtime_providers=(provider,), rag_sources=(), mcp_servers=(),
                                              subagents=_isolated_subagents(runtime.subagents)))
         try:
             session = agent.new_session(session_id="benchmark-private",
@@ -38,16 +39,19 @@ def run_environment_agent(*, bot: str, workspace_root: Path, task_text: str, pro
                 workspace_service=MiddlewareWorkspaceService(workspace=workspace, workspace_root=workspace.root,
                     execution_scope=execution_scope("owner", workspace.root, (workspace.root,))),
                 permission_filter=permission_filter(tool_names), caller_role_hint="owner")
-            turn = {"conversation_id": "benchmark", "turn_index": 0, "input": task_text, "completed": False}
-            record_turn(turn)
-
             def observe(event: Any) -> None:
                 events.append(event_to_dict(event))
                 sample_execution()
 
             with execution_phase("agent"):
-                result = session.run_task(AgentTask(text=task_text), on_event=observe)
-            record_turn({**turn, "completed": True, "final_text": result.final_text, "stop_reason": result.stop_reason})
+                for index, text in enumerate(turn_texts or (task_text,)):
+                    if turn_callback is not None:
+                        turn_callback(index)
+                    turn = {"conversation_id": "benchmark", "turn_index": index, "input": text, "completed": False}
+                    record_turn(turn)
+                    result = session.run_task(AgentTask(text=text), on_event=observe)
+                    record_turn({**turn, "completed": True, "final_text": result.final_text, "stop_reason": result.stop_reason})
             return result.final_text, events
+
         finally:
             agent.close()

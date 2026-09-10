@@ -1,0 +1,45 @@
+schema: 1
+suite_id: project-business-v1
+version: '1'
+name: 项目业务任务
+kind: agent
+status: implemented
+value: 以固定只读工具数据验证业务任务完成情况，使用严格 LLM 判定。
+recommendation: 日常选择已配置的业务题；QQ 教学题待正式工具适配后验收。
+cadence: manual only
+track: agent
+plugin_id: business-agent
+driver_id: agent_configured
+requires_bot: true
+source_type: project
+purpose: business_task
+data_version: '1'
+split: 固定业务题与教学样例
+coverage: 受控只读事实查询；QQ 样例未配置
+target_scope: 所选 Bot 的 Agent runtime · 固定只读工具环境
+native_method: LLM 判定 · 业务任务完成
+scorer_origin: llm_judge
+scorer_version: business-task-geval/v1
+files:
+- path: cases.yaml
+  role: cases
+  media_type: application/yaml
+  sha256: 1bb4e4fffa71a121ccb13ad69b8cdb5e2ba375aaec32dfcc96e59053520d3684
+- path: fixtures/facts.json
+  role: fixture
+  media_type: application/json
+  sha256: b48708879a318046658fae2ef400fe62d86105de8879dc53cc5de483f4bab005
+  resource_id: facts
+- path: fixtures/group-example.json
+  role: fixture
+  media_type: application/json
+  sha256: 005f6deedea1c86cb1f5377c519c6a7dc2842938d2adbc7d0e542a3c7e12520c
+  resource_id: group-example
+options:
+- name: scoring_mode
+  type: enum
+  label: 评分方案
+  choices:
+  - geval
+  default: geval
+execution_scope: agent_runtime/fixed_tools

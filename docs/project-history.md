@@ -813,3 +813,7 @@ Console 的配置与观测分类仍是展示分组，保留字段归属、实体
 评分接线、AgentBench FC 环境工具接线；准确标明覆盖范围、环境准备和实际被测对象。
 运行记录展示冻结配置，趋势默认区分可比协议并保留探索视图。实现边界与验收见
 [`evaluation-benchmark-workbench`](../specs/evaluation-benchmark-workbench/spec.md)。
+
+## 2026-09-10：测评集与业务 Case 组织
+
+在基准工作台上统一 Suite manifest 的来源、用途、执行对象和评分器描述。普通业务题新增受信文件执行路径，复用固定只读查询工具，经 DeepEval 标准对象和严格 GEval 主判；原有 63 个工程回归 Case 及断言保留。开始测试支持工具筛选和分区题目详情，记录与趋势区分原生成绩、LLM 判定和异常。正式设计见 [测评集组织规格](../specs/evaluation-dataset-organization/spec.md)，使用方式见 [业务 Case 指南](evaluation-business-cases.md)。QQ 群成员题仅为未配置的教学样例。
