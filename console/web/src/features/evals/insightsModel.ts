@@ -2,12 +2,16 @@ import type { EvaluationRecord } from "./model";
 
 export type OutcomeCounts = Record<"passed" | "failed" | "error" | "skipped", number>;
 export interface QualitySummary { score: number | null; scored: number; expected: number }
+export interface DurationSummary {
+  kind: "agent" | "runtime"; total_seconds: number | null; recorded_seconds: number | null;
+  recorded: number; partial: number; expected: number; complete: boolean;
+}
 export interface TargetSummary {
   target_id: string; backend: string; model: string; reasoning_effort: string;
   counts: OutcomeCounts; observed: number; pass_rate: number | null;
-  quality: QualitySummary; agent_duration_seconds: number | null;
+  quality: QualitySummary; agent_duration_seconds: number | null; duration?: DurationSummary;
   case_ids: string[]; repetitions: number; scoring: Record<string, unknown>;
-  cases: Array<{ case_id: string; counts: OutcomeCounts; quality: QualitySummary; agent_duration_seconds: number | null }>;
+  cases: Array<{ case_id: string; counts: OutcomeCounts; quality: QualitySummary; agent_duration_seconds: number | null; duration?: DurationSummary }>;
 }
 export interface EvaluationInsights {
   counts: OutcomeCounts | null;
@@ -47,16 +51,29 @@ function quality(value: unknown): QualitySummary {
   const item = object(value);
   return { score: number(item.score), scored: number(item.scored) ?? 0, expected: number(item.expected) ?? 0 };
 }
+export function durationSummary(value: unknown, fallback: number | null, expected: number): DurationSummary {
+  const item = object(value);
+  if (!Object.keys(item).length) return { kind: "agent", total_seconds: fallback, recorded_seconds: fallback,
+    recorded: fallback === null ? 0 : expected, partial: 0, expected, complete: fallback !== null && expected > 0 };
+  const total = number(item.total_seconds), subtotal = number(item.recorded_seconds);
+  const recorded = number(item.recorded) ?? 0, count = number(item.expected) ?? expected;
+  const complete = item.complete === true && total !== null && count > 0 && recorded === count;
+  return { kind: item.kind === "runtime" ? "runtime" : "agent", total_seconds: complete ? total : null,
+    recorded_seconds: subtotal, recorded, expected: count, partial: number(item.partial) ?? 0, complete };
+}
+
 function targetSummary(value: unknown): TargetSummary {
   const item = object(value);
   return { target_id: text(item.target_id) ?? "", backend: text(item.backend) ?? "", model: text(item.model) ?? "",
     reasoning_effort: text(item.reasoning_effort) ?? "", counts: counts(item.counts) ?? { passed: 0, failed: 0, error: 0, skipped: 0 },
     observed: number(item.observed) ?? 0, pass_rate: number(item.pass_rate), quality: quality(item.quality),
+    duration: durationSummary(item.duration, number(item.agent_duration_seconds), number(item.observed) ?? 0),
     agent_duration_seconds: number(item.agent_duration_seconds), repetitions: number(item.repetitions) ?? 1,
     case_ids: Array.isArray(item.case_ids) ? item.case_ids.filter((x): x is string => typeof x === "string") : [],
     scoring: object(item.scoring), cases: Array.isArray(item.cases) ? item.cases.map(raw => {
       const c = object(raw); return { case_id: text(c.case_id) ?? "", counts: counts(c.counts) ?? { passed: 0, failed: 0, error: 0, skipped: 0 },
-        quality: quality(c.quality), agent_duration_seconds: number(c.agent_duration_seconds) };
+        quality: quality(c.quality), agent_duration_seconds: number(c.agent_duration_seconds),
+        duration: durationSummary(c.duration, number(c.agent_duration_seconds), Object.values(counts(c.counts) ?? {}).reduce((sum, n) => sum + n, 0)) };
     }) : [] };
 }
 export function normalizeInsights(value: unknown): EvaluationInsights {

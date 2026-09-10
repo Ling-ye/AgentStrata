@@ -321,6 +321,8 @@ files and private reports never belong in Git.
 | Update, restart, inspect, or diagnose | [Operations runbook](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md) |
 | Understand boundaries and data flow | [Architecture](https://github.com/Ling-ye/AgentStrata/blob/main/docs/architecture.md) · [Runtime](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.md) |
 | Use the Console and Evaluations | [Operations Console](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md) |
+
+Agent 能力测评使用 DeepEval，包含业务能力用例和固定 IFEval 子集；用例范围与使用方式见 [Console 文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md)。
 | Prepare a later signed release | [Release runbook](https://github.com/Ling-ye/AgentStrata/blob/main/docs/releasing.md) |
 | Contribute changes | [Contributing guide](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md) |
 

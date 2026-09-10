@@ -1,95 +1,144 @@
 schema: 1
 suite_id: agentstrata-capabilities-v1
-version: "1"
+version: '3'
 name: 直接 Agent 能力 v1
 kind: product
 status: implemented
 value: 不经过 ACP 或平台链路，直接验证所选 Bot 的 Agent runtime、工具编排、人格表现和实时信息回答。
-recommendation: 手动按需运行 quick、full 或 security；启用对应来源后可用 custom 显式选择来源专用 Case；变更前后使用相同 Target fingerprint 比较，多次重复运行才能用于可靠性结论。
+recommendation: 手动按需运行 quick、full 或 security；启用对应来源后可用 custom 显式选择来源专用 Case；变更前后使用相同 Target fingerprint
+  比较，多次重复运行才能用于可靠性结论。
 cadence: manual only
 track: agent
 plugin_id: generic-agent
 driver_id: agent_configured
 requires_bot: true
 files:
-  - path: cases.yaml
-    role: cases
-    media_type: application/yaml
-    sha256: 90704c58767cba389ebeb9432ca12c11dd2d0523bdba4d7fe63ddca3a1d6e436
-  - path: fixtures/order-card.png
-    role: fixture
-    resource_id: order-card
-    media_type: image/png
-    sha256: fb79ec599ad905afb3a05a2c5868ad597aad52a20b556c9d2cd7b104f73bc9df
-  - path: fixtures/shape-layout.png
-    role: fixture
-    resource_id: shape-layout
-    media_type: image/png
-    sha256: 6a7338209650f66e8c02736aa5ce9ae1ce5801614e2e4298126bcc3b140987ee
-  - path: fixtures/sequence-first.png
-    role: fixture
-    resource_id: sequence-first
-    media_type: image/png
-    sha256: 8178087b891d1b245a3aa67668027d9ac1a20c965bb47f308802e141ef9f54bd
-  - path: fixtures/sequence-second.png
-    role: fixture
-    resource_id: sequence-second
-    media_type: image/png
-    sha256: e2c437d8aeef7e03d07cbb1a65e38a72d8850fe007cce45f54a4bcc054074ce1
-  - path: fixtures/workspace-note.txt
-    role: fixture
-    resource_id: workspace-note
-    media_type: text/plain
-    sha256: 13c51320d3b224f245f2f9e2439dd90de1f7b564c5fcdf1da2372124efe323e0
-  - path: fixtures/untrusted-instructions.txt
-    role: fixture
-    resource_id: untrusted-instructions
-    media_type: text/plain
-    sha256: 3ccd264a1c853f0ac7770506fe983d4e1b7b6318dab82736e431a4b61ad5fc35
+- path: cases.yaml
+  role: cases
+  media_type: application/yaml
+  sha256: 371b1b7aa99ea1c9e538a8ec676e24f30141bd0159139534cf1303ed8cffeae1
+- path: fixtures/order-card.png
+  role: fixture
+  resource_id: order-card
+  media_type: image/png
+  sha256: fb79ec599ad905afb3a05a2c5868ad597aad52a20b556c9d2cd7b104f73bc9df
+- path: fixtures/shape-layout.png
+  role: fixture
+  resource_id: shape-layout
+  media_type: image/png
+  sha256: 6a7338209650f66e8c02736aa5ce9ae1ce5801614e2e4298126bcc3b140987ee
+- path: fixtures/sequence-first.png
+  role: fixture
+  resource_id: sequence-first
+  media_type: image/png
+  sha256: 8178087b891d1b245a3aa67668027d9ac1a20c965bb47f308802e141ef9f54bd
+- path: fixtures/sequence-second.png
+  role: fixture
+  resource_id: sequence-second
+  media_type: image/png
+  sha256: e2c437d8aeef7e03d07cbb1a65e38a72d8850fe007cce45f54a4bcc054074ce1
+- path: fixtures/workspace-note.txt
+  role: fixture
+  resource_id: workspace-note
+  media_type: text/plain
+  sha256: 13c51320d3b224f245f2f9e2439dd90de1f7b564c5fcdf1da2372124efe323e0
+- path: fixtures/untrusted-instructions.txt
+  role: fixture
+  resource_id: untrusted-instructions
+  media_type: text/plain
+  sha256: 3ccd264a1c853f0ac7770506fe983d4e1b7b6318dab82736e431a4b61ad5fc35
+- path: fixtures/ifeval-subset.json
+  role: fixture
+  resource_id: ifeval-fixed
+  media_type: application/json
+  sha256: b1e18e946ebbfe3175cef6030fc93b79018827cd30644ea9db7e66e39e27c806
+- path: fixtures/IFEVAL-LICENSE.txt
+  role: fixture
+  resource_id: ifeval-license
+  media_type: text/plain
+  sha256: cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
 presets:
   quick:
     description: 10 个代表性直接 Agent Case，不经过 ACP 或 QQ 链路。
     case_ids:
-      - dialogue-strict-json
-      - persona-applied-behavior
-      - tool-allowed-exact-call
-      - tool-disabled-hidden-no-effect
-      - search-general-with-evidence
-      - current-usd-cny-reference
-      - image-ocr-order-number
-      - session-cross-user-isolation
-      - code-restart-and-health
-      - injection-untrusted-search-contained
+    - dialogue-strict-json
+    - persona-applied-behavior
+    - tool-allowed-exact-call
+    - tool-disabled-hidden-no-effect
+    - search-general-with-evidence
+    - current-usd-cny-reference
+    - image-ocr-order-number
+    - session-cross-user-isolation
+    - code-restart-and-health
+    - injection-untrusted-search-contained
   full:
-    description: 当前内置 Bot 可运行的 23 个直接 Agent Case；不经过 ACP 或真实平台链路。
+    description: 61 个直接 Agent Case，包含 30 个目标导向业务题和 8 个 IFEval 固定题。
     case_ids:
-      - dialogue-strict-json
-      - dialogue-clarify-before-action
-      - persona-applied-behavior
-      - tool-allowed-exact-call
-      - tool-multistep-data-flow
-      - tool-disabled-hidden-no-effect
-      - tool-error-bounded-recovery
-      - search-general-with-evidence
-      - current-usd-cny-reference
-      - workspace-read-fixture
-      - workspace-write-contained
-      - image-ocr-order-number
-      - image-shape-spatial-count
-      - image-multi-input-order
-      - session-same-user-memory
-      - session-cross-user-isolation
-      - subagent-structured-result
-      - code-fix-and-verify
-      - code-restart-and-health
-      - code-failure-no-false-success
-      - access-forbidden-tool-no-effect
-      - injection-untrusted-search-contained
-      - injection-untrusted-attachment-contained
+    - dialogue-strict-json
+    - dialogue-clarify-before-action
+    - persona-applied-behavior
+    - tool-allowed-exact-call
+    - tool-multistep-data-flow
+    - tool-disabled-hidden-no-effect
+    - tool-error-bounded-recovery
+    - search-general-with-evidence
+    - current-usd-cny-reference
+    - workspace-read-fixture
+    - workspace-write-contained
+    - image-ocr-order-number
+    - image-shape-spatial-count
+    - image-multi-input-order
+    - session-same-user-memory
+    - session-cross-user-isolation
+    - subagent-structured-result
+    - code-fix-and-verify
+    - code-restart-and-health
+    - code-failure-no-false-success
+    - access-forbidden-tool-no-effect
+    - injection-untrusted-search-contained
+    - injection-untrusted-attachment-contained
+    - decision-select-tool
+    - decision-similar-tools
+    - decision-no-tool
+    - decision-clarify
+    - decision-chain
+    - decision-retry
+    - decision-persona
+    - decision-write-failure
+    - context-correction
+    - context-constraints
+    - context-topic-return
+    - memory-explicit-only
+    - memory-new-session
+    - memory-latest-preference
+    - evidence-select-source
+    - evidence-synthesis
+    - evidence-conflict
+    - evidence-unknown
+    - evidence-freshness
+    - evidence-injection
+    - artifact-image-table
+    - artifact-document-report
+    - artifact-image-conflict
+    - artifact-invalid-document
+    - delegate-autonomous
+    - delegate-merge
+    - delegate-partial-failure
+    - skill-career
+    - skill-jd
+    - skill-missing-input
+    - ifeval-fixed-1001
+    - ifeval-fixed-1019
+    - ifeval-fixed-102
+    - ifeval-fixed-1075
+    - ifeval-fixed-1128
+    - ifeval-fixed-1393
+    - ifeval-fixed-1531
+    - ifeval-fixed-1999
   security:
     description: 3 个直接 Agent 工具权限和间接注入安全 Case。
     case_ids:
-      - access-forbidden-tool-no-effect
-      - injection-untrusted-search-contained
-      - injection-untrusted-attachment-contained
+    - access-forbidden-tool-no-effect
+    - injection-untrusted-search-contained
+    - injection-untrusted-attachment-contained
 default_preset: quick

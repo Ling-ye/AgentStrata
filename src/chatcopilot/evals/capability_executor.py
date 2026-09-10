@@ -56,7 +56,9 @@ from chatcopilot.contracts.tools import (
 from chatcopilot.core.access import get_admins, get_owners
 from chatcopilot.core.config import load_config
 from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService, Workspace
-from chatcopilot.evals.trial_capture import capture_case, record_turn, set_phase
+from chatcopilot.evals.ifeval_subset import IFEVAL_IDS, validate_fixed
+from chatcopilot.evals.business_cases import BUSINESS_IDS, MEMORY_IDS, BusinessFixture, delegates, missing_requirements
+from chatcopilot.evals.trial_capture import capture_case, record_turn, set_phase, execution_phase, sample_execution
 from chatcopilot.evals.capability_scenarios import (
     CapabilityScenarioContext,
     run_capability_scenario,
@@ -126,6 +128,7 @@ _AGENT_SUPPORTED = frozenset(
         "current-usd-cny-reference",
     }
 )
+_AGENT_SUPPORTED = _AGENT_SUPPORTED | BUSINESS_IDS | IFEVAL_IDS
 _ENV_LOCK = threading.RLock()
 _SENTINEL = "capability-executor:unchanged"
 _SESSION_NONCE = "AS-MEM-7F31"
@@ -300,6 +303,8 @@ def validate_capability_definition(definition: EvalCaseDefinition) -> None:
             f"capability Case is not implemented by {definition.driver_id}: {definition.case_id}",
         )
     for assertion in definition.assertions:
+        if definition.case_id in IFEVAL_IDS:
+            validate_fixed(assertion.arguments)
         try:
             get_trusted_capability_verifier(assertion.assertion_id)
         except ValueError as exc:
@@ -323,6 +328,10 @@ def _preflight_definition(definition: EvalCaseDefinition, *, bot: str) -> None:
     """Reject unsupported work before creating a Case workspace or staging fixtures."""
 
     validate_capability_definition(definition)
+    if definition.case_id in BUSINESS_IDS:
+        missing = missing_requirements(definition.case_id, load_evaluation_runtime(bot))
+        if missing:
+            raise CapabilityExecutionError('capability_not_configured', ', '.join(missing))
     if definition.driver_id in {"agent_isolated", "agent_configured"}:
         from chatcopilot.evals.deepeval_engine import preflight
 
@@ -604,7 +613,7 @@ def _evaluation_subagents(
     return replace(
         value,
         include=(),
-        custom=controlled_delegate,
+        custom=delegates(definition.case_id) or controlled_delegate,
         overrides={},
         workflows=(),
         research_enabled=value.research_enabled if search_case else False,
@@ -789,7 +798,7 @@ def _extra_tools(
                 ),
                 handler=forbidden_fixture,
                 access=(
-                    "owner" if definition.case_id == "access-forbidden-tool-no-effect" else None
+                    "owner" if definition.case_id == "access-forbidden-tool-no-effect" else "member"
                 ),
                 category="eval.security.fixture",
                 owner="evals",
@@ -802,7 +811,7 @@ def _extra_tools(
         def failing_lookup(
             args: Mapping[str, Any], _ctx: ToolContext
         ) -> ToolResult:
-            error = {
+            error: dict[str, Any] = {
                 "code": "fixture_unavailable",
                 "retryable": False,
                 "message": "deterministic evaluation lookup is unavailable",
@@ -1205,7 +1214,7 @@ def _extra_tools(
         def start_code_task(
             args: Mapping[str, Any], _ctx: ToolContext
         ) -> ToolResult:
-            arguments = {
+            arguments: dict[str, Any] = {
                 "title": str(args.get("title") or ""),
                 "prompt": str(args.get("prompt") or ""),
                 "acceptance_criteria": list(args.get("acceptance_criteria") or []),
@@ -2769,7 +2778,8 @@ def _execute_agent_definition(
             message=message,
         )
 
-    extra_tools = _extra_tools(definition, workspace_path, state)
+    business = BusinessFixture(definition.case_id, workspace_path) if definition.case_id in BUSINESS_IDS else None
+    extra_tools = business.tools() if business else _extra_tools(definition, workspace_path, state)
     runtime_providers: tuple[ToolProvider, ...] = ()
     if extra_tools:
         runtime_providers = (
@@ -2787,6 +2797,12 @@ def _execute_agent_definition(
     allowed_tools = tuple(
         dict.fromkeys((*definition.policy.allowed_tools, *auto_allowed_extra_tools))
     )
+    if business:
+        allowed_tools = tuple(dict.fromkeys((*allowed_tools,
+            *(('read_memory', 'append_memory') if definition.case_id in MEMORY_IDS else ()),
+            *(('persona_manage',) if definition.case_id == 'decision-persona' else ()),
+            *(('read_bot_skill',) if definition.case_id.startswith('skill-') else ()),
+            *(item.tool_name for item in delegates(definition.case_id)))))
     case_permission_filter = permission_filter(frozenset(allowed_tools))
     evaluation_subagents = _evaluation_subagents(runtime.subagents, definition)
     search_case = definition.case_id in _SEARCH_CASES
@@ -2798,7 +2814,9 @@ def _execute_agent_definition(
             # Code/recovery Cases expose only their evaluation-owned atomic tools.
             # In particular, the lifecycle Case deliberately shadows production
             # code-task names without initializing the real repository worker.
-            tool_packs=() if definition.case_id in _CODE_RECOVERY_CASES else None,
+            tool_packs=(('memory.chat',) if definition.case_id in MEMORY_IDS else
+                        ('playbooks.reader',) if definition.case_id.startswith('skill-') else ())
+                if business else (() if definition.case_id in _CODE_RECOVERY_CASES | IFEVAL_IDS else None),
             runtime_providers=runtime_providers,
             rag_sources=(),
             # Only the explicit search Cases may initialize the selected Bot's
@@ -2808,6 +2826,7 @@ def _execute_agent_definition(
         ),
     )
     raw_events: list[dict[str, Any]] = []
+    execution_session_ids: dict[int, str] = {}
     final_text = ""
     stop_reason = ""
     turn_stop_reasons: list[str] = []
@@ -2816,7 +2835,7 @@ def _execute_agent_definition(
     def make_workspace(*, root: Path, user_id: str, chat_id: str) -> Workspace:
         return Workspace(
             root=root,
-            chat_kind="p2p",
+            chat_kind="group" if definition.case_id == "decision-persona" else "p2p",
             chat_id=chat_id,
             user_id=user_id,
             user_name="Eval Runner",
@@ -2829,15 +2848,17 @@ def _execute_agent_definition(
         # retained for code that legitimately consumes the current session identity,
         # but it is no longer the authority for backend workdir selection.
         workspace_service = _EvaluationWorkspaceService(workspace)
-        with _workspace_environment(workspace):
-            session = agent_runtime.new_session(
-                session_id=session_id,
-                prompt_input=PromptBuildInput(
+        extra_session_options: dict[str, Any] = {}
+        if business:
+            extra_session_options['session_providers'] = business.bind(workspace, agent_runtime)
+            workspace_service.persistent_state = business.persistent
+            extra_session_options['retriever_override'] = business if definition.case_id.startswith('evidence-') else None
+        prompt_input = PromptBuildInput(
                     profile=runtime.prompt_profile,
                     backend=runtime.agent_backend,
                     model=None,
                     role="owner",
-                    channel_kind="private",
+                    channel_kind="group" if definition.case_id == "decision-persona" else "private",
                     session_policy="这是隔离能力 Evaluation Trial；只执行当前声明式 Case。",
                     capability_policies=runtime.capability_policies,
                     skill_index=runtime.skills,
@@ -2847,7 +2868,12 @@ def _execute_agent_definition(
                         if definition.case_id == "persona-applied-behavior"
                         else ""
                     ),
-                ),
+                )
+        with _workspace_environment(workspace):
+            session = agent_runtime.new_session(
+                session_id=session_id,
+                **extra_session_options,
+                prompt_input=prompt_input,
                 workspace_service=workspace_service,
                 permission_filter=case_permission_filter,
                 caller_role_hint="owner",
@@ -2863,6 +2889,15 @@ def _execute_agent_definition(
                     else None
                 ),
             )
+        if business and business.persona_port:
+            from chatcopilot.agent.context.prompt_plan import PromptPlanBuilder
+            from dataclasses import replace as replace_prompt
+            def refresh_persona() -> None:
+                names = tuple(getattr(getattr(session, "capabilities", None), "tool_names", ()))
+                session.set_prompt_plan(PromptPlanBuilder().build(replace_prompt(
+                    prompt_input, dynamic_persona=business.persistent.persona_snapshot('group'), tool_names=names)))
+            business.persona_port.refresh = refresh_persona
+        execution_session_ids[id(session)] = session_id
         forbidden_tool_name = _EXECUTION_DENIAL_TOOLS.get(definition.case_id)
         if forbidden_tool_name is not None:
             fixture = state.forbidden_tool_fixture
@@ -2882,6 +2917,10 @@ def _execute_agent_definition(
             )
         return session
 
+    def record_event(event: Any) -> None:
+        raw_events.append(_event_dict(event))
+        sample_execution()
+
     def run_turn(
         session: Any,
         workspace: Workspace,
@@ -2892,12 +2931,15 @@ def _execute_agent_definition(
     ) -> None:
         nonlocal final_text, stop_reason
         state.current_turn_index = turn_index
+        if business:
+            business.turn = turn_index
         audit_start = len(state.audit)
         refs = tuple(resources_by_id[item] for item in resource_ids)
         task = AgentTask(
             text=text,
             resources=refs,
-            turn_context=_case_context(definition, allowed_tools),
+            turn_context=("仅使用本次提供的工具和隔离资源，不访问外部系统。"
+                          if business else _case_context(definition, allowed_tools)),
             metadata={
                 "eval_suite": suite_id,
                 "eval_case": definition.case_id,
@@ -2912,10 +2954,12 @@ def _execute_agent_definition(
         with _workspace_environment(workspace):
             result = session.run_task(
                 task,
-                on_event=lambda event: raw_events.append(_event_dict(event)),
+                on_event=record_event,
             )
         record_turn({**captured_turn, "completed": True, "final_text": result.final_text,
             "stop_reason": result.stop_reason})
+        if business:
+            business.after_turn()
         final_text = result.final_text
         stop_reason = result.stop_reason
         turn_stop_reasons.append(result.stop_reason)
@@ -2923,6 +2967,7 @@ def _execute_agent_definition(
         state.extra_evidence.append(
             {
                 "kind": "agent_turn_result",
+                "execution_session_id": execution_session_ids.get(id(session), ""),
                 "input": text,
                 "conversation_id": workspace.chat_id,
                 "turn_index": turn_index,
@@ -3025,6 +3070,11 @@ def _execute_agent_definition(
             )
             session = open_session(workspace, session_id=f"eval-capability-{definition.case_id}")
             for turn_index, turn in enumerate(definition.turns):
+                if business and definition.case_id in {'memory-new-session', 'memory-latest-preference'} and turn_index == len(definition.turns) - 1:
+                    close = getattr(session, 'close', None)
+                    if callable(close):
+                        close()
+                    session = open_session(workspace, session_id=f'eval-capability-{definition.case_id}-fresh')
                 run_turn(
                     session,
                     workspace,
@@ -3049,6 +3099,14 @@ def _execute_agent_definition(
             cleanup()
 
     event_calls = _pair_tool_calls(raw_events)
+    if business:
+        state.audit.extend(business.audit)
+        business_evidence = business.evidence()
+        state.extra_evidence.append(business_evidence)
+        if business_evidence["report"] is not None:
+            produced.append({"path": "report.txt", "contained": True, "exists": True,
+                             "sha256": business_evidence["report_sha256"],
+                             "size_bytes": len(business_evidence["report"].encode("utf-8"))})
     tool_calls = _merge_tool_audits(state.audit, event_calls)
     evidence = list(resource_evidence)
     evidence.extend(state.extra_evidence)
@@ -3192,23 +3250,24 @@ def execute_capability_case(
                 load_local_environment=False,
                 inherit_environment=False,
             )
-            observation = run_qq_flow_scenario(
-                definition,
-                runtime=runtime,
-                workspace_root=workspace,
-            )
+            with execution_phase("runtime"):
+                observation = run_qq_flow_scenario(
+                    definition,
+                    runtime=runtime,
+                    workspace_root=workspace,
+                )
         elif definition.driver_id in {"agent_isolated", "agent_configured"}:
-            observation = _execute_agent_definition(
-                definition,
-                suite_id=suite_id,
-                bot=bot,
-                workspace_path=workspace,
-                resources_by_id=resources_by_id,
-                resource_evidence=resource_evidence,
-            )
+            with execution_phase("agent"):
+                observation = _execute_agent_definition(
+                    definition,
+                    suite_id=suite_id,
+                    bot=bot,
+                    workspace_path=workspace,
+                    resources_by_id=resources_by_id,
+                    resource_evidence=resource_evidence,
+                )
         else:  # pragma: no cover - preflight_definition fails closed first
             raise AssertionError("capability driver changed after preflight")
-        agent_duration = time.monotonic() - started
         if definition.driver_id in {"agent_isolated", "agent_configured"}:
             from chatcopilot.evals.deepeval_engine import score
 
@@ -3222,6 +3281,7 @@ def execute_capability_case(
         events = redact_payload(list(observation.events), secrets=secrets, roots=roots)
         metadata = redact_payload(
             {
+                "case_source": case.metadata.get("case_source", {}),
                 "driver": definition.driver_id,
                 "plugin": definition.plugin_id,
                 "judge_evidence": judge_evidence,
@@ -3231,7 +3291,6 @@ def execute_capability_case(
                 "post_state": observation.post_state,
                 "usage": observation.usage,
                 "structured_error": observation.structured_error,
-                "agent_duration_seconds": agent_duration,
             },
             secrets=secrets,
             roots=roots,

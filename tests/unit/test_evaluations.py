@@ -3811,3 +3811,31 @@ def test_deterministic_code_judge_runs_fixed_verification_and_captures_diff(
     assert judge.passed is True
     assert evidence["returncode"] == 0
     assert "return left * right" in evidence["diff"]
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX supervision')
+@pytest.mark.parametrize('judging', [False, True])
+def test_supervision_preserves_sampled_execution_separately_from_judging(tmp_path, judging):
+    from chatcopilot.evals.trial_capture import execution_phase, sample_execution, set_phase
+    import copy
+    request = _supervisor_trial_request(tmp_path)
+    frames = []
+
+    def blocking(trial_request):
+        with execution_phase('agent'):
+            time.sleep(.04)
+            sample_execution(force=True)
+            if not judging:
+                time.sleep(60)
+        set_phase('judging')
+        time.sleep(60)
+        return _trial(trial_request)
+
+    with pytest.raises(evaluation_module._TrialExecutionDeadlineExceeded):
+        evaluation_module._execute_supervised_trial(request,
+            budget=evaluation_module._TrialExecutionBudget(seconds=.35, scope='case'),
+            cancel_check=None, executor=blocking, observation_callback=lambda frame: frames.append(copy.deepcopy(frame)),
+            _context=multiprocessing.get_context('fork'))
+    timing = frames[-1]['timing']
+    assert timing['state'] == ('complete' if judging else 'partial')
+    assert .03 <= timing['seconds'] < .3

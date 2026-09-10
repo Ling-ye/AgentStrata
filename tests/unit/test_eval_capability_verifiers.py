@@ -1126,8 +1126,12 @@ def test_registry_covers_every_packaged_verifier_id() -> None:
     assert declared == set(TRUSTED_CAPABILITY_VERIFIERS)
 
 
-def test_every_packaged_case_has_a_deterministic_passing_observation() -> None:
+def test_original_case_verifiers_have_deterministic_passing_observations() -> None:
+    # Goal-oriented and IFEval checks execute real fixtures through DeepEval in
+    # test_eval_business_cases.py and test_ifeval_fixed_subset.py respectively.
     for case in _cases():
+        if case.assertions[0].assertion_id in {"business_behavior", "ifeval_fixed"}:
+            continue
         judge, evidence = verify_capability_facts(case, _passing_observation(case))
         assert judge.passed is True, (case.case_id, judge)
         assert evidence["judge_kind"] == "deterministic:capability"

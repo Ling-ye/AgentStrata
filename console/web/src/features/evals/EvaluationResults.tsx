@@ -5,7 +5,7 @@ import type { EvaluationRecord, EvaluationTrial } from "./model";
 import { evaluationApi, normalizeTrial } from "./evaluationApi";
 import { durationLabel, EXCLUSION_LABELS, OUTCOME_LABELS, rateLabel, VERDICT_LABELS } from "./insightsModel";
 
-import { asObject, asText, captureLabel, executionTurns, objectList, qualityLabel, recordedInput, trialMetrics } from "./trialModel";
+import { asObject, asText, captureLabel, executionTurns, objectList, qualityLabel, recordedInput, trialMetrics, trialSource, instructionChecks, instructionLabel } from "./trialModel";
 
 const { Text, Title } = Typography;
 const COLORS: Record<string, string> = { passed: "green", failed: "red", error: "orange", skipped: "gray" };
@@ -71,6 +71,8 @@ function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: E
     {query.isError && <Alert type="error" content="读取本条测试详情失败，其他测试点仍可查看。" action={<Button onClick={() => void query.refetch()}>重试</Button>} />}
     {trial.error && <Alert type="error" content={trial.error} />}
     {status && <Tag color="orange">{status}</Tag>}
+    {!!trialSource(record, trial).label && <Space wrap><Tag>{asText(trialSource(record, trial).label)}</Tag>
+      {trialSource(record, trial).kind === "ifeval_subset" && <Text type="secondary">原题 {String(trialSource(record, trial).key)} · 版本 {asText(trialSource(record, trial).revision)}</Text>}</Space>}
     <div className="eval-io-grid">
       <section><Text bold>{input.source}</Text>{input.text ? <BoundedText value={input.text} /> : <Text type="secondary"> 未记录</Text>}</section>
       <section><Text bold>Agent 最终输出</Text>{trial.final_text ? <BoundedText value={trial.final_text} /> : <Text type="secondary"> 未记录最终输出</Text>}</section>
@@ -87,6 +89,11 @@ function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: E
         <Text>得分 {typeof metric.score === "number" ? metric.score.toFixed(2) : "—"} / 阈值 {typeof metric.threshold === "number" ? metric.threshold.toFixed(2) : "—"}</Text></Space>
       <div>{asText(metric.error) || asText(metric.reason)}</div>
     </div>)}
+      {!!instructionChecks(trial).length && <Table size="small" pagination={false} rowKey="id" data={instructionChecks(trial)} columns={[
+        { title: "指令约束", render: (_, row) => instructionLabel(asText(row.id)) },
+        { title: "参数", render: (_, row) => Object.values(asObject(row.parameters)).map(v => Array.isArray(v) ? v.join("、") : String(v)).join(" · ") || "无" },
+        { title: "结果", render: (_, row) => <Tag color={row.passed ? "green" : "red"}>{row.passed ? "通过" : "未通过"}</Tag> },
+      ]} />}
       {judging.quality_applicable === false && <Text type="secondary">{asText(judging.quality_reason) || "本测试点使用确定性判分。"}</Text>}
       {!trialMetrics(trial).length && <div>{objectList(judging.assertions).map((a, index) => <div key={index}>{asText(a.id)} · {a.passed ? "通过" : "未通过"}</div>)}
         {Array.isArray(trial.judge?.reasons) && <BoundedText value={trial.judge.reasons.join("\n")} />}</div>}
@@ -125,7 +132,7 @@ export function EvaluationResults({ record }: { record: EvaluationRecord }) {
         expandProps={{ icon: ({ expanded, record: trial }) => <Button size="mini" type="text" aria-expanded={expanded}
           aria-label={`${expanded ? "收起" : "展开"}测试点 ${trial.case_id}`}>{expanded ? "−" : "+"}</Button> }}
         columns={[
-          { title: "测试点", width: 175, render: (_, row) => <span title={row.case_ref}>{row.case_id || row.case_ref || "标识未记录"}<small className="eval-trial-meta">{row.target_id} · 第 {row.attempt} 次</small></span> },
+          { title: "测试点", width: 175, render: (_, row) => <span title={row.case_ref}>{row.case_id || row.case_ref || "标识未记录"}<small className="eval-trial-meta">{row.target_id} · 第 {row.attempt} 次</small>{!!trialSource(record, row).label && <Tag size="small">{asText(trialSource(record, row).label)}</Tag>}</span> },
           { title: "输入", width: 210, render: (_, row) => <span className="eval-cell-preview" title={recordedInput(record, row).source}>{recordedInput(record, row).text || "未记录"}</span> },
           { title: "Agent 最终输出", width: 240, render: (_, row) => <span className="eval-cell-preview">{row.final_text || "未记录"}</span> },
           { title: "结果", width: 80, render: (_, row) => <Tag color={COLORS[row.outcome] || "gray"}>{OUTCOME_LABELS[row.outcome] || "未知"}</Tag> },

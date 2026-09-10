@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # reviewed before their hosts are added.
 PUBLIC_URL_HOSTS = frozenset(
     {
+        "www.apache.org",
         "abstra.io",
         "agentclientprotocol.com",
         "api.deepseek.com",

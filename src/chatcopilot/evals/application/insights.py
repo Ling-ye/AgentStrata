@@ -126,7 +126,9 @@ def _series(request: Mapping[str, Any], result: Mapping[str, Any]) -> tuple[str 
     lanes = []
     for target in targets:
         lane = _mapping(target)
-        if not all(lane.get(key) for key in ("target_id", "executor", "backend", "model")):
+        model_optional = (request.get("suite_id", result.get("suite")) == "agentstrata-qq-message-flow-v1"
+                          and lane.get("executor") == "qq_message_flow")
+        if not all(lane.get(key) for key in ("target_id", "executor", "backend")) or (not model_optional and not lane.get("model")):
             return None, "missing_target"
         lanes.append({key: lane.get(key, "") for key in (
             "target_id", "executor", "backend", "model", "reasoning_effort",
@@ -254,10 +256,35 @@ def quality_summary(trials: list[Any]) -> dict[str, Any]:
     return {"score": sum(values) / len(values) if values else None, "scored": len(values), "expected": expected}
 
 
-def _agent_duration(trials: list[Any]) -> float | None:
-    values = [_nonnegative_number(_mapping(_mapping(t).get("evidence")).get("agent_duration_seconds")) for t in trials]
-    known = [value for value in values if value is not None]
-    return sum(known) if known and len(known) == len(values) else None
+def execution_duration(trials: list[Any], *, kind: str = "agent") -> dict[str, Any]:
+    """Project complete measurements and sampled lower bounds without rewriting history."""
+    known: list[float] = []
+    recorded = partial = 0
+    for trial in trials:
+        evidence = _mapping(_mapping(trial).get("evidence"))
+        timing = _mapping(_mapping(evidence.get("execution")).get("timing"))
+        if timing:
+            value = _nonnegative_number(timing.get("seconds")) if timing.get("kind") == kind else None
+            state = timing.get("state")
+            if value is not None and state in {"complete", "partial", "running"}:
+                known.append(value)
+                if state == "complete":
+                    recorded += 1
+                else:
+                    partial += 1
+        else:
+            value = _nonnegative_number(evidence.get("agent_duration_seconds" if kind == "agent" else "runtime_duration_seconds"))
+            if value is None and kind == "runtime":
+                # Earlier QQ observations used the Agent field for the whole driver.
+                value = _nonnegative_number(evidence.get("agent_duration_seconds"))
+            if value is not None:
+                known.append(value)
+                recorded += 1
+    subtotal = _nonnegative_number(sum(known)) if known else None
+    complete = bool(trials) and recorded == len(trials) and subtotal is not None
+    return {"kind": kind, "total_seconds": subtotal if complete else None,
+            "recorded_seconds": subtotal, "recorded": recorded, "partial": partial,
+            "expected": len(trials), "complete": complete}
 
 
 def target_summaries(result: Mapping[str, Any], request: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -265,20 +292,24 @@ def target_summaries(result: Mapping[str, Any], request: Mapping[str, Any]) -> l
     all_trials = result.get("trials", [])
     if not isinstance(all_trials, list):
         return rows
+    kind = "runtime" if request.get("suite_id", result.get("suite")) == "agentstrata-qq-message-flow-v1" else "agent"
     for target in result.get("targets", []):
         lane = _mapping(target)
         trials = [t for t in all_trials if _mapping(t).get("target_id") == lane.get("target_id")]
         counts, valid = _trial_counts(trials)
         cases = sorted({str(_mapping(t).get("case_id") or "") for t in trials})
+        duration = execution_duration(trials, kind=kind)
         rows.append({
             "target_id": lane.get("target_id"), "backend": lane.get("backend"),
             "model": lane.get("model"), "reasoning_effort": lane.get("reasoning_effort", ""),
             "counts": counts, "observed": len(trials),
             "pass_rate": counts["passed"] / len(trials) if trials and valid else None,
-            "quality": quality_summary(trials), "agent_duration_seconds": _agent_duration(trials),
+            "quality": quality_summary(trials), "duration": duration,
+            "agent_duration_seconds": duration["total_seconds"] if kind == "agent" else None,
             "case_ids": cases, "repetitions": request.get("repetitions", result.get("repetitions")),
             "cases": [{"case_id": case_id, "counts": _trial_counts(selected)[0],
-                "quality": quality_summary(selected), "agent_duration_seconds": _agent_duration(selected)}
+                "quality": quality_summary(selected), "duration": execution_duration(selected, kind=kind),
+                "agent_duration_seconds": execution_duration(selected, kind=kind)["total_seconds"] if kind == "agent" else None}
                 for case_id in cases if (selected := [t for t in trials if _mapping(t).get("case_id") == case_id])],
             "scoring": _mapping(_mapping(result.get("config_snapshot")).get("definition_snapshot")).get("scoring"),
         })
@@ -297,5 +328,5 @@ def trial_preview(trial: Mapping[str, Any]) -> dict[str, Any]:
         "final_text": str(trial.get("final_text") or "")[:400],
         "input_preview": str(first.get("input") or "")[:400],
         "body_available": True, "capture_state": execution.get("state", "not_recorded"),
-        "evidence": {"judge_evidence": {key: judging.get(key) for key in ("quality_applicable", "quality_reason", "metrics", "error")}},
+        "evidence": {"case_source": _mapping(evidence.get("case_source")), "judge_evidence": {key: judging.get(key) for key in ("quality_applicable", "quality_reason", "metrics", "error")}},
     }

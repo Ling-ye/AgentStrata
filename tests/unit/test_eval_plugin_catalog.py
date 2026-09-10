@@ -300,7 +300,7 @@ def test_capability_case_contract_is_strict_and_typed() -> None:
         .joinpath("cases.yaml")
     )
     definitions = parse_case_definitions(resource.read_bytes(), source="capability/cases.yaml")
-    assert len(definitions) == 25
+    assert len(definitions) == 63
     by_id = {item.case_id: item for item in definitions}
     persona_case = by_id["persona-applied-behavior"]
     assert persona_case.plugin_id == "generic-agent"

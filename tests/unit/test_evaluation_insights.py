@@ -227,3 +227,47 @@ def test_trial_preview_contains_actual_input_and_output_without_tool_bodies():
     assert value["input_preview"] == "actual input" and len(value["final_text"]) == 400
     assert value["body_available"] is True
     assert "large private body" not in json.dumps(value)
+
+
+def test_duration_partial_history_preserves_subtotal_without_mutating_trials():
+    from chatcopilot.evals.application.insights import execution_duration
+    trials = [{'evidence': {'agent_duration_seconds': 234.289648}}, {'outcome': 'error', 'duration_seconds': 8, 'evidence': {}}]
+    before = copy.deepcopy(trials)
+    duration = execution_duration(trials)
+    assert duration == {'kind': 'agent', 'total_seconds': None, 'recorded_seconds': 234.289648,
+                        'recorded': 1, 'partial': 0, 'expected': 2, 'complete': False}
+    assert trials == before
+
+
+@pytest.mark.parametrize('invalid', [None, True, -1, float('nan'), float('inf'), '4'])
+def test_invalid_durations_remain_missing_and_zero_is_measured(invalid):
+    from chatcopilot.evals.application.insights import execution_duration
+    value = execution_duration([{'evidence': {'agent_duration_seconds': 0}}, {'evidence': {'agent_duration_seconds': invalid}}])
+    assert value['recorded_seconds'] == 0 and value['recorded'] == 1 and not value['complete']
+    assert value['total_seconds'] is None
+
+
+def test_partial_execution_sample_is_not_a_complete_duration():
+    from chatcopilot.evals.application.insights import execution_duration
+    value = execution_duration([
+        {'evidence': {'agent_duration_seconds': 3}},
+        {'evidence': {'execution': {'timing': {'kind': 'agent', 'state': 'partial', 'seconds': 2}}}},
+    ])
+    assert value['recorded_seconds'] == 5 and value['partial'] == 1
+    assert value['recorded'] == 1 and value['total_seconds'] is None
+
+
+def test_qq_without_model_has_runtime_duration_and_agent_still_requires_model():
+    request, result = fixture_result()
+    result['targets'][0]['model'] = ''
+    assert insight(request, result)['exclusion_reason'] == 'missing_target'
+    request['suite_id'] = 'agentstrata-qq-message-flow-v1'
+    result['targets'][0]['executor'] = 'qq_message_flow'
+    for trial in result['trials']:
+        trial['evidence'] = {'agent_duration_seconds': .5}
+    projected = insight(request, result)
+    assert projected['trend_eligible']
+    target = projected['targets'][0]
+    assert target['duration']['kind'] == 'runtime'
+    assert target['duration']['total_seconds'] == 1
+    assert target['agent_duration_seconds'] is None

@@ -901,3 +901,9 @@ def test_reviewed_search_api_host_allowlist_is_exact() -> None:
         path="candidate.txt",
     )
     assert {finding.rule for finding in findings} == {"url-host-not-allowlisted"}
+
+
+def test_apache_license_host_is_exactly_allowed():
+    checker = _load_checker()
+    assert not checker._scan_uri_candidate('http://www.apache.org/licenses/LICENSE-2.0', path='LICENSE.txt', line_number=1)
+    assert checker._scan_uri_candidate('https://' + 'www.apache.org.other.tld/key', path='LICENSE.txt', line_number=1)

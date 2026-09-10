@@ -16,10 +16,11 @@
 .eval-outcome-bar span { background: currentColor; }
 .eval-capability-list { display: grid; border-top: 1px solid var(--color-border-2); }
 .eval-capability-list > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--color-border-2); }
-.eval-trends { display: grid; gap: 18px; }
+.eval-trends { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 18px; }
+.eval-trends > * { min-width: 0; }
 .eval-trend-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .eval-trend-chart { min-width: 0; }
-.eval-trend-chart svg { display: block; width: 100%; min-height: 190px; }
+.eval-trend-chart svg { display: block; width: 100%; height: 250px; }
 .eval-trend-chart svg text { fill: var(--color-text-3); font-size: 12px; }
 .eval-chart-grid { stroke: var(--color-border-2); stroke-width: 1; }
 .eval-chart-line { stroke: rgb(var(--primary-6)); stroke-width: 2; fill: none; }
@@ -45,8 +46,16 @@
 }
 
 .eval-trend-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.eval-trend-controls label { display: grid; gap: 6px; min-width: 0; color: var(--color-text-2); }
-.eval-split-controls { margin: 14px 0; }
+.eval-trend-controls .eval-trend-filter { display: grid; gap: 6px; min-width: 0; color: var(--color-text-2); }
+.eval-range-controls { display: grid; gap: 12px; }
+.eval-range-actions { display: flex; justify-content: flex-end; }
+.eval-split-controls { margin: 0; padding: 12px 0; border-top: 1px solid var(--color-border-2); border-bottom: 1px solid var(--color-border-2); }
+.eval-chart-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.eval-chart-metric-controls { display: flex; max-width: 100%; flex-wrap: wrap; }
+.eval-chart-point-partial { stroke-width: 2; }
+@media (max-width: 700px) {
+  .eval-chart-header { align-items: flex-start; flex-direction: column; }
+}
 .eval-io-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 10px 0; }
 .eval-io-grid > section { min-width: 0; }
 .eval-trial-detail { min-width: 0; }

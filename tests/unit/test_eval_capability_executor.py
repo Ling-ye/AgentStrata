@@ -1123,9 +1123,10 @@ def test_assertion_failure_is_failed_not_infrastructure_error(
     assert result.error == ""
 
 
-def test_all_manifest_cases_pass_executor_preflight(deepeval_judge) -> None:
+def test_all_manifest_cases_pass_executor_preflight(deepeval_judge, monkeypatch) -> None:
     definitions = load_case_definitions(get_manifest(SUITE_ID))
 
+    monkeypatch.setattr(executor, "load_evaluation_runtime", lambda bot: SimpleNamespace(skills=(SimpleNamespace(id="ai-career-intelligence"), SimpleNamespace(id="ai-jd-analysis"))))
     for definition in definitions:
         executor._preflight_definition(definition, bot="selected-bot")
 

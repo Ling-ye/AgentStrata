@@ -48,6 +48,8 @@ def _check_env(*, uses_repository_index: bool = False) -> dict[str, str]:
     else:
         env.pop("GIT_INDEX_FILE", None)
         env.pop("GIT_OPTIONAL_LOCKS", None)
+        env.pop("GIT_OBJECT_DIRECTORY", None)
+        env.pop("GIT_ALTERNATE_OBJECT_DIRECTORIES", None)
     return env
 
 

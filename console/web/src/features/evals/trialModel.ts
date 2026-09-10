@@ -21,3 +21,21 @@ export function qualityLabel(trial: EvaluationTrial): string {
   const metric = trialMetrics(trial).find(m => m.kind === "quality");
   return typeof metric?.score === "number" && !metric.error ? `${(metric.score * 100).toFixed(0)}%` : "—";
 }
+
+export function trialSource(record: EvaluationRecord, trial: EvaluationTrial): Record<string, unknown> {
+  const direct = asObject(trial.evidence.case_source);
+  if (direct.kind) return direct;
+  const snapshot = asObject(asObject(record.result?.config_snapshot).definition_snapshot);
+  const definition = objectList(snapshot.cases).find(c => c.case_id === trial.case_id);
+  return asObject(asObject(definition?.metadata).case_source);
+}
+
+export const instructionChecks = (trial: EvaluationTrial) => objectList(asObject(trial.evidence.judge_evidence).assertions)
+  .flatMap(assertion => objectList(asObject(assertion.checks).instructions));
+
+export const instructionLabel = (id: string): string => ({
+  "punctuation:no_comma": "不使用逗号", "change_case:english_lowercase": "英文小写",
+  "change_case:english_capital": "英文大写", "detectable_format:json_format": "JSON 格式",
+  "detectable_format:number_bullet_lists": "列表项数量", "startend:end_checker": "指定结尾",
+  "keywords:frequency": "关键词频次", "keywords:existence": "必需关键词",
+}[id] ?? id);

@@ -27,6 +27,9 @@ _COMMON_SUITE_MODULES = (
 _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("generic-agent", "agent_isolated"): (
         "chatcopilot.evals.deepeval_engine",
+        "chatcopilot.evals.business_cases",
+        "chatcopilot.evals.business_verifiers",
+        "chatcopilot.evals.ifeval_subset",
         "chatcopilot.evals.trial_capture",
         "chatcopilot.evals.capability_executor",
         "chatcopilot.evals.capability_verifiers",
@@ -34,6 +37,9 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ),
     ("generic-agent", "agent_configured"): (
         "chatcopilot.evals.deepeval_engine",
+        "chatcopilot.evals.business_cases",
+        "chatcopilot.evals.business_verifiers",
+        "chatcopilot.evals.ifeval_subset",
         "chatcopilot.evals.trial_capture",
         "chatcopilot.evals.capability_executor",
         "chatcopilot.evals.capability_verifiers",

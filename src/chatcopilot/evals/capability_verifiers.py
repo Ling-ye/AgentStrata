@@ -16,6 +16,7 @@ from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Sequence
 
+from chatcopilot.evals.ifeval_subset import MetricCollectionError, check_instructions, validate_fixed
 from chatcopilot.contracts.code_tasks import validate_code_task_title
 from chatcopilot.evals.models import (
     EvalCaseAssertion,
@@ -2020,7 +2021,26 @@ def _qq_flow_receipt(
     )
 
 
+def _business_behavior(case: EvalCaseDefinition, assertion: EvalCaseAssertion, observation: TrialObservation) -> AssertionOutcome:
+    from chatcopilot.evals.business_verifiers import business_checks
+
+    checks = business_checks(case.case_id, observation)
+    return _passed(**checks) if all(checks.values()) else _failed(
+        "业务执行证据不满足要求", violations=tuple(key for key, value in checks.items() if not value), **checks)
+
+
+def _ifeval_fixed(case: EvalCaseDefinition, assertion: EvalCaseAssertion, observation: TrialObservation) -> AssertionOutcome:
+    arguments = assertion.arguments
+    validate_fixed(arguments)
+    checks = check_instructions(arguments['instruction_id_list'], arguments['kwargs'], observation.final_text)
+    return AssertionOutcome(all(c['passed'] for c in checks),
+        reasons=tuple(c['id'] + (': passed' if c['passed'] else ': failed') for c in checks),
+        checks={'instructions': checks, 'provenance': {'kind': 'ifeval_subset', 'key': arguments['key'], 'revision': arguments['revision']}})
+
+
 _REGISTRY: dict[str, Verifier] = {
+    "ifeval_fixed": _ifeval_fixed,
+    "business_behavior": _business_behavior,
     "exact_json_fields": _exact_json_fields,
     "clarification_without_effect": _clarification_without_effect,
     "allowed_tool_trace": _allowed_tool_trace,
@@ -2081,6 +2101,8 @@ def verify_capability_facts(
         else:
             try:
                 outcome = verifier(case, assertion, observation)
+            except MetricCollectionError:
+                raise
             except Exception as exc:  # noqa: BLE001 - verifier bugs fail closed and redact details
                 outcome = _failed(
                     "trusted verifier raised an internal error",

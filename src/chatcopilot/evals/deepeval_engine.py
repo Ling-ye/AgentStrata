@@ -101,6 +101,12 @@ def preflight(cases: list[EvalCaseDefinition]) -> None:
         raise ValueError("Agent 评测需要安装 agentstrata[evaluation]（DeepEval 4.2.2）") from exc
     if installed != ENGINE_VERSION:
         raise ValueError(f"Agent 评测需要 DeepEval {ENGINE_VERSION}，当前为 {installed}")
+    if any(case.capability == "ifeval_subset" for case in cases):
+        try:
+            if version("langdetect") != "1.0.9":
+                raise ValueError("IFEval 固定子集需要 langdetect 1.0.9")
+        except PackageNotFoundError as exc:
+            raise ValueError("IFEval 固定子集需要安装 agentstrata[evaluation]（langdetect 1.0.9）") from exc
     if any(quality_policy(case)["enabled"] for case in cases):
         JudgeConfig.from_environment()
 
@@ -275,9 +281,14 @@ def score(
 
         turns = [item for item in observation.evidence if item.get("kind") == "agent_turn_result"]
         actual_input = str(turns[-1].get("input", "")) if turns else ""
+        quality_context = [json.dumps(
+            {key: item.get(key) for key in ("source", "case_id", "snapshots", "retrieved", "report", "report_sha256")},
+            ensure_ascii=False,
+        ) for item in observation.evidence if item.get("kind") == "business_snapshot"]
         test_case = LLMTestCase(
             input=actual_input,
             actual_output=observation.final_text,
+            context=quality_context or None,
             tools_called=[
                 ToolCall(
                     name=str(call.get("name") or "unknown"),
@@ -323,6 +334,7 @@ def score(
                 conversations = {str(turn.get("conversation_id", "")) for turn in turns}
                 if len(turns) > 1 and len(conversations) == 1:
                     conversation = ConversationalTestCase(
+                        metadata={"execution_evidence": quality_context} if quality_context else None,
                         expected_outcome=policy["expected"],
                         turns=[
                             message
@@ -347,6 +359,7 @@ def score(
                         MultiTurnParams.ROLE,
                         MultiTurnParams.CONTENT,
                         MultiTurnParams.EXPECTED_OUTCOME,
+                        *([MultiTurnParams.METADATA] if quality_context else []),
                     ]
                     run(conversation, conversation_metric, "quality")
                 else:
@@ -358,6 +371,7 @@ def score(
                             SingleTurnParams.INPUT,
                             SingleTurnParams.ACTUAL_OUTPUT,
                             SingleTurnParams.EXPECTED_OUTPUT,
+                            *([SingleTurnParams.CONTEXT, SingleTurnParams.TOOLS_CALLED] if quality_context else []),
                         ],
                         threshold=policy["threshold"],
                         model=model,

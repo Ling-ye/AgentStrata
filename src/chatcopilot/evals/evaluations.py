@@ -855,6 +855,19 @@ def _execute_supervised_trial(
     started = time.monotonic()
     deadline = started + budget.seconds
     startup_deadline = min(deadline, started + _TRIAL_STARTUP_TIMEOUT_SECONDS)
+    latest_execution: dict[str, Any] | None = None
+
+    def preserve_interrupted_timing() -> None:
+        if latest_execution is None or observation_callback is None:
+            return
+        observed = dict(latest_execution)
+        timing = observed.get('timing')
+        if isinstance(timing, dict) and timing.get('state') == 'running':
+            # Only retain elapsed time sampled by the executing child. A parent
+            # deadline includes queueing/judging and is not Agent execution time.
+            observed['timing'] = {**timing, 'state': 'partial'}
+            observation_callback(observed)
+
     ready = False
     process_started = False
     try:
@@ -869,10 +882,12 @@ def _execute_supervised_trial(
             # cancellation immediately.
             if ready and cancel_check is not None and cancel_check():
                 _terminate_trial_process(process, receiver=receiver)
+                preserve_interrupted_timing()
                 raise _TrialExecutionCancelled("Evaluation cancelled during an active Trial")
             now = time.monotonic()
             if now >= deadline:
                 _terminate_trial_process(process, receiver=receiver)
+                preserve_interrupted_timing()
                 raise _TrialExecutionDeadlineExceeded(
                     scope=budget.scope,
                     seconds=budget.seconds,
@@ -904,6 +919,7 @@ def _execute_supervised_trial(
                     execution = message.get("execution")
                     if not ready or set(message) != {"kind", "execution"} or not isinstance(execution, dict):
                         raise RuntimeError("supervised Trial returned an invalid observation")
+                    latest_execution = json.loads(json.dumps(execution))
                     if observation_callback is not None:
                         observation_callback(execution)
                     continue
@@ -2379,7 +2395,8 @@ def _suite_case_preflight(
         if not isinstance(requirements, Mapping):
             requirements = {}
         plugin_id, driver_id = _case_plugin_driver(manifest, case)
-        missing: list[str] = []
+        from chatcopilot.evals.business_cases import missing_requirements
+        missing: list[str] = missing_requirements(case.case_id, runtime)
         capability_definition = definitions.get(case.case_id)
         if definitions:
             if capability_definition is None:
@@ -3925,6 +3942,8 @@ def _error_trial(
             raise ValueError("Trial observation is outside Evaluation")
         if observed.get("trial_id") == _trial_id(request):
             execution = observed.get("execution", {})
+    from chatcopilot.evals.trial_capture import timing_metadata
+
     turns = execution.get("turns", [])
     last = turns[-1] if turns and isinstance(turns[-1], dict) and turns[-1].get("completed") else {}
     quality = _case_definition(request.case).get("quality", {})
@@ -3952,7 +3971,7 @@ def _error_trial(
         order=request.order,
         outcome="error",
         final_text=str(last.get("final_text") or ""), stop_reason=str(last.get("stop_reason") or ""),
-        evidence={"execution": execution, "judge_evidence": {"quality_applicable": quality.get("enabled"),
+        evidence={**timing_metadata(execution), "execution": execution, "judge_evidence": {"quality_applicable": quality.get("enabled"),
             "quality_reason": quality.get("reason", ""), "metrics": [],
             "error": str(exc) if execution.get("phase") == "judging" else ""}},
         started_at=now,

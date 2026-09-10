@@ -24,6 +24,11 @@ def load_declarative_cases(
                 context="\n\n".join(turn_texts[:-1]),
                 rubric=",".join(item.assertion_id for item in definition.assertions),
                 metadata={
+                    "case_source": ({"kind": "ifeval_subset", "label": "IFEval 固定子集",
+                        "key": definition.assertions[0].arguments.get("key"),
+                        "revision": definition.assertions[0].arguments.get("revision")}
+                        if definition.capability == "ifeval_subset" else
+                        {"kind": "business", "label": "业务能力"}),
                     "adapter": definition.plugin_id,
                     "case_definition": to_jsonable(definition),
                     "driver": definition.driver_id,

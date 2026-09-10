@@ -40,6 +40,9 @@ PLUGIN_DRIVERS = {
     "generic-agent": {"agent_isolated", "agent_configured"},
 }
 EXPECTED_CAPABILITY_COUNTS = {
+    "ifeval_subset": 8,
+    "tool_decisions": 8, "context_memory": 6, "retrieval_evidence": 6,
+    "multimodal_artifacts": 4, "delegation": 3, "configured_skills": 3,
     "dialogue_constraints": 2,
     "persona": 1,
     "tool_orchestration": 4,
@@ -101,7 +104,7 @@ def test_suite_loads_through_strict_core_contract() -> None:
     assert manifest.driver_id == "agent_configured"
     assert manifest.default_preset == "quick"
     assert manifest.track == "agent"
-    assert len(cases) == 25
+    assert len(cases) == 63
 
 
 def test_case_contract_counts_and_presets_are_exact() -> None:
@@ -109,11 +112,11 @@ def test_case_contract_counts_and_presets_are_exact() -> None:
     cases = _load_yaml(SUITE_DIR / "cases.yaml")["cases"]
 
     assert isinstance(cases, list)
-    assert len(cases) == 25
+    assert len(cases) == 63
     assert Counter(case["capability"] for case in cases) == EXPECTED_CAPABILITY_COUNTS
 
     identifiers = [case["id"] for case in cases]
-    assert len(set(identifiers)) == 25
+    assert len(set(identifiers)) == 63
     assert all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?", item) for item in identifiers)
     assert all(set(case) == CASE_FIELDS for case in cases)
     assert all(case["schema"] == "agentstrata-eval-case/v1" for case in cases)
@@ -135,7 +138,7 @@ def test_case_contract_counts_and_presets_are_exact() -> None:
     presets = manifest["presets"]
     assert set(presets) == {"quick", "full", "security"}
     assert len(presets["quick"]["case_ids"]) == 10
-    assert len(presets["full"]["case_ids"]) == 23
+    assert len(presets["full"]["case_ids"]) == 61
     assert len(presets["security"]["case_ids"]) == 3
     assert presets["full"]["case_ids"] == [
         case["id"] for case in cases if "full" in case["preset"]
@@ -275,10 +278,10 @@ def test_manifest_resources_are_contained_digest_pinned_and_raster_valid() -> No
     cases = _load_yaml(SUITE_DIR / "cases.yaml")["cases"]
     files = manifest["files"]
 
-    assert len(files) == 7
+    assert len(files) == 9
     assert sum(item["role"] == "cases" for item in files) == 1
     fixture_files = [item for item in files if item["role"] == "fixture"]
-    assert len(fixture_files) == 6
+    assert len(fixture_files) == 8
     assert all("resource_id" not in item for item in files if item["role"] == "cases")
     assert all(item.get("resource_id") for item in fixture_files)
 
@@ -297,7 +300,7 @@ def test_manifest_resources_are_contained_digest_pinned_and_raster_valid() -> No
         for turn in case["turns"]
         for resource_id in turn.get("resources", [])
     }
-    assert referenced == resource_ids
+    assert referenced | {"ifeval-fixed", "ifeval-license"} == resource_ids
 
     pngs = [item for item in fixture_files if item["media_type"] == "image/png"]
     assert {item["resource_id"] for item in pngs} == {

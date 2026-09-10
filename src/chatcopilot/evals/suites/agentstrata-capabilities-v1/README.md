@@ -1,13 +1,13 @@
 # AgentStrata capabilities v1
 
 This packaged Suite is a manually selected product-capability evaluation. It
-contains exactly 25 versioned direct-Agent cases and does not install hooks,
+contains exactly 63 versioned direct-Agent cases and does not install hooks,
 schedules, CI gates, deployment callbacks, or restart triggers.
 
 The presets have intentionally narrow meanings:
 
 - `quick` selects 10 representative cases.
-- `full` selects the 23 cases supported by the built-in Bot configuration once.
+- `full` selects 61 cases once: the original 23, 30 goal-oriented business cases, and eight pinned IFEval records. Required configured Skills must be present.
   A single run is not reliability evidence.
 - `security` selects the three tool-permission and indirect-injection cases.
 - `custom` is the Core-owned explicit `case_ids` selection mode. It is not a
@@ -29,8 +29,7 @@ Every Case uses the statically registered `generic-agent` plugin and either the
 `agent_isolated` or `agent_configured` Core driver. The executor calls the Agent
 runtime directly and records that ACP and transport layers were not exercised.
 The persona Case verifies that an already trusted PromptPlan persona changes the
-Agent's answer. Persona mutation itself is host-owned and therefore belongs to
-the QQ message-flow Suite rather than being misreported as a main-Agent tool.
+Agent's answer. The goal-oriented persona Case additionally binds the real persona tool to Evaluation-owned state. It checks tool selection and persistence without claiming QQ admission or delivery coverage.
 
 The YAML files contain declarations only. They must not name Python modules,
 carry executable commands, provide network targets, or embed credentials.
@@ -42,3 +41,22 @@ Synthetic QQ message-flow checks live in `agentstrata-qq-message-flow-v1`.
 QQ/NapCat/OneBot connectivity remains in the platform external check. Without
 an independent sender account, real inbound user-to-Agent-to-QQ coverage is
 still explicitly `not_tested`.
+
+## Goal-oriented cases and IFEval
+
+Business cases cover autonomous tool selection (8), multi-turn context and memory (6),
+retrieval evidence (6), file/image tasks (4), delegation (3), and configured Skills (3).
+Fixtures expose ordinary data and tools, not expected answers or the scoring rubric.
+Memory uses the real persistent-state service; the fresh-session cases reopen the
+Agent while retaining only their isolated memory. Retrieval uses LocalTextRetriever.
+Reports distinguish test resources from the selected Bot configuration. No live group
+persona, memory, repository, or platform resources are used.
+
+IFEval uses eight unchanged records and strict checks at the revision documented in
+[IFEVAL-NOTICE.md](IFEVAL-NOTICE.md). Results are a fixed AgentStrata subset, not official
+full-benchmark scores. Unknown constraints, missing parameters, and checker exceptions
+are grading errors. Language detection uses a private seeded detector and does not
+silently accept detection errors. All grading runs through DeepEval evaluate().
+
+The suite version changes without rewriting previous artifacts; quick remains 10,
+security remains 3, and the two experience-source cases remain custom-only.

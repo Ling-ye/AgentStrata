@@ -80,7 +80,7 @@ def test_preflight_rejects_missing_judge_without_importing_sdk(monkeypatch):
 
 def test_all_agent_cases_have_explicit_quality_policy():
     cases = load_case_definitions(get_manifest("agentstrata-capabilities-v1"))
-    assert len(cases) == 25
+    assert len(cases) == 63
     assert all("enabled" in engine.quality_policy(c) for c in cases)
 
 

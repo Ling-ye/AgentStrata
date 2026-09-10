@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeEvaluation } from "./model";
-import { buildTrendPoints, groupTrendPoints, linePaths } from "./trendModel";
+import { buildTrendPoints, groupTrendPoints, linePaths, pointValue, pointDuration, durationPointLabel, durationCoverage } from "./trendModel";
 import { normalizeTrial } from "./evaluationApi";
 import { recordedInput } from "./trialModel";
 
@@ -53,5 +53,37 @@ describe("recorded Case input", () => {
     expect(recordedInput(r, t).source).toContain("实际发送未记录");
     r.result = null;
     expect(recordedInput(r, t).text).toBe("");
+  });
+});
+
+describe("cumulative execution duration", () => {
+  it("plots partial measurements as a lower bound and breaks duration lines", () => {
+    const records = [record("1"), record("2"), record("3")];
+    records.forEach((r, i) => {
+      r.insights.targets[0].duration = { kind: "agent", total_seconds: i === 1 ? null : i + 2,
+        recorded_seconds: i + 2, recorded: i === 1 ? 1 : 2, expected: 2, partial: 0, complete: i !== 1 };
+    });
+    const points = buildTrendPoints(records);
+    expect(pointValue(points[1], "duration")).toBe(3);
+    expect(durationPointLabel(points[1])).toContain("至少");
+    expect(durationCoverage(points[1])).toBe("完整记录 1/2 项");
+    expect(linePaths(points, "duration", p => Number(p.record.evaluation_id), v => v)).toEqual(["M1,2", "M3,4"]);
+  });
+  it("keeps zero, missing duration and filtered Case coverage separate", () => {
+    const r = record("1");
+    r.insights.targets[0].cases.push({ case_id: "case-1", counts: { passed: 0, failed: 0, error: 1, skipped: 0 },
+      quality: { score: null, scored: 0, expected: 0 }, agent_duration_seconds: null });
+    const all = buildTrendPoints([r], ["case-0", "case-1"])[0];
+    expect(pointValue(all, "duration")).toBe(2);
+    expect(pointDuration(all).complete).toBe(false);
+    expect(pointDuration(all).recorded).toBe(1);
+    const selected = buildTrendPoints([r], ["case-0"])[0];
+    expect(pointDuration(selected).complete).toBe(true);
+    expect(pointDuration(selected).expected).toBe(1);
+    selected.duration = { kind: "agent", total_seconds: 0, recorded_seconds: 0, recorded: 1, expected: 1, partial: 0, complete: true };
+    expect(pointValue(selected, "duration")).toBe(0);
+    const unrecorded = buildTrendPoints([record("1")])[0];
+    expect(pointValue(unrecorded, "duration")).toBeNull();
+    expect(durationPointLabel(unrecorded)).toBe("未记录");
   });
 });
