@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from chatcopilot.agent.backends.codex_events import CodexJsonlProjector
+from chatcopilot.agent.backends.codex_app_server import AppServerProjector
 from chatcopilot.agent.backends.session_relay import SessionToolRelay
 from chatcopilot.agent.context import (
     frame_task_message,
@@ -73,7 +73,7 @@ from chatcopilot.core.model_selection import (
 from chatcopilot.contracts.prompt import PromptPlan
 from chatcopilot.agent.context.prompt_plan import render_codex_prompt
 from chatcopilot.external_tools.codex_cli.command import (
-    build_codex_command,
+    build_app_server_command,
     build_codex_subprocess_env,
 )
 from chatcopilot.external_tools.codex_cli.credentials import (
@@ -81,7 +81,7 @@ from chatcopilot.external_tools.codex_cli.credentials import (
     credential_lease,
     validate_auth_root_path,
 )
-from chatcopilot.external_tools.codex_cli.process_runner import run_codex_process
+from chatcopilot.external_tools.codex_cli.app_server import run_app_server
 from chatcopilot.external_tools.codex_cli import session_gateway as _standalone_gateway
 
 if TYPE_CHECKING:
@@ -110,6 +110,7 @@ class _CodexSession:
     native_session_id: str = ""
     credential_generation: int = 0
     messages: list[dict[str, Any]] = field(default_factory=list)
+    usage_totals: dict[str, int] | None = None
 
 
 _ISOLATED_GATEWAY_CONFIG = "/run/chatcopilot-gateway.json"
@@ -387,7 +388,7 @@ class CodexAgentBackend:
                 stop_reason="llm_error",
                 message_count=len(state.messages),
             )
-        projector: CodexJsonlProjector | None = None
+        projector: AppServerProjector | None = None
         trace_id = str(task.metadata.get("trace_id") or state.acp_session_id)
         llm_span_id: str | None = None
         turn_relay: SessionToolRelay | None = None
@@ -395,6 +396,7 @@ class CodexAgentBackend:
         successful_operations: list[str] = []
         try:
             image_paths = self._image_paths(task)
+            self._prepare_app_server_home(state)
             command = self._command(
                 state,
                 selection=selection,
@@ -421,7 +423,7 @@ class CodexAgentBackend:
                 prompt=prompt,
             )
             resumed = bool(state.native_session_id)
-            context_kind = "codex_native_resume" if resumed else "codex_exec"
+            context_kind = "codex_native_resume" if resumed else "codex_app_server"
             omitted: tuple[str, ...] = ("provider_internal_instructions",)
             if resumed:
                 omitted += ("provider_managed_resume_context",)
@@ -458,7 +460,7 @@ class CodexAgentBackend:
                     backend=self.backend_id,
                     execution_kind="backend_execution",
                     request_parameters={"model": selection.model, "reasoning_effort": selection.reasoning_effort,
-                                        "resume": resumed},
+                                        "resume": resumed, "summary": "auto", "transport": "app_server_stdio"},
                     trace_id=trace_id,
                     span_id=llm_span_id,
                     parent_span_id=parent_span_id,
@@ -482,7 +484,7 @@ class CodexAgentBackend:
                 depth=1,
                 request_text=task.text,
             )
-            projector = CodexJsonlProjector(
+            projector = AppServerProjector(
                 model=selection.model,
                 iteration=0,
                 trace_id=trace_id,
@@ -500,6 +502,8 @@ class CodexAgentBackend:
                 tool_schema_estimated_tokens=int(prompt_estimate["tool_schema_tokens"]),
                 estimator_version=str(prompt_estimate["estimator_version"]),
                 context_kind=context_kind,
+                initial_usage=state.usage_totals if resumed else {},
+                on_usage=lambda usage: setattr(state, "usage_totals", dict(usage)),
             )
 
             def drain_live_relay_events() -> None:
@@ -516,19 +520,25 @@ class CodexAgentBackend:
                     raise RuntimeError(f"Codex relay audit failed: {relay_error}")
 
             def poll_codex_process() -> None:
+                projector.flush()
                 if cancellation is not None:
                     cancellation.raise_if_cancelled()
                 drain_live_relay_events()
                 if cancellation is not None:
                     cancellation.raise_if_cancelled()
 
-            completed = run_codex_process(
+            completed = run_app_server(
                 command,
                 cwd=state.workdir,
                 prompt=prompt,
                 timeout_seconds=self._runtime_config.routing.code_timeout_seconds,
                 env=subprocess_env,
-                on_stdout_line=projector.consume_line,
+                model=selection.model,
+                effort=selection.reasoning_effort,
+                thread_id=state.native_session_id,
+                image_paths=image_paths,
+                on_notification=projector.consume_notification,
+                on_thread=projector.bind_thread,
                 on_poll=poll_codex_process,
             )
             if cancellation is not None:
@@ -544,20 +554,11 @@ class CodexAgentBackend:
             )
             if audit_error:
                 raise RuntimeError(f"Codex relay audit failed: {audit_error}")
-            if projector.line_count == 0:
-                # Completion-based injected runners do not have to implement the
-                # optional callback. Keep their established contract intact.
-                projector.consume_text(completed.stdout)
-            if getattr(completed, "stdout_line_truncated", False):
-                if projector.stream_omission_count == 0:
-                    projector.mark_stream_line_omitted()
-                if not projector.has_complete_final_after_stream_omission:
-                    raise RuntimeError(
-                        "Codex CLI emitted a JSONL record above the streaming size limit "
-                        "and no complete final message followed that omission"
-                    )
             projector.finish(returncode=completed.returncode)
         except CancellationRequested:
+            if projector is not None:
+                projector.fail(reason="cancelled")
+            self._clear_native_session(state)
             if turn_relay is not None and relay_generation is not None:
                 self._emit_relay_tool_events(
                     turn_relay,
@@ -571,6 +572,8 @@ class CodexAgentBackend:
                 )
             raise
         except Exception as exc:  # noqa: BLE001
+            if projector is not None and projector.turn_id:
+                self._clear_native_session(state)
             audit_error = ""
             if turn_relay is not None and relay_generation is not None:
                 audit_error = self._emit_relay_tool_events(
@@ -643,7 +646,7 @@ class CodexAgentBackend:
         codex_failed = completed.returncode != 0 or projector.provider_failed
         if codex_failed:
             detail = (
-                completed.stderr or final_text or "Codex CLI reported a failed turn"
+                projector.failure_detail or completed.stderr or final_text or "Codex App Server reported a failed turn"
             ).strip()[-4000:]
             auth_failed = self._is_auth_failure(detail)
             on_event(
@@ -938,9 +941,6 @@ class CodexAgentBackend:
             ]
         gateway_args = json.dumps(gateway_argv, ensure_ascii=False)
         scope = state.execution_scope
-        sandbox_mode = self._policy.sandbox_mode or (
-            "workspace-write" if scope is not None and scope.native_write else "read-only"
-        )
         extra_config = [
             "mcp_servers={}",
             f"mcp_servers.chatcopilot.command={json.dumps(gateway_command)}",
@@ -956,22 +956,21 @@ class CodexAgentBackend:
             extra_config.append("project_doc_max_bytes=0")
             extra_config.extend(permission_config(
                 scope, workdir=state.workdir,
-                private_paths=(_ISOLATED_CODEX_HOME + "/auth.json", _ISOLATED_GATEWAY_CONFIG),
+                private_paths=(_ISOLATED_CODEX_HOME + "/auth.json", _ISOLATED_GATEWAY_CONFIG,
+                               _ISOLATED_CODEX_HOME + "/config.toml"),
                 network_access=self._policy.network_access,
                 read_only=self._policy.sandbox_mode == "read-only",
             ))
-        command = build_codex_command(
+        if not isolate_backend_state:
+            extra_config.extend(permission_config(scope, workdir=state.workdir,
+                private_paths=(str(state.codex_home / "auth.json"), str(state.gateway_config), str(state.codex_home / "config.toml")),
+                network_access=self._policy.network_access, read_only=self._policy.sandbox_mode == "read-only"))
+        command = build_app_server_command(
             template=routing.code_command,
             model=effective_selection.model,
             workdir=state.workdir,
             reasoning_effort=effective_selection.reasoning_effort,
-            network_access=self._policy.network_access,
-            sandbox_mode=None if isolate_backend_state else sandbox_mode,
             web_search_mode=self._policy.web_search_mode,
-            skip_git_repo_check=True,
-            ephemeral=False,
-            ignore_user_config=True,
-            inherit_shell_environment=False,
             shell_env_overrides=(
                 {
                     "PATH": "/usr/local/bin:/usr/bin:/bin",
@@ -983,19 +982,29 @@ class CodexAgentBackend:
             extra_config=tuple(extra_config),
         )
         if isolate_backend_state:
-            command[2:2] = ["--strict-config", "--ignore-rules"]
-        command.append("--json")
-        if state.native_session_id:
-            command.extend(["resume", state.native_session_id])
-            for image_path in image_paths:
-                command.extend(["--image", image_path])
-            command.append("-")
-        else:
-            for image_path in image_paths:
-                command.extend(["--image", image_path])
-        if isolate_backend_state:
             return self._wrap_isolated_command(state, command)
         return command
+
+    @staticmethod
+    def _prepare_app_server_home(state: _CodexSession) -> None:
+        # App Server has no exec --ignore-user-config flag. Only this owned home
+        # supplies config; the namespace masks workspace configs and rules.
+        for name in ("rules",):
+            path = state.codex_home / name
+            path.mkdir(mode=0o700, exist_ok=True)
+            info = path.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                raise RuntimeError("Unsafe App Server runtime configuration directory")
+        config = state.codex_home / "config.toml"
+        if config.is_symlink():
+            raise RuntimeError("Unsafe App Server runtime configuration")
+        fd, temporary = tempfile.mkstemp(prefix=".config-", dir=state.codex_home)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write("# Managed by AgentStrata.\n")
+            os.replace(temporary, config)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
 
     @staticmethod
     def _subprocess_env(state: _CodexSession, executable: str) -> dict[str, str]:
@@ -1166,19 +1175,18 @@ class CodexAgentBackend:
             )
         else:
             wrapped.extend(["--ro-bind", str(state.workdir), str(state.workdir)])
-        project_codex = state.workdir / ".codex"
-        try:
-            project_codex_info = project_codex.lstat()
-        except FileNotFoundError:
-            project_codex_info = None
-        if project_codex_info is not None:
-            if (
-                not stat.S_ISDIR(project_codex_info.st_mode)
-                or project_codex_info.st_uid != os.getuid()
-            ):
-                raise RuntimeError(
-                    "shared-group Codex project config must be an owner-owned real directory"
-                )
+        roots = {state.workdir}
+        if state.execution_scope is not None:
+            roots.update(state.execution_scope.readable_roots)
+            roots.update(state.execution_scope.writable_roots)
+        for root in sorted(roots, key=str):
+            project_codex = Path(root) / ".codex"
+            try:
+                info = project_codex.lstat()
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+                raise RuntimeError("Codex project config must be an owner-owned real directory")
             wrapped.extend(["--tmpfs", str(project_codex)])
         wrapped.extend(
             [
@@ -1197,6 +1205,11 @@ class CodexAgentBackend:
                 "--bind",
                 str(state.codex_home),
                 _ISOLATED_CODEX_HOME,
+                "--ro-bind",
+                str(state.codex_home / "config.toml"),
+                _ISOLATED_CODEX_HOME + "/config.toml",
+                "--tmpfs",
+                _ISOLATED_CODEX_HOME + "/rules",
                 "--setenv",
                 "HOME",
                 "/sandbox-home/agent",
@@ -1429,6 +1442,7 @@ class CodexAgentBackend:
         self._persist_session_state(state)
 
     def _clear_native_session(self, state: _CodexSession) -> None:
+        state.usage_totals = None
         if state.native_session_id:
             state.native_session_id = ""
         self._persist_session_state(state)

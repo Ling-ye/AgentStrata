@@ -3,6 +3,7 @@ from __future__ import annotations
 from chatcopilot.application.execution_scope import execution_scope
 
 from tests.prompt_plan_fixture import prompt_input, prompt_plan
+from tests.codex_app_server_fixture import app_server_replay
 
 import json
 import os
@@ -269,10 +270,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                    side_effect=[first, second],
-                ) as run,
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay([first, second])) as run,
             ):
                 result1 = backend.stream_turn(
                     ref,
@@ -290,13 +288,9 @@ class CodexBackendResumeTests(TestCase):
             self.assertEqual(result2.final_text, "second")
             self.assertEqual(native_ref.value, "thread-native-1")
             resume_command = run.call_args_list[1].args[0]
-            resume_index = resume_command.index("resume")
-            self.assertEqual(
-                resume_command[resume_index:],
-                ["resume", "thread-native-1", "-"],
-            )
-            for option in ("--sandbox", "--cd", "--json"):
-                self.assertLess(resume_command.index(option), resume_index)
+            self.assertEqual(resume_command[1], "app-server")
+            self.assertEqual(run.call_args_list[1].kwargs["thread_id"], "thread-native-1")
+            self.assertEqual(run.call_args_list[0].kwargs["thread_id"], "")
             first_context = next(
                 event
                 for event in first_events
@@ -446,10 +440,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch(
-                    "chatcopilot.agent.backends.codex.run_codex_process",
-                    side_effect=run_with_relay,
-                ),
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(run_with_relay)),
             ):
                 result = backend.stream_turn(
                     ref,
@@ -565,10 +556,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch(
-                    "chatcopilot.agent.backends.codex.run_codex_process",
-                    return_value=completed,
-                ),
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)),
                 mock.patch("chatcopilot.agent.turn_support.LOGGER.exception"),
             ):
                 result = backend.stream_turn(
@@ -718,10 +706,7 @@ class CodexBackendResumeTests(TestCase):
                         "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
                         return_value={},
                     ),
-                    mock.patch(
-                        "chatcopilot.agent.backends.codex.run_codex_process",
-                        side_effect=run_turn,
-                    ),
+                    mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(run_turn)),
                 ):
                     first = backend.stream_turn(
                         ref,
@@ -920,10 +905,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                    return_value=completed,
-                ),
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)),
             ):
                 result = backend.stream_turn(
                     ref,
@@ -965,7 +947,6 @@ class CodexBackendResumeTests(TestCase):
                     "total_tokens": 150,
                     "reasoning_tokens": 12,
                     "cached_tokens": 40,
-                    "cache_read_tokens": 40,
                     "cache_write_tokens": 8,
                 },
             )
@@ -1060,10 +1041,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                    side_effect=outputs,
-                ),
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(outputs)),
             ):
                 backend.stream_turn(ref, AgentTask("first"), on_event=lambda _: None)
                 backend.stream_turn(
@@ -1150,8 +1128,6 @@ class CodexBackendResumeTests(TestCase):
                         }
                     )
                 )
-                for _ in range(3):
-                    callback("[stream line omitted: size limit exceeded]")
                 callback(
                     json.dumps(
                         {
@@ -1164,7 +1140,6 @@ class CodexBackendResumeTests(TestCase):
                 self.assertFalse(any(isinstance(event, LlmCallFinished) for event in events))
                 self.assertFalse(any(isinstance(event, FinalText) for event in events))
                 completed = subprocess.CompletedProcess(["codex"], 0, "", "")
-                completed.stdout_line_truncated = True
                 return completed
 
             with (
@@ -1181,10 +1156,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch(
-                    "chatcopilot.agent.backends.codex.run_codex_process",
-                    side_effect=run_live,
-                ),
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(run_live)),
             ):
                 result = backend.stream_turn(
                     ref,
@@ -1199,16 +1171,8 @@ class CodexBackendResumeTests(TestCase):
                 ["live done"],
             )
             self.assertTrue(any(isinstance(event, LlmCallFinished) for event in events))
-            omitted = next(
-                event
-                for event in events
-                if isinstance(event, SpanFinished)
-                and event.kind == "provider_omission"
-                and event.data.get("reason") == "stream_record_size_limit"
-            )
-            self.assertFalse(omitted.ok)
-            self.assertEqual(omitted.data.get("omitted_count"), 3)
-            self.assertIn("Oversized provider JSONL", omitted.summary)
+            self.assertTrue(any(isinstance(event, SpanFinished) and event.kind == "command" for event in events))
+            self.assertEqual(sum(isinstance(event, LlmCallFinished) for event in events), 1)
             backend.close_session(ref)
 
     def test_codex_oversized_jsonl_record_fails_explicitly(self) -> None:
@@ -1254,10 +1218,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch(
-                    "chatcopilot.agent.backends.codex.run_codex_process",
-                    return_value=completed,
-                ),
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=RuntimeError("App Server protocol record exceeds limit")),
             ):
                 result = backend.stream_turn(
                     ref,
@@ -1267,7 +1228,7 @@ class CodexBackendResumeTests(TestCase):
 
             error = next(event for event in events if isinstance(event, TurnError))
             self.assertEqual(result.stop_reason, "llm_error")
-            self.assertIn("streaming size limit", error.message)
+            self.assertIn("protocol record exceeds limit", error.message)
             self.assertNotEqual(
                 result.final_text,
                 "Codex completed without a final message.",
@@ -1683,10 +1644,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                    return_value=completed,
-                ) as run,
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)) as run,
             ):
                 result = backend.stream_turn(
                     ref,
@@ -1701,8 +1659,10 @@ class CodexBackendResumeTests(TestCase):
             self.assertEqual(result.final_text, "done")
             self.assertEqual(
                 command[:4],
-                ["/usr/bin/codex", "exec", "--model", "gpt-5.6-sol"],
+                ["/usr/bin/codex", "app-server", "--listen", "stdio://"],
             )
+            self.assertIn('model="gpt-5.6-sol"', command)
+            self.assertEqual(run.call_args.kwargs["model"], "gpt-5.6-sol")
             self.assertIn('model_reasoning_effort="max"', command)
             self.assertEqual(routing.code_model, "gpt-5.6-terra")
             self.assertEqual(routing.code_reasoning_effort, "medium")
@@ -1755,10 +1715,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                    return_value=completed,
-                ),
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)),
             ):
                 backend.stream_turn(ref, AgentTask("one"), on_event=lambda _: None)
             native_ref = backend.current_session_ref(ref)
@@ -1772,14 +1729,8 @@ class CodexBackendResumeTests(TestCase):
                 return_value="/usr/bin/codex",
             ):
                 command = reconstructed._command(reconstructed.native_session(restored_ref))
-            resume_index = command.index("resume")
-            self.assertEqual(
-                command[resume_index:],
-                ["resume", "persisted-native-id", "-"],
-            )
-            self.assertLess(command.index("--sandbox"), resume_index)
-            self.assertLess(command.index("--cd"), resume_index)
-            self.assertLess(command.index("--json"), resume_index)
+            self.assertEqual(command[1], "app-server")
+            self.assertEqual(reconstructed.native_session(restored_ref).native_session_id, "persisted-native-id")
             reconstructed.close_session(restored_ref)
 
     def test_disabled_persisted_resume_starts_fresh_after_reconstruction(self) -> None:
@@ -1832,10 +1783,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                    return_value=completed,
-                ),
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)),
             ):
                 backend.stream_turn(ref, AgentTask("one"), on_event=lambda _: None)
             backend.close_session(backend.current_session_ref(ref))
@@ -1998,10 +1946,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
                     return_value="/usr/bin/codex",
                 ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                    side_effect=[first, second],
-                ) as run,
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay([first, second])) as run,
             ):
                 backend.stream_turn(ref, AgentTask("first"), on_event=lambda _: None)
                 old_ref = backend.current_session_ref(ref)
@@ -2073,10 +2018,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
                     return_value="/usr/bin/codex",
                 ),
-                mock.patch(
-                    "chatcopilot.agent.backends.codex.run_codex_process",
-                    side_effect=failed_with_refresh,
-                ),
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(failed_with_refresh)),
             ):
                 result = backend.stream_turn(
                     ref,
@@ -2141,10 +2083,7 @@ class CodexBackendResumeTests(TestCase):
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
                     return_value="/usr/bin/codex",
                 ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.process_runner.subprocess.run",
-                    return_value=completed,
-                ),
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)),
             ):
                 result = backend.stream_turn(
                     ref,
@@ -2231,13 +2170,13 @@ class CodexBackendPolicyTests(TestCase):
             root = Path(tmp).resolve()
             command, prompt = self._command_and_prompt(root)
 
-        self.assertIn("workspace-write", command)
-        self.assertIn("--skip-git-repo-check", command)
-        self.assertEqual(command[command.index("--cd") + 1], str(root))
+        self.assertIn('default_permissions="agentstrata"', command)
+        self.assertIn("--strict-config", command)
+        self.assertTrue(any(str(root) in item and "permissions.agentstrata.filesystem" in item for item in command))
         self.assertTrue(any(f'HOME = "{root}"' in item for item in command))
-        self.assertIn("sandbox_workspace_write.network_access=true", command)
+        self.assertIn("permissions.agentstrata.network.enabled=true", command)
         self.assertIn('web_search="live"', command)
-        self.assertIn("--ignore-user-config", command)
+        self.assertIn("project_doc_max_bytes=0", command)
         self.assertIn("mcp_servers={}", command)
         self.assertIn('shell_environment_policy.inherit="none"', command)
         self.assertIn("current-conversation ordinary files", prompt)
@@ -2247,9 +2186,9 @@ class CodexBackendPolicyTests(TestCase):
         with TemporaryDirectory() as tmp:
             command, prompt = self._command_and_prompt(Path(tmp), policy, role_hint="owner")
 
-        self.assertIn("workspace-write", command)
-        self.assertIn("--skip-git-repo-check", command)
-        self.assertIn("--ignore-user-config", command)
+        self.assertIn('default_permissions="agentstrata"', command)
+        self.assertIn("--strict-config", command)
+        self.assertIn("project_doc_max_bytes=0", command)
         self.assertIn("mcp_servers={}", command)
         self.assertTrue(any("mcp_servers.chatcopilot.command" in item for item in command))
         self.assertIn("mcp_servers.chatcopilot.required=true", command)
@@ -2275,8 +2214,8 @@ class CodexBackendPolicyTests(TestCase):
         with TemporaryDirectory() as tmp:
             command, prompt = self._command_and_prompt(Path(tmp), policy)
 
-        self.assertIn("read-only", command)
-        self.assertIn("sandbox_workspace_write.network_access=false", command)
+        self.assertTrue(any('"read"' in item and "permissions.agentstrata.filesystem" in item for item in command))
+        self.assertIn("permissions.agentstrata.network.enabled=false", command)
         self.assertIn('web_search="disabled"', command)
         self.assertNotIn("features.network_proxy.enabled=true", command)
         self.assertNotIn('features.network_proxy.domains={ "*" = "allow" }', command)
@@ -2314,7 +2253,7 @@ class CodexBackendPolicyTests(TestCase):
             command, _ = self._command_and_prompt(
                 Path(tmp), CodexMainSessionPolicy(sandbox_mode="read-only"), role_hint="owner"
             )
-        self.assertIn("read-only", command)
+        self.assertTrue(any('"read"' in item and "permissions.agentstrata.filesystem" in item for item in command))
 
 
 class SessionToolRelayTests(TestCase):

@@ -88,7 +88,7 @@ export function buildRunTree(events: GatewayObservation[]): RunStep[] {
 
 export interface DisplayStep extends RunStep {
   depth: number; contexts: GatewayObservation[]; permissions: GatewayObservation[]; logs: GatewayObservation[];
-  agentName?: string; modelIteration?: number;
+  agentName?: string; modelIteration?: number; deltas?: GatewayObservation[];
   delivery?: { status: string; observedAt: number; errorCode?: string | null };
 }
 
@@ -190,6 +190,7 @@ export function buildRunView(events: GatewayObservation[], delivery?: Pick<Gatew
   flatten(buildRunTree([...core, ...contextual.filter((event) => !usedContexts.has(event.seq))]));
   for (const step of steps) {
     step.contexts = contextsByCall.get(JSON.stringify([step.event.trace_id, step.event.span_id])) ?? [];
+    step.deltas = current.filter((event) => event.kind === "AgentContentDelta" && event.trace_id === step.event.trace_id && event.span_id === step.event.span_id);
     const modelSpan = step.event.data?.model_span_id ?? step.start?.data?.model_span_id;
     const caller = typeof modelSpan === "string" ? steps.find((model) => model.event.trace_id === step.event.trace_id && model.event.span_id === modelSpan) : undefined;
     if (caller && typeof caller.event.data?.iteration === "number") step.modelIteration = caller.event.data.iteration;

@@ -25,7 +25,7 @@ function response(value: unknown) {
 }
 const ACTIVITIES: Record<string, string> = {
   command: "执行命令", file_change: "文件变更", mcp_tool: "MCP 调用", web_search: "搜索",
-  plan: "更新计划", reasoning: "思考活动", provider_omission: "过程采集缺口", subagent: "子 Agent", workflow: "工作流",
+  plan: "更新计划", reasoning: "公开推理摘要", provider_omission: "过程采集缺口", subagent: "子 Agent", workflow: "工作流",
 };
 
 /** Consumes the shared process contract, never a provider's native event shape. */
@@ -56,7 +56,12 @@ export function agentProcess(step: DisplayStep) {
       const data = fields(v); return { summary: data.summary, result: data.execution_result ?? data.data, error: data.error };
     } },
     { id: "model-result", title: "实际交给模型的结果", event: step.finish, select: select("model_result"), secondary: true, messages: true },
-  ] : message ? [{ id: "message", title: "消息正文", event, select: select("text") }] : [
+  ] : message ? [{ id: "message", title: "消息正文", event, select: select("text") }] : kind === "reasoning" ? [
+    { id: "summary", title: "公开推理摘要", event: step.finish, select: (value) => {
+      const summary = fields(fields(value).output).public_summary;
+      return Array.isArray(summary) ? summary.join("\n\n") || "本轮未提供公开推理摘要" : summary || "本轮未提供公开推理摘要";
+    } },
+  ] : [
     { id: "input", title: kind === "subagent" ? "委托输入" : "输入", event: step.start ?? step.update ?? step.finish, select: select("input") },
     { id: "output", title: kind === "subagent" ? "委托结果" : "输出", event: step.finish ?? step.update,
       select: (v) => {

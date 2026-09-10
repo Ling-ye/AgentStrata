@@ -188,7 +188,7 @@ def test_native_tool_loop_keeps_resource_receipts_on_every_context_snapshot(
     assert all(context.coverage == "partial" for context in contexts)
 
 
-def test_codex_new_and_resume_commands_attach_images(tmp_path: Path) -> None:
+def test_codex_images_remain_typed_rpc_inputs_instead_of_command_arguments(tmp_path: Path) -> None:
     image_path = tmp_path / "input.png"
     image_path.write_bytes(_PNG_BYTES)
     task = AgentTask(
@@ -208,6 +208,7 @@ def test_codex_new_and_resume_commands_attach_images(tmp_path: Path) -> None:
         execution_scope=None,
         role_hint="user",
         gateway_config=tmp_path / "gateway.json",
+        codex_home=tmp_path / "runtime",
         allowed_tool_names=frozenset(),
         prompt_plan=prompt_plan("system"),
         access_mode="workspace",
@@ -217,24 +218,14 @@ def test_codex_new_and_resume_commands_attach_images(tmp_path: Path) -> None:
     image_paths = backend._image_paths(task)
 
     with mock.patch(
-        "chatcopilot.agent.backends.codex.build_codex_command",
-        side_effect=lambda **_kwargs: ["codex", "exec"],
+        "chatcopilot.agent.backends.codex.build_app_server_command",
+        side_effect=lambda **_kwargs: ["codex", "app-server"],
     ):
         initial = backend._command(state, image_paths=image_paths)
         state.native_session_id = "thread-native-1"
         resumed = backend._command(state, image_paths=image_paths)
         without_image = backend._command(state)
 
-    assert initial == ["codex", "exec", "--json", "--image", str(image_path)]
-    assert resumed == [
-        "codex",
-        "exec",
-        "--json",
-        "resume",
-        "thread-native-1",
-        "--image",
-        str(image_path),
-        "-",
-    ]
-    assert without_image[-3:] == ["resume", "thread-native-1", "-"]
+    assert initial == resumed == without_image == ["codex", "app-server"]
+    assert image_paths == (str(image_path),)
     assert str(image_path) in backend._prompt(state, task)

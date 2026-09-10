@@ -11,6 +11,7 @@ from typing import Any
 
 from chatcopilot.contracts.agent import (
     AgentEvent,
+    AgentContentDelta,
     AgentMessageObserved,
     ContextSnapshotPrepared,
     InputResourcesDispatched,
@@ -38,6 +39,7 @@ class ProcessObservation:
 class AgentProcessAdapter:
     def project(self, event: AgentEvent) -> ProcessObservation | None:
         supported = (
+            AgentContentDelta,
             ToolCatalogObserved,
             AgentMessageObserved,
             LlmCallStarted,
@@ -60,6 +62,7 @@ class AgentProcessAdapter:
             "context_kind", "finish_reason", "estimated_tokens", "model_selection", "tool_schema_count",
             "system_estimated_tokens", "tool_schema_estimated_tokens", "estimator_version", "execution_kind",
             "source", "tool_call_id", "model_span_id", "revision", "message_id", "message_kind",
+            "item_id", "content_kind", "section",
         ) if hasattr(event, key)}
         finished = isinstance(event, (LlmCallFinished, ToolFinished, SpanFinished))
         started = isinstance(event, (LlmCallStarted, ToolStarted, SpanStarted))
@@ -71,7 +74,12 @@ class AgentProcessAdapter:
         context = isinstance(event, ContextSnapshotPrepared)
         process_kind = "context" if context else "event"
         kind = type(event).__name__
-        if isinstance(event, ToolCatalogObserved):
+        if isinstance(event, AgentContentDelta):
+            process_kind = {"message": "message", "public_summary": "reasoning", "command_output": "command"}[event.content_kind]
+            phase, status = "update", "running"
+            body = {"delta": event.text, "section": event.section, "content_kind": event.content_kind}
+            body_state = event.capture_state
+        elif isinstance(event, ToolCatalogObserved):
             process_kind = "tool_catalog"
             data.update(
                 catalog_phase=event.phase,

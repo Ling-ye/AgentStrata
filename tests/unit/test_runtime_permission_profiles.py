@@ -127,6 +127,7 @@ def test_owner_project_hardlinks_allow_confined_processes(tmp_path, backend, lin
             execution_scope=scope, workdir=project,
             codex_home=codex_home, gateway_config=gateway_config,
         )
+        CodexAgentBackend._prepare_app_server_home(state)
         command = CodexAgentBackend._wrap_isolated_command(
             state, [str(executable), str(cache / "original")]
         )

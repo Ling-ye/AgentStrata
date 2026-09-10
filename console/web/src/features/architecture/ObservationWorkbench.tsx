@@ -9,6 +9,7 @@ import TaskRecordList from "./TaskRecordList";
 import { type ObservationFilters } from "./workbenchModel";
 import { readSessionValue, saveSessionValue, taskWorkspaceState } from "./taskWorkspaceState";
 import { useTaskReadingPosition } from "./useTaskReadingPosition";
+import { mergeObservationEvents, useObservationStream } from "./useObservationStream";
 
 export default function ObservationWorkbench({ bot, visible }: {
   bot: BotInstance; visible: boolean;
@@ -71,7 +72,11 @@ export default function ObservationWorkbench({ bot, visible }: {
     if (!eventPages.hasNextPage) tail.current.reached = true;
     else if (tail.current.reached) void eventPages.fetchNextPage();
   }, [bot.instance_id, selected, querying, eventPages.data, eventPages.isFetching, eventPages.error, eventPages.hasNextPage, eventPages.fetchNextPage]);
-  const events = useMemo(() => eventPages.data?.pages.flatMap((page) => page.observations) ?? selectedDetail?.observations ?? [], [eventPages.data, selectedDetail]);
+  const pages = eventPages.data?.pages;
+  const lastPage = pages?.[pages.length - 1];
+  const stream = useObservationStream(bot.instance_id, selected, flowVisible && isGateway && !!lastPage && !lastPage.has_more,
+    lastPage?.next_cursor ?? 0);
+  const events = useMemo(() => mergeObservationEvents(eventPages.data?.pages.flatMap((page) => page.observations) ?? selectedDetail?.observations ?? [], stream.events), [eventPages.data, selectedDetail, stream.events]);
   useEffect(() => { if (querying && !selected && overview.data?.runs.length) setSelected(overview.data.runs[0].run_id); }, [querying, selected, overview.data]);
   useEffect(() => saveSessionValue(`obs:${bot.instance_id}`, { selected, filters, range, customStart, customEnd }),
     [bot.instance_id, selected, filters, range, customStart, customEnd]);
@@ -81,10 +86,10 @@ export default function ObservationWorkbench({ bot, visible }: {
     params.set("instance", bot.instance_id); params.set("run", selected); params.set("tab", "tasks"); params.delete("entity");
     window.history.replaceState(null, "", "#bots?" + params);
   }, [querying, bot.instance_id, selected]);
-  useTaskReadingPosition({ instanceId: bot.instance_id, runId: selected, active: flowVisible && isGateway,
+  const reading = useTaskReadingPosition({ instanceId: bot.instance_id, runId: selected, active: flowVisible && isGateway,
     ready: !!selectedDetail && (selectedDetail.source !== "observation_index" || !!eventPages.data || !!eventPages.error),
     container: taskPane, pages: eventPages.data?.pages.length ?? 1, hasMore: !!eventPages.hasNextPage,
-    fetchingMore: eventPages.isFetchingNextPage, fetchMore: eventPages.fetchNextPage, contentRevision: events });
+    fetchingMore: eventPages.isFetchingNextPage, fetchMore: eventPages.fetchNextPage, contentRevision: events[events.length - 1]?.seq });
   const changeFilters = (change: Partial<ObservationFilters>) => setFilters((previous) => ({ ...previous, page: 1, ...change }));
   const refresh = () => {
     if (!isGateway) return;
@@ -106,6 +111,8 @@ export default function ObservationWorkbench({ bot, visible }: {
             onPage={(page) => setFilters((value) => ({ ...value, page }))} onSelect={(id) => { setSelected(id); setListOpen(false); }} onRetry={() => void overview.refetch()} />
         </div>
         <main ref={taskPane} className="obs-task-pane" hidden={!wide && (listOpen || !selected)}>
+          {stream.status && <p className="obs-muted" role="status">{stream.status}</p>}
+          {reading.hasNewActivity && <Button className="obs-new-activity" size="small" onClick={reading.followLatest}>有新活动 · 跟随过程</Button>}
           {outsideList && <p className="obs-selection-notice">当前任务不在此列表中</p>}
           {detail.error && <Alert type="warning" content={<><span>任务详情读取失败：{detail.error.message}</span><Button size="mini" onClick={() => void detail.refetch()}>重试</Button></>} />}
           {selectedDetail && selected ? <>

@@ -32,6 +32,13 @@ OneBot provider，不与 AgentStrata Gateway 混称，也不由 Bot start/stop �
 
 ## 任务工作台
 
+Codex 主会话使用 App Server stdio，Agent 执行段连续展示公开消息、推理摘要、工具及命令输出。
+SSE 按已持久化事件序号续读，切换任务或隐藏页面时关闭订阅，断开不影响机器人执行。
+位于底部时跟随更新，上翻阅读后使用“有新活动”返回；消息和摘要直接显示正文，工具可展开参数及结果。
+Codex 回合不等于底层模型调用，未提供摘要、采集失败、截断和到期会分别说明；历史缺失不回填。
+恢复旧 thread 后若没有可信的历史用量基线，本轮不把 thread 累计量冒充本轮用量，后续 live 回合使用真实差值。
+实现与验收边界见 [流式观测规格](../specs/agent-streaming-observability/spec.md)。
+
 机器人实例默认进入“任务”，与“分层配置”“运行状态”“能力与工具”组成四个同级入口。顶部选择实例并查看服务状态，日志统一使用一个“服务日志”入口；页面不展示运行统计或实例 MCP、工具包计数行。工作台可用宽度达到 960px 时，左侧为 300px 任务列表，右侧从任务输入开始，沿页面逐步展示执行过程，末尾展示任务结果与消息交付。左侧随页面滚动保持可见，列表自身滚动；右侧不设置固定高度。宽度不足 960px 时只显示列表或详情，通过“任务列表”按钮返回，选中任务后显示流程，不使用辅助抽屉或拖动分隔条。
 
 “分层配置”展示当前实例的基础设置，按以下分组直接阅读。配置与观测分组用于组织运维信息，其数量和内容独立于四个消息处理职责层：
@@ -94,6 +101,9 @@ Gateway 运行进程持续写入独立的 `observability/index.sqlite3` 和按�
 任务日志只采集带真实任务关联的运行日志；“服务日志”仍为独立参考，不并入任务证据。Channel 投递的开始与返回合并为一个步骤，按该消息的出站记录和回执自动更新为 Provider 已确认、失败或交付结果未知；即使返回事件尚未加载，已有回执也可更新状态。历史投递使用本任务既有的固定出站消息标识关联，不改写旧记录。任务完成本身不能证明投递成功，也不推断平台显示或用户已读。隐藏推理及 Provider 未提供的内部状态不记录。
 
 ### 只读接口
+
+`GET /api/bots/{instance_id}/gateway-observation/runs/{run_id}/stream?after={seq}` 提供 SSE，
+支持 `Last-Event-ID`，只发送该实例任务的持久事件及有界增量正文，禁止缓存。
 
 - `GET /api/bots/{instance_id}/inspection?run_id=...&event_seq=...`：当前、已加载与任务/阶段执行时配置；阶段必须属于选中任务。当前条目补充 `effective_config/effective_environment`，比较结果通过 `configuration_status`（`applied/pending/unknown`）及原因返回；原始字段和 `pending_changes` 保持兼容。
 - `GET /api/bots/{instance_id}/gateway-observation`：分页历史和最多 100 条实例准入审计。筛选参数为 `since/until/state/config_id/backend/model/component/error_code/search/min_ms/page/limit`；时间使用 Unix 秒，单页最多 100 条。

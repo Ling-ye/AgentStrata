@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { readSessionValue, saveSessionValue, scrollBookmark } from "./taskWorkspaceState";
 
 export function useTaskReadingPosition({ instanceId, runId, active, ready, container, pages, hasMore, fetchingMore, fetchMore, contentRevision }: {
@@ -8,17 +8,31 @@ export function useTaskReadingPosition({ instanceId, runId, active, ready, conta
 }) {
   const latest = useRef({ pages, hasMore, fetchingMore, fetchMore });
   const reconcile = useRef<() => void>();
+  const following = useRef(false);
+  const lastRevision = useRef(contentRevision);
+  const [hasNewActivity, setHasNewActivity] = useState(false);
+  const followLatest = () => {
+    following.current = true;
+    setHasNewActivity(false);
+    const element = container.current;
+    if (element) window.scrollTo({ top: window.scrollY + element.getBoundingClientRect().bottom - window.innerHeight + 12, behavior: "instant" });
+  };
   latest.current = { pages, hasMore, fetchingMore, fetchMore };
   useLayoutEffect(() => {
     const element = container.current;
     if (!active || !ready || !runId || !element) return;
     const key = `obs:reading:${instanceId}:${runId}`;
+    following.current = false;
+    setHasNewActivity(false);
+    lastRevision.current = contentRevision;
     let saved = scrollBookmark(readSessionValue(key));
     let restoring = true, cancelled = false, requesting = false;
     let frame = 0, settle = 0, userUntil = 0;
     const cards = () => Array.from(element.querySelectorAll<HTMLElement>("[data-step-key]"));
     const remember = () => {
       if (restoring || cancelled) return;
+      following.current = element.getBoundingClientRect().bottom <= window.innerHeight + 80;
+      if (following.current) setHasNewActivity(false);
       const anchor = cards().find((card) => card.getBoundingClientRect().bottom > 0 && card.getBoundingClientRect().top < window.innerHeight);
       saved = { top: window.scrollY, anchor: anchor?.dataset.stepKey,
         offset: anchor?.getBoundingClientRect().top ?? 0, pages: latest.current.pages };
@@ -27,6 +41,7 @@ export function useTaskReadingPosition({ instanceId, runId, active, ready, conta
     const finish = () => { restoring = false; window.clearTimeout(settle); settle = 0; remember(); };
     const restore = () => {
       if (cancelled) return;
+      if (!restoring && following.current) { followLatest(); return; }
       if (performance.now() < userUntil) { remember(); return; }
       const anchor = saved.anchor ? cards().find((card) => card.dataset.stepKey === saved.anchor) : undefined;
       if (restoring && latest.current.hasMore && latest.current.pages < (saved.pages ?? 1)) {
@@ -60,5 +75,12 @@ export function useTaskReadingPosition({ instanceId, runId, active, ready, conta
       window.removeEventListener("keydown", intent);
     };
   }, [instanceId, runId, active, ready, container]);
-  useLayoutEffect(() => { reconcile.current?.(); }, [contentRevision]);
+  useLayoutEffect(() => {
+    if (lastRevision.current !== contentRevision && lastRevision.current != null) {
+      if (!following.current && active) setHasNewActivity(true);
+    }
+    lastRevision.current = contentRevision;
+    reconcile.current?.();
+  }, [contentRevision, active]);
+  return { hasNewActivity, followLatest };
 }

@@ -868,3 +868,11 @@ Python 3.10/3.13 CI 继续运行全量 Python 测试。范围与验证见
 现在由进程间准入锁原子检查容量与占位，任务持有独立 token 锁；TTL 只回收未锁定的遗留项。
 覆盖线程、进程、延迟发布、活跃过期、崩溃回收及重复释放，规格见
 [file-token-limiter](../specs/file-token-limiter/spec.md)。
+
+## 2026-09-11：Agent 执行过程流式观测
+
+主 Codex 会话由 exec 改为每回合隔离的 App Server stdio，公开消息、推理摘要和命令输出
+经统一增量事件进入既有观测索引。Console 使用 SSE 续读，在原四层任务流中按真实开始顺序
+更新消息及工具卡片，保留阅读位置。会话绑定、资源权限、凭据租约和最终交付门禁保持；
+独立 worker/research 继续使用 exec，不把 Codex 回合标为底层模型轮次。
+实现与本地验证见 [流式观测规格](../specs/agent-streaming-observability/spec.md)。

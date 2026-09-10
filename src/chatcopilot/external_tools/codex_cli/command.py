@@ -68,6 +68,27 @@ def build_codex_command(
     return command
 
 
+def build_app_server_command(
+    template: str, *, model: str, workdir: Path, reasoning_effort: str,
+    web_search_mode: str, shell_env_overrides: dict[str, str] | None,
+    extra_config: tuple[str, ...],
+) -> list[str]:
+    configured = shlex.split(template.format(model=model, workdir=str(workdir)))
+    if len(configured) < 2 or Path(configured[0]).name != "codex" or configured[1] != "exec":
+        raise RuntimeError("code command must identify a Codex executable")
+    _validate_codex_command_template(configured)
+    command = [_resolve_executable(configured[0]), "app-server", "--listen", "stdio://", "--strict-config"]
+    for entry in (
+        f"model={json.dumps(model)}", f"model_reasoning_effort={json.dumps(reasoning_effort)}",
+        'model_reasoning_summary="auto"', f"web_search={json.dumps(web_search_mode)}",
+        "project_doc_max_bytes=0", 'approval_policy="never"',
+        *_shell_environment_policy(workdir=workdir, inherit_all=False, overrides=shell_env_overrides),
+        *extra_config,
+    ):
+        command.extend(["--config", entry])
+    return command
+
+
 def _shell_environment_policy(
     *,
     workdir: Path,

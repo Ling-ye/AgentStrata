@@ -325,6 +325,7 @@ class CodexCancellationTests(unittest.TestCase):
 
             @contextmanager
             def fake_credential_lease(*_args, **_kwargs):
+                backend.native_session(ref).codex_home.mkdir(mode=0o700)
                 yield SimpleNamespace(generation=0)
 
             def cancel_from_poll(*_args, **kwargs):
@@ -353,7 +354,7 @@ class CodexCancellationTests(unittest.TestCase):
                         return_value={},
                     ),
                     mock.patch(
-                        "chatcopilot.agent.backends.codex.run_codex_process",
+                        "chatcopilot.agent.backends.codex.run_app_server",
                         side_effect=cancel_from_poll,
                     ),
                 ):

@@ -2278,6 +2278,7 @@ def test_group_codex_command_has_read_only_namespace_and_strict_config(
         "chatcopilot.external_tools.codex_cli.command._resolve_executable",
         return_value=str(fake_codex),
     ):
+        backend._prepare_app_server_home(state)  # type: ignore[arg-type]
         command = backend._command(state)  # type: ignore[arg-type]
 
     assert "--clearenv" in command
@@ -2291,7 +2292,8 @@ def test_group_codex_command_has_read_only_namespace_and_strict_config(
     separator = command.index("--")
     inner = command[separator + 1 :]
     assert "--strict-config" in inner
-    assert "--ignore-rules" in inner
+    assert inner[1] == "app-server"
+    assert ["--tmpfs", "/sandbox-home/agent/.codex/rules"] in [command[i:i+2] for i in range(len(command))]
     assert "--sandbox" not in inner
     assert 'default_permissions="agentstrata"' in inner
     assert "project_doc_max_bytes=0" in inner

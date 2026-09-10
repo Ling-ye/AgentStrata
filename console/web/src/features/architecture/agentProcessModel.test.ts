@@ -54,11 +54,17 @@ describe("Agent process presentation adapter", () => {
     expect(rememberOpenedSteps([step], collapsed, false)).toBe(collapsed);
     expect(stepIsOpen(completed, collapsed, true)).toBe(false);
   });
-  it.each(["command", "file_change", "mcp_tool", "web_search", "plan", "reasoning", "subagent"])("recognizes %s without raw provider frames", (kind) => {
+  it.each(["command", "file_change", "mcp_tool", "web_search", "plan", "subagent"])("recognizes %s without raw provider frames", (kind) => {
     const model = agentProcess(buildRunView([event(1, { kind: "SpanFinished", phase: "finish", data: { process_kind: kind } })]).steps[0]);
     expect(model.supported).toBe(true);
     expect(model.title).not.toContain("SpanFinished");
     expect(model.panels[1].select?.({ output: "visible" })).toBe("visible");
+  });
+  it("shows public summary text and makes absent summaries explicit", () => {
+    const model = agentProcess(buildRunView([event(1, { kind: "SpanFinished", phase: "finish", data: { process_kind: "reasoning" } })]).steps[0]);
+    expect(model.title).toBe("公开推理摘要");
+    expect(model.panels[0].select?.({ output: { public_summary: ["检查", "处理"] } })).toBe("检查\n\n处理");
+    expect(model.panels[0].select?.({ output: null })).toBe("本轮未提供公开推理摘要");
   });
   it("keeps previews bounded and makes missing bodies explicit", () => {
     expect(processPreview({ content: "x".repeat(5000) })).toHaveLength(360);

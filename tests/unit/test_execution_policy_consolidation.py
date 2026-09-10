@@ -75,14 +75,17 @@ def test_codex_native_permissions_enforce_resources_with_defaults(tmp_path, role
     (protected / "private").write_text("synthetic-state")
     scope = execution_scope(role, work, (project,))
     state = SimpleNamespace(workdir=work, codex_home=home, gateway_config=config_file, execution_scope=scope)
+    CodexAgentBackend._prepare_app_server_home(state)
+    (home / "rules" / "injected.rules").write_text("untrusted rule")
     config = permission_config(
         scope, workdir=work, network_access=False,
-        private_paths=("/sandbox-home/agent/.codex/auth.json", "/run/chatcopilot-gateway.json"),
+        private_paths=("/sandbox-home/agent/.codex/auth.json", "/run/chatcopilot-gateway.json",
+                       "/sandbox-home/agent/.codex/config.toml"),
     )
     assert not any(entry.startswith("features.") and entry.endswith("=false") for entry in config)
-    checks = ["cat visible", "echo changed > changed"]
+    checks = ["cat visible", "echo changed > changed", "test ! -e /sandbox-home/agent/.codex/rules/injected.rules"]
     denied = ["/sandbox-home/agent/.codex/auth.json", "/run/chatcopilot-gateway.json",
-              "/proc/1/root/run/chatcopilot-gateway.json", str(protected / "private")]
+              "/proc/1/root/run/chatcopilot-gateway.json", "/sandbox-home/agent/.codex/config.toml", str(protected / "private")]
     if role == "owner":
         checks.append("cat " + shlex.quote(str(project / "project-file")))
     else:

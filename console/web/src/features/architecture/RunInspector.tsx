@@ -7,6 +7,7 @@ import { bodyState, buildRunView, dateTime, duration, runDuration, stepDuration,
 import { ConfigFields, DetailScope, Disclosure, ObservationPayload, TaskDetailState, TextPreview } from "./ObservationContent";
 import ExecutionConfiguration from "./ExecutionConfiguration";
 import { agentProcess } from "./agentProcessModel";
+import AgentStreamContent from "./AgentStreamContent";
 
 const EVENT_LABELS: Record<string, string> = {
   ContextSnapshotPrepared: "准备上下文", session_capabilities: "本次可用能力",
@@ -104,10 +105,12 @@ function StepCard({ item, index, open, terminal, scope, onToggle, hasMore }: {
         <span className="obs-step-chevron" aria-hidden>{open ? "−" : "+"}</span>
       </button>
     </div>
-    {process.supported && <div className="obs-step-payloads obs-process-panels">{process.panels.filter((panel) => !panel.secondary).map((panel) =>
+    {!step.finish && !!step.deltas?.length && <AgentStreamContent {...scope} expired={!!scope.expired} events={step.deltas} />}
+    {process.supported && <div className="obs-step-payloads obs-process-panels">{process.panels.filter((panel) => !panel.secondary &&
+      (step.finish || !step.deltas?.length || panel.id === "input")).map((panel) =>
       <DetailScope id={panel.id} key={panel.id}><ObservationPayload {...scope}
         reference={panel.event?.body_ref} captureState={panel.event?.body_state ?? (!terminal && panel.id === "output" ? "pending" : "not_recorded")}
-        title={panel.title} select={panel.select} preview={!open} messages={panel.messages} contentId={panel.id} />
+        title={panel.title} select={panel.select} preview={!open && !process.message && process.kind !== "reasoning"} messages={panel.messages} contentId={panel.id} />
       </DetailScope>)}</div>}
     {step.permissions.length > 0 && <div className="obs-step-permissions"><Permissions events={step.permissions} scope={scope} /></div>}
     {open && <div className="obs-step-body" id={"obs-step-body-" + event.seq}>
@@ -214,6 +217,8 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
       <Button size="mini" onClick={() => setExpanded((current) => ({ ...current, ...Object.fromEntries(view.steps.map((step) => [step.key, true])) }))}>展开全部</Button>
       <Button size="mini" onClick={() => setExpanded((current) => ({ ...current, ...Object.fromEntries(view.steps.map((step) => [step.key, false])) }))}>收起全部</Button>
     </Space></div>
+    {run.backend === "codex" && !hasMore && !view.steps.some((step) => step.event.data?.process_kind === "reasoning") &&
+      <p className="obs-muted">{terminal ? "本轮未记录公开推理摘要；以下显示已采集的消息与执行活动。" : "正在等待公开摘要或执行活动；模型未提供的内容不会补写。"}</p>}
     <div className="obs-flow" aria-label="执行时间轴">{view.flow.length ? view.flow.map((item) => item.kind === "stage" ?
       <StageCard key={item.step.key} item={item} terminal={terminal} scope={scope} hasMore={hasMore} /> :
       <StepCard key={item.step.key} item={item} index={stepIndex++} open={stepIsOpen(item.step, expanded, terminal)} terminal={terminal} scope={scope}

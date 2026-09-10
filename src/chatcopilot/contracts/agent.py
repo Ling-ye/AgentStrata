@@ -59,6 +59,27 @@ class ToolCatalogObserved:
 
 
 @dataclass(frozen=True)
+class AgentContentDelta:
+    """Append-only public observation content; never channel delivery text."""
+
+    text: str
+    item_id: str
+    content_kind: Literal["message", "public_summary", "command_output"]
+    trace_id: str
+    span_id: str
+    parent_span_id: str | None
+    revision: int
+    section: int = 0
+    name: str = ""
+    message_kind: str = "response"
+    backend: str = "codex"
+    source: str = "provider"
+    depth: int = 1
+    observed_at: float | None = None
+    capture_state: str = "available"
+
+
+@dataclass(frozen=True)
 class AgentMessageObserved:
     """An observation snapshot, never a request to deliver text to a channel."""
 
@@ -68,7 +89,7 @@ class AgentMessageObserved:
     span_id: str
     parent_span_id: str | None
     revision: int
-    phase: Literal["update", "finish"] = "finish"
+    phase: Literal["start", "update", "finish"] = "finish"
     status: str = "succeeded"
     message_kind: str = "response"
     backend: str = ""
@@ -288,6 +309,7 @@ class TurnError:
 
 
 AgentEvent = Union[
+    AgentContentDelta,
     ToolCatalogObserved,
     AgentMessageObserved,
     SpanUpdated,
@@ -327,6 +349,7 @@ class AgentResult:
 
 
 __all__ = [
+    "AgentContentDelta",
     "AgentTask",
     "ResourceRef",
     "AgentEvent",

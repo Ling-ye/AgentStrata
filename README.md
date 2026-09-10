@@ -41,6 +41,10 @@ resulting system structure.
   to the bot that selects them.
 - **Backend choice per bot.** Native, LangGraph, and Codex implement common
   task, event, and result contracts.
+- **Live Agent process.** Codex main sessions use App Server to stream public
+  progress, reasoning summaries, and tool output into the Console task flow.
+  Recorded events resume after a connection loss; hidden reasoning is not
+  collected. See the [streaming observation specification](https://github.com/Ling-ye/AgentStrata/blob/main/specs/agent-streaming-observability/spec.md).
 - **Backend-neutral context observability.** The Console shows the
   AgentStrata-known conversation and each main-agent or subagent turn call's
   effective, host-visible context. The private operator view shows original

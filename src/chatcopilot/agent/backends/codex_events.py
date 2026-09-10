@@ -655,7 +655,7 @@ def _item_completion(
 
 def _item_payload(item: Mapping[str, Any], item_type: str, *, completed: bool) -> dict[str, Any]:
     fields = {
-        "command_execution": ("command",), "command": ("command",),
+        "command_execution": ("command", "cwd"), "command": ("command", "cwd"),
         "mcp_tool_call": ("server", "tool", "arguments"), "mcp_call": ("server", "tool", "arguments"),
         "web_search": ("query",), "file_change": (), "file_changes": (),
         "plan_update": (), "todo_list": (), "reasoning": (),
