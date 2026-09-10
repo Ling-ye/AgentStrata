@@ -28,12 +28,6 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Bot id such as lingye-copilot-qq, or path to a bot.yaml file.",
     )
-    parser.add_argument(
-        "--transport",
-        default="acp",
-        choices=("acp",),
-        help=argparse.SUPPRESS,
-    )
     args = parser.parse_args(argv)
 
     bot_path = resolve_bot_spec_path(Path(args.bot) if _looks_like_path(args.bot) else args.bot)
@@ -42,8 +36,10 @@ def main(argv: list[str] | None = None) -> int:
     apply_runtime_env(runtime)
     if runtime.gateway is not None and runtime.channels.qq is not None:
         return _run_gateway(runtime)
+    if runtime.platform_type != "feishu":
+        raise ValueError("QQ requires Gateway; legacy ACP entry is available only for Feishu")
     _start_codebase_index_warmup(runtime)
-    return _run_legacy_acp(runtime)
+    return _run_feishu_acp(runtime)
 
 
 def _run_gateway(runtime: BotRuntimeContext) -> int:
@@ -55,8 +51,8 @@ def _run_gateway(runtime: BotRuntimeContext) -> int:
     )
 
 
-def _run_legacy_acp(runtime: BotRuntimeContext) -> int:
-    """Keep non-Gateway platforms on the isolated legacy ACP host."""
+def _run_feishu_acp(runtime: BotRuntimeContext) -> int:
+    """Start the remaining Feishu ACP host."""
 
     from chatcopilot.middleware.acp.server import main as acp_main
 

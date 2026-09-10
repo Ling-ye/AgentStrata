@@ -12,6 +12,7 @@ from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef
 from chatcopilot.contracts.gateway_rpc import (
     ChatAbortParams,
     ChatAbortResult,
+    ChatErrorEvent,
     ChatFinalEvent,
     ChatSendParams,
     ChatSendResult,
@@ -302,6 +303,29 @@ def test_prompt_accepts_only_text_and_never_reads_resource_paths_or_uris() -> No
             await agent.prompt(session_id="session-a", prompt=[image])
         assert raised.value.data == {"code": "text_prompt_only"}
         assert not any(method == "chat.send" for method, _params, _key in gateway.requests)
+
+    asyncio.run(scenario())
+
+
+def test_agent_execution_error_terminates_acp_prompt_without_success_or_retry() -> None:
+    async def scenario() -> None:
+        gateway = FakeGatewayClient()
+        agent, client = await _authenticated_agent(gateway)
+        task = asyncio.create_task(agent.prompt(
+            session_id="session-a", prompt=[TextContentBlock(type="text", text="fixture")],
+        ))
+        subscription = await _wait_for_subscription(gateway, "session-a")
+        await gateway.chat_send_started.wait()
+        await asyncio.sleep(0)
+        subscription.put(TypedGatewayEvent("chat.error", 1, ChatErrorEvent(
+            session_id="session-a", run_id="run-session-a", code="agent_llm_error",
+            message="Agent execution failed", retryable=False,
+        )))
+        with pytest.raises(RequestError) as raised:
+            await asyncio.wait_for(task, 1)
+        assert raised.value.data == {"code": "agent_llm_error", "retryable": False}
+        assert not client.updates
+        assert sum(method == "chat.send" for method, _, _ in gateway.requests) == 1
 
     asyncio.run(scenario())
 

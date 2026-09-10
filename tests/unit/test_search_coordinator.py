@@ -160,9 +160,9 @@ def _router_for_web(query: str = "package release") -> _FakeLLM:
 
 @pytest.mark.parametrize(
     ("turn_timeout", "expected_wall"),
-    [(100.0, 60.0), (1000.0, 180.0), (None, 180.0)],
+    [(100.0, 100.0), (1000.0, 120.0), (None, 120.0)],
 )
-def test_search_wall_budget_is_sixty_percent_with_180_second_cap(
+def test_search_wall_budget_intersects_declared_and_parent_budget(
     monkeypatch: pytest.MonkeyPatch,
     turn_timeout: float | None,
     expected_wall: float,
@@ -595,3 +595,16 @@ def test_search_result_deep_read_uses_dynamic_browser_when_static_page_is_shell(
 
     assert fetched[0]["method"] == "dynamic"
     assert fetched[0]["actual_source"] == "playwright"
+
+
+def test_compaction_uses_the_request_budget_for_counts_and_text():
+    from chatcopilot.agent.search.models import SearchBudget
+    from chatcopilot.agent.search.results import _compact_results
+
+    results = [{"ok": True, "summary": {"items": list(range(8))}}]
+    compacted = _compact_results(results, budget=SearchBudget(3, max_result_items=4))
+    assert compacted[0]["summary"]["items"] == [0, 1, 2, 3]
+    assert compacted[0]["summary"]["items_total"] == 8
+    text = _compact_results([{"summary": "x" * 500}], budget=SearchBudget(3, max_result_chars=100))
+    assert text[0]["truncated"] is True
+    assert len(text[0]["summary"]) < 150

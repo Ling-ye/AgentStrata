@@ -24,7 +24,6 @@ def test_persona_manage_uses_generic_structured_tool_observability(tmp_path) -> 
         {
             "operation": "set",
             "scope": "default",
-            "requirement": "以后说话更简洁",
         },
         span_id="persona-tool",
     )

@@ -34,9 +34,6 @@ from chatcopilot.agent.turn_support import safe_emit
 from chatcopilot.contracts.agent import AgentEvent, SpanFinished
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult
 
-_MAX_PAGE_SUMMARY_CHARS = 12000
-_MAX_URLS_PER_STEP = 5
-_MAX_DEEP_READ_URLS = 2
 _MAX_BUFFERED_STEP_EVENTS = 1024
 _MAX_OMITTED_EVENT_COUNT = (1 << 63) - 1
 
@@ -64,13 +61,6 @@ class SearchCoordinator:
         deadline = started + self._max_wall if self._max_wall else None
         available = self._registry.available_sources()
         plan = self._router.route(request, available_sources=available)
-        if (
-            plan.route_source == "fallback"
-            and "router failed" in plan.route_reason
-            and request.depth == "thorough"
-        ):
-            request = dataclasses.replace(request, depth="standard")
-
         results = self._execute_steps(
             plan.steps,
             request=request,
@@ -114,13 +104,13 @@ class SearchCoordinator:
             "ok": completed,
             "summary": _summary_for(completed, ok_results, results, reflection),
             "plan": plan.to_dict(),
-            "results": _compact_results(results),
+            "results": _compact_results(results, budget=request.budget),
             "actual_sources": actual_sources,
             "reflection": reflection,
             "result_processing": result_processing,
             "limits": {
                 "depth": request.depth,
-                "max_steps": request.max_steps,
+                **dataclasses.asdict(request.budget),
                 "cross_check_requested": plan.cross_check,
                 "cross_check_completed": cross_check_completed,
                 "partial": bool(ok_results) and not completed,
@@ -187,7 +177,7 @@ class SearchCoordinator:
 
         remaining = deadline - time.monotonic() if deadline is not None else None
         step_contexts = [contextvars.copy_context() for _ in steps]
-        with ThreadPoolExecutor(max_workers=min(3, len(steps))) as pool:
+        with ThreadPoolExecutor(max_workers=min(request.budget.parallel_steps, len(steps))) as pool:
             futures = {
                 pool.submit(step_contexts[idx].run, execute_step, step): idx
                 for idx, step in enumerate(steps)
@@ -343,7 +333,7 @@ class SearchCoordinator:
             urls,
             objective=step.query or request.objective,
             required_fields=step.required_fields or request.required_fields,
-            max_urls=_MAX_URLS_PER_STEP,
+            max_urls=request.budget.max_urls,
             allow_dynamic=True,
         )
         return {
@@ -373,7 +363,7 @@ class SearchCoordinator:
             urls,
             objective=step.query or request.objective,
             required_fields=step.required_fields or request.required_fields,
-            max_urls=_MAX_DEEP_READ_URLS,
+            max_urls=request.budget.max_deep_read_urls,
             allow_dynamic=True,
         )
         result = dict(result)

@@ -763,6 +763,44 @@ def test_delivery_rejects_actor_drift_before_commit_or_push(
     assert not _git(bare, "show-ref") or "codex/" not in _git(bare, "show-ref")
 
 
+@pytest.mark.parametrize("kind", [
+    "regular", "directory", "deleted", "hardlink", "symlink", "symlink_directory",
+    "broken_symlink", "private_path",
+])
+def test_delivery_candidate_metadata_preserves_single_file_guards(tmp_path, monkeypatch, kind):
+    from chatcopilot.contracts.execution_scope import bind_execution_scope
+
+    root = tmp_path / "project"
+    (root / "src").mkdir(parents=True)
+    target = root / "src" / ("local.env" if kind == "private_path" else "candidate")
+    original = tmp_path / "outside"
+    original.write_text("unchanged")
+    if kind == "hardlink":
+        os.link(original, target)
+    elif kind == "symlink":
+        target.symlink_to(original)
+    elif kind == "symlink_directory":
+        target.symlink_to(tmp_path)
+    elif kind == "broken_symlink":
+        target.symlink_to(tmp_path / "absent")
+    elif kind == "directory":
+        target.mkdir()
+    elif kind != "deleted":
+        target.write_text("candidate")
+    monkeypatch.setenv("CHATCOPILOT_DEV_ROOT", str(root))
+    monkeypatch.delenv("CHATCOPILOT_DEV_ALLOWED_PATHS", raising=False)
+    monkeypatch.delenv("CHATCOPILOT_DEV_SHELL_TIMEOUT_MAX", raising=False)
+    with bind_execution_scope(None):
+        paths = [target.relative_to(root).as_posix()]
+        if kind in {"regular", "directory", "deleted"}:
+            delivery.validate_delivery_paths(paths, stage="validating")
+        else:
+            with pytest.raises(ToolHandlerError) as rejected:
+                delivery.validate_delivery_paths(paths, stage="validating")
+            assert rejected.value.error_code == "code_task_scope_violation"
+    assert original.read_text() == "unchanged"
+
+
 def test_delivery_rejects_mode_drift_scope_violation_and_ready_pr(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

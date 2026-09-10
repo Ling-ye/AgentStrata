@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib
-import os
-import stat
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+
+from chatcopilot.core.file_integrity import trusted_source_sha256
 
 from chatcopilot.evals.plugins.base import (
     EvaluationPlugin,
@@ -128,7 +127,6 @@ def load_plugin_binding(binding: PluginBinding) -> EvaluationPlugin:
 
 def plugin_implementation_sha256(plugin_id: str) -> str:
     """Hash the exact trusted plugin source file, failing closed on ambiguity."""
-
     binding = get_plugin_binding(plugin_id)
     if binding not in _BINDINGS:
         raise ValueError(f"evaluation plugin binding is not static: {binding.plugin_id}")
@@ -145,51 +143,11 @@ def plugin_implementation_sha256(plugin_id: str) -> str:
     try:
         resolved = path.resolve(strict=True)
         trusted_root = Path(__file__).resolve(strict=True).parent
-        info = resolved.stat(follow_symlinks=False)
+        if resolved.parent != trusted_root:
+            raise ValueError(f"evaluation plugin source is outside the trusted package: {binding.plugin_id}")
+        return trusted_source_sha256(resolved, root=trusted_root, max_bytes=2 * 1024 * 1024)
     except OSError as exc:
         raise ValueError(f"evaluation plugin source is unavailable: {binding.plugin_id}") from exc
-    if resolved.parent != trusted_root or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise ValueError(
-            f"evaluation plugin source is outside the trusted package: {binding.plugin_id}"
-        )
-    if info.st_size > 2 * 1024 * 1024:
-        raise ValueError(f"evaluation plugin source is too large: {binding.plugin_id}")
-    descriptor = -1
-    try:
-        descriptor = os.open(resolved, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        opened = os.fstat(descriptor)
-        if (
-            opened.st_dev != info.st_dev
-            or opened.st_ino != info.st_ino
-            or opened.st_size != info.st_size
-            or not stat.S_ISREG(opened.st_mode)
-            or opened.st_nlink != 1
-        ):
-            raise ValueError(
-                f"evaluation plugin source changed before reading: {binding.plugin_id}"
-            )
-        chunks: list[bytes] = []
-        while True:
-            chunk = os.read(descriptor, 64 * 1024)
-            if not chunk:
-                break
-            chunks.append(chunk)
-        finished = os.fstat(descriptor)
-        if (
-            finished.st_size != opened.st_size
-            or finished.st_mtime_ns != opened.st_mtime_ns
-            or finished.st_ctime_ns != opened.st_ctime_ns
-        ):
-            raise ValueError(f"evaluation plugin source changed while reading: {binding.plugin_id}")
-        payload = b"".join(chunks)
-    except OSError as exc:
-        raise ValueError(f"evaluation plugin source cannot be read: {binding.plugin_id}") from exc
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-    if len(payload) != info.st_size:
-        raise ValueError(f"evaluation plugin source changed while reading: {binding.plugin_id}")
-    return hashlib.sha256(payload).hexdigest()
 
 
 def plugin_binding_snapshot(plugin_id: str) -> dict[str, object]:

@@ -6,6 +6,8 @@ semantics such as event emission, tool-result messages, lifecycle intents, and
 """
 from __future__ import annotations
 
+import sys
+
 from typing import Any, Literal, TypedDict, cast
 
 from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
@@ -44,7 +46,8 @@ class LangGraphAgentSession(AgentSession):
         try:
             state = ops.initial_state()
             graph = self._compile_graph(ops)
-            recursion_limit = max(8, self.hard_iteration_cap * 3 + 6)
+            recursion_limit = (max(8, self.hard_iteration_cap * 3 + 6)
+                               if self.hard_iteration_cap is not None else sys.maxsize)
             final_graph_state = graph.invoke(
                 {"turn": state},
                 config={"recursion_limit": recursion_limit},

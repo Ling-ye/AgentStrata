@@ -3,8 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from chatcopilot.platforms.qq.at_proxy import RelayConfig
-from chatcopilot.platforms.qq.ingress_probe import run_simulated_gateway_ingress
+from chatcopilot.evals.qq_ingress_probe import run_simulated_gateway_ingress
 
 
 _TOKEN = "probe_" + ("x" * 32)
@@ -19,7 +18,7 @@ def _env() -> dict[str, str]:
 
 
 class SimulatedGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
-    async def test_real_relay_forwards_explicit_at_and_drops_missing_at(self) -> None:
+    async def test_current_channel_accepts_explicit_at_and_drops_missing_at(self) -> None:
         receipt = await run_simulated_gateway_ingress(_env())
 
         self.assertTrue(receipt.passed)
@@ -35,18 +34,6 @@ class SimulatedGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
 
         serialized = json.dumps(receipt.to_evidence(), sort_keys=True)
         for private_value in (_TOKEN, _BOT, "ingress-probe"):
-            self.assertNotIn(private_value, serialized)
-
-    async def test_relay_logs_never_receive_private_probe_configuration(self) -> None:
-        with self.assertLogs(
-            "chatcopilot.platforms.qq.at_proxy",
-            level="INFO",
-        ) as captured:
-            receipt = await run_simulated_gateway_ingress(_env())
-
-        self.assertTrue(receipt.passed)
-        serialized = "\n".join(captured.output)
-        for private_value in (_TOKEN, _BOT):
             self.assertNotIn(private_value, serialized)
 
     async def test_ephemeral_listeners_are_released_between_runs(self) -> None:
@@ -73,12 +60,6 @@ class SimulatedGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(message, list)
         self.assertEqual((message or [])[0].get("type"), "at")
 
-    def test_relay_config_has_no_access_policy_state(self) -> None:
-        config = RelayConfig(_env())
-
-        self.assertEqual(config.bot_qq, _BOT)
-        self.assertFalse(hasattr(config, "user_ids"))
-        self.assertFalse(hasattr(config, "group_ids"))
 
 
 if __name__ == "__main__":

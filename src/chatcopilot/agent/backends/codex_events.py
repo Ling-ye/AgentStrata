@@ -45,7 +45,6 @@ _ITEM_KINDS = {
 _MAX_USAGE_TOKEN_COUNT = (1 << 63) - 1
 _MAX_PROJECTED_PROVIDER_ITEMS = 500
 _MAX_TRACKED_OMITTED_STARTED_ITEMS = 1024
-_MAX_FINAL_TEXT_CHARS = 1024 * 1024
 _MAX_PROVIDER_METADATA_CHARS = 512
 
 
@@ -87,8 +86,6 @@ class CodexJsonlProjector:
     provider_failed: bool = False
     stream_omission_count: int = 0
     provider_item_omission_count: int = 0
-    final_text_truncated: bool = False
-    _final_text_chars: int = 0
     _stream_limit_reported: bool = False
     _provider_item_limit_reported: bool = False
     _omitted_started_items: set[str] = field(default_factory=set)
@@ -260,21 +257,8 @@ class CodexJsonlProjector:
         )
 
     def _append_final_text(self, text: str) -> None:
-        if self.final_text_truncated:
-            return
-        separator_chars = 1 if self.final_parts else 0
-        remaining = _MAX_FINAL_TEXT_CHARS - self._final_text_chars
-        required = separator_chars + len(text)
-        if required <= remaining:
-            self.final_parts.append(text)
-            self._final_text_chars += required
-            self._last_complete_final_line = self.line_count
-            return
-        self.final_text_truncated = True
-        keep = max(0, remaining - separator_chars)
-        if keep:
-            self.final_parts.append(text[:keep])
-            self._final_text_chars += separator_chars + keep
+        self.final_parts.append(text)
+        self._last_complete_final_line = self.line_count
 
     @property
     def has_complete_final_after_stream_omission(self) -> bool:
@@ -538,7 +522,7 @@ class CodexJsonlProjector:
                 visible_response=project_visible_response(
                     self.final_text, coverage="adapter_visible",
                     omitted=("provider_internal_turns", "provider_private_reasoning"),
-                    truncated=self.final_text_truncated or bool(self.stream_omission_count),
+                    truncated=bool(self.stream_omission_count),
                 ),
             )
         )

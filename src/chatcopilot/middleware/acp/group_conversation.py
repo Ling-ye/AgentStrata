@@ -21,6 +21,7 @@ from chatcopilot.contracts.identity import (
 )
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.core.workspace_runtime import Workspace
+from chatcopilot.core.file_integrity import FileMetadataError, require_regular_file
 
 _SENDER_ENVELOPE_RE = re.compile(
     r"\A\[cc-connect sender_id=(?P<sender>[1-9][0-9]{4,19})"
@@ -862,12 +863,15 @@ class GroupConversationJournal:
                 "group_journal_unsafe_storage",
                 f"group conversation {label} changed identity",
             ) from exc
+        try:
+            require_regular_file(opened, owner_uid=os.geteuid(), mode=0o600, single_link=True)
+        except FileMetadataError as exc:
+            raise GroupConversationJournalError(
+                "group_journal_unsafe_storage",
+                f"group conversation {label} has unsafe ownership, mode, or identity",
+            ) from exc
         if (
-            not stat.S_ISREG(opened.st_mode)
-            or opened.st_uid != os.geteuid()
-            or opened.st_nlink != 1
-            or stat.S_IMODE(opened.st_mode) != 0o600
-            or opened.st_size > size_limit
+            opened.st_size > size_limit
             or (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino)
         ):
             raise GroupConversationJournalError(
@@ -881,16 +885,13 @@ class GroupConversationJournal:
             entry = os.stat(filename, dir_fd=dir_fd, follow_symlinks=False)
         except FileNotFoundError:
             return
-        if (
-            not stat.S_ISREG(entry.st_mode)
-            or entry.st_uid != os.geteuid()
-            or entry.st_nlink != 1
-            or stat.S_IMODE(entry.st_mode) != 0o600
-        ):
+        try:
+            require_regular_file(entry, owner_uid=os.geteuid(), mode=0o600, single_link=True)
+        except FileMetadataError as exc:
             raise GroupConversationJournalError(
                 "group_journal_unsafe_storage",
                 f"group conversation {label} target is unsafe",
-            )
+            ) from exc
 
 
 def render_turn_identity_context(identity: TurnIdentity, history: str) -> str:

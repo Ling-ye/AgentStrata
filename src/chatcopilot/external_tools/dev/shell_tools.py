@@ -1,13 +1,15 @@
 """Dev shell tool: sandboxed command execution within the project directory."""
 from __future__ import annotations
 
-import re
-import shlex
 import subprocess
+import tempfile
+from uuid import uuid4
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from chatcopilot.core.scoped_process import sandbox_command
+from chatcopilot.core.scoped_files import write_stream
+from chatcopilot.external_tools.dev.command_policy import command_argv
 from chatcopilot.contracts.development import current_development_task_scope
 from chatcopilot.external_tools.dev.config import get_dev_config, DevConfig
 from chatcopilot.external_tools.dev.path_guard import DevPathAccessError
@@ -17,95 +19,6 @@ from chatcopilot.external_tools.shared.tool_spec import (
     ToolResult,
     object_schema,
 )
-
-
-def _validate_command(config: DevConfig, command: str) -> str | None:
-    """Return error message if command matches a blocked pattern, else None."""
-    for pattern in config.shell.blocked_patterns:
-        if pattern.search(command):
-            return f"Command blocked by safety rule: {pattern.pattern}"
-    scope = current_development_task_scope()
-    if scope is not None and scope.shell_profile == "validation":
-        return _validate_validation_command(command)
-    return None
-
-
-_SHELL_CONTROL_RE = re.compile(r"(?:&&|\|\||[|;<>`]|\$\(|\r|\n)")
-_PYTHON_MODULES = frozenset({"pytest", "compileall"})
-_PYTHON_SCRIPTS = frozenset(
-    {
-        "scripts/check_architecture.py",
-        "scripts/check_sdd_specs.py",
-    }
-)
-_DIRECT_VALIDATORS = frozenset({"ruff", "mypy", "pyright"})
-
-
-def _validate_validation_command(command: str) -> str | None:
-    """Restrict delegated shell use to deterministic validation/read commands."""
-
-    if _SHELL_CONTROL_RE.search(command):
-        return "Command blocked by delegated validation profile: shell operators are not allowed"
-    try:
-        argv = shlex.split(command, posix=True)
-    except ValueError as exc:
-        return f"Command blocked by delegated validation profile: {exc}"
-    if not argv:
-        return "Command blocked by delegated validation profile: empty command"
-
-    executable = Path(argv[0]).name
-    if executable in {"python", "python3"} or argv[0].endswith("/bin/python"):
-        return _validate_python_command(argv)
-    if executable == "git":
-        return _validate_git_command(argv)
-    if executable == "npm":
-        if len(argv) >= 3 and argv[1] == "run" and argv[2] in {
-            "build",
-            "check",
-            "lint",
-            "test",
-            "typecheck",
-        }:
-            return None
-    if executable == "cargo" and len(argv) >= 2 and argv[1] in {
-        "check",
-        "clippy",
-        "test",
-    }:
-        return None
-    if executable == "go" and len(argv) >= 2 and argv[1] in {"test", "vet"}:
-        return None
-    if executable in _DIRECT_VALIDATORS:
-        return None
-    if executable == "rg":
-        return None
-    return (
-        "Command blocked by delegated validation profile: only tests, builds, linters, "
-        "read-only git, and repository search are allowed"
-    )
-
-
-def _validate_python_command(argv: list[str]) -> str | None:
-    if len(argv) >= 3 and argv[1] == "-m":
-        module = argv[2]
-        if module in _PYTHON_MODULES:
-            return None
-        if module == "chatcopilot" and argv[3:5] == ["botspec", "validate"]:
-            return None
-    if len(argv) >= 2 and argv[1].replace("\\", "/") in _PYTHON_SCRIPTS:
-        return None
-    return (
-        "Command blocked by delegated validation profile: Python may run pytest, "
-        "compileall, BotSpec validation, or checked repository validators only"
-    )
-
-
-def _validate_git_command(argv: list[str]) -> str | None:
-    if len(argv) < 2:
-        return "Command blocked by delegated validation profile: git subcommand is required"
-    if argv[1] in {"diff", "grep", "log", "ls-files", "rev-parse", "show", "status"}:
-        return None
-    return "Command blocked by delegated validation profile: git command is not read-only"
 
 
 def _resolve_cwd(config: DevConfig, cwd_raw: str | None) -> Path:
@@ -134,7 +47,7 @@ def _resolve_cwd(config: DevConfig, cwd_raw: str | None) -> Path:
     return resolved
 
 
-def _handle_run_command(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
+def _handle_run_command(args: Mapping[str, Any], _ctx: ToolContext) -> ToolResult:
     config = get_dev_config(require_scope=True)
     command = str(args.get("command") or "").strip()
     if not command:
@@ -145,14 +58,13 @@ def _handle_run_command(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
             stage="validation",
         )
 
-    blocked = _validate_command(config, command)
-    if blocked:
-        return ToolResult(
-            ok=False,
-            error=blocked,
-            error_code="command_blocked",
-            stage="validation",
+    task_scope = current_development_task_scope()
+    try:
+        command_args = command_argv(
+            command, validation=task_scope is not None and task_scope.shell_profile == "validation",
         )
+    except ValueError as exc:
+        return ToolResult(ok=False, error=str(exc), error_code="command_blocked", stage="validation")
 
     cwd_raw = args.get("cwd")
     try:
@@ -165,62 +77,62 @@ def _handle_run_command(args: dict[str, Any], _ctx: ToolContext) -> ToolResult:
             stage="validation",
         )
 
-    timeout_raw = args.get("timeout_seconds")
     timeout = config.shell.timeout_default
-    if timeout_raw is not None:
-        timeout = min(int(timeout_raw), config.shell.timeout_max)
-        timeout = max(1, timeout)
+    if args.get("timeout_seconds") is not None:
+        try:
+            timeout = max(1, min(int(args["timeout_seconds"]), config.shell.timeout_max))
+        except (ValueError, TypeError, OverflowError):
+            return ToolResult(ok=False, error="timeout_seconds must be an integer",
+                              error_code="command_timeout_invalid", stage="validation")
 
     try:
         if _ctx.execution_scope is None:
             raise RuntimeError("execution resources are not bound to this command")
-        argv = sandbox_command(["/bin/bash", "--noprofile", "--norc", "-c", command], scope=_ctx.execution_scope, cwd=cwd)
-        result = subprocess.run(
-            argv,
-            shell=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(cwd),
-            env=None,  # bubblewrap clears the child environment
-        )
-    except subprocess.TimeoutExpired:
-        return ToolResult(
-            ok=False,
-            error=f"Command timed out after {timeout}s: {command}",
-            error_code="command_timeout",
-            stage="execution",
-        )
-    except (OSError, ValueError, RuntimeError) as e:
-        return ToolResult(
-            ok=False,
-            error=f"Command execution failed: {e}",
-            error_code="command_execution_failed",
-            stage="execution",
-        )
+        argv = sandbox_command(command_args, scope=_ctx.execution_scope, cwd=cwd)
+        with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+            timed_out = False
+            try:
+                result = subprocess.run(
+                    argv, shell=False, stdout=stdout, stderr=stderr,
+                    timeout=timeout, cwd=str(cwd),
+                )
+                exit_code = result.returncode
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                exit_code = None
+            artifact_roots = _ctx.execution_scope.project_roots or _ctx.execution_scope.writable_roots
+            artifact_root = artifact_roots[0] / "command-output" / uuid4().hex
+            outputs: list[str] = []
+            previews: list[str] = []
+            sizes: dict[str, int] = {}
+            for name, stream in (("stdout", stdout), ("stderr", stderr)):
+                sizes[name] = stream.tell()
+                stream.seek(0)
+                destination = artifact_root / (name + ".log")
+                write_stream(destination, stream)
+                outputs.append(str(destination))
+                stream.seek(0)
+                preview = stream.read(15_000).decode("utf-8", errors="replace")
+                if preview:
+                    previews.append(f"[{name}]\n{preview}")
+            preview_limited = any(size > 15_000 for size in sizes.values())
+            combined = "\n".join(previews)
+            if preview_limited:
+                combined += "\n[Preview only; complete stdout/stderr are saved in outputs.]"
+    except (OSError, ValueError, RuntimeError, IndexError) as exc:
+        return ToolResult(ok=False, error=f"Command execution failed: {exc}",
+                          error_code="command_execution_failed", stage="execution")
 
-    output_parts: list[str] = []
-    if result.stdout:
-        output_parts.append(result.stdout)
-    if result.stderr:
-        output_parts.append(f"[stderr]\n{result.stderr}")
-
-    combined = "\n".join(output_parts)
-    max_chars = config.shell.max_output_chars
-    if len(combined) > max_chars:
-        combined = combined[:max_chars] + f"\n\n[output truncated at {max_chars} chars]"
-
-    exit_code = result.returncode
-    status = "OK" if exit_code == 0 else f"exit code {exit_code}"
+    status = f"timeout after {timeout}s" if timed_out else ("OK" if exit_code == 0 else f"exit code {exit_code}")
     summary = f"[{status}] {command}"
-
+    ok = exit_code == 0 and not timed_out
     return ToolResult(
-        ok=exit_code == 0,
-        summary=summary if exit_code == 0 else "",
+        ok=ok, summary=summary if ok else "", outputs=outputs,
         data={"command": command, "exit_code": exit_code, "output": combined},
-        error=summary if exit_code != 0 else None,
-        error_code="command_nonzero_exit" if exit_code != 0 else "",
-        stage="execution" if exit_code != 0 else "",
+        details={"output_bytes": sizes, "preview_limited": preview_limited},
+        error=None if ok else summary,
+        error_code="" if ok else ("command_timeout" if timed_out else "command_nonzero_exit"),
+        stage="" if ok else "execution",
     )
 
 
@@ -230,7 +142,7 @@ TOOLS: list[ToolDef] = [
         summary=(
             "Execute a shell command in the project directory. "
             "Use for running tests, builds, linters, or other dev tasks. "
-            "Commands are restricted to the project root."
+            "Commands use the host-granted resources. Full stdout/stderr are saved in outputs."
         ),
         input_schema=object_schema(
             {
@@ -241,7 +153,7 @@ TOOLS: list[ToolDef] = [
                 },
                 "timeout_seconds": {
                     "type": "integer",
-                    "description": "Timeout in seconds (default 60, max 300)",
+                    "description": "Timeout in seconds, capped by the current instance command budget",
                 },
             },
             required=("command",),
@@ -249,7 +161,7 @@ TOOLS: list[ToolDef] = [
         output_schema=object_schema(
             {
                 "command": {"type": "string"},
-                "exit_code": {"type": "integer"},
+                "exit_code": {"type": ["integer", "null"], "description": "Observed exit code; null when the command timed out."},
                 "output": {"type": "string"},
             },
             required=("command", "exit_code", "output"),

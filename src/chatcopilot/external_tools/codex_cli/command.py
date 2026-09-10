@@ -16,7 +16,7 @@ def build_codex_command(
     workdir: Path,
     reasoning_effort: str = "medium",
     network_access: bool = False,
-    sandbox_mode: str = "workspace-write",
+    sandbox_mode: str | None = "workspace-write",
     web_search_mode: str = "disabled",
     skip_git_repo_check: bool = False,
     output_last_message: Path | None = None,
@@ -46,20 +46,19 @@ def build_codex_command(
         model,
         "--config",
         f"model_reasoning_effort={json.dumps(reasoning_effort)}",
-        "--sandbox",
-        sandbox_mode,
-        "--config",
-        f"sandbox_workspace_write.network_access={str(network_access).lower()}",
         "--config",
         f"web_search={json.dumps(web_search_mode)}",
     ]
+    if sandbox_mode is not None:
+        command.extend(["--sandbox", sandbox_mode, "--config",
+                        f"sandbox_workspace_write.network_access={str(network_access).lower()}"])
     for entry in shell_policy:
         command.extend(["--config", entry])
     command.extend(["--cd", str(workdir)])
     if ephemeral:
-        command.insert(8, "--ephemeral")
+        command.append("--ephemeral")
     if ignore_user_config:
-        command.insert(8, "--ignore-user-config")
+        command.append("--ignore-user-config")
     for config_entry in extra_config:
         command.extend(["--config", str(config_entry)])
     if skip_git_repo_check:

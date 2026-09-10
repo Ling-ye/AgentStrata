@@ -12,6 +12,7 @@ import secrets
 import stat
 
 from chatcopilot.contracts.agent import ResourceRef
+from chatcopilot.core.file_integrity import require_regular_file
 from chatcopilot.contracts.resources import FetchedResource, ResourceFetcherPort
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
@@ -575,9 +576,7 @@ def _publish_file_atomic(dir_fd: int, *, name: str, data: bytes) -> tuple[int, i
             raise OSError("resource file size drifted during publication")
         destination = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
         if (
-            not stat.S_ISREG(destination.st_mode)
-            or destination.st_nlink != 1
-            or (destination.st_dev, destination.st_ino) != (current.st_dev, current.st_ino)
+            (destination.st_dev, destination.st_ino) != (current.st_dev, current.st_ino)
         ):
             raise OSError("resource destination identity changed during publication")
         identity = (current.st_dev, current.st_ino)
@@ -711,12 +710,10 @@ def _validate_owned_directory(current: os.stat_result) -> None:
 
 
 def _validate_private_file(current: os.stat_result) -> None:
-    if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
-        raise OSError("resource file identity is unsafe")
-    if os.name == "posix" and current.st_uid != os.geteuid():
-        raise OSError("resource file owner is unsafe")
-    if stat.S_IMODE(current.st_mode) != 0o600:
-        raise OSError("resource file mode is unsafe")
+    require_regular_file(
+        current, owner_uid=os.geteuid() if os.name == "posix" else None,
+        mode=0o600, single_link=True,
+    )
 
 
 def _event_directory_name(event: CanonicalInboundEvent) -> str:

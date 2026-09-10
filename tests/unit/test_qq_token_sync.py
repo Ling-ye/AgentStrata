@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import json
 import stat
 import textwrap
@@ -101,6 +102,25 @@ def _write_starter_bot(tmp_path: Path, extra_lines: str = "") -> tuple[Path, Pat
     )
     env_path.chmod(0o600)
     return bot_path, env_path
+
+
+def test_token_sync_accepts_linked_botspec_but_keeps_private_env_guard(tmp_path: Path) -> None:
+    bot_path, env_path = _write_starter_bot(tmp_path)
+    alias = tmp_path / "bot-alias.yaml"
+    os.link(bot_path, alias)
+    before = alias.read_bytes()
+    receipt = upsert_local_env_token(
+        env_path, "k" * 64, bot_path=bot_path, bots_root=bot_path.parent.parent,
+    )
+    assert receipt.committed
+    assert alias.read_bytes() == before and bot_path.stat().st_nlink == 2
+    env_alias = tmp_path / "env-alias"
+    os.link(env_path, env_alias)
+    with pytest.raises(ValueError, match="provision_target_unsafe"):
+        upsert_local_env_token(
+            env_path, "z" * 64, bot_path=bot_path, bots_root=bot_path.parent.parent,
+        )
+    assert load_local_env_values(env_alias)["QQ_ACCESS_TOKEN"] == "k" * 64
 
 
 def test_upsert_local_env_token_preserves_advanced_and_unknown_keys(

@@ -11,6 +11,7 @@ import re
 import time
 from typing import Protocol
 
+from chatcopilot.gateway.result_text import result_preview
 from chatcopilot.application.sessions import SessionManagerError
 from chatcopilot.contracts.turns import PreparedTurn, TurnOutcome
 from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
@@ -458,15 +459,16 @@ class GatewayTurnCoordinator:
                     run_id=run_id,
                     cancellation=cancellation,
                 )
-                await self._complete_without_channel(
+                self._finish_result(
                     session_id=session_id,
                     run_id=run_id,
-                    result=result,
+                    result=result.result,
                 )
             except StaleWriterGeneration:
                 return
             except Exception as exc:
-                self._fail_run(session_id=session_id, run_id=run_id, error=exc)
+                self._fail_run(session_id=session_id, run_id=run_id, error=exc,
+                               result=result.result if result is not None else None)
             finally:
                 if result is not None:
                     self._actor_executor.discard_exchange(request, result)
@@ -493,7 +495,7 @@ class GatewayTurnCoordinator:
                 self._actor_executor.discard_exchange(request, result)
                 self._finish_aborted(session_id=session_id, run_id=run_id)
                 return
-            final_text = _bounded_final_text(result.result.final_text)
+            final_text = _final_text(result.result.final_text)
             runtime = self._channel_runtime
             if runtime is None:
                 raise GatewayTurnCoordinatorError(
@@ -523,10 +525,10 @@ class GatewayTurnCoordinator:
                 exchange_committed = True
             else:
                 self._actor_executor.discard_exchange(request, result)
-            self._finish_completed(
+            self._finish_result(
                 session_id=session_id,
                 run_id=run_id,
-                final_text=final_text,
+                result=result.result,
             )
         except (StaleWriterGeneration, asyncio.CancelledError):
             if result is not None and not exchange_committed:
@@ -539,7 +541,8 @@ class GatewayTurnCoordinator:
                     self._actor_executor.discard_exchange(request, result)
                 except Exception as discard_error:
                     failure = discard_error
-            self._fail_run(session_id=session_id, run_id=run_id, error=failure)
+            self._fail_run(session_id=session_id, run_id=run_id, error=failure,
+                           result=result.result if result is not None else None)
             raise
 
     async def _execute_actor(
@@ -586,23 +589,6 @@ class GatewayTurnCoordinator:
                                stop_reason=result.result.stop_reason)
         return result
 
-    async def _complete_without_channel(
-        self,
-        *,
-        session_id: str,
-        run_id: str,
-        result: TurnOutcome,
-    ) -> None:
-        if result.result.stop_reason == "cancelled":
-            self._finish_aborted(session_id=session_id, run_id=run_id)
-            return
-        final_text = _bounded_final_text(result.result.final_text)
-        self._finish_completed(
-            session_id=session_id,
-            run_id=run_id,
-            final_text=final_text,
-        )
-
     def _begin_run(self, *, session_id: str, run_id: str, input_fingerprint: str) -> None:
         try:
             self._state_store.begin_run(
@@ -623,13 +609,19 @@ class GatewayTurnCoordinator:
                 "Gateway session already has an active run",
             ) from exc
 
-    def _finish_completed(self, *, session_id: str, run_id: str, final_text: str) -> None:
+    def _finish_result(self, *, session_id: str, run_id: str, result: AgentResult) -> None:
+        if result.stop_reason == "cancelled":
+            self._finish_aborted(session_id=session_id, run_id=run_id)
+            return
+        final_text = _final_text(result.final_text)
+        code = "agent_llm_error" if result.stop_reason == "llm_error" else None
         self._state_store.finish_run(
             generation=self._generation,
             session_id=session_id,
             run_id=run_id,
-            outcome="completed",
-            result={"final_text": final_text, "stop_reason": "completed"},
+            outcome="failed" if code else "completed",
+            result={"final_text": final_text, "stop_reason": result.stop_reason},
+            error_code=code,
             now=self._now(),
         )
         self._sessions.session_manager.finish_run(
@@ -637,8 +629,21 @@ class GatewayTurnCoordinator:
             run_id,
             generation=self._generation,
         )
-        self._observe_terminal(run_id, "completed")
-        segments = (TextRpcSegment(final_text),) if final_text else ()
+        self._observe_terminal(run_id, "failed" if code else "completed", code=code)
+        if code:
+            self._events.emit(
+                "chat.error",
+                ChatErrorEvent(
+                    session_id=session_id,
+                    run_id=run_id,
+                    code=code,
+                    message="Agent execution failed",
+                    retryable=False,
+                ),
+                session_id=session_id,
+            )
+            return
+        segments = (TextRpcSegment(result_preview(final_text)),) if final_text else ()
         self._events.emit(
             "chat.final",
             ChatFinalEvent(
@@ -689,7 +694,8 @@ class GatewayTurnCoordinator:
             session_id=session_id,
         )
 
-    def _fail_run(self, *, session_id: str, run_id: str, error: Exception) -> None:
+    def _fail_run(self, *, session_id: str, run_id: str, error: Exception,
+                  result: AgentResult | None = None) -> None:
         current = self._state_store.get_run(run_id)
         if current is None or current.state in {"completed", "aborted", "failed"}:
             return
@@ -700,6 +706,8 @@ class GatewayTurnCoordinator:
                 session_id=session_id,
                 run_id=run_id,
                 outcome="failed",
+                result=({"final_text": result.final_text, "stop_reason": result.stop_reason}
+                        if result is not None and isinstance(result.final_text, str) else None),
                 error_code=code,
                 now=self._now(),
             )
@@ -852,11 +860,11 @@ def _channel_run_id(event: CanonicalInboundEvent) -> str:
     return "run_" + digest
 
 
-def _bounded_final_text(value: object) -> str:
-    if not isinstance(value, str) or len(value) > _MAX_EVENT_TEXT:
+def _final_text(value: object) -> str:
+    if not isinstance(value, str):
         raise GatewayTurnCoordinatorError(
             "agent_output_invalid",
-            "Agent output is invalid or exceeds the Gateway limit",
+            "Agent output must be text",
         )
     return value
 

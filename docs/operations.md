@@ -293,14 +293,14 @@ BotSpec 选择 `persona.control` 后，Owner 可用自然语言或 `/persona` �
 ```
 
 未指定 scope 时群聊固定为 `group`、私聊固定为 `user`；群聊不能选 `user`，私聊不能选
-`group`。`set/append/research` 的 requirement 必须逐字来自当前用户消息的连续片段；`global` 也必须
+`group`。`set/append/research` 的要求由宿主直接取自当前用户正文，不需要模型重复摘抄；`global` 必须
 由当前消息明确提出。`set` 从要求生成完整文档；`append` 把当前层人格与补充要求交给
 `PersonaDraftAgent` 并整体替换；`research` 强制搜索后生成；`refresh` 用当前权威人格重新研究并
 整体替换。命名人物、角色、歌手或组织形象由该 Agent 通过统一搜索完成公开资料消歧。任一步骤失败
 都保持旧人格不变。
 
-明确的非清空更新可直接提交；主 Agent 对依赖前文或仍含糊的要求应传
-`defer_confirmation=true`。该情况和 `clear` 都只建立与 actor/chat/scope/hash 及十分钟 TTL 绑定的
+明确的更新和清空都可直接提交；主 Agent 对依赖前文、作用域不清楚或仍含糊的要求传
+`defer_confirmation=true`，此时建立与 actor/chat/scope/hash 及十分钟 TTL 绑定的
 受保护提案。确认时，当前真实 raw user text 必须精确等于 `/persona confirm`，前后空格或普通
 “确认”都不会写；取消可以自然语言或 `/persona cancel`。只有工具结果的
 `data.committed=true` 及其 receipt 能证明人格已经保存或清空。群聊 `show` 不输出底层正文。
@@ -488,7 +488,7 @@ Console 的「开始测试」按测评集、题目列表、评分和运行计划
 `agentstrata-capabilities-v1` 的 63 个 Case 直接提交给 Agent runtime，不经过 ACP 或 QQ；
 `quick/full/security` 分别选择 10/61/3 题，两个依赖特定来源的 Case 继续通过 custom 选择。
 
-`agentstrata-qq-message-flow-v1` 当前仍验证重构前的 Relay/attestation/ACP 合成链，
+`agentstrata-qq-message-flow-v1` 使用当前 OneBot Channel 探针，再进入隔离的 attestation/ACP 合成链，
 `quick/full/security` 分别选择 3/7/4 个 Case。它只保留为 legacy regression suite，
 不是新 Gateway 验收；迁移到 fake OneBot → real Channel/Gateway 前不得把名称解释成当前
 推荐运行路径。两者只可手动启动；默认
@@ -626,7 +626,8 @@ Token”；该操作只允许来自本机回环 Console，请求成功后 token 
 被 token 接口拒绝。QQ 账号已经在线时无需再次触发登录；Console 会显示“账号已在线”。
 容器停机时，管理页、Token 和登录检查按钮会禁用，应先启动或按上面的受控流程重建。
 
-`qq_simulated_gateway_ingress:passed` 只证明隔离回环中的合成 ingress 契约；它不证明运行
+平台 external-check 不再运行 Relay 模拟门禁。Evaluation 的当前 Channel 探针只证明隔离回环
+中的合成 ingress 契约；它不证明运行
 中的 NapCat 产生过该事件，也不证明 ACP edge、Agent、真实 QQ 客户端展示或用户已读，
 这些证据不能互相替代。
 

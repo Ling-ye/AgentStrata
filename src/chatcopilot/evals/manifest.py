@@ -1162,8 +1162,8 @@ def _inspect_contained_path(
                 raise ValueError(f"package resource ancestor must be a directory: {current}")
             snapshots.append((str(current), _directory_snapshot(info)))
             continue
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise ValueError(f"package resource must be a single-link regular file: {current}")
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"package resource must be a regular file: {current}")
         snapshots.append((str(current), _file_snapshot(info)))
     if final_directory and not parts:
         final_info = root_info

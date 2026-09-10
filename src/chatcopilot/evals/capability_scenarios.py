@@ -29,7 +29,7 @@ from chatcopilot.middleware.acp.attachment_pipeline import (
 )
 from chatcopilot.middleware.acp.tool_permissions import build_permission_filter
 from chatcopilot.platforms import router as platform_router
-from chatcopilot.platforms.qq.at_proxy import evaluate_forward
+from chatcopilot.channels.qq_onebot.codec import has_structured_self_mention
 
 
 _SENTINEL_VALUE = "capability-sentinel:unchanged"
@@ -56,6 +56,13 @@ class _MutationSentinel:
     def mutate(self) -> None:
         self.value = "capability-sentinel:MUTATED"
         self.mutation_count += 1
+
+
+def _transport_trigger(event: Mapping[str, Any], bot_id: str) -> bool:
+    return event.get("message_type") == "private" or (
+        event.get("message_type") == "group"
+        and has_structured_self_mention(event.get("message"), bot_id)
+    )
 
 
 def _post_state(sentinel: _MutationSentinel) -> dict[str, object]:
@@ -183,14 +190,14 @@ def _qq_access_matrix(
             "message": message,
         }
 
-    no_at_forwarded = evaluate_forward(
+    no_at_forwarded = _transport_trigger(
         group_event(group_only_member, group_id=allowed_group, mentioned=False),
         bot_id,
-    ).forward
-    allowed_at_forwarded = evaluate_forward(
+    )
+    allowed_at_forwarded = _transport_trigger(
         group_event(group_only_member, group_id=allowed_group, mentioned=True),
         bot_id,
-    ).forward
+    )
     group_allowed = evaluate_admission(
         platform="qq",
         chat_kind="group",
@@ -198,10 +205,10 @@ def _qq_access_matrix(
         sender_id=group_only_member,
         env=context.env,
     )
-    denied_at_forwarded = evaluate_forward(
+    denied_at_forwarded = _transport_trigger(
         group_event(group_only_member, group_id=other_group, mentioned=True),
         bot_id,
-    ).forward
+    )
     group_denied = evaluate_admission(
         platform="qq",
         chat_kind="group",
@@ -209,10 +216,10 @@ def _qq_access_matrix(
         sender_id=group_only_member,
         env=context.env,
     )
-    unknown_at_forwarded = evaluate_forward(
+    unknown_at_forwarded = _transport_trigger(
         group_event(None, group_id=allowed_group, mentioned=True),
         bot_id,
-    ).forward
+    )
     group_unknown = evaluate_admission(
         platform="qq",
         chat_kind="group",
@@ -504,7 +511,7 @@ def _qq_missing_at(
         "user_id": sender_id,
         "message": [{"type": "text", "data": {"text": "without mention"}}],
     }
-    forwarded = evaluate_forward(frame, bot_id).forward
+    forwarded = _transport_trigger(frame, bot_id)
     if forwarded:
         downstream_frames.append(frame)
     downstream_observer_count = len(downstream_frames)

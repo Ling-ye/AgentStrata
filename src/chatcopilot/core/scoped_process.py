@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import shutil
-import stat
 import sys
 
 from chatcopilot.contracts.execution_scope import ExecutionScope
@@ -47,21 +45,6 @@ def scope_mounts(scope: ExecutionScope) -> list[str]:
             or root.is_symlink()
         ):
             raise ValueError("execution scope requires canonical existing directories")
-    # Hardlinks can expose or mutate an inode outside the mounted resource.
-    for root in roots:
-        for base, dirs, files in os.walk(root, followlinks=False):
-            dirs[:] = [
-                name
-                for name in dirs
-                if Path(base, name) not in (*scope.protected_roots, *scope.hidden_roots)
-            ]
-            for name in files:
-                p = Path(base, name)
-                if p in (*scope.protected_roots, *scope.hidden_roots):
-                    continue
-                info = p.lstat()
-                if stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
-                    raise ValueError("execution resource contains a hardlinked file")
     args = _parents(roots)
     for root in sorted(roots, key=lambda p: len(p.parts)):
         args.extend(
@@ -78,12 +61,20 @@ def scope_mounts(scope: ExecutionScope) -> list[str]:
     return args
 
 
+def require_bubblewrap() -> str:
+    executable = shutil.which("bwrap")
+    if not executable:
+        raise RuntimeError(
+            "bubblewrap (bwrap) is required for isolated execution; "
+            "install bubblewrap on the Linux/WSL host and retry"
+        )
+    return str(Path(executable).resolve())
+
+
 def sandbox_command(command: list[str], *, scope: ExecutionScope, cwd: Path) -> list[str]:
     if not scope.permits(cwd):
         raise ValueError("command cwd is outside its execution scope")
-    bwrap = shutil.which("bwrap")
-    if not bwrap:
-        raise RuntimeError("scoped command execution requires bubblewrap")
+    bwrap = require_bubblewrap()
     args = [
         bwrap,
         "--die-with-parent",

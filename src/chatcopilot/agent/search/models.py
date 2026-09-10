@@ -12,9 +12,22 @@ READ_STRATEGIES = ("search_only", "search_then_read", "static_then_browser")
 VERIFICATION_MODES = ("auto", "required", "none")
 DOMAIN_HINTS = ("general", "technical", "game", "consumer", "news")
 DEPTH_LEVELS = ("quick", "standard", "thorough")
-DEPTH_MAX_STEPS: dict[str, int] = {"quick": 1, "standard": 3, "thorough": 5}
+@dataclass(frozen=True)
+class SearchBudget:
+    max_steps: int
+    max_urls: int = 5
+    max_deep_read_urls: int = 2
+    max_sources: int = 3
+    parallel_steps: int = 3
+    max_page_summary_chars: int = 12_000
+    max_result_chars: int = 36_000
+    max_result_items: int = 15
+
+
+DEFAULT_SEARCH_BUDGET = SearchBudget(3)
+_DEPTH_BUDGETS = {"quick": SearchBudget(1), "standard": DEFAULT_SEARCH_BUDGET, "thorough": SearchBudget(5)}
+DEPTH_MAX_STEPS = {depth: budget.max_steps for depth, budget in _DEPTH_BUDGETS.items()}
 _MAX_OBJECTIVE_CHARS = 4000
-_MAX_URLS = 5
 _MAX_REQUIRED_FIELDS = 20
 _XIAOHONGSHU_RE = re.compile(r"(?<![a-z0-9])xhs(?![a-z0-9])", re.IGNORECASE)
 
@@ -61,8 +74,12 @@ class SearchRequest:
     verification: str = "auto"
 
     @property
+    def budget(self) -> SearchBudget:
+        return _DEPTH_BUDGETS.get(self.depth, _DEPTH_BUDGETS["standard"])
+
+    @property
     def max_steps(self) -> int:
-        return DEPTH_MAX_STEPS.get(self.depth, 3)
+        return self.budget.max_steps
 
     @classmethod
     def from_args(cls, args: Mapping[str, Any] | None) -> "SearchRequest":
@@ -72,9 +89,11 @@ class SearchRequest:
             raise ValueError("objective cannot be empty")
         if len(objective) > _MAX_OBJECTIVE_CHARS:
             raise ValueError(f"objective cannot exceed {_MAX_OBJECTIVE_CHARS} characters")
+        depth = str(raw.get("depth") or "standard").strip().lower()
+        budget = _DEPTH_BUDGETS.get(depth, _DEPTH_BUDGETS["standard"])
         urls = tuple(dict.fromkeys(_strings(raw.get("urls"))))
-        if len(urls) > _MAX_URLS:
-            raise ValueError(f"at most {_MAX_URLS} URLs may be requested")
+        if len(urls) > budget.max_urls:
+            raise ValueError(f"at most {budget.max_urls} URLs may be requested")
         source_hints = tuple(
             dict.fromkeys(_source_hints(raw.get("source_hints"), objective=objective))
         )
@@ -86,8 +105,8 @@ class SearchRequest:
         planned_sources = set(source_hints)
         if urls:
             planned_sources.add("url")
-        if len(planned_sources) > 3:
-            raise ValueError("at most 3 logical sources may be requested")
+        if len(planned_sources) > budget.max_sources:
+            raise ValueError(f"at most {budget.max_sources} logical sources may be requested")
         domain = str(raw.get("domain") or "").strip().lower() or "general"
         if domain not in DOMAIN_HINTS:
             domain = "general"
@@ -172,6 +191,7 @@ ResearchStep = SearchAction
 ResearchPlan = SearchPlan
 
 __all__ = [
+    "DEFAULT_SEARCH_BUDGET",
     "DEPTH_LEVELS",
     "DEPTH_MAX_STEPS",
     "DOMAIN_HINTS",
@@ -182,6 +202,7 @@ __all__ = [
     "ResearchRequest",
     "ResearchStep",
     "SearchAction",
+    "SearchBudget",
     "SearchPlan",
     "SearchRequest",
     "VERIFICATION_MODES",

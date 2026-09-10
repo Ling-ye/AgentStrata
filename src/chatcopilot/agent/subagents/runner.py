@@ -348,8 +348,8 @@ class SubagentRunner:
                 is_subagent=True,
             )
         )
-        soft_iters = max(1, config.max_model_turns)
-        soft_timeout = max(1, config.timeout_seconds)
+        model_turns = config.max_model_turns
+        timeout = config.timeout_seconds
         session = AgentSession(
             session_id=f"{session_id}:subagent:{subagent_name}",
             llm=llm,
@@ -375,11 +375,11 @@ class SubagentRunner:
                 ),
                 summarize_prior_tool_results=True,
             ),
-            max_tool_iterations=soft_iters,
-            hard_iteration_cap=max(soft_iters + 4, soft_iters * 2),
-            max_tool_calls=max(1, config.max_tool_calls),
-            timeout_seconds=soft_timeout,
-            hard_timeout_seconds=soft_timeout * 3,
+            max_tool_iterations=model_turns,
+            hard_iteration_cap=model_turns,
+            max_tool_calls=config.max_tool_calls,
+            timeout_seconds=None,
+            hard_timeout_seconds=timeout,
             stall_window_seconds=30,
             stream_first_turn=False,
             trace_id=trace_id,

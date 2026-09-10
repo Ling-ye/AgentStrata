@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
-import logging
 import os
 import re
 import stat
@@ -12,6 +11,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
+from chatcopilot.core.file_integrity import FileMetadataError, require_regular_file
 
 from chatcopilot.contracts.persistent_state import (
     MEMORY_INITIAL_TEMPLATE,
@@ -23,7 +23,6 @@ from chatcopilot.contracts.persistent_state import (
     PERSONA_MAX_ITEM_CHARS,
     PERSONA_SCOPES,
     MemoryAppendReceipt,
-    has_meaningful_memory,
     has_meaningful_persona,
 )
 from chatcopilot.contracts.workspace import (
@@ -33,7 +32,6 @@ from chatcopilot.contracts.workspace import (
 )
 
 
-_LOGGER = logging.getLogger("chatcopilot.core.persistent_state")
 _STATE_RELPATH = (".conversation-state", "persistent")
 _TIMESTAMPED_MEMORY_RE = re.compile(r"^- \d{4}-\d{2}-\d{2} \d{2}:\d{2} (.*)$")
 
@@ -91,7 +89,6 @@ class FilesystemPersistentConversationState:
 
     def memory_snapshot(self) -> str:
         path = self._memory_path()
-        self._migrate_private_memory(path)
         return self._read_protected(path, max_bytes=MEMORY_MAX_BYTES)
 
     def memory_append(self, *, text: str, section: str) -> MemoryAppendReceipt:
@@ -110,7 +107,6 @@ class FilesystemPersistentConversationState:
         text_oneline = stripped.replace("\r", "").replace("\n", " \\n ")
         created = False
         path = self._memory_path()
-        self._migrate_private_memory(path)
 
         def update(current: str) -> str:
             nonlocal created
@@ -187,17 +183,6 @@ class FilesystemPersistentConversationState:
             )
         return stripped.replace("\r\n", "\n").replace("\r", "\n")
 
-    def _migrate_private_memory(self, target: Path) -> None:
-        if self.memory_scope != "user" or target.exists() or target.is_symlink():
-            return
-        if normalize_chat_kind(self.workspace.chat_kind, self.workspace.chat_id) != "p2p":
-            return
-        legacy = self.workspace.memory_file
-        body = self._read_legacy(legacy, max_bytes=MEMORY_MAX_BYTES)
-        if not has_meaningful_memory(body):
-            return
-        self._write_protected(target, body, max_bytes=MEMORY_MAX_BYTES)
-        _LOGGER.info("migrated legacy private memory into protected state")
 
     @staticmethod
     def _memory_contains(body: str, text: str) -> bool:
@@ -207,30 +192,6 @@ class FilesystemPersistentConversationState:
                 return True
         return False
 
-    def _read_legacy(self, path: Path, *, max_bytes: int) -> str:
-        try:
-            path_lstat = path.lstat()
-        except FileNotFoundError:
-            return ""
-        except OSError as exc:
-            raise PersistentStateSecurityError("旧持久状态无法安全检查") from exc
-        if (
-            stat.S_ISLNK(path_lstat.st_mode)
-            or not stat.S_ISREG(path_lstat.st_mode)
-            or path_lstat.st_uid != os.geteuid()
-            or path_lstat.st_nlink != 1
-            or path_lstat.st_size > max_bytes
-        ):
-            raise PersistentStateSecurityError("旧持久状态的类型、owner、链接或大小不安全")
-        try:
-            absolute = path.absolute()
-            resolved = path.resolve(strict=True)
-            resolved.relative_to(self.workspace_root)
-        except (OSError, ValueError) as exc:
-            raise PersistentStateSecurityError("旧持久状态路径越界或无法解析") from exc
-        if resolved != absolute:
-            raise PersistentStateSecurityError("旧持久状态路径包含符号链接")
-        return self._read_fd(path, max_bytes=max_bytes, strict_mode=False)
 
     def _read_protected(self, path: Path, *, max_bytes: int) -> str:
         try:
@@ -240,9 +201,9 @@ class FilesystemPersistentConversationState:
         except OSError as exc:
             raise PersistentStateSecurityError("持久状态无法安全检查") from exc
         self._validate_state_parents(path.parent)
-        return self._read_fd(path, max_bytes=max_bytes, strict_mode=True)
+        return self._read_fd(path, max_bytes=max_bytes)
 
-    def _read_fd(self, path: Path, *, max_bytes: int, strict_mode: bool) -> str:
+    def _read_fd(self, path: Path, *, max_bytes: int) -> str:
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         try:
             fd = os.open(path, flags)
@@ -250,7 +211,7 @@ class FilesystemPersistentConversationState:
             raise PersistentStateSecurityError("持久状态无法安全打开") from exc
         try:
             file_stat = os.fstat(fd)
-            self._validate_file(file_stat, strict_mode=strict_mode)
+            self._validate_file(file_stat)
             if file_stat.st_size > max_bytes:
                 raise ValueError(f"持久状态体积超过上限 {max_bytes} 字节")
             chunks: list[bytes] = []
@@ -295,9 +256,6 @@ class FilesystemPersistentConversationState:
             relative = target.resolve(strict=False).relative_to(self.state_root.resolve(strict=False))
         except ValueError as exc:
             raise PersistentStateSecurityError("持久状态路径越出保护根") from exc
-        current = self.state_root
-        for part in relative.parts:
-            current = current / part
         # Create from the workspace root one component at a time, checking every
         # protected component after creation. The aggregate workspace root itself
         # is deployment-owned and resolved before this class is constructed.
@@ -358,7 +316,7 @@ class FilesystemPersistentConversationState:
         except OSError as exc:
             raise PersistentStateSecurityError("持久状态锁无法安全打开") from exc
         try:
-            self._validate_file(os.fstat(fd), strict_mode=True)
+            self._validate_file(os.fstat(fd))
             fcntl.flock(fd, fcntl.LOCK_EX)
             yield
         finally:
@@ -370,7 +328,7 @@ class FilesystemPersistentConversationState:
     def _replace_atomic(self, path: Path, raw: bytes) -> None:
         if path.exists() or path.is_symlink():
             try:
-                self._validate_file(path.lstat(), strict_mode=True)
+                self._validate_file(path.lstat())
             except OSError as exc:
                 raise PersistentStateSecurityError("持久状态目标无法检查") from exc
         fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -395,16 +353,13 @@ class FilesystemPersistentConversationState:
             temporary.unlink(missing_ok=True)
 
     @staticmethod
-    def _validate_file(file_stat: os.stat_result, *, strict_mode: bool) -> None:
-        if (
-            not stat.S_ISREG(file_stat.st_mode)
-            or file_stat.st_uid != os.geteuid()
-            or file_stat.st_nlink != 1
-            or (strict_mode and stat.S_IMODE(file_stat.st_mode) != 0o600)
-        ):
+    def _validate_file(file_stat: os.stat_result) -> None:
+        try:
+            require_regular_file(file_stat, owner_uid=os.geteuid(), mode=0o600, single_link=True)
+        except FileMetadataError as exc:
             raise PersistentStateSecurityError(
                 "持久状态文件的类型、owner、链接或权限不安全"
-            )
+            ) from exc
 
 
 def _insert_line_under_section(body: str, header: str, new_line: str) -> str:

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+import math
+
+from chatcopilot.agent.search.models import DEFAULT_SEARCH_BUDGET
 from chatcopilot.agent.search.reranker import ResultReranker
 from chatcopilot.agent.search.coordinator import SearchCoordinator
 from chatcopilot.agent.search.models import SearchRequest
@@ -19,9 +22,6 @@ from chatcopilot.contracts.subagents import SearchProviderSpec, SubagentBudgetSp
 from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 
-_MAX_SEARCH_WALL_SECONDS = 180.0
-_SEARCH_BUDGET_RATIO = 0.6
-_MAX_PAGE_SUMMARY_CHARS = 12000
 
 
 def build_search_tool(
@@ -202,20 +202,17 @@ def build_search_coordinator(
     )
     if not registry.available_sources():
         return None
-    if max_wall_seconds is not None:
-        max_wall = max(1.0, min(float(max_wall_seconds), _MAX_SEARCH_WALL_SECONDS))
-    else:
-        max_wall = (
-            min(turn_timeout_seconds * _SEARCH_BUDGET_RATIO, _MAX_SEARCH_WALL_SECONDS)
-            if turn_timeout_seconds is not None
-            else _MAX_SEARCH_WALL_SECONDS
-        )
+    max_wall = float(max_wall_seconds if max_wall_seconds is not None else budget.timeout_seconds)
+    if turn_timeout_seconds is not None:
+        max_wall = min(max_wall, turn_timeout_seconds)
+    if not math.isfinite(max_wall) or max_wall <= 0:
+        raise ValueError("search wall-time budget must be positive and finite")
     router = SearchRouter(main_llm=main_llm, budget=budget)
     provider = DirectSearchProvider(registry=registry, circuit=circuit)
     page_reader = PageReader(
         web_fetch=registry.tools.get("web_fetch_page"),
         dynamic_browser=registry.tools.get("browse_dynamic_page"),
-        max_chars=_MAX_PAGE_SUMMARY_CHARS,
+        max_chars=DEFAULT_SEARCH_BUDGET.max_page_summary_chars,
     )
     return SearchCoordinator(
         router=router,

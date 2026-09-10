@@ -10,7 +10,6 @@ from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.contracts.tools import ToolContext, ToolResult
 from chatcopilot.agent.tools.builtin.workspace.common import _is_unsafe_member, _require
 
-_UNZIP_MAX_TOTAL_BYTES = 2 * 1024 ** 3
 _UNZIP_SUFFIXES = (".zip", ".tar.gz", ".tgz", ".tar")
 _GROUP_RESERVED_PATHS = frozenset(
     {"jobs", "tasks", "transcripts", ".backend-sessions", ".conversation-state"}
@@ -110,7 +109,7 @@ def _handler_read_text_head(args: Dict[str, Any], _ctx: ToolContext) -> ToolResu
 def _handler_unzip_attachment(
     args: Dict[str, Any], _ctx: ToolContext
 ) -> ToolResult:
-    """把 attachments/ 下的压缩包解压到同名子目录（含压缩炸弹 + 路径穿越防护）。"""
+    """Extract an attachment into a new directory, retaining destination confinement."""
     import tarfile
     import zipfile
 
@@ -136,43 +135,25 @@ def _handler_unzip_attachment(
         raise FileExistsError(f"解压目标已存在，请先删除或换名：attachments/{stem}")
 
     members_info: List[tuple] = []
-    if suffix == ".zip":
-        with zipfile.ZipFile(archive) as zf:
-            total = 0
-            for info in zf.infolist():
-                if _is_unsafe_member(info.filename):
-                    raise PermissionError(f"压缩包含不安全路径，拒绝解压: {info.filename}")
-                total += info.file_size
-                if total > _UNZIP_MAX_TOTAL_BYTES:
-                    raise ValueError(
-                        f"解压后总大小超过 {_UNZIP_MAX_TOTAL_BYTES // (1024**3)} GB 上限，拒绝解压"
-                    )
-                members_info.append((info.filename, info.file_size, info.is_dir()))
-    else:
-        mode = "r:gz" if suffix in (".tar.gz", ".tgz") else "r:"
-        with tarfile.open(archive, mode) as tf:
-            total = 0
-            for member in tf.getmembers():
-                if _is_unsafe_member(member.name):
-                    raise PermissionError(f"压缩包含不安全路径，拒绝解压: {member.name}")
-                if member.issym() or member.islnk():
-                    raise PermissionError(f"压缩包含符号/硬链接，拒绝解压: {member.name}")
-                total += member.size
-                if total > _UNZIP_MAX_TOTAL_BYTES:
-                    raise ValueError(
-                        f"解压后总大小超过 {_UNZIP_MAX_TOTAL_BYTES // (1024**3)} GB 上限，拒绝解压"
-                    )
-                members_info.append((member.name, member.size, member.isdir()))
-
     dest.mkdir(parents=True, exist_ok=False)
     try:
         if suffix == ".zip":
             with zipfile.ZipFile(archive) as zf:
+                for info in zf.infolist():
+                    if _is_unsafe_member(info.filename):
+                        raise PermissionError(f"压缩包含不安全路径，拒绝解压: {info.filename}")
+                    members_info.append((info.filename, info.file_size, info.is_dir()))
                 zf.extractall(dest)
         else:
+            def contained_member(member, destination):
+                filtered = tarfile.data_filter(member, destination)
+                if filtered is not None:
+                    members_info.append((filtered.name, filtered.size, filtered.isdir()))
+                return filtered
+
             mode = "r:gz" if suffix in (".tar.gz", ".tgz") else "r:"
             with tarfile.open(archive, mode) as tf:
-                tf.extractall(dest)
+                tf.extractall(dest, filter=contained_member)
     except Exception:
         shutil.rmtree(dest, ignore_errors=True)
         raise

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -79,12 +80,14 @@ def submit_tool_job(
     request_path = job_dir / _REQUEST_FILENAME
     result_path = job_dir / _RESULT_FILENAME
     from chatcopilot.core.caller_context import get_caller_role_hint
-    from chatcopilot.contracts.execution_scope import current_execution_scope
+    from chatcopilot.contracts.execution_scope import CommandTimeouts, current_execution_scope
     scope = current_execution_scope()
 
     request = {
         "caller_role": get_caller_role_hint(),
         "project_roots": [str(root) for root in scope.project_roots] if scope is not None else [],
+        "readonly_roots": [str(root) for root in scope.readable_roots if root not in scope.writable_roots] if scope is not None else [],
+        "command_timeouts": asdict(scope.command_timeouts if scope is not None else CommandTimeouts()),
         "job_id": job_id,
         "tool_name": tool_name,
         "args": args or {},

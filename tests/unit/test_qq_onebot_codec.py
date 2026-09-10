@@ -428,3 +428,10 @@ def test_action_response_is_distinct_from_event_and_normalizes_retcode() -> None
         max_frame_bytes=1024,
     )
     assert decode_action_response(event_frame) is None
+
+
+def test_outbound_text_does_not_repeat_the_inbound_character_limit():
+    text = "x" * 70_000
+    action, params = build_outbound_action(_outbound((MessageSegment(kind="text", text=text),)))
+    assert action == "send_msg"
+    assert params["message"][-1]["data"]["text"] == text

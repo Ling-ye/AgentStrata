@@ -199,7 +199,7 @@ class TurnOps:
         ):
             self.finish_timeout(state, hard=self.session._hard_timed_out(state.started_at))
             return True
-        if state.iteration >= self.session.hard_iteration_cap:
+        if self.session.hard_iteration_cap is not None and state.iteration >= self.session.hard_iteration_cap:
             self.session._repair_orphan_tool_calls(self.session._messages)
             text = (
                 f"（已达迭代硬上限 {self.session.hard_iteration_cap} 轮，无条件停止。"

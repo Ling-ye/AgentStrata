@@ -693,11 +693,7 @@ class QQExternalPlatformCheckTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(onebot_action.await_count, 2)
         checks = {item.check_id: item for item in report.checks}
         self.assertEqual(checks["qq_account_online"].status, "passed")
-        self.assertEqual(checks["qq_simulated_gateway_ingress"].status, "passed")
-        self.assertEqual(
-            checks["qq_simulated_gateway_ingress"].evidence["mode"],
-            "hermetic_loopback",
-        )
+        self.assertNotIn("qq_simulated_gateway_ingress", checks)
         self.assertEqual(checks["qq_inbound_agent_roundtrip"].status, "not_tested")
         serialized = json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True)
         for private_value in (
@@ -842,49 +838,7 @@ class QQExternalPlatformCheckTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(checks["qq_account_online"].status, "not_tested")
         self.assertEqual(checks["qq_login_identity"].status, "not_tested")
         self.assertEqual(checks["qq_group_access"].status, "not_tested")
-        self.assertEqual(checks["qq_simulated_gateway_ingress"].status, "passed")
-
-    async def test_simulated_ingress_failure_is_an_external_check_error(self) -> None:
-        async def action(
-            _url: str,
-            _token: str,
-            *,
-            action: str,
-            params: dict[str, object],
-            echo: str,
-        ) -> dict[str, object]:
-            del params, echo
-            if action == "get_login_info":
-                data: dict[str, object] = {"user_id": int(BOT_ACCOUNT)}
-            elif action == "get_group_info":
-                data = {"group_id": int(GROUP_ID)}
-            else:
-                raise AssertionError(action)
-            return {"status": "ok", "retcode": 0, "data": data}
-
-        with (
-            mock.patch(
-                "chatcopilot.platforms.qq.gateway_health.probe_onebot_boundary",
-                new=mock.AsyncMock(return_value=ONLINE_STATUS),
-            ),
-            mock.patch(
-                "chatcopilot.platforms.qq.gateway_health._onebot_action",
-                new=mock.AsyncMock(side_effect=action),
-            ),
-            mock.patch(
-                "chatcopilot.platforms.qq.ingress_probe.run_simulated_gateway_ingress",
-                new=mock.AsyncMock(side_effect=RuntimeError("fixture failure")),
-            ),
-        ):
-            report = await run_qq_external_checks(
-                _external_env(),
-                bot_id="example-qq-bot",
-            )
-
-        self.assertEqual(report.verdict, "error")
-        checks = {item.check_id: item for item in report.checks}
-        self.assertEqual(checks["qq_simulated_gateway_ingress"].status, "error")
-        self.assertNotIn("fixture failure", checks["qq_simulated_gateway_ingress"].detail)
+        self.assertNotIn("qq_simulated_gateway_ingress", checks)
 
     async def test_offline_account_fails_before_identity_or_group_actions(self) -> None:
         with (

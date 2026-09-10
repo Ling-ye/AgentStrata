@@ -162,7 +162,7 @@ def decode_inbound_message(
         return InboundDecodeResult("unsupported_message_type")
 
     native_message = payload.get("message")
-    if message_type == "group" and not _has_structured_self_mention(
+    if message_type == "group" and not has_structured_self_mention(
         native_message,
         verified_account_id,
     ):
@@ -305,10 +305,10 @@ def build_outbound_action(envelope: OutboundEnvelope) -> tuple[str, Mapping[str,
     for segment in envelope.segments:
         if segment.kind == "text":
             text = segment.text
-            if not isinstance(text, str) or not text or len(text) > _MAX_TEXT_CHARS:
+            if not isinstance(text, str) or not text:
                 raise OneBotCodecError(
                     "onebot_outbound_text_invalid",
-                    "Outbound text segment is empty or too large",
+                    "Outbound text segment must be non-empty text",
                 )
             native_segments.append({"type": "text", "data": {"text": text}})
         elif segment.kind == "mention":
@@ -534,7 +534,7 @@ def _resource_ticket(
     )
 
 
-def _has_structured_self_mention(native_message: Any, account_id: str) -> bool:
+def has_structured_self_mention(native_message: Any, account_id: str) -> bool:
     if not isinstance(native_message, list):
         return False
     for segment in native_message:

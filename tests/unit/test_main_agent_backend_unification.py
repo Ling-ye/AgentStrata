@@ -1510,8 +1510,7 @@ class CodexBackendResumeTests(TestCase):
         self.assertEqual(projector.provider_item_omission_count, 100)
         self.assertEqual(len(omission_finishes), 1)
         self.assertEqual(omission_finishes[0].data.get("omitted_count"), 100)
-        self.assertTrue(projector.final_text_truncated)
-        self.assertLessEqual(len(projector.final_text), 1024 * 1024)
+        self.assertEqual(len(projector.final_text), 1200 * 1024 + 1)
 
         stale_final = CodexJsonlProjector(
             model="gpt-test",
@@ -2232,18 +2231,16 @@ class CodexBackendPolicyTests(TestCase):
             root = Path(tmp).resolve()
             command, prompt = self._command_and_prompt(root)
 
-        self.assertIn("read-only", command)
+        self.assertIn("workspace-write", command)
         self.assertIn("--skip-git-repo-check", command)
         self.assertEqual(command[command.index("--cd") + 1], str(root))
         self.assertTrue(any(f'HOME = "{root}"' in item for item in command))
         self.assertIn("sandbox_workspace_write.network_access=true", command)
         self.assertIn('web_search="live"', command)
-        self.assertIn("features.network_proxy.enabled=true", command)
-        self.assertIn('features.network_proxy.domains={ "*" = "allow" }', command)
         self.assertIn("--ignore-user-config", command)
         self.assertIn("mcp_servers={}", command)
         self.assertIn('shell_environment_policy.inherit="none"', command)
-        self.assertIn("member tools", prompt)
+        self.assertIn("current-conversation ordinary files", prompt)
 
     def test_owner_scope_is_writable_and_uses_gateway(self) -> None:
         policy = CodexMainSessionPolicy()
@@ -2267,8 +2264,7 @@ class CodexBackendPolicyTests(TestCase):
         )
         self.assertIn('"dynamic_echo"', enabled_tools)
         self.assertIn('shell_environment_policy.inherit="none"', command)
-        self.assertIn("directly edit", prompt)
-        self.assertIn("Background code tasks are optional", prompt)
+        self.assertIn("configured instance and project resources", prompt)
 
     def test_eval_confinement_disables_command_network_and_web_search(self) -> None:
         policy = CodexMainSessionPolicy(

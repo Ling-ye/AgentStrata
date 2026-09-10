@@ -18,11 +18,9 @@ import requests
 from chatcopilot.contracts.code_tasks import validate_code_task_title
 from chatcopilot.contracts.tools import ToolHandlerError
 from chatcopilot.core.jobs import read_json_file, write_json_atomic
+from chatcopilot.core.scoped_files import require_single_link_regular_file
 from chatcopilot.external_tools.dev.config import get_dev_config
-from chatcopilot.external_tools.dev.path_guard import (
-    DevPathAccessError,
-    ensure_writable,
-)
+from chatcopilot.external_tools.dev.path_guard import ensure_writable
 from chatcopilot.project import ENV_PREFIX
 
 DELIVERY_FILENAME = "delivery.json"
@@ -524,8 +522,14 @@ def validate_delivery_paths(
     violations: list[str] = []
     for rel in paths:
         try:
-            ensure_writable(config, rel)
-        except DevPathAccessError:
+            candidate, _ = ensure_writable(config, rel)
+            try:
+                metadata = candidate.lstat()
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISDIR(metadata.st_mode):
+                require_single_link_regular_file(metadata)
+        except PermissionError:
             violations.append(rel)
     if violations:
         raise ToolHandlerError(

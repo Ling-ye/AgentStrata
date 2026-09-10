@@ -1699,6 +1699,8 @@ class AcpChatAgent(Agent):
 async def _amain(runtime: BotRuntimeContext | None = None) -> None:
     _setup_logging()
     selected_runtime = runtime or load_runtime_context()
+    if selected_runtime.platform_type != "feishu":
+        raise ValueError("legacy ACP entry is available only for Feishu; use Gateway for QQ")
     try:
         from chatcopilot.core.workspace_runtime import cleanup_diagnostic_records
 

@@ -314,7 +314,7 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         access="member",
         name="unzip_attachment",
-        summary="安全解压 attachments 中的 zip/tar 包到同名子目录；拒绝越界成员和超过 2GB 的内容。",
+        summary="解压 attachments 中的 zip/tar 包到同名子目录；允许包内链接，拒绝越出目标目录。",
         input_schema=object_schema(
             {
                 "name": {

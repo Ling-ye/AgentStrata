@@ -3,30 +3,30 @@
   "maximum_growth_percent": 10,
   "profiles": {
     "owner_private": {
-      "prompt_chars": 3932,
+      "prompt_chars": 3955,
       "prompt_limit": 4325,
-      "tool_schema_chars": 20333,
+      "tool_schema_chars": 20329,
       "tool_schema_limit": 22366,
       "historical_tool_schema_chars": 23744
     },
     "owner_group": {
-      "prompt_chars": 3930,
+      "prompt_chars": 3953,
       "prompt_limit": 4323,
-      "tool_schema_chars": 20333,
+      "tool_schema_chars": 20329,
       "tool_schema_limit": 22366,
       "historical_tool_schema_chars": 21787
     },
     "user_private": {
       "prompt_chars": 3163,
       "prompt_limit": 3479,
-      "tool_schema_chars": 7327,
+      "tool_schema_chars": 7323,
       "tool_schema_limit": 8059,
       "historical_tool_schema_chars": 12824
     },
     "user_group": {
       "prompt_chars": 3161,
       "prompt_limit": 3477,
-      "tool_schema_chars": 7327,
+      "tool_schema_chars": 7323,
       "tool_schema_limit": 8059,
       "historical_tool_schema_chars": 12824
     }

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from chatcopilot.contracts.code_tasks import CODE_TASK_TERMINAL_STATUSES, CODE_TASK_TOOL
+from chatcopilot.contracts.execution_scope import CommandTimeouts
 from chatcopilot.core.jobs import (
     BackgroundJob,
     read_job_result,
@@ -43,6 +44,15 @@ def run_worker(request_path: Path) -> int:
     ):
         return 2
     job_id = str(request.get("job_id") or job_dir.name)
+    command_timeouts = CommandTimeouts()
+    if "command_timeouts" in request:
+        raw_timeouts = request["command_timeouts"]
+        if not isinstance(raw_timeouts, dict) or set(raw_timeouts) != {"timeout_default", "timeout_max"}:
+            return 2
+        try:
+            command_timeouts = CommandTimeouts(**raw_timeouts)
+        except (TypeError, ValueError):
+            return 2
     queue_name = str(request.get("queue_name") or "default")
     policy = str(request.get("execution_policy") or "")
     tool_name = str(request.get("tool_name") or "")
@@ -82,12 +92,16 @@ def run_worker(request_path: Path) -> int:
             workspace_service = MiddlewareWorkspaceService()
             from chatcopilot.application.execution_scope import execution_scope
             project_roots = request.get("project_roots", [])
-            if not isinstance(project_roots, list) or not all(isinstance(value, str) and Path(value).is_absolute() for value in project_roots):
-                raise ValueError("background execution resources are invalid")
+            readonly_roots = request.get("readonly_roots", [])
+            for roots in (project_roots, readonly_roots):
+                if not isinstance(roots, list) or not all(isinstance(value, str) and Path(value).is_absolute() for value in roots):
+                    raise ValueError("background execution resources are invalid")
             workspace_service.execution_scope = execution_scope(
                 str(request.get("caller_role") or "unknown"),
                 workspace_service.resolve_workspace(create=True).root,
                 tuple(Path(value) for value in project_roots),
+                command_timeouts=command_timeouts,
+                readonly_roots=tuple(Path(value) for value in readonly_roots),
             )
             def update_job_stage(
                 stage: str,

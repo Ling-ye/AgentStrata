@@ -469,7 +469,6 @@ async def run_qq_external_checks(
             )
         )
 
-    checks.append(await _simulated_gateway_ingress_check(env))
 
     if send_message:
         if not group:
@@ -552,39 +551,6 @@ async def run_qq_external_checks(
         external_write_attempted=attempted,
         external_write_performed=performed,
         limitations=tuple(limitations),
-    )
-
-
-async def _simulated_gateway_ingress_check(
-    env: Mapping[str, str],
-) -> ExternalCheckItem:
-    """Run a hermetic relay probe without exposing a production injection API."""
-
-    from chatcopilot.platforms.qq.ingress_probe import (
-        run_simulated_gateway_ingress,
-    )
-
-    try:
-        receipt = await run_simulated_gateway_ingress(env)
-    except Exception as exc:  # noqa: BLE001 - normalize local transport/protocol failures
-        return ExternalCheckItem(
-            check_id="qq_simulated_gateway_ingress",
-            label="QQ gateway 模拟入站",
-            status="error",
-            required=True,
-            detail=f"hermetic gateway ingress failed ({type(exc).__name__})",
-        )
-    return ExternalCheckItem(
-        check_id="qq_simulated_gateway_ingress",
-        label="QQ gateway 模拟入站",
-        status="passed" if receipt.passed else "failed",
-        required=True,
-        detail=(
-            "合成 OneBot 正例已转发且负例已丢弃"
-            if receipt.passed
-            else "gateway relay 未形成完整的正例转发/负例丢弃证据"
-        ),
-        evidence=receipt.to_evidence(),
     )
 
 

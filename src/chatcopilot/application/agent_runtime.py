@@ -14,12 +14,13 @@ from typing import Mapping
 from chatcopilot.agent.runtime import AgentRuntime, build_agent_runtime
 from chatcopilot.agent.search.providers import DEFAULT_PROVIDER_CREDENTIAL_ENVS
 from chatcopilot.botspec.runtime import BotRuntimeContext
-from chatcopilot.botspec.runtime_env import load_research_llm_config, project_resource_roots
+from chatcopilot.botspec.runtime_env import load_research_llm_config, project_resource_roots, project_readonly_resource_roots
 from chatcopilot.contracts.runtime import McpServerConfig, RagSourceConfig
+from chatcopilot.contracts.execution_scope import CommandTimeouts
 from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.tool_packs import ToolPackProjectionProfile, ToolProvider
-from chatcopilot.core.config import ChatConfig, LLMConfig, load_llm_profile
+from chatcopilot.core.config import ChatConfig, LLMConfig, load_command_timeouts, load_llm_profile
 from chatcopilot.tool_packs.catalog import project_tool_pack_names
 
 
@@ -62,6 +63,8 @@ class AgentRuntimeProjection:
     agent_backend: str
     assembly_profile: ToolPackProjectionProfile
     project_roots: tuple[Path, ...] = ()
+    readonly_roots: tuple[Path, ...] = ()
+    command_timeouts: CommandTimeouts = field(default_factory=CommandTimeouts)
 
 
 def project_agent_runtime(
@@ -140,6 +143,12 @@ def project_agent_runtime(
         ),
         assembly_profile=profile.value,
         project_roots=project_resource_roots(runtime.spec, env),
+        readonly_roots=project_readonly_resource_roots(projected_packs, env),
+        command_timeouts=load_command_timeouts(
+            environment=env,
+            timeout_default=runtime.spec.context.dev.shell.timeout_default,
+            timeout_max=runtime.spec.context.dev.shell.timeout_max,
+        ),
     )
 
 
@@ -163,6 +172,8 @@ def materialize_agent_runtime(projection: AgentRuntimeProjection) -> AgentRuntim
         agent_backend=projection.agent_backend,
         assembly_profile=projection.assembly_profile,
         project_roots=projection.project_roots,
+        readonly_roots=projection.readonly_roots,
+        command_timeouts=projection.command_timeouts,
     )
 
 

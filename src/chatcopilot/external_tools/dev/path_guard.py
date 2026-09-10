@@ -85,8 +85,6 @@ def ensure_writable(config: DevConfig, raw_path: str) -> tuple[Path, str]:
     scope = current_execution_scope()
     if scope is not None and not scope.permits(resolved, write=True):
         raise DevPathAccessError("path is outside writable execution resources")
-    if resolved.exists() and resolved.is_file() and resolved.stat().st_nlink != 1:
-        raise DevPathAccessError("writes to hardlinked files are not supported")
     if current_development_task_scope() is not None and not resolved.resolve().is_relative_to(
         config.repo_root
     ):

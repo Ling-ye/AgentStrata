@@ -13,6 +13,10 @@ The host recognizes two authorization profiles: Owner and member. Owner can use 
 
 ## Design
 
+当前 Codex 原生能力按 [execution-policy-consolidation](../execution-policy-consolidation/spec.md) 更新：
+所有角色使用上游默认功能，成员仅获当前普通工作区原生读写。业务工具与项目、权威状态
+的角色边界继续保留；该变更取代本规格初版的成员原生只读与禁用 shell 约束。
+
 - ToolDef declares access as owner/member, defaulting to owner. One pure policy supplies Gateway and Legacy visibility and execution decisions; Backend, tool-name and private-chat exceptions no longer restrict Owner. Historic admin identities retain their label but use the member profile.
 - Application binds readable/writable roots and protected state to the trusted caller. Backends and native command tools consume this scope. Owner uses writable execution; ordinary members have no generic host shell. A working directory alone is not confinement. Actor sessions/resume remain isolated, and permission scope participates in policy fingerprints.
 - Main and delegated execution preserve the caller identity. Group output uses an explicit audience policy without replacing Owner with User. Context remains conversation-scoped; granting authority never automatically imports another conversation's private content.

@@ -74,13 +74,21 @@ async def _run_stdio_server() -> int:
     from chatcopilot.application.execution_scope import execution_scope
     from chatcopilot.contracts.identity import Role
     from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService
+    from chatcopilot.core.config import load_command_timeouts
     from chatcopilot.external_tools.dev.config import get_dev_config
     import os
+
+    from pathlib import Path
+    from chatcopilot.external_tools.windows_fs.config import load_config as load_windows_config
 
     ws = resolve_workspace(create=True)
     projects = (get_dev_config(force_reload=True).repo_root,) if any(os.environ.get(key) for key in ("CHATCOPILOT_DEV_ROOT", "CHATCOPILOT_CODEBASE_CHATCOPILOT_ROOT")) else ()
     # This stdio endpoint is launched by its OS operator, not a chat sender.
-    service = MiddlewareWorkspaceService(workspace=ws, execution_scope=execution_scope(Role.OWNER, ws.root, projects))
+    service = MiddlewareWorkspaceService(workspace=ws, execution_scope=execution_scope(
+        Role.OWNER, ws.root, projects,
+        command_timeouts=load_command_timeouts(environment=dict(os.environ)),
+        readonly_roots=tuple(Path(p).resolve() for p in load_windows_config(environment=dict(os.environ)).allowed_roots),
+    ))
     executor = ToolExecutor(caller_role_hint="owner", workspace_service=service)
 
     server: Server = Server(PROJECT_SLUG)

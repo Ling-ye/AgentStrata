@@ -14,7 +14,7 @@ from chatcopilot.contracts.development import (
 )
 from chatcopilot.external_tools.dev.config import DevConfig
 from chatcopilot.external_tools.dev.path_guard import DevPathAccessError, ensure_writable
-from chatcopilot.external_tools.dev.shell_tools import _validate_command
+from chatcopilot.external_tools.dev.command_policy import command_argv
 
 
 class DevelopmentTaskScopeTests(unittest.TestCase):
@@ -55,18 +55,14 @@ class DevelopmentTaskScopeTests(unittest.TestCase):
             self.assertIsNone(current_development_task_scope())
             ensure_writable(config, "new.py")
 
-    def test_validation_shell_profile_allows_checks_and_blocks_mutation(self) -> None:
-        config = DevConfig(repo_root=Path.cwd())
-        scope = DevelopmentTaskScope(allowed_paths=("src",), shell_profile="validation")
-        with development_task_scope(scope):
-            self.assertIsNone(_validate_command(config, "python -m pytest tests/unit -q"))
-            self.assertIsNone(_validate_command(config, "git diff --check"))
-            self.assertIsNone(
-                _validate_command(config, "python scripts/check_sdd_specs.py")
-            )
-            self.assertIn("validation profile", _validate_command(config, "pip install x") or "")
-            self.assertIn("not read-only", _validate_command(config, "git commit -m x") or "")
-            self.assertIn("shell operators", _validate_command(config, "pytest && rm x") or "")
+    def test_validation_uses_argv_and_rejects_unselected_command_families(self) -> None:
+        for command in ("python -m pytest tests/unit -q", "git diff --check", "python scripts/check_sdd_specs.py"):
+            self.assertTrue(command_argv(command, validation=True))
+        for command in ("pip install x", "git commit -m x", "pytest && rm x"):
+            with self.assertRaises(ValueError):
+                command_argv(command, validation=True)
+        self.assertEqual(command_argv('rg "foo;bar" .', validation=True), ["rg", "foo;bar", "."])
+        self.assertEqual(command_argv('rg "$(touch unsafe)" .', validation=True)[1], "$(touch unsafe)")
 
     def test_write_selector_detects_dev_and_mcp_write_rules(self) -> None:
         dev = SubagentDef(

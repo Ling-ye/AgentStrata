@@ -23,9 +23,9 @@ import stat
 import uuid
 from typing import Final, Mapping
 
+from chatcopilot.evals.private_files import validate_private_directory_metadata, validate_private_file_metadata
 
-_PRIVATE_DIRECTORY_MODE: Final = 0o700
-_PRIVATE_FILE_MODE: Final = 0o600
+
 _MAX_CANCEL_MARKER_BYTES: Final = 64 * 1024
 _AUTHORITY_FILES: Final = (
     "request.json",
@@ -540,13 +540,10 @@ def _sha256_file(descriptor: int, path: Path) -> str:
 
 
 def _validate_private_directory(metadata: os.stat_result, path: Path) -> None:
-    if not stat.S_ISDIR(metadata.st_mode):
-        raise _violation("authority path is not a directory", path)
-    if os.name != "nt":
-        if metadata.st_uid != os.getuid():
-            raise _violation("authority directory is not owned by the current user", path)
-        if stat.S_IMODE(metadata.st_mode) != _PRIVATE_DIRECTORY_MODE:
-            raise _violation("authority directory must use mode 0700", path)
+    try:
+        validate_private_directory_metadata(metadata, path, label="authority directory")
+    except (ValueError, PermissionError) as exc:
+        raise _violation(str(exc), path) from exc
 
 
 def _validate_owned_directory(metadata: os.stat_result, path: Path) -> None:
@@ -560,15 +557,10 @@ def _validate_owned_directory(metadata: os.stat_result, path: Path) -> None:
 
 
 def _validate_private_file(metadata: os.stat_result, path: Path) -> None:
-    if not stat.S_ISREG(metadata.st_mode):
-        raise _violation("authority artifact is not a regular file", path)
-    if os.name != "nt":
-        if metadata.st_uid != os.getuid():
-            raise _violation("authority artifact is not owned by the current user", path)
-        if stat.S_IMODE(metadata.st_mode) != _PRIVATE_FILE_MODE:
-            raise _violation("authority artifact must use mode 0600", path)
-        if metadata.st_nlink != 1:
-            raise _violation("authority artifact must have exactly one hard link", path)
+    try:
+        validate_private_file_metadata(metadata, path, label="authority artifact")
+    except (ValueError, PermissionError) as exc:
+        raise _violation(str(exc), path) from exc
 
 
 def _validate_cancel_marker(parent_fd: int, name: str, path: Path, evaluation_id: str) -> None:

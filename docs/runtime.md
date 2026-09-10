@@ -177,7 +177,7 @@ Application 负责 actor/workspace 绑定及文件发布。QQ Gateway 不读取 
 
 当前群 persona 按 `global → group`，群 memory 按稳定群摘要寻址。`persona_manage` 只投影给
 可信 Owner 主 Agent；User/Admin、subagent 和普通群成员不能读取或修改 persona，Owner 在群内
-也不能绕过 `private_chat_only` 工具。只有结构化 `committed=true` mutation receipt 能证明
+仍按公开群受众处理输出。只有结构化 `committed=true` mutation receipt 能证明
 持久化完成。
 
 ## 工具与 subagent
@@ -197,7 +197,8 @@ Subagent 接收 TaskPack，使用受限 selector 和预算，最后必须调用 
   后台代码任务是可选执行方式。普通写文件不触发或强制自更新；显式自更新仍通过原有交付后生命周期流程。Git 发布仍服从既有独立授权。
 - Admin/User 只拥有当前会话普通文件、公共查询与记忆读取和追加；不拥有项目、人格、清空或后台任务权限。
 - Application 生成 ExecutionScope，文件操作检查同一范围，命令通过 bubblewrap 落实隔离。
-  Owner Codex 使用可写策略；成员原生执行面只读，通过宿主文件工具写入当前会话。
+  所有角色使用 Codex 默认原生功能；成员只可读写当前普通工作区，Owner 另获授权项目。
+  Windows 额外配置根作为只读资源装配，不叠加工具路径或扩展名名单。
   actor 状态、群 journal 和恢复标识继续隔离；项目配置隐藏、环境清理和隔离失败关闭继续保留。
 - 群聊 payload 按公开受众处理，但调用者仍是原身份；权限增加不自动载入别的会话私聊内容。
 - Owner 群后台任务的控制记录写入 actor-scoped `.conversation-state/jobs/`，不写
@@ -279,3 +280,12 @@ L01 已删除 15 个无生产调用方的转发文件：旧 `agent.config`、`ag
 `agent.subagents.presets`、`agent.tools.builtin.mcp_tools` 和 `middleware.runtime.workspace`。
 完整替换关系见 [L01 导入迁移表](../specs/legacy-l01-import-removal/spec.md)。外部脚本需修改导入；
 运行配置、消息链和历史数据不迁移。L02 的活跃转发及 `agent.research` 继续留待后续逐项处理。
+
+命令与执行预算的当前职责见 [执行策略收敛规格](../specs/execution-policy-consolidation/spec.md)。
+Owner shell 的权限由 ExecutionScope 和 bubblewrap 实施；委托验证用声明式 argv 分类器，
+不经过 shell 求值。`run_command` 保存完整 stdout/stderr 到默认项目的 `command-output/`，无项目时使用当前工作区，
+返回有界预览和产物路径；超时也保留已有输出。主 Agent 默认不设硬迭代上限，显式预算仍生效。
+子 Agent 直接消费声明的轮数、次数和时长；搜索时长与调用方预算取交集，不再隐式倍增或按比例裁剪。
+
+Gateway 保存完整最终正文，Channel 使用自身出站帧边界。RPC 终态和恢复快照保留有界预览，
+省略时明确标记；预览不能代表完整正文，执行和真实交付结果继续分开记录。

@@ -11,6 +11,9 @@ import shutil
 import subprocess
 from typing import Any, Dict, List, Tuple
 
+from chatcopilot.contracts.execution_scope import current_execution_scope
+from chatcopilot.core.scoped_files import read_bytes
+from chatcopilot.core.scoped_process import sandbox_command
 from chatcopilot.contracts.tool_packs import static_tool_provider
 from chatcopilot.external_tools.shared.spec_helpers import (
     require_arg,
@@ -50,6 +53,14 @@ def _ensure_ripgrep() -> str:
 
 
 def _run_subprocess(cmd: List[str], *, timeout: int = _DEFAULT_TIMEOUT_SECS) -> Tuple[int, str, str]:
+    scope = current_execution_scope()
+    if scope is not None:
+        from dataclasses import replace
+        from pathlib import Path
+
+        target = Path(cmd[-1])
+        cmd = sandbox_command(cmd, scope=replace(scope, writable_roots=()),
+                              cwd=target if target.is_dir() else target.parent)
     proc = subprocess.run(
         cmd,
         capture_output=True,
@@ -71,24 +82,14 @@ def _handler_win_read_file(args: Dict[str, Any], _ctx: ToolContext) -> ToolResul
     end_line = args.get("end_line")
 
     target = ensure_readable(path, cfg)
-    if not target.exists():
-        raise FileNotFoundError(f"file not found: {target}")
-    if target.is_dir():
-        raise IsADirectoryError(f"path is a directory, use win_glob to list it: {target}")
-
-    size = target.stat().st_size
-    if size > cfg.max_read_bytes:
-        raise ValueError(
-            f"file too large ({size} bytes > max_read_bytes={cfg.max_read_bytes}): {target}. "
-            f"Use win_grep to search inside it, or read a line range."
-        )
-
-    with target.open("r", encoding="utf-8", errors="replace") as fh:
-        lines = fh.readlines()
+    content = read_bytes(target, cfg.max_read_bytes + 1)
+    if len(content) > cfg.max_read_bytes:
+        raise ValueError("file exceeds the read budget")
+    lines = content.decode("utf-8", errors="replace").splitlines(keepends=True)
 
     total = len(lines)
-    s = int(start_line) if start_line not in (None, "", 0) else 1
-    e = int(end_line) if end_line not in (None, "") else total
+    s = int(start_line or 1) if start_line not in (None, "", 0) else 1
+    e = int(end_line or total) if end_line not in (None, "") else total
     if s < 1:
         s = 1
     if e > total:
@@ -147,7 +148,7 @@ def _handler_win_grep(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
         ext_brace = ",".join(ext.lstrip(".") for ext in cfg.allowed_extensions if ext)
         if ext_brace and not file_glob:
             cmd += ["-g", f"*.{{{ext_brace}}}"]
-    cmd += [query, str(search_root)]
+    cmd += ["--", query, str(search_root)]
 
     rc, stdout, stderr = _run_subprocess(cmd)
     if rc not in (0, 1):

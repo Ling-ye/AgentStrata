@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-import os
 import re
-import stat
 from pathlib import Path
 from typing import Iterable
+
+from chatcopilot.core.file_integrity import trusted_source_sha256
 
 
 IMPLEMENTATION_CATALOG_VERSION = "agentstrata-eval-implementation/v1"
@@ -20,6 +19,8 @@ _PACKAGE_ROOT = _EVALS_ROOT.parent
 _MAX_SOURCE_BYTES = 4 * 1024 * 1024
 
 _COMMON_SUITE_MODULES = (
+    "chatcopilot.core.file_integrity",
+    "chatcopilot.evals.private_files",
     "chatcopilot.evals.evaluations",
     "chatcopilot.evals.judges",
     "chatcopilot.evals.runner",
@@ -74,8 +75,10 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "chatcopilot.middleware.acp.admission",
         "chatcopilot.middleware.acp.agent_bridge",
         "chatcopilot.middleware.acp.event_translator",
-        "chatcopilot.platforms.qq.ingress_probe",
-        "chatcopilot.platforms.qq.at_proxy",
+        "chatcopilot.evals.qq_ingress_probe",
+        "chatcopilot.channels.qq_onebot.codec",
+        "chatcopilot.channels.qq_onebot.driver",
+        "chatcopilot.channels.qq_onebot.config",
         "chatcopilot.middleware.acp.group_conversation",
         "chatcopilot.agent.persona.tools",
         "chatcopilot.middleware.acp.server",
@@ -100,6 +103,8 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("bfcl", "direct_llm"): ("chatcopilot.evals.adapters.bfcl",),
 }
 _COMPARISON_IMPLEMENTATIONS = (
+    "chatcopilot.core.file_integrity",
+    "chatcopilot.evals.private_files",
     "chatcopilot.evals.adapters.gaia",
     "chatcopilot.evals.adapters.ifeval",
     "chatcopilot.evals.isolated_executor",
@@ -107,6 +112,7 @@ _COMPARISON_IMPLEMENTATIONS = (
     "chatcopilot.evals.runner",
 )
 _COMMON_RUNTIME_IMPLEMENTATIONS = (
+    "chatcopilot.core.file_integrity",
     "chatcopilot.application.agent_runtime",
     "chatcopilot.botspec.runtime_env",
     "chatcopilot.core.config",
@@ -134,6 +140,7 @@ _BACKEND_RUNTIME_IMPLEMENTATIONS: dict[str, tuple[str, ...]] = {
     "codex": (
         "chatcopilot.agent.backends.codex",
         "chatcopilot.agent.backends.codex_events",
+        "chatcopilot.agent.backends.codex_permissions",
         "chatcopilot.agent.backends.session_relay",
     ),
     "direct": ("chatcopilot.core.llm_client",),
@@ -179,95 +186,11 @@ def _trusted_source_sha256(
     relative_parts = module_name.removeprefix(namespace).split(".")
     if not relative_parts or any(not _MODULE_PART_RE.fullmatch(part) for part in relative_parts):
         raise ValueError(f"{scope} module name is invalid: {module_name}")
-    relative = Path(*relative_parts).with_suffix(".py")
-    path = root / relative
+    path = root / Path(*relative_parts).with_suffix(".py")
     try:
-        root_info = root.stat(follow_symlinks=False)
-        if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
-            raise ValueError(f"{scope} root is unsafe")
-        parent_snapshots: list[tuple[Path, os.stat_result]] = [(root, root_info)]
-        current = root
-        for part in relative.parts[:-1]:
-            current = current / part
-            ancestor = current.stat(follow_symlinks=False)
-            if stat.S_ISLNK(ancestor.st_mode) or not stat.S_ISDIR(ancestor.st_mode):
-                raise ValueError(f"{scope} parent is unsafe: {module_name}")
-            parent_snapshots.append((current, ancestor))
-        info = path.stat(follow_symlinks=False)
-        if stat.S_ISLNK(info.st_mode):
-            raise ValueError(f"{scope} source is a symlink: {module_name}")
-        resolved_root = root.resolve(strict=True)
-        resolved = path.resolve(strict=True)
-    except OSError as exc:
-        raise ValueError(f"{scope} source is unavailable: {module_name}") from exc
-    if resolved_root not in resolved.parents:
-        raise ValueError(f"{scope} is outside trusted package: {module_name}")
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise ValueError(f"{scope} inode is unsafe: {module_name}")
-    if info.st_size > _MAX_SOURCE_BYTES:
-        raise ValueError(f"{scope} source is too large: {module_name}")
-
-    descriptor = -1
-    try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        opened = os.fstat(descriptor)
-        if (
-            opened.st_dev != info.st_dev
-            or opened.st_ino != info.st_ino
-            or opened.st_size != info.st_size
-            or not stat.S_ISREG(opened.st_mode)
-            or opened.st_nlink != 1
-        ):
-            raise ValueError(f"{scope} changed before reading: {module_name}")
-        digest = hashlib.sha256()
-        total = 0
-        while True:
-            chunk = os.read(descriptor, 64 * 1024)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > _MAX_SOURCE_BYTES:
-                raise ValueError(f"{scope} source is too large: {module_name}")
-            digest.update(chunk)
-        finished = os.fstat(descriptor)
-        if (
-            finished.st_size != opened.st_size
-            or finished.st_mtime_ns != opened.st_mtime_ns
-            or finished.st_ctime_ns != opened.st_ctime_ns
-            or total != opened.st_size
-        ):
-            raise ValueError(f"{scope} changed while reading: {module_name}")
-        after = path.stat(follow_symlinks=False)
-        if (
-            after.st_dev != opened.st_dev
-            or after.st_ino != opened.st_ino
-            or after.st_size != opened.st_size
-            or after.st_mtime_ns != opened.st_mtime_ns
-            or after.st_ctime_ns != opened.st_ctime_ns
-            or stat.S_ISLNK(after.st_mode)
-            or not stat.S_ISREG(after.st_mode)
-            or after.st_nlink != 1
-        ):
-            raise ValueError(f"{scope} changed after reading: {module_name}")
-        for parent, before in parent_snapshots:
-            parent_after = parent.stat(follow_symlinks=False)
-            if (
-                parent_after.st_dev != before.st_dev
-                or parent_after.st_ino != before.st_ino
-                or parent_after.st_mtime_ns != before.st_mtime_ns
-                or parent_after.st_ctime_ns != before.st_ctime_ns
-                or stat.S_ISLNK(parent_after.st_mode)
-                or not stat.S_ISDIR(parent_after.st_mode)
-            ):
-                raise ValueError(
-                    f"{scope} parent changed while reading: {module_name}"
-                )
-        return digest.hexdigest()
-    except OSError as exc:
-        raise ValueError(f"{scope} cannot be read: {module_name}") from exc
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
+        return trusted_source_sha256(path, root=root, max_bytes=_MAX_SOURCE_BYTES)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"{scope} {module_name}: {exc}") from exc
 
 
 def suite_implementation_snapshot(
@@ -308,7 +231,7 @@ def comparison_implementation_snapshot() -> dict[str, object]:
     return {
         "catalog_version": IMPLEMENTATION_CATALOG_VERSION,
         "modules": {
-            module_name: trusted_module_sha256(module_name)
+            module_name: _suite_module_sha256(module_name)
             for module_name in modules
         },
     }

@@ -208,7 +208,7 @@ def test_manifest_discovery_rejects_a_symlinked_suite_root(tmp_path: Path) -> No
         discover_suite_manifests(linked_root)
 
 
-def test_manifest_loader_rejects_a_hard_linked_resource(tmp_path: Path) -> None:
+def test_manifest_loader_accepts_a_hard_linked_read_only_resource(tmp_path: Path) -> None:
     suites_root = tmp_path / "suites"
     suite_dir = suites_root / "demo-suite"
     suite_dir.mkdir(parents=True)
@@ -227,8 +227,10 @@ def test_manifest_loader_rejects_a_hard_linked_resource(tmp_path: Path) -> None:
         )
     )
 
-    with pytest.raises(ValueError, match="single-link regular file"):
-        discover_suite_manifests(suites_root)
+    manifests = discover_suite_manifests(suites_root)
+    assert len(manifests) == 1
+    assert manifests[0].files[0].sha256 == digest
+    assert outside.read_bytes() == cases
 
 
 def test_manifest_loader_rejects_toctou_replacement_during_read(
@@ -894,7 +896,7 @@ def test_definition_fingerprint_covers_actual_driver_and_scorer_sources(
     plugin = get_evaluation_plugin("generic-agent")
     case = EvalCase("case-a", "hello", "demo", "reply")
     baseline = suite_definition_fingerprint(manifest, plugin, (case,))
-    original = implementation_catalog.trusted_module_sha256
+    original = implementation_catalog._suite_module_sha256
     modules = suite_definition_snapshot(manifest, plugin, (case,))["execution_implementations"][
         "modules"
     ]
@@ -903,7 +905,7 @@ def test_definition_fingerprint_covers_actual_driver_and_scorer_sources(
         with monkeypatch.context() as scoped:
             scoped.setattr(
                 implementation_catalog,
-                "trusted_module_sha256",
+                "_suite_module_sha256",
                 lambda module_name, changed_module=changed_module: (
                     hashlib.sha256(f"drift:{module_name}".encode()).hexdigest()
                     if module_name == changed_module
@@ -967,8 +969,7 @@ def test_qq_flow_snapshot_hashes_real_acp_orchestration_and_attestation_modules(
     modules = snapshot["execution_implementations"]["modules"]
     required = {
         "chatcopilot.evals.qq_flow_scenarios",
-        "chatcopilot.platforms.qq.at_proxy",
-        "chatcopilot.platforms.qq.ingress_probe",
+        "chatcopilot.evals.qq_ingress_probe",
         "chatcopilot.middleware.acp.server",
         "chatcopilot.middleware.acp.agent_bridge",
         "chatcopilot.agent.persona.tools",

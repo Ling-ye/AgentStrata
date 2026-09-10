@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Mapping
 
 import yaml
 
@@ -39,13 +39,6 @@ _cached_config: Optional[WindowsFsConfig] = None
 _cached_path: Optional[Path] = None
 
 
-def _allowlist_path() -> Path:
-    override = os.environ.get(_ENV_ALLOWLIST_PATH)
-    if override:
-        return Path(override).expanduser().resolve()
-    return Path(__file__).resolve().parent / _DEFAULT_ALLOWLIST_FILENAME
-
-
 def _normalize_extension(ext: str) -> str:
     ext = ext.strip().lower()
     if not ext:
@@ -62,40 +55,28 @@ def _parse_raw(data: dict) -> _RawConfig:
     )
 
 
-def _merge_env_extra_roots(roots: List[str]) -> List[str]:
-    extra = os.environ.get(_ENV_EXTRA_ROOTS, "")
-    if not extra.strip():
-        return roots
-    parts = [p.strip() for p in extra.split(",") if p.strip()]
-    return roots + parts
+def load_config(*, force_reload: bool = False, environment: Mapping[str, str] | None = None) -> WindowsFsConfig:
+    from chatcopilot.contracts.execution_scope import current_execution_scope
 
-
-def load_config(*, force_reload: bool = False) -> WindowsFsConfig:
-    """Load the allow-list from YAML, expand env templates, then cache the result."""
-
+    scope = current_execution_scope() if environment is None else None
+    if scope is not None:
+        return WindowsFsConfig(tuple(map(str, scope.readable_roots)), (), ())
     global _cached_config, _cached_path
-    path = _allowlist_path()
-    if not force_reload and _cached_config is not None and _cached_path == path:
+    env = dict(os.environ if environment is None else environment)
+    override = env.get(_ENV_ALLOWLIST_PATH)
+    path = (Path(override).expanduser().resolve() if override else
+            Path(__file__).resolve().parent / _DEFAULT_ALLOWLIST_FILENAME)
+    if environment is None and not force_reload and _cached_config is not None and _cached_path == path:
         return _cached_config
-
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"windows_fs allow-list not found: {path}. Set {_ENV_ALLOWLIST_PATH} to override."
-        )
     with path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
-    expanded = expand_in_tree(raw)
+    expanded = expand_in_tree(raw, environ=env)
     parsed = _parse_raw(expanded if isinstance(expanded, dict) else {})
-    roots = _merge_env_extra_roots(parsed.allowed_roots)
-
-    config = WindowsFsConfig(
-        allowed_roots=tuple(roots),
-        denied_patterns=tuple(parsed.denied_patterns),
-        allowed_extensions=tuple(parsed.allowed_extensions),
-        max_read_bytes=parsed.max_read_bytes,
-    )
-    _cached_config = config
-    _cached_path = path
+    roots = parsed.allowed_roots + [p.strip() for p in env.get(_ENV_EXTRA_ROOTS, "").split(",") if p.strip()]
+    config = WindowsFsConfig(tuple(dict.fromkeys(roots)), tuple(parsed.denied_patterns),
+                             tuple(parsed.allowed_extensions), parsed.max_read_bytes)
+    if environment is None:
+        _cached_config, _cached_path = config, path
     return config
 
 

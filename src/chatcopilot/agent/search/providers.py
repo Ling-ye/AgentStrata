@@ -12,6 +12,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
+from chatcopilot.agent.search.models import DEFAULT_SEARCH_BUDGET
 from chatcopilot.agent.search.relevance import filter_relevant_items
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.contracts.subagents import SearchProviderSpec
@@ -48,7 +49,7 @@ CIRCUIT_BREAKER_ERRORS = frozenset({
     "search_invalid_response",
     "search_invalid_configuration",
 })
-MAX_RESULT_ITEMS = 15
+MAX_RESULT_ITEMS = DEFAULT_SEARCH_BUDGET.max_result_items
 _MAX_PROVIDER_RESPONSE_BYTES = 4 * 1024 * 1024
 _SEARCH_TEXT_FIELDS = ("query", "keyword", "q", "search", "term")
 _PROVIDER_BREAKER_ERRORS = {

@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -27,7 +26,8 @@ from chatcopilot.agent.response_integrity import ResponseIntegrityCheck
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.turn_support import safe_emit
 from chatcopilot.contracts.execution_scope import ExecutionScope
-from chatcopilot.core.scoped_process import scope_mounts
+from chatcopilot.core.scoped_process import scope_mounts, require_bubblewrap
+from chatcopilot.agent.backends.codex_permissions import permission_config
 from chatcopilot.contracts.agent import (
     AgentResult,
     AgentTask,
@@ -118,53 +118,6 @@ _ISOLATED_GATEWAY_VENV = "/opt/chatcopilot-gateway-venv"
 _ISOLATED_GATEWAY_SCRIPT = "/opt/chatcopilot-gateway/session_gateway.py"
 _ISOLATED_CODEX_BINARY = "/opt/chatcopilot-codex/codex"
 _BWRAP_PROBED: set[str] = set()
-_ISOLATED_DISABLED_FEATURES = (
-    "apps",
-    "artifact",
-    "auth_elicitation",
-    "browser_use",
-    "browser_use_external",
-    "browser_use_full_cdp_access",
-    "chronicle",
-    "code_mode",
-    "code_mode_buffered_exec",
-    "code_mode_host",
-    "code_mode_only",
-    "computer_use",
-    "deferred_executor",
-    "deferred_tool_world_state",
-    "enable_mcp_apps",
-    "external_agent_memory_import",
-    "goals",
-    "guardian_approval",
-    "guardianv2",
-    "hooks",
-    "image_generation",
-    "in_app_browser",
-    "in_app_updates",
-    "js_repl",
-    "js_repl_tools_only",
-    "memories",
-    "mentions_v2",
-    "multi_agent",
-    "multi_agent_v2",
-    "network_proxy",
-    "plugin_sharing",
-    "plugins",
-    "recommended_plugins",
-    "remote_plugin",
-    "request_permissions_tool",
-    "shell_snapshot",
-    "shell_tool",
-    "shell_zsh_fork",
-    "skill_mcp_dependency_install",
-    "skill_search",
-    "tool_call_mcp_elicitation",
-    "tool_suggest",
-    "unified_exec",
-    "unified_exec_zsh_fork",
-    "workspace_dependencies",
-)
 
 
 class CodexAgentBackend:
@@ -603,10 +556,6 @@ class CodexAgentBackend:
                         "Codex CLI emitted a JSONL record above the streaming size limit "
                         "and no complete final message followed that omission"
                     )
-            if projector.final_text_truncated:
-                raise RuntimeError(
-                    "Codex CLI final response exceeded the bounded turn output limit"
-                )
             projector.finish(returncode=completed.returncode)
         except CancellationRequested:
             if turn_relay is not None and relay_generation is not None:
@@ -1003,31 +952,21 @@ class CodexAgentBackend:
             ),
             'mcp_servers.chatcopilot.default_tools_approval_mode="approve"',
         ]
-        if scope is not None and scope.native_write:
-            extra_config.append(
-                "sandbox_workspace_write.writable_roots="
-                + json.dumps([str(p) for p in scope.writable_roots])
-            )
         if isolate_backend_state:
             extra_config.append("project_doc_max_bytes=0")
-            extra_config.extend(
-                f"features.{feature}=false"
-                for feature in _ISOLATED_DISABLED_FEATURES
-                if not (
-                    scope is not None
-                    and scope.native_write
-                    and feature in {"shell_tool", "unified_exec"}
-                )
-            )
-        if self._policy.network_access:
-            extra_config.extend(self._workspace_network_proxy_config())
+            extra_config.extend(permission_config(
+                scope, workdir=state.workdir,
+                private_paths=(_ISOLATED_CODEX_HOME + "/auth.json", _ISOLATED_GATEWAY_CONFIG),
+                network_access=self._policy.network_access,
+                read_only=self._policy.sandbox_mode == "read-only",
+            ))
         command = build_codex_command(
             template=routing.code_command,
             model=effective_selection.model,
             workdir=state.workdir,
             reasoning_effort=effective_selection.reasoning_effort,
             network_access=self._policy.network_access,
-            sandbox_mode=sandbox_mode,
+            sandbox_mode=None if isolate_backend_state else sandbox_mode,
             web_search_mode=self._policy.web_search_mode,
             skip_git_repo_check=True,
             ephemeral=False,
@@ -1067,9 +1006,7 @@ class CodexAgentBackend:
 
     @staticmethod
     def _require_isolated_main_codex_sandbox() -> None:
-        bwrap = shutil.which("bwrap")
-        if not bwrap:
-            raise RuntimeError("bubblewrap is required for shared-group Codex sessions")
+        bwrap = require_bubblewrap()
         resolved = str(Path(bwrap).resolve())
         if resolved in _BWRAP_PROBED:
             return
@@ -1117,9 +1054,7 @@ class CodexAgentBackend:
 
     @staticmethod
     def _wrap_isolated_command(state: _CodexSession, command: list[str]) -> list[str]:
-        bwrap = shutil.which("bwrap")
-        if not bwrap:
-            raise RuntimeError("bubblewrap is required for shared-group Codex sessions")
+        bwrap = require_bubblewrap()
         host_codex = Path(command[0]).expanduser().resolve()
         gateway_venv = Path(sys.prefix).expanduser().resolve()
         gateway_python_runtime = Path(sys.base_prefix).expanduser().resolve()
@@ -1379,23 +1314,12 @@ class CodexAgentBackend:
             paths.append(resource.path)
         return tuple(paths)
 
-    @staticmethod
-    def _workspace_network_proxy_config() -> tuple[str, ...]:
-        return (
-            "features.network_proxy.enabled=true",
-            'features.network_proxy.domains={ "*" = "allow" }',
-            "features.network_proxy.allow_local_binding=false",
-            "features.network_proxy.dangerously_allow_non_loopback_proxy=false",
-            "features.network_proxy.dangerously_allow_all_unix_sockets=false",
-        )
-
     def _execution_policy_prompt(self, state: _CodexSession) -> str:
-        writable = state.execution_scope is not None and state.execution_scope.native_write
+        owner = state.role_hint == "owner"
         boundary = (
-            "The host grants this Owner all assembled capabilities within the configured instance and project resources. "
-            "You may directly edit these resources. Background code tasks are optional. "
-            if writable
-            else "Use only the host-provided member tools for public queries and current-conversation files and memory. "
+            "The host grants this Owner assembled capabilities within configured instance and project resources. "
+            if owner else "Native tools may read and write only current-conversation ordinary files. "
+            "Project resources and other actors' data are unavailable. "
         )
         return (
             f"Codex native web search is {self._policy.web_search_mode}. "
@@ -1433,6 +1357,7 @@ class CodexAgentBackend:
                     "web_search_mode": self._policy.web_search_mode,
                 },
                 "tool_surface": {},
+                "resource_policy": "native-scoped-v3",
             },
             sort_keys=True,
             separators=(",", ":"),

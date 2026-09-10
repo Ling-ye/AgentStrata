@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from chatcopilot.evals.private_files import validate_private_file_metadata as _validate_private_file
+
 import argparse
 import hashlib
 import json
@@ -316,23 +318,6 @@ def _read_private_json_object(path: Path, *, label: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{label} must be a JSON object")
     return {str(key): value for key, value in payload.items()}
-
-
-def _validate_private_file(
-    metadata: os.stat_result,
-    path: Path,
-    *,
-    label: str,
-) -> None:
-    if not stat.S_ISREG(metadata.st_mode):
-        raise ValueError(f"{label} must be a regular file")
-    if os.name != "nt":
-        if metadata.st_uid != os.getuid():
-            raise PermissionError(f"{label} must be owned by the service user")
-        if stat.S_IMODE(metadata.st_mode) != 0o600:
-            raise PermissionError(f"{label} must use mode 0600")
-        if metadata.st_nlink != 1:
-            raise ValueError(f"{label} must have exactly one hard link: {path.name}")
 
 
 if __name__ == "__main__":

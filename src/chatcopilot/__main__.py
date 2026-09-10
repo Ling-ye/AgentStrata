@@ -55,11 +55,6 @@ def main(argv: list[str] | None = None) -> int:
         from chatcopilot.middleware.http.server import main as http_api_main
 
         return http_api_main(args)
-    if command == "qq-at-proxy":
-        from chatcopilot.platforms.qq.at_proxy import main as qq_at_proxy_main
-
-        return qq_at_proxy_main(args)
-
     parser = argparse.ArgumentParser(prog="python -m chatcopilot")
     parser.error(f"unknown command: {command}")
     return 2
@@ -91,7 +86,6 @@ def _print_help() -> None:
         "--bot bots/<bot-id>/bot.yaml --output reports/evals/manual/agent-comparison\n"
         "  agentstrata evals prepare --suite ifeval\n"
         "  agentstrata http-api-server --host 127.0.0.1 --port 8787\n"
-        "  agentstrata qq-at-proxy\n"
         "\n"
         "Compatibility entry point: python -m chatcopilot <command>"
     )

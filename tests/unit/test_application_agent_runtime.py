@@ -138,6 +138,8 @@ def test_materialization_forwards_the_complete_projection(monkeypatch) -> None:
         "agent_backend": projection.agent_backend,
         "assembly_profile": projection.assembly_profile,
         "project_roots": projection.project_roots,
+        "readonly_roots": projection.readonly_roots,
+        "command_timeouts": projection.command_timeouts,
     }
 
 

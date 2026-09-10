@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.contracts.execution_scope import CommandTimeouts
 
 from chatcopilot.botspec.model import ContextSpec
 
@@ -2114,6 +2115,8 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
     canary_retriever = object()
     fake_agent_runtime = SimpleNamespace(
         retriever=canary_retriever,
+        project_roots=(),
+        command_timeouts=CommandTimeouts(75, 900),
         agent_backend="native",
         new_session=new_session,
         tools=(),
@@ -2162,6 +2165,7 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
     assert lazy.role == Role.OWNER
     assert len(captures) == 2
     for captured in captures:
+        assert captured["workspace_service"].execution_scope.command_timeouts == CommandTimeouts(75, 900)
         assert captured["retriever_override"] is None
         assert captured["prompt_input"].memory == ""
         assert captured["prompt_input"].skill_index == ("PRIVATE SKILL",)
@@ -2288,10 +2292,11 @@ def test_group_codex_command_has_read_only_namespace_and_strict_config(
     inner = command[separator + 1 :]
     assert "--strict-config" in inner
     assert "--ignore-rules" in inner
-    assert inner[inner.index("--sandbox") + 1] == "read-only"
+    assert "--sandbox" not in inner
+    assert 'default_permissions="agentstrata"' in inner
     assert "project_doc_max_bytes=0" in inner
-    assert "features.shell_tool=false" in inner
-    assert "features.unified_exec=false" in inner
+    assert "features.shell_tool=false" not in inner
+    assert "features.unified_exec=false" not in inner
     assert not any(
         name in command for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
     )
@@ -2460,7 +2465,7 @@ def test_group_codex_rejects_unsafe_project_config_mountpoint(
 
     with (
         mock.patch(
-            "chatcopilot.agent.backends.codex.shutil.which",
+            "chatcopilot.core.scoped_process.shutil.which",
             return_value="/usr/bin/true",
         ),
         pytest.raises(

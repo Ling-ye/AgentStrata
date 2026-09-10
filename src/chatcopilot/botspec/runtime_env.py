@@ -198,3 +198,12 @@ def project_resource_roots(spec: BotSpec, env: Mapping[str, str]) -> tuple[Path,
             for item in load_registry(resolved, environment=env).repositories.values()
         )
     return tuple(dict.fromkeys(roots))
+
+
+def project_readonly_resource_roots(packs: tuple[str, ...], env: Mapping[str, str]) -> tuple[Path, ...]:
+    if "filesystem.windows.read" not in packs:
+        return ()
+    from chatcopilot.external_tools.windows_fs.config import load_config
+    from chatcopilot.external_tools.windows_fs.path_guard import normalize_input_path
+
+    return tuple(normalize_input_path(path).resolve() for path in load_config(environment=env).allowed_roots)

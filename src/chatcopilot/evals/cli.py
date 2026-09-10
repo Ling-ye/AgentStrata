@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument(
         "--output",
         type=Path,
-        help="Standalone Evaluation directory outside the managed service root.",
+        help="Standalone output directory (default: reports/evals/manual/<evaluation-id>).",
     )
     run.add_argument("--validate-only", action="store_true")
     run.add_argument("--resume", action="store_true")
@@ -278,24 +278,7 @@ def _run_prepared_request(args: argparse.Namespace, request: dict[str, Any]) -> 
     effective = validation["effective_request"]
     if "evaluation_id" not in request:
         request = {**request, "evaluation_id": effective["evaluation_id"]}
-    output = args.output
-    if output is None:
-        print(
-            json.dumps(
-                {
-                    "code": "evaluation_output_required",
-                    "message": (
-                        "standalone evals run requires --output outside the "
-                        "managed Evaluation service root"
-                    ),
-                    "checks": [],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            file=sys.stderr,
-        )
-        return 2
+    output = args.output or Path("reports/evals/manual") / effective["evaluation_id"]
     if output.name != effective["evaluation_id"]:
         print(
             json.dumps(

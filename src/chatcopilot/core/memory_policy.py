@@ -37,10 +37,6 @@ _CONTROL_PATTERNS = (
         re.IGNORECASE,
     ),
 )
-_NON_DURABLE_PATTERN = re.compile(
-    r"(?:临时|一次性|仅本次|只在本次|这次任务|当前任务|本轮|待会儿)",
-    re.IGNORECASE,
-)
 _GROUP_PRIVATE_PATTERN = re.compile(
     r"(?:仅限你我|不要告诉群里|私聊秘密|个人隐私)|"
     r"(?:我的|本人).{0,8}(?:身份证|手机号|住址|家庭住址|病史|医疗记录|银行卡)",
@@ -55,7 +51,7 @@ class MemoryContentDecision:
 
 
 def evaluate_memory_content(text: str, *, scope: str) -> MemoryContentDecision:
-    """Apply deterministic exclusions; semantic stability remains model-guided."""
+    """Enforce persistence safety; durability and relevance belong to the Agent."""
 
     if any(pattern.search(text) for pattern in _SECRET_PATTERNS):
         return MemoryContentDecision(
@@ -67,8 +63,6 @@ def evaluate_memory_content(text: str, *, scope: str) -> MemoryContentDecision:
             False,
             "人格、角色、授权或系统规则不能通过记忆修改。",
         )
-    if _NON_DURABLE_PATTERN.search(text):
-        return MemoryContentDecision(False, "临时或一次性任务内容不进入长期记忆。")
     if scope == "group" and _GROUP_PRIVATE_PATTERN.search(text):
         return MemoryContentDecision(
             False,

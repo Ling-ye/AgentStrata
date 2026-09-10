@@ -18,6 +18,11 @@ evaluations.
 运行权限采用 Owner/member 两档：Owner 可使用当前实例资源和已配置项目；成员仅使用公共查询、
 当前会话普通文件及记忆读取和追加。三个 Backend 使用相同业务规则，详见
 [权限与资源范围](https://github.com/Ling-ye/AgentStrata/blob/main/specs/runtime-permissions-simplification/spec.md)。
+执行范围内的普通文件允许硬链接；任务执行结果与消息投递回执分别记录，详见
+[项目文件与执行结果边界](https://github.com/Ling-ye/AgentStrata/blob/main/specs/gateway-execution-outcomes/spec.md)与
+[文件边界简化](https://github.com/Ling-ye/AgentStrata/blob/main/specs/file-boundary-simplification/spec.md)。
+开发命令遵循实例的超时设置；配置及后台任务行为见
+[命令超时说明](https://github.com/Ling-ye/AgentStrata/blob/main/docs/bot-spec.md#context)。
 
 ## Development history
 
@@ -249,7 +254,7 @@ and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.m
 | Evaluation | DeepEval-backed Agent scoring, readable Case inputs/outputs, and freely grouped progress trends. Console has two manual tracks: a 63-Case engineering regression catalog with a 61-Case default `full`, and 7 legacy synthetic QQ message-flow Cases; benchmark/Profile adapters remain available from CLI |
 
 The direct-Agent track bypasses ACP and platform transport. The existing
-synthetic QQ message-flow track exercises the pre-Gateway Relay/attestation/ACP
+synthetic QQ message-flow track uses the current OneBot Channel probe followed by the isolated attestation/ACP
 path and is retained only as a legacy regression suite; it is not evidence for
 the new Gateway. Gateway contract and integration tests instead use a fake
 loopback OneBot provider, the real Channel/Gateway code, and a deterministic
@@ -383,3 +388,8 @@ Dependency and redistribution notes are in
 [THIRD_PARTY_NOTICES.md](https://github.com/Ling-ye/AgentStrata/blob/main/THIRD_PARTY_NOTICES.md),
 and project-name usage is covered by
 [TRADEMARKS.md](https://github.com/Ling-ye/AgentStrata/blob/main/TRADEMARKS.md).
+
+命令、Codex 成员资源权限、人格确认与预算的当前设计见
+[执行策略收敛规格](https://github.com/Ling-ye/AgentStrata/blob/main/specs/execution-policy-consolidation/spec.md)。所有角色使用 Codex 默认功能，
+成员可原生操作当前普通工作区，项目与权威状态继续独立授权。命令完整输出优先保存为项目文件，无项目时使用当前工作区。
+独立 `evals run` 自动选择 `reports/evals/manual/<evaluation-id>`；QQ 只通过 Gateway 运行。

@@ -25,6 +25,7 @@ def test_run_routes_gateway_qq_and_legacy_platforms_to_separate_hosts(
     runtime = SimpleNamespace(
         gateway=gateway,
         channels=channels,
+        platform_type="qq" if channels.qq is not None else "feishu",
         source_path=Path("/tmp/bot.yaml"),
     )
     selected: list[str] = []
@@ -41,7 +42,7 @@ def test_run_routes_gateway_qq_and_legacy_platforms_to_separate_hosts(
     )
     monkeypatch.setattr(
         run,
-        "_run_legacy_acp",
+        "_run_feishu_acp",
         lambda _: selected.append("legacy") or 23,
     )
 

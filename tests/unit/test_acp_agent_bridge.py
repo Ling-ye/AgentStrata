@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from chatcopilot.application.execution_scope import execution_scope
+from chatcopilot.contracts.execution_scope import CommandTimeouts
 
 
 import os
@@ -319,6 +320,8 @@ def test_control_session_materialization_replays_buffered_exchange(tmp_path: Pat
     )
     agent_runtime = SimpleNamespace(
         retriever=None,
+        project_roots=(),
+        command_timeouts=CommandTimeouts(90, 1200),
         new_session=mock.Mock(return_value=agent_session),
     )
 
@@ -329,6 +332,7 @@ def test_control_session_materialization_replays_buffered_exchange(tmp_path: Pat
     assert messages == [("job status?", "delegated")]
     agent_runtime.new_session.assert_called_once()
     open_kwargs = agent_runtime.new_session.call_args.kwargs
+    assert open_kwargs["workspace_service"].execution_scope.command_timeouts == CommandTimeouts(90, 1200)
     assert open_kwargs["caller_role_hint"] == "user"
     assert open_kwargs["caller_identity"].user_id == "owner-1"
     assert open_kwargs["caller_identity"].user_name == "Example User"

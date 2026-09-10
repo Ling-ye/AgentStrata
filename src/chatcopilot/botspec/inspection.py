@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
+from chatcopilot.contracts.execution_scope import RUNTIME_ACCESS_POLICY_VERSION
 from chatcopilot.core.inspection import fingerprint, plain
 from chatcopilot.core.mcp_catalog import resolve_catalog_server
 from .loader import load_botspec, validate_botspec
@@ -45,7 +46,7 @@ def configuration_projection(
             add("channel", f"channel:{name}", name, config)
     add("channel", "platform:instance", "平台", data.get("platform", {}))
     access = {
-        "policy_version": "runtime-access-v2",
+        "policy_version": RUNTIME_ACCESS_POLICY_VERSION,
         "owner": "当前实例资源和已配置项目",
         "member": "公共查询、当前会话文件、记忆读取和追加",
     }

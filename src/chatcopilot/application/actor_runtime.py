@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from chatcopilot.contracts.execution_scope import RUNTIME_ACCESS_POLICY_VERSION
 from chatcopilot.application.execution_scope import execution_scope
+from chatcopilot.contracts.execution_scope import CommandTimeouts
 
 import asyncio
 from collections.abc import Callable
@@ -242,7 +244,9 @@ class ActorSessionFactory:
         port = _ActorPersonaToolPort(self, key=key, principal=principal)
         session_providers = self._session_providers(port)
         binding.service.execution_scope = execution_scope(
-            principal.role, binding.workspace.root, getattr(self.agent_runtime, "project_roots", ())
+            principal.role, binding.workspace.root, getattr(self.agent_runtime, "project_roots", ()),
+            command_timeouts=getattr(self.agent_runtime, "command_timeouts", CommandTimeouts()),
+        readonly_roots=getattr(self.agent_runtime, "readonly_roots", ()),
         )
         try:
             file_sender = (
@@ -266,7 +270,7 @@ class ActorSessionFactory:
                 ),
                 permission_filter=build_tool_permission_filter(
                     principal,
-                    policy_version="runtime-access-v2",
+                    policy_version=RUNTIME_ACCESS_POLICY_VERSION,
                     on_decision=self._decision_sink,
                 ),
                 background_submitter=background_submitter,

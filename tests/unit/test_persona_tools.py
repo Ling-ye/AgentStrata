@@ -148,7 +148,7 @@ def test_provider_exposes_one_structured_owner_main_agent_tool() -> None:
         "confirm",
         "cancel",
     }
-    assert "requirement" in tool.input_schema["properties"]
+    assert "requirement" not in tool.input_schema["properties"]
     assert "text" not in tool.input_schema["properties"]
     assert tool.output_schema["required"] == [
         "outcome",
@@ -206,7 +206,7 @@ def test_reported_natural_language_request_commits_through_persona_manage(
     assert _DraftAgent.calls[-1]["draft"]["owner_requirement"] == request
 
 
-def test_owner_recheck_and_requirement_grounding_fail_closed(monkeypatch) -> None:
+def test_owner_recheck_and_host_owned_requirement(monkeypatch) -> None:
     port = _Port()
     state = _State()
     handler, _ = _handler(port, monkeypatch)
@@ -224,11 +224,10 @@ def test_owner_recheck_and_requirement_grounding_fail_closed(monkeypatch) -> Non
     assert denied.ok is False
     assert denied.error_code == "persona_owner_required"
     assert denied.data["committed"] is False
-    assert invented.ok is False
-    assert invented.error_code == "persona_requirement_ungrounded"
-    assert invented.data["committed"] is False
-    assert state.personas == {}
-    assert port.refreshes == 0
+    assert invented.ok is True
+    assert "更简洁" in state.personas["user"]
+    assert "更温柔" not in state.personas["user"]
+    assert port.refreshes == 1
 
 
 def test_clear_requires_actor_bound_exact_cross_turn_confirmation(monkeypatch) -> None:
@@ -238,7 +237,7 @@ def test_clear_requires_actor_bound_exact_cross_turn_confirmation(monkeypatch) -
     handler, _ = _handler(port, monkeypatch)
 
     proposed = handler(
-        {"operation": "clear", "scope": "group"},
+        {"operation": "clear", "scope": "group", "defer_confirmation": True},
         _context(state, "/persona clear group", chat_kind="group", chat_id="chat-1"),
     )
     imprecise = handler(
@@ -298,7 +297,7 @@ def test_deferred_clear_rejects_protected_persona_drift(monkeypatch) -> None:
     handler, _ = _handler(port, monkeypatch)
 
     proposed = handler(
-        {"operation": "clear", "scope": "group"},
+        {"operation": "clear", "scope": "group", "defer_confirmation": True},
         _context(state, "/persona clear group", chat_kind="group", chat_id="chat-1"),
     )
     state.personas["group"] = "# Persona\n\n并发更新后的人格"

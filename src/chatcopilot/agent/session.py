@@ -73,7 +73,7 @@ class AgentSession:
     topic_classifier: Optional[TopicRelevanceClassifier] = None
     # Dual-layer iteration budget
     max_tool_iterations: int = 8          # soft cap — triggers health check
-    hard_iteration_cap: int = 30          # absolute max — unconditional stop
+    hard_iteration_cap: int | None = None  # explicit hard budget only
     max_consecutive_tool_failures: int = 3
     max_tool_calls: Optional[int] = None
     # Dual-layer timeout budget
@@ -156,7 +156,7 @@ class AgentSession:
             return ops.cancelled_result(state)
 
     def _run_task_loop(self, ops: TurnOps, state: TurnState) -> AgentResult:
-        while state.iteration < self.hard_iteration_cap:
+        while self.hard_iteration_cap is None or state.iteration < self.hard_iteration_cap:
             # --- hard timeout: unconditional stop ---
             if self._hard_timed_out(state.started_at):
                 ops.finish_timeout(state, hard=True)
@@ -370,12 +370,12 @@ class AgentSession:
             )
         elif self.max_tool_calls is not None:
             remaining_calls = self.max_tool_calls - tool_calls_used
-            remaining_turns = self.hard_iteration_cap - iteration - 1
-            if remaining_calls > 2 and remaining_turns > 1:
+            remaining_turns = (self.hard_iteration_cap - iteration - 1) if self.hard_iteration_cap is not None else None
+            if remaining_calls > 2 and (remaining_turns is None or remaining_turns > 1):
                 return llm_view
             warning = (
                 f"\n\n[BUDGET WARNING] You have {remaining_calls} tool call(s) and "
-                f"{remaining_turns} iteration(s) remaining. You MUST call submit_result "
+                f"{remaining_turns if remaining_turns is not None else 'unbounded'} iteration(s) remaining. You MUST call submit_result "
                 "as your very next action. Summarize all findings collected so far — "
                 "do not attempt further searches."
             )

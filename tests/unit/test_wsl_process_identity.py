@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
-import signal
 import subprocess
 import time
 
@@ -21,7 +20,7 @@ def _write_executable(path: Path, text: str) -> None:
 def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
     deploy_dir = tmp_path / "runtime" / "deploy" / "wsl"
     deploy_dir.mkdir(parents=True)
-    for name in ("_load_env.sh", "_start_qq_proxy.sh", "_stop_cc.sh"):
+    for name in ("_load_env.sh", "_stop_cc.sh"):
         shutil.copy2(REPO_ROOT / "deploy" / "wsl" / name, deploy_dir / name)
 
     home = tmp_path / "home"
@@ -46,7 +45,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         "CHATCOPILOT_CC_CONNECT_CONFIG_DIR": str(config_dir),
         "CHATCOPILOT_LOG_DIR": str(tmp_path / "logs"),
     }
-    return deploy_dir / "_start_qq_proxy.sh", deploy_dir / "_stop_cc.sh", cc_home, env
+    return deploy_dir, deploy_dir / "_stop_cc.sh", cc_home, env
 
 
 def _terminate(process: subprocess.Popen[bytes]) -> None:
@@ -88,108 +87,6 @@ def test_stop_ignores_stale_pidfiles_pointing_to_unrelated_process(
         assert not (cc_home / "cc-connect.pid").exists()
     finally:
         _terminate(unrelated)
-
-
-def test_start_ignores_stale_relay_pid_before_failed_probe(tmp_path: Path) -> None:
-    start_script, _, cc_home, env = _fixture(tmp_path)
-    _write_executable(
-        Path(env["CHATCOPILOT_HOME"]) / ".venv" / "bin" / "python",
-        "#!/usr/bin/env bash\nexit 1\n",
-    )
-    unrelated = subprocess.Popen(["/bin/sleep", "60"])
-    try:
-        (cc_home / "qq-at-proxy.pid").write_text(
-            f"{unrelated.pid}\n", encoding="utf-8"
-        )
-
-        completed = subprocess.run(
-            ["bash", str(start_script)],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-
-        assert completed.returncode == 4
-        assert unrelated.poll() is None
-        assert "忽略未绑定当前实例的残留 Relay" in completed.stderr
-        assert "OneBot 安全边界探针失败" in completed.stderr
-        assert not (cc_home / "qq-at-proxy.pid").exists()
-    finally:
-        _terminate(unrelated)
-
-
-def test_start_rejects_missing_private_python_without_system_fallback(
-    tmp_path: Path,
-) -> None:
-    start_script, _, _, env = _fixture(tmp_path)
-    marker = tmp_path / "system-python-used"
-    fake_bin = Path(env["PATH"].split(":", 1)[0])
-    for name in ("python3", "python"):
-        _write_executable(
-            fake_bin / name,
-            f"#!/usr/bin/env bash\n: > {marker}\nexit 0\n",
-        )
-
-    completed = subprocess.run(
-        ["bash", str(start_script)],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-
-    assert completed.returncode == 3
-    assert not marker.exists()
-    assert "拒绝回退到系统解释器" in completed.stderr
-
-
-def test_start_never_reports_unbound_spawned_pid_as_ready(tmp_path: Path) -> None:
-    start_script, _, cc_home, env = _fixture(tmp_path)
-    spawned_pid_file = tmp_path / "spawned.pid"
-    env["SPAWNED_PID_FILE"] = str(spawned_pid_file)
-    _write_executable(
-        Path(env["PATH"].split(":", 1)[0]) / "sleep",
-        "#!/usr/bin/env bash\nexit 0\n",
-    )
-    _write_executable(
-        Path(env["CHATCOPILOT_HOME"]) / ".venv" / "bin" / "python",
-        "#!/usr/bin/env bash\n"
-        "if [[ \"$*\" == *'chatcopilot.platforms.qq.gateway_health probe'* ]]; then\n"
-        "  exit 0\n"
-        "fi\n"
-        "if [ \"${1:-}\" = -c ]; then\n"
-        "  if [[ \"${2:-}\" == *urlsplit* ]]; then printf '127.0.0.1\\t3002\\n'; else exit 0; fi\n"
-        "  exit 0\n"
-        "fi\n"
-        "if [ \"${1:-}\" = -m ] && [ \"${2:-}\" = chatcopilot ] "
-        "&& [ \"${3:-}\" = qq-at-proxy ]; then\n"
-        "  printf '%s\\n' \"$$\" > \"$SPAWNED_PID_FILE\"\n"
-        "  exec /bin/sleep 60\n"
-        "fi\n"
-        "exit 1\n",
-    )
-    spawned_pid = 0
-    try:
-        completed = subprocess.run(
-            ["bash", str(start_script)],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        spawned_pid = int(spawned_pid_file.read_text(encoding="utf-8").strip())
-
-        assert completed.returncode == 3
-        os.kill(spawned_pid, 0)
-        assert "Relay 就绪" not in completed.stderr
-        assert not (cc_home / "qq-at-proxy.pid").exists()
-    finally:
-        if spawned_pid:
-            try:
-                os.kill(spawned_pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
 
 
 def test_stop_still_terminates_processes_bound_to_current_instance(

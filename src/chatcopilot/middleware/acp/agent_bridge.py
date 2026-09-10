@@ -13,6 +13,7 @@ SessionState"的装配逻辑下沉到本模块，让 server.py 只关心 ACP 协
 from __future__ import annotations
 
 from chatcopilot.application.execution_scope import execution_scope
+from chatcopilot.contracts.execution_scope import CommandTimeouts
 
 import logging
 import re
@@ -596,7 +597,9 @@ def _materialize_session_for_workspace(
     _, visible_skills = _prompt_projection(runtime, state.role, state.workspace)
     workspace_service = _make_workspace_service(state.workspace, platform_type)
     workspace_service.execution_scope = execution_scope(
-        state.role, state.workspace.root, getattr(agent_runtime, "project_roots", ())
+        state.role, state.workspace.root, getattr(agent_runtime, "project_roots", ()),
+        command_timeouts=getattr(agent_runtime, "command_timeouts", CommandTimeouts()),
+        readonly_roots=getattr(agent_runtime, "readonly_roots", ()),
     )
     persona_snippet = extract_persona_snippet(
         runtime, state.role, state.workspace, workspace_service

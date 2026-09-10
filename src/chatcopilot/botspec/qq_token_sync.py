@@ -76,7 +76,6 @@ def _validate_bot_paths(path: Path, bot_path: Path, bots_root: Path) -> Path:
         or not stat.S_ISREG(bot_info.st_mode)
         or stat.S_ISLNK(bot_info.st_mode)
         or bot_info.st_uid != os.getuid()
-        or bot_info.st_nlink != 1
     ):
         raise ValueError("token_sync_path_unsafe")
     try:

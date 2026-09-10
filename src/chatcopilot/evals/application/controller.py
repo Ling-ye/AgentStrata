@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from chatcopilot.evals.private_files import (
+    validate_private_file_metadata as _validate_private_file_metadata,
+    validate_private_directory_metadata as _validate_private_directory_metadata,
+)
+
 import json
 import logging
 import os
@@ -129,38 +134,6 @@ class EvaluationBlocked(ValueError):
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _validate_private_file_metadata(
-    metadata: os.stat_result,
-    path: Path,
-    *,
-    label: str = "evaluation artifact",
-) -> None:
-    if not stat.S_ISREG(metadata.st_mode):
-        raise ValueError(f"{label} is not a regular file: {path.name}")
-    if os.name != "nt":
-        if metadata.st_uid != os.getuid():
-            raise PermissionError(f"{label} must be owned by the service user: {path.name}")
-        if stat.S_IMODE(metadata.st_mode) != 0o600:
-            raise PermissionError(f"{label} must use mode 0600: {path.name}")
-        if metadata.st_nlink != 1:
-            raise ValueError(f"{label} must have exactly one hard link: {path.name}")
-
-
-def _validate_private_directory_metadata(
-    metadata: os.stat_result,
-    path: Path,
-    *,
-    label: str,
-) -> None:
-    if not stat.S_ISDIR(metadata.st_mode):
-        raise ValueError(f"{label} is not a directory: {path.name}")
-    if os.name != "nt":
-        if metadata.st_uid != os.getuid():
-            raise PermissionError(f"{label} must be owned by the service user: {path.name}")
-        if stat.S_IMODE(metadata.st_mode) != 0o700:
-            raise PermissionError(f"{label} must use mode 0700: {path.name}")
 
 
 def _reject_symlink_components(path: Path) -> None:

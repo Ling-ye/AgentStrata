@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 from chatcopilot.project import CHAT_ENV_PREFIX, DEFAULT_CONFIG_DIR
+from chatcopilot.contracts.execution_scope import CommandTimeouts
 from chatcopilot.contracts.model_selection import (
     CODEX_REASONING_EFFORTS,
     CodeModelProfile,
@@ -28,6 +29,22 @@ _DEFAULT_CONFIG_NAMES = (
     DEFAULT_CONFIG_DIR / "chat.yaml",
 )
 _CODE_MODEL_PROFILE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+
+
+def load_command_timeouts(
+    *,
+    environment: Mapping[str, str],
+    timeout_default: int = 60,
+    timeout_max: int = 300,
+) -> CommandTimeouts:
+    """Resolve command settings from the host's captured startup environment."""
+    raw = environment.get("CHATCOPILOT_DEV_SHELL_TIMEOUT_MAX")
+    if raw is not None and raw.strip():
+        try:
+            timeout_max = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("CHATCOPILOT_DEV_SHELL_TIMEOUT_MAX must be a positive integer") from exc
+    return CommandTimeouts(timeout_default=timeout_default, timeout_max=timeout_max)
 
 
 @dataclass
@@ -51,7 +68,7 @@ class RuntimeConfig:
     #   hard cap → 无条件停止（绝对安全线）
     # max_tool_calls 为 None 表示不限制。
     max_tool_iterations: int = 8          # soft iteration cap
-    hard_iteration_cap: int = 30          # absolute max iterations
+    hard_iteration_cap: int | None = None  # explicit hard budget only
     max_tool_calls: Optional[int] = None
     turn_timeout_seconds: Optional[int] = None   # soft timeout
     hard_timeout_seconds: Optional[int] = None    # absolute max time
@@ -277,7 +294,7 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
         cfg.runtime.max_tool_iterations = _coerce_int(
             rt_raw.get("max_tool_iterations"), cfg.runtime.max_tool_iterations
         )
-        cfg.runtime.hard_iteration_cap = _coerce_int(
+        cfg.runtime.hard_iteration_cap = _coerce_opt_int(
             rt_raw.get("hard_iteration_cap"), cfg.runtime.hard_iteration_cap
         )
         cfg.runtime.max_tool_calls = _coerce_opt_int(
@@ -430,7 +447,7 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
     cfg.runtime.max_tool_iterations = _coerce_int(
         os.environ.get(f"{env_prefix}_MAX_TOOL_ITERATIONS"), cfg.runtime.max_tool_iterations
     )
-    cfg.runtime.hard_iteration_cap = _coerce_int(
+    cfg.runtime.hard_iteration_cap = _coerce_opt_int(
         os.environ.get(f"{env_prefix}_HARD_ITERATION_CAP"), cfg.runtime.hard_iteration_cap
     )
     cfg.runtime.max_tool_calls = _coerce_opt_int(
@@ -679,4 +696,5 @@ __all__ = [
     "expected_config_paths",
     "load_llm_profile",
     "load_config",
+    "load_command_timeouts",
 ]

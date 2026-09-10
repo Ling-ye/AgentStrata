@@ -4,8 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any, Sequence
 
-_MAX_SEARCH_RESULT_CHARS = 36000
-_MAX_RESULT_ITEMS = 15
+from chatcopilot.agent.search.models import SearchBudget
 
 
 def _actual_source(tool_name: str, payload: dict[str, Any]) -> str:
@@ -101,11 +100,11 @@ def _successful_actual_sources(results: Sequence[dict[str, Any]]) -> list[str]:
     )
 
 
-def _compact_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    remaining = _MAX_SEARCH_RESULT_CHARS
+def _compact_results(results: list[dict[str, Any]], *, budget: SearchBudget) -> list[dict[str, Any]]:
+    remaining = budget.max_result_chars
     compacted: list[dict[str, Any]] = []
     for item in results:
-        item = _limit_summary_items(item)
+        item = _limit_summary_items(item, max_items=budget.max_result_items)
         encoded = json.dumps(item, ensure_ascii=False)
         if len(encoded) <= remaining:
             compacted.append(item)
@@ -120,7 +119,7 @@ def _compact_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return compacted
 
 
-def _limit_summary_items(result: dict[str, Any]) -> dict[str, Any]:
+def _limit_summary_items(result: dict[str, Any], *, max_items: int) -> dict[str, Any]:
     summary = result.get("summary")
     if not isinstance(summary, dict):
         return result
@@ -128,8 +127,8 @@ def _limit_summary_items(result: dict[str, Any]) -> dict[str, Any]:
     trimmed = dict(summary)
     for key in ("items", "findings", "results", "evidence", "organic_results"):
         value = trimmed.get(key)
-        if isinstance(value, list) and len(value) > _MAX_RESULT_ITEMS:
-            trimmed[key] = value[:_MAX_RESULT_ITEMS]
+        if isinstance(value, list) and len(value) > max_items:
+            trimmed[key] = value[:max_items]
             trimmed[f"{key}_total"] = len(value)
             changed = True
     if not changed:

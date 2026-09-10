@@ -817,3 +817,39 @@ Console 的配置与观测分类仍是展示分组，保留字段归属、实体
 ## 2026-09-10：测评集与业务 Case 组织
 
 在基准工作台上统一 Suite manifest 的来源、用途、执行对象和评分器描述。普通业务题新增受信文件执行路径，复用固定只读查询工具，经 DeepEval 标准对象和严格 GEval 主判；原有 63 个工程回归 Case 及断言保留。开始测试支持工具筛选和分区题目详情，记录与趋势区分原生成绩、LLM 判定和异常。正式设计见 [测评集组织规格](../specs/evaluation-dataset-organization/spec.md)，使用方式见 [业务 Case 指南](evaluation-business-cases.md)。QQ 群成员题仅为未配置的教学样例。
+
+## 2026-09-10：项目硬链接与 Gateway 执行结果
+
+执行目录的递归扫描曾将正常依赖硬链接视为启动失败。Owner 已授权项目改为接受文件实体共享，
+会话工作区及权威状态继续执行各自的校验。Gateway 的 Channel 与直接客户端路径统一消费
+AgentResult，保留原始停止原因，将 `llm_error` 记录为失败；失败提示的投递确认保持独立，
+不触发重发。契约、权限取舍和验证见
+[项目文件与执行结果规格](../specs/gateway-execution-outcomes/spec.md)。
+
+## 2026-09-10：命令超时快照与文件检查去重
+
+修正绑定执行范围后命令超时被默认配置覆盖的问题。装配阶段形成不可变 CommandTimeouts，
+经运行时、执行范围和后台请求传递，各实例及已排队任务保留自己的预算。
+文件元数据检查由实际 I/O 与可信交付入口复用，路径 guard 聚焦范围；
+删除无生产消费点的 protected_branches，保留交付仍在使用的路径 allow/deny 策略。
+行为、兼容范围和验证见 [命令超时快照规格](../specs/command-timeout-snapshots/spec.md)。
+
+
+## 2026-09-10：普通文件与评测检查边界简化
+
+取消启动时的全目录硬链接扫描，普通文件 I/O 在授权路径内支持硬链接，原子替换和删除只
+影响选中的路径。附件解压允许包内链接并取消应用容量上限，仍约束目标目录；安装采用
+uv 默认文件复用。私聊记忆不再读取或迁移旧路径，现存旧文件原样保留。
+资源发布、journal 和 Evaluation 复用底层元数据校验；评测实现与插件共用受信源码读取，
+且把共享实现纳入指纹。各 I/O 边界的身份、锁、原子性及权威产物检查继续由对应服务负责。
+完整范围与验证见 [文件边界简化](../specs/file-boundary-simplification/spec.md)。
+
+## 执行策略与预算收敛
+
+在文件边界简化之后，删除 Codex 功能禁用名单，成员原生权限改为当前工作区读写；
+凭据与状态继续依靠实际资源边界保护。命令分类和进程执行分离，完整输出形成普通文件产物。
+人格要求由可信当前正文提供，明确清空直接执行，歧义才建立绑定提案；记忆临时性由 Agent 判断。
+主 Agent 默认硬迭代上限取消，子 Agent 不倍增预算，搜索不再使用隐藏比例与重复步骤裁剪。
+QQ Relay 及其启动入口退役，当前 Channel 探针由 Evaluation 拥有；平台检查只报告真实 provider
+状态。独立 Evaluation 默认使用 manual 输出目录。设计与验收见
+[execution-policy-consolidation](../specs/execution-policy-consolidation/spec.md)。

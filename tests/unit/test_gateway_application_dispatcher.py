@@ -16,7 +16,7 @@ from chatcopilot.application.turns import prepare_channel_turn, prepare_client_t
 from chatcopilot.contracts.turns import ExchangeRef, TurnOutcome
 from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
 from chatcopilot.channels.base import ChannelDefinitelyNotSubmittedError, ChannelDeliveryUnknownError, ChannelHealth
-from chatcopilot.contracts.agent import AgentResult
+from chatcopilot.contracts.agent import AgentResult, TurnError
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
     ChannelAccountRef,
@@ -92,17 +92,21 @@ class _PreparedExecutor:
 
 
 class _ImmediateExecutor(_PreparedExecutor):
-    def __init__(self) -> None:
+    def __init__(self, result: AgentResult | None = None) -> None:
         self.requests = []
         self.commits = []
         self.discards = []
+        self.result = result or AgentResult("answer", "end_turn")
 
     async def execute(self, request, *, on_event, cancellation=None):
         self.requests.append(request)
         if cancellation is not None:
             cancellation.raise_if_cancelled()
-        on_event(SimpleNamespace())
-        return TurnOutcome(AgentResult("answer", "end_turn"), ExchangeRef())
+        if self.result.stop_reason == "llm_error":
+            on_event(TurnError(code="fixture_backend_error", message="fixture diagnostic"))
+        else:
+            on_event(SimpleNamespace())
+        return TurnOutcome(self.result, ExchangeRef())
 
     def commit_exchange(self, request, outcome, *, envelope, receipt):
         del envelope, receipt
@@ -1111,3 +1115,159 @@ async def test_stale_generation_fails_closed(tmp_path: Path) -> None:
             client=_client("client-a"),
         )
     assert stale.value.code == "gateway_generation_stale"
+
+
+@pytest.mark.parametrize("entrypoint", ["channel", "client"])
+@pytest.mark.parametrize("stop_reason, final_text", [
+    ("llm_error", "Execution failed"), ("llm_error", ""),
+    ("end_turn", "answer"), ("cancelled", ""),
+    pytest.param("end_turn", "x" * 70_000, id="large-success"),
+    pytest.param("llm_error", "x" * 70_000, id="large-error"),
+    ("tool_failure_cap", "stopped"), ("iteration_cap", "stopped"),
+    ("tool_call_cap", "stopped"), ("timeout_cap", "stopped"),
+])
+@_async_test
+async def test_agent_result_terminal_preserves_execution_and_delivery(
+    tmp_path, entrypoint, stop_reason, final_text,
+):
+    actor = _ImmediateExecutor(AgentResult(final_text, stop_reason))
+    state, generation, _, _, coordinator, channels, _, dispatcher, _ = _runtime(
+        tmp_path, executor=actor,
+    )
+    coordinator._clock = time.time
+    recorder = ObservationRecorder(state, generation)
+    driver = _Driver()
+    channels.register(driver)
+    await channels.start()
+    await channels.activate()
+    try:
+        if entrypoint == "channel":
+            event = _event(event_id="result-outcome", sender="20002")
+            await channels.handle_inbound(event)
+            await channels.handle_inbound(event)
+            run_id = actor.requests[0].run_id
+        else:
+            client = _client("client-a")
+            created = await _create(dispatcher, client, "result-session")
+            accepted = await dispatcher.dispatch(
+                RequestFrame("send-result", "chat.send", {
+                    "sessionId": created["session"]["sessionId"],
+                    "segments": [{"kind": "text", "text": "fixture request"}],
+                }, idempotency_key="result-request"), client=client,
+            )
+            run_id = accepted["runId"]
+            for _ in range(100):
+                if state.get_run(run_id).state in {"completed", "failed", "aborted"}:
+                    break
+                await asyncio.sleep(0)
+        run = state.get_run(run_id)
+        expected_state = (
+            "failed" if stop_reason == "llm_error" else
+            "aborted" if stop_reason == "cancelled" else "completed"
+        )
+        assert run.state == expected_state
+        assert run.error_code == ("agent_llm_error" if stop_reason == "llm_error" else None)
+        assert run.result == {"final_text": final_text, "stop_reason": stop_reason}
+        assert len(actor.requests) == 1
+        assert state.get_session(run.session_id).active_run_id is None
+        terminals = [event for event in state.events_after(0, limit=100)
+                     if event.event in {"chat.final", "chat.error"}
+                     and event.payload["runId"] == run_id]
+        assert len(terminals) == 1
+        if stop_reason == "llm_error":
+            assert terminals[0].event == "chat.error"
+            assert terminals[0].payload["code"] == "agent_llm_error"
+            assert terminals[0].payload["retryable"] is False
+        else:
+            assert terminals[0].event == "chat.final"
+            assert terminals[0].payload["stopReason"] == (
+                "aborted" if stop_reason == "cancelled" else "completed"
+            )
+        observed = observation_detail(recorder.store, run_id)
+        assert observed["run"]["state"] == expected_state
+        assert observed["run"]["error_code"] == run.error_code
+        if len(final_text) < 64 * 1024:
+            assert recorder.store.body(run_id, observed["run"]["result_ref"])["payload"] == run.result
+        if stop_reason == "llm_error":
+            errors = [event for event in observed["observations"] if event["kind"] == "TurnError"]
+            assert [event["error_code"] for event in errors] == ["fixture_backend_error"]
+        if entrypoint == "channel" and final_text:
+            assert len(driver.sent) == len(actor.commits) == 1
+            assert not actor.discards
+            assert driver.sent[0].segments[0].text == final_text
+            assert [receipt.stage for receipt in state.delivery_receipts(driver.sent[0].outbound_id)] == [
+                "gateway_accepted", "provider_submitted", "provider_acknowledged",
+            ]
+            assert observed["outbox"][0]["state"] == "provider_acknowledged"
+            assert observed["receipts"][-1]["stage"] == "provider_acknowledged"
+        else:
+            assert not driver.sent and not actor.commits
+            assert len(actor.discards) == 1
+    finally:
+        await channels.stop()
+        await coordinator.close()
+        recorder.close()
+
+
+@pytest.mark.parametrize("failure", ["delivery", "unknown_delivery", "exchange", "terminal_write", "generation"])
+@_async_test
+async def test_agent_failure_does_not_override_delivery_or_persistence_errors(tmp_path, monkeypatch, failure):
+    from chatcopilot.gateway.state_store import StaleWriterGeneration
+
+    actor = _ImmediateExecutor(AgentResult("Execution failed", "llm_error"))
+    state, _, _, _, coordinator, channels, _, _, _ = _runtime(tmp_path, executor=actor)
+
+    class Driver(_Driver):
+        async def send(self, envelope):
+            receipt = await super().send(envelope)
+            if failure == "delivery":
+                raise ChannelDefinitelyNotSubmittedError("provider_rejected", "fixture rejection")
+            if failure == "unknown_delivery":
+                raise ChannelDeliveryUnknownError("provider_timeout", "fixture timeout")
+            if failure == "generation":
+                state.acquire_writer_generation(now=21.0)
+            return receipt
+
+    if failure == "exchange":
+        def fail_commit(*args, **kwargs):
+            raise OSError("fixture journal failure after acknowledgement")
+        monkeypatch.setattr(actor, "commit_exchange", fail_commit)
+    if failure == "terminal_write":
+        original_finish = state.finish_run
+
+        def fail_result_once(**kwargs):
+            if kwargs.get("error_code") == "agent_llm_error":
+                raise OSError("fixture terminal persistence failure")
+            return original_finish(**kwargs)
+        monkeypatch.setattr(state, "finish_run", fail_result_once)
+    driver = Driver()
+    channels.register(driver)
+    await channels.start()
+    await channels.activate()
+    try:
+        with pytest.raises((ChannelDefinitelyNotSubmittedError, ChannelDeliveryUnknownError, OSError, StaleWriterGeneration)):
+            await channels.handle_inbound(_event(event_id="failed-result-boundary", sender="20002"))
+        run = state.get_run(actor.requests[0].run_id)
+        assert run.error_code != "agent_llm_error"
+        if failure != "generation":
+            assert run.result == {"final_text": "Execution failed", "stop_reason": "llm_error"}
+        assert len(driver.sent) == 1
+        receipts = state.delivery_receipts(driver.sent[0].outbound_id)
+        if failure in {"exchange", "terminal_write"}:
+            assert receipts[-1].stage == "provider_acknowledged"
+            assert run.state == "failed" and run.error_code == "gateway_turn_failed"
+        elif failure == "delivery":
+            assert receipts[-1].stage == "failed"
+            assert run.error_code == "provider_rejected"
+        elif failure == "unknown_delivery":
+            assert receipts[-1].stage == "delivery_unknown"
+            assert run.error_code == "provider_timeout"
+        else:
+            assert run.state != "completed"
+        if failure == "terminal_write":
+            assert len(actor.commits) == 1 and not actor.discards
+        else:
+            assert not actor.commits and len(actor.discards) == 1
+    finally:
+        await channels.stop()
+        await coordinator.close()

@@ -195,6 +195,13 @@ Codex 同样装配已启用的统一搜索和委托能力，经 Session Gateway 
 显式目标可以命中经过审阅的公开 provider，未命中或 provider 不可用时返回结构化
 搜索降级，不会把 provider 目录当作个人默认关注列表。
 
+开发命令的 `context.dev.shell.timeout_default` 与 `timeout_max` 默认分别为 60 和 300 秒；
+已有环境变量 `CHATCOPILOT_DEV_SHELL_TIMEOUT_MAX` 优先覆盖最大值。显式值必须是正整数，
+默认超时不超过最大值。它们在实例装配时解析，并随执行范围及后台任务请求保存；
+修改环境后需重新装配实例才能影响新任务，已排队任务保留提交时的值。
+此预算只约束开发命令，不改变 Codex 整轮时长或 Evaluation 预算。
+配置与文件校验职责见 [命令超时快照规格](../specs/command-timeout-snapshots/spec.md)。
+
 ### `workspace`
 
 `root_env` 只声明环境变量名。Application 按可信 Principal 和 conversation 在根目录下创建会话隔离空间，

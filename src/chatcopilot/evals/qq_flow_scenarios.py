@@ -48,7 +48,7 @@ from chatcopilot.middleware.runtime.tasks import (
     TASK_FILENAME,
     TURN_FILENAME,
 )
-from chatcopilot.platforms.qq.ingress_probe import run_simulated_gateway_ingress
+from chatcopilot.evals.qq_ingress_probe import run_simulated_gateway_ingress
 
 
 _SENTINEL = "QQ-FLOW-SENTINEL"
@@ -129,7 +129,6 @@ class _DeterministicAgentSession:
             arguments = {
                 "operation": "set",
                 "scope": "group",
-                "requirement": task.text[len(prefix) :],
             }
             self.tool_calls.append({"name": "persona_manage", "arguments": arguments})
             on_event(
@@ -996,8 +995,7 @@ async def _run_persona_roundtrip(
             persona_tool_started.get("name") == "persona_manage"
             and len(first_tool_calls) == 1
             and first_tool_calls[0].get("name") == "persona_manage"
-            and first_tool_calls[0].get("arguments", {}).get("requirement")
-            == persona_command.removeprefix("/persona set group ")
+            and "requirement" not in first_tool_calls[0].get("arguments", {})
         ),
         "persona_draft_stub_construct_count": draft_factory.construction_count,
         "persona_draft_stub_invocation_count": draft_factory.draft_call_count,

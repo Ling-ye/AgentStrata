@@ -192,7 +192,7 @@ class SearchRouter:
         if not steps:
             return self._fallback(request, available, reason="router returned no valid steps")
 
-        steps = _cap_single_source_steps(steps, max_steps)
+        steps = steps[:max_steps]
 
         operation = _operation_for_steps(steps)
         forced_cross_check = _requires_cross_check(request)
@@ -276,9 +276,6 @@ class SearchRouter:
             self._cache.popitem(last=False)
 
 
-_SINGLE_SOURCE_MAX_STEPS = 2
-
-
 def _deterministic_route_reason(request: SearchRequest) -> str:
     if request.urls:
         return "explicit URL input"
@@ -291,22 +288,6 @@ def _deterministic_route_reason(request: SearchRequest) -> str:
     if not _MULTI_ENTITY_RE.search(request.objective):
         return "thorough single-entity request"
     return ""
-
-
-def _cap_single_source_steps(
-    steps: list[SearchAction], max_steps: int
-) -> list[SearchAction]:
-    """Limit total steps and cap same-source decomposition.
-
-    When every step targets the same logical source, extra queries have
-    high overlap and diminishing returns while each one consumes a full
-    subagent budget.  Cap to ``_SINGLE_SOURCE_MAX_STEPS`` in that case.
-    """
-    steps = steps[:max_steps]
-    sources = {step.source for step in steps}
-    if len(sources) == 1 and len(steps) > _SINGLE_SOURCE_MAX_STEPS:
-        steps = steps[:_SINGLE_SOURCE_MAX_STEPS]
-    return steps
 
 
 def _parse_step(

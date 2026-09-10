@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 import hashlib
 from typing import Any, cast
 
+from chatcopilot.gateway.result_text import result_preview
 from chatcopilot.contracts.gateway_protocol import EventFrame, RequestFrame
 from chatcopilot.contracts.authorization import Principal
 from chatcopilot.contracts.gateway_rpc import (
@@ -543,7 +544,7 @@ def _run_snapshot(run: RunRecord) -> RunSnapshot:
         final_text = result.get("final_text") if isinstance(result, Mapping) else None
         if not isinstance(final_text, str):
             raise GatewayStateError("completed Gateway run has no final text")
-        segments = (TextRpcSegment(final_text),) if final_text else ()
+        segments = (TextRpcSegment(result_preview(final_text)),) if final_text else ()
     elif state == "failed":
         error_code = run.error_code
         if not isinstance(error_code, str) or not error_code:

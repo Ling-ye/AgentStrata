@@ -164,14 +164,7 @@ def build_inprocess_backend(
                     _defaults_rt.max_tool_iterations,
                 ),
             ),
-            hard_iteration_cap=max(
-                1,
-                getattr(
-                    rt,
-                    "hard_iteration_cap",
-                    _defaults_rt.hard_iteration_cap,
-                ),
-            ),
+            hard_iteration_cap=getattr(rt, "hard_iteration_cap", _defaults_rt.hard_iteration_cap),
             max_tool_calls=getattr(
                 rt,
                 "max_tool_calls",

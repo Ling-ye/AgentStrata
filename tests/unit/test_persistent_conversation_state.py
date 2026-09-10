@@ -123,7 +123,7 @@ def test_memory_append_is_idempotent_and_concurrent(tmp_path: Path) -> None:
     assert all(item in snapshot for item in entries)
 
 
-def test_only_private_memory_migrates_and_all_legacy_persona_is_ignored(tmp_path: Path) -> None:
+def test_all_legacy_memory_and_persona_are_ignored_without_migration(tmp_path: Path) -> None:
     private = _state(tmp_path, user_id="u1")
     private.workspace.memory_file.write_text(
         "# Memory\n\n## facts\n- 2026-08-19 12:00 私聊稳定偏好\n",
@@ -133,7 +133,11 @@ def test_only_private_memory_migrates_and_all_legacy_persona_is_ignored(tmp_path
         "成员可写旧人格",
         encoding="utf-8",
     )
-    assert "私聊稳定偏好" in private.memory_snapshot()
+    assert private.memory_snapshot() == ""
+    private.memory_append(text="当前保护域记忆", section="facts")
+    assert "当前保护域记忆" in private.memory_snapshot()
+    assert "私聊稳定偏好" not in private.memory_snapshot()
+    assert "私聊稳定偏好" in private.workspace.memory_file.read_text()
     assert private.workspace.memory_file.exists()
     assert private.persona_snapshot("user") == ""
     assert private.workspace.root.joinpath("PERSONA.md").exists()
@@ -205,6 +209,27 @@ def test_legacy_global_persona_is_never_migrated(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert state.persona_snapshot("global") == ""
+
+
+@pytest.mark.parametrize("legacy_kind", ["malformed", "symlink", "hardlink"])
+def test_legacy_memory_is_not_read_or_modified(tmp_path, legacy_kind):
+    state = _state(tmp_path)
+    legacy = state.workspace.memory_file
+    legacy.unlink(missing_ok=True)
+    original = tmp_path / "old-memory"
+    original.write_bytes(b"\xff old data")
+    if legacy_kind == "malformed":
+        legacy.write_bytes(original.read_bytes())
+    elif legacy_kind == "symlink":
+        legacy.symlink_to(original)
+    else:
+        os.link(original, legacy)
+    assert state.memory_snapshot() == ""
+    state.memory_append(text="new protected data", section="facts")
+    assert "new protected data" in state.memory_snapshot()
+    assert "old data" not in state.memory_snapshot()
+    assert original.read_bytes() == b"\xff old data"
+    assert legacy.read_bytes() == b"\xff old data"
 
 
 def test_malformed_utf8_protected_state_fails_closed(tmp_path: Path) -> None:

@@ -42,6 +42,7 @@ from chatcopilot.agent.tools.file_delivery import FileSender
 from chatcopilot.agent.tools.registry import ToolRegistry
 from chatcopilot.agent.tools.workspace_context import WorkspaceService
 from chatcopilot.contracts.runtime import McpServerConfig, RagSourceConfig
+from chatcopilot.contracts.execution_scope import CommandTimeouts
 from chatcopilot.contracts.agent_backend import BackendOpenRequest, BackendSessionOptions
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.subagents import SubagentSpec
@@ -91,6 +92,7 @@ class AgentRuntime:
     mcp_configs: tuple[McpServerConfig, ...] = ()
     search_circuit: SearchCircuitBreaker = field(default_factory=SearchCircuitBreaker, repr=False)
     project_roots: tuple[Path, ...] = ()
+    readonly_roots: tuple[Path, ...] = ()
     agent_backend: str = "native"
     tool_registry: ToolRegistry | None = field(default=None, repr=False)
     tool_packs: tuple[str, ...] = ()
@@ -100,6 +102,7 @@ class AgentRuntime:
     search_llm: LLMClient | None = None
     subagent_llms: Mapping[str, LLMClient] = field(default_factory=dict, repr=False)
     search_provider_credentials: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    command_timeouts: CommandTimeouts = field(default_factory=CommandTimeouts)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -425,6 +428,8 @@ def build_agent_runtime(
     agent_backend: str = "native",
     assembly_profile: ToolPackProjectionProfile = "interactive",
     project_roots: tuple[Path, ...] = (),
+    readonly_roots: tuple[Path, ...] = (),
+    command_timeouts: CommandTimeouts = CommandTimeouts(),
 ) -> AgentRuntime:
     """装配一个 AgentRuntime。
 
@@ -599,6 +604,8 @@ def build_agent_runtime(
             exclude_tools=tuple(exclude_tools or ()),
             assembly_profile=assembly_profile,
             project_roots=project_roots,
+            readonly_roots=readonly_roots,
+            command_timeouts=command_timeouts,
             session_capability_packs=session_capability_packs,
         )
     except BaseException:

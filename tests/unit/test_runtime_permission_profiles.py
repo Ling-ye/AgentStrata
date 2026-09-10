@@ -1,5 +1,7 @@
 from pathlib import Path
+import os
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,7 +14,7 @@ from chatcopilot.contracts.authorization import (
 from chatcopilot.contracts.identity import Role, ConversationIdentity
 from chatcopilot.contracts.tools import ToolDef, ToolResult, object_schema
 from chatcopilot.application.execution_scope import execution_scope
-from chatcopilot.core.scoped_process import sandbox_command
+from chatcopilot.core.scoped_process import sandbox_command, scope_mounts
 
 
 def tool(access="owner"):
@@ -72,15 +74,100 @@ def test_scoped_commands_can_write_project_but_cannot_reach_other_resources(tmp_
     assert (outside / "secret").read_text() == "outside"
 
 
-def test_member_scope_has_no_project_or_native_write(tmp_path):
+def test_member_scope_grants_native_write_only_in_workspace(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     project = tmp_path / "project"
     project.mkdir()
     scope = execution_scope(Role.USER, workspace, (project,))
-    assert not scope.native_write and not scope.project_roots
+    assert scope.native_write and not scope.project_roots
     assert scope.permits(workspace / "file", write=True)
     assert not scope.permits(project / "file", write=True)
+
+
+@pytest.mark.parametrize("backend", ["command", "codex"])
+@pytest.mark.parametrize("link_target", ["project", "external_cache"])
+def test_owner_project_hardlinks_allow_confined_processes(tmp_path, backend, link_target):
+    workspace = tmp_path / "workspace"
+    project = tmp_path / "project"
+    cache = tmp_path / "cache"
+    for root in (workspace, project, cache):
+        root.mkdir()
+    original = (project if link_target == "project" else cache) / "original"
+    original.write_text("original")
+    os.link(original, project / "linked")
+    (project / ".git").mkdir()
+    (project / ".git" / "config").write_text("protected")
+    (project / ".backend-sessions").mkdir()
+    (project / ".backend-sessions" / "auth").write_text("hidden")
+    scope = execution_scope(Role.OWNER, workspace, (project,))
+    script = (
+        'set -eu\n'
+        'test ! -e "$1"\n'
+        'test ! -e .backend-sessions/auth\n'
+        'test ! -w .git/config\n'
+        'printf updated > linked\n'
+    )
+    if backend == "command":
+        command = sandbox_command(
+            ["/bin/sh", "-c", script, "probe", str(cache / "original")],
+            scope=scope, cwd=project,
+        )
+    else:
+        from chatcopilot.agent.backends.codex import CodexAgentBackend
+
+        executable = tmp_path / "probe"
+        executable.write_text("#!/bin/sh\n" + script)
+        executable.chmod(0o700)
+        codex_home = tmp_path / "codex-home"
+        codex_home.mkdir(mode=0o700)
+        gateway_config = tmp_path / "gateway.json"
+        gateway_config.write_text("{}")
+        state = SimpleNamespace(
+            execution_scope=scope, workdir=project,
+            codex_home=codex_home, gateway_config=gateway_config,
+        )
+        command = CodexAgentBackend._wrap_isolated_command(
+            state, [str(executable), str(cache / "original")]
+        )
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert (project / "linked").read_text() == "updated"
+    # The authorized relaxation intentionally allows writes to the shared inode.
+    assert original.read_text() == "updated"
+    assert (project / ".git" / "config").read_text() == "protected"
+    assert (project / ".backend-sessions" / "auth").read_text() == "hidden"
+    assert scope.project_roots == (project,)
+
+
+@pytest.mark.parametrize("layout", [
+    "separate", "equal", "workspace_contains_project", "project_contains_workspace",
+    "equal_with_another_project",
+])
+def test_hardlinks_do_not_block_mount_assembly_for_overlapping_roots(tmp_path, layout):
+    workspace = tmp_path / "workspace"
+    project = tmp_path / "project"
+    if layout in {"equal", "equal_with_another_project"}:
+        project = workspace
+    elif layout == "workspace_contains_project":
+        project = workspace / "project"
+    elif layout == "project_contains_workspace":
+        workspace = project / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    project.mkdir(parents=True, exist_ok=True)
+    projects = (project,)
+    if layout == "equal_with_another_project":
+        extra = tmp_path / "other-project"
+        extra.mkdir()
+        projects += (extra,)
+    original = tmp_path / "outside"
+    original.write_text("unchanged")
+    link_root = project if layout == "workspace_contains_project" else workspace
+    os.link(original, link_root / "linked")
+    scope = execution_scope(Role.OWNER, workspace, projects)
+    assert scope_mounts(scope)
+    assert original.read_text() == "unchanged"
+    assert scope.project_roots == projects
 
 
 def test_actual_caller_role_reaches_handler_without_shared_mutation():
@@ -172,7 +259,7 @@ def test_unbound_executor_does_not_grant_owner_by_default():
 
 
 @pytest.mark.parametrize("role", [Role.OWNER, Role.USER])
-def test_file_operations_reject_links_and_protected_state(tmp_path, role):
+def test_file_operations_accept_hardlinks_but_reject_escaping_and_protected_paths(tmp_path, role):
     from chatcopilot.agent.tools.executor import ToolExecutor
     from chatcopilot.core.workspace_runtime import Workspace, MiddlewareWorkspaceService
     from chatcopilot.external_tools.dev.file_tools import TOOLS
@@ -195,11 +282,17 @@ def test_file_operations_reject_links_and_protected_state(tmp_path, role):
     import os
 
     os.link(secret, root / "linked")
-    for path in ("symbolic", "linked", "../other", ".conversation-state/persona.md"):
+    for path in ("symbolic", "../other", ".conversation-state/persona.md"):
         result = executor.execute("write_file", {"path": path, "content": "overwrite"})
         assert not result.ok, path
     assert not executor.execute("read_file", {"path": "symbolic"}).ok
-    assert not executor.execute("read_file", {"path": "linked"}).ok
+    assert executor.execute("read_file", {"path": "linked"}).ok
+    assert executor.execute("write_file", {"path": "linked", "content": "replacement"}).ok
+    assert (root / "linked").read_text() == "replacement"
+    assert secret.read_text() == "unchanged"
+    os.link(secret, root / "to-delete")
+    assert executor.execute("delete_file", {"path": "to-delete"}).ok
+    assert not (root / "to-delete").exists()
     assert executor.execute("write_file", {"path": "notes/new.txt", "content": "saved"}).ok
     assert (root / "notes/new.txt").read_text() == "saved"
     assert secret.read_text() == "unchanged"
@@ -338,7 +431,6 @@ def test_persona_research_commits_and_next_turn_loads_in_each_backend(
     params = {
         "operation": "research",
         "scope": "group" if kind == "group" else "user",
-        "requirement": request,
     }
 
     class Model:

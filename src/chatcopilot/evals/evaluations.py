@@ -6,6 +6,9 @@ the orchestration, while each Trial has an independent outcome.
 
 from __future__ import annotations
 
+from chatcopilot.contracts.execution_scope import RUNTIME_ACCESS_POLICY_VERSION
+from chatcopilot.evals.private_files import validate_private_file_metadata as _validate_private_artifact_metadata
+
 import hashlib
 import hmac
 from importlib import resources
@@ -16,7 +19,6 @@ import os
 import re
 import signal
 import shutil
-import stat
 import sys
 import time
 import uuid
@@ -3581,7 +3583,7 @@ def _runtime_behavior_fingerprint(
             "rag_sources": rag_sources,
             "skills": skills,
         },
-        "permissions": {"policy_version": "runtime-access-v2"},
+        "permissions": {"policy_version": RUNTIME_ACCESS_POLICY_VERSION},
     }
     sanitized = redact_payload(
         _behavior_json_value(payload),
@@ -4512,24 +4514,6 @@ def _ensure_private_dir(path: Path) -> None:
         raise ValueError(f"Evaluation path is not a directory: {path.name}")
     if os.name != "nt":
         path.chmod(0o700)
-
-
-def _validate_private_artifact_metadata(
-    metadata: os.stat_result,
-    path: Path,
-    *,
-    label: str,
-) -> None:
-    if not stat.S_ISREG(metadata.st_mode):
-        raise ValueError(f"{label} must be a regular file: {path.name}")
-    if os.name == "nt":
-        return
-    if metadata.st_uid != os.getuid():
-        raise PermissionError(f"{label} must be owned by the current user: {path.name}")
-    if stat.S_IMODE(metadata.st_mode) != 0o600:
-        raise PermissionError(f"{label} must use mode 0600: {path.name}")
-    if metadata.st_nlink != 1:
-        raise ValueError(f"{label} must have exactly one hard link: {path.name}")
 
 
 def _read_private_json_object(path: Path, label: str) -> dict[str, Any]:

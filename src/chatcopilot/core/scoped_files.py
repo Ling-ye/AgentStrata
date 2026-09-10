@@ -2,11 +2,15 @@
 
 from contextlib import contextmanager
 import os
+import io
+import shutil
+from typing import BinaryIO
 from pathlib import Path
 import stat
 from uuid import uuid4
 
 from chatcopilot.contracts.execution_scope import current_execution_scope
+from chatcopilot.core.file_integrity import require_regular_file
 
 
 @contextmanager
@@ -33,9 +37,8 @@ def _parent(path: Path, *, write: bool = False, create: bool = False):
         os.close(fd)
 
 
-def _regular(info):
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise PermissionError("ordinary files must be regular and single-link")
+def require_single_link_regular_file(info: os.stat_result) -> None:
+    require_regular_file(info, single_link=True)
 
 
 def read_bytes(path: Path, limit: int) -> bytes:
@@ -45,7 +48,7 @@ def read_bytes(path: Path, limit: int) -> bytes:
     with _parent(path) as parent:
         fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
         with os.fdopen(fd, "rb") as stream:
-            _regular(os.fstat(stream.fileno()))
+            require_regular_file(os.fstat(stream.fileno()))
             return stream.read(limit)
 
 
@@ -55,14 +58,19 @@ def read_text(path: Path) -> str:
     with _parent(path) as parent:
         fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
         with os.fdopen(fd, encoding="utf-8", errors="replace") as stream:
-            _regular(os.fstat(stream.fileno()))
+            require_regular_file(os.fstat(stream.fileno()))
             return stream.read()
 
 
 def write_text(path: Path, content: str) -> None:
+    write_stream(path, io.BytesIO(content.encode("utf-8")))
+
+
+def write_stream(path: Path, source: BinaryIO) -> None:
     if current_execution_scope() is None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        with path.open("wb") as stream:
+            shutil.copyfileobj(source, stream)
         return
     with _parent(path, write=True, create=True) as parent:
         try:
@@ -70,15 +78,15 @@ def write_text(path: Path, content: str) -> None:
         except FileNotFoundError:
             mode = 0o600
         else:
-            _regular(info)
+            require_regular_file(info)
             mode = stat.S_IMODE(info.st_mode)
         temporary = ".write-" + uuid4().hex
         fd = os.open(
             temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=parent
         )
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(content)
+            with os.fdopen(fd, "wb") as stream:
+                shutil.copyfileobj(source, stream)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent)
@@ -95,5 +103,5 @@ def delete_file(path: Path) -> None:
         path.unlink()
         return
     with _parent(path, write=True) as parent:
-        _regular(os.stat(path.name, dir_fd=parent, follow_symlinks=False))
+        require_regular_file(os.stat(path.name, dir_fd=parent, follow_symlinks=False))
         os.unlink(path.name, dir_fd=parent)

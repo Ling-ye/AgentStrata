@@ -8,10 +8,9 @@
 AgentStrata 的生产运行面是 Linux 或 WSL2，不支持 Windows 原生部署。Console 是可选管理面，
 不是 QQ 首次部署的依赖。
 
-安装脚本通过 `uv sync --link-mode copy` 将 Python 依赖复制到实例虚拟环境，避免与外部
-缓存共享硬链接。项目目录进入 Agent 执行范围时仍按
-[`runtime-permissions-simplification`](../specs/runtime-permissions-simplification/spec.md)
-检查文件边界；硬链接检查不会因依赖安装而放宽。
+安装脚本保留锁定依赖解析，文件复用采用 uv 默认方式，不再强制复制依赖。
+挂载装配不扫描目录内的硬链接；普通文件与权威状态采用各自的校验边界，见
+[文件边界简化规格](../specs/file-boundary-simplification/spec.md)。
 
 ## 准备什么
 

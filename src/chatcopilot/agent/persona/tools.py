@@ -16,7 +16,6 @@ from chatcopilot.contracts.persona_control import (
 )
 from chatcopilot.contracts.identity import role_value
 from chatcopilot.contracts.persistent_state import (
-    PERSONA_MAX_ITEM_CHARS,
     PERSONA_SCOPES,
     PersistentConversationState,
     has_meaningful_persona,
@@ -39,7 +38,6 @@ _OPERATIONS = frozenset(
 _SCOPES = frozenset({"default", *PERSONA_SCOPES})
 _CONFIRM_COMMAND = "/persona confirm"
 _PROPOSAL_TTL_SECONDS = 600
-_GLOBAL_CUES = ("全局", "所有会话", "所有群", "global", "every conversation")
 _NAMED_PERSONA_RE = re.compile(
     r"(?:人格|人设)(?:为|是|成)|(?:你|机器人|助手)(?:就是|作为|扮演)|(?:模仿|扮演|冒充)",
     re.IGNORECASE,
@@ -155,39 +153,13 @@ class _PersonaManageHandler:
             return _show_persona(state, chat_kind=chat_kind, requested_scope=requested_scope)
 
         request_text = str(context.request_text or "").strip()
-        requirement = str(arguments.get("requirement") or "").strip()
-        defer_confirmation = bool(arguments.get("defer_confirmation", False))
-        if operation in {"set", "append", "research"}:
-            if not requirement:
-                return _failure(
-                    "persona_requirement_empty",
-                    "set、append 和 research 必须提供 requirement。",
-                    operation=operation,
-                    scope=scope,
-                )
-            if requirement not in request_text:
-                return _failure(
-                    "persona_requirement_ungrounded",
-                    "requirement 必须是当前用户消息中的连续原文。",
-                    operation=operation,
-                    scope=scope,
-                )
-        elif requirement:
+        requirement = request_text if operation in {"set", "append", "research"} else ""
+        if not request_text:
             return _failure(
-                "persona_requirement_unexpected",
-                f"{operation} 不接受 requirement。",
-                operation=operation,
-                scope=scope,
+                "persona_request_missing", "人格修改需要当前用户消息。",
+                operation=operation, scope=scope,
             )
-        if scope == "global" and not any(cue in request_text for cue in _GLOBAL_CUES):
-            return _failure(
-                "persona_global_scope_ungrounded",
-                "只有当前消息明确要求全局或所有会话时才能选择 global。",
-                operation=operation,
-                scope=scope,
-            )
-
-        if operation == "clear" or defer_confirmation:
+        if bool(arguments.get("defer_confirmation", False)):
             return self._defer(
                 operation=operation,
                 scope=scope,
@@ -196,6 +168,8 @@ class _PersonaManageHandler:
             )
 
         self.port.clear_pending_proposal()
+        if operation == "clear":
+            return self._clear(service=service, scope=scope)
         return self._apply(
             operation=operation,
             scope=scope,
@@ -596,7 +570,7 @@ _INPUT_SCHEMA = object_schema(
             "enum": sorted(_OPERATIONS),
             "description": (
                 "show=查看；set=替换；append=合并补充；research=检索命名人物后替换；"
-                "refresh=重查并整理；clear=创建清空提案；confirm=确认提案；cancel=取消提案。"
+                "refresh=重查并整理；clear=清空；confirm=确认提案；cancel=取消提案。"
             ),
         },
         "scope": {
@@ -604,14 +578,6 @@ _INPUT_SCHEMA = object_schema(
             "enum": sorted(_SCOPES),
             "default": "default",
             "description": "default 自动绑定当前私聊 user 或当前 group；global 必须由用户明确提出。",
-        },
-        "requirement": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": PERSONA_MAX_ITEM_CHARS,
-            "description": (
-                "set/append/research 的人格要求，必须逐字取自当前用户消息中的一个连续子串。"
-            ),
         },
         "defer_confirmation": {
             "type": "boolean",
@@ -703,9 +669,9 @@ def build_persona_provider(
         name="persona_manage",
         summary=(
             "Owner-only 人格管理。用户用自然语言或 /persona 要求查看、设置、补充、检索、"
-            "刷新、清空、确认或取消持续人格时必须调用。set/append/research 的 requirement 必须"
-            "是当前用户消息的连续原文；命名人物或角色优先用 research。依赖指代或含义不确定时"
-            "设置 defer_confirmation=true。clear 永远只创建提案，confirm 仅接受用户精确发送"
+            "刷新、清空、确认或取消持续人格时必须调用。宿主从当前用户正文取得人格要求；"
+            "命名人物或角色优先用 research。明确要求直接执行，包括 clear；依赖指代、"
+            "作用域或含义不确定时设置 defer_confirmation=true。confirm 仅接受用户精确发送"
             " /persona confirm。只有 data.committed=true 才能声称人格已保存或清空。"
         ),
         input_schema=_INPUT_SCHEMA,

@@ -14,5 +14,5 @@ def test_top_level_cli_uses_lazy_imports_for_heavy_commands() -> None:
     assert "from chatcopilot.evals.cli import main as evals_main" in text
     assert "agentstrata evals list" in text
     assert "agentstrata http-api-server" in text
-    assert "agentstrata qq-at-proxy" in text
+    assert "agentstrata qq-at-proxy" not in text
     assert "Compatibility entry point: python -m chatcopilot <command>" in text

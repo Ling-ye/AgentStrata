@@ -1,6 +1,6 @@
 """Path access guard for the ``windows_fs`` capability.
 
-Validates that any absolute path requested by ``win_*`` tools:
+Bound calls use ExecutionScope. Without a bound scope, ``win_*`` paths:
 
 1. Stays under one of ``WindowsFsConfig.allowed_roots`` (after normalization).
 2. Does not match any deny glob in ``denied_patterns``.
@@ -119,63 +119,35 @@ def normalize_input_path(raw: str) -> Path:
     return Path(rebuilt)
 
 
-def ensure_readable(path: str, cfg: WindowsFsConfig) -> Path:
-    """Validate that ``path`` is allowed for read/search operations.
+def _authorized_path(path: str, cfg: WindowsFsConfig, *, check_extension: bool) -> Path:
+    from chatcopilot.contracts.execution_scope import current_execution_scope
 
-    Returns the normalized ``Path`` instance on success; raises
-    ``PathAccessError`` on rejection.
-    """
     resolved = normalize_input_path(path)
+    scope = current_execution_scope()
+    if scope is not None:
+        if not scope.permits(resolved):
+            raise PathAccessError("path is outside the bound execution resources")
+        return resolved
     target_norm = _normalize(str(resolved))
-
     if not cfg.allowed_roots:
-        raise PathAccessError(
-            "no allowed_roots configured; set CHATCOPILOT_WINDOWS_FS_EXTRA_ROOTS "
-            "or CHATCOPILOT_WINDOWS_FS_ALLOWLIST"
-        )
+        raise PathAccessError("no allowed_roots configured")
     if not _is_within_any_root(target_norm, cfg.allowed_roots):
-        raise PathAccessError(
-            f"path not under any allowed_roots: {resolved} "
-            f"(allowed roots: {', '.join(cfg.allowed_roots) or '<empty>'})"
-        )
+        raise PathAccessError(f"path not under any allowed_roots: {resolved}")
     if _matches_any_glob(target_norm, cfg.denied_patterns):
         raise PathAccessError(f"path matches denied_patterns: {resolved}")
-
-    if cfg.allowed_extensions:
+    if check_extension and cfg.allowed_extensions:
         ext = resolved.suffix.lower()
         if ext and ext not in cfg.allowed_extensions and not resolved.is_dir():
-            raise PathAccessError(
-                f"extension {ext!r} not in allowed_extensions: {resolved}"
-            )
+            raise PathAccessError(f"extension {ext!r} not in allowed_extensions: {resolved}")
     return resolved
+
+
+def ensure_readable(path: str, cfg: WindowsFsConfig) -> Path:
+    return _authorized_path(path, cfg, check_extension=True)
 
 
 def ensure_directory_searchable(path: str, cfg: WindowsFsConfig) -> Path:
-    """Validate that ``path`` can be used as a search root.
-
-    Same checks as ``ensure_readable`` minus the extension constraint (a
-    directory has no meaningful extension).
-    """
-    resolved = normalize_input_path(path)
-    target_norm = _normalize(str(resolved))
-
-    if not cfg.allowed_roots:
-        raise PathAccessError(
-            "no allowed_roots configured; set CHATCOPILOT_WINDOWS_FS_EXTRA_ROOTS "
-            "or CHATCOPILOT_WINDOWS_FS_ALLOWLIST"
-        )
-    if not _is_within_any_root(target_norm, cfg.allowed_roots):
-        raise PathAccessError(
-            f"path not under any allowed_roots: {resolved}"
-        )
-    if _matches_any_glob(target_norm, cfg.denied_patterns):
-        raise PathAccessError(f"path matches denied_patterns: {resolved}")
-    return resolved
+    return _authorized_path(path, cfg, check_extension=False)
 
 
-__all__ = [
-    "PathAccessError",
-    "ensure_directory_searchable",
-    "ensure_readable",
-    "normalize_input_path",
-]
+__all__ = ["PathAccessError", "ensure_directory_searchable", "ensure_readable", "normalize_input_path"]

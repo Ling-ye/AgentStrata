@@ -3398,7 +3398,7 @@ def test_cli_environment_error_does_not_echo_local_env_secret(
     assert secret not in captured.out
 
 
-def test_cli_requires_explicit_output_outside_managed_service_root(
+def test_cli_defaults_to_manual_output_and_rejects_managed_service_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -3419,12 +3419,13 @@ def test_cli_requires_explicit_output_outside_managed_service_root(
         "--json",
     ]
 
-    missing_code = evals_cli_main(arguments)
-    missing = json.loads(capsys.readouterr().err)
+    result_code = evals_cli_main(arguments)
+    payload = json.loads(capsys.readouterr().out)
 
-    assert missing_code == 2
-    assert missing["code"] == "evaluation_output_required"
-    assert not (repository / "reports").exists()
+    assert result_code == 0
+    assert payload["evaluation_id"]
+    assert (console / "reports/evals/manual" / payload["evaluation_id"]).is_dir()
+    assert not (repository / "reports/evals/evaluations").exists()
 
     reserved = repository / "reports/evals/evaluations/eval-reserved"
     reserved_code = evals_cli_main(

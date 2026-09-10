@@ -124,7 +124,7 @@ class PersonaDraftAgent:
                 "content": json.dumps(
                     {
                         "operation": operation,
-                        "owner_requirement": requirement[:2000],
+                        "owner_requirement": requirement,
                         "current_persona": current[:_MAX_CURRENT_PERSONA_CHARS],
                         "research_required": bool(research_required),
                     },
