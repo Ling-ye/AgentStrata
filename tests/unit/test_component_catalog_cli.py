@@ -25,8 +25,11 @@ def _load_script():
     return module
 
 
-def test_component_catalog_cli_json_contract(capsys) -> None:
+def test_component_catalog_cli_json_contract(monkeypatch, capsys) -> None:
     script = _load_script()
+
+    report = CatalogAuditReport(issues=(), stats=CatalogAuditStats(static_tools=3))
+    monkeypatch.setattr(script, "audit_component_catalog", lambda: report)
 
     assert script.main(["--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -34,7 +37,8 @@ def test_component_catalog_cli_json_contract(capsys) -> None:
     assert payload["schema_version"] == 1
     assert payload["ok"] is True
     assert payload["issue_count"] == 0
-    assert payload["stats"]["static_tools"] > 0
+    assert payload["stats"]["static_tools"] == 3
+    assert payload["issues"] == []
 
 
 def test_component_catalog_cli_returns_nonzero_for_structured_issues(

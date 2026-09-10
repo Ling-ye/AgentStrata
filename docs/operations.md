@@ -28,6 +28,8 @@ python -m chatcopilot bot doctor --bot bots/<id>/bot.yaml
 
 | 目标 | 命令 |
 | --- | --- |
+| 日常代码回归（约 1000 项＋静态检查） | `.venv/bin/python scripts/check_repo.py fast` |
+| 广泛改动的完整回归与构建检查 | `.venv/bin/python scripts/check_repo.py full` |
 | 查看全部实例 | `python -m console.control list --json` |
 | 更新 Console 与全部机器人 | `bash deploy/wsl/deploy_console.sh` |
 | 查看实例状态 | `python -m console.control status --instance <id> --json` |

@@ -1,0 +1,94 @@
+# Daily regression: complete files; extended regression remains in full and CI.
+# Selection rationale: specs/daily-test-profile/spec.md
+
+# Gateway and QQ message delivery
+tests/unit/test_gateway_protocol.py
+tests/unit/test_gateway_rpc_validation.py
+tests/unit/test_gateway_state_store.py
+tests/unit/test_gateway_server.py
+tests/unit/test_gateway_client.py
+tests/unit/test_gateway_channels.py
+tests/unit/test_gateway_runtime_host.py
+tests/unit/test_gateway_application_dispatcher.py
+tests/unit/test_gateway_acp_edge.py
+tests/unit/test_gateway_durable_approvals.py
+tests/unit/test_qq_onebot_codec.py
+tests/unit/test_qq_onebot_driver.py
+
+# Application sessions and exchanges
+tests/unit/test_application_actor_runtime.py
+tests/unit/test_application_sessions.py
+tests/unit/test_application_resources.py
+tests/unit/test_application_workspaces.py
+tests/unit/test_application_tool_authorization.py
+tests/unit/test_group_conversation_journal_generation.py
+
+# Identity, permissions and operator lifecycle
+tests/unit/test_authorization_policy.py
+tests/unit/test_authorization_tools.py
+tests/unit/test_authorization_approvals.py
+tests/unit/test_runtime_permission_profiles.py
+tests/unit/test_execution_policy_consolidation.py
+tests/unit/test_development_task_scope.py
+tests/unit/test_codex_mutation_policy.py
+tests/unit/test_codex_credentials.py
+tests/unit/test_qq_token_sync.py
+tests/unit/test_operator_commands.py
+tests/unit/test_deterministic_operator_commands.py
+
+# Agent, backend, prompt and tool contracts
+tests/unit/test_tool_registry.py
+tests/unit/test_tool_executor_contract.py
+tests/unit/test_tool_permission_schema.py
+tests/unit/test_component_catalog_audit.py
+tests/unit/test_component_catalog_cli.py
+tests/unit/test_component_catalog_projection.py
+tests/unit/test_session_capability_assembly.py
+tests/unit/test_application_agent_runtime.py
+tests/unit/test_runtime_llm_profiles.py
+tests/unit/test_prompt_plan.py
+tests/unit/test_prompt_plan_architecture.py
+tests/unit/test_agent_cancellation.py
+tests/unit/test_concurrency.py
+tests/unit/test_main_agent_backend_unification.py
+tests/unit/test_codex_cli_runner.py
+tests/unit/test_mcp_client_provider.py
+tests/unit/test_search_coordinator.py
+
+# Files, resources and persistent conversation state
+tests/unit/test_file_integrity.py
+tests/unit/test_archive_extraction.py
+tests/unit/test_gateway_resources.py
+tests/unit/test_multimodal_image_io.py
+tests/unit/test_persistent_conversation_state.py
+tests/unit/test_memory_tools.py
+tests/unit/test_persona_tools.py
+tests/unit/test_persona_control_service.py
+tests/unit/test_memory_receipt.py
+
+# Evaluation isolation and service lifecycle
+tests/unit/test_eval_artifact_guard.py
+tests/unit/test_evaluation_environments.py
+tests/unit/test_evaluation_service_protocol.py
+tests/unit/test_evaluation_execution_capture.py
+
+# Console configuration and observation
+tests/unit/test_console_task_flow.py
+tests/unit/test_gateway_observation.py
+tests/unit/test_console_configuration_resolution.py
+tests/unit/test_console_health.py
+tests/unit/test_console_operator_values.py
+
+# Configuration and validation entrypoints
+tests/unit/test_repository_validation.py
+tests/unit/test_architecture_boundaries.py
+tests/unit/test_sdd_specs.py
+tests/unit/test_botspec_gateway_channels.py
+tests/unit/test_botspec_runtime_env.py
+tests/unit/test_command_timeouts.py
+
+# Local integration smoke
+tests/integration/test_gateway_onebot_roundtrip.py
+tests/integration/test_access_control.py
+tests/integration/test_acp_streaming_updates.py
+tests/integration/test_lingye_botspec_smoke.py

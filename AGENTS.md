@@ -244,7 +244,11 @@ python -m chatcopilot.agent.search.probe --bot bots/lingye-copilot-qq/bot.yaml -
 
 ## 快速验证
 
-改动后至少跑与改动相关的一组：
+开发过程中先跑改动模块及直接调用方的定向测试；普通改动完成后使用 `fast`，
+按 `tests/fast.txt` 的完整文件清单执行约 1000 项日常回归和全部静态检查。
+清单之外的功能有改动时补跑对应测试，不要求每次小修改执行全量。
+跨层、部署、依赖、打包或广泛改动使用 `full`；CI 保留 Python 3.10/3.13 全量覆盖。
+裸 `pytest` 仍是全量发现。清单按职责维护，不按数量截断参数矩阵。
 
 ```bash
 # Public-boundary checks for the current change
@@ -255,7 +259,7 @@ bash scripts/check_secrets.sh changes
 python scripts/check_public_repo.py --history
 bash scripts/check_secrets.sh history
 
-# 统一入口；fast 包含 SDD、架构、requirements 漂移、Ruff、渐进 mypy 和核心测试
+# 日常入口；fast 包含全部静态检查和约 1000 项精选回归
 .venv/bin/python scripts/check_repo.py fast
 
 # Component Catalog 精确投影与跨 surface 一致性

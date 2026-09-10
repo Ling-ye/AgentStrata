@@ -44,7 +44,7 @@ jobs:
           - python-version: "3.10"
             gate: full
           - python-version: "3.13"
-            gate: fast
+            gate: python-tests
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -68,7 +68,11 @@ jobs:
         working-directory: console/web
         run: npm ci
       - name: Run repository gate
+        if: matrix.gate == 'full'
         run: python scripts/check_repo.py ${{ matrix.gate }}
+      - name: Run complete Python regression
+        if: matrix.gate == 'python-tests'
+        run: python -m pytest -q
 
   console:
     name: Console

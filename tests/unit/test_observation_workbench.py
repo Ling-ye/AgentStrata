@@ -57,13 +57,18 @@ def test_closed_console_records_lifecycle_and_recovers_without_invented_steps(re
 
 def test_history_search_paginates_all_records_and_preserves_selected_detail(recorded):
     _, _, recorder = recorded
-    for index in range(63):
+    assert RunFilter().limit == 50
+    for index in range(7):
         make_run(recorded, str(index), complete=True)
-    first = history(recorder.store, RunFilter(limit=50))
-    second = history(recorder.store, RunFilter(page=2))
-    assert len(first['runs']) == 50 and len(second['runs']) == 13 and first['has_more']
-    assert first['total'] == 63
+    first = history(recorder.store, RunFilter(limit=5))
+    second = history(recorder.store, RunFilter(page=2, limit=5))
+    assert len(first['runs']) == 5 and len(second['runs']) == 2 and first['has_more']
+    assert first['total'] == second['total'] == 7
+    assert not second['has_more']
     assert not ({row['run_id'] for row in first['runs']} & {row['run_id'] for row in second['runs']})
+    assert {row['run_id'] for row in [*first['runs'], *second['runs']]} == {
+        f'run-{index}' for index in range(7)
+    }
     assert history(recorder.store, RunFilter(search='run-0'))['runs'][0]['run_id'] == 'run-0'
     assert detail(recorder.store, 'run-0')['run']['state'] == 'completed'
 

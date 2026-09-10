@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
+import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -9,67 +12,50 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_architecture_graph_detects_strongly_connected_components() -> None:
-    import importlib.util
-    import sys
-
-    script = ROOT / "scripts" / "check_architecture.py"
-    spec = importlib.util.spec_from_file_location("check_architecture_scc", script)
+@pytest.fixture
+def checker(monkeypatch):
+    spec = importlib.util.spec_from_file_location(
+        "architecture_checker_test", ROOT / "scripts/check_architecture.py"
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
+    monkeypatch.setitem(sys.modules, spec.name, module)
     spec.loader.exec_module(module)
+    return module
 
-    components = module._strongly_connected_components(
+
+def test_architecture_graph_detects_strongly_connected_components(checker) -> None:
+    components = checker._strongly_connected_components(
         {"a": {"b"}, "b": {"c"}, "c": {"a"}, "d": set()}
     )
     assert components == (("a", "b", "c"),)
 
 
-def test_architecture_graph_resolves_relative_import_base() -> None:
-    import importlib.util
-    import sys
-
-    script = ROOT / "scripts" / "check_architecture.py"
-    spec = importlib.util.spec_from_file_location("check_architecture_relative", script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-
-    record = module.ModuleFile(
+def test_architecture_graph_resolves_relative_import_base(checker) -> None:
+    record = checker.ModuleFile(
         name="chatcopilot.agent.feature",
         path=ROOT / "src" / "chatcopilot" / "agent" / "feature.py",
         area="agent",
     )
     node = ast.parse("from ..core import config").body[0]
-    assert module._absolute_import_base(record, node) == "chatcopilot.core"
+    assert checker._absolute_import_base(record, node) == "chatcopilot.core"
 
 
-def test_architecture_graph_records_every_imported_submodule(tmp_path: Path) -> None:
-    import importlib.util
-    import sys
-
-    script = ROOT / "scripts" / "check_architecture.py"
-    spec = importlib.util.spec_from_file_location("check_architecture_aliases", script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+def test_architecture_graph_records_every_imported_submodule(checker, tmp_path: Path) -> None:
     source = tmp_path / "source.py"
     source.write_text("from example.routes import first, second, VALUE\n", encoding="utf-8")
     records = {
-        "example.source": module.ModuleFile("example.source", source, "entrypoints"),
-        "example.routes": module.ModuleFile("example.routes", tmp_path / "routes.py", "entrypoints"),
-        "example.routes.first": module.ModuleFile(
+        "example.source": checker.ModuleFile("example.source", source, "entrypoints"),
+        "example.routes": checker.ModuleFile("example.routes", tmp_path / "routes.py", "entrypoints"),
+        "example.routes.first": checker.ModuleFile(
             "example.routes.first", tmp_path / "first.py", "entrypoints"
         ),
-        "example.routes.second": module.ModuleFile(
+        "example.routes.second": checker.ModuleFile(
             "example.routes.second", tmp_path / "second.py", "entrypoints"
         ),
     }
 
-    references = module._import_references(records["example.source"], records)
+    references = checker._import_references(records["example.source"], records)
 
     assert tuple(reference.target for reference in references) == (
         "example.routes.first",
@@ -78,16 +64,7 @@ def test_architecture_graph_records_every_imported_submodule(tmp_path: Path) -> 
     )
 
 
-def test_architecture_graph_does_not_hide_a_cycle_in_a_later_alias(tmp_path: Path) -> None:
-    import importlib.util
-    import sys
-
-    script = ROOT / "scripts" / "check_architecture.py"
-    spec = importlib.util.spec_from_file_location("check_architecture_alias_cycle", script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+def test_architecture_graph_does_not_hide_a_cycle_in_a_later_alias(checker, tmp_path: Path) -> None:
     package = tmp_path / "pkg"
     package.mkdir()
     a_path = package / "a.py"
@@ -97,67 +74,50 @@ def test_architecture_graph_does_not_hide_a_cycle_in_a_later_alias(tmp_path: Pat
     b_path.write_text("from pkg import a\n", encoding="utf-8")
     helper_path.write_text("VALUE = 1\n", encoding="utf-8")
     records = {
-        "pkg": module.ModuleFile("pkg", package / "__init__.py", "entrypoints", True),
-        "pkg.a": module.ModuleFile("pkg.a", a_path, "entrypoints"),
-        "pkg.b": module.ModuleFile("pkg.b", b_path, "entrypoints"),
-        "pkg.helper": module.ModuleFile("pkg.helper", helper_path, "entrypoints"),
+        "pkg": checker.ModuleFile("pkg", package / "__init__.py", "entrypoints", True),
+        "pkg.a": checker.ModuleFile("pkg.a", a_path, "entrypoints"),
+        "pkg.b": checker.ModuleFile("pkg.b", b_path, "entrypoints"),
+        "pkg.helper": checker.ModuleFile("pkg.helper", helper_path, "entrypoints"),
     }
     graph = {
         name: {
             reference.target
-            for reference in module._import_references(record, records)
+            for reference in checker._import_references(record, records)
             if reference.target is not None and reference.target != name
         }
         for name, record in records.items()
         if record.path.exists()
     }
 
-    assert module._strongly_connected_components(graph) == (("pkg.a", "pkg.b"),)
+    assert checker._strongly_connected_components(graph) == (("pkg.a", "pkg.b"),)
 
 
-def test_private_cross_area_import_check_is_not_module_allowlist_based(tmp_path: Path) -> None:
-    import importlib.util
-    import sys
-
-    script = ROOT / "scripts" / "check_architecture.py"
-    spec = importlib.util.spec_from_file_location("check_architecture_private", script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+def test_private_cross_area_import_check_is_not_module_allowlist_based(checker, tmp_path: Path) -> None:
     source = tmp_path / "source.py"
     source.write_text(
         "from ..external_tools.example import _private, public, __all__\n",
         encoding="utf-8",
     )
     records = {
-        "chatcopilot.agent.source": module.ModuleFile(
+        "chatcopilot.agent.source": checker.ModuleFile(
             "chatcopilot.agent.source", source, "agent"
         ),
-        "chatcopilot.external_tools.example": module.ModuleFile(
+        "chatcopilot.external_tools.example": checker.ModuleFile(
             "chatcopilot.external_tools.example",
             tmp_path / "external.py",
             "external_tools",
         ),
     }
 
-    assert module._private_cross_area_imports(
+    assert checker._private_cross_area_imports(
         records["chatcopilot.agent.source"], records
     ) == ("chatcopilot.external_tools.example:_private",)
 
 
 def test_private_cross_area_check_covers_direct_imports_private_modules_and_console(
+    checker,
     tmp_path: Path,
 ) -> None:
-    import importlib.util
-    import sys
-
-    script = ROOT / "scripts" / "check_architecture.py"
-    spec = importlib.util.spec_from_file_location("check_architecture_private_paths", script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
     source = tmp_path / "console_source.py"
     source.write_text(
         "import chatcopilot.external_tools._private\n"
@@ -165,33 +125,26 @@ def test_private_cross_area_check_covers_direct_imports_private_modules_and_cons
         encoding="utf-8",
     )
     records = {
-        "console.source": module.ModuleFile("console.source", source, "entrypoints"),
-        "chatcopilot.external_tools._private": module.ModuleFile(
+        "console.source": checker.ModuleFile("console.source", source, "entrypoints"),
+        "chatcopilot.external_tools._private": checker.ModuleFile(
             "chatcopilot.external_tools._private",
             tmp_path / "private.py",
             "external_tools",
         ),
-        "chatcopilot.external_tools._helpers": module.ModuleFile(
+        "chatcopilot.external_tools._helpers": checker.ModuleFile(
             "chatcopilot.external_tools._helpers",
             tmp_path / "helpers.py",
             "external_tools",
         ),
     }
 
-    assert module._private_cross_area_imports(records["console.source"], records) == (
+    assert checker._private_cross_area_imports(records["console.source"], records) == (
         "chatcopilot.external_tools._helpers",
         "chatcopilot.external_tools._private",
     )
 
 
-def test_retired_imports_are_rejected_even_from_compatibility_tests(tmp_path, monkeypatch) -> None:
-    import importlib.util
-    import sys
-
-    spec = importlib.util.spec_from_file_location("architecture_retired_imports", ROOT / "scripts/check_architecture.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+def test_retired_imports_are_rejected_even_from_compatibility_tests(checker, tmp_path, monkeypatch) -> None:
     source_root = tmp_path / "src/chatcopilot"
     (source_root / "agent").mkdir(parents=True)
     (source_root / "agent/current.py").write_text("from . import config\n", encoding="utf-8")
@@ -200,32 +153,25 @@ def test_retired_imports_are_rejected_even_from_compatibility_tests(tmp_path, mo
     (tests / "test_compatibility_exports.py").write_text(
         "from chatcopilot.agent.protocol import AgentTask\n", encoding="utf-8",
     )
-    monkeypatch.setattr(module, "ROOT", tmp_path)
-    monkeypatch.setattr(module, "SRC", source_root)
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", source_root)
 
-    failures = module._compatibility_import_checks()["compatibility_surfaces_are_not_internal_dependencies"]
+    failures = checker._compatibility_import_checks()["compatibility_surfaces_are_not_internal_dependencies"]
 
     assert failures["src/chatcopilot/agent/current.py"] == ["chatcopilot.agent.config"]
     assert any(name.startswith("chatcopilot.agent.protocol") for name in failures["tests/unit/test_compatibility_exports.py"])
 
 
-def test_empty_retired_modules_and_replacement_packages_are_rejected(tmp_path, monkeypatch) -> None:
-    import importlib.util
-    import sys
-
-    spec = importlib.util.spec_from_file_location("architecture_retired_sources", ROOT / "scripts/check_architecture.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+def test_empty_retired_modules_and_replacement_packages_are_rejected(checker, tmp_path, monkeypatch) -> None:
     source_root = tmp_path / "src/chatcopilot"
     for name in ("agent/config.py", "core/workspace/__init__.py", "middleware/runtime/workspace/replacement.py"):
         path = source_root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("", encoding="utf-8")
-    monkeypatch.setattr(module, "ROOT", tmp_path)
-    monkeypatch.setattr(module, "SRC", source_root)
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", source_root)
 
-    rejected = module._semantic_invariants()["removed_legacy_sources_do_not_return"]["repository"]
+    rejected = checker._semantic_invariants()["removed_legacy_sources_do_not_return"]["repository"]
 
     assert "src/chatcopilot/agent/config.py" in rejected
     assert "src/chatcopilot/core/workspace/__init__.py" in rejected
@@ -233,18 +179,7 @@ def test_empty_retired_modules_and_replacement_packages_are_rejected(tmp_path, m
 
 
 @pytest.fixture
-def runtime_architecture_workspace(tmp_path: Path, monkeypatch):
-    import importlib.util
-    import sys
-    from dataclasses import replace
-
-    spec = importlib.util.spec_from_file_location(
-        "check_four_layer_baseline", ROOT / "scripts/check_architecture.py"
-    )
-    assert spec is not None and spec.loader is not None
-    checker = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = checker
-    spec.loader.exec_module(checker)
+def runtime_architecture_workspace(tmp_path: Path, monkeypatch, checker):
     original_root = checker.ROOT
     monkeypatch.setattr(checker, "RULES", tuple(
         replace(rule, root=tmp_path / rule.root.relative_to(original_root))

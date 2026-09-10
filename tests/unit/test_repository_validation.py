@@ -5,6 +5,9 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -17,11 +20,6 @@ def _load_script(name: str):
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
-
-
-def test_generated_requirements_are_in_sync() -> None:
-    sync_requirements = _load_script("sync_requirements.py")
-    assert sync_requirements.check() == []
 
 
 def test_validation_profiles_include_static_and_runtime_checks(
@@ -52,6 +50,9 @@ def test_validation_profiles_include_static_and_runtime_checks(
     ]
     fast_pytest = profiles["fast"][-1]
     full_pytest = profiles["full"][-2]
+    assert fast_pytest.argv[3:-2] == check_repo._fast_test_paths()
+    assert "tests/unit" not in fast_pytest.argv
+    assert full_pytest.argv[1:4] == ("-m", "pytest", "-q")
     assert f"--basetemp={tmp_path / 'chatcopilot-pytest-fast'}" in fast_pytest.argv
     assert f"--basetemp={tmp_path / 'chatcopilot-pytest-full'}" in full_pytest.argv
     indexed_checks = {
@@ -64,6 +65,55 @@ def test_validation_profiles_include_static_and_runtime_checks(
         "UTF-8 source normalization",
         "Python wheel build smoke",
     }
+
+
+def test_fast_selection_preserves_file_order_and_ignores_comments(monkeypatch, tmp_path):
+    check_repo = _load_script("check_repo.py")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    for name in ("test_first.py", "test_second.py"):
+        (tests / name).write_text("", encoding="utf-8")
+    (tests / "fast.txt").write_text(
+        "# Daily core\n\n tests/test_second.py \n  # Boundary\ntests/test_first.py\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_repo, "ROOT", tmp_path)
+
+    assert check_repo._fast_test_paths() == (
+        "tests/test_second.py", "tests/test_first.py"
+    )
+
+
+@pytest.mark.parametrize("selection", (
+    "# no selection\n",
+    "tests/test_core.py\ntests/test_core.py\n",
+    "tests/test_missing.py\n",
+    "tests/../test_core.py\n",
+    "tests/test_core.py::test_one\n",
+    "--ignore=tests/test_core.py\n",
+))
+def test_fast_selection_rejects_invalid_manifest(monkeypatch, tmp_path, selection):
+    check_repo = _load_script("check_repo.py")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_core.py").write_text("", encoding="utf-8")
+    (tests / "fast.txt").write_text(selection, encoding="utf-8")
+    monkeypatch.setattr(check_repo, "ROOT", tmp_path)
+
+    with pytest.raises(ValueError):
+        check_repo._profiles()
+
+
+def test_ci_retains_complete_python_coverage_independently_of_fast():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    job = workflow["jobs"]["python"]
+    assert job["strategy"]["matrix"]["include"] == [
+        {"python-version": "3.10", "gate": "full"},
+        {"python-version": "3.13", "gate": "python-tests"},
+    ]
+    commands = {step.get("if"): step["run"] for step in job["steps"] if "run" in step}
+    assert commands["matrix.gate == 'full'"] == "python scripts/check_repo.py ${{ matrix.gate }}"
+    assert commands["matrix.gate == 'python-tests'"] == "python -m pytest -q"
 
 
 def test_validation_subprocesses_use_one_wsl_temp_root(
@@ -87,16 +137,22 @@ def test_validation_candidate_index_does_not_leak_into_test_subprocesses(
     tmp_path: Path,
 ) -> None:
     check_repo = _load_script("check_repo.py")
-    candidate = tmp_path / "candidate-index"
-    monkeypatch.setenv("GIT_INDEX_FILE", str(candidate))
+    git_paths = {
+        name: str(tmp_path / name.lower())
+        for name in (
+            "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"
+        )
+    }
+    for name, value in git_paths.items():
+        monkeypatch.setenv(name, value)
     monkeypatch.setenv("GIT_OPTIONAL_LOCKS", "1")
 
     ordinary = check_repo._check_env()
     projected = check_repo._check_env(uses_repository_index=True)
 
-    assert "GIT_INDEX_FILE" not in ordinary
+    assert all(name not in ordinary for name in git_paths)
     assert "GIT_OPTIONAL_LOCKS" not in ordinary
-    assert projected["GIT_INDEX_FILE"] == str(candidate)
+    assert {name: projected[name] for name in git_paths} == git_paths
     assert projected["GIT_OPTIONAL_LOCKS"] == "0"
 
 

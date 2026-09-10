@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import unittest
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -251,16 +250,6 @@ class AcpTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
         outcome = TurnOutcome(reason="stable")
         with self.assertRaises(FrozenInstanceError):
             outcome.reason = "changed"  # type: ignore[misc]
-
-    def test_legacy_cross_backend_modules_are_removed(self) -> None:
-        self.assertIsNone(importlib.util.find_spec("chatcopilot.middleware.acp.code_route"))
-        self.assertIsNone(importlib.util.find_spec("chatcopilot.middleware.acp.route_orchestrator"))
-
-    def test_server_has_no_cross_backend_router_reference(self) -> None:
-        root = Path(__file__).resolve().parents[2]
-        source = (root / "src/chatcopilot/middleware/acp/server.py").read_text(encoding="utf-8")
-        self.assertNotIn("route_orchestrator", source)
-        self.assertNotIn("run_code_route", source)
 
     def test_server_delegates_all_real_stages_without_noop_handlers(self) -> None:
         root = Path(__file__).resolve().parents[2]

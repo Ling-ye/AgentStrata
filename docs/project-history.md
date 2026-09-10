@@ -853,3 +853,11 @@ uv 默认文件复用。私聊记忆不再读取或迁移旧路径，现存旧�
 QQ Relay 及其启动入口退役，当前 Channel 探针由 Evaluation 拥有；平台检查只报告真实 provider
 状态。独立 Evaluation 默认使用 manual 输出目录。设计与验收见
 [execution-policy-consolidation](../specs/execution-policy-consolidation/spec.md)。
+
+## 日常测试与完整回归分开
+
+原 `fast` 覆盖全部 unit 测试，逐渐接近完整 Python 回归。日常入口改为按
+`tests/fast.txt` 选择完整测试文件，保留约 1000 项核心消息链、权限、资源、Agent
+契约及控制观测回归；扩展功能仍保留定向测试和完整回归。静态检查不缩减，
+Python 3.10/3.13 CI 继续运行全量 Python 测试。范围与验证见
+[日常测试规格](../specs/daily-test-profile/spec.md)。

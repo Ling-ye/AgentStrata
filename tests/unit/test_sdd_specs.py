@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY_FILES = ("spec.yaml", "acceptance.md", "verification.md")
 
 
 def _load_checker():
@@ -52,17 +51,6 @@ def _make_root(tmp_path: Path, spec_text: str) -> Path:
     (template / "spec.md").write_text("# template\n", encoding="utf-8")
     (spec_dir / "spec.md").write_text(spec_text, encoding="utf-8")
     return spec_dir
-
-
-def test_specs_have_required_files_and_schema() -> None:
-    checker = _load_checker()
-    assert checker.check_specs(ROOT) == []
-
-
-def test_template_is_single_file() -> None:
-    template = ROOT / "specs" / "_template"
-    assert (template / "spec.md").is_file()
-    assert not any((template / name).exists() for name in LEGACY_FILES)
 
 
 def test_implemented_spec_does_not_require_pass_wording(tmp_path: Path) -> None:

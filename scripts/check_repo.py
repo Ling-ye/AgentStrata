@@ -53,6 +53,27 @@ def _check_env(*, uses_repository_index: bool = False) -> dict[str, str]:
     return env
 
 
+def _fast_test_paths() -> tuple[str, ...]:
+    paths = tuple(
+        line.strip()
+        for line in (ROOT / "tests" / "fast.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    if not paths or len(paths) != len(set(paths)):
+        raise ValueError("tests/fast.txt must contain a nonempty, unique list of test files")
+    for name in paths:
+        path = Path(name)
+        if (
+            path.parts[0] != "tests"
+            or ".." in path.parts
+            or path.suffix != ".py"
+            or not path.name.startswith("test_")
+            or not (ROOT / path).is_file()
+        ):
+            raise ValueError(f"invalid fast test file: {name}")
+    return paths
+
+
 def _profiles() -> dict[str, tuple[Check, ...]]:
     common = (
         Check("SDD metadata", _python("scripts/check_sdd_specs.py")),
@@ -87,9 +108,7 @@ def _profiles() -> dict[str, tuple[Check, ...]]:
             _python(
                 "-m",
                 "pytest",
-                "tests/unit",
-                "tests/integration/test_acp_streaming_updates.py",
-                "tests/integration/test_lingye_botspec_smoke.py",
+                *_fast_test_paths(),
                 "-q",
                 _pytest_basetemp("fast"),
             ),

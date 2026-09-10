@@ -339,6 +339,9 @@ python -m pip install -e ".[agent,acp,dev,evaluation]"
 .venv/bin/python scripts/check_repo.py fast
 ```
 
+The daily `fast` profile runs approximately 1,000 regression cases selected in
+`tests/fast.txt`, together with all static checks. Run focused tests for changed
+features outside that list. Full pytest discovery and CI keep all Python tests.
 Run `.venv/bin/python scripts/check_repo.py full` before broad runtime,
 packaging, deployment, or Console changes. Architecture, public contracts,
 deployment workflows, and migrations use
