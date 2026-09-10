@@ -289,3 +289,12 @@ Owner shell 的权限由 ExecutionScope 和 bubblewrap 实施；委托验证用�
 
 Gateway 保存完整最终正文，Channel 使用自身出站帧边界。RPC 终态和恢复快照保留有界预览，
 省略时明确标记；预览不能代表完整正文，执行和真实交付结果继续分开记录。
+
+## Core 并发槽位
+
+`FileTokenLimiter` 供 LLM 和重工具复用。准入锁只覆盖遗留 token 清理、容量检查与占位，
+实际任务仍按配置并行；每个获准任务持有自己的 token 文件锁。排队超时包含准入锁等待。
+TTL 不释放活跃持有者；进程崩溃释放 OS 锁后，遗留 token 到期才回收。
+共享同一限流目录的进程须使用一致版本与容量配置，更新时不能混跑旧排序算法。
+调用方继续使用 `slot()`，或在同一实例上配对调用 `acquire()` / `release()`。
+设计与回归见 [file-token-limiter](../specs/file-token-limiter/spec.md)。

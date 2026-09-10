@@ -861,3 +861,10 @@ QQ Relay 及其启动入口退役，当前 Channel 探针由 Evaluation 拥有�
 契约及控制观测回归；扩展功能仍保留定向测试和完整回归。静态检查不缩减，
 Python 3.10/3.13 CI 继续运行全量 Python 测试。范围与验证见
 [日常测试规格](../specs/daily-test-profile/spec.md)。
+
+## N06 并发槽位竞争修复
+
+限流器原先按 token 文件名中的时间戳排序，延迟发布的早时间戳 token 可以挤掉已获准持有者。
+现在由进程间准入锁原子检查容量与占位，任务持有独立 token 锁；TTL 只回收未锁定的遗留项。
+覆盖线程、进程、延迟发布、活跃过期、崩溃回收及重复释放，规格见
+[file-token-limiter](../specs/file-token-limiter/spec.md)。
