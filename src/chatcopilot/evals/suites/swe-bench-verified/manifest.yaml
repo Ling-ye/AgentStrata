@@ -1,9 +1,11 @@
 schema: 1
 suite_id: swe-bench-verified
-version: 0.1.0
+version: 1.0.0
 name: SWE-bench Verified
 kind: code
-status: planned
+status: implemented
+plugin_id: swe-bench
+driver_id: agent_configured
 value: 真实 GitHub issue 修复，最接近工程 Agent 端到端代码修改能力。
 recommendation: 仅在代码 Agent 机制大改后低频运行。
 cadence: major-change
@@ -12,5 +14,16 @@ requires_external_data: true
 prepare_supported: false
 official_url: https://www.swebench.com/
 setup_hint: >-
-  需要 Docker 沙箱基础设施：clone repo → worktree → Agent 修改 → Docker
-  内运行测试套件。设置 CHATCOPILOT_SWEBENCH_DATA_PATH 指向官方 JSONL。
+  配置 CHATCOPILOT_SWEBENCH_DATA_PATH 的当前官方 JSONL（含 image/eval_script 字段）、
+  安装 SWE-bench 5.0.2 评分包并准备对应 Docker 镜像；运行只使用本地已有镜像。
+options:
+  - name: scoring_mode
+    type: enum
+    label: 评分方案
+    choices: [native, native_geval, geval]
+    default: native
+  - name: quality_rubric
+    type: enum
+    label: GEval 量表
+    choices: [evidence, task]
+    default: evidence

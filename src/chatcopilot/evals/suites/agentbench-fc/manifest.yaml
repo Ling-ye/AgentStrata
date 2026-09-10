@@ -1,0 +1,27 @@
+schema: 1
+suite_id: agentbench-fc
+version: 1.0.0
+name: AgentBench FC
+kind: agent
+status: implemented
+value: 在隔离环境中调用真实 AgentStrata Agent，通过环境工具完成多轮任务。
+recommendation: 先准备固定版本的 DB 或 OS 题目和本地环境，再运行小题单。
+cadence: manual
+plugin_id: agentbench-fc
+driver_id: agent_configured
+requires_bot: true
+requires_external_data: true
+prepare_supported: false
+official_url: https://github.com/THUDM/AgentBench
+setup_hint: 配置 CHATCOPILOT_AGENTBENCH_DATA_PATH 的 FC JSONL 题目目录，以及 CHATCOPILOT_AGENTBENCH_CONTROLLER_URL 的本地 /api 控制器；环境由独立上游服务提供，不自动安装或启动。
+options:
+  - name: scoring_mode
+    type: enum
+    label: 评分方案
+    choices: [native, native_geval, geval]
+    default: native
+  - name: quality_rubric
+    type: enum
+    label: GEval 量表
+    choices: [evidence, task]
+    default: evidence

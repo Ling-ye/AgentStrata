@@ -228,8 +228,46 @@ def result_insights(
         "configuration_fingerprint": _digest(configuration) if any(configuration.values()) else None,
         "benchmark_fingerprint": snapshot.get("case_hash"),
         "quality": quality_summary(trials),
+        "comparison_keys": benchmark_comparison_keys(request, result),
         "targets": target_summaries(result, request),
     }
+
+
+def benchmark_comparison_keys(request: Mapping[str, Any], result: Mapping[str, Any]) -> dict[str, str]:
+    snapshot = _mapping(result.get("config_snapshot"))
+    benchmark = _mapping(request.get("benchmark") or snapshot.get("benchmark"))
+    if benchmark.get("schema") != "evaluation-workbench/v1" or not benchmark.get("case_set_hash"):
+        return {}
+    definition = _mapping(snapshot.get("definition_snapshot"))
+    implementations = _mapping(_mapping(definition.get("execution_implementations")).get("modules"))
+    scoring = _mapping(benchmark.get("scoring"))
+    material = {key: benchmark.get(key) for key in ("suite_id", "adapter_version", "case_set_hash", "environment_contract", "budget")}
+    material["protocols"] = definition.get("protocols")
+    material["driver"] = _mapping(definition.get("manifest")).get("driver_id")
+    material["native_implementations"] = {key: value for key, value in implementations.items() if ".adapters." in key or key.endswith(("capability_verifiers", "business_verifiers", "ifeval_subset"))}
+    material["native_mode"] = scoring.get("native")
+    suite_id = benchmark.get("suite_id")
+    if suite_id in {"swe-bench-verified", "agentbench-fc"}:
+        environments = []
+        for raw in result.get("trials", []):
+            trial = _mapping(raw)
+            evidence = _mapping(trial.get("evidence"))
+            lease = _mapping(_mapping(evidence.get("execution")).get("environment"))
+            identity = evidence.get("image_id") if suite_id == "swe-bench-verified" else lease.get("controller_fingerprint")
+            if not isinstance(identity, str) or not identity:
+                return {}
+            environments.append((str(trial.get("case_id")), identity))
+        if not environments:
+            return {}
+        material["observed_environments"] = sorted(set(environments))
+    native = _digest(material)
+    quality_implementations = {key: value for key, value in implementations.items()
+                               if key.endswith(("deepeval_engine", "benchmark_scoring", "workbench"))}
+    quality = _digest({**material, "scoring": scoring, "quality_implementations": quality_implementations})
+    # Product pass/fail includes required quality, while public native results do not.
+    product = benchmark.get("suite_id") == "agentstrata-capabilities-v1"
+    return {"pass_rate": quality if product or scoring.get("native") is False else native,
+            "quality": quality, "duration": native}
 
 
 def _nonnegative_number(value: Any) -> float | None:
@@ -326,7 +364,7 @@ def trial_preview(trial: Mapping[str, Any]) -> dict[str, Any]:
         **{key: trial.get(key) for key in ("trial_id", "case_id", "case_ref", "target_id", "attempt",
             "outcome", "duration_seconds", "started_at", "stop_reason", "error", "score", "max_score", "passed")},
         "final_text": str(trial.get("final_text") or "")[:400],
-        "input_preview": str(first.get("input") or "")[:400],
+        "input_preview": str(first.get("input") or evidence.get("input") or "")[:400],
         "body_available": True, "capture_state": execution.get("state", "not_recorded"),
-        "evidence": {"case_source": _mapping(evidence.get("case_source")), "judge_evidence": {key: judging.get(key) for key in ("quality_applicable", "quality_reason", "metrics", "error")}},
+        "evidence": {"case_source": _mapping(evidence.get("case_source")), "judge_evidence": {key: judging.get(key) for key in ("quality_applicable", "quality_reason", "metrics", "error", "native_result", "mode")}},
     }

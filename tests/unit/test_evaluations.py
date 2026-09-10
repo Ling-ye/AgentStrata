@@ -714,6 +714,7 @@ def test_suite_validation_selects_explicit_executor_policy(
     expected_executor: str,
     llm_judge: bool,
     monkeypatch: pytest.MonkeyPatch,
+    deepeval_judge,
 ) -> None:
     case = EvalCase(
         case_id=f"{suite}-case",

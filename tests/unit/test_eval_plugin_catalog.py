@@ -478,7 +478,7 @@ def test_legacy_catalog_facade_and_thin_plugins_remain_compatible(
         "webarena",
     }
     assert get_suite_manifest("bfcl").driver_id == "direct_llm"
-    assert get_suite_manifest("swe-bench-verified").status == "planned"
+    assert get_suite_manifest("swe-bench-verified").status == "implemented"
     assert get_suite_manifest("agentstrata-canary-self-update-v1").status == "planned"
     assert get_cases("agentstrata-canary-self-update-v1", auto_prepare=False) == ()
     assert get_cases("swe-bench-verified", auto_prepare=False) == ()
@@ -664,7 +664,7 @@ def test_direct_llm_runner_uses_non_bfcl_plugin_hooks(
     assert len(results) == 1
     assert results[0].suite_id == "synthetic-suite"
     assert results[0].status == "passed"
-    assert results[0].metadata == {
+    assert {key: results[0].metadata[key] for key in ("benchmark_category", "synthetic_receipt", "usage_totals", "tool_calls")} == {
         "benchmark_category": "synthetic-protocol",
         "synthetic_receipt": True,
         "usage_totals": {"prompt_tokens": 3, "completion_tokens": 2},
@@ -751,7 +751,7 @@ def test_runner_has_no_official_suite_identity_branches() -> None:
 
 def test_planned_suites_are_explicitly_unavailable() -> None:
     descriptors = {item["suite_id"]: item for item in list_suite_descriptors()}
-    for suite_id in ("swe-bench-verified", "webarena"):
+    for suite_id in ("agentstrata-canary-self-update-v1", "webarena"):
         assert descriptors[suite_id]["status"] == "planned"
         assert descriptors[suite_id]["implemented"] is False
         assert descriptors[suite_id]["ready"] is False

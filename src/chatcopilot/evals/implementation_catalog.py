@@ -23,6 +23,9 @@ _COMMON_SUITE_MODULES = (
     "chatcopilot.evals.evaluations",
     "chatcopilot.evals.judges",
     "chatcopilot.evals.runner",
+    "chatcopilot.evals.workbench",
+    "chatcopilot.evals.benchmark_scoring",
+    "chatcopilot.evals.deepeval_engine",
 )
 _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("generic-agent", "agent_isolated"): (
@@ -75,6 +78,14 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "chatcopilot.middleware.acp.turn_orchestrator",
         "chatcopilot.middleware.acp.workspace_service",
         "chatcopilot.middleware.runtime.tasks",
+    ),
+    ("swe-bench", "agent_configured"): (
+        "chatcopilot.evals.adapters.swebench", "chatcopilot.evals.adapters.swebench_runtime",
+        "chatcopilot.evals.environment_agent", "chatcopilot.evals.environment_cleanup", "chatcopilot.evals.trial_capture",
+    ),
+    ("agentbench-fc", "agent_configured"): (
+        "chatcopilot.evals.adapters.agentbench", "chatcopilot.evals.environment_agent",
+        "chatcopilot.evals.environment_cleanup", "chatcopilot.evals.trial_capture",
     ),
     ("gaia", "agent_configured"): (
         "chatcopilot.evals.adapters.gaia",

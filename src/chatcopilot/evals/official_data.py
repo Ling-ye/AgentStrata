@@ -90,6 +90,10 @@ def prepare_official_data(suite_id: str) -> dict[str, Any]:
 
 def suite_data_status(suite_id: str) -> dict[str, Any]:
     normalized = suite_id.strip().lower().replace("_", "-")
+    if normalized in {"swe-bench-verified", "agentbench-fc"}:
+        key = "CHATCOPILOT_SWEBENCH_DATA_PATH" if normalized == "swe-bench-verified" else "CHATCOPILOT_AGENTBENCH_DATA_PATH"
+        configured = os.environ.get(key, "").strip()
+        return {"source": "configured" if configured else "unavailable", "cache_path": configured, "uses_smoke": False}
     if normalized == "gaia":
         return _gaia_data_status()
     if normalized == "bfcl":

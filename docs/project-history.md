@@ -804,3 +804,12 @@ Console 的配置与观测分类仍是展示分组，保留字段归属、实体
 进一步的组件关系、依赖方向和运行时细节分别见
 [`architecture.md`](architecture.md)、[`runtime.md`](runtime.md) 和
 [`bot-spec.md`](bot-spec.md)。
+
+
+## 2026-09-10：基准工作台
+
+测评中心采用基准目录、题目和评分配置并列的工作台。DeepEval 承担指标执行，原生基准结果
+与 GEval 独立保存，GAIA 不再用语义判分覆盖答案匹配。新增 SWE-bench 受限容器修复及上游
+评分接线、AgentBench FC 环境工具接线；准确标明覆盖范围、环境准备和实际被测对象。
+运行记录展示冻结配置，趋势默认区分可比协议并保留探索视图。实现边界与验收见
+[`evaluation-benchmark-workbench`](../specs/evaluation-benchmark-workbench/spec.md)。

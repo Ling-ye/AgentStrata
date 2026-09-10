@@ -605,6 +605,7 @@ class EvaluationApplication:
                 "created_at": created_at,
                 "source_revision": capture_source_revision(self.repository_root),
                 **({"scoring": scoring} if scoring is not None else {}),
+                **({"benchmark": validation["benchmark"]} if "benchmark" in validation else {}),
             }
             core_request = _core_request(
                 bot,
@@ -891,6 +892,7 @@ class EvaluationApplication:
             ),
             "summary": result.get("summary") if isinstance(result.get("summary"), Mapping) else {},
             "selection": self._selection_summary(request),
+            "benchmark": request.get("benchmark", result.get("config_snapshot", {}).get("benchmark", {})),
             "source_revision": source_revision(request),
             "insights": result_insights(
                 request, result, status=str(state.get("status") or ""), planned=total,

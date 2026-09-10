@@ -3223,12 +3223,16 @@ def execute_capability_case(
     started = time.monotonic()
     started_at = _utc_now()
     try:
-        if options:
+        if set(options) - {"scoring_mode"} or (options and suite_id != "agentstrata-capabilities-v1"):
             raise CapabilityExecutionError(
                 "capability_options_unsupported",
                 "this capability suite does not declare runtime options",
             )
         definition = _definition_for_case(suite_id, case)
+        if suite_id == "agentstrata-capabilities-v1":
+            from chatcopilot.evals.workbench import capability_scoring
+
+            definition = capability_scoring(definition, options)
         _preflight_definition(definition, bot=bot)
         workspace = _workspace_for_case(Path(workspace_root), definition.case_id)
         resources_by_id, resource_evidence = _stage_resources(suite_id, definition, workspace)

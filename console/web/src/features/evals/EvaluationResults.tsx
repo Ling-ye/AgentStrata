@@ -23,7 +23,7 @@ export function ResultOverview({ record }: { record: EvaluationRecord }) {
     </Space>
     <div className="eval-outcome-metrics">
       <div><span>通过率</span><strong>{rateLabel(insights.pass_rate)}</strong></div>
-      <div><span>质量分</span><strong>{rateLabel(insights.quality.score)}</strong><Text type="secondary">已评分 {insights.quality.scored} / {insights.quality.expected}</Text></div>
+      <div><span>质量分</span><strong>{insights.quality.score === null ? "—" : insights.quality.score.toFixed(2)}</strong><Text type="secondary">已评分 {insights.quality.scored} / {insights.quality.expected}</Text></div>
       {Object.entries(OUTCOME_LABELS).map(([key, label]) => <div key={key} className={`eval-outcome-${key}`}>
         <span>{label}</span><strong>{insights.counts?.[key as keyof typeof insights.counts]}</strong>
       </div>)}

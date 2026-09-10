@@ -1,11 +1,4 @@
-"""SWE-bench Verified adapter (interface stub).
-
-Full implementation requires Docker sandbox infrastructure:
-clone repo → worktree → Agent patch → Docker test execution.
-
-Currently only supports data loading; ``prepare_task`` and ``judge``
-raise ``NotImplementedError`` until the sandbox is built.
-"""
+"""Load frozen SWE-bench instances; execution is owned by the environment plugin."""
 
 from __future__ import annotations
 
@@ -15,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from chatcopilot.evals.env import positive_int_from_env
-from chatcopilot.evals.models import EvalCase, JudgeResult
+from chatcopilot.evals.models import EvalCase
 
 _ENV_DATA_PATH = "CHATCOPILOT_SWEBENCH_DATA_PATH"
 _ENV_MAX_CASES = "CHATCOPILOT_SWEBENCH_MAX_CASES"
@@ -23,7 +16,7 @@ _ENV_MAX_CASES = "CHATCOPILOT_SWEBENCH_MAX_CASES"
 _ID_KEYS = ("instance_id", "id")
 _REPO_KEYS = ("repo",)
 _PROBLEM_KEYS = ("problem_statement",)
-_PATCH_KEYS = ("patch", "gold_patch")
+
 
 
 def load_cases(limit: int | None = None) -> tuple[EvalCase, ...]:
@@ -34,7 +27,7 @@ def load_cases(limit: int | None = None) -> tuple[EvalCase, ...]:
         return ()
 
     path = Path(data_path).expanduser()
-    if not path.is_file():
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 64 * 1024 * 1024:
         raise FileNotFoundError(f"SWE-bench data not found: {path}")
 
     cases: list[EvalCase] = []
@@ -49,18 +42,6 @@ def load_cases(limit: int | None = None) -> tuple[EvalCase, ...]:
     if limit is not None and limit > 0:
         cases = cases[:limit]
     return tuple(cases)
-
-
-def prepare_task(case: EvalCase, workspace: Any) -> Any:
-    raise NotImplementedError(
-        "SWE-bench 需要 Docker 沙箱基础设施（clone repo → worktree → Agent 修改 → Docker 测试）。"
-    )
-
-
-def judge(case: EvalCase, patch: str) -> JudgeResult:
-    raise NotImplementedError(
-        "SWE-bench 判分需要 Docker 沙箱（apply patch → 运行测试套件 → 检查通过率）。"
-    )
 
 
 def _row_to_case(row: dict[str, Any]) -> EvalCase | None:
@@ -79,8 +60,7 @@ def _row_to_case(row: dict[str, Any]) -> EvalCase | None:
             "instance_id": instance_id,
             "repo": repo,
             "base_commit": row.get("base_commit", ""),
-            "test_patch": row.get("test_patch", ""),
-            "gold_patch": _first(row, _PATCH_KEYS),
+            "swe_instance": {key: value for key, value in row.items() if key not in {"patch", "gold_patch", "hints_text"}},
         },
     )
 
@@ -108,4 +88,4 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-__all__ = ["judge", "load_cases", "prepare_task"]
+__all__ = ["load_cases"]

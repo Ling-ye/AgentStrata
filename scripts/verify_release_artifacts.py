@@ -62,6 +62,7 @@ REQUIRED_PACKAGE_RESOURCES = frozenset(
         "evals/suites/agentstrata-qq-message-flow-v1/README.md",
         "evals/suites/agentstrata-qq-message-flow-v1/cases.yaml",
         "evals/suites/agentstrata-qq-message-flow-v1/manifest.yaml",
+        "evals/suites/agentbench-fc/manifest.yaml",
         "evals/suites/bfcl/manifest.yaml",
         "evals/suites/gaia/manifest.yaml",
         "evals/suites/ifeval/manifest.yaml",

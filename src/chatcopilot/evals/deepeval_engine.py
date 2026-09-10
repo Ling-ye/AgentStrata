@@ -137,6 +137,8 @@ def _local_sdk() -> Iterator[None]:
         os.environ.update(
             {
                 "DEEPEVAL_DISABLE_DOTENV": "1",
+                "PYTHON_DOTENV_DISABLED": "1",
+                "HF_HUB_DISABLE_TELEMETRY": "1",
                 "DEEPEVAL_TELEMETRY_OPT_OUT": "1",
                 "DEEPEVAL_UPDATE_WARNING_OPT_IN": "0",
                 "DEEPEVAL_NO_INSPECT_PROMPT": "1",

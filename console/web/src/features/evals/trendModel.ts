@@ -39,19 +39,21 @@ export function buildTrendPoints(records: EvaluationRecord[], selectedCases: str
   }).sort((a, b) => a.timestamp - b.timestamp || a.key.localeCompare(b.key));
 }
 
-export function groupTrendPoints(points: TrendPoint[], dimensions: SplitDimension[]): TrendLine[] {
+export function groupTrendPoints(points: TrendPoint[], dimensions: SplitDimension[], metric?: TrendMetric): TrendLine[] {
   const lines = new Map<string, TrendLine>();
   for (const point of points) {
     const values = dimensions.map(d => d === "agent" ? `${point.record.bot_id} / ${point.backend}` : d === "model" ? pointModel(point) : pointScale(point));
-    const key = JSON.stringify(values);
-    const line = lines.get(key) ?? { key, label: values.join(" · ") || "所选评测", points: [] };
+    const contract = metric ? point.record.insights.comparison_keys?.[metric] : undefined;
+    if (metric && !contract) continue;
+    const key = JSON.stringify([...(contract ? [contract] : []), ...values]);
+    const line = lines.get(key) ?? { key, label: (values.join(" · ") || "所选评测") + (contract ? ` · 条件 ${contract.slice(0, 6)}` : ""), points: [] };
     line.points.push(point); lines.set(key, line);
   }
   return [...lines.values()];
 }
 
 export function pointValue(point: TrendPoint, metric: TrendMetric): number | null {
-  return metric === "pass_rate" ? point.pass_rate : metric === "quality" ? point.quality.score : pointDuration(point).recorded_seconds;
+  return metric === "pass_rate" ? point.pass_rate : metric === "quality" ? (point.quality.scored === point.quality.expected ? point.quality.score : null) : pointDuration(point).recorded_seconds;
 }
 
 export function linePaths(points: TrendPoint[], metric: TrendMetric, x: (p: TrendPoint) => number, y: (v: number) => number): string[] {

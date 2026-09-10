@@ -993,6 +993,15 @@ def _execute_supervised_trial(
         if process_started and not process.is_alive():
             process.join(timeout=0)
             process.close()
+            if latest_execution and latest_execution.get("environment"):
+                from chatcopilot.evals.environment_cleanup import cleanup_environment
+
+                try:
+                    with _preserved_environment():
+                        load_evaluation_runtime(request.bot)
+                        cleanup_environment(latest_execution["environment"])
+                except Exception as exc:
+                    raise _TrialCleanupFailed("benchmark environment cleanup was not confirmed") from exc
 
 
 def _execute_trial_with_artifact_guard(
@@ -1890,6 +1899,10 @@ def _parse_suite_request(request: Mapping[str, Any]) -> SuiteEvaluationRequest:
         raise ValueError("max_wall_seconds must be at most 21600")
     seed = _integer(request.get("seed", 0), "seed")
     options = _suite_options(manifest, request.get("options", {}))
+    if llm_judge:
+        if request.get("options", {}).get("scoring_mode") not in {None, "native_geval"}:
+            raise ValueError("llm_judge conflicts with scoring_mode")
+        options["scoring_mode"] = "native_geval"
     declared_options = {item.name for item in manifest.options}
     if "dry_run" in declared_options:
         options["dry_run"] = dry_run
@@ -2040,6 +2053,14 @@ def _validate_suite(
         return ()
 
     try:
+        plugin = get_evaluation_plugin(manifest.plugin_id)
+        if plugin.preflight is not None and not request.dry_run:
+            plugin.preflight(cases=selected)
+    except ValueError as exc:
+        checks.append(_check("benchmark_environment", "基准执行环境", False, str(exc)))
+        return ()
+
+    try:
         capability_definitions = _validated_capability_definitions(manifest, selected)
         if capability_definitions:
             checks.append(
@@ -2089,10 +2110,25 @@ def _validate_suite(
         from chatcopilot.evals.deepeval_engine import preflight
 
         try:
-            preflight([capability_definitions[case.case_id] for case in selected])
+            from chatcopilot.evals.workbench import capability_scoring
+
+            preflight([capability_scoring(capability_definitions[case.case_id], request.options) for case in selected])
             checks.append(_check("deepeval", "DeepEval 与独立评分模型", True, "ready"))
         except ValueError as exc:
             checks.append(_check("deepeval", "DeepEval 与独立评分模型", False, str(exc), "安装 evaluation 依赖并配置独立评分模型"))
+            return ()
+
+    from chatcopilot.evals.workbench import EXTERNAL_SUITES, scoring_mode
+    if request.suite in EXTERNAL_SUITES and not request.dry_run:
+        from chatcopilot.evals.deepeval_engine import JudgeConfig, preflight
+
+        try:
+            preflight([])
+            if scoring_mode(request.suite, request.options, llm_judge=request.llm_judge) != "native":
+                JudgeConfig.from_environment()
+            checks.append(_check("deepeval", "DeepEval 与评分配置", True, "ready"))
+        except ValueError as exc:
+            checks.append(_check("deepeval", "DeepEval 与评分配置", False, str(exc)))
             return ()
 
     if request.dry_run:
@@ -2866,6 +2902,10 @@ def _validate_managed_bootstrap(
         from chatcopilot.evals.source_revision import validate_source_revision
 
         expected["source_revision"] = validate_source_revision(stored_request["source_revision"])
+    if "benchmark" in stored_request:
+        if not isinstance(request, SuiteEvaluationRequest):
+            raise ValueError("benchmark snapshot requires a Suite")
+        expected["benchmark"] = _benchmark_request_snapshot(request)
     if "scoring" in stored_request:
         from chatcopilot.evals.deepeval_engine import scoring_snapshot
 
@@ -3617,7 +3657,7 @@ def _config_snapshot(
         "case_hash": _hash_json(case_payload),
         "target_fingerprints": {target.target_id: target.fingerprint for target in targets},
         "judge": (
-            "gaia-llm-fallback"
+            "deepeval-geval"
             if isinstance(request, SuiteEvaluationRequest) and request.llm_judge
             else "suite-or-profile-defined"
         ),
@@ -3625,6 +3665,8 @@ def _config_snapshot(
     if isinstance(request, SuiteEvaluationRequest):
         manifest = get_manifest(request.suite)
         suite_cases = tuple(case for case in cases if isinstance(case, EvalCase))
+        if manifest.track != "qq_message_flow":
+            snapshot["benchmark"] = _benchmark_request_snapshot(request)
         target_material = {target.target_id: target.fingerprint for target in targets}
         plugin = get_evaluation_plugin(manifest.plugin_id)
         definition = suite_definition_snapshot(
@@ -3835,11 +3877,29 @@ def _validation_payload(
         "effective_request": (_effective_request_dict(request) if request is not None else None),
         "targets": [to_jsonable(target) for target in targets],
     }
+    if ready and isinstance(request, SuiteEvaluationRequest) and get_manifest(request.suite).track != "qq_message_flow":
+        payload["benchmark"] = _benchmark_request_snapshot(request)
     return redact_payload(
         payload,
         secrets=collect_env_secrets(),
         roots={"repository": Path.cwd()},
     )
+
+
+def _benchmark_request_snapshot(request: SuiteEvaluationRequest) -> dict[str, Any]:
+    from chatcopilot.evals.workbench import benchmark_snapshot
+
+    manifest = get_manifest(request.suite)
+    cases = _select_suite_cases(get_cases(request.suite, auto_prepare=False), request.case_ids)
+    snapshot = benchmark_snapshot(manifest, cases, request.options, llm_judge=request.llm_judge)
+    if request.bot:
+        with _preserved_environment():
+            runtime = load_evaluation_runtime(request.bot)
+            snapshot["environment_contract"] = _hash_json({
+                key: runtime.spec.raw.get(key) for key in ("tools", "context", "workspace", "access")
+            })
+    snapshot["budget"] = {"repetitions": request.repetitions, "seed": request.seed, "max_wall_seconds": request.max_wall_seconds}
+    return snapshot
 
 
 def _select_suite_cases(

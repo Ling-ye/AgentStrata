@@ -43,6 +43,7 @@ dependencies = [
 evaluation = [
     "deepeval==4.2.2",
     "langdetect==1.0.9",
+    "swebench==5.0.2",
 ]
 agent = [
     "openai>=1.40.0",

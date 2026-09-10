@@ -6,6 +6,7 @@ import sys
 import time
 import os
 from datetime import datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -34,6 +35,7 @@ from chatcopilot.evals.plugins import CaseLoadContext, EvaluationPlugin, get_eva
 from chatcopilot.evals.registry import get_manifest, get_standard
 from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService
 from chatcopilot.project import ENV_PREFIX
+from chatcopilot.evals.trial_capture import capture, record_turn, execution_phase, set_phase, timing_metadata
 
 ProgressCallback = Callable[[dict[str, Any]], None]
 
@@ -145,6 +147,7 @@ def run_suite(
                 started_at=started_at,
                 suite_start=started,
                 progress_callback=progress_callback,
+                options=plugin_options,
             )
         )
     elif any(isinstance(case.metadata.get("case_definition"), dict) for case in cases):
@@ -164,6 +167,13 @@ def run_suite(
                 confirm_external_write=confirm_external_write,
             )
         )
+    elif effective_driver == "agent_configured" and plugin.execute_trial is not None:
+        if not bot or workspace_root is None:
+            raise ValueError("environment benchmarks require a managed Trial workspace")
+        if plugin.preflight is not None:
+            plugin.preflight(cases=cases)
+        case_results = tuple(plugin.execute_trial(case, bot=bot, workspace_root=workspace_root,
+                                                  options=plugin_options) for case in cases)
     elif effective_driver == "agent_configured":
         if standard.requires_bot and not bot:
             raise ValueError(f"{standard.name} 需要 --bot 指定 BotSpec。")
@@ -179,6 +189,7 @@ def run_suite(
                 suite_start=started,
                 progress_callback=progress_callback,
                 workspace_root=workspace_root,
+                options=plugin_options,
             )
         )
     else:
@@ -228,6 +239,7 @@ def _run_direct_llm_cases(
     started_at: str = "",
     suite_start: float = 0.0,
     progress_callback: ProgressCallback | None = None,
+    options: dict[str, Any] | None = None,
 ) -> list[EvalCaseResult]:
     """Run one trusted direct-LLM plugin without assuming a benchmark identity."""
 
@@ -244,61 +256,79 @@ def _run_direct_llm_cases(
         _case_started(progress_callback, index=index, total=total, case=case)
         started = time.monotonic()
         case_started_at = _utc_now()
-        try:
-            observation = plugin.execute_trial(case, chat_config=chat_config)
-            if not isinstance(observation, dict):
-                raise TypeError(
-                    f"direct_llm plugin {plugin.plugin_id!r} returned a non-mapping observation"
+        with capture() as observed:
+            final_text = ""
+            tool_calls = []
+            try:
+                record_turn({"conversation_id": case.case_id, "turn_index": 0, "input": case.input, "completed": False})
+                with execution_phase("agent"):
+                    observation = plugin.execute_trial(case, chat_config=chat_config)
+                if not isinstance(observation, dict):
+                    raise TypeError(
+                        f"direct_llm plugin {plugin.plugin_id!r} returned a non-mapping observation"
+                    )
+                final_text = str(observation.get("final_text") or "")
+                tool_calls = observation.get("tool_calls") or []
+                usage = observation.get("usage") or {}
+                plugin_metadata = observation.get("metadata") or {}
+                if (
+                    not isinstance(tool_calls, list)
+                    or not isinstance(usage, dict)
+                    or not isinstance(plugin_metadata, dict)
+                ):
+                    raise TypeError(
+                        f"direct_llm plugin {plugin.plugin_id!r} returned an invalid observation"
+                    )
+                record_turn({"conversation_id": case.case_id, "turn_index": 0, "input": case.input,
+                             "completed": True, "final_text": final_text, "stop_reason": "end_turn"})
+                set_phase("judging")
+                from chatcopilot.evals.benchmark_scoring import score_benchmark
+
+                judge_result, judge_evidence = score_benchmark(
+                    suite_id, case, final_text, lambda: plugin.judge(case, observation),
+                    options=options or {}, tool_calls=tool_calls,
                 )
-            final_text = str(observation.get("final_text") or "")
-            tool_calls = observation.get("tool_calls") or []
-            usage = observation.get("usage") or {}
-            plugin_metadata = observation.get("metadata") or {}
-            if (
-                not isinstance(tool_calls, list)
-                or not isinstance(usage, dict)
-                or not isinstance(plugin_metadata, dict)
-            ):
-                raise TypeError(
-                    f"direct_llm plugin {plugin.plugin_id!r} returned an invalid observation"
+                if not isinstance(judge_result, JudgeResult):
+                    raise TypeError(
+                        f"direct_llm plugin {plugin.plugin_id!r} returned an invalid judge result"
+                    )
+                results.append(
+                    EvalCaseResult(
+                        case_id=case.case_id,
+                        suite_id=suite_id,
+                        status="passed" if judge_result.passed else "failed",
+                        score=judge_result.score,
+                        max_score=judge_result.max_score,
+                        final_text=final_text,
+                        stop_reason="end_turn",
+                        duration_seconds=time.monotonic() - started,
+                        started_at=case_started_at,
+                        finished_at=_utc_now(),
+                        judge=judge_result,
+                        metadata={
+                            **plugin_metadata,
+                            "input": case.input,
+                            "judge_evidence": judge_evidence,
+                            "usage_totals": _flatten_usage(usage),
+                            "tool_calls": tool_calls,
+                        },
+                    )
                 )
-            judge_result = plugin.judge(case, observation)
-            if not isinstance(judge_result, JudgeResult):
-                raise TypeError(
-                    f"direct_llm plugin {plugin.plugin_id!r} returned an invalid judge result"
+            except Exception as exc:  # noqa: BLE001
+                results.append(
+                    EvalCaseResult(
+                        case_id=case.case_id,
+                        suite_id=suite_id,
+                        status="error",
+                        final_text=final_text,
+                        metadata={"input": case.input, "tool_calls": tool_calls},
+                        duration_seconds=time.monotonic() - started,
+                        started_at=case_started_at,
+                        finished_at=_utc_now(),
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
                 )
-            results.append(
-                EvalCaseResult(
-                    case_id=case.case_id,
-                    suite_id=suite_id,
-                    status="passed" if judge_result.passed else "failed",
-                    score=judge_result.score,
-                    max_score=judge_result.max_score,
-                    final_text=final_text,
-                    stop_reason="end_turn",
-                    duration_seconds=time.monotonic() - started,
-                    started_at=case_started_at,
-                    finished_at=_utc_now(),
-                    judge=judge_result,
-                    metadata={
-                        **plugin_metadata,
-                        "usage_totals": _flatten_usage(usage),
-                        "tool_calls": tool_calls,
-                    },
-                )
-            )
-        except Exception as exc:  # noqa: BLE001
-            results.append(
-                EvalCaseResult(
-                    case_id=case.case_id,
-                    suite_id=suite_id,
-                    status="error",
-                    duration_seconds=time.monotonic() - started,
-                    started_at=case_started_at,
-                    finished_at=_utc_now(),
-                    error=f"{type(exc).__name__}: {exc}",
-                )
-            )
+        results[-1] = replace(results[-1], metadata={**results[-1].metadata, **timing_metadata(observed), "execution": observed})
         _case_completed(
             progress_callback,
             index=index,
@@ -406,6 +436,7 @@ def _run_agent_cases(
     suite_start: float = 0.0,
     progress_callback: ProgressCallback | None = None,
     workspace_root: Path | None = None,
+    options: dict[str, Any] | None = None,
 ) -> list[EvalCaseResult]:
     plugin = plugin or get_evaluation_plugin(get_manifest(suite_id).plugin_id)
     runtime = assemble_runtime_context(
@@ -454,44 +485,58 @@ def _run_agent_cases(
                 events: list[dict[str, Any]] = []
                 case_start = time.monotonic()
                 case_started_at = _utc_now()
-                try:
-                    task = _prepare_task(plugin, suite_id, case, workspace)
-                    agent_result = session.run_task(
-                        task,
-                        on_event=lambda event: events.append(_event_to_dict(event)),
-                    )
-                    judge = _judge_case(
-                        plugin,
-                        case,
-                        agent_result.final_text,
-                        chat_config=chat_config if llm_judge else None,
-                    )
-                    case_result = EvalCaseResult(
-                        case_id=case.case_id,
-                        suite_id=suite_id,
-                        status="passed" if judge.passed else "failed",
-                        score=judge.score,
-                        max_score=judge.max_score,
-                        final_text=agent_result.final_text,
-                        stop_reason=agent_result.stop_reason,
-                        duration_seconds=time.monotonic() - case_start,
-                        started_at=case_started_at,
-                        finished_at=_utc_now(),
-                        events=tuple(events),
-                        judge=judge,
-                        metadata=_usage_summary(events),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    case_result = EvalCaseResult(
-                        case_id=case.case_id,
-                        suite_id=suite_id,
-                        status="error",
-                        duration_seconds=time.monotonic() - case_start,
-                        started_at=case_started_at,
-                        finished_at=_utc_now(),
-                        events=tuple(events),
-                        error=f"{type(exc).__name__}: {exc}",
-                    )
+                with capture() as observed:
+                    final_text = ""
+                    task = None
+                    try:
+                        task = _prepare_task(plugin, suite_id, case, workspace)
+                        record_turn({"conversation_id": case.case_id, "turn_index": 0, "input": task.text, "completed": False})
+                        with execution_phase("agent"):
+                            agent_result = session.run_task(
+                                task,
+                                on_event=lambda event: events.append(_event_to_dict(event)),
+                            )
+                        final_text = agent_result.final_text
+                        record_turn({"conversation_id": case.case_id, "turn_index": 0, "input": task.text,
+                                     "completed": True, "final_text": final_text, "stop_reason": agent_result.stop_reason})
+                        set_phase("judging")
+                        from chatcopilot.evals.benchmark_scoring import score_benchmark
+
+                        judge, judge_evidence = score_benchmark(
+                            suite_id, case, agent_result.final_text,
+                            lambda: _judge_case(plugin, case, agent_result.final_text),
+                            options=options or {}, llm_judge=llm_judge,
+                        )
+                        case_result = EvalCaseResult(
+                            case_id=case.case_id,
+                            suite_id=suite_id,
+                            status="passed" if judge.passed else "failed",
+                            score=judge.score,
+                            max_score=judge.max_score,
+                            final_text=agent_result.final_text,
+                            stop_reason=agent_result.stop_reason,
+                            duration_seconds=time.monotonic() - case_start,
+                            started_at=case_started_at,
+                            finished_at=_utc_now(),
+                            events=tuple(events),
+                            judge=judge,
+                            metadata={**_usage_summary(events), "input": task.text,
+                                      "judge_evidence": judge_evidence},
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        case_result = EvalCaseResult(
+                            case_id=case.case_id,
+                            suite_id=suite_id,
+                            status="error",
+                            final_text=final_text,
+                            metadata={"input": task.text if task is not None else ""},
+                            duration_seconds=time.monotonic() - case_start,
+                            started_at=case_started_at,
+                            finished_at=_utc_now(),
+                            events=tuple(events),
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
+                case_result = replace(case_result, metadata={**case_result.metadata, **timing_metadata(observed), "execution": observed})
                 results.append(case_result)
                 _case_completed(
                     progress_callback,

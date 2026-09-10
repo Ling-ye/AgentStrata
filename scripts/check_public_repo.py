@@ -142,6 +142,7 @@ PUBLIC_CODE_REPOSITORIES = frozenset(
         "github.com/python/peps",
         "github.com/run-llama/llama_index",
         "github.com/rust-lang/rfcs",
+        "github.com/thudm/agentbench",
         "github.com/vitejs/vite",
         "github.com/xpzouying/xiaohongshu-mcp",
     }

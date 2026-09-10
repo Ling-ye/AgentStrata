@@ -141,6 +141,18 @@ def capture_case(function: Callable[..., Any]) -> Callable[..., Any]:
     return wrapped
 
 
+@_serialized_capture
+def record_environment(lease: dict[str, Any]) -> None:
+    """Publish a host-created lease before any Agent receives environment input."""
+    current = _current.get()
+    if current is None:
+        raise ValueError("benchmark environment requires a managed capture scope")
+    current["environment"] = dict(lease)
+    sink = _sink.get()
+    if sink is not None:
+        sink(current)
+
+
 @contextmanager
 def execution_phase(kind: str) -> Iterator[None]:
     """Measure the actual driver interval, separately from preparation and judging."""

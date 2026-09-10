@@ -193,6 +193,7 @@ export interface EvaluationRecord {
   summary: Record<string, unknown>;
   insights: EvaluationInsights;
   source_revision: SourceRevision;
+  benchmark?: Record<string, unknown>;
   error: string;
 }
 
@@ -244,7 +245,16 @@ export interface EvaluationParameter {
   default: boolean;
 }
 
+export interface BenchmarkDescriptor {
+  name: string; framework: string; framework_version: string; adapter_version: string;
+  coverage: string; native_method: string; target_scope: string; scoring_modes: string[];
+  default_scoring_mode: string; case_set_hash: string;
+  judge: { model: string; reasoning_effort?: string } | null;
+  rubrics: Array<{ id: string; name: string; steps: string[]; threshold: number }>;
+}
+
 export interface EvaluationSuite {
+  benchmark?: BenchmarkDescriptor;
   suite_id: string;
   name: string;
   kind: string;
@@ -292,6 +302,7 @@ export function suiteSupportsLlmJudge(suite: EvaluationSuite | null): boolean {
 }
 
 export interface EvaluationCaseSummary {
+  quality_required?: boolean;
   case_id: string;
   category: string;
   summary: string;
@@ -306,6 +317,7 @@ export interface EvaluationCaseDescriptor extends EvaluationCaseSummary {
   rubric: string;
   expected_behavior: string;
   metadata: Record<string, unknown>;
+  scoring?: Record<string, unknown>;
 }
 
 export interface EvaluationTrial {
@@ -735,6 +747,7 @@ export function normalizeEvaluation(value: unknown): EvaluationRecord {
     summary: isRecord(item.summary) ? item.summary : asRecord(result?.summary),
     insights: normalizeInsights(item.insights),
     source_revision: normalizeSourceRevision(item.source_revision),
+    benchmark: asRecord(item.benchmark),
     error: asString(item.error),
   };
 }

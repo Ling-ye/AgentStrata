@@ -10,6 +10,7 @@ export const captureLabel = (state: string) => ({ not_recorded: "未采集", tru
 export function recordedInput(record: EvaluationRecord, trial: EvaluationTrial): { text: string; source: string } {
   const turns = executionTurns(trial);
   if (turns.length) return { text: asText(turns[0].input), source: "实际输入" };
+  if (asText(trial.evidence.input)) return { text: asText(trial.evidence.input), source: "实际输入" };
   if (trial.input_preview) return { text: trial.input_preview, source: "实际输入" };
   const snapshot = asObject(asObject(record.result?.config_snapshot).definition_snapshot);
   const definition = objectList(snapshot.cases).find(c => c.case_id === trial.case_id);
@@ -19,7 +20,7 @@ export function recordedInput(record: EvaluationRecord, trial: EvaluationTrial):
 
 export function qualityLabel(trial: EvaluationTrial): string {
   const metric = trialMetrics(trial).find(m => m.kind === "quality");
-  return typeof metric?.score === "number" && !metric.error ? `${(metric.score * 100).toFixed(0)}%` : "—";
+  return typeof metric?.score === "number" && !metric.error ? metric.score.toFixed(2) : "—";
 }
 
 export function trialSource(record: EvaluationRecord, trial: EvaluationTrial): Record<string, unknown> {

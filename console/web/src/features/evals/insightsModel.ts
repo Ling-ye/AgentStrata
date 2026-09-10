@@ -29,6 +29,7 @@ export interface EvaluationInsights {
   benchmark_fingerprint: string | null;
   quality: QualitySummary;
   targets: TargetSummary[];
+  comparison_keys?: Record<string, string>;
 }
 export interface SourceRevision {
   status: string;
@@ -89,6 +90,7 @@ export function normalizeInsights(value: unknown): EvaluationInsights {
     exclusion_reason: text(item.exclusion_reason) ?? "missing_definition",
     configuration_fingerprint: text(item.configuration_fingerprint), benchmark_fingerprint: text(item.benchmark_fingerprint),
     quality: quality(item.quality), targets: Array.isArray(item.targets) ? item.targets.map(targetSummary) : [],
+    comparison_keys: Object.fromEntries(Object.entries(object(item.comparison_keys)).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
   };
 }
 export function normalizeSourceRevision(value: unknown): SourceRevision {

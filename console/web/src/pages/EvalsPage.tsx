@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -10,7 +10,6 @@ import {
   Message,
   Modal,
   Progress,
-  Radio,
   Select,
   Space,
   Spin,
@@ -26,22 +25,19 @@ import {
   evaluationExportUrl,
 } from "../features/evals/evaluationApi";
 import {
-  EvaluationApiError,
-  buildSuiteRequest,
   formatApiError,
-  type ApiProblem,
   type EvaluationRecord,
   type EvaluationStatus,
-  type EvaluationSuite,
-  type SuitePreset,
 } from "../features/evals/model";
 import type { ColumnProps } from "../shared/ui/arcoTypes";
 import PageSection from "../shared/ui/PageSection";
+import BenchmarkWorkbench from "../features/evals/BenchmarkWorkbench";
+import { BenchmarkSnapshot } from "../features/evals/BenchmarkSnapshot";
 import EvaluationTrends from "../features/evals/EvaluationTrends";
 import { EvaluationResults } from "../features/evals/EvaluationResults";
 import { dateLabel, evaluationSuiteId, modelLabel, rateLabel, revisionLabel } from "../features/evals/insightsModel";
 
-const { Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 type EvaluationTrack = "agent" | "qq_message_flow";
 
@@ -64,8 +60,8 @@ interface TrackDefinition {
 const TRACKS: readonly TrackDefinition[] = [
   {
     id: "agent",
-    title: "Agent 评测",
-    shortTitle: "Agent 评测",
+    title: "Agent / 模型能力",
+    shortTitle: "Agent / 模型能力",
     description: "评估任务完成、工具使用、多轮交互和协作表现。",
     framework: "DeepEval",
     includes: "工具决策、搜索与证据、记忆与上下文、文件与图片、Skills、子 Agent、代码任务及指令遵循",
@@ -102,7 +98,7 @@ function suiteId(record: EvaluationRecord): string {
 
 function trackForRecord(record: EvaluationRecord): TrackDefinition | null {
   const id = suiteId(record);
-  return TRACKS.find((track) => track.suiteId === id) ?? null;
+  return TRACKS.find((track) => track.suiteId === id) ?? (["gaia", "bfcl", "ifeval", "swe-bench-verified", "agentbench-fc"].includes(id) ? TRACKS[0] : null);
 }
 
 function formatTime(value: string | null | undefined): string {
@@ -117,30 +113,11 @@ function formatDuration(value: number | null | undefined): string {
   return `${Math.floor(value / 60)} 分 ${Math.round(value % 60)} 秒`;
 }
 
-function presetOptions(suite: EvaluationSuite | null): SuitePreset[] {
-  const declared = (suite?.presets ?? [])
-    .map((item) => item.preset_id)
-    .filter((value): value is SuitePreset =>
-      value === "quick" || value === "full" || value === "security"
-    );
-  return declared.length ? declared : ["quick"];
-}
-
-function presetDescription(suite: EvaluationSuite | null, preset: SuitePreset): string {
-  return suite?.presets?.find((item) => item.preset_id === preset)?.description ?? "";
-}
-
 export default function EvalsPage({ visible = true }: Props) {
   const queryClient = useQueryClient();
   const detailTop = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState("start");
   const [botId, setBotId] = useState("");
-  const [selectedTrack, setSelectedTrack] = useState<EvaluationTrack>("agent");
-  const [presets, setPresets] = useState<Record<EvaluationTrack, SuitePreset>>({
-    agent: "quick",
-    qq_message_flow: "quick",
-  });
-  const [problem, setProblem] = useState<ApiProblem | null>(null);
   const [selectedEvaluation, setSelectedEvaluation] = useState<EvaluationRecord | null>(null);
   const [recordTrack, setRecordTrack] = useState("all");
   const [recordStatus, setRecordStatus] = useState("all");
@@ -180,63 +157,11 @@ export default function EvalsPage({ visible = true }: Props) {
   const selectedRecord = detailQuery.data ?? latestSelected;
   const filteredRecords = records.filter(record => (recordTrack === "all" || trackForRecord(record)?.id === recordTrack)
     && (recordStatus === "all" || record.status === recordStatus));
-  const suitesByTrack = useMemo(() => {
-    const mapped = new Map<EvaluationTrack, EvaluationSuite>();
-    for (const suite of suites) {
-      if (suite.track === "agent" || suite.track === "qq_message_flow") {
-        mapped.set(suite.track, suite);
-      }
-    }
-    return mapped;
-  }, [suites]);
   const activeForBot = records.find((record) => ACTIVE_STATUSES.has(record.status));
 
   useEffect(() => {
     if (!botId && bots.length) setBotId(bots[0].instance_id);
   }, [botId, bots]);
-
-  useEffect(() => {
-    for (const track of TRACKS) {
-      const options = presetOptions(suitesByTrack.get(track.id) ?? null);
-      if (!options.includes(presets[track.id])) {
-        setPresets((current) => ({ ...current, [track.id]: options[0] }));
-      }
-    }
-  }, [presets, suitesByTrack]);
-
-  const startMutation = useMutation({
-    mutationFn: async (track: EvaluationTrack) => {
-      const suite = suitesByTrack.get(track);
-      if (!suite) throw new Error("该测试轨道未安装或未进入目录。");
-      return evaluationApi.create(buildSuiteRequest({
-        botId,
-        suiteId: suite.suite_id,
-        caseIds: [],
-        preset: presets[track],
-        repetitions: 1,
-        maxWallSeconds: 0,
-        seed: 0,
-        options: {},
-        confirmExternalWrite: false,
-        dryRun: false,
-        llmJudge: false,
-      }));
-    },
-    onMutate: (track) => {
-      setSelectedTrack(track);
-      setProblem(null);
-    },
-    onSuccess: async (record) => {
-      Message.success(`已启动 ${trackForRecord(record)?.shortTitle ?? "评测"}`);
-      setSelectedEvaluation(record);
-      setTab("records");
-      await queryClient.invalidateQueries({ queryKey: ["evaluation-records"] });
-    },
-    onError: (error) => {
-      if (error instanceof EvaluationApiError) setProblem(error.problem);
-      else setProblem({ code: "start_failed", message: formatApiError(error), checks: [] });
-    },
-  });
 
   const actionMutation = useMutation({
     mutationFn: async ({ action, id }: { action: "cancel" | "rerun" | "delete"; id: string }) => {
@@ -287,6 +212,9 @@ export default function EvalsPage({ visible = true }: Props) {
       render: (value: string) => <Tag color={STATUS_COLORS[value] ?? "gray"}>{value}</Tag>,
     },
     {
+      title: "基准 / 框架", width: 220, render: (_value, record) => <BenchmarkSnapshot record={record} compact />,
+    },
+    {
       title: "通过情况",
       width: 200,
       render: (_value, record) => record.insights.counts ? (
@@ -298,6 +226,12 @@ export default function EvalsPage({ visible = true }: Props) {
           {!record.insights.complete && <Tag color="gray">部分</Tag>}
         </Space>
       ) : <Text type="secondary">未记录</Text>,
+    },
+    {
+      title: "GEval 质量", width: 150, render: (_value, record) => <Space direction="vertical" size={2}>
+        <Text>{record.insights.quality.score === null ? "—" : record.insights.quality.score.toFixed(2)}</Text>
+        <Text type="secondary">已评分 {record.insights.quality.scored} / {record.insights.quality.expected}</Text>
+      </Space>,
     },
     {
       title: "进度",
@@ -343,118 +277,24 @@ export default function EvalsPage({ visible = true }: Props) {
   return (
     <PageSection
       title="测评中心"
-      description="查看 Agent 评测与 QQ 链路测试的结果、版本记录和历史变化。"
+      description="按基准选择题目与评分方法，查看实际结果和可比趋势。"
       extra={tab !== "trends" ? <Button size="small" onClick={() => void refresh()}>刷新</Button> : undefined}
     >
       {tab !== "trends" && <div className="eval-history-filters eval-bot-selection">
         <Text bold>机器人</Text>
         <Select aria-label="评测机器人" value={botId || undefined} placeholder="选择机器人" loading={botsQuery.isLoading}
           options={bots.map(bot => ({ label: bot.display_name, value: bot.instance_id }))}
-          onChange={value => { setBotId(String(value ?? "")); setSelectedEvaluation(null); setProblem(null); }} />
+          onChange={value => { setBotId(String(value ?? "")); setSelectedEvaluation(null); }} />
         <Text type="secondary">手动启动 · 每个测试点默认 1 次 · 同一机器人同时运行一条评测</Text>
       </div>}
       <Tabs activeTab={tab} onChange={setTab}>
         <Tabs.TabPane key="start" title="开始测试">
-          <div className="eval-center-stack">
-            {activeForBot && (
-              <Alert
-                type="warning"
-                showIcon
-                content={`该 Bot 正在运行 ${trackForRecord(activeForBot)?.shortTitle ?? "一条评测"}；完成或取消后才能启动下一条。`}
-              />
-            )}
-            {problem && (
-              <Alert
-                type="error"
-                showIcon
-                title={`${problem.code}：${problem.message}`}
-                content={
-                  problem.checks.length ? (
-                    <div className="eval-problem">
-                      {problem.checks.filter((check) => !check.ok).map((check) => (
-                        <Text key={check.code}>
-                          {check.label}：{check.detail}{check.action ? `；${check.action}` : ""}
-                        </Text>
-                      ))}
-                    </div>
-                  ) : undefined
-                }
-              />
-            )}
+          {suitesQuery.isLoading ? <Spin /> : suitesQuery.isError ? <Alert type="error" content={formatApiError(suitesQuery.error)} /> :
+            <BenchmarkWorkbench key={botId} botId={botId} suites={suites} active={Boolean(activeForBot)} onCreated={record => {
+              setSelectedEvaluation(record); setTab("records");
+              void queryClient.invalidateQueries({ queryKey: ["evaluation-records"] });
+            }} />}
 
-            <div className="eval-track-grid">
-              {TRACKS.map((track) => {
-                const suite = suitesByTrack.get(track.id) ?? null;
-                const preset = presets[track.id];
-                const options = presetOptions(suite);
-                const selected = selectedTrack === track.id;
-                const unavailable = !suite || !suite.ready;
-                return (
-                  <Card
-                    key={track.id}
-                    className={`eval-track-card${selected ? " eval-track-card-selected" : ""}`}
-                    title={track.title}
-                    extra={
-                      suite?.ready
-                        ? <Tag color="green">{suite.case_count} Cases</Tag>
-                        : <Tag color="red">未就绪</Tag>
-                    }
-                    onClick={() => setSelectedTrack(track.id)}
-                  >
-                    <Paragraph>{track.description}</Paragraph>
-                    <Descriptions
-                      column={1}
-                      size="small"
-                      data={[
-                        ...(track.framework ? [{ label: "测评框架", value: track.framework }] : []),
-                        { label: "测试内容", value: track.includes },
-                        { label: "明确不含", value: track.excludes },
-                      ]}
-                    />
-                    <div className="eval-track-controls" onClick={(event) => event.stopPropagation()}>
-                      <Text bold>范围</Text>
-                      <Radio.Group
-                        type="button"
-                        value={preset}
-                        onChange={(value) => setPresets((current) => ({
-                          ...current,
-                          [track.id]: value as SuitePreset,
-                        }))}
-                      >
-                        {options.map((option) => (
-                          <Radio key={option} value={option}>
-                            {option === "quick" ? "快速" : option === "full" ? "完整" : "安全"}
-                          </Radio>
-                        ))}
-                      </Radio.Group>
-                      <Text type="secondary">
-                        {unavailable
-                          ? suite?.unavailable_reason || "测试轨道未安装。"
-                          : presetDescription(suite, preset)}
-                      </Text>
-                      <Button
-                        type="primary"
-                        long
-                        loading={startMutation.isPending && selectedTrack === track.id}
-                        disabled={!botId || unavailable || Boolean(activeForBot)}
-                        onClick={() => startMutation.mutate(track.id)}
-                      >
-                        {track.id === "agent"
-                          ? preset === "full" ? "开始完整评测" : preset === "security" ? "开始安全评测" : "开始评测"
-                          : `启动${track.shortTitle}${preset === "full" ? "完整测试" : "测试"}`}
-                      </Button>
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-
-            <Alert
-              type="info"
-              showIcon
-              content="真实 QQ 登录、NapCat 在线和真实外部用户往返不在这两条本地 Evaluation 中；它们继续由基础设施诊断单独报告。"
-            />
-          </div>
         </Tabs.TabPane>
 
         <Tabs.TabPane key="records" title="运行记录">
@@ -545,6 +385,7 @@ export default function EvalsPage({ visible = true }: Props) {
             {detailQuery.isLoading && <Spin tip="正在读取测试点结果…" />}
             {detailQuery.isError && <Alert type="error" content={`详情读取失败：${formatApiError(detailQuery.error)}`}
               action={<Button size="small" onClick={() => void detailQuery.refetch()}>重试</Button>} />}
+            <BenchmarkSnapshot record={selectedRecord} />
             <EvaluationResults key={selectedRecord.evaluation_id} record={selectedRecord} />
             <Space wrap>
               {ACTIVE_STATUSES.has(selectedRecord.status) && (

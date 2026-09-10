@@ -22,3 +22,13 @@ options:
     type: boolean
     label: 仅校验，不调用模型
     default: false
+  - name: scoring_mode
+    type: enum
+    label: 评分方案
+    choices: [native, native_geval, geval]
+    default: native
+  - name: quality_rubric
+    type: enum
+    label: GEval 量表
+    choices: [evidence, task]
+    default: evidence

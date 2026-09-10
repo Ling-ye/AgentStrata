@@ -16,6 +16,7 @@ from chatcopilot.evals.application.bots import (
     temporary_eval_env,
 )
 from chatcopilot.evals.models import EvalCase, to_jsonable
+from chatcopilot.evals.workbench import benchmark_descriptor
 from chatcopilot.evals.official_data import suite_data_status
 from chatcopilot.evals.plugins import get_evaluation_plugin
 from chatcopilot.evals.profiles import profile_descriptors
@@ -66,6 +67,8 @@ def list_suite_descriptors(
                             f"plugin {manifest.plugin_id} does not allow {manifest.driver_id}"
                         )
                     cases = get_cases(standard.suite_id, auto_prepare=False)
+                    if plugin.preflight is not None:
+                        plugin.preflight(cases=cases)
                 except Exception as exc:  # noqa: BLE001
                     error = f"{type(exc).__name__}: {exc}"
             ready = implemented and bool(cases) and not error
@@ -83,6 +86,7 @@ def list_suite_descriptors(
                     "type": option.type,
                     "label": option.label,
                     "default": option.default,
+                    "choices": list(option.choices),
                 }
                 for option in manifest.options
             ]
@@ -90,6 +94,7 @@ def list_suite_descriptors(
                 {
                     **to_jsonable(standard),
                     "version": manifest.version,
+                    "benchmark": benchmark_descriptor(manifest, cases),
                     "status": manifest.status,
                     "plugin_id": manifest.plugin_id,
                     "driver_id": manifest.driver_id,
@@ -229,6 +234,7 @@ def get_case_descriptor(
                 "rubric": case.rubric,
                 "expected_behavior": case.expected_behavior,
                 "metadata": _safe_case_metadata(case),
+                "scoring": case.metadata.get("case_definition", {}).get("quality", {}),
             }
     raise KeyError(case_id)
 
@@ -240,6 +246,7 @@ def _case_summary(case: EvalCase) -> dict[str, Any]:
         "case_id": case.case_id,
         "category": case.category,
         "summary": text[:180] + ("…" if len(text) > 180 else ""),
+        "quality_required": case.metadata.get("case_definition", {}).get("quality", {}).get("enabled"),
         "has_attachments": bool(files),
         "attachment_count": (len(files) if isinstance(files, (list, tuple)) else 0),
         "source": _safe_source(case.metadata.get("source", "")),
@@ -255,6 +262,12 @@ def _safe_case_metadata(case: EvalCase) -> dict[str, Any]:
         "task_id",
         "files",
         "problem_categories",
+        "source_revision",
+        "task",
+        "index",
+        "repo",
+        "base_commit",
+        "instance_id",
     }
     result = {key: to_jsonable(value) for key, value in case.metadata.items() if key in allowed}
     if "source" in result:

@@ -27,6 +27,7 @@ export default function EvaluationTrends({ initialBot, bots, visible, onOpen }: 
   const [dimensions, setDimensions] = useState<SplitDimension[]>(["agent", "model"]);
   const [metric, setMetric] = useState<TrendMetric>("pass_rate");
   const [focusedKey, setFocusedKey] = useState("");
+  const [view, setView] = useState("comparable");
   const botIds = selectedBots ?? (initialBot ? [initialBot] : []);
   const from = days === -1 ? Date.parse(customFrom) : days ? anchor - days * 86400000 : null;
   const to = days === -1 ? Date.parse(customTo) : anchor;
@@ -51,8 +52,8 @@ export default function EvaluationTrends({ initialBot, bots, visible, onOpen }: 
   const scaleOptions = [...new Set(allPoints.map(pointScale))];
   const caseOptions = [...new Set(allPoints.flatMap(p => p.case_ids))].sort();
   const points = useMemo(() => buildTrendPoints(records, cases).filter(p => (!models.length || models.includes(pointModel(p)))
-    && (!scales.length || scales.includes(pointScale(p)))), [records, cases, models, scales]);
-  const lines = useMemo(() => groupTrendPoints(points, dimensions), [points, dimensions]);
+    && (!scales.length || scales.includes(pointScale(p))) && (view === "explore" || Boolean(p.record.insights.comparison_keys?.[metric]))), [records, cases, models, scales, view, metric]);
+  const lines = useMemo(() => groupTrendPoints(points, dimensions, view === "comparable" ? metric : undefined), [points, dimensions, metric, view]);
   const chartRef = useRef<HTMLDivElement>(null);
   const [chartWidth, setChartWidth] = useState(900);
   useEffect(() => {
@@ -70,7 +71,7 @@ export default function EvaluationTrends({ initialBot, bots, visible, onOpen }: 
   const end = points[points.length - 1]?.timestamp ?? anchor;
   const x = (point: TrendPoint) => end === start ? (55 + chartEnd) / 2 : 55 + (point.timestamp - start) / (end - start) * (chartEnd - 55);
   const y = (value: number) => 210 - value / maximum * 180;
-  const labelValue = (point: TrendPoint) => metric === "duration" ? durationPointLabel(point) : rateLabel(pointValue(point, metric));
+  const labelValue = (point: TrendPoint) => metric === "duration" ? durationPointLabel(point) : metric === "quality" ? (pointValue(point, metric)?.toFixed(2) ?? "—") : rateLabel(pointValue(point, metric));
   const excluded = records.filter(record => !record.insights.trend_eligible);
   const options = (values: string[]) => values.map(value => ({ value, label: value }));
   return <div className="eval-trends">
@@ -82,7 +83,8 @@ export default function EvaluationTrends({ initialBot, bots, visible, onOpen }: 
       ]} /></div>
       <div className="eval-trend-filter">机器人<Select aria-label="趋势机器人" mode="multiple" value={botIds} onChange={setSelectedBots} allowClear placeholder="全部机器人" options={options(bots)} /></div>
       <div className="eval-trend-filter">测试方向<Select aria-label="趋势测试方向" value={suite} onChange={setSuite} options={[
-        { value: "agentstrata-capabilities-v1", label: "Agent 评测" }, { value: "agentstrata-qq-message-flow-v1", label: "QQ 链路" },
+        { value: "swe-bench-verified", label: "SWE-bench Verified" }, { value: "bfcl", label: "BFCL" }, { value: "gaia", label: "GAIA" }, { value: "agentbench-fc", label: "AgentBench FC" },
+        { value: "agentstrata-capabilities-v1", label: "AgentStrata 回归" }, { value: "ifeval", label: "IFEval" }, { value: "agentstrata-qq-message-flow-v1", label: "QQ 链路" },
       ]} /></div>
       <div className="eval-trend-filter">模型<Select aria-label="趋势模型" mode="multiple" value={models} onChange={setModels} options={options(modelOptions)} allowClear placeholder="全部模型" /></div>
       <div className="eval-trend-filter">测试规模<Select aria-label="趋势测试规模" mode="multiple" value={scales} onChange={setScales} options={options(scaleOptions)} allowClear placeholder="全部规模" /></div>
@@ -92,6 +94,8 @@ export default function EvaluationTrends({ initialBot, bots, visible, onOpen }: 
       <label>结束时间<input aria-label="趋势结束时间" type="datetime-local" value={customTo} onChange={e => setCustomTo(e.target.value)} /></label></Space>}
     <div className="eval-range-actions"><Button onClick={() => { setAnchor(Date.now()); if (days === -1) void query.refetch(); }}>刷新</Button></div>
     </section>
+    <Space wrap><Select aria-label="趋势比较方式" value={view} onChange={setView} style={{ width: 180 }} options={[{ value: "comparable", label: "可比趋势" }, { value: "explore", label: "探索视图" }]} />
+      <Text type="secondary">{view === "comparable" ? "按精确题单、环境与评分定义分组；缺少快照的旧记录可在探索视图查看。" : "探索视图允许不同条件同屏，曲线变化不直接表示能力进步。"}</Text></Space>
     <div className="eval-split-controls" role="group" aria-label="曲线分组"><Space wrap><Text>按以下维度拆线</Text>
       {([['agent', 'Agent'], ['model', '模型'], ['scale', '测试规模']] as const).map(([key, label]) => <Checkbox key={key} checked={dimensions.includes(key)}
         onChange={checked => setDimensions(current => checked ? [...current, key] : current.filter(d => d !== key))}>{label}</Checkbox>)}
@@ -108,7 +112,7 @@ export default function EvaluationTrends({ initialBot, bots, visible, onOpen }: 
         <svg viewBox={`0 0 ${chartWidth} 250`} role="group" aria-label="评测进步曲线">
           {[0, .25, .5, .75, 1].map(ratio => <g key={ratio}>
             <line x1="55" x2={chartEnd} y1={y(ratio * maximum)} y2={y(ratio * maximum)} className="eval-chart-grid" />
-            <text x="45" y={y(ratio * maximum) + 4} textAnchor="end">{metric === "duration" ? `${(ratio * maximum).toFixed(maximum < 10 ? 1 : 0)}s` : `${ratio * 100}%`}</text>
+            <text x="45" y={y(ratio * maximum) + 4} textAnchor="end">{metric === "duration" ? `${(ratio * maximum).toFixed(maximum < 10 ? 1 : 0)}s` : metric === "quality" ? ratio.toFixed(2) : `${ratio * 100}%`}</text>
           </g>)}
           {lines.map((line, index) => <g key={line.key}>
             {linePaths(line.points, metric, x, y).map((d, pathIndex) => <path key={pathIndex} d={d} className="eval-chart-line" style={{ stroke: COLORS[index % COLORS.length] }} />)}
@@ -129,7 +133,7 @@ export default function EvaluationTrends({ initialBot, bots, visible, onOpen }: 
           <Text>{dateLabel(focused.record.started_at || focused.record.created_at)}</Text><Text>{focused.record.bot_id} / {focused.backend}</Text>
           <Text>{pointModel(focused)} · {pointScale(focused)}</Text><Tag>{revisionLabel(focused.record)}</Tag>
           {metric === "duration" && <Text>{durationTitle}：{durationPointLabel(focused)} · {durationCoverage(focused)}</Text>}
-          <Text>通过 {focused.counts.passed} / {focused.observed}</Text><Text>质量 {rateLabel(focused.quality.score)} · 已评分 {focused.quality.scored} / {focused.quality.expected}</Text>
+          <Text>通过 {focused.counts.passed} / {focused.observed}</Text><Text>质量 {focused.quality.score === null ? "—" : focused.quality.score.toFixed(2)} · 已评分 {focused.quality.scored} / {focused.quality.expected}</Text>
           <Text>评分模型：{String((focused.scoring.judge as Record<string, unknown> | undefined)?.model ?? "未记录")}</Text>
           <Button type="text" onClick={() => onOpen(focused.record)}>查看本次评测</Button>
         </Space></div>}
@@ -140,7 +144,7 @@ export default function EvaluationTrends({ initialBot, bots, visible, onOpen }: 
         { title: "Agent / 模型", width: 230, render: (_, p) => `${p.record.bot_id} / ${p.backend} / ${pointModel(p)}` },
         { title: "规模", width: 115, render: (_, p) => pointScale(p) },
         { title: "通过率", width: 110, render: (_, p) => `${rateLabel(p.pass_rate)} (${p.counts.passed}/${p.observed})` },
-        { title: "质量分", width: 140, render: (_, p) => `${rateLabel(p.quality.score)} (${p.quality.scored}/${p.quality.expected})` },
+        { title: "质量分", width: 140, render: (_, p) => `${p.quality.score === null ? "—" : p.quality.score.toFixed(2)} (${p.quality.scored}/${p.quality.expected})` },
         { title: "Git 版本", width: 190, render: (_, p) => <span title={p.record.source_revision.commit ?? ""}>{revisionLabel(p.record)}</span> },
         { title: durationTitle, width: 190, render: (_, p) => <span>{durationPointLabel(p)}<small className="eval-trial-meta">{durationCoverage(p)}</small></span> },
       ]} />

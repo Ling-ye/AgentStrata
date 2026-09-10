@@ -416,7 +416,7 @@ HTTP route 由 `chatcopilot.http_routes` registry 发现。registry 为空时健
 
 Agent 轨道使用 DeepEval 4.2.2。Console 安装/更新流程对账 `evaluation` 可选依赖；开发环境可运行 `python -m pip install -e ".[agent,evaluation,dev]"`。评分模型独立配置，先从 [`evaluation.env.example`](../deploy/wsl/evaluation.env.example) 复制非秘密模板至服务用户的 `~/.config/agentstrata/evaluation.env`，目录使用 `0700`、文件使用 `0600`，填写 `CHATCOPILOT_EVALUATION_JUDGE_MODEL`、`BASE_URL`、`API_KEY` 和可选 `TIMEOUT`（默认 60 秒）。可选 `CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT=medium` 将评分推理强度明确设置为中；留空则不发送该参数。模型可接受的档位由 Provider 决定，不支持时会报告判分错误。推理强度记录在评分快照中，独立于被测模型。模板不包含默认商业模型或凭据。
 
-Evaluation systemd unit 读取该文件；配置更新按既有维护流程在服务 idle 时应用，不需要修改或重启机器人。命令行独立执行时显式提供同名环境变量。预检缺少评分配置会阻止创建正式 Agent 评测；不会借用被测模型。每次判分也受 Case 和 Evaluation 剩余时间约束。DeepEval 只使用本地 SDK，结果留在现有 Evaluation 根；正常模型 Provider 调用费用与 Agent 测试调用分开记录。
+Evaluation systemd unit 读取该文件；配置更新按既有维护流程在服务 idle 时应用，不需要修改或重启机器人。命令行独立执行时显式提供同名环境变量。选择 GEval 且题目需要质量判分时，预检缺少评分配置会阻止创建评测；不会借用被测模型。每次判分也受 Case 和 Evaluation 剩余时间约束。DeepEval 只使用本地 SDK，结果留在现有 Evaluation 根；正常模型 Provider 调用费用与 Agent 测试调用分开记录。
 
 控制台中的「开始测试 / 运行记录 / 进步趋势」通过
 `chatcopilot-evaluation.service` 执行。服务是 activity claim、lifecycle state 和
@@ -465,12 +465,27 @@ python -m chatcopilot evals run \
   --output reports/evals/manual/bfcl-smoke
 ```
 
-### 两轨手动测评
+### 基准工作台与手动测评
 
-Console 测评中心只提供两个入口。`agentstrata-capabilities-v1` 直接提交给 Agent
-runtime，不经过 ACP 或 QQ；`quick/full/security` 分别选择 10/23/3 个 Case。
-能力目录保留 25 个 Case；依赖未启用 `experience` 来源的两个来源专用 Case 只允许在启用
-对应受信来源后通过 `custom` 显式选择，因此默认 `full` 实际选择 23 个 Case。
+Console 的「开始测试」按基准目录、题目列表、评分和运行计划组织。能力方向包含
+SWE-bench Verified、BFCL、GAIA、AgentBench FC、IFEval 和 AgentStrata 回归；QQ 合成链路
+保留独立入口。查看目录和题目不会下载数据、启动环境或调用模型。勾选题目后，运行计划使用
+准确 Case ID，并冻结框架版本、题单摘要与评分配置。数据准备由独立「准备官方数据」动作触发，
+完成后刷新目录。缺少环境或数据的基准保留可见并显示阻断原因。
+
+「原生评分 + GEval」分别记录确定性结果和语义质量；「仅原生评分」不调用 Judge。
+公开基准可选择「自定义 GEval 质量评价」，此时不产生原生基准成绩。固定量表可选证据质量或
+任务回应质量，阈值 0.7；项目回归使用每题自身的固定质量定义。GAIA 不再使用旧 LLM fallback
+改判答案，按官方数字、顺序列表和字符串归一化规则检查。质量分范围为 0–1，不表示正确概率。
+
+运行记录显示框架、基准、题单和评分快照，并可展开逐题实际输入、输出、工具和评分理由。
+缺少旧字段时显示未记录。趋势默认按精确题集、环境、预算和指标协议区分可比条件；GEval
+额外区分 Judge 与量表。探索视图可看历史及不同条件，变化不能直接解释为能力进步。
+质量覆盖不完整时不生成完整可比质量点。不同基准不平均为总分。
+
+`agentstrata-capabilities-v1` 的 63 个 Case 直接提交给 Agent runtime，不经过 ACP 或 QQ；
+`quick/full/security` 分别选择 10/61/3 题，两个依赖特定来源的 Case 继续通过 custom 选择。
+
 `agentstrata-qq-message-flow-v1` 当前仍验证重构前的 Relay/attestation/ACP 合成链，
 `quick/full/security` 分别选择 3/7/4 个 Case。它只保留为 legacy regression suite，
 不是新 Gateway 验收；迁移到 fake OneBot → real Channel/Gateway 前不得把名称解释成当前
@@ -478,6 +493,32 @@ runtime，不经过 ACP 或 QQ；`quick/full/security` 分别选择 10/23/3 个 
 `repetitions=1`，只说明本次执行结果，不能作为重复可靠性结论。
 
 两条产品轨道均不接 Git hook、CI、文件监听、部署回调或 Bot 重启回调。
+
+SWE-bench 与 AgentBench 的资源由部署者显式准备：
+
+- SWE-bench 使用已固定的 `swebench==5.0.2` 评分库（包含在 `evaluation` extra）。
+  `CHATCOPILOT_SWEBENCH_DATA_PATH` 指向当前官方 JSONL，每行包含 `instance_id`、
+  `problem_statement`、`base_commit`、`image`、`eval_script`、`repo`、`version`、
+  `FAIL_TO_PASS`、`PASS_TO_PASS`、`log_parser`、`eval_type`。
+  先按数据声明准备 Docker 镜像；运行不自动拉取镜像。Agent 通过 `benchmark_shell`
+  在无宿主挂载、断网、丢弃 capabilities、有限 CPU/内存/PID 的容器内修复，模型补丁在新容器中
+  接受隐藏测试，再交给上游 log grader 判卷。容器基线 commit 必须匹配，镜像 ID 与补丁摘要
+  随结果保存。该受限执行配置需与原始榜单条件区分；暂不支持 Multimodal 资源。
+- AgentBench FC 由用户独立管理本地 Controller 与环境 worker。
+  `CHATCOPILOT_AGENTBENCH_CONTROLLER_URL` 只接受明确的回环 IP HTTP `/api` 地址，
+  禁止重定向、代理和带用户信息的 URL。`CHATCOPILOT_AGENTBENCH_DATA_PATH` 为从所部署
+  固定版本导出的 JSONL 目录，每行包含 `task`、`index`、`input`（预览原题）、
+  `source_revision`（40 位源码 commit）。支持的 task 为 `dbbench-std`、`os-std`、`kg-std`、
+  `alfworld-std`、`webshop-std`；实际可用性由已部署 worker 和数据决定。运行时真实输入和
+  工具来自 Controller，AgentStrata Agent 调用工具推进环境，终态按环境 reward 判定。
+  上游未提供可验证版本回执，部署者需保持题目目录与 worker 版本一致；不宣称官方榜单等价。
+- 环境资源在 Agent 调用前向 Trial supervisor 登记，正常结束与取消后按精确资源身份回收。
+  无法确认回收时返回清理异常，不当作完成。环境准备、真实模型运行和完整官方数据集成绩
+  分别验收；本地模拟环境测试不替代这些结果。
+
+环境配置模板见 [`evaluation.env.example`](../deploy/wsl/evaluation.env.example)。新基准仍使用
+现有 Evaluation service、单 Bot claim、预算与取消机制，不创建第二个生命周期或报告根。
+
 
 直接 Agent 的实时汇率 Case 要求搜索最新可用业务日的 ECB USD/CNY 参考值，并由
 Evaluation 独立读取 ECB Data Portal 作为 oracle。oracle 不可用时 Case 记为基础设施

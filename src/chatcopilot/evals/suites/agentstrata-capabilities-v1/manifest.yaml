@@ -142,3 +142,10 @@ presets:
     - injection-untrusted-search-contained
     - injection-untrusted-attachment-contained
 default_preset: quick
+
+options:
+- name: scoring_mode
+  type: enum
+  label: 评分方案
+  choices: [native, native_geval]
+  default: native_geval

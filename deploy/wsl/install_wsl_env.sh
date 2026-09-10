@@ -547,6 +547,8 @@ install_python_env() {
     if [ "$INSTALL_CONSOLE_DEPS" -eq 1 ]; then
         sync_args+=(--extra console --extra evaluation)
     fi
+    # Project execution scopes reject hardlinks to files outside the mounted tree.
+    sync_args+=(--link-mode copy)
     sync_args+=(--no-config)
     run "${uv_env[@]}" "$UV_BIN" "${sync_args[@]}"
     [ "$DRY_RUN" -eq 1 ] || ok "isolated Python $PYTHON_VERSION environment ready: $VENV_DIR"

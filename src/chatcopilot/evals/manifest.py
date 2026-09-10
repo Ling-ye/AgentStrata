@@ -662,6 +662,7 @@ def suite_definition_snapshot(
         for case in cases
     ]
     from chatcopilot.evals.deepeval_engine import scoring_snapshot
+    from chatcopilot.evals.workbench import EXTERNAL_SUITES, RUBRICS, SCORING_VERSION
 
     return {
         "schema": 2,
@@ -673,7 +674,9 @@ def suite_definition_snapshot(
         },
         "case_plugin_bindings": case_plugin_bindings,
         **({"scoring": scoring_snapshot()}
-           if manifest.track == "agent" else {}),
+           if manifest.track == "agent" or manifest.suite_id in EXTERNAL_SUITES else {}),
+        **({"quality_rubrics": RUBRICS, "scoring_version": SCORING_VERSION}
+           if manifest.suite_id in EXTERNAL_SUITES else {}),
         "execution_implementations": suite_implementation_snapshot(implementation_bindings),
         "cases": case_records,
         "target_fingerprint": to_jsonable(dict(target_fingerprint or {})),

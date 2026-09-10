@@ -44,6 +44,7 @@ class EvalRegistryTests(unittest.TestCase):
                 "bfcl",
                 "ifeval",
                 "swe-bench-verified",
+                "agentbench-fc",
                 "webarena",
             },
             suite_ids,
@@ -81,7 +82,7 @@ class EvalRegistryTests(unittest.TestCase):
             lines,
         )
         self.assertIn(
-            "swe-bench-verified\tcode\tplanned/unavailable\tSWE-bench Verified",
+            "swe-bench-verified\tcode\texternal-data\tSWE-bench Verified",
             lines,
         )
 
@@ -415,7 +416,7 @@ class EvalRunnerTests(unittest.TestCase):
             metadata={"adapter": "gaia", "answer": "The Blue Whale"},
         )
 
-        passed = gaia.judge(case, "Final answer: blue whale.")
+        passed = gaia.judge(case, "The blue whale.")
         failed = gaia.judge(case, "Final answer: humpback whale")
 
         self.assertTrue(passed.passed)

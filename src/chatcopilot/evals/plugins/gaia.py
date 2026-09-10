@@ -9,12 +9,7 @@ def _load_cases(context: CaseLoadContext):
 
 
 def _judge(case, final_text: str, *, chat_config=None):
-    result = gaia.judge(case, final_text)
-    if result.passed or chat_config is None:
-        return result
-    from chatcopilot.evals.judges_llm import judge_llm_rubric
-
-    return judge_llm_rubric(case, final_text, chat_config)
+    return gaia.judge(case, final_text)
 
 
 PLUGIN = EvaluationPlugin(

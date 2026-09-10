@@ -29,6 +29,10 @@ class PluginBinding:
 
 
 _BINDINGS: tuple[PluginBinding, ...] = (
+    PluginBinding("swe-bench", f"{_TRUSTED_PREFIX}swebench", PLUGIN_API_VERSION,
+                  frozenset({"agent_configured", "dry_run"})),
+    PluginBinding("agentbench-fc", f"{_TRUSTED_PREFIX}agentbench", PLUGIN_API_VERSION,
+                  frozenset({"agent_configured", "dry_run"})),
     PluginBinding(
         "gaia",
         f"{_TRUSTED_PREFIX}gaia",

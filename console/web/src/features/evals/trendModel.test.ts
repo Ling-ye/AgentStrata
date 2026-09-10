@@ -56,6 +56,27 @@ describe("recorded Case input", () => {
   });
 });
 
+describe("comparable benchmark trends", () => {
+  it("keeps different case and scorer contracts separate while retaining exploration", () => {
+    const first = record("1"), second = record("2"), legacy = record("3");
+    first.insights.comparison_keys = { pass_rate: "same-native", quality: "judge-a" };
+    second.insights.comparison_keys = { pass_rate: "same-native", quality: "judge-b" };
+    const points = buildTrendPoints([first, second, legacy]);
+    expect(groupTrendPoints(points, [], "pass_rate")).toHaveLength(1);
+    expect(groupTrendPoints(points, [], "pass_rate")[0].points).toHaveLength(2);
+    expect(groupTrendPoints(points, [], "quality")).toHaveLength(2);
+    expect(groupTrendPoints(points, [])[0].points).toHaveLength(3);
+    second.insights.comparison_keys.pass_rate = "other-case-set";
+    expect(groupTrendPoints(buildTrendPoints([first, second]), [], "pass_rate")).toHaveLength(2);
+  });
+  it("does not present incomplete quality coverage as a complete quality point", () => {
+    const point = buildTrendPoints([record("1")])[0];
+    expect(pointValue(point, "quality")).toBeNull();
+    point.quality.scored = point.quality.expected;
+    expect(pointValue(point, "quality")).toBe(.9);
+  });
+});
+
 describe("cumulative execution duration", () => {
   it("plots partial measurements as a lower bound and breaks duration lines", () => {
     const records = [record("1"), record("2"), record("3")];

@@ -68,15 +68,16 @@ resulting system structure.
 - **Controlled development.** Codex-backed owner sessions dispatch repository
   mutation to isolated code tasks that validate and prepare draft pull
   requests; they do not merge or deploy automatically.
-- **Unified evaluation.** The Console exposes a 25-Case direct-Agent catalog
-  whose default `full` preset runs the 23 Cases supported by the built-in Bot,
-  plus 7 legacy synthetic QQ message-flow Cases; Profile comparisons, BFCL, GAIA, and IFEval
-  remain available through the same Evaluation resource and artifact layout.
-  Results show per-case outcomes and historical pass-rate/duration trends grouped
-  by test conditions, with creation-time Git and runtime-configuration metadata.
-  Product presets are started manually; BFCL remains a direct-LLM protocol
-  calibration. The local service owns managed workers and lifecycle state,
-  while the Console is its UI/BFF over a same-user Unix socket.
+- **Benchmark workbench.** The Console exposes benchmark selection, case previews,
+  scoring plans, run evidence and comparable trends through DeepEval. SWE-bench,
+  BFCL, GAIA and AgentBench FC have explicit coverage and environment requirements;
+  the 63-case project catalog and 7 legacy synthetic QQ cases remain available.
+  Native benchmark scores and GEval quality are reported separately. BFCL's current
+  adapter measures a subset of direct-model function calling; prepared SWE-bench
+  containers use upstream grading, and AgentBench uses its local FC environment.
+  The independent Evaluation service owns workers and artifacts; the Console is
+  its UI/BFF over a same-user Unix socket. See the [workbench specification](https://github.com/Ling-ye/AgentStrata/blob/main/specs/evaluation-benchmark-workbench/spec.md).
+
 
 ## Quick start
 

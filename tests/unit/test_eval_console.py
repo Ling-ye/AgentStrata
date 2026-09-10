@@ -174,6 +174,7 @@ def test_catalog_queries_are_generic_and_hide_answers(
         "bfcl",
         "ifeval",
         "swe-bench-verified",
+                "agentbench-fc",
         "webarena",
     }
     assert by_id["ifeval"]["ready"] is True
@@ -189,7 +190,7 @@ def test_catalog_queries_are_generic_and_hide_answers(
         == "image_generation:not_configured"
     )
     assert by_id["bfcl"]["execution_scope"] == "direct_llm/function_call_protocol"
-    assert by_id["swe-bench-verified"]["implemented"] is False
+    assert by_id["swe-bench-verified"]["implemented"] is True
     assert "balanced-100" in by_id["gaia"]["selection_policy"]
     assert "simple/relevance=Lv1" in by_id["bfcl"]["level_policy"]
     assert "instruction family" in by_id["ifeval"]["category_policy"]

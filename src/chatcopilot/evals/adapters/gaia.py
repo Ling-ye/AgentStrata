@@ -192,14 +192,12 @@ def judge(case: EvalCase, final_text: str) -> JudgeResult:
             missing=("metadata.answer",),
         )
 
-    expected_norm = _normalize_answer(expected)
-    candidates = _answer_candidates(final_text)
-    passed = any(_normalize_answer(candidate) == expected_norm for candidate in candidates)
+    passed = _official_answer_match(final_text, expected)
     return JudgeResult(
         score=1.0 if passed else 0.0,
         max_score=1.0,
         passed=passed,
-        reasons=("normalized exact match",) if passed else ("normalized exact match failed",),
+        reasons=("GAIA normalized answer match",) if passed else ("GAIA normalized answer mismatch",),
         missing=() if passed else (expected,),
     )
 
@@ -791,39 +789,32 @@ def _first_text(row: dict[str, Any], keys: tuple[str, ...]) -> str:
     return ""
 
 
-def _answer_candidates(text: str) -> tuple[str, ...]:
-    stripped = text.strip()
-    candidates = [stripped]
-    patterns = (
-        r"(?im)^\s*(?:final answer|answer|答案|最终答案)\s*[:：]\s*(.+?)\s*$",
-        r"(?im)(?:final answer|answer|答案|最终答案)\s*[:：]\s*(.+?)\s*$",
-    )
-    for pattern in patterns:
-        for match in re.findall(pattern, text):
-            candidate = str(match).strip()
-            if candidate:
-                candidates.append(candidate)
-    non_empty_lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-    if non_empty_lines:
-        candidates.append(non_empty_lines[-1])
-    return tuple(dict.fromkeys(candidates))
+def _official_answer_match(actual: str, expected: str) -> bool:
+    # GAIA's public scorer distinguishes numbers, ordered lists and strings;
+    # stripping answer prefixes, articles or final lines would change its protocol.
+    def number(value: str) -> float | None:
+        try:
+            return float(value)
+        except ValueError:
+            return None
 
+    def normalized_number(value: str) -> float | None:
+        return number(value.translate(str.maketrans("", "", "$%,")))
 
-def _normalize_answer(value: str) -> str:
-    text = value.strip().lower()
-    text = _strip_code_fence(text)
-    text = re.sub(r"\b(a|an|the)\b", " ", text)
-    text = text.translate(str.maketrans("", "", string.punctuation))
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    def text(value: str, *, punctuation: bool) -> str:
+        value = re.sub(r"\s", "", value).lower()
+        return value.translate(str.maketrans("", "", string.punctuation)) if punctuation else value
 
-
-def _strip_code_fence(text: str) -> str:
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if len(lines) >= 3 and lines[-1].strip() == "```":
-            return "\n".join(lines[1:-1]).strip()
-    return text
+    if number(expected) is not None:
+        return normalized_number(actual) == number(expected)
+    if "," in expected or ";" in expected:
+        left, right = re.split(r"[,;]", actual), re.split(r"[,;]", expected)
+        return len(left) == len(right) and all(
+            normalized_number(a) == number(b) if number(b) is not None
+            else text(a, punctuation=False) == text(b, punctuation=False)
+            for a, b in zip(left, right)
+        )
+    return text(actual, punctuation=True) == text(expected, punctuation=True)
 
 
 def _levels_from_env() -> set[str]:

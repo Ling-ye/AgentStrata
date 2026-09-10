@@ -113,6 +113,7 @@ def test_dry_run_is_zero_write_and_reports_x86_artifacts(tmp_path: Path) -> None
     assert "uv-x86_64-unknown-linux-gnu.tar.gz" in completed.stdout
     assert "node-v24.20.0-linux-x64.tar.xz" in completed.stdout
     assert "uv sync --frozen --python 3.13.15 --extra agent --extra acp" in completed.stdout
+    assert "--link-mode copy --no-config" in completed.stdout
     assert "dry-run completed; no files or packages were changed" in completed.stdout
 
 
@@ -135,6 +136,7 @@ def test_console_dependencies_are_an_explicit_locked_extra(tmp_path: Path) -> No
 
     assert completed.returncode == 0, completed.stderr
     assert "uv sync --frozen --python 3.13.15 --extra agent --extra acp --extra console --extra evaluation" in completed.stdout
+    assert "--link-mode copy --no-config" in completed.stdout
     assert "ensurepip" not in INSTALLER.read_text(encoding="utf-8")
 
 
