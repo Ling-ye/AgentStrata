@@ -40,7 +40,6 @@ def _agent_case(case_id: str):
 
 def _context(monkeypatch: pytest.MonkeyPatch) -> CapabilityScenarioContext:
     monkeypatch.setenv("QQ_ALLOW_FROM", "10002,10001")
-    monkeypatch.setenv("QQ_ALLOW_GROUPS", "10004")
     monkeypatch.setenv("CHATCOPILOT_ADD_OWNER_IDS", "10001")
     monkeypatch.delenv("CHATCOPILOT_ADD_OWNER_NAMES", raising=False)
     monkeypatch.delenv("CHATCOPILOT_ADD_ADMIN_IDS", raising=False)
@@ -49,7 +48,6 @@ def _context(monkeypatch: pytest.MonkeyPatch) -> CapabilityScenarioContext:
         platform_type="qq",
         env={
             "QQ_ALLOW_FROM": "10002,10001",
-            "QQ_ALLOW_GROUPS": "10004",
             "QQ_ACCOUNT": "10003",
         },
         owners=(Identity(user_id="10001"),),
@@ -71,7 +69,7 @@ def test_member_owner_action_runs_selected_gate_then_denies_by_stable_role(
     assert decision["kind"] == "access_decision"
     assert decision["selected_bot_policy"] is True
     assert decision["gate_allowed"] is True
-    assert decision["gate_reason"] == "qq-group-user-allowed"
+    assert decision["gate_reason"] == "qq-group-allowed"
     assert decision["resolved_role"] == "user"
     assert decision["action_authorized"] is False
     assert execution == {
@@ -94,6 +92,9 @@ def test_member_owner_action_runs_selected_gate_then_denies_by_stable_role(
     assert matrix["relay_allowlist_read"] is False
     assert matrix["relay_fixed_group_mention_trigger"] is True
     assert matrix["all_expected"] is True
+    other_group = next(row for row in matrix["rows"] if row["scenario"] == "other_group_with_at")
+    assert other_group["expected_allowed"] is True
+    assert other_group["actual_allowed"] is True
     assert {row["scenario"] for row in matrix["rows"]} == {
         "private_allowlisted",
         "private_group_only_member",

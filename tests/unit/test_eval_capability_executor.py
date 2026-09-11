@@ -1065,7 +1065,6 @@ def test_quick_acp_scenarios_dispatch_with_selected_bot_policy_without_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("QQ_ALLOW_FROM", "10002,10001")
-    monkeypatch.setenv("QQ_ALLOW_GROUPS", "10004")
     monkeypatch.setenv("QQ_ACCOUNT", "10001")
     monkeypatch.setenv("CHATCOPILOT_ADD_OWNER_IDS", "10001")
     runtime_load: dict[str, Any] = {}

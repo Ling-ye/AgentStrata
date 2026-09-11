@@ -15,6 +15,9 @@ evaluations.
 > **Status:** alpha source baseline, version `0.1.0.dev0`. The first public
 > state is source-only and does not represent a published `v0.1.0` Release.
 
+机器人加入的 QQ 群无需白名单，成员 @ 机器人即可交流；私聊仍按发送者名单准入，详见
+[QQ 准入说明](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md)。
+
 运行权限采用 Owner/member 两档：Owner 可使用当前实例资源和已配置项目；成员仅使用公共查询、
 当前会话普通文件及记忆读取和追加。三个 Backend 使用相同业务规则，详见
 [权限与资源范围](https://github.com/Ling-ye/AgentStrata/blob/main/specs/runtime-permissions-simplification/spec.md)。

@@ -1,8 +1,6 @@
 from __future__ import annotations
 from chatcopilot.contracts.execution_scope import CommandTimeouts
 
-from chatcopilot.botspec.model import ContextSpec
-
 from tests.prompt_plan_fixture import prompt_input
 
 import asyncio
@@ -15,13 +13,11 @@ import subprocess
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 import pytest
-from acp import PromptResponse
 
 
 from chatcopilot.agent.backends.codex import CodexAgentBackend
@@ -78,7 +74,6 @@ from chatcopilot.middleware.runtime.jobs.submitter import submit_tool_job
 from chatcopilot.middleware.runtime.tasks import (
     TurnTaskRecorder,
     complete_delegated_task,
-    group_task_actor_root,
 )
 
 
@@ -972,230 +967,6 @@ def test_shared_transcript_uses_protected_pseudonymous_storage_identity(
     assert meta["execution_session_id"] is None
     assert meta["turn_actor"]["actor_ref"] == identity.actor_ref
     assert "sender_user_id" not in meta["turn_actor"]
-
-
-def test_access_denied_sender_is_tracked_without_activating_actor_execution(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("QQ_ALLOW_FROM", _OWNER_ID)
-    monkeypatch.setenv("QQ_ALLOW_GROUPS", "")
-    runtime = SimpleNamespace(
-        platform_type="qq",
-    )
-    shared_workspace = Workspace(
-        root=tmp_path / f"group_{_GROUP_ID}" / "shared",
-        chat_kind="group",
-        chat_id=_GROUP_ID,
-        scope=WORKSPACE_SCOPE_GROUP_SHARED,
-    ).ensure()
-    conversation_state = SessionState(
-        session_id="qq-denied-session",
-        workspace=shared_workspace,
-        role=Role.USER,
-        assistant_mode=AssistantMode.PERFORMANCE,
-        runtime=runtime,
-    )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
-    agent._runtime = runtime
-    agent._sessions = {"qq-denied-session": conversation_state}
-    agent._group_actor_sessions = {}
-    activations: list[dict[str, object]] = []
-
-    class _Connection:
-        async def session_update(self, **_kwargs: object) -> None:
-            return None
-
-    agent._conn = _Connection()
-
-    def fail_if_built(**_kwargs: object) -> SessionState:
-        raise AssertionError("access-denied actor must not build a SessionState")
-
-    def activate(**kwargs: object) -> SessionState:
-        activations.append(kwargs)
-        return agent._activate_turn_identity(**kwargs)  # type: ignore[arg-type]
-
-    agent._build_session = fail_if_built  # type: ignore[method-assign]
-    orchestrator = AcpTurnOrchestrator(
-        agent,
-        platform_type="qq",
-        has_image_inputs=False,
-        has_role_matrix=False,
-        has_user_files_pipeline=False,
-        has_private_space_inventory=False,
-        update_text=lambda text: {"text": text},
-        recover_workspace=lambda *_args: None,
-        refresh_prompt_plan=lambda _session: None,
-        prepare_turn_identity=agent._prepare_turn_identity,
-        activate_turn_identity=activate,
-    )
-
-    async def fail_if_attachments_run(_turn: object) -> object:
-        raise AssertionError("access-denied turn must not enter attachment handling")
-
-    orchestrator._attachments = fail_if_attachments_run  # type: ignore[method-assign]
-
-    _write_group_transport_attestation(
-        monkeypatch,
-        tmp_path,
-        sender_id=_MEMBER_ID,
-        text="denied turn",
-    )
-    response = asyncio.run(
-        orchestrator.run(
-            prompt=[{"text": _envelope(_MEMBER_ID, "denied turn")}],
-            session=conversation_state,
-            session_id="qq-denied-session",
-            message_id="message-denied",
-        )
-    )
-
-    assert response.stop_reason == "end_turn"
-    assert activations == []
-    assert agent._sessions == {"qq-denied-session": conversation_state}
-    assert agent._group_actor_sessions == {}
-    assert not shared_workspace.tasks.exists()
-    tracked_workspace = replace(
-        shared_workspace,
-        user_id=_MEMBER_ID,
-        user_name=None,
-    )
-    task_paths = tuple((group_task_actor_root(tracked_workspace) / "tasks").glob("*/task.json"))
-    assert len(task_paths) == 1
-    task = json.loads(task_paths[0].read_text(encoding="utf-8"))
-    assert task["status"] == "succeeded"
-    assert task["description"] == "（入站消息内容未保存：ACP 准入拒绝）"
-    assert task["progress"] == "已按 ACP 准入策略忽略该消息。"
-    turn = json.loads((task_paths[0].parent / "turn.json").read_text(encoding="utf-8"))
-    assert turn["stop_reason"] == "access_denied"
-    persisted = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (
-            task_paths[0],
-            task_paths[0].parent / "turn.json",
-            task_paths[0].parent / "events.jsonl",
-        )
-    )
-    assert "denied turn" not in persisted
-    assert _MEMBER_ID not in persisted
-    assert _GROUP_ID not in persisted
-    assert not (shared_workspace.root.parent / ".conversation-state" / "backends").exists()
-    assert not (shared_workspace.root.parent / ".conversation-state" / "journal.jsonl").exists()
-
-
-def test_full_group_allowlist_denial_only_writes_redacted_protected_task(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    instance_root = tmp_path / "instance"
-    shared_workspace = Workspace(
-        root=instance_root / f"group_{_GROUP_ID}" / "shared",
-        chat_kind="group",
-        chat_id=_GROUP_ID,
-        scope=WORKSPACE_SCOPE_GROUP_SHARED,
-    )
-    runtime = SimpleNamespace(
-        bot_id="group-denial-bot",
-        instance_id="group-denial-bot",
-        platform_type="qq",
-        skills=(),
-        tool_packs=(),
-        tool_features=(),
-        exclude_tools=(),
-        rag_sources=(),
-        mcp_servers=(),
-        subagents=SimpleNamespace(),
-        agent_backend="native",
-        spec=SimpleNamespace(
-            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_GROUPDENIAL")
-        ),
-    )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
-    agent._runtime = runtime
-    agent._chat_config = ChatConfig()
-    agent._sessions = {}
-    agent._session_locks = {}
-    agent._group_actor_sessions = {}
-    agent._job_watch_tasks = {}
-    agent._attachment_ack_tasks = {}
-    agent._attachment_ack_resource_names = {}
-    agent._resolve_conversation_workspace = lambda: shared_workspace  # type: ignore[method-assign]
-
-    class _Connection:
-        async def session_update(self, **_kwargs: object) -> None:
-            return None
-
-    agent._conn = _Connection()
-    denied_body = "full group denial body [文件] secret.txt"
-    attestation = _write_group_transport_attestation(
-        monkeypatch,
-        tmp_path,
-        sender_id=_MEMBER_ID,
-        text=denied_body,
-    )
-    monkeypatch.setenv("CHATCOPILOT_WORKSPACE_ROOT", str(instance_root))
-    monkeypatch.setenv("QQ_ALLOW_FROM", _OWNER_ID)
-    monkeypatch.setenv("QQ_ALLOW_GROUPS", "")
-
-    async def fail_if_agent_materializes(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("denied group turn must not materialize an Agent session")
-
-    def fail_if_actor_activates(**_kwargs: object) -> SessionState:
-        raise AssertionError("denied group turn must not create an actor SessionState")
-
-    async def exercise() -> tuple[PromptResponse, str, SessionState]:
-        created = await agent.new_session(cwd="/ignored")
-        shell = agent._sessions[created.session_id]
-        agent._build_session = fail_if_actor_activates  # type: ignore[method-assign]
-        agent._ensure_agent_session = fail_if_agent_materializes  # type: ignore[method-assign]
-        with mock.patch.object(
-            attachment_pipeline,
-            "import_transport_attachments",
-            side_effect=AssertionError("denied group turn must not import attachments"),
-        ):
-            response = await agent.prompt(
-                prompt=[{"text": _envelope(_MEMBER_ID, denied_body)}],
-                session_id=created.session_id,
-                message_id="message-full-group-denied",
-            )
-        return response, created.session_id, shell
-
-    response, session_id, shell = asyncio.run(exercise())
-
-    assert response.stop_reason == "end_turn"
-    assert agent._sessions == {session_id: shell}
-    assert agent._group_actor_sessions == {}
-    assert not shell.is_workspace_materialized
-    assert not shell.is_materialized
-    assert shell.turn_identity is None
-    assert not shared_workspace.root.exists()
-    group_root = shared_workspace.root.parent
-    state_root = group_root / ".conversation-state"
-    assert {path.name for path in group_root.iterdir()} == {".conversation-state"}
-    assert {path.name for path in state_root.iterdir()} == {"task-actors"}
-    tracked_workspace = replace(shared_workspace, user_id=_MEMBER_ID)
-    task_paths = tuple((group_task_actor_root(tracked_workspace) / "tasks").glob("*/task.json"))
-    assert len(task_paths) == 1
-    task_dir = task_paths[0].parent
-    task = json.loads(task_paths[0].read_text(encoding="utf-8"))
-    turn = json.loads((task_dir / "turn.json").read_text(encoding="utf-8"))
-    assert task["status"] == "succeeded"
-    assert task["progress"] == "已按 ACP 准入策略忽略该消息。"
-    assert turn["stop_reason"] == "access_denied"
-    persisted = "\n".join(
-        path.read_text(encoding="utf-8") for path in task_dir.iterdir() if path.is_file()
-    )
-    for sensitive in (
-        denied_body,
-        _MEMBER_ID,
-        _GROUP_ID,
-        "message-full-group-denied",
-        str(instance_root),
-    ):
-        assert sensitive not in persisted
-    assert not (state_root / "group-conversation.jsonl").exists()
-    assert not (state_root / "backend-sessions").exists()
-    assert json.loads(attestation.read_text(encoding="utf-8"))["attestations"] == []
 
 
 def test_identity_rejected_group_message_creates_redacted_intake_task(

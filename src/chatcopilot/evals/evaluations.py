@@ -3763,10 +3763,6 @@ def _private_runtime_configuration_snapshot(
             os.environ.get("QQ_ALLOW_FROM"),
             field="QQ_ALLOW_FROM",
         )
-        group_allowlist = parse_numeric_allowlist(
-            os.environ.get("QQ_ALLOW_GROUPS"),
-            field="QQ_ALLOW_GROUPS",
-        )
         owners = tuple(
             value.strip()
             for value in str(os.environ.get("CHATCOPILOT_ADD_OWNER_IDS", "")).split(",")
@@ -3780,19 +3776,14 @@ def _private_runtime_configuration_snapshot(
         user_mode = "all" if user_allowlist.allow_all else (
             "finite" if user_allowlist.values else "empty"
         )
-        group_mode = "all" if group_allowlist.allow_all else (
-            "finite" if group_allowlist.values else "empty"
-        )
         has_private_identities = bool(
-            user_allowlist.values or group_allowlist.values or owners or admins
+            user_allowlist.values or owners or admins
         )
         material = (
             "\0".join(
                 (
                     f"users:{user_mode}",
                     *sorted(user_allowlist.values),
-                    f"groups:{group_mode}",
-                    *sorted(group_allowlist.values),
                     "owners",
                     *owners,
                     "admins",
@@ -3806,8 +3797,6 @@ def _private_runtime_configuration_snapshot(
         snapshot: dict[str, Any] = {
             "qq_user_allowlist_mode": user_mode,
             "qq_user_allowlist_entry_count": len(user_allowlist.values),
-            "qq_group_allowlist_mode": group_mode,
-            "qq_group_allowlist_entry_count": len(group_allowlist.values),
             "owner_entry_count": len(owners),
             "admin_entry_count": len(admins),
             "identity_hmac": (

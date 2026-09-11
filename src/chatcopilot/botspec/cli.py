@@ -152,8 +152,8 @@ export CHATCOPILOT_GATEWAY_STATE_ROOT="$HOME/.local/state/agentstrata/{bot_id}/g
 export QQ_ACCOUNT=""
 export CHATCOPILOT_QQ_ONEBOT_WS_URL="ws://127.0.0.1:3001"
 export QQ_ACCESS_TOKEN=""
+# Private-chat admission only. Group members can chat by mentioning the bot.
 export QQ_ALLOW_FROM=""
-export QQ_ALLOW_GROUPS=""
 export QQ_WEBUI_PORT="6099"
 """
 
@@ -342,7 +342,6 @@ _GUIDED_PROMPT_FIELDS = (
     "chat_api_key",
     "qq_account",
     "add_owner_ids",
-    "qq_allow_groups",
 )
 
 

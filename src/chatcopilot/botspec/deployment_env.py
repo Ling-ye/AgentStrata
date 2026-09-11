@@ -47,6 +47,8 @@ def deployment_environment(spec, local_env: Mapping[str, str], *, source_root: P
     values.update(_tool_pack_runtime_defaults(spec.tools.packs))
     values.update(llm_runtime_env_defaults(spec.llm))
     values.update(local_env)
+    # Generic QQ_* export must not carry the removed admission setting forward.
+    values.pop("QQ_ALLOW_GROUPS", None)
     values.update(
         {
             "CHATCOPILOT_INSTANCE_ID": instance_id,
@@ -182,7 +184,6 @@ def runtime_environment_keys(spec) -> tuple[str, ...]:
         "CHATCOPILOT_QQ_ONEBOT_WS_URL",
         "QQ_ACCESS_TOKEN",
         "QQ_ALLOW_FROM",
-        "QQ_ALLOW_GROUPS",
         "QQ_WEBUI_PORT",
         "TAVILY_API_KEY",
         "GITHUB_MCP_AUTHORIZATION",

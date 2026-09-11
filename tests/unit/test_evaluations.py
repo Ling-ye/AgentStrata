@@ -2036,7 +2036,7 @@ def test_comparison_report_rejects_execution_implementation_drift(
         compare_reports(base_output, new_output)
 
 
-def test_private_runtime_fingerprint_binds_group_allowlist_without_persisting_ids(
+def test_private_runtime_fingerprint_ignores_removed_group_list_and_binds_private_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = SimpleNamespace(
@@ -2054,12 +2054,13 @@ def test_private_runtime_fingerprint_binds_group_allowlist_without_persisting_id
     serialized = json.dumps(first, ensure_ascii=False, sort_keys=True)
 
     assert first["qq_user_allowlist_mode"] == "finite"
-    assert first["qq_group_allowlist_mode"] == "finite"
-    assert first["qq_group_allowlist_entry_count"] == 1
+    assert not any("group_allowlist" in key for key in first)
     assert "10017" not in serialized
     assert "10023" not in serialized
 
-    monkeypatch.setenv("QQ_ALLOW_GROUPS", "10024")
+    monkeypatch.setenv("QQ_ALLOW_GROUPS", "no-longer-parsed")
+    assert evaluation_module._private_runtime_configuration_snapshot("configured-bot") == first
+    monkeypatch.setenv("QQ_ALLOW_FROM", "10024")
     drifted = evaluation_module._private_runtime_configuration_snapshot("configured-bot")
     assert first["identity_hmac"] != drifted["identity_hmac"]
 
@@ -2097,8 +2098,6 @@ def test_private_runtime_fingerprint_allows_empty_identity_without_key(
     assert snapshot == {
         "qq_user_allowlist_mode": "empty",
         "qq_user_allowlist_entry_count": 0,
-        "qq_group_allowlist_mode": "empty",
-        "qq_group_allowlist_entry_count": 0,
         "owner_entry_count": 0,
         "admin_entry_count": 0,
         "identity_hmac": "",

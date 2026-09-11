@@ -147,8 +147,9 @@ bootstrap -> 本地 WebUI 登录 -> sync-token -> authenticated status -> update
 
 `QQ_ACCESS_TOKEN` 是由主机生成的 32–128 位 URL-safe 强 token。NapCat WebUI 管理 token
 是另一凭据，只用于 localhost 管理面板；带 token 的 URL 只显示在可信交互式终端，不写入
-普通日志、配置或摘要。QQ Owner 与群准入只使用稳定数字 ID，昵称不参与授权；默认
-`QQ_ALLOW_FROM` 只包含 Owner，群列表默认为空。
+普通日志、配置或摘要。QQ Owner 只按稳定发送者 ID 判断，昵称不参与授权；默认
+`QQ_ALLOW_FROM` 只允许 Owner 私聊。机器人加入的群无需白名单，成员 @ 机器人即可交流，
+不会因此获得私聊权限或 Owner 权限。
 
 NapCat 是用户独立维护的外部 OneBot provider。每个 Bot 的 systemd unit 直接以前台
 `python -m chatcopilot run --bot <deployed-bot.yaml>` 运行唯一 Gateway host，Gateway 直接

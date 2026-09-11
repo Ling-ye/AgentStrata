@@ -288,7 +288,6 @@ def test_new_session_then_private_admission_denial_has_no_runtime_workspace_side
         {
             "CHATCOPILOT_WORKSPACE_ROOT": str(instance_root),
             "QQ_ALLOW_FROM": "20002",
-            "QQ_ALLOW_GROUPS": "",
         },
         clear=False,
     ):

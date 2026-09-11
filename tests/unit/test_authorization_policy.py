@@ -47,11 +47,12 @@ def _request(principal, operation=AuthorizationOperation.INGRESS):
     )
 
 
-def test_group_allowlist_admits_without_role_elevation() -> None:
-    principal = _principal()
+@pytest.mark.parametrize("qq_users", [None, "", "20002", "40004", "*"])
+@pytest.mark.parametrize("group", ["30003", "30004"])
+def test_all_groups_admit_without_role_elevation(qq_users, group) -> None:
+    principal = _principal(chat_id=group)
     decision = AdmissionPolicy.from_raw(
-        qq_users="20002",
-        qq_groups="30003",
+        qq_users=qq_users,
         policy_version="policy-1",
     ).decide(_request(principal))
 
@@ -60,16 +61,28 @@ def test_group_allowlist_admits_without_role_elevation() -> None:
     assert principal.role is Role.USER
 
 
-def test_group_allowlist_does_not_admit_private_chat() -> None:
+def test_group_membership_does_not_admit_private_chat() -> None:
     principal = _principal(chat_kind="p2p", chat_id="40004")
     decision = AdmissionPolicy.from_raw(
         qq_users="",
-        qq_groups="30003",
         policy_version="policy-1",
     ).decide(_request(principal))
 
     assert decision.allowed is False
     assert decision.code == "qq-private-user-not-allowed"
+
+
+@pytest.mark.parametrize("sender,group,code", [
+    ("", "30003", "qq-sender-invalid"),
+    ("invalid", "30003", "qq-sender-invalid"),
+    ("40004", "", "qq-group-invalid"),
+    ("40004", "invalid", "qq-group-invalid"),
+])
+def test_open_groups_still_require_valid_identity(sender, group, code) -> None:
+    policy = AdmissionPolicy.from_raw(qq_users="", policy_version="policy-1")
+    decision = policy.decide(_request(_principal(sender=sender, chat_id=group)))
+    assert not decision.allowed
+    assert decision.code == code
 
 
 def test_qq_display_name_cannot_grant_owner() -> None:
@@ -120,7 +133,6 @@ def test_malformed_allowlist_fails_before_policy_use() -> None:
     with pytest.raises(AllowlistConfigError):
         AdmissionPolicy.from_raw(
             qq_users="40004,*",
-            qq_groups="",
             policy_version="policy-1",
         )
 
@@ -128,7 +140,6 @@ def test_malformed_allowlist_fails_before_policy_use() -> None:
 def test_missing_qq_chat_kind_and_wrong_operation_fail_closed() -> None:
     policy = AdmissionPolicy.from_raw(
         qq_users="*",
-        qq_groups="*",
         policy_version="policy-1",
     )
     missing_kind = _request(_principal(chat_kind="", chat_id="40004"))

@@ -78,7 +78,6 @@ def _complete_values() -> dict[str, str]:
         "qq_account": "10001",
         "qq_access_token": "a" * 32,
         "qq_allow_from": "20002",
-        "qq_allow_groups": "",
     }
 
 

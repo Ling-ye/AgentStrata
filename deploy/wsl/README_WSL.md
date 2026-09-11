@@ -131,8 +131,9 @@ journalctl --user -u chatcopilot@<id>.service -n 120 --no-page
   执行 `sync-token`，不要手工拼接 token 同步命令。
 - 启动报告 `QQ_REQUIRE_AT_IN_GROUP` 或 `QQ_AT_ALL_COUNTS` 已废弃：从 bot-local
   `local.env` 删除该键，再更新实例；群聊明确 @ 是 Gateway Channel 的固定触发条件。
-- 配置群号后仍只有个别用户可用：确认群号写在私有 `QQ_ALLOW_GROUPS`，没有误写到只
-  接受发送者 QQ 号的 `QQ_ALLOW_FROM`，再更新实例并检查 Gateway 的授权与 task evidence。
+- 群成员 @ 后无响应：群聊已无需白名单，先确认运行实例已更新，再检查结构化 @ 是否指向
+  当前机器人、Channel 连接与身份校验，以及 Gateway 的授权与 task evidence。私聊仍受
+  `QQ_ALLOW_FROM` 控制，群号无需写入任何准入名单。
 - OneBot 健康但 Bot service 失败：检查主 service 的 journald 中 Gateway、模型和 Channel
   错误，并确认 systemd `MainPID` 是当前实例的 `python -m chatcopilot run --bot ...`。
 

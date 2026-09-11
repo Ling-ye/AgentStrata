@@ -631,7 +631,7 @@ def test_gateway_real_application_preserves_delivery_and_exchange_facts(tmp_path
         coordinator = GatewayTurnCoordinator(
             state_store=store, sessions=sessions, events=events, actor_executor=executor,
             identity_policy=IdentityPolicy(), admission_policy=AdmissionPolicy.from_raw(
-                qq_users="*", qq_groups="*", policy_version="test-policy"), generation=generation,
+                qq_users="*", policy_version="test-policy"), generation=generation,
             clock=lambda: 10.0)
         channels = ChannelRuntimeManager(state_store=store, gateway_ingress=coordinator,
                                          event_sink=events, writer_generation=generation, clock=lambda: 20.0)

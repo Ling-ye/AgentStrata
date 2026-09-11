@@ -101,7 +101,6 @@ class DeployRenderTests(unittest.TestCase):
                 "QQ_ACCESS_TOKEN",
                 "QQ_ACCOUNT",
                 "QQ_ALLOW_FROM",
-                "QQ_ALLOW_GROUPS",
                 "QQ_IMAGE_MAX_BYTES",
                 "QQ_IMAGE_SEND_TIMEOUT_SECONDS",
                 "QQ_WEBUI_PORT",
@@ -141,23 +140,34 @@ class DeployRenderTests(unittest.TestCase):
                 "QQ_ACCOUNT": "10001",
                 "QQ_ACCESS_TOKEN": "q" * 32,
                 "QQ_ALLOW_FROM": "20002",
-                "QQ_ALLOW_GROUPS": "30003",
             }
         )
 
         self.assertEqual(errors, ())
 
     def test_qq_allowlist_validation_does_not_echo_private_value(self) -> None:
-        private_value = "invalid-private-group"
+        private_value = "invalid-private-user"
         errors = registry.get_adapter("qq").validate_runtime_env(
             {
                 "QQ_ACCESS_TOKEN": "x" * 32,
                 "QQ_ACCOUNT": "10001",
-                "QQ_ALLOW_GROUPS": private_value,
+                "QQ_ALLOW_FROM": private_value,
             }
         )
         self.assertTrue(any("qq_allowlist_invalid" in item for item in errors))
         self.assertNotIn(private_value, "\n".join(errors))
+
+    def test_removed_group_allowlist_is_not_validated_or_advertised(self) -> None:
+        adapter = registry.get_adapter("qq")
+        base = {
+            "CHATCOPILOT_GATEWAY_TOKEN": "g" * 32,
+            "QQ_ACCOUNT": "10001",
+            "QQ_ACCESS_TOKEN": "q" * 32,
+        }
+        self.assertNotIn("QQ_ALLOW_GROUPS", {item.env_key for item in adapter.required_secrets()})
+        for value in ("", "30003", "*", "invalid-old-value"):
+            with self.subTest(value=value):
+                self.assertEqual(adapter.validate_runtime_env({**base, "QQ_ALLOW_GROUPS": value}), ())
 
     def test_qq_removed_ingress_switches_are_rejected(self) -> None:
         adapter = registry.get_adapter("qq")

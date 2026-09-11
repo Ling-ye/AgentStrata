@@ -94,7 +94,6 @@ def _write_starter_bot(tmp_path: Path, extra_lines: str = "") -> tuple[Path, Pat
             export CHATCOPILOT_QQ_ONEBOT_WS_URL="ws://127.0.0.1:3001"
             export QQ_ACCESS_TOKEN="{'c' * 64}"
             export QQ_ALLOW_FROM="20002"
-            export QQ_ALLOW_GROUPS=""
             {extra_lines}
             """
         ),

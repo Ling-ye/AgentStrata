@@ -1,4 +1,4 @@
-"""Authoritative QQ admission decision at the ACP boundary."""
+"""QQ admission semantics for the legacy ACP and evaluation paths."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from chatcopilot.core.allowlists import is_numeric_platform_id, parse_numeric_al
 from chatcopilot.core.workspace_runtime.model import normalize_chat_kind
 
 QQ_USER_ALLOWLIST_ENV = "QQ_ALLOW_FROM"
-QQ_GROUP_ALLOWLIST_ENV = "QQ_ALLOW_GROUPS"
 
 
 @dataclass(frozen=True)
@@ -37,10 +36,6 @@ def evaluate_admission(
         resolved_env.get(QQ_USER_ALLOWLIST_ENV),
         field=QQ_USER_ALLOWLIST_ENV,
     )
-    groups = parse_numeric_allowlist(
-        resolved_env.get(QQ_GROUP_ALLOWLIST_ENV),
-        field=QQ_GROUP_ALLOWLIST_ENV,
-    )
     sender = str(sender_id or "").strip()
     raw_kind = str(chat_kind or "").strip()
     if not raw_kind:
@@ -55,11 +50,7 @@ def evaluate_admission(
         conversation = str(chat_id or "").strip()
         if not is_numeric_platform_id(conversation):
             return AdmissionDecision(False, "qq-group-invalid")
-        if users.allows(sender):
-            return AdmissionDecision(True, "qq-group-user-allowed")
-        if groups.allows(conversation):
-            return AdmissionDecision(True, "qq-group-allowed")
-        return AdmissionDecision(False, "qq-group-not-allowed")
+        return AdmissionDecision(True, "qq-group-allowed")
     if users.allows(sender):
         return AdmissionDecision(True, "qq-private-user-allowed")
     return AdmissionDecision(False, "qq-private-user-not-allowed")
@@ -67,7 +58,6 @@ def evaluate_admission(
 
 __all__ = [
     "AdmissionDecision",
-    "QQ_GROUP_ALLOWLIST_ENV",
     "QQ_USER_ALLOWLIST_ENV",
     "evaluate_admission",
 ]

@@ -895,3 +895,11 @@ Python 3.10/3.13 CI 继续运行全量 Python 测试。范围与验证见
 证据不完整、测试环境错误和不可复现分别说明，不重放生产消息。修复状态仍由
 Harness 数据库独立拥有，不回写测评和机器人任务记录。
 边界与验证见 [AI Harness 规格](../specs/evaluation-case-harness/spec.md)。
+
+## QQ 群消息开放准入（2026-09-11）
+
+原规则要求发送者命中用户名单或当前群命中群名单，在维护者已允许机器人进群后仍需重复配置。
+现在删除群白名单，经过认证与结构化 @ 校验的群消息均可交流；`QQ_ALLOW_FROM` 只控制私聊。
+部署向导、Console 当前配置及测评指纹同步移除群名单，历史快照不迁移。发送者身份、
+Owner/member 工具权限、actor 隔离与持久化顺序继续保留。设计与验证见
+[`qq-group-open-admission`](../specs/qq-group-open-admission/spec.md)。

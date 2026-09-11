@@ -445,15 +445,11 @@ print_status() {
                 bad "QQ_ACCESS_TOKEN 缺失或格式无效（必须为 32-128 位 URL-safe 字符）"
             fi
             if [ -n "${QQ_ALLOW_FROM:-}" ]; then
-                ok "QQ_ALLOW_FROM = (ACP 用户准入已配置，标识已脱敏)"
+                ok "QQ_ALLOW_FROM = (Gateway 私聊准入已配置，标识已脱敏)"
             else
-                warn "QQ_ALLOW_FROM 未设置（ACP 不从用户维度授予准入）"
+                warn "QQ_ALLOW_FROM 未设置（Gateway 不允许私聊）"
             fi
-            if [ -n "${QQ_ALLOW_GROUPS:-}" ]; then
-                ok "QQ_ALLOW_GROUPS = (ACP 群准入已配置，标识已脱敏)"
-            else
-                dim "QQ_ALLOW_GROUPS 未设置（ACP 不从群维度授予准入）"
-            fi
+            dim "QQ 群聊无需白名单，成员 @ 机器人即可交流"
             ;;
         *)
             dim "platform=$PLATFORM_TYPE_FOR_STATUS：未配置凭据展示"

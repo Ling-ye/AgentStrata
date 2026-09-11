@@ -684,7 +684,7 @@ validate_guided_env_value() {
         QQ_ACCOUNT)
             [ -z "$trimmed" ] || [[ "$trimmed" =~ ^[0-9]+$ ]]
             ;;
-        QQ_ALLOW_FROM|QQ_ALLOW_GROUPS)
+        QQ_ALLOW_FROM)
             valid_guided_numeric_list "$trimmed" 1
             ;;
         CHATCOPILOT_QQ_ONEBOT_WS_URL)
@@ -749,7 +749,7 @@ validate_resume_paths() {
                 CHATCOPILOT_ADD_OWNER_IDS|CHATCOPILOT_GATEWAY_PORT|\
                 CHATCOPILOT_GATEWAY_TOKEN|CHATCOPILOT_GATEWAY_STATE_ROOT|QQ_ACCOUNT|\
                 CHATCOPILOT_QQ_ONEBOT_WS_URL|QQ_ACCESS_TOKEN|\
-                QQ_ALLOW_FROM|QQ_ALLOW_GROUPS|QQ_WEBUI_PORT|\
+                QQ_ALLOW_FROM|QQ_WEBUI_PORT|\
                 QQ_IMAGE_MAX_BYTES|QQ_IMAGE_SEND_TIMEOUT_SECONDS) ;;
                 *)
                     local key_label="$key"

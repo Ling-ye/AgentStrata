@@ -30,7 +30,7 @@ def fixture(tmp_path, name="fixture"):
             "context": {"rag": {"sources": "rag.yaml"}, "codebases": {"registry": "repos.yaml"}}}
     path = folder / "bot.yaml"
     path.write_text(yaml.safe_dump(data))
-    values = {"CHATCOPILOT_CHAT_MODEL": name + "-model", "QQ_ALLOW_GROUPS": "*",
+    values = {"CHATCOPILOT_CHAT_MODEL": name + "-model", "QQ_ALLOW_FROM": "*",
               "CHATCOPILOT_RAG_ROOT": str(folder / "documents"), "CHATCOPILOT_REPO_ROOT": str(folder / "repository"),
               "CHATCOPILOT_WIKI_ROOT": "~/wiki", "GITHUB_MCP_AUTHORIZATION": ""}
     return path, values
@@ -51,7 +51,7 @@ def loaded_by_startup(path, values, monkeypatch, tmp_path):
 def test_expected_matches_actual_export_and_startup_defaults_without_process_pollution(tmp_path, monkeypatch):
     path, values = fixture(tmp_path)
     monkeypatch.setenv("CHATCOPILOT_CHAT_MODEL", "console-unrelated-model")
-    monkeypatch.setenv("QQ_ALLOW_GROUPS", "console-unrelated-group")
+    monkeypatch.setenv("QQ_ALLOW_FROM", "console-unrelated-group")
     before = dict(os.environ)
     current = expected_configuration(path, values, home=Path.home())
     assert dict(os.environ) == before
@@ -66,7 +66,7 @@ def test_expected_matches_actual_export_and_startup_defaults_without_process_pol
     assert by_id["codebase:fixture-repo"]["config"]["max_read_bytes"] == 4096
 
 
-@pytest.mark.parametrize("key,value", [("CHATCOPILOT_CHAT_MODEL", "changed-model"), ("QQ_ALLOW_GROUPS", ""),
+@pytest.mark.parametrize("key,value", [("CHATCOPILOT_CHAT_MODEL", "changed-model"), ("QQ_ALLOW_FROM", ""),
                                       ("CHATCOPILOT_GATEWAY_PORT", "18790"), ("CHATCOPILOT_RAG_ROOT", "~/changed"),
                                       ("CHATCOPILOT_REPO_ROOT", "~/changed-repo")])
 def test_real_effective_changes_are_pending(tmp_path, monkeypatch, key, value):
@@ -90,6 +90,15 @@ def test_empty_value_semantics_and_referenced_files(tmp_path, monkeypatch):
         assert configuration_comparison(changed, loaded, stale=False)[0] == "pending"
         target.write_text(old)
     assert loaded == original
+
+
+def test_removed_group_list_does_not_appear_or_create_pending_configuration(tmp_path, monkeypatch):
+    path, values = fixture(tmp_path)
+    loaded = loaded_by_startup(path, values, monkeypatch, tmp_path)
+    current = expected_configuration(path, {**values, "QQ_ALLOW_GROUPS": "invalid-old-value"}, home=Path.home())
+    assert configuration_comparison(current, loaded, stale=False)[0] == "applied"
+    policy = next(item for item in current["entities"] if item["id"] == "policy:instance")
+    assert "QQ_ALLOW_GROUPS" not in policy["config"]
 
 
 def test_stale_missing_and_incomparable_snapshots_are_unknown(tmp_path, monkeypatch):

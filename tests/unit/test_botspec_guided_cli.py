@@ -119,7 +119,6 @@ def test_guided_configure_writes_mode_0600_and_doctor_json_is_secret_free(
             "example-chat-model",
             "10001",
             "20002",
-            "30003,30004",
         )
     )
     with (
@@ -140,7 +139,7 @@ def test_guided_configure_writes_mode_0600_and_doctor_json_is_secret_free(
     assert values["QQ_ACCOUNT"] == "10001"
     assert values["CHATCOPILOT_ADD_OWNER_IDS"] == "20002"
     assert values["QQ_ALLOW_FROM"] == "20002"
-    assert values["QQ_ALLOW_GROUPS"] == "30003,30004"
+    assert "QQ_ALLOW_GROUPS" not in values
     assert 32 <= len(values["QQ_ACCESS_TOKEN"]) <= 128
     assert 32 <= len(values["CHATCOPILOT_GATEWAY_TOKEN"]) <= 128
     assert values["CHATCOPILOT_GATEWAY_TOKEN"] != values["QQ_ACCESS_TOKEN"]

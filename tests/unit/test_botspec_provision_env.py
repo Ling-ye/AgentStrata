@@ -271,7 +271,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             self.assertEqual(code, 0)
             rendered = runtime_env.read_text(encoding="utf-8")
             self.assertIn(f"export QQ_ACCESS_TOKEN={token}", rendered)
-            self.assertIn("export QQ_ALLOW_GROUPS=30003", rendered)
+            self.assertNotIn("QQ_ALLOW_GROUPS", rendered)
             values = load_local_env_values(runtime_env)
             self.assertEqual(
                 values["CHATCOPILOT_QQ_ONEBOT_WS_URL"],
@@ -472,9 +472,9 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             self.assertTrue(runtime_env.is_symlink())
             self.assertIn("runtime_env_write_failed", output.getvalue())
 
-    def test_qq_provision_rejects_invalid_group_allowlist_without_echoing_it(self) -> None:
+    def test_qq_provision_rejects_invalid_private_allowlist_without_echoing_it(self) -> None:
         with TemporaryDirectory() as tmp:
-            private_value = "invalid-private-group"
+            private_value = "invalid-private-user"
             bot_yaml, runtime_env = self._write_qq_bot(
                 Path(tmp),
                 textwrap.dedent(
@@ -482,7 +482,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                     export CHATCOPILOT_CHAT_API_KEY="sk-test"
                     export QQ_ACCOUNT="10001"
                     export QQ_ACCESS_TOKEN="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-                    export QQ_ALLOW_GROUPS="{private_value}"
+                    export QQ_ALLOW_FROM="{private_value}"
                     """
                 ),
             )

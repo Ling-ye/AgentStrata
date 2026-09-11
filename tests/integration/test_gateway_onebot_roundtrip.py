@@ -193,8 +193,7 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record
                 owners=(Identity(user_id=_ACTOR),)
             ),
             admission_policy=AdmissionPolicy.from_raw(
-                qq_users=_ACTOR,
-                qq_groups="",
+                qq_users="",
                 policy_version="policy-v1",
             ),
             generation=generation,

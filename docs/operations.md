@@ -265,11 +265,15 @@ bash deploy/wsl/qq_gateway.sh recreate --instance <id> --confirm-recreate <id>
 `start`、`restart` 和 `status` 都必须通过无 token 拒绝、带 token 可执行 OneBot
 动作的双向探针；只完成 WebSocket 握手不算认证成功。
 
-QQ 访问名单只在 `bots/<bot-id>/local.env` 中维护：`QQ_ALLOW_FROM` 是发送者 QQ
-号，`QQ_ALLOW_GROUPS` 是允许整群使用的群号。两者只由 Gateway 内的授权层解释，不会传给
-外部 NapCat provider 或可选 ACP edge。缺失或空值不授予权限；只有整个值精确为 `*` 才允许全部，有限
-名单只接受逗号分隔的数字 ID，空 token、尾随分隔符、混入 `*` 或非数字值都会阻止启动
-或 doctor。群名单中的成员只在该群获得访问权，不因此获得私聊权限。
+机器人加入的 QQ 群无需额外白名单，成员 @ 机器人即可交流。`QQ_ALLOW_FROM` 只控制私聊，
+在 `bots/<bot-id>/local.env` 中维护允许私聊的发送者 QQ 号，由 Gateway 解释，不传给外部
+NapCat provider 或可选 ACP edge。缺失或空值拒绝私聊；只有整个值精确为 `*` 才允许所有
+用户私聊。有限名单只接受逗号分隔的数字 ID，空 token、尾随分隔符、混入 `*` 或非数字值
+会阻止启动或 doctor。群聊准入不授予私聊权限，也不提升角色。
+
+`QQ_ALLOW_GROUPS` 已删除，旧值不参与运行时校验、准入或新 runtime env 导出，可从私有配置
+移除；使用严格的新手 `--resume` 流程时需先删除该键。新行为见
+[QQ 群消息开放准入](../specs/qq-group-open-admission/spec.md)。
 
 Gateway 直接消费 OneBot v11 结构化事件：私聊按稳定发送者处理；群聊只有结构化 `at`
 segment 明确指向当前 `QQ_ACCOUNT` 才进入处理，`@全体成员`、纯文本名字和伪造 CQ 文本均

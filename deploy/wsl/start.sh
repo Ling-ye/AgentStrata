@@ -232,7 +232,7 @@ echo "    >>> 关闭本终端即停止服务 <<<"
 echo
 
 # 把 CC_LOG_FILE 显式注入子进程 env，cc-connect 与 ACP runtime 都靠它定位日志。
-exec env -u QQ_ALLOW_FROM -u QQ_ALLOW_GROUPS -u NODE_OPTIONS -u NODE_PATH \
+exec env -u QQ_ALLOW_FROM -u NODE_OPTIONS -u NODE_PATH \
     -u NPM_CONFIG_USERCONFIG -u NPM_CONFIG_GLOBALCONFIG \
     HOME="$CC_HOME" PATH="$(dirname "$NODE_BIN"):$PATH" \
     CC_LOG_FILE="${CC_LOG_FILE:-/tmp/cc-connect.log}" \

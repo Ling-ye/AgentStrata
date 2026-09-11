@@ -637,7 +637,6 @@ def build_gateway_runtime_host(
             ),
             admission_policy=AdmissionPolicy.from_raw(
                 qq_users=values.get("QQ_ALLOW_FROM"),
-                qq_groups=values.get("QQ_ALLOW_GROUPS"),
                 policy_version=config.policy_version,
             ),
             generation=generation,

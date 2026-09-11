@@ -102,7 +102,6 @@ def _environment(tmp_path: Path) -> dict[str, str]:
         "QQ_ACCESS_TOKEN": "q" * 48,
         "QQ_ACCOUNT": "10001",
         "QQ_ALLOW_FROM": "10002",
-        "QQ_ALLOW_GROUPS": "20001",
     }
 
 

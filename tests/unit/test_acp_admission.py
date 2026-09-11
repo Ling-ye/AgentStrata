@@ -164,60 +164,36 @@ class AdmissionDecisionTests(unittest.TestCase):
         self.assertEqual(group, AdmissionDecision(True, "qq-group-allowed"))
         self.assertEqual(private, AdmissionDecision(False, "qq-private-user-not-allowed"))
 
-    def test_group_only_member_is_denied_in_other_group(self) -> None:
-        decision = self._decide(
-            kind="group",
-            chat_id="30004",
-            sender="40004",
-            user_allowlist="20002",
-            group_allowlist="30003",
-        )
-        self.assertFalse(decision.allowed)
+    def test_every_group_is_allowed_independent_of_private_and_removed_lists(self) -> None:
+        for users in (None, "", "20002", "40004", "*"):
+            for groups in (None, "", "30003", "*", "invalid-old-value"):
+                with self.subTest(users=users, groups=groups):
+                    decision = self._decide(
+                        kind="group", chat_id="30004", sender="40004",
+                        user_allowlist=users, group_allowlist=groups,
+                    )
+                    self.assertEqual(decision, AdmissionDecision(True, "qq-group-allowed"))
 
-    def test_user_allowlist_still_grants_group_admission(self) -> None:
-        decision = self._decide(
-            kind="group",
-            chat_id="30004",
-            sender="40004",
-            user_allowlist="40004",
-            group_allowlist="",
-        )
-        self.assertEqual(decision.code, "qq-group-user-allowed")
+    def test_missing_and_empty_private_lists_deny_private_chat(self) -> None:
+        for users in (None, ""):
+            with self.subTest(users=users):
+                self.assertFalse(self._decide(kind="p2p", sender="40004", user_allowlist=users).allowed)
 
-    def test_missing_and_empty_lists_grant_nothing(self) -> None:
-        for user_list, group_list in ((None, None), ("", "")):
-            with self.subTest(user_list=user_list, group_list=group_list):
-                self.assertFalse(
-                    self._decide(
-                        kind="group",
-                        chat_id="30003",
-                        sender="40004",
-                        user_allowlist=user_list,
-                        group_allowlist=group_list,
-                    ).allowed
+    def test_private_wildcard_allows_private_chat(self) -> None:
+        self.assertTrue(self._decide(kind="p2p", sender="40004", user_allowlist="*").allowed)
+
+    def test_invalid_group_or_sender_is_denied(self) -> None:
+        for sender, group, code in (
+            ("", "30003", "qq-sender-invalid"),
+            ("invalid", "30003", "qq-sender-invalid"),
+            ("40004", "", "qq-group-invalid"),
+            ("40004", "invalid", "qq-group-invalid"),
+        ):
+            with self.subTest(sender=sender, group=group):
+                self.assertEqual(
+                    self._decide(kind="group", sender=sender, chat_id=group),
+                    AdmissionDecision(False, code),
                 )
-
-    def test_each_exact_wildcard_has_only_its_own_scope(self) -> None:
-        self.assertTrue(
-            self._decide(kind="p2p", sender="40004", user_allowlist="*").allowed
-        )
-        self.assertTrue(
-            self._decide(
-                kind="group",
-                chat_id="30003",
-                sender="40004",
-                user_allowlist="",
-                group_allowlist="*",
-            ).allowed
-        )
-        self.assertFalse(
-            self._decide(
-                kind="p2p",
-                sender="40004",
-                user_allowlist="",
-                group_allowlist="*",
-            ).allowed
-        )
 
     def test_malformed_config_fails_closed(self) -> None:
         with self.assertRaises(AllowlistConfigError):
@@ -314,7 +290,7 @@ class OwnerRuntimeInfoQueryTests(unittest.TestCase):
             runtime=SimpleNamespace(),
         )
 
-    def test_owner_private_can_list_full_allowlists(self) -> None:
+    def test_owner_private_can_list_private_allowlist(self) -> None:
         reply = _handle_owner_runtime_info_query(
             self._session(chat_kind="p2p", chat_id=""),
             "白名单都有谁？",
@@ -322,15 +298,15 @@ class OwnerRuntimeInfoQueryTests(unittest.TestCase):
         )
         self.assertIn("10002", reply or "")
         self.assertIn("10003", reply or "")
-        self.assertIn("30003", reply or "")
+        self.assertNotIn("30003", reply or "")
 
-    def test_group_query_only_reports_current_group_match(self) -> None:
+    def test_group_query_reports_open_admission(self) -> None:
         reply = _handle_owner_runtime_info_query(
             self._session(),
             "此群在白名单中吗？",
             env={"QQ_ALLOW_FROM": "10002", "QQ_ALLOW_GROUPS": "30003"},
         )
-        self.assertEqual(reply, "当前群在群聊白名单中。")
+        self.assertEqual(reply, "群聊无需白名单，当前群成员 @ 机器人即可交流。")
         self.assertNotIn("10002", reply or "")
         self.assertNotIn("30003", reply or "")
         self.assertNotIn("QQ_ALLOW", reply or "")

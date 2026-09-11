@@ -188,9 +188,9 @@ generation、account、event/message ID、sender、conversation 和 frame digest
 明确指向当前 Bot 账号的结构化 `at` segment；`at all`、显示名文本和 CQ-looking 文本均无效。
 
 Gateway 在任何资源下载、task、Agent、模型、工具或 journal 副作用前，调用 authorization
-策略从该 evidence 构造可信 `Principal` 并解释 `QQ_ALLOW_FROM` / `QQ_ALLOW_GROUPS`。稳定群号只形成
-`ConversationIdentity`，当前稳定 sender 决定 actor 与 role；群白名单只授予准入，不能提升
-Owner/Admin。拒绝仅保存有界、无正文的授权审计 receipt，不保留 provider URL；通过后才把
+策略从该 evidence 构造可信 `Principal`；群消息直接准入，私聊按 `QQ_ALLOW_FROM` 判断。稳定群号
+只形成 `ConversationIdentity`，当前稳定 sender 决定 actor 与 role；群准入不能提升 Owner/Admin。
+拒绝仅保存有界、无正文的授权审计 receipt，不保留 provider URL；通过后才把
 完整 canonical event 与 Principal 持久化为 ingress。新 writer 只恢复从未 claim 的
 `accepted` ingress；中断的 `processing` 进入 `recovery_required`，不会冒险重复 Agent 或工具副作用。
 

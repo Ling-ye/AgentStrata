@@ -124,8 +124,8 @@ chat ID，当前 `Principal` 另行绑定 channel/account/user/role/conversation
 QQ Channel 先完成 provider 连接认证和 `get_login_info` 账号核验，再校验结构化平台事件、
 群消息的明确 @ 与 sender 字段，生成 `CanonicalInboundEvent`。transport evidence 绑定
 connection generation、Bot account、event/message ID、sender、conversation 与 frame digest。
-这些字段提供平台事件及其连接来源证据；用户白名单、群白名单和 Owner/Admin 角色由 Gateway 调用授权
-策略决定，显示名、用户正文和 provider 实现名都不能建立权限。普通消息的端到端主路径是：
+这些字段提供平台事件及其连接来源证据；Gateway 调用授权策略允许有效群消息、检查私聊名单，
+并计算 Owner/Admin 角色，显示名、用户正文和 provider 实现名都不能建立权限。普通消息的端到端主路径是：
 
 ```text
 Channel：连接与结构化事件校验 → CanonicalInboundEvent

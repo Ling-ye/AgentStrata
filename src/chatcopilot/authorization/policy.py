@@ -114,7 +114,6 @@ class IdentityPolicy:
 @dataclass(frozen=True)
 class AdmissionPolicy:
     qq_users: NumericAllowlist
-    qq_groups: NumericAllowlist
     policy_version: str
 
     @classmethod
@@ -122,12 +121,10 @@ class AdmissionPolicy:
         cls,
         *,
         qq_users: str | None,
-        qq_groups: str | None,
         policy_version: str,
     ) -> "AdmissionPolicy":
         return cls(
             qq_users=parse_numeric_allowlist(qq_users, field="QQ_ALLOW_FROM"),
-            qq_groups=parse_numeric_allowlist(qq_groups, field="QQ_ALLOW_GROUPS"),
             policy_version=policy_version,
         )
 
@@ -157,14 +154,7 @@ class AdmissionPolicy:
             code = "qq-chat-kind-invalid"
         elif kind == "group" and not is_numeric_platform_id(conversation.chat_id):
             code = "qq-group-invalid"
-        elif kind == "group" and self.qq_users.allows(sender):
-            return _decision(
-                request,
-                allowed=True,
-                code="qq-group-user-allowed",
-                policy_version=self.policy_version,
-            )
-        elif kind == "group" and self.qq_groups.allows(conversation.chat_id):
+        elif kind == "group":
             return _decision(
                 request,
                 allowed=True,
@@ -178,8 +168,6 @@ class AdmissionPolicy:
                 code="qq-private-user-allowed",
                 policy_version=self.policy_version,
             )
-        elif kind == "group":
-            code = "qq-group-not-allowed"
         else:
             code = "qq-private-user-not-allowed"
         return _decision(

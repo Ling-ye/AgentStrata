@@ -50,7 +50,7 @@ def configuration_projection(
         "owner": "当前实例资源和已配置项目",
         "member": "公共查询、当前会话文件、记忆读取和追加",
     }
-    for name in ("QQ_ALLOW_FROM", "QQ_ALLOW_GROUPS", "CHATCOPILOT_OWNERS", "CHATCOPILOT_ADMINS"):
+    for name in ("QQ_ALLOW_FROM", "CHATCOPILOT_OWNERS", "CHATCOPILOT_ADMINS"):
         access[name] = values.get(name)
     add("authorization", "policy:instance", "权限策略", access)
     add("application", "workspace:instance", "工作区", data.get("workspace", {}))

@@ -1,13 +1,16 @@
 ---
 id: qq-group-access-allowlist
 type: public-contract
-status: draft
+status: superseded
 created: 2026-08-17
 ---
 
 # QQ Group Access Allowlist
 
 ## Summary
+
+本规格保留早期群白名单与 ACP/Relay 设计历史；当前群准入由
+[QQ 群消息开放准入](../qq-group-open-admission/spec.md) 取代。
 
 QQ 消息准入只由 ACP 判断。`QQ_ALLOW_FROM` 只声明稳定发送者 QQ 号，`QQ_ALLOW_GROUPS`
 只声明稳定群号；群名单只授予当前群的消息准入，不授予该成员私聊权限或更高角色。Relay

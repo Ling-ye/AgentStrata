@@ -285,7 +285,6 @@ def _synthetic_inputs(runtime: BotRuntimeContext, root: Path) -> _SyntheticInput
         "QQ_ACCESS_TOKEN": secrets.token_urlsafe(32),
         "QQ_ACCOUNT": bot_id,
         "QQ_ALLOW_FROM": owner_id,
-        "QQ_ALLOW_GROUPS": group_id,
         "QQ_WS_URL": "ws://127.0.0.1:1",
         "QQ_AT_PROXY_URL": "ws://127.0.0.1:1",
         "CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID": group_id,
@@ -456,7 +455,6 @@ async def _run_owned_roundtrip(
                 "CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID": group_id,
                 "QQ_ACCOUNT": bot_id,
                 "QQ_ALLOW_FROM": inputs.owner_id,
-                "QQ_ALLOW_GROUPS": group_id,
             }
         )
 

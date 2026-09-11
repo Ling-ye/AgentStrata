@@ -2,7 +2,7 @@ import { ConfigFields, Disclosure, FIELD_NAMES, TextPreview } from "./Observatio
 import type { InspectionEntity } from "./workbenchModel";
 
 const ENV_NAMES: Record<string, string> = {
-  QQ_ALLOW_FROM: "用户白名单", QQ_ALLOW_GROUPS: "群白名单", CHATCOPILOT_OWNERS: "Owner", CHATCOPILOT_ADMINS: "Admin",
+  QQ_ALLOW_FROM: "私聊用户白名单", CHATCOPILOT_OWNERS: "Owner", CHATCOPILOT_ADMINS: "Admin",
   QQ_ACCOUNT: "机器人账号", QQ_ACCESS_TOKEN: "OneBot 认证令牌", CHATCOPILOT_GATEWAY_PORT: "监听端口",
   CHATCOPILOT_GATEWAY_STATE_ROOT: "状态存储目录", CHATCOPILOT_GATEWAY_TOKEN: "Gateway 认证令牌",
 };

@@ -20,7 +20,6 @@ from chatcopilot.core.access import resolve_role
 from chatcopilot.core.allowlists import is_numeric_platform_id, parse_numeric_allowlist
 from chatcopilot.evals.models import EvalCaseDefinition, TrialObservation
 from chatcopilot.middleware.acp.admission import (
-    QQ_GROUP_ALLOWLIST_ENV,
     QQ_USER_ALLOWLIST_ENV,
     evaluate_admission,
 )
@@ -140,20 +139,12 @@ def _qq_access_matrix(
         context.env.get(QQ_USER_ALLOWLIST_ENV),
         field=QQ_USER_ALLOWLIST_ENV,
     )
-    groups = parse_numeric_allowlist(
-        context.env.get(QQ_GROUP_ALLOWLIST_ENV),
-        field=QQ_GROUP_ALLOWLIST_ENV,
-    )
-    if not groups.allow_all and not groups.values:
-        raise ValueError("selected QQ Bot requires one allowed group for access evaluation")
-    allowed_group = str(context.group_id or "").strip()
-    if not allowed_group or not groups.allows(allowed_group):
-        allowed_group = next(iter(sorted(groups.values)), "8000000001")
+    allowed_group = str(context.group_id or "8000000001").strip()
     group_only_member = member_id if not users.allows(member_id) else _unlisted_identity(context)
     private_member = next(iter(sorted(users.values)), member_id)
     other_group_number = 8_100_000_001
     other_group = str(other_group_number)
-    while groups.allows(other_group):
+    while other_group == allowed_group:
         other_group_number += 1
         other_group = str(other_group_number)
 
@@ -205,11 +196,11 @@ def _qq_access_matrix(
         sender_id=group_only_member,
         env=context.env,
     )
-    denied_at_forwarded = _transport_trigger(
+    other_at_forwarded = _transport_trigger(
         group_event(group_only_member, group_id=other_group, mentioned=True),
         bot_id,
     )
-    group_denied = evaluate_admission(
+    other_group_allowed = evaluate_admission(
         platform="qq",
         chat_kind="group",
         chat_id=other_group,
@@ -254,9 +245,9 @@ def _qq_access_matrix(
         },
         {
             "scenario": "other_group_with_at",
-            "expected_allowed": False,
-            "actual_allowed": denied_at_forwarded and group_denied.allowed,
-            "reason": _safe_reason(group_denied.code),
+            "expected_allowed": True,
+            "actual_allowed": other_at_forwarded and other_group_allowed.allowed,
+            "reason": _safe_reason(other_group_allowed.code),
         },
         {
             "scenario": "group_unknown_identity_with_at",

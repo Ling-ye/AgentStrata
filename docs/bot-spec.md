@@ -114,12 +114,13 @@ Admin/User 只使用公共查询、当前会话普通文件及记忆读取和追
 默认 Owner。旧 `access.owner_only_project_access`、`agents.codex.owner_access/member_access` 和 `llm.code.allowed_roles`
 必须删除，校验会明确报出迁移错误，不能通过留空恢复旧模式。部署环境若存在 `<模型前缀>_CODE_ALLOWED_ROLES` 也需移除；模型控制固定为 Owner。
 
-QQ 准入仍由 Gateway 固定读取 `QQ_ALLOW_FROM` 与 `QQ_ALLOW_GROUPS`：分别表示稳定发送者和
-稳定群号。缺失或空值不授予准入，只有整个值精确为 `*` 才允许全部。群名单不能提升角色。
+机器人加入的 QQ 群允许成员 @ 机器人交流，不再配置群白名单。`QQ_ALLOW_FROM` 只声明
+允许私聊的稳定发送者 ID，缺失或空值拒绝私聊，整个值精确为 `*` 才允许全部用户私聊。
 
-OneBot provider 不读取这两份名单，也不分配 AgentStrata 角色。Gateway 先认证 transport、
-核对实际登录账号与结构化事件，再在资源下载和 Agent 副作用前解释名单。群命中只授予当前
-群准入，不提升发送者为 Owner/Admin；ACP client 不参与 QQ 准入。
+OneBot provider 不解释私聊名单或分配角色。Gateway 先认证 transport、核对实际登录账号与
+结构化事件，再在资源下载和 Agent 副作用前完成准入。群消息仍校验发送者、群身份和结构化 @，
+不会因准入提升为 Owner/Admin；ACP client 不参与 QQ 准入。详见
+[QQ 群消息开放准入](../specs/qq-group-open-admission/spec.md)。
 
 ### `llm`
 

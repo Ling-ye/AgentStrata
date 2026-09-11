@@ -181,15 +181,8 @@ class QQAdapter(PlatformAdapter):
                 "QQ_ALLOW_FROM",
                 required=False,
                 default="",
-                label="允许接入的 QQ 用户",
-                description="Gateway QQ 用户准入名单（空值不授予权限）",
-            ),
-            SecretSpec(
-                "QQ_ALLOW_GROUPS",
-                required=False,
-                default="",
-                label="允许接入的 QQ 群",
-                description="Gateway QQ 群准入名单（空值不授予权限）",
+                label="允许私聊的 QQ 用户",
+                description="Gateway QQ 私聊准入名单（空值不允许私聊，群聊无需名单）",
             ),
             SecretSpec(
                 "QQ_WEBUI_PORT",
@@ -238,11 +231,10 @@ class QQAdapter(PlatformAdapter):
                 errors.append(
                     f"qq_legacy_ingress_env_removed: {legacy_key} is no longer supported"
                 )
-        for allowlist_key in ("QQ_ALLOW_FROM", "QQ_ALLOW_GROUPS"):
-            try:
-                parse_numeric_allowlist(env.get(allowlist_key), field=allowlist_key)
-            except AllowlistConfigError as exc:
-                errors.append(f"qq_allowlist_invalid: {exc}")
+        try:
+            parse_numeric_allowlist(env.get("QQ_ALLOW_FROM"), field="QQ_ALLOW_FROM")
+        except AllowlistConfigError as exc:
+            errors.append(f"qq_allowlist_invalid: {exc}")
         try:
             require_access_token(env.get("QQ_ACCESS_TOKEN"))
         except QQBoundaryError as exc:

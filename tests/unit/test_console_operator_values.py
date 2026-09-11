@@ -29,17 +29,16 @@ def entity(config, identity):
 def test_operator_projection_preserves_lists_empty_values_references_and_paths(tmp_path):
     numbers = ','.join(('100' + '200301', '100' + '200302'))
     private = 'fixture-' + 'credential-value'
-    values = {'QQ_ALLOW_GROUPS': numbers, 'QQ_ALLOW_FROM': '*', 'CHATCOPILOT_OWNERS': '',
+    values = {'CHATCOPILOT_ADMINS': numbers, 'QQ_ALLOW_FROM': '*', 'CHATCOPILOT_OWNERS': '',
               'FIXTURE_TOKEN': private, 'FIXTURE_CHAT_API_KEY': private,
               'FIXTURE_CHAT_MODEL': 'configured-model', 'UNRELATED_ENV': 'not-part-of-instance'}
     config = configuration_projection({'gateway': {'token_env': 'FIXTURE_TOKEN'},
         'channels': {'qq': {'account_env': 'UNSET_ACCOUNT'}}, 'llm': {'chat': {'env_prefix': 'FIXTURE_CHAT'}}},
         mcp=[{'id': 'lookup', 'env': {'TOKEN': '${FIXTURE_TOKEN}'}}], environment=values)
     policy = entity(config, 'policy:instance')['config']
-    assert policy['QQ_ALLOW_GROUPS'] == numbers
+    assert policy['CHATCOPILOT_ADMINS'] == numbers
     assert policy['QQ_ALLOW_FROM'] == '*'
     assert policy['CHATCOPILOT_OWNERS'] == ''
-    assert policy['CHATCOPILOT_ADMINS'] is None
     assert entity(config, 'channel:qq')['environment'] == {'UNSET_ACCOUNT': None}
     assert entity(config, 'gateway:instance')['environment'] == {'FIXTURE_TOKEN': private}
     assert entity(config, 'mcp:lookup')['environment'] == {'FIXTURE_TOKEN': private}
@@ -76,7 +75,7 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
     monkeypatch.setattr('chatcopilot.gateway.observation_runtime.time', clock)
     monkeypatch.setattr('console.control.gateway_observability.time', clock)
     instances, recorders, states, environments = {}, [], [], []
-    for key in ('QQ_ALLOW_GROUPS', 'QQ_ALLOW_FROM', 'CHATCOPILOT_OWNERS', 'CHATCOPILOT_ADMINS'):
+    for key in ('QQ_ALLOW_FROM', 'CHATCOPILOT_OWNERS', 'CHATCOPILOT_ADMINS'):
         monkeypatch.delenv(key, raising=False)
     for index in range(2):
         folder = tmp_path / str(index)
@@ -89,7 +88,7 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
         state = GatewayStateStore(folder / 'gateway')
         generation = state.acquire_writer_generation()
         values = {'CHATCOPILOT_GATEWAY_STATE_ROOT': str(state.root),
-                  'QQ_ALLOW_GROUPS': '100' + f'20030{index}', 'QQ_ALLOW_FROM': '100' + f'40050{index}',
+                  'CHATCOPILOT_ADMINS': '100' + f'20030{index}', 'QQ_ALLOW_FROM': '100' + f'40050{index}',
                   'QQ_ACCESS_TOKEN': 'fixture-' + f'credential-{index}', 'FIXTURE_CHAT_MODEL': f'model-{index}',
                   'FIXTURE_CHAT_API_KEY': 'fixture-' + f'llm-value-{index}'}
         env = folder / 'local.env'
@@ -108,10 +107,10 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
                              conversation=ConversationRef('p2p', 'fixture'))
         state.begin_run(generation=generation, session_id='session', run_id='run-values', input_fingerprint='a' * 64)
         observer = RunObserver(state, generation, 'run-values')
-        observer.prepare(SimpleNamespace(principal=SimpleNamespace(role=Role.OWNER), canonical_text=values['QQ_ALLOW_GROUPS']))
+        observer.prepare(SimpleNamespace(principal=SimpleNamespace(role=Role.OWNER), canonical_text=values['CHATCOPILOT_ADMINS']))
         observer(ToolStarted('lookup', {'user_id': values['QQ_ALLOW_FROM'], 'token': values['QQ_ACCESS_TOKEN']},
                              trace_id='run-values', span_id='lookup'))
-        observer(ToolFinished('lookup', True, values['QQ_ALLOW_GROUPS'],
+        observer(ToolFinished('lookup', True, values['CHATCOPILOT_ADMINS'],
                              data={'path': str(folder)}, trace_id='run-values', span_id='lookup'))
         observer(ContextSnapshotPrepared('ctx-values', 'native', 'fixture', 1,
             ({'role': 'assistant', 'content': 'answer', 'reasoning_content': 'excluded-provider-thought'},),
@@ -132,7 +131,7 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
         base = '/api/bots/fixture-0'
         current = client.get(base + '/inspection')
         assert current.headers['cache-control'] == 'no-store'
-        assert entity(current.json()['current'], 'policy:instance')['config']['QQ_ALLOW_GROUPS'] == environments[0]['QQ_ALLOW_GROUPS']
+        assert entity(current.json()['current'], 'policy:instance')['config']['CHATCOPILOT_ADMINS'] == environments[0]['CHATCOPILOT_ADMINS']
         assert entity(current.json()['current'], 'channel:qq')['environment']['QQ_ACCESS_TOKEN'] == environments[0]['QQ_ACCESS_TOKEN']
         assert not current.json()['pending_changes']
         detail = client.get(base + '/gateway-observation/runs/run-values').json()
@@ -145,7 +144,7 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
             payloads.append(response.json()['payload'])
             assert client.get('/api/bots/fixture-1' + route).status_code == 404
             assert client.get(base + route.replace('run-values', 'run-other')).status_code == 404
-        assert payloads[0]['text'] == environments[0]['QQ_ALLOW_GROUPS']
+        assert payloads[0]['text'] == environments[0]['CHATCOPILOT_ADMINS']
         assert payloads[1]['final_text'] == environments[0]['QQ_ALLOW_FROM']
         assert next(item for item in payloads if 'arguments' in item)['arguments']['token'] == environments[0]['QQ_ACCESS_TOKEN']
         assert next(item for item in payloads if 'level' in item)['message'] == 'token=' + environments[0]['QQ_ACCESS_TOKEN']
@@ -155,22 +154,22 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
         assert str(tmp_path / '0') in json.dumps(payloads)
         before = client.get(base + '/inspection?run_id=run-values').json()['execution']
         env = Path(instances['fixture-0'].env_file)
-        env.write_text(env.read_text().replace(environments[0]['QQ_ALLOW_GROUPS'], '*'))
+        env.write_text(env.read_text().replace(environments[0]['CHATCOPILOT_ADMINS'], '*'))
         recorders[0].refresh()
         after = client.get(base + '/inspection?run_id=run-values').json()
         assert after['pending_changes'], after['configuration_status_reason']
-        assert entity(after['current'], 'policy:instance')['config']['QQ_ALLOW_GROUPS'] == '*'
+        assert entity(after['current'], 'policy:instance')['config']['CHATCOPILOT_ADMINS'] == '*'
         assert after['execution'] == before
         deployed_env = tmp_path / '0' / 'runtime.env'
         deployed_env.write_text(''.join(f'{key}={value}\n' for key, value in environments[0].items()))
         deployed_env.chmod(0o600)
         instances['fixture-0'].env_file = str(deployed_env)
-        env.write_text(env.read_text().replace('QQ_ALLOW_GROUPS=*\n', ''))
+        env.write_text(env.read_text().replace('CHATCOPILOT_ADMINS=*\n', ''))
         removed = client.get(base + '/inspection').json()
-        assert entity(removed['current'], 'policy:instance')['config']['QQ_ALLOW_GROUPS'] is None
-        monkeypatch.setenv('QQ_ALLOW_GROUPS', '100' + '999001')
+        assert entity(removed['current'], 'policy:instance')['config']['CHATCOPILOT_ADMINS'] is None
+        monkeypatch.setenv('CHATCOPILOT_ADMINS', '100' + '999001')
         overridden = client.get(base + '/inspection').json()
-        assert entity(overridden['current'], 'policy:instance')['config']['QQ_ALLOW_GROUPS'] is None
+        assert entity(overridden['current'], 'policy:instance')['config']['CHATCOPILOT_ADMINS'] is None
         assert client.get('/api/not-found').headers['cache-control'] == 'no-store'
         deployed_env.chmod(0o644)
         unsafe = client.get(base + '/inspection')

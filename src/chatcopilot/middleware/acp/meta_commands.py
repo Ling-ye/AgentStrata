@@ -71,13 +71,13 @@ _OWNER_GLOBAL_WORKSPACE_INTENT_RE = re.compile(
 )
 _OWNER_RUNTIME_ACCESS_INTENT_RE = re.compile(
     r"("
-    r"白名单|群白名单|QQ_ALLOW_FROM|QQ_ALLOW_GROUPS|"
+    r"白名单|QQ_ALLOW_FROM|"
     r"允许.{0,8}(谁|哪些|来源|用户|群|群号|QQ|访问|使用)|"
     r"(谁|哪些|什么人).{0,8}(能|可以|允许).{0,8}(访问|使用|用)"
     r")",
     re.IGNORECASE,
 )
-_CURRENT_GROUP_ALLOWLIST_INTENT_RE = re.compile(
+_CURRENT_GROUP_ACCESS_INTENT_RE = re.compile(
     r"(此群|当前群|这个群|本群).{0,12}(白名单|允许|加白)|"
     r"(白名单|允许|加白).{0,12}(此群|当前群|这个群|本群)",
     re.IGNORECASE,
@@ -434,61 +434,46 @@ def _format_owner_access_allowlist_status(
             resolved_env.get("QQ_ALLOW_FROM"),
             field="QQ_ALLOW_FROM",
         )
-        groups = parse_numeric_allowlist(
-            resolved_env.get("QQ_ALLOW_GROUPS"),
-            field="QQ_ALLOW_GROUPS",
-        )
     except AllowlistConfigError:
-        return "当前 ACP 准入名单配置无效，请由维护者检查私有配置。"
+        return "当前私聊准入名单配置无效，请由维护者检查私有配置。"
     user_ids = sorted(users.values)
-    group_ids = sorted(groups.values)
     queried_ids = _QQ_NUMBER_RE.findall(user_text or "")
     workspace = getattr(session, "workspace", None)
     chat_kind = str(getattr(workspace, "chat_kind", "") or "").strip().lower()
     chat_id = str(getattr(workspace, "chat_id", "") or "").strip()
     is_group_chat = chat_kind == "group"
-    asks_current_group = bool(_CURRENT_GROUP_ALLOWLIST_INTENT_RE.search(user_text or ""))
+    asks_current_group = bool(_CURRENT_GROUP_ACCESS_INTENT_RE.search(user_text or ""))
     asks_enumeration = bool(_ALLOWLIST_ENUMERATION_INTENT_RE.search(user_text or ""))
 
     if is_group_chat and asks_enumeration:
         return "为避免在群聊中暴露私有白名单，不能在这里列出完整名单。请由 Owner 私聊查询。"
 
     if is_group_chat and asks_current_group and chat_id:
-        current_group_allowed = groups.allows(chat_id)
-        return "当前群在群聊白名单中。" if current_group_allowed else "当前群不在群聊白名单中。"
+        return "群聊无需白名单，当前群成员 @ 机器人即可交流。"
 
     if is_group_chat:
-        return "为避免在群聊中暴露私有白名单，这里只支持查询当前群是否已加白；其他查询请由 Owner 私聊进行。"
+        return "群聊无需白名单；私聊准入名单仅供 Owner 私聊查询。"
 
     if queried_ids:
         checks = ["查询结果："]
         for qq in queried_ids:
-            user_status = "在用户白名单中" if users.allows(qq) else "不在用户白名单中"
-            group_status = "在群聊白名单中" if groups.allows(qq) else "不在群聊白名单中"
-            checks.append(f"- `{qq}`：{user_status}；{group_status}")
+            user_status = "允许私聊" if users.allows(qq) else "不允许私聊"
+            checks.append(f"- `{qq}`：{user_status}")
         return "\n".join(checks)
 
     if not asks_enumeration:
         return (
-            f"当前配置了 {len(user_ids)} 个用户白名单条目和 {len(group_ids)} 个群聊白名单条目。"
+            f"群聊无需白名单。当前配置了 {len(user_ids)} 个私聊白名单条目。"
             "如需完整名单，请明确要求列出。"
         )
 
-    lines = ["当前访问白名单："]
+    lines = ["群聊无需白名单。当前私聊白名单："]
     if users.allow_all:
-        lines.append("- 用户白名单：显式允许全部用户来源。")
+        lines.append("- 私聊白名单：显式允许全部用户私聊。")
     else:
         lines.append(
-            f"- 用户白名单：当前共有 {len(user_ids)} 个允许来源："
+            f"- 私聊白名单：当前共有 {len(user_ids)} 个允许来源："
             f"{', '.join(user_ids) if user_ids else '无'}。"
-        )
-
-    if groups.allow_all:
-        lines.append("- 群聊白名单：显式允许全部群聊。")
-    else:
-        lines.append(
-            f"- 群聊白名单：当前共有 {len(group_ids)} 个允许群聊："
-            f"{', '.join(group_ids) if group_ids else '无'}。"
         )
 
     return "\n".join(lines)

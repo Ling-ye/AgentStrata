@@ -334,6 +334,7 @@ def _runtime(
     executor=None,
     live_sink=None,
     admission_sink=None,
+    qq_users="*",
     ingress_retention_limit: int = 10_000,
     state_store: GatewayStateStore | None = None,
     writer_generation: int | None = None,
@@ -361,8 +362,7 @@ def _runtime(
         actor_executor=actor,
         identity_policy=IdentityPolicy(),
         admission_policy=AdmissionPolicy.from_raw(
-            qq_users="*",
-            qq_groups="*",
+            qq_users=qq_users,
             policy_version="policy-v1",
         ),
         generation=generation,
@@ -900,7 +900,7 @@ def _event(*, event_id: str, sender: str, group: str = "30003") -> CanonicalInbo
 async def test_qq_group_shares_conversation_but_preserves_two_actor_principals_and_receipts(
     tmp_path: Path,
 ) -> None:
-    state, _, _, _, _, channels, _, _, actor = _runtime(tmp_path)
+    state, _, _, _, _, channels, _, _, actor = _runtime(tmp_path, qq_users="")
     driver = _Driver()
     channels.register(driver)
     await channels.start()
@@ -915,6 +915,7 @@ async def test_qq_group_shares_conversation_but_preserves_two_actor_principals_a
     assert len(actor.requests) == 2
     assert actor.requests[0].session_id == actor.requests[1].session_id
     assert actor.requests[0].principal.actor_ref != actor.requests[1].principal.actor_ref
+    assert all(request.principal.role is Role.USER for request in actor.requests)
     assert len(actor.commits) == 2
     assert actor.discards == []
     assert len(driver.sent) == 2
@@ -1012,7 +1013,7 @@ async def test_cancelled_channel_caller_waits_for_real_worker_exit(tmp_path: Pat
 
 
 @_async_test
-async def test_admission_rejection_precedes_session_and_agent_side_effects(tmp_path: Path) -> None:
+async def test_private_admission_rejection_precedes_session_and_agent_side_effects(tmp_path: Path) -> None:
     state = GatewayStateStore(tmp_path / "state")
     generation = state.acquire_writer_generation(now=1.0)
     manager = SessionManager(writer_generation=generation)
@@ -1036,7 +1037,6 @@ async def test_admission_rejection_precedes_session_and_agent_side_effects(tmp_p
         identity_policy=IdentityPolicy(),
         admission_policy=AdmissionPolicy.from_raw(
             qq_users="",
-            qq_groups="",
             policy_version="policy-v1",
         ),
         generation=generation,
@@ -1060,7 +1060,7 @@ async def test_admission_rejection_precedes_session_and_agent_side_effects(tmp_p
             event = CanonicalInboundEvent(
                 evidence=TransportEvidence(
                     account=evidence.account,
-                    conversation=evidence.conversation,
+                    conversation=ConversationRef("p2p", evidence.sender.sender_id),
                     sender=evidence.sender,
                     event_id=evidence.event_id,
                     message_id=evidence.message_id,
@@ -1076,7 +1076,7 @@ async def test_admission_rejection_precedes_session_and_agent_side_effects(tmp_p
                     ResourceTicket(
                         ticket_id=ticket_id,
                         account=evidence.account,
-                        conversation=evidence.conversation,
+                        conversation=ConversationRef("p2p", evidence.sender.sender_id),
                         sender_id=evidence.sender.sender_id,
                         event_id=evidence.event_id,
                         message_id=evidence.message_id,
@@ -1090,7 +1090,7 @@ async def test_admission_rejection_precedes_session_and_agent_side_effects(tmp_p
             )
             with pytest.raises(Exception) as rejected:
                 await channels.handle_inbound(event)
-            assert getattr(rejected.value, "code") == "qq-group-not-allowed"
+            assert getattr(rejected.value, "code") == "qq-private-user-not-allowed"
     finally:
         await channels.stop()
     assert len(decisions) == 64
