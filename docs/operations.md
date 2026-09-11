@@ -748,8 +748,24 @@ python -m chatcopilot.harness resume <repair-id>
 `--reasoning-effort` 和稳定 `--request-id`。继续使用原冻结代码和剩余预算；编程阶段
 中断不重放同一 Agent 回合，保留尝试记录。模型与工具调用可能产生 Provider 费用。
 
-在 Console 侧栏进入独立的「AI Harness 修复」，加载测评 ID 后选择一个失败 Case。先按原条件
-确认当前本地 HEAD 仍失败；未提交修改不进入基线，当前通过则标记「当前未复现」。
+在 Console 侧栏进入独立的「AI Harness 修复」，测评来源输入一个完整的单 Case 引用：
+
+```text
+evalcase:<evaluation_id>/<case_ref>/<target_id>
+```
+
+三个字段分别按 URL 百分号编码，再用 `/` 连接。例如测评 `eval-example` 中
+`suite:case-b` 在 `agent-main` 目标下的引用是
+`evalcase:eval-example/suite%3Acase-b/agent-main`。字段取自原有测评结果；此引用是
+现有三个标识的组合，不是新生成的数据库 ID。测评结果页不提供新增的引用入口。
+点击「加载来源」后显示所属测评、Case、Target 和失败状态，再设置参数启动修复。
+页面不接受裸测评 ID、Case ID 或 Trial ID，也不提供失败 Case 下拉选择；目标不存在、
+没有失败结果或来源受阻时不能启动，不会自动替换为其他失败项。
+
+同次测评中同一 Case / Target 的重复执行共用引用，修复沿用原重复次数；其他已通过
+Case 继续作为回归保护集，其他失败 Case 不要求一起修好。API 和 CLI 仍分别传入既有
+的 Evaluation、Case 和 Target 参数。先按原条件确认当前本地 HEAD 仍失败；未提交
+修改不进入基线，当前通过则标记「当前未复现」。
 仅支持具有完整定义快照、实际执行 AgentStrata 的隔离 Suite；Profile comparison、
 dry-run 与 direct-LLM 测评不进入修复流程。旧定义缺失时重新运行测评。
 

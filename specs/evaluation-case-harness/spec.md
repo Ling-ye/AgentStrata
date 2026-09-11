@@ -9,7 +9,7 @@ created: 2026-09-11
 
 ## Summary
 
-控制台提供与测评中心并列的 AI Harness 修复页面，接收测评 ID 或绑定实例的机器人
+控制台提供与测评中心并列的 AI Harness 修复页面，接收单 Case 引用或绑定实例的机器人
 任务 ID，每次只处理一个问题。测评中心负责测评，机器人任务流负责运行观测；来源
 加载、自检、修复、复测和修复历史全部归 Harness，不在来源页面标记修复进度。
 从已完成测评的单个失败 Case 手动发起修复。先确认当前代码仍有问题，再在专属本地
@@ -30,6 +30,17 @@ worktree 中调用 Codex，使用原题单复测。目标通过且原有通过�
 只负责可信实例解析与端口装配，不把任意客户端日志、路径或 Console 运维任务 ID
 当成机器人证据。Harness 不回写来源记录，观测缺失、过期、截断或运行未结束均明确
 记录自检受阻。历史和来源关联从 Harness 自己的数据库查询，不要求来源服务在线。
+
+Console 的测评来源只接收 `evalcase:<evaluation_id>/<case_ref>/<target_id>`，三个字段
+分别使用 URL 百分号编码后以 `/` 连接。引用绑定某次测评中的一个 Case/Target，
+同组重复执行共用引用，继续按原重复次数验证。前端解析后通过原来源接口加载测评，
+核对测评 ID 并精确匹配失败目标，展示固定目标摘要；不接受裸测评 ID、Case ID 或
+Trial ID，不提供批次选择或失败 Case 下拉框。格式错误、目标未匹配失败结果或来源
+受阻时不能启动，也不改选其他 Case。修改输入或来源类型立即清除旧预览与目标，
+通过请求代次校验忽略迟到响应。启动仍提交既有三个字段，由服务端重新校验来源。
+引用不进入数据库或 worker，不增加随机 ID、数据迁移或测评结果页的获取入口；
+机器人任务来源和 CLI 参数保持。其他已通过 Case 继续作为回归保护集，其他失败
+Case 不要求一并修好。
 
 日常任务没有可靠的现成 Case 时，在独立准备阶段生成一个本地 pytest 复现测试和
 依据说明；准备 Agent 只能写测试草案目录，产品代码只读。测试必须产生真实断言失败，
@@ -96,7 +107,9 @@ Git hooks 不参与自动提交；不推送、建 PR、合入 main 或部署。
 - 重复请求、断线与恢复不产生重复活动任务或子测评，失败入库可幂等补写。
 - 不同失败特征不误合并，旧修复与新失败同时可见，失效补丁不自动复用。
 - CLI、Console、数据库和 worker 共享相同公开控制入口与状态语义。
-- 测评页不导入或轮询 Harness；独立页面支持来源预览、单 Case 选择、全过程和历史。
+- 测评页不导入或轮询 Harness，也不增加引用入口；独立页面只通过完整引用定位单个失败 Case/Target，并展示全过程和历史。
+- 相同 Case 的不同测评和 Target 不混淆；裸 ID、非法引用、缺失或非失败目标不能启动，也不自动替换目标。
+- 输入修改与迟到响应交错时，预览和提交只对应当前引用；机器人任务来源继续可用。
 - 机器人任务的测试准备与产品修复拥有不同写入范围，测试冻结后不得改变验收标准。
 - 操作者工作区与暂存状态保持；未启用的任务不提交，启用任务仅受控本地提交。
 - 审核拒绝或未知时记录原因并保留产物；批准后提交内容与受验收内容一致。
@@ -167,3 +180,18 @@ Case、断言或质量评分标准。QQ quick/full/security 预检及非 dry-run
 先在任务私有目录构建，提交元数据也进入同一敏感扫描。批准后只导入最终提交所需
 对象。新增断言证明被拒绝的候选不会写入仓库对象库；最后的 12 项质量回归及 mypy
 通过，真实扫描的正常提交与合成敏感提交说明的拒绝场景均通过。
+
+单 Case 引用输入验证（2026-09-12）：
+
+- `npm --prefix console/web test`：17 files、174 tests passed；新增引用解析与精确匹配
+  覆盖编码、裸 ID、空字段、不同测评/Target、不存在目标和无失败结果。
+- `npm --prefix console/web run build`：TypeScript 与生产构建通过。
+- `PYTHONPATH=src .venv/bin/python -m pytest tests/unit/test_harness_sources.py tests/unit/test_harness_console.py tests/unit/test_case_harness.py -q --basetemp=/tmp/agentstrata-harness-case-reference-pytest`：42 passed。
+- `PYTHONPATH=src .venv/bin/python scripts/check_repo.py fast --report-dir .cache/harness-case-reference/fast-complete`：
+  9 项检查通过，核心测试为 1111 passed、2 warnings、34 subtests passed。首次检查因
+  本地虚拟环境缺少 Ruff 停止；补齐 Ruff 0.16.4 与 mypy 1.20.2 后完整通过，依赖清单未改动。
+- 实际生产前端配合受控 API 在 1360px / 390px 下完成 12 组浏览器检查，无 pageerror
+  或页面横向溢出。覆盖引用拒绝、精确目标提交、受阻来源、迟到响应、来源切换、机器人
+  任务提交和测评页无 Harness 请求；结果与截图位于 `.cache/harness-case-reference/`。
+
+这些结果只证明本地代码与受控接口交互，未启动真实修复 worker、调用商业模型或部署。

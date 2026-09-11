@@ -1,15 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { caseKey, harnessApi, selectedCase, sourceLabel, stageLabel, repairStatusLabel, type RepairTask, type SourcePreview } from "./api";
+import { harnessApi, sourceLabel, stageLabel, repairStatusLabel, type RepairTask } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("independent Harness source selection", () => {
-  it("keeps the selected target when Case IDs repeat", () => {
-    const failures = ["first", "second"].map(target_id => ({ case_ref: "suite:case", case_id: "case", target_id }));
-    const preview = { kind: "evaluation", bot_id: "sample", blockers: [], history: [], failures } satisfies SourcePreview;
-    expect(selectedCase(preview, caseKey(failures[1]))?.target_id).toBe("second");
-    expect(selectedCase(preview, "stale-selection")).toBeUndefined();
-  });
   it("loads robot evidence through the Harness BFF", async () => {
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ kind: "robot_task" }) });
     vi.stubGlobal("fetch", fetch);

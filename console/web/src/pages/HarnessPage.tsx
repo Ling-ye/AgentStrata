@@ -3,8 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Checkbox, Drawer, Input, InputNumber, Select, Space, Table, Tag, Typography } from "@arco-design/web-react";
 import { api } from "../api";
 import PageSection from "../shared/ui/PageSection";
-import { caseKey, harnessApi, REPAIR_LABELS, repairStatusLabel, selectedCase, sourceLabel, stageLabel,
+import { harnessApi, REPAIR_LABELS, repairStatusLabel, sourceLabel, stageLabel,
   type SourceKind, type SourcePreview, type StartRepair } from "../features/harness/api";
+import { parseCaseReference, selectedCase, type CaseReference } from "../features/harness/caseReference";
 import { RepairDetail } from "../features/harness/RepairDetail";
 
 const { Text } = Typography;
@@ -16,7 +17,7 @@ export default function HarnessPage() {
   const [sourceId, setSourceId] = useState("");
   const [botId, setBotId] = useState("");
   const [preview, setPreview] = useState<SourcePreview>();
-  const [selection, setSelection] = useState("");
+  const [reference, setReference] = useState<CaseReference>();
   const [loading, setLoading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
@@ -43,22 +44,26 @@ export default function HarnessPage() {
     setTaskId(id);
     window.location.hash = id ? `harness?task=${encodeURIComponent(id)}` : "harness";
   }
-  function resetPreview() { generation.current++; setPreview(undefined); setSelection(""); setError(""); setLoading(false); }
+  function resetPreview() { generation.current++; setPreview(undefined); setReference(undefined); setError(""); setLoading(false); }
   async function load() {
+    if (starting || !sourceId.trim() || (kind === "robot_task" && !botId)) return;
     const current = ++generation.current;
-    setLoading(true); setError(""); setPreview(undefined); setSelection("");
+    setLoading(true); setError(""); setPreview(undefined); setReference(undefined);
     try {
-      const value = await harnessApi.load(kind, sourceId.trim(), kind === "robot_task" ? botId : "");
+      const parsed = kind === "evaluation" ? parseCaseReference(sourceId) : undefined;
+      const value = await harnessApi.load(kind, parsed?.evaluation_id ?? sourceId.trim(), kind === "robot_task" ? botId : "");
       if (current !== generation.current) return;
+      if (parsed && (value.kind !== "evaluation" || value.evaluation_id !== parsed.evaluation_id)) throw new Error("返回的测评与单 Case 引用不一致，请重新加载来源");
+      if (parsed && !value.blockers.length && !selectedCase(value, parsed)) throw new Error("该测评中未找到引用指定的失败 Case / Target：目标不存在或没有失败结果");
       setPreview(value);
-      if (value.failures?.length === 1) setSelection(caseKey(value.failures[0]));
+      setReference(parsed);
     } catch (value) { if (current === generation.current) setError(value instanceof Error ? value.message : String(value)); }
     finally { if (current === generation.current) setLoading(false); }
   }
   async function start() {
-    if (!preview) return;
-    const trial = selectedCase(preview, selection);
-    if (kind === "evaluation" && !trial) return;
+    if (!preview || starting || loading) return;
+    const trial = selectedCase(preview, reference);
+    if (kind === "evaluation" && (!trial || preview.blockers.length)) return;
     const body = { source_kind: kind, ...(kind === "evaluation" ? {
       evaluation_id: preview.evaluation_id, case_ref: trial!.case_ref, target_id: trial!.target_id,
     } : { bot_id: preview.bot_id, run_id: preview.run_id }), model: model.trim(), reasoning_effort: effort,
@@ -76,6 +81,7 @@ export default function HarnessPage() {
     finally { setStarting(false); }
   }
   const blocked = !!preview?.blockers.length;
+  const trial = selectedCase(preview, reference);
   return <PageSection title="AI Harness 修复" description="加载一个失败来源，完成自检、隔离修复和回归验证。每次处理一个问题。">
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
       <Card title="发起修复">
@@ -83,24 +89,28 @@ export default function HarnessPage() {
           <Text type="secondary">测评中心负责运行测评，机器人任务流负责查看运行过程；修复过程和历史统一保存在此处。</Text>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))", gap: 16 }}>
             <div>来源类型<Select aria-label="修复来源类型" value={kind} disabled={starting} onChange={value => { setKind(value); resetPreview(); }} options={[
-              { label: "测评 ID", value: "evaluation" }, { label: "机器人任务 ID", value: "robot_task" },
+              { label: "测评单 Case", value: "evaluation" }, { label: "机器人任务 ID", value: "robot_task" },
             ]} /></div>
             {kind === "robot_task" && <div>机器人实例<Select aria-label="修复来源实例" value={botId || undefined} disabled={starting} loading={bots.isPending}
               placeholder="选择任务所属实例" onChange={value => { setBotId(value); resetPreview(); }}
               options={(bots.data ?? []).filter(bot => bot.runtime_kind === "gateway").map(bot => ({ value: bot.instance_id, label: bot.instance_id }))} /></div>}
-            <div>{kind === "evaluation" ? "测评 ID" : "机器人任务 ID"}<Input aria-label="修复来源 ID" value={sourceId} disabled={starting}
-              placeholder={kind === "evaluation" ? "输入已完成的测评 ID" : "输入任务流中的 run_id"}
+            <div>{kind === "evaluation" ? "单 Case 引用" : "机器人任务 ID"}<Input aria-label={kind === "evaluation" ? "单 Case 引用" : "修复来源 ID"} value={sourceId} disabled={starting}
+              placeholder={kind === "evaluation" ? "evalcase:<evaluation_id>/<case_ref>/<target_id>" : "输入任务流中的 run_id"}
               onChange={value => { setSourceId(value); resetPreview(); }} onPressEnter={() => void load()} /></div>
           </div>
+          {kind === "evaluation" && <Text type="secondary" style={{ overflowWrap: "anywhere" }}>输入完整引用，例如 evalcase:eval-example/suite%3Acase-b/agent-main；三个字段分别进行 URL 百分号编码。每次只修复引用指定的一个 Case / Target。</Text>}
           {kind === "robot_task" && <Text type="secondary">任务将先建立本地复现测试。缺失证据或无法在隔离环境中复现时，会记录受阻原因。</Text>}
           <Button loading={loading} disabled={starting || !sourceId.trim() || (kind === "robot_task" && !botId)} onClick={() => void load()}>加载来源</Button>
           {error && <Alert type="error" content={error} />}
           {kind === "robot_task" && bots.isError && <Alert type="error" content="机器人实例列表读取失败，请刷新后重试" />}
           {preview && <>
             <Alert type={blocked ? "warning" : "info"} content={blocked ? preview.blockers.join("；") :
-              kind === "evaluation" ? `已加载 ${preview.failures?.length ?? 0} 个失败 Case / Target，请选择一个修复。` : "已加载任务证据。启动后将先核对预期行为并建立冻结复现测试。"} />
-            {kind === "evaluation" && !!preview.failures?.length && <div>失败 Case / Target<Select aria-label="待修复 Case" value={selection || undefined}
-              disabled={starting} placeholder="选择一个失败 Case" onChange={setSelection} options={preview.failures.map(item => ({ value: caseKey(item), label: `${item.case_id} · ${item.target_id}` }))} /></div>}
+              kind === "evaluation" ? "已定位引用指定的失败 Case / Target；启动前会再次验证来源。" : "已加载任务证据。启动后将先核对预期行为并建立冻结复现测试。"} />
+            {kind === "evaluation" && reference && <div aria-label="待修复 Case 详情" style={{ overflowWrap: "anywhere" }}>
+              <div>所属测评：{reference.evaluation_id}</div><div>Case：{reference.case_ref}</div><div>Target：{reference.target_id}</div>
+              <div>失败状态：{trial ? "已记录失败或执行错误" : "未确认"}</div>
+              <Text type="secondary">同一 Case / Target 的重复执行按原次数验证，其他已通过 Case 继续作为回归保护集。</Text>
+            </div>}
             {!!preview.history.length && <Space direction="vertical"><Text bold>关联历史修复 {preview.history.length} 条</Text>
               {preview.history.map(item => <Button type="text" key={item.task_id} onClick={() => openTask(item.task_id)}>{repairStatusLabel(item)} · {sourceLabel(item)}</Button>)}</Space>}
             {preview.evidence && <details><summary>查看任务证据</summary><pre style={{ maxHeight: 320, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(preview.evidence, null, 2)}</pre></details>}
@@ -113,7 +123,7 @@ export default function HarnessPage() {
               </div>
               <Checkbox checked={reviewAndCommit} disabled={starting} onChange={setReviewAndCommit}>AI 审核通过后，收录回归测试并创建本地提交（不推送）</Checkbox>
               <Text type="secondary">从本地 HEAD 创建专属 worktree 和分支。目标和保护集通过后执行所选后续动作；审核与提交共用本次预算，合入主分支由你决定。</Text>
-              <Button type="primary" loading={starting} disabled={!model.trim() || (kind === "evaluation" && !selectedCase(preview, selection))} onClick={() => void start()}>
+              <Button type="primary" loading={starting} disabled={loading || !model.trim() || (kind === "evaluation" && (!trial || blocked))} onClick={() => void start()}>
                 {blocked ? "保存自检受阻记录" : "开始自检与修复"}</Button>
             </>}
           </>}

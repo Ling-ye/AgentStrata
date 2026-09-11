@@ -912,3 +912,11 @@ Owner/member 工具权限、actor 隔离与持久化顺序继续保留。设计�
 测试一次生成、冻结并按正式路径验证，通过后与产品修复形成同一个本地提交；已有
 Evaluation Case 只关联。提交意图及真实 Git 回执支持中断恢复，不扩大到推送、合入
 或部署。设计及验收见 [Harness 规格](../specs/evaluation-case-harness/spec.md)。
+
+## 2026-09-12：Harness 测评来源收敛为单 Case 引用
+
+Console 通过绑定 Evaluation/Case/Target 的完整 `evalcase:` 引用直接定位修复目标，
+替换原先输入测评 ID 后再选择失败项的交互。无效引用、未匹配失败结果和来源受阻
+均不能启动；切换输入立即清除旧目标，忽略迟到响应。继续使用现有 API 字段、数据
+库和 worker，保留重复次数、回归保护集及机器人任务来源，测评结果页保持原样。
+引用格式和验收见 [Harness 规格](../specs/evaluation-case-harness/spec.md)。

@@ -45,10 +45,6 @@ export function stageLabel(stage: string): string {
 export function sourceLabel(task: RepairTask): string {
   return task.source.kind === "robot_task" ? `机器人任务 ${task.source.run_id}` : `测评 ${task.source.evaluation_id} · ${task.source.case_id}`;
 }
-export function caseKey(item: FailedCase): string { return JSON.stringify([item.case_ref, item.target_id]); }
-export function selectedCase(preview: SourcePreview | undefined, key: string): FailedCase | undefined {
-  return preview?.failures?.find(item => caseKey(item) === key);
-}
 export type StartRepair = { source_kind: SourceKind; evaluation_id?: string; case_ref?: string; target_id?: string;
   bot_id?: string; run_id?: string; review_and_commit?: boolean; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number };
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

@@ -337,8 +337,8 @@ files and private reports never belong in Git.
 
 Agent 能力测评使用 DeepEval，按测评集与 Case 浏览；新业务题使用严格 LLM 判定，63 个既有工程回归题保留程序断言，公开基准保留原生评分。文件维护方法见 [业务 Case 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-business-cases.md)；用例范围与使用方式见 [Console 文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md)。
 
-The Console has a separate **AI Harness Repair** page alongside Evaluation. Load an
-Evaluation ID and select one failed Case, or load an instance-bound robot task ID.
+The Console has a separate **AI Harness Repair** page alongside Evaluation. Enter a
+single Case reference binding an Evaluation, Case and Target, or an instance-bound robot task ID.
 Harness owns self-checks, isolated worktrees, repair attempts, regression verification
 and repair history. Robot task repairs first freeze a local reproduction test; incomplete
 evidence or unsafe external replay blocks automatic repair. Evaluation results and robot
