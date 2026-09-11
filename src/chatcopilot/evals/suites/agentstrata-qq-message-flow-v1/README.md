@@ -6,6 +6,11 @@ protected state, and a deterministic Agent sentinel. It never connects or
 writes to real QQ and is not evidence for real NapCat or cc-connect runtime
 behavior.
 
+Preflight and execution use the same deterministic message-flow driver. These
+Cases do not require DeepEval quality policies or a judge-model configuration;
+the existing transport, authorization, state and delivery assertions remain the
+acceptance criteria.
+
 `quick` covers the positive owned-chain path, attestation failure closing, and
 persona persistence into the next PromptPlan. `full` runs all seven Cases;
 `security` selects the four ingress and authorization negative Cases.

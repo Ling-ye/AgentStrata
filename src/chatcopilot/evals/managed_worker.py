@@ -73,6 +73,16 @@ def main(argv: list[str] | None = None) -> int:
         if core_request.get("evaluation_id") != evaluation_id:
             raise ValueError("managed core_request evaluation_id does not match output")
         _await_startup(args.startup_fd)
+        source_receipt = os.environ.get("CHATCOPILOT_EVALUATION_SOURCE_RECEIPT")
+        if outer_request.get("code_source"):
+            from chatcopilot.evals.code_source import read_source_receipt
+            expected_receipt = output.parent / ".sources" / f"{evaluation_id}.json"
+            if source_receipt != str(expected_receipt):
+                raise ValueError("candidate source receipt is not bound to this Evaluation")
+            receipt = read_source_receipt(expected_receipt)
+            if ({key: value for key, value in receipt.items() if key != "manifest"} != outer_request["code_source"]
+                    or Path(receipt["path"]) != Path.cwd()):
+                raise ValueError("candidate source does not match the executing worker")
         _verify_bot_spec_snapshot(outer_request)
         claim_path = _managed_claim_path(output, outer_request)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -106,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
                 cancel_path=cancel_path,
                 claim_path=claim_path,
                 evaluation_id=evaluation_id,
+                expected_conditions=outer_request.get("expected_conditions"),
             )
 
 
@@ -140,6 +151,7 @@ def _run_managed(
     cancel_path: Path,
     claim_path: Path,
     evaluation_id: str,
+    expected_conditions: dict[str, Any] | None = None,
 ) -> int:
     configure_logging("INFO", "CHATCOPILOT_EVAL_LOG_LEVEL")
     cancelled = threading.Event()
@@ -190,6 +202,7 @@ def _run_managed(
             cancel_check=cancel_check,
             managed=True,
             authority_claim_path=claim_path,
+            expected_conditions=expected_conditions,
         )
     except EvaluationValidationError as exc:
         print(json.dumps(exc.to_dict(), ensure_ascii=False), file=sys.stderr)

@@ -77,6 +77,16 @@ BotSpec 负责配置解释，Application 的装配函数将配置投影为 Agent
 
 ## 硬规则
 
+- **单 Case Harness 独立性**：`chatcopilot.harness` 拥有按需 worker、任务与尝试数据库；
+  通过来源、验证和编程适配器协作，Evaluation 不反向依赖 Harness。测评数据库由
+  Evaluation 服务校验并保存新增结果，历史文件不批量迁移；Console 组合查询两个模块，
+  不跨库写表。修复入口、进度和历史只在并列的 AI Harness 页面展示，测评页和机器人
+  任务流不管理修复状态。日常任务只读绑定实例的 Gateway 观测，独立准备并冻结本地
+  复现测试；准备阶段产品只读，修复阶段测试只读。证据或本地复现不足时明确受阻。
+  候选测评必须加载实际冻结源码，Case、评分与控制实现保持受信版本。
+  worktree 目标及保护集验收通过才标记已修复，原始成绩不改写，候选不自动提交或发布。
+  规格见 `specs/evaluation-case-harness/spec.md`。
+
 - **Agent 流式观测**：主 Codex 使用每回合隔离的 App Server stdio，沿用 actor、PromptPlan、ExecutionScope 和凭据租约。公开消息、摘要和命令输出通过 AgentContentDelta 进入既有观测索引，Console SSE 只读续传；过程不进入渠道最终回复，不采集 raw/encrypted reasoning，不重放已开始的 turn。独立 worker/research 保留 exec，规格见 `specs/agent-streaming-observability/spec.md`。
 
 - **Agent 层禁止 import**：`chatcopilot.botspec.*` / `chatcopilot.platforms.*` / `chatcopilot.middleware.*` / middleware `Workspace` 实现 / `BotRuntimeContext` / ACP 帧。共享 DTO/ports 只能从 `chatcopilot.contracts` 取；策略通过 hook 注入，如 `tool_payload_filter`、`background_submitter`、`file_sender`。

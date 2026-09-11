@@ -15,6 +15,7 @@ from chatcopilot.evals.capability_verifiers import verify_capability_facts
 from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 from chatcopilot.evals.manifest import load_case_definitions, load_suite_manifest
 from chatcopilot.evals.qq_flow_scenarios import run_qq_flow_scenario
+from chatcopilot.evals.evaluations import run_evaluation, validate_evaluation
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -32,6 +33,59 @@ BOT_PATH = REPOSITORY_ROOT / "bots" / "lingye-copilot-qq" / "bot.yaml"
 def _case(case_id: str):
     manifest = load_suite_manifest(SUITE_DIR / "manifest.yaml", suite_dir=SUITE_DIR)
     return next(item for item in load_case_definitions(manifest) if item.case_id == case_id)
+
+
+@pytest.mark.parametrize("preset", ["quick", "full", "security"])
+def test_qq_preflight_uses_deterministic_driver_without_deepeval(preset, monkeypatch):
+    from chatcopilot.evals import deepeval_engine
+
+    def unexpected(_cases):
+        pytest.fail("QQ deterministic drivers must not enter DeepEval preflight")
+
+    monkeypatch.setattr(deepeval_engine, "preflight", unexpected)
+    result = validate_evaluation({
+        "kind": "suite", "suite": "agentstrata-qq-message-flow-v1", "bot": str(BOT_PATH),
+        "preset": preset, "dry_run": False,
+    })
+    assert result["ready"], result["checks"]
+    assert all(check["code"] != "deepeval" for check in result["checks"])
+    assert {target["executor"] for target in result["targets"]} == {"qq_message_flow"}
+
+
+def test_agent_preflight_still_requires_its_quality_engine(monkeypatch):
+    from chatcopilot.evals import deepeval_engine
+
+    def required(cases):
+        assert cases and all(case.driver_id in {"agent_isolated", "agent_configured"} for case in cases)
+        raise ValueError("independent quality configuration is required")
+
+    monkeypatch.setattr(deepeval_engine, "preflight", required)
+    result = validate_evaluation({
+        "kind": "suite", "suite": "agentstrata-capabilities-v1", "bot": str(BOT_PATH),
+        "preset": "custom", "case_ids": ["dialogue-strict-json"], "dry_run": False,
+    })
+    assert not result["ready"]
+    assert any(check["code"] == "deepeval" and not check["ok"] for check in result["checks"])
+
+
+def test_full_qq_suite_executes_all_deterministic_cases_without_quality_model(tmp_path, monkeypatch):
+    from chatcopilot.evals import deepeval_engine
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("QQ synthetic evaluation must not execute DeepEval quality scoring")
+
+    monkeypatch.setattr(deepeval_engine, "preflight", unexpected)
+    monkeypatch.setattr(deepeval_engine, "score", unexpected)
+    result = run_evaluation({
+        "kind": "suite", "suite": "agentstrata-qq-message-flow-v1", "bot": str(BOT_PATH),
+        "preset": "full", "dry_run": False,
+    }, output=tmp_path / "qq-evaluation")
+    assert result.status == "completed"
+    assert len(result.trials) == 7
+    assert all(trial.outcome == "passed" for trial in result.trials), [
+        (trial.case_id, trial.outcome, trial.error) for trial in result.trials
+    ]
+    assert all(trial.executor == "qq_message_flow" for trial in result.trials)
 
 
 def test_owned_roundtrip_traverses_acp_task_and_client_chain_without_private_inputs(

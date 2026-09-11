@@ -710,3 +710,72 @@ bash deploy/wsl/dump.sh --archive
 | `chatcopilot-console.service` | 控制台 systemd unit |
 | `chatcopilot-evaluation.service` | Evaluation application 与 managed worker supervisor systemd unit |
 | `~/ChatCopilot*` | 既有部署和数据路径；新文档不把它当作项目名称 |
+
+
+## 单 Case AI Harness
+
+Harness 是可选的独立模块，通过同 UID Evaluation 客户端读取结果和提交复测，
+按需创建 systemd transient worker，没有常驻 Harness 服务。Console 关闭不取消任务。
+需要带 Git 元数据的源码仓库、Linux/WSL user systemd、bubblewrap 和原生 Codex 二进制。
+
+首次使用可把 `deploy/wsl/harness.env.example` 复制到操作者的
+`~/.config/agentstrata/harness.env`，将目录设为 `0700`、文件设为 `0600`。配置
+`CHATCOPILOT_CODEX_BIN` 和已有专用凭据根 `CHATCOPILOT_CODEX_BOT_HOME`；后者的
+`worker` lane 必须已经登录。凭据操作沿用本文的 Codex 凭据命令，不使用个人桌面
+认证目录。配置文件不执行 shell，仅展开值开头的 `~`、`$HOME`、`${HOME}`；
+进程环境优先。`CHATCOPILOT_HARNESS_ENV` 可指定另一份私有配置文件。
+
+默认修复数据库位于用户状态目录的 `agentstrata/harness/<repository-hash>/`，
+可通过 `CHATCOPILOT_HARNESS_ROOT` 指定；任务、runtime 快照、补丁和工作区都属于
+该目录。可用 `CHATCOPILOT_HARNESS_MODEL` 设置 CLI 默认修复模型。
+
+在源码仓库运行：
+
+```bash
+python -m chatcopilot.harness --help
+python -m chatcopilot.harness start --evaluation <evaluation-id> --case <case-ref> --target <target-id> --model <codex-model>
+python -m chatcopilot.harness list
+python -m chatcopilot.harness get <repair-id>
+python -m chatcopilot.harness cancel <repair-id>
+python -m chatcopilot.harness resume <repair-id>
+```
+
+创建时可设置 `--max-attempts`（默认 3）、`--timeout-seconds`（默认 7200）、
+`--reasoning-effort` 和稳定 `--request-id`。继续使用原冻结代码和剩余预算；编程阶段
+中断不重放同一 Agent 回合，保留尝试记录。模型与工具调用可能产生 Provider 费用。
+
+在 Console 侧栏进入独立的「AI Harness 修复」，加载测评 ID 后选择一个失败 Case。先按原条件
+确认当前本地 HEAD 仍失败；未提交修改不进入基线，当前通过则标记「当前未复现」。
+仅支持具有完整定义快照、实际执行 AgentStrata 的隔离 Suite；Profile comparison、
+dry-run 与 direct-LLM 测评不进入修复流程。旧定义缺失时重新运行测评。
+
+机器人任务来源在页面选择实例并输入 Gateway `run_id`。自检读取只读观测索引及有界
+详情，不能从业务状态库补造丢失证据。具备证据后，准备 Agent 在独立草案目录中生成
+一个有依据的 pytest 测试；产品代码只读。宿主冻结测试，先确认基线出现断言失败，再
+进行代码修复。复测执行同一冻结测试及仓库 `tests/unit`，保护基线中每个通过项。
+测试收集、导入、运行环境错误或跳过不能冒充目标失败或成功。需要已安装开发测试
+依赖的 Python 环境；缺失依赖应按测试进程错误处理，不能绕过回归验证。
+隔离测试无网络、无实例状态或凭据，不发送真实平台消息。外部依赖无法本地复现时
+记录受阻；准备被中断时保留草案，重新发起任务，不重放同一模型回合。
+
+CLI 可以直接指定操作者已确认的实例观测目录，不依赖 Console：
+
+```bash
+python -m chatcopilot.harness start-task --bot <instance-id> --run <run-id> --gateway-state-root <instance-state-root> --model <codex-model>
+python -m chatcopilot.harness list --page 2 --search <source-id> --status blocked
+```
+
+每个任务创建 `feat/harness-<id>` 分支和专属 worktree。第一版允许修改运行时产品源码，
+测试、评分、配置包络和控制实现保持只读。候选进行 Python 语法与 Git diff 检查，并
+复测原题单。目标和保护集通过即记录「已修复」，其他原失败项可保持失败。此结论仅指
+该 worktree 在指定条件下验证通过，代码不自动暂存、提交、推送或合入。
+
+测评中心和机器人任务流只展示原始运行事实，修复状态统一显示在 AI Harness 页面。
+新增平台测评由 Evaluation 保存到自己的 `results.sqlite3`；
+Harness 的 `harness.sqlite3` 只保存任务和尝试，两者不跨库写表。原始日志与附件仍是
+文件产物，历史测评不批量入库。数据库故障保留原始执行事实，不能据此确认修复。
+
+前端修复写操作仅接受同源、本机连接；远程维护使用 SSH 隧道。CLI 可直接操作同一
+用户的 Harness，不需要打开 Console。systemd 调度失败会记录受阻，不使用 nohup
+或进程内后台任务降级。详情含 worker unit、工作区、候选摘要和逐轮验收引用；
+先检查任务详情，再检查对应 unit 的 journal。不要在任务活动期间手工改动其工作区。

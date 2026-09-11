@@ -39,6 +39,8 @@ from chatcopilot.evals.application.insights import (
     result_insights,
     source_revision,
 )
+from chatcopilot.evals.application.result_store import EvaluationResultStore
+from chatcopilot.evals.code_source import prepare_code_source, write_source_receipt
 
 ACTIVE_STATUSES = {"queued", "running"}
 TERMINAL_STATUSES = {
@@ -444,7 +446,14 @@ class EvaluationApplication:
         self._process_bot_ids: dict[str, str] = {}
         self._spawn_env_snapshots: dict[str, dict[str, str]] = {}
         self._cancelled: set[str] = set()
+        self.result_store = EvaluationResultStore(self.root)
+        self._result_storage_errors: dict[str, str] = {}
         self._recover_interrupted()
+        for evaluation_id in self.result_store.pending():
+            try:
+                self.get(evaluation_id)
+            except (KeyError, ValueError, OSError):
+                LOGGER.warning("Evaluation ingestion recovery pending: %s", evaluation_id)
 
     def _ensure_private_root(self) -> None:
         self.root.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -467,13 +476,18 @@ class EvaluationApplication:
         bot_id: str,
         request: Mapping[str, Any],
         evaluation_id: str | None = None,
+        code_source: Mapping[str, Any] | None = None,
+        expected_conditions: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         bot = self._resolve_bot(bot_id)
         effective_env = evaluation_subprocess_env(bot_env(bot, self.repository_root))
         bot_spec_digest = _bot_spec_sha256(bot, self.repository_root)
         clean_request = dict(request)
         clean_request["bot_id"] = bot.instance_id
-        request_fingerprint = _start_request_fingerprint(clean_request)
+        request_fingerprint = _start_request_fingerprint(
+            {**clean_request, **({"code_source": dict(code_source)} if code_source is not None else {}),
+             **({"expected_conditions": dict(expected_conditions)} if expected_conditions is not None else {})}
+        )
         requested_id = str(evaluation_id or "").strip()
         if requested_id:
             self._evaluation_dir(requested_id)
@@ -606,8 +620,21 @@ class EvaluationApplication:
             try:
                 self._create_claim(bot.instance_id, evaluation_id)
                 directory.mkdir(parents=True, mode=0o700)
+                if code_source is not None:
+                    source_root = self.root / ".sources"
+                    source_root.mkdir(mode=0o700, exist_ok=True)
+                    receipt = prepare_code_source(self.repository_root, code_source, source_root / evaluation_id)
+                    write_source_receipt(source_root / f"{evaluation_id}.json", receipt)
+                    stored_request["code_source"] = {key: value for key, value in receipt.items() if key != "manifest"}
+                    stored_request["source_revision"] = {
+                        "status": "recorded", "commit": receipt["commit"], "dirty": True,
+                        "captured_at": created_at,
+                    }
+                if expected_conditions is not None:
+                    stored_request["expected_conditions"] = dict(expected_conditions)
                 _write_json(directory / "request.json", stored_request)
                 _write_json(directory / "state.json", state)
+                self.result_store.register(stored_request)
                 self._spawn_env_snapshots[evaluation_id] = effective_env.copy()
                 try:
                     self._spawn(evaluation_id, bot)
@@ -867,12 +894,21 @@ class EvaluationApplication:
             "selection": self._selection_summary(request),
             "benchmark": request.get("benchmark", result.get("config_snapshot", {}).get("benchmark", {})),
             "source_revision": source_revision(request),
+            "code_source": {key: value for key, value in request.get("code_source", {}).items() if key != "path"},
+            "result_storage": ("pending" if evaluation_id in self._result_storage_errors else
+                               "database" if self.result_store.contains(evaluation_id) else "legacy_files"),
             "insights": result_insights(
                 request, result, status=str(state.get("status") or ""), planned=total,
             ),
         }
         if include_result:
             response["request"] = request
+            if result.get("config_snapshot"):
+                from chatcopilot.evals.conditions import evaluation_conditions
+                try:
+                    response["conditions"] = evaluation_conditions(result["config_snapshot"], target_values)
+                except (KeyError, TypeError, ValueError):
+                    response["conditions"] = None
             if not include_bodies:
                 result = {**result, "trials": [trial_preview(t) for t in trial_values if isinstance(t, Mapping)],
                     "config_snapshot": {"definition_snapshot": result.get("config_snapshot", {}).get("definition_snapshot", {})}}
@@ -1070,6 +1106,12 @@ class EvaluationApplication:
             if target == self.root or not target.is_dir():
                 raise ValueError("invalid evaluation directory")
             shutil.rmtree(target)
+            self.result_store.delete(evaluation_id)
+            source_root = self.root / ".sources"
+            candidate = source_root / evaluation_id
+            if candidate.is_dir() and not candidate.is_symlink():
+                shutil.rmtree(candidate)
+            (source_root / f"{evaluation_id}.json").unlink(missing_ok=True)
             if bot_id:
                 self._release_claim(bot_id, evaluation_id)
 
@@ -1288,7 +1330,11 @@ class EvaluationApplication:
         env = evaluation_subprocess_env(
             snapshot.copy() if snapshot is not None else bot_env(bot, self.repository_root)
         )
-        src = str(self.repository_root / "src")
+        stored = _read_json(directory / "request.json")
+        execution_root = Path(stored.get("code_source", {}).get("path") or self.repository_root)
+        src = str(execution_root / "src")
+        if stored.get("code_source"):
+            env["CHATCOPILOT_EVALUATION_SOURCE_RECEIPT"] = str(self.root / ".sources" / f"{evaluation_id}.json")
         env["PYTHONPATH"] = os.pathsep.join(
             [
                 src,
@@ -1309,7 +1355,7 @@ class EvaluationApplication:
         try:
             process = subprocess.Popen(
                 command,
-                cwd=str(self.repository_root),
+                cwd=str(execution_root),
                 env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -1412,6 +1458,14 @@ class EvaluationApplication:
                     state["error"] = f"evaluation process exited with code {exit_code}"
                 _write_json(directory / "state.json", state)
                 terminal_state_persisted = True
+                try:
+                    self.result_store.synchronize(
+                        evaluation_id, result=result, state=state,
+                        observation=_read_json(directory / "observation.json", max_bytes=1024 * 1024),
+                    )
+                except Exception as storage_error:
+                    self._result_storage_errors[evaluation_id] = type(storage_error).__name__
+                    LOGGER.warning("Evaluation result ingestion pending: %s", evaluation_id)
             except Exception as exc:
                 LOGGER.error(
                     "Evaluation worker finalization failed; activity claim retained "
@@ -2031,6 +2085,22 @@ class EvaluationApplication:
             raise ValueError("evaluation result is not valid JSON")
         if result.get("evaluation_id") != evaluation_id:
             raise ValueError("evaluation_id does not match its result record")
+        if self.result_store.contains(evaluation_id):
+            try:
+                self.result_store.synchronize(
+                    evaluation_id, result=result, state=_read_json(target / "state.json"),
+                    observation=_read_json(target / "observation.json", max_bytes=1024 * 1024),
+                )
+                stored = self.result_store.get(evaluation_id)
+                self._result_storage_errors.pop(evaluation_id, None)
+                if stored is not None:
+                    return stored["result"]
+            except ValueError:
+                raise
+            except Exception as exc:
+                # Persistence failure cannot rewrite the actual execution outcome.
+                self._result_storage_errors[evaluation_id] = type(exc).__name__
+                LOGGER.warning("Evaluation result ingestion pending: %s (%s)", evaluation_id, type(exc).__name__)
         return result
 
     @staticmethod

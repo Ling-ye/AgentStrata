@@ -179,12 +179,24 @@ RULES = (
         root=ROOT / "console",
         forbidden=("chatcopilot.agent.subagents", "chatcopilot.botspec.registry"),
     ),
+    Rule(
+        name="harness_uses_public_adapters",
+        root=SRC / "harness",
+        forbidden=("chatcopilot.evals", "chatcopilot.agent", "chatcopilot.external_tools", "chatcopilot.gateway"),
+        allowed=tuple(("src/chatcopilot/harness/" + file, module) for file, modules in (
+            ("evaluation_adapter.py", ("chatcopilot.evals.service",)),
+            ("gateway_adapter.py", ("chatcopilot.gateway.observation_queries", "chatcopilot.gateway.observation_store")),
+            ("codex_adapter.py", ("chatcopilot.agent.backends.codex_permissions", "chatcopilot.agent.context.prompt_plan",
+                                  "chatcopilot.external_tools.codex_cli", "chatcopilot.external_tools.codex_cli.process_runner")),
+        ) for module in modules),
+    ),
 )
 
 
 # Same-area imports are always allowed. Cross-area imports must be listed here;
 # this declaration is itself checked for cycles before source edges are checked.
 AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
+    "harness": frozenset({"core", "contracts", "evals", "agent", "external_tools", "gateway"}),
     "contracts": frozenset(),
     "project": frozenset(),
     "core": frozenset({"contracts", "project"}),
@@ -274,6 +286,7 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     ),
     "entrypoints": frozenset(
         {
+            "harness",
             "agent",
             "application",
             "authorization",

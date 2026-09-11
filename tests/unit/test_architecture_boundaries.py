@@ -31,6 +31,19 @@ def test_architecture_graph_detects_strongly_connected_components(checker) -> No
     assert components == (("a", "b", "c"),)
 
 
+def test_harness_dependency_direction_and_private_evaluator_imports(checker, tmp_path, monkeypatch):
+    assert "harness" not in checker.AREA_DEPENDENCIES["evals"]
+    assert "harness" not in checker.AREA_DEPENDENCIES["core"]
+    rule = next(rule for rule in checker.RULES if rule.name == "harness_uses_public_adapters")
+    folder = tmp_path / "src/chatcopilot/harness"
+    folder.mkdir(parents=True)
+    (folder / "workflow.py").write_text("from chatcopilot.evals.application.controller import EvaluationApplication\n")
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    monkeypatch.setattr(checker, "RULES", (replace(rule, root=folder),))
+    assert checker.check_rules()["harness_uses_public_adapters"]
+
+
 def test_architecture_graph_resolves_relative_import_base(checker) -> None:
     record = checker.ModuleFile(
         name="chatcopilot.agent.feature",

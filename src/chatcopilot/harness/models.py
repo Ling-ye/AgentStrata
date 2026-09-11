@@ -1,0 +1,105 @@
+"""Small orchestration contracts independent of evaluator and coding backends."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Protocol
+import os
+
+from chatcopilot.core.observability_redaction import redact_observability_payload
+
+ACTIVE = frozenset({"queued", "running", "cancel_requested"})
+TERMINAL = frozenset({"fixed", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})
+
+
+class HarnessError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message)
+
+
+class Cancelled(HarnessError):
+    def __init__(self) -> None:
+        super().__init__("cancelled", "修复任务已取消")
+
+
+def safe_error(error: Exception, extra_secrets: tuple[str, ...] = ()) -> str:
+    secrets = (
+        *extra_secrets,
+        *(
+            value
+            for name, value in os.environ.items()
+            if any(
+                part in name.lower() for part in ("secret", "token", "password", "api_key", "proxy")
+            )
+        ),
+    )
+    value = redact_observability_payload({"error": str(error)}, secrets=secrets).value
+    return str(value.get("error", type(error).__name__))[:1000]
+
+
+@dataclass(frozen=True)
+class RepairOptions:
+    model: str
+    reasoning_effort: str = "medium"
+    max_attempts: int = 3
+    timeout_seconds: int = 7200
+
+    def __post_init__(self) -> None:
+        if not self.model.strip() or any(char.isspace() for char in self.model):
+            raise ValueError("修复模型必须明确指定")
+        if self.reasoning_effort not in {"minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("不支持的推理强度")
+        if type(self.max_attempts) is not int or self.max_attempts < 1:
+            raise ValueError("修复次数必须为正整数")
+        if type(self.timeout_seconds) is not int or self.timeout_seconds < 1:
+            raise ValueError("任务时间预算必须为正整数")
+
+
+class Evaluator(Protocol):
+    def source(self, evaluation_id: str, case_ref: str, target_id: str) -> dict[str, Any]: ...
+    def run(
+        self,
+        task: dict[str, Any],
+        worktree: Path,
+        evaluation_id: str,
+        case_ids: list[str],
+        check_cancel: Callable[[], None],
+    ) -> dict[str, Any]: ...
+    def cancel(self, evaluation_id: str) -> None: ...
+
+
+class Coder(Protocol):
+    def prepare(
+        self,
+        worktree: Path,
+        evidence: dict[str, Any],
+        options: RepairOptions,
+        output: Path,
+        check_cancel: Callable[[], None],
+    ) -> dict[str, Any]: ...
+
+    def run(
+        self,
+        worktree: Path,
+        evidence: dict[str, Any],
+        options: RepairOptions,
+        output: Path,
+        check_cancel: Callable[[], None],
+    ) -> dict[str, Any]: ...
+
+
+def passed_cases(
+    result: dict[str, Any], target_id: str, case_ids: list[str], repetitions: int
+) -> set[str]:
+    rows = [item for item in result.get("trials", []) if item.get("target_id") == target_id]
+    expected = {(case, attempt) for case in case_ids for attempt in range(1, repetitions + 1)}
+    identities = [(item.get("case_id"), item.get("attempt")) for item in rows]
+    if len(identities) != len(expected) or set(identities) != expected:
+        raise HarnessError("incomplete_trials", "测评 Trial 不完整或存在重复身份")
+    return {
+        case
+        for case in case_ids
+        if all(item["outcome"] == "passed" for item in rows if item["case_id"] == case)
+    }

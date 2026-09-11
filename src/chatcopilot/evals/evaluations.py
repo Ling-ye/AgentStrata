@@ -1068,6 +1068,7 @@ def run_evaluation(
     resume: bool = False,
     managed: bool = False,
     authority_claim_path: Path | None = None,
+    expected_conditions: Mapping[str, Any] | None = None,
 ) -> EvaluationResult:
     """Run case × attempt × targets with complete target-group checkpoints."""
 
@@ -1085,6 +1086,9 @@ def run_evaluation(
     output = output.expanduser().resolve()
     cases = _execution_cases(parsed)
     snapshot = _config_snapshot(parsed, targets, cases)
+    if expected_conditions is not None:
+        from chatcopilot.evals.conditions import evaluation_conditions, verify_conditions
+        verify_conditions(expected_conditions, evaluation_conditions(snapshot, [to_jsonable(target) for target in targets]))
     if managed and resume:
         raise ValueError("managed Evaluation cannot use the standalone resume path")
     if resume:
@@ -2120,13 +2124,19 @@ def _validate_suite(
         )
         return ()
 
-    if capability_definitions and not request.dry_run:
+    agent_definitions = [
+        capability_definitions[case.case_id]
+        for case in selected
+        if case.case_id in capability_definitions
+        and capability_definitions[case.case_id].driver_id in {"agent_isolated", "agent_configured"}
+    ]
+    if agent_definitions and not request.dry_run:
         from chatcopilot.evals.deepeval_engine import preflight
 
         try:
             from chatcopilot.evals.workbench import capability_scoring
 
-            preflight([capability_scoring(capability_definitions[case.case_id], request.options) for case in selected])
+            preflight([capability_scoring(definition, request.options) for definition in agent_definitions])
             checks.append(_check("deepeval", "DeepEval 与独立评分模型", True, "ready"))
         except ValueError as exc:
             checks.append(_check("deepeval", "DeepEval 与独立评分模型", False, str(exc), "安装 evaluation 依赖并配置独立评分模型"))
@@ -2916,6 +2926,14 @@ def _validate_managed_bootstrap(
         from chatcopilot.evals.source_revision import validate_source_revision
 
         expected["source_revision"] = validate_source_revision(stored_request["source_revision"])
+    if "expected_conditions" in stored_request:
+        if not isinstance(stored_request["expected_conditions"], dict):
+            raise ValueError("expected conditions must be an object")
+        expected["expected_conditions"] = stored_request["expected_conditions"]
+    if "code_source" in stored_request:
+        from chatcopilot.evals.code_source import read_source_receipt
+        receipt = read_source_receipt(entries["request.json"].parent.parent / ".sources" / f"{request.evaluation_id}.json")
+        expected["code_source"] = {key: value for key, value in receipt.items() if key != "manifest"}
     if "benchmark" in stored_request:
         if not isinstance(request, SuiteEvaluationRequest):
             raise ValueError("benchmark snapshot requires a Suite")

@@ -101,6 +101,8 @@ class EvaluationServiceRuntime:
                 bot_id=_required_text(payload, "bot_id"),
                 request={str(key): value for key, value in request.items()},
                 evaluation_id=_required_text(payload, "evaluation_id"),
+                **({"code_source": payload["code_source"]} if "code_source" in payload else {}),
+                **({"expected_conditions": payload["expected_conditions"]} if "expected_conditions" in payload else {}),
             )
         if operation == "evaluations.list":
             return self.application.list(

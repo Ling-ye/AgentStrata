@@ -156,12 +156,17 @@ class EvaluationServiceClient:
         *,
         bot_id: str,
         request: Mapping[str, Any],
+        evaluation_id: str | None = None,
+        code_source: Mapping[str, Any] | None = None,
+        expected_conditions: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        evaluation_id = self._new_evaluation_id()
+        evaluation_id = evaluation_id or self._new_evaluation_id()
         payload = {
             "bot_id": bot_id,
             "request": dict(request),
             "evaluation_id": evaluation_id,
+            **({"code_source": dict(code_source)} if code_source is not None else {}),
+            **({"expected_conditions": dict(expected_conditions)} if expected_conditions is not None else {}),
         }
         return self._mapping(
             self._mutation_call(

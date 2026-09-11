@@ -876,3 +876,22 @@ Python 3.10/3.13 CI 继续运行全量 Python 测试。范围与验证见
 更新消息及工具卡片，保留阅读位置。会话绑定、资源权限、凭据租约和最终交付门禁保持；
 独立 worker/research 继续使用 exec，不把 Codex 回合标为底层模型轮次。
 实现与本地验证见 [流式观测规格](../specs/agent-streaming-observability/spec.md)。
+
+
+## 2026-09-11：独立单 Case Harness
+
+测评中心增加手动单 Case 修复入口。Evaluation 为新增结果提供独立 SQLite 存储、
+候选源码执行和调用方幂等请求；Harness 自己拥有任务、尝试和按需 worker。
+修复先确认当前版本问题，候选对原题单进行验收，通过后记录本地 worktree 已修复，
+保留原始测评分数。Console 只组合两者的查询；没有批量故障队列、跨库写入或自动发布。
+设计和验证见 [单 Case Harness 规格](../specs/evaluation-case-harness/spec.md)。
+
+
+## 2026-09-11：AI Harness 独立工作台
+
+将修复入口、来源加载、自检、进度和历史迁至与测评中心并列的独立页面，移除测评
+结果中的修复控件和轮询。保留单问题范围，增加绑定实例的 Gateway 任务来源。
+日常任务经独立准备阶段建立冻结的本地 pytest 复现，目标及基线通过项共同验收；
+证据不完整、测试环境错误和不可复现分别说明，不重放生产消息。修复状态仍由
+Harness 数据库独立拥有，不回写测评和机器人任务记录。
+边界与验证见 [AI Harness 规格](../specs/evaluation-case-harness/spec.md)。
