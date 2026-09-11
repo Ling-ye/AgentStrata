@@ -903,3 +903,12 @@ Harness 数据库独立拥有，不回写测评和机器人任务记录。
 部署向导、Console 当前配置及测评指纹同步移除群名单，历史快照不迁移。发送者身份、
 Owner/member 工具权限、actor 隔离与持久化顺序继续保留。设计与验证见
 [`qq-group-open-admission`](../specs/qq-group-open-admission/spec.md)。
+
+
+## 2026-09-11：Harness 复测后审核与本地提交
+
+在现有 worker 中增加一次只读 AI 审核及受信宿主本地提交。新请求明确启用，历史
+任务保持原行为；审核拒绝或无法确认时显示问题、理由和证据并保留产物。机器人复现
+测试一次生成、冻结并按正式路径验证，通过后与产品修复形成同一个本地提交；已有
+Evaluation Case 只关联。提交意图及真实 Git 回执支持中断恢复，不扩大到推送、合入
+或部署。设计及验收见 [Harness 规格](../specs/evaluation-case-harness/spec.md)。

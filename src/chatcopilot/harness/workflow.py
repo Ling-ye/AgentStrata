@@ -23,6 +23,8 @@ from chatcopilot.harness.models import (
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness import workspace
 from chatcopilot.harness.local_verifier import LocalVerifier
+from chatcopilot.harness.local_commit import LocalCommitter
+from chatcopilot.harness.quality import finish_candidate
 
 
 def run_task(
@@ -32,6 +34,7 @@ def run_task(
     coder: Coder,
     *,
     local_verifier: LocalVerifier | None = None,
+    committer: LocalCommitter | None = None,
 ) -> dict[str, Any]:
     task = store.get(task_id)
     if task["status"] == "cancel_requested":
@@ -48,6 +51,8 @@ def run_task(
         if source.get("kind") == "robot_task"
         else None
     )
+    repository_verifier = local_verifier or LocalVerifier(store.root)
+    publisher = committer or LocalCommitter()
     worktree: Path | None = None
     heartbeat = 0.0
 
@@ -110,9 +115,22 @@ def run_task(
         store.update(task_id, evaluations=phases, current_evaluation_id=None)
         return record
 
-    try:
-        check_cancel()
+    def execute() -> None:
+        nonlocal worktree, source
         store.update(task_id, status="running")
+        if task.get("commit_intent"):
+            worktree = Path(task["worktree"])
+            recovered_attempt = next(
+                item
+                for item in store.attempts(task_id)
+                if item["number"] == task["commit_intent"]["attempt"]
+            )
+            if finish_candidate(
+                store, task_id, recovered_attempt, coder, publisher, options, check_cancel, deadline
+            ):
+                store.finish_verified(task_id, recovered_attempt["number"], recovered_attempt)
+            return
+        check_cancel()
         worktree = workspace.prepare(
             Path(task["repository"]), store.root, task_id, task["base_commit"]
         )
@@ -150,6 +168,14 @@ def run_task(
             baseline_result = evaluate("baseline", remaining) if remaining else {"passed_cases": []}
             protected = set(source["passed_cases"]) | set(baseline_result["passed_cases"])
             store.update(task_id, protected_cases=sorted(protected))
+            library: dict[str, Any] = {}
+            if not local:
+                library = store.get(task_id).get("regression_baseline") or {}
+                if not library:
+                    library = repository_verifier.regressions(
+                        store.get(task_id), worktree, check_cancel
+                    )
+                    store.update(task_id, regression_baseline=library)
             for number in range(1, options.max_attempts + 1):
                 check_cancel()
                 attempts = {item["number"]: item for item in store.attempts(task_id)}
@@ -161,7 +187,12 @@ def run_task(
                     continue
                 output = store.root / "jobs" / task_id / f"attempt-{number}"
                 output.mkdir(mode=0o700, exist_ok=True)
-                if not attempt or attempt["status"] != "verifying":
+                if not attempt or attempt["status"] not in {
+                    "verifying",
+                    "reviewing",
+                    "review_inconclusive",
+                    "committing",
+                }:
                     store.update(task_id, stage="coding", current_attempt=number)
                     attempt = {"number": number, "status": "coding", "started_at": time.time()}
                     store.save_attempt(task_id, number, attempt)
@@ -223,8 +254,23 @@ def run_task(
                         store.update(task_id, working_digest=manifest_digest(baseline))
                         continue
                 verification = evaluate(f"verify-{number}", source["case_ids"])
+                if not local and library.get("case_ids"):
+                    regression_result = attempt.get(
+                        "repository_regressions"
+                    ) or repository_verifier.regressions(
+                        store.get(task_id), worktree, check_cancel, library["case_ids"]
+                    )
+                    attempt["repository_regressions"] = regression_result
+                else:
+                    regression_result = {"passed_cases": []}
                 passing = set(verification["passed_cases"])
                 regressions = sorted(protected - passing)
+                regressions.extend(
+                    sorted(
+                        set(library.get("passed_cases", []))
+                        - set(regression_result["passed_cases"])
+                    )
+                )
                 accepted = source["case_id"] in passing and not regressions
                 attempt.update(
                     status="accepted" if accepted else "rejected",
@@ -233,7 +279,10 @@ def run_task(
                     finished_at=time.time(),
                 )
                 if accepted:
-                    store.finish_verified(task_id, number, attempt)
+                    if finish_candidate(
+                        store, task_id, attempt, coder, publisher, options, check_cancel, deadline
+                    ):
+                        store.finish_verified(task_id, number, attempt)
                     break
                 store.save_attempt(task_id, number, attempt)
                 workspace.restore(worktree, baseline, attempt["candidate_digest"])
@@ -245,8 +294,17 @@ def run_task(
                     stage="done",
                     message="已达到尝试次数，目标或回归验收仍未通过",
                 )
+
+    try:
+        execute()
     except Cancelled:
-        store.update(task_id, status="cancelled", message="修复任务已取消")
+        store.update(
+            task_id,
+            status="cancelled",
+            message="修复任务已取消；本地提交已创建"
+            if store.get(task_id).get("local_commit")
+            else "修复任务已取消",
+        )
     except Exception as exc:
         code = getattr(exc, "code", "execution_error")
         store.update(

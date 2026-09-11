@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { caseKey, harnessApi, selectedCase, sourceLabel, stageLabel, type RepairTask, type SourcePreview } from "./api";
+import { caseKey, harnessApi, selectedCase, sourceLabel, stageLabel, repairStatusLabel, type RepairTask, type SourcePreview } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -32,4 +32,13 @@ describe("independent Harness source selection", () => {
     expect(stageLabel("prepare_reproducer")).toBe("建立复现测试");
     expect(stageLabel("verify-2")).toBe("第 2 轮复测");
   });
+});
+
+
+it("keeps local commit and main inclusion as separate facts", () => {
+  const task = { status: "fixed", local_commit: { sha: "verified-sha" }, commit_in_main: false } as RepairTask;
+  expect(repairStatusLabel(task)).toBe("已本地提交");
+  expect(repairStatusLabel({ ...task, commit_in_main: true })).toBe("已进入本地 main");
+  expect(stageLabel("review")).toBe("AI 审核");
+  expect(stageLabel("commit")).toBe("本地提交");
 });

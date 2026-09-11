@@ -342,7 +342,10 @@ Evaluation ID and select one failed Case, or load an instance-bound robot task I
 Harness owns self-checks, isolated worktrees, repair attempts, regression verification
 and repair history. Robot task repairs first freeze a local reproduction test; incomplete
 evidence or unsafe external replay blocks automatic repair. Evaluation results and robot
-observations retain their original facts. Verified worktrees remain uncommitted for review.
+observations retain their original facts. New Console repairs default to one read-only AI review
+and a local commit containing the verified fix and regression test. Rejected or inconclusive
+reviews retain their artifacts without committing. API/CLI callers opt in explicitly; no
+remote push, main merge, PR creation, or deployment is performed.
 Setup and commands: [Harness operations](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md).
 
 ## Development

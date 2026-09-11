@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Drawer, Input, InputNumber, Select, Space, Table, Tag, Typography } from "@arco-design/web-react";
+import { Alert, Button, Card, Checkbox, Drawer, Input, InputNumber, Select, Space, Table, Tag, Typography } from "@arco-design/web-react";
 import { api } from "../api";
 import PageSection from "../shared/ui/PageSection";
-import { caseKey, harnessApi, REPAIR_LABELS, selectedCase, sourceLabel, stageLabel,
+import { caseKey, harnessApi, REPAIR_LABELS, repairStatusLabel, selectedCase, sourceLabel, stageLabel,
   type SourceKind, type SourcePreview, type StartRepair } from "../features/harness/api";
 import { RepairDetail } from "../features/harness/RepairDetail";
 
@@ -21,6 +21,7 @@ export default function HarnessPage() {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
   const [model, setModel] = useState("");
+  const [reviewAndCommit, setReviewAndCommit] = useState(true);
   const [effort, setEffort] = useState("medium");
   const [attempts, setAttempts] = useState(3);
   const [seconds, setSeconds] = useState(7200);
@@ -61,7 +62,7 @@ export default function HarnessPage() {
     const body = { source_kind: kind, ...(kind === "evaluation" ? {
       evaluation_id: preview.evaluation_id, case_ref: trial!.case_ref, target_id: trial!.target_id,
     } : { bot_id: preview.bot_id, run_id: preview.run_id }), model: model.trim(), reasoning_effort: effort,
-      max_attempts: attempts, timeout_seconds: seconds };
+      max_attempts: attempts, timeout_seconds: seconds, review_and_commit: reviewAndCommit };
     const identity = JSON.stringify(body);
     if (submitted.current.body !== identity) submitted.current = { body: identity, requestId: crypto.randomUUID() };
     setStarting(true); setError("");
@@ -101,7 +102,7 @@ export default function HarnessPage() {
             {kind === "evaluation" && !!preview.failures?.length && <div>失败 Case / Target<Select aria-label="待修复 Case" value={selection || undefined}
               disabled={starting} placeholder="选择一个失败 Case" onChange={setSelection} options={preview.failures.map(item => ({ value: caseKey(item), label: `${item.case_id} · ${item.target_id}` }))} /></div>}
             {!!preview.history.length && <Space direction="vertical"><Text bold>关联历史修复 {preview.history.length} 条</Text>
-              {preview.history.map(item => <Button type="text" key={item.task_id} onClick={() => openTask(item.task_id)}>{REPAIR_LABELS[item.status] ?? item.status} · {sourceLabel(item)}</Button>)}</Space>}
+              {preview.history.map(item => <Button type="text" key={item.task_id} onClick={() => openTask(item.task_id)}>{repairStatusLabel(item)} · {sourceLabel(item)}</Button>)}</Space>}
             {preview.evidence && <details><summary>查看任务证据</summary><pre style={{ maxHeight: 320, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(preview.evidence, null, 2)}</pre></details>}
             {(!blocked || kind === "robot_task") && <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: 16 }}>
@@ -110,7 +111,8 @@ export default function HarnessPage() {
                 <div>最多候选次数<InputNumber aria-label="最多候选次数" min={1} precision={0} value={attempts} disabled={starting} onChange={setAttempts} style={{ width: "100%" }} /></div>
                 <div>总时间预算（秒）<InputNumber aria-label="修复时间预算" min={1} precision={0} value={seconds} disabled={starting} onChange={setSeconds} style={{ width: "100%" }} /></div>
               </div>
-              <Text type="secondary">从本地 HEAD 创建专属 worktree 和分支。目标通过且原有通过项不退化后才标记已修复；补丁留待审阅、提交和合入。</Text>
+              <Checkbox checked={reviewAndCommit} disabled={starting} onChange={setReviewAndCommit}>AI 审核通过后，收录回归测试并创建本地提交（不推送）</Checkbox>
+              <Text type="secondary">从本地 HEAD 创建专属 worktree 和分支。目标和保护集通过后执行所选后续动作；审核与提交共用本次预算，合入主分支由你决定。</Text>
               <Button type="primary" loading={starting} disabled={!model.trim() || (kind === "evaluation" && !selectedCase(preview, selection))} onClick={() => void start()}>
                 {blocked ? "保存自检受阻记录" : "开始自检与修复"}</Button>
             </>}
@@ -127,7 +129,7 @@ export default function HarnessPage() {
         <Table size="small" rowKey="task_id" loading={history.isPending} data={history.data?.tasks ?? []} scroll={{ x: 900 }}
           pagination={{ current: page, pageSize: 20, total: history.data?.total ?? 0, onChange: setPage }} columns={[
             { title: "来源", width: 340, render: (_, task) => <Button type="text" onClick={() => openTask(task.task_id)} style={{ whiteSpace: "normal", height: "auto", textAlign: "left", overflowWrap: "anywhere" }}>{sourceLabel(task)}</Button> },
-            { title: "状态", render: (_, task) => <Tag color={task.status === "fixed" ? "green" : "blue"}>{REPAIR_LABELS[task.status] ?? task.status}</Tag> },
+            { title: "状态", render: (_, task) => <Tag color={task.status === "fixed" ? "green" : "blue"}>{repairStatusLabel(task)}</Tag> },
             { title: "阶段", render: (_, task) => stageLabel(task.stage) },
             { title: "更新时间", render: (_, task) => new Date(task.updated_at * 1000).toLocaleString() },
             { title: "操作", render: (_, task) => <Button size="small" onClick={() => openTask(task.task_id)}>查看记录</Button> },

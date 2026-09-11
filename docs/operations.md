@@ -772,7 +772,32 @@ python -m chatcopilot.harness list --page 2 --search <source-id> --status blocke
 每个任务创建 `feat/harness-<id>` 分支和专属 worktree。第一版允许修改运行时产品源码，
 测试、评分、配置包络和控制实现保持只读。候选进行 Python 语法与 Git diff 检查，并
 复测原题单。目标和保护集通过即记录「已修复」，其他原失败项可保持失败。此结论仅指
-该 worktree 在指定条件下验证通过，代码不自动暂存、提交、推送或合入。
+该 worktree 在指定条件下验证通过。未显式启用审核提交时，只保留未提交产物。
+
+新任务可启用 `--review-and-commit`（Console 默认勾选，API 的同名下划线字段默认
+false）。审核及提交沿用修复任务的模型、推理配置和剩余时间预算，只有一次只读
+审核；拒绝或无法确认后保留问题、理由、证据和产物，不自动修改测试并重审。
+历史任务不自动升级交付方式，也不提供补录操作。
+
+```bash
+python -m chatcopilot.harness start --evaluation <evaluation-id> --case <case-ref> --target <target-id> --model <codex-model> --review-and-commit
+```
+
+机器人复现测试从生成时就采用离线合成数据，在隔离副本按最终回归路径执行，并在
+审核批准后原样收录到 `tests/unit/harness_regressions/`；完整 pytest / CI 和后续
+Harness 修复会执行其基线版本中的该集合。已有 Evaluation Case 只关联定义身份。
+原始日志、账号和任务 ID 只保存在私有数据库；Git 中使用公开回归标识关联。
+
+受信宿主将产品修复和新增回归测试生成一个本地提交，说明以 `[AI Harness] 自动修复：`
+开头，并标记 `Generated-by: AI Harness` 与 `Regression-Id`。使用仓库已有 Git 身份；
+身份必须通过公开仓库检查。Ruff、公开信息和敏感信息检查使用 worker 冻结的受信
+版本；Gitleaks 扫描器沿用仓库脚本的固定版本下载及哈希校验，网络或检查不可用时
+停止提交。编程和审核 Agent 均没有 Git 写权限。
+
+提交内容与验证摘要绑定，已有暂存内容或外部修改会阻断。本地 Git 提交意图在推进
+分支前持久化；恢复时核对真实父提交、文件树及说明，不重复创建提交。Git 已完成
+而数据库中断时，先核验并补记回执；不要手动改动任务 worktree 或暂存区。
+自动流程不执行 Git hooks、不推送、不创建 PR、不合入 main 或部署。
 
 测评中心和机器人任务流只展示原始运行事实，修复状态统一显示在 AI Harness 页面。
 新增平台测评由 Evaluation 保存到自己的 `results.sqlite3`；

@@ -27,6 +27,9 @@ def main(argv: list[str] | None = None) -> int:
     start.add_argument("--max-attempts", type=int, default=3)
     start.add_argument("--timeout-seconds", type=int, default=7200)
     start.add_argument("--request-id")
+    start.add_argument(
+        "--review-and-commit", action="store_true", help="AI 审核通过后在任务分支本地提交"
+    )
     task_start = sub.add_parser("start-task", parents=[], help="从实例 Gateway 任务记录发起修复")
     task_start.add_argument("--bot", required=True)
     task_start.add_argument("--run", required=True)
@@ -36,6 +39,9 @@ def main(argv: list[str] | None = None) -> int:
     task_start.add_argument("--max-attempts", type=int, default=3)
     task_start.add_argument("--timeout-seconds", type=int, default=7200)
     task_start.add_argument("--request-id")
+    task_start.add_argument(
+        "--review-and-commit", action="store_true", help="AI 审核通过后本地提交修复与回归测试"
+    )
     listing = sub.add_parser("list")
     listing.add_argument("--page", type=int, default=1)
     listing.add_argument("--search", default="")
@@ -64,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.timeout_seconds,
                 ),
                 request_id=args.request_id,
+                review_and_commit=args.review_and_commit,
             )
         elif args.command == "start-task":
             value = controller.start_task(
@@ -76,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.timeout_seconds,
                 ),
                 request_id=args.request_id,
+                review_and_commit=args.review_and_commit,
             )
         elif args.command == "list":
             value = controller.list(page=args.page, search=args.search, status=args.status)

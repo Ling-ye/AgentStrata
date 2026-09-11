@@ -17,7 +17,7 @@ from chatcopilot.contracts.execution_scope import ExecutionScope
 from chatcopilot.core.file_integrity import require_regular_file
 from chatcopilot.core.private_sqlite import json_text, private_directory, private_file
 from chatcopilot.core.scoped_process import sandbox_command
-from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
+from chatcopilot.core.source_snapshot import copy_sources, manifest_digest, source_manifest
 from chatcopilot.harness.models import HarnessError, RepairOptions
 
 
@@ -87,20 +87,31 @@ class LocalVerifier:
             stream.write(content)
         frozen.chmod(0o600)
         test_hash = hashlib.sha256(content).hexdigest()
-        collected = self._pytest(task, worktree, [str(frozen)], check_cancel, collect=True)
+        prepared = {**task["source"], "test_path": str(frozen), "test_sha256": test_hash}
+        if task.get("review_and_commit"):
+            prepared.update(
+                test_relative_path=f"tests/unit/harness_regressions/test_{test_hash}.py",
+                regression_id="pytest-" + test_hash,
+            )
+        prepared_task = {**task, "source": prepared}
+        path = prepared.get("test_relative_path", str(frozen))
+        collected = self._pytest(prepared_task, worktree, [path], check_cancel, collect=True)
         if len(collected["collected"]) != 1:
             raise HarnessError("invalid_reproducer", "单次任务必须生成且只生成一个可执行复现测试")
-        regression = self._pytest(task, worktree, ["tests/unit"], check_cancel, collect=True)
+        regression = self._pytest(
+            prepared_task, worktree, ["tests/unit"], check_cancel, collect=True
+        )
         if not regression["collected"]:
             raise HarnessError("regression_unavailable", "没有可用的仓库单元回归测试")
         return {
-            **task["source"],
-            "test_path": str(frozen),
-            "test_sha256": test_hash,
+            **prepared,
             "test_nodeid": collected["collected"][0],
             "diagnosis": diagnosis,
             "preparation": coding,
-            "case_ids": ["reproduction", *regression["collected"]],
+            "case_ids": [
+                "reproduction",
+                *(name for name in regression["collected"] if name != collected["collected"][0]),
+            ],
         }
 
     def run(
@@ -117,7 +128,10 @@ class LocalVerifier:
             raise HarnessError("reproducer_changed", "冻结的复现测试已变化")
         target = "reproduction" in case_ids
         regression = [case for case in case_ids if case != "reproduction"]
-        paths = ([str(frozen)] if target else []) + (["tests/unit"] if regression else [])
+        path = source.get("test_relative_path", str(frozen))
+        paths = ([path] if target else []) + (["tests/unit"] if regression else [])
+        if source.get("test_relative_path") and regression:
+            paths = ["tests/unit"]
         selected = ([source["test_nodeid"]] if target else []) + regression
         result = self._pytest(task, worktree, paths, check_cancel, selected=selected)
         if hashlib.sha256(_read(frozen)).hexdigest() != source["test_sha256"]:
@@ -150,6 +164,30 @@ class LocalVerifier:
             "test_sha256": source["test_sha256"],
         }
 
+    def regressions(
+        self,
+        task: dict[str, Any],
+        worktree: Path,
+        check_cancel: Callable[[], None],
+        cases: list[str] | None = None,
+    ) -> dict[str, Any]:
+        folder = worktree / "tests/unit/harness_regressions"
+        if cases is None and not list(folder.glob("test_*.py")):
+            return {"case_ids": [], "passed_cases": [], "failed_cases": []}
+        result = self._pytest(
+            task, worktree, ["tests/unit/harness_regressions"], check_cancel, selected=cases
+        )
+        expected = cases if cases is not None else result["collected"]
+        if len(expected) != len(set(expected)) or set(expected) != set(result["rows"]):
+            raise HarnessError("incomplete_tests", "正式回归结果缺失或身份发生变化")
+        passed = sorted(name for name, row in result["rows"].items() if row["outcome"] == "passed")
+        return {
+            "case_ids": expected,
+            "passed_cases": passed,
+            "failed_cases": sorted(set(expected) - set(passed)),
+            "rows": result["rows"],
+        }
+
     def _pytest(
         self,
         task: dict[str, Any],
@@ -163,6 +201,23 @@ class LocalVerifier:
         output = private_directory(
             self.root / "jobs" / task["task_id"] / "checks" / uuid.uuid4().hex
         )
+        source = task.get("source", {})
+        if source.get("test_relative_path"):
+            snapshot = output / "source"
+            copy_sources(worktree, snapshot, source_manifest(worktree))
+            content = _read(Path(source["test_path"]))
+            if hashlib.sha256(content).hexdigest() != source["test_sha256"]:
+                raise HarnessError("reproducer_changed", "冻结的复现测试已变化")
+            relative = f"tests/unit/harness_regressions/test_{source['test_sha256']}.py"
+            if source["test_relative_path"] != relative:
+                raise HarnessError("invalid_reproducer", "回归路径与冻结测试身份不一致")
+            target = snapshot / relative
+            if target.exists() and target.read_bytes() != content:
+                raise HarnessError("reproducer_changed", "正式回归路径存在其他内容")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+            target.chmod(0o600)
+            worktree = snapshot
         request = output / "request.json"
         request.write_text(
             json_text(
@@ -172,7 +227,9 @@ class LocalVerifier:
         request.chmod(0o600)
         report = output / "result.json"
         runner = Path(__file__).with_name("pytest_runner.py").resolve()
-        reproduction = self.root / "jobs" / task["task_id"] / "reproducer" / "frozen"
+        reproduction = private_directory(
+            self.root / "jobs" / task["task_id"] / "reproducer" / "frozen"
+        )
         scope = ExecutionScope(
             readable_roots=(worktree, runner.parent, reproduction),
             writable_roots=(output,),

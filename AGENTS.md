@@ -9,7 +9,7 @@
 - 修 Bug、新功能和重构时只改必要范围，避免误伤无关老功能。
 - 默认追求干净的当前设计；除非现有契约、测试或用户明确要求，不为了旧数据或旧实现牺牲结构。
 - 自动生成 commit 描述时用简短中文。
-- AI 不执行 `git commit` / `git push`；提交由用户完成。
+- 交互式 AI 不执行 `git commit` / `git push`；提交由用户完成。明确启用的 Harness 受控本地提交例外见下文。
 - 改完代码后尽量做快速验证，并同步更新受影响的 `README.md` 和 `AGENTS.md`。`README.md` 只做公开入口，`docs/project-history.md` 记录开发时间线、各阶段的初始设计、问题、架构优化和相关规格，禁止写入私有仓库坐标或运行值；`docs/operations.md` 集中日常命令，`docs/deployment.md` 只讲首次部署与边界，`deploy/wsl/README_WSL.md` 只讲异常排障；组件文档链接事实源，不复制运维流程。
 - QQ 新手首次部署的唯一推荐入口是 `deploy/wsl/quickstart.sh`；其他部署、Console 和运维脚本只提供可复用阶段或安装后操作，不复制另一套扫码、token 同步和实例生命周期编排。
 - 架构、公共契约、部署流程和数据迁移必须先引用或创建 `specs/<id>/spec.md`；普通修复与局部功能直接实现并测试。
@@ -84,7 +84,9 @@ BotSpec 负责配置解释，Application 的装配函数将配置投影为 Agent
   任务流不管理修复状态。日常任务只读绑定实例的 Gateway 观测，独立准备并冻结本地
   复现测试；准备阶段产品只读，修复阶段测试只读。证据或本地复现不足时明确受阻。
   候选测评必须加载实际冻结源码，Case、评分与控制实现保持受信版本。
-  worktree 目标及保护集验收通过才标记已修复，原始成绩不改写，候选不自动提交或发布。
+  worktree 目标及保护集验收通过才可接受候选，原始成绩不改写。新任务显式启用
+  review_and_commit 后，一次只读 AI 审核批准且宿主检查通过才允许将修复与冻结测试
+  一并提交至本地任务分支；拒绝或无法确认时保留产物并停止，旧记录不补审或补提交。
   规格见 `specs/evaluation-case-harness/spec.md`。
 
 - **Agent 流式观测**：主 Codex 使用每回合隔离的 App Server stdio，沿用 actor、PromptPlan、ExecutionScope 和凭据租约。公开消息、摘要和命令输出通过 AgentContentDelta 进入既有观测索引，Console SSE 只读续传；过程不进入渠道最终回复，不采集 raw/encrypted reasoning，不重放已开始的 turn。独立 worker/research 保留 exec，规格见 `specs/agent-streaming-observability/spec.md`。
@@ -143,7 +145,7 @@ BotSpec 负责配置解释，Application 的装配函数将配置投影为 Agent
 - **敏感扫描测试夹具**： Gitleaks 的私有主机规则只匹配有合法左边界的主机，敏感查询规则只匹配 URI 中的 `?key=` / `&key=`；拒绝性测试需要用分段字面量在运行时构造私网地址、私有域名或假 secret，禁止用宽泛路径 allowlist、`gitleaks:allow` 或提交真实敏感值绕过门禁。
 - **全新公开基线**： 首次公开从审计后的 tracked-only 文件树创建单个无父根提交，不复制旧 commit、tag、branch、notes、replace refs、LFS、submodule 或 GitHub 元数据；禁止 `--mirror`、`--all` 和批量 `--tags` 推送。 完整流程与 Git 结构验收以 `specs/fresh-public-repository-bootstrap/spec.md` 为事实源，提交、推送、远端创建、可见性修改和归档由维护者执行。
 - **Release 构建边界**： `requirements/release-build.txt` 是手工复核的六包、全哈希、Python 3.10 build-only 闭包，不由兼容 requirements 生成。测试、构建、正常安装和带写权限的 draft Release 必须分 job；原始 sdist 在解包前验证，最终 wheel/sdist/notes/checksum 受校验和与 attestation 绑定。
-- **Git 写操作只接受当前请求的明确授权**： 当前交互式 AI 协作者不得自行执行 `git add` / `git commit` / `git push`；唯一自动化例外是 Owner 明确调用 `start_code_task`，由受信 code-worker 在任务专属 `codex/<instance-id>/<task-id>` 分支上提交、非强制推送并创建草稿 PR。 该例外不授权 merge、force-push、部署或修改操作者工作区。
+- **Git 写操作只接受当前请求的明确授权**： 当前交互式 AI 协作者不得自行执行 `git add` / `git commit` / `git push`；既有发布自动化例外是 Owner 明确调用 `start_code_task`，由受信 code-worker 在任务专属 `codex/<instance-id>/<task-id>` 分支上提交、非强制推送并创建草稿 PR。 该例外不授权 merge、force-push、部署或修改操作者工作区。另允许操作者明确启用 Harness 的 `review_and_commit`：仅由受信宿主在任务专属 `feat/harness-<task-id>` worktree 中暂存经验证的精确文件清单并创建一个本地提交，提交说明必须标记 AI Harness；不执行 Git hooks、push、PR、merge、rebase、tag 或部署，不扩大编程/审核 Agent 的 Git 权限。
 
 - **Lingye 固定 Codex backend**： `lingye-copilot-qq` 使用 `agents.backend: codex`；选择作用于整个实例，不按角色、命令或单回合切换。 切回 Native 或 LangGraph 必须修改 BotSpec 并重新部署；部署前删除旧 backend 状态，失败后不恢复旧会话。 Native 的会话、工具执行、仓库任务和发布能力是长期保留的一等能力。
 - **Evaluation 独立生命周期**：Agent Profile 对比和 BFCL / GAIA / IFEval Suite 只使用 `Evaluation`，以 `kind: comparison | suite` 区分；`chatcopilot.evals.application` 与本机 `chatcopilot.evals.service` 是活动 claim、受管 worker、lifecycle state 和更新 maintenance lease 的唯一 owner。Console 只是通过同 UID Unix socket 调用服务的 UI/BFF，禁止在 `console.*` 中恢复 Evaluation manager、worker supervision、进程内 fallback 或旧 import facade。Console 启停和重启不得发送 worker 信号或改写 Evaluation 终态；运行代码更新必须在与创建相同的跨进程锁内原子证明 idle 并持久化 maintenance marker，整个构建、Evaluation 重启、UDS health 和 Console 重启窗口都拒绝新 Evaluation，结束后才释放；服务不可达、状态不明或已安装 unit 未运行时 fail closed。Console 页面触发自身更新时只允许 `systemd-run --user` 创建独立 transient unit；`setsid` / `nohup` 仍属于 Console service cgroup，禁止作为降级路径，transient unit 无法创建时必须在运行更新脚本和获取 maintenance lease 前失败。服务不可用时 BFF 明确返回 `503`，不得降级为本地 manager。

@@ -67,6 +67,7 @@ class HarnessController:
         *,
         request_id: str | None = None,
         launch: bool = True,
+        review_and_commit: bool = False,
     ) -> dict[str, Any]:
         return self._start(
             lambda: self.evaluator.source(evaluation_id, case_ref, target_id),
@@ -74,6 +75,7 @@ class HarnessController:
             options,
             request_id=request_id,
             launch=launch,
+            review_and_commit=review_and_commit,
         )
 
     def load_source(self, kind: str, source_id: str, bot_id: str = "") -> dict[str, Any]:
@@ -107,6 +109,7 @@ class HarnessController:
         *,
         request_id: str | None = None,
         launch: bool = True,
+        review_and_commit: bool = False,
     ) -> dict[str, Any]:
         return self._start(
             lambda: self._task_source(bot_id, run_id),
@@ -114,6 +117,7 @@ class HarnessController:
             options,
             request_id=request_id,
             launch=launch,
+            review_and_commit=review_and_commit,
         )
 
     def _start(
@@ -124,7 +128,12 @@ class HarnessController:
         *,
         request_id: str | None,
         launch: bool,
+        review_and_commit: bool,
     ) -> dict[str, Any]:
+        if type(review_and_commit) is not bool:
+            raise ValueError("review_and_commit 必须为布尔值")
+        if review_and_commit:
+            identity = {**identity, "review_and_commit": True}
         request_id = request_id or uuid.uuid4().hex
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_id):
             raise ValueError("invalid request ID")
@@ -145,6 +154,7 @@ class HarnessController:
                 "commit": commit,
                 "options": asdict(options),
                 "cases": source["case_ids"],
+                **({"review_and_commit": True} if review_and_commit else {}),
             }
         )
         for old in self.store.history(context_key=context):
@@ -166,6 +176,7 @@ class HarnessController:
             "repository": str(self.repository),
             "source": source,
             "options": asdict(options),
+            "review_and_commit": review_and_commit,
             "unit": "agentstrata-harness-" + task_id[7:],
             "dispatch_state": "creating",
         }
@@ -287,6 +298,7 @@ class HarnessController:
         return {
             **self._public(task),
             "attempts": self.store.attempts(task_id),
+            **self._commit_status(task),
             "candidate_available": self._candidate_available(task)
             if task["status"] == "fixed"
             else False,
@@ -403,6 +415,38 @@ class HarnessController:
         return content
 
     @staticmethod
+    def _commit_status(task: dict[str, Any]) -> dict[str, Any]:
+        receipt = task.get("local_commit")
+        intent = task.get("commit_intent") or {}
+        if not receipt and not intent:
+            return {"uncommitted": True}
+        try:
+            from chatcopilot.harness.local_commit import _git
+
+            root = Path(task["worktree"])
+            head = _git(root, "rev-parse", "HEAD").decode().strip()
+            sha = str((receipt or {}).get("sha") or intent.get("commit_sha") or "")
+            if not receipt:
+                return {
+                    "uncommitted": False if sha and head == sha else True,
+                    "commit_state": "unconfirmed" if sha and head == sha else "pending",
+                }
+            _git(root, "cat-file", "-e", sha + "^{commit}")
+            main = _git(root, "rev-parse", "--verify", "refs/heads/main").decode().strip()
+            common = _git(root, "merge-base", sha, main).decode().strip()
+            return {
+                "uncommitted": False,
+                "commit_state": "recorded",
+                "commit_in_main": common == sha,
+            }
+        except (OSError, ValueError, HarnessError, subprocess.SubprocessError):
+            return {
+                "uncommitted": False if receipt else None,
+                "commit_state": "unknown",
+                "commit_in_main": None,
+            }
+
+    @staticmethod
     def _candidate_available(task: dict[str, Any]) -> bool:
         try:
             return (
@@ -426,6 +470,7 @@ class HarnessController:
                 "active_key",
                 "match_key",
                 "context_key",
+                "commit_intent",
             }
         }
         source = task["source"]
@@ -446,8 +491,12 @@ class HarnessController:
                 "diagnosis",
                 "test_sha256",
                 "preparation",
+                "test_relative_path",
+                "regression_id",
             )
             if key in source
         }
-        value["uncommitted"] = True
+        value["uncommitted"] = (
+            False if task.get("local_commit") else None if task.get("commit_intent") else True
+        )
         return value

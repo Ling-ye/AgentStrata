@@ -166,14 +166,21 @@ class HarnessStore:
             task = json.loads(row[0])
             if task["status"] != "running":
                 raise Cancelled()
+            if task.get("review_and_commit") and (
+                attempt.get("review", {}).get("decision") != "approved"
+                or not task.get("local_commit")
+            ):
+                raise ValueError("review and local commit receipts are required")
             task.update(
                 status="fixed",
                 stage="done",
                 verified_at=time.time(),
-                verified_digest=attempt["candidate_digest"],
+                verified_digest=attempt.get("delivered_digest", attempt["candidate_digest"]),
                 verification_evaluation_id=attempt["verification"]["evaluation_id"],
                 updated_at=time.time(),
-                message="worktree 验收通过；改动尚未提交或合入",
+                message="AI 审核与验证通过，已创建本地提交"
+                if task.get("local_commit")
+                else "worktree 验收通过；改动尚未提交或合入",
             )
             connection.execute(
                 "INSERT INTO attempts VALUES(?,?,?) ON CONFLICT(task_id,number) DO UPDATE SET payload=excluded.payload",

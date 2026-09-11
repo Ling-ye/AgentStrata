@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Empty, Space, Spin, Table, Tag, Typography } from "@arco-design/web-react";
-import { ACTIVE, ATTEMPT_LABELS, harnessApi, REPAIR_LABELS, sourceLabel, stageLabel } from "./api";
+import { ACTIVE, ATTEMPT_LABELS, harnessApi, repairStatusLabel, sourceLabel, stageLabel } from "./api";
 const { Text } = Typography;
 const jsonStyle = { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 420, overflow: "auto" } as const;
 
@@ -28,7 +28,7 @@ export function RepairDetail({ taskId }: { taskId: string }) {
   return <Space direction="vertical" size={16} style={{ width: "100%", minWidth: 0 }}>
     {(error || query.isError) && <Alert type="error" content={error || String(query.error)} />}
     <Text copyable>{task.task_id}</Text><Text>{sourceLabel(task)}</Text>
-    <Space wrap><Tag color={task.status === "fixed" ? "green" : "blue"}>{REPAIR_LABELS[task.status] ?? task.status}</Tag>
+    <Space wrap><Tag color={task.status === "fixed" ? "green" : "blue"}>{repairStatusLabel(task)}</Tag>
       <Text>阶段：{stageLabel(task.stage)}</Text><Text type="secondary">已用 {Math.round(task.elapsed_seconds ?? 0)} 秒 / {task.options.timeout_seconds} 秒</Text></Space>
     {task.message && <Alert type={task.status === "fixed" ? "success" : "info"} content={task.message} />}
     {task.source.kind === "robot_task" && <Text type="secondary">验证范围：冻结的本地复现测试和仓库单元回归；真实平台恢复需另行验证。</Text>}
@@ -43,6 +43,21 @@ export function RepairDetail({ taskId }: { taskId: string }) {
       <Button onClick={() => void query.refetch()}>刷新状态</Button>
       {task.source.test_sha256 && <a href={`/api/harness/tasks/${encodeURIComponent(taskId)}/reproducer`} download>下载冻结复现测试</a>}</Space>
     {task.source.diagnosis && <Alert type="info" title="复现依据" content={`${task.source.diagnosis.reason}；预期行为：${task.source.diagnosis.expected_behavior}`} />}
+    {task.review_and_commit && <section><Text bold>AI 审核</Text>
+      {(task.attempts ?? []).filter(attempt => attempt.review).map(attempt => <div key={attempt.number} style={{ marginTop: 12 }}>
+        <Alert type={attempt.review?.decision === "approved" ? "success" : "warning"}
+          title={attempt.review?.decision === "approved" ? "审核通过" : attempt.review?.decision === "rejected" ? "AI 审核认为问题未解决" : "AI 审核未能确认修复"}
+          content={<><div>问题：{attempt.review?.problem || "未指出未修复问题"}</div><div>理由：{attempt.review?.reason || "等待审核结果"}</div>
+            <div>证据：{attempt.review?.evidence_refs?.join("、") || "等待证据引用"}</div></>} />
+      </div>)}
+      {!task.attempts?.some(attempt => attempt.review) && <p><Text type="secondary">目标和保护集验证通过后开始一次只读审核。</Text></p>}
+    </section>}
+    {task.local_commit && <section style={{ overflowWrap: "anywhere" }}><Text bold>本地提交与回归收录</Text>
+      <p><Text copyable>{task.local_commit.sha}</Text></p>
+      <p><Text copyable>{task.regression?.path || task.regression?.case_ref || task.regression?.id}</Text></p>
+      <Text>{task.commit_in_main === true ? "该提交已包含在本地 main 中" : task.commit_in_main === false ? "该提交尚未包含在本地 main 中" : "当前无法确认本地 main 是否包含该提交"}；远端状态未查询。</Text>
+    </section>}
+    {task.commit_state === "unconfirmed" && <Alert type="warning" content="Git 分支已产生提交，但回执尚未完成核验；继续时只核对并补记，不能重复提交。" />}
     <Text bold>自检与复测记录</Text>
     {Object.keys(task.evaluations ?? {}).length ? <Table size="small" rowKey="phase" pagination={false} scroll={{ x: 620 }}
       data={Object.entries(task.evaluations ?? {}).map(([phase, value]) => ({ phase, ...value }))} columns={[

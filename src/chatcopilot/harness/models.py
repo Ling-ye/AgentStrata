@@ -71,6 +71,15 @@ class Evaluator(Protocol):
 
 
 class Coder(Protocol):
+    def review(
+        self,
+        worktree: Path,
+        evidence: dict[str, Any],
+        options: RepairOptions,
+        output: Path,
+        check_cancel: Callable[[], None],
+    ) -> dict[str, Any]: ...
+
     def prepare(
         self,
         worktree: Path,
@@ -103,3 +112,31 @@ def passed_cases(
         for case in case_ids
         if all(item["outcome"] == "passed" for item in rows if item["case_id"] == case)
     }
+
+
+def review_decision(value: Any) -> dict[str, Any]:
+    keys = {"decision", "problem", "reason", "evidence_refs"}
+    if not isinstance(value, dict) or set(value) != keys:
+        raise HarnessError("review_invalid", "审核结果不完整，未能确认修复")
+    if value["decision"] not in {"approved", "rejected", "inconclusive"}:
+        raise HarnessError("review_invalid", "审核结论无效，未能确认修复")
+    if any(
+        not isinstance(value[key], str) or len(value[key]) > 4000 for key in ("problem", "reason")
+    ):
+        raise HarnessError("review_invalid", "审核说明无效")
+    if not value["reason"].strip() or (
+        value["decision"] != "approved" and not value["problem"].strip()
+    ):
+        raise HarnessError("review_invalid", "审核缺少问题或理由")
+    refs = value["evidence_refs"]
+    if (
+        not isinstance(refs, list)
+        or not refs
+        or any(
+            not isinstance(ref, str)
+            or ref not in {"source", "reproduction", "verification", "patch", "regression"}
+            for ref in refs
+        )
+    ):
+        raise HarnessError("review_invalid", "审核缺少有效证据引用")
+    return value

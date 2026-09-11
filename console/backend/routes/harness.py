@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from chatcopilot.evals.service import EvaluationServiceError
 from chatcopilot.gateway.state_store import GatewayStateError
@@ -28,6 +28,7 @@ class CreateRepair(BaseModel):
     run_id: str = ""
     request_id: str
     model: str = Field(min_length=1)
+    review_and_commit: StrictBool = False
     reasoning_effort: str = "medium"
     max_attempts: int = Field(default=3, ge=1)
     timeout_seconds: int = Field(default=7200, ge=1)
@@ -123,7 +124,11 @@ def create(request: Request, body: CreateRepair):
     if body.source_kind == "robot_task":
         return _call(
             lambda: _controller(request).start_task(
-                body.bot_id, body.run_id, options, request_id=body.request_id
+                body.bot_id,
+                body.run_id,
+                options,
+                request_id=body.request_id,
+                review_and_commit=body.review_and_commit,
             )
         )
     return _call(
@@ -133,6 +138,7 @@ def create(request: Request, body: CreateRepair):
             body.target_id,
             options,
             request_id=body.request_id,
+            review_and_commit=body.review_and_commit,
         )
     )
 

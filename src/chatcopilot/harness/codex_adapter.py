@@ -27,7 +27,7 @@ from chatcopilot.external_tools.codex_cli import (
     validate_auth_root_path,
 )
 from chatcopilot.external_tools.codex_cli.process_runner import run_codex_process
-from chatcopilot.harness.models import HarnessError, RepairOptions
+from chatcopilot.harness.models import HarnessError, RepairOptions, review_decision
 from chatcopilot.harness.workspace import protected_paths, writable_paths
 
 
@@ -80,6 +80,7 @@ class CodexCoder:
         check_cancel: Callable[[], None],
         *,
         draft: Path | None = None,
+        reviewing: bool = False,
     ) -> dict[str, Any]:
         binary, auth = self.preflight()
         private_directory(output)
@@ -103,9 +104,9 @@ class CodexCoder:
                     )
                 )
             ),
-            writable_roots=(draft,) if draft else writable_paths(worktree),
+            writable_roots=() if reviewing else (draft,) if draft else writable_paths(worktree),
             protected_roots=protected,
-            native_write=True,
+            native_write=not reviewing,
         )
         profile = BotPromptProfile(
             identity="AgentStrata 软件维护助手", response_style="报告根因、修改和实际检查结果。"
@@ -118,7 +119,9 @@ class CodexCoder:
                 role="owner",
                 channel_kind="private",
                 session_policy=(
-                    "只分析机器人任务证据并创建本地复现测试草案，产品代码只读。不得重放生产消息或访问外部服务。"
+                    "只读审核修复是否解决原问题、测试是否符合契约，不能修改任何代码、测试或验收记录。"
+                    if reviewing
+                    else "只分析机器人任务证据并创建本地复现测试草案，产品代码只读。不得重放生产消息或访问外部服务。"
                     if draft
                     else "仅修复当前任务要求的产品实现。不得修改测例、评分或权限边界。"
                 )
@@ -128,9 +131,20 @@ class CodexCoder:
         prompt = render_codex_prompt(
             plan,
             user_message=(
-                "调查任务中的实际失败，优先复用仓库已有测试的断言与隔离 fixture。"
+                "独立核对 source、reproduction、verification、patch、regression 中的证据。"
+                "检查原问题是否真正解决、测试是否表达预期，是否弱化校验或针对样例硬编码，"
+                "测试是否使用合成数据、可离线运行且适合公开长期运行。已有测试通过不能代替判断。"
+                "有未修复问题返回 rejected，证据不足返回 inconclusive；只有明确支持修复时 approved。"
+                '最后一条消息只返回 JSON：{"decision":"approved|rejected|inconclusive",'
+                '"problem":"仍存在的问题，批准时可为空","reason":"判断理由",'
+                '"evidence_refs":["source","patch"]}。引用只使用上述五个证据键，不提供分数。'
+                if reviewing
+                else "调查任务中的实际失败，优先复用仓库已有测试的断言与隔离 fixture。"
                 f"仅在 {draft} 写入 test_reproduction.py 和 diagnosis.json。测试文件必须只包含一个测试，"
                 "在无网络、无实例状态、无凭据环境中调用真实产品代码；不能修改源码、跳过测试、伪造结果、"
+                "测试将原样纳入仓库 tests/unit/harness_regressions，必须使用合成数据和临时目录，"
+                "用模块文档字符串的一句话说明可公开的问题，提交说明将采用这句话，"
+                "不得包含真实平台身份、原始日志、机器绝对路径、私有端点或凭据；不得依赖当前文件位置。"
                 "依据文件哈希或环境状态故意失败。测试必须断言用户已明确要求或现有契约确定的行为。"
                 'diagnosis.json 格式为 {"reproducible": true, "reason": "根因假设和证据依据", '
                 '"expected_behavior": "有依据的期望行为"}。无法可靠复现或期望不明时写 '
@@ -142,6 +156,7 @@ class CodexCoder:
         )
         events: list[dict[str, Any]] = []
         usage: dict[str, Any] = {}
+        final_text = ""
         with credential_lease(auth, "worker", runtime_home, blocking=False):
             config = permission_config(
                 scope, workdir=worktree, private_paths=(str(runtime_home),), network_access=False
@@ -176,6 +191,7 @@ class CodexCoder:
             with os.fdopen(fd, "a") as stream:
 
                 def observe(line: str) -> None:
+                    nonlocal final_text
                     try:
                         event = json.loads(line)
                     except ValueError:
@@ -194,6 +210,8 @@ class CodexCoder:
                         if key in item
                     }
                     safe = redact_observability_payload(projected).value
+                    if item.get("type") == "agent_message":
+                        final_text = str(safe.get("text", ""))
                     stream.write(json_text(safe) + "\n")
                     stream.flush()
                     if len(events) < 50:
@@ -210,4 +228,19 @@ class CodexCoder:
                 )
             if completed.returncode:
                 raise HarnessError("coding_failed", "Codex 执行失败；查看任务中的公开执行记录")
-        return {"events": events, "usage": usage, "log": log_path.name}
+        return {"events": events, "usage": usage, "log": log_path.name, "final_text": final_text}
+
+    def review(
+        self,
+        worktree: Path,
+        evidence: dict[str, Any],
+        options: RepairOptions,
+        output: Path,
+        check_cancel: Callable[[], None],
+    ) -> dict[str, Any]:
+        result = self._execute(worktree, evidence, options, output, check_cancel, reviewing=True)
+        try:
+            decision = review_decision(json.loads(result.pop("final_text")))
+        except (ValueError, KeyError) as exc:
+            raise HarnessError("review_invalid", "审核未返回完整结构化结论，未能确认修复") from exc
+        return {**decision, "execution": result}

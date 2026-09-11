@@ -117,3 +117,22 @@ def test_frontend_cannot_supply_host_paths_or_status(app):
             == 422
         )
     app.state.harness.start.assert_not_called()
+
+
+def test_review_commit_is_explicit_and_boolean(app):
+    with TestClient(app, client=("127.0.0.1", 41000)) as client:
+        assert client.post("/api/harness/tasks", json=body()).status_code == 200
+        assert app.state.harness.start.call_args.kwargs["review_and_commit"] is False
+        assert (
+            client.post(
+                "/api/harness/tasks", json={**body(), "review_and_commit": True}
+            ).status_code
+            == 200
+        )
+        assert app.state.harness.start.call_args.kwargs["review_and_commit"] is True
+        assert (
+            client.post(
+                "/api/harness/tasks", json={**body(), "review_and_commit": "true"}
+            ).status_code
+            == 422
+        )

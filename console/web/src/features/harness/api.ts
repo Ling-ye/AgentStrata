@@ -9,17 +9,24 @@ export interface Verification {
   evaluation_id: string; kind?: string; complete: boolean; case_ids: string[];
   passed_cases?: string[]; failed_cases?: string[]; test_sha256?: string;
 }
+export interface Review {
+  decision?: "approved" | "rejected" | "inconclusive"; problem?: string; reason?: string; evidence_refs?: string[];
+}
 export interface RepairTask {
   task_id: string; status: string; stage: string; base_commit: string; created_at: number; updated_at: number;
   source: { kind?: SourceKind; evaluation_id?: string; run_id?: string; bot_id: string;
     case_id: string; case_ref?: string; target_id: string; case_ids: string[];
-    blockers?: string[]; test_sha256?: string; diagnosis?: { reason: string; expected_behavior?: string } };
+    blockers?: string[]; test_sha256?: string; test_relative_path?: string; regression_id?: string;
+    diagnosis?: { reason: string; expected_behavior?: string } };
+  review_and_commit?: boolean; uncommitted?: boolean | null; commit_state?: string; commit_in_main?: boolean | null;
+  local_commit?: { sha: string; branch: string; paths: string[]; message: string };
+  regression?: { kind: string; id: string; path?: string; case_ref?: string };
   message?: string; branch?: string; worktree?: string; verified_digest?: string; verified_at?: number;
   candidate_available?: boolean; elapsed_seconds?: number; error_code?: string; current_evaluation_id?: string;
   options: { model: string; max_attempts: number; reasoning_effort: string; timeout_seconds: number };
   evaluations?: Record<string, Verification>;
   attempts?: Array<{ number: number; status: string; changed_files?: string[]; error?: string; checks?: string[];
-    patch_sha256?: string; coding?: { events: Array<Record<string, unknown>> }; regressions?: string[]; verification?: Verification }>;
+    review?: Review; repository_regressions?: { passed_cases: string[]; failed_cases: string[] }; patch_sha256?: string; coding?: { events: Array<Record<string, unknown>> }; regressions?: string[]; verification?: Verification }>;
 }
 export const ACTIVE = ["queued", "running", "cancel_requested"];
 export const REPAIR_LABELS: Record<string, string> = {
@@ -27,13 +34,13 @@ export const REPAIR_LABELS: Record<string, string> = {
   not_reproduced: "当前未复现", failed: "修复未通过", blocked: "受阻", cancelled: "已取消", interrupted: "已中断",
 };
 export const ATTEMPT_LABELS: Record<string, string> = {
-  coding: "生成候选", verifying: "复测中", accepted: "验收通过", rejected: "验收未通过",
+  coding: "生成候选", verifying: "复测中", reviewing: "AI 审核中", committing: "本地提交中", review_rejected: "审核认为未修复", review_inconclusive: "审核未能确认", accepted: "验收通过", rejected: "验收未通过",
   coding_failed: "生成失败", interrupted: "已中断",
 };
 export function stageLabel(stage: string): string {
   if (stage.startsWith("verify-")) return `第 ${stage.slice(7)} 轮复测`;
   return ({ queued: "等待启动", self_check: "来源自检", prepare_reproducer: "建立复现测试",
-    reproduce: "确认当前问题", baseline: "建立回归基线", coding: "生成候选", done: "完成" } as Record<string, string>)[stage] ?? stage;
+    review: "AI 审核", commit: "本地提交", reproduce: "确认当前问题", baseline: "建立回归基线", coding: "生成候选", done: "完成" } as Record<string, string>)[stage] ?? stage;
 }
 export function sourceLabel(task: RepairTask): string {
   return task.source.kind === "robot_task" ? `机器人任务 ${task.source.run_id}` : `测评 ${task.source.evaluation_id} · ${task.source.case_id}`;
@@ -43,7 +50,7 @@ export function selectedCase(preview: SourcePreview | undefined, key: string): F
   return preview?.failures?.find(item => caseKey(item) === key);
 }
 export type StartRepair = { source_kind: SourceKind; evaluation_id?: string; case_ref?: string; target_id?: string;
-  bot_id?: string; run_id?: string; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number };
+  bot_id?: string; run_id?: string; review_and_commit?: boolean; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number };
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/harness${path}`, init);
   const value = await response.json();
@@ -59,3 +66,9 @@ export const harnessApi = {
   start: (body: StartRepair) => request<RepairTask>("/tasks", post(body)),
   action: (taskId: string, action: "cancel" | "resume") => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/${action}`, { method: "POST" }),
 };
+
+export function repairStatusLabel(task: RepairTask): string {
+  if (task.local_commit) return task.commit_in_main === true ? "已进入本地 main" : "已本地提交";
+  if (task.commit_state === "unconfirmed") return "本地提交待核验";
+  return REPAIR_LABELS[task.status] ?? task.status;
+}
