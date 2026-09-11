@@ -371,6 +371,7 @@ def _load_external_cases(path: Path) -> list[EvalCase]:
         categories = _categories_from_row(row)
         cases.append(
             EvalCase(
+                capability_tags=("综合任务",),
                 case_id=f"gaia-{_safe_id(raw_id)}",
                 input=question,
                 category=f"level-{level}" if level else "gaia",
@@ -760,6 +761,7 @@ def _case_context(case: EvalCase) -> str:
 def _smoke_cases() -> list[EvalCase]:
     return [
         EvalCase(
+            capability_tags=("综合任务",),
             case_id="gaia-smoke-arithmetic",
             input="GAIA smoke task: What is 17 + 25? Reply with only the final answer.",
             category="smoke",
@@ -767,6 +769,7 @@ def _smoke_cases() -> list[EvalCase]:
             metadata={"adapter": "gaia", "source": "builtin-smoke", "level": "1", "answer": "42"},
         ),
         EvalCase(
+            capability_tags=("综合任务",),
             case_id="gaia-smoke-normalization",
             input="GAIA smoke task: What color is the clear daytime sky usually? Reply with one word.",
             category="smoke",

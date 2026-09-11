@@ -1,10 +1,12 @@
 schema: 1
 suite_id: agentstrata-qq-message-flow-v1
 version: "1"
-name: QQ 消息全链路 v1
+name: QQ 合成链路回归
+subject_type: system
+capability_tags: [消息链路, 权限隔离]
 kind: product
 status: implemented
-value: 假设 QQ 已产生消息后，验证 AgentStrata 自有的合成入站、身份、权限、会话、编排和回复投影链路。
+value: 验证 Legacy Relay / attestation / ACP 的合成消息回归；不代表当前 Gateway 全链路或真实 QQ E2E。
 recommendation: 日常使用 quick；身份、权限、Persona 或 QQ gateway 变更后运行 full。真实 QQ 连通性另用基础设施检查。
 cadence: manual only
 track: qq_message_flow
@@ -15,7 +17,7 @@ files:
   - path: cases.yaml
     role: cases
     media_type: application/yaml
-    sha256: c9d078861a2b55db4f23d5725ab8496dcfb5c6fbd722a9206739eb5e8f669e38
+    sha256: 2579b2242afcf575a41463c9a9a2e9b914dfd949a480b85f4306811a027356dc
 presets:
   quick:
     description: 正向自有链路、attestation 失败关闭和人格下一轮生效。

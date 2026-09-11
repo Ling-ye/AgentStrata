@@ -1,7 +1,9 @@
 schema: 1
 suite_id: project-business-v1
 version: '1'
-name: 项目业务任务
+name: 业务任务完成
+subject_type: agent
+capability_tags: [业务任务, 工具调用, 故障处理]
 kind: agent
 status: implemented
 value: 以固定只读工具数据验证业务任务完成情况，使用严格 LLM 判定。
@@ -24,7 +26,7 @@ files:
 - path: cases.yaml
   role: cases
   media_type: application/yaml
-  sha256: 1bb4e4fffa71a121ccb13ad69b8cdb5e2ba375aaec32dfcc96e59053520d3684
+  sha256: ea9c31ed90cd15476e4d2155c9eb3c22787692759ac84f933950918e1716fea7
 - path: fixtures/facts.json
   role: fixture
   media_type: application/json

@@ -23,7 +23,7 @@ export default function EvaluationTrends({ initialBot, bots, suites, visible, on
   useEffect(() => { if (!suite && suites.length) setSuite(suites[0].suite_id); }, [suite, suites]);
   const selectedSuite = suites.find(item => item.suite_id === suite);
   const llmPrimary = selectedSuite?.purpose === "business_task";
-  const durationTitle = selectedSuite?.track === "qq_message_flow" ? "QQ 链路累计耗时" : "Agent 累计执行耗时";
+  const durationTitle = "累计执行耗时";
   const metricOptions = [...(llmPrimary ? [] : [{ value: "pass_rate", label: "原生 / 工程通过率" }]), { value: "quality", label: llmPrimary ? "LLM 判定通过率" : "独立 LLM 质量分" }, { value: "duration", label: durationTitle }];
   const [models, setModels] = useState<string[]>([]);
   const [scales, setScales] = useState<string[]>([]);
@@ -87,7 +87,7 @@ export default function EvaluationTrends({ initialBot, bots, suites, visible, on
         { value: 0, label: "全部时间" }, { value: -1, label: "自定义" },
       ]} /></div>
       <div className="eval-trend-filter">机器人<Select aria-label="趋势机器人" mode="multiple" value={botIds} onChange={setSelectedBots} allowClear placeholder="全部机器人" options={options(bots)} /></div>
-      <div className="eval-trend-filter">测试方向<Select aria-label="趋势测试方向" value={suite} onChange={setSuite} options={suites.map(item => ({ value: item.suite_id, label: item.name }))} /></div>
+      <div className="eval-trend-filter">测评集<Select aria-label="趋势测评集" value={suite} onChange={setSuite} options={suites.map(item => ({ value: item.suite_id, label: item.name }))} /></div>
       <div className="eval-trend-filter">模型<Select aria-label="趋势模型" mode="multiple" value={models} onChange={setModels} options={options(modelOptions)} allowClear placeholder="全部模型" /></div>
       <div className="eval-trend-filter">测试规模<Select aria-label="趋势测试规模" mode="multiple" value={scales} onChange={setScales} options={options(scaleOptions)} allowClear placeholder="全部规模" /></div>
       <div className="eval-trend-filter">测试点<Select aria-label="趋势测试点" mode="multiple" value={cases} onChange={setCases} options={options(caseOptions)} allowClear placeholder="全部测试点" /></div>

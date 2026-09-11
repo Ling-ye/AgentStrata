@@ -1,7 +1,9 @@
 schema: 1
 suite_id: swe-bench-verified
 version: 1.0.0
-name: SWE-bench Verified
+name: SWE-bench Verified · 代码修复
+subject_type: agent
+capability_tags: [代码修复]
 kind: code
 status: implemented
 plugin_id: swe-bench

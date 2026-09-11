@@ -1,7 +1,9 @@
 schema: 1
 suite_id: gaia
 version: 1.0.0
-name: GAIA
+name: GAIA · 综合任务
+subject_type: agent
+capability_tags: [综合任务]
 kind: agent
 status: implemented
 value: 真实世界多步任务，常需搜索、工具和综合推理，是 Agent 综合能力的标准标尺。

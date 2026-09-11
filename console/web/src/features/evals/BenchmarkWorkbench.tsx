@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Alert, Button, Checkbox, Empty, Input, InputNumber, Message, Select, Space, Spin, Tag, Typography } from "@arco-design/web-react";
 import { evaluationApi } from "./evaluationApi";
-import { buildSuiteRequest, formatApiError, type EvaluationRecord, type EvaluationSuite, type EvaluationCaseDescriptor } from "./model";
+import { buildSuiteRequest, formatApiError, type EvaluationRecord, type EvaluationSuite, type EvaluationCaseDescriptor, type EvaluationSubject } from "./model";
+
+import { SUBJECTS, SCORING_LABELS, SOURCE_LABELS, PURPOSE_LABELS, SCORER_ORIGINS, catalogGroups, suiteFormKey } from "./catalogModel";
 
 const { Text, Paragraph } = Typography;
-export const SCORING_LABELS: Record<string, string> = { native: "原生评分 / 工程断言", native_geval: "原生评分 + 独立 GEval", geval: "LLM 判定 · GEval 主判" };
-export const SOURCE_LABELS: Record<string, string> = { project: "项目专用", public_benchmark: "公开基准" };
-export const PURPOSE_LABELS: Record<string, string> = { business_task: "业务任务", engineering_regression: "工程回归", benchmark: "公开基准测评" };
-export const SCORER_ORIGINS: Record<string, string> = { official: "官方实现", project_adapter: "项目适配实现", llm_judge: "LLM Judge" };
 
 function CasePreview({ suite, caseId, botId }: { suite: EvaluationSuite; caseId: string; botId: string }) {
   const query = useQuery({ queryKey: ["benchmark-case", botId, suite.suite_id, caseId],
@@ -17,7 +15,7 @@ function CasePreview({ suite, caseId, botId }: { suite: EvaluationSuite; caseId:
   if (query.isError) return <Alert type="error" content={formatApiError(query.error)} action={<Button onClick={() => void query.refetch()}>重试</Button>} />;
   const item: EvaluationCaseDescriptor = query.data;
   return <div className="eval-benchmark-case-detail">
-    <section><Text bold>Agent 可见的提问与背景</Text><pre>{item.input || "未记录"}</pre>
+    <section><Text bold>被测对象可见的输入与背景</Text><pre>{item.input || "未记录"}</pre>
       {item.context && <pre>{item.context}</pre>}<Text type="secondary">背景是任务资料，不授予会话身份或工具权限。</Text></section>
     <section><Text bold>评分侧的期望与参考资料</Text><pre>{item.expected_behavior || "未记录"}</pre>
       <Paragraph>{suite.benchmark?.scorer?.name || suite.benchmark?.native_method}</Paragraph>
@@ -32,86 +30,113 @@ function CasePreview({ suite, caseId, botId }: { suite: EvaluationSuite; caseId:
   </div>;
 }
 
-export default function BenchmarkWorkbench({ botId, suites, active, onCreated }: {
+export default function BenchmarkWorkbench(props: {
   botId: string; suites: EvaluationSuite[]; active: boolean; onCreated: (record: EvaluationRecord) => void;
 }) {
-  const [track, setTrack] = useState("agent");
+  const [subject, setSubject] = useState<EvaluationSubject>("agent");
+  return <div className="eval-benchmark-workbench">
+    <Space wrap>{SUBJECTS.map(item => <Button key={item.id} aria-pressed={subject === item.id}
+      type={subject === item.id ? "primary" : "secondary"} onClick={() => setSubject(item.id)}>{item.title}</Button>)}</Space>
+    <Text type="secondary">{SUBJECTS.find(item => item.id === subject)?.description}</Text>
+    <SubjectCatalog key={`${props.botId}:${subject}`} {...props} subject={subject} />
+  </div>;
+}
+
+function SubjectCatalog({ botId, suites, active, onCreated, subject }: {
+  botId: string; suites: EvaluationSuite[]; active: boolean; onCreated: (record: EvaluationRecord) => void; subject: EvaluationSubject;
+}) {
   const [suiteId, setSuiteId] = useState("");
+  const [capability, setCapability] = useState("");
+  const groups = catalogGroups(suites, subject, capability);
+  const available = groups.flatMap(group => [...group.suites, ...group.planned]);
+  const suite = available.find(item => item.suite_id === suiteId) ?? groups.flatMap(group => group.suites)[0];
+  const capabilities = [...new Set(suites.filter(item => item.subject_type === subject).flatMap(item => item.capability_tags ?? []))];
+  const card = (item: EvaluationSuite) => <button type="button" key={item.suite_id} aria-pressed={item.suite_id === suite?.suite_id} onClick={() => setSuiteId(item.suite_id)}>
+    <strong>{item.name}</strong><span>{item.capability_tags?.slice(0, 3).join(" · ") || "能力标签未记录"}</span>
+    <small>{SUBJECTS.find(entry => entry.id === item.subject_type)?.title || "对象未记录"} · {item.benchmark?.target_scope || item.execution_scope || "执行范围未记录"}</small>
+    <span>{item.ready ? `可运行 · ${item.runnable_case_count ?? item.case_count} / ${item.case_count} 题` : item.implemented ? "待准备" : "待接入"}</span>
+    {item.implemented && !item.ready && <small>{item.runnable_case_count ?? 0} / {item.case_count} 题满足题目依赖，运行条件待准备</small>}
+    {item.uses_smoke_data && <small>冒烟数据 · 非完整官方基准</small>}
+  </button>;
+  return <>
+    <Select aria-label="测评能力筛选" value={capability} onChange={value => { setCapability(value); setSuiteId(""); }}
+      options={[{ value: "", label: "全部能力" }, ...capabilities.map(value => ({ value, label: value }))]} />
+    {active && <Alert type="warning" content="该机器人已有活动评测，完成或取消后才能开始新的评测。" />}
+    <div className="eval-benchmark-layout">
+      <nav className="eval-benchmark-catalog" aria-label="测评集">{groups.map(group => <section key={group.id} aria-label={group.title}>
+        <Text bold>{group.title}</Text><div className="eval-catalog-items">{group.suites.map(card)}</div>
+        {!!group.planned.length && <details><summary>待接入（{group.planned.length}）</summary><div className="eval-catalog-items">{group.planned.map(card)}</div></details>}
+      </section>)}</nav>
+      {suite ? <SuiteForm key={suiteFormKey(botId, suite)} botId={botId} suite={suite} active={active} onCreated={onCreated} />
+        : <Empty description={botId ? "当前没有匹配的已接入测评集，可调整筛选或展开待接入目录。" : "请先选择机器人。"} />}
+    </div>
+  </>;
+}
+
+function SuiteForm({ botId, suite, active, onCreated }: {
+  botId: string; suite: EvaluationSuite; active: boolean; onCreated: (record: EvaluationRecord) => void;
+}) {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [tool, setTool] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<string[]>([]);
-  const [mode, setMode] = useState("native_geval");
+  const [mode, setMode] = useState(suite.benchmark?.default_scoring_mode ?? "native");
   const [rubric, setRubric] = useState("evidence");
   const [repetitions, setRepetitions] = useState(1);
   const [budget, setBudget] = useState(1800);
   const [page, setPage] = useState(1);
-  const available = suites.filter(s => track === "qq" ? s.track === "qq_message_flow" : s.track !== "qq_message_flow");
-  const suite = available.find(s => s.suite_id === suiteId) ?? available[0];
-  const identity = `${botId}:${suite?.suite_id}:${suite?.benchmark?.case_set_hash ?? ""}`;
-  const cases = useQuery({ queryKey: ["benchmark-cases", identity], enabled: Boolean(botId && suite?.implemented),
-    queryFn: () => evaluationApi.cases(suite!.suite_id, botId) });
-  useEffect(() => {
-    setSelected([]); setExpanded([]); setSearch(""); setCategory(""); setTool(""); setPage(1);
-    setMode(suite?.benchmark?.default_scoring_mode ?? "native"); setRubric("evidence");
-  }, [identity]); // Selection belongs to one immutable catalog response.
+  const identity = suiteFormKey(botId, suite);
+  const cases = useQuery({ queryKey: ["benchmark-cases", identity], enabled: Boolean(botId && suite.implemented),
+    queryFn: () => evaluationApi.cases(suite.suite_id, botId) });
   const caseList = cases.data ?? [];
   const knownIds = useMemo(() => new Set(caseList.filter(c => c.readiness?.ready !== false).map(c => c.case_id)), [cases.data]);
   const selectedIds = selected.filter(id => knownIds.has(id));
-  const rows = caseList.filter(c => (!category || c.category === category) && (!tool || c.tools?.includes(tool)) && `${c.case_id} ${c.summary}`.toLowerCase().includes(search.toLowerCase()));
+  const rows = caseList.filter(c => (!category || c.capability_tags?.includes(category)) && (!tool || c.tools?.includes(tool)) && `${c.case_id} ${c.summary}`.toLowerCase().includes(search.toLowerCase()));
   const tools = [...new Set(caseList.flatMap(c => c.tools ?? []))].sort();
-  const categories = [...new Set(caseList.map(c => c.category))].sort();
+  const categories = [...new Set(caseList.flatMap(c => c.capability_tags ?? []))].sort();
   const pages = Math.max(1, Math.ceil(rows.length / 20));
   const safePage = Math.min(page, pages);
   const visibleRows = rows.slice((safePage - 1) * 20, safePage * 20);
   const benchmark = suite?.benchmark;
   const judge = benchmark?.judge;
   const supportsMode = benchmark?.scoring_modes.includes(mode) ?? mode === "native";
-  const judgeRequired = mode !== "native" && track !== "qq" && (!selectedIds.length || caseList.some(c => selectedIds.includes(c.case_id) && c.quality_required !== false));
+  const judgeRequired = mode !== "native" && (!selectedIds.length || caseList.some(c => selectedIds.includes(c.case_id) && c.quality_required !== false));
   const blocked = !botId || !suite?.ready || active || !selectedIds.length || !supportsMode || (judgeRequired && !judge) || cases.isFetching || cases.isError;
   const start = useMutation({ mutationFn: () => {
     if (!suite || blocked) throw new Error("请先完成选题并修正阻断项。");
     return evaluationApi.create(buildSuiteRequest({ botId, suiteId: suite.suite_id, caseIds: selectedIds,
       preset: "custom", repetitions, maxWallSeconds: budget, seed: 0,
-      options: track === "qq" ? {} : { scoring_mode: mode, ...(benchmark?.rubrics.length ? { quality_rubric: rubric } : {}) },
+      options: suite.track === "qq_message_flow" ? {} : { scoring_mode: mode, ...(benchmark?.rubrics.length ? { quality_rubric: rubric } : {}) },
       dryRun: false, llmJudge: false, confirmExternalWrite: false }));
   }, onSuccess: onCreated });
   const prepare = useMutation({ mutationFn: () => evaluationApi.prepareSuite(suite!.suite_id, botId),
     onSuccess: () => Message.info("已提交数据准备任务；完成后刷新目录。") });
-  const choose = (id: string) => { setSuiteId(id); start.reset(); prepare.reset(); };
-  if (!suite) return <Empty description={botId ? "当前没有可用的测评集。" : "请先选择机器人。"} />;
-  return <div className="eval-benchmark-workbench">
-    <Space wrap><Button type={track === "agent" ? "primary" : "secondary"} onClick={() => { setTrack("agent"); start.reset(); }}>Agent / 模型能力</Button>
-      <Button type={track === "qq" ? "primary" : "secondary"} onClick={() => { setTrack("qq"); start.reset(); }}>QQ 合成链路</Button></Space>
-    {active && <Alert type="warning" content="该机器人已有活动评测，完成或取消后才能开始新的评测。" />}
-    {start.isError && <Alert type="error" content={formatApiError(start.error)} />}
-    <div className="eval-benchmark-layout">
-      <nav className="eval-benchmark-catalog" aria-label="测评集">{available.map(s => <button type="button" key={s.suite_id} aria-pressed={s.suite_id === suite.suite_id} onClick={() => choose(s.suite_id)}>
-        <strong>{s.benchmark?.name || s.name}</strong><span>{s.ready ? `${s.runnable_case_count ?? s.case_count} 道可运行 / ${s.case_count} 道题` : s.implemented ? "待准备" : "待接入"}</span>
-        <small>{SOURCE_LABELS[s.source_type || ""] || "来源未记录"} · {PURPOSE_LABELS[s.purpose || ""] || "用途未记录"}{s.uses_smoke_data && " · 冒烟数据"}</small>
-      </button>)}</nav>
-      <section className="eval-benchmark-questions" aria-label="基准题目">
-        <Space wrap><Text bold>{benchmark?.name || suite.name}</Text><Tag>{benchmark?.framework || "框架未记录"} {benchmark?.framework_version}</Tag><Tag>{suite.version}</Tag></Space>
+  return <>
+    {start.isError && <Alert className="eval-form-error" type="error" content={formatApiError(start.error)} />}
+      <section className="eval-benchmark-questions" aria-label="测评题目">
+        <Space wrap><Text bold>{benchmark?.name || suite.name}</Text><Tag>{suite.version}</Tag></Space>
+        <Space wrap><Tag>来源：{SOURCE_LABELS[benchmark?.source_type || ""] || "未记录"}</Tag><Tag>建议用途：{PURPOSE_LABELS[benchmark?.purpose || ""] || "未记录"}</Tag></Space>
         <Paragraph>{suite.value}</Paragraph>
-        <Space wrap><Tag>{SOURCE_LABELS[benchmark?.source_type || ""] || "来源未记录"}</Tag><Tag>{PURPOSE_LABELS[benchmark?.purpose || ""] || "用途未记录"}</Tag></Space>
+        <Paragraph>执行环境与范围：{benchmark?.target_scope || suite.execution_scope || "未记录"}</Paragraph>
+        <Paragraph>覆盖范围：{benchmark?.coverage || "未记录"}</Paragraph>
         <Paragraph>数据版本 {benchmark?.data_version || suite.version} · {benchmark?.split || "划分以当前数据为准"}</Paragraph>
-        <Paragraph>执行适配器：{benchmark?.executor?.id || suite.plugin_id} · {benchmark?.executor?.driver || suite.driver_id}</Paragraph>
-        <Paragraph>默认评分：{benchmark?.scorer?.name} · {SCORER_ORIGINS[benchmark?.scorer?.origin || ""] || "来源未记录"} · {benchmark?.scorer?.version}</Paragraph><Text type="secondary">{benchmark?.coverage}</Text>
+        <details><summary>执行与评分实现</summary><Paragraph>指标框架：{benchmark?.framework || "未记录"} {benchmark?.framework_version}</Paragraph><Paragraph>执行适配器：{benchmark?.executor?.id || suite.plugin_id} · {benchmark?.executor?.driver || suite.driver_id}</Paragraph>
+        <Paragraph>默认评分：{benchmark?.scorer?.name} · {SCORER_ORIGINS[benchmark?.scorer?.origin || ""] || "来源未记录"} · {benchmark?.scorer?.version}</Paragraph></details>
         <div className="eval-benchmark-source">数据来源：{(suite.data_source === "project_files" ? "项目固定题目文件" : suite.data_source) || "未载入"} · 当前目录 {caseList.length} 题{suite.uses_smoke_data && " · 非完整官方基准"}
           {suite.official_url && <a href={suite.official_url} target="_blank" rel="noreferrer">官方说明</a>}</div>
         {!suite.ready && <Alert type="warning" content={suite.unavailable_reason || suite.setup_hint} />}
         {suite.prepare_available && <Space wrap><Button loading={prepare.isPending} onClick={() => prepare.mutate()}>准备官方数据</Button><Text type="secondary">单独执行下载；查看题目不会自动准备数据。</Text></Space>}
         {prepare.isError && <Alert type="error" content={formatApiError(prepare.error)} />}
         {cases.isError && <Alert type="error" content={formatApiError(cases.error)} action={<Button onClick={() => void cases.refetch()}>重试</Button>} />}
-        <div className="eval-benchmark-filters"><Input aria-label="搜索基准题目" placeholder="搜索题目或 ID" value={search} onChange={value => { setSearch(value); setPage(1); }} allowClear />
-          <Select aria-label="题目类别" value={category} onChange={value => { setCategory(value); setPage(1); }} options={[{ label: "全部类别", value: "" }, ...categories.map(value => ({ label: value, value }))]} />
+        <div className="eval-benchmark-filters"><Input aria-label="搜索测评题目" placeholder="搜索题目或 ID" value={search} onChange={value => { setSearch(value); setPage(1); }} allowClear />
+          <Select aria-label="题目能力筛选" value={category} onChange={value => { setCategory(value); setPage(1); }} options={[{ label: "全部题目能力", value: "" }, ...categories.map(value => ({ label: value, value }))]} />
           <Select aria-label="业务工具筛选" value={tool} onChange={value => { setTool(value); setPage(1); }} options={[{ label: "全部业务工具", value: "" }, ...tools.map(value => ({ label: value, value }))]} /></div>
         <Space wrap>{suite.presets?.map(p => <Button key={p.preset_id} size="small" disabled={cases.isFetching} onClick={() => setSelected(p.case_ids.filter(id => knownIds.has(id)))}>{({ quick: "快速题单", full: "完整题单", security: "安全题单" } as Record<string, string>)[p.preset_id] || p.preset_id}</Button>)}
           <Button size="small" onClick={() => setSelected([...new Set([...selectedIds, ...rows.filter(c => c.readiness?.ready !== false).map(c => c.case_id)])])}>选择筛选结果</Button><Button size="small" onClick={() => setSelected([])}>清空选择</Button><Text type="secondary">已选 {selectedIds.length} / {caseList.length}</Text></Space>
         {cases.isFetching ? <Spin /> : visibleRows.length ? visibleRows.map(c => <article className="eval-benchmark-case" key={c.case_id}>
           <div className="eval-benchmark-case-heading"><Checkbox aria-label={`选择 ${c.case_id}`} disabled={c.readiness?.ready === false} checked={selectedIds.includes(c.case_id)} onChange={checked => setSelected(current => checked ? [...new Set([...current, c.case_id])] : current.filter(id => id !== c.case_id))} />
-            <div><Text bold>{c.summary || c.case_id}</Text><div className="eval-trial-meta">{c.case_id} · {c.category}{c.readiness?.ready === false && " · 未配置"}{c.has_attachments && ` · ${c.attachment_count} 个附件`}</div></div>
+            <div><Text bold>{c.summary || c.case_id}</Text><div className="eval-trial-meta">{c.case_id} · {c.capability_tags?.join(" · ") || c.category}{c.readiness?.ready === false && " · 未配置"}{c.has_attachments && ` · ${c.attachment_count} 个附件`}</div></div>
             <Button type="text" size="small" aria-expanded={expanded.includes(c.case_id)} onClick={() => setExpanded(ids => ids.includes(c.case_id) ? ids.filter(id => id !== c.case_id) : [...ids, c.case_id])}>{expanded.includes(c.case_id) ? "收起" : "题目详情"}</Button></div>
           {expanded.includes(c.case_id) && <CasePreview suite={suite} caseId={c.case_id} botId={botId} />}
         </article>) : <Empty description="没有匹配的题目；请检查数据准备状态或调整筛选。" />}
@@ -128,9 +153,8 @@ export default function BenchmarkWorkbench({ botId, suites, active, onCreated }:
         </div>}
         <div className="eval-benchmark-field">每题重复次数<InputNumber aria-label="重复次数" min={1} max={10} precision={0} value={repetitions} onChange={setRepetitions} /></div>
         <div className="eval-benchmark-field">总时间预算（秒）<InputNumber aria-label="时间预算" min={1} max={21600} precision={0} value={budget} onChange={setBudget} /></div>
-        <div className="eval-benchmark-total"><Text bold>{selectedIds.length} 题 × {repetitions} 次</Text><Text type="secondary">Agent / Judge 费用：未知</Text><Text type="secondary">题单和评分配置将在启动时冻结。</Text>
+        <div className="eval-benchmark-total"><Text bold>{selectedIds.length} 题 × {repetitions} 次</Text><Text type="secondary">被测执行 / Judge 费用：未知</Text><Text type="secondary">题单和评分配置将在启动时冻结。</Text>
           <Button type="primary" long disabled={blocked} loading={start.isPending} onClick={() => start.mutate()}>检查并开始测试</Button></div>
       </aside>
-    </div>
-  </div>;
+  </>;
 }

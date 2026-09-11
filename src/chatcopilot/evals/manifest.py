@@ -77,6 +77,7 @@ _TOP_LEVEL_FIELDS = {
     "default_preset",
     "execution_scope", "source_type", "purpose", "data_version", "split", "coverage", "target_scope",
     "native_method", "scorer_origin", "scorer_version",
+    "subject_type", "capability_tags",
 }
 _FILE_FIELDS = {"path", "role", "media_type", "sha256", "resource_id"}
 _OPTION_FIELDS = {"name", "type", "label", "default", "required", "choices", "minimum", "maximum"}
@@ -99,6 +100,7 @@ _CASE_FIELDS = {
     "id",
     "version",
     "capability",
+    "capability_tags",
     "plugin",
     "driver",
     "preset",
@@ -236,6 +238,8 @@ def parse_suite_manifest(data: bytes, *, source: str = "manifest.yaml") -> Suite
         native_method=_optional_string(raw.get("native_method", "Suite scorer"), source, "native_method", maximum=240),
         scorer_origin=_choice(raw.get("scorer_origin", "project_adapter"), {"official", "project_adapter", "llm_judge"}, source, "scorer_origin"),
         scorer_version=_optional_string(raw.get("scorer_version", version), source, "scorer_version", maximum=120),
+        subject_type=_choice(raw.get("subject_type"), {"model", "agent", "system"}, source, "subject_type"),
+        capability_tags=_string_list(raw.get("capability_tags"), source, "capability_tags"),
     )
 
 
@@ -433,6 +437,7 @@ def _parse_case_definition(value: Any, *, source: str, index: int) -> EvalCaseDe
         case_id=case_id,
         version=version,
         capability=_symbol(value.get("capability"), source, f"{field}.capability"),
+        capability_tags=_string_list(value.get("capability_tags"), source, f"{field}.capability_tags"),
         plugin_id=plugin_id,
         driver_id=driver_id,
         turns=turns,

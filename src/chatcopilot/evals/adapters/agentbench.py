@@ -55,7 +55,7 @@ def load_cases() -> tuple[EvalCase, ...]:
         if case_id in seen:
             raise ValueError("duplicate AgentBench task/index")
         seen.add(case_id)
-        cases.append(EvalCase(case_id=case_id, input=prompt, category=task,
+        cases.append(EvalCase(capability_tags=("环境交互", "工具调用"), case_id=case_id, input=prompt, category=task,
             expected_behavior="Complete the task through the environment's declared tools.",
             metadata={"adapter": "agentbench-fc", "source": "AgentBench FC local catalog", "source_revision": revision,
                       "task": task, "index": index}))

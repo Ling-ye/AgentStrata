@@ -241,7 +241,7 @@ def benchmark_comparison_keys(request: Mapping[str, Any], result: Mapping[str, A
     definition = _mapping(snapshot.get("definition_snapshot"))
     implementations = _mapping(_mapping(definition.get("execution_implementations")).get("modules"))
     scoring = _mapping(benchmark.get("scoring"))
-    material = {key: benchmark.get(key) for key in ("suite_id", "adapter_version", "case_set_hash", "environment_contract", "budget", "source_type", "purpose", "data_version", "split", "executor")}
+    material = {key: benchmark.get(key) for key in ("suite_id", "subject_type", "adapter_version", "case_set_hash", "environment_contract", "budget", "source_type", "purpose", "data_version", "split", "executor")}
     material["protocols"] = definition.get("protocols")
     material["driver"] = _mapping(definition.get("manifest")).get("driver_id")
     material["native_implementations"] = {key: value for key, value in implementations.items() if ".adapters." in key or key.endswith(("capability_verifiers", "business_verifiers", "ifeval_subset"))}

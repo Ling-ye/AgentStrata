@@ -61,6 +61,7 @@ def parse_business_cases(payload: bytes, manifest: SuiteManifest) -> tuple[EvalC
                 "context",
                 "expected_behavior",
                 "category",
+                "capability_tags",
                 "tools",
                 "resources",
                 "reference",
@@ -83,7 +84,7 @@ def parse_business_cases(payload: bytes, manifest: SuiteManifest) -> tuple[EvalC
         ):
             raise ValueError(f"{case_id}: context/reference must be bounded text")
         sequences = {}
-        for field in ("tools", "resources", "turns"):
+        for field in ("tools", "resources", "turns", "capability_tags"):
             values = row.get(field, [])
             if (
                 not isinstance(values, list)
@@ -114,6 +115,7 @@ def parse_business_cases(payload: bytes, manifest: SuiteManifest) -> tuple[EvalC
                 input=question,
                 context=context,
                 expected_behavior=expected,
+                capability_tags=tuple(sequences["capability_tags"]),
                 category=_required_string(
                     row.get("category", "business"), case_id, "category", maximum=120
                 ),

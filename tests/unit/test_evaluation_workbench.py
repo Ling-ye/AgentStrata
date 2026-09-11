@@ -129,3 +129,47 @@ def test_qq_synthetic_snapshot_reports_actual_checker():
     plan = scoring_plan(get_manifest("agentstrata-qq-message-flow-v1"), {})
     assert plan["framework"] == "AgentStrata 链路检查器"
     assert plan["framework_version"] == ""
+
+
+def test_catalog_subjects_and_snapshots_preserve_execution_boundaries():
+    from chatcopilot.evals.catalog import list_suite_manifests
+
+    expected = {
+        "bfcl": "model", "project-business-v1": "agent", "agentstrata-capabilities-v1": "agent",
+        "gaia": "agent", "ifeval": "agent", "agentbench-fc": "agent", "swe-bench-verified": "agent",
+        "webarena": "agent", "agentstrata-qq-message-flow-v1": "system", "agentstrata-canary-self-update-v1": "system",
+    }
+    manifests = {item.suite_id: item for item in list_suite_manifests()}
+    assert {key: value.subject_type for key, value in manifests.items()} == expected
+    for ident, manifest in manifests.items():
+        assert manifest.capability_tags
+        snapshot = benchmark_snapshot(manifest, [], {})
+        assert snapshot["subject_type"] == expected[ident]
+        assert snapshot["capability_tags"] == list(manifest.capability_tags)
+    assert manifests["bfcl"].driver_id == "direct_llm"
+    assert manifests["ifeval"].driver_id == "agent_configured"
+    assert "Legacy" in manifests["agentstrata-qq-message-flow-v1"].coverage
+    for ident in ("webarena", "agentstrata-canary-self-update-v1"):
+        assert manifests[ident].status == "planned"
+        assert not manifests[ident].plugin_id
+
+
+def test_subject_change_separates_trends_without_backfilling_legacy():
+    snapshot = benchmark_snapshot(get_manifest("ifeval"), [example()], {})
+    result = {"config_snapshot": {"benchmark": snapshot}}
+    original = benchmark_comparison_keys({}, result)
+    snapshot["subject_type"] = "model"
+    assert original != benchmark_comparison_keys({}, result)
+    del snapshot["subject_type"]
+    legacy = benchmark_comparison_keys({}, result)
+    assert original != legacy
+    assert "subject_type" not in snapshot
+
+
+def test_case_tags_survive_definition_business_and_catalog_projections():
+    from chatcopilot.evals.application.catalog import get_case_descriptor, list_case_summaries
+
+    for suite_id in ("agentstrata-capabilities-v1", "project-business-v1", "agentstrata-qq-message-flow-v1"):
+        cases = list_case_summaries(suite_id)
+        multiple = next(case for case in cases if len(case["capability_tags"]) > 1)
+        assert get_case_descriptor(suite_id, multiple["case_id"])["capability_tags"] == multiple["capability_tags"]

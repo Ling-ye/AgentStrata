@@ -57,6 +57,15 @@ describe("recorded Case input", () => {
 });
 
 describe("comparable benchmark trends", () => {
+  it("never connects distinct subjects or suites even in exploration", () => {
+    const model = record("1"), agent = record("2"), otherSuite = record("3"), legacy = record("4");
+    model.benchmark = { suite_id: "shared", subject_type: "model" };
+    agent.benchmark = { suite_id: "shared", subject_type: "agent" };
+    otherSuite.benchmark = { suite_id: "another", subject_type: "agent" };
+    legacy.benchmark = { suite_id: "shared" };
+    for (const item of [model, agent, otherSuite, legacy]) item.request.suite_id = item.benchmark?.suite_id;
+    expect(groupTrendPoints(buildTrendPoints([model, agent, otherSuite, legacy]), [])).toHaveLength(4);
+  });
   it("keeps different case and scorer contracts separate while retaining exploration", () => {
     const first = record("1"), second = record("2"), legacy = record("3");
     first.insights.comparison_keys = { pass_rate: "same-native", quality: "judge-a" };

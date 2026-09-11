@@ -51,6 +51,7 @@ def _row_to_case(row: dict[str, Any]) -> EvalCase | None:
         return None
     repo = _first(row, _REPO_KEYS)
     return EvalCase(
+        capability_tags=("代码修复",),
         case_id=f"swebench-{instance_id}",
         input=problem,
         category=f"swebench-{repo}" if repo else "swebench",

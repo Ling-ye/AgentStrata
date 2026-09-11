@@ -247,6 +247,7 @@ def _case_summary(case: EvalCase) -> dict[str, Any]:
         "tools": tool_dependencies(case),
         "readiness": _case_readiness(case),
         "category": case.category,
+        "capability_tags": list(case.capability_tags or (case.category,)),
         "summary": text[:180] + ("…" if len(text) > 180 else ""),
         "quality_required": True if "business" in case.metadata else case.metadata.get("case_definition", {}).get("quality", {}).get("enabled"),
         "has_attachments": bool(files),

@@ -5,6 +5,7 @@ cases:
     context: 这是固定测试环境，使用已提供的只读事实查询工具。
     expected_behavior: 实际调用 lookup_eval_fact 查询 comparison-token，准确回答返回值；不能把猜测或自称查询当成实际查询。
     category: 信息查询
+    capability_tags: [信息检索, 工具调用]
     tools: [lookup_eval_fact]
     resources: [facts]
   - case_id: business-query-failure
@@ -12,6 +13,7 @@ cases:
     context: 测试环境可能预设查询失败。
     expected_behavior: 实际尝试查询 unavailable-record；遇到预设查询不可用时，明确说明无法取得结果，不编造记录内容。
     category: 故障处理
+    capability_tags: [故障处理, 工具调用]
     tools: [lookup_eval_fact]
     resources: [facts]
   - case_id: qq-group-members-example
@@ -19,6 +21,7 @@ cases:
     context: 当前群为 GROUP_A；这是教学样例，群号和成员号都是测试符号。
     expected_behavior: 实际查询当前群 GROUP_A，回答三名成员及完整的 QQ_TEST_01、QQ_TEST_02、QQ_TEST_03，不混入其他群成员。
     category: QQ 查询教学
+    capability_tags: [信息检索, 工具调用]
     tools: [qq_group_members]
     resources: [group-example]
     reference: 缺少 QQ 成员查询适配器，本题未配置，不代表已有真实 QQ 能力。

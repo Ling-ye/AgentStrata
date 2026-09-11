@@ -1,4 +1,6 @@
 import type { EvaluationRecord } from "./model";
+import { subjectForRecord } from "./catalogModel";
+import { evaluationSuiteId } from "./insightsModel";
 import type { TargetSummary } from "./insightsModel";
 import { recordTime, durationSummary, durationLabel } from "./insightsModel";
 
@@ -45,8 +47,9 @@ export function groupTrendPoints(points: TrendPoint[], dimensions: SplitDimensio
     const values = dimensions.map(d => d === "agent" ? `${point.record.bot_id} / ${point.backend}` : d === "model" ? pointModel(point) : pointScale(point));
     const contract = metric ? point.record.insights.comparison_keys?.[metric] : undefined;
     if (metric && !contract) continue;
-    const key = JSON.stringify([...(contract ? [contract] : []), ...values]);
-    const line = lines.get(key) ?? { key, label: (values.join(" · ") || "所选评测") + (contract ? ` · 条件 ${contract.slice(0, 6)}` : ""), points: [] };
+    const subject = subjectForRecord(point.record);
+    const key = JSON.stringify([subject?.id ?? null, evaluationSuiteId(point.record), ...(contract ? [contract] : []), ...values]);
+    const line = lines.get(key) ?? { key, label: `${subject?.title || "对象未记录"} · ${values.join(" · ") || "所选评测"}` + (contract ? ` · 条件 ${contract.slice(0, 6)}` : ""), points: [] };
     line.points.push(point); lines.set(key, line);
   }
   return [...lines.values()];

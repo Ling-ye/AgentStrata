@@ -20,6 +20,7 @@ DriverId = Literal[
     "dry_run",
 ]
 EvaluationTrack = Literal["agent", "qq_message_flow"]
+EvaluationSubject = Literal["model", "agent", "system"]
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,8 @@ class SuiteManifest:
     native_method: str = "Suite scorer"
     scorer_origin: str = "project_adapter"
     scorer_version: str = "1"
+    subject_type: EvaluationSubject | str = ""
+    capability_tags: tuple[str, ...] = ()
 
     def to_standard(self) -> BenchmarkStandard:
         """Project this richer contract onto the legacy public facade."""
@@ -203,6 +206,7 @@ class EvalCaseDefinition:
     severity: Literal["required", "critical", "observational"] = "required"
     resources: tuple[EvalCaseResource, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+    capability_tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -218,6 +222,7 @@ class EvalCase:
     context: str = ""
     rubric: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    capability_tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -32,57 +32,20 @@ import {
 import type { ColumnProps } from "../shared/ui/arcoTypes";
 import PageSection from "../shared/ui/PageSection";
 import BenchmarkWorkbench from "../features/evals/BenchmarkWorkbench";
+import { SUBJECTS, subjectForRecord } from "../features/evals/catalogModel";
 import { asObject } from "../features/evals/trialModel";
 import { BenchmarkSnapshot } from "../features/evals/BenchmarkSnapshot";
 import EvaluationTrends from "../features/evals/EvaluationTrends";
 import { EvaluationResults } from "../features/evals/EvaluationResults";
 import { InstanceId } from "../features/evals/InstanceId";
-import { dateLabel, evaluationSuiteId, modelLabel, rateLabel, revisionLabel } from "../features/evals/insightsModel";
+import { dateLabel, modelLabel, rateLabel, revisionLabel } from "../features/evals/insightsModel";
 
 const { Text } = Typography;
 const hasLlmPrimary = (record: EvaluationRecord) => asObject(asObject(record.benchmark).scoring).primary === "llm_judge";
 
-type EvaluationTrack = "agent" | "qq_message_flow";
-
 interface Props {
   visible?: boolean;
 }
-
-interface TrackDefinition {
-  id: EvaluationTrack;
-  title: string;
-  shortTitle: string;
-  description: string;
-  framework?: string;
-  includes: string;
-  excludes: string;
-  suiteId: string;
-  accent: string;
-}
-
-const TRACKS: readonly TrackDefinition[] = [
-  {
-    id: "agent",
-    title: "Agent / 模型能力",
-    shortTitle: "Agent / 模型能力",
-    description: "评估任务完成、工具使用、多轮交互和协作表现。",
-    framework: "DeepEval",
-    includes: "工具决策、搜索与证据、记忆与上下文、文件与图片、Skills、子 Agent、代码任务及指令遵循",
-    excludes: "QQ 消息接入、网关准入与平台投递",
-    suiteId: "agentstrata-capabilities-v1",
-    accent: "arcoblue",
-  },
-  {
-    id: "qq_message_flow",
-    title: "QQ 消息全链路",
-    shortTitle: "QQ 链路",
-    description: "假设 QQ 已产生消息，验证 AgentStrata 自有代码能否安全传到回复投影。",
-    includes: "合成 OneBot、网关过滤、attestation、身份权限、会话、人格持久化与回复投影",
-    excludes: "不连接真实 QQ，不冒充真实 NapCat、cc-connect 或外部用户 E2E",
-    suiteId: "agentstrata-qq-message-flow-v1",
-    accent: "purple",
-  },
-] as const;
 
 const ACTIVE_STATUSES = new Set<EvaluationStatus>(["queued", "running"]);
 const STATUS_COLORS: Record<string, string> = {
@@ -94,15 +57,6 @@ const STATUS_COLORS: Record<string, string> = {
   interrupted: "orangered",
   error: "red",
 };
-
-function suiteId(record: EvaluationRecord): string {
-  return evaluationSuiteId(record);
-}
-
-function trackForRecord(record: EvaluationRecord): TrackDefinition | null {
-  const id = suiteId(record);
-  return TRACKS.find((track) => track.suiteId === id) ?? (id ? TRACKS[0] : null);
-}
 
 function formatTime(value: string | null | undefined): string {
   if (!value) return "—";
@@ -158,7 +112,7 @@ export default function EvalsPage({ visible = true }: Props) {
     refetchInterval: query => ACTIVE_STATUSES.has(query.state.data?.status ?? latestSelected?.status ?? "error") ? 2000 : false,
   });
   const selectedRecord = detailQuery.data ?? latestSelected;
-  const filteredRecords = records.filter(record => (recordTrack === "all" || trackForRecord(record)?.id === recordTrack)
+  const filteredRecords = records.filter(record => (recordTrack === "all" || (subjectForRecord(record)?.id ?? "unknown") === recordTrack)
     && (recordStatus === "all" || record.status === recordStatus));
   const activeForBot = records.find((record) => ACTIVE_STATUSES.has(record.status));
 
@@ -199,13 +153,13 @@ export default function EvalsPage({ visible = true }: Props) {
 
   const columns: ColumnProps<EvaluationRecord>[] = [
     {
-      title: "测试方向",
+      title: "被测对象",
       width: 150,
       render: (_value, record) => {
-        const track = trackForRecord(record);
+        const track = subjectForRecord(record);
         return track
-          ? <Tag color={track.accent}>{track.shortTitle}</Tag>
-          : <Tag color="gray">历史 / CLI</Tag>;
+          ? <Tag color={track.color}>{track.title}</Tag>
+          : <Tag color="gray">对象未记录</Tag>;
       },
     },
     {
@@ -215,7 +169,7 @@ export default function EvalsPage({ visible = true }: Props) {
       render: (value: string) => <Tag color={STATUS_COLORS[value] ?? "gray"}>{value}</Tag>,
     },
     {
-      title: "测评集 / 框架", width: 220, render: (_value, record) => <BenchmarkSnapshot record={record} compact />,
+      title: "测评集 / 对象", width: 220, render: (_value, record) => <BenchmarkSnapshot record={record} compact />,
     },
     {
       title: "通过情况",
@@ -304,7 +258,7 @@ export default function EvalsPage({ visible = true }: Props) {
           <Card className="eval-create-card">
             <div className="eval-history-filters">
               <Select aria-label="记录测试方向" value={recordTrack} onChange={setRecordTrack} options={[
-                { value: "all", label: "全部方向" }, ...TRACKS.map(track => ({ value: track.id, label: track.shortTitle })),
+                { value: "all", label: "全部方向" }, ...SUBJECTS.map(track => ({ value: track.id, label: track.title })), { value: "unknown", label: "对象未记录" },
               ]} />
               <Select aria-label="记录状态" value={recordStatus} onChange={setRecordStatus} options={[
                 { value: "all", label: "全部状态" }, ...Object.keys(STATUS_COLORS).map(value => ({ value, label: value })),
@@ -359,7 +313,7 @@ export default function EvalsPage({ visible = true }: Props) {
               data={[
                 {
                   label: "测试方向",
-                  value: trackForRecord(selectedRecord)?.title ?? "历史 / CLI 评测",
+                  value: subjectForRecord(selectedRecord)?.title ?? "对象未记录 评测",
                 },
                 { label: "Evaluation ID", value: selectedRecord.evaluation_id },
                 { label: "Bot", value: selectedRecord.bot_id || "—" },

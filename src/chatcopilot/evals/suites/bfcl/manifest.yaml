@@ -1,11 +1,13 @@
 schema: 1
 suite_id: bfcl
 version: 1.0.0
-name: BFCL
+name: BFCL · 函数调用
+subject_type: model
+capability_tags: [函数调用]
 kind: tool
 status: implemented
 value: 函数调用与参数构造评测，直接对应工具选择、schema 遵循和调用准确性。
-recommendation: 改工具注册、selector、payload filter 或 tool prompt 后运行；外部数据默认 balanced-100。
+recommendation: 切换模型或函数调用请求格式后运行；当前仅校准模型协议，不验证 Agent 工具注册或实际执行；外部数据默认 balanced-100。
 cadence: weekly/regression
 plugin_id: bfcl
 driver_id: direct_llm

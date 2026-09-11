@@ -112,6 +112,7 @@ def _case(case_id: str, prompt: str, checks: list[dict[str, Any]]) -> EvalCase:
     level = _checks_level(checks, official_instruction_ids=())
     categories = _check_categories(checks, official_instruction_ids=())
     return EvalCase(
+        capability_tags=("指令遵循",),
         case_id=case_id,
         input=prompt,
         category=categories[0] if categories else "instruction_following",
@@ -147,6 +148,7 @@ def _load_jsonl_cases(path: Path) -> list[EvalCase]:
             categories = _check_categories(checks, official_instruction_ids=official_instruction_ids)
             cases.append(
                 EvalCase(
+                    capability_tags=("指令遵循",),
                     case_id=f"ifeval-{key}",
                     input=prompt,
                     category=categories[0] if categories else "instruction_following",

@@ -1,7 +1,9 @@
 schema: 1
 suite_id: agentstrata-capabilities-v1
 version: '3'
-name: AgentStrata 工程回归
+name: Agent 行为回归
+subject_type: agent
+capability_tags: [指令遵循, 工具调用, 信息检索, 上下文与记忆, 文件操作, 多模态理解, 子 Agent 协作, 代码修复, 权限隔离, Skills]
 kind: product
 status: implemented
 value: 不经过 ACP 或平台链路，直接验证所选 Bot 的 Agent runtime、工具编排、人格表现和实时信息回答。
@@ -16,7 +18,7 @@ files:
 - path: cases.yaml
   role: cases
   media_type: application/yaml
-  sha256: 371b1b7aa99ea1c9e538a8ec676e24f30141bd0159139534cf1303ed8cffeae1
+  sha256: 34646b61741d692a6bd41e7c74d3dd6bec985eec1f0f84a7983854c9f429c229
 - path: fixtures/order-card.png
   role: fixture
   resource_id: order-card

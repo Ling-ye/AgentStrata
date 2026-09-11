@@ -350,6 +350,7 @@ def _row_to_case(
     level = _category_level(category)
 
     return EvalCase(
+        capability_tags=("函数调用",),
         case_id=f"bfcl-{case_id}",
         input=question,
         category=f"bfcl-{category}",
@@ -588,6 +589,7 @@ def _smoke(
     expected_calls: list[dict[str, Any]],
 ) -> EvalCase:
     return EvalCase(
+        capability_tags=("函数调用",),
         case_id=case_id,
         input=question,
         category=f"bfcl-{category}",

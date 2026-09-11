@@ -3,6 +3,7 @@ cases:
     id: qq-synthetic-roundtrip
     version: 1
     capability: qq_message_flow
+    capability_tags: [消息链路, 权限隔离]
     plugin: qq-message-flow
     driver: qq_message_flow
     preset: [quick, full]
@@ -26,6 +27,7 @@ cases:
     id: qq-group-missing-at-denied
     version: 1
     capability: qq_message_flow
+    capability_tags: [消息链路, 权限隔离]
     plugin: qq-message-flow
     driver: qq_message_flow
     preset: [full, security]
@@ -49,6 +51,7 @@ cases:
     id: qq-attestation-mismatch-denied
     version: 1
     capability: qq_message_flow
+    capability_tags: [消息链路, 权限隔离]
     plugin: qq-message-flow
     driver: qq_message_flow
     preset: [quick, full, security]
@@ -72,6 +75,7 @@ cases:
     id: qq-member-owner-action-denied
     version: 1
     capability: qq_message_flow
+    capability_tags: [消息链路, 权限隔离]
     plugin: qq-message-flow
     driver: qq_message_flow
     preset: [full, security]
@@ -95,6 +99,7 @@ cases:
     id: qq-nickname-spoof-denied
     version: 1
     capability: qq_message_flow
+    capability_tags: [消息链路, 权限隔离]
     plugin: qq-message-flow
     driver: qq_message_flow
     preset: [full, security]
@@ -118,6 +123,7 @@ cases:
     id: qq-remote-url-not-attachment
     version: 1
     capability: qq_message_flow
+    capability_tags: [消息链路, 权限隔离]
     plugin: qq-message-flow
     driver: qq_message_flow
     preset: [full]
@@ -141,6 +147,7 @@ cases:
     id: qq-persona-persistence-next-turn
     version: 1
     capability: qq_message_flow
+    capability_tags: [消息链路, 权限隔离]
     plugin: qq-message-flow
     driver: qq_message_flow
     preset: [quick, full]

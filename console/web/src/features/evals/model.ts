@@ -245,7 +245,11 @@ export interface EvaluationParameter {
   default: boolean;
 }
 
+export type EvaluationSubject = "model" | "agent" | "system";
+
 export interface DatasetOrganization {
+  subject_type?: EvaluationSubject;
+  capability_tags?: string[];
   source_type?: string; purpose?: string; data_version?: string; split?: string;
   executor?: { id: string; driver: string; version: string; target: string };
   scorer?: { name: string; origin: string; version: string; implementation?: string };
@@ -310,6 +314,7 @@ export function suiteSupportsLlmJudge(suite: EvaluationSuite | null): boolean {
 }
 
 export interface EvaluationCaseSummary {
+  capability_tags?: string[];
   tools?: string[];
   readiness?: { ready: boolean; state: string; missing_tools: string[]; environment: string; reason: string };
   quality_required?: boolean;

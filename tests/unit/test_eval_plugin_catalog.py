@@ -75,6 +75,7 @@ def _manifest_text(extra: str = "") -> bytes:
         "version: 1.0.0\n"
         "name: Demo Suite\n"
         "kind: agent\n"
+        "subject_type: agent\n"
         "status: implemented\n"
         "value: Exercises a demo capability.\n"
         "recommendation: Run after demo changes.\n"
@@ -126,6 +127,19 @@ def test_manifest_parser_rejects_unknown_and_duplicate_fields() -> None:
         parse_suite_manifest(_manifest_text("python_module: untrusted.module\n"))
     with pytest.raises(ValueError, match="invalid YAML"):
         parse_suite_manifest(_manifest_text("name: Duplicate\n"))
+
+
+@pytest.mark.parametrize("value", ["unknown", "[]", "null"])
+def test_manifest_rejects_invalid_subject(value):
+    with pytest.raises(ValueError, match="subject_type"):
+        parse_suite_manifest(_manifest_text().replace(b"subject_type: agent", f"subject_type: {value}".encode()))
+
+
+def test_manifest_requires_explicit_subject_and_unique_tags():
+    with pytest.raises(ValueError, match="subject_type"):
+        parse_suite_manifest(_manifest_text().replace(b"subject_type: agent\n", b""))
+    with pytest.raises(ValueError, match="duplicates"):
+        parse_suite_manifest(_manifest_text("capability_tags: [tool, tool]\n"))
 
 
 def test_manifest_parser_rejects_aliases_and_path_traversal() -> None:

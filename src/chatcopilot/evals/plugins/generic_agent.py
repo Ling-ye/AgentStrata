@@ -20,6 +20,7 @@ def load_declarative_cases(
                 case_id=definition.case_id,
                 input=turn_texts[-1],
                 category=definition.capability,
+                capability_tags=definition.capability_tags,
                 expected_behavior=str(definition.quality.get("expected") or "Pass all declared trusted verifier assertions."),
                 context="\n\n".join(turn_texts[:-1]),
                 rubric=",".join(item.assertion_id for item in definition.assertions),

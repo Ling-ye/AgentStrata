@@ -140,7 +140,8 @@ def scorer_descriptor(manifest: SuiteManifest) -> dict[str, Any]:
 
 
 def organization_descriptor(manifest: SuiteManifest) -> dict[str, Any]:
-    return {"source_type": manifest.source_type, "purpose": manifest.purpose,
+    return {"subject_type": manifest.subject_type, "capability_tags": list(manifest.capability_tags),
+            "source_type": manifest.source_type, "purpose": manifest.purpose,
             "data_version": manifest.data_version or manifest.version, "split": manifest.split,
             "executor": {"id": manifest.plugin_id, "driver": manifest.driver_id,
                          "version": manifest.version, "target": manifest.target_scope},

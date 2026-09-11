@@ -6,8 +6,8 @@
 
 | 测评集 | 用途 | 主评分 | 环境 |
 | --- | --- | --- | --- |
-| `project-business-v1` | 项目业务任务 | 严格 GEval，显示「LLM 判定」 | 固定只读测试工具数据 |
-| `agentstrata-capabilities-v1` | 63 个既有工程回归 Case | 原有程序断言及适用的质量门禁 | 原有隔离执行环境 |
+| `project-business-v1` | 业务任务完成 | 严格 GEval，显示「LLM 判定」 | 固定只读测试工具数据 |
+| `agentstrata-capabilities-v1` | Agent 行为回归（63 个 Case） | 原有程序断言及适用的质量门禁 | 原有隔离执行环境 |
 | GAIA、BFCL、IFEval、SWE-bench、AgentBench | 公开基准 | 原生规则，独立 GEval 附评默认关闭 | 每个适配器声明的数据与环境 |
 
 公开基准的评分器实现来源另行标注。BFCL 当前是项目适配的部分协议匹配；GAIA 为项目实现的官方归一化规则；SWE-bench 使用固定版本的上游 grader；AgentBench 使用已配置环境的结果。查看题目不会准备数据或执行模型。完整范围见 [运维文档](operations.md#基准工作台与手动测评)。
@@ -36,6 +36,7 @@
 | `context` | 是 | 任务背景，不能设置真实群身份、角色或权限 |
 | `turns` | 是 | 可选的完整多轮提问列表，首项必须等于 `input`；逐轮交给同一隔离会话 |
 | `expected_behavior` | 否 | 任务完成标准 |
+| `capability_tags` | 否 | 可选的多个能力标签，用于选题筛选，不进入 Agent 输入 |
 | `reference` | 否 | 可选的额外评分参考 |
 | `tools` | 工具定义 | 已注册的受控工具依赖；未知工具显示未配置 |
 | `resources` | 不直接发送 | 工具数据资源引用，需通过实际工具调用取得对应返回值 |

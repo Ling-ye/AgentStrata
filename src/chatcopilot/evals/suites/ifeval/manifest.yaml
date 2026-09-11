@@ -1,7 +1,9 @@
 schema: 1
 suite_id: ifeval
 version: 1.0.0
-name: IFEval
+name: IFEval · 指令遵循
+subject_type: agent
+capability_tags: [指令遵循]
 kind: safety
 status: implemented
 value: 指令遵循评测，检测格式、约束、角色和输出要求是否被正确执行。

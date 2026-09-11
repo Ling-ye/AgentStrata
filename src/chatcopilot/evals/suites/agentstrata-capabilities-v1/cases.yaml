@@ -3,6 +3,7 @@ cases:
     id: dialogue-strict-json
     version: 1
     capability: dialogue_constraints
+    capability_tags: [指令遵循]
     plugin: generic-agent
     driver: agent_configured
     preset: [quick, full]
@@ -29,6 +30,7 @@ cases:
     id: dialogue-clarify-before-action
     version: 1
     capability: dialogue_constraints
+    capability_tags: [指令遵循]
     plugin: generic-agent
     driver: agent_configured
     preset: [full]
@@ -60,6 +62,7 @@ cases:
     id: persona-applied-behavior
     version: 1
     capability: persona
+    capability_tags: [人格表现]
     plugin: generic-agent
     driver: agent_configured
     preset: [quick, full]
@@ -91,6 +94,7 @@ cases:
     id: tool-allowed-exact-call
     version: 1
     capability: tool_orchestration
+    capability_tags: [工具调用]
     plugin: generic-agent
     driver: agent_isolated
     preset: [quick, full]
@@ -119,6 +123,7 @@ cases:
     id: tool-multistep-data-flow
     version: 2
     capability: tool_orchestration
+    capability_tags: [工具调用]
     plugin: generic-agent
     driver: agent_isolated
     preset: [full]
@@ -149,6 +154,7 @@ cases:
     id: tool-disabled-hidden-no-effect
     version: 1
     capability: tool_orchestration
+    capability_tags: [工具调用]
     plugin: generic-agent
     driver: agent_isolated
     preset: [quick, full]
@@ -176,6 +182,7 @@ cases:
     id: tool-error-bounded-recovery
     version: 1
     capability: tool_orchestration
+    capability_tags: [工具调用]
     plugin: generic-agent
     driver: agent_isolated
     preset: [full]
@@ -204,6 +211,7 @@ cases:
     id: search-general-with-evidence
     version: 2
     capability: search
+    capability_tags: [信息检索]
     plugin: generic-agent
     driver: agent_configured
     preset: [quick, full]
@@ -246,6 +254,7 @@ cases:
     id: search-explicit-source
     version: 2
     capability: search
+    capability_tags: [信息检索]
     plugin: generic-agent
     driver: agent_configured
     preset: [custom]
@@ -288,6 +297,7 @@ cases:
     id: search-conflict-disclosure
     version: 1
     capability: search
+    capability_tags: [信息检索]
     plugin: generic-agent
     driver: agent_configured
     preset: [custom]
@@ -332,6 +342,7 @@ cases:
     id: current-usd-cny-reference
     version: 1
     capability: current_information
+    capability_tags: [信息检索, 证据核验]
     plugin: generic-agent
     driver: agent_configured
     preset: [quick, full]
@@ -371,6 +382,7 @@ cases:
     id: workspace-read-fixture
     version: 2
     capability: file_workspace
+    capability_tags: [文件操作]
     plugin: generic-agent
     driver: agent_isolated
     preset: [full]
@@ -405,6 +417,7 @@ cases:
     id: workspace-write-contained
     version: 2
     capability: file_workspace
+    capability_tags: [文件操作]
     plugin: generic-agent
     driver: agent_isolated
     preset: [full]
@@ -445,6 +458,7 @@ cases:
     id: image-ocr-order-number
     version: 1
     capability: image_understanding
+    capability_tags: [多模态理解]
     plugin: generic-agent
     driver: agent_configured
     preset: [quick, full]
@@ -472,6 +486,7 @@ cases:
     id: image-shape-spatial-count
     version: 1
     capability: image_understanding
+    capability_tags: [多模态理解]
     plugin: generic-agent
     driver: agent_configured
     preset: [full]
@@ -499,6 +514,7 @@ cases:
     id: image-multi-input-order
     version: 1
     capability: image_understanding
+    capability_tags: [多模态理解]
     plugin: generic-agent
     driver: agent_configured
     preset: [full]
@@ -526,6 +542,7 @@ cases:
     id: session-same-user-memory
     version: 1
     capability: session_memory_subagent
+    capability_tags: [上下文与记忆]
     plugin: generic-agent
     driver: agent_configured
     preset: [full]
@@ -559,6 +576,7 @@ cases:
     id: session-cross-user-isolation
     version: 1
     capability: session_memory_subagent
+    capability_tags: [上下文与记忆]
     plugin: generic-agent
     driver: agent_configured
     preset: [quick, full]
@@ -587,6 +605,7 @@ cases:
     id: subagent-structured-result
     version: 2
     capability: session_memory_subagent
+    capability_tags: [上下文与记忆]
     plugin: generic-agent
     driver: agent_isolated
     preset: [full]
@@ -623,6 +642,7 @@ cases:
     id: code-fix-and-verify
     version: 1
     capability: code_recovery
+    capability_tags: [代码修复, 故障恢复]
     plugin: generic-agent
     driver: agent_isolated
     preset: [full]
@@ -665,6 +685,7 @@ cases:
     id: code-restart-and-health
     version: 1
     capability: code_recovery
+    capability_tags: [代码修复, 故障恢复]
     plugin: generic-agent
     driver: agent_isolated
     preset: [quick, full]
@@ -703,6 +724,7 @@ cases:
     id: code-failure-no-false-success
     version: 2
     capability: code_recovery
+    capability_tags: [代码修复, 故障恢复]
     plugin: generic-agent
     driver: agent_configured
     preset: [full]
@@ -753,6 +775,7 @@ cases:
     id: access-forbidden-tool-no-effect
     version: 1
     capability: access_security
+    capability_tags: [权限隔离]
     plugin: generic-agent
     driver: agent_isolated
     preset: [full, security]
@@ -780,6 +803,7 @@ cases:
     id: injection-untrusted-search-contained
     version: 2
     capability: access_security
+    capability_tags: [权限隔离]
     plugin: generic-agent
     driver: agent_isolated
     preset: [quick, full, security]
@@ -810,6 +834,7 @@ cases:
     id: injection-untrusted-attachment-contained
     version: 2
     capability: access_security
+    capability_tags: [权限隔离]
     plugin: generic-agent
     driver: agent_isolated
     preset: [full, security]
@@ -841,6 +866,7 @@ cases:
     id: decision-select-tool
     version: 1
     capability: tool_decisions
+    capability_tags: [工具调用, 任务决策]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -872,6 +898,7 @@ cases:
     id: decision-similar-tools
     version: 1
     capability: tool_decisions
+    capability_tags: [工具调用, 任务决策]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -903,6 +930,7 @@ cases:
     id: decision-no-tool
     version: 1
     capability: tool_decisions
+    capability_tags: [工具调用, 任务决策]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -934,6 +962,7 @@ cases:
     id: decision-clarify
     version: 1
     capability: tool_decisions
+    capability_tags: [工具调用, 任务决策]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -965,6 +994,7 @@ cases:
     id: decision-chain
     version: 1
     capability: tool_decisions
+    capability_tags: [工具调用, 任务决策]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -996,6 +1026,7 @@ cases:
     id: decision-retry
     version: 1
     capability: tool_decisions
+    capability_tags: [工具调用, 任务决策]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1027,6 +1058,7 @@ cases:
     id: decision-persona
     version: 1
     capability: tool_decisions
+    capability_tags: [工具调用, 任务决策]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1058,6 +1090,7 @@ cases:
     id: decision-write-failure
     version: 1
     capability: tool_decisions
+    capability_tags: [工具调用, 任务决策]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1089,6 +1122,7 @@ cases:
     id: context-correction
     version: 1
     capability: context_memory
+    capability_tags: [上下文与记忆]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1122,6 +1156,7 @@ cases:
     id: context-constraints
     version: 1
     capability: context_memory
+    capability_tags: [上下文与记忆]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1155,6 +1190,7 @@ cases:
     id: context-topic-return
     version: 1
     capability: context_memory
+    capability_tags: [上下文与记忆]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1188,6 +1224,7 @@ cases:
     id: memory-explicit-only
     version: 1
     capability: context_memory
+    capability_tags: [上下文与记忆]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1220,6 +1257,7 @@ cases:
     id: memory-new-session
     version: 1
     capability: context_memory
+    capability_tags: [上下文与记忆]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1252,6 +1290,7 @@ cases:
     id: memory-latest-preference
     version: 1
     capability: context_memory
+    capability_tags: [上下文与记忆]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1285,6 +1324,7 @@ cases:
     id: evidence-select-source
     version: 1
     capability: retrieval_evidence
+    capability_tags: [信息检索, 证据核验]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1316,6 +1356,7 @@ cases:
     id: evidence-synthesis
     version: 1
     capability: retrieval_evidence
+    capability_tags: [信息检索, 证据核验]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1347,6 +1388,7 @@ cases:
     id: evidence-conflict
     version: 1
     capability: retrieval_evidence
+    capability_tags: [信息检索, 证据核验]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1378,6 +1420,7 @@ cases:
     id: evidence-unknown
     version: 1
     capability: retrieval_evidence
+    capability_tags: [信息检索, 证据核验]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1409,6 +1452,7 @@ cases:
     id: evidence-freshness
     version: 1
     capability: retrieval_evidence
+    capability_tags: [信息检索, 证据核验]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1440,6 +1484,7 @@ cases:
     id: evidence-injection
     version: 1
     capability: retrieval_evidence
+    capability_tags: [信息检索, 证据核验]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1471,6 +1516,7 @@ cases:
     id: artifact-image-table
     version: 1
     capability: multimodal_artifacts
+    capability_tags: [多模态理解, 文件操作]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1505,6 +1551,7 @@ cases:
     id: artifact-document-report
     version: 1
     capability: multimodal_artifacts
+    capability_tags: [多模态理解, 文件操作]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1536,6 +1583,7 @@ cases:
     id: artifact-image-conflict
     version: 1
     capability: multimodal_artifacts
+    capability_tags: [多模态理解, 文件操作]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1570,6 +1618,7 @@ cases:
     id: artifact-invalid-document
     version: 1
     capability: multimodal_artifacts
+    capability_tags: [多模态理解, 文件操作]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1601,6 +1650,7 @@ cases:
     id: delegate-autonomous
     version: 1
     capability: delegation
+    capability_tags: [子 Agent 协作]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1632,6 +1682,7 @@ cases:
     id: delegate-merge
     version: 1
     capability: delegation
+    capability_tags: [子 Agent 协作]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1663,6 +1714,7 @@ cases:
     id: delegate-partial-failure
     version: 1
     capability: delegation
+    capability_tags: [子 Agent 协作]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1694,6 +1746,7 @@ cases:
     id: skill-career
     version: 1
     capability: configured_skills
+    capability_tags: [Skills]
     plugin: generic-agent
     driver: agent_configured
     preset:
@@ -1727,6 +1780,7 @@ cases:
     id: skill-jd
     version: 1
     capability: configured_skills
+    capability_tags: [Skills]
     plugin: generic-agent
     driver: agent_configured
     preset:
@@ -1760,6 +1814,7 @@ cases:
     id: skill-missing-input
     version: 1
     capability: configured_skills
+    capability_tags: [Skills]
     plugin: generic-agent
     driver: agent_configured
     preset:
@@ -1794,6 +1849,7 @@ cases:
     id: ifeval-fixed-1001
     version: 1
     capability: ifeval_subset
+    capability_tags: [指令遵循]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1828,6 +1884,7 @@ cases:
     id: ifeval-fixed-1019
     version: 1
     capability: ifeval_subset
+    capability_tags: [指令遵循]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1862,6 +1919,7 @@ cases:
     id: ifeval-fixed-102
     version: 1
     capability: ifeval_subset
+    capability_tags: [指令遵循]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1901,6 +1959,7 @@ cases:
     id: ifeval-fixed-1075
     version: 1
     capability: ifeval_subset
+    capability_tags: [指令遵循]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1935,6 +1994,7 @@ cases:
     id: ifeval-fixed-1128
     version: 1
     capability: ifeval_subset
+    capability_tags: [指令遵循]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -1970,6 +2030,7 @@ cases:
     id: ifeval-fixed-1393
     version: 1
     capability: ifeval_subset
+    capability_tags: [指令遵循]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -2006,6 +2067,7 @@ cases:
     id: ifeval-fixed-1531
     version: 1
     capability: ifeval_subset
+    capability_tags: [指令遵循]
     plugin: generic-agent
     driver: agent_isolated
     preset:
@@ -2043,6 +2105,7 @@ cases:
     id: ifeval-fixed-1999
     version: 1
     capability: ifeval_subset
+    capability_tags: [指令遵循]
     plugin: generic-agent
     driver: agent_isolated
     preset:

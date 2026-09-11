@@ -1,7 +1,9 @@
 schema: 1
 suite_id: agentbench-fc
 version: 1.0.0
-name: AgentBench FC
+name: AgentBench FC · 环境交互
+subject_type: agent
+capability_tags: [环境交互, 工具调用]
 kind: agent
 status: implemented
 value: 在隔离环境中调用真实 AgentStrata Agent，通过环境工具完成多轮任务。

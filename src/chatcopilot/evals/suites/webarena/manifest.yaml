@@ -1,7 +1,9 @@
 schema: 1
 suite_id: webarena
 version: 0.1.0
-name: WebArena
+name: WebArena · 浏览器操作
+subject_type: agent
+capability_tags: [浏览器操作]
 kind: web
 status: planned
 value: 浏览器/Web 环境操作任务，衡量网页理解、点击、表单和多步操作能力。
@@ -18,3 +20,4 @@ setup_hint: >-
 source_type: public_benchmark
 purpose: benchmark
 coverage: 尚未接入
+target_scope: 浏览器与 Web 测试环境 · 尚未接入
