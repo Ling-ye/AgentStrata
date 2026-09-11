@@ -63,6 +63,12 @@ jobs:
           cache-dependency-path: console/web/package-lock.json
       - name: Install development dependencies
         run: python -m pip install -e ".[agent,acp,desktop,dev,evaluation]"
+      - name: Install and verify Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bubblewrap ripgrep
+          bwrap --ro-bind / / --unshare-pid -- /bin/true
+          rg --version
       - name: Install locked Console dependencies for full gate
         if: matrix.gate == 'full'
         working-directory: console/web

@@ -20,7 +20,9 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
-def _fixture(tmp_path: Path, *, pid_one: str = "systemd") -> tuple[Path, dict[str, str]]:
+def _fixture(
+    tmp_path: Path, *, pid_one: str = "systemd", wsl: bool = False,
+) -> tuple[Path, dict[str, str]]:
     root = tmp_path / "AgentStrata"
     script = root / "deploy" / "wsl" / "quickstart.sh"
     script.parent.mkdir(parents=True)
@@ -35,6 +37,17 @@ def _fixture(tmp_path: Path, *, pid_one: str = "systemd") -> tuple[Path, dict[st
     shutil.copy2(REPO_ROOT / "uv.lock", root / "uv.lock")
 
     fake_bin = tmp_path / "bin"
+    # Select the kernel environment explicitly, independently of the test host.
+    _write_executable(
+        fake_bin / "grep",
+        "#!/usr/bin/env bash\n"
+        'case "$*" in\n'
+        "  '-qi microsoft /proc/sys/kernel/osrelease /proc/version'|"
+        "'-qi wsl2 /proc/sys/kernel/osrelease')\n"
+        f"    exit {0 if wsl else 1} ;;\n"
+        "esac\n"
+        'exec /usr/bin/grep "$@"\n',
+    )
     _write_executable(
         fake_bin / "git",
         "#!/usr/bin/env bash\nprintf '%s\\n' \"$FAKE_REPO_ROOT\"\n",
@@ -340,8 +353,11 @@ def test_inherited_deploy_python_override_is_rejected_before_any_write(
     assert "AGENTSTRATA_DEPLOY_PYTHON" in report["checks"][-1]["message"]
 
 
-def test_missing_systemd_is_needs_user_action_before_any_write(tmp_path: Path) -> None:
-    script, env = _fixture(tmp_path, pid_one="not-systemd")
+@pytest.mark.parametrize("wsl", [False, True], ids=["linux", "wsl2"])
+def test_missing_systemd_is_needs_user_action_before_any_write(
+    tmp_path: Path, wsl: bool,
+) -> None:
+    script, env = _fixture(tmp_path, pid_one="not-systemd", wsl=wsl)
 
     completed = subprocess.run(
         ["bash", str(script), "--dry-run"],
@@ -356,8 +372,13 @@ def test_missing_systemd_is_needs_user_action_before_any_write(tmp_path: Path) -
     report = _last_json(completed.stdout)
     assert report["overall"] == "needs_user_action"
     assert any(item["id"] == "systemd_pid1" for item in report["checks"])
-    assert "systemd=true" in completed.stderr
-    assert "wsl --shutdown" in completed.stderr
+    if wsl:
+        assert "systemd=true" in completed.stderr
+        assert "wsl --shutdown" in completed.stderr
+    else:
+        assert "systemd=true" not in completed.stderr
+        assert "wsl --shutdown" not in completed.stderr
+        assert "PID 1 不是 systemd" in completed.stdout
     assert not (Path(env["HOME"])).exists()
 
 
@@ -483,7 +504,7 @@ def test_systemd_pause_can_resume_before_scaffold_without_any_write(
 def test_systemd_pause_receipt_replays_custom_id_and_display_name(
     tmp_path: Path,
 ) -> None:
-    script, env = _fixture(tmp_path, pid_one="not-systemd")
+    script, env = _fixture(tmp_path, pid_one="not-systemd", wsl=True)
     bot_id = "custom-qq"
     display_name = "Custom Assistant"
     expected = (
@@ -783,7 +804,7 @@ def test_resume_canonical_starter_passes_dependency_free_preflight(
 
 
 def test_custom_wsl_drvfs_mount_is_rejected_before_any_write(tmp_path: Path) -> None:
-    script, env = _fixture(tmp_path)
+    script, env = _fixture(tmp_path, wsl=True)
     env["FAKE_FINDMNT"] = r"9p D:\ rw,aname=drvfs;path=D:\,uid=1000"
     before = sorted(
         (path.relative_to(tmp_path).as_posix(), path.read_bytes() if path.is_file() else b"")

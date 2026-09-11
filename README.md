@@ -347,6 +347,10 @@ Setup and commands: [Harness operations](https://github.com/Ling-ye/AgentStrata/
 
 ## Development
 
+Linux/WSL Python regression tests require the system packages `bubblewrap` and
+`ripgrep` (`sudo apt-get install bubblewrap ripgrep` on Ubuntu/Debian). CI installs
+both and verifies that a bubblewrap sandbox can start before running tests.
+
 ```bash
 python -m pip install -e ".[agent,acp,dev,evaluation]"
 .venv/bin/python scripts/check_repo.py fast
