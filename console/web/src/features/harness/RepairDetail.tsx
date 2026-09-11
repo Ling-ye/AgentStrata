@@ -28,6 +28,7 @@ export function RepairDetail({ taskId }: { taskId: string }) {
   return <Space direction="vertical" size={16} style={{ width: "100%", minWidth: 0 }}>
     {(error || query.isError) && <Alert type="error" content={error || String(query.error)} />}
     <Text copyable>{task.task_id}</Text><Text>{sourceLabel(task)}</Text>
+    {task.source.case_instance_id && <Text copyable>Case 实例 ID：{task.source.case_instance_id}</Text>}
     <Space wrap><Tag color={task.status === "fixed" ? "green" : "blue"}>{repairStatusLabel(task)}</Tag>
       <Text>阶段：{stageLabel(task.stage)}</Text><Text type="secondary">已用 {Math.round(task.elapsed_seconds ?? 0)} 秒 / {task.options.timeout_seconds} 秒</Text></Space>
     {task.message && <Alert type={task.status === "fixed" ? "success" : "info"} content={task.message} />}

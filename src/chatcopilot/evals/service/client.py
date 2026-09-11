@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from chatcopilot.evals.case_instances import validate_case_instance_id
+
 import base64
 import builtins
 import os
@@ -228,6 +230,10 @@ class EvaluationServiceClient:
                  **({"attempt": attempt} if attempt is not None else {})},
             )
         )
+
+    def case_instance(self, case_instance_id: str) -> dict[str, Any]:
+        validate_case_instance_id(case_instance_id)
+        return self._mapping(self._call("evaluations.case_instance", {"case_instance_id": case_instance_id}))
 
     def clone(self, evaluation_id: str) -> dict[str, Any]:
         new_evaluation_id = self._new_evaluation_id()

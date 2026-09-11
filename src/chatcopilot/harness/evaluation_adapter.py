@@ -21,7 +21,7 @@ class ServiceEvaluator:
     ) -> None:
         self.client = client or EvaluationServiceClient(socket_path)
 
-    def load(self, evaluation_id: str) -> dict[str, Any]:
+    def load(self, evaluation_id: str, *, target_id: str | None = None) -> dict[str, Any]:
         record = self.client.get(evaluation_id)
         result = record.get("result") or {}
         failures = {}
@@ -41,6 +41,10 @@ class ServiceEvaluator:
             blockers.append("只支持实际执行的隔离 Suite 测评")
         if not failures:
             blockers.append("该测评没有失败 Case")
+        if target_id is not None:
+            target = next((item for item in result.get("targets", []) if item["target_id"] == target_id), None)
+            if target is None or target["executor"] in {"direct_llm", "dry_run"}:
+                blockers.append("此目标未执行 AgentStrata 运行时")
         return {
             "kind": "evaluation",
             "evaluation_id": evaluation_id,
@@ -49,6 +53,37 @@ class ServiceEvaluator:
             "failures": list(failures.values()),
             "blockers": blockers,
         }
+
+    def _instance(self, case_instance_id: str) -> dict[str, Any]:
+        value = self.client.case_instance(case_instance_id)
+        if value.get("case_instance_id") != case_instance_id:
+            raise HarnessError("source_mismatch", "Case 实例 ID 与来源不一致")
+        return value
+
+    def load_instance(self, case_instance_id: str) -> dict[str, Any]:
+        instance = self._instance(case_instance_id)
+        value = self.load(instance["evaluation_id"], target_id=instance["target_id"])
+        value.pop("failures", None)
+        trial = instance["trial"]
+        if trial.get("outcome") not in {"failed", "error"}:
+            value["blockers"].append("该 Case 实例没有失败或执行错误，不能发起修复")
+        value["case_instance"] = {
+            **{key: item for key, item in instance.items() if key != "trial"},
+            "case_id": trial["case_id"], "outcome": trial["outcome"],
+        }
+        return value
+
+    def source_instance(self, case_instance_id: str) -> dict[str, Any]:
+        instance = self._instance(case_instance_id)
+        if instance["trial"].get("outcome") not in {"failed", "error"}:
+            raise HarnessError("not_failed", "该 Case 实例没有失败或执行错误")
+        source = self.source(instance["evaluation_id"], instance["case_ref"], instance["target_id"])
+        if not any(trial.get("trial_id") == instance["trial_id"]
+                   and trial.get("attempt") == instance["attempt"]
+                   and trial.get("outcome") in {"failed", "error"} for trial in source["trials"]):
+            raise HarnessError("source_mismatch", "Case 实例结果已变化，请重新加载")
+        return {**source, "case_instance_id": case_instance_id,
+                "trial_id": instance["trial_id"], "attempt": instance["attempt"]}
 
     def source(self, evaluation_id: str, case_ref: str, target_id: str) -> dict[str, Any]:
         record = self.client.get(evaluation_id)

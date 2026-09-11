@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Empty, Input, Select, Space, Spin, Table, Tag, Typography } from "@arco-design/web-react";
 import type { EvaluationRecord, EvaluationTrial } from "./model";
 import { evaluationApi, normalizeTrial } from "./evaluationApi";
+import { InstanceId } from "./InstanceId";
 import { durationLabel, EXCLUSION_LABELS, OUTCOME_LABELS, rateLabel, VERDICT_LABELS } from "./insightsModel";
 
 import { asObject, asText, captureLabel, executionTurns, objectList, qualityLabel, recordedInput, trialMetrics, trialSource, instructionChecks, instructionLabel } from "./trialModel";
@@ -68,6 +69,7 @@ function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: E
   const judging = asObject(trial.evidence.judge_evidence);
   const status = captureLabel(asText(asObject(trial.evidence.execution).state) || trial.capture_state || "");
   return <div className="eval-trial-detail">
+    {!!trial.case_instance_id && <InstanceId id={trial.case_instance_id} label="Case 实例 ID" />}
     {query.isLoading && <Spin tip="正在读取输入输出…" />}
     {query.isError && <Alert type="error" content="读取本条测试详情失败，其他测试点仍可查看。" action={<Button onClick={() => void query.refetch()}>重试</Button>} />}
     {trial.error && <Alert type="error" content={trial.error} />}
@@ -117,7 +119,7 @@ export function EvaluationResults({ record }: { record: EvaluationRecord }) {
   const [expanded, setExpanded] = useState<string[]>([]);
   const rows = useMemo(() => objectList(record.result?.trials).map(normalizeTrial), [record.result]);
   const filtered = rows.filter(trial => (outcome === "all" || trial.outcome === outcome)
-    && `${trial.case_id} ${trial.case_ref} ${trial.dimension} ${recordedInput(record, trial).text}`.toLowerCase().includes(search.toLowerCase()));
+    && `${trial.case_instance_id} ${trial.case_id} ${trial.case_ref} ${trial.dimension} ${recordedInput(record, trial).text}`.toLowerCase().includes(search.toLowerCase()));
   const observation = asObject(record.result?.execution_observation);
   const observedTurns = objectList(asObject(observation.execution).turns);
   const showObservation = observedTurns.length > 0 && !rows.some(t => t.trial_id === observation.trial_id);
@@ -136,7 +138,8 @@ export function EvaluationResults({ record }: { record: EvaluationRecord }) {
         expandProps={{ icon: ({ expanded, record: trial }) => <Button size="mini" type="text" aria-expanded={expanded}
           aria-label={`${expanded ? "收起" : "展开"}测试点 ${trial.case_id}`}>{expanded ? "−" : "+"}</Button> }}
         columns={[
-          { title: "测试点", width: 175, render: (_, row) => <span title={row.case_ref}>{row.case_id || row.case_ref || "标识未记录"}<small className="eval-trial-meta">{row.target_id} · 第 {row.attempt} 次</small>{!!trialSource(record, row).label && <Tag size="small">{asText(trialSource(record, row).label)}</Tag>}</span> },
+          { title: "测试点", width: 235, render: (_, row) => <div title={row.case_ref}>{row.case_id || row.case_ref || "标识未记录"}<small className="eval-trial-meta">{row.target_id} · 第 {row.attempt} 次</small>{!!trialSource(record, row).label && <Tag size="small">{asText(trialSource(record, row).label)}</Tag>}
+            {row.case_instance_id ? <InstanceId id={row.case_instance_id} label="Case 实例 ID" /> : <Text type="secondary">Case 实例 ID 未记录</Text>}</div> },
           { title: "输入", width: 210, render: (_, row) => <span className="eval-cell-preview" title={recordedInput(record, row).source}>{recordedInput(record, row).text || "未记录"}</span> },
           { title: "Agent 最终输出", width: 240, render: (_, row) => <span className="eval-cell-preview">{row.final_text || "未记录"}</span> },
           { title: "结果", width: 80, render: (_, row) => <Tag color={COLORS[row.outcome] || "gray"}>{OUTCOME_LABELS[row.outcome] || "未知"}</Tag> },

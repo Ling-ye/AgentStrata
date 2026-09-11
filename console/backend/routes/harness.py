@@ -21,9 +21,7 @@ router = APIRouter(prefix="/api/harness", tags=["harness"])
 class CreateRepair(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_kind: Literal["evaluation", "robot_task"] = "evaluation"
-    evaluation_id: str = ""
-    case_ref: str = ""
-    target_id: str = ""
+    case_instance_id: str = ""
     bot_id: str = ""
     run_id: str = ""
     request_id: str
@@ -37,16 +35,14 @@ class CreateRepair(BaseModel):
     def selected_source(self):
         if self.source_kind == "evaluation":
             valid = (
-                self.evaluation_id
-                and self.case_ref
-                and self.target_id
+                self.case_instance_id
                 and not (self.bot_id or self.run_id)
             )
         else:
             valid = (
                 self.bot_id
                 and self.run_id
-                and not (self.evaluation_id or self.case_ref or self.target_id)
+                and not self.case_instance_id
             )
         if not valid:
             raise ValueError("必须选择一种完整的修复来源")
@@ -104,7 +100,8 @@ def _call(function):
             404 if exc.code == "not_found" else 409, {"code": exc.code, "message": str(exc)}
         ) from exc
     except EvaluationServiceError as exc:
-        raise HTTPException(503, {"code": exc.code, "message": exc.message}) from exc
+        raise HTTPException(404 if exc.code == "not_found" else 503,
+                            {"code": exc.code, "message": "Case 实例或所属测评不存在，可能已被删除" if exc.code == "not_found" else exc.message}) from exc
     except (sqlite3.Error, GatewayStateError) as exc:
         raise HTTPException(409, "任务观测或修复数据库暂不可用") from exc
     except (ValueError, OSError) as exc:
@@ -132,10 +129,8 @@ def create(request: Request, body: CreateRepair):
             )
         )
     return _call(
-        lambda: _controller(request).start(
-            body.evaluation_id,
-            body.case_ref,
-            body.target_id,
+        lambda: _controller(request).start_case_instance(
+            body.case_instance_id,
             options,
             request_id=body.request_id,
             review_and_commit=body.review_and_commit,

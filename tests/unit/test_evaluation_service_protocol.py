@@ -163,6 +163,57 @@ def _wait_for_terminal(
     pytest.fail(f"Evaluation {evaluation_id} did not reach a terminal state; latest={latest!r}")
 
 
+def test_case_instance_lookup_uses_public_service_and_http_route(tmp_path, monkeypatch):
+    from tests.unit.test_evaluation_read_models import seed
+    from console.backend.routes import evaluations as routes
+
+    with _running_service(tmp_path) as service:
+        identifier = seed(service.runtime.application)
+        record = service.client.get(identifier, include_bodies=False)
+        instance_id = record["result"]["trials"][0]["case_instance_id"]
+        with pytest.raises(ValueError, match="Case 实例 ID"):
+            service.client.case_instance(identifier)
+        detail = service.client.case_instance(instance_id)
+        assert detail["evaluation_id"] == identifier and detail["trial"]["case_id"] == "a"
+        monkeypatch.setattr(routes, "get_evaluation_client", lambda _: service.client)
+        with TestClient(app) as client:
+            response = client.get(f"/api/evals/case-instances/{instance_id}")
+            assert response.status_code == 200 and response.json() == detail
+            assert client.get("/api/evals/case-instances/case-" + "0" * 32).status_code == 404
+
+
+def test_harness_case_instance_resolves_saved_evidence_before_creating_task(tmp_path):
+    from tests.unit.test_evaluation_read_models import seed
+    from chatcopilot.harness.api import HarnessController
+    from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
+    from chatcopilot.harness.models import HarnessError, RepairOptions
+
+    with _running_service(tmp_path) as service:
+        identifier = seed(service.runtime.application)
+        file = service.artifact_root / identifier / "result.json"
+        result = json.loads(file.read_text())
+        result["trials"][1]["outcome"] = "failed"
+        result["config_snapshot"]["definition_snapshot"]["cases"] = [
+            {"case_id": case, "definition_sha256": case * 64} for case in ("a", "b")
+        ]
+        file.write_text(json.dumps(result))
+        trials = service.client.get(identifier)["result"]["trials"]
+        controller = HarnessController(REPOSITORY_ROOT, root=tmp_path / "repairs", evaluator=ServiceEvaluator(service.client))
+        preview = controller.load_source("evaluation", trials[1]["case_instance_id"])
+        assert not preview["blockers"] and preview["case_instance"]["case_id"] == "b"
+        created = controller.start_case_instance(trials[1]["case_instance_id"], RepairOptions("test-model"), request_id="one", launch=False)
+        assert created["source"]["case_instance_id"] == trials[1]["case_instance_id"]
+        assert created["source"]["case_ref"] == "fixture-suite:b"
+        evidence = controller.evidence(created["task_id"])
+        assert evidence["trials"][0]["final_text"] == result["trials"][1]["final_text"]
+        again = controller.start_case_instance(trials[1]["case_instance_id"], RepairOptions("test-model"), request_id="one", launch=False)
+        assert again["task_id"] == created["task_id"]
+        assert controller.list(search=trials[1]["case_instance_id"])["total"] == 1
+        with pytest.raises(HarnessError, match="没有失败"):
+            controller.start_case_instance(trials[0]["case_instance_id"], RepairOptions("test-model"), launch=False)
+        assert controller.list()["total"] == 1
+
+
 def _start_service_process(
     socket_path: Path,
     artifact_root: Path,

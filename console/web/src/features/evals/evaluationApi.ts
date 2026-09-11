@@ -57,6 +57,7 @@ export function normalizeTrial(value: unknown): EvaluationTrial {
   const nullableNumber = (input: unknown) =>
     typeof input === "number" && Number.isFinite(input) ? input : null;
   return {
+    case_instance_id: typeof item.case_instance_id === "string" ? item.case_instance_id : "",
     input_preview: typeof item.input_preview === "string" ? item.input_preview : "",
     body_available: item.body_available === true,
     capture_state: typeof item.capture_state === "string" ? item.capture_state : "",

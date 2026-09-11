@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from chatcopilot.core.private_sqlite import PrivateDatabase, json_text
+from chatcopilot.evals.case_instances import case_instance_identity, validate_case_instance_id
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS evaluations (
@@ -22,6 +23,11 @@ CREATE TABLE IF NOT EXISTS trials (
  PRIMARY KEY(evaluation_id, trial_id), UNIQUE(evaluation_id, case_ref, target_id, attempt)
 );
 CREATE INDEX IF NOT EXISTS trials_case ON trials(case_ref, target_id, outcome);
+CREATE TABLE IF NOT EXISTS case_instances (
+ case_instance_id TEXT PRIMARY KEY, evaluation_id TEXT NOT NULL,
+ trial_id TEXT NOT NULL, case_ref TEXT NOT NULL, target_id TEXT NOT NULL, attempt INTEGER NOT NULL,
+ UNIQUE(evaluation_id, trial_id), UNIQUE(evaluation_id, case_ref, target_id, attempt)
+);
 """
 
 
@@ -136,6 +142,40 @@ class EvaluationResultStore:
                 )
             ]
 
+    def identify_trials(self, evaluation_id: str, trials: list[Any]) -> list[dict[str, Any]]:
+        """Index verified identities without changing stored results or importing old files."""
+        identified = []
+        with self.database.connect(write=True) as connection:
+            for trial in trials:
+                if not isinstance(trial, Mapping):
+                    continue
+                value = {key: item for key, item in trial.items() if key != "case_instance_id"}
+                identity = case_instance_identity(evaluation_id, trial)
+                if identity is not None:
+                    connection.execute(
+                        "INSERT OR IGNORE INTO case_instances VALUES(:case_instance_id,:evaluation_id,:trial_id,:case_ref,:target_id,:attempt)",
+                        identity,
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM case_instances WHERE case_instance_id=?", (identity["case_instance_id"],)
+                    ).fetchone()
+                    if row is None or dict(row) != identity:
+                        raise ValueError("Case instance identity changed")
+                    value["case_instance_id"] = identity["case_instance_id"]
+                identified.append(value)
+        return identified
+
+    def case_instance(self, case_instance_id: str) -> dict[str, Any]:
+        validate_case_instance_id(case_instance_id)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM case_instances WHERE case_instance_id=?", (case_instance_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(case_instance_id)
+        return dict(row)
+
     def delete(self, evaluation_id: str) -> None:
         with self.database.connect(write=True) as connection:
+            connection.execute("DELETE FROM case_instances WHERE evaluation_id=?", (evaluation_id,))
             connection.execute("DELETE FROM evaluations WHERE evaluation_id=?", (evaluation_id,))

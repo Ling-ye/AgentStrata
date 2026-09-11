@@ -131,6 +131,14 @@ def list_evaluations(
         raise_evaluation_service_error(exc)
 
 
+@router.get("/case-instances/{case_instance_id}")
+def get_case_instance(request: Request, case_instance_id: str):
+    try:
+        return get_evaluation_client(request).case_instance(case_instance_id)
+    except EvaluationServiceError as exc:
+        raise_evaluation_service_error(exc)
+
+
 @router.get("/evaluations/{evaluation_id}")
 def get_evaluation(request: Request, evaluation_id: str, include_bodies: bool = Query(default=True)):
     try:

@@ -407,7 +407,12 @@ def test_managed_candidate_bootstrap_and_database(tmp_path, dry_run):
         assert record["result"]["trials"][0]["outcome"] == ("skipped" if dry_run else "passed")
         assert record["code_source"]["sha256"]
         stored = application.result_store.get(record["evaluation_id"])
-        assert stored["result"] == {key: value for key, value in record["result"].items() if key != "execution_observation"}
+        projected = {key: value for key, value in record["result"].items() if key != "execution_observation"}
+        projected["trials"] = [{key: value for key, value in trial.items() if key != "case_instance_id"}
+                               for trial in projected["trials"]]
+        assert stored["result"] == projected
+        instance_id = record["result"]["trials"][0]["case_instance_id"]
+        assert application.case_instance(instance_id)["evaluation_id"] == record["evaluation_id"]
         if not dry_run:
             assert stored["observation"] == record["result"]["execution_observation"]
     finally:

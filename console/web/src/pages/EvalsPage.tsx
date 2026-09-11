@@ -36,6 +36,7 @@ import { asObject } from "../features/evals/trialModel";
 import { BenchmarkSnapshot } from "../features/evals/BenchmarkSnapshot";
 import EvaluationTrends from "../features/evals/EvaluationTrends";
 import { EvaluationResults } from "../features/evals/EvaluationResults";
+import { InstanceId } from "../features/evals/InstanceId";
 import { dateLabel, evaluationSuiteId, modelLabel, rateLabel, revisionLabel } from "../features/evals/insightsModel";
 
 const { Text } = Typography;
@@ -348,6 +349,7 @@ export default function EvalsPage({ visible = true }: Props) {
         {selectedRecord && (
           <div ref={detailTop} tabIndex={-1} className="eval-detail-content">
           <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <InstanceId id={selectedRecord.evaluation_id} label="测评实例 ID" />
             <Space wrap><Tag color={STATUS_COLORS[selectedRecord.status] ?? "gray"}>{selectedRecord.status}</Tag>
               <Text>{selectedRecord.bot_id} · {modelLabel(selectedRecord)}</Text><Text>{dateLabel(selectedRecord.started_at || selectedRecord.created_at)}</Text>
               <Tag>{revisionLabel(selectedRecord)}</Tag></Space>

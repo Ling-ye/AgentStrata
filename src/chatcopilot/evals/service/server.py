@@ -128,6 +128,8 @@ class EvaluationServiceRuntime:
                 _required_text(payload, "case_ref"),
                 **{key: payload[key] for key in ("trial_id", "target_id", "attempt") if key in payload},
             )
+        if operation == "evaluations.case_instance":
+            return self.application.case_instance(_required_text(payload, "case_instance_id"))
         if operation == "evaluations.rerun":
             return self.application.clone(
                 _required_text(payload, "source_evaluation_id"),

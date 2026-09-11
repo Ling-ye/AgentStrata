@@ -60,6 +60,45 @@ def test_source_previews_group_failed_repetitions_and_include_target():
     assert [item["target_id"] for item in preview["failures"]] == ["first", "second"]
 
 
+def test_case_instance_load_and_source_resolve_on_server_and_keep_original_attempt():
+    identifier = "case-" + "a" * 32
+    trial = {"trial_id": "trial-b-2", "case_id": "b", "case_ref": "suite:b", "target_id": "main", "attempt": 2, "outcome": "failed"}
+    client = Mock()
+    client.case_instance.return_value = {
+        "case_instance_id": identifier, "evaluation_id": "eval-source", "case_ref": "suite:b",
+        "target_id": "main", "attempt": 2, "trial_id": "trial-b-2", "trial": trial,
+    }
+    client.get.return_value = {
+        "status": "completed", "conditions": {"complete": True},
+        "request": {"kind": "suite"},
+        "result": {"trials": [trial], "targets": [{"target_id": "main", "executor": "agent_configured"}]},
+    }
+    evaluator = ServiceEvaluator(client)
+    preview = evaluator.load_instance(identifier)
+    assert not preview["blockers"] and "failures" not in preview
+    assert preview["case_instance"]["attempt"] == 2
+    source = {"trials": [trial], "repetitions": 3, "passed_cases": ["a"]}
+    evaluator.source = Mock(return_value=source)
+    resolved = evaluator.source_instance(identifier)
+    evaluator.source.assert_called_once_with("eval-source", "suite:b", "main")
+    assert resolved["case_instance_id"] == identifier and resolved["trial_id"] == "trial-b-2"
+    assert resolved["repetitions"] == 3 and resolved["passed_cases"] == ["a"]
+    client.case_instance.return_value["trial"] = {**trial, "outcome": "passed"}
+    assert evaluator.load_instance(identifier)["blockers"]
+    with pytest.raises(HarnessError, match="没有失败"):
+        evaluator.source_instance(identifier)
+    assert evaluator.source.call_count == 1
+
+
+def test_mismatched_case_instance_never_resolves_to_a_different_source():
+    client = Mock()
+    evaluator = ServiceEvaluator(client)
+    client.case_instance.return_value = {"case_instance_id": "case-" + "b" * 32}
+    with pytest.raises(HarnessError, match="不一致"):
+        evaluator.source_instance("case-" + "a" * 32)
+    client.get.assert_not_called()
+
+
 def test_task_selfcheck_is_persisted_and_never_dispatches_with_missing_evidence(
     tmp_path, monkeypatch
 ):

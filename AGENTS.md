@@ -81,9 +81,11 @@ BotSpec 负责配置解释，Application 的装配函数将配置投影为 Agent
   通过来源、验证和编程适配器协作，Evaluation 不反向依赖 Harness。测评数据库由
   Evaluation 服务校验并保存新增结果，历史文件不批量迁移；Console 组合查询两个模块，
   不跨库写表。修复入口、进度和历史只在并列的 AI Harness 页面展示，测评页和机器人
-  任务流不管理修复状态。Console 测评来源只接受绑定 Evaluation/Case/Target 的
-  `evalcase:` 完整引用，精确定位单个失败目标，不接受裸测评 ID 或提供失败列表选择；
-  测评结果页不增加引用入口。日常任务只读绑定实例的 Gateway 观测，独立准备并冻结本地
+  任务流不管理修复状态。Evaluation 为每条 Case 执行记录提供稳定的 `case_instance_id`，
+  绑定测评、Case、Target 与重复执行序号并维护定位索引；测评页可复制测评及 Case 实例
+  ID，不能发起修复或轮询 Harness。Console Harness 只提交 Case 实例 ID，由服务端
+  经 Evaluation 公开查询获取来源并复检失败状态；不恢复手工拼接引用或客户端指定
+  测评/Target。日常任务只读绑定实例的 Gateway 观测，独立准备并冻结本地
   复现测试；准备阶段产品只读，修复阶段测试只读。证据或本地复现不足时明确受阻。
   候选测评必须加载实际冻结源码，Case、评分与控制实现保持受信版本。
   worktree 目标及保护集验收通过才可接受候选，原始成绩不改写。新任务显式启用

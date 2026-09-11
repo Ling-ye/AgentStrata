@@ -238,6 +238,7 @@ class HarnessStore:
         clause = (
             "(?='' OR status=?) AND (?='' OR instr(lower(task_id || ' ' || "
             "COALESCE(json_extract(payload, '$.source.evaluation_id'),'') || ' ' || "
+            "COALESCE(json_extract(payload, '$.source.case_instance_id'),'') || ' ' || "
             "COALESCE(json_extract(payload, '$.source.run_id'),'')), lower(?))>0)"
         )
         args = (status, status, search, search)

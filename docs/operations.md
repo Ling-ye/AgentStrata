@@ -748,23 +748,25 @@ python -m chatcopilot.harness resume <repair-id>
 `--reasoning-effort` 和稳定 `--request-id`。继续使用原冻结代码和剩余预算；编程阶段
 中断不重放同一 Agent 回合，保留尝试记录。模型与工具调用可能产生 Provider 费用。
 
-在 Console 侧栏进入独立的「AI Harness 修复」，测评来源输入一个完整的单 Case 引用：
+在 Console 的「测评中心」打开一次测评，详情顶部可直接复制「测评实例 ID」。
+在「测试点结果」中找到失败记录，点击该行的「复制 Case 实例 ID」；无需展开原始
+JSON 或手工拼接标识。相同题目在不同测评、不同 Target、不同重复执行下各有独立
+的 `case-` 开头实例 ID。复制不可用时，页面提供可选中文本供手动复制。
 
-```text
-evalcase:<evaluation_id>/<case_ref>/<target_id>
-```
+进入「AI Harness 修复」，选择「测评 Case 实例」，将复制的 ID 粘贴到「Case 实例 ID」
+并点击「加载来源」。页面显示所属测评、Case、Target、第几次执行及结果，再设置
+参数启动修复。Harness 后端凭此 ID 查询原始记录；前端不能额外指定测评或 Target。
+测评 ID、题库 Case ID、旧 Trial ID 和手工 `evalcase:` 引用均不作为此输入。
+不存在、已删除、通过或跳过的实例，以及不符合现有条件的来源不能启动修复。
 
-三个字段分别按 URL 百分号编码，再用 `/` 连接。例如测评 `eval-example` 中
-`suite:case-b` 在 `agent-main` 目标下的引用是
-`evalcase:eval-example/suite%3Acase-b/agent-main`。字段取自原有测评结果；此引用是
-现有三个标识的组合，不是新生成的数据库 ID。测评结果页不提供新增的引用入口。
-点击「加载来源」后显示所属测评、Case、Target 和失败状态，再设置参数启动修复。
-页面不接受裸测评 ID、Case ID 或 Trial ID，也不提供失败 Case 下拉选择；目标不存在、
-没有失败结果或来源受阻时不能启动，不会自动替换为其他失败项。
+已有完整结果在读取时补齐定位索引，ID 刷新或服务重启后保持；原始成绩、证据和
+结果文件不改写，也不批量导入旧文件。缺失执行身份时显示「Case 实例 ID 未记录」。
+HTTP API 可通过 `GET /api/evals/case-instances/<case-instance-id>` 查询单个实例；
+`POST /api/harness/tasks` 的测评来源只提交 `case_instance_id` 及修复参数。
+现有 CLI 仍可显式提供 Evaluation、Case 和 Target 参数。
 
-同次测评中同一 Case / Target 的重复执行共用引用，修复沿用原重复次数；其他已通过
-Case 继续作为回归保护集，其他失败 Case 不要求一起修好。API 和 CLI 仍分别传入既有
-的 Evaluation、Case 和 Target 参数。先按原条件确认当前本地 HEAD 仍失败；未提交
+修复绑定被选中的失败实例，并沿用同 Case / Target 的原重复次数；其他已通过
+Case 继续作为回归保护集，其他失败 Case 不要求一起修好。先按原条件确认当前本地 HEAD 仍失败；未提交
 修改不进入基线，当前通过则标记「当前未复现」。
 仅支持具有完整定义快照、实际执行 AgentStrata 的隔离 Suite；Profile comparison、
 dry-run 与 direct-LLM 测评不进入修复流程。旧定义缺失时重新运行测评。

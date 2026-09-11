@@ -920,3 +920,12 @@ Console 通过绑定 Evaluation/Case/Target 的完整 `evalcase:` 引用直接�
 均不能启动；切换输入立即清除旧目标，忽略迟到响应。继续使用现有 API 字段、数据
 库和 worker，保留重复次数、回归保护集及机器人任务来源，测评结果页保持原样。
 引用格式和验收见 [Harness 规格](../specs/evaluation-case-harness/spec.md)。
+
+## 2026-09-12：测评 Case 实例 ID 与复制入口
+
+此前要求操作者手工组合测评、Case 和 Target，无法直接复制单条执行记录用于修复。
+现在 Evaluation 为每条 Case 执行生成稳定实例 ID 并保存定位索引，测评详情和结果
+表提供复制按钮。Harness 只接收实例 ID，由服务端查回来源并核验这次执行确实失败。
+不同测评、Target 和重复执行有不同 ID；已有结果读取时补齐索引，原始成绩和证据
+不改写。执行与修复状态仍分别归 Evaluation 与 Harness；测评页只提供标识复制。
+详细契约与验证见 [Harness 规格](../specs/evaluation-case-harness/spec.md)。

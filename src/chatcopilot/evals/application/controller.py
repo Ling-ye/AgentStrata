@@ -12,6 +12,7 @@ import logging
 import os
 import shutil
 import signal
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -903,6 +904,8 @@ class EvaluationApplication:
         }
         if include_result:
             response["request"] = request
+            trial_values = self._identify_trials(evaluation_id, trial_values)
+            result = {**result, "trials": trial_values}
             if result.get("config_snapshot"):
                 from chatcopilot.evals.conditions import evaluation_conditions
                 try:
@@ -966,6 +969,7 @@ class EvaluationApplication:
         trials = [t for t in trials if (trial_id is None or t.get("trial_id") == trial_id)
             and (target_id is None or t.get("target_id") == target_id)
             and (attempt is None or t.get("attempt") == attempt)]
+        trials = self._identify_trials(evaluation_id, trials)
         observation = _read_json(directory / "observation.json", max_bytes=1024 * 1024)
         if observation and observation.get("evaluation_id") != evaluation_id:
             raise ValueError("Evaluation observation identity mismatch")
@@ -981,6 +985,25 @@ class EvaluationApplication:
             "trials": trials,
             "execution_observation": observation,
         }
+
+    def _identify_trials(self, evaluation_id: str, trials: list[Any]) -> list[dict[str, Any]]:
+        try:
+            return self.result_store.identify_trials(evaluation_id, trials)
+        except (sqlite3.Error, OSError) as exc:
+            LOGGER.warning("Case instance index unavailable: %s (%s)", evaluation_id, type(exc).__name__)
+            return [{key: value for key, value in trial.items() if key != "case_instance_id"}
+                    for trial in trials if isinstance(trial, Mapping)]
+
+    def case_instance(self, case_instance_id: str) -> dict[str, Any]:
+        identity = self.result_store.case_instance(case_instance_id)
+        detail = self.case_detail(
+            identity["evaluation_id"], identity["case_ref"],
+            trial_id=identity["trial_id"], target_id=identity["target_id"], attempt=identity["attempt"],
+        )
+        trials = detail["trials"]
+        if len(trials) != 1 or trials[0].get("case_instance_id") != case_instance_id:
+            raise KeyError(case_instance_id)
+        return {**identity, "trial": trials[0]}
 
     def active_for_bot(self, bot_id: str) -> dict[str, Any] | None:
         with self._creation_guard(), self._lock:

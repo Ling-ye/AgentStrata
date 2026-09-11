@@ -78,9 +78,19 @@ class HarnessController:
             review_and_commit=review_and_commit,
         )
 
+    def start_case_instance(
+        self, case_instance_id: str, options: RepairOptions, *, request_id: str | None = None,
+        launch: bool = True, review_and_commit: bool = False,
+    ) -> dict[str, Any]:
+        return self._start(
+            lambda: self.evaluator.source_instance(case_instance_id),
+            {"case_instance_id": case_instance_id}, options,
+            request_id=request_id, launch=launch, review_and_commit=review_and_commit,
+        )
+
     def load_source(self, kind: str, source_id: str, bot_id: str = "") -> dict[str, Any]:
         if kind == "evaluation":
-            value = self.evaluator.load(source_id)
+            value = self.evaluator.load_instance(source_id)
         elif kind == "robot_task":
             value = self._task_source(bot_id, source_id)
             value = {
@@ -90,7 +100,7 @@ class HarnessController:
         else:
             raise ValueError("未知的修复来源类型")
         value["history"] = (
-            self._evaluation_history(source_id)
+            self._evaluation_history(value["evaluation_id"])
             if kind == "evaluation"
             else [self._public(task) for task in self.store.source_history(kind, source_id, bot_id)]
         )
@@ -154,6 +164,7 @@ class HarnessController:
                 "commit": commit,
                 "options": asdict(options),
                 "cases": source["case_ids"],
+                **({"case_instance_id": source["case_instance_id"]} if source.get("case_instance_id") else {}),
                 **({"review_and_commit": True} if review_and_commit else {}),
             }
         )
@@ -481,6 +492,9 @@ class HarnessController:
                 "run_id",
                 "revision",
                 "evaluation_id",
+                "case_instance_id",
+                "trial_id",
+                "attempt",
                 "bot_id",
                 "suite_id",
                 "case_id",

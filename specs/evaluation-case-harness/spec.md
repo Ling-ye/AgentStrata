@@ -9,7 +9,7 @@ created: 2026-09-11
 
 ## Summary
 
-控制台提供与测评中心并列的 AI Harness 修复页面，接收单 Case 引用或绑定实例的机器人
+控制台提供与测评中心并列的 AI Harness 修复页面，接收 Case 实例 ID 或绑定实例的机器人
 任务 ID，每次只处理一个问题。测评中心负责测评，机器人任务流负责运行观测；来源
 加载、自检、修复、复测和修复历史全部归 Harness，不在来源页面标记修复进度。
 从已完成测评的单个失败 Case 手动发起修复。先确认当前代码仍有问题，再在专属本地
@@ -31,16 +31,22 @@ worktree 中调用 Codex，使用原题单复测。目标通过且原有通过�
 当成机器人证据。Harness 不回写来源记录，观测缺失、过期、截断或运行未结束均明确
 记录自检受阻。历史和来源关联从 Harness 自己的数据库查询，不要求来源服务在线。
 
-Console 的测评来源只接收 `evalcase:<evaluation_id>/<case_ref>/<target_id>`，三个字段
-分别使用 URL 百分号编码后以 `/` 连接。引用绑定某次测评中的一个 Case/Target，
-同组重复执行共用引用，继续按原重复次数验证。前端解析后通过原来源接口加载测评，
-核对测评 ID 并精确匹配失败目标，展示固定目标摘要；不接受裸测评 ID、Case ID 或
-Trial ID，不提供批次选择或失败 Case 下拉框。格式错误、目标未匹配失败结果或来源
-受阻时不能启动，也不改选其他 Case。修改输入或来源类型立即清除旧预览与目标，
-通过请求代次校验忽略迟到响应。启动仍提交既有三个字段，由服务端重新校验来源。
-引用不进入数据库或 worker，不增加随机 ID、数据迁移或测评结果页的获取入口；
-机器人任务来源和 CLI 参数保持。其他已通过 Case 继续作为回归保护集，其他失败
-Case 不要求一并修好。
+每次测评沿用唯一 `evaluation_id`。每条 Case 执行记录新增服务端生成的
+`case_instance_id`（`case-` 加 32 位十六进制摘要），稳定绑定 Evaluation、Case、Target
+及重复次数序号；重读和服务重启不改变 ID，不同测评、目标和重复执行各有独立 ID。
+Evaluation 在自己的 SQLite 中维护轻量定位索引，详情读取时幂等补齐已有记录的索引，
+不改写原始结果、成绩、证据或冻结条件，也不批量导入历史文件。缺失执行身份的记录
+不能生成 ID；索引失败不能展示无法查回的 ID。删除测评同时删除索引。
+
+Evaluation 提供按实例 ID 查询的公开服务及 Console 只读 API，查询先解析索引，再
+核验原始来源和精确 Trial 绑定，索引不能代替当前来源证据。测评详情直接展示可复制
+的测评实例 ID，结果表与 Case 详情展示可复制的 Case 实例 ID，不增加修复控制或
+Harness 轮询。Console Harness 只输入并提交 Case 实例 ID；来源加载和启动都由后端
+经公开服务解析，前端不能指定所属测评、Case 或 Target。未知 ID、通过/跳过实例及
+受阻来源不启动。修复来源记录原始实例 ID 与 Trial，沿用同 Case/Target 的原重复
+次数和回归保护集合，其他失败 Case 不要求一并修好。修改输入或来源类型立即清除
+旧预览，通过请求代次校验忽略迟到响应。旧 `evalcase:` 输入与前端拆解逻辑删除，
+机器人任务来源及现有内部按三字段调用的修复端口保持。
 
 日常任务没有可靠的现成 Case 时，在独立准备阶段生成一个本地 pytest 复现测试和
 依据说明；准备 Agent 只能写测试草案目录，产品代码只读。测试必须产生真实断言失败，
@@ -107,9 +113,10 @@ Git hooks 不参与自动提交；不推送、建 PR、合入 main 或部署。
 - 重复请求、断线与恢复不产生重复活动任务或子测评，失败入库可幂等补写。
 - 不同失败特征不误合并，旧修复与新失败同时可见，失效补丁不自动复用。
 - CLI、Console、数据库和 worker 共享相同公开控制入口与状态语义。
-- 测评页不导入或轮询 Harness，也不增加引用入口；独立页面只通过完整引用定位单个失败 Case/Target，并展示全过程和历史。
-- 相同 Case 的不同测评和 Target 不混淆；裸 ID、非法引用、缺失或非失败目标不能启动，也不自动替换目标。
-- 输入修改与迟到响应交错时，预览和提交只对应当前引用；机器人任务来源继续可用。
+- 测评页直接复制测评实例 ID 和每条 Case 实例 ID，不导入或轮询 Harness；Harness 只凭 Case 实例 ID 查回来源并启动单 Case 修复。
+- 相同 Case 的不同测评、Target 和重复执行有不同实例 ID；刷新、重启和查询模式不改变 ID，原始结果不改写。
+- 未知、非法、已删除或非失败实例不能启动，也不自动替换目标；服务端拒绝客户端额外指定测评或 Target。
+- 输入修改与迟到响应交错时，预览和提交只对应当前实例 ID；机器人任务来源继续可用。
 - 机器人任务的测试准备与产品修复拥有不同写入范围，测试冻结后不得改变验收标准。
 - 操作者工作区与暂存状态保持；未启用的任务不提交，启用任务仅受控本地提交。
 - 审核拒绝或未知时记录原因并保留产物；批准后提交内容与受验收内容一致。
@@ -195,3 +202,21 @@ Case、断言或质量评分标准。QQ quick/full/security 预检及非 dry-run
   任务提交和测评页无 Harness 请求；结果与截图位于 `.cache/harness-case-reference/`。
 
 这些结果只证明本地代码与受控接口交互，未启动真实修复 worker、调用商业模型或部署。
+
+Case 实例 ID 与复制入口验证（2026-09-12，替代上述组合引用输入）：
+
+- `npm --prefix console/web test`：17 files、166 tests passed；生产构建通过。
+- `PYTHONPATH=src .venv/bin/python -m pytest tests/unit/test_evaluation_read_models.py tests/unit/test_harness_sources.py tests/unit/test_harness_console.py tests/unit/test_case_harness.py tests/unit/test_evaluation_service_protocol.py -q --basetemp=/tmp/agentstrata-case-instance-final`：78 passed。
+  覆盖旧结果索引、原始字节不变、不同测评/Target/重复次数、重启、并发、索引故障、删除、
+  精确来源复检，以及真实本地 UDS/HTTP 查询和 Harness 证据快照、请求幂等、通过项拒绝。
+- `PYTHONPATH=src .venv/bin/python -m pytest tests/unit/test_evaluation_console.py tests/unit/test_evaluation_execution_capture.py tests/integration/test_evaluation_service.py -q --basetemp=/tmp/agentstrata-case-instance-evaluation`：84 passed、2 warnings。
+- `PYTHONPATH=src .venv/bin/python scripts/check_repo.py fast --report-dir .cache/harness-case-instance/fast-final`：9 项通过；核心测试 1113 passed、2 warnings、34 subtests passed。
+- 新增身份、结果索引和 Harness 来源适配器的 mypy 定向检查通过。架构检查保持
+  Harness 仅依赖 Evaluation 公开服务，不读取其私有身份实现或数据库。
+- 生产前端配合本地 Evaluation 生成的受控数据，在 1360px / 390px 完成 12 组浏览器检查：
+  测评 ID 及 Case ID 实际剪贴板复制、拒绝剪贴板时手动复制、只提交 ID、原始引用与
+  通过项拒绝、迟到响应及机器人来源。无 pageerror、无页面横向溢出。
+  报告及截图保存在 `.cache/harness-case-instance/`。
+
+验证不调用商业模型，不运行真实修复 worker 或部署；实际创建的 Harness 记录位于
+测试临时目录，使用 `launch=False`。未暂存、提交或推送操作者工作区。

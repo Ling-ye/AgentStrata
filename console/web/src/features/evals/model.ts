@@ -333,6 +333,7 @@ export interface EvaluationCaseDescriptor extends EvaluationCaseSummary {
 }
 
 export interface EvaluationTrial {
+  case_instance_id?: string;
   input_preview?: string;
   body_available?: boolean;
   capture_state?: string;

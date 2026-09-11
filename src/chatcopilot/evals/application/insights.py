@@ -364,7 +364,7 @@ def trial_preview(trial: Mapping[str, Any]) -> dict[str, Any]:
     first = _mapping(turns[0]) if isinstance(turns, list) and turns else {}
     judging = _mapping(evidence.get("judge_evidence"))
     return {
-        **{key: trial.get(key) for key in ("trial_id", "case_id", "case_ref", "target_id", "attempt",
+        **{key: trial.get(key) for key in ("case_instance_id", "trial_id", "case_id", "case_ref", "target_id", "attempt",
             "outcome", "duration_seconds", "started_at", "stop_reason", "error", "score", "max_score", "passed")},
         "final_text": str(trial.get("final_text") or "")[:400],
         "input_preview": str(first.get("input") or evidence.get("input") or "")[:400],
