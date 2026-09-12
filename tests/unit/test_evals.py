@@ -38,7 +38,7 @@ class EvalRegistryTests(unittest.TestCase):
         self.assertEqual(
             {
                 "agentstrata-canary-self-update-v1",
-                "agentstrata-capabilities-v1",
+                "agentstrata-agent-tasks-v1",
                 "agentstrata-qq-message-flow-v1",
                 "gaia",
                 "bfcl",
@@ -46,7 +46,6 @@ class EvalRegistryTests(unittest.TestCase):
                 "swe-bench-verified",
                 "agentbench-fc",
                 "webarena",
-                "project-business-v1",
             },
             suite_ids,
         )
@@ -79,11 +78,11 @@ class EvalRegistryTests(unittest.TestCase):
         lines = output.getvalue().splitlines()
         self.assertIn(
             "agentstrata-canary-self-update-v1\tproduct\tplanned/unavailable\t"
-            "AgentStrata Canary 自更新 v1",
+            "自更新与恢复验证",
             lines,
         )
         self.assertIn(
-            "swe-bench-verified\tcode\texternal-data\tSWE-bench Verified",
+            "swe-bench-verified\tcode\texternal-data\tSWE-bench Verified · 代码修复",
             lines,
         )
 
@@ -126,7 +125,7 @@ class EvalRegistryTests(unittest.TestCase):
 
 class EvalRunnerTests(unittest.TestCase):
     def test_ifeval_judge_scores_supported_checks(self) -> None:
-        case = next(item for item in get_cases("ifeval") if item.case_id == "ifeval-json-format")
+        case = next(item for item in get_cases("ifeval") if item.case_id == "ifeval-fixed-1075")
 
         passed = ifeval.judge(case, '{"name":"baseline","value":1}')
         failed = ifeval.judge(case, "name: baseline")

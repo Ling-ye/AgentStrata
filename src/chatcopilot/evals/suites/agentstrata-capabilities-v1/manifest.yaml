@@ -5,7 +5,7 @@ name: Agent 行为回归
 subject_type: agent
 capability_tags: [指令遵循, 工具调用, 信息检索, 上下文与记忆, 文件操作, 多模态理解, 子 Agent 协作, 代码修复, 权限隔离, Skills]
 kind: product
-status: implemented
+status: retired
 value: 不经过 ACP 或平台链路，直接验证所选 Bot 的 Agent runtime、工具编排、人格表现和实时信息回答。
 recommendation: 手动按需运行 quick、full 或 security；启用对应来源后可用 custom 显式选择来源专用 Case；变更前后使用相同 Target fingerprint
   比较，多次重复运行才能用于可靠性结论。

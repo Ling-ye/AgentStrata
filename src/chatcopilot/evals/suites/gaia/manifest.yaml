@@ -16,9 +16,9 @@ requires_external_data: true
 prepare_supported: true
 official_url: https://huggingface.co/datasets/gaia-benchmark/GAIA
 setup_hint: >-
-  设置 CHATCOPILOT_GAIA_DATA_PATH 指向官方 JSON/JSONL，可选
-  CHATCOPILOT_GAIA_FILES_DIR/LEVELS/MAX_CASES/CASE_PROFILE；先用 Level 1
-  小样本固定 search_information/Tavily 工具环境后再比较分数。
+  先在 Hugging Face 的 GAIA 官方页同意访问条件，并在本机执行 hf auth login
+  或配置 CHATCOPILOT_HF_TOKEN，再点击“准备官方数据”；自动下载 validation
+  题目与附件并识别缓存。自备数据可使用 CHATCOPILOT_GAIA_DATA_PATH。
 options:
   - name: dry_run
     type: boolean

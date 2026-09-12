@@ -85,6 +85,10 @@ def prepare_official_data(suite_id: str) -> dict[str, Any]:
         return prepare_bfcl_official_data()
     if normalized == "ifeval":
         return prepare_ifeval_official_data()
+    if normalized == "swe-bench-verified":
+        from chatcopilot.evals.benchmark_data import prepare_swe_data
+
+        return {"suite_id": normalized, **prepare_swe_data()}
     raise ValueError(f"{normalized} does not support official data preparation")
 
 
@@ -93,6 +97,12 @@ def suite_data_status(suite_id: str) -> dict[str, Any]:
     if normalized in {"swe-bench-verified", "agentbench-fc"}:
         key = "CHATCOPILOT_SWEBENCH_DATA_PATH" if normalized == "swe-bench-verified" else "CHATCOPILOT_AGENTBENCH_DATA_PATH"
         configured = os.environ.get(key, "").strip()
+        if not configured and normalized == "swe-bench-verified":
+            from chatcopilot.evals.benchmark_data import swe_data_path
+
+            cached = swe_data_path()
+            if cached:
+                return {"source": "official_cache", "cache_path": str(cached), "uses_smoke": False}
         return {"source": "configured" if configured else "unavailable", "cache_path": configured, "uses_smoke": False}
     if normalized == "gaia":
         return _gaia_data_status()
@@ -111,7 +121,7 @@ def suite_data_status(suite_id: str) -> dict[str, Any]:
         cache = ifeval_cache_path()
         if has_ifeval_official_data(cache):
             return {"source": "official_cache", "cache_path": str(cache), "uses_smoke": False}
-        return {"source": "builtin_smoke", "cache_path": str(cache), "uses_smoke": True}
+        return {"source": "fixed_official_subset", "cache_path": str(cache), "uses_smoke": False}
     return {"source": "", "cache_path": "", "uses_smoke": False}
 
 

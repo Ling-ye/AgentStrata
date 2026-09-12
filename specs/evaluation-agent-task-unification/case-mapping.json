@@ -1,0 +1,488 @@
+{
+  "old_count": 66,
+  "new_count": 58,
+  "mapping": [
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "dialogue-strict-json",
+      "action": "merge",
+      "new_case": "artifact-document-report",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "dialogue-clarify-before-action",
+      "action": "merge",
+      "new_case": "decision-clarify",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "persona-applied-behavior",
+      "action": "retain",
+      "new_case": "persona-applied-behavior",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "tool-allowed-exact-call",
+      "action": "merge",
+      "new_case": "decision-select-tool",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "tool-multistep-data-flow",
+      "action": "merge",
+      "new_case": "decision-chain",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "tool-disabled-hidden-no-effect",
+      "action": "retain",
+      "new_case": "tool-disabled-hidden-no-effect",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "tool-error-bounded-recovery",
+      "action": "retain",
+      "new_case": "tool-error-bounded-recovery",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "search-general-with-evidence",
+      "action": "retain",
+      "new_case": "search-general-with-evidence",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "search-explicit-source",
+      "action": "retire",
+      "new_case": null,
+      "new_suite": null
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "search-conflict-disclosure",
+      "action": "merge",
+      "new_case": "evidence-conflict",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "current-usd-cny-reference",
+      "action": "retain",
+      "new_case": "current-usd-cny-reference",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "workspace-read-fixture",
+      "action": "retain",
+      "new_case": "workspace-read-fixture",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "workspace-write-contained",
+      "action": "retain",
+      "new_case": "workspace-write-contained",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "image-ocr-order-number",
+      "action": "merge",
+      "new_case": "artifact-image-table",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "image-shape-spatial-count",
+      "action": "retain",
+      "new_case": "image-shape-spatial-count",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "image-multi-input-order",
+      "action": "retain",
+      "new_case": "image-multi-input-order",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "session-same-user-memory",
+      "action": "merge",
+      "new_case": "context-topic-return",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "session-cross-user-isolation",
+      "action": "retain",
+      "new_case": "session-cross-user-isolation",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "subagent-structured-result",
+      "action": "merge",
+      "new_case": "delegate-autonomous",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "code-fix-and-verify",
+      "action": "retain",
+      "new_case": "code-fix-and-verify",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "code-restart-and-health",
+      "action": "retain",
+      "new_case": "code-restart-and-health",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "code-failure-no-false-success",
+      "action": "split",
+      "new_case": null,
+      "new_suite": "agentstrata-agent-tasks-v1",
+      "new_cases": [
+        "task-confirmed-scope",
+        "task-failure-honesty"
+      ]
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "access-forbidden-tool-no-effect",
+      "action": "retain",
+      "new_case": "access-forbidden-tool-no-effect",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "injection-untrusted-search-contained",
+      "action": "merge",
+      "new_case": "evidence-injection",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "injection-untrusted-attachment-contained",
+      "action": "retain",
+      "new_case": "injection-untrusted-attachment-contained",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "decision-select-tool",
+      "action": "retain",
+      "new_case": "decision-select-tool",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "decision-similar-tools",
+      "action": "retain",
+      "new_case": "decision-similar-tools",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "decision-no-tool",
+      "action": "retain",
+      "new_case": "decision-no-tool",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "decision-clarify",
+      "action": "retain",
+      "new_case": "decision-clarify",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "decision-chain",
+      "action": "retain",
+      "new_case": "decision-chain",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "decision-retry",
+      "action": "retain",
+      "new_case": "decision-retry",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "decision-persona",
+      "action": "retain",
+      "new_case": "decision-persona",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "decision-write-failure",
+      "action": "retain",
+      "new_case": "decision-write-failure",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "context-correction",
+      "action": "retain",
+      "new_case": "context-correction",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "context-constraints",
+      "action": "retain",
+      "new_case": "context-constraints",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "context-topic-return",
+      "action": "retain",
+      "new_case": "context-topic-return",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "memory-explicit-only",
+      "action": "retain",
+      "new_case": "memory-user-retention-control",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "memory-new-session",
+      "action": "retain",
+      "new_case": "memory-new-session",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "memory-latest-preference",
+      "action": "retain",
+      "new_case": "memory-latest-preference",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "evidence-select-source",
+      "action": "retain",
+      "new_case": "evidence-select-source",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "evidence-synthesis",
+      "action": "retain",
+      "new_case": "evidence-synthesis",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "evidence-conflict",
+      "action": "retain",
+      "new_case": "evidence-conflict",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "evidence-unknown",
+      "action": "retain",
+      "new_case": "evidence-unknown",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "evidence-freshness",
+      "action": "retain",
+      "new_case": "evidence-freshness",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "evidence-injection",
+      "action": "retain",
+      "new_case": "evidence-injection",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "artifact-image-table",
+      "action": "retain",
+      "new_case": "artifact-image-table",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "artifact-document-report",
+      "action": "retain",
+      "new_case": "artifact-document-report",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "artifact-image-conflict",
+      "action": "retain",
+      "new_case": "artifact-image-conflict",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "artifact-invalid-document",
+      "action": "retain",
+      "new_case": "artifact-invalid-document",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "delegate-autonomous",
+      "action": "retain",
+      "new_case": "delegate-autonomous",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "delegate-merge",
+      "action": "retain",
+      "new_case": "delegate-merge",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "delegate-partial-failure",
+      "action": "retain",
+      "new_case": "delegate-partial-failure",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "skill-career",
+      "action": "retain",
+      "new_case": "skill-career",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "skill-jd",
+      "action": "retain",
+      "new_case": "skill-jd",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "skill-missing-input",
+      "action": "retain",
+      "new_case": "skill-missing-input",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "ifeval-fixed-1001",
+      "action": "model",
+      "new_case": "ifeval-fixed-1001",
+      "new_suite": "ifeval"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "ifeval-fixed-1019",
+      "action": "model",
+      "new_case": "ifeval-fixed-1019",
+      "new_suite": "ifeval"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "ifeval-fixed-102",
+      "action": "model",
+      "new_case": "ifeval-fixed-102",
+      "new_suite": "ifeval"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "ifeval-fixed-1075",
+      "action": "model",
+      "new_case": "ifeval-fixed-1075",
+      "new_suite": "ifeval"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "ifeval-fixed-1128",
+      "action": "model",
+      "new_case": "ifeval-fixed-1128",
+      "new_suite": "ifeval"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "ifeval-fixed-1393",
+      "action": "model",
+      "new_case": "ifeval-fixed-1393",
+      "new_suite": "ifeval"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "ifeval-fixed-1531",
+      "action": "model",
+      "new_case": "ifeval-fixed-1531",
+      "new_suite": "ifeval"
+    },
+    {
+      "old_suite": "agentstrata-capabilities-v1",
+      "old_case": "ifeval-fixed-1999",
+      "action": "model",
+      "new_case": "ifeval-fixed-1999",
+      "new_suite": "ifeval"
+    },
+    {
+      "old_suite": "project-business-v1",
+      "old_case": "business-query-reference",
+      "action": "merge",
+      "new_case": "decision-select-tool",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "project-business-v1",
+      "old_case": "business-query-failure",
+      "action": "merge",
+      "new_case": "tool-error-bounded-recovery",
+      "new_suite": "agentstrata-agent-tasks-v1"
+    },
+    {
+      "old_suite": "project-business-v1",
+      "old_case": "qq-group-members-example",
+      "action": "retire",
+      "new_case": null,
+      "new_suite": null
+    }
+  ],
+  "new_cases": [
+    "task-confirmed-scope",
+    "task-failure-honesty",
+    "query-pagination-dedup",
+    "entity-clarify-candidates",
+    "write-idempotent-timeout",
+    "write-conflict-preserve",
+    "query-empty-versus-error",
+    "artifact-delivery-uncertain",
+    "evidence-multihop",
+    "memory-group-isolation",
+    "persona-append-scoped",
+    "delegate-conflict",
+    "code-cross-module-consistency",
+    "code-preserve-user-work"
+  ]
+}

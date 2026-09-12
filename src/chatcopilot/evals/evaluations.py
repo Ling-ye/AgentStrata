@@ -2322,13 +2322,13 @@ def _validated_capability_definitions(
             raise ValueError(
                 f"selected product Case has no packaged definition: {case.case_id}"
             ) from exc
-        validate_capability_definition(definition)
         case_plugin, case_driver = _case_plugin_driver(manifest, case)
         if (case_plugin, case_driver) != (definition.plugin_id, definition.driver_id):
             raise ValueError(
                 "selected product Case plugin/driver differs from packaged definition: "
                 f"{case.case_id}"
             )
+        validate_capability_definition(definition)
     return definitions
 
 
@@ -2503,6 +2503,13 @@ def _suite_case_preflight(
                 missing.extend(
                     f"tool:{value}" for value in sorted(required_tools - available_case_tools)
                 )
+        if plugin_id == "agent-tasks" and definition.get("scenario_id") == "live-search" and "web" not in _configured_search_sources(runtime):
+            missing.append("search_source:web")
+        if plugin_id == "agent-tasks" and definition.get("scenario_id") == "skills":
+            from chatcopilot.evals.agent_tasks.scenes import SKILLS
+            skill = SKILLS[definition["scenario_params"]["mode"]]
+            if skill not in {s.id for s in runtime.skills}:
+                missing.append(f"skill:{skill}")
         env_keys = tuple(str(value) for value in requirements.get("env_keys", ()))
         missing.extend(f"env:{key}" for key in env_keys if not str(os.environ.get(key, "")).strip())
         if case.case_id == "subagent-structured-result":

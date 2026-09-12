@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { normalizeTrial } from "./evaluationApi";
 import { instructionChecks, instructionLabel, trialSource } from "./trialModel";
 import type { EvaluationRecord, EvaluationTrial } from "./model";
 
@@ -19,4 +20,10 @@ describe("frozen evaluation provenance", () => {
     expect(instructionChecks(trial).map(c => c.passed)).toEqual([false, true]);
     expect(instructionLabel("punctuation:no_comma")).toBe("不使用逗号");
   });
+});
+
+
+it("reads direct model instruction results without replacing strict failures", () => {
+  const row = normalizeTrial({ evidence: { instructions: [{ id: "keywords:frequency", passed: false, loose_passed: true, parameters: { frequency: 2 } }] } });
+  expect(instructionChecks(row)[0]).toMatchObject({ passed: false, loose_passed: true });
 });

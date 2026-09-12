@@ -1123,6 +1123,9 @@ def _passing_observation(case: EvalCaseDefinition) -> TrialObservation:
 
 def test_registry_covers_every_packaged_verifier_id() -> None:
     declared = {assertion.assertion_id for case in _cases() for assertion in case.assertions}
+    from chatcopilot.evals.manifest import load_case_definitions
+    from chatcopilot.evals.registry import get_manifest
+    declared.update(a.assertion_id for c in load_case_definitions(get_manifest("agentstrata-agent-tasks-v1")) for a in c.assertions)
     assert declared == set(TRUSTED_CAPABILITY_VERIFIERS)
 
 

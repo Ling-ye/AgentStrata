@@ -21,16 +21,11 @@ export default function EvaluationTrends({ initialBot, bots, suites, visible, on
   const [customTo, setCustomTo] = useState("");
   const [suite, setSuite] = useState("");
   useEffect(() => { if (!suite && suites.length) setSuite(suites[0].suite_id); }, [suite, suites]);
-  const selectedSuite = suites.find(item => item.suite_id === suite);
-  const llmPrimary = selectedSuite?.purpose === "business_task";
-  const durationTitle = "累计执行耗时";
-  const metricOptions = [...(llmPrimary ? [] : [{ value: "pass_rate", label: "原生 / 工程通过率" }]), { value: "quality", label: llmPrimary ? "LLM 判定通过率" : "独立 LLM 质量分" }, { value: "duration", label: durationTitle }];
   const [models, setModels] = useState<string[]>([]);
   const [scales, setScales] = useState<string[]>([]);
   const [cases, setCases] = useState<string[]>([]);
   const [dimensions, setDimensions] = useState<SplitDimension[]>(["agent", "model"]);
   const [metric, setMetric] = useState<TrendMetric>("pass_rate");
-  useEffect(() => { if (llmPrimary && metric === "pass_rate") setMetric("quality"); }, [llmPrimary, metric]);
   const [focusedKey, setFocusedKey] = useState("");
   const [view, setView] = useState("comparable");
   const botIds = selectedBots ?? (initialBot ? [initialBot] : []);
@@ -47,11 +42,21 @@ export default function EvaluationTrends({ initialBot, bots, suites, visible, on
     enabled: visible && validRange,
     staleTime: 30000,
   });
-  const records = useMemo(() => {
+  const loadedRecords = useMemo(() => {
     const unique = new Map<string, EvaluationRecord>();
     for (const page of query.data?.pages ?? []) for (const record of page.slice(0, 50)) unique.set(record.evaluation_id, record);
-    return [...unique.values()].filter(record => evaluationSuiteId(record) === suite);
-  }, [query.data, suite]);
+    return [...unique.values()];
+  }, [query.data]);
+  const records = useMemo(() => loadedRecords.filter(record => evaluationSuiteId(record) === suite), [loadedRecords, suite]);
+  const llmPrimary = records.length > 0 && records.every(record => asObject(asObject(record.benchmark).scoring).primary === "llm_judge");
+  const durationTitle = "累计执行耗时";
+  const metricOptions = [...(llmPrimary ? [] : [{ value: "pass_rate", label: "原生 / 工程通过率" }]), { value: "quality", label: llmPrimary ? "LLM 判定通过率" : "独立 LLM 质量分" }, { value: "duration", label: "累计执行耗时" }];
+  useEffect(() => { if (llmPrimary && metric === "pass_rate") setMetric("quality"); }, [llmPrimary, metric]);
+  const suiteOptions = new Map(suites.map(item => [item.suite_id, item.name]));
+  for (const record of loadedRecords) {
+    const id = evaluationSuiteId(record);
+    if (id && !suiteOptions.has(id)) suiteOptions.set(id, `${typeof record.benchmark?.name === "string" ? record.benchmark.name : id}（历史只读）`);
+  }
   const allPoints = useMemo(() => buildTrendPoints(records), [records]);
   const modelOptions = [...new Set(allPoints.map(pointModel))];
   const scaleOptions = [...new Set(allPoints.map(pointScale))];
@@ -87,7 +92,7 @@ export default function EvaluationTrends({ initialBot, bots, suites, visible, on
         { value: 0, label: "全部时间" }, { value: -1, label: "自定义" },
       ]} /></div>
       <div className="eval-trend-filter">机器人<Select aria-label="趋势机器人" mode="multiple" value={botIds} onChange={setSelectedBots} allowClear placeholder="全部机器人" options={options(bots)} /></div>
-      <div className="eval-trend-filter">测评集<Select aria-label="趋势测评集" value={suite} onChange={setSuite} options={suites.map(item => ({ value: item.suite_id, label: item.name }))} /></div>
+      <div className="eval-trend-filter">测评集<Select aria-label="趋势测评集" value={suite} onChange={setSuite} options={[...suiteOptions].map(([value, label]) => ({ value, label }))} /></div>
       <div className="eval-trend-filter">模型<Select aria-label="趋势模型" mode="multiple" value={models} onChange={setModels} options={options(modelOptions)} allowClear placeholder="全部模型" /></div>
       <div className="eval-trend-filter">测试规模<Select aria-label="趋势测试规模" mode="multiple" value={scales} onChange={setScales} options={options(scaleOptions)} allowClear placeholder="全部规模" /></div>
       <div className="eval-trend-filter">测试点<Select aria-label="趋势测试点" mode="multiple" value={cases} onChange={setCases} options={options(caseOptions)} allowClear placeholder="全部测试点" /></div>

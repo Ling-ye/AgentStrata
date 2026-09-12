@@ -36,7 +36,10 @@ SEND_FILES_TO_USER = next(tool for tool in WORKSPACE_TOOLS if tool.name == "send
 
 
 def _case(case_id: str) -> EvalCase:
-    return next(item for item in get_cases(SUITE_ID) if item.case_id == case_id)
+    from chatcopilot.evals.plugins import get_evaluation_plugin, CaseLoadContext
+    manifest = get_manifest(SUITE_ID)
+    cases = get_evaluation_plugin(manifest.plugin_id).load_cases(CaseLoadContext(manifest))
+    return next(item for item in cases if item.case_id == case_id)
 
 
 def _definition(case_id: str):

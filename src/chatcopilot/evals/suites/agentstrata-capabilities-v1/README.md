@@ -1,3 +1,7 @@
+# 已退役测评集
+
+本套件退出可选目录和正式执行，历史只读。当前入口为 Agent 任务能力（agentstrata-agent-tasks-v1）。以下资源保留用于原有工程合同验证，不是可执行兼容入口。
+
 # AgentStrata capabilities v1
 
 This packaged Suite is a manually selected product-capability evaluation. It

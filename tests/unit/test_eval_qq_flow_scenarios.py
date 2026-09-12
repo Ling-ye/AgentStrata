@@ -61,8 +61,8 @@ def test_agent_preflight_still_requires_its_quality_engine(monkeypatch):
 
     monkeypatch.setattr(deepeval_engine, "preflight", required)
     result = validate_evaluation({
-        "kind": "suite", "suite": "agentstrata-capabilities-v1", "bot": str(BOT_PATH),
-        "preset": "custom", "case_ids": ["dialogue-strict-json"], "dry_run": False,
+        "kind": "suite", "suite": "agentstrata-agent-tasks-v1", "bot": str(BOT_PATH),
+        "preset": "custom", "case_ids": ["decision-no-tool"], "dry_run": False,
     })
     assert not result["ready"]
     assert any(check["code"] == "deepeval" and not check["ok"] for check in result["checks"])

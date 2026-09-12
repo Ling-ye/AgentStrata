@@ -11,4 +11,9 @@ fastapi>=0.110
 uvicorn>=0.29
 deepeval==4.2.2
 langdetect==1.0.9
+absl-py>=2,<3
+immutabledict>=4,<5
+nltk>=3.9.2,<4
 swebench==5.0.2
+huggingface-hub>=1,<2
+pyarrow>=18

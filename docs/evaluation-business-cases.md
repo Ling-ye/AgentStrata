@@ -1,3 +1,15 @@
+# 文件维护的 Agent 任务题
+
+当前项目测评使用 `agentstrata-agent-tasks-v1`：执行事实主判与必要语义判定。旧 `project-business-v1`、`agentstrata-capabilities-v1` 已退出可选目录，以下历史文档仅用于理解旧数据格式与工程合同测试，不是新增题入口。
+
+新题在 [当前题库](../src/chatcopilot/evals/suites/agentstrata-agent-tasks-v1/README.md) 的 cases.yaml 中声明 scenario_id、参数、用户回合、资源、可信断言和必要语义。场景实现静态注册；普通参数变化不新增 Case ID 分支。修改数据后更新 manifest 中的 SHA-256，且必须验证正确、错误、缺证据轨迹。不要把期望、操作步骤或秘密写进 Agent 输入。
+
+迁移与评分规则见 [统一规格](../specs/evaluation-agent-task-unification/spec.md)。QQ 成员查询样例仍只属于未接入的教学示例，不代表真实 QQ 查询能力。
+
+---
+
+## 旧格式参考（只读）
+
 # 文件维护的业务测评题
 
 工具组织考试，测评集规定题目和条件，评分器负责判卷。Console 按「测评集 → Case」浏览，业务工具是筛选条件；DeepEval 4.2.2 是执行指标的框架，不是题库分类。

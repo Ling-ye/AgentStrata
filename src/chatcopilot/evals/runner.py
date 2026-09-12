@@ -60,6 +60,8 @@ def run_suite(
 
     standard = get_standard(suite_id)
     manifest = get_manifest(standard.suite_id)
+    if manifest.status == "retired":
+        raise ValueError("评测集已退出，历史只读；请新建 Agent 任务能力测评。")
     plugin = get_evaluation_plugin(manifest.plugin_id)
     started = time.monotonic()
     started_at = datetime.now(timezone.utc).isoformat()
@@ -150,7 +152,7 @@ def run_suite(
                 options=plugin_options,
             )
         )
-    elif any(isinstance(case.metadata.get("case_definition"), dict) for case in cases):
+    elif plugin.execute_trial is None and any(isinstance(case.metadata.get("case_definition"), dict) for case in cases):
         if standard.requires_bot and not bot:
             raise ValueError(f"{standard.name} 需要 --bot 指定 BotSpec。")
         case_results = tuple(
@@ -321,7 +323,8 @@ def _run_direct_llm_cases(
                         suite_id=suite_id,
                         status="error",
                         final_text=final_text,
-                        metadata={"input": case.input, "tool_calls": tool_calls},
+                        metadata={"input": case.input, "tool_calls": tool_calls, "error_stage": observed.get("phase", "execution"),
+                                  "error_code": "judge_error" if observed.get("phase") == "judging" else "execution_error"},
                         duration_seconds=time.monotonic() - started,
                         started_at=case_started_at,
                         finished_at=_utc_now(),

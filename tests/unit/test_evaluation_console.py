@@ -65,7 +65,7 @@ def _ready_validator(
                     "preset": request.get("preset", "quick"),
                     "targets": ["codex", "native"],
                     "case_refs": [
-                        "ifeval:ifeval-json-format",
+                        "ifeval:ifeval-fixed-1075",
                         "bfcl:bfcl-simple-weather",
                     ],
                     "repetitions": 1,
@@ -277,7 +277,7 @@ def _persist_evaluation(
                 "profile_id": "agent-comparison-mvp",
                 "preset": "quick",
                 "target_ids": ["codex", "native"],
-                "case_refs": ["ifeval:ifeval-json-format"],
+                "case_refs": ["ifeval:ifeval-fixed-1075"],
                 "repetitions": 1,
                 "max_wall_seconds": 900,
                 "seed": 7,
@@ -287,7 +287,7 @@ def _persist_evaluation(
         request.update(
             {
                 "suite_id": "ifeval",
-                "case_ids": ["ifeval-json-format"],
+                "case_ids": ["ifeval-fixed-1075"],
                 "dry_run": False,
                 "llm_judge": False,
             }
@@ -405,7 +405,7 @@ def test_quick_create_uses_server_defaults_without_client_overrides(
             "kind": "suite",
             "bot_id": "lingye-copilot-qq",
             "suite_id": "ifeval",
-            "case_ids": ["ifeval-json-format"],
+            "case_ids": ["ifeval-fixed-1075"],
             "profile_id": "agent-comparison-mvp",
         },
     ],
@@ -505,7 +505,7 @@ def test_application_rejects_non_boolean_external_write_confirmation_before_crea
             bot_id=_instance().instance_id,
             request={
                 "kind": "suite",
-                "suite_id": "agentstrata-capabilities-v1",
+                "suite_id": "agentstrata-agent-tasks-v1",
                 "preset": "full",
                 "case_ids": [],
                 "repetitions": 1,
@@ -534,7 +534,7 @@ def test_named_suite_preset_keeps_resolved_cases_out_of_core_request(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "evaluations"
-    selected_cases = ["dialogue-strict-json", "tool-allowed-exact-call"]
+    selected_cases = ["decision-no-tool", "tool-allowed-exact-call"]
 
     def validator(
         _bot: BotInstance,
@@ -566,7 +566,7 @@ def test_named_suite_preset_keeps_resolved_cases_out_of_core_request(
             bot_id=_instance().instance_id,
             request={
                 "kind": "suite",
-                "suite_id": "agentstrata-capabilities-v1",
+                "suite_id": "agentstrata-agent-tasks-v1",
                 "case_ids": [],
                 "preset": "quick",
             },
@@ -762,7 +762,7 @@ def test_lifecycle_status_and_failed_outcome_are_independent(
         trials=[
             {
                 "trial_id": "trial-1",
-                "case_ref": "ifeval:ifeval-json-format",
+                "case_ref": "ifeval:ifeval-fixed-1075",
                 "target_id": "native",
                 "target_fingerprint": "native-v1",
                 "outcome": "failed",
@@ -788,9 +788,9 @@ def test_coverage_is_partitioned_by_target_fingerprint(
             {
                 "trial_id": "trial-codex",
                 "attempt": 1,
-                "case_ref": "ifeval:ifeval-json-format",
+                "case_ref": "ifeval:ifeval-fixed-1075",
                 "suite_id": "ifeval",
-                "case_id": "ifeval-json-format",
+                "case_id": "ifeval-fixed-1075",
                 "target_id": "codex",
                 "target_fingerprint": "codex-model-a-high",
                 "outcome": "passed",
@@ -800,9 +800,9 @@ def test_coverage_is_partitioned_by_target_fingerprint(
             {
                 "trial_id": "trial-native",
                 "attempt": 1,
-                "case_ref": "ifeval:ifeval-json-format",
+                "case_ref": "ifeval:ifeval-fixed-1075",
                 "suite_id": "ifeval",
-                "case_id": "ifeval-json-format",
+                "case_id": "ifeval-fixed-1075",
                 "target_id": "native",
                 "target_fingerprint": "native-model-a-high",
                 "outcome": "failed",
@@ -1038,7 +1038,7 @@ def test_result_artifact_symlink_is_rejected_before_read_or_export(
         trials=[
             {
                 "trial_id": "trial-1",
-                "case_ref": "ifeval:ifeval-json-format",
+                "case_ref": "ifeval:ifeval-fixed-1075",
                 "target_id": "native",
                 "target_fingerprint": "native-v1",
                 "outcome": "passed",
@@ -1056,7 +1056,7 @@ def test_result_artifact_symlink_is_rejected_before_read_or_export(
         lambda: manager.get(evaluation_id),
         lambda: manager.case_detail(
             evaluation_id,
-            "ifeval:ifeval-json-format",
+            "ifeval:ifeval-fixed-1075",
         ),
         lambda: manager.report_path(evaluation_id, "json"),
         lambda: next(manager.follow(evaluation_id)),
@@ -1280,8 +1280,8 @@ def test_application_recovers_checkpoint_without_rewriting_core_result(
         trials=[
             {
                 "trial_id": "trial-1",
-                "case_ref": "ifeval:ifeval-json-format",
-                "case_id": "ifeval-json-format",
+                "case_ref": "ifeval:ifeval-fixed-1075",
+                "case_id": "ifeval-fixed-1075",
                 "target_id": "native",
                 "target_fingerprint": "native-v1",
                 "outcome": "passed",
@@ -1609,7 +1609,7 @@ def test_stopped_worker_restores_terminal_result_without_overwriting_it(
         trials=[
             {
                 "trial_id": "trial-1",
-                "case_ref": "ifeval:ifeval-json-format",
+                "case_ref": "ifeval:ifeval-fixed-1075",
                 "target_id": "native",
                 "target_fingerprint": "native-v1",
                 "outcome": "passed",
@@ -1873,9 +1873,9 @@ def test_suite_rerun_does_not_reuse_legacy_external_write_confirmation() -> None
         {
             "kind": "suite",
             "bot_id": "lingye-copilot-qq",
-            "suite_id": "agentstrata-capabilities-v1",
+            "suite_id": "agentstrata-agent-tasks-v1",
             "preset": "full",
-            "case_ids": ["dialogue-strict-json", "tool-allowed-exact-call"],
+            "case_ids": ["decision-no-tool", "tool-allowed-exact-call"],
             "confirm_external_write": True,
         }
     )
@@ -2415,8 +2415,8 @@ def test_case_stream_export_and_delete_share_one_evaluation_resource(
         trials=[
             {
                 "trial_id": "trial-1",
-                "case_ref": "ifeval:ifeval-json-format",
-                "case_id": "ifeval-json-format",
+                "case_ref": "ifeval:ifeval-fixed-1075",
+                "case_id": "ifeval-fixed-1075",
                 "target_id": "native",
                 "target_fingerprint": "native-v1",
                 "outcome": "passed",
@@ -2434,7 +2434,7 @@ def test_case_stream_export_and_delete_share_one_evaluation_resource(
         json.dumps(
             {
                 "event": "trial_completed",
-                "case_ref": "ifeval:ifeval-json-format",
+                "case_ref": "ifeval:ifeval-fixed-1075",
             }
         )
         + "\n",
@@ -2447,7 +2447,7 @@ def test_case_stream_export_and_delete_share_one_evaluation_resource(
     manager = EvaluationApplication(root)
     with _use_manager(manager):
         client = TestClient(app)
-        case = client.get(f"/api/evals/evaluations/{evaluation_id}/cases/ifeval:ifeval-json-format")
+        case = client.get(f"/api/evals/evaluations/{evaluation_id}/cases/ifeval:ifeval-fixed-1075")
         stream = client.get(f"/api/evals/evaluations/{evaluation_id}/stream")
         export = client.get(f"/api/evals/evaluations/{evaluation_id}/export/markdown")
         removed = client.delete(f"/api/evals/evaluations/{evaluation_id}")

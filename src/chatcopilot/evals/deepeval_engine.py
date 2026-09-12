@@ -284,9 +284,9 @@ def score(
         turns = [item for item in observation.evidence if item.get("kind") == "agent_turn_result"]
         actual_input = str(turns[-1].get("input", "")) if turns else ""
         quality_context = [json.dumps(
-            {key: item.get(key) for key in ("source", "case_id", "snapshots", "retrieved", "report", "report_sha256")},
+            {key: item.get(key) for key in ("source", "case_id", "snapshots", "retrieved", "report", "report_sha256", "scenario_id", "state")},
             ensure_ascii=False,
-        ) for item in observation.evidence if item.get("kind") == "business_snapshot"]
+        ) for item in observation.evidence if item.get("kind") in {"business_snapshot", "task_snapshot"}]
         test_case = LLMTestCase(
             input=actual_input,
             actual_output=observation.final_text,
@@ -331,7 +331,7 @@ def score(
 
         try:
             run(test_case, FactsMetric(), "deterministic")
-            if policy["enabled"]:
+            if policy["enabled"] and (facts.passed or case.plugin_id != "agent-tasks"):
                 model = model if model is not None else _model(config)  # type: ignore[arg-type]
                 conversations = {str(turn.get("conversation_id", "")) for turn in turns}
                 if len(turns) > 1 and len(conversations) == 1:
@@ -349,6 +349,7 @@ def score(
                     )
                     conversation_metric = ConversationalGEval(
                         name="回答质量",
+                        **({"strict_mode": True} if case.plugin_id == "agent-tasks" else {}),
                         evaluation_steps=[
                             *policy["steps"],
                             "Expected behavior: " + policy["expected"],
@@ -368,6 +369,7 @@ def score(
                     test_case.expected_output = policy["expected"]
                     metric = GEval(
                         name="回答质量",
+                        **({"strict_mode": True} if case.plugin_id == "agent-tasks" else {}),
                         evaluation_steps=policy["steps"],
                         evaluation_params=[
                             SingleTurnParams.INPUT,

@@ -329,7 +329,7 @@ def test_strict_quick_request_rejects_all_creation_overrides() -> None:
         "profile": "agent-comparison-mvp",
         "preset": "quick",
         "targets": ["codex", "native"],
-        "case_refs": ["ifeval:ifeval-json-format"],
+        "case_refs": ["ifeval:ifeval-fixed-1075"],
         "repetitions": 1,
         "max_wall_seconds": 30,
         "seed": 7,
@@ -381,7 +381,7 @@ def test_standalone_core_rejects_managed_service_root(
                 "evaluation_id": output.name,
                 "kind": "suite",
                 "suite": "ifeval",
-                "case_ids": ["ifeval-json-format"],
+                "case_ids": ["ifeval-fixed-1075"],
                 "dry_run": True,
                 "llm_judge": False,
             },
@@ -633,7 +633,7 @@ def test_codex_preflight_uses_explicit_binary_outside_service_path(
         {
             "kind": "suite",
             "bot": "lingye-copilot-qq",
-            "suite": "agentstrata-capabilities-v1",
+            "suite": "agentstrata-agent-tasks-v1",
             "preset": "quick",
         }
     )
@@ -659,7 +659,7 @@ def test_codex_preflight_rejects_unusable_configured_binary(
         {
             "kind": "suite",
             "bot": "lingye-copilot-qq",
-            "suite": "agentstrata-capabilities-v1",
+            "suite": "agentstrata-agent-tasks-v1",
             "preset": "quick",
         }
     )
@@ -668,7 +668,7 @@ def test_codex_preflight_rejects_unusable_configured_binary(
         {
             "kind": "suite",
             "bot": "lingye-copilot-qq",
-            "suite": "agentstrata-capabilities-v1",
+            "suite": "agentstrata-agent-tasks-v1",
             "preset": "quick",
         }
     )
@@ -690,7 +690,7 @@ def test_codex_preflight_rejects_malformed_positional_command_template(
         {
             "kind": "suite",
             "bot": "lingye-copilot-qq",
-            "suite": "agentstrata-capabilities-v1",
+            "suite": "agentstrata-agent-tasks-v1",
             "preset": "quick",
         }
     )
@@ -705,7 +705,7 @@ def test_codex_preflight_rejects_malformed_positional_command_template(
     ("suite", "expected_executor", "llm_judge"),
     (
         ("bfcl", "direct_llm", False),
-        ("ifeval", "agent_configured", False),
+        ("ifeval", "direct_llm", False),
         ("gaia", "agent_configured", True),
     ),
 )
@@ -721,7 +721,7 @@ def test_suite_validation_selects_explicit_executor_policy(
         input="question",
         category="test",
         expected_behavior="answer",
-        metadata={"adapter": suite},
+        metadata={"adapter": suite, **({"instruction_checks": [{"id": "punctuation:no_comma", "kwargs": {}}]} if suite == "ifeval" else {})},
     )
     monkeypatch.setattr(
         "chatcopilot.evals.evaluations.get_cases",
@@ -748,7 +748,7 @@ def test_dry_run_validation_selects_dry_run_executor() -> None:
         {
             "kind": "suite",
             "suite": "ifeval",
-            "case_ids": ["ifeval-json-format"],
+            "case_ids": ["ifeval-fixed-1075"],
             "dry_run": True,
             "llm_judge": False,
         }
@@ -770,7 +770,7 @@ def test_product_dry_run_validates_static_capability_catalog_before_runtime_load
     result = validate_evaluation(
         {
             "kind": "suite",
-            "suite": "agentstrata-capabilities-v1",
+            "suite": "agentstrata-agent-tasks-v1",
             "preset": "quick",
             "dry_run": True,
         }
@@ -801,7 +801,7 @@ def test_product_dry_run_rejects_invalid_static_verifier_before_runtime_loading(
     result = validate_evaluation(
         {
             "kind": "suite",
-            "suite": "agentstrata-capabilities-v1",
+            "suite": "agentstrata-agent-tasks-v1",
             "preset": "quick",
             "dry_run": True,
         }
@@ -823,7 +823,7 @@ def test_product_dry_run_rejects_case_plugin_driver_drift_before_runtime_loading
         definitions = original(manifest)  # type: ignore[arg-type]
         return tuple(
             replace(item, driver_id="agent_isolated")
-            if item.case_id == "dialogue-strict-json"
+            if item.case_id == "decision-no-tool"
             else item
             for item in definitions
         )
@@ -838,7 +838,7 @@ def test_product_dry_run_rejects_case_plugin_driver_drift_before_runtime_loading
     result = validate_evaluation(
         {
             "kind": "suite",
-            "suite": "agentstrata-capabilities-v1",
+            "suite": "agentstrata-agent-tasks-v1",
             "preset": "quick",
             "dry_run": True,
         }
@@ -855,7 +855,7 @@ def test_named_capability_preset_accepts_console_empty_case_list() -> None:
         {
             "kind": "suite",
             "bot": "bots/lingye-copilot-qq/bot.yaml",
-            "suite": "agentstrata-capabilities-v1",
+            "suite": "agentstrata-agent-tasks-v1",
             "preset": "quick",
             "case_ids": [],
             "dry_run": True,
@@ -864,7 +864,7 @@ def test_named_capability_preset_accepts_console_empty_case_list() -> None:
 
     assert parsed.kind == "suite"
     assert parsed.preset == "quick"
-    assert len(parsed.case_ids) == 10
+    assert len(parsed.case_ids) == 12
 
 
 def _capability_case_preflight(
@@ -875,10 +875,12 @@ def _capability_case_preflight(
     chat_model: str = "commercial-model",
     chat_credential: str = "credential",
 ) -> list[dict[str, object]]:
+    # Archived cases exercise the shared provider contract, not a runnable suite alias.
+    from chatcopilot.evals.plugins import get_evaluation_plugin, CaseLoadContext
     manifest = evaluation_module.get_manifest("agentstrata-capabilities-v1")
     case = next(
         item
-        for item in evaluation_module.get_cases(manifest.suite_id, auto_prepare=False)
+        for item in get_evaluation_plugin(manifest.plugin_id).load_cases(CaseLoadContext(manifest))
         if item.case_id == case_id
     )
     runtime = SimpleNamespace(
@@ -1033,7 +1035,7 @@ def test_suite_request_rejects_legacy_external_write_authority() -> None:
                 "evaluation_id": "eval-no-external-write",
                 "kind": "suite",
                 "bot": "bots/lingye-copilot-qq/bot.yaml",
-                "suite": "agentstrata-capabilities-v1",
+                "suite": "agentstrata-agent-tasks-v1",
                 "preset": "quick",
                 "confirm_external_write": True,
             }
@@ -1049,7 +1051,7 @@ def test_managed_suite_bootstrap_includes_complete_effective_request(
         "bot": "bots/lingye-copilot-qq/bot.yaml",
         "suite": "ifeval",
         "preset": "custom",
-        "case_ids": ["ifeval-json-format"],
+        "case_ids": ["ifeval-fixed-1075"],
         "repetitions": 2,
         "max_wall_seconds": 90,
         "seed": 7,
@@ -1112,7 +1114,7 @@ def test_named_suite_runnable_request_reselects_cases_from_the_preset() -> None:
             "evaluation_id": "eval-named-suite-preset",
             "kind": "suite",
             "bot": "bots/lingye-copilot-qq/bot.yaml",
-            "suite": "agentstrata-capabilities-v1",
+            "suite": "agentstrata-agent-tasks-v1",
             "preset": "quick",
             "dry_run": True,
         }
@@ -1120,7 +1122,7 @@ def test_named_suite_runnable_request_reselects_cases_from_the_preset() -> None:
 
     runnable = evaluation_module._runnable_request_dict(parsed)
 
-    assert len(parsed.case_ids) == 10
+    assert len(parsed.case_ids) == 12
     assert runnable["preset"] == "quick"
     assert runnable["case_ids"] == []
     assert parse_evaluation_request(runnable).case_ids == parsed.case_ids
@@ -1201,7 +1203,7 @@ def test_production_trial_uses_spawn_supervisor(tmp_path: Path) -> None:
             "kind": "suite",
             "suite": "ifeval",
             "preset": "custom",
-            "case_ids": ["ifeval-json-format"],
+            "case_ids": ["ifeval-fixed-1075"],
             "repetitions": 1,
             "max_wall_seconds": 30,
             "seed": 17,
@@ -1240,7 +1242,7 @@ def test_definition_drift_discards_target_group_without_checkpoint(tmp_path: Pat
             "kind": "suite",
             "suite": "ifeval",
             "preset": "custom",
-            "case_ids": ["ifeval-json-format"],
+            "case_ids": ["ifeval-fixed-1075"],
             "dry_run": True,
         },
         output=output,
@@ -1600,7 +1602,7 @@ def test_in_flight_evaluation_budget_discards_uncheckpointed_group(
             "kind": "suite",
             "suite": "ifeval",
             "preset": "custom",
-            "case_ids": ["ifeval-json-format"],
+            "case_ids": ["ifeval-fixed-1075"],
             "repetitions": 1,
             "max_wall_seconds": 30,
             "seed": 17,
@@ -1636,7 +1638,7 @@ def test_in_flight_case_timeout_is_an_infrastructure_error_trial(
             "kind": "suite",
             "suite": "ifeval",
             "preset": "custom",
-            "case_ids": ["ifeval-json-format"],
+            "case_ids": ["ifeval-fixed-1075"],
             "repetitions": 1,
             "max_wall_seconds": 30,
             "seed": 17,
@@ -1669,7 +1671,7 @@ def test_cleanup_failure_is_fatal_quarantines_workspace_and_rejects_resume(
         "kind": "suite",
         "suite": "ifeval",
         "preset": "custom",
-        "case_ids": ["ifeval-json-format"],
+        "case_ids": ["ifeval-fixed-1075"],
         "repetitions": 2,
         "max_wall_seconds": 30,
         "seed": 17,
@@ -1824,9 +1826,9 @@ def test_suite_resume_accepts_checkpointed_attempts_above_one(tmp_path: Path) ->
     request = {
         "evaluation_id": "eval-capability-repetitions",
         "kind": "suite",
-        "suite": "agentstrata-capabilities-v1",
+        "suite": "agentstrata-agent-tasks-v1",
         "preset": "custom",
-        "case_ids": ["dialogue-strict-json"],
+        "case_ids": ["decision-no-tool"],
         "repetitions": 3,
         "max_wall_seconds": 0,
         "seed": 17,
@@ -1867,18 +1869,18 @@ def test_suite_resume_validates_the_case_driver_not_the_mixed_target_driver() ->
             "evaluation_id": "eval-mixed-driver-resume",
             "kind": "suite",
             "bot": "bots/lingye-copilot-qq/bot.yaml",
-            "suite": "agentstrata-capabilities-v1",
+            "suite": "agentstrata-agent-tasks-v1",
             "preset": "custom",
             "case_ids": [
-                "dialogue-strict-json",
-                "tool-allowed-exact-call",
+                "decision-no-tool",
+                "decision-select-tool",
             ],
             "repetitions": 2,
         }
     )
     assert request.kind == "suite"
     cases = evaluation_module._execution_cases(request)
-    isolated_case = next(case for case in cases if case.case_id == "tool-allowed-exact-call")
+    isolated_case = next(case for case in cases if case.case_id == "decision-select-tool")
     target = EvaluationTarget(
         target_id="codex-configured",
         label="Codex configured",
@@ -1917,7 +1919,7 @@ def test_suite_resume_validates_the_case_driver_not_the_mixed_target_driver() ->
         cases=cases,
     )
 
-    assert resumed[0].executor == "agent_isolated"
+    assert resumed[0].executor == "agent_configured"
 
 
 def test_suite_resume_rejects_plugin_definition_drift(
@@ -1927,9 +1929,9 @@ def test_suite_resume_rejects_plugin_definition_drift(
     request = {
         "evaluation_id": "eval-capability-definition-drift",
         "kind": "suite",
-        "suite": "agentstrata-capabilities-v1",
+        "suite": "agentstrata-agent-tasks-v1",
         "preset": "custom",
-        "case_ids": ["dialogue-strict-json"],
+        "case_ids": ["decision-no-tool"],
         "repetitions": 2,
         "dry_run": True,
     }
@@ -2139,7 +2141,7 @@ def test_suite_preflight_rejects_private_identity_without_digest_key(
             "bot": "configured-bot",
             "suite": "ifeval",
             "preset": "custom",
-            "case_ids": ["ifeval-json-format"],
+            "case_ids": ["ifeval-fixed-1075"],
             "dry_run": True,
         }
     )
@@ -2423,7 +2425,7 @@ def _frozen_ifeval_trial_request(tmp_path: Path) -> TrialExecutionRequest:
             "kind": "suite",
             "suite": "ifeval",
             "preset": "custom",
-            "case_ids": ["ifeval-json-format"],
+            "case_ids": ["ifeval-fixed-1075"],
             "dry_run": True,
         }
     )
@@ -3070,7 +3072,7 @@ def test_suite_dry_run_uses_unified_result_and_skipped_outcome(
         "evaluation_id": "eval-suite-dry",
         "kind": "suite",
         "suite": "ifeval",
-        "case_ids": ["ifeval-json-format"],
+        "case_ids": ["ifeval-fixed-1075"],
         "dry_run": True,
         "llm_judge": False,
     }
@@ -3080,7 +3082,7 @@ def test_suite_dry_run_uses_unified_result_and_skipped_outcome(
 
     assert result.kind == "suite"
     assert result.status == "completed"
-    assert result.selected_cases == ("ifeval:ifeval-json-format",)
+    assert result.selected_cases == ("ifeval:ifeval-fixed-1075",)
     assert result.trials[0].executor == "dry_run"
     assert result.trials[0].outcome == "skipped"
     assert result.comparisons == ()
@@ -3098,11 +3100,11 @@ def test_product_suite_summary_never_reports_a_partial_green_or_total_score() ->
         parse_evaluation_request(
             {
                 "kind": "suite",
-                "suite": "agentstrata-capabilities-v1",
+                "suite": "agentstrata-agent-tasks-v1",
                 "preset": "custom",
                 "case_ids": [
-                    "dialogue-strict-json",
-                    "tool-allowed-exact-call",
+                    "decision-no-tool",
+                    "decision-select-tool",
                 ],
                 "dry_run": True,
             }
@@ -3122,7 +3124,7 @@ def test_product_suite_summary_never_reports_a_partial_green_or_total_score() ->
         kind="suite",
         bot="",
         output=Path("reports/evals/manual/eval-product-summary"),
-        suite_id="agentstrata-capabilities-v1",
+        suite_id="agentstrata-agent-tasks-v1",
         profile="",
         profile_case=None,
         case=cases[0],
@@ -3186,7 +3188,7 @@ def test_cli_product_suite_exit_code_follows_capability_verdict(
         started_at="2026-08-17T00:00:00+00:00",
         finished_at="2026-08-17T00:00:01+00:00",
         duration_seconds=1.0,
-        suite="agentstrata-capabilities-v1",
+        suite="agentstrata-agent-tasks-v1",
         summary={"verdict": verdict},
     )
 
@@ -3204,7 +3206,7 @@ def test_cli_product_suite_text_has_verdict_and_no_aggregate_score() -> None:
         started_at="2026-08-17T00:00:00+00:00",
         finished_at="2026-08-17T00:00:01+00:00",
         duration_seconds=1.0,
-        suite="agentstrata-capabilities-v1",
+        suite="agentstrata-agent-tasks-v1",
         summary={
             "verdict": "failed",
             "passed": 8,
@@ -3255,7 +3257,7 @@ def test_cli_json_stdout_remains_one_parseable_document(
             "ifeval",
             "--dry-run",
             "--case-id",
-            "ifeval-json-format",
+            "ifeval-fixed-1075",
             "--output",
             str(output),
             "--json",
@@ -3414,7 +3416,7 @@ def test_cli_defaults_to_manual_output_and_rejects_managed_service_root(
         "ifeval",
         "--dry-run",
         "--case-id",
-        "ifeval-json-format",
+        "ifeval-fixed-1075",
         "--json",
     ]
 
@@ -3468,7 +3470,7 @@ def test_managed_root_detection_is_stable_from_repository_subdirectory(
             "ifeval",
             "--dry-run",
             "--case-id",
-            "ifeval-json-format",
+            "ifeval-fixed-1075",
             "--evaluation-id",
             output.name,
             "--output",
@@ -3519,7 +3521,7 @@ def test_cli_allows_manual_root_from_repository_subdirectory(
             "ifeval",
             "--dry-run",
             "--case-id",
-            "ifeval-json-format",
+            "ifeval-fixed-1075",
             "--evaluation-id",
             output.name,
             "--output",
@@ -3580,7 +3582,7 @@ def test_cli_rejects_configured_managed_service_root_without_side_effect(
             "ifeval",
             "--dry-run",
             "--case-id",
-            "ifeval-json-format",
+            "ifeval-fixed-1075",
             "--evaluation-id",
             output.name,
             "--output",
@@ -3638,7 +3640,7 @@ def test_cli_rejects_mixed_request_sources() -> None:
         {
             "kind": "suite",
             "suite": "ifeval",
-            "case_ids": "ifeval-json-format",
+            "case_ids": "ifeval-fixed-1075",
             "dry_run": True,
             "llm_judge": False,
         },
@@ -3687,7 +3689,7 @@ def test_cli_resume_rejection_is_structured_and_has_no_side_effect(
             "ifeval",
             "--dry-run",
             "--case-id",
-            "ifeval-json-format",
+            "ifeval-fixed-1075",
             "--output",
             str(output),
             "--resume",
@@ -3842,16 +3844,15 @@ def test_supervision_preserves_sampled_execution_separately_from_judging(tmp_pat
     assert .03 <= timing['seconds'] < .3
 
 
-def test_business_preflight_records_primary_plan_and_missing_tool_is_blocked(deepeval_judge):
-    request = {"kind": "suite", "bot": "lingye-copilot-qq", "suite": "project-business-v1",
-               "case_ids": ["business-query-reference"], "options": {}}
-    result = validate_evaluation(request)
+def test_retired_business_preflight_and_new_task_primary_plan(deepeval_judge):
+    old = validate_evaluation({"kind": "suite", "bot": "lingye-copilot-qq", "suite": "project-business-v1", "case_ids": ["business-query-reference"]})
+    assert not old["ready"]
+    assert "已退出" in old["checks"][0]["detail"]
+    result = validate_evaluation({"kind": "suite", "bot": "lingye-copilot-qq", "suite": "agentstrata-agent-tasks-v1", "case_ids": ["decision-no-tool"]})
     assert result["ready"], result["checks"]
-    assert result["benchmark"]["scoring"]["primary"] == "llm_judge"
-    assert result["benchmark"]["scoring"]["rubric"]["strict_mode"] is True
-    blocked = validate_evaluation({**request, "case_ids": ["qq-group-members-example"]})
-    assert blocked["ready"] is False
-    assert any(c["code"] == "benchmark_environment" and not c["ok"] for c in blocked["checks"])
+    assert result["benchmark"]["scoring"]["primary"] == "native"
+    with pytest.raises(ValueError, match="scoring_mode"):
+        parse_evaluation_request({"kind": "suite", "suite": "agentstrata-agent-tasks-v1", "options": {"scoring_mode": "native"}})
 
 
 def test_legacy_judge_flags_normalize_without_overriding_native_result(monkeypatch):

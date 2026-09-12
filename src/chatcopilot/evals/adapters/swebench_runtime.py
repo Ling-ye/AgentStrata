@@ -79,6 +79,36 @@ def preflight(*, cases: Sequence[EvalCase]) -> None:
             raise ValueError("此适配器只支持文本 SWE-bench，尚未接入 Multimodal 资源")
         if not re.fullmatch(r"[0-9a-f]{40}", str(row["base_commit"])):
             raise ValueError("SWE-bench requires an immutable base commit")
+    states = case_readiness(cases)
+    missing = [state["reason"] for state in states.values() if not state["ready"]]
+    if missing:
+        raise ValueError("SWE-bench 所选环境未准备：" + "；".join(missing[:5]))
+
+
+def case_readiness(cases: Sequence[EvalCase]) -> dict[str, dict[str, Any]]:
+    """Inspect the local image catalog once; never pull images or start containers."""
+    images: set[str] = set()
+    reason = ""
+    try:
+        if not shutil.which("docker"):
+            raise ValueError("未安装 Docker")
+        _, output = docker(["image", "ls", "--digests", "--format", "{{json .}}"])
+        for line in output.splitlines():
+            row = json.loads(line)
+            if row.get("Tag") not in {None, "<none>"}:
+                images.add(f"{row['Repository']}:{row['Tag']}")
+            if row.get("Digest") not in {None, "<none>"}:
+                images.add(f"{row['Repository']}@{row['Digest']}")
+    except (OSError, ValueError, TimeoutError) as exc:
+        reason = f"无法读取 Docker 镜像状态：{exc}"
+    results = {}
+    for case in cases:
+        image = case.metadata.get("swe_instance", {}).get("image", "")
+        ready = bool(image and image in images and not reason)
+        results[case.case_id] = {"ready": ready, "state": "ready" if ready else "not_prepared",
+                               "missing_tools": [], "environment": image,
+                               "reason": "" if ready else reason or f"尚未准备镜像：{image or '数据未声明镜像'}"}
+    return results
 
 
 def start_container(name: str, image: str) -> str:
@@ -109,6 +139,24 @@ def cleanup_container(name: str) -> None:
     if len(value) != 1 or value[0].get("Config", {}).get("Labels", {}).get("agentstrata.evaluation") != match[1]:
         raise ValueError("benchmark container ownership differs")
     docker(["rm", "--force", name])
+
+
+def prepare_repository(name: str, base_commit: str) -> dict[str, str]:
+    """Restore the task base inside a fresh disposable official instance image.
+
+    Official images can contain a build/setup commit on top of the task base.
+    Both solve and grade must start from the declared product revision.
+    """
+    if not _CONTAINER.fullmatch(name) or not re.fullmatch(r"[0-9a-f]{40}", base_commit):
+        raise ValueError("invalid managed repository preparation")
+    prefix = ["exec", "--workdir", "/testbed", name, "git"]
+    _, original = docker([*prefix, "rev-parse", "HEAD"])
+    docker([*prefix, "cat-file", "-e", f"{base_commit}^{{commit}}"])
+    docker([*prefix, "reset", "--hard", base_commit])
+    _, restored = docker([*prefix, "rev-parse", "HEAD"])
+    if restored.strip() != base_commit:
+        raise ValueError("SWE-bench repository could not be restored to its frozen base")
+    return {"image_head": original.strip(), "base_commit": restored.strip()}
 
 
 def read_patch(name: str) -> str:

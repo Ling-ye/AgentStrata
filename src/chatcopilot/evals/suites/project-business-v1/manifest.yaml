@@ -5,7 +5,7 @@ name: 业务任务完成
 subject_type: agent
 capability_tags: [业务任务, 工具调用, 故障处理]
 kind: agent
-status: implemented
+status: retired
 value: 以固定只读工具数据验证业务任务完成情况，使用严格 LLM 判定。
 recommendation: 日常选择已配置的业务题；QQ 教学题待正式工具适配后验收。
 cadence: manual only

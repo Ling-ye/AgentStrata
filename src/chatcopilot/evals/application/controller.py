@@ -1017,6 +1017,11 @@ class EvaluationApplication:
     ) -> dict[str, Any]:
         directory = self._verified_evaluation_dir(evaluation_id)
         stored = _read_json(directory / "request.json")
+        suite_id = stored.get("suite_id")
+        if suite_id in {"agentstrata-capabilities-v1", "project-business-v1"}:
+            raise ValueError("旧评测集已退出，历史只读；请从 Agent 任务能力新建测评。")
+        if suite_id == "ifeval" and stored.get("benchmark", {}).get("subject_type") != "model":
+            raise ValueError("历史 IFEval 不是当前模型直测协议；请从 IFEval 入口新建测评。")
         return self.start(
             bot_id=str(stored.get("bot_id") or ""),
             request=self._clone_request(stored),

@@ -136,7 +136,7 @@ def test_catalog_subjects_and_snapshots_preserve_execution_boundaries():
 
     expected = {
         "bfcl": "model", "project-business-v1": "agent", "agentstrata-capabilities-v1": "agent",
-        "gaia": "agent", "ifeval": "agent", "agentbench-fc": "agent", "swe-bench-verified": "agent",
+        "agentstrata-agent-tasks-v1": "agent", "gaia": "agent", "ifeval": "model", "agentbench-fc": "agent", "swe-bench-verified": "agent",
         "webarena": "agent", "agentstrata-qq-message-flow-v1": "system", "agentstrata-canary-self-update-v1": "system",
     }
     manifests = {item.suite_id: item for item in list_suite_manifests()}
@@ -147,7 +147,7 @@ def test_catalog_subjects_and_snapshots_preserve_execution_boundaries():
         assert snapshot["subject_type"] == expected[ident]
         assert snapshot["capability_tags"] == list(manifest.capability_tags)
     assert manifests["bfcl"].driver_id == "direct_llm"
-    assert manifests["ifeval"].driver_id == "agent_configured"
+    assert manifests["ifeval"].driver_id == "direct_llm"
     assert "Legacy" in manifests["agentstrata-qq-message-flow-v1"].coverage
     for ident in ("webarena", "agentstrata-canary-self-update-v1"):
         assert manifests[ident].status == "planned"
@@ -158,7 +158,7 @@ def test_subject_change_separates_trends_without_backfilling_legacy():
     snapshot = benchmark_snapshot(get_manifest("ifeval"), [example()], {})
     result = {"config_snapshot": {"benchmark": snapshot}}
     original = benchmark_comparison_keys({}, result)
-    snapshot["subject_type"] = "model"
+    snapshot["subject_type"] = "agent"
     assert original != benchmark_comparison_keys({}, result)
     del snapshot["subject_type"]
     legacy = benchmark_comparison_keys({}, result)
@@ -169,7 +169,7 @@ def test_subject_change_separates_trends_without_backfilling_legacy():
 def test_case_tags_survive_definition_business_and_catalog_projections():
     from chatcopilot.evals.application.catalog import get_case_descriptor, list_case_summaries
 
-    for suite_id in ("agentstrata-capabilities-v1", "project-business-v1", "agentstrata-qq-message-flow-v1"):
+    for suite_id in ("agentstrata-agent-tasks-v1", "agentstrata-qq-message-flow-v1"):
         cases = list_case_summaries(suite_id)
         multiple = next(case for case in cases if len(case["capability_tags"]) > 1)
         assert get_case_descriptor(suite_id, multiple["case_id"])["capability_tags"] == multiple["capability_tags"]

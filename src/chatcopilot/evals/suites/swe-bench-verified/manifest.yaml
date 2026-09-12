@@ -13,11 +13,12 @@ recommendation: 仅在代码 Agent 机制大改后低频运行。
 cadence: major-change
 requires_bot: true
 requires_external_data: true
-prepare_supported: false
+prepare_supported: true
 official_url: https://www.swebench.com/
 setup_hint: >-
-  配置 CHATCOPILOT_SWEBENCH_DATA_PATH 的当前官方 JSONL（含 image/eval_script 字段）、
-  安装 SWE-bench 5.0.2 评分包并准备对应 Docker 镜像；运行只使用本地已有镜像。
+  点击“准备官方数据”下载固定版本的 500 道题，自动识别本机缓存；也可通过
+  CHATCOPILOT_SWEBENCH_DATA_PATH 指定数据。执行前需准备所选题的 Docker 镜像与
+  SWE-bench 5.0.2 评分包；题目详情显示具体缺项，运行不自动下载镜像。
 options:
   - name: scoring_mode
     type: enum

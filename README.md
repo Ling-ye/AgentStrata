@@ -258,7 +258,7 @@ and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.m
 | Capabilities | Local tool packs; in-process web search; reviewed MCP bindings; RAG; memory; private Wiki |
 | Operations | React/FastAPI Console BFF; diagnostics; task/context observability; logs |
 | Deployment | Linux / WSL; Console and Evaluation systemd user services; desired-state Docker infrastructure |
-| Evaluation | Three manual Console entries: model capability, Agent capability, and system flows. Metadata groups project suites and public benchmarks, with capability filters and explicit readiness. The 63-Case Agent regression catalog and 7 legacy synthetic QQ Cases retain their execution boundaries; Profile comparisons remain available from CLI |
+| Evaluation | Three manual Console entries: LLM evaluation, Agent evaluation, and system testing. Metadata groups project suites and public benchmarks, with capability filters and explicit readiness. The unified 65-Case Agent task suite replaces the two retired project suites; IFEval directly tests models with pinned official checkers. Seven legacy synthetic QQ Cases retain their boundary; Profile comparisons remain available from CLI |
 
 The direct-Agent track bypasses ACP and platform transport. The existing
 synthetic QQ message-flow track uses the current OneBot Channel probe followed by the isolated attestation/ACP
@@ -335,7 +335,7 @@ files and private reports never belong in Git.
 | Understand boundaries and data flow | [Architecture](https://github.com/Ling-ye/AgentStrata/blob/main/docs/architecture.md) · [Runtime](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.md) |
 | Use the Console and Evaluations | [Operations Console](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md) |
 
-测评中心按模型能力、Agent 能力、系统链路组织，默认 Agent 能力；各入口按项目测评与公开基准分组，支持能力标签筛选，待接入项目默认折叠。新业务题使用严格 LLM 判定，63 个既有回归题保留程序断言，公开基准保留原生评分；BFCL 当前为模型函数调用部分协议校准，QQ 回归保持 Legacy 合成链路边界。新运行保存对象类型，历史缺失信息不回填。文件维护方法见 [业务 Case 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-business-cases.md)；概念定义见 [测评术语](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-glossary.md)，使用方式见 [Console 文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md)。
+测评中心按LLM测评、Agent测评、系统测试组织，默认 Agent测评；各入口按项目测评与公开基准分组，支持能力标签筛选，待接入项目默认折叠。项目测评统一为 65 道 Agent 任务，采用执行事实主判与必要语义判定，题单为快速 12、离线完整 60、安全 11、红队 12、联网 2、Skill 3；红队支持独立分类与攻击面标签；GAIA 和 SWE-bench 可下载固定官方数据并自动识别缓存，镜像就绪状态单独显示；IFEval 改为模型直测，保留固定官方检查器和 8 道原题；BFCL 当前为模型函数调用部分协议校准，QQ 回归保持 Legacy 合成链路边界。新运行保存对象类型，历史缺失信息不回填。文件维护方法见 [业务 Case 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-business-cases.md)；概念定义见 [测评术语](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-glossary.md)，使用方式见 [Console 文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md)。
 
 The Console has a separate **AI Harness Repair** page alongside Evaluation. Enter a
 Case instance ID copied from Evaluation results, or an instance-bound robot task ID.

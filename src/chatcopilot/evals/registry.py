@@ -9,7 +9,7 @@ from chatcopilot.evals.plugins import CaseLoadContext, get_evaluation_plugin
 def list_standards() -> tuple[BenchmarkStandard, ...]:
     """Return all manually selectable benchmark standards."""
 
-    return tuple(manifest.to_standard() for manifest in list_suite_manifests())
+    return tuple(manifest.to_standard() for manifest in list_suite_manifests() if manifest.status != "retired")
 
 
 def get_standard(suite_id: str) -> BenchmarkStandard:
@@ -26,6 +26,8 @@ def get_cases(
     """Return built-in cases for a suite. Public benchmarks may require external data."""
 
     manifest = get_manifest(suite_id)
+    if manifest.status == "retired":
+        raise ValueError(f"评测集 {manifest.suite_id} 已退出；请从 Agent 任务能力新建测评。历史记录保持只读。")
     if manifest.status != "implemented":
         return ()
     plugin = get_evaluation_plugin(manifest.plugin_id)

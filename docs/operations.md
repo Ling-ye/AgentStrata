@@ -473,9 +473,10 @@ python -m chatcopilot evals run \
 
 ### 基准工作台与手动测评
 
-Console 的「开始测试」按测评集、题目列表、评分和运行计划组织，支持按业务工具筛选。目录信息由后端 Suite manifest 统一提供。能力方向包含
-项目业务任务、SWE-bench Verified、BFCL、GAIA、AgentBench FC、IFEval 和 AgentStrata 工程回归；QQ 合成链路
-保留独立入口。查看目录和题目不会下载数据、启动环境或调用模型。勾选题目后，运行计划使用
+Console 的「开始测试」按LLM测评、Agent测评、系统测试组织，目录由 Suite metadata 提供。
+自建 Agent 任务能力共 65 题，支持独立红队分类与 12 题 Agent 红队专项；公开基准包含
+SWE-bench Verified、BFCL、GAIA、AgentBench FC 和 IFEval，QQ 保留合成链路说明。
+查看目录和题目不会下载数据、启动容器或调用模型。勾选题目后，运行计划使用
 准确 Case ID，并冻结框架版本、题单摘要与评分配置。数据准备由独立「准备官方数据」动作触发，
 完成后刷新目录。缺少环境或数据的基准保留可见并显示阻断原因。
 
@@ -484,15 +485,16 @@ Console 的「开始测试」按测评集、题目列表、评分和运行计划
 任务回应质量，阈值 0.7；项目回归使用每题自身的固定质量定义。GAIA 不再使用旧 LLM fallback
 改判答案，按官方数字、顺序列表和字符串归一化规则检查。质量分范围为 0–1，不表示正确概率。
 
-文件维护的新业务题固定使用严格 GEval 主判，显示 LLM 判定。字段、数据维护和异常说明见 [业务 Case 指南](evaluation-business-cases.md)。原有 63 个 Case 归工程回归，保留原断言。
+自建任务以执行事实和必要的严格语义共同判定，不允许关闭必要语义。字段、数据维护和异常说明见 [业务 Case 指南](evaluation-business-cases.md)。旧两个题库已退役，仅保留历史与工程合同验证。
 
 运行记录显示框架、来源、用途、适配器、评分器来源和版本、题单和评分快照，并可展开逐题实际输入、输出、工具和评分理由。
 缺少旧字段时显示未记录。趋势默认按精确题集、环境、预算和指标协议区分可比条件；GEval
 额外区分 Judge 与量表。探索视图可看历史及不同条件，变化不能直接解释为能力进步。
 质量覆盖不完整时不生成完整可比质量点。不同基准不平均为总分。
 
-`agentstrata-capabilities-v1` 的 63 个 Case 直接提交给 Agent runtime，不经过 ACP 或 QQ；
-`quick/full/security` 分别选择 10/61/3 题，两个依赖特定来源的 Case 继续通过 custom 选择。
+`agentstrata-agent-tasks-v1` 直接使用隔离 Agent runtime，不经过 ACP 或 QQ；
+`quick/full/security/red-team/live/skills` 分别选择 12/60/11/12/2/3 题。
+缺条件的题目保留在选择中并阻断启动，不静默减题。
 
 `agentstrata-qq-message-flow-v1` 使用当前 OneBot Channel 探针，再进入隔离的 attestation/ACP 合成链，
 `quick/full/security` 分别选择 3/7/4 个 Case。它只保留为 legacy regression suite，
@@ -502,15 +504,38 @@ Console 的「开始测试」按测评集、题目列表、评分和运行计划
 
 两条产品轨道均不接 Git hook、CI、文件监听、部署回调或 Bot 重启回调。
 
-SWE-bench 与 AgentBench 的资源由部署者显式准备：
+官方数据通过 Console“准备官方数据”或以下命令显式下载；CLI 读取调用进程环境，
+Console 会从所选 Bot 的私有 `local.env` 读取配置。数据默认保存在
+`~/.cache/agentstrata/evals`，也可使用 `CHATCOPILOT_EVALS_DATA_DIR` 指定位置。
+
+```bash
+.venv/bin/python -m chatcopilot.evals prepare --suite swe-bench-verified --json
+.venv/bin/hf auth login
+.venv/bin/python -m chatcopilot.evals prepare --suite gaia --json
+```
+
+GAIA 必须由同一账号在 [官方数据页](https://huggingface.co/datasets/gaia-benchmark/GAIA)
+同意访问条件。可在 Bot 的 `local.env` 填写 `CHATCOPILOT_HF_TOKEN` 代替 CLI 登录，
+示例见 [local.env.example](../bots/lingye-copilot-qq/local.env.example)；只读权限即可。
+下载固定 revision 的 validation 题目与全部关联附件，保存 JSONL 与来源/哈希回执。
+缓存完整时自动发现，不必手工设置 `CHATCOPILOT_GAIA_DATA_PATH`；自备文件仍可显式
+覆盖，并使用 `CHATCOPILOT_GAIA_FILES_DIR` 指定附件目录。`CHATCOPILOT_GAIA_CASE_PROFILE=full`
+展示全部 validation 题目；默认 balanced-100 只选固定 100 题，不代表只下载了 100 题。
+官方 gated 数据、答案与附件不得提交到公开仓库。
+
+SWE-bench 与 AgentBench 的执行资源仍需单独准备：
 
 - SWE-bench 使用已固定的 `swebench==5.0.2` 评分库（包含在 `evaluation` extra）。
-  `CHATCOPILOT_SWEBENCH_DATA_PATH` 指向当前官方 JSONL，每行包含 `instance_id`、
+  “准备官方数据”下载固定版本的 500 题并自动发现缓存；可选的
+  `CHATCOPILOT_SWEBENCH_DATA_PATH` 覆盖默认 JSONL，每行包含 `instance_id`、
   `problem_statement`、`base_commit`、`image`、`eval_script`、`repo`、`version`、
   `FAIL_TO_PASS`、`PASS_TO_PASS`、`log_parser`、`eval_type`。
-  先按数据声明准备 Docker 镜像；运行不自动拉取镜像。Agent 通过 `benchmark_shell`
+  先按所选题详情声明的 image 执行 `docker pull <image>`，无需一次下载全部 500 个镜像。
+  目录保留全部题目，并分别显示已准备/缺镜像；正式运行前再次核验，运行不自动拉取镜像。Agent 通过 `benchmark_shell`
   在无宿主挂载、断网、丢弃 capabilities、有限 CPU/内存/PID 的容器内修复，模型补丁在新容器中
-  接受隐藏测试，再交给上游 log grader 判卷。容器基线 commit 必须匹配，镜像 ID 与补丁摘要
+  接受隐藏测试，再交给上游 log grader 判卷。官方镜像可能附带构建提交，宿主只在新建的
+  临时容器内将仓库恢复到题目 base_commit，并记录原镜像 HEAD；求解与评分使用同一基线。
+  镜像 ID 与补丁摘要
   随结果保存。该受限执行配置需与原始榜单条件区分；暂不支持 Multimodal 资源。
 - AgentBench FC 由用户独立管理本地 Controller 与环境 worker。
   `CHATCOPILOT_AGENTBENCH_CONTROLLER_URL` 只接受明确的回环 IP HTTP `/api` 地址，

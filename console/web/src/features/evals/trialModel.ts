@@ -31,8 +31,11 @@ export function trialSource(record: EvaluationRecord, trial: EvaluationTrial): R
   return asObject(asObject(definition?.metadata).case_source);
 }
 
-export const instructionChecks = (trial: EvaluationTrial) => objectList(asObject(trial.evidence.judge_evidence).assertions)
-  .flatMap(assertion => objectList(asObject(assertion.checks).instructions));
+export const instructionChecks = (trial: EvaluationTrial) => {
+  const direct = objectList(trial.evidence.instructions);
+  return direct.length ? direct : objectList(asObject(trial.evidence.judge_evidence).assertions)
+    .flatMap(assertion => objectList(asObject(assertion.checks).instructions));
+};
 
 export const instructionLabel = (id: string): string => ({
   "punctuation:no_comma": "不使用逗号", "change_case:english_lowercase": "英文小写",

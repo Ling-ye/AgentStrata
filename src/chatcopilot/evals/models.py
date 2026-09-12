@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 SuiteKind = Literal[
     "product", "knowledge", "reasoning", "code", "agent", "tool", "web", "context", "safety"
 ]
 RunStatus = Literal["passed", "failed", "skipped", "error", "unavailable"]
 EvalRunStatus = RunStatus | Literal["running"]
-SuiteStatus = Literal["implemented", "planned"]
+SuiteStatus = Literal["implemented", "planned", "retired"]
 DriverId = Literal[
     "agent_isolated",
     "agent_configured",
@@ -207,6 +207,8 @@ class EvalCaseDefinition:
     resources: tuple[EvalCaseResource, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
     capability_tags: tuple[str, ...] = ()
+    scenario_id: str = ""
+    scenario_params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -299,3 +301,13 @@ def to_jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): to_jsonable(raw) for key, raw in value.items()}
     return value
+
+
+@dataclass(frozen=True)
+class AssertionOutcome:
+    """One deterministic verifier result, independent of verifier modules."""
+    passed: bool
+    reasons: tuple[str, ...] = ()
+    missing: tuple[str, ...] = ()
+    violations: tuple[str, ...] = ()
+    checks: Mapping[str, Any] = field(default_factory=dict)

@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     compare.add_argument("--json", action="store_true")
 
     prepare = sub.add_parser("prepare", help="Prepare official Suite data.")
-    prepare.add_argument("--suite", choices=("gaia", "bfcl", "ifeval"), required=True)
+    prepare.add_argument("--suite", choices=("gaia", "bfcl", "ifeval", "swe-bench-verified"), required=True)
     prepare.add_argument("--json", action="store_true")
 
     advise = sub.add_parser(
@@ -363,6 +363,7 @@ def _is_product_capability_result(result: Any) -> bool:
             result.suite
             in {
                 "agentstrata-capabilities-v1",
+                "agentstrata-agent-tasks-v1",
                 "agentstrata-qq-message-flow-v1",
             }
             or summary.get("score_scope")

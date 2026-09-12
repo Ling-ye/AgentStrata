@@ -13,6 +13,8 @@ created: 2026-09-10
 
 ## Design
 
+当前三类对象入口按 [目录组织](../evaluation-dataset-organization/spec.md) 执行；58 题 Agent 任务能力、旧套件退役及 IFEval 模型直测按 [题库统一](../evaluation-agent-task-unification/spec.md) 执行。本规格的两方向描述保留为初始设计背景。
+
 遵循 [四层运行时基线](../runtime-four-layer-definition/spec.md)。Evaluation 与 Console 位于消息运行时四层之外；Console 只消费既有服务投影和控制 API，Evaluation application/Core 继续拥有生命周期、Trial 监督、隔离、取消和权威 artifact。基准环境不是新的消息层或第二个 Evaluation manager。
 
 本规格修订 [两轨入口](../evaluation-two-track-center/spec.md) 中主界面隐藏公开基准的限制、[DeepEval 评分](../evaluation-deepeval/spec.md) 的仅自建题库范围及 [趋势](../evaluation-progress-history/spec.md) 的默认自由混合规则。保留能力与 QQ 两方向，能力明确区分 Agent runtime 和 direct-LLM；历史数据只读，不回填当前版本、模型或评分结果。

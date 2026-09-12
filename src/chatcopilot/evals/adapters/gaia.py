@@ -4,9 +4,9 @@ GAIA is an external benchmark: official data is loaded from a local JSON/JSONL
 export, while an opt-in smoke subset keeps the runner path testable without
 shipping benchmark content in the repository.
 
-Auto-download: when ``CHATCOPILOT_GAIA_DATA_PATH`` is unset and
-``CHATCOPILOT_HF_TOKEN`` is available, the adapter automatically downloads
-the GAIA dataset from HuggingFace to a local cache directory.
+Explicit preparation uses ``CHATCOPILOT_HF_TOKEN`` or the local Hugging Face
+login and downloads a pinned validation split, including attachments. Catalog
+reads only use prepared data and never initiate downloads.
 """
 
 from __future__ import annotations
@@ -39,12 +39,7 @@ _ENV_SMOKE = "CHATCOPILOT_GAIA_SMOKE"
 _ENV_HF_TOKEN = "CHATCOPILOT_HF_TOKEN"
 
 _HF_REPO_ID = "gaia-benchmark/GAIA"
-_DEFAULT_CACHE_DIR = (
-    Path(os.environ.get("CHATCOPILOT_EVALS_DATA_DIR", "~/.cache/agentstrata/evals"))
-    .expanduser()
-    / "gaia"
-    / "official"
-)
+_DEFAULT_CACHE_DIR = Path.home() / ".cache" / "agentstrata" / "evals" / "gaia" / "official"
 
 _QUESTION_KEYS = ("Question", "question", "prompt", "input")
 _ANSWER_KEYS = ("Final answer", "final_answer", "answer", "Answer")
@@ -112,16 +107,13 @@ def prepare_data() -> dict[str, Any]:
             )
         return {"ready": bool(cases), "case_count": len(cases), "source": "configured"}
 
-    downloaded = _try_auto_download()
-    if not downloaded:
-        raise FileNotFoundError(
-            "GAIA data is not ready. Configure CHATCOPILOT_GAIA_DATA_PATH "
-            "or CHATCOPILOT_HF_TOKEN on the backend."
-        )
+    from chatcopilot.evals.benchmark_data import prepare_gaia_data
+
+    result = prepare_gaia_data(_cache_dir())
     cases = load_cases(auto_download=False)
     if not cases:
         raise ValueError("GAIA data was prepared but no runnable cases were found.")
-    return {"ready": bool(cases), "case_count": len(cases), "source": "prepared"}
+    return {**result, "case_count": len(cases), "source": "prepared"}
 
 
 def build_manifest(
@@ -223,91 +215,27 @@ def write_manifest(
     return manifest
 
 
+def _cache_dir() -> Path:
+    configured = os.environ.get("CHATCOPILOT_EVALS_DATA_DIR", "").strip()
+    return Path(configured).expanduser() / "gaia" / "official" if configured else _DEFAULT_CACHE_DIR
+
+
 def _try_auto_download() -> str:
-    """Auto-download GAIA from HuggingFace if token is available and data is missing."""
+    from chatcopilot.evals.benchmark_data import hf_token, prepare_gaia_data
 
-    hf_token = os.environ.get(_ENV_HF_TOKEN, "").strip()
-    if not hf_token:
-        return ""
-
-    cache_dir = _DEFAULT_CACHE_DIR
-    found = _find_metadata_file(cache_dir)
+    found = find_cached_data()
     if found:
-        log.info("GAIA data found at %s (auto-cached)", found)
-        os.environ[_ENV_DATA_PATH] = str(found)
-        os.environ[_ENV_FILES_DIR] = str(found.parent)
-        return str(found)
-
-    log.info("Auto-downloading GAIA dataset from HuggingFace to %s ...", cache_dir)
-    try:
-        _download_gaia_via_api(hf_token, cache_dir)
-    except Exception as exc:
-        log.warning("GAIA auto-download failed: %s", exc)
+        return found
+    if not hf_token():
         return ""
-
-    found = _find_metadata_file(cache_dir)
-    if found:
-        os.environ[_ENV_DATA_PATH] = str(found)
-        os.environ[_ENV_FILES_DIR] = str(found.parent)
-        log.info("GAIA data downloaded: %s", found)
-        return str(found)
-
-    log.warning("GAIA download succeeded but no metadata file found in %s", cache_dir)
-    return ""
+    return str(prepare_gaia_data(_cache_dir())["path"])
 
 
 def find_cached_data() -> str:
-    found = _find_metadata_file(_DEFAULT_CACHE_DIR)
+    from chatcopilot.evals.benchmark_data import prepared_path, GAIA_REVISION
+
+    found = prepared_path(_cache_dir(), GAIA_REVISION)
     return str(found) if found else ""
-
-
-def _download_gaia_via_api(token: str, target: Path) -> None:
-    """Download GAIA validation split using direct HuggingFace API calls.
-
-    ``huggingface_hub.snapshot_download`` has reliability issues on Windows,
-    so we use the REST API directly.
-    """
-
-    import requests
-
-    headers = {"Authorization": f"Bearer {token}"}
-    api_base = f"https://huggingface.co/api/datasets/{_HF_REPO_ID}"
-    resolve_base = f"https://huggingface.co/datasets/{_HF_REPO_ID}/resolve/main"
-
-    def _list_files(path: str) -> list[dict]:
-        url = f"{api_base}/tree/main/{path}" if path else f"{api_base}/tree/main"
-        resp = requests.get(url, headers=headers, timeout=30)
-        resp.raise_for_status()
-        return resp.json()
-
-    def _collect(path: str) -> list[dict]:
-        entries = _list_files(path)
-        result: list[dict] = []
-        for entry in entries:
-            if entry.get("type") == "directory":
-                result.extend(_collect(entry["path"]))
-            elif entry.get("type") == "file":
-                result.append(entry)
-        return result
-
-    files = _collect("2023/validation")
-    log.info("GAIA: %d files to download", len(files))
-
-    for entry in files:
-        rfilename = entry["path"]
-        expected_size = entry.get("size")
-        local_path = target / rfilename
-        if local_path.is_file() and expected_size and local_path.stat().st_size == expected_size:
-            continue
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        url = f"{resolve_base}/{rfilename}"
-        resp = requests.get(url, headers=headers, timeout=120, stream=True)
-        resp.raise_for_status()
-        with local_path.open("wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-    log.info("GAIA: download complete (%d files)", len(files))
 
 
 def _find_metadata_file(base: Path) -> Path | None:
@@ -359,6 +287,10 @@ def _load_external_cases(path: Path) -> list[EvalCase]:
     data_file = _resolve_data_file(path)
     rows = _read_rows(data_file)
     files_dir = _resolve_files_dir(path, data_file)
+    from chatcopilot.evals.benchmark_data import GAIA_REVISION
+
+    cached = find_cached_data()
+    revision = GAIA_REVISION if cached and data_file.resolve() == Path(cached).resolve() else ""
     cases: list[EvalCase] = []
     for index, row in enumerate(rows, start=1):
         question = _first_text(row, _QUESTION_KEYS)
@@ -379,6 +311,7 @@ def _load_external_cases(path: Path) -> list[EvalCase]:
                 metadata={
                     "adapter": "gaia",
                     "source": str(data_file),
+                    "source_revision": revision,
                     "task_id": raw_id,
                     "level": level,
                     "problem_categories": categories,

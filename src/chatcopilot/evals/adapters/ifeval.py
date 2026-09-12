@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -44,206 +43,61 @@ def load_cases(limit: int | None = None) -> tuple[EvalCase, ...]:
 
 
 def judge(case: EvalCase, final_text: str) -> JudgeResult:
-    """Judge a response using the supported deterministic IFEval checks."""
+    results = instruction_results(case, final_text)
+    passed = all(item["passed"] for item in results)
+    return JudgeResult(float(passed), 1.0, passed,
+        reasons=tuple(item["id"] + (": passed" if item["passed"] else ": failed") for item in results))
 
-    checks = tuple(case.metadata.get("instruction_checks") or ())
-    if not checks:
-        return JudgeResult(
-            score=0.0,
-            max_score=1.0,
-            passed=False,
-            reasons=("no supported IFEval checks",),
-            missing=("instruction_checks",),
-        )
 
-    failures: list[str] = []
-    for raw_check in checks:
-        if not isinstance(raw_check, dict):
-            failures.append("invalid_check")
-            continue
-        check_id = str(raw_check.get("id", "")).strip()
-        kwargs = raw_check.get("kwargs") if isinstance(raw_check.get("kwargs"), dict) else {}
-        if not _passes_check(check_id, kwargs, final_text):
-            failures.append(check_id or "unknown_check")
+def instruction_results(case: EvalCase, output: str) -> list[dict[str, Any]]:
+    from chatcopilot.evals.ifeval_official import check_instructions
+    checks = case.metadata["instruction_checks"]
+    return check_instructions([c["id"] for c in checks], [c["kwargs"] for c in checks], output, case.input)
 
-    total = len(checks)
-    passed_checks = total - len(failures)
-    score = passed_checks / total if total else 0.0
-    return JudgeResult(
-        score=score,
-        max_score=1.0,
-        passed=not failures,
-        reasons=("all IFEval checks passed",) if not failures else ("failed IFEval checks",),
-        missing=tuple(failures),
-    )
+
+def preflight(cases) -> None:
+    from chatcopilot.evals.ifeval_official import build_checker
+    for case in cases:
+        for check in case.metadata["instruction_checks"]:
+            build_checker(check["id"], check["kwargs"], case.input)
+            if check["id"] == "length_constraints:number_sentences":
+                from chatcopilot.evals.vendor.ifeval.instructions_util import _get_sentence_tokenizer
+                _get_sentence_tokenizer()
 
 
 def _smoke_cases() -> list[EvalCase]:
-    return [
-        _case(
-            "ifeval-no-comma",
-            "请用中文写一句话回答：为什么固定测试集适合观察 Agent 优化？回答中不要使用逗号。",
-            [{"id": "punctuation:no_comma", "kwargs": {}}],
-        ),
-        _case(
-            "ifeval-keyword-frequency",
-            "请用中文用两句话说明工具调用评测的价值，并且必须至少 2 次提到“工具”。",
-            [{"id": "keywords:frequency", "kwargs": {"keyword": "工具", "relation": "at least", "num": 2}}],
-        ),
-        _case(
-            "ifeval-json-format",
-            "请只输出 JSON 对象，包含两个字段：name 和 value。不要输出 Markdown。",
-            [{"id": "detectable_format:json_object", "kwargs": {}}],
-        ),
-        _case(
-            "ifeval-word-count-max",
-            "Answer in English in at most 12 words: what does a baseline compare do?",
-            [{"id": "length_constraints:number_words", "kwargs": {"relation": "at most", "num_words": 12}}],
-        ),
-        _case(
-            "ifeval-bullet-count",
-            "请列出 3 条评测报告应该包含的信息，每条用 '-' 开头。",
-            [{"id": "detectable_format:number_bullets", "kwargs": {"num_bullets": 3}}],
-        ),
-    ]
+    from importlib.resources import files
+    rows = json.loads(files("chatcopilot.evals.suites").joinpath("ifeval/fixtures/fixed.json").read_text())["rows"]
+    return [_row_case(row, "fixed-official-subset", prefix="ifeval-fixed") for row in rows]
 
 
 def _case(case_id: str, prompt: str, checks: list[dict[str, Any]]) -> EvalCase:
-    level = _checks_level(checks, official_instruction_ids=())
-    categories = _check_categories(checks, official_instruction_ids=())
-    return EvalCase(
-        capability_tags=("指令遵循",),
-        case_id=case_id,
-        input=prompt,
-        category=categories[0] if categories else "instruction_following",
-        expected_behavior="Follow all verifiable instructions in the prompt.",
-        metadata={
-            "adapter": "ifeval",
-            "source": "builtin-smoke",
-            "instruction_checks": checks,
-            "level": level,
-            "problem_categories": categories,
-        },
-    )
+    return EvalCase(case_id=case_id, input=prompt, category="instruction_following",
+        capability_tags=("指令遵循",), expected_behavior="Follow every declared verifiable instruction.",
+        metadata={"adapter": "ifeval", "source": "fixed-official-subset", "instruction_checks": checks,
+                  "level": str(min(3, len(checks))), "problem_categories": ["instruction_following"]})
+
+
+def _row_case(raw: dict[str, Any], source: str, prefix: str = "ifeval") -> EvalCase:
+    from chatcopilot.evals.ifeval_official import REVISION
+    ids, args = raw.get("instruction_id_list"), raw.get("kwargs")
+    if not isinstance(ids, list) or not ids or not isinstance(args, list) or len(ids) != len(args):
+        raise ValueError("IFEval instruction/parameter count mismatch")
+    prompt = raw.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("IFEval prompt is missing")
+    checks = [{"id": ident, "kwargs": value} for ident, value in zip(ids, args)]
+    case = _case(f"{prefix}-{raw['key']}", prompt, checks)
+    case.metadata.update(source=source, source_revision=REVISION, official_instruction_ids=ids)
+    preflight([case])
+    return case
 
 
 def _load_jsonl_cases(path: Path) -> list[EvalCase]:
-    if not path.is_file():
-        raise FileNotFoundError(f"IFEval data file not found: {path}")
-    cases: list[EvalCase] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line_no, raw_line in enumerate(handle, start=1):
-            line = raw_line.strip()
-            if not line:
-                continue
-            raw = json.loads(line)
-            prompt = str(raw.get("prompt", "")).strip()
-            if not prompt:
-                raise ValueError(f"{path}:{line_no}: prompt 不能为空")
-            key = str(raw.get("key", line_no)).strip()
-            checks = _checks_from_official_row(raw)
-            if not checks:
-                continue
-            official_instruction_ids = raw.get("instruction_id_list", [])
-            categories = _check_categories(checks, official_instruction_ids=official_instruction_ids)
-            cases.append(
-                EvalCase(
-                    capability_tags=("指令遵循",),
-                    case_id=f"ifeval-{key}",
-                    input=prompt,
-                    category=categories[0] if categories else "instruction_following",
-                    expected_behavior="Follow all verifiable instructions in the prompt.",
-                    metadata={
-                        "adapter": "ifeval",
-                        "source": str(path),
-                        "instruction_checks": checks,
-                        "official_instruction_ids": official_instruction_ids,
-                        "level": _checks_level(checks, official_instruction_ids=official_instruction_ids),
-                        "problem_categories": categories,
-                    },
-                )
-            )
+    cases = [_row_case(json.loads(line), str(path)) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if len({c.case_id for c in cases}) != len(cases):
+        raise ValueError("duplicate IFEval Case ID")
     return cases
-
-
-def _checks_from_official_row(raw: dict[str, Any]) -> list[dict[str, Any]]:
-    instruction_ids = raw.get("instruction_id_list") or []
-    kwargs_list = raw.get("kwargs") or []
-    if not isinstance(instruction_ids, list):
-        instruction_ids = []
-    if not isinstance(kwargs_list, list):
-        kwargs_list = []
-    checks: list[dict[str, Any]] = []
-    for idx, instruction_id in enumerate(instruction_ids):
-        kwargs = kwargs_list[idx] if idx < len(kwargs_list) and isinstance(kwargs_list[idx], dict) else {}
-        mapped = _map_official_instruction(str(instruction_id), kwargs)
-        if mapped is not None:
-            checks.append(mapped)
-    return checks
-
-
-def _map_official_instruction(instruction_id: str, kwargs: dict[str, Any]) -> dict[str, Any] | None:
-    if instruction_id in {
-        "punctuation:no_comma",
-        "detectable_format:json_format",
-        "detectable_format:json_object",
-        "length_constraints:number_words",
-    }:
-        mapped_id = "detectable_format:json_object" if instruction_id == "detectable_format:json_format" else instruction_id
-        return {"id": mapped_id, "kwargs": dict(kwargs)}
-    if instruction_id in {"keywords:frequency", "keywords:existence"}:
-        return {"id": instruction_id, "kwargs": dict(kwargs)}
-    return None
-
-
-def _passes_check(check_id: str, kwargs: dict[str, Any], text: str) -> bool:
-    if check_id == "punctuation:no_comma":
-        return "," not in text and "，" not in text
-    if check_id == "keywords:frequency":
-        keyword = str(kwargs.get("keyword", ""))
-        relation = str(kwargs.get("relation", "at least")).lower()
-        threshold = int(kwargs.get("num", kwargs.get("frequency", 1)) or 1)
-        count = text.count(keyword)
-        return _compare(count, relation, threshold)
-    if check_id == "keywords:existence":
-        keywords = kwargs.get("keywords") or kwargs.get("keyword") or []
-        if isinstance(keywords, str):
-            keywords = [keywords]
-        return all(str(keyword) in text for keyword in keywords)
-    if check_id == "detectable_format:json_object":
-        try:
-            parsed = json.loads(_strip_code_fence(text.strip()))
-        except json.JSONDecodeError:
-            return False
-        return isinstance(parsed, dict)
-    if check_id == "length_constraints:number_words":
-        relation = str(kwargs.get("relation", "at most")).lower()
-        threshold = int(kwargs.get("num_words", kwargs.get("num", 0)) or 0)
-        words = re.findall(r"\b[\w'-]+\b", text)
-        return _compare(len(words), relation, threshold)
-    if check_id == "detectable_format:number_bullets":
-        threshold = int(kwargs.get("num_bullets", kwargs.get("num", 0)) or 0)
-        bullet_lines = [line for line in text.splitlines() if line.strip().startswith(("-", "*"))]
-        return len(bullet_lines) == threshold
-    return False
-
-
-def _compare(value: int, relation: str, threshold: int) -> bool:
-    if relation in {"at least", "more than", "greater than", ">="}:
-        return value >= threshold
-    if relation in {"at most", "less than", "no more than", "<="}:
-        return value <= threshold
-    if relation in {"exactly", "equal to", "=="}:
-        return value == threshold
-    return value >= threshold
-
-
-def _strip_code_fence(text: str) -> str:
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if len(lines) >= 3 and lines[-1].strip() == "```":
-            return "\n".join(lines[1:-1]).strip()
-    return text
 
 
 def _select_profile(cases: list[EvalCase], *, profile: str, seed: int) -> list[EvalCase]:

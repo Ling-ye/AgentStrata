@@ -6,10 +6,10 @@ import json
 
 import pytest
 
-from chatcopilot.evals.business_dataset import agent_inputs, parse_business_cases
+from chatcopilot.evals.business_dataset import agent_inputs, parse_business_cases, load_business_cases
 from chatcopilot.evals.business_scoring import BusinessScoringError, score_business
 from chatcopilot.evals.models import TrialObservation
-from chatcopilot.evals.registry import get_cases, get_manifest
+from chatcopilot.evals.registry import get_manifest
 from chatcopilot.evals.trial_capture import record_turn
 
 
@@ -47,7 +47,7 @@ def observed(case, *, final="PAIR-42", calls=None, state="recorded"):
 
 
 def test_strict_single_turn_uses_sdk_and_keeps_reference_out_of_agent(deepeval_judge):
-    case = get_cases("project-business-v1")[0]
+    case = load_business_cases(get_manifest("project-business-v1"))[0]
     deepeval_judge.value = 1
     result, evidence = score_business(case, observed(case))
     assert result.passed and result.score == 1
@@ -62,7 +62,7 @@ def test_strict_single_turn_uses_sdk_and_keeps_reference_out_of_agent(deepeval_j
 
 
 def test_multiturn_uses_separate_conversational_dataset(deepeval_judge):
-    case = deepcopy(get_cases("project-business-v1")[0])
+    case = deepcopy(load_business_cases(get_manifest("project-business-v1"))[0])
     case.metadata["business"]["turns"].append("请重述查询到的值。")
     deepeval_judge.value = 10
     result, evidence = score_business(case, observed(case))
@@ -76,7 +76,7 @@ def test_multiturn_uses_separate_conversational_dataset(deepeval_judge):
 
 @pytest.mark.parametrize("state", ["not_recorded", "truncated"])
 def test_missing_evidence_is_error_without_judge_call(deepeval_judge, state):
-    case = get_cases("project-business-v1")[0]
+    case = load_business_cases(get_manifest("project-business-v1"))[0]
     with pytest.raises(BusinessScoringError) as failure:
         score_business(case, observed(case, state=state))
     assert failure.value.code == "evidence_missing"
@@ -85,7 +85,7 @@ def test_missing_evidence_is_error_without_judge_call(deepeval_judge, state):
 
 def test_empty_calls_is_observed_failure_not_missing_capture(deepeval_judge):
     deepeval_judge.value = 0
-    case = get_cases("project-business-v1")[0]
+    case = load_business_cases(get_manifest("project-business-v1"))[0]
     result, evidence = score_business(case, observed(case, calls=[]))
     assert not result.passed and result.score == 0
     assert evidence["tool_outcome"] == "no_calls"
@@ -95,7 +95,7 @@ def test_empty_calls_is_observed_failure_not_missing_capture(deepeval_judge):
 
 def test_expected_tool_failure_can_pass(deepeval_judge):
     deepeval_judge.value = 1
-    case = get_cases("project-business-v1")[1]
+    case = load_business_cases(get_manifest("project-business-v1"))[1]
     result, evidence = score_business(
         case,
         observed(
@@ -117,7 +117,7 @@ def test_expected_tool_failure_can_pass(deepeval_judge):
 
 def test_judge_exception_is_ungraded_with_input_retained(deepeval_judge):
     deepeval_judge.failure = TimeoutError("controlled timeout")
-    case = get_cases("project-business-v1")[0]
+    case = load_business_cases(get_manifest("project-business-v1"))[0]
     with pytest.raises(BusinessScoringError) as failure:
         score_business(case, observed(case))
     assert failure.value.code == "judge_error"
@@ -174,15 +174,15 @@ def test_qq_example_is_visible_but_not_runnable():
     from chatcopilot.evals.application.catalog import get_case_descriptor, list_suite_descriptors
     from chatcopilot.evals.business_tools import preflight
 
-    case = get_cases("project-business-v1")[-1]
-    detail = get_case_descriptor("project-business-v1", case.case_id)
-    assert detail["readiness"]["state"] == "not_configured"
-    assert detail["tools"] == ["qq_group_members"]
+    case = load_business_cases(get_manifest("project-business-v1"))[-1]
+    from chatcopilot.evals.business_tools import readiness
+    assert readiness(case)["state"] == "not_configured"
     with pytest.raises(ValueError, match="未配置"):
         preflight(cases=[case])
-    suite = next(s for s in list_suite_descriptors() if s["suite_id"] == "project-business-v1")
-    assert suite["ready"] and suite["runnable_case_count"] == 2 and suite["case_count"] == 3
-    assert suite["benchmark"]["default_scoring_mode"] == "geval"
+    assert not any(s["suite_id"] == "project-business-v1" for s in list_suite_descriptors())
+    with pytest.raises(ValueError, match="已退出"):
+        get_case_descriptor("project-business-v1", case.case_id)
+
 
 
 @pytest.mark.parametrize(
@@ -217,7 +217,7 @@ def test_group_example_evidence_and_binary_sdk_contract(
     deepeval_judge, answer, group, members, ok, expected
 ):
     # Controlled scores verify SDK/provenance flow, not the judgment accuracy of a real model.
-    case = get_cases("project-business-v1")[-1]
+    case = load_business_cases(get_manifest("project-business-v1"))[-1]
     if not ok:
         case = replace(
             case,
@@ -248,7 +248,7 @@ def test_group_example_evidence_and_binary_sdk_contract(
 def test_runner_failure_and_missing_capture_stay_distinct(monkeypatch, tmp_path, deepeval_judge):
     from chatcopilot.evals.plugins.business_agent import execute
 
-    case = get_cases("project-business-v1")[0]
+    case = load_business_cases(get_manifest("project-business-v1"))[0]
     monkeypatch.setattr(
         "chatcopilot.evals.plugins.business_agent.run_environment_agent",
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("controlled startup failure")),
@@ -284,7 +284,7 @@ def test_business_scoring_conditions_and_reference_change_comparison_keys(deepev
     from chatcopilot.evals.workbench import benchmark_snapshot
     from chatcopilot.evals.application.insights import benchmark_comparison_keys
 
-    case = get_cases("project-business-v1")[0]
+    case = load_business_cases(get_manifest("project-business-v1"))[0]
     manifest = get_manifest("project-business-v1")
     snapshot = benchmark_snapshot(manifest, [case], {})
     result = {"config_snapshot": {"benchmark": snapshot}}
@@ -349,7 +349,7 @@ def test_native_agent_registry_tool_execution_and_sdk_judge(monkeypatch, tmp_pat
         "httpx.Client.send", lambda *args, **kwargs: pytest.fail("unexpected network access")
     )
     deepeval_judge.value = 1
-    case = get_cases("project-business-v1")[0]
+    case = load_business_cases(get_manifest("project-business-v1"))[0]
     result = execute(case, bot="controlled", workspace_root=tmp_path, options={})
     assert result.status == "passed", result.error
     assert len(requests) == 2
@@ -381,7 +381,7 @@ def test_returned_execution_failure_is_not_a_model_verdict(
         "chatcopilot.evals.plugins.business_agent.run_environment_agent", interrupted
     )
     result = execute(
-        get_cases("project-business-v1")[0], bot="controlled", workspace_root=tmp_path, options={}
+        load_business_cases(get_manifest("project-business-v1"))[0], bot="controlled", workspace_root=tmp_path, options={}
     )
     assert result.status == "error" and result.judge is None
     assert result.metadata["error_code"] == "execution_error"

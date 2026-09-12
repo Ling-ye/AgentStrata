@@ -33,9 +33,7 @@ def _execute(case, *, bot: str, workspace_root: Path, options: dict[str, Any]) -
         lease_active = True
         record_environment({"kind": "swe-bench", "container": name})
         image_id = sandbox.start_container(name, case.metadata["swe_instance"]["image"])
-        _, base = sandbox.docker(["exec", "--workdir", "/testbed", name, "git", "rev-parse", "HEAD"])
-        if base.strip() != case.metadata["base_commit"]:
-            raise ValueError("SWE-bench image base commit differs from the frozen case")
+        repository = sandbox.prepare_repository(name, case.metadata["base_commit"])
 
         def shell(arguments, context):
             command = arguments.get("command")
@@ -61,6 +59,7 @@ def _execute(case, *, bot: str, workspace_root: Path, options: dict[str, Any]) -
         name = f"agentstrata-swe-{run_id}-grade"
         record_environment({"kind": "swe-bench", "container": name})
         sandbox.start_container(name, image_id)
+        sandbox.prepare_repository(name, case.metadata["base_commit"])
         grading: dict[str, Any] = {}
 
         def native():
@@ -76,6 +75,7 @@ def _execute(case, *, bot: str, workspace_root: Path, options: dict[str, Any]) -
             metadata={**usage_summary(events), "judge_evidence": evidence, "tool_calls": audit,
                       "predicted_patch": patch, "patch_sha256": hashlib.sha256(patch.encode()).hexdigest(),
                       "image_id": image_id, "environment_result": grading,
+                      "repository_preparation": repository,
                       "execution_protocol": "network-disabled capped container; upstream log grading"})
     except Exception as exc:
         return EvalCaseResult(case_id=case.case_id, suite_id="swe-bench-verified", status="error", final_text=final_text,

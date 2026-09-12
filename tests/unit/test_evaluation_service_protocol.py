@@ -443,7 +443,7 @@ def test_mutation_acceptance_prevents_start_timeout_during_slow_prepare(
                 request={
                     "kind": "suite",
                     "suite_id": "ifeval",
-                    "case_ids": ["ifeval-json-format"],
+                    "case_ids": ["ifeval-fixed-1075"],
                     "dry_run": True,
                     "llm_judge": False,
                 },
@@ -476,7 +476,7 @@ def test_start_identity_is_idempotent_and_rejects_request_drift(
     request = {
         "kind": "suite",
         "suite_id": "ifeval",
-        "case_ids": ["ifeval-json-format"],
+        "case_ids": ["ifeval-fixed-1075"],
         "dry_run": True,
         "llm_judge": False,
     }
@@ -1108,7 +1108,7 @@ def test_real_ifeval_dry_run_lifecycle_over_uds(
                 "kind": "suite",
                 "bot_id": "lingye-copilot-qq",
                 "suite_id": "ifeval",
-                "case_ids": ["ifeval-json-format"],
+                "case_ids": ["ifeval-fixed-1075"],
                 "dry_run": True,
                 "llm_judge": False,
             },
@@ -1188,7 +1188,7 @@ def test_console_and_service_restart_preserve_and_recover_worker(
     previous_client = app.state.evaluations
     try:
         _wait_for_service(service_a, client)
-        case_ids = ["ifeval-json-format"]
+        case_ids = ["ifeval-fixed-1075"]
         created = client.start(
             bot_id="lingye-copilot-qq",
             request={

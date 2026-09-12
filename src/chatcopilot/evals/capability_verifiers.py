@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Sequence
@@ -26,15 +25,7 @@ from chatcopilot.evals.models import (
 )
 
 
-@dataclass(frozen=True)
-class AssertionOutcome:
-    """One verifier result before Case-level ``all``/``any`` aggregation."""
-
-    passed: bool
-    reasons: tuple[str, ...] = ()
-    missing: tuple[str, ...] = ()
-    violations: tuple[str, ...] = ()
-    checks: Mapping[str, Any] = field(default_factory=dict)
+from chatcopilot.evals.models import AssertionOutcome
 
 
 Verifier = Callable[[EvalCaseDefinition, EvalCaseAssertion, TrialObservation], AssertionOutcome]
@@ -2038,7 +2029,13 @@ def _ifeval_fixed(case: EvalCaseDefinition, assertion: EvalCaseAssertion, observ
         checks={'instructions': checks, 'provenance': {'kind': 'ifeval_subset', 'key': arguments['key'], 'revision': arguments['revision']}})
 
 
+def _task_scenario(case, assertion, observation):
+    from chatcopilot.evals.agent_tasks.verifier import verify
+    return verify(case, assertion, observation)
+
+
 _REGISTRY: dict[str, Verifier] = {
+    "task_scenario": _task_scenario,
     "ifeval_fixed": _ifeval_fixed,
     "business_behavior": _business_behavior,
     "exact_json_fields": _exact_json_fields,

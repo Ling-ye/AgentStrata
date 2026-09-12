@@ -9,14 +9,15 @@ created: 2026-09-10
 
 ## Summary
 
-按已批准方案保留 DeepEval 和开始测试、运行记录、进步趋势三页工作台。开始测试按模型能力、Agent 能力、系统链路三个被测对象入口组织，默认 Agent 能力；入口内按项目测评、公开基准分组，再浏览测评集 → Case。来源、能力标签、用途、执行范围与就绪状态独立呈现。现有 63 个工程回归 Case 和历史 ID 保留；普通业务题通过 YAML 与已支持工具资源执行，以严格 GEval 作为主判。
+按已批准方案保留 DeepEval 和开始测试、运行记录、进步趋势三页工作台。开始测试按LLM测评、Agent测评、系统测试三个被测对象入口组织，默认 Agent测评；入口内按项目测评、公开基准分组，再浏览测评集 → Case。来源、能力标签、用途、执行范围与就绪状态独立呈现。当前统一 Agent 题库与 IFEval 模型路径由 [题库统一规格](../evaluation-agent-task-unification/spec.md) 修订；下文业务插件与 63 题规则记录前一阶段设计，旧资源仅供历史读取和工程契约验证。
 
 ## Design
 
 遵循 [四层运行时基线](../runtime-four-layer-definition/spec.md)。Console 是控制观测入口，Evaluation application/service/Core 保持独立生命周期、预检、取消、监督和 artifact 所有权。执行适配器只返回 Case 结果，不接管生命周期，也不增加消息层。本规格修订 [基准工作台](../evaluation-benchmark-workbench/spec.md) 的目录和评分组织，保留既有 API 根、Suite/Case 与运行记录。
 
 - Suite manifest 统一声明来源、用途、覆盖范围、执行对象及原生评分器来源和版本；前端从目录生成测评集，不维护 Suite 白名单。现有工程回归仍保留确定性断言与原有质量门禁。
-- 对象类型使用 `subject_type: model | agent | system`，属于目录与新运行快照元数据，不替代执行 driver、旧 track 或运行时四层。BFCL 属于模型，业务题、Agent 行为回归、GAIA、IFEval、AgentBench FC、SWE-bench 与 WebArena 属于 Agent；QQ 合成回归和 Canary 属于系统。WebArena、Canary 仍待接入，QQ 必须保留 Legacy Relay / attestation / ACP 覆盖说明，不宣称当前 Gateway 或真实 QQ E2E。
+- 页面入口名称统一为“LLM测评”“Agent测评”“系统测试”，开始测试、记录筛选和详情标签共用同一名称表。系统测试覆盖范围宽于 Gateway 单层，且当前 QQ 套件为 Legacy 合成回归、Canary 尚待接入，因此不把入口命名为“网关测试”。名称调整不改变 subject_type、Suite/Case ID 或历史快照。
+- 对象类型使用 `subject_type: model | agent | system`，属于目录与新运行快照元数据，不替代执行 driver、旧 track 或运行时四层。BFCL 与当前 IFEval 属于模型；Agent 任务能力、GAIA、AgentBench FC、SWE-bench 与 WebArena 属于 Agent；QQ 合成回归和 Canary 属于系统。IFEval 归类变更伴随真实模型执行路径变更，旧 Agent 运行保留原快照。WebArena、Canary 仍待接入，QQ 必须保留 Legacy Relay / attestation / ACP 覆盖说明，不宣称当前 Gateway 或真实 QQ E2E。
 - Benchmark 表达标准依据，Dataset 表达版本化题目与资源，Suite 绑定可执行题目、环境与评分方案，Case 表达单题。Target 是不可变被测配置；Evaluation 冻结题单、环境、评分与参数；Trial 是 Case × Target × 重复序号。沿用一运行一 Suite，不新增数据集服务或执行能力。
 - Suite 与 Case 可声明多个 `capability_tags`；来源、能力、用途和状态不能彼此推导。用途仅作说明，不增加必填表单。待接入默认折叠，待准备可查看；空来源分组隐藏。选中 Bot、对象或 Suite 改变时重新初始化选题、筛选、评分及预算，迟到响应不影响新表单。
 - 新运行保存对象类型及能力标签。历史读取不查当前目录补造字段，不迁移历史记录。结果分别展示执行事实、评分结果与统计；运行完成不等于通过，缺失评分不补零，可比趋势包含对象类型，不产生跨套件混合总分。
@@ -31,11 +32,11 @@ created: 2026-09-10
 ## Acceptance
 
 - 已有工具和资源下新增普通业务 Case 只改数据文件及完整性摘要，无需新增 Case ID 分支。
-- 63 个回归 ID 与确定性断言保持；新业务题明确显示 LLM 判定及理由。
+- 前阶段 63 个回归 ID 与确定性断言保留为历史资源；当前 58 题目录、旧题迁移去向及事实加必要语义评分按题库统一规格验收。
 - Agent 输入不包含评分资料，工具调用与返回进入 Judge；无调用、失败返回、缺失采集、Judge 异常可以区分。
 - 公共基准原生成绩独立、适配范围明确；新测评集无需修改前端列表。
 - 保存可复核的评分快照，变化条件不并入同一可比趋势；旧记录不补造新字段。
-- 三类入口及来源分组完全消费目录；BFCL 不列入 Agent，IFEval 不列入模型，待接入不因分类改变而可运行。多标签筛选、跨 Bot/对象/Suite 切换隔离、旧记录未记录显示与不同对象趋势分组均通过验证。
+- 三类入口及来源分组完全消费目录；BFCL、当前 IFEval 不列入 Agent，待接入不因分类改变而可运行。多标签筛选、跨 Bot/对象/Suite 切换隔离、旧记录未记录显示与不同对象趋势分组均通过验证。选择题单不得过滤未满足条件的题目，应保留选择、列明缺项并阻断启动。
 - 不修改运行目录、已安装依赖、服务或 Git 索引，不提交或发布。
 
 ## Verification

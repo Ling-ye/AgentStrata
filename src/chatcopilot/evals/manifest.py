@@ -43,7 +43,7 @@ _ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 _CASE_ID_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,160}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _KINDS = {"product", "knowledge", "reasoning", "code", "agent", "tool", "web", "context", "safety"}
-_STATUSES = {"implemented", "planned"}
+_STATUSES = {"implemented", "planned", "retired"}
 _DRIVERS = {
     "agent_isolated",
     "agent_configured",
@@ -96,6 +96,8 @@ _MEDIA_TYPES = {
     ".ppm": {"image/x-portable-pixmap"},
 }
 _CASE_FIELDS = {
+    "metadata",
+    "scenario_id", "scenario_params",
     "schema",
     "id",
     "version",
@@ -432,12 +434,23 @@ def _parse_case_definition(value: Any, *, source: str, index: int) -> EvalCaseDe
     judge_mode, assertions = _parse_case_assertions(value.get("judge"), source=source, field=field)
     if policy.side_effect == "external_write":
         raise ValueError(f"{source}: {field} Agent Evaluation cases cannot use external_write")
+    metadata = _strict_mapping(value.get("metadata", {}), source, f"{field}.metadata")
+    _reject_unknown(metadata, {"test_category", "red_team_surface"}, f"{source}: {field}.metadata")
+    if metadata.get("test_category", "task") not in {"task", "red_team"}:
+        raise ValueError(f"{source}: {field}.metadata.test_category is unsupported")
+    if metadata.get("test_category") == "red_team":
+        _required_string(metadata.get("red_team_surface"), source, f"{field}.red_team_surface", maximum=160)
     return EvalCaseDefinition(
         schema=schema,
         case_id=case_id,
         version=version,
         capability=_symbol(value.get("capability"), source, f"{field}.capability"),
         capability_tags=_string_list(value.get("capability_tags"), source, f"{field}.capability_tags"),
+        metadata=dict(metadata),
+        scenario_id=_optional_identifier(value.get("scenario_id"), source, f"{field}.scenario_id"),
+        scenario_params=_canonical_assertion_arguments(
+            _strict_mapping(value.get("scenario_params", {}), source, f"{field}.scenario_params"),
+            source=source, field=f"{field}.scenario_params"),
         plugin_id=plugin_id,
         driver_id=driver_id,
         turns=turns,

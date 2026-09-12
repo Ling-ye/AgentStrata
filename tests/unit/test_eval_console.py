@@ -135,7 +135,7 @@ def test_report_checkpoint_keeps_previous_json_when_replace_fails() -> None:
         result = run_suite(
             "ifeval",
             dry_run=True,
-            case_ids=["ifeval-json-format"],
+            case_ids=["ifeval-fixed-1075"],
         )
         write_run_report(result, root)
         previous = (root / "result.json").read_text(encoding="utf-8")
@@ -168,7 +168,7 @@ def test_catalog_queries_are_generic_and_hide_answers(
     assert profiles[0]["profile_id"] == "agent-comparison-mvp"
     assert set(by_id) == {
         "agentstrata-canary-self-update-v1",
-        "agentstrata-capabilities-v1",
+        "agentstrata-agent-tasks-v1",
         "agentstrata-qq-message-flow-v1",
         "gaia",
         "bfcl",
@@ -176,19 +176,18 @@ def test_catalog_queries_are_generic_and_hide_answers(
         "swe-bench-verified",
                 "agentbench-fc",
         "webarena",
-        "project-business-v1",
-    }
+            }
     assert by_id["ifeval"]["ready"] is True
     assert by_id["agentstrata-canary-self-update-v1"]["status"] == "planned"
     assert by_id["agentstrata-canary-self-update-v1"]["ready"] is False
-    assert by_id["agentstrata-capabilities-v1"]["case_count"] == 63
-    assert by_id["agentstrata-capabilities-v1"]["track"] == "agent"
+    assert by_id["agentstrata-agent-tasks-v1"]["case_count"] == 65
+    assert by_id["agentstrata-agent-tasks-v1"]["track"] == "agent"
     assert by_id["agentstrata-qq-message-flow-v1"]["case_count"] == 7
     assert by_id["agentstrata-qq-message-flow-v1"]["track"] == "qq_message_flow"
-    assert by_id["agentstrata-capabilities-v1"]["default_preset"] == "quick"
+    assert by_id["agentstrata-agent-tasks-v1"]["default_preset"] == "quick"
     assert (
-        by_id["agentstrata-capabilities-v1"]["capability_status"]
-        == "image_generation:not_configured"
+        by_id["agentstrata-agent-tasks-v1"]["capability_status"]
+        == "configured"
     )
     assert by_id["bfcl"]["execution_scope"] == "direct_llm/function_call_protocol"
     assert by_id["swe-bench-verified"]["implemented"] is True
@@ -424,7 +423,7 @@ def test_suite_descriptor_marks_smoke_data_as_preparable() -> None:
     assert by_id["bfcl"]["data_source"] == "builtin_smoke"
     assert by_id["bfcl"]["uses_smoke_data"] is True
     assert by_id["bfcl"]["prepare_available"] is True
-    assert by_id["ifeval"]["data_source"] == "builtin_smoke"
+    assert by_id["ifeval"]["data_source"] == "fixed_official_subset"
     assert by_id["ifeval"]["prepare_available"] is True
 
 
@@ -524,7 +523,7 @@ def _write_ifeval_official_cache(path: Path) -> None:
             [
                 "punctuation:no_comma",
                 "keywords:existence",
-                "detectable_format:json_object",
+                "detectable_format:json_format",
             ],
             [{}, {"keywords": ["alpha"]}, {}],
         ),

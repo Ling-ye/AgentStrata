@@ -22,6 +22,7 @@ _COMMON_SUITE_MODULES = (
     "chatcopilot.core.file_integrity",
     "chatcopilot.evals.private_files",
     "chatcopilot.evals.evaluations",
+    "chatcopilot.evals.evaluation_runtime",
     "chatcopilot.evals.judges",
     "chatcopilot.evals.runner",
     "chatcopilot.evals.workbench",
@@ -29,6 +30,12 @@ _COMMON_SUITE_MODULES = (
     "chatcopilot.evals.deepeval_engine",
 )
 _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("agent-tasks", "agent_configured"): (
+        "chatcopilot.evals.agent_tasks.scenes", "chatcopilot.evals.agent_tasks.runtime",
+        "chatcopilot.evals.agent_tasks.verifier", "chatcopilot.evals.agent_tasks.code_fixture",
+        "chatcopilot.evals.capability_executor", "chatcopilot.evals.capability_verifiers",
+        "chatcopilot.evals.deepeval_engine", "chatcopilot.evals.trial_capture",
+    ),
     ("business-agent", "agent_configured"): (
         "chatcopilot.evals.business_dataset", "chatcopilot.evals.business_tools",
         "chatcopilot.evals.business_scoring", "chatcopilot.evals.business_policy", "chatcopilot.evals.deepeval_mapping",
@@ -88,6 +95,7 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "chatcopilot.middleware.runtime.tasks",
     ),
     ("swe-bench", "agent_configured"): (
+        "chatcopilot.evals.benchmark_data",
         "chatcopilot.evals.adapters.swebench", "chatcopilot.evals.adapters.swebench_runtime",
         "chatcopilot.evals.environment_agent", "chatcopilot.evals.environment_cleanup", "chatcopilot.evals.trial_capture",
     ),
@@ -96,10 +104,11 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "chatcopilot.evals.environment_cleanup", "chatcopilot.evals.trial_capture",
     ),
     ("gaia", "agent_configured"): (
+        "chatcopilot.evals.benchmark_data",
         "chatcopilot.evals.adapters.gaia",
         "chatcopilot.evals.judges_llm",
     ),
-    ("ifeval", "agent_configured"): ("chatcopilot.evals.adapters.ifeval",),
+    ("ifeval", "direct_llm"): ("chatcopilot.evals.adapters.ifeval", "chatcopilot.evals.ifeval_official", "chatcopilot.evals.ifeval_language", "chatcopilot.evals.vendor.ifeval.instructions", "chatcopilot.evals.vendor.ifeval.instructions_util", "chatcopilot.evals.vendor.ifeval.instructions_registry"),
     ("bfcl", "direct_llm"): ("chatcopilot.evals.adapters.bfcl",),
 }
 _COMPARISON_IMPLEMENTATIONS = (

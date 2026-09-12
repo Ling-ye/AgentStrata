@@ -21,7 +21,7 @@ _MACHINE_ABSOLUTE_PATH = "/" + "/".join(
     (
         (
             "src/chatcopilot/agent/session.py",
-            {"agent": ("full", "subagent-structured-result")},
+            {"agent": ("full", "delegate-autonomous")},
             (),
         ),
         (
@@ -36,7 +36,7 @@ _MACHINE_ABSOLUTE_PATH = "/" + "/".join(
         ),
         (
             "src/chatcopilot/agent/search/coordinator.py",
-            {"agent": ("full", "search-general-with-evidence")},
+            {"agent": ("full", "evidence-select-source")},
             (),
         ),
         (
@@ -72,14 +72,14 @@ _MACHINE_ABSOLUTE_PATH = "/" + "/".join(
         (
             "src/chatcopilot/evals/manifest.py",
             {
-                "agent": ("quick", "dialogue-strict-json"),
+                "agent": ("quick", "artifact-document-report"),
                 "qq_message_flow": ("quick", "qq-synthetic-roundtrip"),
             },
             (),
         ),
         (
             "docs/unclassified-change.md",
-            {"agent": ("quick", "dialogue-strict-json")},
+            {"agent": ("quick", "artifact-document-report")},
             (),
         ),
     ),
@@ -106,7 +106,7 @@ def test_unknown_path_uses_exact_current_quick_preset() -> None:
     manifest = next(
         item
         for item in discover_suite_manifests()
-        if item.suite_id == "agentstrata-capabilities-v1"
+        if item.suite_id == "agentstrata-agent-tasks-v1"
     )
     quick = next(item.case_ids for item in manifest.presets if item.preset_id == "quick")
 
@@ -130,10 +130,10 @@ def test_multiple_categories_are_order_independent_and_recommend_custom() -> Non
     assert first.categories == ("search", "qq-message-flow", "qq")
     by_track = {run.track: run for run in first.runs}
     assert by_track["agent"].recommended_preset == "full"
-    assert "search-general-with-evidence" in by_track["agent"].case_ids
+    assert "evidence-select-source" in by_track["agent"].case_ids
     assert "search-explicit-source" not in by_track["agent"].case_ids
     assert "search-conflict-disclosure" not in by_track["agent"].case_ids
-    assert "current-usd-cny-reference" in by_track["agent"].case_ids
+    assert "evidence-conflict" in by_track["agent"].case_ids
     assert by_track["qq_message_flow"].recommended_preset == "full"
     assert first.external_checks == ("qq",)
 

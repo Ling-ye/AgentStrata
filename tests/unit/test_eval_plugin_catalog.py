@@ -561,7 +561,7 @@ def test_official_plugins_preserve_adapter_judges(
     ifeval_plugin = get_evaluation_plugin("ifeval")
     assert ifeval_plugin.judge is not None
     for final_text in ("固定测试集适合观察优化", "固定测试集适合观察，优化"):
-        assert ifeval_plugin.judge(ifeval_case, final_text, chat_config=None) == ifeval.judge(
+        assert ifeval_plugin.judge(ifeval_case, {"final_text": final_text}) == ifeval.judge(
             ifeval_case, final_text
         )
 
@@ -958,7 +958,7 @@ def test_product_definition_snapshot_hashes_each_selected_execution_layer() -> N
         "persona-applied-behavior",
         "current-usd-cny-reference",
     }
-    cases = tuple(case for case in get_cases(manifest.suite_id) if case.case_id in selected_ids)
+    cases = tuple(case for case in plugin.load_cases(CaseLoadContext(manifest, auto_prepare=False)) if case.case_id in selected_ids)
 
     snapshot = suite_definition_snapshot(manifest, plugin, cases)
     modules = snapshot["execution_implementations"]["modules"]

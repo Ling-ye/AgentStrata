@@ -244,8 +244,9 @@ def benchmark_comparison_keys(request: Mapping[str, Any], result: Mapping[str, A
     material = {key: benchmark.get(key) for key in ("suite_id", "subject_type", "adapter_version", "case_set_hash", "environment_contract", "budget", "source_type", "purpose", "data_version", "split", "executor")}
     material["protocols"] = definition.get("protocols")
     material["driver"] = _mapping(definition.get("manifest")).get("driver_id")
-    material["native_implementations"] = {key: value for key, value in implementations.items() if ".adapters." in key or key.endswith(("capability_verifiers", "business_verifiers", "ifeval_subset"))}
+    material["native_implementations"] = {key: value for key, value in implementations.items() if ".adapters." in key or ".agent_tasks." in key or ".vendor.ifeval." in key or key.endswith(("ifeval_official", "ifeval_language")) or key.endswith(("capability_verifiers", "business_verifiers", "ifeval_subset"))}
     material["native_mode"] = scoring.get("native")
+    material["native_scorer"] = scoring.get("scorer")
     suite_id = benchmark.get("suite_id")
     if suite_id in {"swe-bench-verified", "agentbench-fc"}:
         environments = []
@@ -265,7 +266,7 @@ def benchmark_comparison_keys(request: Mapping[str, Any], result: Mapping[str, A
                                if key.endswith(("deepeval_engine", "benchmark_scoring", "business_scoring", "business_policy", "deepeval_mapping", "business_tools", "business_dataset", "environment_agent", "workbench"))}
     quality = _digest({**material, "scoring": scoring, "quality_implementations": quality_implementations})
     # Product pass/fail includes required quality, while public native results do not.
-    product = benchmark.get("suite_id") == "agentstrata-capabilities-v1"
+    product = benchmark.get("suite_id") in {"agentstrata-capabilities-v1", "agentstrata-agent-tasks-v1"}
     return {"pass_rate": quality if product or scoring.get("native") is False else native,
             "quality": quality, "duration": native}
 

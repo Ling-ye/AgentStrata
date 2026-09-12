@@ -23,6 +23,7 @@ SUITE_DIR = (
     / "agentstrata-capabilities-v1"
 )
 CASE_FIELDS = {
+    "capability_tags",
     "schema",
     "id",
     "version",
@@ -99,7 +100,7 @@ def test_suite_loads_through_strict_core_contract() -> None:
 
     assert manifest.schema == 1
     assert manifest.suite_id == "agentstrata-capabilities-v1"
-    assert manifest.status == "implemented"
+    assert manifest.status == "retired"
     assert manifest.plugin_id == "generic-agent"
     assert manifest.driver_id == "agent_configured"
     assert manifest.default_preset == "quick"

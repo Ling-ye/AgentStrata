@@ -1,8 +1,8 @@
 schema: 1
 suite_id: ifeval
-version: 1.0.0
+version: 2.0.0
 name: IFEval · 指令遵循
-subject_type: agent
+subject_type: model
 capability_tags: [指令遵循]
 kind: safety
 status: implemented
@@ -10,7 +10,7 @@ value: 指令遵循评测，检测格式、约束、角色和输出要求是否�
 recommendation: 每次改系统 prompt 后运行；外部数据默认 balanced-100，未配置时使用内置 smoke 子集。
 cadence: daily/regression
 plugin_id: ifeval
-driver_id: agent_configured
+driver_id: direct_llm
 requires_bot: true
 requires_external_data: false
 prepare_supported: true
@@ -38,9 +38,21 @@ source_type: public_benchmark
 purpose: benchmark
 data_version: 具体版本见题目数据快照；未提供时不推断
 split: 实际载入数据划分
-coverage: 已实现的确定性指令类别
-target_scope: Agent runtime
-native_method: 指令约束检查（支持子集）
-scorer_origin: project_adapter
-scorer_version: 1.0.0
-execution_scope: agent_runtime
+coverage: 官方约束不丢弃；默认固定 8 题，完整数据及检查器资源须另行准备
+target_scope: 模型直测 · 独立 PromptPlan，无 Agent、工具和记忆
+native_method: 固定官方检查器 · 严格口径主判，宽松及指令指标单列
+scorer_origin: official
+scorer_version: 2.0.0
+execution_scope: direct_llm/instruction_following
+
+files:
+- path: fixtures/fixed.json
+  role: fixture
+  media_type: application/json
+  resource_id: ifeval-fixed
+  sha256: b1e18e946ebbfe3175cef6030fc93b79018827cd30644ea9db7e66e39e27c806
+- path: fixtures/LICENSE.txt
+  role: fixture
+  media_type: text/plain
+  resource_id: ifeval-license
+  sha256: cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30

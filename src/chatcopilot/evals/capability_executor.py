@@ -279,6 +279,16 @@ def _workspace_for_case(workspace_root: Path, case_id: str) -> Path:
 def validate_capability_definition(definition: EvalCaseDefinition) -> None:
     """Validate the static executor/verifier binding without runtime side effects."""
 
+    if definition.plugin_id == "agent-tasks":
+        from chatcopilot.evals.agent_tasks.scenes import validate
+        from chatcopilot.evals.deepeval_engine import quality_policy
+        validate(definition)
+        quality_policy(definition)
+        if definition.driver_id != "agent_configured":
+            raise ValueError("Agent tasks require agent_configured")
+        for assertion in definition.assertions:
+            get_trusted_capability_verifier(assertion.assertion_id)
+        return
     expected_binding = {
         "agent_isolated": "generic-agent",
         "agent_configured": "generic-agent",

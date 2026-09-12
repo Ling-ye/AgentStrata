@@ -60,6 +60,7 @@ def list_suite_descriptors(
             manifest = get_manifest(standard.suite_id)
             implemented = manifest.status == "implemented"
             cases: tuple[EvalCase, ...] = ()
+            readiness: dict[str, dict[str, Any]] = {}
             error = ""
             if implemented:
                 try:
@@ -69,13 +70,14 @@ def list_suite_descriptors(
                             f"plugin {manifest.plugin_id} does not allow {manifest.driver_id}"
                         )
                     cases = get_cases(standard.suite_id, auto_prepare=False)
+                    readiness = _case_readiness_map(cases)
                     if plugin.preflight is not None:
-                        runnable = tuple(case for case in cases if _case_readiness(case)["ready"])
+                        runnable = tuple(case for case in cases if readiness[case.case_id]["ready"])
                         if runnable:
                             plugin.preflight(cases=runnable)
                 except Exception as exc:  # noqa: BLE001
                     error = f"{type(exc).__name__}: {exc}"
-            ready = implemented and any(_case_readiness(case)["ready"] for case in cases) and not error
+            ready = implemented and any(state["ready"] for state in readiness.values()) and not error
             reason = ""
             if not implemented:
                 reason = "该评测套件当前仅预留 adapter，尚未实现执行链路。"
@@ -83,6 +85,9 @@ def list_suite_descriptors(
                 reason = error
             elif not cases:
                 reason = standard.setup_hint or "当前没有可运行 case。"
+            elif not ready:
+                reason = "题目数据已就绪；执行环境待准备。" + next(
+                    (state["reason"] for state in readiness.values() if state.get("reason")), "")
             data_status = suite_data_status(standard.suite_id)
             parameters = [
                 {
@@ -99,7 +104,7 @@ def list_suite_descriptors(
                     **to_jsonable(standard),
                     "version": manifest.version,
                     **organization_descriptor(manifest),
-                    "runnable_case_count": sum(_case_readiness(case)["ready"] for case in cases),
+                    "runnable_case_count": sum(state["ready"] for state in readiness.values()),
                     "benchmark": benchmark_descriptor(manifest, cases),
                     "status": manifest.status,
                     "plugin_id": manifest.plugin_id,
@@ -147,11 +152,11 @@ def _suite_prepare_available(
     if not prepare_supported:
         return False
     if suite_id in {"bfcl", "ifeval"}:
-        return data_status.get("source") in {"builtin_smoke", "unavailable"}
+        return data_status.get("source") in {"builtin_smoke", "fixed_official_subset", "unavailable"}
     if suite_id == "gaia":
-        return data_status.get("source") not in {"official_cache", "configured"} and bool(
-            os.environ.get("CHATCOPILOT_HF_TOKEN", "").strip()
-        )
+        return data_status.get("source") not in {"official_cache", "configured"}
+    if suite_id == "swe-bench-verified":
+        return data_status.get("source") not in {"official_cache", "configured"}
     return False
 
 
@@ -202,14 +207,9 @@ def list_case_summaries(
     *,
     repository_root: Path | None = None,
 ) -> list[dict[str, Any]]:
-    return [
-        _case_summary(case)
-        for case in _load_suite_cases(
-            suite_id,
-            bot,
-            repository_root=repository_root,
-        )
-    ]
+    cases = _load_suite_cases(suite_id, bot, repository_root=repository_root)
+    readiness = _case_readiness_map(cases)
+    return [_case_summary(case, readiness[case.case_id]) for case in cases]
 
 
 def get_case_descriptor(
@@ -226,7 +226,7 @@ def get_case_descriptor(
     ):
         if case.case_id == case_id:
             return {
-                **_case_summary(case),
+                **_case_summary(case, _case_readiness_map((case,))[case.case_id]),
                 "input": case.input,
                 "context": case.context,
                 "rubric": case.rubric,
@@ -239,14 +239,16 @@ def get_case_descriptor(
     raise KeyError(case_id)
 
 
-def _case_summary(case: EvalCase) -> dict[str, Any]:
+def _case_summary(case: EvalCase, readiness: dict[str, Any] | None = None) -> dict[str, Any]:
     text = " ".join(case.input.split())
     files = case.metadata.get("files") if isinstance(case.metadata, dict) else ()
     return {
         "case_id": case.case_id,
         "tools": tool_dependencies(case),
-        "readiness": _case_readiness(case),
+        "readiness": readiness if readiness is not None else _case_readiness(case),
         "category": case.category,
+        "test_category": case.metadata.get("test_category", "task"),
+        "red_team_surface": case.metadata.get("red_team_surface", ""),
         "capability_tags": list(case.capability_tags or (case.category,)),
         "summary": text[:180] + ("…" if len(text) > 180 else ""),
         "quality_required": True if "business" in case.metadata else case.metadata.get("case_definition", {}).get("quality", {}).get("enabled"),
@@ -259,6 +261,8 @@ def _case_summary(case: EvalCase) -> dict[str, Any]:
 def _safe_case_metadata(case: EvalCase) -> dict[str, Any]:
     allowed = {
         "adapter",
+        "test_category",
+        "red_team_surface",
         "source",
         "bfcl_category",
         "level",
@@ -370,3 +374,11 @@ def _case_readiness(case: EvalCase) -> dict[str, Any]:
     if "business" in case.metadata:
         return business_readiness(case)
     return {"ready": True, "state": "ready", "missing_tools": [], "environment": "", "reason": ""}
+
+
+def _case_readiness_map(cases: tuple[EvalCase, ...]) -> dict[str, dict[str, Any]]:
+    if cases and cases[0].metadata.get("adapter") == "swebench":
+        from chatcopilot.evals.adapters.swebench_runtime import case_readiness
+
+        return case_readiness(cases)
+    return {case.case_id: _case_readiness(case) for case in cases}

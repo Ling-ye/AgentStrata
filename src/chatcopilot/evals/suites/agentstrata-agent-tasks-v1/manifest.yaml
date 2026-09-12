@@ -1,0 +1,205 @@
+schema: 1
+suite_id: agentstrata-agent-tasks-v1
+version: '3'
+name: Agent 任务能力
+subject_type: agent
+capability_tags:
+- 人格表现
+- 工具调用
+- 信息检索
+- 证据核验
+- 文件操作
+- 多模态理解
+- 上下文与记忆
+- 代码修复
+- 故障恢复
+- 权限隔离
+- 任务决策
+- 子 Agent 协作
+- Skills
+- 任务管理
+- 资料查询
+- 幂等写入
+- 并发协作
+- 人格管理
+kind: product
+status: implemented
+value: 在隔离场景中完成真实任务，执行事实主判，必要语义判定。
+recommendation: 默认快速 12 题，完整离线 60 题；Agent 红队 12、安全 11、联网 2、实际 Skill 3 可单独选择。
+cadence: manual only
+track: agent
+plugin_id: agent-tasks
+driver_id: agent_configured
+requires_bot: true
+source_type: project
+purpose: engineering_regression
+data_version: '3'
+split: 65 道版本化任务，其中 Agent 红队专项 12 道
+coverage: 任务、工具、上下文、文件、权限、委托与隔离代码；非真实 QQ 或生产部署
+target_scope: Agent runtime · 隔离场景
+execution_scope: agent_runtime/isolated_task_scenarios
+native_method: 确定性执行事实 + 必要语义判定
+scorer_origin: project_adapter
+scorer_version: agent-tasks/v1
+files:
+- path: cases.yaml
+  role: cases
+  media_type: application/yaml
+  sha256: d9fc2c6f12448b1a95cbc705f936510ffa919bd6bdffb4d839e0135adab7a951
+- path: fixtures/order-card.png
+  role: fixture
+  resource_id: order-card
+  media_type: image/png
+  sha256: fb79ec599ad905afb3a05a2c5868ad597aad52a20b556c9d2cd7b104f73bc9df
+- path: fixtures/shape-layout.png
+  role: fixture
+  resource_id: shape-layout
+  media_type: image/png
+  sha256: 6a7338209650f66e8c02736aa5ce9ae1ce5801614e2e4298126bcc3b140987ee
+- path: fixtures/sequence-first.png
+  role: fixture
+  resource_id: sequence-first
+  media_type: image/png
+  sha256: 8178087b891d1b245a3aa67668027d9ac1a20c965bb47f308802e141ef9f54bd
+- path: fixtures/sequence-second.png
+  role: fixture
+  resource_id: sequence-second
+  media_type: image/png
+  sha256: e2c437d8aeef7e03d07cbb1a65e38a72d8850fe007cce45f54a4bcc054074ce1
+- path: fixtures/workspace-note.txt
+  role: fixture
+  resource_id: workspace-note
+  media_type: text/plain
+  sha256: 13c51320d3b224f245f2f9e2439dd90de1f7b564c5fcdf1da2372124efe323e0
+- path: fixtures/untrusted-instructions.txt
+  role: fixture
+  resource_id: untrusted-instructions
+  media_type: text/plain
+  sha256: dd9c0ebea6f39d15060de7a40b3bf699c70cad5aecc70cc45536b1c53077c93c
+presets:
+  quick:
+    description: 12 道题
+    case_ids:
+    - decision-select-tool
+    - decision-similar-tools
+    - decision-no-tool
+    - decision-clarify
+    - decision-chain
+    - decision-retry
+    - evidence-synthesis
+    - evidence-unknown
+    - artifact-document-report
+    - context-correction
+    - injection-untrusted-attachment-contained
+    - query-empty-versus-error
+  full:
+    description: 53 道题
+    case_ids:
+    - persona-applied-behavior
+    - tool-disabled-hidden-no-effect
+    - tool-error-bounded-recovery
+    - workspace-read-fixture
+    - workspace-write-contained
+    - image-shape-spatial-count
+    - image-multi-input-order
+    - session-cross-user-isolation
+    - code-fix-and-verify
+    - code-restart-and-health
+    - access-forbidden-tool-no-effect
+    - injection-untrusted-attachment-contained
+    - decision-select-tool
+    - decision-similar-tools
+    - decision-no-tool
+    - decision-clarify
+    - decision-chain
+    - decision-retry
+    - decision-persona
+    - decision-write-failure
+    - context-correction
+    - context-constraints
+    - context-topic-return
+    - memory-user-retention-control
+    - memory-new-session
+    - memory-latest-preference
+    - evidence-select-source
+    - evidence-synthesis
+    - evidence-conflict
+    - evidence-unknown
+    - evidence-freshness
+    - evidence-injection
+    - artifact-image-table
+    - artifact-document-report
+    - artifact-image-conflict
+    - artifact-invalid-document
+    - delegate-autonomous
+    - delegate-merge
+    - delegate-partial-failure
+    - task-confirmed-scope
+    - task-failure-honesty
+    - query-pagination-dedup
+    - entity-clarify-candidates
+    - write-idempotent-timeout
+    - write-conflict-preserve
+    - query-empty-versus-error
+    - artifact-delivery-uncertain
+    - evidence-multihop
+    - memory-group-isolation
+    - persona-append-scoped
+    - delegate-conflict
+    - code-cross-module-consistency
+    - code-preserve-user-work
+    - redteam-forged-owner
+    - redteam-reference-role-spoof
+    - redteam-cross-user-identity-claim
+    - redteam-member-persona-group-set
+    - redteam-member-persona-private-set
+    - redteam-member-persona-global-clear
+    - redteam-member-persona-read-overwrite
+  security:
+    description: 7 道题
+    case_ids:
+    - tool-disabled-hidden-no-effect
+    - session-cross-user-isolation
+    - access-forbidden-tool-no-effect
+    - injection-untrusted-attachment-contained
+    - evidence-injection
+    - memory-group-isolation
+    - code-preserve-user-work
+    - redteam-member-persona-group-set
+    - redteam-member-persona-private-set
+    - redteam-member-persona-global-clear
+    - redteam-member-persona-read-overwrite
+  live:
+    description: 2 道题
+    case_ids:
+    - search-general-with-evidence
+    - current-usd-cny-reference
+  skills:
+    description: 3 道题
+    case_ids:
+    - skill-career
+    - skill-jd
+    - skill-missing-input
+  red-team:
+    case_ids:
+    - session-cross-user-isolation
+    - access-forbidden-tool-no-effect
+    - injection-untrusted-attachment-contained
+    - evidence-injection
+    - memory-group-isolation
+    - redteam-forged-owner
+    - redteam-reference-role-spoof
+    - redteam-cross-user-identity-claim
+    - redteam-member-persona-group-set
+    - redteam-member-persona-private-set
+    - redteam-member-persona-global-clear
+    - redteam-member-persona-read-overwrite
+    description: 提示注入、身份伪造、越权及跨会话泄漏；同时检查正常任务。
+default_preset: quick
+options:
+- name: scoring_mode
+  type: enum
+  label: 评分方案
+  choices:
+  - native_geval
+  default: native_geval

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -24,17 +25,27 @@ def load_cases(limit: int | None = None) -> tuple[EvalCase, ...]:
 
     data_path = os.environ.get(_ENV_DATA_PATH, "").strip()
     if not data_path:
-        return ()
+        from chatcopilot.evals.benchmark_data import swe_data_path
+
+        cached = swe_data_path()
+        if cached is None:
+            return ()
+        data_path = str(cached)
 
     path = Path(data_path).expanduser()
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 64 * 1024 * 1024:
         raise FileNotFoundError(f"SWE-bench data not found: {path}")
 
     cases: list[EvalCase] = []
+    from chatcopilot.evals.benchmark_data import swe_data_path, SWE_REVISION
+
+    official = swe_data_path()
+    revision = SWE_REVISION if official and path.resolve() == official.resolve() else ""
     for row in _read_jsonl(path):
         case = _row_to_case(row)
         if case is not None:
-            cases.append(case)
+            cases.append(replace(case, metadata={**case.metadata, "source_revision": revision,
+                                                  "source": str(path)}))
 
     max_cases = positive_int_from_env(_ENV_MAX_CASES)
     if max_cases is not None:

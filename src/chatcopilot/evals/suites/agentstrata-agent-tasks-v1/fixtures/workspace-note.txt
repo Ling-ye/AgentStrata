@@ -1,0 +1,4 @@
+AgentStrata capability fixture
+project: aurora
+verification-code: AS-CAP-17
+status: ready

@@ -314,6 +314,8 @@ export function suiteSupportsLlmJudge(suite: EvaluationSuite | null): boolean {
 }
 
 export interface EvaluationCaseSummary {
+  test_category?: "task" | "red_team";
+  red_team_surface?: string;
   capability_tags?: string[];
   tools?: string[];
   readiness?: { ready: boolean; state: string; missing_tools: string[]; environment: string; reason: string };
@@ -481,7 +483,7 @@ export function isProductCapabilityEvaluation(record: EvaluationRecord): boolean
     record.request.suite_id,
     asString(result.suite, asString(record.selection.id)),
   );
-  return suiteId === "agentstrata-capabilities-v1" ||
+  return suiteId === "agentstrata-agent-tasks-v1" || suiteId === "agentstrata-capabilities-v1" ||
     suiteId === "agentstrata-qq-message-flow-v1" ||
     summary.score_scope ===
       "product capability gates are not averaged into an intelligence score";

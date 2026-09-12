@@ -12,7 +12,7 @@ from typing import Iterable
 
 from chatcopilot.evals.manifest import discover_suite_manifests, load_case_definitions
 
-_AGENT_SUITE_ID = "agentstrata-capabilities-v1"
+_AGENT_SUITE_ID = "agentstrata-agent-tasks-v1"
 _QQ_FLOW_SUITE_ID = "agentstrata-qq-message-flow-v1"
 
 
@@ -83,9 +83,9 @@ _RULES: tuple[_PathRule, ...] = (
         exact_paths=("src/chatcopilot/search_probe.py",),
         contains=(),
         case_ids=(
-            "search-general-with-evidence",
-            "current-usd-cny-reference",
-            "injection-untrusted-search-contained",
+            "evidence-select-source",
+            "evidence-conflict",
+            "evidence-injection",
         ),
         preset="full",
         reason="搜索路由或证据变化需要当前 Bot 可运行的搜索与注入隔离覆盖。",
@@ -97,7 +97,7 @@ _RULES: tuple[_PathRule, ...] = (
         exact_paths=("src/chatcopilot/core/image_content.py",),
         contains=("/image_", "/images.py", "/attachment_", "/attachments/"),
         case_ids=(
-            "image-ocr-order-number",
+            "artifact-image-table",
             "image-shape-spatial-count",
             "image-multi-input-order",
             "injection-untrusted-attachment-contained",
@@ -116,7 +116,7 @@ _RULES: tuple[_PathRule, ...] = (
         contains=("/access/", "access_control", "allowlist", "whitelist"),
         case_ids=(
             "access-forbidden-tool-no-effect",
-            "injection-untrusted-search-contained",
+            "evidence-injection",
             "injection-untrusted-attachment-contained",
         ),
         preset="security",
@@ -134,7 +134,7 @@ _RULES: tuple[_PathRule, ...] = (
         case_ids=(
             "code-fix-and-verify",
             "code-restart-and-health",
-            "code-failure-no-false-success",
+            "task-failure-honesty",
         ),
         preset="full",
         reason="代码任务、验证、交付或重启链路变化需要成功、健康和失败诚实性覆盖。",
@@ -154,8 +154,8 @@ _RULES: tuple[_PathRule, ...] = (
         ),
         contains=("/tools/", "/tool_packs/"),
         case_ids=(
-            "tool-allowed-exact-call",
-            "tool-multistep-data-flow",
+            "decision-select-tool",
+            "decision-chain",
             "tool-disabled-hidden-no-effect",
             "tool-error-bounded-recovery",
             "access-forbidden-tool-no-effect",
@@ -197,10 +197,10 @@ _RULES: tuple[_PathRule, ...] = (
         exact_paths=("src/chatcopilot/contracts/agent.py",),
         contains=("runtime_context", "runtime_env", "assembly"),
         case_ids=(
-            "dialogue-strict-json",
-            "tool-multistep-data-flow",
+            "artifact-document-report",
+            "decision-chain",
             "session-cross-user-isolation",
-            "code-failure-no-false-success",
+            "task-failure-honesty",
         ),
         preset="full",
         reason="共享 runtime 或 Agent 契约变化需要跨对话、工具、会话和错误语义覆盖。",
@@ -212,11 +212,11 @@ _RULES: tuple[_PathRule, ...] = (
         exact_paths=(),
         contains=(),
         case_ids=(
-            "dialogue-strict-json",
-            "dialogue-clarify-before-action",
-            "session-same-user-memory",
+            "artifact-document-report",
+            "decision-clarify",
+            "context-topic-return",
             "session-cross-user-isolation",
-            "subagent-structured-result",
+            "delegate-autonomous",
         ),
         preset="full",
         reason="Agent 行为或委托变化需要对话、记忆、隔离和结构化 subagent 覆盖。",
@@ -231,7 +231,7 @@ _RULES: tuple[_PathRule, ...] = (
         exact_paths=(),
         contains=("persona_control", "persistent/persona"),
         case_ids=("persona-applied-behavior",),
-        preset="quick",
+        preset="full",
         reason="人格上下文变化需要直接 Agent 人格行为覆盖。",
     ),
     _PathRule(
@@ -395,6 +395,8 @@ def advise_capability_evaluation(changed_paths: Iterable[str]) -> EvaluationAdvi
         if not selected[suite_id]:
             continue
         ordered_case_ids, _presets, track = contracts[suite_id]
+        if selected[suite_id] == set(_presets["quick"]):
+            ordered_case_ids = _presets["quick"]
         requested = presets_requested[suite_id]
         recommended_preset = (
             requested[0] if len(set(requested)) == 1 else "custom"

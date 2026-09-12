@@ -26,7 +26,7 @@ def test_named_suite_preset_owns_case_selection() -> None:
     request = SuiteEvaluationRequest(
         kind="suite",
         bot_id="sample-bot",
-        suite_id="agentstrata-capabilities-v1",
+        suite_id="agentstrata-agent-tasks-v1",
         preset="quick",
         case_ids=[],
         repetitions=3,
@@ -42,9 +42,9 @@ def test_named_suite_preset_owns_case_selection() -> None:
         SuiteEvaluationRequest(
             kind="suite",
             bot_id="sample-bot",
-            suite_id="agentstrata-capabilities-v1",
+            suite_id="agentstrata-agent-tasks-v1",
             preset="quick",
-            case_ids=["dialogue-strict-json"],
+            case_ids=["decision-no-tool"],
         )
 
 
@@ -52,7 +52,7 @@ def test_full_capability_preset_has_no_external_write_confirmation() -> None:
     request = SuiteEvaluationRequest(
         kind="suite",
         bot_id="sample-bot",
-        suite_id="agentstrata-capabilities-v1",
+        suite_id="agentstrata-agent-tasks-v1",
         preset="full",
     )
     assert request.confirm_external_write is False
@@ -62,7 +62,7 @@ def test_full_capability_preset_has_no_external_write_confirmation() -> None:
     legacy = SuiteEvaluationRequest(
         kind="suite",
         bot_id="sample-bot",
-        suite_id="agentstrata-capabilities-v1",
+        suite_id="agentstrata-agent-tasks-v1",
         preset="full",
         confirm_external_write=True,
     )
@@ -72,7 +72,7 @@ def test_full_capability_preset_has_no_external_write_confirmation() -> None:
         SuiteEvaluationRequest(
             kind="suite",
             bot_id="sample-bot",
-            suite_id="agentstrata-capabilities-v1",
+            suite_id="agentstrata-agent-tasks-v1",
             preset="qq-live",
         )
 
@@ -92,7 +92,7 @@ def test_suite_request_rejects_coerced_boolean_values(field: str, value: object)
         "kind": "suite",
         "bot_id": "sample-bot",
         "suite_id": "ifeval",
-        "case_ids": ["ifeval-json-format"],
+        "case_ids": ["ifeval-fixed-1075"],
         "preset": "custom",
         field: value,
     }

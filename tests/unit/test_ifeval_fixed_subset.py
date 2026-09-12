@@ -68,12 +68,12 @@ def test_no_dropped_or_default_passing_constraints(ids, args):
 
 
 def test_detector_failure_is_grading_error(monkeypatch):
-    from chatcopilot.evals import ifeval_subset
+    from chatcopilot.evals import ifeval_language
 
     def broken(_value):
         raise RuntimeError("controlled failure")
 
-    monkeypatch.setattr(ifeval_subset, "_english", broken)
+    monkeypatch.setattr(ifeval_language, "detect", broken)
     definition = next(
         c
         for c in load_case_definitions(get_manifest("agentstrata-capabilities-v1"))

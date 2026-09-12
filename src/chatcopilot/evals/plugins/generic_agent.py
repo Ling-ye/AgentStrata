@@ -18,19 +18,23 @@ def load_declarative_cases(
         cases.append(
             EvalCase(
                 case_id=definition.case_id,
-                input=turn_texts[-1],
+                input=turn_texts[0] if definition.plugin_id == "agent-tasks" else turn_texts[-1],
                 category=definition.capability,
                 capability_tags=definition.capability_tags,
                 expected_behavior=str(definition.quality.get("expected") or "Pass all declared trusted verifier assertions."),
-                context="\n\n".join(turn_texts[:-1]),
+                context="\n\n".join(turn_texts[1:] if definition.plugin_id == "agent-tasks" else turn_texts[:-1]),
                 rubric=",".join(item.assertion_id for item in definition.assertions),
                 metadata={
                     "case_source": ({"kind": "ifeval_subset", "label": "IFEval 固定子集",
                         "key": definition.assertions[0].arguments.get("key"),
                         "revision": definition.assertions[0].arguments.get("revision")}
                         if definition.capability == "ifeval_subset" else
+                        {"kind": "red_team", "label": "红队测试"} if definition.metadata.get("test_category") == "red_team" else
+                        {"kind": "agent_task", "label": "Agent 任务"} if definition.plugin_id == "agent-tasks" else
                         {"kind": "engineering_regression", "label": "工程回归"}),
                     "adapter": definition.plugin_id,
+                    "test_category": definition.metadata.get("test_category", "task"),
+                    "red_team_surface": definition.metadata.get("red_team_surface", ""),
                     "case_definition": to_jsonable(definition),
                     "driver": definition.driver_id,
                     "plugin": definition.plugin_id,
