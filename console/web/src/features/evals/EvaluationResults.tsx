@@ -5,6 +5,7 @@ import { Alert, Button, Empty, Input, Select, Space, Spin, Table, Tag, Typograph
 import type { EvaluationRecord, EvaluationTrial } from "./model";
 import { evaluationApi, normalizeTrial } from "./evaluationApi";
 import { InstanceId } from "./InstanceId";
+import { factChecks, factCheckLabel } from "./trialModel";
 import { durationLabel, EXCLUSION_LABELS, OUTCOME_LABELS, rateLabel, VERDICT_LABELS } from "./insightsModel";
 
 import { asObject, asText, captureLabel, executionTurns, objectList, qualityLabel, recordedInput, trialMetrics, trialSource, instructionChecks, instructionLabel, isModelOutput, modelCalls, modelOutputSummary } from "./trialModel";
@@ -121,6 +122,12 @@ function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: E
         <Text>得分 {typeof metric.score === "number" ? metric.score.toFixed(2) : "未评分"} / 阈值 {typeof metric.threshold === "number" ? metric.threshold.toFixed(2) : "—"}</Text></Space>
       <div>{asText(metric.error) || asText(metric.reason)}</div>
     </div>)}
+      {!!factChecks(trial).length && <section aria-label="执行事实检查"><Text bold>执行事实检查</Text>
+        <Text type="secondary">每项只表示已记录的检查结果；回答质量单独判定。</Text>
+        <Space wrap>{factChecks(trial).map(check => <Tag key={check.id} color={check.passed ? "green" : "red"}>
+          {factCheckLabel(check.name)}：{check.passed ? "通过" : "未通过"}
+        </Tag>)}</Space>
+      </section>}
       {!!instructionChecks(trial).length && <Table size="small" pagination={false} rowKey="id" data={instructionChecks(trial)} columns={[
         { title: "指令约束", render: (_, row) => instructionLabel(asText(row.id)) },
         { title: "参数", render: (_, row) => Object.values(asObject(row.parameters)).map(v => Array.isArray(v) ? v.join("、") : String(v)).join(" · ") || "无" },

@@ -13,6 +13,8 @@ created: 2026-09-12
 
 ## Design
 
+版本 4 的局部修订见 [逐题审查](../../docs/evaluation-agent-task-audit.md)：保留 64 题，修复跨主体评分前文丢失与题意歧义，删除重复的 Skill 缺参题；不改变本规格分层和生命周期，以下首版数量保留为历史事实。
+
 后续 [红队与数据准备规格](../evaluation-red-team-data-preparation/spec.md) 将版本 2 扩为 61 题、完整离线 56 题，并增加独立 8 题红队专项；本规格的 66→58 审计及验证计数保留为首版事实。
 
 遵循 [运行时四层基线](../runtime-four-layer-definition/spec.md)。Console 仍为 UI/BFF，Evaluation Core/service 拥有 Trial、隔离、预算、取消、恢复与产物；受信场景只提供配置、工具、环境与观察，不拥有第二套生命周期。不改 Channel/Gateway/Application/Agent 依赖方向。

@@ -493,7 +493,7 @@ SWE-bench Verified、BFCL、GAIA、AgentBench FC 和 IFEval，QQ 保留合成链
 质量覆盖不完整时不生成完整可比质量点。不同基准不平均为总分。
 
 `agentstrata-agent-tasks-v1` 直接使用隔离 Agent runtime，不经过 ACP 或 QQ；
-`quick/full/security/red-team/live/skills` 分别选择 12/60/11/12/2/3 题。
+`quick/full/security/red-team/live/skills` 分别选择 12/60/11/12/2/2 题。
 缺条件的题目保留在选择中并阻断启动，不静默减题。
 
 `agentstrata-qq-message-flow-v1` 使用当前 OneBot Channel 探针，再进入隔离的 attestation/ACP 合成链，

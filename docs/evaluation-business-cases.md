@@ -4,6 +4,8 @@
 
 新题在 [当前题库](../src/chatcopilot/evals/suites/agentstrata-agent-tasks-v1/README.md) 的 cases.yaml 中声明 scenario_id、参数、用户回合、资源、可信断言和必要语义。场景实现静态注册；普通参数变化不新增 Case ID 分支。修改数据后更新 manifest 中的 SHA-256，且必须验证正确、错误、缺证据轨迹。不要把期望、操作步骤或秘密写进 Agent 输入。
 
+版本 4 的逐题保留、修订和删除理由见 [题库审查表](evaluation-agent-task-audit.md)。
+
 迁移与评分规则见 [统一规格](../specs/evaluation-agent-task-unification/spec.md)。QQ 成员查询样例仍只属于未接入的教学示例，不代表真实 QQ 查询能力。
 
 ---

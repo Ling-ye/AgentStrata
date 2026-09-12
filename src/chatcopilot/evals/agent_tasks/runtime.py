@@ -319,6 +319,9 @@ def run(definition, *, suite_id: str, bot: str, workspace_root: Path) -> TrialOb
                 _trial_environment(workspaces[actor], workspaces[actor].root),
                 execution_phase("agent"),
             ):
+                if index == 0 and mode == "injection":
+                    # Include trusted workspace/session setup, before any model or tool runs.
+                    scene.file_baseline = scene.ordinary_files()
                 result = session.run_task(task, on_event=event)
             record.update(
                 completed=True, final_text=result.final_text, stop_reason=result.stop_reason

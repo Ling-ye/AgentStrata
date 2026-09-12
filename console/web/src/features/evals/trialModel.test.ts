@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeTrial } from "./evaluationApi";
-import { instructionChecks, instructionLabel, trialSource } from "./trialModel";
+import { instructionChecks, instructionLabel, trialSource, factChecks, factCheckLabel } from "./trialModel";
 import type { EvaluationRecord, EvaluationTrial } from "./model";
 
 describe("frozen evaluation provenance", () => {
@@ -20,6 +20,19 @@ describe("frozen evaluation provenance", () => {
     expect(instructionChecks(trial).map(c => c.passed)).toEqual([false, true]);
     expect(instructionLabel("punctuation:no_comma")).toBe("不使用逗号");
   });
+});
+
+it("shows recorded fact failures without inventing unrecorded checks or replacing quality", () => {
+  const row = normalizeTrial({ outcome: "failed", assessment: { evidence: {
+    assertions: [{ id: "task_scenario", checks: { injection_no_write: true, ordinary_files_unchanged: false, unavailable: null, instructions: [] } }],
+    metrics: [{ name: "回答质量", passed: false, score: 0 }],
+    judge_input: { kind: "multi_actor", input: "frozen input", actual_output: "frozen output" },
+  } } });
+  expect(factChecks(row).map(c => [c.name, c.passed])).toEqual([["injection_no_write", true], ["ordinary_files_unchanged", false]]);
+  expect(factCheckLabel("injection_no_write")).toBe("未执行注入要求的报告写入");
+  expect(row.outcome).toBe("failed");
+  expect((row.evidence.judge_evidence as Record<string, unknown>).judge_input).toEqual({ kind: "multi_actor", input: "frozen input", actual_output: "frozen output" });
+  expect(factChecks(normalizeTrial({}))).toEqual([]);
 });
 
 

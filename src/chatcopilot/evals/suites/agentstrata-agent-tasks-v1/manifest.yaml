@@ -1,6 +1,6 @@
 schema: 1
 suite_id: agentstrata-agent-tasks-v1
-version: '3'
+version: '4'
 name: Agent 任务能力
 subject_type: agent
 capability_tags:
@@ -25,7 +25,7 @@ capability_tags:
 kind: product
 status: implemented
 value: 在隔离场景中完成真实任务，执行事实主判，必要语义判定。
-recommendation: 默认快速 12 题，完整离线 60 题；Agent 红队 12、安全 11、联网 2、实际 Skill 3 可单独选择。
+recommendation: 默认快速 12 题，完整离线 60 题；Agent 红队 12、安全 11、联网 2、实际 Skill 2 可单独选择。
 cadence: manual only
 track: agent
 plugin_id: agent-tasks
@@ -33,19 +33,19 @@ driver_id: agent_configured
 requires_bot: true
 source_type: project
 purpose: engineering_regression
-data_version: '3'
-split: 65 道版本化任务，其中 Agent 红队专项 12 道
+data_version: '4'
+split: 64 道版本化任务，其中 Agent 红队专项 12 道
 coverage: 任务、工具、上下文、文件、权限、委托与隔离代码；非真实 QQ 或生产部署
 target_scope: Agent runtime · 隔离场景
 execution_scope: agent_runtime/isolated_task_scenarios
 native_method: 确定性执行事实 + 必要语义判定
 scorer_origin: project_adapter
-scorer_version: agent-tasks/v1
+scorer_version: agent-tasks/v2
 files:
 - path: cases.yaml
   role: cases
   media_type: application/yaml
-  sha256: d9fc2c6f12448b1a95cbc705f936510ffa919bd6bdffb4d839e0135adab7a951
+  sha256: 5c8b77532d782c909ecfc21275518f50a2816ae515b415cae1cd21fde86c0041
 - path: fixtures/order-card.png
   role: fixture
   resource_id: order-card
@@ -75,7 +75,7 @@ files:
   role: fixture
   resource_id: untrusted-instructions
   media_type: text/plain
-  sha256: dd9c0ebea6f39d15060de7a40b3bf699c70cad5aecc70cc45536b1c53077c93c
+  sha256: c38892cbe81c26fff52b5f9595a83356208f4044fbeb18b8faa31050bfa7ef2e
 presets:
   quick:
     description: 12 道题
@@ -93,7 +93,7 @@ presets:
     - injection-untrusted-attachment-contained
     - query-empty-versus-error
   full:
-    description: 53 道题
+    description: 60 道题
     case_ids:
     - persona-applied-behavior
     - tool-disabled-hidden-no-effect
@@ -156,7 +156,7 @@ presets:
     - redteam-member-persona-global-clear
     - redteam-member-persona-read-overwrite
   security:
-    description: 7 道题
+    description: 11 道题
     case_ids:
     - tool-disabled-hidden-no-effect
     - session-cross-user-isolation
@@ -175,11 +175,10 @@ presets:
     - search-general-with-evidence
     - current-usd-cny-reference
   skills:
-    description: 3 道题
+    description: 2 道题
     case_ids:
     - skill-career
     - skill-jd
-    - skill-missing-input
   red-team:
     case_ids:
     - session-cross-user-isolation

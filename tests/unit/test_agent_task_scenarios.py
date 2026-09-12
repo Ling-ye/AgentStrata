@@ -17,7 +17,10 @@ DEFINITIONS = load_case_definitions(get_manifest("agentstrata-agent-tasks-v1"))
 
 
 def successful_observation(d, root):
+    from chatcopilot.evals.capability_executor import _stage_resources
+
     scene = Scene(d, root)
+    _stage_resources("agentstrata-agent-tasks-v1", d, root)
     tools = {t.name: t for t in scene.tools()}
 
     def call(tool_name, **arguments):
@@ -72,13 +75,8 @@ def successful_observation(d, root):
                 call("read_reference", source=name)
         if f == "files":
             if m in {"read", "injection"}:
-                res = root / "resources"
-                res.mkdir()
-                (res / "workspace-note.txt").write_text(
-                    "verification-code: AS-CAP-17; 纸灯颜色：蓝色。"
-                )
-                call("read_attachment", name="workspace-note")
-            if m in {"report", "invalid"}:
+                call("read_attachment", name="untrusted" if m == "injection" else "workspace-note")
+            if m in {"report", "invalid", "delivery-unknown"}:
                 call("read_source_document")
             if m in {
                 "deliver",
@@ -157,6 +155,8 @@ def successful_observation(d, root):
             )
         if "text" in expected:
             output = expected["text"]
+        if "quantity" in expected:
+            output = str(expected["quantity"])
         if "one_of" in expected:
             output = expected["one_of"][0]
         turns = [
@@ -175,6 +175,7 @@ def successful_observation(d, root):
         if f == "conversation" and m == "isolation":
             for i, a in enumerate(["a", "b", "a", "b", "b"]):
                 turns[i].update(
+                    conversation_id=a,
                     execution_session_id="session-" + a,
                     final_text=["已记住", "不知道", "A-17", "已记住", "B-42"][i],
                 )
@@ -203,6 +204,7 @@ def successful_observation(d, root):
                 store = states[a]
                 before = store.memory_snapshot()
                 turns[i].update(
+                    conversation_id=a,
                     execution_session_id="session-"
                     + a
                     + ("-fresh" if i in d.scenario_params.get("fresh_before", []) else ""),
@@ -239,7 +241,8 @@ def successful_observation(d, root):
                     or (m in {"fresh", "latest"} and i < len(turns) - 1)
                 ):
                     store.memory_append(
-                        text="本群约定先给结论。" if a == "a" else "本群约定先列待办。",
+                        text=("本群演示项目代号是青杉。" if a == "a" else "本群演示项目代号是溪石。")
+                        if m == "groups" else ("偏好主题更正为天文，园艺已失效。" if m == "latest" and i == 1 else "演示资料主题偏好是园艺。"),
                         section="facts",
                     )
                 snap["state_snapshots"].append(
@@ -328,10 +331,10 @@ def test_retired_suites_are_not_runnable_and_presets_are_exact():
     for ident in ("project-business-v1", "agentstrata-capabilities-v1"):
         with pytest.raises(ValueError, match="已退出"):
             get_cases(ident)
-    assert len(DEFINITIONS) == 65
+    assert len(DEFINITIONS) == 64
     assert {
         p.preset_id: len(p.case_ids) for p in get_manifest("agentstrata-agent-tasks-v1").presets
-    } == {"quick": 12, "full": 60, "security": 11, "live": 2, "skills": 3, "red-team": 12}
+    } == {"quick": 12, "full": 60, "security": 11, "live": 2, "skills": 2, "red-team": 12}
 
 
 def test_red_team_is_a_separate_classification_with_real_attack_surfaces():

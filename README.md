@@ -335,7 +335,9 @@ files and private reports never belong in Git.
 | Understand boundaries and data flow | [Architecture](https://github.com/Ling-ye/AgentStrata/blob/main/docs/architecture.md) · [Runtime](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.md) |
 | Use the Console and Evaluations | [Operations Console](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md) |
 
-测评中心按LLM测评、Agent测评、系统测试组织，默认 Agent测评；各入口按项目测评与公开基准分组，支持能力标签筛选，待接入项目默认折叠。项目测评统一为 65 道 Agent 任务，采用执行事实主判与必要语义判定，题单为快速 12、离线完整 60、安全 11、红队 12、联网 2、Skill 3；红队支持独立分类与攻击面标签；GAIA 和 SWE-bench 可下载固定官方数据并自动识别缓存，镜像就绪状态单独显示；AgentBench FC 提供 DB/OS 本地准备脚本，并核验实际 worker 与题目索引；IFEval 模型直测默认载入官方 541 道原题；BFCL 采用 V4 官方单轮 13 类 3,641 题和固定官方评分核心，均保留显式调试子集与实际模型请求、正文和函数调用输出，QQ 回归保持 Legacy 合成链路边界。新运行保存对象类型，历史缺失信息不回填。文件维护方法见 [业务 Case 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-business-cases.md)；概念定义见 [测评术语](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-glossary.md)，使用方式见 [Console 文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md)。
+测评中心按LLM测评、Agent测评、系统测试组织，默认 Agent测评；各入口按项目测评与公开基准分组，支持能力标签筛选，待接入项目默认折叠。项目测评统一为 64 道 Agent 任务，采用执行事实主判与必要语义判定，题单为快速 12、离线完整 60、安全 11、红队 12、联网 2、Skill 2；红队支持独立分类与攻击面标签；GAIA 和 SWE-bench 可下载固定官方数据并自动识别缓存，镜像就绪状态单独显示；AgentBench FC 提供 DB/OS 本地准备脚本，并核验实际 worker 与题目索引；IFEval 模型直测默认载入官方 541 道原题；BFCL 采用 V4 官方单轮 13 类 3,641 题和固定官方评分核心，均保留显式调试子集与实际模型请求、正文和函数调用输出，QQ 回归保持 Legacy 合成链路边界。新运行保存对象类型，历史缺失信息不回填。文件维护方法见 [业务 Case 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-business-cases.md)；概念定义见 [测评术语](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-glossary.md)，使用方式见 [Console 文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md)。
+
+[Agent 题库逐题审查](docs/evaluation-agent-task-audit.md) 记录版本 4 的题意修正、删除理由与验证边界。
 
 测评题目默认展示预期回答／行为，结果可直接对照本次冻结预期与实际回答。
 新记录采用 v2 结果契约，分别保存执行证据、评分和结构化异常；未评分与实际零分区分。
