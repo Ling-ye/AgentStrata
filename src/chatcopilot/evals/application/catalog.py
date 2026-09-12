@@ -114,7 +114,7 @@ def list_suite_descriptors(
                     "execution_scope": manifest.execution_scope or manifest.driver_id,
                     "capability_status": _suite_capability_status(manifest.suite_id),
                     "default_preset": manifest.default_preset,
-                    "presets": [to_jsonable(item) for item in manifest.presets],
+                    "presets": _catalog_presets(manifest, cases),
                     "implemented": implemented,
                     "ready": ready,
                     "case_count": len(cases),
@@ -136,6 +136,16 @@ def list_suite_descriptors(
     return sorted(descriptors, key=lambda item: (item["status"] != "implemented", item["purpose"] != "business_task", item["name"]))
 
 
+
+
+def _catalog_presets(manifest, cases):
+    presets = [to_jsonable(item) for item in manifest.presets]
+    if manifest.subject_type == "model" and len(cases) >= 100:
+        from chatcopilot.evals.selection import balanced_100_cases, normalize_level
+        selected = balanced_100_cases(cases, level_of=lambda case: normalize_level(case.metadata.get("level")),
+            categories_of=lambda case: case.metadata.get("problem_categories") or (case.category,))
+        presets.append({"preset_id": "balanced-100", "case_ids": [case.case_id for case in selected]})
+    return presets
 
 
 def _suite_capability_status(suite_id: str) -> str:
@@ -161,7 +171,9 @@ def _suite_prepare_available(
 
 
 def _suite_selection_policy(suite_id: str) -> str:
-    if suite_id in {"gaia", "bfcl", "ifeval"}:
+    if suite_id in {"bfcl", "ifeval"}:
+        return "默认官方全量；balanced-100 为显式子集选项，smoke 仅用于调试。"
+    if suite_id == "gaia":
         return (
             "外部数据默认 balanced-100：总计 100 题，优先按 Level 1/2/3 选择 34/33/33；"
             "若官方数据某 Level 不足则全取该 Level 并从其他 Level 补足；"
@@ -175,7 +187,7 @@ def _suite_level_policy(suite_id: str) -> str:
         return "使用官方 Level 字段。"
     if suite_id == "bfcl":
         return (
-            "按调用复杂度映射：simple/relevance=Lv1，multiple=Lv2，parallel/parallel_multiple=Lv3。"
+            "按调用复杂度映射：simple/irrelevance/relevance=Lv1，multiple=Lv2，parallel/parallel_multiple=Lv3。"
         )
     if suite_id == "ifeval":
         return "按指令复杂度映射：1 条指令=Lv1，2 条=Lv2，3 条及以上=Lv3。"
@@ -190,7 +202,7 @@ def _suite_category_policy(suite_id: str) -> str:
         )
     if suite_id == "bfcl":
         return (
-            "覆盖 BFCL 官方类别及调用形态：simple、multiple、parallel、"
+            "覆盖 BFCL V4 的 13 个单轮类别（包括 Python/Java/JavaScript 与六个 Live 类别）：simple、multiple、parallel、"
             "parallel_multiple、relevance。"
         )
     if suite_id == "ifeval":
@@ -208,7 +220,9 @@ def list_case_summaries(
     repository_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     cases = _load_suite_cases(suite_id, bot, repository_root=repository_root)
-    readiness = _case_readiness_map(cases)
+    values = bot_env(bot, _repo(repository_root)) if bot is not None else {}
+    with temporary_eval_env(values):
+        readiness = _case_readiness_map(cases)
     return [_case_summary(case, readiness[case.case_id]) for case in cases]
 
 
@@ -225,8 +239,11 @@ def get_case_descriptor(
         repository_root=repository_root,
     ):
         if case.case_id == case_id:
+            values = bot_env(bot, _repo(repository_root)) if bot is not None else {}
+            with temporary_eval_env(values):
+                readiness = _case_readiness_map((case,))[case.case_id]
             return {
-                **_case_summary(case, _case_readiness_map((case,))[case.case_id]),
+                **_case_summary(case, readiness),
                 "input": case.input,
                 "context": case.context,
                 "rubric": case.rubric,
@@ -377,6 +394,10 @@ def _case_readiness(case: EvalCase) -> dict[str, Any]:
 
 
 def _case_readiness_map(cases: tuple[EvalCase, ...]) -> dict[str, dict[str, Any]]:
+    if cases and cases[0].metadata.get("adapter") == "agentbench-fc":
+        from chatcopilot.evals.adapters.agentbench import case_readiness
+
+        return case_readiness(cases)
     if cases and cases[0].metadata.get("adapter") == "swebench":
         from chatcopilot.evals.adapters.swebench_runtime import case_readiness
 

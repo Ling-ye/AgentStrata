@@ -108,8 +108,8 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "chatcopilot.evals.adapters.gaia",
         "chatcopilot.evals.judges_llm",
     ),
-    ("ifeval", "direct_llm"): ("chatcopilot.evals.adapters.ifeval", "chatcopilot.evals.ifeval_official", "chatcopilot.evals.ifeval_language", "chatcopilot.evals.vendor.ifeval.instructions", "chatcopilot.evals.vendor.ifeval.instructions_util", "chatcopilot.evals.vendor.ifeval.instructions_registry"),
-    ("bfcl", "direct_llm"): ("chatcopilot.evals.adapters.bfcl",),
+    ("ifeval", "direct_llm"): ("chatcopilot.evals.model_io", "chatcopilot.evals.ifeval_resources", "chatcopilot.evals.llm_data", "chatcopilot.evals.adapters.ifeval", "chatcopilot.evals.ifeval_official", "chatcopilot.evals.ifeval_language", "chatcopilot.evals.vendor.ifeval.instructions", "chatcopilot.evals.vendor.ifeval.instructions_util", "chatcopilot.evals.vendor.ifeval.instructions_registry"),
+    ("bfcl", "direct_llm"): tuple("chatcopilot.evals." + name for name in ("adapters.bfcl", "bfcl_official", "model_io", "llm_data", "vendor.bfcl.ast_checker", "vendor.bfcl.enums", "vendor.bfcl.type_mappings", "vendor.bfcl.java_type_converter", "vendor.bfcl.js_type_converter", "vendor.bfcl.schema", "vendor.bfcl.language", "vendor.bfcl.relevance", "vendor.bfcl.model_profile")),
 }
 _COMPARISON_IMPLEMENTATIONS = (
     "chatcopilot.core.file_integrity",

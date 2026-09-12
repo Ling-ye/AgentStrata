@@ -77,6 +77,10 @@ class Controller:
                               timeout=(5, 45), allow_redirects=False, stream=True) as response:
             if operation == "cancel" and response.status_code in {404, 410}:
                 return {}, None
+            if operation == "cancel" and response.status_code == 400:
+                content = response.raw.read(_MAX_BYTES + 1, decode_content=True)
+                if len(content) <= _MAX_BYTES and json.loads(content) == {"message": "session not found"}:
+                    return {}, None
             if not 200 <= response.status_code < 300:
                 raise ValueError(f"AgentBench controller failed with HTTP {response.status_code}")
             if operation == "start_sample":
@@ -99,12 +103,43 @@ class Controller:
         if not isinstance(session, str) or not re.fullmatch(r"[0-9]{1,18}", session):
             raise ValueError("AgentBench did not return a valid session identity")
         self.session_id = int(session)
-        return validate_observation(response)
+        # The upstream start_sample contract returns only messages/tools, not
+        # an interact completion frame. Do not generalize this to interact.
+        if (not isinstance(response, dict) or not isinstance(response.get("messages"), list)
+                or not isinstance(response.get("tools"), list)):
+            raise ValueError("AgentBench start response lacks messages/tools")
+        session_state = self.sessions().get(str(self.session_id))
+        if (not isinstance(session_state, dict) or session_state.get("name") != case.metadata["task"]
+                or type(session_state.get("index")) is not type(case.metadata["index"])
+                or session_state.get("index") != case.metadata["index"]):
+            raise ValueError("AgentBench environment ended during initialization; inspect the task worker logs")
+        return {**response, "finish": False}
 
     def call(self, name: str, arguments: dict[str, Any], call_id: str) -> dict[str, Any]:
         response, _ = self.request("interact", {"messages": [{"role": "assistant", "content": "", "tool_calls": [
             {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]}]})
-        return validate_observation(response)
+        observation = validate_observation(response)
+        if observation["finish"]:
+            self.session_id = None  # AgentRL removes terminal sessions itself.
+        return observation
+
+    def workers(self) -> dict[str, Any]:
+        return self._read_catalog("list_workers")
+
+    def sessions(self) -> dict[str, Any]:
+        return self._read_catalog("list_sessions")
+
+    def _read_catalog(self, operation: str) -> dict[str, Any]:
+        with self.client.get(self.url + operation, timeout=(3, 5), allow_redirects=False, stream=True) as response:
+            if response.status_code != 200:
+                raise ValueError(f"AgentBench worker query failed with HTTP {response.status_code}")
+            content = response.raw.read(_MAX_BYTES + 1, decode_content=True)
+            if len(content) > _MAX_BYTES:
+                raise ValueError("AgentBench worker catalog exceeds evidence budget")
+            result = json.loads(content)
+            if not isinstance(result, dict):
+                raise ValueError("AgentBench worker catalog is invalid")
+            return result
 
     def close(self) -> None:
         try:
@@ -123,6 +158,38 @@ def validate_observation(value: Any) -> dict[str, Any]:
     if value["finish"] and (type(value.get("reward")) not in (int, float) or not math.isfinite(value["reward"])):
         raise ValueError("AgentBench completed response lacks a finite reward")
     return value
+
+
+def case_readiness(cases: tuple[EvalCase, ...]) -> dict[str, dict[str, Any]]:
+    """Read online worker/index state without starting an environment or model."""
+    workers: dict[str, Any] = {}
+    failure = ""
+    controller = None
+    try:
+        controller = Controller()
+        workers = controller.workers()
+    except (ValueError, requests.RequestException) as exc:
+        failure = f"AgentBench Controller 未就绪：{type(exc).__name__}。请启动本地 DB/OS 环境。"
+    finally:
+        if controller:
+            controller.client.close()
+    result = {}
+    for case in cases:
+        task = case.metadata["task"]
+        row = workers.get(task, {})
+        if not isinstance(row, dict):
+            row = {}
+        pool = row.get("workers", {})
+        pool = pool if isinstance(pool, dict) else {}
+        alive = [w for w in pool.values() if isinstance(w, dict) and w.get("status") == "ALIVE" and w.get("stale") is False]
+        idle = [w for w in alive if type(w.get("capacity")) is int and type(w.get("current")) is int
+                and w["capacity"] > w["current"] >= 0]
+        indices = row.get("indices", [])
+        matched = isinstance(indices, list) and any(type(i) is type(case.metadata["index"]) and i == case.metadata["index"] for i in indices)
+        reason = failure or (f"未启动 {task} worker" if not alive else "所选题目不在当前 worker 的索引中" if not matched else "任务 worker 正忙，请稍后重试" if not idle else "")
+        result[case.case_id] = {"ready": not reason, "state": "ready" if not reason else "not_prepared",
+                                "missing_tools": [], "environment": f"AgentBench FC / {task}", "reason": reason}
+    return result
 
 
 def judge_response(value: dict[str, Any]) -> JudgeResult:

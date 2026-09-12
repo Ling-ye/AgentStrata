@@ -204,6 +204,10 @@ def scorer_descriptor(manifest: SuiteManifest) -> dict[str, Any]:
             except PackageNotFoundError:
                 dependencies[package] = "unavailable"
         descriptor["dependency_versions"] = dependencies
+        from chatcopilot.evals.ifeval_resources import REVISION as resource_revision, resource_dir
+        from hashlib import sha256
+        receipt = resource_dir() / "source.json"
+        descriptor["sentence_resources"] = {"revision": resource_revision, "receipt_sha256": sha256(receipt.read_bytes()).hexdigest() if receipt.is_file() else "unavailable"}
     return descriptor
 
 

@@ -52,6 +52,7 @@ def test_controller_publishes_lease_before_reading_body_and_never_follows_redire
 
     with capture(lambda value: frames.append(json.loads(json.dumps(value)))):
         client = agentbench.Controller()
+        monkeypatch.setattr(client, "sessions", lambda: {"123": {"name": "dbbench-std", "index": 0}})
         monkeypatch.setattr(client.client, "post", lambda url, **kwargs: (sent.append((url, kwargs)) or Response()))
         case = EvalCase("db:0", "Task", "db", "Complete", metadata={"task": "dbbench-std", "index": 0})
         client.start(case)
@@ -155,6 +156,7 @@ def test_agentbench_plugin_runs_host_agent_with_environment_tools(monkeypatch, t
         return "Completed", []
 
     monkeypatch.setattr(plugin.agentbench, "Controller", Controller)
+    monkeypatch.setattr(plugin, "_preflight", lambda **kwargs: None)
     monkeypatch.setattr(plugin, "run_environment_agent", run_agent)
     result = plugin._execute(EvalCase("db:0", "Query", "db", "Complete"), bot="sample", workspace_root=tmp_path, options={"scoring_mode": "native"})
     assert result.status == "passed" and closed

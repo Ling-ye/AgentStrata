@@ -23,11 +23,15 @@ def _preflight(*, cases) -> None:
     agentbench.controller_url()
     if not cases:
         raise ValueError("请准备带 task/index/input/source_revision 的 AgentBench FC 本地题目目录")
+    unavailable = [state["reason"] for state in agentbench.case_readiness(tuple(cases)).values() if not state["ready"]]
+    if unavailable:
+        raise ValueError("；".join(dict.fromkeys(unavailable)))
 
 
 @capture_case
 def _execute(case, *, bot: str, workspace_root: Path, options: dict[str, Any]) -> EvalCaseResult:
     started = time.monotonic()
+    _preflight(cases=(case,))
     controller = agentbench.Controller()
     final_text = ""
     events: list[dict[str, Any]] = []

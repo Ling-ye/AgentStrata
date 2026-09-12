@@ -6,7 +6,7 @@
 #
 # Usage:
 #   bash deploy/wsl/deploy_console.sh                 # install/repair console + update every bot
-#   bash deploy/wsl/deploy_console.sh --update-only   # rebuild web + restart Evaluation / Console
+#   bash deploy/wsl/deploy_console.sh --update-only   # sync dependencies + rebuild web + restart Evaluation / Console
 #   bash deploy/wsl/deploy_console.sh --skip-web      # skip web build
 #   bash deploy/wsl/deploy_console.sh --skip-bots     # install/repair console only
 #   bash deploy/wsl/deploy_console.sh --restart-only  # only restart service
@@ -481,6 +481,9 @@ elif [ "$UPDATE_ONLY" -eq 1 ]; then
         err "Evaluation is active or idle cannot be proven; update refused"
         exit 1
     fi
+    run_or_print bash "$REPO_ROOT/deploy/wsl/install_wsl_env.sh" \
+        --no-system-packages --skip-cc-connect --with-console-deps \
+        --venv "$REPO_ROOT/.venv" --no-verify || { err "dependency sync failed; update stopped"; exit 1; }
     build_web || { err "web build failed; services were not restarted"; exit 1; }
     restart_evaluation || exit $?
     restart_console || exit $?

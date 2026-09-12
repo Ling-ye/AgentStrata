@@ -340,6 +340,7 @@ export interface EvaluationCaseDescriptor extends EvaluationCaseSummary {
 }
 
 export interface EvaluationTrial {
+  model_output_preview?: Record<string, unknown>;
   case_instance_id?: string;
   input_preview?: string;
   body_available?: boolean;

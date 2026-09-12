@@ -1,24 +1,23 @@
 schema: 1
 suite_id: bfcl
-version: 1.0.0
+version: 2.0.0
 name: BFCL · 函数调用
 subject_type: model
 capability_tags: [函数调用]
 kind: tool
 status: implemented
 value: 函数调用与参数构造评测，直接对应工具选择、schema 遵循和调用准确性。
-recommendation: 切换模型或函数调用请求格式后运行；当前仅校准模型协议，不验证 Agent 工具注册或实际执行；外部数据默认 balanced-100。
+recommendation: 选择模型后按需运行官方单轮题目；默认全量，balanced-100 可显式选择；函数调用不代表工具执行。
 cadence: weekly/regression
 plugin_id: bfcl
 driver_id: direct_llm
 requires_bot: true
-requires_external_data: false
+requires_external_data: true
 prepare_supported: true
 official_url: https://gorilla.cs.berkeley.edu/leaderboard.html
 setup_hint: >-
-  内置 smoke 子集可直接运行；完整评测需下载
-  gorilla-llm/Berkeley-Function-Calling-Leaderboard 并设置
-  CHATCOPILOT_BFCL_DATA_DIR 指向数据目录；默认按调用复杂度映射 Level 并选 100 题。
+  准备官方数据后使用完整题库。CHATCOPILOT_BFCL_DATA_DIR 指向 V4 单轮目录；
+  CASE_PROFILE 默认为 full，balanced-100 和 smoke 必须显式选择。
 options:
   - name: dry_run
     type: boolean
@@ -37,11 +36,11 @@ options:
 
 source_type: public_benchmark
 purpose: benchmark
-data_version: 具体版本见题目数据快照；未提供时不推断
+data_version: f7cf7359b7ac615a0b294831c5ba2bc95ee4a000
 split: 实际载入数据划分
-coverage: v3 数据格式：simple / multiple / parallel / parallel_multiple / relevance；当前为部分协议校准
+coverage: V4 官方单轮 13 类共 3641 题；Live 为数据来源类别；不含多轮、搜索、记忆和全榜总分
 target_scope: 模型函数调用接口 · direct_llm
-native_method: 调用名称与参数匹配（项目适配器）
-scorer_origin: project_adapter
-scorer_version: 1.0.0
+native_method: 固定官方单轮 AST 与相关性评分核心
+scorer_origin: official
+scorer_version: f7cf7359b7ac615a0b294831c5ba2bc95ee4a000
 execution_scope: direct_llm/function_call_protocol

@@ -79,6 +79,7 @@ function SuiteForm({ botId, suite, active, onCreated }: {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [testCategory, setTestCategory] = useState("");
+  const [dataCategory, setDataCategory] = useState("");
   const [tool, setTool] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<string[]>([]);
@@ -94,7 +95,7 @@ function SuiteForm({ botId, suite, active, onCreated }: {
   const knownIds = useMemo(() => new Set(caseList.map(c => c.case_id)), [cases.data]);
   const selectedIds = selected.filter(id => knownIds.has(id));
   const unavailableSelection = caseList.filter(c => selectedIds.includes(c.case_id) && c.readiness?.ready === false);
-  const rows = caseList.filter(c => (!testCategory || (c.test_category || "task") === testCategory) && (!category || c.capability_tags?.includes(category)) && (!tool || c.tools?.includes(tool)) && `${c.case_id} ${c.summary}`.toLowerCase().includes(search.toLowerCase()));
+  const rows = caseList.filter(c => (!dataCategory || c.category === dataCategory) && (!testCategory || (c.test_category || "task") === testCategory) && (!category || c.capability_tags?.includes(category)) && (!tool || c.tools?.includes(tool)) && `${c.case_id} ${c.summary}`.toLowerCase().includes(search.toLowerCase()));
   const tools = [...new Set(caseList.flatMap(c => c.tools ?? []))].sort();
   const categories = [...new Set(caseList.flatMap(c => c.capability_tags ?? []))].sort();
   const pages = Math.max(1, Math.ceil(rows.length / 20));
@@ -134,8 +135,9 @@ function SuiteForm({ botId, suite, active, onCreated }: {
         <div className="eval-benchmark-filters"><Input aria-label="搜索测评题目" placeholder="搜索题目或 ID" value={search} onChange={value => { setSearch(value); setPage(1); }} allowClear />
           {caseList.some(c => c.test_category === "red_team") && <Select aria-label="测试分类" value={testCategory} onChange={value => { setTestCategory(value); setPage(1); }} options={[{ value: "", label: "全部测试分类" }, { value: "task", label: "任务能力测试" }, { value: "red_team", label: "红队测试" }]} />}
           <Select aria-label="题目能力筛选" value={category} onChange={value => { setCategory(value); setPage(1); }} options={[{ label: "全部题目能力", value: "" }, ...categories.map(value => ({ label: value, value }))]} />
+          <Select aria-label="数据类别筛选" value={dataCategory} onChange={value => { setDataCategory(value); setPage(1); }} options={[{ label: "全部数据类别", value: "" }, ...[...new Set(caseList.map(c => c.category))].sort().map(value => ({ label: value, value }))]} />
           <Select aria-label="业务工具筛选" value={tool} onChange={value => { setTool(value); setPage(1); }} options={[{ label: "全部业务工具", value: "" }, ...tools.map(value => ({ label: value, value }))]} /></div>
-        <Space wrap>{suite.presets?.map(p => <Button key={p.preset_id} size="small" disabled={cases.isFetching} onClick={() => { setSelected(p.case_ids.filter(id => knownIds.has(id))); setTestCategory(p.preset_id === "red-team" ? "red_team" : ""); setPage(1); }}>{({ quick: "快速题单", full: "完整离线题单", security: "安全题单", "red-team": "红队专项", live: "联网专项", skills: "Skill 专项" } as Record<string, string>)[p.preset_id] || p.preset_id}</Button>)}
+        <Space wrap>{suite.presets?.map(p => <Button key={p.preset_id} size="small" disabled={cases.isFetching} onClick={() => { setSelected(p.case_ids.filter(id => knownIds.has(id))); setTestCategory(p.preset_id === "red-team" ? "red_team" : ""); setPage(1); }}>{({ "balanced-100": "固定 100 题子集", quick: "快速题单", full: "完整离线题单", security: "安全题单", "red-team": "红队专项", live: "联网专项", skills: "Skill 专项" } as Record<string, string>)[p.preset_id] || p.preset_id}</Button>)}
           <Button size="small" onClick={() => setSelected([...new Set([...selectedIds, ...rows.map(c => c.case_id)])])}>选择筛选结果</Button><Button size="small" onClick={() => setSelected([])}>清空选择</Button><Text type="secondary">已选 {selectedIds.length} / {caseList.length}</Text></Space>
         {!!unavailableSelection.length && <Alert type="warning" title={`所选 ${unavailableSelection.length} 题缺少运行条件，已保留完整题单`} content={unavailableSelection.map(c => <div key={c.case_id}>{c.case_id}：{c.readiness?.reason || "请查看题目详情中的环境依赖"}</div>)} />}
         {cases.isFetching ? <Spin /> : visibleRows.length ? visibleRows.map(c => <article className="eval-benchmark-case" key={c.case_id}>

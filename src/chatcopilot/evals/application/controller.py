@@ -913,7 +913,7 @@ class EvaluationApplication:
                 except (KeyError, TypeError, ValueError):
                     response["conditions"] = None
             if not include_bodies:
-                result = {**result, "trials": [trial_preview(t) for t in trial_values if isinstance(t, Mapping)],
+                result = {**result, "trials": [trial_preview(t, model=response["benchmark"].get("subject_type") == "model") for t in trial_values if isinstance(t, Mapping)],
                     "config_snapshot": {"definition_snapshot": result.get("config_snapshot", {}).get("definition_snapshot", {})}}
             observation = _read_json(directory / "observation.json", max_bytes=1024 * 1024)
             if observation:

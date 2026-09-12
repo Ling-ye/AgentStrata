@@ -1,23 +1,23 @@
 schema: 1
 suite_id: ifeval
-version: 2.0.0
+version: 2.1.0
 name: IFEval · 指令遵循
 subject_type: model
 capability_tags: [指令遵循]
 kind: safety
 status: implemented
 value: 指令遵循评测，检测格式、约束、角色和输出要求是否被正确执行。
-recommendation: 每次改系统 prompt 后运行；外部数据默认 balanced-100，未配置时使用内置 smoke 子集。
+recommendation: 选择模型后按需运行官方指令任务；默认全部 541 题，独立测评提示条件保留于结果。
 cadence: daily/regression
 plugin_id: ifeval
 driver_id: direct_llm
 requires_bot: true
-requires_external_data: false
+requires_external_data: true
 prepare_supported: true
 official_url: https://github.com/google-research/google-research/tree/master/instruction_following_eval
 setup_hint: >-
-  可选：设置 CHATCOPILOT_IFEVAL_DATA_PATH 指向官方 input_data.jsonl；
-  默认按指令复杂度映射 Level 并选 100 题。
+  准备官方数据及 NLTK 分句资源，CHATCOPILOT_IFEVAL_DATA_PATH 指向 input_data.jsonl；
+  CASE_PROFILE 默认为 full，smoke 仅为固定 8 题调试模式。
 options:
   - name: dry_run
     type: boolean
@@ -36,13 +36,13 @@ options:
 
 source_type: public_benchmark
 purpose: benchmark
-data_version: 具体版本见题目数据快照；未提供时不推断
+data_version: 26d8ccdab6fec61b5c83ad6327ea8bda9e580288
 split: 实际载入数据划分
-coverage: 官方约束不丢弃；默认固定 8 题，完整数据及检查器资源须另行准备
+coverage: 官方 541 道原题、25 种已出现约束；缺检查器或分句资源时阻断
 target_scope: 模型直测 · 独立 PromptPlan，无 Agent、工具和记忆
 native_method: 固定官方检查器 · 严格口径主判，宽松及指令指标单列
 scorer_origin: official
-scorer_version: 2.0.0
+scorer_version: 26d8ccdab6fec61b5c83ad6327ea8bda9e580288
 execution_scope: direct_llm/instruction_following
 
 files:

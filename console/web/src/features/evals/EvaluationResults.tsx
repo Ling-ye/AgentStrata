@@ -6,7 +6,7 @@ import { evaluationApi, normalizeTrial } from "./evaluationApi";
 import { InstanceId } from "./InstanceId";
 import { durationLabel, EXCLUSION_LABELS, OUTCOME_LABELS, rateLabel, VERDICT_LABELS } from "./insightsModel";
 
-import { asObject, asText, captureLabel, executionTurns, objectList, qualityLabel, recordedInput, trialMetrics, trialSource, instructionChecks, instructionLabel } from "./trialModel";
+import { asObject, asText, captureLabel, executionTurns, objectList, qualityLabel, recordedInput, trialMetrics, trialSource, instructionChecks, instructionLabel, isModelOutput, modelCalls, modelOutputSummary } from "./trialModel";
 
 const { Text, Title } = Typography;
 const COLORS: Record<string, string> = { passed: "green", failed: "red", error: "orange", skipped: "gray" };
@@ -68,6 +68,10 @@ function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: E
   const turns = executionTurns(trial);
   const judging = asObject(trial.evidence.judge_evidence);
   const ifeval = asObject(trial.evidence.ifeval_metrics);
+  const model = isModelOutput(record, trial);
+  const response = asObject(trial.evidence.model_response);
+  const calls = model ? modelCalls(trial) : [];
+  const responseText = typeof response.content === "string" ? response.content : trial.final_text;
   const status = captureLabel(asText(asObject(trial.evidence.execution).state) || trial.capture_state || "");
   return <div className="eval-trial-detail">
     {!!trial.case_instance_id && <InstanceId id={trial.case_instance_id} label="Case 实例 ID" />}
@@ -79,8 +83,22 @@ function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: E
       {trialSource(record, trial).kind === "ifeval_subset" && <Text type="secondary">原题 {String(trialSource(record, trial).key)} · 版本 {asText(trialSource(record, trial).revision)}</Text>}</Space>}
     <div className="eval-io-grid">
       <section><Text bold>{input.source}</Text>{input.text ? <BoundedText value={input.text} /> : <Text type="secondary"> 未记录</Text>}</section>
-      <section><Text bold>被测对象最终输出</Text>{trial.final_text ? <BoundedText value={trial.final_text} /> : <Text type="secondary"> 未记录最终输出</Text>}</section>
+      <section aria-label="被测对象最终输出"><Text bold>被测对象最终输出</Text>
+        {responseText ? <BoundedText value={responseText} /> : <div><Text type="secondary">{calls.length ? "模型返回了函数调用，无文本正文。" : modelOutputSummary(record, trial)}</Text></div>}
+        {model && calls.map((call, index) => <section className="eval-conversation-turn" key={call.id || index} aria-label={`模型函数调用 ${call.name}`}>
+          <Text bold>{call.name || "函数名未记录"}</Text>{call.id && <div><Text type="secondary">调用 ID：{call.id}</Text></div>}
+          {call.error && <Alert type="warning" content={call.error} />}
+          <BoundedText value={call.error ? call.raw : JSON.stringify(call.parsed, null, 2)} />
+          <details><summary>原始参数字符串</summary><BoundedText value={call.raw} /></details>
+        </section>)}
+        {!!calls.length && <Text type="secondary">以上是模型提出的函数调用，本次模型直测没有执行这些工具。</Text>}
+        {model && <div><Text type="secondary">模型结束原因：{asText(response.finish_reason) || "未记录"}</Text></div>}
+      </section>
     </div>
+    {model && <details><summary>模型请求与响应数据</summary>
+      {trial.evidence.model_request ? <><Text bold>实际请求</Text><BoundedText value={JSON.stringify(trial.evidence.model_request, null, 2)} /></> : <Text type="secondary">当时未记录完整请求 messages/tools。</Text>}
+      <div><Text bold>{trial.evidence.model_response ? "实际响应" : "当时保存的响应字段"}</Text><BoundedText value={JSON.stringify(trial.evidence.model_response ?? { content: trial.final_text, tool_calls: trial.evidence.tool_calls }, null, 2)} /></div>
+    </details>}
     {turns.length > 1 && <section><Text bold>多轮交互</Text>{turns.map((turn, index) => <div key={`${turn.conversation_id}:${turn.turn_index}`} className="eval-conversation-turn">
       <Space><Text>第 {index + 1} 轮</Text><Text type="secondary">会话 {asText(turn.conversation_id)}</Text>{captureLabel(asText(turn.state)) && <Tag>{captureLabel(asText(turn.state))}</Tag>}</Space>
       <div className="eval-io-grid"><section><Text bold>发送</Text><BoundedText value={asText(turn.input)} /></section>
@@ -110,10 +128,10 @@ function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: E
     </section>
     {!!judging.judge_input && <details><summary>Judge 实际收到的评分资料</summary><BoundedText value={JSON.stringify(judging.judge_input, null, 2)} /></details>}
     {trial.stop_reason && <Text type="secondary">执行结束原因：{trial.stop_reason}</Text>}
-    <details><summary>工具与执行证据</summary>{objectList(trial.evidence.tool_calls).map((tool, index) => <section className="eval-conversation-turn" key={index}>
+    {!model && <details><summary>工具与执行证据</summary>{objectList(trial.evidence.tool_calls).map((tool, index) => <section className="eval-conversation-turn" key={index}>
       <Text bold>{asText(tool.name)}</Text><div className="eval-io-grid"><section><Text>参数</Text><BoundedText value={JSON.stringify(tool.arguments ?? {}, null, 2)} /></section>
         <section><Text>结果</Text><BoundedText value={JSON.stringify(tool.result ?? tool.output ?? tool, null, 2)} /></section></div>
-    </section>)}<BoundedText value={JSON.stringify(trial.evidence.observation_evidence ?? [], null, 2)} /></details>
+    </section>)}<BoundedText value={JSON.stringify(trial.evidence.observation_evidence ?? [], null, 2)} /></details>}
     <details><summary>原始测试记录</summary><BoundedText value={JSON.stringify(trial, null, 2)} /></details>
   </div>;
 }
@@ -146,7 +164,7 @@ export function EvaluationResults({ record }: { record: EvaluationRecord }) {
           { title: "测试点", width: 235, render: (_, row) => <div title={row.case_ref}>{row.case_id || row.case_ref || "标识未记录"}<small className="eval-trial-meta">{row.target_id} · 第 {row.attempt} 次</small>{!!trialSource(record, row).label && <Tag size="small">{asText(trialSource(record, row).label)}</Tag>}
             {row.case_instance_id ? <InstanceId id={row.case_instance_id} label="Case 实例 ID" /> : <Text type="secondary">Case 实例 ID 未记录</Text>}</div> },
           { title: "输入", width: 210, render: (_, row) => <span className="eval-cell-preview" title={recordedInput(record, row).source}>{recordedInput(record, row).text || "未记录"}</span> },
-          { title: "被测对象最终输出", width: 240, render: (_, row) => <span className="eval-cell-preview">{row.final_text || "未记录"}</span> },
+          { title: "被测对象最终输出", width: 240, render: (_, row) => <span className="eval-cell-preview">{modelOutputSummary(record, row)}</span> },
           { title: "结果", width: 80, render: (_, row) => <Tag color={COLORS[row.outcome] || "gray"}>{OUTCOME_LABELS[row.outcome] || "未知"}</Tag> },
           { title: "LLM 评价", width: 90, render: (_, row) => asObject(row.evidence.judge_evidence).primary === "llm_judge" ? row.outcome === "error" ? "未判定" : row.passed ? "通过" : "未通过" : qualityLabel(row) },
           { title: "耗时", width: 85, render: (_, row) => durationLabel(row.duration_seconds) },

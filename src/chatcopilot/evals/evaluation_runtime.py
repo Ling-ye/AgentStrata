@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from chatcopilot.botspec import assemble_runtime_context, load_botspec, resolve_bot_spec_path
 from chatcopilot.contracts.tools import ToolDef
+from chatcopilot.contracts.tools import tool_access_allowed
 from chatcopilot.evals.execution_support import load_local_env
 
 
@@ -32,13 +33,13 @@ def load_evaluation_runtime(
     return runtime
 
 
-def permission_filter(allowed: frozenset[str]) -> Callable[[ToolDef], str | None]:
-    """Deny every tool not explicitly listed by the frozen Evaluation Case."""
+def permission_filter(allowed: frozenset[str], *, role: str = "owner") -> Callable[[ToolDef], str | None]:
+    """Apply the Case allow-list together with the runtime's shared role policy."""
 
     def check(tool: ToolDef) -> str | None:
-        if tool.name in allowed:
-            return None
-        return "evaluation policy denies this tool"
+        if tool.name not in allowed:
+            return "evaluation policy denies this tool"
+        return None if tool_access_allowed(role, tool.access) else "该工具仅限 Owner。"
 
     return check
 

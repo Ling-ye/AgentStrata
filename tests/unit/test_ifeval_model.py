@@ -64,6 +64,7 @@ def test_direct_call_uses_neither_agent_nor_bot_persona_and_closes_client(monkey
     import chatcopilot.core.llm_client as client_module
     import chatcopilot.application.agent_runtime as assembly
 
+    monkeypatch.setenv("CHATCOPILOT_IFEVAL_CASE_PROFILE", "smoke")
     requests = []
     closed = []
 
@@ -73,7 +74,7 @@ def test_direct_call_uses_neither_agent_nor_bot_persona_and_closes_client(monkey
 
         def chat(self, **kwargs):
             requests.append(kwargs)
-            return SimpleNamespace(content="A calm journey unfolds", usage={"input_tokens": 3})
+            return SimpleNamespace(content="A calm journey unfolds", tool_calls=[], finish_reason="stop", usage={"input_tokens": 3})
 
         def close(self):
             closed.append(True)
@@ -93,7 +94,7 @@ def test_direct_call_uses_neither_agent_nor_bot_persona_and_closes_client(monkey
     assert requests[0]["tools"] is None and len(requests) == 1 and closed == [True]
     assert requests[0]["messages"][-1] == {"role": "user", "content": case.input}
     assert result["metadata"]["agent_runtime_exercised"] is False
-    assert result["metadata"]["model_input_messages"] == requests[0]["messages"]
+    assert result["metadata"]["model_request"]["messages"] == requests[0]["messages"]
     assert get_manifest("ifeval").driver_id == "direct_llm"
     assert len(get_cases("ifeval")) == 8
 

@@ -57,6 +57,11 @@ from chatcopilot.evals.report import compare_reports
 
 
 @pytest.fixture(autouse=True)
+def explicit_ifeval_debug_data(monkeypatch):
+    monkeypatch.setenv("CHATCOPILOT_IFEVAL_CASE_PROFILE", "smoke")
+
+
+@pytest.fixture(autouse=True)
 def _available_codex_cli(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

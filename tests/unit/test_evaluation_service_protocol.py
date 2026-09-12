@@ -48,6 +48,11 @@ from chatcopilot.evals.profiles import get_profile
 from console.backend.app import app
 from console.backend.routes.evaluations import export_evaluation
 
+@pytest.fixture(autouse=True)
+def explicit_ifeval_debug_data(monkeypatch):
+    monkeypatch.setenv("CHATCOPILOT_IFEVAL_CASE_PROFILE", "smoke")
+
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 TERMINAL_STATUSES = {
@@ -1097,7 +1102,6 @@ def test_real_ifeval_dry_run_lifecycle_over_uds(
     for key in (
         "CHATCOPILOT_IFEVAL_DATA_PATH",
         "CHATCOPILOT_IFEVAL_MAX_CASES",
-        "CHATCOPILOT_IFEVAL_CASE_PROFILE",
     ):
         monkeypatch.delenv(key, raising=False)
 

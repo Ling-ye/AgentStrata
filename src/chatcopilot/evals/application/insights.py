@@ -358,7 +358,8 @@ def target_summaries(result: Mapping[str, Any], request: Mapping[str, Any]) -> l
     return rows
 
 
-def trial_preview(trial: Mapping[str, Any]) -> dict[str, Any]:
+def trial_preview(trial: Mapping[str, Any], *, model: bool = False) -> dict[str, Any]:
+    from chatcopilot.evals.model_io import output_preview
     evidence = _mapping(trial.get("evidence"))
     execution = _mapping(evidence.get("execution"))
     turns = execution.get("turns", [])
@@ -370,5 +371,6 @@ def trial_preview(trial: Mapping[str, Any]) -> dict[str, Any]:
         "final_text": str(trial.get("final_text") or "")[:400],
         "input_preview": str(first.get("input") or evidence.get("input") or "")[:400],
         "body_available": True, "capture_state": execution.get("state", "not_recorded"),
+        **({"model_output_preview": output_preview(trial)} if model or "model_response" in evidence else {}),
         "evidence": {"error_code": evidence.get("error_code"), "error_stage": evidence.get("error_stage"), "tool_evidence_state": evidence.get("tool_evidence_state"), "case_source": _mapping(evidence.get("case_source")), "judge_evidence": {key: judging.get(key) for key in ("quality_applicable", "quality_reason", "metrics", "error", "native_result", "mode", "primary", "tool_outcome", "tool_evidence_state")}},
     }

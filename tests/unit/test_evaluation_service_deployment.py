@@ -175,6 +175,7 @@ def _deploy_harness(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
         encoding="utf-8",
     )
     script.chmod(0o755)
+    _write_executable(repository / "deploy/wsl/install_wsl_env.sh", "#!/usr/bin/env bash\nprintf 'dependency-sync %s\\n' \"$*\" >> \"$CALL_LOG\"\n")
     (repository / "console").mkdir()
     (repository / "src/chatcopilot").mkdir(parents=True)
     fake_bin = tmp_path / "bin"
@@ -253,7 +254,8 @@ def test_deploy_holds_maintenance_across_both_service_restarts(
     evaluation_restart = calls.index("systemctl --user restart chatcopilot-evaluation.service")
     console_restart = calls.index("systemctl --user restart chatcopilot-console.service")
     leave = calls.index("maintenance leave")
-    assert enter < evaluation_restart < console_restart < leave
+    dependency_sync = calls.index("dependency-sync")
+    assert enter < dependency_sync < evaluation_restart < console_restart < leave
 
 
 def test_deploy_refuses_updates_when_maintenance_cannot_be_acquired(

@@ -5,59 +5,12 @@ from chatcopilot.evals.plugins.base import EvaluationPlugin, PLUGIN_API_VERSION
 
 
 def _execute_trial(case, *, chat_config):
-    from chatcopilot.agent.context.prompt_plan import (
-        PromptBuildInput,
-        PromptPlanBuilder,
-        render_native_prefix,
-    )
-    from chatcopilot.contracts.prompt import BotPromptProfile
-    from chatcopilot.core.llm_client import LLMClient
-    from chatcopilot.evals.trial_capture import record_turn
+    from chatcopilot.evals.model_io import invoke
 
-    plan = PromptPlanBuilder().build(
-        PromptBuildInput(
-            profile=BotPromptProfile(
-                identity="Instruction-following evaluation assistant.",
-                response_style="Follow the task requirements.",
-            ),
-            backend="native",
-            model=chat_config.llm.model,
-            role="user",
-            channel_kind="private",
-            skill_index=(),
-            session_policy="Answer the user's instruction-following task. No tools are available.",
-        )
-    )
-    messages = [*render_native_prefix(plan), {"role": "user", "content": case.input}]
-    turn = {
-        "turn_index": 0,
-        "conversation_id": case.case_id,
-        "input": case.input,
-        "messages": messages,
-        "completed": False,
-    }
-    record_turn(turn)
-    client = LLMClient(chat_config.llm)
-    try:
-        response = client.chat(messages=messages, tools=None, stream=False, max_retries=0)
-    finally:
-        client.close()
-    if getattr(response, "tool_calls", None):
+    observation = invoke(case, chat_config=chat_config, messages=[{"role": "user", "content": case.input}], tools=None)
+    if observation["tool_calls"]:
         raise ValueError("IFEval model-only response requested tools")
-    output = response.content or ""
-    record_turn({**turn, "completed": True, "final_text": output, "stop_reason": "end_turn"})
-    return {
-        "final_text": output,
-        "tool_calls": [],
-        "usage": response.usage or {},
-        "metadata": {
-            "subject_type": "model",
-            "agent_runtime_exercised": False,
-            "model_input_messages": messages,
-            "prompt_protocol": "independent_prompt_plan_with_host_policy",
-            "official_prompt_equivalent": False,
-        },
-    }
+    return observation
 
 
 def _judge(case, observation):

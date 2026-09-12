@@ -64,6 +64,8 @@ def isolated_official_suite_env(
         "CHATCOPILOT_IFEVAL_CASE_PROFILE",
     ):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("CHATCOPILOT_BFCL_CASE_PROFILE", "smoke")
+    monkeypatch.setenv("CHATCOPILOT_IFEVAL_CASE_PROFILE", "smoke")
     monkeypatch.setenv("CHATCOPILOT_EVALS_DATA_DIR", str(tmp_path / "official-cache"))
     monkeypatch.setattr(gaia, "_DEFAULT_CACHE_DIR", tmp_path / "gaia-cache")
 
@@ -592,10 +594,14 @@ def test_bfcl_plugin_preserves_request_and_execution_metadata(
         def chat(self, **kwargs: object) -> object:
             captured.update(kwargs)
             return SimpleNamespace(
+                finish_reason="tool_calls",
                 content="synthetic BFCL response",
                 tool_calls=case.metadata["expected_calls"],
                 usage={"prompt_tokens": 11, "completion_tokens": 3},
             )
+
+        def close(self):
+            captured["closed"] = True
 
     monkeypatch.setattr("chatcopilot.core.llm_client.LLMClient", FakeLLMClient)
     plugin = get_evaluation_plugin("bfcl")
@@ -603,22 +609,18 @@ def test_bfcl_plugin_preserves_request_and_execution_metadata(
 
     observation = plugin.execute_trial(
         case,
-        chat_config=SimpleNamespace(llm="configured-chat-profile"),
+        chat_config=SimpleNamespace(llm=SimpleNamespace(model="synthetic-model")),
     )
 
-    assert captured["config"] == "configured-chat-profile"
-    assert captured["messages"] == bfcl.build_messages(case)
+    assert captured["config"].model == "synthetic-model"
+    assert captured["closed"] is True
+    assert captured["messages"][-1:] == bfcl.build_messages(case)
     assert captured["tools"] == bfcl.build_tools_schema(case)
     assert captured["stream"] is False
-    assert observation == {
-        "final_text": "synthetic BFCL response",
-        "tool_calls": case.metadata["expected_calls"],
-        "usage": {"prompt_tokens": 11, "completion_tokens": 3},
-        "metadata": {
-            "bfcl_category": case.metadata["bfcl_category"],
-            "benchmark_category": case.metadata["bfcl_category"],
-        },
-    }
+    assert observation["final_text"] == "synthetic BFCL response"
+    assert observation["metadata"]["model_request"]["messages"] == captured["messages"]
+    assert observation["metadata"]["model_response"]["tool_calls"] == case.metadata["expected_calls"]
+    assert observation["metadata"]["agent_runtime_exercised"] is False
 
 
 def test_direct_llm_runner_uses_non_bfcl_plugin_hooks(

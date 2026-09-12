@@ -89,8 +89,8 @@ def test_case_content_and_judge_changes_have_metric_specific_comparison_keys(dee
 def test_descriptor_does_not_present_bfcl_as_full_agent_or_official_score():
     descriptor = benchmark_descriptor(get_manifest("bfcl"), [example()])
     assert "direct_llm" in descriptor["target_scope"]
-    assert "部分" in descriptor["coverage"]
-    assert "项目适配器" in descriptor["native_method"]
+    assert "单轮" in descriptor["coverage"] and "全榜总分" in descriptor["coverage"]
+    assert "官方" in descriptor["native_method"]
     assert scoring_plan(get_manifest("gaia"), {"scoring_mode": "native"})["judge"] is None
 
 

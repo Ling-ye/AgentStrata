@@ -130,6 +130,8 @@ PUBLIC_CODE_REPOSITORIES = frozenset(
         "github.com/gitleaks/gitleaks",
         "github.com/gollum/gollum",
         "github.com/google-research/google-research",
+        "github.com/shishirpatil/gorilla",
+        "github.com/nltk/nltk_data",
         "github.com/kubernetes/enhancements",
         "github.com/ling-ye/agentstrata",
         "github.com/liuliang520530/taoke-mcp",

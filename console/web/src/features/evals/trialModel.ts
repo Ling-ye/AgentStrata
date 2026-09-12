@@ -7,6 +7,38 @@ export const executionTurns = (trial: EvaluationTrial) => objectList(asObject(tr
 export const trialMetrics = (trial: EvaluationTrial) => objectList(asObject(trial.evidence.judge_evidence).metrics);
 export const captureLabel = (state: string) => ({ not_recorded: "未采集", truncated: "已截断", failed: "采集失败", expired: "已到期" }[state] ?? "");
 
+export const isModelOutput = (record: EvaluationRecord, trial: EvaluationTrial) =>
+  record.benchmark?.subject_type === "model" || !!trial.evidence.model_response;
+
+export function modelCalls(trial: EvaluationTrial) {
+  const response = asObject(trial.evidence.model_response);
+  return objectList(response.tool_calls ?? trial.evidence.tool_calls).map(call => {
+    const fn = call.function ? asObject(call.function) : call;
+    const value = fn.arguments ?? fn.args ?? {};
+    const raw = typeof value === "string" ? value : JSON.stringify(value);
+    let parsed: unknown = value, error = "";
+    try {
+      parsed = typeof value === "string" ? JSON.parse(value) : value;
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) error = "参数不是 JSON 对象";
+    } catch { error = "参数 JSON 解析失败，以下保留原始字符串"; }
+    return { id: asText(call.id), name: asText(fn.name), raw, parsed, error };
+  });
+}
+
+export function modelOutputSummary(record: EvaluationRecord, trial: EvaluationTrial): string {
+  if (!isModelOutput(record, trial)) return trial.final_text || "未记录";
+  const preview = asObject(trial.model_output_preview);
+  const response = asObject(trial.evidence.model_response);
+  const text = typeof response.content === "string" ? response.content : trial.final_text;
+  const calls = preview.kind ? objectList(preview.calls) : modelCalls(trial).map(c => ({ name: c.name, arguments: c.raw }));
+  const parts = [asText(preview.text) || text, ...calls.map(c => `${asText(c.name) || "未命名调用"}(${asText(c.arguments)})`)].filter(Boolean);
+  if (parts.length) return parts.join("\n");
+  const execution = asObject(trial.evidence.execution);
+  const recorded = !!trial.evidence.model_response || (execution.state === "recorded" && "tool_calls" in trial.evidence
+    && executionTurns(trial).some(t => t.completed === true));
+  return preview.kind === "empty" || recorded ? "模型返回空内容（无函数调用）" : "未记录模型输出";
+}
+
 export function recordedInput(record: EvaluationRecord, trial: EvaluationTrial): { text: string; source: string } {
   const turns = executionTurns(trial);
   if (turns.length) return { text: asText(turns[0].input), source: "实际输入" };

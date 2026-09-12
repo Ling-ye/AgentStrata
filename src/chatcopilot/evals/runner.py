@@ -282,7 +282,8 @@ def _run_direct_llm_cases(
                         f"direct_llm plugin {plugin.plugin_id!r} returned an invalid observation"
                     )
                 record_turn({"conversation_id": case.case_id, "turn_index": 0, "input": case.input,
-                             "completed": True, "final_text": final_text, "stop_reason": "end_turn"})
+                             "completed": True, "final_text": final_text, "stop_reason": "end_turn",
+                             **{key: plugin_metadata[key] for key in ("model_request", "model_response") if key in plugin_metadata}})
                 set_phase("judging")
                 from chatcopilot.evals.benchmark_scoring import score_benchmark
 
@@ -317,13 +318,20 @@ def _run_direct_llm_cases(
                     )
                 )
             except Exception as exc:  # noqa: BLE001
+                captured = observed.get("turns", [])
+                captured = captured[-1] if captured else {}
+                response = captured.get("model_response") or {}
+                final_text = response.get("content", final_text) or ""
+                tool_calls = response.get("tool_calls", tool_calls) or []
                 results.append(
                     EvalCaseResult(
                         case_id=case.case_id,
                         suite_id=suite_id,
                         status="error",
                         final_text=final_text,
-                        metadata={"input": case.input, "tool_calls": tool_calls, "error_stage": observed.get("phase", "execution"),
+                        metadata={"input": case.input, "tool_calls": tool_calls,
+                                  **{key: captured[key] for key in ("model_request", "model_response") if key in captured},
+                                  "error_stage": observed.get("phase", "execution"),
                                   "error_code": "judge_error" if observed.get("phase") == "judging" else "execution_error"},
                         duration_seconds=time.monotonic() - started,
                         started_at=case_started_at,

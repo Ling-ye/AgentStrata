@@ -1,8 +1,8 @@
 """IFEval adapter.
 
 The official IFEval benchmark ships prompts plus deterministic instruction
-checkers. This adapter supports a small built-in smoke subset immediately and
-can also ingest official-style JSONL prompt files via CHATCOPILOT_IFEVAL_DATA_PATH.
+checkers. Official data is the default; the eight-question smoke subset
+requires an explicit debug profile.
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ _ENV_CASE_PROFILE = "CHATCOPILOT_IFEVAL_CASE_PROFILE"
 def load_cases(limit: int | None = None) -> tuple[EvalCase, ...]:
     """Load IFEval cases from official-style JSONL or built-in smoke cases."""
 
+    if _case_profile_from_env() == "smoke":
+        return tuple(_smoke_cases()[:limit] if limit else _smoke_cases())
     data_path = os.environ.get(_ENV_DATA_PATH, "").strip()
     if not data_path and has_ifeval_official_data():
         data_path = str(ifeval_cache_path())
@@ -33,7 +35,7 @@ def load_cases(limit: int | None = None) -> tuple[EvalCase, ...]:
         if not _manual_case_filter_enabled(limit):
             cases = _select_profile(cases, profile=_case_profile_from_env(), seed=20260614)
     else:
-        cases = _smoke_cases()
+        cases = []
     max_cases = positive_int_from_env(_ENV_MAX_CASES)
     if max_cases is not None:
         cases = cases[:max_cases]
@@ -61,6 +63,8 @@ def preflight(cases) -> None:
         for check in case.metadata["instruction_checks"]:
             build_checker(check["id"], check["kwargs"], case.input)
             if check["id"] == "length_constraints:number_sentences":
+                from chatcopilot.evals.ifeval_resources import configure_resources
+                configure_resources()
                 from chatcopilot.evals.vendor.ifeval.instructions_util import _get_sentence_tokenizer
                 _get_sentence_tokenizer()
 
@@ -88,7 +92,9 @@ def _row_case(raw: dict[str, Any], source: str, prefix: str = "ifeval") -> EvalC
         raise ValueError("IFEval prompt is missing")
     checks = [{"id": ident, "kwargs": value} for ident, value in zip(ids, args)]
     case = _case(f"{prefix}-{raw['key']}", prompt, checks)
-    case.metadata.update(source=source, source_revision=REVISION, official_instruction_ids=ids)
+    from dataclasses import replace
+    case = replace(case, category=" + ".join(sorted({ident.split(":")[0] for ident in ids})))
+    case.metadata.update(source=source, source_revision=REVISION, official_instruction_ids=ids, problem_categories=ids)
     preflight([case])
     return case
 
@@ -125,7 +131,7 @@ def _manual_case_filter_enabled(limit: int | None) -> bool:
 
 
 def _case_profile_from_env() -> str:
-    return _normalize_profile(os.environ.get(_ENV_CASE_PROFILE, "balanced-100"))
+    return _normalize_profile(os.environ.get(_ENV_CASE_PROFILE, "full"))
 
 
 def _normalize_profile(value: str) -> str:

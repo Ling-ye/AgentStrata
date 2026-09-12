@@ -138,6 +138,14 @@ testpaths = ["tests"]
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
 
+# Preserve pinned upstream scorer semantics and formatting.
+[tool.ruff.lint.per-file-ignores]
+"src/chatcopilot/evals/vendor/bfcl/ast_checker.py" = ["E711", "E721"]
+"src/chatcopilot/evals/vendor/bfcl/java_type_converter.py" = ["E712"]
+"src/chatcopilot/evals/vendor/bfcl/js_type_converter.py" = ["E712", "E722"]
+"src/chatcopilot/evals/vendor/bfcl/relevance.py" = ["E721"]
+"src/chatcopilot/evals/vendor/bfcl/language.py" = ["E721"]
+
 [tool.mypy]
 python_version = "3.10"
 warn_unused_ignores = true

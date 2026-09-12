@@ -58,6 +58,8 @@ REQUIRED_PACKAGE_RESOURCES = frozenset(
         "evals/suites/ifeval/fixtures/fixed.json",
         "evals/vendor/ifeval/LICENSE.txt",
         "evals/vendor/ifeval/NOTICE.md",
+        "evals/vendor/bfcl/LICENSE.txt",
+        "evals/vendor/bfcl/NOTICE.md",
         "evals/suites/agent-comparison/cases.yaml",
         "evals/suites/agentstrata-canary-self-update-v1/manifest.yaml",
         "evals/suites/agentstrata-capabilities-v1/README.md",

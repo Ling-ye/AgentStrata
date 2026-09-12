@@ -972,3 +972,21 @@ Hugging Face Token，公开示例只保留空值。
 控制台将对象入口命名为“LLM测评”“Agent测评”“系统测试”，并统一开始测试、记录筛选
 与详情标签。系统测试还覆盖交付、自更新与恢复，范围宽于 Gateway 单层，因此保留系统级
 名称；具体套件继续说明 Legacy 合成覆盖或待接入状态。内部对象类型和历史数据保持原样。
+
+## 2026-09-12：AgentBench FC 本地 DB/OS 接入
+
+此前入口只提示配置数据文件与 Controller URL，缺少本地环境准备，也未核验 worker。
+现增加固定版本 DB/OS 准备脚本，独立 Compose 项目提供控制器、worker、Redis 与任务容器，
+从实际 worker 加载器导出题目并核对索引；目录与启动前查询真实可用性。
+
+实际接线发现 start_sample 不带 finish、控制器主动删除终态会话，以及上游 worker 的
+aiodocker timeout 参数不兼容。分别修正启动/终态/取消契约和本地 worker 参数适配，
+同时保留原生题目与评分逻辑，并明确低内存环境条件。真实 DB/OS 正答、错答与取消核查
+和受控 Native Agent 工具调用用于验证接线，不计为真实模型成绩。规格与验证见
+[AgentBench 本地环境](../specs/evaluation-agentbench-local-environment/spec.md)。
+
+## 2026-09-12：LLM 官方全量题库与模型响应可见性
+
+BFCL 旧入口只有 5 道协议冒烟题，IFEval 的运行环境缺少实际依赖；模型纯函数调用虽已存储，结果页只读正文而误报未记录。本轮将 BFCL 更新为固定 V4 单轮 13 类 3,641 题及官方 AST/相关性核心，IFEval 更新为固定官方全部 541 题、25 种约束与必要分句资源；默认全量，子集和调试模式显式选择。
+
+两个入口均通过独立 PromptPlan 保存真实请求与响应，函数调用作为模型输出展示，既有成绩只读投影。维护更新在 Evaluation idle lease 内同步 Python 锁定依赖并更新 Evaluation/Console，AgentBench 在线预检同时生效。测评相关回归 857 项、fast 1113 项与 34 个子测试、前端 178 项、生产构建及安装包校验通过；实际 API/浏览器核验全量目录、历史调用及 DB 占用前后 444/144/444 题数。未运行真实付费模型、未提交 Git。规格见 [LLM 官方题库与响应](../specs/evaluation-llm-official-output/spec.md)。

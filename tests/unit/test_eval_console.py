@@ -50,6 +50,8 @@ def _isolate_official_eval_cache(
         str(tmp_path / "evals-cache"),
     )
     monkeypatch.setattr(gaia, "_DEFAULT_CACHE_DIR", tmp_path / "gaia-cache")
+    monkeypatch.setenv("CHATCOPILOT_BFCL_CASE_PROFILE", "smoke")
+    monkeypatch.setenv("CHATCOPILOT_IFEVAL_CASE_PROFILE", "smoke")
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -192,7 +194,7 @@ def test_catalog_queries_are_generic_and_hide_answers(
     assert by_id["bfcl"]["execution_scope"] == "direct_llm/function_call_protocol"
     assert by_id["swe-bench-verified"]["implemented"] is True
     assert "balanced-100" in by_id["gaia"]["selection_policy"]
-    assert "simple/relevance=Lv1" in by_id["bfcl"]["level_policy"]
+    assert "simple/irrelevance/relevance=Lv1" in by_id["bfcl"]["level_policy"]
     assert "instruction family" in by_id["ifeval"]["category_policy"]
     cases = list_case_summaries("bfcl")
     assert cases
@@ -427,7 +429,9 @@ def test_suite_descriptor_marks_smoke_data_as_preparable() -> None:
     assert by_id["ifeval"]["prepare_available"] is True
 
 
-def test_official_cache_makes_bfcl_and_ifeval_balanced_100() -> None:
+def test_official_cache_uses_full_with_explicit_balanced_subset(monkeypatch) -> None:
+    monkeypatch.setenv("CHATCOPILOT_BFCL_CASE_PROFILE", "full")
+    monkeypatch.setenv("CHATCOPILOT_IFEVAL_CASE_PROFILE", "full")
     _write_bfcl_official_cache(bfcl_cache_dir())
     _write_ifeval_official_cache(ifeval_cache_path())
 
@@ -435,13 +439,17 @@ def test_official_cache_makes_bfcl_and_ifeval_balanced_100() -> None:
     by_id = {item["suite_id"]: item for item in suites}
 
     assert by_id["bfcl"]["data_source"] == "official_cache"
-    assert by_id["bfcl"]["case_count"] == 100
+    assert by_id["bfcl"]["case_count"] == 520
     assert by_id["bfcl"]["uses_smoke_data"] is False
     assert by_id["ifeval"]["data_source"] == "official_cache"
-    assert by_id["ifeval"]["case_count"] == 100
+    assert by_id["ifeval"]["case_count"] == 120
+    monkeypatch.setenv("CHATCOPILOT_BFCL_CASE_PROFILE", "balanced-100")
+    monkeypatch.setenv("CHATCOPILOT_IFEVAL_CASE_PROFILE", "balanced-100")
+    assert len(get_cases("bfcl")) == len(get_cases("ifeval")) == 100
 
 
-def test_stream_prepare_suite_refreshes_bfcl_cases_from_cache() -> None:
+def test_stream_prepare_suite_refreshes_bfcl_cases_from_cache(monkeypatch) -> None:
+    monkeypatch.setenv("CHATCOPILOT_BFCL_CASE_PROFILE", "full")
     def fake_prepare(suite_id: str, _values: dict, _repository: Path) -> dict:
         assert suite_id == "bfcl"
         _write_bfcl_official_cache(bfcl_cache_dir())
@@ -457,18 +465,13 @@ def test_stream_prepare_suite_refreshes_bfcl_cases_from_cache() -> None:
     ):
         lines = list(stream_prepare_suite("bfcl"))
 
-    assert any("case 数量：100" in line for line in lines)
+    assert any("case 数量：520" in line for line in lines)
     assert lines[-1] == "__EXIT__ 0"
 
 
 def _write_bfcl_official_cache(root: Path) -> None:
-    categories = {
-        "simple": "BFCL_v3_simple.json",
-        "multiple": "BFCL_v3_multiple.json",
-        "parallel": "BFCL_v3_parallel.json",
-        "parallel_multiple": "BFCL_v3_parallel_multiple.json",
-        "relevance": "BFCL_v3_irrelevance.json",
-    }
+    from chatcopilot.evals.bfcl_official import CATEGORY_COUNTS, filename as official_filename
+    categories = {c: official_filename(c) for c in CATEGORY_COUNTS}
     for category, filename in categories.items():
         rows = []
         answers = []
@@ -491,14 +494,14 @@ def _write_bfcl_official_cache(root: Path) -> None:
                             "description": "test",
                             "parameters": {
                                 "type": "object",
-                                "properties": {"value": {"type": "integer"}},
+                                "properties": {"value": {"type": "integer", "description": "value"}},
                             },
                         }
                     ],
                 }
             )
             ground_truth = (
-                [] if category == "relevance" else [{f"{category}_tool": {"value": index}}]
+                [] if "relevance" in category else [{f"{category}_tool": {"value": [index]}}]
             )
             answers.append(
                 {
@@ -507,7 +510,10 @@ def _write_bfcl_official_cache(root: Path) -> None:
                 }
             )
         _write_jsonl(root / filename, rows)
-        _write_jsonl(root / "possible_answer" / filename, answers)
+        if "relevance" not in category:
+            _write_jsonl(root / "possible_answer" / filename, answers)
+    from chatcopilot.evals.llm_data import BFCL_FILES, BFCL_REVISION
+    _write_receipt(root, BFCL_REVISION, BFCL_FILES)
 
 
 def _write_ifeval_official_cache(path: Path) -> None:
@@ -539,6 +545,13 @@ def _write_ifeval_official_cache(path: Path) -> None:
                 }
             )
     _write_jsonl(path, rows)
+    from chatcopilot.evals.llm_data import IFEVAL_REVISION
+    _write_receipt(path.parent, IFEVAL_REVISION, (path.name,))
+
+
+def _write_receipt(root, revision, names):
+    import hashlib
+    _write_json(root / "source.json", {"revision": revision, "files": {n: hashlib.sha256((root / n).read_bytes()).hexdigest() for n in names}})
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:

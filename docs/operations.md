@@ -523,6 +523,17 @@ GAIA 必须由同一账号在 [官方数据页](https://huggingface.co/datasets/
 展示全部 validation 题目；默认 balanced-100 只选固定 100 题，不代表只下载了 100 题。
 官方 gated 数据、答案与附件不得提交到公开仓库。
 
+BFCL 默认载入固定 BFCL V4 单轮 13 类共 3,641 题，IFEval 默认载入固定官方全部 541 题。
+在控制台选择对应套件后使用“准备官方数据”；准备过程校验版本、题目与答案 ID、数量、哈希及必要评分资源，最后发布准备回执。
+可用 `CHATCOPILOT_BFCL_DATA_DIR` 和 `CHATCOPILOT_IFEVAL_DATA_PATH` 指定数据，留空时读取校验后的私有缓存。
+两个套件的 `CHATCOPILOT_<BFCL|IFEVAL>_CASE_PROFILE` 默认 `full`；`balanced-100` 为显式 100 题子集，`smoke` 为调试题。
+全量目录内也可直接选择“固定 100 题子集”。未准备成功不会自动回退到调试题。BFCL Live 表示题目来源类别，无需真实工具联网；结果不代表 BFCL V4 全榜总分。
+IFEval 依赖随 Evaluation extra 安装，准备入口下载固定版本的 English `punkt`/`punkt_tab` 分句资源。
+
+结果列表同时显示模型正文与函数调用摘要；展开题目可复制完整已采集 JSON、查看原始参数及模型结束原因。
+“模型返回函数调用”只表示调用提议。旧记录仅显示已保存字段，不补写原始请求、文本或成绩。
+`deploy_console.sh --update-only` 在维护锁内同步锁定 Python 依赖并更新 Evaluation/Console，不更新机器人实例。
+
 SWE-bench 与 AgentBench 的执行资源仍需单独准备：
 
 - SWE-bench 使用已固定的 `swebench==5.0.2` 评分库（包含在 `evaluation` extra）。
@@ -537,14 +548,34 @@ SWE-bench 与 AgentBench 的执行资源仍需单独准备：
   临时容器内将仓库恢复到题目 base_commit，并记录原镜像 HEAD；求解与评分使用同一基线。
   镜像 ID 与补丁摘要
   随结果保存。该受限执行配置需与原始榜单条件区分；暂不支持 Multimodal 资源。
-- AgentBench FC 由用户独立管理本地 Controller 与环境 worker。
+- AgentBench FC 可通过项目准备脚本安装固定版本的本地 DB/OS 环境：
+
+  ```bash
+  .venv/bin/python scripts/prepare_agentbench.py up
+  .venv/bin/python scripts/prepare_agentbench.py status
+  .venv/bin/python scripts/prepare_agentbench.py stop
+  ```
+
+  准备脚本使用独立 Compose 项目 `agentstrata-agentbench`，默认只将 Controller
+  的 `15020` 端口绑定到本机回环；worker 与 Redis 不发布宿主端口。DB/OS 各一 worker、
+  并发均为 1；DB 缓冲池 128 MiB、任务容器内存上限 1 GiB，OS 使用 Ubuntu 24.04。
+  这些是明确的本地环境条件，不等同于上游高并发部署；题目和评分逻辑保持上游实现。
+  KG/ALFWorld/WebShop 不随该准备命令启动。
+  默认数据、Compose 配置及来源/镜像回执保存在 `~/.cache/agentstrata/evals/agentbench-fc`。
+  首次准备完成后，将输出的数据路径及 Controller URL 填入 Bot 的私有 `local.env`：
+  `CHATCOPILOT_AGENTBENCH_DATA_PATH`、`CHATCOPILOT_AGENTBENCH_CONTROLLER_URL`。
+  `status`/`stop` 使用非默认端口时也需传同一个 `--port`。
   `CHATCOPILOT_AGENTBENCH_CONTROLLER_URL` 只接受明确的回环 IP HTTP `/api` 地址，
   禁止重定向、代理和带用户信息的 URL。`CHATCOPILOT_AGENTBENCH_DATA_PATH` 为从所部署
   固定版本导出的 JSONL 目录，每行包含 `task`、`index`、`input`（预览原题）、
   `source_revision`（40 位源码 commit）。支持的 task 为 `dbbench-std`、`os-std`、`kg-std`、
   `alfworld-std`、`webshop-std`；实际可用性由已部署 worker 和数据决定。运行时真实输入和
   工具来自 Controller，AgentStrata Agent 调用工具推进环境，终态按环境 reward 判定。
-  上游未提供可验证版本回执，部署者需保持题目目录与 worker 版本一致；不宣称官方榜单等价。
+  本地准备脚本从实际 worker 的数据加载器导出题目预览，并与运行中的 Controller 索引核对；
+  固定源码版本、低内存配置与实际镜像 ID 保存在 `source.json`。
+  目录和运行前会只读核验 worker 是否存活、是否繁忙、题目索引是否存在；不凭 URL 格式判可用。
+  Controller 的启动消息与后续交互终态分别校验，不把 start_sample 缺少 finish 当作执行失败。
+  环境回收只针对当前会话；上游已经删除的终态会话不会被重复取消误报。完整成绩仍需真实 Agent 运行。
 - 环境资源在 Agent 调用前向 Trial supervisor 登记，正常结束与取消后按精确资源身份回收。
   无法确认回收时返回清理异常，不当作完成。环境准备、真实模型运行和完整官方数据集成绩
   分别验收；本地模拟环境测试不替代这些结果。
@@ -602,10 +633,7 @@ python -m chatcopilot evals run \
 ```
 
 图片理解已有 3 个配置化 Case 和合成图片 fixture；图片生成尚未配置，能力目录显示
-`image_generation:not_configured`，它不属于失败 Case。GAIA 与 IFEval 使用 Agent
-runtime；BFCL 明确是 `direct_llm/function_call_protocol` 校准，不进入产品 Agent 能力
-通过率。SWE-bench Verified、WebArena 和 `agentstrata-canary-self-update-v1` 当前均为
-`planned/unavailable`，不能从 Console 或 CLI 启动正式 Trial。
+`image_generation:not_configured`，它不属于失败 Case。GAIA 使用 Agent runtime；IFEval 与 BFCL 使用独立 PromptPlan 模型直测，结果不进入 Agent 任务通过率。SWE-bench Verified 需官方数据与隔离容器镜像；WebArena 和 `agentstrata-canary-self-update-v1` 仍待接入。
 
 ### QQ 外部平台检查
 

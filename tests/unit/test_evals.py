@@ -31,6 +31,12 @@ def _isolate_official_eval_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(gaia, "_DEFAULT_CACHE_DIR", tmp_path / "gaia-cache")
 
 
+@pytest.fixture(autouse=True)
+def explicit_debug_profiles(monkeypatch):
+    monkeypatch.setenv("CHATCOPILOT_BFCL_CASE_PROFILE", "smoke")
+    monkeypatch.setenv("CHATCOPILOT_IFEVAL_CASE_PROFILE", "smoke")
+
+
 class EvalRegistryTests(unittest.TestCase):
     def test_standard_benchmarks_are_registered(self) -> None:
         suite_ids = {standard.suite_id for standard in list_standards()}
@@ -103,7 +109,7 @@ class EvalRegistryTests(unittest.TestCase):
         standard = get_standard("ifeval")
         cases = get_cases("ifeval")
 
-        self.assertFalse(standard.requires_external_data)
+        self.assertTrue(standard.requires_external_data)
         self.assertGreaterEqual(len(cases), 5)
         self.assertEqual(cases[0].metadata["adapter"], "ifeval")
         self.assertTrue(cases[0].metadata["instruction_checks"])
@@ -792,7 +798,7 @@ class BFCLAdapterTests(unittest.TestCase):
 
         self.assertEqual(len(cases), 5)
         categories = {c.metadata["bfcl_category"] for c in cases}
-        self.assertTrue(categories.issuperset({"simple", "multiple", "parallel", "relevance"}))
+        self.assertTrue(categories.issuperset({"simple", "multiple", "parallel", "irrelevance"}))
 
     def test_smoke_cases_filter_by_category(self) -> None:
         with _patched_env(CHATCOPILOT_BFCL_DATA_DIR=None):
@@ -819,7 +825,7 @@ class BFCLAdapterTests(unittest.TestCase):
 
     def test_judge_relevance_no_calls_passes(self) -> None:
         relevance_cases = [
-            c for c in bfcl.load_cases() if c.metadata["bfcl_category"] == "relevance"
+            c for c in bfcl.load_cases() if c.metadata["bfcl_category"] == "irrelevance"
         ]
         self.assertTrue(len(relevance_cases) > 0)
         result = bfcl.judge(relevance_cases[0], [])
@@ -828,7 +834,7 @@ class BFCLAdapterTests(unittest.TestCase):
 
     def test_judge_relevance_with_calls_fails(self) -> None:
         relevance_cases = [
-            c for c in bfcl.load_cases() if c.metadata["bfcl_category"] == "relevance"
+            c for c in bfcl.load_cases() if c.metadata["bfcl_category"] == "irrelevance"
         ]
         result = bfcl.judge(
             relevance_cases[0], [{"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}]

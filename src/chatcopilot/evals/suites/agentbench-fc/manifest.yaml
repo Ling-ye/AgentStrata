@@ -15,7 +15,7 @@ requires_bot: true
 requires_external_data: true
 prepare_supported: false
 official_url: https://github.com/THUDM/AgentBench
-setup_hint: 配置 CHATCOPILOT_AGENTBENCH_DATA_PATH 的 FC JSONL 题目目录，以及 CHATCOPILOT_AGENTBENCH_CONTROLLER_URL 的本地 /api 控制器；环境由独立上游服务提供，不自动安装或启动。
+setup_hint: 运行 .venv/bin/python scripts/prepare_agentbench.py up 准备固定版本的 DB/OS 数据、控制器和低并发容器环境；在 Bot local.env 填写输出的 CHATCOPILOT_AGENTBENCH_DATA_PATH 与 CHATCOPILOT_AGENTBENCH_CONTROLLER_URL。目录会核验实际 worker 和题目索引，查看目录不自动启动环境或模型。
 options:
   - name: scoring_mode
     type: enum

@@ -21,54 +21,19 @@ def _load_cases(context: CaseLoadContext):
 
 
 def _execute_trial(case, *, chat_config) -> dict[str, Any]:
-    from chatcopilot.core.llm_client import LLMClient
+    from chatcopilot.evals.model_io import invoke
 
-    result = LLMClient(chat_config.llm).chat(
-        messages=bfcl.build_messages(case),
-        tools=bfcl.build_tools_schema(case) or None,
-        stream=False,
-    )
-    return {
-        "final_text": result.content or "",
-        "tool_calls": _extract_tool_calls(result),
-        "usage": result.usage or {},
-        "metadata": {
-            "bfcl_category": str(case.metadata.get("bfcl_category") or ""),
-            "benchmark_category": str(case.metadata.get("bfcl_category") or case.category),
-        },
-    }
+    observation = invoke(case, chat_config=chat_config, messages=bfcl.build_messages(case),
+                         tools=bfcl.build_tools_schema(case) or None)
+    observation["metadata"].update(bfcl_category=case.metadata["bfcl_category"],
+                                    benchmark_category=case.metadata["bfcl_category"],
+                                    function_name_mapping=case.metadata.get("function_name_mapping", {}))
+    return observation
 
 
 def _judge(case, observation: dict[str, Any]):
     return bfcl.judge(case, observation.get("tool_calls") or [])
 
-
-def _extract_tool_calls(chat_result: Any) -> list[dict[str, Any]]:
-    import json
-
-    calls: list[dict[str, Any]] = []
-    for tool_call in getattr(chat_result, "tool_calls", None) or []:
-        if isinstance(tool_call, dict):
-            calls.append(tool_call)
-            continue
-        function = getattr(tool_call, "function", None)
-        if function is None:
-            continue
-        arguments = getattr(function, "arguments", {})
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except (TypeError, ValueError, json.JSONDecodeError):
-                arguments = {}
-        if not isinstance(arguments, dict):
-            arguments = {}
-        calls.append(
-            {
-                "name": str(getattr(function, "name", "") or ""),
-                "arguments": arguments,
-            }
-        )
-    return calls
 
 
 PLUGIN = EvaluationPlugin(
