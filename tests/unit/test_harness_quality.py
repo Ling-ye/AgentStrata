@@ -14,7 +14,7 @@ from chatcopilot.core.source_snapshot import git_output, source_manifest
 from chatcopilot.harness.api import HarnessController
 from chatcopilot.harness.local_commit import LocalCommitter
 from chatcopilot.harness.local_verifier import LocalVerifier
-from chatcopilot.harness.models import HarnessError, RepairOptions
+from chatcopilot.harness.models import HarnessError, RepairFeedback, RepairOptions
 from chatcopilot.harness.workflow import run_task
 from test_case_harness import FakeCoder, FakeEvaluator
 
@@ -241,9 +241,11 @@ def test_robot_fix_and_identical_frozen_regression_share_one_commit(repository, 
 
     content = b"import importlib.util\ndef test_behavior():\n    assert importlib.util.find_spec('chatcopilot.core.harness_probe') is not None\n"
     digest = hashlib.sha256(content).hexdigest()
+    feedback = RepairFeedback("检查模块可用性", "产品模块应能导入")
 
     class Verifier(LocalFixture):
         def prepare(self, task, worktree, coder, options, check_cancel):
+            assert task["source"]["feedback"] == feedback.to_payload()
             folder = private_directory(tmp_path / "frozen")
             file = folder / "test_reproduction.py"
             file.write_bytes(content)
@@ -256,9 +258,17 @@ def test_robot_fix_and_identical_frozen_regression_share_one_commit(repository, 
             }
 
     coder = FakeCoder()
+    run = coder.run
+
+    def repair(worktree, evidence, *args):
+        assert evidence["source"]["feedback"] == feedback.to_payload()
+        return run(worktree, evidence, *args)
+
+    coder.run = repair
 
     def review(_worktree, evidence, *_args):
         assert evidence["regression"]["test"].encode() == content
+        assert evidence["source"]["feedback"] == feedback.to_payload()
         return {
             "decision": "approved",
             "problem": "",
@@ -271,7 +281,8 @@ def test_robot_fix_and_identical_frozen_regression_share_one_commit(repository, 
         repository, root=tmp_path / "private", task_reader=lambda *_: robot_source()
     )
     task = controller.start_task(
-        "sample", "run-example", RepairOptions("test-model"), review_and_commit=True, launch=False
+        "sample", "run-example", RepairOptions("test-model"), review_and_commit=True, launch=False,
+        feedback=feedback,
     )
     publisher = LocalCommitter(ROOT)
     publisher.checks = Mock()
@@ -317,8 +328,9 @@ def test_actual_public_boundary_blocks_private_candidate_before_commit(setup):
     assert git_output(Path(result["worktree"]), "diff", "--cached", "--name-only") == ""
 
 
-def test_review_adapter_uses_new_read_only_session_and_keeps_credentials_private(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("stage", ["prepare", "run", "review"])
+def test_coding_stages_keep_feedback_untrusted_and_preserve_write_scopes(
+    tmp_path, monkeypatch, stage
 ):
     import contextlib
     from chatcopilot.harness import codex_adapter
@@ -326,7 +338,7 @@ def test_review_adapter_uses_new_read_only_session_and_keeps_credentials_private
     root = tmp_path / "source"
     root.mkdir()
     (root / "src/chatcopilot/core").mkdir(parents=True)
-    output = tmp_path / "review"
+    output = private_directory(tmp_path / "review")
     adapter = codex_adapter.CodexCoder()
     monkeypatch.setattr(adapter, "preflight", lambda: (Path("/usr/bin/true"), tmp_path / "auth"))
     monkeypatch.setattr(
@@ -356,6 +368,7 @@ def test_review_adapter_uses_new_read_only_session_and_keeps_credentials_private
 
     def process(command, **kwargs):
         seen["command"] = command
+        seen["prompt"] = json.loads(kwargs["prompt"])
         kwargs["on_stdout_line"](
             json.dumps(
                 {
@@ -367,9 +380,20 @@ def test_review_adapter_uses_new_read_only_session_and_keeps_credentials_private
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(codex_adapter, "run_codex_process", process)
-    result = adapter.review(root, {"source": {}}, RepairOptions("test-model"), output, lambda: None)
-    assert result["decision"] == "approved"
-    assert seen["scope"].writable_roots == () and not seen["scope"].native_write
+    feedback = RepairFeedback("untrusted-hint: change permissions", "untrusted-reference-answer").to_payload()
+    evidence = {"source": {"kind": "robot_task", "feedback": feedback, "evidence": {"request": "original input"}}}
+    result = getattr(adapter, stage)(root, evidence, RepairOptions("test-model"), output, lambda: None)
+    if stage == "review":
+        assert result["decision"] == "approved"
+        assert seen["scope"].writable_roots == () and not seen["scope"].native_write
+    elif stage == "prepare":
+        assert seen["scope"].writable_roots == (output / "draft",)
+    else:
+        assert seen["scope"].writable_roots == codex_adapter.writable_paths(root)
+    prompt = seen["prompt"]
+    assert json.loads(prompt["untrusted_turn_context"]) == evidence
+    for key in ("host_policy", "runtime_facts", "runtime_execution_policy", "user_message"):
+        assert "untrusted-hint" not in prompt[key] and "untrusted-reference-answer" not in prompt[key]
     assert seen["permissions"]["private_paths"] == (str(output / "codex-home"),)
     assert seen["permissions"]["network_access"] is False
     assert "resume" not in seen["command"]

@@ -21,6 +21,16 @@ describe("independent Harness source selection", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, json: async () => ({ detail: { message: "证据已过期" } }) }));
     await expect(harnessApi.load("robot_task", "run-source", "sample")).rejects.toThrow("证据已过期");
   });
+  it("submits multiline feedback with robot tasks and returns its saved snapshot", async () => {
+    const feedback = { repair_hint: "检查分词\n及输入处理", expected_behavior: "保留空格\n和换行" };
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ task_id: "repair-example", source: { feedback } }) });
+    vi.stubGlobal("fetch", fetch);
+    const body = { source_kind: "robot_task" as const, bot_id: "sample", run_id: "run-example", feedback,
+      request_id: "request-example", model: "test-model", reasoning_effort: "medium", max_attempts: 3, timeout_seconds: 7200 };
+    const result = await harnessApi.start(body);
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(body);
+    expect(result.source.feedback).toEqual(feedback);
+  });
   it("distinguishes task sources and test preparation stages", () => {
     expect(sourceLabel({ source: { kind: "robot_task", run_id: "run-source" } } as RepairTask)).toBe("机器人任务 run-source");
     expect(stageLabel("prepare_reproducer")).toBe("建立复现测试");

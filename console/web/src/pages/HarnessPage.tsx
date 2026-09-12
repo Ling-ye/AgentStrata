@@ -21,6 +21,8 @@ export default function HarnessPage() {
   const [loading, setLoading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
+  const [repairHint, setRepairHint] = useState("");
+  const [expectedBehavior, setExpectedBehavior] = useState("");
   const [model, setModel] = useState("");
   const [reviewAndCommit, setReviewAndCommit] = useState(true);
   const [effort, setEffort] = useState("medium");
@@ -44,7 +46,10 @@ export default function HarnessPage() {
     setTaskId(id);
     window.location.hash = id ? `harness?task=${encodeURIComponent(id)}` : "harness";
   }
-  function resetPreview() { generation.current++; setPreview(undefined); setLoadedId(""); setError(""); setLoading(false); }
+  function resetPreview() {
+    generation.current++; setPreview(undefined); setLoadedId(""); setError(""); setLoading(false);
+    setRepairHint(""); setExpectedBehavior("");
+  }
   async function load() {
     if (starting || !sourceId.trim() || (kind === "robot_task" && !botId)) return;
     const current = ++generation.current;
@@ -65,7 +70,12 @@ export default function HarnessPage() {
     if (kind === "evaluation" && (!trial || !["failed", "error"].includes(trial.outcome) || preview.blockers.length)) return;
     const body = { source_kind: kind, ...(kind === "evaluation" ? {
       case_instance_id: trial!.case_instance_id,
-    } : { bot_id: preview.bot_id, run_id: preview.run_id }), model: model.trim(), reasoning_effort: effort,
+    } : { bot_id: preview.bot_id, run_id: preview.run_id,
+      ...((repairHint.trim() || expectedBehavior.trim()) ? { feedback: {
+        ...(repairHint.trim() ? { repair_hint: repairHint } : {}),
+        ...(expectedBehavior.trim() ? { expected_behavior: expectedBehavior } : {}),
+      } } : {}),
+    }), model: model.trim(), reasoning_effort: effort,
       max_attempts: attempts, timeout_seconds: seconds, review_and_commit: reviewAndCommit };
     const identity = JSON.stringify(body);
     if (submitted.current.body !== identity) submitted.current = { body: identity, requestId: crypto.randomUUID() };
@@ -113,6 +123,13 @@ export default function HarnessPage() {
             {!!preview.history.length && <Space direction="vertical"><Text bold>关联历史修复 {preview.history.length} 条</Text>
               {preview.history.map(item => <Button type="text" key={item.task_id} onClick={() => openTask(item.task_id)}>{repairStatusLabel(item)} · {sourceLabel(item)}</Button>)}</Space>}
             {preview.evidence && <details><summary>查看任务证据</summary><pre style={{ maxHeight: 320, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(preview.evidence, null, 2)}</pre></details>}
+            {kind === "robot_task" && <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              <div><Text>修复提示（可选）</Text><Input.TextArea aria-label="修复提示" value={repairHint} disabled={starting}
+                onChange={setRepairHint} autoSize={{ minRows: 3, maxRows: 8 }} placeholder="描述问题、补充背景或提供调查线索" /></div>
+              <div><Text>参考答案／预期行为（可选）</Text><Input.TextArea aria-label="参考答案／预期行为" value={expectedBehavior} disabled={starting}
+                onChange={setExpectedBehavior} autoSize={{ minRows: 4, maxRows: 12 }} placeholder="填写期望的答案或行为，也可以附上解释和来源线索" /></div>
+              <Text type="secondary">参考答案作为你提供的验收期望，默认允许语义等价，不要求逐字一致。补充内容随本次修复保存；修改后需重新发起任务。需要真实模型或外部搜索才能验证的问题，仍可能因无法本地复现而受阻。</Text>
+            </Space>}
             {(!blocked || kind === "robot_task") && <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: 16 }}>
                 <div>修复模型<Input aria-label="修复模型" value={model} disabled={starting} onChange={setModel} placeholder="输入已配置的 Codex 模型" /></div>

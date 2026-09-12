@@ -341,7 +341,9 @@ The Console has a separate **AI Harness Repair** page alongside Evaluation. Ente
 Case instance ID copied from Evaluation results, or an instance-bound robot task ID.
 Every recorded Case execution has its own stable ID; Harness resolves the source on the server.
 Harness owns self-checks, isolated worktrees, repair attempts, regression verification
-and repair history. Robot task repairs first freeze a local reproduction test; incomplete
+and repair history. Robot task repairs accept optional repair hints and a reference answer or
+expected behavior, saved with each repair and used in preparation, repair and optional review.
+They first freeze a local reproduction test; incomplete
 evidence or unsafe external replay blocks automatic repair. Evaluation results and robot
 observations retain their original facts. New Console repairs default to one read-only AI review
 and a local commit containing the verified fix and regression test. Rejected or inconclusive

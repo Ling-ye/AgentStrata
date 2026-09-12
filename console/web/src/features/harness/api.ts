@@ -1,4 +1,5 @@
 export type SourceKind = "evaluation" | "robot_task";
+export interface RepairFeedback { repair_hint?: string; expected_behavior?: string }
 export interface CaseInstance { case_instance_id: string; evaluation_id: string; case_id: string; case_ref: string; target_id: string; trial_id: string; attempt: number; outcome: string }
 export interface SourcePreview {
   kind: SourceKind; bot_id: string; evaluation_id?: string; run_id?: string;
@@ -16,7 +17,7 @@ export interface RepairTask {
   task_id: string; status: string; stage: string; base_commit: string; created_at: number; updated_at: number;
   source: { kind?: SourceKind; evaluation_id?: string; run_id?: string; bot_id: string;
     case_id: string; case_ref?: string; target_id: string; case_ids: string[]; case_instance_id?: string; trial_id?: string; attempt?: number;
-    blockers?: string[]; test_sha256?: string; test_relative_path?: string; regression_id?: string;
+    blockers?: string[]; test_sha256?: string; test_relative_path?: string; regression_id?: string; feedback?: RepairFeedback;
     diagnosis?: { reason: string; expected_behavior?: string } };
   review_and_commit?: boolean; uncommitted?: boolean | null; commit_state?: string; commit_in_main?: boolean | null;
   local_commit?: { sha: string; branch: string; paths: string[]; message: string };
@@ -46,7 +47,7 @@ export function sourceLabel(task: RepairTask): string {
   return task.source.kind === "robot_task" ? `机器人任务 ${task.source.run_id}` : `测评 ${task.source.evaluation_id} · ${task.source.case_id}`;
 }
 export type StartRepair = { source_kind: SourceKind; case_instance_id?: string;
-  bot_id?: string; run_id?: string; review_and_commit?: boolean; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number };
+  bot_id?: string; run_id?: string; feedback?: RepairFeedback; review_and_commit?: boolean; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number };
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/harness${path}`, init);
   const value = await response.json();

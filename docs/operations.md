@@ -833,12 +833,22 @@ dry-run 与 direct-LLM 测评不进入修复流程。旧定义缺失时重新运
 隔离测试无网络、无实例状态或凭据，不发送真实平台消息。外部依赖无法本地复现时
 记录受阻；准备被中断时保留草案，重新发起任务，不重放同一模型回合。
 
-CLI 可以直接指定操作者已确认的实例观测目录，不依赖 Console：
+页面加载机器人任务后，可填写「修复提示」和「参考答案／预期行为」。前者提供待验证
+的调查线索，后者记录你希望得到的答案或行为，可附解释与来源线索，默认允许语义等价。
+两项均可留空；切换来源会清空，提交失败保留。内容在修复详情及来源证据中可查，
+启动后固定；更正时重新发起任务，不沿用旧参考答案下的候选验收结论。
+API 的机器人任务请求可携带 `feedback.repair_hint`、`feedback.expected_behavior`，
+测评来源不接受非空补充内容。CLI 可以直接指定操作者已确认的实例观测目录，不依赖
+Console，并使用下面两个可选参数：
 
 ```bash
-python -m chatcopilot.harness start-task --bot <instance-id> --run <run-id> --gateway-state-root <instance-state-root> --model <codex-model>
+python -m chatcopilot.harness start-task --bot <instance-id> --run <run-id> --gateway-state-root <instance-state-root> --model <codex-model> --repair-hint '调查输入处理步骤' --expected-behavior '保留输入中的换行'
 python -m chatcopilot.harness list --page 2 --search <source-id> --status blocked
 ```
+
+补充信息用于准备复现、修复与已启用的 AI 审核，不修改原始观测或被测任务输入。
+只有真实模型或外部搜索才能验证的回答质量问题，仍会因无法本地复现而受阻；填写
+参考答案不等于已修复，也不会自动写入机器人知识或记忆。
 
 每个任务创建 `feat/harness-<id>` 分支和专属 worktree。第一版允许修改运行时产品源码，
 测试、评分、配置包络和控制实现保持只读。候选进行 Python 语法与 Git diff 检查，并

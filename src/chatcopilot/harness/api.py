@@ -23,7 +23,7 @@ from chatcopilot.core.source_snapshot import (
 )
 from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
 from chatcopilot.harness.config import configuration
-from chatcopilot.harness.models import ACTIVE, HarnessError, RepairOptions, safe_error
+from chatcopilot.harness.models import ACTIVE, HarnessError, RepairFeedback, RepairOptions, safe_error
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.workspace import context_key
 
@@ -120,6 +120,7 @@ class HarnessController:
         request_id: str | None = None,
         launch: bool = True,
         review_and_commit: bool = False,
+        feedback: RepairFeedback | None = None,
     ) -> dict[str, Any]:
         return self._start(
             lambda: self._task_source(bot_id, run_id),
@@ -128,6 +129,7 @@ class HarnessController:
             request_id=request_id,
             launch=launch,
             review_and_commit=review_and_commit,
+            feedback=feedback,
         )
 
     def _start(
@@ -139,11 +141,15 @@ class HarnessController:
         request_id: str | None,
         launch: bool,
         review_and_commit: bool,
+        feedback: RepairFeedback | None = None,
     ) -> dict[str, Any]:
         if type(review_and_commit) is not bool:
             raise ValueError("review_and_commit 必须为布尔值")
         if review_and_commit:
             identity = {**identity, "review_and_commit": True}
+        feedback_payload = feedback.to_payload() if feedback else {}
+        if feedback_payload:
+            identity = {**identity, "feedback": feedback_payload}
         request_id = request_id or uuid.uuid4().hex
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_id):
             raise ValueError("invalid request ID")
@@ -154,6 +160,8 @@ class HarnessController:
                 raise HarnessError("conflict", "同一请求 ID 的内容已变化")
             return self.get(previous["task_id"])
         source = source_loader()
+        if feedback_payload:
+            source = {**source, "feedback": feedback_payload}
         commit = git_output(self.repository, "rev-parse", "HEAD")
         context = context_key(source)
         signature = source["failure_signature"] or [identity]
@@ -166,6 +174,7 @@ class HarnessController:
                 "cases": source["case_ids"],
                 **({"case_instance_id": source["case_instance_id"]} if source.get("case_instance_id") else {}),
                 **({"review_and_commit": True} if review_and_commit else {}),
+                **({"feedback": feedback_payload} if feedback_payload else {}),
             }
         )
         for old in self.store.history(context_key=context):
@@ -409,7 +418,7 @@ class HarnessController:
         source = self.store.get(task_id)["source"]
         return {
             key: source[key]
-            for key in ("evidence", "trials", "case_definition", "diagnosis", "conditions")
+            for key in ("evidence", "feedback", "trials", "case_definition", "diagnosis", "conditions")
             if key in source
         }
 
@@ -503,6 +512,7 @@ class HarnessController:
                 "case_ids",
                 "blockers",
                 "diagnosis",
+                "feedback",
                 "test_sha256",
                 "preparation",
                 "test_relative_path",

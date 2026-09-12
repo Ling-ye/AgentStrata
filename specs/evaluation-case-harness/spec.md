@@ -55,6 +55,20 @@ Harness 轮询。Console Harness 只输入并提交 Case 实例 ID；来源加�
 隔离进程中执行，保护基线中每个通过项。不能安全本地复现的外部任务明确受阻，
 不得重放生产消息或将生成测试通过描述为真实平台端到端恢复。
 
+机器人任务可在加载来源后填写可选的「修复提示」与「参考答案／预期行为」。创建 API
+的 `feedback` 包含 `repair_hint`、`expected_behavior`，仅机器人任务可携带非空内容；
+CLI `start-task` 提供对应的 `--repair-hint`、`--expected-behavior` 参数。补充内容保存在
+Harness 私有来源快照 `source.feedback`，与 Gateway 原始观测分开；详情及证据接口可查。
+切换来源类型、机器人或任务 ID 时清空输入，提交期间锁定，失败重试保留。
+
+补充内容随任务冻结，参与请求幂等和候选复用身份；同请求 ID 修改内容报冲突，同一 run
+修改内容后重新发起任务，历史继续按来源聚合。使用现有 JSON 存储，不迁移或回填旧记录。
+准备、修复和已启用的只读审核均接收补充内容：提示是待验证线索，参考答案是用户声明的
+验收期望，允许语义等价，不默认要求逐字匹配。准备说明必须解释采用的预期及本地测试
+实际覆盖的行为。补充文本不能改变宿主权限、测试保护、提交授权或原始任务输入。
+不得 mock 最终回答、比较两份人工答案或硬编码该题回复制造通过；需要真实模型或外部
+搜索才能确认的问题仍记录受阻。本轮不新增真实模型复测、知识写入或历史任务编辑。
+
 新增测评的结构化请求、Trial、结果和采集详情由 Evaluation 服务校验后幂等写入自己的
 SQLite 数据库；文件仍承载 Core 的原始证据与恢复检查点。历史文件只读，不批量导入。
 结果入库失败不改变原始执行结果，重启可对已登记的新记录补写。Harness 的独立 SQLite
@@ -106,6 +120,10 @@ Git hooks 不参与自动提交；不推送、建 PR、合入 main 或部署。
 
 ## Acceptance
 
+- 机器人任务的补充内容可选，提交、持久化、刷新查询及准备／修复／可选审核使用同一快照；
+  测评来源拒绝非空补充内容，原始观测不被改写。
+- 同请求 ID 修改补充内容报冲突，修改答案不复用旧候选；来源缺失或无法本地复现仍受阻。
+- 页面切换来源清空补充内容、提交时禁用、失败时保留，桌面与窄屏可输入并查看完整内容。
 - 不启动 Harness 时普通测评、入库和查询正常；关闭 Console 不终止 Harness。
 - 新测评入库保留原始成绩、工具轨迹、错误和证据，历史记录仍可查询。
 - 当前版本未复现时不启动编程执行器；目标和保护集通过才标记已修复。
@@ -220,3 +238,25 @@ Case 实例 ID 与复制入口验证（2026-09-12，替代上述组合引用输�
 
 验证不调用商业模型，不运行真实修复 worker 或部署；实际创建的 Harness 记录位于
 测试临时目录，使用 `launch=False`。未暂存、提交或推送操作者工作区。
+
+机器人任务修复提示与参考答案验证（2026-09-12）：
+
+- `PYTHONPATH=src .venv/bin/python -m pytest tests/unit/test_harness_console.py tests/unit/test_harness_sources.py tests/unit/test_harness_quality.py tests/unit/test_case_harness.py -q --basetemp=/tmp/agentstrata-harness-feedback-pytest`：79 passed。
+  覆盖可选字段、非法输入与来源拒绝、CLI 参数、持久化与重读、原始证据不变、请求冲突、
+  活动任务及已验收候选的复用身份、三阶段传递，以及来源缺失／无法本地复现时受阻。
+- 随后将编程适配器检查扩展为准备、修复、审核三个阶段；
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/unit/test_harness_quality.py -k coding_stages -q --basetemp=/tmp/harness-feedback-prompts-final`：3 passed、11 deselected。
+  实际渲染的 PromptPlan 只在不可信任务材料中包含补充文本，三个阶段保持原写入范围。
+- `npm --prefix console/web test`：18 files、179 tests passed；
+  `npm --prefix console/web run build`：TypeScript 与生产构建通过。
+- `PYTHONPATH=src .venv/bin/python -m mypy src/chatcopilot/harness`：16 个源码文件通过。
+- `PYTHONPATH=src .venv/bin/python scripts/check_repo.py fast --report-dir .cache/harness-feedback/fast`：
+  9 项全部通过，核心测试 1113 passed、2 warnings、34 subtests passed。
+- 既有 Playwright 驱动生产前端与受控 API，在 1360px / 390px 完成 12 组交互检查：
+  多行输入、可选提交、提交时禁用、失败保留及重试幂等、修改答案发起新请求、旧记录
+  刷新回显、证据接口展示，以及切换任务／机器人／来源类型时清空。无 pageerror 或页面
+  横向溢出，桌面表单及窄屏表单、详情截图已逐项查看。产物位于 `.cache/harness-feedback/`。
+
+本次补齐本地虚拟环境缺失的已声明开发检查工具，未更改依赖清单。操作者的暂存区和
+已有无关脚本改动哈希前后相同；测试中的 Git 写入只发生在临时测试仓库。
+这些检查不包含真实模型回答质量、真实修复 worker 或 QQ 端到端验证，也没有部署。

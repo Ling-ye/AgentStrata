@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from chatcopilot.harness.api import HarnessController
-from chatcopilot.harness.models import RepairOptions
+from chatcopilot.harness.models import RepairFeedback, RepairOptions
 from chatcopilot.harness.config import configuration
 from chatcopilot.harness.gateway_adapter import read_task
 
@@ -39,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
     task_start.add_argument("--max-attempts", type=int, default=3)
     task_start.add_argument("--timeout-seconds", type=int, default=7200)
     task_start.add_argument("--request-id")
+    task_start.add_argument("--repair-hint", default="", help="调查线索或修复提示")
+    task_start.add_argument("--expected-behavior", default="", help="参考答案或预期行为")
     task_start.add_argument(
         "--review-and-commit", action="store_true", help="AI 审核通过后本地提交修复与回归测试"
     )
@@ -84,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 request_id=args.request_id,
                 review_and_commit=args.review_and_commit,
+                feedback=RepairFeedback(args.repair_hint, args.expected_behavior),
             )
         elif args.command == "list":
             value = controller.list(page=args.page, search=args.search, status=args.status)

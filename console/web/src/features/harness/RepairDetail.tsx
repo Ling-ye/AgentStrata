@@ -33,6 +33,14 @@ export function RepairDetail({ taskId }: { taskId: string }) {
       <Text>阶段：{stageLabel(task.stage)}</Text><Text type="secondary">已用 {Math.round(task.elapsed_seconds ?? 0)} 秒 / {task.options.timeout_seconds} 秒</Text></Space>
     {task.message && <Alert type={task.status === "fixed" ? "success" : "info"} content={task.message} />}
     {task.source.kind === "robot_task" && <Text type="secondary">验证范围：冻结的本地复现测试和仓库单元回归；真实平台恢复需另行验证。</Text>}
+    {task.source.feedback && <section aria-label="本次修复补充内容">
+      <Text bold>本次修复补充内容</Text>
+      {task.source.feedback.repair_hint && <div style={{ marginTop: 12 }}><Text bold>修复提示</Text>
+        <div style={jsonStyle}>{task.source.feedback.repair_hint}</div></div>}
+      {task.source.feedback.expected_behavior && <div style={{ marginTop: 12 }}><Text bold>参考答案／预期行为</Text>
+        <div style={jsonStyle}>{task.source.feedback.expected_behavior}</div></div>}
+      <Text type="secondary">这是发起时提供的验收期望与调查线索；需要更正时，请重新发起修复。</Text>
+    </section>}
     {task.status === "fixed" && task.candidate_available === false && <Alert type="warning" content="验证后的工作区已变化或不可用，不能直接复用旧结论。" />}
     <div style={{ overflowWrap: "anywhere" }}><Text>基线：{task.base_commit}</Text>
       {task.branch && <p><Text copyable>分支：{task.branch}</Text></p>}

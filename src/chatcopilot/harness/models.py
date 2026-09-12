@@ -40,6 +40,26 @@ def safe_error(error: Exception, extra_secrets: tuple[str, ...] = ()) -> str:
 
 
 @dataclass(frozen=True)
+class RepairFeedback:
+    repair_hint: str = ""
+    expected_behavior: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.repair_hint, str) or not isinstance(self.expected_behavior, str):
+            raise ValueError("修复提示与参考答案必须为文本")
+
+    def to_payload(self) -> dict[str, str]:
+        return {
+            key: value
+            for key, value in (
+                ("repair_hint", self.repair_hint),
+                ("expected_behavior", self.expected_behavior),
+            )
+            if value.strip()
+        }
+
+
+@dataclass(frozen=True)
 class RepairOptions:
     model: str
     reasoning_effort: str = "medium"

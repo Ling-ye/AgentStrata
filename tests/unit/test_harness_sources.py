@@ -15,7 +15,7 @@ from chatcopilot.harness.api import HarnessController
 from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
 from chatcopilot.harness.gateway_adapter import task_source
 from chatcopilot.harness.local_verifier import LocalVerifier
-from chatcopilot.harness.models import HarnessError, RepairOptions
+from chatcopilot.harness.models import HarnessError, RepairFeedback, RepairOptions
 from chatcopilot.harness.workflow import run_task
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,6 +36,61 @@ def robot_source(*, blockers=()):
         "passed_cases": [],
         "repetitions": 1,
     }
+
+
+@pytest.mark.parametrize("feedback", [
+    None, RepairFeedback(), RepairFeedback(" \n", "\t"),
+    RepairFeedback(repair_hint="检查输入处理\n保留换行"),
+    RepairFeedback(expected_behavior="保留换行"),
+    RepairFeedback("检查输入处理", "保留换行"),
+])
+def test_feedback_is_saved_separately_and_read_after_restart(tmp_path, feedback):
+    original = robot_source()
+    before = copy.deepcopy(original)
+    root = tmp_path / "private"
+    controller = HarnessController(ROOT, root=root, task_reader=lambda *_: original)
+    task = controller.start_task(
+        "sample", "run-example", RepairOptions("test-model"), feedback=feedback, launch=False
+    )
+    expected = feedback.to_payload() if feedback else {}
+    reopened = HarnessController(ROOT, root=root)
+    assert reopened.get(task["task_id"])["source"].get("feedback", {}) == expected
+    assert reopened.evidence(task["task_id"]).get("feedback", {}) == expected
+    assert reopened.evidence(task["task_id"])["evidence"] == before["evidence"]
+    assert original == before
+    assert reopened.store.get(task["task_id"])["source"]["revision"] == before["revision"]
+
+
+def test_feedback_changes_request_and_candidate_identity_but_keeps_source_history(tmp_path, monkeypatch):
+    controller = HarnessController(ROOT, root=tmp_path / "private", task_reader=lambda *_: robot_source())
+    args = ("sample", "run-example", RepairOptions("test-model"))
+    feedback = RepairFeedback("检查输入", "保留换行")
+    first = controller.start_task(*args, feedback=feedback, request_id="original", launch=False)
+    same = controller.start_task(*args, feedback=feedback, request_id="original", launch=False)
+    active = controller.start_task(*args, feedback=feedback, request_id="duplicate", launch=False)
+    assert first["task_id"] == same["task_id"] == active["task_id"]
+    controller.store.update(first["task_id"], status="fixed")
+    monkeypatch.setattr(controller, "_candidate_available", lambda _: True)
+    reused = controller.start_task(*args, feedback=feedback, request_id="reuse", launch=False)
+    assert reused["task_id"] == first["task_id"] and reused["reused"]
+    for index, changed in enumerate([
+        RepairFeedback("检查分词", "保留换行"), RepairFeedback("检查输入", "保留空格"), None,
+    ]):
+        with pytest.raises(HarnessError, match="内容已变化"):
+            controller.start_task(*args, feedback=changed, request_id="original", launch=False)
+        fresh = controller.start_task(*args, feedback=changed, request_id=f"changed-{index}", launch=False)
+        assert fresh["task_id"] != first["task_id"] and not fresh.get("reused")
+    assert len(controller.load_source("robot_task", "run-example", "sample")["history"]) == 4
+    assert controller.get(first["task_id"])["source"]["feedback"] == feedback.to_payload()
+
+
+def test_empty_feedback_uses_same_identity_as_omitted_feedback(tmp_path):
+    controller = HarnessController(ROOT, root=tmp_path / "private", task_reader=lambda *_: robot_source())
+    args = ("sample", "run-example", RepairOptions("test-model"))
+    first = controller.start_task(*args, request_id="same", launch=False)
+    again = controller.start_task(*args, feedback=RepairFeedback("\n", " "), request_id="same", launch=False)
+    assert again["task_id"] == first["task_id"]
+    assert "feedback" not in controller.store.get(first["task_id"])["source"]
 
 
 def test_source_previews_group_failed_repetitions_and_include_target():
@@ -107,14 +162,16 @@ def test_task_selfcheck_is_persisted_and_never_dispatches_with_missing_evidence(
     launch = Mock()
     monkeypatch.setattr(controller, "_launch", launch)
     result = controller.start_task(
-        "sample", "run-example", RepairOptions("test-model"), request_id="one"
+        "sample", "run-example", RepairOptions("test-model"), request_id="one",
+        feedback=RepairFeedback(expected_behavior="参考答案不能补全观测"),
     )
     assert result["status"] == "blocked" and result["stage"] == "self_check"
     launch.assert_not_called()
     reader.assert_called_once_with("sample", "run-example")
     reader.side_effect = RuntimeError("offline")
     again = controller.start_task(
-        "sample", "run-example", RepairOptions("test-model"), request_id="one"
+        "sample", "run-example", RepairOptions("test-model"), request_id="one",
+        feedback=RepairFeedback(expected_behavior="参考答案不能补全观测"),
     )
     assert again["task_id"] == result["task_id"]
     assert controller.list()["tasks"][0]["task_id"] == result["task_id"]
@@ -347,9 +404,13 @@ def test_generated_test_is_frozen_and_reused_with_real_candidate_import(local_te
         "from probe import VALUE\ndef test_existing(): assert VALUE >= 0\n"
     )
     task["source"] = robot_source()
+    feedback = RepairFeedback("检查数值", "VALUE equals one").to_payload()
+    task["source"]["feedback"] = feedback
     test_bytes = b"from probe import VALUE\ndef test_repro(): assert VALUE == 1\n"
 
     def prepare(_worktree, _evidence, _options, output, _check):
+        assert _evidence["source"]["feedback"] == feedback
+        assert _evidence["source"]["evidence"] == robot_source()["evidence"]
         draft = private_directory(output / "draft")
         (draft / "test_reproduction.py").write_bytes(test_bytes)
         (draft / "diagnosis.json").write_text(
@@ -376,6 +437,34 @@ def test_generated_test_is_frozen_and_reused_with_real_candidate_import(local_te
     assert len(second["result"]["trials"]) == 2
     assert first["test_sha256"] == second["test_sha256"] == hashlib.sha256(test_bytes).hexdigest()
     assert first["code_source"]["sha256"] != second["code_source"]["sha256"]
+    assert task["source"]["feedback"] == feedback
+
+
+def test_reference_answer_cannot_replace_reproduction(repository, tmp_path):
+    import json
+
+    feedback = RepairFeedback(expected_behavior="给出需要外部来源确认的解释")
+    controller = HarnessController(repository, root=tmp_path / "private", task_reader=lambda *_: robot_source())
+    task = controller.start_task(
+        "sample", "run-example", RepairOptions("test-model"), feedback=feedback, launch=False
+    )
+
+    def prepare(_worktree, evidence, _options, output, _check):
+        assert evidence["source"]["feedback"] == feedback.to_payload()
+        draft = private_directory(output / "draft")
+        file = draft / "diagnosis.json"
+        file.write_text(json.dumps({"reproducible": False, "reason": "需要真实模型与外部搜索验证"}))
+        file.chmod(0o600)
+        return {}
+
+    coder = SimpleNamespace(prepare=prepare, run=Mock())
+    evaluator = Mock()
+    result = run_task(controller.store, task["task_id"], evaluator, coder)
+    assert result["status"] == "blocked" and result["error_code"] == "not_reproducible"
+    assert "需要真实模型" in result["message"]
+    assert "verified_digest" not in result and "test_sha256" not in result["source"]
+    coder.run.assert_not_called()
+    evaluator.run.assert_not_called()
 
 
 def test_gateway_task_evidence_reads_real_observation_database_without_writes(tmp_path):

@@ -107,6 +107,44 @@ def test_patch_download_is_separate_from_eval_results(app):
     app.state.harness.patch.assert_called_once_with("repair-example", 1)
 
 
+@pytest.mark.parametrize("feedback", [None, {}, {"repair_hint": "检查分词"},
+    {"expected_behavior": "保留换行"}, {"repair_hint": "检查分词", "expected_behavior": "保留换行"}])
+def test_robot_feedback_reaches_controller_and_is_rejected_for_evaluations(app, feedback):
+    payload = {"source_kind": "robot_task", "bot_id": "sample", "run_id": "run-example",
+               "request_id": "robot-feedback", "model": "test-model", "feedback": feedback}
+    with TestClient(app, client=("127.0.0.1", 41000)) as client:
+        assert client.post("/api/harness/tasks", json=payload).status_code == 200
+        evaluation = client.post("/api/harness/tasks", json={**body(), "feedback": feedback})
+        assert evaluation.status_code == (422 if feedback else 200)
+    supplied = app.state.harness.start_task.call_args.kwargs["feedback"]
+    assert (supplied.to_payload() if supplied else {}) == (feedback or {})
+
+
+@pytest.mark.parametrize("feedback", ["answer", {"expected_behavior": 42},
+    {"repair_hint": None}, {"expected_behavior": ["answer"]}, {"unknown": "value"}])
+def test_invalid_feedback_is_rejected_before_dispatch(app, feedback):
+    payload = {"source_kind": "robot_task", "bot_id": "sample", "run_id": "run-example",
+               "request_id": "robot-feedback", "model": "test-model", "feedback": feedback}
+    with TestClient(app, client=("127.0.0.1", 41000)) as client:
+        assert client.post("/api/harness/tasks", json=payload).status_code == 422
+    app.state.harness.start_task.assert_not_called()
+
+
+def test_start_task_cli_passes_feedback_without_changing_commit_option(monkeypatch, capsys):
+    from chatcopilot.harness import __main__ as cli
+
+    controller = Mock()
+    controller.start_task.return_value = {"task_id": "repair-example"}
+    monkeypatch.setattr(cli, "HarnessController", Mock(return_value=controller))
+    assert cli.main(["start-task", "--bot", "sample", "--run", "run-example",
+                     "--gateway-state-root", "synthetic-state", "--model", "test-model",
+                     "--repair-hint", "检查分词", "--expected-behavior", "保留换行\n及空格"]) == 0
+    kwargs = controller.start_task.call_args.kwargs
+    assert kwargs["feedback"].to_payload() == {"repair_hint": "检查分词", "expected_behavior": "保留换行\n及空格"}
+    assert kwargs["review_and_commit"] is False
+    assert "repair-example" in capsys.readouterr().out
+
+
 def test_frontend_cannot_supply_host_paths_or_status(app):
     with TestClient(app, client=("127.0.0.1", 41000)) as client:
         assert (

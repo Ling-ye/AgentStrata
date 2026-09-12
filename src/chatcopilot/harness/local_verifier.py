@@ -62,7 +62,7 @@ class LocalVerifier:
         directory.joinpath("started").touch(mode=0o600)
         digest = manifest_digest(source_manifest(worktree))
         coding = coder.prepare(
-            worktree, task["source"]["evidence"], options, directory, check_cancel
+            worktree, {"source": task["source"]}, options, directory, check_cancel
         )
         check_cancel()
         if manifest_digest(source_manifest(worktree)) != digest:

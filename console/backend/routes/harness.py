@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from chatcopilot.evals.service import EvaluationServiceError
 from chatcopilot.gateway.state_store import GatewayStateError
+from chatcopilot.harness.models import RepairFeedback
 from console.control.discovery import repo_root
 
 router = APIRouter(prefix="/api/harness", tags=["harness"])
@@ -24,6 +25,7 @@ class CreateRepair(BaseModel):
     case_instance_id: str = ""
     bot_id: str = ""
     run_id: str = ""
+    feedback: RepairFeedback | None = None
     request_id: str
     model: str = Field(min_length=1)
     review_and_commit: StrictBool = False
@@ -34,6 +36,8 @@ class CreateRepair(BaseModel):
     @model_validator(mode="after")
     def selected_source(self):
         if self.source_kind == "evaluation":
+            if self.feedback and self.feedback.to_payload():
+                raise ValueError("只有机器人任务来源可以填写修复提示与参考答案")
             valid = (
                 self.case_instance_id
                 and not (self.bot_id or self.run_id)
@@ -126,6 +130,7 @@ def create(request: Request, body: CreateRepair):
                 options,
                 request_id=body.request_id,
                 review_and_commit=body.review_and_commit,
+                feedback=body.feedback,
             )
         )
     return _call(
