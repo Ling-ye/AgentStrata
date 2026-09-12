@@ -70,12 +70,11 @@ export default function HarnessPage() {
     if (kind === "evaluation" && (!trial || !["failed", "error"].includes(trial.outcome) || preview.blockers.length)) return;
     const body = { source_kind: kind, ...(kind === "evaluation" ? {
       case_instance_id: trial!.case_instance_id,
-    } : { bot_id: preview.bot_id, run_id: preview.run_id,
-      ...((repairHint.trim() || expectedBehavior.trim()) ? { feedback: {
+    } : { bot_id: preview.bot_id, run_id: preview.run_id }),
+      ...((repairHint.trim() || (kind === "robot_task" && expectedBehavior.trim())) ? { feedback: {
         ...(repairHint.trim() ? { repair_hint: repairHint } : {}),
-        ...(expectedBehavior.trim() ? { expected_behavior: expectedBehavior } : {}),
-      } } : {}),
-    }), model: model.trim(), reasoning_effort: effort,
+        ...(kind === "robot_task" && expectedBehavior.trim() ? { expected_behavior: expectedBehavior } : {}),
+      } } : {}), model: model.trim(), reasoning_effort: effort,
       max_attempts: attempts, timeout_seconds: seconds, review_and_commit: reviewAndCommit };
     const identity = JSON.stringify(body);
     if (submitted.current.body !== identity) submitted.current = { body: identity, requestId: crypto.randomUUID() };
@@ -108,7 +107,7 @@ export default function HarnessPage() {
               onChange={value => { setSourceId(value); resetPreview(); }} onPressEnter={() => void load()} /></div>
           </div>
           {kind === "evaluation" && <Text type="secondary">在测评结果中复制失败项的「Case 实例 ID」，粘贴后加载。Harness 会自动获取这次执行的信息，每次只处理一个 Case。</Text>}
-          {kind === "robot_task" && <Text type="secondary">任务将先建立本地复现测试。缺失证据或无法在隔离环境中复现时，会记录受阻原因。</Text>}
+          {kind === "robot_task" && <Text type="secondary">任务将先建立冻结验证计划，按问题实际运行 Agent 或离线测试。缺失证据或无法在隔离环境中复现时，会记录受阻原因。</Text>}
           <Button loading={loading} disabled={starting || !sourceId.trim() || (kind === "robot_task" && !botId)} onClick={() => void load()}>加载来源</Button>
           {error && <Alert type="error" content={error} />}
           {kind === "robot_task" && bots.isError && <Alert type="error" content="机器人实例列表读取失败，请刷新后重试" />}
@@ -118,18 +117,18 @@ export default function HarnessPage() {
             {kind === "evaluation" && trial && <div aria-label="待修复 Case 详情" style={{ overflowWrap: "anywhere" }}>
               <div>Case 实例 ID：{trial.case_instance_id}</div><div>所属测评：{trial.evaluation_id}</div><div>Case：{trial.case_ref}</div><div>Target：{trial.target_id} · 第 {trial.attempt} 次执行</div>
               <div>执行结果：{({ failed: "失败", error: "执行错误", passed: "通过", skipped: "跳过" } as Record<string, string>)[trial.outcome] || trial.outcome}</div>
-              <Text type="secondary">同一 Case / Target 的重复执行按原次数验证，其他已通过 Case 继续作为回归保护集。</Text>
+              <Text type="secondary">真实模型每组至少执行 3 次，原次数更高时沿用；目标及其他已通过项继续接受回归与独立确认。</Text>
             </div>}
             {!!preview.history.length && <Space direction="vertical"><Text bold>关联历史修复 {preview.history.length} 条</Text>
               {preview.history.map(item => <Button type="text" key={item.task_id} onClick={() => openTask(item.task_id)}>{repairStatusLabel(item)} · {sourceLabel(item)}</Button>)}</Space>}
             {preview.evidence && <details><summary>查看任务证据</summary><pre style={{ maxHeight: 320, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(preview.evidence, null, 2)}</pre></details>}
-            {kind === "robot_task" && <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Space direction="vertical" size={12} style={{ width: "100%" }}>
               <div><Text>修复提示（可选）</Text><Input.TextArea aria-label="修复提示" value={repairHint} disabled={starting}
                 onChange={setRepairHint} autoSize={{ minRows: 3, maxRows: 8 }} placeholder="描述问题、补充背景或提供调查线索" /></div>
-              <div><Text>参考答案／预期行为（可选）</Text><Input.TextArea aria-label="参考答案／预期行为" value={expectedBehavior} disabled={starting}
-                onChange={setExpectedBehavior} autoSize={{ minRows: 4, maxRows: 12 }} placeholder="填写期望的答案或行为，也可以附上解释和来源线索" /></div>
-              <Text type="secondary">参考答案作为你提供的验收期望，默认允许语义等价，不要求逐字一致。补充内容随本次修复保存；修改后需重新发起任务。需要真实模型或外部搜索才能验证的问题，仍可能因无法本地复现而受阻。</Text>
-            </Space>}
+              {kind === "robot_task" && <div><Text>参考答案／预期行为（可选）</Text><Input.TextArea aria-label="参考答案／预期行为" value={expectedBehavior} disabled={starting}
+                onChange={setExpectedBehavior} autoSize={{ minRows: 4, maxRows: 12 }} placeholder="填写期望的答案或行为，也可以附上解释和来源线索" /></div>}
+              <Text type="secondary">参考答案作为你提供的验收期望，默认允许语义等价，不要求逐字一致。补充内容随本次修复保存；修改后需重新发起任务。真实 Agent 验证在隔离环境使用冻结资料；必要外部状态缺失时会明确受阻。</Text>
+            </Space>
             {(!blocked || kind === "robot_task") && <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: 16 }}>
                 <div>修复模型<Input aria-label="修复模型" value={model} disabled={starting} onChange={setModel} placeholder="输入已配置的 Codex 模型" /></div>
@@ -137,6 +136,7 @@ export default function HarnessPage() {
                 <div>最多候选次数<InputNumber aria-label="最多候选次数" min={1} precision={0} value={attempts} disabled={starting} onChange={setAttempts} style={{ width: "100%" }} /></div>
                 <div>总时间预算（秒）<InputNumber aria-label="修复时间预算" min={1} precision={0} value={seconds} disabled={starting} onChange={setSeconds} style={{ width: "100%" }} /></div>
               </div>
+              <Text type="secondary">真实 Agent 每个验证 Case 最多 {(2 * attempts + 1) * Math.max(3, preview.repetitions ?? 3)} 次执行（基线、候选与独立确认）；完整数量在验证计划冻结后展示，评分和回归共用总预算。</Text>
               <Checkbox checked={reviewAndCommit} disabled={starting} onChange={setReviewAndCommit}>AI 审核通过后，收录回归测试并创建本地提交（不推送）</Checkbox>
               <Text type="secondary">从本地 HEAD 创建专属 worktree 和分支。目标和保护集通过后执行所选后续动作；审核与提交共用本次预算，合入主分支由你决定。</Text>
               <Button type="primary" loading={starting} disabled={loading || !model.trim() || (kind === "evaluation" && (!trial || !["failed", "error"].includes(trial.outcome) || blocked))} onClick={() => void start()}>

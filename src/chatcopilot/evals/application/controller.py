@@ -327,6 +327,7 @@ def _core_request(
             "confirm_external_write": request.get("confirm_external_write", False),
             "dry_run": request.get("dry_run", False),
             "llm_judge": request.get("llm_judge", False),
+            **({"case_snapshot": request["case_snapshot"]} if request.get("case_snapshot") else {}),
         }
     raise ValueError(f"unsupported evaluation kind: {kind}")
 
@@ -398,6 +399,9 @@ def _stored_request(
         )
     else:
         raise ValueError(f"unsupported evaluation kind: {kind}")
+    for field in ("case_snapshot", "case_snapshot_id"):
+        if request.get(field):
+            value[field] = request[field]
     value["targets"] = [dict(item) if isinstance(item, Mapping) else item for item in targets]
     return value
 
@@ -473,6 +477,14 @@ class EvaluationApplication:
             label="Evaluation root",
         )
 
+    def register_case(self, declaration: dict[str, Any]) -> dict[str, Any]:
+        with self._creation_guard(), self._lock:
+            self._require_creation_allowed_locked()
+            return self.result_store.register_case(declaration)
+
+    def frozen_case(self, snapshot_id: str) -> dict[str, Any]:
+        return self.result_store.frozen_case(snapshot_id)
+
     def start(
         self,
         *,
@@ -486,6 +498,10 @@ class EvaluationApplication:
         effective_env = evaluation_subprocess_env(bot_env(bot, self.repository_root))
         bot_spec_digest = _bot_spec_sha256(bot, self.repository_root)
         clean_request = dict(request)
+        if "case_snapshot" in clean_request:
+            raise ValueError("use a registered Case snapshot ID, not client-provided frozen data")
+        if clean_request.get("case_snapshot_id"):
+            clean_request["case_snapshot"] = self.result_store.frozen_case(clean_request["case_snapshot_id"])
         clean_request["bot_id"] = bot.instance_id
         request_fingerprint = _start_request_fingerprint(
             {**clean_request, **({"code_source": dict(code_source)} if code_source is not None else {}),
@@ -630,6 +646,7 @@ class EvaluationApplication:
                     receipt = prepare_code_source(self.repository_root, code_source, source_root / evaluation_id)
                     write_source_receipt(source_root / f"{evaluation_id}.json", receipt)
                     stored_request["code_source"] = {key: value for key, value in receipt.items() if key != "manifest"}
+                    stored_request["bot_spec_sha256"] = receipt["manifest"][stored_request["bot_spec"]]["sha256"]
                     stored_request["source_revision"] = {
                         "status": "recorded", "commit": receipt["commit"], "dirty": True,
                         "captured_at": created_at,

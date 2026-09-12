@@ -1,0 +1,30 @@
+schema: 1
+suite_id: agentstrata-regression-v1
+version: '1'
+name: 冻结 Agent 行为回归
+subject_type: agent
+capability_tags:
+- 行为回归
+kind: product
+status: implemented
+value: 真实 Agent 与隔离产品工具执行冻结任务
+recommendation: 由登记的单 Case 或已收录回归显式执行
+cadence: manual only
+track: agent
+plugin_id: frozen-agent
+driver_id: agent_configured
+requires_bot: true
+source_type: project
+purpose: engineering_regression
+data_version: '1'
+split: 内容寻址 Case
+coverage: 隔离 Agent 行为；不代表生产平台恢复
+target_scope: Agent runtime · 隔离场景
+execution_scope: agent_runtime/frozen_case
+native_method: 确定性执行事实 + 必要语义判定
+scorer_origin: project_adapter
+scorer_version: frozen-agent/v1
+files: []
+presets: {}
+default_preset: ''
+options: []

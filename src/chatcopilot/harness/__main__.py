@@ -27,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     start.add_argument("--max-attempts", type=int, default=3)
     start.add_argument("--timeout-seconds", type=int, default=7200)
     start.add_argument("--request-id")
+    start.add_argument("--repair-hint", default="", help="调查线索，不覆盖 Case 评分")
     start.add_argument(
         "--review-and-commit", action="store_true", help="AI 审核通过后在任务分支本地提交"
     )
@@ -83,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 request_id=args.request_id,
                 review_and_commit=args.review_and_commit,
+                feedback=RepairFeedback(repair_hint=args.repair_hint),
             )
         elif args.command == "start-task":
             value = controller.start_task(

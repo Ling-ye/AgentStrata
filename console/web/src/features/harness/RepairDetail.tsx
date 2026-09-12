@@ -32,7 +32,8 @@ export function RepairDetail({ taskId }: { taskId: string }) {
     <Space wrap><Tag color={task.status === "fixed" ? "green" : "blue"}>{repairStatusLabel(task)}</Tag>
       <Text>阶段：{stageLabel(task.stage)}</Text><Text type="secondary">已用 {Math.round(task.elapsed_seconds ?? 0)} 秒 / {task.options.timeout_seconds} 秒</Text></Space>
     {task.message && <Alert type={task.status === "fixed" ? "success" : "info"} content={task.message} />}
-    {task.source.kind === "robot_task" && <Text type="secondary">验证范围：冻结的本地复现测试和仓库单元回归；真实平台恢复需另行验证。</Text>}
+    {task.verification_plan && <Text type="secondary">验证范围：{task.verification_plan.real_agent ? "真实 Agent 与隔离工具环境" : "冻结的确定性复现测试"}；每组 {task.verification_plan.repetitions} 次，{task.verification_plan.checks.length} 个检查项{task.planned_agent_trials ? `，最多 ${task.planned_agent_trials} 次 Agent 执行` : ""}。</Text>}
+    {task.hypothesis && <section><Text bold>根因假设与验收预期</Text><p>{task.hypothesis.reason}</p><p>{task.hypothesis.expected_behavior}</p></section>}
     {task.source.feedback && <section aria-label="本次修复补充内容">
       <Text bold>本次修复补充内容</Text>
       {task.source.feedback.repair_hint && <div style={{ marginTop: 12 }}><Text bold>修复提示</Text>
@@ -74,6 +75,7 @@ export function RepairDetail({ taskId }: { taskId: string }) {
         { title: "验证记录", render: (_, row) => <Text copyable>{row.evaluation_id}</Text> },
         { title: "进度", render: (_, row) => row.complete ? `通过 ${row.passed_cases?.length ?? 0} / ${row.case_ids.length}` : "执行中" },
       ]} /> : <Empty description="完成来源自检后，将在这里显示复现和回归验证记录" />}
+    {!!task.commit_checks?.length && <section><Text bold>宿主检查记录</Text>{task.commit_checks.map((check, index) => <details key={index}><summary>{check.label} · {check.exit_code === 0 ? "通过" : "未通过"}</summary><pre style={jsonStyle}>{check.output}</pre></details>)}</section>}
     <Text bold>修复尝试</Text>
     <Table rowKey="number" pagination={false} scroll={{ x: 600 }} data={task.attempts ?? []} columns={[
       { title: "次数", dataIndex: "number", width: 60 }, { title: "状态", width: 110, render: (_, row) => ATTEMPT_LABELS[row.status] ?? row.status },

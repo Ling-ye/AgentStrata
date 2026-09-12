@@ -16,6 +16,7 @@ def evaluation_conditions(
         raise ValueError("frozen Case set is empty")
     return {
         "cases": cases,
+        **({"configuration_invariants": snapshot["configuration_invariants"]} if snapshot.get("configuration_invariants") else {}),
         "grading": {
             key: definition.get(key)
             for key in ("manifest", "protocols", "scoring", "quality_rubrics", "scoring_version")
@@ -36,9 +37,16 @@ def verify_conditions(expected: Mapping[str, Any], actual: Mapping[str, Any]) ->
         "environment"
     ) != actual.get("environment"):
         raise ValueError("evaluation grading or environment differs from the source evaluation")
+    configured_variation = bool(expected.get("configuration_invariants"))
+    if configured_variation and expected["configuration_invariants"] != actual.get("configuration_invariants"):
+        raise ValueError("candidate changed fixed configuration invariants")
     for category in ("cases", "targets"):
         if not isinstance(expected.get(category), dict) or not actual.get(category):
             raise ValueError("evaluation condition identity is incomplete")
         for key, value in actual[category].items():
-            if expected[category].get(key) != value:
+            original = expected[category].get(key)
+            if category == "targets" and configured_variation and isinstance(original, dict):
+                original = {k: v for k, v in original.items() if k != "config_fingerprint"}
+                value = {k: v for k, v in value.items() if k != "config_fingerprint"}
+            if original != value:
                 raise ValueError(f"evaluation {category} changed: {key}")

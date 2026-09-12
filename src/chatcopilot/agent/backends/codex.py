@@ -965,6 +965,8 @@ class CodexAgentBackend:
             extra_config.extend(permission_config(scope, workdir=state.workdir,
                 private_paths=(str(state.codex_home / "auth.json"), str(state.gateway_config), str(state.codex_home / "config.toml")),
                 network_access=self._policy.network_access, read_only=self._policy.sandbox_mode == "read-only"))
+        if not self._policy.connected_apps:
+            extra_config.append("features.apps=false")
         command = build_app_server_command(
             template=routing.code_command,
             model=effective_selection.model,

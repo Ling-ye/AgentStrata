@@ -13,7 +13,7 @@ from chatcopilot.harness.codex_adapter import CodexCoder
 from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
 from chatcopilot.harness.models import ACTIVE
 from chatcopilot.harness.store import HarnessStore
-from chatcopilot.harness.workflow import run_task
+from chatcopilot.harness.assembly import run_task
 
 
 def main(argv: list[str] | None = None) -> int:

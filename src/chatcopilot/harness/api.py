@@ -25,6 +25,8 @@ from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
 from chatcopilot.harness.config import configuration
 from chatcopilot.harness.models import ACTIVE, HarnessError, RepairFeedback, RepairOptions, safe_error
 from chatcopilot.harness.store import HarnessStore
+from chatcopilot.harness.sources import RepairSources
+from chatcopilot.harness.models import PIPELINE_VERSION, ProblemEvidence, SourceReader
 from chatcopilot.harness.workspace import context_key
 
 
@@ -57,6 +59,7 @@ class HarnessController:
         self.evaluator = evaluator or ServiceEvaluator(
             socket_path=Path(socket_path) if socket_path else None
         )
+        self.sources: SourceReader = RepairSources(self.evaluator, task_reader)
 
     def start(
         self,
@@ -67,25 +70,29 @@ class HarnessController:
         *,
         request_id: str | None = None,
         launch: bool = True,
-        review_and_commit: bool = False,
+        review_and_commit: bool = False, feedback: RepairFeedback | None = None,
     ) -> dict[str, Any]:
+        if feedback and feedback.expected_behavior.strip():
+            raise ValueError("Case 只能补充修复线索，不能覆盖原评分预期")
         return self._start(
-            lambda: self.evaluator.source(evaluation_id, case_ref, target_id),
+            lambda: self.sources.load({"evaluation_id": evaluation_id, "case_ref": case_ref, "target_id": target_id}),
             {"evaluation_id": evaluation_id, "case_ref": case_ref, "target_id": target_id},
             options,
             request_id=request_id,
             launch=launch,
-            review_and_commit=review_and_commit,
+            review_and_commit=review_and_commit, feedback=feedback,
         )
 
     def start_case_instance(
         self, case_instance_id: str, options: RepairOptions, *, request_id: str | None = None,
-        launch: bool = True, review_and_commit: bool = False,
+        launch: bool = True, review_and_commit: bool = False, feedback: RepairFeedback | None = None,
     ) -> dict[str, Any]:
+        if feedback and feedback.expected_behavior.strip():
+            raise ValueError("Case 只能补充修复线索，不能覆盖原评分预期")
         return self._start(
-            lambda: self.evaluator.source_instance(case_instance_id),
+            lambda: self.sources.load({"case_instance_id": case_instance_id}),
             {"case_instance_id": case_instance_id}, options,
-            request_id=request_id, launch=launch, review_and_commit=review_and_commit,
+            request_id=request_id, launch=launch, review_and_commit=review_and_commit, feedback=feedback,
         )
 
     def load_source(self, kind: str, source_id: str, bot_id: str = "") -> dict[str, Any]:
@@ -123,7 +130,7 @@ class HarnessController:
         feedback: RepairFeedback | None = None,
     ) -> dict[str, Any]:
         return self._start(
-            lambda: self._task_source(bot_id, run_id),
+            lambda: self.sources.load({"kind": "robot_task", "bot_id": bot_id, "run_id": run_id}),
             {"kind": "robot_task", "bot_id": bot_id, "run_id": run_id},
             options,
             request_id=request_id,
@@ -134,7 +141,7 @@ class HarnessController:
 
     def _start(
         self,
-        source_loader: Callable[[], dict[str, Any]],
+        source_loader: Callable[[], ProblemEvidence],
         identity: dict[str, Any],
         options: RepairOptions,
         *,
@@ -159,7 +166,8 @@ class HarnessController:
             if previous["request_digest"] != request_digest:
                 raise HarnessError("conflict", "同一请求 ID 的内容已变化")
             return self.get(previous["task_id"])
-        source = source_loader()
+        evidence = source_loader()
+        source = evidence.material
         if feedback_payload:
             source = {**source, "feedback": feedback_payload}
         commit = git_output(self.repository, "rev-parse", "HEAD")
@@ -168,10 +176,11 @@ class HarnessController:
         match = _digest({"context": context, "signature": signature})
         active = _digest(
             {
+                "pipeline_version": PIPELINE_VERSION,
                 "match": match,
                 "commit": commit,
                 "options": asdict(options),
-                "cases": source["case_ids"],
+                "cases": source.get("case_ids", []),
                 **({"case_instance_id": source["case_instance_id"]} if source.get("case_instance_id") else {}),
                 **({"review_and_commit": True} if review_and_commit else {}),
                 **({"feedback": feedback_payload} if feedback_payload else {}),
@@ -187,6 +196,7 @@ class HarnessController:
         task_id = "repair-" + uuid.uuid4().hex
         task: dict[str, Any] = {
             "task_id": task_id,
+            "pipeline_version": PIPELINE_VERSION,
             "request_key": request_id,
             "request_digest": request_digest,
             "context_key": context,
@@ -195,6 +205,7 @@ class HarnessController:
             "base_commit": commit,
             "repository": str(self.repository),
             "source": source,
+            "evidence_digest": evidence.digest,
             "options": asdict(options),
             "review_and_commit": review_and_commit,
             "unit": "agentstrata-harness-" + task_id[7:],
@@ -420,7 +431,7 @@ class HarnessController:
         source = self.store.get(task_id)["source"]
         return {
             key: source[key]
-            for key in ("evidence", "feedback", "trials", "case_definition", "diagnosis", "conditions")
+            for key in ("evidence", "feedback", "trials", "case_definition", "diagnosis", "conditions", "agent_case")
             if key in source
         }
 
@@ -519,6 +530,7 @@ class HarnessController:
                 "preparation",
                 "test_relative_path",
                 "regression_id",
+                "case_snapshot_id",
             )
             if key in source
         }

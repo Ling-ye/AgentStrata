@@ -109,13 +109,13 @@ def test_patch_download_is_separate_from_eval_results(app):
 
 @pytest.mark.parametrize("feedback", [None, {}, {"repair_hint": "检查分词"},
     {"expected_behavior": "保留换行"}, {"repair_hint": "检查分词", "expected_behavior": "保留换行"}])
-def test_robot_feedback_reaches_controller_and_is_rejected_for_evaluations(app, feedback):
+def test_feedback_reaches_controller_and_only_case_expectation_override_is_rejected(app, feedback):
     payload = {"source_kind": "robot_task", "bot_id": "sample", "run_id": "run-example",
                "request_id": "robot-feedback", "model": "test-model", "feedback": feedback}
     with TestClient(app, client=("127.0.0.1", 41000)) as client:
         assert client.post("/api/harness/tasks", json=payload).status_code == 200
         evaluation = client.post("/api/harness/tasks", json={**body(), "feedback": feedback})
-        assert evaluation.status_code == (422 if feedback else 200)
+        assert evaluation.status_code == (422 if feedback and feedback.get("expected_behavior") else 200)
     supplied = app.state.harness.start_task.call_args.kwargs["feedback"]
     assert (supplied.to_payload() if supplied else {}) == (feedback or {})
 

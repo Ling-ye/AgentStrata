@@ -16,7 +16,7 @@ from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
 from chatcopilot.harness.gateway_adapter import task_source
 from chatcopilot.harness.local_verifier import LocalVerifier
 from chatcopilot.harness.models import HarnessError, RepairFeedback, RepairOptions
-from chatcopilot.harness.workflow import run_task
+from test_case_harness import run_task
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -312,6 +312,8 @@ def test_daily_task_fix_is_gated_by_target_and_previously_passing_tests(
 def local_test(tmp_path):
     root = private_directory(tmp_path / "private")
     worktree = private_directory(tmp_path / "source")
+    from chatcopilot.core.source_snapshot import git_output
+    git_output(worktree, "init", "--quiet")
     (worktree / "tests/unit").mkdir(parents=True)
     task = {"task_id": "repair-test"}
     private_directory(root / "jobs" / task["task_id"] / "reproducer")

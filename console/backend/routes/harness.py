@@ -36,8 +36,8 @@ class CreateRepair(BaseModel):
     @model_validator(mode="after")
     def selected_source(self):
         if self.source_kind == "evaluation":
-            if self.feedback and self.feedback.to_payload():
-                raise ValueError("只有机器人任务来源可以填写修复提示与参考答案")
+            if self.feedback and self.feedback.expected_behavior.strip():
+                raise ValueError("测评 Case 只能补充修复线索，不能覆盖原参考答案")
             valid = (
                 self.case_instance_id
                 and not (self.bot_id or self.run_id)
@@ -137,6 +137,7 @@ def create(request: Request, body: CreateRepair):
         lambda: _controller(request).start_case_instance(
             body.case_instance_id,
             options,
+            feedback=body.feedback,
             request_id=body.request_id,
             review_and_commit=body.review_and_commit,
         )

@@ -12,6 +12,10 @@ from chatcopilot.evals.result_codec import validate_result, trial_from_dict
 from chatcopilot.evals.case_instances import case_instance_identity, validate_case_instance_id
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS agent_cases (
+ snapshot_id TEXT PRIMARY KEY, payload TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS evaluations (
  evaluation_id TEXT PRIMARY KEY, request TEXT NOT NULL, result TEXT,
  observation TEXT, result_hash TEXT, state TEXT NOT NULL DEFAULT '{}',
@@ -35,6 +39,28 @@ CREATE TABLE IF NOT EXISTS case_instances (
 class EvaluationResultStore:
     def __init__(self, root: Path) -> None:
         self.database = PrivateDatabase(root / "results.sqlite3", _SCHEMA)
+
+    def register_case(self, value: dict[str, Any]) -> dict[str, Any]:
+        from chatcopilot.evals.agent_case import case_identity, validate_case
+        case = validate_case(value)
+        ident = case_identity(case)
+        raw = json_text(case)
+        with self.database.connect(write=True) as connection:
+            connection.execute("INSERT OR IGNORE INTO agent_cases VALUES(?,?)", (ident, raw))
+            stored = connection.execute("SELECT payload FROM agent_cases WHERE snapshot_id=?", (ident,)).fetchone()
+            if stored[0] != raw:
+                raise ValueError("frozen Case content identity conflict")
+        return {"snapshot_id": ident, "case": case}
+
+    def frozen_case(self, snapshot_id: str) -> dict[str, Any]:
+        from chatcopilot.evals.agent_case import evaluation_cases
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT payload FROM agent_cases WHERE snapshot_id=?", (snapshot_id,)).fetchone()
+        if row is None:
+            raise KeyError(snapshot_id)
+        result = {"snapshot_id": snapshot_id, "case": json.loads(row[0])}
+        evaluation_cases(result)
+        return result
 
     def register(self, request: Mapping[str, Any]) -> None:
         key = str(request["evaluation_id"])

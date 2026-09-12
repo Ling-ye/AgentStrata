@@ -10,11 +10,12 @@ from typing import Any, Callable
 
 from chatcopilot.core.private_sqlite import json_text, private_directory, private_file
 from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
-from chatcopilot.harness.local_commit import LocalCommitter, regression_ref
+from chatcopilot.harness.local_commit import regression_content, regression_ref
 from chatcopilot.harness.local_verifier import _read
 from chatcopilot.harness.models import (
     Cancelled,
     Coder,
+    Publisher,
     HarnessError,
     RepairOptions,
     review_decision,
@@ -28,7 +29,7 @@ def finish_candidate(
     task_id: str,
     attempt: dict[str, Any],
     coder: Coder,
-    committer: LocalCommitter,
+    committer: Publisher,
     options: RepairOptions,
     check_cancel: Callable[[], None],
     deadline: float,
@@ -44,8 +45,8 @@ def finish_candidate(
             raise HarnessError("workspace_changed", "审核前候选内容变化")
         reference = regression_ref(task)
         regression = dict(reference)
-        if reference["kind"] == "pytest":
-            content = _read(Path(task["source"]["test_path"]))
+        if reference["kind"] in {"pytest", "agent_case"}:
+            content = regression_content(task, reference)
             if hashlib.sha256(content).hexdigest() != reference["sha256"]:
                 raise HarnessError("reproducer_changed", "审核前冻结测试内容变化")
             regression["test"] = content.decode("utf-8")
@@ -59,7 +60,9 @@ def finish_candidate(
             "reproduction": task["evaluations"]["reproduce"],
             "verification": {
                 "target": attempt["verification"],
+                "confirmation": attempt.get("confirmation"),
                 "repository_regressions": attempt.get("repository_regressions"),
+                "repository_baseline": task.get("regression_baseline"),
                 "protected_cases": task.get("protected_cases", []),
             },
             "patch": patch_bytes.decode("utf-8", errors="replace"),

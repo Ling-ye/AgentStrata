@@ -805,7 +805,8 @@ Harness 是可选的独立模块，通过同 UID Evaluation 客户端读取结�
 
 默认修复数据库位于用户状态目录的 `agentstrata/harness/<repository-hash>/`，
 可通过 `CHATCOPILOT_HARNESS_ROOT` 指定；任务、runtime 快照、补丁和工作区都属于
-该目录。可用 `CHATCOPILOT_HARNESS_MODEL` 设置 CLI 默认修复模型。
+该目录。使用用户私有的持久目录；当前 Codex 不在系统临时目录下创建原生辅助程序。
+可用 `CHATCOPILOT_HARNESS_MODEL` 设置 CLI 默认修复模型。
 
 在源码仓库运行：
 
@@ -839,7 +840,7 @@ HTTP API 可通过 `GET /api/evals/case-instances/<case-instance-id>` 查询单�
 `POST /api/harness/tasks` 的测评来源只提交 `case_instance_id` 及修复参数。
 现有 CLI 仍可显式提供 Evaluation、Case 和 Target 参数。
 
-修复绑定被选中的失败实例，并沿用同 Case / Target 的原重复次数；其他已通过
+修复绑定被选中的失败实例；模型验证每组至少三次，原重复数更高时沿用。其他已通过
 Case 继续作为回归保护集，其他失败 Case 不要求一起修好。先按原条件确认当前本地 HEAD 仍失败；未提交
 修改不进入基线，当前通过则标记「当前未复现」。
 仅支持具有完整定义快照、实际执行 AgentStrata 的隔离 Suite；Profile comparison、
@@ -847,11 +848,16 @@ dry-run 与 direct-LLM 测评不进入修复流程。旧定义缺失时重新运
 
 机器人任务来源在页面选择实例并输入 Gateway `run_id`。自检读取只读观测索引及有界
 详情，不能从业务状态库补造丢失证据。具备证据后，准备 Agent 在独立草案目录中生成
-一个有依据的 pytest 测试；产品代码只读。宿主冻结测试，先确认基线出现断言失败，再
-进行代码修复。复测执行同一冻结测试及仓库 `tests/unit`，保护基线中每个通过项。
+根因假设与验证草案；产品代码只读。确定性缺陷生成可含多个断言的 pytest 文件，
+Agent 行为问题生成由 Evaluation 登记并冻结的声明式 Case。基线先取得有效行为失败，
+随后修复；两种来源都运行仓库 `tests/unit` 和架构／配置检查，保护基线中每个通过项。
 测试收集、导入、运行环境错误或跳过不能冒充目标失败或成功。需要已安装开发测试
 依赖的 Python 环境；缺失依赖应按测试进程错误处理，不能绕过回归验证。
-隔离测试无网络、无实例状态或凭据，不发送真实平台消息。外部依赖无法本地复现时
+pytest 在无网络、无实例状态或凭据的隔离副本中执行。Agent Case 实际调用模型和产品
+工具，冻结输入、相关上下文与合成文件，不注入评分预期。当前声明式环境支持
+`read_text_head`、`write_workspace_file`、`list_workspace`、`unzip_attachment` 和
+`read_bot_skill`；生产投递、联网查询和全局状态工具需要独立依赖 fixture，不能用假回答
+替代。Codex 验证及编程会话禁用账号连接器，编程会话也禁用联网搜索。外部依赖无法本地复现时
 记录受阻；准备被中断时保留草案，重新发起任务，不重放同一模型回合。
 
 页面加载机器人任务后，可填写「修复提示」和「参考答案／预期行为」。前者提供待验证
@@ -859,7 +865,7 @@ dry-run 与 direct-LLM 测评不进入修复流程。旧定义缺失时重新运
 两项均可留空；切换来源会清空，提交失败保留。内容在修复详情及来源证据中可查，
 启动后固定；更正时重新发起任务，不沿用旧参考答案下的候选验收结论。
 API 的机器人任务请求可携带 `feedback.repair_hint`、`feedback.expected_behavior`，
-测评来源不接受非空补充内容。CLI 可以直接指定操作者已确认的实例观测目录，不依赖
+测评来源允许 `feedback.repair_hint`，不允许覆盖原参考答案。CLI `start` 也支持 `--repair-hint`。CLI 可以直接指定操作者已确认的实例观测目录，不依赖
 Console，并使用下面两个可选参数：
 
 ```bash
@@ -868,12 +874,12 @@ python -m chatcopilot.harness list --page 2 --search <source-id> --status blocke
 ```
 
 补充信息用于准备复现、修复与已启用的 AI 审核，不修改原始观测或被测任务输入。
-只有真实模型或外部搜索才能验证的回答质量问题，仍会因无法本地复现而受阻；填写
-参考答案不等于已修复，也不会自动写入机器人知识或记忆。
+回答质量可使用真实 Agent 与独立语义评分；缺少必要外部状态时明确受阻。
+填写参考答案不等于已修复，也不会自动写入机器人知识或记忆。
 
-每个任务创建 `feat/harness-<id>` 分支和专属 worktree。第一版允许修改运行时产品源码，
-测试、评分、配置包络和控制实现保持只读。候选进行 Python 语法与 Git diff 检查，并
-复测原题单。目标和保护集通过即记录「已修复」，其他原失败项可保持失败。此结论仅指
+每个任务创建 `feat/harness-<id>` 分支和专属 worktree。允许修改运行时产品源码、Bot 提示词及受约束声明；
+模型／backend、凭据位置、资源授权、测试、评分与控制实现固定。候选进行 Python 语法与 Git diff 检查，并
+复测原题单；模型候选还需同条件独立确认。目标和保护集通过才记录「已修复」，其他原失败项可保持失败。此结论仅指
 该 worktree 在指定条件下验证通过。未显式启用审核提交时，只保留未提交产物。
 
 新任务可启用 `--review-and-commit`（Console 默认勾选，API 的同名下划线字段默认
@@ -887,14 +893,19 @@ python -m chatcopilot.harness start --evaluation <evaluation-id> --case <case-re
 
 机器人复现测试从生成时就采用离线合成数据，在隔离副本按最终回归路径执行，并在
 审核批准后原样收录到 `tests/unit/harness_regressions/`；完整 pytest / CI 和后续
-Harness 修复会执行其基线版本中的该集合。已有 Evaluation Case 只关联定义身份。
+Harness 修复会执行其基线版本中的该集合。已有打包 Case 继续关联原定义；登记的
+Agent Case 原样收录为 `tests/agent_regressions/<digest>/case.json`，普通单元测试不隐式
+调用模型。通过显式 `evals run --suite agentstrata-regression-v1 --bot <bot-id>` 运行已收录
+回归，或用 `evals run --request <request.json>` 执行包含 `case_snapshot` 的冻结请求。
+公开服务客户端提供 `register_case(case)`、`frozen_case(snapshot_id)`；启动 Suite 的请求
+使用 `case_snapshot_id`，服务读取自己的不可变登记数据，不接受客户端替换冻结内容。
 原始日志、账号和任务 ID 只保存在私有数据库；Git 中使用公开回归标识关联。
 
 受信宿主将产品修复和新增回归测试生成一个本地提交，说明以 `[AI Harness] 自动修复：`
 开头，并标记 `Generated-by: AI Harness` 与 `Regression-Id`。使用仓库已有 Git 身份；
 身份必须通过公开仓库检查。Ruff、公开信息和敏感信息检查使用 worker 冻结的受信
 版本；Gitleaks 扫描器沿用仓库脚本的固定版本下载及哈希校验，网络或检查不可用时
-停止提交。编程和审核 Agent 均没有 Git 写权限。
+停止提交。检查记录保留有界脱敏输出，详情页可查看。编程和审核 Agent 均没有 Git 写权限。
 
 提交内容与验证摘要绑定，已有暂存内容或外部修改会阻断。本地 Git 提交意图在推进
 分支前持久化；恢复时核对真实父提交、文件树及说明，不重复创建提交。Git 已完成

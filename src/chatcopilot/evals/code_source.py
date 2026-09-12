@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from chatcopilot.core.private_sqlite import json_text
+from chatcopilot.core.candidate_configuration import configuration_path, validate_configuration
 from chatcopilot.core.source_snapshot import (
     copy_sources,
     git_output,
@@ -18,7 +19,7 @@ from chatcopilot.core.source_snapshot import (
 )
 
 # These paths define the test, not the product being tested.
-_TRUSTED_PREFIXES = ("src/chatcopilot/evals/", "src/chatcopilot/harness/", "tests/", "bots/")
+_TRUSTED_PREFIXES = ("src/chatcopilot/evals/", "src/chatcopilot/harness/", "tests/")
 _TRUSTED_FILES = frozenset(
     {
         "pyproject.toml",
@@ -32,6 +33,7 @@ _TRUSTED_FILES = frozenset(
                 "source_snapshot.py",
                 "source_manifest.py",
                 "inspection.py",
+                "candidate_configuration.py",
             )
         ),
     }
@@ -53,6 +55,15 @@ def prepare_code_source(
     if manifest_digest(candidate) != source["sha256"]:
         raise ValueError("candidate source changed since submission")
     trusted = source_manifest(repository)
+    for name in candidate.keys() | trusted.keys():
+        if not name.startswith("bots/") or candidate.get(name) == trusted.get(name):
+            continue
+        if not configuration_path(name):
+            raise ValueError("candidate changes a protected Bot resource")
+        if name.endswith("/bot.yaml"):
+            if name not in candidate or name not in trusted:
+                raise ValueError("candidate cannot add or remove a Bot runtime envelope")
+            validate_configuration((repository / name).read_bytes(), (path / name).read_bytes())
     members = {
         name: (repository if name.startswith(_TRUSTED_PREFIXES) or name in _TRUSTED_FILES else path)
         for name in candidate

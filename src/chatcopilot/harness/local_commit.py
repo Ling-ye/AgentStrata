@@ -14,10 +14,10 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from chatcopilot.core.private_sqlite import private_directory, private_file
+from chatcopilot.core.private_sqlite import json_text, private_directory, private_file
 from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
 from chatcopilot.harness.local_verifier import _read
-from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.models import HarnessError, safe_error
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.workspace import permitted_change
 
@@ -67,14 +67,19 @@ def _index_bytes(path: Path) -> bytes:
 
 def regression_ref(task: dict[str, Any]) -> dict[str, Any]:
     source = task["source"]
+    if source.get("case_snapshot_id"):
+        content = json_text(source["agent_case"]).encode()
+        sha = _sha(content)
+        if source["case_snapshot_id"] != "snapshot-" + sha:
+            raise HarnessError("regression_changed", "Agent 回归声明与冻结身份不一致")
+        return {"kind": "agent_case", "id": source["case_snapshot_id"],
+                "path": f"tests/agent_regressions/{sha}/case.json", "sha256": sha}
     if source.get("kind") == "robot_task":
         sha = source["test_sha256"]
         relative = f"tests/unit/harness_regressions/test_{sha}.py"
         if not re.fullmatch(r"[0-9a-f]{64}", sha) or source.get("test_relative_path") != relative:
             raise HarnessError("invalid_reproducer", "此任务没有可收录的正式复现测试")
         return {"kind": "pytest", "id": "pytest-" + sha, "path": relative, "sha256": sha}
-    from chatcopilot.core.private_sqlite import json_text
-
     definition = source["conditions"]["cases"][source["case_id"]]
     return {
         "kind": "evaluation_case",
@@ -93,9 +98,15 @@ def regression_ref(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def regression_content(task: dict[str, Any], reference: dict[str, Any]) -> bytes:
+    return (json_text(task["source"]["agent_case"]).encode() if reference["kind"] == "agent_case"
+            else _read(Path(task["source"]["test_path"])))
+
+
 class LocalCommitter:
     def __init__(self, policy_root: Path | None = None) -> None:
         self.policy_root = policy_root or Path(__file__).resolve().parents[3]
+        self.check_reports: list[dict[str, Any]] = []
 
     def checks(
         self,
@@ -104,6 +115,7 @@ class LocalCommitter:
         env: dict[str, str],
         check_cancel: Callable[[], None],
     ) -> None:
+        self.check_reports = []
         python_files = [
             name for name in paths if name.endswith(".py") and (worktree / name).exists()
         ]
@@ -151,27 +163,39 @@ class LocalCommitter:
                     ],
                 )
             )
-        environment = {**env, "AGENTSTRATA_REPO_ROOT": str(worktree)}
+        for filename, label in (("check_architecture.py", "架构检查"), ("check_sdd_specs.py", "规格检查")):
+            script = worktree / "scripts" / filename
+            if script.is_file():
+                commands.append((label, [sys.executable, str(script)]))
+        for name in paths:
+            if name.endswith("/bot.yaml"):
+                commands.append(("BotSpec 检查", [sys.executable, "-m", "chatcopilot", "botspec", "validate", name]))
+        environment = {**env, "AGENTSTRATA_REPO_ROOT": str(worktree), "PYTHONPATH": str(worktree / "src")}
         for label, command in commands:
             check_cancel()
-            with open(os.devnull, "wb") as sink:
-                process = subprocess.Popen(
-                    command,
-                    cwd=worktree,
-                    env=environment,
-                    stdout=sink,
-                    stderr=sink,
-                    start_new_session=True,
-                )
-                try:
-                    while process.poll() is None:
-                        check_cancel()
-                        time.sleep(0.2)
+            process = subprocess.Popen(command, cwd=worktree, env=environment,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+            assert process.stdout is not None
+            os.set_blocking(process.stdout.fileno(), False)
+            captured = bytearray()
+            try:
+                while True:
                     check_cancel()
-                finally:
-                    if process.poll() is None:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait()
+                    chunk = process.stdout.read(65536)
+                    if chunk:
+                        captured.extend(chunk)
+                        del captured[:-65536]
+                    elif process.poll() is not None:
+                        break
+                    else:
+                        time.sleep(0.05)
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                process.stdout.close()
+                self.check_reports.append({"label": label, "exit_code": process.returncode,
+                    "output": safe_error(Exception(captured.decode(errors="replace")))})
             if process.returncode:
                 raise HarnessError("commit_check_failed", label + "未通过，未创建本地提交")
 
@@ -257,11 +281,11 @@ class LocalCommitter:
                 if current.get(name) != task["baseline_manifest"].get(name)
             )
             if paths != sorted(attempt["changed_files"]) or any(
-                not permitted_change(name) for name in paths
+                not permitted_change(name, task["source"].get("bot_id")) for name in paths
             ):
                 raise HarnessError("protected_change", "实际修改不属于审核通过的产品差异")
-            if reference["kind"] == "pytest":
-                content = _read(Path(task["source"]["test_path"]))
+            if reference["kind"] in {"pytest", "agent_case"}:
+                content = regression_content(task, reference)
                 if _sha(content) != reference["sha256"]:
                     raise HarnessError("reproducer_changed", "冻结测试在审核后发生变化")
                 name = reference["path"]
@@ -271,7 +295,9 @@ class LocalCommitter:
                 if name not in current:
                     paths.append(name)
                     current[name] = expected
-            if reference["kind"] == "pytest":
+            if reference["kind"] == "agent_case":
+                summary = task["source"]["agent_case"]["title"]
+            elif reference["kind"] == "pytest":
                 frozen_ast = ast.parse(content.decode("utf-8"))
                 summary = ast.get_docstring(frozen_ast) or next(
                     (
@@ -313,8 +339,8 @@ class LocalCommitter:
         check_cancel()
         if _sha(_index_bytes(index_path)) != intent["index_before"]:
             raise HarnessError("index_changed", "任务暂存区被外部修改")
-        if reference["kind"] == "pytest":
-            content = _read(Path(task["source"]["test_path"]))
+        if reference["kind"] in {"pytest", "agent_case"}:
+            content = regression_content(task, reference)
             if _sha(content) != reference["sha256"]:
                 raise HarnessError("reproducer_changed", "冻结测试已变化")
             destination = worktree / reference["path"]
@@ -371,7 +397,10 @@ class LocalCommitter:
             data=f"100644 {metadata_oid}\t{metadata_name}\0".encode(),
             env=env,
         )
-        self.checks(worktree, intent["paths"], env, check_cancel)
+        try:
+            self.checks(worktree, intent["paths"], env, check_cancel)
+        finally:
+            store.update(task_id, commit_checks=self.check_reports)
         _git(worktree, "read-tree", tree, env=env)
         if manifest_digest(source_manifest(worktree)) != intent["content_digest"]:
             raise HarnessError("workspace_changed", "检查期间交付文件发生变化")

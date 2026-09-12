@@ -182,7 +182,7 @@ class ArtifactIntegrityGuard:
         # Adding the one permitted cancel marker necessarily changes the parent
         # directory's mtime/ctime.  Its own inode, ownership, mode, link count
         # and size are still frozen; the marker is separately validated below.
-        _assert_directory_same_except_timestamps(
+        _assert_directory_identity(
             "Evaluation output directory",
             self._snapshot.root,
             _directory_snapshot_from_fd(self._root_fd, self._output),
@@ -655,7 +655,7 @@ def _assert_named_directory_matches(
     path: Path,
 ) -> None:
     current = _snapshot_directory_at(parent_fd, name, path)
-    _assert_directory_same_except_timestamps(
+    _assert_directory_identity(
         "Evaluation output directory path",
         expected,
         current,
@@ -670,26 +670,6 @@ def _assert_same(
     path: Path,
 ) -> None:
     if expected != current:
-        raise _violation(f"{label} changed during Trial execution", path)
-
-
-def _assert_directory_same_except_timestamps(
-    label: str,
-    expected: ArtifactEntrySnapshot,
-    current: ArtifactEntrySnapshot,
-    path: Path,
-) -> None:
-    if (
-        expected.exists != current.exists
-        or expected.dev != current.dev
-        or expected.ino != current.ino
-        or expected.kind != current.kind
-        or expected.uid != current.uid
-        or expected.mode != current.mode
-        or expected.nlink != current.nlink
-        or expected.size != current.size
-        or expected.sha256 != current.sha256
-    ):
         raise _violation(f"{label} changed during Trial execution", path)
 
 

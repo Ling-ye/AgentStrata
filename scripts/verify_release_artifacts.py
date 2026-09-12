@@ -54,6 +54,7 @@ REQUIRED_PACKAGE_RESOURCES = frozenset(
         "evals/suites/agentstrata-agent-tasks-v1/fixtures/untrusted-instructions.txt",
         "evals/suites/agentstrata-agent-tasks-v1/fixtures/workspace-note.txt",
         "evals/suites/agentstrata-agent-tasks-v1/manifest.yaml",
+        "evals/suites/agentstrata-regression-v1/manifest.yaml",
         "evals/suites/ifeval/fixtures/LICENSE.txt",
         "evals/suites/ifeval/fixtures/fixed.json",
         "evals/vendor/ifeval/LICENSE.txt",

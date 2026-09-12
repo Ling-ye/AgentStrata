@@ -180,6 +180,7 @@ def _isolated_subagents(value: SubagentSpec) -> SubagentSpec:
         research_enabled=False,
         codex=CodexMainSessionPolicy(
             network_access=False,
+            connected_apps=False,
             web_search_mode="disabled",
             sandbox_mode="read-only",
         ),

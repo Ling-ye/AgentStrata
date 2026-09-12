@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 import os
 
 from chatcopilot.core.observability_redaction import redact_observability_payload
+
+PIPELINE_VERSION = 2
 
 ACTIVE = frozenset({"queued", "running", "cancel_requested"})
 TERMINAL = frozenset({"fixed", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})
@@ -75,6 +77,102 @@ class RepairOptions:
             raise ValueError("修复次数必须为正整数")
         if type(self.timeout_seconds) is not int or self.timeout_seconds < 1:
             raise ValueError("任务时间预算必须为正整数")
+
+
+@dataclass(frozen=True)
+class ProblemEvidence:
+    source_id: str
+    kind: str
+    digest: str
+    material: dict[str, Any]
+    feedback: RepairFeedback = field(default_factory=RepairFeedback)
+
+
+@dataclass(frozen=True)
+class RepairHypothesis:
+    reason: str
+    expected_behavior: str
+    evidence_refs: tuple[str, ...] = ("source",)
+
+
+@dataclass(frozen=True)
+class CandidateRef:
+    path: Path
+    digest: str
+    base_commit: str
+
+
+@dataclass(frozen=True)
+class VerificationPlan:
+    primary_checks: tuple[str, ...]
+    checks: tuple[str, ...]
+    protected_checks: tuple[str, ...]
+    repetitions: int
+    real_agent: bool = False
+    snapshot_id: str = ""
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_payload(cls, value: dict[str, Any]) -> VerificationPlan:
+        return cls(**{**value, **{key: tuple(value[key]) for key in
+                                 ("primary_checks", "checks", "protected_checks")}})
+
+
+@dataclass(frozen=True)
+class VerificationCheck:
+    check_id: str
+    repetition: int
+    outcome: str
+    failure_kind: str = ""
+    evidence: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    run_id: str
+    candidate_digest: str
+    checks: tuple[VerificationCheck, ...]
+    evidence_refs: tuple[str, ...] = ()
+
+    def require_valid(self, check_ids: list[str], repetitions: int) -> None:
+        expected = {(name, n) for name in check_ids for n in range(1, repetitions + 1)}
+        actual = [(check.check_id, check.repetition) for check in self.checks]
+        if len(actual) != len(expected) or set(actual) != expected:
+            raise HarnessError("incomplete_verification", "验证结果缺失、重复或身份不一致")
+        invalid = [check for check in self.checks if check.outcome not in {"passed", "failed"}
+                   or (check.outcome == "failed" and check.failure_kind != "product")]
+        if invalid:
+            kinds = sorted({check.failure_kind or "evidence" for check in invalid})
+            raise HarnessError("verification_" + kinds[0],
+                               "验证未形成有效产品行为证据：" + ", ".join(kinds))
+
+    @property
+    def passed(self) -> set[str]:
+        names = {check.check_id for check in self.checks}
+        return {name for name in names if all(check.outcome == "passed"
+                for check in self.checks if check.check_id == name)}
+
+
+class SourceReader(Protocol):
+    def load(self, reference: dict[str, str]) -> ProblemEvidence: ...
+
+
+class Verifier(Protocol):
+    def prepare(self, task: dict[str, Any], candidate: CandidateRef, coder: Coder,
+                options: RepairOptions, check_cancel: Callable[[], None]
+                ) -> tuple[dict[str, Any], RepairHypothesis, VerificationPlan]: ...
+    def run(self, task: dict[str, Any], candidate: CandidateRef, run_id: str,
+            checks: list[str], check_cancel: Callable[[], None]) -> VerificationResult: ...
+    def regressions(self, task: dict[str, Any], candidate: CandidateRef,
+                    check_cancel: Callable[[], None], checks: list[str] | None = None
+                    ) -> dict[str, Any]: ...
+
+
+class Publisher(Protocol):
+    def publish(self, store: Any, task_id: str, attempt: dict[str, Any],
+                check_cancel: Callable[[], None]) -> dict[str, Any]: ...
 
 
 class Evaluator(Protocol):

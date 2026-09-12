@@ -760,12 +760,12 @@ def _assert_suite_trial_definition_current(request: TrialExecutionRequest) -> No
         if manifest.status != "implemented":
             raise ValueError("Suite is no longer implemented")
         plugin = get_evaluation_plugin(manifest.plugin_id)
-        loaded_cases = plugin.load_cases(
-            CaseLoadContext(
-                manifest=manifest,
-                auto_prepare=False,
-            )
-        )
+        if manifest.plugin_id == "frozen-agent":
+            from chatcopilot.evals.agent_case import evaluation_cases
+            loaded_cases = evaluation_cases({"snapshot_id": request.case.case_id,
+                                             "case": request.case.metadata["agent_case"]})
+        else:
+            loaded_cases = plugin.load_cases(CaseLoadContext(manifest=manifest, auto_prepare=False))
         selected_cases = _select_suite_cases(loaded_cases, expected_case_ids)
         current = suite_definition_snapshot(
             manifest,
@@ -994,6 +994,7 @@ def _parse_suite_request(request: Mapping[str, Any]) -> SuiteEvaluationRequest:
         "confirm_external_write",
         "dry_run",
         "llm_judge",
+        "case_snapshot",
     }
     _reject_extra_fields(request, allowed)
     suite = _required_text(request.get("suite"), "suite").lower().replace("_", "-")
@@ -1012,11 +1013,14 @@ def _parse_suite_request(request: Mapping[str, Any]) -> SuiteEvaluationRequest:
     if raw_preset and not _ID_PATTERN.fullmatch(raw_preset):
         raise ValueError("preset must use letters, digits, '_' or '-'")
     preset = raw_preset or ("custom" if requested_case_ids else manifest.default_preset)
-    available_cases = get_cases(suite, auto_prepare=False)
+    available_cases = _suite_case_input(suite, request.get("case_snapshot"))
     # Legacy official suites intentionally keep an omitted selection as an
     # empty tuple (meaning "all cases"). Product suites with a declared
     # default preset must materialize that preset so the exact Case set is
     # durable in the request and definition fingerprint.
+    if request.get("case_snapshot") and not requested_case_ids:
+        requested_case_ids = tuple(case.case_id for case in available_cases)
+        preset = "custom"
     case_ids = (
         resolve_suite_preset(
             manifest,
@@ -1085,6 +1089,7 @@ def _parse_suite_request(request: Mapping[str, Any]) -> SuiteEvaluationRequest:
         confirm_external_write=confirm_external_write,
         dry_run=dry_run,
         llm_judge=llm_judge,
+        case_snapshot=request.get("case_snapshot"),
     )
 
 
@@ -1158,7 +1163,7 @@ def _validate_suite(
         )
         return ()
     try:
-        loaded = get_cases(standard.suite_id, auto_prepare=False)
+        loaded = _suite_case_input(standard.suite_id, request.case_snapshot)
         selected = _select_suite_cases(loaded, request.case_ids)
         ready = bool(selected)
         detail = f"suite={standard.suite_id}, cases={len(selected)}"
@@ -1445,7 +1450,7 @@ def _validated_capability_definitions(
     a product suite is runnable.
     """
 
-    if str(getattr(manifest, "kind", "")) != "product":
+    if str(getattr(manifest, "kind", "")) != "product" or manifest.plugin_id == "frozen-agent":
         return {}
     definitions = {definition.case_id: definition for definition in load_case_definitions(manifest)}
     for case in cases:
@@ -1682,6 +1687,15 @@ def _private_configuration_digest(value: str, *, fallback_secret: str = "") -> s
     return hmac.new(key, value.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _suite_case_input(suite: str, snapshot: dict[str, Any] | None) -> tuple[EvalCase, ...]:
+    from chatcopilot.evals.agent_case import SUITE, evaluation_cases
+    if snapshot is not None:
+        if suite != SUITE:
+            raise ValueError("frozen Agent Cases require their dedicated trusted Suite")
+        return evaluation_cases(snapshot)
+    return get_cases(suite, auto_prepare=False)
+
+
 def _execution_cases(
     request: EvaluationRequest,
 ) -> tuple[ProfileCase, ...] | tuple[EvalCase, ...]:
@@ -1689,7 +1703,7 @@ def _execution_cases(
         profile = get_profile(request.profile)
         known = {item.ref: item for item in profile.cases}
         return tuple(known[value] for value in request.case_refs)
-    cases = get_cases(request.suite, auto_prepare=False)
+    cases = _suite_case_input(request.suite, request.case_snapshot)
     return _select_suite_cases(cases, request.case_ids)
 
 
@@ -2085,6 +2099,17 @@ def _validate_managed_bootstrap(
         or not str(stored_request["created_at"]).strip()
     ):
         raise ValueError("Evaluation service request created_at is invalid")
+    if "code_source" in stored_request:
+        # The service preflights trusted product configuration; the worker loads
+        # the content-bound candidate. Model/driver identity must still match.
+        def invariant_targets(values):
+            return [{key: value for key, value in target.items()
+                     if key not in {"fingerprint", "config_fingerprint"}} for target in values]
+        if invariant_targets(stored_request.get("targets", [])) != invariant_targets(expected["targets"]):
+            raise ValueError("candidate Target changed fixed execution identity")
+        expected["targets"] = stored_request["targets"]
+        if "benchmark" in expected and "environment_contract" in expected["benchmark"]:
+            expected["benchmark"]["environment_contract"] = stored_request["benchmark"].get("environment_contract")
     if stored_request != expected:
         raise ValueError("Evaluation service request does not match managed worker")
     state = _read_private_json_object(
@@ -2164,6 +2189,9 @@ def _expected_bootstrap_request(
                 "llm_judge": request.llm_judge,
             }
         )
+    if isinstance(request, SuiteEvaluationRequest) and request.case_snapshot:
+        expected["case_snapshot"] = request.case_snapshot
+        expected["case_snapshot_id"] = request.case_snapshot["snapshot_id"]
     return expected
 
 
@@ -2822,7 +2850,33 @@ def _config_snapshot(
     case_payload = [
         to_jsonable(case.case if isinstance(case, ProfileCase) else case) for case in cases
     ]
+    from chatcopilot.core.candidate_configuration import configuration_invariants
+    invariants = None
+    if request.bot:
+        with _preserved_environment():
+            runtime = load_evaluation_runtime(request.bot)
+            config = load_config(env_prefix=runtime.spec.llm.env_prefix)
+            raw = configuration_invariants(runtime.spec.raw)
+            environment_names: set[str] = {"CHATCOPILOT_CODEX_BOT_HOME"}
+            def collect_environment(value):
+                if isinstance(value, dict):
+                    for key, item in value.items():
+                        if key.endswith("_env") and isinstance(item, str):
+                            environment_names.add(item)
+                        collect_environment(item)
+                elif isinstance(value, list):
+                    for item in value:
+                        collect_environment(item)
+            collect_environment(raw)
+            credential = str(config.llm.api_key or "")
+            invariants = _hash_json({
+                "declaration": raw,
+                "resolved_model": _resolved_chat_config_snapshot(config),
+                "credential": _private_configuration_digest(credential, fallback_secret=credential) if credential else "",
+                "resource_environment": {name: _hash_json(os.environ.get(name, "")) for name in sorted(environment_names)},
+            })
     snapshot: dict[str, Any] = {
+        **({"configuration_invariants": invariants} if invariants is not None else {}),
         "request_hash": _hash_json(_effective_request_dict(request)),
         "case_hash": _hash_json(case_payload),
         "target_fingerprints": {target.target_id: target.fingerprint for target in targets},
@@ -3001,6 +3055,7 @@ def _runnable_request_dict(request: EvaluationRequest) -> dict[str, Any]:
         "confirm_external_write": request.confirm_external_write,
         "dry_run": request.dry_run,
         "llm_judge": request.llm_judge,
+        **({"case_snapshot": request.case_snapshot} if request.case_snapshot else {}),
     }
 
 
@@ -3049,7 +3104,7 @@ def _benchmark_request_snapshot(request: SuiteEvaluationRequest) -> dict[str, An
     from chatcopilot.evals.workbench import benchmark_snapshot
 
     manifest = get_manifest(request.suite)
-    cases = _select_suite_cases(get_cases(request.suite, auto_prepare=False), request.case_ids)
+    cases = _select_suite_cases(_suite_case_input(request.suite, request.case_snapshot), request.case_ids)
     snapshot = benchmark_snapshot(manifest, cases, request.options, llm_judge=request.llm_judge)
     if request.bot:
         with _preserved_environment():

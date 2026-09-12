@@ -136,7 +136,7 @@ def test_catalog_subjects_and_snapshots_preserve_execution_boundaries():
 
     expected = {
         "bfcl": "model", "project-business-v1": "agent", "agentstrata-capabilities-v1": "agent",
-        "agentstrata-agent-tasks-v1": "agent", "gaia": "agent", "ifeval": "model", "agentbench-fc": "agent", "swe-bench-verified": "agent",
+        "agentstrata-regression-v1": "agent", "agentstrata-agent-tasks-v1": "agent", "gaia": "agent", "ifeval": "model", "agentbench-fc": "agent", "swe-bench-verified": "agent",
         "webarena": "agent", "agentstrata-qq-message-flow-v1": "system", "agentstrata-canary-self-update-v1": "system",
     }
     manifests = {item.suite_id: item for item in list_suite_manifests()}

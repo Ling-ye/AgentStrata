@@ -262,3 +262,17 @@ def test_observation_publish_cannot_mask_child_mutations(tmp_path):
         _private_file(root / "state.json", b'{}')
         with pytest.raises(ArtifactIntegrityError):
             guard.publish_observation({"evaluation_id": "eval-guard"})
+
+
+def test_cancel_marker_can_change_directory_size_without_changing_identity(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from chatcopilot.evals import artifact_guard as module
+    root = _evaluation_root(tmp_path)
+    with ArtifactIntegrityGuard.capture(root, evaluation_id="eval-guard") as guard:
+        original = module._snapshot_directory_at
+        def snapshot(*args, **kwargs):
+            value = original(*args, **kwargs)
+            return replace(value, size=value.size + 64)
+        monkeypatch.setattr(module, "_snapshot_directory_at", snapshot)
+        _private_file(root / ".cancel-requested.json", _canonical_cancel("eval-guard"))
+        guard.verify()

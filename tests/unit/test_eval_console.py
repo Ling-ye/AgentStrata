@@ -169,6 +169,7 @@ def test_catalog_queries_are_generic_and_hide_answers(
     assert set(by_id) == {
         "agentstrata-canary-self-update-v1",
         "agentstrata-agent-tasks-v1",
+                "agentstrata-regression-v1",
         "agentstrata-qq-message-flow-v1",
         "gaia",
         "bfcl",
@@ -180,7 +181,7 @@ def test_catalog_queries_are_generic_and_hide_answers(
     assert by_id["ifeval"]["ready"] is True
     assert by_id["agentstrata-canary-self-update-v1"]["status"] == "planned"
     assert by_id["agentstrata-canary-self-update-v1"]["ready"] is False
-    assert by_id["agentstrata-agent-tasks-v1"]["case_count"] == 65
+    assert by_id["agentstrata-agent-tasks-v1"]["case_count"] == 64
     assert by_id["agentstrata-agent-tasks-v1"]["track"] == "agent"
     assert by_id["agentstrata-qq-message-flow-v1"]["case_count"] == 7
     assert by_id["agentstrata-qq-message-flow-v1"]["track"] == "qq_message_flow"

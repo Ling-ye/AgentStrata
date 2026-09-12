@@ -54,6 +54,7 @@ class ServiceEvaluator:
             "evaluation_id": evaluation_id,
             "bot_id": request.get("bot_id", record.get("bot_id", "")),
             "status": record["status"],
+            "repetitions": request.get("repetitions", 1),
             "failures": list(failures.values()),
             "blockers": blockers,
         }
@@ -122,6 +123,7 @@ class ServiceEvaluator:
             "max_wall_seconds",
             "options",
             "llm_judge",
+            "case_snapshot_id",
         )
         signature = []
         for trial in trials:
@@ -137,7 +139,10 @@ class ServiceEvaluator:
                     "judge": ((trial.get("assessment") or {}).get("judge") or {}).get("reasons", []),
                 }
             )
+        selected_definition = next(item for item in definition["cases"] if item["case_id"] == case_id)
         return {
+            **({"agent_case": selected_definition["agent_case"], "case_snapshot_id": case_id}
+               if selected_definition.get("agent_case") else {}),
             "kind": "evaluation",
             "result_schema_version": RESULT_SCHEMA_VERSION,
             "evaluation_id": evaluation_id,
@@ -146,6 +151,7 @@ class ServiceEvaluator:
             "case_ref": case_ref,
             "case_id": case_id,
             "target_id": target_id,
+            "executor": target["executor"],
             "case_ids": cases,
             "repetitions": repeats,
             "passed_cases": sorted(passed),
@@ -158,6 +164,22 @@ class ServiceEvaluator:
             ),
         }
 
+    def prepare_agent_case(self, source: dict[str, Any], check_cancel: Callable[[], None]) -> dict[str, Any]:
+        check_cancel()
+        snapshot = self.client.register_case(source["agent_case"])
+        case = snapshot["case"]
+        # The draft may use synthetic inputs, but cannot change the observed actor's role.
+        role = (source.get("evidence", {}).get("run") or {}).get("role")
+        if role and case["role"] != role:
+            raise HarnessError("source_mismatch", "复现不能改变原任务主体的权限角色")
+        return {**source, "agent_case": case, "case_snapshot_id": snapshot["snapshot_id"],
+                "case_id": snapshot["snapshot_id"], "case_ids": [snapshot["snapshot_id"]],
+                "target_id": "", "passed_cases": [], "repetitions": 3,
+                "suite_id": "agentstrata-regression-v1", "case_ref": "agentstrata-regression-v1:" + snapshot["snapshot_id"],
+                "request": {"kind": "suite", "suite_id": "agentstrata-regression-v1",
+                            "case_snapshot_id": snapshot["snapshot_id"], "repetitions": 3,
+                            "seed": 0, "max_wall_seconds": 0, "options": {}}}
+
     def run(
         self,
         task: dict[str, Any],
@@ -168,7 +190,7 @@ class ServiceEvaluator:
     ) -> dict[str, Any]:
         source = task["source"]
         check_cancel()
-        request = {**source["request"], "case_ids": case_ids, "preset": "custom"}
+        request = {**source["request"], "repetitions": source["repetitions"], "case_ids": case_ids, "preset": "custom"}
         descriptor = {"path": str(worktree), "sha256": manifest_digest(source_manifest(worktree))}
         try:
             try:
@@ -182,7 +204,7 @@ class ServiceEvaluator:
                     request=request,
                     evaluation_id=evaluation_id,
                     code_source=descriptor,
-                    expected_conditions=source["conditions"],
+                    expected_conditions=source.get("conditions"),
                 )
             while record["status"] in {"queued", "running"}:
                 check_cancel()
@@ -211,10 +233,13 @@ class ServiceEvaluator:
             raise HarnessError("source_changed", "测评结果与当前候选代码不一致")
         result = record.get("result") or {}
         # The complete identity matrix, rather than an aggregate score, is the gate.
-        passed_cases(result, source["target_id"], case_ids, source["repetitions"])
+        target = source["target_id"] or result["targets"][0]["target_id"]
+        passed_cases(result, target, case_ids, source["repetitions"])
         return {
             "evaluation_id": evaluation_id,
             "result": result,
+            "target_id": target,
+            "conditions": record.get("conditions"),
             "code_source": record["code_source"],
         }
 

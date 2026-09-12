@@ -122,6 +122,12 @@ class EvaluationServiceClient:
         ):
             yield str(item)
 
+    def register_case(self, case: dict[str, Any]) -> dict[str, Any]:
+        return self._mapping(self._call("cases.register", {"case": case}))
+
+    def frozen_case(self, snapshot_id: str) -> dict[str, Any]:
+        return self._mapping(self._call("cases.snapshot", {"snapshot_id": snapshot_id}))
+
     def list_cases(
         self,
         suite_id: str,

@@ -14,10 +14,21 @@ from chatcopilot.evals.application import EvaluationApplication
 from chatcopilot.evals.code_source import prepare_code_source
 from chatcopilot.evals.conditions import verify_conditions
 from chatcopilot.harness.api import HarnessController
+from chatcopilot.harness.local_verifier import LocalVerifier
 from chatcopilot.harness.models import HarnessError, RepairOptions, passed_cases
-from chatcopilot.harness.workflow import run_task
+from chatcopilot.harness.assembly import run_task as execute_task
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class EmptyRepositoryVerifier(LocalVerifier):
+    def regressions(self, *args):
+        return {"case_ids": [], "passed_cases": [], "failed_cases": []}
+
+
+def run_task(*args, **kwargs):
+    kwargs.setdefault("local_verifier", EmptyRepositoryVerifier(args[0].root))
+    return execute_task(*args, **kwargs)
 
 
 @pytest.fixture(scope="module")
@@ -90,6 +101,15 @@ class FakeCoder:
     def __init__(self, candidates=("fixed",)):
         self.candidates = list(candidates)
         self.calls = 0
+
+    def prepare(self, worktree, evidence, options, output, check_cancel):
+        import json
+        draft = output / "draft"
+        draft.mkdir(mode=0o700, exist_ok=True)
+        path = draft / "diagnosis.json"
+        path.write_text(json.dumps({"reproducible": True, "reason": "controlled diagnosis", "expected_behavior": "frozen behavior"}))
+        path.chmod(0o600)
+        return {}
 
     def run(self, worktree, evidence, options, output, check_cancel):
         check_cancel()

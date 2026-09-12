@@ -2,6 +2,7 @@ export type SourceKind = "evaluation" | "robot_task";
 export interface RepairFeedback { repair_hint?: string; expected_behavior?: string }
 export interface CaseInstance { case_instance_id: string; evaluation_id: string; case_id: string; case_ref: string; target_id: string; trial_id: string; attempt: number; outcome: string }
 export interface SourcePreview {
+  repetitions?: number;
   kind: SourceKind; bot_id: string; evaluation_id?: string; run_id?: string;
   status?: string; revision?: string; blockers: string[]; case_instance?: CaseInstance;
   evidence?: Record<string, unknown>; history: RepairTask[];
@@ -14,6 +15,10 @@ export interface Review {
   decision?: "approved" | "rejected" | "inconclusive"; problem?: string; reason?: string; evidence_refs?: string[];
 }
 export interface RepairTask {
+  hypothesis?: { reason: string; expected_behavior: string; evidence_refs: string[] };
+  verification_plan?: { real_agent: boolean; repetitions: number; primary_checks: string[]; checks: string[]; snapshot_id: string };
+  planned_agent_trials?: number;
+  commit_checks?: Array<{ label: string; exit_code: number; output: string }>;
   task_id: string; status: string; stage: string; base_commit: string; created_at: number; updated_at: number;
   source: { kind?: SourceKind; evaluation_id?: string; run_id?: string; bot_id: string;
     case_id: string; case_ref?: string; target_id: string; case_ids: string[]; case_instance_id?: string; trial_id?: string; attempt?: number;
@@ -39,9 +44,11 @@ export const ATTEMPT_LABELS: Record<string, string> = {
   coding_failed: "生成失败", interrupted: "已中断",
 };
 export function stageLabel(stage: string): string {
+  if (stage.startsWith("repository-verify-")) return `第 ${stage.slice(18)} 轮仓库回归`;
+  if (stage.startsWith("confirm-")) return `第 ${stage.slice(8)} 轮独立确认`;
   if (stage.startsWith("verify-")) return `第 ${stage.slice(7)} 轮复测`;
   return ({ queued: "等待启动", self_check: "来源自检", prepare_reproducer: "建立复现测试",
-    review: "AI 审核", commit: "本地提交", reproduce: "确认当前问题", baseline: "建立回归基线", coding: "生成候选", done: "完成" } as Record<string, string>)[stage] ?? stage;
+    review: "AI 审核", commit: "本地提交", reproduce: "确认当前问题", baseline: "建立回归基线", repository_baseline: "仓库回归基线", coding: "生成候选", done: "完成" } as Record<string, string>)[stage] ?? stage;
 }
 export function sourceLabel(task: RepairTask): string {
   return task.source.kind === "robot_task" ? `机器人任务 ${task.source.run_id}` : `测评 ${task.source.evaluation_id} · ${task.source.case_id}`;

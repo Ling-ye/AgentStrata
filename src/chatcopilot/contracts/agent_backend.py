@@ -35,8 +35,11 @@ class CodexMainSessionPolicy:
     network_access: bool = True
     web_search_mode: str = "live"
     sandbox_mode: str | None = None
+    connected_apps: bool = True
 
     def __post_init__(self) -> None:
+        if not isinstance(self.connected_apps, bool):
+            raise TypeError("Codex connected_apps must be a boolean")
         if not isinstance(self.network_access, bool):
             raise TypeError("Codex command network_access must be a boolean")
         if self.web_search_mode not in CODEX_WEB_SEARCH_MODES:

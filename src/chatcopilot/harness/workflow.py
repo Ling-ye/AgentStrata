@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -14,27 +14,26 @@ from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
 from chatcopilot.harness.models import (
     Cancelled,
     Coder,
-    Evaluator,
+    Verifier,
+    Publisher,
+    CandidateRef,
+    VerificationPlan,
     HarnessError,
     RepairOptions,
-    passed_cases,
     safe_error,
 )
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness import workspace
-from chatcopilot.harness.local_verifier import LocalVerifier
-from chatcopilot.harness.local_commit import LocalCommitter
 from chatcopilot.harness.quality import finish_candidate
 
 
 def run_task(
     store: HarnessStore,
     task_id: str,
-    evaluator: Evaluator,
+    verifier: Verifier,
     coder: Coder,
     *,
-    local_verifier: LocalVerifier | None = None,
-    committer: LocalCommitter | None = None,
+    committer: Publisher,
 ) -> dict[str, Any]:
     task = store.get(task_id)
     if task["status"] == "cancel_requested":
@@ -46,13 +45,6 @@ def run_task(
     options = RepairOptions(**task["options"])
     deadline = started + max(0, options.timeout_seconds - previous_elapsed)
     source = task["source"]
-    local = (
-        (local_verifier or LocalVerifier(store.root))
-        if source.get("kind") == "robot_task"
-        else None
-    )
-    repository_verifier = local_verifier or LocalVerifier(store.root)
-    publisher = committer or LocalCommitter()
     worktree: Path | None = None
     heartbeat = 0.0
 
@@ -71,13 +63,21 @@ def run_task(
                 elapsed_seconds=previous_elapsed + heartbeat - started,
             )
 
-    def evaluate(phase: str, cases: list[str]) -> dict[str, Any]:
+    def candidate() -> CandidateRef:
         assert worktree is not None
+        return CandidateRef(worktree, manifest_digest(source_manifest(worktree)), task["base_commit"])
+
+    def evaluate(phase: str, cases: list[str]) -> dict[str, Any]:
+        assert worktree is not None and plan is not None
         current = store.get(task_id)
         phases = dict(current.get("evaluations", {}))
         digest = manifest_digest(source_manifest(worktree))
         existing = phases.get(phase, {})
         if existing.get("complete"):
+            if existing["source_digest"] != digest and phase.startswith(("verify-", "confirm-")):
+                raise HarnessError("workspace_changed", "已完成验证与候选不一致")
+            if existing.get("error"):
+                raise HarnessError(existing["error"]["code"], existing["error"]["message"])
             return existing
         if existing and existing["source_digest"] != digest:
             raise HarnessError("workspace_changed", "恢复测评时发现候选内容变化")
@@ -90,33 +90,41 @@ def run_task(
             current_evaluation_id=evaluation_id,
             working_digest=digest,
         )
-        validator = local or evaluator
-        receipt = validator.run(store.get(task_id), worktree, evaluation_id, cases, check_cancel)
+        receipt = verifier.run(store.get(task_id), candidate(), evaluation_id, cases, check_cancel)
         check_cancel()
-        if manifest_digest(source_manifest(worktree)) != digest:
+        if manifest_digest(source_manifest(worktree)) != digest or receipt.candidate_digest != digest:
             raise HarnessError("workspace_changed", "测评期间候选内容变化，结果不能用于验收")
-        passed = passed_cases(receipt["result"], source["target_id"], cases, source["repetitions"])
+        validation_error = None
+        try:
+            receipt.require_valid(cases, plan.repetitions)
+        except HarnessError as exc:
+            validation_error = exc
+        passed = receipt.passed
         record = {
             **phases[phase],
             "complete": True,
-            "kind": "local_pytest" if local else "evaluation",
-            "test_sha256": receipt.get("test_sha256"),
+            "kind": "agent" if plan.real_agent else "deterministic",
+            "test_sha256": source.get("test_sha256"),
+            "checks": [asdict(check) for check in receipt.checks],
+            "evidence_refs": receipt.evidence_refs,
             "passed_cases": sorted(passed),
             "case_ids": cases,
             "failed_cases": [case for case in cases if case not in passed],
-            "target_trials": [
-                trial
-                for trial in receipt["result"]["trials"]
-                if trial["case_id"] == source["case_id"]
-                and trial["target_id"] == source["target_id"]
-            ],
+            "target_trials": [check.evidence for check in receipt.checks
+                              if check.check_id in plan.primary_checks],
         }
+        if validation_error is not None:
+            record["error"] = {"code": validation_error.code, "message": str(validation_error)}
         phases[phase] = record
         store.update(task_id, evaluations=phases, current_evaluation_id=None)
+        if validation_error is not None:
+            raise validation_error
         return record
 
+    plan: VerificationPlan | None = None
+
     def execute() -> None:
-        nonlocal worktree, source
+        nonlocal worktree, source, plan
         store.update(task_id, status="running")
         if task.get("commit_intent"):
             worktree = Path(task["worktree"])
@@ -126,7 +134,7 @@ def run_task(
                 if item["number"] == task["commit_intent"]["attempt"]
             )
             if finish_candidate(
-                store, task_id, recovered_attempt, coder, publisher, options, check_cancel, deadline
+                store, task_id, recovered_attempt, coder, committer, options, check_cancel, deadline
             ):
                 store.finish_verified(task_id, recovered_attempt["number"], recovered_attempt)
             return
@@ -145,18 +153,16 @@ def run_task(
             baseline_manifest=baseline,
             working_digest=current_digest,
         )
-        if local and not source.get("test_sha256"):
-            store.update(task_id, stage="prepare_reproducer")
-            source = local.prepare(
-                task,
-                worktree,
-                coder,
-                replace(options, timeout_seconds=max(1, int(deadline - time.monotonic()))),
-                check_cancel,
-            )
-            store.update(task_id, source=source)
-        reproduction = evaluate("reproduce", [source["case_id"]])
-        if source["case_id"] in reproduction["passed_cases"]:
+        store.update(task_id, stage="prepare_reproducer")
+        source, hypothesis, plan = verifier.prepare(
+            store.get(task_id), candidate(), coder,
+            replace(options, timeout_seconds=max(1, int(deadline - time.monotonic()))), check_cancel,
+        )
+        store.update(task_id, source=source, hypothesis=asdict(hypothesis), verification_plan=plan.to_payload(),
+                     planned_agent_trials=(2 * options.max_attempts + 1) * len(plan.checks) * plan.repetitions if plan.real_agent else 0)
+        reproduction = evaluate("reproduce", list(plan.primary_checks))
+        source = store.get(task_id)["source"]
+        if set(plan.primary_checks).issubset(reproduction["passed_cases"]):
             store.update(
                 task_id,
                 status="not_reproduced",
@@ -164,18 +170,15 @@ def run_task(
                 message="当前版本未复现；未生成修复补丁",
             )
         else:
-            remaining = [case for case in source["case_ids"] if case != source["case_id"]]
+            remaining = [case for case in plan.checks if case not in plan.primary_checks]
             baseline_result = evaluate("baseline", remaining) if remaining else {"passed_cases": []}
-            protected = set(source["passed_cases"]) | set(baseline_result["passed_cases"])
+            protected = set(plan.protected_checks) | set(baseline_result["passed_cases"])
             store.update(task_id, protected_cases=sorted(protected))
-            library: dict[str, Any] = {}
-            if not local:
-                library = store.get(task_id).get("regression_baseline") or {}
-                if not library:
-                    library = repository_verifier.regressions(
-                        store.get(task_id), worktree, check_cancel
-                    )
-                    store.update(task_id, regression_baseline=library)
+            library = store.get(task_id).get("regression_baseline")
+            if library is None:
+                store.update(task_id, stage="repository_baseline")
+                library = verifier.regressions(store.get(task_id), candidate(), check_cancel)
+                store.update(task_id, regression_baseline=library)
             for number in range(1, options.max_attempts + 1):
                 check_cancel()
                 attempts = {item["number"]: item for item in store.attempts(task_id)}
@@ -213,7 +216,7 @@ def run_task(
                             check_cancel,
                         )
                         check_cancel()
-                        changed = workspace.delta(worktree, baseline)
+                        changed = workspace.delta(worktree, baseline, str(source.get("bot_id", "")))
                         if not changed:
                             raise HarnessError("empty_candidate", "编程执行器未生成产品改动")
                         for name in changed:
@@ -253,12 +256,13 @@ def run_task(
                         workspace.restore(worktree, baseline, digest)
                         store.update(task_id, working_digest=manifest_digest(baseline))
                         continue
-                verification = evaluate(f"verify-{number}", source["case_ids"])
-                if not local and library.get("case_ids"):
+                verification = evaluate(f"verify-{number}", list(plan.checks))
+                if library.get("case_ids"):
+                    store.update(task_id, stage=f"repository-verify-{number}")
                     regression_result = attempt.get(
                         "repository_regressions"
-                    ) or repository_verifier.regressions(
-                        store.get(task_id), worktree, check_cancel, library["case_ids"]
+                    ) or verifier.regressions(
+                        store.get(task_id), candidate(), check_cancel, library["case_ids"]
                     )
                     attempt["repository_regressions"] = regression_result
                 else:
@@ -271,7 +275,11 @@ def run_task(
                         - set(regression_result["passed_cases"])
                     )
                 )
-                accepted = source["case_id"] in passing and not regressions
+                accepted = set(plan.primary_checks).issubset(passing) and not regressions
+                if accepted and plan.real_agent:
+                    confirmation = evaluate(f"confirm-{number}", list(plan.checks))
+                    attempt["confirmation"] = confirmation
+                    accepted = (set(plan.primary_checks) | protected).issubset(confirmation["passed_cases"])
                 attempt.update(
                     status="accepted" if accepted else "rejected",
                     verification=verification,
@@ -280,7 +288,7 @@ def run_task(
                 )
                 if accepted:
                     if finish_candidate(
-                        store, task_id, attempt, coder, publisher, options, check_cancel, deadline
+                        store, task_id, attempt, coder, committer, options, check_cancel, deadline
                     ):
                         store.finish_verified(task_id, number, attempt)
                     break
@@ -315,8 +323,6 @@ def run_task(
         )
     finally:
         changes: dict[str, Any] = {"elapsed_seconds": previous_elapsed + time.monotonic() - started}
-        if local:
-            changes["current_evaluation_id"] = None
         if worktree is not None and store.get(task_id).get("error_code") != "workspace_changed":
             try:
                 changes["working_digest"] = manifest_digest(source_manifest(worktree))

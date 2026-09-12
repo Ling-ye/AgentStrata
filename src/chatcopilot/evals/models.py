@@ -442,6 +442,8 @@ class SuiteEvaluationRequest:
     dry_run: bool
     llm_judge: bool
 
+    case_snapshot: dict[str, Any] | None = None
+
 
 EvaluationRequest: TypeAlias = ComparisonEvaluationRequest | SuiteEvaluationRequest
 

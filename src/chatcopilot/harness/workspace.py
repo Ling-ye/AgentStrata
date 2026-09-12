@@ -12,6 +12,7 @@ from typing import Any
 from chatcopilot.core.private_sqlite import json_text, private_directory
 from chatcopilot.core.source_snapshot import git_output, manifest_digest, source_manifest
 from chatcopilot.harness.models import HarnessError
+from chatcopilot.core.candidate_configuration import configuration_path, validate_configuration
 
 _AREAS = (
     "agent",
@@ -33,28 +34,32 @@ _FIXED_CORE = (
     "source_snapshot.py",
     "source_manifest.py",
     "inspection.py",
+    "candidate_configuration.py",
 )
 
 
-def writable_paths(root: Path) -> tuple[Path, ...]:
-    return tuple(
+def writable_paths(root: Path, bot_id: str = "") -> tuple[Path, ...]:
+    configuration = tuple(p for p in ((root / "bots" / bot_id),) if bot_id and p.is_dir())
+    return configuration + tuple(
         root / "src" / "chatcopilot" / area
         for area in _AREAS
         if (root / "src" / "chatcopilot" / area).is_dir()
     )
 
 
-def protected_paths(root: Path) -> tuple[Path, ...]:
-    return tuple(
+def protected_paths(root: Path, bot_id: str = "") -> tuple[Path, ...]:
+    bot = root / "bots" / bot_id
+    configuration = tuple(p for p in bot.iterdir() if p.name not in {"bot.yaml", "prompts"}) if bot_id and bot.is_dir() else ()
+    return configuration + tuple(
         root / "src" / "chatcopilot" / "core" / name
         for name in _FIXED_CORE
         if (root / "src" / "chatcopilot" / "core" / name).exists()
     )
 
 
-def permitted_change(name: str) -> bool:
+def permitted_change(name: str, bot_id: str | None = None) -> bool:
     parts = Path(name).parts
-    return (
+    return configuration_path(name, bot_id) or (
         len(parts) > 3
         and parts[:2] == ("src", "chatcopilot")
         and parts[2] in _AREAS
@@ -76,13 +81,23 @@ def prepare(repository: Path, root: Path, task_id: str, commit: str) -> Path:
     return path
 
 
-def delta(worktree: Path, baseline: dict[str, Any]) -> list[str]:
+def delta(worktree: Path, baseline: dict[str, Any], bot_id: str | None = None) -> list[str]:
     current = source_manifest(worktree)
     changed = sorted(
         name for name in baseline.keys() | current.keys() if baseline.get(name) != current.get(name)
     )
-    if any(not permitted_change(name) for name in changed):
+    if any(not permitted_change(name, bot_id) for name in changed):
         raise HarnessError("protected_change", "候选修改了测试、评分或运行控制文件")
+    for name in changed:
+        if configuration_path(name) and name.endswith("/bot.yaml"):
+            if name not in baseline or name not in current:
+                raise HarnessError("protected_change", "不能创建或删除机器人运行包络")
+            original = subprocess.run(["git", "-C", str(worktree), "show", "HEAD:" + name],
+                                      capture_output=True, check=True).stdout
+            try:
+                validate_configuration(original, (worktree / name).read_bytes())
+            except ValueError as exc:
+                raise HarnessError("protected_change", str(exc)) from exc
     return changed
 
 

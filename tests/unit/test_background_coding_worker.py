@@ -109,6 +109,10 @@ def test_generic_worker_uses_persisted_oversized_result_manifest_for_terminal_st
             return_value=(executor, None),
         ),
         mock.patch(
+            "chatcopilot.core.workspace_runtime.MiddlewareWorkspaceService.resolve_workspace",
+            return_value=SimpleNamespace(root=tmp_path),
+        ),
+        mock.patch(
             "chatcopilot.middleware.runtime.jobs.worker.FileQueueSlot",
             return_value=mock.MagicMock(),
         ),

@@ -28,6 +28,8 @@ class PluginBinding:
 
 
 _BINDINGS: tuple[PluginBinding, ...] = (
+    PluginBinding("frozen-agent", f"{_TRUSTED_PREFIX}frozen_agent", PLUGIN_API_VERSION,
+                  frozenset({"agent_configured", "dry_run"})),
     PluginBinding("agent-tasks", f"{_TRUSTED_PREFIX}agent_tasks", PLUGIN_API_VERSION,
                   frozenset({"agent_configured", "dry_run"})),
     PluginBinding("business-agent", f"{_TRUSTED_PREFIX}business_agent", PLUGIN_API_VERSION,

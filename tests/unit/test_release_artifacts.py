@@ -219,6 +219,7 @@ def test_release_resource_allowlist_is_exact() -> None:
             'evals/suites/agentstrata-agent-tasks-v1/README.md',
             'evals/suites/agentstrata-agent-tasks-v1/cases.yaml',
             'evals/suites/agentstrata-agent-tasks-v1/manifest.yaml',
+            'evals/suites/agentstrata-regression-v1/manifest.yaml',
             'evals/suites/agentstrata-agent-tasks-v1/fixtures/order-card.png',
             'evals/suites/agentstrata-agent-tasks-v1/fixtures/sequence-first.png',
             'evals/suites/agentstrata-agent-tasks-v1/fixtures/sequence-second.png',

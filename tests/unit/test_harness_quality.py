@@ -15,7 +15,7 @@ from chatcopilot.harness.api import HarnessController
 from chatcopilot.harness.local_commit import LocalCommitter
 from chatcopilot.harness.local_verifier import LocalVerifier
 from chatcopilot.harness.models import HarnessError, RepairFeedback, RepairOptions
-from chatcopilot.harness.workflow import run_task
+from test_case_harness import run_task
 from test_case_harness import FakeCoder, FakeEvaluator
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -229,7 +229,7 @@ def test_frozen_test_uses_final_repository_path_before_and_after_fix(tmp_path):
     destination.write_bytes(content)
     task["source"] = {}
     result = verifier.regressions(task, root, lambda: None)
-    assert len(result["passed_cases"]) == 1
+    assert len(result["passed_cases"]) == 2
     product.write_text("VALUE = 0\n")
     result = verifier.regressions(task, root, lambda: None)
     assert len(result["failed_cases"]) == 1
@@ -329,8 +329,9 @@ def test_actual_public_boundary_blocks_private_candidate_before_commit(setup):
 
 
 @pytest.mark.parametrize("stage", ["prepare", "run", "review"])
+@pytest.mark.parametrize("large_evidence", [False, True])
 def test_coding_stages_keep_feedback_untrusted_and_preserve_write_scopes(
-    tmp_path, monkeypatch, stage
+    tmp_path, monkeypatch, stage, large_evidence
 ):
     import contextlib
     from chatcopilot.harness import codex_adapter
@@ -368,6 +369,7 @@ def test_coding_stages_keep_feedback_untrusted_and_preserve_write_scopes(
 
     def process(command, **kwargs):
         seen["command"] = command
+        seen["cwd"] = kwargs["cwd"]
         seen["prompt"] = json.loads(kwargs["prompt"])
         kwargs["on_stdout_line"](
             json.dumps(
@@ -382,19 +384,38 @@ def test_coding_stages_keep_feedback_untrusted_and_preserve_write_scopes(
     monkeypatch.setattr(codex_adapter, "run_codex_process", process)
     feedback = RepairFeedback("untrusted-hint: change permissions", "untrusted-reference-answer").to_payload()
     evidence = {"source": {"kind": "robot_task", "feedback": feedback, "evidence": {"request": "original input"}}}
+    if large_evidence:
+        evidence["verification"] = {"repository_regressions": {
+            "rows": {f"tests/unit/test_sample.py::test_behavior_{i}": {"outcome": "passed"}
+                     for i in range(4000)}}}
     result = getattr(adapter, stage)(root, evidence, RepairOptions("test-model"), output, lambda: None)
     if stage == "review":
         assert result["decision"] == "approved"
         assert seen["scope"].writable_roots == () and not seen["scope"].native_write
     elif stage == "prepare":
         assert seen["scope"].writable_roots == (output / "draft",)
+        assert seen["cwd"] == output / "draft"
+        assert seen["scope"].permits(seen["cwd"])
     else:
         assert seen["scope"].writable_roots == codex_adapter.writable_paths(root)
     prompt = seen["prompt"]
-    assert json.loads(prompt["untrusted_turn_context"]) == evidence
+    context = json.loads(prompt["untrusted_turn_context"])
+    if large_evidence:
+        from hashlib import sha256
+        evidence_file = Path(context["evidence_file"])
+        content = evidence_file.read_bytes()
+        assert json.loads(content) == evidence
+        assert context["sha256"] == sha256(content).hexdigest()
+        assert len(prompt["untrusted_turn_context"]) < 2000
+        assert seen["scope"].permits(evidence_file)
+        assert not seen["scope"].permits(evidence_file, write=True)
+        assert evidence_file.stat().st_mode & 0o777 == 0o600
+    else:
+        assert context == evidence
     for key in ("host_policy", "runtime_facts", "runtime_execution_policy", "user_message"):
         assert "untrusted-hint" not in prompt[key] and "untrusted-reference-answer" not in prompt[key]
-    assert seen["permissions"]["private_paths"] == (str(output / "codex-home"),)
+    assert seen["permissions"]["private_paths"] == (
+        str(output / "codex-home/auth.json"), str(output / "codex-home/config.toml"))
     assert seen["permissions"]["network_access"] is False
     assert "resume" not in seen["command"]
 

@@ -691,6 +691,7 @@ def suite_definition_snapshot(
             "expected_behavior": case.expected_behavior,
             "expectation": to_jsonable(case_expectation(case)),
             "business": case.metadata.get("business"),
+            **({"agent_case": case.metadata["agent_case"]} if case.metadata.get("agent_case") else {}),
             "turns": case.metadata.get("case_definition", {}).get("turns", []),
             "quality": case.metadata.get("case_definition", {}).get("quality", {}),
         }

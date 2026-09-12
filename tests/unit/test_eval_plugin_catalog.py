@@ -1068,6 +1068,7 @@ def test_runtime_implementation_snapshot_covers_real_agent_and_capability_depend
 def test_runner_executes_parent_frozen_case_without_reloading_cases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("CHATCOPILOT_IFEVAL_CASE_PROFILE", "smoke")
     case = get_cases("ifeval")[0]
     plugin = get_evaluation_plugin("ifeval")
     frozen_plugin = replace(

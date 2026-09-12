@@ -45,6 +45,7 @@ class EvalRegistryTests(unittest.TestCase):
             {
                 "agentstrata-canary-self-update-v1",
                 "agentstrata-agent-tasks-v1",
+                "agentstrata-regression-v1",
                 "agentstrata-qq-message-flow-v1",
                 "gaia",
                 "bfcl",

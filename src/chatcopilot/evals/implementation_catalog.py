@@ -36,6 +36,11 @@ _COMMON_SUITE_MODULES = (
     "chatcopilot.evals.deepeval_engine",
 )
 _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("frozen-agent", "agent_configured"): (
+        "chatcopilot.evals.agent_case", "chatcopilot.evals.frozen_agent_runtime",
+        "chatcopilot.evals.frozen_agent_scoring", "chatcopilot.evals.isolated_executor",
+        "chatcopilot.evals.trial_capture",
+    ),
     ("agent-tasks", "agent_configured"): (
         "chatcopilot.evals.agent_tasks.scenes", "chatcopilot.evals.agent_tasks.runtime",
         "chatcopilot.evals.agent_tasks.verifier", "chatcopilot.evals.agent_tasks.code_fixture",

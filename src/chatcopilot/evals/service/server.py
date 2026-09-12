@@ -78,6 +78,10 @@ class EvaluationServiceRuntime:
                 self._optional_bot(payload),
                 repository_root=self.repository_root,
             )
+        if operation == "cases.register":
+            return self.application.register_case(payload.get("case"))
+        if operation == "cases.snapshot":
+            return self.application.frozen_case(_required_text(payload, "snapshot_id"))
         if operation == "cases.list":
             return catalog.list_case_summaries(
                 _required_text(payload, "suite_id"),

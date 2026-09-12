@@ -11,7 +11,9 @@ import pytest
 
 
 def main() -> int:
-    os.umask(0o077)
+    # Unit tests exercise explicit POSIX permissions; private control artifacts
+    # use explicit modes instead of changing the semantics of test-created files.
+    os.umask(0o022)
     request = json.loads(Path(sys.argv[1]).read_text())
     output = Path(sys.argv[2])
     rows: dict[str, dict] = {}
@@ -66,9 +68,9 @@ def main() -> int:
     if request.get("collect"):
         args.append("--collect-only")
     code = int(pytest.main(args, plugins=[Reporter()]))
-    output.write_text(
-        json.dumps({"exit_code": code, "collected": collected, "rows": rows, "errors": errors})
-    )
+    descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "w") as stream:
+        json.dump({"exit_code": code, "collected": collected, "rows": rows, "errors": errors}, stream)
     return code
 
 
