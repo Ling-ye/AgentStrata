@@ -755,6 +755,27 @@ bash deploy/wsl/dump.sh --archive
 6. systemd user bus、Gateway、Feishu legacy cc-connect、WSL 冷启动或 Windows 调用问题进入
    [`../deploy/wsl/README_WSL.md`](../deploy/wsl/README_WSL.md)。
 
+## 阅读测评预期与异常
+
+开始测评的题目列表直接展示预期摘要；展开后可查看参考答案、预期行为和具体校验要求。
+结果表并排显示预期与实际回答，展开后查看本次冻结的完整预期、执行事实、评分及错误。
+没有唯一文本答案的任务按行为或状态验证，不要求模仿某段示范话术。
+
+v2 结果包含 `expectation`、`execution`、`assessment` 和结构化 `error`。
+未评分显示“未评分”，未知耗时显示“未记录”；实际零分和零耗时保留。
+单题执行/评分异常继续后续题目，共用结果契约、传输、权威写入或清理故障终止整批。
+已完成的执行观测和有效评分保留，不能据此补判未完成的整题。
+
+运行记录中的“归档记录”只提供旧格式摘要和原始 JSON/Markdown 导出。旧 Case 实例
+ID 明确提示已归档，不能重跑、恢复、比较或进入 Harness；请从当前题库创建新测评。
+原文件和数据库记录不自动改写。
+
+Console 安装/更新入口先证明 Harness 空闲，并在整个更新过程中阻止新建和恢复修复任务，
+再沿用 Evaluation maintenance lease 保护测评。存在活动任务或无法取得维护资格时停止更新。
+完成或取消活动任务后重新执行既有更新命令；不要手工移除活动 claim 来绕过检查。
+该保护不用于只读状态查询或仅重启 Console。手工更新可用
+`python -m chatcopilot.harness maintenance -- <更新命令及参数>` 包裹既有维护流程。
+
 ## 兼容名称
 
 以下名称仍是可调用或持久化契约，不代表当前产品品牌：

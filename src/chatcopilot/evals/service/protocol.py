@@ -9,6 +9,7 @@ import struct
 from pathlib import Path
 from typing import Any, Mapping
 
+# The frame format and maintenance handshake did not change. Results carry their own v2 schema.
 PROTOCOL = "agentstrata.evaluation.v1"
 MAX_REQUEST_BYTES = 1024 * 1024
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024

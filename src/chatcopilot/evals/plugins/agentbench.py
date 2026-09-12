@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from chatcopilot.evals.execution_support import cleanup
+
 import json
 import hashlib
-import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +16,8 @@ from chatcopilot.evals.adapters import agentbench
 from chatcopilot.evals.benchmark_scoring import score_benchmark
 from chatcopilot.evals.environment_agent import run_environment_agent
 from chatcopilot.evals.execution_support import usage_summary
-from chatcopilot.evals.models import EvalCaseResult
 from chatcopilot.evals.plugins.base import EvaluationPlugin, PLUGIN_API_VERSION
-from chatcopilot.evals.trial_capture import capture_case, record_environment
+from chatcopilot.evals.trial_capture import record_environment
 
 
 def _preflight(*, cases) -> None:
@@ -28,9 +29,8 @@ def _preflight(*, cases) -> None:
         raise ValueError("；".join(dict.fromkeys(unavailable)))
 
 
-@capture_case
-def _execute(case, *, bot: str, workspace_root: Path, options: dict[str, Any]) -> EvalCaseResult:
-    started = time.monotonic()
+@contextmanager
+def open_case(case, *, bot: str, workspace_root: Path, options: dict[str, Any]):
     _preflight(cases=(case,))
     controller = agentbench.Controller()
     final_text = ""
@@ -72,20 +72,17 @@ def _execute(case, *, bot: str, workspace_root: Path, options: dict[str, Any]) -
         if not observation["finish"]:
             final_text, events = run_environment_agent(bot=bot, workspace_root=workspace_root,
                 task_text=prompt, provider=provider, tool_names=frozenset(t.name for t in tools))
-        judge, evidence = score_benchmark("agentbench-fc", case, final_text,
-            lambda: agentbench.judge_response(observation), options=options, tool_calls=audit)
-        return EvalCaseResult(case_id=case.case_id, suite_id="agentbench-fc", status="passed" if judge.passed else "failed",
-            score=judge.score, max_score=judge.max_score, final_text=final_text, judge=judge,
-            duration_seconds=time.monotonic() - started, events=tuple(events),
-            metadata={**usage_summary(events), "judge_evidence": evidence, "tool_calls": audit,
-                      "environment_result": {key: observation.get(key) for key in ("finish", "status", "reward", "metrics")}})
-    except Exception as exc:
-        return EvalCaseResult(case_id=case.case_id, suite_id="agentbench-fc", status="error", final_text=final_text,
-            events=tuple(events), duration_seconds=time.monotonic() - started, error=str(exc), metadata={"tool_calls": audit})
+        from chatcopilot.evals.models import TrialObservation
+        from chatcopilot.evals.models import PreparedCase
+        observed = TrialObservation(final_text=final_text, stop_reason="end_turn", events=tuple(events),
+            tool_calls=tuple(audit), usage=usage_summary(events).get("usage_totals", {}),
+            post_state={key: observation.get(key) for key in ("finish", "status", "reward", "metrics")})
+        yield PreparedCase(observed, lambda: score_benchmark("agentbench-fc", case, final_text,
+            lambda: agentbench.judge_response(observation), options=options, tool_calls=audit))
     finally:
-        controller.close()
+        cleanup(controller.close)
 
 
 PLUGIN = EvaluationPlugin(plugin_id="agentbench-fc", api_version=PLUGIN_API_VERSION,
     implementation_module=__name__, allowed_drivers=frozenset({"agent_configured", "dry_run"}),
-    load_cases=lambda context: agentbench.load_cases(), preflight=_preflight, execute_trial=_execute)
+    load_cases=lambda context: agentbench.load_cases(), preflight=_preflight, open_case=open_case)

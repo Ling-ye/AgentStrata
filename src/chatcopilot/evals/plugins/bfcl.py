@@ -42,7 +42,7 @@ PLUGIN = EvaluationPlugin(
     implementation_module=__name__,
     allowed_drivers=frozenset({"direct_llm", "dry_run"}),
     load_cases=_load_cases,
-    execute_trial=_execute_trial,
+    execute_model=_execute_trial,
     judge=_judge,
 )
 

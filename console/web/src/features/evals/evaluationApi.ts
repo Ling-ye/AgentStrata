@@ -49,21 +49,34 @@ function evaluationList(value: unknown): EvaluationRecord[] {
   return value.map(normalizeEvaluation);
 }
 
+const object = (v: unknown): Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
+
 export function normalizeTrial(value: unknown): EvaluationTrial {
   const item =
     typeof value === "object" && value !== null && !Array.isArray(value)
       ? value as Record<string, unknown>
       : {};
+  const execution = object(item.execution), assessment = object(item.assessment);
+  const metadata = object(execution.metadata), judge = object(assessment.judge), failure = object(item.error);
+  const expected = object(item.expectation);
+  const timing = object(object(metadata.execution).timing);
   const nullableNumber = (input: unknown) =>
     typeof input === "number" && Number.isFinite(input) ? input : null;
   return {
+    expectation: Object.keys(expected).length ? {
+      reference_answer: expected.reference_answer, behavior: typeof expected.behavior === "string" ? expected.behavior : "",
+      checks: Array.isArray(expected.checks) ? expected.checks.filter((v): v is string => typeof v === "string") : [],
+      source: typeof expected.source === "string" ? expected.source : "",
+    } : undefined,
+    failure: typeof failure.message === "string" ? { stage: String(failure.stage), code: String(failure.code), message: failure.message } : null,
+    execution_seconds: nullableNumber(timing.seconds), scoring_seconds: nullableNumber(assessment.duration_seconds),
     model_output_preview: typeof item.model_output_preview === "object" && item.model_output_preview !== null
       ? item.model_output_preview as Record<string, unknown> : undefined,
     case_instance_id: typeof item.case_instance_id === "string" ? item.case_instance_id : "",
     input_preview: typeof item.input_preview === "string" ? item.input_preview : "",
     body_available: item.body_available === true,
     capture_state: typeof item.capture_state === "string" ? item.capture_state : "",
-    started_at: typeof item.started_at === "string" ? item.started_at : "",
+    started_at: typeof execution.started_at === "string" ? execution.started_at : "",
     trial_id: typeof item.trial_id === "string" ? item.trial_id : "",
     case_ref: typeof item.case_ref === "string" ? item.case_ref : "",
     case_id: typeof item.case_id === "string" ? item.case_id : "",
@@ -78,31 +91,17 @@ export function normalizeTrial(value: unknown): EvaluationTrial {
       typeof item.outcome === "string"
         ? item.outcome
         : "",
-    score: nullableNumber(item.score),
-    max_score: nullableNumber(item.max_score),
-    passed: typeof item.passed === "boolean" ? item.passed : null,
-    duration_seconds: nullableNumber(item.duration_seconds),
-    final_text: typeof item.final_text === "string" ? item.final_text : "",
-    stop_reason: typeof item.stop_reason === "string" ? item.stop_reason : "",
-    judge:
-      typeof item.judge === "object" &&
-      item.judge !== null &&
-      !Array.isArray(item.judge)
-        ? item.judge as Record<string, unknown>
-        : null,
-    events: Array.isArray(item.events)
-      ? item.events.filter(
-          (event): event is Record<string, unknown> =>
-            typeof event === "object" && event !== null && !Array.isArray(event),
-        )
-      : [],
-    evidence:
-      typeof item.evidence === "object" &&
-      item.evidence !== null &&
-      !Array.isArray(item.evidence)
-        ? item.evidence as Record<string, unknown>
-        : {},
-    error: typeof item.error === "string" ? item.error : "",
+    score: nullableNumber(judge.score),
+    max_score: nullableNumber(judge.max_score),
+    passed: item.outcome === "passed" ? true : item.outcome === "failed" ? false : null,
+    duration_seconds: nullableNumber(execution.total_seconds),
+    final_text: typeof execution.final_text === "string" ? execution.final_text : "",
+    stop_reason: typeof execution.stop_reason === "string" ? execution.stop_reason : "",
+    judge: Object.keys(judge).length ? judge : null,
+    events: Array.isArray(execution.events) ? execution.events.map(object) : [],
+    evidence: { ...metadata, judge_evidence: object(assessment.evidence), error_stage: failure.stage, error_code: failure.code },
+    error: typeof failure.message === "string" ? failure.message : "",
+
   };
 }
 

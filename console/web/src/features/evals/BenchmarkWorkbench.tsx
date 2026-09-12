@@ -1,3 +1,4 @@
+import { Expectation } from "./Expectation";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Alert, Button, Checkbox, Empty, Input, InputNumber, Message, Select, Space, Spin, Tag, Typography } from "@arco-design/web-react";
@@ -17,7 +18,7 @@ function CasePreview({ suite, caseId, botId }: { suite: EvaluationSuite; caseId:
   return <div className="eval-benchmark-case-detail">
     <section><Text bold>被测对象可见的输入与背景</Text><pre>{item.input || "未记录"}</pre>
       {item.context && <pre>{item.context}</pre>}<Text type="secondary">背景是任务资料，不授予会话身份或工具权限。</Text></section>
-    <section><Text bold>评分侧的期望与参考资料</Text><pre>{item.expected_behavior || "未记录"}</pre>
+    <section><Expectation value={item.expectation} />
       <Paragraph>{suite.benchmark?.scorer?.name || suite.benchmark?.native_method}</Paragraph>
       <details><summary>查看参考资料与资源</summary><pre>{JSON.stringify(item.reference_material ?? {}, null, 2)}</pre></details>
       {!!Object.keys(item.scoring ?? {}).length && <details><summary>评价步骤与阈值</summary><pre>{JSON.stringify(item.scoring, null, 2)}</pre></details>}
@@ -144,6 +145,7 @@ function SuiteForm({ botId, suite, active, onCreated }: {
           <div className="eval-benchmark-case-heading"><Checkbox aria-label={`选择 ${c.case_id}`} checked={selectedIds.includes(c.case_id)} onChange={checked => setSelected(current => checked ? [...new Set([...current, c.case_id])] : current.filter(id => id !== c.case_id))} />
             <div><Text bold>{c.summary || c.case_id}</Text>{c.test_category === "red_team" && <div><Tag color="red">红队测试</Tag><Text type="secondary">{c.red_team_surface}</Text></div>}<div className="eval-trial-meta">{c.case_id} · {c.capability_tags?.join(" · ") || c.category}{c.readiness?.ready === false && " · 待准备"}{c.has_attachments && ` · ${c.attachment_count} 个附件`}</div></div>
             <Button type="text" size="small" aria-expanded={expanded.includes(c.case_id)} onClick={() => setExpanded(ids => ids.includes(c.case_id) ? ids.filter(id => id !== c.case_id) : [...ids, c.case_id])}>{expanded.includes(c.case_id) ? "收起" : "题目详情"}</Button></div>
+          <div className="eval-case-expectation-summary"><Text bold>预期回答／行为：</Text><Text>{c.expectation_summary || "预期未记录"}</Text></div>
           {expanded.includes(c.case_id) && <CasePreview suite={suite} caseId={c.case_id} botId={botId} />}
         </article>) : <Empty description="没有匹配的题目；请检查数据准备状态或调整筛选。" />}
         {pages > 1 && <Space><Button disabled={safePage === 1} onClick={() => setPage(safePage - 1)}>上一页</Button><Text>{safePage} / {pages}</Text><Button disabled={safePage === pages} onClick={() => setPage(safePage + 1)}>下一页</Button></Space>}

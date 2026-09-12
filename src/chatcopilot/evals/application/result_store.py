@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from chatcopilot.core.private_sqlite import PrivateDatabase, json_text
+from chatcopilot.evals.result_codec import validate_result, trial_from_dict
 from chatcopilot.evals.case_instances import case_instance_identity, validate_case_instance_id
 
 _SCHEMA = """
@@ -66,6 +67,8 @@ class EvaluationResultStore:
         state: Mapping[str, Any],
         observation: Mapping[str, Any] | None = None,
     ) -> None:
+        if result:
+            validate_result(result)
         raw = json_text(dict(result))
         digest = hashlib.sha256(raw.encode()).hexdigest()
         rows = result.get("trials", [])
@@ -150,6 +153,7 @@ class EvaluationResultStore:
                 if not isinstance(trial, Mapping):
                     continue
                 value = {key: item for key, item in trial.items() if key != "case_instance_id"}
+                trial_from_dict(value)
                 identity = case_instance_identity(evaluation_id, trial)
                 if identity is not None:
                     connection.execute(

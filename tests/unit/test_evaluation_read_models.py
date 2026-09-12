@@ -1,3 +1,4 @@
+from tests.evaluation_fixtures import result_payload
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
@@ -76,6 +77,8 @@ def seed(application, number=1, *, bot="bot-a"):
             for case in ("a", "b")
         ],
     }
+    result = result_payload(result)
+    request["result_schema_version"] = 2
     for name, value in (
         ("request.json", request),
         ("state.json", {"evaluation_id": identifier, "status": "completed", "started_at": started}),
@@ -112,12 +115,12 @@ def test_preview_and_precise_body_read_are_bound_to_trial(tmp_path):
     identifier = seed(application)
     value = application.get(identifier, include_bodies=False)
     assert value["result"]["trials"][0]["input_preview"] == "effective input a"
-    assert len(value["result"]["trials"][0]["final_text"]) == 400
+    assert len(value["result"]["trials"][0]["execution"]["final_text"]) == 400
     detail = application.case_detail(
         identifier, "fixture-suite:a", trial_id=f"{identifier}-a", target_id="main", attempt=1
     )
     assert len(detail["trials"]) == 1
-    assert len(detail["trials"][0]["final_text"]) > 400
+    assert len(detail["trials"][0]["execution"]["final_text"]) > 400
     with pytest.raises(KeyError):
         application.case_detail(identifier, "fixture-suite:b", trial_id=f"{identifier}-a")
     with pytest.raises(KeyError):
@@ -159,7 +162,8 @@ def test_case_instance_ids_are_unique_stable_and_do_not_rewrite_results(tmp_path
     trial = raw["trials"][0]
     raw["trials"].extend([
         {**trial, "trial_id": "another-target", "target_id": "other"},
-        {**trial, "trial_id": "another-attempt", "attempt": 2, "outcome": "failed"},
+        {**trial, "trial_id": "another-attempt", "attempt": 2, "outcome": "failed",
+         "assessment": {**trial["assessment"], "judge": {**trial["assessment"]["judge"], "passed": False, "score": 0.0}}},
     ])
     file.write_text(json.dumps(raw))
     before = {p: p.read_bytes() for p in (application.root / first).iterdir() if p.is_file()}

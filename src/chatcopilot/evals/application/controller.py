@@ -41,6 +41,8 @@ from chatcopilot.evals.application.insights import (
     source_revision,
 )
 from chatcopilot.evals.application.result_store import EvaluationResultStore
+from chatcopilot.evals.models import RESULT_SCHEMA_VERSION
+from chatcopilot.evals.result_codec import require_current_result, validate_result, ArchivedResultError
 from chatcopilot.evals.code_source import prepare_code_source, write_source_receipt
 
 ACTIVE_STATUSES = {"queued", "running"}
@@ -582,6 +584,7 @@ class EvaluationApplication:
             directory = self._evaluation_dir(evaluation_id)
             created_at = _utc_now()
             stored_request = {
+                "result_schema_version": RESULT_SCHEMA_VERSION,
                 **clean_request,
                 "evaluation_id": evaluation_id,
                 "bot_id": bot.instance_id,
@@ -867,6 +870,17 @@ class EvaluationApplication:
                 directory=directory,
                 required=False,
             )
+        if (result and result.get("schema_version") != RESULT_SCHEMA_VERSION) or (
+            not result and request.get("result_schema_version") != RESULT_SCHEMA_VERSION
+        ):
+            return {**state, "evaluation_id": evaluation_id, "archived": True,
+                    "archive_reason": str(ArchivedResultError()), "kind": request.get("kind", ""),
+                    "bot_id": request.get("bot_id", ""), "created_at": request.get("created_at", ""),
+                    "targets": request.get("targets", []), "benchmark": request.get("benchmark", {}),
+                    "summary": result.get("summary", {}), "source_revision": source_revision(request),
+                    "selection": self._selection_summary(request), "result": None,
+                    "conditions": None, "insights": {"trend_eligible": False,
+                        "exclusion_reason": "archived", "complete": False}}
         trials = result.get("trials")
         trial_values = trials if isinstance(trials, list) else []
         targets = result.get("targets")
@@ -942,6 +956,7 @@ class EvaluationApplication:
             directory=directory,
             required=True,
         )
+        require_current_result(result)
         comparisons = result.get("comparisons")
         comparison = (
             next(
@@ -1017,6 +1032,8 @@ class EvaluationApplication:
     ) -> dict[str, Any]:
         directory = self._verified_evaluation_dir(evaluation_id)
         stored = _read_json(directory / "request.json")
+        if stored.get("result_schema_version") != RESULT_SCHEMA_VERSION:
+            raise ArchivedResultError()
         suite_id = stored.get("suite_id")
         if suite_id in {"agentstrata-capabilities-v1", "project-business-v1"}:
             raise ValueError("旧评测集已退出，历史只读；请从 Agent 任务能力新建测评。")
@@ -1150,6 +1167,8 @@ class EvaluationApplication:
     ) -> dict[str, Any]:
         buckets: dict[tuple[str, str, str], dict[str, Any]] = {}
         for evaluation in self.list(bot_id=bot_id):
+            if evaluation.get("archived"):
+                continue
             evaluation_id = str(evaluation["evaluation_id"])
             result = self._verified_result(
                 evaluation_id,
@@ -1158,6 +1177,8 @@ class EvaluationApplication:
             for trial in result.get("trials", []):
                 if not isinstance(trial, Mapping):
                     continue
+                from chatcopilot.evals.result_codec import trial_projection
+                trial = trial_projection(trial)
                 case_ref = str(
                     trial.get("case_ref")
                     or ":".join(
@@ -2113,6 +2134,9 @@ class EvaluationApplication:
             raise ValueError("evaluation result is not valid JSON")
         if result.get("evaluation_id") != evaluation_id:
             raise ValueError("evaluation_id does not match its result record")
+        if result.get("schema_version") != RESULT_SCHEMA_VERSION:
+            return result
+        validate_result(result)
         if self.result_store.contains(evaluation_id):
             try:
                 self.result_store.synchronize(

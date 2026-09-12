@@ -240,6 +240,11 @@ def _use_manager(manager: EvaluationApplication) -> Iterator[None]:
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    from tests.evaluation_fixtures import result_payload
+    if path.name == "result.json":
+        payload = result_payload(payload)
+    if path.name == "request.json":
+        payload = {**payload, "result_schema_version": 2}
     path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
     if os.name != "nt":
         path.parent.chmod(0o700)

@@ -353,6 +353,8 @@ class HarnessController:
         task = self.store.get(task_id)
         if task["status"] in ACTIVE:
             return self.get(task_id)
+        if task["source"].get("kind") == "evaluation" and task["source"].get("result_schema_version") != 2:
+            raise HarnessError("source_archived", "旧测评来源已归档；请使用新测评发起修复")
         if task["source"].get("blockers"):
             raise HarnessError("source_incomplete", "来源证据不完整；补充观测后重新加载并发起")
         if task["status"] not in {"blocked", "interrupted", "cancelled"}:

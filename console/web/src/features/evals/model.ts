@@ -177,6 +177,8 @@ export interface EvaluationProgress {
 }
 
 export interface EvaluationRecord {
+  archived?: boolean;
+  archive_reason?: string;
   evaluation_id: string;
   kind: EvaluationKind;
   bot_id: string;
@@ -313,7 +315,15 @@ export function suiteSupportsLlmJudge(suite: EvaluationSuite | null): boolean {
   );
 }
 
+export interface CaseExpectation {
+  reference_answer: unknown;
+  behavior: string;
+  checks: string[];
+  source: string;
+}
+
 export interface EvaluationCaseSummary {
+  expectation_summary?: string;
   test_category?: "task" | "red_team";
   red_team_surface?: string;
   capability_tags?: string[];
@@ -329,17 +339,21 @@ export interface EvaluationCaseSummary {
 }
 
 export interface EvaluationCaseDescriptor extends EvaluationCaseSummary {
+  expectation?: CaseExpectation;
   reference_material?: Record<string, unknown>;
   organization?: DatasetOrganization;
   input: string;
   context: string;
   rubric: string;
-  expected_behavior: string;
   metadata: Record<string, unknown>;
   scoring?: Record<string, unknown>;
 }
 
 export interface EvaluationTrial {
+  expectation?: CaseExpectation;
+  failure?: { stage: string; code: string; message: string } | null;
+  execution_seconds?: number | null;
+  scoring_seconds?: number | null;
   model_output_preview?: Record<string, unknown>;
   case_instance_id?: string;
   input_preview?: string;
@@ -747,6 +761,8 @@ export function normalizeEvaluation(value: unknown): EvaluationRecord {
     : Math.max(0, Math.min(100, suppliedPercent));
 
   return {
+    archived: item.archived === true,
+    archive_reason: asString(item.archive_reason),
     evaluation_id: asString(item.evaluation_id),
     kind,
     bot_id: asString(item.bot_id),

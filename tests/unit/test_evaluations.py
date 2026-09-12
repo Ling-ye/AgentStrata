@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.evaluation_fixtures import trial_result, replace_trial
+
 from chatcopilot.botspec.model import ContextSpec
 
 import hashlib
@@ -17,6 +19,8 @@ import pytest
 
 import chatcopilot.evals.cli as eval_cli_module
 import chatcopilot.evals.evaluations as evaluation_module
+import chatcopilot.evals.trial_supervisor as supervisor_module
+import chatcopilot.evals.result_codec as result_codec
 import chatcopilot.evals.implementation_catalog as implementation_catalog
 import chatcopilot.evals.paths as evaluation_paths
 import chatcopilot.evals.runner as evaluation_runner
@@ -46,7 +50,7 @@ from chatcopilot.evals.isolated_executor import (
     permission_filter,
     stage_fixture,
 )
-from chatcopilot.evals.models import EvalCase, EvalCaseResult, EvalRunResult
+from chatcopilot.evals.models import EvalCase, EvalCaseResult
 from chatcopilot.evals.profiles import get_profile
 from chatcopilot.evals.redaction import (
     collect_env_secrets,
@@ -116,7 +120,7 @@ def _trial(
     outcome: str = "passed",
     score: float = 1.0,
 ) -> EvaluationTrial:
-    return EvaluationTrial(
+    return trial_result(
         trial_id=(f"{request.case.case_id}-a{request.attempt}-{request.target.fingerprint[:12]}"),
         evaluation_id=request.evaluation_id,
         kind=request.kind,
@@ -268,6 +272,7 @@ def _write_managed_comparison_bootstrap(
     bot_id = bot_path.parent.name if bot_path.name == "bot.yaml" else bot_path.name
     stored_request = {
         "evaluation_id": parsed.evaluation_id,
+            "result_schema_version": 2,
         "kind": parsed.kind,
         "bot_id": bot_id,
         "bot_spec": bot_spec,
@@ -1492,24 +1497,24 @@ def test_trial_ipc_uses_bounded_canonical_json_bytes_only() -> None:
             raise AssertionError("pickle send must not be used")
 
     sender = SendBytesOnly()
-    evaluation_module._send_trial_ipc_frame(sender, {"pid": 7, "kind": "ready"})
+    supervisor_module._send_trial_ipc_frame(sender, {"pid": 7, "kind": "ready"})
     assert sender.encoded == b'{"kind":"ready","pid":7}'
 
     class ReceiveBytesOnly:
         def recv_bytes(self, maxlength: int) -> bytes:
-            assert maxlength == evaluation_module._MAX_TRIAL_IPC_FRAME_BYTES
+            assert maxlength == supervisor_module._MAX_TRIAL_IPC_FRAME_BYTES
             return sender.encoded
 
         def recv(self) -> object:
             raise AssertionError("pickle recv must not be used")
 
-    assert evaluation_module._recv_trial_ipc_frame(ReceiveBytesOnly()) == {
+    assert supervisor_module._recv_trial_ipc_frame(ReceiveBytesOnly()) == {
         "kind": "ready",
         "pid": 7,
     }
     with pytest.raises(ValueError, match="exceeds"):
-        evaluation_module._encode_trial_ipc_frame(
-            {"blob": "x" * evaluation_module._MAX_TRIAL_IPC_FRAME_BYTES}
+        supervisor_module._encode_trial_ipc_frame(
+            {"blob": "x" * supervisor_module._MAX_TRIAL_IPC_FRAME_BYTES}
         )
 
     class RawFrame:
@@ -1517,15 +1522,15 @@ def test_trial_ipc_uses_bounded_canonical_json_bytes_only() -> None:
             self.encoded = encoded
 
         def recv_bytes(self, maxlength: int) -> bytes:
-            assert maxlength == evaluation_module._MAX_TRIAL_IPC_FRAME_BYTES
+            assert maxlength == supervisor_module._MAX_TRIAL_IPC_FRAME_BYTES
             return self.encoded
 
     with pytest.raises(ValueError, match="canonical"):
-        evaluation_module._recv_trial_ipc_frame(RawFrame(b'{"pid":7, "kind":"ready"}'))
+        supervisor_module._recv_trial_ipc_frame(RawFrame(b'{"pid":7, "kind":"ready"}'))
     with pytest.raises(ValueError, match="valid UTF-8 JSON"):
-        evaluation_module._recv_trial_ipc_frame(RawFrame(b'{"kind":NaN}'))
+        supervisor_module._recv_trial_ipc_frame(RawFrame(b'{"kind":NaN}'))
     with pytest.raises(ValueError, match="valid UTF-8 JSON"):
-        evaluation_module._recv_trial_ipc_frame(RawFrame(b'{"kind":"ready","kind":"ready"}'))
+        supervisor_module._recv_trial_ipc_frame(RawFrame(b'{"kind":"ready","kind":"ready"}'))
 
 
 def test_unproven_supervisor_cleanup_is_fatal_and_process_is_not_closed(
@@ -1575,7 +1580,7 @@ def test_unproven_supervisor_cleanup_is_fatal_and_process_is_not_closed(
             return process
 
     monkeypatch.setattr(evaluation_module.os, "killpg", lambda _pid, _signal: None)
-    monkeypatch.setattr(evaluation_module, "_TRIAL_TERMINATE_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(supervisor_module, "_TRIAL_TERMINATE_GRACE_SECONDS", 0.01)
 
     with pytest.raises(evaluation_module._TrialCleanupFailed, match="did not finish"):
         evaluation_module._execute_supervised_trial(
@@ -1583,6 +1588,7 @@ def test_unproven_supervisor_cleanup_is_fatal_and_process_is_not_closed(
             budget=evaluation_module._TrialExecutionBudget(seconds=0.1, scope="case"),
             cancel_check=lambda: True,
             _context=FakeContext(),
+            executor=_trial,
         )
 
     assert process.close_calls == 0
@@ -1655,7 +1661,7 @@ def test_in_flight_case_timeout_is_an_infrastructure_error_trial(
     assert result.status == "completed"
     assert len(result.trials) == 1
     assert result.trials[0].outcome == "error"
-    assert "case execution deadline exceeded" in result.trials[0].error
+    assert "case execution deadline exceeded" in result.trials[0].error.message
 
 
 def test_cleanup_failure_is_fatal_quarantines_workspace_and_rejects_resume(
@@ -1739,9 +1745,9 @@ def test_core_converts_oversized_trial_evidence_to_indeterminate_error(
     output = tmp_path / "eval-oversized-evidence"
 
     def execute(request: TrialExecutionRequest) -> EvaluationTrial:
-        return replace(
+        return replace_trial(
             _trial(request),
-            evidence={"blob": "x" * (evaluation_module._MAX_TRIAL_STRING_CHARS + 1)},
+            evidence={"blob": "x" * (result_codec._MAX_TRIAL_STRING_CHARS + 1)},
         )
 
     result = run_evaluation(
@@ -1753,11 +1759,11 @@ def test_core_converts_oversized_trial_evidence_to_indeterminate_error(
         trial_executor=execute,
     )
 
-    assert result.status == "completed"
+    assert result.status == "error"
     assert len(result.trials) == 1
     assert result.trials[0].outcome == "error"
     assert result.trials[0].passed is False
-    assert "Core integrity limits" in result.trials[0].error
+    assert "Core integrity limits" in result.trials[0].error.message
 
 
 def test_core_rejects_recursive_trial_evidence_before_redaction(tmp_path: Path) -> None:
@@ -1766,7 +1772,7 @@ def test_core_rejects_recursive_trial_evidence_before_redaction(tmp_path: Path) 
     output = tmp_path / "eval-recursive-evidence"
 
     def execute(request: TrialExecutionRequest) -> EvaluationTrial:
-        return replace(_trial(request), evidence=recursive)
+        return replace_trial(_trial(request), evidence=recursive)
 
     result = run_evaluation(
         _custom_request(
@@ -1778,7 +1784,7 @@ def test_core_rejects_recursive_trial_evidence_before_redaction(tmp_path: Path) 
     )
 
     assert result.trials[0].outcome == "error"
-    assert "recursive mapping" in result.trials[0].error
+    assert "recursive mapping" in result.trials[0].error.message
 
 
 def test_cancel_and_resume_operate_only_at_complete_target_group_boundaries(
@@ -2800,7 +2806,7 @@ def test_dimension_aggregation_accumulates_multiple_cases() -> None:
     for case in cases:
         for target in targets:
             trials.append(
-                EvaluationTrial(
+                trial_result(
                     trial_id=f"{case.case_id}-{target.target_id}",
                     evaluation_id="eval-aggregate",
                     kind="comparison",
@@ -2844,7 +2850,7 @@ def test_persistence_redacts_secrets_and_preserves_console_metadata(
     _write_managed_comparison_bootstrap(request, output)
 
     def execute(request: TrialExecutionRequest) -> EvaluationTrial:
-        return replace(
+        return replace_trial(
             _trial(request),
             final_text=f"super-secret-value at {request.output}",
             events=({"type": "ToolFinished", "summary": "api_key=super-secret-value"},),
@@ -2964,28 +2970,12 @@ def test_external_case_id_cannot_escape_suite_workspace(
     workspace_roots: list[Path] = []
     identity_checks: list[str] = []
 
-    def fake_run_suite(
-        _suite_id: str,
-        **kwargs: object,
-    ) -> EvalRunResult:
-        workspace_roots.append(Path(kwargs["workspace_root"]))  # type: ignore[arg-type]
-        assert kwargs["_frozen_cases"] == (case,)
-        return EvalRunResult(
-            suite_id="ifeval",
-            bot=None,
-            status="skipped",
-            started_at="2026-07-26T00:00:00+00:00",
-            duration_seconds=0.0,
-            cases=(
-                EvalCaseResult(
-                    case_id=case.case_id,
-                    suite_id="ifeval",
-                    status="skipped",
-                ),
-            ),
-        )
+    def fake_run_case(selected, **kwargs):
+        workspace_roots.append(Path(kwargs["workspace_root"]))
+        assert selected == case
+        return EvalCaseResult(case_id=case.case_id, suite_id="ifeval", status="skipped")
 
-    monkeypatch.setattr(evaluation_module, "run_suite", fake_run_suite)
+    monkeypatch.setattr("chatcopilot.evals.trial_runner.run_case", fake_run_case)
     monkeypatch.setattr(
         evaluation_module,
         "_assert_suite_trial_definition_current",
@@ -3040,8 +3030,7 @@ def test_suite_workspace_rejects_symlink_escape(
         fingerprint="a" * 64,
     )
     monkeypatch.setattr(
-        evaluation_module,
-        "run_suite",
+        "chatcopilot.evals.trial_runner.run_case",
         lambda *_args, **_kwargs: pytest.fail("executor must not run"),
     )
     monkeypatch.setattr(

@@ -52,7 +52,7 @@ export function recordedInput(record: EvaluationRecord, trial: EvaluationTrial):
 
 export function qualityLabel(trial: EvaluationTrial): string {
   const metric = trialMetrics(trial).find(m => m.kind === "quality");
-  return typeof metric?.score === "number" && !metric.error ? metric.score.toFixed(2) : "—";
+  return typeof metric?.score === "number" && !metric.error ? metric.score.toFixed(2) : "未评分";
 }
 
 export function trialSource(record: EvaluationRecord, trial: EvaluationTrial): Record<string, unknown> {

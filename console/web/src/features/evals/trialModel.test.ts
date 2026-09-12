@@ -24,7 +24,7 @@ describe("frozen evaluation provenance", () => {
 
 
 it("reads direct model instruction results without replacing strict failures", () => {
-  const row = normalizeTrial({ evidence: { instructions: [{ id: "keywords:frequency", passed: false, loose_passed: true, parameters: { frequency: 2 } }] } });
+  const row = normalizeTrial({ execution: { metadata: { instructions: [{ id: "keywords:frequency", passed: false, loose_passed: true, parameters: { frequency: 2 } }] } } });
   expect(instructionChecks(row)[0]).toMatchObject({ passed: false, loose_passed: true });
 });
 
@@ -34,7 +34,7 @@ describe("model output evidence", () => {
   const model = { benchmark: { subject_type: "model" } } as unknown as EvaluationRecord;
   const call = { id: "saved-call", function: { name: "get_weather", arguments: '{"city":"Paris"}' } };
   it("renders the saved historical function without claiming execution", () => {
-    const row = normalizeTrial({ final_text: "", evidence: { tool_calls: [call] } });
+    const row = normalizeTrial({ execution: { final_text: "", metadata: { tool_calls: [call] } } });
     expect(modelOutputSummary(model, row)).toContain('get_weather({"city":"Paris"})');
     expect(modelCalls(row)[0]).toMatchObject({ id: "saved-call", name: "get_weather", parsed: { city: "Paris" }, raw: call.function.arguments, error: "" });
     expect(row.final_text).toBe("");
@@ -45,20 +45,20 @@ describe("model output evidence", () => {
     expect(modelOutputSummary(model, row)).toBe("checking\nget_weather({})");
   });
   it("distinguishes a recorded empty response and missing evidence", () => {
-    expect(modelOutputSummary(model, normalizeTrial({ evidence: { model_response: { content: "", tool_calls: [] } } }))).toContain("模型返回空内容");
+    expect(modelOutputSummary(model, normalizeTrial({ execution: { metadata: { model_response: { content: "", tool_calls: [] } } } }))).toContain("模型返回空内容");
     expect(modelOutputSummary(model, normalizeTrial({}))).toBe("未记录模型输出");
   });
   it("preserves invalid parameter strings and reports parse errors", () => {
-    const row = normalizeTrial({ evidence: { tool_calls: [{ function: { name: "broken", arguments: '{"x":' } }] } });
+    const row = normalizeTrial({ execution: { metadata: { tool_calls: [{ function: { name: "broken", arguments: '{"x":' } }] } } });
     expect(modelCalls(row)[0]).toMatchObject({ raw: '{"x":', error: "参数 JSON 解析失败，以下保留原始字符串" });
   });
   it("keeps model data visible after a scoring error, with text and calls", () => {
-    const row = normalizeTrial({ status: "error", error: "judge failed", evidence: { model_response: { content: "proposed call", tool_calls: [call], finish_reason: "tool_calls" } } });
+    const row = normalizeTrial({ outcome: "error", error: { stage: "scoring", code: "judge_error", message: "judge failed" }, execution: { metadata: { model_response: { content: "proposed call", tool_calls: [call], finish_reason: "tool_calls" } } } });
     expect(modelOutputSummary(model, row)).toContain("proposed call\nget_weather");
     expect(isModelOutput({} as unknown as EvaluationRecord, row)).toBe(true);
   });
   it("does not interpret Agent tool execution as model-only calls", () => {
-    const row = normalizeTrial({ final_text: "actual result", evidence: { tool_calls: [call] } });
+    const row = normalizeTrial({ execution: { final_text: "actual result", metadata: { tool_calls: [call] } } });
     expect(isModelOutput({ benchmark: { subject_type: "agent" } } as unknown as EvaluationRecord, row)).toBe(false);
   });
 });

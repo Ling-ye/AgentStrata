@@ -135,7 +135,7 @@ def capture_case(function: Callable[..., Any]) -> Callable[..., Any]:
                 result,
                 final_text=text,
                 stop_reason=result.stop_reason or final.get("stop_reason", ""),
-                metadata={**metadata, **timing_metadata(observed), "execution": observed},
+                metadata={**metadata, **timing_metadata(observed), "execution": {k: v for k, v in observed.items() if k not in {"expectation", "observation", "assessment"}}},
             )
 
     return wrapped
@@ -228,3 +228,24 @@ def execution_snapshot() -> dict[str, Any]:
 
     with _write_lock.get() or nullcontext():
         return deepcopy(_current.get() or {"state": "not_recorded", "turns": []})
+
+
+@_serialized_capture
+def record_checkpoint(name: str, value: Any) -> None:
+    """Publish an immutable, bounded snapshot before the next fallible stage."""
+    from chatcopilot.evals.models import to_jsonable
+    from chatcopilot.evals.result_codec import ResultContractError
+
+    current = _current.get()
+    if current is None:
+        return
+    if name not in {"expectation", "observation", "assessment"}:
+        raise ResultContractError("checkpoint: unsupported snapshot")
+    safe = redact_payload(to_jsonable(value), secrets=collect_env_secrets())
+    encoded = json.dumps({**current, name: safe}, ensure_ascii=False, allow_nan=False)
+    if len(encoded.encode()) > _BYTE_LIMIT:
+        raise ResultContractError(f"checkpoint.{name}: snapshot exceeds capture limit")
+    current[name] = json.loads(encoded)[name]
+    sink = _sink.get()
+    if sink is not None:
+        sink(current)

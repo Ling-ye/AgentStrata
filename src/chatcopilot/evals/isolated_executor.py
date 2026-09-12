@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from chatcopilot.evals.execution_support import cleanup
+
 from chatcopilot.application.execution_scope import execution_scope
 
 import difflib
 import os
 import subprocess
 import sys
-import time
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
@@ -34,7 +35,6 @@ from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime, permis
 from chatcopilot.evals.execution_support import event_to_dict, usage_summary
 from chatcopilot.evals.models import EvalCase, JudgeResult
 from chatcopilot.evals.profiles import ProfileCase
-from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, sanitize_text
 from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService
 
 _event_to_dict = event_to_dict
@@ -62,37 +62,10 @@ class IsolatedTrialRequest:
     order: int
 
 
-@dataclass(frozen=True)
-class IsolatedTrialResult:
-    trial_id: str
-    case_ref: str
-    suite_id: str
-    case_id: str
-    dimension: str
-    target_id: str
-    backend: str
-    attempt: int
-    outcome: str
-    score: float = 0.0
-    passed: bool = False
-    duration_seconds: float = 0.0
-    final_text: str = ""
-    stop_reason: str = ""
-    started_at: str = ""
-    finished_at: str = ""
-    judge: dict[str, Any] | None = None
-    events: tuple[dict[str, Any], ...] = ()
-    usage_totals: dict[str, int] | None = None
-    tool_summary: dict[str, int] | None = None
-    evidence: dict[str, Any] | None = None
-    error: str = ""
-
-
-def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult:
+@contextmanager
+def open_isolated_case(request: IsolatedTrialRequest):
     """Execute one Profile Case in a policy-isolated Agent workspace."""
 
-    started = time.monotonic()
-    started_at = _utc_now()
     case = request.profile_case.case
     trial_id = trial_artifact_id(
         request.profile_case.case_id,
@@ -109,12 +82,6 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
     tool_audit: list[dict[str, Any]] = []
     raw_events: list[dict[str, Any]] = []
     agent_runtime = None
-    final_text = ""
-    stop_reason = ""
-    judge: JudgeResult | None = None
-    verification: dict[str, Any] = {}
-    error = ""
-    outcome = "error"
     try:
         runtime = load_evaluation_runtime(request.bot)
         chat_config = load_config(env_prefix=runtime.spec.llm.env_prefix)
@@ -161,57 +128,22 @@ def execute_isolated_trial(request: IsolatedTrialRequest) -> IsolatedTrialResult
                 permission_filter=permission_filter(allowed_tools),
                 caller_role_hint="owner",
             )
-            result = session.run_task(
-                _prepare_task(request.profile_case, workspace),
-                on_event=lambda event: raw_events.append(event_to_dict(event)),
-            )
-            final_text = result.final_text
-            stop_reason = result.stop_reason
-            judge, verification = judge_profile_trial(
-                case,
-                final_text,
-                workspace_root,
-                tool_audit,
-                fixture_before,
-            )
-            outcome = "passed" if judge.passed else "failed"
-    except Exception as exc:  # noqa: BLE001
-        error = f"{type(exc).__name__}: {exc}"
+            from chatcopilot.evals.trial_capture import record_turn, execution_phase
+            from chatcopilot.evals.models import TrialObservation
+            from chatcopilot.evals.models import PreparedCase
+            task = _prepare_task(request.profile_case, workspace)
+            record_turn({"conversation_id": case.case_id, "turn_index": 0, "input": task.text, "completed": False})
+            with execution_phase("agent"):
+                result = session.run_task(task, on_event=lambda event: raw_events.append(event_to_dict(event)))
+            record_turn({"conversation_id": case.case_id, "turn_index": 0, "input": task.text,
+                         "completed": True, "final_text": result.final_text, "stop_reason": result.stop_reason})
+            observation = TrialObservation(final_text=result.final_text, stop_reason=result.stop_reason,
+                events=tuple(raw_events), tool_calls=tuple(tool_audit), usage=usage_summary(raw_events).get("usage_totals", {}))
+            yield PreparedCase(observation, lambda: judge_profile_trial(case, result.final_text, workspace_root, tool_audit, fixture_before))
     finally:
         if agent_runtime is not None:
-            agent_runtime.close()
+            cleanup(agent_runtime.close)
 
-    roots = {"evaluation": request.output, "workspace": workspace_root}
-    secrets = collect_env_secrets()
-    sanitized_events = redact_payload(raw_events, secrets=secrets, roots=roots)
-    usage = usage_summary(sanitized_events).get("usage_totals", {})
-    judge_payload = asdict(judge) if judge is not None else None
-    return IsolatedTrialResult(
-        trial_id=trial_id,
-        case_ref=request.profile_case.ref,
-        suite_id=request.profile_case.suite_id,
-        case_id=request.profile_case.case_id,
-        dimension=request.profile_case.dimension,
-        target_id=request.target.target_id,
-        backend=request.target.backend,
-        attempt=request.attempt,
-        outcome=outcome,
-        score=(judge.score / judge.max_score if judge is not None and judge.max_score else 0.0),
-        passed=bool(judge and judge.passed),
-        duration_seconds=time.monotonic() - started,
-        final_text=sanitize_text(final_text, secrets=secrets, roots=roots),
-        stop_reason=stop_reason,
-        started_at=started_at,
-        finished_at=_utc_now(),
-        judge=redact_payload(judge_payload, secrets=secrets, roots=roots),
-        events=tuple(sanitized_events),
-        usage_totals={
-            str(key): int(value) for key, value in usage.items() if isinstance(value, int)
-        },
-        tool_summary=_summarize_tools(raw_events, tool_audit),
-        evidence=redact_payload(verification, secrets=secrets, roots=roots),
-        error=sanitize_text(error, secrets=secrets, roots=roots),
-    )
 
 
 def stage_fixture(case: EvalCase, root: Path) -> dict[str, str]:
@@ -501,8 +433,7 @@ def _utc_now() -> str:
 __all__ = [
     "IsolatedTarget",
     "IsolatedTrialRequest",
-    "IsolatedTrialResult",
-    "execute_isolated_trial",
+    "open_isolated_case",
     "judge_profile_trial",
     "load_evaluation_runtime",
     "permission_filter",

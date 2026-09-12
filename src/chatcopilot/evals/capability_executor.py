@@ -58,7 +58,7 @@ from chatcopilot.core.config import load_config
 from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService, Workspace
 from chatcopilot.evals.ifeval_subset import IFEVAL_IDS, validate_fixed
 from chatcopilot.evals.business_cases import BUSINESS_IDS, MEMORY_IDS, BusinessFixture, delegates, missing_requirements
-from chatcopilot.evals.trial_capture import capture_case, record_turn, set_phase, execution_phase, sample_execution
+from chatcopilot.evals.trial_capture import record_turn, execution_phase, sample_execution
 from chatcopilot.evals.capability_scenarios import (
     CapabilityScenarioContext,
     run_capability_scenario,
@@ -73,11 +73,9 @@ from chatcopilot.evals.manifest import load_case_definitions
 from chatcopilot.evals.models import (
     EvalCase,
     EvalCaseDefinition,
-    EvalCaseResult,
-    RunStatus,
     TrialObservation,
 )
-from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, sanitize_text
+from chatcopilot.evals.redaction import collect_env_secrets, sanitize_text
 from chatcopilot.evals.registry import get_manifest
 
 
@@ -3196,157 +3194,69 @@ def _execute_agent_definition(
     )
 
 
-def _error_result(
-    *,
-    case: EvalCase,
-    suite_id: str,
-    started_at: str,
-    started: float,
-    code: str,
-    message: str,
-) -> EvalCaseResult:
-    safe_message = sanitize_text(message, secrets=collect_env_secrets())
-    return EvalCaseResult(
-        case_id=case.case_id,
-        suite_id=suite_id,
-        status="error",
-        duration_seconds=time.monotonic() - started,
-        started_at=started_at,
-        finished_at=_utc_now(),
-        error=f"{code}: {safe_message}",
-        metadata={"error": {"code": code, "message": safe_message}},
-    )
+@contextmanager
+def open_capability_case(case: EvalCase, *, suite_id: str, bot: str, workspace_root: Path,
+                         options: Mapping[str, Any], confirm_external_write: bool):
+    from chatcopilot.evals.models import PreparedCase
+    if set(options) - {"scoring_mode"} or (options and suite_id != "agentstrata-capabilities-v1"):
+        raise CapabilityExecutionError(
+            "capability_options_unsupported",
+            "this capability suite does not declare runtime options",
+        )
+    definition = _definition_for_case(suite_id, case)
+    if suite_id == "agentstrata-capabilities-v1":
+        from chatcopilot.evals.workbench import capability_scoring
 
-
-@capture_case
-def execute_capability_case(
-    case: EvalCase,
-    *,
-    suite_id: str,
-    bot: str,
-    workspace_root: Path,
-    options: Mapping[str, Any],
-    confirm_external_write: bool,
-) -> EvalCaseResult:
-    """Execute one manifest-declared capability Case through its trusted driver."""
-
-    started = time.monotonic()
-    started_at = _utc_now()
-    try:
-        if set(options) - {"scoring_mode"} or (options and suite_id != "agentstrata-capabilities-v1"):
-            raise CapabilityExecutionError(
-                "capability_options_unsupported",
-                "this capability suite does not declare runtime options",
-            )
-        definition = _definition_for_case(suite_id, case)
-        if suite_id == "agentstrata-capabilities-v1":
-            from chatcopilot.evals.workbench import capability_scoring
-
-            definition = capability_scoring(definition, options)
-        _preflight_definition(definition, bot=bot)
-        workspace = _workspace_for_case(Path(workspace_root), definition.case_id)
-        resources_by_id, resource_evidence = _stage_resources(suite_id, definition, workspace)
-        if definition.driver_id == "acp_scenario":
-            runtime = load_evaluation_runtime(bot)
-            observation = run_capability_scenario(
+        definition = capability_scoring(definition, options)
+    _preflight_definition(definition, bot=bot)
+    workspace = _workspace_for_case(Path(workspace_root), definition.case_id)
+    resources_by_id, resource_evidence = _stage_resources(suite_id, definition, workspace)
+    if definition.driver_id == "acp_scenario":
+        runtime = load_evaluation_runtime(bot)
+        observation = run_capability_scenario(
+            definition,
+            context=CapabilityScenarioContext(
+                platform_type=runtime.platform_type,
+                env=dict(os.environ),
+                owners=tuple(get_owners()),
+                admins=tuple(get_admins()),
+                prompt_profile=runtime.prompt_profile,
+            ),
+        )
+    elif definition.driver_id == "qq_message_flow":
+        runtime = load_evaluation_runtime(
+            bot,
+            load_local_environment=False,
+            inherit_environment=False,
+        )
+        with execution_phase("runtime"):
+            observation = run_qq_flow_scenario(
                 definition,
-                context=CapabilityScenarioContext(
-                    platform_type=runtime.platform_type,
-                    env=dict(os.environ),
-                    owners=tuple(get_owners()),
-                    admins=tuple(get_admins()),
-                    prompt_profile=runtime.prompt_profile,
-                ),
+                runtime=runtime,
+                workspace_root=workspace,
             )
-        elif definition.driver_id == "qq_message_flow":
-            runtime = load_evaluation_runtime(
-                bot,
-                load_local_environment=False,
-                inherit_environment=False,
+    elif definition.driver_id in {"agent_isolated", "agent_configured"}:
+        with execution_phase("agent"):
+            observation = _execute_agent_definition(
+                definition,
+                suite_id=suite_id,
+                bot=bot,
+                workspace_path=workspace,
+                resources_by_id=resources_by_id,
+                resource_evidence=resource_evidence,
             )
-            with execution_phase("runtime"):
-                observation = run_qq_flow_scenario(
-                    definition,
-                    runtime=runtime,
-                    workspace_root=workspace,
-                )
-        elif definition.driver_id in {"agent_isolated", "agent_configured"}:
-            with execution_phase("agent"):
-                observation = _execute_agent_definition(
-                    definition,
-                    suite_id=suite_id,
-                    bot=bot,
-                    workspace_path=workspace,
-                    resources_by_id=resources_by_id,
-                    resource_evidence=resource_evidence,
-                )
-        else:  # pragma: no cover - preflight_definition fails closed first
-            raise AssertionError("capability driver changed after preflight")
+    else:  # pragma: no cover - preflight_definition fails closed first
+        raise AssertionError("capability driver changed after preflight")
+    def assess():
         if definition.driver_id in {"agent_isolated", "agent_configured"}:
             from chatcopilot.evals.deepeval_engine import score
-
-            set_phase("judging")
-            judge, judge_evidence = score(definition, observation)
-        else:
-            judge, judge_evidence = verify_capability_facts(definition, observation)
-        status: RunStatus = "error" if judge_evidence.get("error") else ("passed" if judge.passed else "failed")
-        roots = {"workspace": workspace, "evaluation": Path(workspace_root).resolve()}
-        secrets = collect_env_secrets()
-        events = redact_payload(list(observation.events), secrets=secrets, roots=roots)
-        metadata = redact_payload(
-            {
-                "case_source": case.metadata.get("case_source", {}),
-                "driver": definition.driver_id,
-                "plugin": definition.plugin_id,
-                "judge_evidence": judge_evidence,
-                "observation_evidence": list(observation.evidence),
-                "tool_calls": list(observation.tool_calls),
-                "produced_resources": list(observation.produced_resources),
-                "post_state": observation.post_state,
-                "usage": observation.usage,
-                "structured_error": observation.structured_error,
-            },
-            secrets=secrets,
-            roots=roots,
-        )
-        return EvalCaseResult(
-            case_id=case.case_id,
-            suite_id=suite_id,
-            status=status,
-            score=judge.score,
-            max_score=judge.max_score,
-            final_text=sanitize_text(observation.final_text, secrets=secrets, roots=roots),
-            stop_reason=observation.stop_reason,
-            duration_seconds=time.monotonic() - started,
-            started_at=started_at,
-            finished_at=_utc_now(),
-            events=tuple(events),
-            judge=judge,
-            error=sanitize_text(str(judge_evidence.get("error") or ""), secrets=secrets, roots=roots),
-            metadata=metadata,
-        )
-    except CapabilityExecutionError as exc:
-        return _error_result(
-            case=case,
-            suite_id=suite_id,
-            started_at=started_at,
-            started=started,
-            code=exc.code,
-            message=str(exc),
-        )
-    except Exception as exc:  # noqa: BLE001 - infrastructure errors are redacted and classified
-        return _error_result(
-            case=case,
-            suite_id=suite_id,
-            started_at=started_at,
-            started=started,
-            code="capability_infrastructure_error",
-            message=f"{type(exc).__name__}: {exc}",
-        )
+            return score(definition, observation)
+        return verify_capability_facts(definition, observation)
+    yield PreparedCase(observation, assess)
 
 
 __all__ = [
     "CapabilityExecutionError",
-    "execute_capability_case",
+    "open_capability_case",
     "validate_capability_definition",
 ]

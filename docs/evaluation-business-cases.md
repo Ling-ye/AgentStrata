@@ -65,6 +65,9 @@
 
 ## 怎样阅读结果
 
+当前结果格式为 v2。开始测评时可以直接看到预期摘要，结果页使用运行时冻结的预期与实际回答对照。
+旧格式记录只归档导出，不再进入新趋势、恢复或 Harness。
+
 业务题的主评分使用固定的 `business-task-geval/v1` 步骤和 `strict_mode`。单轮映射 `Golden` / `LLMTestCase`，多轮映射 `ConversationalGolden` / `ConversationalTestCase`，数据集不会混用。GEval / ConversationalGEval 读取最终回答、可见回合、实际工具参数与返回、期望及参考资料，输出通过或不通过及理由。
 
 | 结果 | 意义 |

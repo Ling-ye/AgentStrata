@@ -38,6 +38,7 @@ def raise_evaluation_service_error(exc: EvaluationServiceError) -> None:
         "not_found": 404,
         "conflict": 409,
         "invalid_request": 400,
+        "archived_result": 409,
         "service_unavailable": 503,
         "invalid_response": 502,
         "internal_error": 502,

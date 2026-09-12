@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from importlib import resources
 from typing import Any
 
-from chatcopilot.evals.models import EvalCase
+from chatcopilot.evals.models import ProfileCase
 from chatcopilot.evals.suite_loader import load_suite_cases
 
 DIMENSIONS = (
@@ -21,18 +21,6 @@ DIMENSIONS = (
 class ProfileMode:
     repetitions: int
     max_wall_seconds: int
-
-
-@dataclass(frozen=True)
-class ProfileCase:
-    suite_id: str
-    case_id: str
-    dimension: str
-    case: EvalCase
-
-    @property
-    def ref(self) -> str:
-        return f"{self.suite_id}:{self.case_id}"
 
 
 @dataclass(frozen=True)

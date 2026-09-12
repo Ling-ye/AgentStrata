@@ -399,6 +399,9 @@ def _mutation_acceptance(
 
 
 def _error_payload(exc: Exception) -> dict[str, Any]:
+    from chatcopilot.evals.result_codec import ArchivedResultError
+    if isinstance(exc, ArchivedResultError):
+        return {"code": "archived_result", "message": str(exc)}
     if isinstance(exc, EvaluationBlocked):
         return {
             "code": str(exc.payload.get("code") or "evaluation_blocked"),

@@ -4,38 +4,21 @@ from __future__ import annotations
 
 import sys
 import time
-import os
 from datetime import datetime, timezone
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
-from chatcopilot.application.agent_runtime import (
-    AgentRuntimeAssemblyProfile,
-    assemble_agent_runtime,
-)
-from chatcopilot.core.config import ChatConfig, load_config
-from chatcopilot.contracts.agent import AgentTask
-from chatcopilot.agent.context.prompt_plan import PromptBuildInput
-from chatcopilot.botspec import assemble_runtime_context, load_botspec, resolve_bot_spec_path
-from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.evals.execution_support import (
-    event_to_dict as _event_to_dict,
-    load_local_env as _load_local_env,
-    usage_summary as _usage_summary,
+    load_local_env as _load_local_env,  # noqa: F401 - public utility alias
 )
 from chatcopilot.evals.models import (
     EvalCase,
     EvalCaseResult,
     EvalRunResult,
-    JudgeResult,
     RunStatus,
 )
-from chatcopilot.evals.plugins import CaseLoadContext, EvaluationPlugin, get_evaluation_plugin
+from chatcopilot.evals.plugins import CaseLoadContext, get_evaluation_plugin
 from chatcopilot.evals.registry import get_manifest, get_standard
-from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService
-from chatcopilot.project import ENV_PREFIX
-from chatcopilot.evals.trial_capture import capture, record_turn, execution_phase, set_phase, timing_metadata
 
 ProgressCallback = Callable[[dict[str, Any]], None]
 
@@ -123,79 +106,23 @@ def run_suite(
         suite_id=standard.suite_id,
         total=len(cases),
     )
-    effective_driver = "dry_run" if dry_run else manifest.driver_id
-    if effective_driver == "dry_run":
-        case_results = tuple(
-            _run_dry_cases(
-                standard.suite_id,
-                cases,
-                bot=bot,
-                output=output,
-                started_at=started_at,
-                suite_start=started,
-                progress_callback=progress_callback,
-            )
-        )
-    elif effective_driver == "direct_llm":
-        if not bot:
-            raise ValueError(f"{standard.name} 需要 --bot 指定 BotSpec（用于 LLM 配置）。")
-        case_results = tuple(
-            _run_direct_llm_cases(
-                standard.suite_id,
-                plugin,
-                cases,
-                bot=bot,
-                output=output,
-                started_at=started_at,
-                suite_start=started,
-                progress_callback=progress_callback,
-                options=plugin_options,
-            )
-        )
-    elif plugin.execute_trial is None and any(isinstance(case.metadata.get("case_definition"), dict) for case in cases):
-        if standard.requires_bot and not bot:
-            raise ValueError(f"{standard.name} 需要 --bot 指定 BotSpec。")
-        case_results = tuple(
-            _run_declarative_cases(
-                standard.suite_id,
-                cases,
-                bot=bot or "",
-                output=output,
-                started_at=started_at,
-                suite_start=started,
-                progress_callback=progress_callback,
-                workspace_root=workspace_root,
-                options=plugin_options,
-                confirm_external_write=confirm_external_write,
-            )
-        )
-    elif effective_driver == "agent_configured" and plugin.execute_trial is not None:
-        if not bot or workspace_root is None:
-            raise ValueError("environment benchmarks require a managed Trial workspace")
-        if plugin.preflight is not None:
-            plugin.preflight(cases=cases)
-        case_results = tuple(plugin.execute_trial(case, bot=bot, workspace_root=workspace_root,
-                                                  options=plugin_options) for case in cases)
-    elif effective_driver == "agent_configured":
-        if standard.requires_bot and not bot:
-            raise ValueError(f"{standard.name} 需要 --bot 指定 BotSpec。")
-        case_results = tuple(
-            _run_agent_cases(
-                standard.suite_id,
-                cases,
-                plugin=plugin,
-                bot=bot or "",
-                llm_judge=llm_judge,
-                output=output,
-                started_at=started_at,
-                suite_start=started,
-                progress_callback=progress_callback,
-                workspace_root=workspace_root,
-                options=plugin_options,
-            )
-        )
-    else:
-        raise ValueError(f"suite {standard.suite_id} has no Core driver for {effective_driver!r}")
+    from chatcopilot.evals.trial_runner import run_case
+    root = workspace_root or ((output / "workspace") if output else Path("reports/evals/workspaces") / suite_id)
+    results = []
+    if not dry_run and plugin.preflight is not None:
+        plugin.preflight(cases=cases)
+    for index, case in enumerate(cases, 1):
+        _case_started(progress_callback, index=index, total=len(cases), case=case)
+        result = run_case(case, suite_id=suite_id, bot=bot or "", workspace_root=root / case.case_id,
+                          options=plugin_options, driver=str(manifest.driver_id), dry_run=dry_run,
+                          confirm_external_write=confirm_external_write)
+        results.append(result)
+        _case_completed(progress_callback, index=index, total=len(cases), result=result)
+        _write_case_checkpoint(results=results, total_cases=len(cases), suite_id=suite_id, bot=bot,
+                               started_at=started_at, suite_start=started, output=output)
+        if result.error and result.error.fatal:
+            break
+    case_results = tuple(results)
 
     duration = time.monotonic() - started
     result = EvalRunResult(
@@ -231,371 +158,11 @@ def _utc_now() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _run_direct_llm_cases(
-    suite_id: str,
-    plugin: EvaluationPlugin,
-    cases: tuple[EvalCase, ...],
-    *,
-    bot: str,
-    output: Path | None = None,
-    started_at: str = "",
-    suite_start: float = 0.0,
-    progress_callback: ProgressCallback | None = None,
-    options: dict[str, Any] | None = None,
-) -> list[EvalCaseResult]:
-    """Run one trusted direct-LLM plugin without assuming a benchmark identity."""
-
-    if plugin.execute_trial is None or plugin.judge is None:
-        raise ValueError(
-            f"direct_llm plugin {plugin.plugin_id!r} must define execute_trial and judge hooks"
-        )
-
-    chat_config = _load_bot_config(bot)
-    results: list[EvalCaseResult] = []
-
-    total = len(cases)
-    for index, case in enumerate(cases, start=1):
-        _case_started(progress_callback, index=index, total=total, case=case)
-        started = time.monotonic()
-        case_started_at = _utc_now()
-        with capture() as observed:
-            final_text = ""
-            tool_calls = []
-            try:
-                record_turn({"conversation_id": case.case_id, "turn_index": 0, "input": case.input, "completed": False})
-                with execution_phase("agent"):
-                    observation = plugin.execute_trial(case, chat_config=chat_config)
-                if not isinstance(observation, dict):
-                    raise TypeError(
-                        f"direct_llm plugin {plugin.plugin_id!r} returned a non-mapping observation"
-                    )
-                final_text = str(observation.get("final_text") or "")
-                tool_calls = observation.get("tool_calls") or []
-                usage = observation.get("usage") or {}
-                plugin_metadata = observation.get("metadata") or {}
-                if (
-                    not isinstance(tool_calls, list)
-                    or not isinstance(usage, dict)
-                    or not isinstance(plugin_metadata, dict)
-                ):
-                    raise TypeError(
-                        f"direct_llm plugin {plugin.plugin_id!r} returned an invalid observation"
-                    )
-                record_turn({"conversation_id": case.case_id, "turn_index": 0, "input": case.input,
-                             "completed": True, "final_text": final_text, "stop_reason": "end_turn",
-                             **{key: plugin_metadata[key] for key in ("model_request", "model_response") if key in plugin_metadata}})
-                set_phase("judging")
-                from chatcopilot.evals.benchmark_scoring import score_benchmark
-
-                judge_result, judge_evidence = score_benchmark(
-                    suite_id, case, final_text, lambda: plugin.judge(case, observation),
-                    options=options or {}, tool_calls=tool_calls,
-                )
-                if not isinstance(judge_result, JudgeResult):
-                    raise TypeError(
-                        f"direct_llm plugin {plugin.plugin_id!r} returned an invalid judge result"
-                    )
-                results.append(
-                    EvalCaseResult(
-                        case_id=case.case_id,
-                        suite_id=suite_id,
-                        status="passed" if judge_result.passed else "failed",
-                        score=judge_result.score,
-                        max_score=judge_result.max_score,
-                        final_text=final_text,
-                        stop_reason="end_turn",
-                        duration_seconds=time.monotonic() - started,
-                        started_at=case_started_at,
-                        finished_at=_utc_now(),
-                        judge=judge_result,
-                        metadata={
-                            **plugin_metadata,
-                            "input": case.input,
-                            "judge_evidence": judge_evidence,
-                            "usage_totals": _flatten_usage(usage),
-                            "tool_calls": tool_calls,
-                        },
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001
-                captured = observed.get("turns", [])
-                captured = captured[-1] if captured else {}
-                response = captured.get("model_response") or {}
-                final_text = response.get("content", final_text) or ""
-                tool_calls = response.get("tool_calls", tool_calls) or []
-                results.append(
-                    EvalCaseResult(
-                        case_id=case.case_id,
-                        suite_id=suite_id,
-                        status="error",
-                        final_text=final_text,
-                        metadata={"input": case.input, "tool_calls": tool_calls,
-                                  **{key: captured[key] for key in ("model_request", "model_response") if key in captured},
-                                  "error_stage": observed.get("phase", "execution"),
-                                  "error_code": "judge_error" if observed.get("phase") == "judging" else "execution_error"},
-                        duration_seconds=time.monotonic() - started,
-                        started_at=case_started_at,
-                        finished_at=_utc_now(),
-                        error=f"{type(exc).__name__}: {exc}",
-                    )
-                )
-        results[-1] = replace(results[-1], metadata={**results[-1].metadata, **timing_metadata(observed), "execution": observed})
-        _case_completed(
-            progress_callback,
-            index=index,
-            total=total,
-            result=results[-1],
-        )
-        _write_case_checkpoint(
-            results=results,
-            total_cases=total,
-            suite_id=suite_id,
-            bot=bot,
-            started_at=started_at,
-            suite_start=suite_start,
-            output=output,
-        )
-
-    return results
-
-
-def _flatten_usage(usage: Any) -> dict[str, int]:
-    if isinstance(usage, dict):
-        totals: dict[str, int] = {}
-        for key, value in usage.items():
-            if isinstance(value, int):
-                totals[key] = value
-            elif isinstance(value, dict):
-                for nested_key, nested_value in value.items():
-                    if isinstance(nested_value, int):
-                        totals[nested_key] = totals.get(nested_key, 0) + nested_value
-                        totals[f"{key}.{nested_key}"] = nested_value
-        return totals
-    if hasattr(usage, "model_dump"):
-        return _flatten_usage(usage.model_dump())
-    return {}
 
 
 # ---------------------------------------------------------------------------
 # Agent path (GAIA, IFEval, etc.)
 # ---------------------------------------------------------------------------
-
-
-def _run_declarative_cases(
-    suite_id: str,
-    cases: tuple[EvalCase, ...],
-    *,
-    bot: str,
-    output: Path | None,
-    started_at: str,
-    suite_start: float,
-    progress_callback: ProgressCallback | None,
-    workspace_root: Path | None,
-    options: dict[str, Any],
-    confirm_external_write: bool,
-) -> list[EvalCaseResult]:
-    """Execute strict repository-owned Cases through the capability driver.
-
-    The driver returns ordinary ``EvalCaseResult`` values only.  Lifecycle,
-    authoritative artifacts, checkpointing, redaction and cancellation remain
-    owned by Evaluation Core.
-    """
-
-    from chatcopilot.evals.capability_executor import execute_capability_case
-
-    root = (
-        workspace_root.resolve()
-        if workspace_root is not None
-        else (Path("reports") / "evals" / "workspaces" / suite_id).resolve()
-    )
-    total = len(cases)
-    results: list[EvalCaseResult] = []
-    for index, case in enumerate(cases, start=1):
-        _case_started(progress_callback, index=index, total=total, case=case)
-        case_workspace = root if total == 1 else root / case.case_id
-        result = execute_capability_case(
-            case,
-            suite_id=suite_id,
-            bot=bot,
-            workspace_root=case_workspace,
-            options=options,
-            confirm_external_write=confirm_external_write,
-        )
-        results.append(result)
-        _case_completed(progress_callback, index=index, total=total, result=result)
-        _write_case_checkpoint(
-            results=results,
-            total_cases=total,
-            suite_id=suite_id,
-            bot=bot,
-            started_at=started_at,
-            suite_start=suite_start,
-            output=output,
-        )
-    return results
-
-
-def _run_agent_cases(
-    suite_id: str,
-    cases: tuple[EvalCase, ...],
-    *,
-    plugin: EvaluationPlugin | None = None,
-    bot: str,
-    llm_judge: bool = False,
-    output: Path | None = None,
-    started_at: str = "",
-    suite_start: float = 0.0,
-    progress_callback: ProgressCallback | None = None,
-    workspace_root: Path | None = None,
-    options: dict[str, Any] | None = None,
-) -> list[EvalCaseResult]:
-    plugin = plugin or get_evaluation_plugin(get_manifest(suite_id).plugin_id)
-    runtime = assemble_runtime_context(
-        load_botspec(resolve_bot_spec_path(Path(bot) if _looks_like_path(bot) else bot))
-    )
-    _load_local_env(runtime.source_path.parent / "local.env")
-    chat_config = load_config(env_prefix=runtime.spec.llm.env_prefix)
-    agent_runtime = assemble_agent_runtime(
-        runtime,
-        chat_config=chat_config,
-        profile=AgentRuntimeAssemblyProfile.DETACHED,
-    )
-    try:
-        resolved_workspace_root = workspace_root or (
-            (output / "workspace")
-            if output is not None
-            else Path("reports") / "evals" / "workspaces" / runtime.instance_id
-        )
-        workspace = Workspace(
-            root=resolved_workspace_root.resolve(),
-            chat_kind="p2p",
-            chat_id=f"eval:{suite_id}",
-            user_id="eval-user",
-            user_name="Eval Runner",
-        ).ensure()
-        env_guard = _EvalWorkspaceEnv(workspace)
-        total = len(cases)
-        with env_guard:
-            results: list[EvalCaseResult] = []
-            for index, case in enumerate(cases, start=1):
-                _case_started(progress_callback, index=index, total=total, case=case)
-                session = agent_runtime.new_session(
-                    session_id=f"eval-{suite_id}-{case.case_id}-{index}",
-                    prompt_input=PromptBuildInput(
-                        profile=runtime.prompt_profile,
-                        backend=runtime.agent_backend,
-                        model=None,
-                        role="owner",
-                        channel_kind="private",
-                        session_policy="这是隔离 Evaluation 会话；只处理当前评测 Case。",
-                        capability_policies=runtime.capability_policies,
-                        skill_index=runtime.skills,
-                    ),
-                    workspace_service=MiddlewareWorkspaceService(),
-                )
-                events: list[dict[str, Any]] = []
-                case_start = time.monotonic()
-                case_started_at = _utc_now()
-                with capture() as observed:
-                    final_text = ""
-                    task = None
-                    try:
-                        task = _prepare_task(plugin, suite_id, case, workspace)
-                        record_turn({"conversation_id": case.case_id, "turn_index": 0, "input": task.text, "completed": False})
-                        with execution_phase("agent"):
-                            agent_result = session.run_task(
-                                task,
-                                on_event=lambda event: events.append(_event_to_dict(event)),
-                            )
-                        final_text = agent_result.final_text
-                        record_turn({"conversation_id": case.case_id, "turn_index": 0, "input": task.text,
-                                     "completed": True, "final_text": final_text, "stop_reason": agent_result.stop_reason})
-                        set_phase("judging")
-                        from chatcopilot.evals.benchmark_scoring import score_benchmark
-
-                        judge, judge_evidence = score_benchmark(
-                            suite_id, case, agent_result.final_text,
-                            lambda: _judge_case(plugin, case, agent_result.final_text),
-                            options=options or {}, llm_judge=llm_judge,
-                        )
-                        case_result = EvalCaseResult(
-                            case_id=case.case_id,
-                            suite_id=suite_id,
-                            status="passed" if judge.passed else "failed",
-                            score=judge.score,
-                            max_score=judge.max_score,
-                            final_text=agent_result.final_text,
-                            stop_reason=agent_result.stop_reason,
-                            duration_seconds=time.monotonic() - case_start,
-                            started_at=case_started_at,
-                            finished_at=_utc_now(),
-                            events=tuple(events),
-                            judge=judge,
-                            metadata={**_usage_summary(events), "input": task.text,
-                                      "judge_evidence": judge_evidence},
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        case_result = EvalCaseResult(
-                            case_id=case.case_id,
-                            suite_id=suite_id,
-                            status="error",
-                            final_text=final_text,
-                            metadata={"input": task.text if task is not None else ""},
-                            duration_seconds=time.monotonic() - case_start,
-                            started_at=case_started_at,
-                            finished_at=_utc_now(),
-                            events=tuple(events),
-                            error=f"{type(exc).__name__}: {exc}",
-                        )
-                case_result = replace(case_result, metadata={**case_result.metadata, **timing_metadata(observed), "execution": observed})
-                results.append(case_result)
-                _case_completed(
-                    progress_callback,
-                    index=index,
-                    total=total,
-                    result=case_result,
-                )
-                _write_case_checkpoint(
-                    results=results,
-                    total_cases=total,
-                    suite_id=suite_id,
-                    bot=bot,
-                    started_at=started_at,
-                    suite_start=suite_start,
-                    output=output,
-                )
-            return results
-    finally:
-        agent_runtime.close()
-
-
-def _run_dry_cases(
-    suite_id: str,
-    cases: tuple[EvalCase, ...],
-    *,
-    bot: str | None,
-    output: Path | None,
-    started_at: str,
-    suite_start: float,
-    progress_callback: ProgressCallback | None,
-) -> list[EvalCaseResult]:
-    results: list[EvalCaseResult] = []
-    total = len(cases)
-    for index, case in enumerate(cases, start=1):
-        _case_started(progress_callback, index=index, total=total, case=case)
-        result = _dry_run_case(suite_id, case)
-        results.append(result)
-        _case_completed(progress_callback, index=index, total=total, result=result)
-        _write_case_checkpoint(
-            results=results,
-            total_cases=total,
-            suite_id=suite_id,
-            bot=bot,
-            started_at=started_at,
-            suite_start=suite_start,
-            output=output,
-        )
-    return results
 
 
 def _write_case_checkpoint(
@@ -702,74 +269,12 @@ def _write_checkpoint(
         pass
 
 
-def _dry_run_case(suite_id: str, case: EvalCase) -> EvalCaseResult:
-    now = _utc_now()
-    return EvalCaseResult(
-        case_id=case.case_id,
-        suite_id=suite_id,
-        status="skipped",
-        score=0.0,
-        max_score=1.0,
-        started_at=now,
-        finished_at=now,
-        error="dry-run: validated case shape but did not call the agent",
-    )
 
 
-def _judge_case(
-    plugin: EvaluationPlugin,
-    case: EvalCase,
-    final_text: str,
-    *,
-    chat_config: ChatConfig | None = None,
-) -> JudgeResult:
-    if plugin.judge is None:
-        raise ValueError(
-            f"agent plugin {plugin.plugin_id!r} must define a deterministic judge hook"
-        )
-    result = plugin.judge(case, final_text, chat_config=chat_config)
-    if not isinstance(result, JudgeResult):
-        raise TypeError(f"evaluation plugin {plugin.plugin_id!r} returned an invalid judge result")
-    return result
 
 
-def _load_bot_config(bot: str) -> ChatConfig:
-    """Load ChatConfig from a BotSpec path (for BFCL and other LLM-only paths)."""
-
-    runtime = assemble_runtime_context(
-        load_botspec(resolve_bot_spec_path(Path(bot) if _looks_like_path(bot) else bot))
-    )
-    _load_local_env(runtime.source_path.parent / "local.env")
-    return load_config(env_prefix=runtime.spec.llm.env_prefix)
 
 
-def _prepare_task(
-    plugin: EvaluationPlugin,
-    suite_id: str,
-    case: EvalCase,
-    workspace: Workspace,
-) -> AgentTask:
-    if plugin.build_task is not None:
-        task = plugin.build_task(case, workspace)
-        if not isinstance(task, AgentTask):
-            raise TypeError(f"evaluation plugin {plugin.plugin_id!r} returned an invalid AgentTask")
-        return task
-    return AgentTask(
-        text=case.input,
-        turn_context=_case_context(case),
-        metadata={"eval_suite": suite_id, "eval_case": case.case_id},
-    )
-
-
-def _case_context(case: EvalCase) -> str:
-    parts = [
-        "## Eval Case Context",
-        f"case_id: {case.case_id}",
-        f"category: {case.category}",
-    ]
-    if case.context:
-        parts.append(f"context: {case.context}")
-    return "\n".join(parts)
 
 
 def _summarize(results: tuple[EvalCaseResult, ...]) -> dict[str, Any]:
@@ -944,32 +449,3 @@ def _select_cases(
     if unknown:
         raise ValueError(f"unknown case_ids: {', '.join(unknown)}")
     return tuple(case for case in cases if case.case_id in requested)
-
-
-def _looks_like_path(value: str) -> bool:
-    return any(sep in value for sep in ("/", "\\")) or value.endswith((".yaml", ".yml"))
-
-
-class _EvalWorkspaceEnv:
-    def __init__(self, workspace: Workspace) -> None:
-        self._values = {
-            f"{ENV_PREFIX}_WORKSPACE": str(workspace.root),
-            f"{ENV_PREFIX}_CHAT_KIND": workspace.chat_kind or "",
-            f"{ENV_PREFIX}_CHAT_ID": workspace.chat_id or "",
-            f"{ENV_PREFIX}_USER_ID": workspace.user_id or "",
-            f"{ENV_PREFIX}_USER_NAME": workspace.user_name or "",
-        }
-        self._old: dict[str, str | None] = {}
-
-    def __enter__(self) -> "_EvalWorkspaceEnv":
-        for key, value in self._values.items():
-            self._old[key] = os.environ.get(key)
-            os.environ[key] = value
-        return self
-
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        for key, old_value in self._old.items():
-            if old_value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = old_value

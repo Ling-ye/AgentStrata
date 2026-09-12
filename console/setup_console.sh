@@ -140,6 +140,13 @@ info "控制仓库：$REPO_ROOT"
 # ---- 1. venv + 依赖 ----
 VENV="$REPO_ROOT/.venv"
 evaluation_unit_installed=0
+# Harness uses its existing database inode to block new/resumed tasks during updates.
+if [ -x "$VENV/bin/python" ] && [ "${CHATCOPILOT_HARNESS_MAINTENANCE_HELD:-0}" != 1 ]; then
+    exec env PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+        "$VENV/bin/python" -m chatcopilot.harness --repository-root "$REPO_ROOT" \
+        maintenance -- bash "$0" "$@"
+fi
+
 if [ -f "$USER_UNIT_DIR/$EVALUATION_UNIT_NAME" ] || \
     systemctl --user cat "$EVALUATION_UNIT_NAME" >/dev/null 2>&1; then
     evaluation_unit_installed=1

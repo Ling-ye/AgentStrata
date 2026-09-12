@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.evals.execution_support import event_to_dict
+
 from dataclasses import asdict
 import json
 
@@ -8,7 +10,7 @@ from chatcopilot.contracts.agent import (
     InputResourceReceipt,
     TurnError,
 )
-from chatcopilot.evals import capability_executor, isolated_executor, runner
+from chatcopilot.evals import capability_executor, isolated_executor
 
 
 def _sensitive_context_event() -> tuple[ContextSnapshotPrepared, str]:
@@ -62,12 +64,12 @@ def _sensitive_context_event() -> tuple[ContextSnapshotPrepared, str]:
 def test_context_snapshot_projection_omits_sensitive_bodies_in_all_eval_paths() -> None:
     event, secret = _sensitive_context_event()
     projections = (
-        runner._event_to_dict(event),
+        event_to_dict(event),
         isolated_executor._event_to_dict(event),
         capability_executor._event_dict(event),
     )
 
-    assert isolated_executor._event_to_dict is runner._event_to_dict
+    assert isolated_executor._event_to_dict is event_to_dict
     for projected in projections:
         serialized = json.dumps(projected, ensure_ascii=False)
         assert secret not in serialized
@@ -183,7 +185,7 @@ def test_non_context_event_projection_remains_compatible() -> None:
         "type": "TurnError",
     }
 
-    assert runner._event_to_dict(event) == expected
+    assert event_to_dict(event) == expected
     assert isolated_executor._event_to_dict(event) == expected
     assert capability_executor._event_dict(event) == expected
     assert capability_executor._event_dict({"type": "CustomEvent", "value": 1}) == {

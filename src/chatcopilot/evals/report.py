@@ -165,6 +165,11 @@ def compare_reports(base: Path, new: Path) -> dict[str, Any]:
 
     base_payload = _load_result(base)
     new_payload = _load_result(new)
+    from chatcopilot.evals.result_codec import validate_result, trial_projection
+    validate_result(base_payload)
+    validate_result(new_payload)
+    base_payload = {**base_payload, "trials": [trial_projection(t) for t in base_payload["trials"]]}
+    new_payload = {**new_payload, "trials": [trial_projection(t) for t in new_payload["trials"]]}
     _require_comparable_evaluations(base_payload, new_payload)
     product_capability_report = _is_product_capability_report(base_payload)
     base_ratio = None if product_capability_report else _evaluation_score_ratio(base_payload)

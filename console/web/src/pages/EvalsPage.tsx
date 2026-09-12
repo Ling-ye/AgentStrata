@@ -101,6 +101,7 @@ export default function EvalsPage({ visible = true }: Props) {
 
   const bots = botsQuery.data ?? [];
   const suites = suitesQuery.data ?? [];
+  const [archiveView, setArchiveView] = useState("current");
   const records = recordsQuery.data ?? [];
   const latestSelected = records.find(
     (record) => record.evaluation_id === selectedEvaluation?.evaluation_id,
@@ -113,7 +114,8 @@ export default function EvalsPage({ visible = true }: Props) {
   });
   const selectedRecord = detailQuery.data ?? latestSelected;
   const filteredRecords = records.filter(record => (recordTrack === "all" || (subjectForRecord(record)?.id ?? "unknown") === recordTrack)
-    && (recordStatus === "all" || record.status === recordStatus));
+    && (recordStatus === "all" || record.status === recordStatus)
+    && Boolean(record.archived) === (archiveView === "archived"));
   const activeForBot = records.find((record) => ACTIVE_STATUSES.has(record.status));
 
   useEffect(() => {
@@ -257,6 +259,7 @@ export default function EvalsPage({ visible = true }: Props) {
         <Tabs.TabPane key="records" title="运行记录">
           <Card className="eval-create-card">
             <div className="eval-history-filters">
+              <Select aria-label="记录版本" value={archiveView} onChange={setArchiveView} options={[{ value: "current", label: "当前测评" }, { value: "archived", label: "归档记录" }]} />
               <Select aria-label="记录测试方向" value={recordTrack} onChange={setRecordTrack} options={[
                 { value: "all", label: "全部方向" }, ...SUBJECTS.map(track => ({ value: track.id, label: track.title })), { value: "unknown", label: "对象未记录" },
               ]} />
@@ -344,7 +347,7 @@ export default function EvalsPage({ visible = true }: Props) {
             {detailQuery.isError && <Alert type="error" content={`详情读取失败：${formatApiError(detailQuery.error)}`}
               action={<Button size="small" onClick={() => void detailQuery.refetch()}>重试</Button>} />}
             <BenchmarkSnapshot record={selectedRecord} />
-            <EvaluationResults key={selectedRecord.evaluation_id} record={selectedRecord} />
+            {selectedRecord.archived ? <Alert type="info" title="旧格式记录已归档" content={selectedRecord.archive_reason || "只保留原有摘要和原始导出。"} /> : <EvaluationResults key={selectedRecord.evaluation_id} record={selectedRecord} />}
             <Space wrap>
               {ACTIVE_STATUSES.has(selectedRecord.status) && (
                 <Button
@@ -358,7 +361,7 @@ export default function EvalsPage({ visible = true }: Props) {
                   取消
                 </Button>
               )}
-              {!ACTIVE_STATUSES.has(selectedRecord.status) && (
+              {!selectedRecord.archived && !ACTIVE_STATUSES.has(selectedRecord.status) && (
                 <Button
                   loading={actionMutation.isPending}
                   onClick={() => actionMutation.mutate({
@@ -375,7 +378,7 @@ export default function EvalsPage({ visible = true }: Props) {
               <Button href={evaluationExportUrl(selectedRecord.evaluation_id, "markdown")}>
                 导出 Markdown
               </Button>
-              {!ACTIVE_STATUSES.has(selectedRecord.status) && (
+              {!selectedRecord.archived && !ACTIVE_STATUSES.has(selectedRecord.status) && (
                 <Button
                   status="danger"
                   onClick={() => Modal.confirm({

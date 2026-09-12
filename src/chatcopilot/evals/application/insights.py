@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Mapping
+from chatcopilot.evals.result_codec import trial_projection
+from chatcopilot.evals.models import RESULT_SCHEMA_VERSION
 
 _OUTCOMES = ("passed", "failed", "error", "skipped")
 
@@ -157,12 +159,25 @@ def _series(request: Mapping[str, Any], result: Mapping[str, Any]) -> tuple[str 
 def result_insights(
     request: Mapping[str, Any], result: Mapping[str, Any], *, status: str, planned: int,
 ) -> dict[str, Any]:
+    if result and result.get("schema_version") != RESULT_SCHEMA_VERSION:
+        return {"trend_eligible": False, "exclusion_reason": "archived", "complete": False}
+    from chatcopilot.evals.result_codec import ResultContractError
+    projected = []
+    malformed = False
+    for raw in result.get("trials", []):
+        try:
+            projected.append(trial_projection(raw))
+        except ResultContractError:
+            malformed = True
+            projected.append(raw)
+    result = {**result, "trials": projected}
     raw_trials = result.get("trials")
     trials = raw_trials if isinstance(raw_trials, list) else []
     raw_targets = result.get("targets")
     targets = raw_targets if isinstance(raw_targets, list) else []
     summary = _mapping(result.get("summary"))
     counts, valid = _trial_counts(trials)
+    valid = valid and not malformed
     if request.get("evaluation_id"):
         valid = valid and all(
             _mapping(trial).get("evaluation_id") == request["evaluation_id"] for trial in trials
@@ -360,17 +375,20 @@ def target_summaries(result: Mapping[str, Any], request: Mapping[str, Any]) -> l
 
 def trial_preview(trial: Mapping[str, Any], *, model: bool = False) -> dict[str, Any]:
     from chatcopilot.evals.model_io import output_preview
-    evidence = _mapping(trial.get("evidence"))
-    execution = _mapping(evidence.get("execution"))
-    turns = execution.get("turns", [])
+    view = trial_projection(trial)
+    evidence = view["evidence"]
+    captured = _mapping(evidence.get("execution"))
+    turns = captured.get("turns", [])
     first = _mapping(turns[0]) if isinstance(turns, list) and turns else {}
-    judging = _mapping(evidence.get("judge_evidence"))
-    return {
-        **{key: trial.get(key) for key in ("case_instance_id", "trial_id", "case_id", "case_ref", "target_id", "attempt",
-            "outcome", "duration_seconds", "started_at", "stop_reason", "error", "score", "max_score", "passed")},
-        "final_text": str(trial.get("final_text") or "")[:400],
+    execution = dict(trial["execution"])
+    execution.update(final_text=view["final_text"][:400], events=[],
+        metadata={"execution": {"state": captured.get("state", "not_recorded"), "timing": captured.get("timing")},
+                  "case_source": evidence.get("case_source", {}), "input": str(first.get("input") or evidence.get("input") or "")[:400]})
+    assessment = trial.get("assessment")
+    if assessment is not None:
+        assessment = {**assessment, "evidence": {key: assessment["evidence"].get(key)
+            for key in ("quality_applicable", "quality_reason", "metrics", "error", "native_result", "mode", "primary", "tool_outcome", "tool_evidence_state")}}
+    return {**dict(trial), "execution": execution, "assessment": assessment,
+        "body_available": True, "capture_state": captured.get("state", "not_recorded"),
         "input_preview": str(first.get("input") or evidence.get("input") or "")[:400],
-        "body_available": True, "capture_state": execution.get("state", "not_recorded"),
-        **({"model_output_preview": output_preview(trial)} if model or "model_response" in evidence else {}),
-        "evidence": {"error_code": evidence.get("error_code"), "error_stage": evidence.get("error_stage"), "tool_evidence_state": evidence.get("tool_evidence_state"), "case_source": _mapping(evidence.get("case_source")), "judge_evidence": {key: judging.get(key) for key in ("quality_applicable", "quality_reason", "metrics", "error", "native_result", "mode", "primary", "tool_outcome", "tool_evidence_state")}},
-    }
+        **({"model_output_preview": output_preview(view)} if model or "model_response" in evidence else {})}

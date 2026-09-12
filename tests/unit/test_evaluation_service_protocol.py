@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import asyncio
 import base64
 import json
@@ -198,6 +199,7 @@ def test_harness_case_instance_resolves_saved_evidence_before_creating_task(tmp_
         file = service.artifact_root / identifier / "result.json"
         result = json.loads(file.read_text())
         result["trials"][1]["outcome"] = "failed"
+        result["trials"][1]["assessment"]["judge"].update(passed=False, score=0.0)
         result["config_snapshot"]["definition_snapshot"]["cases"] = [
             {"case_id": case, "definition_sha256": case * 64} for case in ("a", "b")
         ]
@@ -210,7 +212,7 @@ def test_harness_case_instance_resolves_saved_evidence_before_creating_task(tmp_
         assert created["source"]["case_instance_id"] == trials[1]["case_instance_id"]
         assert created["source"]["case_ref"] == "fixture-suite:b"
         evidence = controller.evidence(created["task_id"])
-        assert evidence["trials"][0]["final_text"] == result["trials"][1]["final_text"]
+        assert evidence["trials"][0]["execution"]["final_text"] == result["trials"][1]["execution"]["final_text"]
         again = controller.start_case_instance(trials[1]["case_instance_id"], RepairOptions("test-model"), request_id="one", launch=False)
         assert again["task_id"] == created["task_id"]
         assert controller.list(search=trials[1]["case_instance_id"])["total"] == 1
@@ -344,7 +346,7 @@ def _write_comparison_test_sitecustomize(tmp_path: Path) -> Path:
             def _execute(request):
                 time.sleep(0.02)
                 case_ref = request.profile_case.ref
-                return evaluation_module.EvaluationTrial(
+                return evaluation_module.trial_result(
                     trial_id=(
                         f"{request.case.case_id}-a{request.attempt}-"
                         f"{request.target.target_id}"

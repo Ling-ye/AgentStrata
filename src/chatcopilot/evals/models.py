@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal, Mapping
+from pathlib import Path
+from contextlib import AbstractContextManager
+from typing import Any, Callable, Literal, Mapping, TypeAlias
 
 SuiteKind = Literal[
     "product", "knowledge", "reasoning", "code", "agent", "tool", "web", "context", "safety"
@@ -228,6 +230,18 @@ class EvalCase:
 
 
 @dataclass(frozen=True)
+class ProfileCase:
+    suite_id: str
+    case_id: str
+    dimension: str
+    case: EvalCase
+
+    @property
+    def ref(self) -> str:
+        return f"{self.suite_id}:{self.case_id}"
+
+
+@dataclass(frozen=True)
 class JudgeResult:
     """Structured scoring output for a case."""
 
@@ -255,7 +269,7 @@ class EvalCaseResult:
     finished_at: str = ""
     events: tuple[dict[str, Any], ...] = ()
     judge: JudgeResult | None = None
-    error: str = ""
+    error: EvaluationError | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -289,6 +303,52 @@ class TrialObservation:
     structured_error: dict[str, Any] | None = None
 
 
+RESULT_SCHEMA_VERSION = 2
+
+
+@dataclass(frozen=True)
+class CaseExpectation:
+    """Scorer-only declaration, frozen before execution; never an Agent input."""
+
+    reference_answer: Any = None
+    behavior: str = ""
+    checks: tuple[str, ...] = ()
+    source: str = "case_definition"
+
+
+@dataclass(frozen=True)
+class EvaluationError:
+    stage: str
+    code: str
+    message: str
+
+    @property
+    def fatal(self) -> bool:
+        return self.code in {
+            "result_contract_error", "protocol_error", "storage_error",
+            "artifact_integrity_error", "cleanup_error",
+        }
+
+
+@dataclass(frozen=True)
+class ExecutionEvidence:
+    final_text: str = ""
+    stop_reason: str = ""
+    events: tuple[dict[str, Any], ...] = ()
+    usage: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    started_at: str = ""
+    finished_at: str = ""
+    total_seconds: float | None = None
+
+
+@dataclass(frozen=True)
+class Assessment:
+    judge: JudgeResult | None = None
+    evidence: dict[str, Any] = field(default_factory=dict)
+    duration_seconds: float | None = None
+
+
 def to_jsonable(value: Any) -> Any:
     """Convert dataclasses recursively into JSON-serializable values."""
 
@@ -311,3 +371,238 @@ class AssertionOutcome:
     missing: tuple[str, ...] = ()
     violations: tuple[str, ...] = ()
     checks: Mapping[str, Any] = field(default_factory=dict)
+
+
+EvaluationKind = Literal["comparison", "suite"]
+EvaluationStatus = Literal[
+    "queued",
+    "running",
+    "completed",
+    "partial",
+    "cancelled",
+    "interrupted",
+    "error",
+]
+TrialOutcome = Literal["passed", "failed", "skipped", "error"]
+TargetExecutor = Literal[
+    "direct_llm",
+    "agent_configured",
+    "agent_isolated",
+    "acp_scenario",
+    "qq_message_flow",
+    "dry_run",
+]
+ComparisonPreset = Literal["quick", "standard", "custom"]
+
+@dataclass(frozen=True)
+class EvaluationTarget:
+    """Resolved and fingerprinted execution lane."""
+
+    target_id: str
+    label: str
+    executor: TargetExecutor
+    backend: str
+    model: str
+    reasoning_effort: str
+    fingerprint: str
+    config_fingerprint: str = ""
+
+
+@dataclass(frozen=True)
+class ComparisonEvaluationRequest:
+    """Resolved request for a versioned Profile comparison."""
+
+    evaluation_id: str
+    kind: Literal["comparison"]
+    bot: str
+    profile: str
+    preset: ComparisonPreset
+    targets: tuple[str, ...]
+    case_refs: tuple[str, ...]
+    repetitions: int
+    max_wall_seconds: float
+    seed: int
+
+
+@dataclass(frozen=True)
+class SuiteEvaluationRequest:
+    """Resolved request for one official or built-in benchmark Suite."""
+
+    evaluation_id: str
+    kind: Literal["suite"]
+    bot: str
+    suite: str
+    case_ids: tuple[str, ...]
+    preset: str
+    repetitions: int
+    max_wall_seconds: float
+    seed: int
+    options: dict[str, Any]
+    confirm_external_write: bool
+    dry_run: bool
+    llm_judge: bool
+
+
+EvaluationRequest: TypeAlias = ComparisonEvaluationRequest | SuiteEvaluationRequest
+
+
+@dataclass(frozen=True)
+class TrialExecutionRequest:
+    """One executor invocation inside a complete target group."""
+
+    evaluation_id: str
+    kind: EvaluationKind
+    bot: str
+    output: Path
+    suite_id: str
+    profile: str
+    profile_case: ProfileCase | None
+    case: EvalCase
+    dimension: str
+    target: EvaluationTarget
+    attempt: int
+    order: int
+    plugin_id: str = ""
+    driver_id: str = ""
+    dry_run: bool = False
+    llm_judge: bool = False
+    options: dict[str, Any] = field(default_factory=dict)
+    confirm_external_write: bool = False
+    max_execution_seconds: float = 0.0
+    frozen_definition_snapshot: dict[str, Any] = field(default_factory=dict)
+    frozen_definition_fingerprint: str = ""
+    frozen_environment_fingerprint: str = ""
+
+
+@dataclass(frozen=True)
+class EvaluationTrial:
+    """Coverage-complete evidence for one Case, attempt, and Target."""
+
+    trial_id: str
+    evaluation_id: str
+    kind: EvaluationKind
+    bot: str
+    profile: str
+    suite_id: str
+    case_ref: str
+    case_id: str
+    dimension: str
+    target_id: str
+    target_fingerprint: str
+    executor: TargetExecutor
+    backend: str
+    model: str
+    reasoning_effort: str
+    attempt: int
+    order: int
+    outcome: TrialOutcome
+    expectation: CaseExpectation = field(default_factory=CaseExpectation)
+    execution: ExecutionEvidence = field(default_factory=ExecutionEvidence)
+    assessment: Assessment | None = None
+    error: EvaluationError | None = None
+
+    @property
+    def score(self) -> float | None:
+        return self.assessment.judge.score if self.assessment and self.assessment.judge else None
+
+    @property
+    def max_score(self) -> float:
+        return self.assessment.judge.max_score if self.assessment and self.assessment.judge else 1.0
+
+    @property
+    def passed(self) -> bool:
+        return self.outcome == "passed"
+
+    @property
+    def judge(self) -> dict[str, Any] | None:
+        return to_jsonable(self.assessment.judge) if self.assessment and self.assessment.judge else None
+
+    @property
+    def final_text(self) -> str:
+        return self.execution.final_text
+
+    @property
+    def stop_reason(self) -> str:
+        return self.execution.stop_reason
+
+    @property
+    def events(self) -> tuple[dict[str, Any], ...]:
+        return self.execution.events
+
+    @property
+    def usage_totals(self) -> dict[str, Any]:
+        return self.execution.usage
+
+    @property
+    def tool_summary(self) -> dict[str, Any]:
+        return self.execution.metadata.get("tool_summary", {})
+
+    @property
+    def evidence(self) -> dict[str, Any]:
+        return {**self.execution.metadata,
+                "judge_evidence": self.assessment.evidence if self.assessment else {},
+                "error_stage": self.error.stage if self.error else "",
+                "error_code": self.error.code if self.error else ""}
+
+    @property
+    def duration_seconds(self) -> float | None:
+        return self.execution.total_seconds
+
+    @property
+    def started_at(self) -> str:
+        return self.execution.started_at
+
+    @property
+    def finished_at(self) -> str:
+        return self.execution.finished_at
+
+
+@dataclass(frozen=True)
+class CaseComparison:
+    case_ref: str
+    case_id: str
+    dimension: str
+    sample_size: int
+    verdict: str
+    targets: dict[str, dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class EvaluationResult:
+    """Authoritative top-level Evaluation result."""
+
+    evaluation_id: str
+    kind: EvaluationKind
+    bot: str
+    status: EvaluationStatus
+    started_at: str
+    finished_at: str
+    duration_seconds: float
+    profile: str = ""
+    suite: str = ""
+    preset: str = ""
+    repetitions: int = 1
+    max_wall_seconds: float = 0.0
+    seed: int = 0
+    targets: tuple[EvaluationTarget, ...] = ()
+    selected_cases: tuple[str, ...] = ()
+    trials: tuple[EvaluationTrial, ...] = ()
+    comparisons: tuple[CaseComparison, ...] = ()
+    dimensions: dict[str, Any] = field(default_factory=dict)
+    summary: dict[str, Any] = field(default_factory=dict)
+    config_snapshot: dict[str, Any] = field(default_factory=dict)
+    error: str = ""
+    schema_version: int = RESULT_SCHEMA_VERSION
+
+
+
+Scorer = Callable[[], tuple[JudgeResult, dict[str, Any]]]
+
+
+@dataclass(frozen=True)
+class PreparedCase:
+    observation: TrialObservation
+    score: Scorer
+
+
+CaseOpener = Callable[..., AbstractContextManager[PreparedCase]]

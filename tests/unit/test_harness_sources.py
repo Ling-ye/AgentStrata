@@ -95,7 +95,8 @@ def test_empty_feedback_uses_same_identity_as_omitted_feedback(tmp_path):
 
 def test_source_previews_group_failed_repetitions_and_include_target():
     trials = [
-        {"case_ref": "suite:case", "case_id": "case", "target_id": target, "outcome": outcome}
+        {"case_ref": "suite:case", "case_id": "case", "target_id": target, "outcome": outcome,
+         "error": {"stage": "execution", "code": "execution_error", "message": "controlled failure"} if outcome == "error" else None}
         for target, outcome in [
             ("first", "failed"),
             ("first", "failed"),

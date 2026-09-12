@@ -144,7 +144,7 @@ def test_model_capture_actual_messages_and_client_close(monkeypatch, fail):
 
 def test_judge_failure_keeps_model_response(monkeypatch):
     from chatcopilot.evals.plugins.bfcl import PLUGIN
-    from chatcopilot.evals.runner import _run_direct_llm_cases
+    from tests.evaluation_fixtures import run_direct_cases
     case = bfcl._smoke_cases()[0]
     def execute(*args, **kwargs):
         from chatcopilot.evals.trial_capture import record_turn
@@ -153,8 +153,8 @@ def test_judge_failure_keeps_model_response(monkeypatch):
         record_turn({"conversation_id": case.case_id, "turn_index": 0, "model_request": request, "model_response": response, "completed": True})
         return {"final_text": "retained", "tool_calls": [call()], "metadata": {"model_request": request, "model_response": response}}
     def broken(*args): raise ValueError("synthetic checker failure")
-    monkeypatch.setattr("chatcopilot.evals.runner._load_bot_config", lambda bot: object())
-    result = _run_direct_llm_cases("bfcl", replace(PLUGIN, execute_trial=execute, judge=broken), (case,), bot="synthetic")[0]
+    monkeypatch.setattr("chatcopilot.evals.case_drivers._load_bot_config", lambda bot: object())
+    result = run_direct_cases("bfcl", replace(PLUGIN, execute_model=execute, judge=broken), (case,), bot="synthetic")[0]
     assert result.status == "error" and result.final_text == "retained"
     assert result.metadata["model_response"]["tool_calls"] == [call()]
-    assert result.metadata["error_code"] == "judge_error"
+    assert result.error.code == "judge_error"

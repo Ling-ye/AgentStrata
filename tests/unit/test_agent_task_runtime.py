@@ -78,7 +78,7 @@ def test_native_session_executes_real_registry_and_fact_scoring(monkeypatch, tmp
     from chatcopilot.core.llm_client import ChatResult, LLMClient
     from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
     from chatcopilot.evals.registry import get_cases
-    from chatcopilot.evals.plugins.agent_tasks import execute
+    from tests.evaluation_fixtures import execute_agent_task as execute
 
     runtime = replace(
         load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False),

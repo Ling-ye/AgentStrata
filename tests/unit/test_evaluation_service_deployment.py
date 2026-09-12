@@ -188,6 +188,12 @@ def _deploy_harness(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
         """#!/usr/bin/env bash
 printf 'venv-python %s\n' "$*" >> "$CALL_LOG"
 case "$*" in
+  *"chatcopilot.harness"*"maintenance --"*)
+    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
+    shift
+    CHATCOPILOT_HARNESS_MAINTENANCE_HELD=1 "$@"
+    exit $?
+    ;;
   *"maintenance enter"*)
     if [ "${FAIL_MAINTENANCE_ENTER:-0}" = 1 ]; then exit 1; fi
     printf '0123456789abcdef0123456789abcdef\n'

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from chatcopilot.contracts.agent import AgentEvent, LlmCallFinished
 from chatcopilot.core.settings import load_local_env_values
@@ -47,3 +47,12 @@ def load_local_env(path: Path) -> None:
 
 
 __all__ = ["event_to_dict", "load_local_env", "usage_summary"]
+
+
+def cleanup(action: Callable[[], Any]) -> None:
+    """Resource owners report cleanup failures at the boundary where they occur."""
+    from chatcopilot.evals.result_codec import PipelineFailure, error_from_exception
+    try:
+        action()
+    except Exception as exc:
+        raise PipelineFailure(error_from_exception(exc, "cleanup")) from exc

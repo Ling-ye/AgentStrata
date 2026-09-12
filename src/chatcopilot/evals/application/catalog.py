@@ -15,6 +15,7 @@ from chatcopilot.evals.application.bots import (
     evaluation_subprocess_env,
     temporary_eval_env,
 )
+from chatcopilot.evals.expectations import case_expectation, expectation_summary
 from chatcopilot.evals.models import EvalCase, to_jsonable
 from chatcopilot.evals.workbench import benchmark_descriptor, organization_descriptor, scoring_plan
 from chatcopilot.evals.business_dataset import tool_dependencies, reference_material
@@ -247,7 +248,7 @@ def get_case_descriptor(
                 "input": case.input,
                 "context": case.context,
                 "rubric": case.rubric,
-                "expected_behavior": case.expected_behavior,
+                "expectation": to_jsonable(case_expectation(case)),
                 "metadata": _safe_case_metadata(case),
                 "scoring": scoring_plan(get_manifest(suite_id), {}) if "business" in case.metadata else case.metadata.get("case_definition", {}).get("quality", {}),
                 "reference_material": reference_material(case),
@@ -267,6 +268,7 @@ def _case_summary(case: EvalCase, readiness: dict[str, Any] | None = None) -> di
         "test_category": case.metadata.get("test_category", "task"),
         "red_team_surface": case.metadata.get("red_team_surface", ""),
         "capability_tags": list(case.capability_tags or (case.category,)),
+        "expectation_summary": expectation_summary(case_expectation(case)),
         "summary": text[:180] + ("…" if len(text) > 180 else ""),
         "quality_required": True if "business" in case.metadata else case.metadata.get("case_definition", {}).get("quality", {}).get("enabled"),
         "has_attachments": bool(files),

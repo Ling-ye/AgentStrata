@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from chatcopilot.evals.execution_support import cleanup
+
 import hashlib
-import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 import uuid
@@ -14,14 +16,12 @@ from chatcopilot.evals.adapters import swebench, swebench_runtime as sandbox
 from chatcopilot.evals.benchmark_scoring import score_benchmark
 from chatcopilot.evals.environment_agent import run_environment_agent
 from chatcopilot.evals.execution_support import usage_summary
-from chatcopilot.evals.models import EvalCaseResult
 from chatcopilot.evals.plugins.base import EvaluationPlugin, PLUGIN_API_VERSION
-from chatcopilot.evals.trial_capture import capture_case, record_environment
+from chatcopilot.evals.trial_capture import record_environment
 
 
-@capture_case
-def _execute(case, *, bot: str, workspace_root: Path, options: dict[str, Any]) -> EvalCaseResult:
-    started = time.monotonic()
+@contextmanager
+def open_case(case, *, bot: str, workspace_root: Path, options: dict[str, Any]):
     run_id = uuid.uuid4().hex
     name = f"agentstrata-swe-{run_id}-solve"
     final_text = ""
@@ -55,36 +55,35 @@ def _execute(case, *, bot: str, workspace_root: Path, options: dict[str, Any]) -
         final_text, events = run_environment_agent(bot=bot, workspace_root=workspace_root / "agent",
             task_text=case.input, provider=provider, tool_names=frozenset({tool.name}))
         patch = sandbox.read_patch(name)
-        sandbox.cleanup_container(name)
-        name = f"agentstrata-swe-{run_id}-grade"
-        record_environment({"kind": "swe-bench", "container": name})
-        sandbox.start_container(name, image_id)
-        sandbox.prepare_repository(name, case.metadata["base_commit"])
-        grading: dict[str, Any] = {}
-
-        def native():
-            nonlocal grading
-            result, grading = sandbox.grade(case, patch, container=name, output=workspace_root)
-            return result
-
-        judge, evidence = score_benchmark("swe-bench-verified", case, final_text, native, options=options,
-                                         tool_calls=[{"name": "predicted_patch", "result": patch}])
-        return EvalCaseResult(case_id=case.case_id, suite_id="swe-bench-verified", status="passed" if judge.passed else "failed",
-            score=judge.score, max_score=judge.max_score, final_text=final_text, judge=judge,
-            duration_seconds=time.monotonic() - started, events=tuple(events),
-            metadata={**usage_summary(events), "judge_evidence": evidence, "tool_calls": audit,
-                      "predicted_patch": patch, "patch_sha256": hashlib.sha256(patch.encode()).hexdigest(),
-                      "image_id": image_id, "environment_result": grading,
-                      "repository_preparation": repository,
-                      "execution_protocol": "network-disabled capped container; upstream log grading"})
-    except Exception as exc:
-        return EvalCaseResult(case_id=case.case_id, suite_id="swe-bench-verified", status="error", final_text=final_text,
-            events=tuple(events), duration_seconds=time.monotonic() - started, error=str(exc), metadata={"tool_calls": audit})
+        from chatcopilot.evals.models import TrialObservation
+        from chatcopilot.evals.models import PreparedCase
+        metadata = {"predicted_patch": patch, "patch_sha256": hashlib.sha256(patch.encode()).hexdigest(),
+                    "image_id": image_id, "repository_preparation": repository,
+                    "execution_protocol": "network-disabled capped container; upstream log grading"}
+        observed = TrialObservation(final_text=final_text, stop_reason="end_turn", events=tuple(events),
+            tool_calls=tuple(audit), usage=usage_summary(events).get("usage_totals", {}),
+            evidence=({"kind": "adapter_metadata", **metadata},))
+        def assess():
+            nonlocal name
+            cleanup(lambda: sandbox.cleanup_container(name))
+            name = f"agentstrata-swe-{run_id}-grade"
+            record_environment({"kind": "swe-bench", "container": name})
+            sandbox.start_container(name, image_id)
+            sandbox.prepare_repository(name, case.metadata["base_commit"])
+            grading = {}
+            def native():
+                nonlocal grading
+                result, grading = sandbox.grade(case, patch, container=name, output=workspace_root)
+                return result
+            judge, evidence = score_benchmark("swe-bench-verified", case, final_text, native, options=options,
+                                             tool_calls=[{"name": "predicted_patch", "result": patch}])
+            return judge, {**evidence, "environment_result": grading}
+        yield PreparedCase(observed, assess)
     finally:
         if lease_active:
-            sandbox.cleanup_container(name)
+            cleanup(lambda: sandbox.cleanup_container(name))
 
 
 PLUGIN = EvaluationPlugin(plugin_id="swe-bench", api_version=PLUGIN_API_VERSION,
     implementation_module=__name__, allowed_drivers=frozenset({"agent_configured", "dry_run"}),
-    load_cases=lambda context: swebench.load_cases(), preflight=sandbox.preflight, execute_trial=_execute)
+    load_cases=lambda context: swebench.load_cases(), preflight=sandbox.preflight, open_case=open_case)

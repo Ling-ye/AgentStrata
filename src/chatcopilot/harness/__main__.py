@@ -44,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     task_start.add_argument(
         "--review-and-commit", action="store_true", help="AI 审核通过后本地提交修复与回归测试"
     )
+    maintenance = sub.add_parser("maintenance", help="证明 Harness 空闲并在命令期间阻止创建和恢复任务")
+    maintenance.add_argument("argv", nargs=argparse.REMAINDER)
     listing = sub.add_parser("list")
     listing.add_argument("--page", type=int, default=1)
     listing.add_argument("--search", default="")
@@ -60,6 +62,14 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "start-task"
             else None,
         )
+        if args.command == "maintenance":
+            import os
+            import subprocess
+            command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+            if not command:
+                raise ValueError("maintenance requires an explicit command")
+            with controller.store.maintenance() as descriptor:
+                return subprocess.run(command, pass_fds=(descriptor,), env={**os.environ, "CHATCOPILOT_HARNESS_MAINTENANCE_HELD": "1"}, check=False).returncode
         if args.command == "start":
             value = controller.start(
                 args.evaluation,

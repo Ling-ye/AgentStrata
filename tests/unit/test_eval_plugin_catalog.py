@@ -1,4 +1,6 @@
 from __future__ import annotations
+import chatcopilot.evals.case_drivers as driver_module
+from tests.evaluation_fixtures import run_direct_cases
 
 import ast
 import hashlib
@@ -605,9 +607,9 @@ def test_bfcl_plugin_preserves_request_and_execution_metadata(
 
     monkeypatch.setattr("chatcopilot.core.llm_client.LLMClient", FakeLLMClient)
     plugin = get_evaluation_plugin("bfcl")
-    assert plugin.execute_trial is not None
+    assert plugin.execute_model is not None
 
-    observation = plugin.execute_trial(
+    observation = plugin.execute_model(
         case,
         chat_config=SimpleNamespace(llm=SimpleNamespace(model="synthetic-model")),
     )
@@ -658,10 +660,10 @@ def test_direct_llm_runner_uses_non_bfcl_plugin_hooks(
         implementation_module="chatcopilot.evals.plugins.synthetic_direct",
         allowed_drivers=frozenset({"direct_llm"}),
         load_cases=lambda _context: (case,),
-        execute_trial=execute_trial,
+        execute_model=execute_trial,
         judge=judge,
     )
-    monkeypatch.setattr(runner_module, "_load_bot_config", lambda _bot: object())
+    monkeypatch.setattr(driver_module, "_load_bot_config", lambda _bot: object())
     monkeypatch.setattr(
         bfcl,
         "judge",
@@ -673,7 +675,7 @@ def test_direct_llm_runner_uses_non_bfcl_plugin_hooks(
     from dataclasses import replace
     manifest = replace(get_manifest("bfcl"), suite_id="synthetic-suite", plugin_id=plugin.plugin_id)
     monkeypatch.setattr(benchmark_scoring, "get_manifest", lambda _suite: manifest)
-    results = runner_module._run_direct_llm_cases(
+    results = run_direct_cases(
         "synthetic-suite",
         plugin,
         (case,),
@@ -699,7 +701,7 @@ def test_direct_llm_runner_uses_non_bfcl_plugin_hooks(
     assert leaderboard["accuracy_synthetic-protocol"] == 1.0
 
 
-@pytest.mark.parametrize("missing_hook", ("execute_trial", "judge"))
+@pytest.mark.parametrize("missing_hook", ("execute_model", "judge"))
 def test_direct_llm_runner_fails_closed_when_required_hook_is_missing(
     missing_hook: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -711,7 +713,7 @@ def test_direct_llm_runner_fails_closed_when_required_hook_is_missing(
         implementation_module="chatcopilot.evals.plugins.synthetic_direct",
         allowed_drivers=frozenset({"direct_llm"}),
         load_cases=lambda _context: (case,),
-        execute_trial=lambda _case, **_kwargs: {
+        execute_model=lambda _case, **_kwargs: {
             "final_text": "output",
             "tool_calls": [],
             "usage": {},
@@ -720,18 +722,15 @@ def test_direct_llm_runner_fails_closed_when_required_hook_is_missing(
     )
     plugin = replace(plugin, **{missing_hook: None})
     monkeypatch.setattr(
-        runner_module,
+        driver_module,
         "_load_bot_config",
         lambda _bot: (_ for _ in ()).throw(AssertionError("Bot config must not load")),
     )
 
-    with pytest.raises(ValueError, match="must define execute_trial and judge hooks"):
-        runner_module._run_direct_llm_cases(
-            "synthetic-suite",
-            plugin,
-            (case,),
-            bot="synthetic-bot",
-        )
+    result = run_direct_cases("synthetic-suite", plugin, (case,), bot="synthetic-bot")[0]
+    assert result.status == "error"
+    assert result.error.code == "result_contract_error"
+    assert "execute_model and judge hooks" in result.error.message
 
 
 def test_agent_runner_fails_closed_when_judge_hook_is_missing() -> None:
@@ -745,7 +744,7 @@ def test_agent_runner_fails_closed_when_judge_hook_is_missing() -> None:
     )
 
     with pytest.raises(ValueError, match="must define a deterministic judge hook"):
-        runner_module._judge_case(plugin, case, "claimed pass")
+        driver_module._judge_case(plugin, case, "claimed pass")
 
 
 def test_runner_has_no_official_suite_identity_branches() -> None:
@@ -879,21 +878,21 @@ def test_definition_fingerprint_covers_every_execution_definition_axis(monkeypat
     monkeypatch.setattr(plugin_catalog, "plugin_implementation_sha256", original_digest)
 
     original_driver = plugin_protocol.DRIVER_PROTOCOL_VERSION
-    monkeypatch.setattr(plugin_protocol, "DRIVER_PROTOCOL_VERSION", "agentstrata-eval-driver/v2")
+    monkeypatch.setattr(plugin_protocol, "DRIVER_PROTOCOL_VERSION", "agentstrata-eval-driver/test-change")
     assert baseline != suite_definition_fingerprint(
         manifest, plugin, (case,), target_fingerprint=target
     )
     monkeypatch.setattr(plugin_protocol, "DRIVER_PROTOCOL_VERSION", original_driver)
 
     original_scorer = plugin_protocol.SCORER_PROTOCOL_VERSION
-    monkeypatch.setattr(plugin_protocol, "SCORER_PROTOCOL_VERSION", "agentstrata-eval-scorer/v2")
+    monkeypatch.setattr(plugin_protocol, "SCORER_PROTOCOL_VERSION", "agentstrata-eval-scorer/test-change")
     assert baseline != suite_definition_fingerprint(
         manifest, plugin, (case,), target_fingerprint=target
     )
     monkeypatch.setattr(plugin_protocol, "SCORER_PROTOCOL_VERSION", original_scorer)
 
     binding = plugin_catalog.get_plugin_binding("generic-agent")
-    changed_binding = replace(binding, binding_version="agentstrata-plugin-binding/v2")
+    changed_binding = replace(binding, binding_version="agentstrata-plugin-binding/test-change")
     changed_bindings = tuple(
         changed_binding if item.plugin_id == binding.plugin_id else item
         for item in plugin_catalog._BINDINGS

@@ -9,6 +9,7 @@ from typing import Any, Callable
 from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
 from chatcopilot.evals.service import (
     EvaluationServiceClient,
+    RESULT_SCHEMA_VERSION,
     EvaluationServiceError,
     EvaluationServiceUnavailable,
 )
@@ -25,8 +26,11 @@ class ServiceEvaluator:
         record = self.client.get(evaluation_id)
         result = record.get("result") or {}
         failures = {}
+        if record.get("archived"):
+            return {"kind": "evaluation", "evaluation_id": evaluation_id, "status": record["status"],
+                    "failures": [], "blockers": ["旧格式测评已归档，请创建新的测评"]}
         for trial in result.get("trials", []):
-            if trial.get("outcome") in {"failed", "error"}:
+            if _repairable(trial):
                 key = (trial["case_ref"], trial["target_id"])
                 failures[key] = {name: trial[name] for name in ("case_id", "case_ref", "target_id")}
         blockers = []
@@ -65,7 +69,7 @@ class ServiceEvaluator:
         value = self.load(instance["evaluation_id"], target_id=instance["target_id"])
         value.pop("failures", None)
         trial = instance["trial"]
-        if trial.get("outcome") not in {"failed", "error"}:
+        if not _repairable(trial):
             value["blockers"].append("该 Case 实例没有失败或执行错误，不能发起修复")
         value["case_instance"] = {
             **{key: item for key, item in instance.items() if key != "trial"},
@@ -75,7 +79,7 @@ class ServiceEvaluator:
 
     def source_instance(self, case_instance_id: str) -> dict[str, Any]:
         instance = self._instance(case_instance_id)
-        if instance["trial"].get("outcome") not in {"failed", "error"}:
+        if not _repairable(instance["trial"]):
             raise HarnessError("not_failed", "该 Case 实例没有失败或执行错误")
         source = self.source(instance["evaluation_id"], instance["case_ref"], instance["target_id"])
         if not any(trial.get("trial_id") == instance["trial_id"]
@@ -87,6 +91,8 @@ class ServiceEvaluator:
 
     def source(self, evaluation_id: str, case_ref: str, target_id: str) -> dict[str, Any]:
         record = self.client.get(evaluation_id)
+        if record.get("archived") or record.get("result", {}).get("schema_version") != RESULT_SCHEMA_VERSION:
+            raise HarnessError("source_archived", "旧格式测评已归档，请创建新的测评")
         if record.get("status") != "completed" or not record.get("conditions"):
             raise HarnessError("unsupported_source", "需要已完成、具有完整 Case 快照的 Suite 测评")
         request, result = record["request"], record["result"]
@@ -101,7 +107,7 @@ class ServiceEvaluator:
             raise HarnessError("unsupported_target", "此目标未执行 AgentStrata 运行时")
         detail = self.client.case_detail(evaluation_id, case_ref, target_id=target_id)
         trials = detail["trials"]
-        if not trials or not any(trial["outcome"] in {"failed", "error"} for trial in trials):
+        if not trials or not any(_repairable(trial) for trial in trials):
             raise HarnessError("not_failed", "选中的 Case 没有失败 Trial")
         case_id = trials[0]["case_id"]
         definition = result["config_snapshot"]["definition_snapshot"]
@@ -121,18 +127,19 @@ class ServiceEvaluator:
         for trial in trials:
             if trial["outcome"] not in {"failed", "error"}:
                 continue
-            evidence = trial.get("evidence") or {}
+            error = trial.get("error") or {}
             signature.append(
                 {
                     "outcome": trial["outcome"],
-                    "stop_reason": trial.get("stop_reason"),
-                    "error_code": evidence.get("error_code"),
-                    "error_stage": evidence.get("error_stage"),
-                    "judge": (trial.get("judge") or {}).get("reason", ""),
+                    "stop_reason": trial.get("execution", {}).get("stop_reason"),
+                    "error_code": error.get("code"),
+                    "error_stage": error.get("stage"),
+                    "judge": ((trial.get("assessment") or {}).get("judge") or {}).get("reasons", []),
                 }
             )
         return {
             "kind": "evaluation",
+            "result_schema_version": RESULT_SCHEMA_VERSION,
             "evaluation_id": evaluation_id,
             "bot_id": request["bot_id"],
             "suite_id": request["suite_id"],
@@ -217,3 +224,11 @@ class ServiceEvaluator:
         except EvaluationServiceError as exc:
             if exc.code != "not_found":
                 raise
+
+
+def _repairable(trial: dict[str, Any]) -> bool:
+    error = trial.get("error")
+    return trial.get("outcome") == "failed" or (
+        trial.get("outcome") == "error" and isinstance(error, dict)
+        and error.get("code") in {"execution_error", "case_timeout"}
+    )

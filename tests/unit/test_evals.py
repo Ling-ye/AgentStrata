@@ -969,6 +969,8 @@ def _as_json(result):
 
 
 def _write_payload(path: Path, payload: dict) -> None:
+    from tests.evaluation_fixtures import result_payload
+    payload = result_payload({**payload, "trials": [{**t, "evaluation_id": payload.get("evaluation_id", "eval-fixture")} for t in payload.get("trials", [])]})
     path.mkdir(parents=True)
     (path / "result.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),

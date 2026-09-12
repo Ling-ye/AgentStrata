@@ -47,7 +47,7 @@ describe("free composition of evaluation trends", () => {
 describe("recorded Case input", () => {
   it("uses execution input before a frozen template and never looks up current definitions", () => {
     const r = record("1"); r.result = { config_snapshot: { definition_snapshot: { cases: [{ case_id: "a", input: "frozen template" }] } } };
-    const t = normalizeTrial({ case_id: "a", evidence: { execution: { turns: [{ input: "effective request" }] } } });
+    const t = normalizeTrial({ case_id: "a", execution: { metadata: { execution: { turns: [{ input: "effective request" }] } } } });
     expect(recordedInput(r, t)).toEqual({ text: "effective request", source: "实际输入" });
     t.evidence = {};
     expect(recordedInput(r, t).source).toContain("实际发送未记录");

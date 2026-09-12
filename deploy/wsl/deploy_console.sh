@@ -468,6 +468,16 @@ if [ "$STATUS_ONLY" -eq 1 ]; then
     exit $?
 fi
 
+# The outer Harness guard holds creation/resume through the existing Evaluation lease.
+# Read-only and Console-only restart operations do not need an update guard.
+if [ "$DRY_RUN" -eq 0 ] && [ "$RESTART_ONLY" -eq 0 ] && \
+   [ -x "$REPO_ROOT/.venv/bin/python" ] && \
+   [ "${CHATCOPILOT_HARNESS_MAINTENANCE_HELD:-0}" != 1 ]; then
+    exec env PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+        "$REPO_ROOT/.venv/bin/python" -m chatcopilot.harness --repository-root "$REPO_ROOT" \
+        maintenance -- bash "$0" "$@"
+fi
+
 preflight_common
 preflight_web
 

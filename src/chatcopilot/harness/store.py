@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import time
+import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from chatcopilot.core.private_sqlite import PrivateDatabase, json_text
+from chatcopilot.core.private_sqlite import PrivateDatabase, json_text, private_file
 from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError
 
 _SCHEMA = """
@@ -29,6 +31,35 @@ class HarnessStore:
         self.root = root.absolute()
         self.database = PrivateDatabase(self.root / "harness.sqlite3", _SCHEMA)
 
+    @contextmanager
+    def creation_guard(self, *, exclusive: bool = False):
+        """Share the existing database inode lock with the update process."""
+        import fcntl
+        path = self.root / "harness.sqlite3"
+        before = private_file(path)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            current = os.fstat(descriptor)
+            if (before.st_dev, before.st_ino) != (current.st_dev, current.st_ino):
+                raise HarnessError("maintenance_unknown", "Harness 数据库身份发生变化")
+            try:
+                fcntl.flock(descriptor, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise HarnessError("maintenance_active", "Harness 正在维护或接受另一项操作，请稍后重试") from exc
+            yield descriptor
+        finally:
+            os.close(descriptor)
+
+    @contextmanager
+    def maintenance(self):
+        """Atomically prove idle and prevent new/resumed work through the update."""
+        with self.creation_guard(exclusive=True) as descriptor:
+            with self.database.connect() as connection:
+                placeholders = ",".join("?" for _ in ACTIVE)
+                if connection.execute(f"SELECT 1 FROM tasks WHERE status IN ({placeholders}) LIMIT 1", tuple(ACTIVE)).fetchone():
+                    raise HarnessError("maintenance_blocked", "Harness 有活动任务，不能更新运行代码")
+            yield descriptor
+
     def by_request(self, request_key: str) -> dict[str, Any] | None:
         with self.database.connect() as connection:
             row = connection.execute(
@@ -38,7 +69,7 @@ class HarnessStore:
 
     def create(self, task: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         now = time.time()
-        with self.database.connect(write=True) as connection:
+        with self.creation_guard(), self.database.connect(write=True) as connection:
             old = connection.execute(
                 "SELECT payload FROM tasks WHERE request_key=? OR active_key=?",
                 (task["request_key"], task["active_key"]),
@@ -129,7 +160,7 @@ class HarnessStore:
             ]
 
     def claim_resume(self, task_id: str) -> tuple[dict[str, Any], bool]:
-        with self.database.connect(write=True) as connection:
+        with self.creation_guard(), self.database.connect(write=True) as connection:
             row = connection.execute(
                 "SELECT payload FROM tasks WHERE task_id=?", (task_id,)
             ).fetchone()

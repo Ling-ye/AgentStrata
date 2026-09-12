@@ -42,6 +42,6 @@ PLUGIN = EvaluationPlugin(
     allowed_drivers=frozenset({"direct_llm", "dry_run"}),
     load_cases=lambda context: ifeval.load_cases(),
     preflight=lambda *, cases: ifeval.preflight(cases),
-    execute_trial=_execute_trial,
+    execute_model=_execute_trial,
     judge=_judge,
 )

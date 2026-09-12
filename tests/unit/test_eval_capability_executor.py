@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.evals.trial_runner import run_case
+
 from chatcopilot.botspec.model import ContextSpec
 
 import json
@@ -730,7 +732,7 @@ def test_all_generic_agent_cases_execute_through_fake_selected_runtime(
     tmp_path: Path,
     fake_agent: list[Any],
 ) -> None:
-    result = executor.execute_capability_case(
+    result = run_case(
         _case(case_id),
         suite_id=SUITE_ID,
         bot="selected-bot",
@@ -741,7 +743,6 @@ def test_all_generic_agent_cases_execute_through_fake_selected_runtime(
 
     assert result.status == "passed", (case_id, result.error, result.judge)
     assert result.judge is not None and result.judge.passed is True
-    assert result.metadata["driver"] in {"agent_isolated", "agent_configured"}
     assert result.metadata["judge_evidence"]["judge_kind"] == "deepeval"
     assert result.metadata["judge_evidence"]["metrics"][0]["kind"] == "deterministic"
     assert fake_agent
@@ -1084,7 +1085,7 @@ def test_quick_acp_scenarios_dispatch_with_selected_bot_policy_without_model(
         )
 
     monkeypatch.setattr(executor, "load_evaluation_runtime", load_runtime)
-    result = executor.execute_capability_case(
+    result = run_case(
         _qq_case(case_id),
         suite_id=QQ_SUITE_ID,
         bot="selected-bot",
@@ -1094,7 +1095,6 @@ def test_quick_acp_scenarios_dispatch_with_selected_bot_policy_without_model(
     )
 
     assert result.status == "passed"
-    assert result.metadata["driver"] == "qq_message_flow"
     assert runtime_load == {
         "load_local_environment": False,
         "inherit_environment": False,
@@ -1111,7 +1111,7 @@ def test_assertion_failure_is_failed_not_infrastructure_error(
         lambda *_args, **_kwargs: TrialObservation(final_text="not JSON"),
     )
 
-    result = executor.execute_capability_case(
+    result = run_case(
         _case("dialogue-strict-json"),
         suite_id=SUITE_ID,
         bot="selected-bot",
@@ -1122,7 +1122,7 @@ def test_assertion_failure_is_failed_not_infrastructure_error(
 
     assert result.status == "failed"
     assert result.judge is not None and result.judge.passed is False
-    assert result.error == ""
+    assert result.error is None
 
 
 def test_all_manifest_cases_pass_executor_preflight(deepeval_judge, monkeypatch) -> None:
@@ -1139,7 +1139,7 @@ def test_declared_workspace_root_symlink_is_rejected_before_writes(tmp_path: Pat
     linked = tmp_path / "linked"
     linked.symlink_to(actual, target_is_directory=True)
 
-    result = executor.execute_capability_case(
+    result = run_case(
         _qq_case("qq-remote-url-not-attachment"),
         suite_id=QQ_SUITE_ID,
         bot="selected-bot",
@@ -1149,7 +1149,7 @@ def test_declared_workspace_root_symlink_is_rejected_before_writes(tmp_path: Pat
     )
 
     assert result.status == "error"
-    assert result.metadata["error"]["code"] == "capability_workspace_invalid"
+    assert result.error.code == "capability_workspace_invalid"
     assert list(actual.iterdir()) == []
 
 
@@ -1182,7 +1182,7 @@ def test_isolated_agent_runtime_drops_configured_rag_mcp_and_research_subagents(
 
     monkeypatch.setattr(executor, "assemble_agent_runtime", capture_build_runtime)
 
-    result = executor.execute_capability_case(
+    result = run_case(
         _case("tool-allowed-exact-call"),
         suite_id=SUITE_ID,
         bot="selected-bot",
@@ -1321,7 +1321,7 @@ def test_code_recovery_runtime_exposes_only_eval_owned_atomic_tools(
         return original_build_runtime(runtime_context, **kwargs)
 
     monkeypatch.setattr(executor, "assemble_agent_runtime", capture_build_runtime)
-    result = executor.execute_capability_case(
+    result = run_case(
         _case(case_id),
         suite_id=SUITE_ID,
         bot="selected-bot",
@@ -1397,7 +1397,7 @@ def test_infrastructure_exception_is_structured_error(
         raise ConnectionError("fake runtime unavailable")
 
     monkeypatch.setattr(executor, "_execute_agent_definition", fail)
-    result = executor.execute_capability_case(
+    result = run_case(
         _case("dialogue-strict-json"),
         suite_id=SUITE_ID,
         bot="selected-bot",
@@ -1407,8 +1407,8 @@ def test_infrastructure_exception_is_structured_error(
     )
 
     assert result.status == "error"
-    assert result.metadata["error"]["code"] == "capability_infrastructure_error"
-    assert "ConnectionError" in result.error
+    assert result.error.code == "execution_error"
+    assert "ConnectionError" in result.error.message
 
 
 def test_multiple_turns_reuse_one_agent_session(
@@ -1435,7 +1435,7 @@ def test_multiple_turns_reuse_one_agent_session(
 
 @pytest.mark.parametrize("fake_agent", ["native", "langgraph", "codex"], indirect=True)
 def test_selected_backend_input_output_reaches_deepeval(fake_agent, tmp_path):
-    result = executor.execute_capability_case(_case("dialogue-strict-json"), suite_id=SUITE_ID,
+    result = run_case(_case("dialogue-strict-json"), suite_id=SUITE_ID,
         bot="selected-bot", workspace_root=tmp_path, options={}, confirm_external_write=False)
     assert result.status == "passed", result.error
     assert result.metadata["judge_evidence"]["judge_kind"] == "deepeval"

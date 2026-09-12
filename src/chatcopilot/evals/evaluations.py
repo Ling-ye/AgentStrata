@@ -14,19 +14,15 @@ import hmac
 from importlib import resources
 import json
 import math
-import multiprocessing
 import os
 import re
-import signal
 import shutil
-import sys
 import time
 import uuid
-from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator, Literal, Mapping, Sequence, TypeAlias
+from typing import Any, Callable, Mapping, Sequence
 
 from chatcopilot.agent.backends.registry import backend_ids
 from chatcopilot.agent.tools.registry import ToolMaterializationError, discover_tools
@@ -44,7 +40,6 @@ from chatcopilot.evals.artifact_guard import (
 from chatcopilot.evals.isolated_executor import (
     IsolatedTarget,
     IsolatedTrialRequest,
-    execute_isolated_trial,
 )
 from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 from chatcopilot.evals.implementation_catalog import (
@@ -58,49 +53,31 @@ from chatcopilot.evals.manifest import (
     suite_definition_snapshot,
 )
 from chatcopilot.evals.capability_executor import validate_capability_definition
-from chatcopilot.evals.models import EvalCase, EvalCaseResult, to_jsonable
+from chatcopilot.evals.models import (
+    EvalCase, EvalCaseResult, to_jsonable, EvaluationKind, EvaluationStatus,
+    TrialOutcome, TargetExecutor, ComparisonPreset, EvaluationTarget,
+    ComparisonEvaluationRequest, SuiteEvaluationRequest, EvaluationRequest,
+    TrialExecutionRequest, EvaluationTrial, CaseComparison, EvaluationResult,
+    ExecutionEvidence, Assessment, EvaluationError, RESULT_SCHEMA_VERSION,
+)
 from chatcopilot.evals.paths import is_managed_evaluation_output
 from chatcopilot.evals.profiles import ProfileCase, get_profile
 from chatcopilot.evals.redaction import collect_env_secrets, redact_payload, sanitize_text
 from chatcopilot.evals.plugins import CaseLoadContext, get_evaluation_plugin, get_plugin_binding
 from chatcopilot.evals.registry import get_cases, get_manifest, get_standard
-from chatcopilot.evals.runner import run_suite
 from chatcopilot.external_tools.codex_cli import build_codex_command
+from chatcopilot.evals.result_codec import (ResultContractError, error_from_exception,
+    _assert_bounded_trial, _MAX_TRIAL_ARTIFACT_BYTES,
+)
 
-EvaluationKind = Literal["comparison", "suite"]
-EvaluationStatus = Literal[
-    "queued",
-    "running",
-    "completed",
-    "partial",
-    "cancelled",
-    "interrupted",
-    "error",
-]
-TrialOutcome = Literal["passed", "failed", "skipped", "error"]
-TargetExecutor = Literal[
-    "direct_llm",
-    "agent_configured",
-    "agent_isolated",
-    "acp_scenario",
-    "qq_message_flow",
-    "dry_run",
-]
-ComparisonPreset = Literal["quick", "standard", "custom"]
+from chatcopilot.evals.result_codec import _trial_id
+from chatcopilot.evals.trial_supervisor import (
+    _TrialExecutionCancelled, _TrialExecutionDeadlineExceeded, _TrialCleanupFailed,
+    _EvaluationDefinitionDrift, _TrialExecutionBudget, _execute_supervised_trial,
+    _preserved_environment,
+)
 
-_MAX_TRIAL_ARTIFACT_BYTES = 2 * 1024 * 1024
-_MAX_TRIAL_EVENTS = 512
-_MAX_TRIAL_COLLECTION_ITEMS = 4096
-_MAX_TRIAL_JSON_NODES = 20_000
-_MAX_TRIAL_JSON_DEPTH = 12
-_MAX_TRIAL_STRING_CHARS = 128 * 1024
-_MAX_TRIAL_KEY_CHARS = 256
-_MAX_TRIAL_IPC_FRAME_BYTES = _MAX_TRIAL_ARTIFACT_BYTES + 16 * 1024
 _DEFAULT_TRIAL_TIMEOUT_SECONDS = 1200.0
-_TRIAL_STARTUP_TIMEOUT_SECONDS = 15.0
-_TRIAL_TERMINATE_GRACE_SECONDS = 5.0
-_TRIAL_SUBTREE_TERM_GRACE_SECONDS = 0.5
-_TRIAL_SUBTREE_KILL_GRACE_SECONDS = 2.0
 _TRIAL_CLEANUP_ERROR_PREFIX = "trial_cleanup_failed:"
 _ARTIFACT_INTEGRITY_ERROR_PREFIX = "artifact_integrity_violation:"
 
@@ -113,159 +90,6 @@ _DEFAULT_COMPARISON_TARGETS = ("codex", "native")
 _TIE_THRESHOLD = 0.05
 
 
-@dataclass(frozen=True)
-class EvaluationTarget:
-    """Resolved and fingerprinted execution lane."""
-
-    target_id: str
-    label: str
-    executor: TargetExecutor
-    backend: str
-    model: str
-    reasoning_effort: str
-    fingerprint: str
-    config_fingerprint: str = ""
-
-
-@dataclass(frozen=True)
-class ComparisonEvaluationRequest:
-    """Resolved request for a versioned Profile comparison."""
-
-    evaluation_id: str
-    kind: Literal["comparison"]
-    bot: str
-    profile: str
-    preset: ComparisonPreset
-    targets: tuple[str, ...]
-    case_refs: tuple[str, ...]
-    repetitions: int
-    max_wall_seconds: float
-    seed: int
-
-
-@dataclass(frozen=True)
-class SuiteEvaluationRequest:
-    """Resolved request for one official or built-in benchmark Suite."""
-
-    evaluation_id: str
-    kind: Literal["suite"]
-    bot: str
-    suite: str
-    case_ids: tuple[str, ...]
-    preset: str
-    repetitions: int
-    max_wall_seconds: float
-    seed: int
-    options: dict[str, Any]
-    confirm_external_write: bool
-    dry_run: bool
-    llm_judge: bool
-
-
-EvaluationRequest: TypeAlias = ComparisonEvaluationRequest | SuiteEvaluationRequest
-
-
-@dataclass(frozen=True)
-class TrialExecutionRequest:
-    """One executor invocation inside a complete target group."""
-
-    evaluation_id: str
-    kind: EvaluationKind
-    bot: str
-    output: Path
-    suite_id: str
-    profile: str
-    profile_case: ProfileCase | None
-    case: EvalCase
-    dimension: str
-    target: EvaluationTarget
-    attempt: int
-    order: int
-    plugin_id: str = ""
-    driver_id: str = ""
-    dry_run: bool = False
-    llm_judge: bool = False
-    options: dict[str, Any] = field(default_factory=dict)
-    confirm_external_write: bool = False
-    max_execution_seconds: float = 0.0
-    frozen_definition_snapshot: dict[str, Any] = field(default_factory=dict)
-    frozen_definition_fingerprint: str = ""
-    frozen_environment_fingerprint: str = ""
-
-
-@dataclass(frozen=True)
-class EvaluationTrial:
-    """Coverage-complete evidence for one Case, attempt, and Target."""
-
-    trial_id: str
-    evaluation_id: str
-    kind: EvaluationKind
-    bot: str
-    profile: str
-    suite_id: str
-    case_ref: str
-    case_id: str
-    dimension: str
-    target_id: str
-    target_fingerprint: str
-    executor: TargetExecutor
-    backend: str
-    model: str
-    reasoning_effort: str
-    attempt: int
-    order: int
-    outcome: TrialOutcome
-    score: float = 0.0
-    max_score: float = 1.0
-    passed: bool = False
-    duration_seconds: float = 0.0
-    final_text: str = ""
-    stop_reason: str = ""
-    started_at: str = ""
-    finished_at: str = ""
-    judge: dict[str, Any] | None = None
-    events: tuple[dict[str, Any], ...] = ()
-    usage_totals: dict[str, int] = field(default_factory=dict)
-    tool_summary: dict[str, int] = field(default_factory=dict)
-    evidence: dict[str, Any] = field(default_factory=dict)
-    error: str = ""
-
-
-@dataclass(frozen=True)
-class CaseComparison:
-    case_ref: str
-    case_id: str
-    dimension: str
-    sample_size: int
-    verdict: str
-    targets: dict[str, dict[str, Any]]
-
-
-@dataclass(frozen=True)
-class EvaluationResult:
-    """Authoritative top-level Evaluation result."""
-
-    evaluation_id: str
-    kind: EvaluationKind
-    bot: str
-    status: EvaluationStatus
-    started_at: str
-    finished_at: str
-    duration_seconds: float
-    profile: str = ""
-    suite: str = ""
-    preset: str = ""
-    repetitions: int = 1
-    max_wall_seconds: float = 0.0
-    seed: int = 0
-    targets: tuple[EvaluationTarget, ...] = ()
-    selected_cases: tuple[str, ...] = ()
-    trials: tuple[EvaluationTrial, ...] = ()
-    comparisons: tuple[CaseComparison, ...] = ()
-    dimensions: dict[str, Any] = field(default_factory=dict)
-    summary: dict[str, Any] = field(default_factory=dict)
-    config_snapshot: dict[str, Any] = field(default_factory=dict)
-    error: str = ""
 
 
 class EvaluationValidationError(ValueError):
@@ -285,33 +109,6 @@ class EvaluationValidationError(ValueError):
 
     def to_dict(self) -> dict[str, Any]:
         return {"code": self.code, "message": self.message, "checks": self.checks}
-
-
-class _TrialExecutionCancelled(RuntimeError):
-    """The controlling Evaluation cancelled one in-flight Trial."""
-
-
-class _TrialExecutionDeadlineExceeded(TimeoutError):
-    """A hard Trial process deadline expired."""
-
-    def __init__(self, *, scope: Literal["case", "evaluation"], seconds: float) -> None:
-        self.scope = scope
-        self.seconds = seconds
-        super().__init__(f"{scope} execution deadline exceeded after {seconds:.3f} seconds")
-
-
-class _TrialCleanupFailed(RuntimeError):
-    """A Trial supervisor could not prove that every descendant was reaped."""
-
-
-class _EvaluationDefinitionDrift(RuntimeError):
-    """The Suite definition/runtime changed after the parent froze the run."""
-
-
-@dataclass(frozen=True)
-class _TrialExecutionBudget:
-    seconds: float
-    scope: Literal["case", "evaluation"]
 
 
 @dataclass(frozen=True)
@@ -396,614 +193,6 @@ def _trial_execution_budget(
     return _TrialExecutionBudget(seconds=case_seconds, scope="case")
 
 
-_trial_supervisor_stop_requested = False
-
-
-def _request_trial_supervisor_stop(_signum: int, _frame: Any) -> None:
-    """Ask the dedicated outer supervisor to reap its complete Trial subtree."""
-
-    global _trial_supervisor_stop_requested
-    _trial_supervisor_stop_requested = True
-
-
-def _prepare_trial_process(*, parent_pid: int) -> None:
-    """Create a Linux subreaper before any model or tool code runs."""
-
-    global _trial_supervisor_stop_requested
-    _trial_supervisor_stop_requested = False
-    if not sys.platform.startswith("linux"):
-        raise OSError("hard Trial descendant supervision requires Linux/WSL")
-    if not Path("/proc/self/task").is_dir():
-        raise OSError("hard Trial descendant supervision requires a mounted /proc")
-    os.setsid()
-
-    # The outer child never executes Agent or plugin code.  It remains alive as
-    # a subreaper while a forked inner child executes the Trial.  A daemonizing
-    # or setsid(2) descendant is therefore reparented here rather than to PID 1.
-    import ctypes
-
-    signal.signal(signal.SIGTERM, _request_trial_supervisor_stop)
-    signal.signal(signal.SIGINT, _request_trial_supervisor_stop)
-    libc = ctypes.CDLL(None, use_errno=True)
-    pr_set_pdeathsig = 1
-    pr_set_child_subreaper = 36
-    if libc.prctl(pr_set_pdeathsig, int(signal.SIGTERM), 0, 0, 0) != 0:
-        errno_value = ctypes.get_errno()
-        raise OSError(errno_value, "could not bind Trial lifetime to Evaluation Core")
-    if libc.prctl(pr_set_child_subreaper, 1, 0, 0, 0) != 0:
-        errno_value = ctypes.get_errno()
-        raise OSError(errno_value, "could not make Trial supervisor a child subreaper")
-    if os.getppid() != parent_pid:
-        raise RuntimeError("Evaluation Core exited during Trial supervisor startup")
-
-
-def _encode_trial_ipc_frame(payload: Mapping[str, Any]) -> bytes:
-    """Encode one finite canonical JSON control frame with a hard byte limit."""
-
-    try:
-        encoded = json.dumps(
-            dict(payload),
-            allow_nan=False,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Trial IPC frame is not finite canonical JSON") from exc
-    if len(encoded) > _MAX_TRIAL_IPC_FRAME_BYTES:
-        raise ValueError(f"Trial IPC frame exceeds {_MAX_TRIAL_IPC_FRAME_BYTES} bytes")
-    return encoded
-
-
-def _send_trial_ipc_frame(connection: Any, payload: Mapping[str, Any]) -> None:
-    connection.send_bytes(_encode_trial_ipc_frame(payload))
-
-
-def _reject_trial_ipc_constant(value: str) -> None:
-    raise ValueError(f"Trial IPC frame contains non-finite JSON constant {value!r}")
-
-
-def _trial_ipc_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in payload:
-            raise ValueError(f"Trial IPC frame contains duplicate key {key!r}")
-        payload[key] = value
-    return payload
-
-
-def _recv_trial_ipc_frame(connection: Any) -> dict[str, Any]:
-    """Receive bounded bytes before parsing; never unpickle child-controlled data."""
-
-    try:
-        encoded = connection.recv_bytes(maxlength=_MAX_TRIAL_IPC_FRAME_BYTES)
-    except OSError as exc:
-        raise ValueError("Trial IPC frame exceeded the receive limit") from exc
-    try:
-        payload = json.loads(
-            encoded.decode("utf-8"),
-            parse_constant=_reject_trial_ipc_constant,
-            object_pairs_hook=_trial_ipc_object,
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-        raise ValueError("Trial IPC frame is not valid UTF-8 JSON") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("Trial IPC frame must be an object")
-    if _encode_trial_ipc_frame(payload) != encoded:
-        raise ValueError("Trial IPC frame is not canonical JSON")
-    return payload
-
-
-def _linux_direct_children(pid: int) -> set[int]:
-    """Return all process children across the target's Linux thread group."""
-
-    task_root = Path(f"/proc/{pid}/task")
-    try:
-        task_dirs = tuple(task_root.iterdir())
-    except FileNotFoundError:
-        return set()
-    except OSError as exc:
-        raise _TrialCleanupFailed(f"could not inspect Trial process {pid}") from exc
-    children: set[int] = set()
-    for task_dir in task_dirs:
-        try:
-            raw = (task_dir / "children").read_text(encoding="ascii").strip()
-        except FileNotFoundError:
-            continue
-        except OSError as exc:
-            raise _TrialCleanupFailed(
-                f"could not inspect Trial process children for {pid}"
-            ) from exc
-        for value in raw.split():
-            if value.isdigit():
-                children.add(int(value))
-    return children
-
-
-def _linux_trial_descendants() -> tuple[int, ...]:
-    """Enumerate the dedicated supervisor's complete current descendant tree."""
-
-    pending = list(_linux_direct_children(os.getpid()))
-    seen: set[int] = set()
-    ordered: list[int] = []
-    while pending:
-        pid = pending.pop()
-        if pid in seen:
-            continue
-        seen.add(pid)
-        ordered.append(pid)
-        pending.extend(_linux_direct_children(pid) - seen)
-    return tuple(ordered)
-
-
-def _reap_trial_children() -> None:
-    """Reap every exited child adopted by the dedicated Trial subreaper."""
-
-    while True:
-        try:
-            pid, _status = os.waitpid(-1, os.WNOHANG)
-        except ChildProcessError:
-            return
-        except InterruptedError:
-            continue
-        if pid == 0:
-            return
-
-
-def _signal_trial_descendants(signum: int) -> None:
-    # Children are signalled before their parents.  The loop in the caller
-    # repeats discovery, so descendants forked during shutdown are included.
-    for pid in reversed(_linux_trial_descendants()):
-        try:
-            os.kill(pid, signum)
-        except ProcessLookupError:
-            continue
-        except OSError as exc:
-            raise _TrialCleanupFailed(f"could not signal Trial descendant {pid}") from exc
-
-
-def _wait_for_empty_trial_subtree(*, signum: int, grace_seconds: float) -> bool:
-    deadline = time.monotonic() + grace_seconds
-    while True:
-        _signal_trial_descendants(signum)
-        _reap_trial_children()
-        if not _linux_trial_descendants():
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.02)
-
-
-def _cleanup_trial_subtree() -> None:
-    """Terminate and reap even daemonized/session-escaped Trial descendants."""
-
-    if _wait_for_empty_trial_subtree(
-        signum=signal.SIGTERM,
-        grace_seconds=_TRIAL_SUBTREE_TERM_GRACE_SECONDS,
-    ):
-        return
-    if _wait_for_empty_trial_subtree(
-        signum=signal.SIGKILL,
-        grace_seconds=_TRIAL_SUBTREE_KILL_GRACE_SECONDS,
-    ):
-        return
-    remaining = _linux_trial_descendants()
-    raise _TrialCleanupFailed(
-        "Trial descendants remained after SIGKILL: " + ",".join(str(pid) for pid in remaining)
-    )
-
-
-def _execute_trial_in_fork(
-    sender: Any,
-    outer_sender: Any,
-    request: TrialExecutionRequest,
-    executor: TrialExecutor,
-) -> None:
-    """Run Agent/plugin code in the inner child and emit canonical JSON only."""
-
-    outer_sender.close()
-    signal.signal(signal.SIGTERM, signal.SIG_DFL)
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
-    try:
-        os.setsid()
-        from chatcopilot.evals.trial_capture import capture
-
-        with capture(lambda observation: _send_trial_ipc_frame(sender, {"kind": "observation", "execution": observation})):
-            trial = executor(request)
-        if not isinstance(trial, EvaluationTrial):
-            raise TypeError("Trial executor did not return EvaluationTrial")
-        _assert_bounded_trial(trial)
-        trial_payload = to_jsonable(trial)
-        encoded_trial = json.dumps(
-            trial_payload,
-            allow_nan=False,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-        if len(encoded_trial) > _MAX_TRIAL_ARTIFACT_BYTES:
-            raise ValueError(f"Trial exceeds {_MAX_TRIAL_ARTIFACT_BYTES} IPC bytes")
-        _send_trial_ipc_frame(sender, {"kind": "result", "trial": trial_payload})
-    except BaseException as exc:  # noqa: BLE001 - isolated execution boundary
-        try:
-            _send_trial_ipc_frame(
-                sender,
-                {
-                    "kind": (
-                        "definition_drift"
-                        if isinstance(exc, _EvaluationDefinitionDrift)
-                        else "error"
-                    ),
-                    "error_type": type(exc).__name__,
-                    "message": str(exc)[:4096],
-                },
-            )
-        except (BrokenPipeError, EOFError, OSError, ValueError):
-            pass
-    finally:
-        sender.close()
-
-
-def _await_inner_trial_frame(receiver: Any, executor_pid: int, outer_sender: Any = None) -> dict[str, Any] | None:
-    """Wait for inner evidence while remaining responsive to parent death."""
-
-    while not _trial_supervisor_stop_requested:
-        try:
-            if receiver.poll(0.05):
-                frame = _recv_trial_ipc_frame(receiver)
-                if frame.get("kind") == "observation" and outer_sender is not None:
-                    _send_trial_ipc_frame(outer_sender, frame)
-                    continue
-                return frame
-        except (EOFError, OSError, ValueError) as exc:
-            return {
-                "kind": "error",
-                "error_type": type(exc).__name__,
-                "message": str(exc)[:4096],
-            }
-        try:
-            waited, status = os.waitpid(executor_pid, os.WNOHANG)
-        except ChildProcessError:
-            waited, status = executor_pid, 0
-        if waited == executor_pid:
-            try:
-                if receiver.poll(0.05):
-                    return _recv_trial_ipc_frame(receiver)
-            except (EOFError, OSError, ValueError) as exc:
-                return {
-                    "kind": "error",
-                    "error_type": type(exc).__name__,
-                    "message": str(exc)[:4096],
-                }
-            return {
-                "kind": "error",
-                "error_type": "RuntimeError",
-                "message": f"Trial executor exited without evidence (status={status})",
-            }
-    return None
-
-
-def _trial_process_main(
-    sender: Any,
-    request: TrialExecutionRequest,
-    executor: TrialExecutor,
-    parent_pid: int,
-) -> None:
-    """Outer child: supervise, reap, then forward one bounded JSON frame."""
-
-    inner_receiver: Any | None = None
-    inner_sender: Any | None = None
-    executor_pid: int | None = None
-    cleanup_attempted = False
-    try:
-        try:
-            _prepare_trial_process(parent_pid=parent_pid)
-        except BaseException as exc:  # noqa: BLE001 - child startup boundary
-            _send_trial_ipc_frame(
-                sender,
-                {
-                    "kind": "startup_error",
-                    "error_type": type(exc).__name__,
-                    "message": str(exc)[:4096],
-                },
-            )
-            return
-        _send_trial_ipc_frame(sender, {"kind": "ready", "pid": os.getpid()})
-        if _trial_supervisor_stop_requested:
-            return
-
-        try:
-            inner_receiver, inner_sender = multiprocessing.get_context("fork").Pipe(duplex=False)
-            executor_pid = os.fork()
-        except OSError as exc:
-            _send_trial_ipc_frame(
-                sender,
-                {
-                    "kind": "error",
-                    "error_type": type(exc).__name__,
-                    "message": str(exc)[:4096],
-                },
-            )
-            return
-        if executor_pid == 0:
-            inner_receiver.close()
-            try:
-                _execute_trial_in_fork(inner_sender, sender, request, executor)
-            finally:
-                os._exit(0)
-        inner_sender.close()
-        inner_sender = None
-        frame = _await_inner_trial_frame(inner_receiver, executor_pid, sender)
-        cleanup_attempted = True
-        try:
-            _cleanup_trial_subtree()
-        except _TrialCleanupFailed as exc:
-            try:
-                _send_trial_ipc_frame(
-                    sender,
-                    {
-                        "kind": "cleanup_error",
-                        "error_type": type(exc).__name__,
-                        "message": str(exc)[:4096],
-                    },
-                )
-            finally:
-                raise SystemExit(72) from exc
-        if frame is not None and not _trial_supervisor_stop_requested:
-            _send_trial_ipc_frame(sender, frame)
-    except (BrokenPipeError, EOFError):
-        # The Core parent may have died.  Cleanup above remains authoritative;
-        # there is no receiver left to notify.
-        return
-    finally:
-        if executor_pid is not None and not cleanup_attempted:
-            cleanup_attempted = True
-            try:
-                _cleanup_trial_subtree()
-            except _TrialCleanupFailed as exc:
-                try:
-                    _send_trial_ipc_frame(
-                        sender,
-                        {
-                            "kind": "cleanup_error",
-                            "error_type": type(exc).__name__,
-                            "message": str(exc)[:4096],
-                        },
-                    )
-                except (BrokenPipeError, EOFError, OSError, ValueError):
-                    pass
-                os._exit(72)
-        if inner_receiver is not None:
-            inner_receiver.close()
-        if inner_sender is not None:
-            inner_sender.close()
-        sender.close()
-
-
-def _terminate_trial_process(process: Any, *, receiver: Any | None = None) -> None:
-    """Ask the outer subreaper to clean its subtree, and require clean exit."""
-
-    if process.pid is None:
-        return
-    if not process.is_alive():
-        process.join(timeout=0)
-    else:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except OSError:
-            process.terminate()
-        deadline = time.monotonic() + _TRIAL_TERMINATE_GRACE_SECONDS
-        while process.is_alive() and time.monotonic() < deadline:
-            # A bounded result can span multiple OS pipe buffers.  Continue
-            # draining while cancellation/timeout waits for the subreaper, so
-            # it cannot deadlock after it has already cleaned its descendants.
-            if receiver is not None:
-                try:
-                    if receiver.poll(0.05):
-                        _recv_trial_ipc_frame(receiver)
-                except (EOFError, OSError, ValueError):
-                    receiver = None
-            else:
-                process.join(timeout=0.05)
-            process.join(timeout=0)
-    if process.is_alive():
-        raise _TrialCleanupFailed(
-            f"Trial supervisor {process.pid} did not finish descendant cleanup"
-        )
-    process.join(timeout=0)
-    if process.exitcode != 0:
-        raise _TrialCleanupFailed(
-            f"Trial supervisor {process.pid} exited without cleanup proof (code={process.exitcode})"
-        )
-
-
-def _await_clean_trial_supervisor_exit(process: Any) -> None:
-    process.join(timeout=_TRIAL_TERMINATE_GRACE_SECONDS)
-    if process.is_alive():
-        raise _TrialCleanupFailed(
-            f"Trial supervisor {process.pid} did not exit after cleanup proof"
-        )
-    process.join(timeout=0)
-    if process.exitcode != 0:
-        raise _TrialCleanupFailed(
-            f"Trial supervisor {process.pid} exited without cleanup proof (code={process.exitcode})"
-        )
-
-
-def _execute_supervised_trial(
-    request: TrialExecutionRequest,
-    *,
-    budget: _TrialExecutionBudget,
-    cancel_check: CancelCheck | None,
-    executor: TrialExecutor | None = None,
-    observation_callback: Callable[[dict[str, Any]], None] | None = None,
-    _context: Any | None = None,
-) -> EvaluationTrial:
-    """Execute one production Trial in a spawn-isolated, killable process."""
-
-    if not math.isfinite(budget.seconds) or budget.seconds <= 0:
-        raise _TrialExecutionDeadlineExceeded(scope=budget.scope, seconds=0.0)
-    effective_executor = executor or execute_evaluation_trial
-    context = _context or multiprocessing.get_context("spawn")
-    receiver, sender = context.Pipe(duplex=False)
-    process = context.Process(
-        target=_trial_process_main,
-        args=(sender, request, effective_executor, os.getpid()),
-        name=f"agentstrata-eval-trial-{_trial_id(request)[:48]}",
-        daemon=False,
-    )
-    started = time.monotonic()
-    deadline = started + budget.seconds
-    startup_deadline = min(deadline, started + _TRIAL_STARTUP_TIMEOUT_SECONDS)
-    latest_execution: dict[str, Any] | None = None
-
-    def preserve_interrupted_timing() -> None:
-        if latest_execution is None or observation_callback is None:
-            return
-        observed = dict(latest_execution)
-        timing = observed.get('timing')
-        if isinstance(timing, dict) and timing.get('state') == 'running':
-            # Only retain elapsed time sampled by the executing child. A parent
-            # deadline includes queueing/judging and is not Agent execution time.
-            observed['timing'] = {**timing, 'state': 'partial'}
-            observation_callback(observed)
-
-    ready = False
-    process_started = False
-    try:
-        process.start()
-        process_started = True
-        sender.close()
-        while True:
-            # Before the ready frame the child has not yet installed its
-            # subreaper/signal contract.  Killing it in that narrow window can
-            # only produce a signal exit, not proof that descendants were
-            # cleaned.  Wait for ready, then consume the already-pending
-            # cancellation immediately.
-            if ready and cancel_check is not None and cancel_check():
-                _terminate_trial_process(process, receiver=receiver)
-                preserve_interrupted_timing()
-                raise _TrialExecutionCancelled("Evaluation cancelled during an active Trial")
-            now = time.monotonic()
-            if now >= deadline:
-                _terminate_trial_process(process, receiver=receiver)
-                preserve_interrupted_timing()
-                raise _TrialExecutionDeadlineExceeded(
-                    scope=budget.scope,
-                    seconds=budget.seconds,
-                )
-            if not ready and now >= startup_deadline:
-                _terminate_trial_process(process, receiver=receiver)
-                raise RuntimeError("supervised Trial process did not become ready")
-
-            wait_seconds = min(0.1, deadline - now)
-            try:
-                has_message = receiver.poll(max(0.0, wait_seconds))
-            except (EOFError, OSError) as exc:
-                _terminate_trial_process(process, receiver=receiver)
-                raise RuntimeError("supervised Trial evidence pipe failed") from exc
-            if has_message:
-                try:
-                    message = _recv_trial_ipc_frame(receiver)
-                except (EOFError, OSError, ValueError) as exc:
-                    _terminate_trial_process(process, receiver=receiver)
-                    raise RuntimeError("supervised Trial exited without evidence") from exc
-                kind = message.get("kind")
-                if kind == "ready":
-                    if ready or message != {"kind": "ready", "pid": process.pid}:
-                        _terminate_trial_process(process, receiver=receiver)
-                        raise RuntimeError("supervised Trial returned an invalid ready frame")
-                    ready = True
-                    continue
-                if kind == "observation":
-                    execution = message.get("execution")
-                    if not ready or set(message) != {"kind", "execution"} or not isinstance(execution, dict):
-                        raise RuntimeError("supervised Trial returned an invalid observation")
-                    latest_execution = json.loads(json.dumps(execution))
-                    if observation_callback is not None:
-                        observation_callback(execution)
-                    continue
-                if kind in {"startup_error", "error", "definition_drift"}:
-                    _await_clean_trial_supervisor_exit(process)
-                    if set(message) != {"kind", "error_type", "message"}:
-                        raise RuntimeError("supervised Trial returned a malformed error frame")
-                    if kind == "definition_drift":
-                        if message["error_type"] != _EvaluationDefinitionDrift.__name__:
-                            raise RuntimeError(
-                                "supervised Trial returned an invalid definition-drift frame"
-                            )
-                        raise _EvaluationDefinitionDrift(str(message["message"]))
-                    raise RuntimeError(f"{message['error_type']}: {message['message']}")
-                if kind == "cleanup_error":
-                    process.join(timeout=_TRIAL_TERMINATE_GRACE_SECONDS)
-                    if process.is_alive():
-                        raise _TrialCleanupFailed(
-                            f"Trial supervisor {process.pid} reported cleanup failure and stayed alive"
-                        )
-                    process.join(timeout=0)
-                    raise _TrialCleanupFailed(
-                        f"{message.get('error_type', 'TrialCleanupFailed')}: "
-                        f"{message.get('message', 'Trial descendant cleanup failed')}"
-                    )
-                if kind == "result":
-                    payload = message.get("trial")
-                    if (
-                        not ready
-                        or set(message) != {"kind", "trial"}
-                        or not isinstance(payload, Mapping)
-                    ):
-                        _terminate_trial_process(process, receiver=receiver)
-                        raise RuntimeError("supervised Trial returned an invalid result frame")
-                    try:
-                        trial = _trial_from_dict(payload)
-                        _assert_bounded_trial(trial)
-                    except (TypeError, ValueError) as exc:
-                        _terminate_trial_process(process, receiver=receiver)
-                        raise RuntimeError(
-                            "supervised Trial returned malformed canonical evidence"
-                        ) from exc
-                    _await_clean_trial_supervisor_exit(process)
-                    return trial
-                _terminate_trial_process(process, receiver=receiver)
-                raise RuntimeError(f"supervised Trial returned unknown control frame {kind!r}")
-
-            if not process.is_alive():
-                # Drain a frame queued immediately before process exit once.
-                if receiver.poll(0.05):
-                    continue
-                process.join(timeout=0)
-                if process.exitcode != 0:
-                    raise _TrialCleanupFailed(
-                        f"Trial supervisor {process.pid} exited without cleanup proof "
-                        f"(code={process.exitcode})"
-                    )
-                raise RuntimeError(
-                    f"supervised Trial exited before returning evidence (code={process.exitcode})"
-                )
-    except BaseException as exc:
-        if process.pid is not None and process.is_alive():
-            try:
-                _terminate_trial_process(process, receiver=receiver)
-            except _TrialCleanupFailed as cleanup_exc:
-                raise cleanup_exc from exc
-        raise
-    finally:
-        receiver.close()
-        sender.close()
-        if process_started and not process.is_alive():
-            process.join(timeout=0)
-            process.close()
-            if latest_execution and latest_execution.get("environment"):
-                from chatcopilot.evals.environment_cleanup import cleanup_environment
-
-                try:
-                    with _preserved_environment():
-                        load_evaluation_runtime(request.bot)
-                        cleanup_environment(latest_execution["environment"])
-                except Exception as exc:
-                    raise _TrialCleanupFailed("benchmark environment cleanup was not confirmed") from exc
 
 
 def _execute_trial_with_artifact_guard(
@@ -1030,7 +219,12 @@ def _execute_trial_with_artifact_guard(
                 "case_id": request.case.case_id, "case_ref": f"{request.suite_id}:{request.case.case_id}",
                 "target_id": request.target.target_id, "attempt": request.attempt,
                 "execution": execution, "captured_at": _utc_now()}
-            guard.publish_observation(_sanitize(payload, output=request.output))
+            from chatcopilot.evals.result_codec import validate_checkpoint, PipelineFailure
+            validate_checkpoint(execution)
+            try:
+                guard.publish_observation(_sanitize(payload, output=request.output))
+            except (OSError, ValueError) as exc:
+                raise PipelineFailure(error_from_exception(exc, "persistence")) from exc
 
         try:
             trial = (
@@ -1039,6 +233,7 @@ def _execute_trial_with_artifact_guard(
                     budget=budget,
                     cancel_check=cancel_check,
                     observation_callback=publish,
+                    executor=execute,
                 )
                 if supervise
                 else execute(request)
@@ -1332,7 +527,7 @@ def run_evaluation(
                         sanitized_trial = _sanitize_trial(
                             _error_trial(
                                 execution_request,
-                                ValueError(
+                                ResultContractError(
                                     "trial evidence failed Core integrity limits: "
                                     f"{type(exc).__name__}: {exc}"
                                 ),
@@ -1344,6 +539,10 @@ def run_evaluation(
                             trial_id=_trial_id(execution_request),
                         )
                     group.append(sanitized_trial)
+                    if sanitized_trial.error and sanitized_trial.error.fatal:
+                        status = "error"
+                        error = sanitized_trial.error.message
+                        stop = True
                     _record_event(
                         output,
                         progress_callback,
@@ -1357,6 +556,11 @@ def run_evaluation(
                         completed_trials=len(trials) + len(group),
                         total_trials=total_trials,
                     )
+                    if stop:
+                        if len(group) != len(targets):
+                            group_aborted = True
+                            group_quarantined = True
+                        break
 
                 # A checkpoint either contains every Target in the group or none.
                 if group_aborted:
@@ -1589,94 +793,23 @@ def _assert_suite_trial_definition_current(request: TrialExecutionRequest) -> No
 
 
 def execute_evaluation_trial(request: TrialExecutionRequest) -> EvaluationTrial:
-    """Dispatch explicitly to the supported executor policies."""
-
+    from chatcopilot.evals.trial_runner import run_case
     executor = request.driver_id or request.target.executor
-    if executor == "agent_isolated" and request.profile_case is not None:
-        isolated = execute_isolated_trial(
-            IsolatedTrialRequest(
-                bot=request.bot,
-                evaluation_id=request.evaluation_id,
-                output=request.output,
-                profile_case=request.profile_case,
-                target=IsolatedTarget(
-                    target_id=request.target.target_id,
-                    backend=request.target.backend,
-                    label=request.target.label,
-                    fingerprint=request.target.fingerprint,
-                    model=request.target.model,
-                    reasoning_effort=request.target.reasoning_effort,
-                ),
-                attempt=request.attempt,
-                order=request.order,
-            )
-        )
-        return EvaluationTrial(
-            trial_id=isolated.trial_id,
-            evaluation_id=request.evaluation_id,
-            kind=request.kind,
-            bot=request.bot,
-            profile=request.profile,
-            suite_id=isolated.suite_id,
-            case_ref=isolated.case_ref,
-            case_id=isolated.case_id,
-            dimension=isolated.dimension,
-            target_id=request.target.target_id,
-            target_fingerprint=request.target.fingerprint,
-            executor="agent_isolated",
-            backend=request.target.backend,
-            model=request.target.model,
-            reasoning_effort=request.target.reasoning_effort,
-            attempt=request.attempt,
-            order=request.order,
-            outcome=_normalize_outcome(isolated.outcome),
-            score=isolated.score,
-            max_score=1.0,
-            passed=isolated.passed,
-            duration_seconds=isolated.duration_seconds,
-            final_text=isolated.final_text,
-            stop_reason=isolated.stop_reason,
-            started_at=isolated.started_at,
-            finished_at=isolated.finished_at,
-            judge=isolated.judge,
-            events=isolated.events,
-            usage_totals=isolated.usage_totals or {},
-            tool_summary=isolated.tool_summary or {},
-            evidence=isolated.evidence or {},
-            error=isolated.error,
-        )
-
-    if executor not in {
-        "direct_llm",
-        "agent_configured",
-        "agent_isolated",
-        "acp_scenario",
-        "qq_message_flow",
-        "dry_run",
-    }:
-        raise ValueError(f"unsupported evaluation executor: {executor}")
-    _assert_suite_trial_definition_current(request)
-    run = run_suite(
-        request.suite_id,
-        bot=request.bot or None,
-        dry_run=executor == "dry_run",
-        llm_judge=request.llm_judge,
-        case_ids=[request.case.case_id],
-        options=request.options,
-        confirm_external_write=request.confirm_external_write,
-        workspace_root=contained_artifact_path(
-            request.output,
-            "workspaces",
-            _trial_id(request),
-        ),
-        _frozen_cases=(request.case,),
-    )
-    _assert_suite_trial_definition_current(request)
-    if len(run.cases) != 1:
-        raise ValueError(
-            f"{request.suite_id}:{request.case.case_id} produced {len(run.cases)} results"
-        )
-    return _trial_from_case_result(request, run.cases[0])
+    isolated = None
+    if request.profile_case is not None:
+        isolated = IsolatedTrialRequest(request.bot, request.evaluation_id, request.output,
+            request.profile_case, IsolatedTarget(request.target.target_id, request.target.backend,
+                request.target.label, request.target.fingerprint, request.target.model,
+                request.target.reasoning_effort), request.attempt, request.order)
+    else:
+        _assert_suite_trial_definition_current(request)
+    result = run_case(request.case, suite_id=request.suite_id, bot=request.bot,
+        workspace_root=contained_artifact_path(request.output, "workspaces", _trial_id(request)),
+        options=request.options, driver=executor, dry_run=request.dry_run,
+        confirm_external_write=request.confirm_external_write, profile_request=isolated)
+    if isolated is None:
+        _assert_suite_trial_definition_current(request)
+    return _trial_from_case_result(request, result)
 
 
 def evaluation_result_to_dict(result: EvaluationResult) -> dict[str, Any]:
@@ -2643,15 +1776,17 @@ def _trial_from_case_result(
     request: TrialExecutionRequest,
     result: EvalCaseResult,
 ) -> EvaluationTrial:
-    metadata = result.metadata if isinstance(result.metadata, dict) else {}
-    usage = metadata.get("usage_totals", metadata.get("usage"))
-    if not isinstance(usage, dict):
-        usage = {}
-    evidence = {key: value for key, value in metadata.items() if key != "usage_totals"}
-    quality = _case_definition(request.case).get("quality", {})
-    if isinstance(quality, dict) and quality:
-        evidence.setdefault("judge_evidence", {"quality_applicable": quality.get("enabled"),
-            "quality_reason": quality.get("reason", ""), "metrics": [], "error": result.error})
+    from chatcopilot.evals.expectations import case_expectation
+    from chatcopilot.evals.result_codec import ResultContractError
+
+    metadata = dict(result.metadata)
+    expectation = metadata.pop("expectation", None)
+    judging = metadata.pop("judge_evidence", {})
+    usage = metadata.pop("usage_totals", metadata.pop("usage", {}))
+    error = result.error
+    if error is not None and not isinstance(error, EvaluationError):
+        raise ResultContractError("case_result.error: expected EvaluationError or null")
+    assessment = Assessment(result.judge, judging, judging.get("duration_seconds")) if result.judge or judging else None
     return EvaluationTrial(
         trial_id=_trial_id(request),
         evaluation_id=request.evaluation_id,
@@ -2670,22 +1805,15 @@ def _trial_from_case_result(
         reasoning_effort=request.target.reasoning_effort,
         attempt=request.attempt,
         order=request.order,
-        outcome=_normalize_outcome(result.status),
-        score=result.score,
-        max_score=result.max_score,
-        passed=bool(result.judge and result.judge.passed),
-        duration_seconds=result.duration_seconds,
-        final_text=result.final_text,
-        stop_reason=result.stop_reason,
-        started_at=result.started_at,
-        finished_at=result.finished_at,
-        judge=to_jsonable(result.judge) if result.judge is not None else None,
-        events=result.events,
-        usage_totals={
-            str(key): int(value) for key, value in usage.items() if isinstance(value, int)
-        },
-        evidence=evidence,
-        error=result.error,
+        outcome="error" if error else "skipped" if result.status in {"skipped", "unavailable"} else
+            "passed" if result.judge and result.judge.passed else "failed",
+        expectation=expectation or case_expectation(request.case),
+        execution=ExecutionEvidence(
+            result.final_text, result.stop_reason, result.events, usage, metadata,
+            result.started_at, result.finished_at, result.duration_seconds,
+        ),
+        assessment=assessment,
+        error=error,
     )
 
 
@@ -2830,6 +1958,7 @@ def _persist_request(
         "kind": request.kind,
         "targets": [to_jsonable(target) for target in targets],
         "core_request": core_request,
+        "result_schema_version": RESULT_SCHEMA_VERSION,
     }
     if request.kind == "comparison":
         payload.update(
@@ -3002,6 +2131,7 @@ def _expected_bootstrap_request(
 ) -> dict[str, Any]:
     expected: dict[str, Any] = {
         "evaluation_id": request.evaluation_id,
+        "result_schema_version": RESULT_SCHEMA_VERSION,
         "kind": request.kind,
         "bot_id": _bot_id(request.bot),
         "bot_spec": _portable_bot_ref(request.bot),
@@ -3050,6 +2180,8 @@ def _resume_checkpoint(
     if not result_path.is_file():
         raise ValueError("resume requested but result.json does not exist")
     payload = _read_json_object(result_path, "resume result.json")
+    from chatcopilot.evals.result_codec import require_current_result
+    require_current_result(payload)
     try:
         json.dumps(payload, allow_nan=False)
     except (TypeError, ValueError) as exc:
@@ -3152,13 +2284,13 @@ def _validated_resume_trials(
             raise ValueError(
                 f"resume Trial {index} contains non-finite or invalid JSON values"
             ) from exc
-        events = raw.get("events")
+        events = raw.get("execution", {}).get("events")
         if not isinstance(events, list) or any(not isinstance(item, Mapping) for item in events):
             raise ValueError(f"resume Trial {index} events must be a list of objects")
         try:
             trial = _trial_from_dict(raw)
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"resume Trial {index} is malformed") from exc
+            raise ValueError(f"resume Trial {index} is malformed: {exc}") from exc
         if trial.evaluation_id != request.evaluation_id or trial.kind != request.kind:
             raise ValueError(f"resume Trial {index} Evaluation identity does not match")
         expected_case_id = expected_case_ids.get(trial.case_ref)
@@ -3225,9 +2357,8 @@ def _validated_resume_trials(
 
 
 def _trial_from_dict(payload: Mapping[str, Any]) -> EvaluationTrial:
-    values = dict(payload)
-    values["events"] = tuple(item for item in values.get("events", []) if isinstance(item, dict))
-    return EvaluationTrial(**values)
+    from chatcopilot.evals.result_codec import trial_from_dict
+    return trial_from_dict(payload)
 
 
 def _complete_group_keys(
@@ -3258,7 +2389,7 @@ def _valid_complete_attempts(
 
 def _target_statistics(trials: Sequence[EvaluationTrial]) -> dict[str, Any]:
     valid = [trial for trial in trials if trial.outcome in {"passed", "failed"}]
-    scores = [trial.score / trial.max_score if trial.max_score else 0.0 for trial in valid]
+    scores = [trial.score / trial.max_score if trial.score is not None and trial.max_score else 0.0 for trial in valid]
     usage: dict[str, int] = {}
     for trial in valid:
         for key, value in trial.usage_totals.items():
@@ -3304,7 +2435,7 @@ def _suite_summary(
     repetitions: int = 1,
 ) -> dict[str, Any]:
     outcomes = _outcome_counts(trials)
-    score = sum(trial.score for trial in trials)
+    score = sum(trial.score for trial in trials if trial.score is not None)
     max_score = sum(trial.max_score for trial in trials) or 1.0
     severity_by_case = {
         case.case_id: str(_case_definition(case).get("severity") or "required") for case in cases
@@ -3956,12 +3087,6 @@ def _case_ref(
     return f"{suite_id}:{case.case_id}" if suite_id else case.case_id
 
 
-def _trial_id(request: TrialExecutionRequest) -> str:
-    return trial_artifact_id(
-        request.case.case_id,
-        attempt=request.attempt,
-        target_fingerprint=request.target.fingerprint,
-    )
 
 
 def _reset_trial_workspace(request: TrialExecutionRequest) -> None:
@@ -4017,24 +3142,42 @@ def _normalize_outcome(value: Any) -> TrialOutcome:
     return "error"
 
 
-def _error_trial(
-    request: TrialExecutionRequest,
-    exc: Exception,
-) -> EvaluationTrial:
-    now = _utc_now()
-    execution: dict[str, Any] = {}
+def _error_trial(request: TrialExecutionRequest, exc: BaseException) -> EvaluationTrial:
+    from chatcopilot.evals.expectations import case_expectation
+    from chatcopilot.evals.result_codec import assessment_from_dict
+    from chatcopilot.evals.trial_capture import timing_metadata
+    from chatcopilot.evals.models import CaseExpectation
+
+    captured: dict[str, Any] = {}
     path = request.output / "observation.json"
     if path.exists():
         observed = _read_private_json_object(path, "Trial observation")
         if observed.get("evaluation_id") != request.evaluation_id:
             raise ValueError("Trial observation is outside Evaluation")
         if observed.get("trial_id") == _trial_id(request):
-            execution = observed.get("execution", {})
-    from chatcopilot.evals.trial_capture import timing_metadata
-
-    turns = execution.get("turns", [])
-    last = turns[-1] if turns and isinstance(turns[-1], dict) and turns[-1].get("completed") else {}
+            captured = observed.get("execution", {})
+    turns = captured.get("turns", [])
+    last = turns[-1] if turns and turns[-1].get("completed") else {}
+    observation = captured.get("observation", {})
+    error = error_from_exception(exc, str(captured.get("phase") or "execution"))
+    if isinstance(exc, _TrialExecutionDeadlineExceeded):
+        error = EvaluationError(error.stage, "case_timeout", str(exc))
+    expectation = CaseExpectation(**captured["expectation"]) if captured.get("expectation") else case_expectation(request.case)
+    execution = ExecutionEvidence(
+        final_text=observation.get("final_text", last.get("final_text", "")),
+        stop_reason=observation.get("stop_reason", last.get("stop_reason", "")),
+        events=tuple(observation.get("events", [])), usage=observation.get("usage", {}),
+        metadata={"execution": {k: v for k, v in captured.items() if k not in {"expectation", "observation", "assessment"}}, **timing_metadata(captured),
+                  "tool_calls": observation.get("tool_calls", []),
+                  "task_state": observation.get("post_state", {}),
+                  "observation_evidence": observation.get("evidence", [])},
+        finished_at=_utc_now(),
+    )
+    assessment = assessment_from_dict(captured.get("assessment"))
     quality = _case_definition(request.case).get("quality", {})
+    if assessment is None and type(quality.get("enabled")) is bool:
+        assessment = Assessment(None, {"quality_applicable": quality["enabled"],
+            "quality_reason": quality.get("reason", ""), "metrics": []})
     return EvaluationTrial(
         trial_id=_trial_id(request),
         evaluation_id=request.evaluation_id,
@@ -4057,14 +3200,8 @@ def _error_trial(
         reasoning_effort=request.target.reasoning_effort,
         attempt=request.attempt,
         order=request.order,
-        outcome="error",
-        final_text=str(last.get("final_text") or ""), stop_reason=str(last.get("stop_reason") or ""),
-        evidence={**timing_metadata(execution), "execution": execution, "judge_evidence": {"quality_applicable": quality.get("enabled"),
-            "quality_reason": quality.get("reason", ""), "metrics": [],
-            "error": str(exc) if execution.get("phase") == "judging" else ""}},
-        started_at=now,
-        finished_at=now,
-        error=f"{type(exc).__name__}: {exc}",
+        outcome="error", expectation=expectation, execution=execution,
+        assessment=assessment, error=error,
     )
 
 
@@ -4082,109 +3219,9 @@ def _sanitize_trial(trial: EvaluationTrial, *, output: Path) -> EvaluationTrial:
         raise ValueError("Trial is not finite canonical JSON") from exc
     if len(encoded) > _MAX_TRIAL_ARTIFACT_BYTES:
         raise ValueError(f"Trial exceeds {_MAX_TRIAL_ARTIFACT_BYTES} persisted bytes")
-    payload["events"] = tuple(payload.get("events", []))
-    return EvaluationTrial(**payload)
+    return _trial_from_dict(payload)
 
 
-def _assert_bounded_trial(trial: EvaluationTrial) -> None:
-    if len(trial.events) > _MAX_TRIAL_EVENTS:
-        raise ValueError(f"Trial contains more than {_MAX_TRIAL_EVENTS} events")
-    values = (
-        trial.judge,
-        trial.events,
-        trial.usage_totals,
-        trial.tool_summary,
-        trial.evidence,
-    )
-    budget = [_MAX_TRIAL_JSON_NODES]
-    active: set[int] = set()
-    for value in values:
-        _assert_bounded_json_value(value, depth=0, budget=budget, active=active)
-    for text_value in (
-        trial.trial_id,
-        trial.evaluation_id,
-        trial.bot,
-        trial.profile,
-        trial.suite_id,
-        trial.case_ref,
-        trial.case_id,
-        trial.dimension,
-        trial.target_id,
-        trial.target_fingerprint,
-        trial.backend,
-        trial.model,
-        trial.reasoning_effort,
-        trial.final_text,
-        trial.stop_reason,
-        trial.started_at,
-        trial.finished_at,
-        trial.error,
-    ):
-        if len(text_value) > _MAX_TRIAL_STRING_CHARS:
-            raise ValueError("Trial contains an oversized text field")
-
-
-def _assert_bounded_json_value(
-    value: Any,
-    *,
-    depth: int,
-    budget: list[int],
-    active: set[int],
-) -> None:
-    budget[0] -= 1
-    if budget[0] < 0:
-        raise ValueError(f"Trial contains more than {_MAX_TRIAL_JSON_NODES} JSON nodes")
-    if depth > _MAX_TRIAL_JSON_DEPTH:
-        raise ValueError(f"Trial JSON nesting exceeds {_MAX_TRIAL_JSON_DEPTH}")
-    if value is None or isinstance(value, (bool, int)):
-        return
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError("Trial contains NaN or Infinity")
-        return
-    if isinstance(value, str):
-        if len(value) > _MAX_TRIAL_STRING_CHARS:
-            raise ValueError("Trial contains an oversized string")
-        return
-    if isinstance(value, Mapping):
-        if len(value) > _MAX_TRIAL_COLLECTION_ITEMS:
-            raise ValueError("Trial contains an oversized mapping")
-        identity = id(value)
-        if identity in active:
-            raise ValueError("Trial contains a recursive mapping")
-        active.add(identity)
-        try:
-            for key, item in value.items():
-                if not isinstance(key, str) or len(key) > _MAX_TRIAL_KEY_CHARS:
-                    raise ValueError("Trial contains an invalid mapping key")
-                _assert_bounded_json_value(
-                    item,
-                    depth=depth + 1,
-                    budget=budget,
-                    active=active,
-                )
-        finally:
-            active.remove(identity)
-        return
-    if isinstance(value, (list, tuple)):
-        if len(value) > _MAX_TRIAL_COLLECTION_ITEMS:
-            raise ValueError("Trial contains an oversized collection")
-        identity = id(value)
-        if identity in active:
-            raise ValueError("Trial contains a recursive collection")
-        active.add(identity)
-        try:
-            for item in value:
-                _assert_bounded_json_value(
-                    item,
-                    depth=depth + 1,
-                    budget=budget,
-                    active=active,
-                )
-        finally:
-            active.remove(identity)
-        return
-    raise ValueError(f"Trial contains a non-JSON value: {type(value).__name__}")
 
 
 def _sanitize(value: Any, *, output: Path) -> Any:
@@ -4263,14 +3300,6 @@ def _summary_markdown(payload: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-@contextmanager
-def _preserved_environment() -> Iterator[None]:
-    before = dict(os.environ)
-    try:
-        yield
-    finally:
-        os.environ.clear()
-        os.environ.update(before)
 
 
 def _reject_extra_fields(request: Mapping[str, Any], allowed: set[str]) -> None:

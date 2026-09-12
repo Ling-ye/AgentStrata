@@ -96,6 +96,14 @@ BotSpec 负责配置解释，Application 的装配函数将配置投影为 Agent
   一并提交至本地任务分支；拒绝或无法确认时保留产物并停止，旧记录不补审或补提交。
   规格见 `specs/evaluation-case-harness/spec.md`。
 
+- **Evaluation v2 结果链路**：单题统一通过 `trial_runner` 获取执行观测并调用评分器，插件不能组装最终 Trial。
+  `models` 与 `result_codec` 是结果和编解码的唯一契约；无错误为 null，未评分分数为 null。
+  执行和评分快照经既有 observation 通道保存，结果校验异常不能丢失先前已验证证据或冒充 Judge 异常。
+  单题失败/异常继续；结果契约、协议、权威持久化和清理失败停止整批，完整 Target 组检查点规则保持。
+  预期只从受信题目/fixture 投影，运行前冻结，不注入被测模型；结果页只读当时快照。
+  旧记录只归档导出，不迁移、补判、恢复或作为 Harness 来源；新来源排除测评系统故障。
+  部署更新同时保护 Harness 创建/恢复和 Evaluation 维护窗口。规格见 `specs/evaluation-result-pipeline/spec.md`。
+
 - **Agent 流式观测**：主 Codex 使用每回合隔离的 App Server stdio，沿用 actor、PromptPlan、ExecutionScope 和凭据租约。公开消息、摘要和命令输出通过 AgentContentDelta 进入既有观测索引，Console SSE 只读续传；过程不进入渠道最终回复，不采集 raw/encrypted reasoning，不重放已开始的 turn。独立 worker/research 保留 exec，规格见 `specs/agent-streaming-observability/spec.md`。
 
 - **Agent 层禁止 import**：`chatcopilot.botspec.*` / `chatcopilot.platforms.*` / `chatcopilot.middleware.*` / middleware `Workspace` 实现 / `BotRuntimeContext` / ACP 帧。共享 DTO/ports 只能从 `chatcopilot.contracts` 取；策略通过 hook 注入，如 `tool_payload_filter`、`background_submitter`、`file_sender`。

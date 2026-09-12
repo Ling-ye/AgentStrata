@@ -7,10 +7,10 @@ from typing import Any, Callable, Mapping
 
 from chatcopilot.evals.models import EvalCase, SuiteManifest
 
-PLUGIN_API_VERSION = "1"
-STATIC_PLUGIN_BINDING_VERSION = "agentstrata-plugin-binding/v1"
-DRIVER_PROTOCOL_VERSION = "agentstrata-eval-driver/v1"
-SCORER_PROTOCOL_VERSION = "agentstrata-eval-scorer/v1"
+PLUGIN_API_VERSION = "2"
+STATIC_PLUGIN_BINDING_VERSION = "agentstrata-plugin-binding/v2"
+DRIVER_PROTOCOL_VERSION = "agentstrata-eval-driver/v2"
+SCORER_PROTOCOL_VERSION = "agentstrata-eval-scorer/v2"
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,8 @@ class EvaluationPlugin:
     preflight: PluginHook | None = None
     prepare: PluginHook | None = None
     build_task: PluginHook | None = None
-    execute_trial: PluginHook | None = None
+    execute_model: PluginHook | None = None
+    open_case: PluginHook | None = None
     judge: PluginHook | None = None
     cleanup: PluginHook | None = None
 

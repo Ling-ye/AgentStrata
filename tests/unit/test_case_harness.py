@@ -248,6 +248,8 @@ def test_result_database_is_explicit_and_idempotent(tmp_path):
             }
         ],
     }
+    from tests.evaluation_fixtures import result_payload
+    result = result_payload(result)
     store.register(request)
     for _ in range(2):
         store.synchronize("eval-new", result=result, state={"status": "completed"})
@@ -256,6 +258,7 @@ def test_result_database_is_explicit_and_idempotent(tmp_path):
     assert store.pending() == []
     altered = copy.deepcopy(result)
     altered["trials"][0]["outcome"] = "passed"
+    altered["trials"][0]["assessment"]["judge"].update(passed=True, score=1.0)
     with pytest.raises(ValueError, match="changed"):
         store.synchronize("eval-new", result=altered, state={"status": "completed"})
     assert store.get("eval-new")["result"] == result

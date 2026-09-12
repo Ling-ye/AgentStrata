@@ -86,6 +86,12 @@ def score_benchmark(
             measure(NativeMetric(), "deterministic")
             if native is None or metrics[-1].get("error"):
                 raise ValueError("native benchmark scoring failed")
+            from chatcopilot.evals.trial_capture import record_checkpoint
+            from chatcopilot.evals.models import Assessment
+            record_checkpoint("assessment", Assessment(native, {
+                "native_result": to_jsonable(native), "metrics": metrics,
+                "quality_applicable": mode != "native", "mode": mode,
+            }))
         if mode != "native":
             try:
                 model = model if model is not None else engine._model(JudgeConfig.from_environment())

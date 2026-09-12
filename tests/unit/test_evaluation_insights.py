@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.evaluation_fixtures import result_payload, trial_payload
+
 import copy
 import json
 import subprocess
@@ -35,7 +37,7 @@ def fixture_result() -> tuple[dict, dict]:
 
 
 def insight(request, result, status="completed", planned=2):
-    return result_insights(request, result, status=status, planned=planned)
+    return result_insights(request, result_payload(result), status=status, planned=planned)
 
 
 def test_result_statistics_preserve_failure_and_count_all_outcomes():
@@ -181,7 +183,7 @@ def test_persisted_insights_are_read_only_after_application_restart(tmp_path):
     directory.mkdir(mode=0o700)
     for name, value in [("request", request), ("result", result), ("state", {"evaluation_id": request["evaluation_id"], "status": "completed"})]:
         path = directory / f"{name}.json"
-        path.write_text(json.dumps(value))
+        path.write_text(json.dumps(result_payload(value) if name == "result" else value))
         path.chmod(0o600)
     before = {path.name: path.read_bytes() for path in directory.iterdir()}
     with patch("chatcopilot.evals.application.controller.capture_source_revision", side_effect=AssertionError("read must not capture current Git")):
@@ -220,11 +222,13 @@ def test_target_metrics_and_quality_coverage_do_not_mix_targets():
 
 
 def test_trial_preview_contains_actual_input_and_output_without_tool_bodies():
-    from chatcopilot.evals.application.insights import trial_preview
+    from chatcopilot.evals.application.insights import trial_preview as raw_preview
+    def trial_preview(value):
+        return raw_preview(trial_payload(value))
     value = trial_preview({"trial_id": "one", "final_text": "answer" * 1000,
         "evidence": {"execution": {"state": "recorded", "turns": [{"input": "actual input"}]},
                      "tool_calls": [{"result": "large private body"}]}})
-    assert value["input_preview"] == "actual input" and len(value["final_text"]) == 400
+    assert value["input_preview"] == "actual input" and len(value["execution"]["final_text"]) == 400
     assert value["body_available"] is True
     assert "large private body" not in json.dumps(value)
 
@@ -274,15 +278,17 @@ def test_qq_without_model_has_runtime_duration_and_agent_still_requires_model():
 
 
 def test_business_preview_keeps_judgment_kind_without_loading_reference_body():
-    from chatcopilot.evals.application.insights import trial_preview
+    from chatcopilot.evals.application.insights import trial_preview as raw_preview
+    def trial_preview(value):
+        return raw_preview(trial_payload(value))
 
     preview = trial_preview({"trial_id": "business-a", "outcome": "error", "evidence": {
         "error_code": "judge_error", "error_stage": "judging", "tool_evidence_state": "recorded",
         "judge_evidence": {"primary": "llm_judge", "tool_outcome": "no_calls", "tool_evidence_state": "recorded",
                            "quality_applicable": True, "metrics": [], "judge_input": {"reference": "full reference"}}}})
-    assert preview["evidence"]["judge_evidence"]["primary"] == "llm_judge"
-    assert preview["evidence"]["error_code"] == "judge_error"
-    assert "judge_input" not in preview["evidence"]["judge_evidence"]
+    assert preview["assessment"]["evidence"]["primary"] == "llm_judge"
+    assert preview["error"]["code"] == "judge_error"
+    assert "judge_input" not in preview["assessment"]["evidence"]
 
 
 def test_trend_target_uses_frozen_plan_instead_of_ambient_legacy_judge():

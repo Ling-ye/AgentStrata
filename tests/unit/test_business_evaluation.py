@@ -129,7 +129,7 @@ def test_judge_exception_is_ungraded_with_input_retained(deepeval_judge):
 def test_new_case_id_from_yaml_executes_without_dispatch_branch(
     monkeypatch, tmp_path, deepeval_judge
 ):
-    from chatcopilot.evals.plugins.business_agent import execute
+    from tests.evaluation_fixtures import execute_business as execute
 
     manifest = get_manifest("project-business-v1")
     payload = b"""schema: agentstrata-business-cases/v1
@@ -246,7 +246,7 @@ def test_group_example_evidence_and_binary_sdk_contract(
 
 
 def test_runner_failure_and_missing_capture_stay_distinct(monkeypatch, tmp_path, deepeval_judge):
-    from chatcopilot.evals.plugins.business_agent import execute
+    from tests.evaluation_fixtures import execute_business as execute
 
     case = load_business_cases(get_manifest("project-business-v1"))[0]
     monkeypatch.setattr(
@@ -254,13 +254,13 @@ def test_runner_failure_and_missing_capture_stay_distinct(monkeypatch, tmp_path,
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("controlled startup failure")),
     )
     failed = execute(case, bot="controlled", workspace_root=tmp_path, options={})
-    assert failed.status == "error" and failed.metadata["error_code"] == "execution_error"
+    assert failed.status == "error" and failed.error.code == "execution_error"
     monkeypatch.setattr(
         "chatcopilot.evals.plugins.business_agent.run_environment_agent",
         lambda **kwargs: ("PAIR-42", []),
     )
     missing = execute(case, bot="controlled", workspace_root=tmp_path, options={})
-    assert missing.status == "error" and missing.metadata["error_code"] == "evidence_missing"
+    assert missing.status == "error" and missing.error.code == "evidence_missing"
     assert deepeval_judge.calls == 0
 
 
@@ -313,7 +313,7 @@ def test_native_agent_registry_tool_execution_and_sdk_judge(monkeypatch, tmp_pat
     from chatcopilot.core.llm_client import ChatResult, LLMClient
     from chatcopilot.evals import environment_agent
     from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
-    from chatcopilot.evals.plugins.business_agent import execute
+    from tests.evaluation_fixtures import execute_business as execute
 
     runtime = replace(
         load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False),
@@ -362,7 +362,7 @@ def test_native_agent_registry_tool_execution_and_sdk_judge(monkeypatch, tmp_pat
 def test_returned_execution_failure_is_not_a_model_verdict(
     monkeypatch, tmp_path, deepeval_judge, stop_reason
 ):
-    from chatcopilot.evals.plugins.business_agent import execute
+    from tests.evaluation_fixtures import execute_business as execute
 
     def interrupted(**kwargs):
         record_turn(
@@ -384,6 +384,6 @@ def test_returned_execution_failure_is_not_a_model_verdict(
         load_business_cases(get_manifest("project-business-v1"))[0], bot="controlled", workspace_root=tmp_path, options={}
     )
     assert result.status == "error" and result.judge is None
-    assert result.metadata["error_code"] == "execution_error"
-    assert result.metadata["error_stage"] == "execution"
+    assert result.error.code == "execution_error"
+    assert result.error.stage == "execution"
     assert deepeval_judge.calls == 0

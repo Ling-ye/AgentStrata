@@ -1,3 +1,4 @@
+from chatcopilot.evals.trial_runner import run_case
 import hashlib
 import json
 from types import SimpleNamespace
@@ -158,9 +159,9 @@ def test_agentbench_plugin_runs_host_agent_with_environment_tools(monkeypatch, t
     monkeypatch.setattr(plugin.agentbench, "Controller", Controller)
     monkeypatch.setattr(plugin, "_preflight", lambda **kwargs: None)
     monkeypatch.setattr(plugin, "run_environment_agent", run_agent)
-    result = plugin._execute(EvalCase("db:0", "Query", "db", "Complete"), bot="sample", workspace_root=tmp_path, options={"scoring_mode": "native"})
+    result = run_case(EvalCase("db:0", "Query", "db", "Complete"), suite_id="agentbench-fc", bot="sample", workspace_root=tmp_path, options={"scoring_mode": "native"})
     assert result.status == "passed" and closed
-    assert result.metadata["environment_result"]["reward"] == 1
+    assert result.metadata["task_state"]["reward"] == 1
     assert result.metadata["execution"]["environment"]["controller_fingerprint"] == hashlib.sha256(Controller.url.encode()).hexdigest()
 
 

@@ -331,6 +331,12 @@ def score(
 
         try:
             run(test_case, FactsMetric(), "deterministic")
+            from chatcopilot.evals.trial_capture import record_checkpoint
+            from chatcopilot.evals.models import Assessment, to_jsonable
+            record_checkpoint("assessment", Assessment(None, {
+                **evidence, "native_result": to_jsonable(facts), "metrics": metrics_data,
+                "quality_applicable": policy["enabled"], "quality_reason": policy.get("reason", ""),
+            }))
             if policy["enabled"] and (facts.passed or case.plugin_id != "agent-tasks"):
                 model = model if model is not None else _model(config)  # type: ignore[arg-type]
                 conversations = {str(turn.get("conversation_id", "")) for turn in turns}

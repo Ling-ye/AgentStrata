@@ -681,6 +681,7 @@ def suite_definition_snapshot(
                 f"Case plugin/driver binding is not trusted: {plugin_id}/{driver_id}"
             )
 
+    from chatcopilot.evals.expectations import case_expectation
     case_records = [
         {
             "case_id": case.case_id,
@@ -688,6 +689,7 @@ def suite_definition_snapshot(
             "input": case.input,
             "context": case.context,
             "expected_behavior": case.expected_behavior,
+            "expectation": to_jsonable(case_expectation(case)),
             "business": case.metadata.get("business"),
             "turns": case.metadata.get("case_definition", {}).get("turns", []),
             "quality": case.metadata.get("case_definition", {}).get("quality", {}),

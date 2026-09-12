@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from chatcopilot.botspec.model import ContextSpec
 
 import json
 import os
@@ -33,7 +32,6 @@ from chatcopilot.evals.registry import get_cases
 from chatcopilot.evals.report import write_run_report
 from chatcopilot.evals.runner import (
     _load_local_env,
-    _run_agent_cases,
     _select_cases,
     run_suite,
 )
@@ -202,116 +200,23 @@ def test_catalog_queries_are_generic_and_hide_answers(
     assert "expected_calls" not in json.dumps(cases)
 
 
-def test_agent_runtime_is_closed_when_case_execution_fails() -> None:
-    case = get_cases("ifeval")[0]
-    fake_agent_runtime = MagicMock()
-    fake_agent_runtime.new_session.side_effect = RuntimeError("session failed")
-    runtime = SimpleNamespace(
-        source_path=Path("bots/test/bot.yaml"),
-        instance_id="test-bot",
-        platform_type="qq",
-        agent_backend="native",
-        prompt_profile=BotPromptProfile(identity="test", response_style="concise"),
-        capability_policies=(),
-        skills=(),
-        tool_packs=(),
-        tool_features=(),
-        exclude_tools=(),
-        rag_sources=(),
-        mcp_servers=(),
-        subagents=(),
-        spec=SimpleNamespace(
-            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")
-        ),
-    )
-    with (
-        _test_dir() as root,
-        patch(
-            "chatcopilot.evals.runner.resolve_bot_spec_path",
-            return_value=Path("bots/test/bot.yaml"),
-        ),
-        patch(
-            "chatcopilot.evals.runner.load_botspec",
-            return_value=object(),
-        ),
-        patch(
-            "chatcopilot.evals.runner.assemble_runtime_context",
-            return_value=runtime,
-        ),
-        patch("chatcopilot.evals.runner._load_local_env"),
-        patch(
-            "chatcopilot.evals.runner.load_config",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "chatcopilot.evals.runner.assemble_agent_runtime",
-            return_value=fake_agent_runtime,
-        ),
-    ):
-        with pytest.raises(RuntimeError, match="session failed"):
-            _run_agent_cases(
-                "ifeval",
-                (case,),
-                bot="bots/test/bot.yaml",
-                workspace_root=root / "workspace",
-            )
-
-    fake_agent_runtime.close.assert_called_once_with()
-
-
-def test_agent_runtime_is_closed_when_prompt_plan_session_creation_fails() -> None:
-    case = get_cases("ifeval")[0]
-    fake_agent_runtime = MagicMock()
-    fake_agent_runtime.new_session.side_effect = RuntimeError("prompt failed")
-    runtime = SimpleNamespace(
-        source_path=Path("bots/test/bot.yaml"),
-        instance_id="test-bot",
-        platform_type="qq",
-        agent_backend="native",
-        prompt_profile=BotPromptProfile(identity="test", response_style="concise"),
-        capability_policies=(),
-        tool_packs=(),
-        tool_features=(),
-        exclude_tools=(),
-        skills=(),
-        rag_sources=(),
-        mcp_servers=(),
-        subagents=(),
-        spec=SimpleNamespace(
-            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")
-        ),
-    )
-    with (
-        patch(
-            "chatcopilot.evals.runner.resolve_bot_spec_path",
-            return_value=Path("bots/test/bot.yaml"),
-        ),
-        patch(
-            "chatcopilot.evals.runner.load_botspec",
-            return_value=object(),
-        ),
-        patch(
-            "chatcopilot.evals.runner.assemble_runtime_context",
-            return_value=runtime,
-        ),
-        patch("chatcopilot.evals.runner._load_local_env"),
-        patch(
-            "chatcopilot.evals.runner.load_config",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "chatcopilot.evals.runner.assemble_agent_runtime",
-            return_value=fake_agent_runtime,
-        ),
-    ):
-        with pytest.raises(RuntimeError, match="prompt failed"):
-            _run_agent_cases(
-                "ifeval",
-                (case,),
-                bot="bots/test/bot.yaml",
-            )
-
-    fake_agent_runtime.close.assert_called_once_with()
+@pytest.mark.parametrize("message", ["session failed", "prompt failed"])
+def test_agent_runtime_closes_when_session_creation_fails(tmp_path, message):
+    from chatcopilot.evals.case_drivers import _agent
+    from chatcopilot.evals.models import EvalCase
+    from chatcopilot.evals.plugins import get_evaluation_plugin
+    agent = MagicMock()
+    agent.new_session.side_effect = RuntimeError(message)
+    runtime = SimpleNamespace(agent_backend="native", prompt_profile=BotPromptProfile(identity="test", response_style="concise"),
+        capability_policies=(), skills=(), spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST")))
+    with patch("chatcopilot.evals.evaluation_runtime.load_evaluation_runtime", return_value=runtime), \
+         patch("chatcopilot.core.config.load_config", return_value=MagicMock()), \
+         patch("chatcopilot.application.agent_runtime.assemble_agent_runtime", return_value=agent):
+        with pytest.raises(RuntimeError, match=message):
+            with _agent(EvalCase("controlled", "task", "test", "expected"), plugin=get_evaluation_plugin("gaia"),
+                        suite_id="gaia", bot="controlled", workspace_root=tmp_path, options={}):
+                pytest.fail("session creation must fail")
+    agent.close.assert_called_once_with()
 
 
 def test_machine_eval_env_overrides_bot_local_and_is_restored(
