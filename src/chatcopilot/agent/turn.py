@@ -686,6 +686,7 @@ class TurnOps:
         payload = tool_result.to_llm_payload()
         if self.session.tool_payload_filter is not None:
             payload = self.session.tool_payload_filter(payload)
+        payload = self.session.executor.project_result(name, payload)
         tool_msg = {
             "role": "tool",
             "tool_call_id": tool_call.get("id", ""),

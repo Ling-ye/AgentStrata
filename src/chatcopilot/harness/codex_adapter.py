@@ -29,6 +29,7 @@ from chatcopilot.external_tools.codex_cli import (
 )
 from chatcopilot.external_tools.codex_cli.process_runner import run_codex_process
 from chatcopilot.harness.models import HarnessError, RepairOptions, review_decision
+from chatcopilot.harness.evidence_context import evidence_index
 from chatcopilot.harness.workspace import protected_paths, writable_paths
 
 
@@ -99,8 +100,8 @@ class CodexCoder:
             evidence_text = json_text({
                 "evidence_file": str(evidence_path),
                 "sha256": hashlib.sha256(evidence_text.encode()).hexdigest(),
-                "sections": list(evidence),
-                "instructions": "完整证据位于只读 JSON 文件。先读取各节结构，再按需查询来源、失败与通过项、补丁及确认记录；不要一次打印整个文件。所有验收项保持完整。",
+                **evidence_index(evidence, stage="review" if reviewing else "prepare" if draft else "repair"),
+                "instructions": "完整证据位于只读 JSON 文件；JSON pointer 指向原始位置。按 read_order 阅读；source 中原问题、原预期和 feedback 必须完整核对。先看异常位置和缺失节，再按需查原文；计数不是验收结论，未展示的失败也必须核对。不要一次打印整个文件。",
             })
         runtime_home = output / "codex-home"
         execution_directory = draft or worktree

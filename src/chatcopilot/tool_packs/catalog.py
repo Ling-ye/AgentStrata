@@ -233,6 +233,16 @@ _BUILTIN_TOOL_PACKS_DATA: dict[str, ToolPackEntry] = {
         dynamic=True,
         runtime_scope="host_session",
     ),
+    "context.results": _entry(
+        "context.results",
+        "chatcopilot.agent.tools.result_reader",
+        "Session-scoped readback of filtered tool result snapshots.",
+        dynamic=True,
+        runtime_scope="agent_session",
+        provider_factory_module="chatcopilot.agent.capabilities.results",
+        factory_order=300,
+        session_default_enabled=True,
+    ),
 }
 
 

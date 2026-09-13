@@ -1,397 +1,77 @@
 # AGENTS.md — AgentStrata
 
-给 Claude Code、Codex、Cursor 等 AI 协作者的项目入口。Cursor 细则在 `.cursor/rules/`。
+给 Claude Code、Codex、Cursor 等 AI 协作者的项目入口。先读本页，再按任务读取下表指向的
+相关章节；不要在每个任务开始时批量加载所有领域契约或历史规格。Cursor 细则在 `.cursor/rules/`。
 
-## 协作姿态
+## 协作与授权
 
-- 每次先按 `grill-me` 模式回应：先指出范围、事实或设计风险，再执行。
-- 准确性优先于迎合；不要为了显得顺从而放弃证据。
-- 修 Bug、新功能和重构时只改必要范围，避免误伤无关老功能。
-- 默认追求干净的当前设计；除非现有契约、测试或用户明确要求，不为了旧数据或旧实现牺牲结构。
-- 自动生成 commit 描述时用简短中文。
-- 交互式 AI 不执行 `git commit` / `git push`；提交由用户完成。明确启用的 Harness 受控本地提交例外见下文。
-- 改完代码后尽量做快速验证，并同步更新受影响的 `README.md` 和 `AGENTS.md`。`README.md` 只做公开入口，`docs/project-history.md` 记录开发时间线、各阶段的初始设计、问题、架构优化和相关规格，禁止写入私有仓库坐标或运行值；`docs/operations.md` 集中日常命令，`docs/deployment.md` 只讲首次部署与边界，`deploy/wsl/README_WSL.md` 只讲异常排障；组件文档链接事实源，不复制运维流程。
-- QQ 新手首次部署的唯一推荐入口是 `deploy/wsl/quickstart.sh`；其他部署、Console 和运维脚本只提供可复用阶段或安装后操作，不复制另一套扫码、token 同步和实例生命周期编排。
-- 架构、公共契约、部署流程和数据迁移必须先引用或创建 `specs/<id>/spec.md`；普通修复与局部功能直接实现并测试。
-- **SDD 运行时基线**：`specs/runtime-four-layer-definition/spec.md` 是长期架构标准。涉及运行时架构、跨层契约、运行部署或相关数据迁移的规格必须引用它，在现有 `Design` 中说明职责、交接契约和依赖方向；装配、Console、Evaluation 按需说明边界，不增加消息层。冲突设计先明确提出基线变更并单独审议，不能在局部规格中悄悄改层级；普通修复不增加统一填表或额外审批。SDD 脚本检查结构，现有架构脚本检查依赖，两者均在 `fast/full` 中执行。
-- `spec.md` frontmatter 只允许 `id/type/status/created`，正文固定为 `Summary/Design/Acceptance/Verification`；流程细则见 `docs/sdd.md`，结构检查跑 `python3 scripts/check_sdd_specs.py`。
+- 目标、范围和权限清楚时自主完成，修复聚焦根因，避免过度设计和无关改动。
+- 结论先行，准确性与可复核证据优先；不得编造事实、引用、输出、测试或完成状态。
+- 架构、根因、安全、权限、费用、公共契约和不可逆操作按需检查反对理由与具体失败路径；普通工具步骤不重复质疑或总结。
+- 修改前核对仓库、分支、工作区和 worktree，保护用户未提交、已暂存及无关改动。
+- 未经明确授权不执行 add、commit、amend、push、PR、merge、rebase、tag 或 Release；各动作分别判断。
+  交互式 AI 默认不暂存、不提交，简短中文提交草案仅在需要时提供。
+  Owner 显式调用的受控 code-worker 交付和 Harness review_and_commit 的精确例外，见
+  [Git 交付契约](docs/ai-contracts-operations.md)；它们不授权交互式 AI 提交。
+- 默认使用 WSL/Linux。实际越过权限、秘密或数据完整性边界时立即披露。
+- 保持干净的当前设计，不增加推测性兼容层；涉及旧接口或数据兼容风险时先说明并询问处理方式。
 
-## 项目一句话
+## 架构底线
 
-AgentStrata 是单代码库、多机器人平台：每个 `bots/<bot-id>/` 实例以 `prompts` / `tools` / `agents` / `context` 四面声明提示词、能力、主 Agent/委托和上下文，并用 `platform` / `llm` / `workspace` / `deploy` / `access` 声明运行包络，共享底层基础设施。Python import namespace 与既有 `CHATCOPILOT_*` 环境变量作为兼容契约继续保留。
+AgentStrata 是单代码库、多机器人平台。`bots/<bot-id>/` 通过 prompts、tools、agents、context
+声明行为与能力，并通过 platform、llm、workspace、deploy、access 声明运行包络。
 
-当前内置实例：
+运行时按 **Channel → Gateway → Application → Agent** 组织；实例宿主负责装配和生命周期，
+Console 控制观测与 Evaluation 独立测评位于消息链之外。详细职责与交接契约以
+[四层运行时基线](specs/runtime-four-layer-definition/spec.md) 为准。
 
-- `lingye-copilot-qq`：QQ / NapCat / OneBot 通用助手 + 按源搜索 + 直接开发能力（dev tools + mcp-server-git）。
+- Channel 处理平台连接、原生事件与投递回执；Gateway 完成身份采信、准入、run 和交付协调；
+  Application 管 actor、工作区、上下文与交换；Agent 管模型、工具、backend 和委托。
+- Agent 不依赖 BotSpec、平台、中间件 Workspace 或 ACP 帧；External tools 不反向依赖
+  Agent、BotSpec、中间件或平台；Contracts 不依赖这些上层实现。共享 DTO/ports 从 contracts 取。
+- 身份、准入和权限必须先于模型、工具、附件与持久化副作用；当前 Owner/member 权限由宿主
+  代码执行，不从昵称、用户文本、历史资料或模型输出推断。不同 actor、群与私聊继续隔离。
+- PromptPlanBuilder 是唯一提示契约入口，保持 host policy、runtime facts、bot instructions、
+  untrusted data 四个信任分区；资料按需加载不会改变它的信任等级或执行权限。
+- 工具发现与投影复用同一个 ToolRegistry 和显式 provider catalog；不新增平行注册中心。
+  过程输出、执行结果、provider acknowledgement 与用户可见交付是不同证据，不能互相替代。
 
-通用飞书 adapter 与 `feishu.document` / `feishu.sheet` / `feishu.bitable` /
-`feishu.wiki` / `feishu.messaging` 工具包继续公开，但不绑定任何组织、租户或具体项目。
+## 按任务读取
 
-## 运行时分层
-
-AgentStrata 由机器人运行时，以及启动装配、控制观测、独立测评等配套部分组成。
-机器人运行时按四个职责层组织，各层通过结构化契约协作，由实例宿主管理生命周期：
-
-```text
-渠道适配层（Channel）
-  ↓
-网关层（Gateway）
-  ↓
-应用层（Application）
-  ↓
-Agent 层
-```
-
-- Channel 负责原生连接、结构化事件校验与转换、平台资源获取实现和实际投递回执，不分配角色。
-- Gateway 负责主体采信、准入与角色策略调用、run、持久化和交付协调。
-- Application 负责 actor 会话、工作区、上下文准备和交换提交；Agent 负责 Backend、模型、工具和委托执行。
-- 启动装配与实例宿主位于四层之外；`GatewayRuntimeHost` 管理整实例构建和启停，保留现有入口。
-  `AgentRuntime` 仅指 Agent 执行引擎，装配不要求独立进程。
-- Console 是控制观测入口，只读取配置及运行投影、调用控制 API；Evaluation 拥有独立生命周期，
-  按目标复用隔离的 Agent 或消息链。二者都不属于机器人消息必经层。
-
-箭头表示入站职责顺序，源码依赖由 `scripts/check_architecture.py` 约束。Gateway 向 Channel
-注入入站回调，Channel 不反向 import Gateway。授权、模型访问、工具和存储按契约参与，
-`contracts` 与 `core` 是支撑模块。ACP 是可直连 Gateway 的本地协议入口；旧 ACP 宿主只保留 Feishu，QQ Relay 启动链已删除。
-BotSpec 负责配置解释，Application 的装配函数将配置投影为 Agent 运行输入。Console 配置与观测
-分组不等同于四层，既有 `layer`、实体 ID 和历史快照保持。长期基线见
-[`runtime-four-layer-definition`](specs/runtime-four-layer-definition/spec.md)，SDD 遵循方式见 [docs/sdd.md](docs/sdd.md)。
-
-跨层契约只通过这些模块：
-
-| 契约 | 模块 |
-| --- | --- |
-| `Role` / `AssistantMode` / `SessionIdentity` | `contracts/identity.py` |
-| `WorkspaceRef` / `WorkspaceView` | `contracts/workspace.py` |
-| `AgentTask` / `AgentEvent` / `AgentResult` | `contracts/agent.py` |
-| `PreparedTurn` / `TurnOutcome` / `ExchangeRef` | `contracts/turns.py` |
-| `ToolDef` / `ToolResult` / `ToolContext` | `contracts/tools.py` |
-| `AdapterApprovalEnvelope` | `contracts/adapter_approval.py` |
-| `Principal` / authorization and approval DTO | `contracts/authorization.py` |
-| `CanonicalInboundEvent` / resource / outbound / delivery DTO | `contracts/gateway.py` |
-| `FetchedResource` / `ResourceFetcherPort` | `contracts/resources.py` |
-| Gateway wire frames and typed RPC DTO | `contracts/{gateway_protocol,gateway_rpc}.py` |
-| Cooperative cancellation | `contracts/cancellation.py` |
-| MCP / RAG / subagent / skill / tool pack DTO | `contracts/{runtime,subagents,skills,tool_packs}.py` |
-| 开发任务范围 | `contracts/development.py` |
-
-## 硬规则
-
-- **单 Case Harness 独立性**：`chatcopilot.harness` 拥有按需 worker、任务与尝试数据库；
-  通过来源、验证、编程和 Git 交付适配器协作，Evaluation 不反向依赖 Harness。测评数据库由
-  Evaluation 服务校验并保存新增结果，历史文件不批量迁移；Console 组合查询两个模块，
-  不跨库写表。修复入口、进度和历史只在并列的 AI Harness 页面展示，测评页和机器人
-  任务流不管理修复状态。Evaluation 为每条 Case 执行记录提供稳定的 `case_instance_id`，
-  绑定测评、Case、Target 与重复执行序号并维护定位索引；测评页可复制测评及 Case 实例
-  ID，不能发起修复或轮询 Harness。Console Harness 只提交 Case 实例 ID，由服务端
-  经 Evaluation 公开查询获取来源并复检失败状态；不恢复手工拼接引用或客户端指定
-  测评/Target。日常任务只读绑定实例的 Gateway 观测，冻结来源、根因假设与验证计划；
-  确定性缺陷用 pytest，Agent 行为用 Evaluation 登记的声明式 Case 实际运行模型与隔离
-  产品工具。准备阶段产品只读，修复阶段测试只读；环境、评分和证据错误不能冒充产品失败。
-  两种来源共用仓库单元与架构回归；模型每组至少三次且在验收前独立确认，预算不因阶段拆分重置。
-  Case 来源允许 repair_hint，但不得覆盖原预期；原始观测与评分不改写。
-  机器人任务可携带可选 `feedback`（修复提示、参考答案／预期行为），与原始观测分开
-  保存并随任务冻结，贯穿准备、修复和可选审核，参与请求幂等及候选复用身份。
-  参考答案是用户期望，不是已验证事实或宿主策略，不能替代真实本地复现；修改后发起新任务。
-  候选测评必须加载实际冻结源码与获准 BotSpec／提示词变更；模型/backend、身份和资源授权
-  固定，候选配置身份与比较不变量分开。Case、评分与控制实现保持受信版本，评分预期不进入
-  被测 Agent。Agent 回归收录至 tests/agent_regressions/<digest>/case.json，经显式测评执行，
-  单元测试不得隐式调用商用模型。
-  worktree 目标及保护集验收通过才可接受候选，原始成绩不改写。新任务显式启用
-  review_and_commit 后，一次只读 AI 审核批准且宿主检查通过才允许将修复与冻结测试
-  一并提交至本地任务分支；拒绝或无法确认时保留产物并停止，旧记录不补审或补提交。
-  规格见 `specs/evaluation-case-harness/spec.md`。
-
-- **Evaluation v2 结果链路**：单题统一通过 `trial_runner` 获取执行观测并调用评分器，插件不能组装最终 Trial。
-  `models` 与 `result_codec` 是结果和编解码的唯一契约；无错误为 null，未评分分数为 null。
-  执行和评分快照经既有 observation 通道保存，结果校验异常不能丢失先前已验证证据或冒充 Judge 异常。
-  单题失败/异常继续；结果契约、协议、权威持久化和清理失败停止整批，完整 Target 组检查点规则保持。
-  预期只从受信题目/fixture 投影，运行前冻结，不注入被测模型；结果页只读当时快照。
-  旧记录只归档导出，不迁移、补判、恢复或作为 Harness 来源；新来源排除测评系统故障。
-  部署更新同时保护 Harness 创建/恢复和 Evaluation 维护窗口。规格见 `specs/evaluation-result-pipeline/spec.md`。
-
-- **Agent 流式观测**：主 Codex 使用每回合隔离的 App Server stdio，沿用 actor、PromptPlan、ExecutionScope 和凭据租约。公开消息、摘要和命令输出通过 AgentContentDelta 进入既有观测索引，Console SSE 只读续传；过程不进入渠道最终回复，不采集 raw/encrypted reasoning，不重放已开始的 turn。独立 worker/research 保留 exec，规格见 `specs/agent-streaming-observability/spec.md`。
-
-- **Agent 层禁止 import**：`chatcopilot.botspec.*` / `chatcopilot.platforms.*` / `chatcopilot.middleware.*` / middleware `Workspace` 实现 / `BotRuntimeContext` / ACP 帧。共享 DTO/ports 只能从 `chatcopilot.contracts` 取；策略通过 hook 注入，如 `tool_payload_filter`、`background_submitter`、`file_sender`。
-- **External tools 禁止 import**：`chatcopilot.agent.*` / `chatcopilot.botspec.*` / `chatcopilot.middleware.*` / `chatcopilot.platforms.*`；共享工具契约从 `chatcopilot.contracts`、`chatcopilot.core` 或 `external_tools/shared` re-export 取。
-- **Contracts 层禁止 import**：`chatcopilot.agent.*` / `chatcopilot.middleware.*` / `chatcopilot.platforms.*` / `chatcopilot.botspec.*` / `chatcopilot.external_tools.*`。
-- **BotSpec 四面模型**：`prompts` 管机器人提示词，`tools` 管本地工具包/MCP/工具特性/隐藏工具，`agents` 管主 Agent backend（`native` / `langgraph` / `codex`）、subagent 与搜索能力，`context` 管 RAG、可写私有 Wiki、记忆存储、代码仓库、playbooks 和 dev tools 配置（`context.dev`）。当前内置 workflow registry 为空，文档和配置示例不要写不存在的 `coding` / `research` workflow。
-- **配置解析与模型生命周期**：Application 在 `project_agent_runtime()` 捕获配置与环境、解析研究/搜索/子 Agent 模型覆盖和搜索凭据，再由 `materialize_agent_runtime()` 创建运行对象。执行路径复用实例客户端，不重新读取模型覆盖环境；同配置客户端在实例内复用，由 `AgentRuntime.close()` 去重关闭，组装失败回收已创建资源。`LLMClient` 与共享限流仍归 Core。
-- **Core 并发槽位**：`FileTokenLimiter` 在同一进程间锁内检查容量并创建 token，任务期间持有 token 文件锁。TTL 只能清理未锁定的遗留 token；禁止用文件名排序或年龄驱逐活跃持有者。相同限流目录的参与者使用一致版本和容量配置。
-- **Gateway/Application 交接**：Application 的 `ActorTurnExecutor` 准备回合、管理 actor 和待确认交换，`execute()` 只返回 `TurnOutcome(result, exchange)`，不暴露 actor_state。`ExchangeRef` 是绑定本进程、本轮、session 和 Principal 的不透明引用；Gateway 保留准入、run、取消、outbox、交付和 writer generation。Provider 确认且 generation 仍有效后调用 `commit_exchange()`，Application 复检 envelope/receipt 绑定并幂等提交；未确认群交换由 `discard_exchange()` 丢弃并逐出 actor。交付已确认而 journal 失败不能改写为未送达或自动重发。
-- **Backend 创建具体 session**：通用 AgentRuntime 只准备公共输入，Native/LangGraph/Codex adapter 创建各自 session；`BackendOpenRequest.options` 只承载类型化目录、隔离、恢复和角色提示参数，不传构造函数。
-- **配置投影归 BotSpec**：`botspec/inspection.py` 解释 BotSpec 字段、环境引用并生成配置投影；`core/inspection.py` 只做通用序列化和指纹。Console 分层配置保留记忆、RAG、MCP、子 Agent 等基础配置；Wiki、Skills、搜索 Provider、工具包和具体工具归能力与工具，历史任务保留执行时快照与原实体 ID。
-- **任务运行四层观测**：任务流按真实 Channel/Gateway/Application/Agent 交接分段，运行职责标记与配置 layer 分开。新增边界用成对 Started/Finished 及真实 trace/span，正文走有界详情与现有留存；准入且 run 建立后才归档平台输入，观测投影不进入业务 ingress 序列化/指纹。Agent 公开输出独立于投递保存，交换提交只报告实际结果；Codex 只标适配器可见范围，隐藏推理不采集。观测失败不能改变权限、执行或交付事实。规格见 `specs/console-layered-observability/spec.md`。 Console 不再从旧事件名补造调用关联或回退读取 Gateway 业务状态库；任务流只消费当前四层观测版本。
-- **Channel 资源抓取**：QQ CDN 实现位于 `channels/qq_onebot/resources.py`，只通过 `contracts/resources.py` 的 `ResourceFetcherPort`/`FetchedResource` 交接有界字节。Application 负责票据、actor/workspace 绑定及原子文件发布；移动实现不得弱化 DNS/TLS、大小和文件校验。
-- **唯一 PromptPlan 契约**：BotSpec `prompts.schema_version` 只接受 `2`，Bot 文件只声明 `identity/response_style/refusal_style/role_styles/mode_styles`，不得声明安全、授权、记忆、人格持久化、搜索触发或工具规则。middleware 只提供可信结构化输入，所有 main Agent、subagent、backend 和 Evaluation 模型入口都经唯一 `PromptPlanBuilder`；Native/LangGraph/Codex renderer 只渲染不可变 plan，禁止追加第二份规则。Prompt trust 必须保持 `host policy / runtime facts / bot instructions / untrusted data` 四分区：只有宿主策略和可信运行时事实进入 Native system envelope，Bot identity/style/Skills 使用独立 user-context envelope；Codex 使用 schema v2 的独立字段。Bot 文本只能形成 identity/style，persona、memory、journal、网页和用户正文始终是不可信数据。禁止恢复旧 prompt assembler、旧导出、旧字段转换、自由文本 capability fragments 或 backend appendix。
-- **LLM 三槽配置**：BotSpec 的 `llm.chat / llm.research / llm.code` 分别声明日常模型前缀、研究模型前缀和 Codex 路由策略；非密钥默认值进入版本库，secret 留在 `local.env`。research 只覆盖实际提供的字段，其余配置继承 chat；机器 env 仍是最高优先级。`llm.code.reasoning_effort` 与 `llm.code.profiles` 形成对话可选白名单，`/model` 只修改当前 ACP session 的主 Codex lane，不能改变共享 chat LLM 或独立 code-worker。启用 `dev.code_tasks` 的实例必须用 `llm.code.code_task_profile` 引用现有 profile；worker 启动时从实例前缀 env 解析该 profile，再内部派生 `CHATCOPILOT_CODE_MODEL` / `CHATCOPILOT_CODE_REASONING_EFFORT`，不得从 `local.env` 直接导入这两个全局变量。
-- **工具发现统一走 `agent/tools/registry`**；具体工具包 catalog 位于 `tool_packs/catalog.py`，只把 pack id 映射到显式 `ToolProvider` 模块，不再复制工具名。领域 provider 自己声明 pack 与完整 `ToolDef`；静态、MCP、搜索、委托、人格和 session-local 工具均注册到同一个 `ToolRegistry`，Agent 与 Console 消费同源快照。重复 provider、pack、tool，缺失 provider，非法 schema 或旧 handler 签名都在物化阶段失败关闭。`scripts/check_component_catalog.py` 验证 pack、feature、MCP、subagent、workflow 和跨 surface 工具名一致性。`contracts.tool_packs` 只保留 DTO；控制台和控制面只读 `component_catalog`，不直接 import `agent.subagents.*` 或 `botspec.registry`；BotSpec 只声明 `tools.packs`，不让 Agent 层 import BotSpec 或中间件类型。`playbooks.reader` 在 runtime 物化时闭包绑定当前 Bot 的不可变 Skill 索引，不得恢复进程级可变 Skill registry。
-- **职业情报 provider 不是关注列表**： `career.intelligence` 的默认 watchlist 必须为空；只有用户显式目标或 workspace-local watchlist 才能触发查询。 经过审阅的公开 provider 只作为能力目录：直接源仅读取公开招聘端点，失败时返回结构化 research fallback；已知公司 fallback 写入必须校验官方域名和职位详情页，禁止把稳定 tenant 招聘端点、个人目标或社区/搜索页固化为官方岗位。
-- **大模块保留 facade**：`agent/mcp/client.py`、`agent/tools/builtin/workspace_tools.py`、`agent/subagents/registry.py`、`agent/search/coordinator.py` 是稳定入口；新增职责放到同层子模块，不把 runner/stateless/serialization/workspace handler/subagent definition/delegate/workflow/search factory/circuit/result helper 逻辑塞回 facade。
-- **当前导出与 Legacy 退出**：内部代码使用 canonical imports：`core.config` / `core.llm_client` / `core.concurrency`、`core.mcp_catalog`、`core.workspace_runtime`、`component_catalog`、`contracts.agent` 和 `agent.search`。L01 的 15 个旧转发文件已删除，完整名单与替换关系见 `specs/legacy-l01-import-removal/spec.md`；生产代码、测试和安装包均不得恢复旧模块、空存根或动态回退。`agent.research`、`agent.tools.workspace_context`、`external_tools.shared.tool_spec`、`middleware.mcp.session_gateway` 仍在后续审议范围，不能借 L01 顺带删除。旧 Codex turn routing 模块也不得恢复。
-- **Subagent 是 Agent 层基础能力**：BotSpec 只通过 `agents` 声明 preset、workflow 和预算；主 Agent 通过委托工具调用；subagent 禁止 import middleware、platforms、Workspace。
-- **新增 Gateway 通道**：新的原生传输放在 `channels/<name>/`，实现连接生命周期、codec、provider capability、资源获取与回执，并在实例装配入口显式接线；不能分配 AgentStrata 角色或授权工具。`platforms/<name>/adapter.py` 的 `ADAPTER` 自动发现只保留给尚未迁移的 legacy edge；平台分支仅限装配入口，不进入共享执行逻辑。
-- **QQ Gateway 迁移不得削弱安全保证**：QQ BotSpec 使用顶层 `gateway` 与 `channels.qq`；每个
-  实例由 systemd 以前台 `python -m chatcopilot run --bot <exact-bot>` 运行唯一 Gateway，并
-  在组装 Agent、推进 writer generation、连接 Channel 或监听端口前取得 state root 下的非阻塞
-  singleton lease；竞争或 owner/mode/symlink/hardlink/inode 校验失败必须关闭，构建、取消、回滚和
-  shutdown 都必须释放 descriptor。实例宿主通过 QQ Channel 连接用户独立维护的回环 NapCat/OneBot provider。
-  Channel 校验账号、发送者、会话和结构化 @；Gateway 采信绑定证据、完成准入和角色计算并持久化
-  受理记录与 run，Application 复检资源绑定。这些门禁必须先于 Agent、模型、工具、附件或
-  journal 副作用；迁移不得删除或弱化既有 fail-closed、actor isolation、权限审核和
-  evidence 分级保证。QQ 推荐部署不安装、渲染或启动 Node、cc-connect 或 QQ @ Relay；ACP 是
-  可选本地 Gateway client edge，不拥有 Channel、平台身份、准入、权限或 Agent runtime。
-- **Legacy 平台身份归 adapter**：只有 Feishu 等尚未迁移的 legacy edge 继续由 adapter 归一化 `session_key` / hook 字段；这些字段不能进入 QQ Gateway 的身份、准入或资源路径。
-- **QQ 群会话身份与逐轮身份分离**：QQ Channel 从已认证 OneBot 结构化帧产生不可变 transport evidence；稳定群号只形成 `ConversationIdentity`，稳定发送者另形成当前 `Principal`。账号、event/message ID、sender、conversation、connection generation 与帧摘要必须绑定，显示名和 provider 实现名不参与授权。Channel 在生成规范事件前校验结构化 @，Gateway 在资源 materialization、task、Agent、模型、工具和 journal 副作用前完成主体采信、准入与角色计算；缺失、畸形、跨账号、跨会话、重复 ID 漂移或发送者不匹配时失败关闭。本地 fake OneBot 测试不能替代真实两账号 QQ ingress E2E。
-- **QQ 群共享上下文与目录**：同一 QQ 群共享有界 conversation journal 和 `<workspace-root>/group_<safe-chat-id>/shared/` 中的普通文件，不同群、QQ 私聊与其它平台继续隔离；旧 `group_<id>/user_<id>/` 不自动迁移，也不能从 shared root 穿越。说话人变化时选择该 actor 绑定的执行 `SessionState`，通过 journal 注入群历史，不得复用其他 actor 的 executor、Codex resume、调用者身份或受保护任务。成员可写的 shared root 不保存权威 `IDENTITY.json`、`MEMORY.md`、backend state、job/task 控制记录或 persona；权威群 persona 与群 memory 位于 workspace 根的 `.conversation-state/persistent/` 保护域，以平台、会话类型和稳定群号摘要寻址，不暴露原始群号。群 Codex 只在同一 live actor session 内 resume；未获得 provider acknowledgement 的交换必须逐出对应 live actor state，不能污染下一轮；成功投递后的 journal 写入使用稳定 outbound identity 幂等。
-- **统一执行权限**：业务权限只有 Owner/member。Owner 在实例资源与已配置项目范围内使用全部已装配工具，三个 Backend、群聊与私聊一致；Admin/User 只使用明确声明 `access: member` 的公共查询、当前会话普通文件及记忆 read/append。ToolDef 默认 `access: owner`，不再按工具名、Backend、private_chat_only 或旧访问模式叠加 Owner 限制。Application 下发 ExecutionScope；文件工具与命令进程必须执行资源范围，cwd 不能代替隔离。Owner Codex 可写获准目录；所有角色恢复 Codex 默认原生功能；成员原生读写只限当前普通工作区，项目仍仅授权 Owner。内层权限配置禁止原生命令读取 Codex auth.json 与 MCP relay 配置，外层 bubblewrap 执行资源挂载。保持 actor/resume 隔离，群输出独立脱敏，不替换可信角色。权威人格、记忆和状态仍经管理服务操作。规格见 `specs/runtime-permissions-simplification/spec.md`。
-- **项目硬链接与执行终态**：挂载装配不遍历文件树扫描硬链接；普通文件在执行路径范围内允许硬链接读取、原子替换和删除，接受已放入普通共享目录的 inode 内容通过该路径可见。权威状态仍保留单链接等对象校验，解压链接不得越出目标目录。Gateway 按 AgentResult 保存原始停止原因，`llm_error` 为失败；已确认投递保持独立事实，不因执行失败重发。规格见 `specs/gateway-execution-outcomes/spec.md`。
-- **开发命令超时快照**：装配阶段解析 `context.dev.shell` 和已有环境覆盖，CommandTimeouts 随 AgentRuntime、ExecutionScope 及后台请求传递；绑定工具不得重读环境或回退重建默认预算。路径 guard 负责范围，文件 I/O 与可信交付各自调用共享单文件校验；交付的 allow/deny 策略仍有效。规格见 `specs/command-timeout-snapshots/spec.md`。
-- **文件检查职责**：Core 的 `file_integrity` 统一普通文件元数据和受信源码哈希读取；Evaluation 的 `private_files` 统一私有产物元数据检查，在实际 I/O 边界复用，不能用一次入口检查替代读写期间的身份复检。TAR 使用标准库 data filter 保留目标目录约束，允许包内链接且不设应用解压容量上限。规格见 `specs/file-boundary-simplification/spec.md`。
-- **QQ Gateway 是唯一准入 owner**：Gateway 在认证 OneBot transport 后、资源下载和 Agent 副作用前完成准入。机器人加入的群无需白名单，有效群消息在结构化 @、发送者与会话身份校验后允许。`QQ_ALLOW_FROM` 只声明允许私聊的稳定发送者 ID；缺失或空值拒绝私聊，精确 `*` 允许全部私聊，有限名单只接受逗号分隔数字 ID。`QQ_ALLOW_GROUPS` 已删除，不解析、不参与准入、不生成配置或导出到新 runtime env。群准入不授予私聊权限或提升 Owner/Admin。旧 QQ BotSpec 准入字段及 `QQ_REQUIRE_AT_IN_GROUP` / `QQ_AT_ALL_COUNTS` 仍拒绝；ACP client 不解释 QQ 身份、名单或角色。规格见 `specs/qq-group-open-admission/spec.md`。
-- **QQ 群准入不提升项目权限**：开放群准入不得把群成员提升为 Owner/Admin；每轮角色只按稳定发送者 ID 解析。真实 Owner 在私聊和群聊都保持 Owner prompt、工具、Codex 和代码任务权限，群聊输出与工具 payload 按公开群场景脱敏，不自动注入任何 actor 的私聊 memory/Wiki/RAG。User/Admin 群成员只保留公开搜索、当前群共享普通文件、当前群受保护 memory 的 read/append 和获准同步能力，不能读取项目/主机/配置/内部资料/其他用户数据、读取或修改任何 persona、清空整份群 memory、访问 Owner job 或获得高级工具。拒绝只写有界授权审计事实，不保存原始正文或 provider 资源 URL；通过准入后才持久化 ingress 和启动 task。任何 admitted-intake、task 或受保护状态持久化失败都必须在模型、工具和资源 materialization 副作用前失败关闭。非法工具访问声明在装配时失败关闭；未显式声明成员访问的新工具默认仅限 Owner。
-
-- **Owner 斜杠指令准入与生命周期**：去除平台 envelope 后，用户正文去除前导空白并以 ASCII `/name` token 开头、后接空白或正文结束时才识别为斜杠指令；绝对路径、URL、`//name` 和正文中间的 slash 仍是普通输入。所有已识别指令一律只允许本轮认证 Gateway `Principal`、准入和身份激活共同确认的可信 Owner；统一门禁位于身份激活之后、资源 materialization 及 Session/Agent/模型/工具之前，群准入、昵称、历史回合或共享 session 不得提升权限。`/help` 必须从当前 Bot 实际注册且启用的同一命令目录生成；`/state` 只投影当前会话和可信 runtime 绑定的当前 Bot systemd unit 的有界脱敏状态。`/restart` 不接受目标或参数，只重启当前 Bot unit，不清理 workspace、journal、memory、persona、backend resume 或 task/job 状态，也不操作外部 OneBot provider；仅在接受回复送达和指令 task 终态持久化后，才允许通过 Bot cgroup 外的 systemd transient unit 延迟执行，任何身份、投递、持久化、systemd、同实例 transient-unit 冲突或调度异常都失败关闭，禁止用进程内后台任务、`nohup` 或 `setsid` 降级，也不得把“请求已接受”描述为“重启已完成”。timer 注册后的回执落盘失败只能 best-effort 停止 transient units；即使目标 generation 尚未变化也不得声称已撤销，因为 systemd manager 可能已经排队 restart。
-
-- **人格与会话记忆独立授权**：BotSpec 只通过 `tools.packs: persona.control` 向 Owner 主 Agent 注入 session-bound `persona_manage`；自然语言与 `/persona` 原样进入主 Agent，不得恢复 `PersonaCandidateDetector`、解释器、命令 parser 或宿主前置短路，也不得把该工具投影给 subagent。Registry 可见性和 handler 都复检真实 Owner；`set/append/research` 的草案要求直接取自当前可信 `ToolContext.request_text`，不接受模型重复填写 requirement；`global` 由主 Agent 根据当前明确要求选择，不用关键词名单判定，模型不能提供 actor/chat/path/receipt。所有非清空人格操作的完整 Markdown 只由 `PersonaDraftAgent` 生成；宿主不得拼接人格正文，`append` 也必须读取当前层后由 Agent 生成完整替换文档。命名人物由 Agent 使用统一搜索自行查询、消歧并选择实际使用来源，再做唯一一次原子 `set`；无歌词专用 schema、候选库或响应装饰器。明确更新或清空可直接写；只在需求或作用域不清楚时设置 `defer_confirmation=true`，建立绑定真实 actor/chat/scope/hash/TTL 的提案；只有当前真实 raw user text 精确等于 `/persona confirm` 才能确认，cancel 可自然语言。只有 `ToolResult.data.committed=true` 和其中真实 mutation receipt 才能声称已保存或清空；写后 PromptPlan 刷新失败仍必须如实保留 committed receipt。群聊按 `global → group`、私聊按 `global → user` 加载，群内 show 只返回状态/哈希；非 Owner 不能读取或修改。Owner 要求的模仿强度不自动弱化，persona 和网页证据仍不能改变 transport 身份、角色、准入、scope、路径、工具、凭据或执行事实。当前私聊发送者或当前群的非空 memory 每轮作为不可信历史数据注入；所有准入用户可 read/append，私聊与群聊 memory 都只有 Owner 可 clear。秘密、群内个人隐私、persona 和权限指令在持久化入口拒绝；长期价值与临时性由 Agent 判断，不用临时关键词硬拒绝。权威文件只位于 `.conversation-state/persistent/{persona,memory}/`，目录 `0700`、文件 `0600`、no-follow、单硬链接、锁和原子替换异常时失败关闭；旧 persona 和旧 p2p memory 路径完全忽略，不自动迁移或回退读取；磁盘旧数据不由运行时清理。
-- **平台技术能力由 Channel/adapter 声明，实例开关由 BotSpec 声明**：Gateway QQ 使用 `channels.qq`；Feishu legacy 使用 adapter；`chat.file_uploads` / `chat.private_workspace` 属于 `tools.features`。
-- **纯文本附件兜底只识别本地文件引用**：匹配路径或文件名前先排除 `http://` / `https://` URL。
-- **不要写绝对路径到代码或 YAML**；机器路径走 env，secret 走 `bots/<id>/local.env` 或本机 credential store。
-- **公开源码不携带私有身份或端点**： tracked 文件、示例、测试和可达 Git 历史禁止真实凭据、组织/租户端点、文档 token、平台账号/群号、显示名、稳定平台身份、私有项目名或机器路径；公开维护者身份只有 `Lingye` / `lingye` 与 `616202172@qq.com`。 `DEFAULT_OWNERS` / `DEFAULT_ADMINS` 保持为空，角色只由部署 env 显式配置；Unity/Windows 根目录走 `CHATCOPILOT_UNITY_SAMPLE_GAME_ROOT`、`CHATCOPILOT_UNITY_PROJECTS`、`CHATCOPILOT_WINDOWS_FS_EXTRA_ROOTS` 或 `CHATCOPILOT_WINDOWS_FS_ALLOWLIST`，空 Windows allow-list 失败关闭。
-- **私有语义清单**： 组织名、私有域名、文档 ID 和项目代号等语义规则只通过 `scripts/check_public_repo.py --private-literals-file` 从仓库外载入；文件必须由当前用户拥有、mode `0600`、非符号链接、single-link、UTF-8 且每行一个非空唯一字面量。 私有清单和匹配报告禁止进入任何仓库；扫描输出不得打印字面量或命中路径。
-- **Standard WSL bridge host**:  `wsl.localhost` is the standard host-only bridge for Windows access to WSL files; exempt only that exact literal inside the `agentstrata-private-host` rule, never a path, suffix, or arbitrary `.localhost` allowlist.
-- **`local.env` 路径语义**： `provision-env` 保持非执行解析边界，只展开值开头的 `~`、`$HOME`、`${HOME}` 为部署用户主目录；其他 shell 变量和命令替换不执行。
-- **官方仓库坐标**： `https://github.com/Ling-ye/AgentStrata` 是唯一允许包含 `Ling-ye` 的公开仓库坐标；不得由此放宽其他维护者仓库名或额外公开身份。
-- **公开与发布门禁**： 当前索引、工作区和未忽略候选必须通过 `scripts/check_public_repo.py`；首次公开、可见性变更和 Release 还必须通过 `scripts/check_public_repo.py --history` 与 `scripts/check_secrets.sh history`。 首次公开根提交使用 `--strict-git-identities` 核对 author/committer/tagger header 邮箱；常规历史扫描允许 commit/tag message 中的外部仓库链接和联系或签名邮箱，但文件、路径、历史 blob、URI secret、真实私有文档链接和外部私有 literal 仍严格扫描，不能阻断 Dependabot 或合法外部贡献者。 Release 从签名 annotated tag 开始，自动化只创建草稿；不发布 PyPI、不部署、不合并、不修改源码。`docs/releasing.md` 是唯一事实源。
-- **敏感扫描测试夹具**： Gitleaks 的私有主机规则只匹配有合法左边界的主机，敏感查询规则只匹配 URI 中的 `?key=` / `&key=`；拒绝性测试需要用分段字面量在运行时构造私网地址、私有域名或假 secret，禁止用宽泛路径 allowlist、`gitleaks:allow` 或提交真实敏感值绕过门禁。
-- **全新公开基线**： 首次公开从审计后的 tracked-only 文件树创建单个无父根提交，不复制旧 commit、tag、branch、notes、replace refs、LFS、submodule 或 GitHub 元数据；禁止 `--mirror`、`--all` 和批量 `--tags` 推送。 完整流程与 Git 结构验收以 `specs/fresh-public-repository-bootstrap/spec.md` 为事实源，提交、推送、远端创建、可见性修改和归档由维护者执行。
-- **Release 构建边界**： `requirements/release-build.txt` 是手工复核的六包、全哈希、Python 3.10 build-only 闭包，不由兼容 requirements 生成。测试、构建、正常安装和带写权限的 draft Release 必须分 job；原始 sdist 在解包前验证，最终 wheel/sdist/notes/checksum 受校验和与 attestation 绑定。
-- **Git 写操作只接受当前请求的明确授权**： 当前交互式 AI 协作者不得自行执行 `git add` / `git commit` / `git push`；既有发布自动化例外是 Owner 明确调用 `start_code_task`，由受信 code-worker 在任务专属 `codex/<instance-id>/<task-id>` 分支上提交、非强制推送并创建草稿 PR。 该例外不授权 merge、force-push、部署或修改操作者工作区。另允许操作者明确启用 Harness 的 `review_and_commit`：仅由受信宿主在任务专属 `feat/harness-<task-id>` worktree 中暂存经验证的精确文件清单并创建一个本地提交，提交说明必须标记 AI Harness；不执行 Git hooks、push、PR、merge、rebase、tag 或部署，不扩大编程/审核 Agent 的 Git 权限。
-
-- **Lingye 固定 Codex backend**： `lingye-copilot-qq` 使用 `agents.backend: codex`；选择作用于整个实例，不按角色、命令或单回合切换。 切回 Native 或 LangGraph 必须修改 BotSpec 并重新部署；部署前删除旧 backend 状态，失败后不恢复旧会话。 Native 的会话、工具执行、仓库任务和发布能力是长期保留的一等能力。
-- **Evaluation 独立生命周期**：Agent Profile 对比和 BFCL / GAIA / IFEval Suite 只使用 `Evaluation`，以 `kind: comparison | suite` 区分；`chatcopilot.evals.application` 与本机 `chatcopilot.evals.service` 是活动 claim、受管 worker、lifecycle state 和更新 maintenance lease 的唯一 owner。Console 只是通过同 UID Unix socket 调用服务的 UI/BFF，禁止在 `console.*` 中恢复 Evaluation manager、worker supervision、进程内 fallback 或旧 import facade。Console 启停和重启不得发送 worker 信号或改写 Evaluation 终态；运行代码更新必须在与创建相同的跨进程锁内原子证明 idle 并持久化 maintenance marker，整个构建、Evaluation 重启、UDS health 和 Console 重启窗口都拒绝新 Evaluation，结束后才释放；服务不可达、状态不明或已安装 unit 未运行时 fail closed。Console 页面触发自身更新时只允许 `systemd-run --user` 创建独立 transient unit；`setsid` / `nohup` 仍属于 Console service cgroup，禁止作为降级路径，transient unit 无法创建时必须在运行更新脚本和获取 maintenance lease 前失败。服务不可用时 BFF 明确返回 `503`，不得降级为本地 manager。
-- **Evaluation artifact 所有权**：创建必须先完成无副作用预检，阻断时返回结构化 `code/message/checks`，不创建报告目录或子进程。Application 唯一写 `request.json`、`state.json`、活动 claim 和取消标记；Evaluation Core 唯一写 `result.json`、`summary.md`、`progress.jsonl` 和逐 Trial 证据；managed worker 只写脱敏 `run.log`。Worker 必须等待父子启动握手，只有 PID 同时持久化到 state 与 claim 后才能执行 Core；握手前 service 退出时 worker 必须自行退出。受管进程退出前禁止删除、重跑或为同 Bot 创建下一条；worker PID 只有在 argv 精确包含内部 managed-worker 模块、且唯一 `--output` 与 Evaluation 目录规范路径匹配时才可发送信号，身份不明时 fail closed。Evaluation 根的既存祖先、目录、claim、取消标记和权威 artifact 必须拒绝符号链接，并校验 owner、inode 类型、`0700` / `0600`、单硬链接、记录 ID 与 containment。评测数据统一位于 `reports/evals/evaluations/<evaluation-id>/`，禁止恢复 `/api/evals/experiments`、`/api/evals/runs` 或第二套报告根。
-- **Evaluation mutation 交付**：`start` / `rerun` / `cancel` / `delete` 必须在任何 mutation 前由 UDS server 返回绑定 request ID、operation 和 Evaluation ID 的 accepted 帧；未成功发送 accepted 时不得 dispatch。`start` / `rerun` 使用 client 生成的稳定 Evaluation ID 和规范请求指纹实现同请求幂等恢复，同 ID 请求漂移必须 conflict；accepted 后断线只能用同一 ID 有界查询或重试，禁止产生身份未知的重复 Evaluation。Suite 官方数据准备在显式子进程内使用私有环境快照，不得在下载期间修改全局 `os.environ` 或长期持有进程级环境锁。
-- **Standalone Evaluation 隔离**：`evals run` 默认写入 `reports/evals/manual/<evaluation-id>`，允许显式 `--output`，并拒绝写入 `CHATCOPILOT_EVALUATION_ROOT` 或默认 `reports/evals/evaluations/` 受管根；standalone/CI 记录使用 `reports/evals/manual/` 等独立目录，不能绕过 service claim 写受管 artifact。
-- **Evaluation 对象与执行边界**：Console 按LLM测评、Agent测评、系统测试组织，Agent 任务题库见下一条；旧两个项目套件只保留历史与工程合同验证。现有 `agentstrata-qq-message-flow-v1` 的 7 个 Case 是 legacy Relay/attestation/ACP 合成链，只用于防止旧能力回归，不是新 Gateway 验收或当前推荐部署证据；迁移到 fake OneBot → real Channel → Gateway 前不得称为当前 QQ message-flow 证明。测评只允许 Console 按钮或 CLI 手动启动，默认每 Case 1 次，不接 Git hook、CI、文件/部署/重启回调，不发送真实 QQ。Console 按LLM测评、Agent测评、系统测试三类对象组织，默认 Agent测评；入口内按项目测评/公开基准分组，待接入默认折叠。BFCL 当前模型直测；IFEval 使用独立 PromptPlan 直接调用模型，GAIA/AgentBench 等按实际 Agent 执行归属，QQ 保留 Legacy 合成链路说明；Comparison 保留 CLI/服务入口。基准支持范围、实际执行对象与准备状态必须如实显示；仓库自动化不得描述成真实商用 LLM、真实 QQ、真实 cc-connect/NapCat 或 Canary E2E 通过。
-- **Agent 任务题库与目录**：`agentstrata-agent-tasks-v1` 为唯一当前项目 Agent 套件：64 题，quick/full/security/live/skills/red-team=12/60/11/2/2/12。`agentstrata-capabilities-v1` 与 `project-business-v1` 已退役，原资源仅用于工程合同测试，正式创建和重跑拒绝，历史快照不改写。Case 通过静态 scenario_id 和参数提供隔离环境，不按新 Case ID 分派；输入不携带参考答案或操作脚本。事实验证结构、数值、依赖、真实产物与保护集，必要语义采用 strict GEval，不允许用 native 关闭。多主体评分必须保留全部回合与会话绑定，评分输入只供判分和复核；自然数量允许单位，拒绝操作不要求固定内部术语。逐题审查见 `docs/evaluation-agent-task-audit.md`。未记录证据、执行或评分异常不能算通过。IFEval 模型直测复用固定官方检查器，约束不丢弃、未知或参数异常失败关闭，旧 Agent 运行不自动转换。源码、许可、数据和修改说明一并打包。红队通过 Case metadata 的 test_category/red_team_surface 分类，不能用普通异常处理题冒充对抗覆盖；新增题必须同时检查攻击效果与正常功能。GAIA/SWE-bench 使用固定官方版本与私有缓存，缺附件或镜像不得标可运行；准备数据不自动下载全部镜像或调用模型。下载凭据使用私有 CHATCOPILOT_HF_TOKEN 或本机登录，不进入题目和产物。规格见 `specs/evaluation-agent-task-unification/spec.md` 与 `specs/evaluation-red-team-data-preparation/spec.md`。
-- **LLM 官方数据与输出**：BFCL 固定 V4 单轮 13 类 3,641 题与官方 AST/相关性核心；IFEval 固定 541 道官方原题、25 种约束及分句资源。默认 full，balanced-100/smoke 显式选择，缺数据不回退。独立 PromptPlan 保存真实 model_request/model_response；模型函数调用不代表工具执行，历史调用仅只读投影。评分异常保留响应，未采集、空响应、截断分别显示。维护更新先取得 Evaluation idle lease，再同步依赖、构建与重启两项服务；不启动付费试跑。规格见 `specs/evaluation-llm-official-output/spec.md`。
-- **AgentBench FC 本地环境**：`scripts/prepare_agentbench.py` 仅显式准备固定版本 DB/OS Controller、worker、Redis 与容器环境，不运行模型或训练器。Controller 只发布回环端口；Docker socket 仅供受信 worker 分配隔离环境，任务容器不得挂载宿主数据或凭据。低内存资源配置、AgentRL exec timeout DTO 适配及实际镜像身份必须保留记录，不改上游评分与题目。目录和启动前核验活跃 worker 与准确索引；start_sample 按 messages/tools 契约解析，并核对会话仍存在，interact 必须有真实终态/评分。取消只容忍上游明确的 session not found，不忽略其他错误。规格见 `specs/evaluation-agentbench-local-environment/spec.md`。
-- **Evaluation 引擎与趋势**：直接 Agent 轨道统一使用 DeepEval 4.2.2 的用例与指标执行，确定性事实加 Case 声明的默认质量评分；独立评分模型从 Evaluation 配置捕获，不继承被测 Bot 的评分设置。SDK 只在 Trial 内运行，禁用 dotenv、遥测、云上报与缓存，不能接管生命周期。Core 的 observation 仅保存可读执行证据，不进入完整组 checkpoint/resume。公开基准经 DeepEval 分别保存原生评分和 GEval，不以语义分覆盖原生结果；GAIA 使用官方数字、列表、字符串匹配。工作台冻结题单、框架和评分配置；趋势默认按题集、环境及指标协议区分可比条件，探索视图保留自由拆线，Git 为变化元数据；完整性、通过率分母和严格 compare/resume 保持。契约见 `specs/evaluation-benchmark-workbench/spec.md`、`specs/evaluation-deepeval/spec.md` 和 `specs/evaluation-progress-history/spec.md`。
-- **Evaluation Trial 监督**：正式 Trial 必须在独立 `spawn` 子进程执行，期限取 Case timeout 与 Evaluation 剩余 max-wall 的最小值；取消、期限或预算终止并回收 Trial 进程组，Linux/WSL 必须绑定父死保护。只有同一 Case/attempt 的完整 Target 组可写 checkpoint；中断的不完整组及 workspace 必须丢弃，不能参与 resume、compare 或通过率。
-- **评测 backend override 例外**： 只有 Evaluation 执行层可在评测子进程内把同一 Bot 投影为 Codex/Native Target；不得写回 BotSpec、部署实例或复用线上 session。 Profile Case 使用稳定版本化定义，Suite 继续使用官方动态数据和数据准备流程。 Target 必须记录 executor、backend、model、reasoning effort 与包含 Bot runtime 行为摘要的稳定 fingerprint；Case coverage 按 Bot + Case + Target fingerprint 聚合。 Resume 必须在任何写入前核对完整请求、Case 快照、Target fingerprint 和已有 Trial 结构，任一漂移都拒绝；已完成 Evaluation 不可 Resume，未 checkpoint 的 workspace 必须清理后再执行，不能修改请求后复用旧 Trial。 非 Resume 禁止复用已有 Evaluation 证据目录；外部 Case ID 只作领域标识，不得直接形成 workspace 或 artifact 路径，但包含 `/` 时仍须可查询；Evaluation 持久化前必须统一脱敏，禁止落盘原始事件、凭据字段、通用 token、已知 secret 和机器绝对路径；不完整 Target 组不得计入胜负。
-- **主会话与可选代码任务**：旧 `agents.codex.owner_access/member_access`、`access.owner_only_project_access` 已删除，校验给出迁移错误。Owner 主会话按宿主 ExecutionScope 直接读写项目；`start/get/cancel/resume_code_task` 保留为 Owner 可选独立任务。独立 systemd code-worker 从远端默认分支创建任务私有 clone，在 bwrap 中使用固定 Codex 二进制与专用 worker 凭据，不能读取个人 MCP、个人 `CODEX_HOME`、AgentStrata Session Gateway 或 GitHub token。 验证通过后仅由受信宿主提交任务分支、非强制 push 并创建草稿 PR；不覆盖源仓、不修改运行副本、不重启、不部署、不 merge。 GitHub fine-grained PAT 必须在 clone 前和交付前解析为 `local.env` 明确配置的预期 actor；`delivery.json` 绑定 canonical actor，缺失、不匹配或漂移均失败关闭。Git author/committer 使用独立的公开 AgentStrata AI Coding Bot 身份，commit 正文和 Draft PR 顶部保留 repository owner、AI generation 与 human-review-required provenance。 `CHATCOPILOT_CODEX_BOT_HOME` 的 main `auth.json` 与 `worker/auth.json` 必须分别 device auth 并独立 lease；GitHub token 只从 owner-only `0700` 配置目录内的 single-link mode `0600` worker 文件读取，交付进程用 `O_NOFOLLOW` + `fstat` 单次载入；Git askpass 只使用任务期内的临时 `0600` 快照，原始 token 不进入 Codex 沙箱、worker env 或 Git remote。 caller 摘要、角色、策略或 credential generation 变化必须使旧 resume ID 失效，不能只信任 `role_hint`。
-- **QQ 身份与 OneBot 边界**： QQ Owner/Admin 只按稳定 `user_id` 授权，昵称不参与匹配；飞书 adapter 保留姓名兜底。 `QQ_ACCESS_TOKEN` 必填且必须为 32–128 位 URL-safe 字符；`sync-token` 幂等复用或生成强 token，只替换 bot-owned `local.env` 的对应键并保留全部其他键，再同步运行时 env 与 NapCat `3001` 配置；WebUI 管理 token 是另一凭据，只用于登录 localhost 管理面板。 OneBot `3001`、WebUI `6099` 只绑定 `127.0.0.1`；控制台 WebUI 登录只调用安全 `bootstrap`，正式 start/restart 仍在任何停止动作前校验强 token。 双向探针必须实际执行 OneBot 动作，以兼容 NapCat 握手后发送 `1403` 再关闭的拒绝语义；provision、渲染、gateway 与实例启动遇到空/弱 token、非回环 URL 或双向认证失败时必须 fail closed。
-- **QQ 外部平台检查**：QQ/NapCat/OneBot 的真实连通性不属于 Agent Evaluation，不创建 Evaluation/Trial、不调用模型、不影响 Agent verdict。新 Gateway 的 hermetic integration 只在随机回环端口使用假 OneBot provider、真实 Channel/Gateway 和确定性 Agent，不能解释成真实 QQ/Agent E2E。旧 `qq_message_flow` suite 必须显式列出 `qq_platform/napcat/cc_connect/agent_model` 替代层并标记 legacy。可选群消息探针必须同时提供 `--send-message` 与单次 `--confirm-external-write`，目标只能来自 bot-local `CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID`。缺少独立发送 QQ 时，真实入站 Agent 往返必须报告 `not_tested`，不得用模拟帧或 Bot 自发消息冒充端到端通过。
-
-## 常用入口
-
-```bash
-# BotSpec
-python -m chatcopilot botspec validate bots/lingye-copilot-qq/bot.yaml
-
-# Gateway serve（Gateway BotSpec）
-python -m chatcopilot run --bot bots/lingye-copilot-qq/bot.yaml
-
-# stdio MCP serve
-python -m chatcopilot mcp-server
-
-# 实例管理
-python -m chatcopilot bot list
-python -m chatcopilot bot new <id> --platform <feishu|qq>
-python -m chatcopilot bot doctor --bot bots/<bot-id>/bot.yaml
-# 以下两个渲染命令只用于明确的 Feishu legacy edge；QQ Gateway 禁止调用。
-python -m chatcopilot bot render-cc-config --bot bots/<bot-id>/bot.yaml
-python -m chatcopilot bot render-session-env --bot bots/<bot-id>/bot.yaml --session-key <key>
-
-# Linux / WSL 部署
-bash deploy/wsl/deploy_console.sh
-bash deploy/wsl/deploy_console.sh --update-only
-bash deploy/wsl/update_instance.sh --instance <bot-id>
-bash deploy/wsl/deploy_console.sh --status
-
-# 质量评测
-python -m chatcopilot evals list
-python -m chatcopilot evals describe --suite gaia
-python -m chatcopilot evals prepare --suite bfcl
-python -m chatcopilot.evals.service health --json
-python -m chatcopilot evals run --suite bfcl --bot bots/lingye-copilot-qq/bot.yaml --output reports/evals/manual/bfcl-smoke
-python -m chatcopilot evals run --profile agent-comparison-mvp --preset quick --bot bots/lingye-copilot-qq/bot.yaml --output reports/evals/manual/agent-quick
-python -m chatcopilot evals compare --base reports/evals/baseline --new reports/evals/latest
-
-# QQ / NapCat gateway
-bash deploy/wsl/qq_gateway.sh sync-token --instance lingye-copilot-qq
-bash deploy/wsl/qq_gateway.sh start --instance lingye-copilot-qq
-bash deploy/wsl/qq_gateway.sh status --instance lingye-copilot-qq
-
-# 共享 Docker 服务（desired state 来自启用的 BotSpec）
-bash deploy/docker/services.sh desired
-bash deploy/docker/services.sh start
-bash deploy/docker/services.sh status
-bash deploy/docker/services.sh doctor all
-bash deploy/docker/services.sh probe searxng --keyword "鸢一折纸 照片"
-bash deploy/docker/services.sh probe playwright
-bash deploy/docker/services.sh probe xhs --keyword "上海 二郎拉面"
-python -m chatcopilot.agent.search.probe --bot bots/lingye-copilot-qq/bot.yaml --server xiaohongshu --query "上海 二郎拉面 探店"
-```
-
-## 核心机制
-
-- **主 Agent backend**：`agents.backend` 默认 `native`，也可设为 `langgraph` 或 `codex`；三个 backend 必须共享 `AgentTask` / `AgentEvent` / `AgentResult` 协议和现有工具注册/权限 hook。选择只发生在实例配置，不按回合自动切换。Native/LangGraph 复用 `agent/turn.py` 的 `TurnOps`；Codex 必须把公开 CLI JSONL 投影为相同事件、工具结果、生命周期 intent 和最终 `AgentResult`，不得让 Console 解析 backend 私有日志。
-- **统一上下文可观测性**： 主 Agent 与 subagent 的每次 turn 模型调用前必须发 `ContextSnapshotPrepared`；Native/LangGraph 纯文本请求捕获最终提交的 `exact_model_input`，含本地二进制资源或受限字段时降为 `partial` 并只保留 path-free receipt，Codex 捕获 AgentStrata stdin/tool/resource envelope 并以 `adapter_visible` + `provider_opaque` 标明原生 resume/内部 instructions 等不可见状态。隐藏 chain-of-thought 不进入事件或 artifact。Legacy 与 Evaluation 共享快照正文必须在首次落盘前脱敏，独立写入 private bounded artifact；Gateway 的私有观测原值遵循 Console 管理视图契约；`task.json` 只留摘要，Console 只通过 opaque snapshot ID 懒加载，不按 backend 分支。Topic classifier、search router 与 reranker 等独立 helper-model 调用本版本只保留既有 step/usage；确定性的 `ResponseIntegrityCheck` 记录摘要但不产生模型上下文 artifact。
-- **Subagent**：主 Agent 是唯一对用户负责的交付者；subagent 只通过委托工具执行内部任务，并必须用 `submit_result` 返回 `{ok,summary,findings,evidence,changes,commands_run,outputs,risks,next_steps,confidence,cache_summary}`。
-- **Task pack**：新委托使用 `objective/user_intent/deliverable/constraints/inputs/resources/acceptance_criteria/evidence_required/write_scope/excluded_context/cache_key_hint`；旧 `task` 只作为兼容别名。
-- **按源搜索**：`risk: search` MCP 为账号态或垂直来源生成受限 `search_<server-id>` delegate，例如 `search_xiaohongshu`。每个搜索 subagent 只能访问本 server 的 `search_only_tools`；Tavily、Brave 与 SearXNG 不再用 MCP wrapper。
-- **统一搜索入口**：启用 `agents.unified_search.enabled` 后，主 Agent 只调用 `search_information`；`web_fetch_page` / `browse_dynamic_page` 仅供该入口内部使用。URL、显式来源、quick、standard 单实体和 thorough 单实体请求由脚本路由；只有 thorough 多实体比较调用路由 LLM。结果先由脚本做 canonical URL/标题去重、来源权重与时间稳定排序；只有 thorough 多来源结果调用 LLM 做语义冲突和事实合并。所有结果记录 `decision_source` / `decision_reason`。Web 源三级降级：Tavily → Brave → SearXNG。
- - **直接搜索执行**：`agents.unified_search.providers` 按顺序声明 `id / kind / enabled / endpoint / credential_env / timeout_seconds / max_results`。Tavily、Brave 与 SearXNG 由有界进程内 HTTP client 执行，账号态或垂直来源继续直接调用 search-only MCP tool；两者都跳过 subagent LLM 并共享 `SearchCircuitBreaker`、deadline、结果归一化与多源降级。凭据 provider 只允许审核过的官方 HTTPS endpoint，SearXNG 只允许回环 endpoint，redirect 不得携带 credential。
- - **显式来源约束**：用户点名小红书 / XHS / Xiaohongshu 时，`ResearchRequest` 归一为 `source_hints=["experience"]`，router 只保留显式来源，避免静默回退到通用网页搜索。
- - **结果条目上限**：`_compact_results` 在字符长度截断基础上增加条目上限（`_MAX_RESULT_ITEMS = 15`），防止大量列表（如 47 条海报）撑爆 context。
-  - **时间预算**：`SearchCoordinator` 接受 `max_wall_seconds`（有 `turn_timeout` 时取 `min(turn_timeout * 0.6, 180s)`，否则 fallback 到 180s 硬上限），所有步骤并行提交到 `ThreadPoolExecutor`，通过 `as_completed(timeout=remaining)` 统一 deadline；超时未完成的步骤标记 `time_budget_exhausted`；reranker 在 deadline 过后跳过。
-  - **同源步骤上限**：Router 分解出的步骤若全部指向同一 logical source（如 3 个 `experience` 查询），上限收紧到 2 步（`_SINGLE_SOURCE_MAX_STEPS`），避免同源重叠查询消耗过多 subagent 预算。
-  - **熔断器递增 TTL**：`SearchCircuitBreaker` 对 `mcp_quota_exceeded` 使用指数递增 TTL（1h → 2h → … → 24h 上限，env `CHATCOPILOT_SEARCH_QUOTA_MAX_TTL`），成功后重置。直接搜索和 delegate 路径共享同一 `SearchCircuitBreaker` 实例。
-  - **浏览器降级**：`_needs_browser` 识别 HTTP 403/401/429 为浏览器可解决错误，自动尝试 Playwright 渲染。
-  - **Router fallback 降级**：Router LLM 异常时 `thorough` 自动降到 `standard`，runner 同步降级 request.depth，避免 fallback plan 浪费步数和 subagent 预算。
-  - **同 turn 不重复搜索**：唯一 `runtime.accuracy_and_search` layer 指示主 Agent 不在同一轮重复调用 `search_information`，避免双倍时间开销。
- - **同轮搜索硬保护**：`AgentSession` 会在同一轮首个成功 `search_information` 后拦截后续重复搜索，把上一次搜索结果作为工具结果回灌，并要求模型基于已有证据作答。
-  - **搜索 subagent 快速退出**：搜索 subagent prompt 指示在遇到 quota/unavailable 等基础设施错误时立即 `submit_result(ok=false)`，禁止盲猜 URL 或重试。
-- **MCP 与容器放置**：共享 catalog 文件在 `src/chatcopilot/botspec/mcp_catalog.yaml`，读取入口在 `chatcopilot.core.mcp_catalog`；bot 级绑定在 `bots/<bot-id>/mcp/servers.yaml`。只有浏览器、账号态或重量级共享引擎保留容器；`services.sh start` 必须先发现至少一个 BotSpec 并通过完整 BotSpec 校验，再只从 canonical `BotSpec` / `McpServerConfig` runtime DTO 对账 SearXNG engine、Playwright 与小红书，禁止另写 raw YAML enablement 解释器；发现或校验失败时禁止改变容器，缺省禁用或 `exposure: disabled` 不启动，`doctor all` 只检查 desired 服务。SearXNG / Playwright / 小红书宿主端口固定为 `18064 / 18066 / 18060`，Compose、MCP catalog、direct provider、Console 和探针必须一致；机器 env 或 Compose `.env` 端口覆盖一律在副作用前拒绝。小红书 MCP 使用固定 digest 的官方 `xpzouying/xiaohongshu-mcp:v1.2.6` 镜像，Agent 端继续通过 `search_only_tools` 只暴露 `search_feeds`。
-- **第三方能力安装**： 公开版不自动下载、安装或启用第三方 MCP/Skill。`discover_mcp_server` 只读查询内置 catalog 与官方 Registry；`approve_mcp_server` 只启用仓库内已审阅的 catalog 条目；`probe_mcp_server` 只对 BotSpec 中已经存在的 binding 执行 initialize + list_tools，不调用远端工具、不改配置。其他服务必须由维护者核实源码、许可证、运行命令、secret 引用和远端写行为后手工安装并添加 BotSpec binding。 `adapter_forge` 是与 LPM 无关的 Owner-only 源码适配 preset；Owner 必须先用 `prepare_adapter_source` 核对不可变公开源码 envelope，再显式调用 `approve_adapter_source` 写入 bot-local、Git 忽略、同一稳定 `user_id` 一次性消费的批准记录。forge 只通过 `start_code_task` 修改源码，不安装 marketplace 资源、不恢复旧插件生命周期。
-- **搜索 MCP 探针**：`python -m chatcopilot.agent.search.probe` 在机器人外直连 `risk: search` MCP server，逐个调用 `search_only_tools` 并报告参数、结果数、错误码；用于排除 router、cross-check、subagent 和 LLM 总结层干扰。
-- **直接 Web provider 边界**：Tavily / Brave 缺少有效 credential 时保持 unavailable，不得启动占位容器；SearXNG provider 的 loopback endpoint 需要 Docker 中的 SearXNG engine。Sequential Thinking 已删除；Taoke 在源码、镜像、远端配置和凭据行为完成独立审阅前不得重新进入 reviewed catalog。
-- **Codex mutation 与 PR 交付**：Owner 可用宿主绑定的文件、命令和委托工具直接修改项目；独立代码任务保留为可选方式。adapter_forge 仍消费一次性源码批准记录，其 selector 是该预设的任务范围。code-worker 使用全局 FIFO、独立 transient cgroup、远端干净 clone 和 bwrap；changed paths 必须通过 `context.dev`，一次完整门禁通过后由沙箱外受信交付器生成中文 commit、非强制 push 并创建草稿 PR，`delivery.json` 记录分支、commit 与 PR 证据。 Native/LangGraph 保持不 commit/push 的 `RepositoryTaskService`；Codex PR 不自动 merge、部署或重启。
-  - **先方案后确认**： Owner 明确要求先分析、设计、评审或给方案并等待后续确认时，当前 turn 只返回方案且不得调用 `start_code_task`；同一 session 后续明确确认时只调用一次，并完整重述已批准范围与可观测验收条件。直接要求立即实现时不增加确认轮，孤立且无明确待确认方案的“确认”必须澄清。提示投影测试覆盖这三条模型契约；隔离的两轮产品能力 Case 只实测 plan→confirm 主路径，不得把单次通过描述为宿主侧一次性 proposal 门禁或真实 Draft PR E2E。
-  - **验证工具链挂载**：bwrap 只把源仓 `.venv` 与经 manifest/父链校验的 `console/web/node_modules` 作为只读工具链映射到每条命令的临时候选树；前端构建仍在 `/workspace/console/web` 执行，任务不得改写宿主依赖。
-  - **候选索引验证边界**：full validation 使用 job-private、只读挂载的权威 Git index 表示 `HEAD + exact task delta`，宿主 materialize/verify 只操作 disposable index copy；quick 前真实 index 必须等于 `HEAD`，pytest 等会创建临时仓库的检查不得继承候选 `GIT_INDEX_FILE`。每条 quick/full 使用独立 exact-materialized tree、`0700` HOME、无 profile/rc Bash 和独立网络 namespace；clone ignored 内容不进入验证。tree/home/index-copy/lock 必须在成功、失败和 resume 路径严格清理，遗留 symlink、foreign owner 或 inode 类型异常时失败关闭且不跟随。Console 依赖只在 source/task 的 `package.json` 与 `package-lock.json` 完全一致、父链无 symlink 且 source `console/web/node_modules` 存在时挂载。
-  - **实例隔离与恢复**： `start_code_task` request 必须在任务目录可见前持久化非空 `instance_id`；每个 systemd worker 使用 BotSpec 派生的实例专属 workspace，只恢复与当前实例完全匹配的 request，missing/foreign identity 一律 fail closed。
-  - **取消与交付边界**： cancel 与进入 `delivering` 必须共享状态锁；进入交付后不可取消，普通后台任务不得依赖该 POSIX 锁。 GitHub 返回的 PR `head.sha` 必须精确等于已验证 commit；远端分支恢复不得 force-push、改写 commit 或静默创建重复 PR。
-  - **context.dev 接线**：BotSpec 只声明 `root_env` 与 `shell`，Application 捕获实际配置后生成执行资源；旧 allowed_paths/denied_paths 校验时报迁移错误。code-worker 继续复用现有配置解析与单次任务写入范围。
-  - **路径解析与交付**：宿主根据可信角色绑定工作区和项目资源。Owner 文件工具默认相对已配置项目，成员相对当前会话工作区；绝对路径仍检查同一资源范围。命令通过 bwrap 限定可见与可写目录。运行副本只能通过显式部署或 self-update publisher 更新，代码任务的发布流程独立。
-- **Codebase (legacy)**：`external_tools/codebase/` 中 `codebase.read` 只读检索仍可用；`codebase.change` 已从工具包 catalog 移除，托管写入流程由 dev tools 替代。
-- **RAG**：只检索 BotSpec 声明的本地/私有知识源，不替代联网查证，也不写入长期 memory。
-- **私有 Wiki**：`context.wiki` 声明机器私有根目录 env、最低读取角色和私聊限制；`wiki.knowledge` 对 Owner 可用；自动私有上下文只在当前 Owner 私聊注入。`pages/` Markdown 是事实源，`sources/` 保存原始快照，`.index/wiki.db` 可重建。会话权限由 middleware 在 Retriever 和 tool schema 装配前强制执行；禁止仅靠 prompt 保密。V1 不包含 PDF/DOCX、飞书同步或自动 Git commit/push。
-- **PromptPlan 缓存与预算**：固定 layer 按契约顺序构造并以 layer hash 形成稳定前缀；动态 persona、history 和 session facts 位于后层。tools schema 按 name 排序、properties 按 key 排序，工具投影 digest 来自最终可信工具集合。main Agent 与 subagent 使用同一个 `PromptLayer` 类型；subagent 只增加 `runtime.subagent` 与职责文本，不建立平行 prompt 体系。预算按固定策略、persona、history、用户正文和 tool schema 分桶，超限必须显式评审。
-- **双层预算机制**：`AgentSession` 的迭代与超时均采用 **soft cap + 健康检查 + hard cap** 三层设计：
-  - **迭代**：`max_tool_iterations`（默认 8）是 soft cap，到达后检查健康状态（无重复工具调用、无连续失败）；健康则继续执行，不健康则注入 wrap-up 指令让 LLM 总结后停止。`hard_iteration_cap` 默认为空，只有显式配置才成为硬上限；子 Agent 直接使用声明的轮数和时间，不隐式倍增。
-  - **超时**：`turn_timeout_seconds` 是 soft timeout；到达后检查最近工具活跃度（`stall_window_seconds` 内有无工具完成）；有活跃则继续。`hard_timeout_seconds` 是无条件安全线。若只设 `turn_timeout_seconds` 不设 `hard_timeout_seconds`，保持旧行为（等价硬截断）。
-  - **停滞检测**：最近 3 次工具调用 fingerprint 相同 → 判定为死循环；连续 2+ 次失败 → 判定为不健康。
-  - **Subagent 自动继承**：subagent 的 `max_model_turns` 作为 soft cap，hard cap 自动计算为 `max(soft+4, soft*2)`；hard timeout 为 soft 的 3 倍。
-  - **Env 覆盖**：`CHATCOPILOT_HARD_ITERATION_CAP`、`CHATCOPILOT_HARD_TIMEOUT_SECONDS`、`CHATCOPILOT_STALL_WINDOW_SECONDS`。
-- **Tool call 完整性修复**：`AgentSession._repair_orphan_tool_calls` 扫描 messages，为缺失 tool result 的 `tool_calls` 补全合成 error result（`ok: false, error: aborted`）。三处调用：`_timeout_result`（超时截断后）、tool_call_cap 返回前、每次 `llm.chat()` 前的防御性校验。确保跨 turn 累积的 messages 不会因 orphan `tool_calls` 导致 OpenAI API 400。
-- **任务诊断与 Gateway durable state 分层**：只有经过 transport verification、identity 与 admission 的消息才能创建 `task_...` 并进入 Agent；拒绝只保留有界、无正文的 authorization decision receipt。Gateway SQLite 另行拥有 ingress、session、run、event cursor、outbox 与 delivery receipt，不能把 task JSON 当成平台投递事实。`job_...` 仍是后台长任务，Owner job 按 actor digest 位于受保护状态；群内 workspace 不可读取。Gateway 运行端持续写独立观测索引与任务正文，Console 只读查询分层配置快照、分页历史、阶段、指标、审批和回执；正文按终态结束时间保留 30 天，活动及恢复任务不清理，摘要长期保留；禁止推进 generation、读取原始 ingress 或套用 legacy ACP 八层证据。无 run 关联键的准入审计只能作为实例审计；诊断写失败不改变权限或交付结果，历史缺记录与截断必须显示。
-- **ACP 是 Gateway client edge**：`protocols/acp/server.py` 只映射 ACP 帧、session lifecycle、prompt/cancel 与 Gateway typed RPC；它不能 import 或重新拥有 Agent、QQ、BotSpec、authorization、workspace 或 task runtime。连接中断恢复使用原始 params/idempotency key、`runs.get` / `runs.latest` 与 `deliveries.get`，不得以新输入替代旧 run。
-
-## 快速验证
-
-开发过程中先跑改动模块及直接调用方的定向测试；普通改动完成后使用 `fast`，
-按 `tests/fast.txt` 的完整文件清单执行约 1000 项日常回归和全部静态检查。
-清单之外的功能有改动时补跑对应测试，不要求每次小修改执行全量。
-跨层、部署、依赖、打包或广泛改动使用 `full`；CI 保留 Python 3.10/3.13 全量覆盖。
-裸 `pytest` 仍是全量发现。清单按职责维护，不按数量截断参数矩阵。
-
-```bash
-# Public-boundary checks for the current change
-python scripts/check_public_repo.py
-bash scripts/check_secrets.sh changes
-
-# Full-history gates before public visibility or a Release
-python scripts/check_public_repo.py --history
-bash scripts/check_secrets.sh history
-
-# 日常入口；fast 包含全部静态检查和约 1000 项精选回归
-.venv/bin/python scripts/check_repo.py fast
-
-# Component Catalog 精确投影与跨 surface 一致性
-.venv/bin/python scripts/check_component_catalog.py --json
-
-# 全量入口额外执行 pip check、wheel 构建不变性、完整 pytest 与控制台生产构建
-.venv/bin/python scripts/check_repo.py full
-
-# 文档/配置/轻量代码改动
-git diff --check
-python -m compileall -q src bots tests
-python -m chatcopilot botspec validate bots/lingye-copilot-qq/bot.yaml
-
-# QQ 图片 / MCP / 搜索
-python -m pytest tests/unit -q -k "qq or image or mcp or search"
-
-# 控制台后端
-python -m pytest tests/unit -q -k "console or eval"
-
-# 前端
-cd console/web && npm run build
-```
-
-构建工具必须由 `pyproject.toml[project.optional-dependencies].dev` 声明；禁止依赖虚拟环境中碰巧存在的未声明工具。
-
-Python 依赖只能在 `pyproject.toml` 的现有 `agent` / `acp` / `console` / `evaluation` / `desktop` / `dev` 分组修改；随后运行 `scripts/sync_requirements.py` 更新兼容 requirements，并用 `--check` 验证无漂移。远端状态参与写入位置或去重判断时必须失败关闭，禁止把读取异常降级为空表、零行或空去重集。
-
-Windows 上全量 pytest 可能被旧临时目录 ACL 干扰；优先 targeted tests，必要时设置可写 `TEMP` / `TMP` 和 `--basetemp`。WSL 的 `check_repo.py` 会把子进程 `TMPDIR` / `TEMP` / `TMP` 统一到显式 `TMPDIR` 或 `/tmp`，避免继承 Windows 临时目录。
-
-## 文档导航
-
-| 主题 | 文档 |
-| --- | --- |
-| 项目入口 | `README.md` |
-| 版本发布 | `docs/releasing.md` |
-| 支持边界 | `SUPPORT.md` |
-| 文档总览 | `docs/README.md` |
-| 日常运维 | `docs/operations.md` |
-| 架构边界 | `docs/architecture.md` |
-| 架构边界加固规格 | `specs/architecture-boundary-hardening/spec.md` |
-| SDD 开发模式 | `docs/sdd.md` |
-| 运行时数据流 | `docs/runtime.md` |
-| BotSpec / MCP / RAG / codebase 配置 | `docs/bot-spec.md` |
-| Linux / WSL 首次部署 | `docs/deployment.md` |
-| 控制台 | `docs/console.md` |
-| 共享 Docker 服务 | `deploy/docker/README.md` |
-| WSL 手动排障 | `deploy/wsl/README_WSL.md` |
-| 外部工具架构 | `docs/external-tools-architecture.md` |
-| AI 前端规则 | `docs/ai-frontend.md` |
-| AI 任务诊断 | `docs/ai-debugging.md` |
-| Evaluation 术语 | `docs/evaluation-glossary.md` |
-
-## 控制台前端约定
-
-- 控制台是运维工作台，不是营销页：信息密集、安静、可扫描，优先支持重复运维操作和异常定位。
-- Console 管理视图直接展示实例配置与私有观测原值，包括身份名单、凭据、环境引用和路径；不再次脱敏已有可读取字段。值仅进入私有存储及禁止缓存的 API，不进入公开源码或诊断导出；历史已省略字段不能补造。共享 artifact、Evaluation、群聊/工具授权及隐藏推理边界保持，契约见 `specs/console-operator-visible-values/spec.md`。
-- 保持 React 18 + Rsbuild/Rspack + Arco Design + TanStack Query；不默认引入 Tailwind、shadcn、MUI、Storybook 或 Playwright 视觉测试等新栈。
-- 触碰页面时使用原生 Arco API，不恢复旧 UI 语义兼容层。
-- 文本、状态标签和按钮层级优先复用 `styles/tokens.css`、`styles/components.css` 与 `shared/ui/status.ts`。
-- 修改后优先用当前 AI 环境已有浏览器工具检查桌面和窄屏；没有浏览器时至少完成构建并说明未做视觉验证。
-
-### 控制台页面
-
-| 页面 | 功能 |
-| --- | --- |
-| 总览 | 实例状态汇总 |
-| 服务管理 | 按 Channel 接入与外部能力查看服务职责、状态、诊断与日志 |
-| 机器人实例 | 任务 / 分层配置 / 运行状态 / 能力与工具，四个同级页签；任务内左侧列表、右侧流程，窄屏单列切换；服务日志统一入口 |
-| 组件目录 | 按 tools / prompts / agents / context 四个 surface 统一浏览工具、提示词、Agent 和上下文组件（只读卡片） |
-| 质量评测 | 新建评测 / 评测记录 / 任务集 |
-| 设置 | 控制台本身 |
-
-### 控制台 API
-
-| 端点 | 方法 | 用途 |
+| 本次涉及 | 先读取的相关章节 | 进一步事实源 |
 | --- | --- | --- |
-| `/api/bots/{id}/gateway-observation` | GET | 当前实例 Gateway run 和独立准入审计 |
-| `/api/bots/{id}/gateway-observation/runs/{run_id}` | GET | 当前 run 的诊断事件、审批和交付回执 |
-| `/api/catalog` | GET | 统一组件目录（tools + prompts + agents + context） |
-| `/api/catalog/{item_id}` | GET | 单个目录条目 |
-| `/api/bots/{id}/tools` | GET | 读取实例当前工具配置 |
-| `/api/bots/{id}/tools` | PUT | 写回工具配置；`?apply=true` 时同步到运行实例并重启 |
+| Channel、Gateway、actor、授权、文件、群上下文、投递、斜杠指令 | [运行时与资源契约](docs/ai-contracts-runtime.md) | [架构](docs/architecture.md)、[运行数据流](docs/runtime.md)及章节引用规格 |
+| Agent/backend、PromptPlan、Skills、MCP、工具注册、子 Agent、搜索、人格、记忆 | [Agent 与上下文契约](docs/ai-contracts-agent.md) | [BotSpec](docs/bot-spec.md)、[外部工具](docs/external-tools-architecture.md)及章节引用规格 |
+| Evaluation、评分、Case、结果保存、Harness 复现/修复/审核 | [Evaluation 与 Harness 契约](docs/ai-contracts-evaluation.md) | [结果链路](specs/evaluation-result-pipeline/spec.md)、[Harness](specs/evaluation-case-harness/spec.md) |
+| 部署、容器、MCP 安装、发布、秘密扫描或 Git 交付 | [部署与公开契约](docs/ai-contracts-operations.md) | [首次部署](docs/deployment.md)、[运维](docs/operations.md)、[发布](docs/releasing.md) |
+| Console 页面、API、配置编辑与私有观测显示 | [Console 契约](docs/ai-console-contracts.md)、[前端工作流](docs/ai-frontend.md) | [Console](docs/console.md)，再按数据归属读运行时或测评契约 |
+| 开发命令、依赖、测试范围 | [开发与验证](docs/ai-development.md) | [贡献指南](CONTRIBUTING.md)、`pyproject.toml`、`tests/fast.txt` |
+| 运行失败诊断 | [任务诊断](docs/ai-debugging.md) | 先 summary/index，再读取相关原始证据 |
+| 文档入口与渐进式披露 | [文档中心](docs/README.md)、[披露规格](specs/progressive-disclosure/spec.md) | 仅调查演进原因时读 [项目历史](docs/project-history.md) |
 
-### 工具配置编辑机制
+相关契约中的规则仍然有效；按任务定位后必须在修改前读到适用内容。跨层任务同时读取有关
+领域。规则指向规格时，优先使用其当前契约；历史验证只证明当时的状态。
 
-- 前端 `BotToolEditor` 使用四面 DTO：`tools.packs/features/hide/mcp.servers` 与 `agents.presets/workflows`，并融合 inventory 诊断信息按 tools / prompts / agents / context 页签展示本地能力、MCP 健康、提示词、子代理预算、workflow 和上下文配置。
-- 后端 `console/control/yaml_editor.py` 使用 `ruamel.yaml` round-trip 编辑 `bot.yaml` 和 `mcp/servers.yaml`，保留注释和格式；该依赖已声明在 `console/requirements.txt`，`deploy_console.sh` / `setup_console.sh` 安装时会一并装入 venv。
-- `console/control/catalog.py` 通过 `component_catalog` 读取 tool pack / tool feature / MCP catalog / subagent preset / workflow DTO，并聚合提示词占位和上下文来源占位为统一 `CatalogItem`。
--  编辑后点「保存并重启」会先取得同实例 TaskManager 串行资格，再写入源仓配置并调用统一 `update_instance.sh`；该入口通常同步后快速应用配置并重启，只有依赖、安装脚本变化或实例 venv 缺失时才完整 bootstrap。仅「保存配置」同步写源仓。配置修改留在 WSL 源仓，由用户在 WSL git 工作区提交。
+## 配置与公开边界
 
-## WSL 源仓环境安装入口
+- Secret 和机器私有配置使用环境变量或被忽略的 local.env；必要时维护无秘密的示例和
+  `.gitignore`。不要把机器绝对路径写入代码或 YAML。公开稳定配置正常纳入版本管理。
+- 公开源码、测试、示例与可达历史不得含真实凭据、私有身份、端点、文档 token 或机器路径。
+  公开维护者身份只允许 Lingye / lingye 与 616202172@qq.com；官方仓库坐标只有
+  https://github.com/Ling-ye/AgentStrata 。DEFAULT_OWNERS / DEFAULT_ADMINS 保持为空。
+- 普通文件与权威状态按各自实际 I/O 边界校验；不因渐进式披露弱化作用域、路径、身份或回执检查。
+  完整公开、私有清单与 Release 边界按上表读取部署与公开契约。
 
-首次在 WSL 源仓直接安装、配置和运行项目时使用：
+## 规格、文档与验证
 
-    bash deploy/wsl/install_wsl_env.sh
-
-需要同时安装/修复控制台服务时加 --with-console；不要把 secret 写进脚本，机器私有值仍放 bots/<id>/local.env。
+- 架构、公共契约、部署或数据迁移先引用或创建 `specs/<id>/spec.md`；涉及运行时必须引用
+  四层基线并说明职责、交接与依赖方向。普通修复与局部功能直接实现并测试。
+- SDD frontmatter 只允许 id/type/status/created，正文为 Summary/Design/Acceptance/Verification；
+  详见 [SDD](docs/sdd.md)。不为普通改动增加固定审批或填表。
+- README 只做公开入口，docs/README 做导航，operations 集中日常命令，deployment 讲首次部署，
+  deploy/wsl/README_WSL 讲异常排障，project-history 记录演进；同一流程不复制多份。
+  QQ 新手首次部署唯一推荐入口为 `deploy/wsl/quickstart.sh`。
+- 先跑改动模块及直接调用方的定向测试；普通完成态用 `fast`，跨层、部署、依赖、打包或广泛
+  改动用 `full`，具体命令见开发与验证页。检查通过后停止，仅有新增改动、失败或具体风险时扩查。
+- 更新受影响的文档；报告实际命令、结果、跳过项与剩余风险。静态、mock、局部测试、fake OneBot
+  不等于真实商用模型或 QQ/NapCat 端到端验证。模型测评仅按明确请求手动启动。

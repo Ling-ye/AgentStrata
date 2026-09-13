@@ -92,13 +92,18 @@ def _summarize_tool_message(msg: Dict[str, Any], max_tokens: int) -> Dict[str, A
 
     summary = ""
     if isinstance(payload, dict):
+        if payload.get("result_cache") == "not_cached_oversized" or payload.get("result_inline_required") is True:
+            return msg
         summary = payload.get("summary") or payload.get("error") or ""
     if not summary:
         summary = content_raw[:200] + "..."
 
     summarized = dict(msg)
+    retained = {"summary": summary, "truncated": True}
+    if isinstance(payload, dict) and isinstance(payload.get("result_ref"), dict):
+        retained["result_ref"] = payload["result_ref"]
     summarized["content"] = json.dumps(
-        {"summary": summary, "truncated": True},
+        retained,
         ensure_ascii=False,
     )
     return summarized

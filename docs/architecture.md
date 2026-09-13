@@ -133,6 +133,34 @@ Skill registry。会话 payload filter 与后台提交器由宿主在 `new_sessi
 Codex envelope 使用 schema v2；render receipt 记录四个分区、各 layer 与最终渲染结果的
 稳定摘要。Bot 文件即使由维护者提供，也只控制 identity/style，不获得授权或安全策略权限。
 
+## 资料与工具结果按需读取
+
+Skills 在 PromptPlan 中只提供已授权索引，命中任务后通过 `read_bot_skill` 读取正文；
+正文在当前上下文中且版本相同时复用，压缩后或资料更新时允许重读。宿主策略、可信角色、
+当前任务、人格与非空作用域记忆继续按现有契约注入。
+
+Skill 与 MCP 工具的完整正文只在执行结果 data 中保存一次。Agent 会话通过现有 catalog
+装配 `context.results` / `read_tool_result`，在 payload filter 之后保存正文快照；
+超过 8,000 字符的 Skill 和搜索 MCP 正文先展示 2,000 字符预览与 `result_ref`。
+非搜索 MCP 保留完整正文和回执，不使用通用长结果截断。错误与其它工具结果保持原有字段。
+模型投影和执行观测分别记录，不把预览当作完整证据。
+
+`read_tool_result(result_id, offset?, limit?, query?)` 在当前 live actor session 中分页
+回读，offset 从零开始，limit 默认 4,000、最多 8,000 字符；query 从 offset 定位原文。
+响应包含哈希、总字符数和 next_offset。缓存只含已过滤正文，读取复检原工具权限；
+不接受文件路径、actor 或外部 URL，不重放原工具，不向 subagent 分享主会话缓存。
+Native/LangGraph 工具消息和 Codex relay 复用这一投影，历史摘要保留引用。
+未装配回读能力的独立子 Agent 保留单份完整正文，历史摘要不得只留下读取状态。
+
+每个 live session 使用 16 MiB LRU 回读缓存（含条目元数据预留），关闭后清空；
+超大单条结果保留完整正文并标记未缓存。淘汰、会话重建或关闭导致的失效返回
+`tool_result_unavailable`，不能当作原工具失败、空结果或再次执行的授权。它不替代现有
+观测留存，也不承诺跨进程恢复。完整边界见 [披露规格](../specs/progressive-disclosure/spec.md)。
+
+独立 Harness 对大证据包保留只读原文与哈希，首屏按准备、修复、审核阶段提供阅读顺序、
+小节原值、实际状态计数及异常 JSON pointer。缺失项与部分索引显式显示；先完整核对原问题、
+预期和 feedback，再进入对应阶段。摘要不替代验收，评分资料不注入被测机器人。
+
 ## Agent backend
 
 三个 backend 共享 `AgentTask`、`AgentEvent`、`AgentResult` 和 turn runtime。backend

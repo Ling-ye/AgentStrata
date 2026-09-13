@@ -123,6 +123,9 @@ class AgentSession:
         """返回当前 messages 的快照，供上层落 transcript。"""
         return [dict(msg) for msg in self._messages]
 
+    def close(self) -> None:
+        self.executor.close()
+
     @property
     def message_count(self) -> int:
         return len(self._messages)

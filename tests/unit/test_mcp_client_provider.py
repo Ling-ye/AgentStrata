@@ -306,7 +306,7 @@ class McpClientProviderTests(unittest.TestCase):
             )
 
         self.assertTrue(result.ok)
-        self.assertIn('"text": "ok"', result.summary)
+        self.assertIn('"text": "ok"', json.dumps(result.data["content"]))
         self.assertEqual(result.outputs, [])
         self.assertIsNone(result.file_type_hint)
 
@@ -451,7 +451,7 @@ class McpClientProviderTests(unittest.TestCase):
                 )
 
                 self.assertTrue(result.ok)
-                self.assertIn("result for unity memory", result.summary)
+                self.assertIn("result for unity memory", str(result.data["content"]))
                 self.assertEqual(result.outputs, [])
                 self.assertIsNone(result.file_type_hint)
                 self.assertEqual(by_name["web_search"].metadata["mcp_exposure"], "subagent")
@@ -521,7 +521,7 @@ class McpClientProviderTests(unittest.TestCase):
                 )
 
                 self.assertTrue(result.ok)
-                self.assertIn("recovered search for 成都29所", result.summary)
+                self.assertIn("recovered search for 成都29所", str(result.data["content"]))
                 self.assertEqual(result.outputs, [])
                 self.assertIsNone(result.file_type_hint)
                 self.assertEqual(len(FakeRunner.instances), 2)

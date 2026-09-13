@@ -18,6 +18,8 @@
 | 管理共享 Docker 服务 | [`../deploy/docker/README.md`](../deploy/docker/README.md) | [`operations.md`](operations.md) |
 | 接入或修改外部工具 | [`external-tools-architecture.md`](external-tools-architecture.md) | [`architecture.md`](architecture.md) |
 | 参与开发 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | [`sdd.md`](sdd.md)、[`ai-debugging.md`](ai-debugging.md) |
+| 让 AI 修改某个领域 | [`../AGENTS.md`](../AGENTS.md) 的任务导航 | 只读取相关领域契约及所引用规格 |
+| 理解资料、工具结果与 Harness 证据如何按需读取 | [`architecture.md#资料与工具结果按需读取`](architecture.md#资料与工具结果按需读取) | [`progressive-disclosure`](../specs/progressive-disclosure/spec.md) |
 
 ## 文档分层
 
@@ -32,6 +34,10 @@
 
 同一命令只在其事实源中完整说明；其他文档使用链接。这样可以避免一次行为变更需要
 同步修改三到四份文档，也让过期描述更容易被发现。
+
+首次阅读先选择一个目标，读到能够完成任务即可。字段与原理按需展开，历史规格用于理解
+决策背景。AI 的根协作入口保留全局边界，`ai-contracts-*.md` 保留可定位的领域规则，
+不要求每个任务读取所有规则。Markdown 折叠仅改变显示，不代表模型实际减少了上下文输入。
 
 ## 命名约定
 

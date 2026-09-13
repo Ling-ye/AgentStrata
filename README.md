@@ -15,81 +15,10 @@ evaluations.
 > **Status:** alpha source baseline, version `0.1.0.dev0`. The first public
 > state is source-only and does not represent a published `v0.1.0` Release.
 
-机器人加入的 QQ 群无需白名单，成员 @ 机器人即可交流；私聊仍按发送者名单准入，详见
-[QQ 准入说明](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md)。
+## Start here
 
-运行权限采用 Owner/member 两档：Owner 可使用当前实例资源和已配置项目；成员仅使用公共查询、
-当前会话普通文件及记忆读取和追加。三个 Backend 使用相同业务规则，详见
-[权限与资源范围](https://github.com/Ling-ye/AgentStrata/blob/main/specs/runtime-permissions-simplification/spec.md)。
-执行范围内的普通文件允许硬链接；任务执行结果与消息投递回执分别记录，详见
-[项目文件与执行结果边界](https://github.com/Ling-ye/AgentStrata/blob/main/specs/gateway-execution-outcomes/spec.md)与
-[文件边界简化](https://github.com/Ling-ye/AgentStrata/blob/main/specs/file-boundary-simplification/spec.md)。
-开发命令遵循实例的超时设置；配置及后台任务行为见
-[命令超时说明](https://github.com/Ling-ye/AgentStrata/blob/main/docs/bot-spec.md#context)。
-
-## Development history
-
-AgentStrata was developed across multiple private repositories from November
-2025 through August 2026. The later private repository alone contains 196
-commits; the public root records the August 2026 open-source baseline rather
-than the beginning of implementation.
-
-See [Project history and architecture evolution](https://github.com/Ling-ye/AgentStrata/blob/main/docs/project-history.md)
-for the initial design, problems encountered, architectural changes, and the
-resulting system structure.
-
-## Why AgentStrata
-
-- **Declarative instances.** BotSpec keeps behavior and capabilities adjacent
-  to the bot that selects them.
-- **Backend choice per bot.** Native, LangGraph, and Codex implement common
-  task, event, and result contracts.
-- **Live Agent process.** Codex main sessions use App Server to stream public
-  progress, reasoning summaries, and tool output into the Console task flow.
-  Recorded events resume after a connection loss; hidden reasoning is not
-  collected. See the [streaming observation specification](https://github.com/Ling-ye/AgentStrata/blob/main/specs/agent-streaming-observability/spec.md).
-- **Backend-neutral context observability.** The Console shows the
-  AgentStrata-known conversation and each main-agent or subagent turn call's
-  effective, host-visible context. The private operator view shows original
-  configuration and recorded values; legacy shared artifacts retain their original
-  redaction. Binary omissions and provider-managed
-  state that cannot be inspected are labelled partial or opaque instead of
-  being presented as complete.
-- **Evidence-bound runtime.** The Gateway durably separates admitted ingress,
-  authorization decisions, runs, outbox state, and provider receipts. The
-  Console shows Channel, Gateway, Application, and Agent handoffs with recorded
-  inputs, outputs, and inline call details, alongside configuration snapshots in a runtime
-  observation workbench. Runtime-owned recording supports indexed history,
-  component metrics, approvals and delivery receipts even while Console is closed;
-  detailed bodies expire after 30 days while summaries remain queryable. Legacy ACP task evidence remains separate.
-  Missing transport evidence and hidden provider reasoning remain explicit gaps
-  rather than inferred success.
-- **Purpose-built runtime boundaries.** Thin web-search providers run in the
-  Agent process; browser-backed, account-bound, and shared search-engine
-  components remain isolated and are started only when an enabled BotSpec
-  requires them.
-- **Channel boundary.** The Channel owns QQ / OneBot connection, native event
-  validation, and delivery. The Gateway controls its lifecycle and owns
-  admission, routing, sessions, runs, and delivery evidence. Feishu remains on
-  an isolated legacy adapter edge; neither path leaks native platform frames
-  into Agent logic.
-- **Owner controls in chat.** An Owner verified by Gateway identity and
-  admission policies can list the current Bot's slash commands, inspect combined
-  session and instance state, and request a state-preserving restart of only
-  that Bot after the reply is delivered.
-- **Controlled development.** Codex-backed owner sessions dispatch repository
-  mutation to isolated code tasks that validate and prepare draft pull
-  requests; they do not merge or deploy automatically.
-- **Benchmark workbench.** The Console exposes benchmark selection, case previews,
-  scoring plans, run evidence and comparable trends through DeepEval. SWE-bench,
-  BFCL, GAIA and AgentBench FC have explicit coverage and environment requirements;
-  the 65-case project catalog and 7 legacy synthetic QQ cases remain available.
-  Native benchmark scores and GEval quality are reported separately. BFCL uses 3,641 official V4 single-turn cases and IFEval uses all 541 official
-  prompts; model text and proposed function calls are visible in results. Prepared SWE-bench
-  containers use upstream grading, and AgentBench uses its local FC environment.
-  The independent Evaluation service owns workers and artifacts; the Console is
-  its UI/BFF over a same-user Unix socket. See the [workbench specification](https://github.com/Ling-ye/AgentStrata/blob/main/specs/evaluation-benchmark-workbench/spec.md).
-
+Deploy a QQ assistant with the guided route below. To configure an existing Bot,
+diagnose a task, or work on the source, choose a task from the reading map.
 
 ## Quick start
 
@@ -131,7 +60,48 @@ for requirements, permissions and recovery, then use the
 after installation. AgentStrata does not provide hosted models, chat accounts,
 or third-party credentials.
 
-### Developer setup
+## Choose your next task
+
+| I want to… | Start here | Read details when needed |
+| --- | --- | --- |
+| Install a bot for the first time | [Deployment](https://github.com/Ling-ye/AgentStrata/blob/main/docs/deployment.md#三条命令开始) | Requirements, permissions and recovery on the same page |
+| Configure models, tools or bot behavior | [BotSpec](https://github.com/Ling-ye/AgentStrata/blob/main/docs/bot-spec.md) | [Bot template](https://github.com/Ling-ye/AgentStrata/blob/main/bots/_template/README.md) |
+| Update, restart or inspect a bot | [Operations quick reference](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md#一页速查) | Follow the relevant command section |
+| Investigate a failed task | [Task diagnosis](https://github.com/Ling-ye/AgentStrata/blob/main/docs/ai-debugging.md#读取顺序) | Read summary and index before detailed evidence |
+| Run evaluations or repair a failed case | [Evaluation operations](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md#evaluation) / [AI Harness](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md#单-case-ai-harness) | [Evaluation terminology](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-glossary.md) |
+| Understand the runtime | [Architecture](https://github.com/Ling-ye/AgentStrata/blob/main/docs/architecture.md#分层与依赖) | [Runtime flow](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.md), then the linked specification |
+| Change the source | Developer setup below, then [Contributing](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md) | [AI collaboration](https://github.com/Ling-ye/AgentStrata/blob/main/AGENTS.md) routes to task-specific contracts |
+
+The [documentation center](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md) is the full navigation entrypoint.
+[Project history](https://github.com/Ling-ye/AgentStrata/blob/main/docs/project-history.md) explains the evolution and earlier
+design decisions; it is optional background for onboarding.
+
+## What the platform provides
+
+- **Declarative instances.** BotSpec groups prompts, tools, agents and context
+  alongside platform, model, workspace, deployment and access settings.
+- **Three Agent backends.** Native, LangGraph and Codex share task and result
+  contracts. Main Codex sessions stream host-visible progress into the Console.
+- **Channel and identity boundaries.** Channel → Gateway → Application → Agent
+  separates platform transport, admission, actor context and execution. Owner/member
+  permissions are enforced by the host. Group admission does not grant project access.
+- **Inspectable execution.** The Console distinguishes execution outcomes,
+  delivery receipts and missing or opaque provider state. Local readiness and
+  synthetic checks do not establish a real model or QQ roundtrip.
+- **Context on demand.** Registered Skills start as a short index. Skill and
+  search MCP results provide readable content or a preview with an authorized
+  session result reference; compressed context can reread the snapshot. See
+  [context disclosure](https://github.com/Ling-ye/AgentStrata/blob/main/docs/architecture.md#资料与工具结果按需读取).
+- **Evaluation and repair.** Independent Evaluation owns cases, execution and
+  grading. AI Harness freezes failure evidence, prepares a reproducible check,
+  repairs an isolated candidate and verifies it. Optional review and local commit
+  remain explicit controlled actions; evidence and scores are not rewritten.
+
+QQ群成员通过有效 @ 消息进入机器人，私聊按发送者名单准入。Owner 可使用实例已授权资源，
+成员只使用公共查询、当前会话普通文件及允许的记忆操作。配置与日常命令见
+[运维手册](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md)，领域契约见 [架构文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/architecture.md)。
+
+## Developer setup
 
 The guided deployment is not a development environment. Contributors who only
 need an editable checkout can install the declared development dependencies and
@@ -149,264 +119,25 @@ isolated code tasks. The starter created by the wizard intentionally excludes
 those advanced features. The bot template can also scaffold advanced QQ or
 Feishu instances.
 
-## BotSpec in 30 seconds
+Linux/WSL tests require `bubblewrap` and `ripgrep`. Start with focused tests for
+the changed modules. The `fast` profile runs the daily regression selection and
+all static checks; broad runtime, deployment, dependency or packaging changes
+use `full`. Exact commands and environment requirements are in
+[development and validation](https://github.com/Ling-ye/AgentStrata/blob/main/docs/ai-development.md#快速验证). Architecture and
+public-contract changes follow [SDD-lite](https://github.com/Ling-ye/AgentStrata/blob/main/docs/sdd.md).
 
-```yaml
-id: my-bot
-display_name: My AgentStrata Bot
+## Names and public boundaries
 
-platform:
-  type: feishu
-  adapter: feishu_acp
+The product, distribution and executable are AgentStrata / `agentstrata`.
+The `chatcopilot` Python namespace, `CHATCOPILOT_*` environment variables and
+existing runtime names remain public compatibility contracts. Current canonical
+imports and retired modules are documented in the
+[import mapping](https://github.com/Ling-ye/AgentStrata/blob/main/specs/legacy-l01-import-removal/spec.md).
 
-llm:
-  chat:
-    env_prefix: MY_BOT
-
-prompts:
-  schema_version: 2
-  identity: prompts/identity.md
-  response_style: prompts/response-style.md
-
-tools:
-  packs:
-    - workspace.read_write
-    - memory.chat
-    - feishu.document
-
-agents:
-  backend: native
-
-context:
-  memory_store:
-    provider: markdown
-    namespace: my-bot
-```
-
-Real account IDs, stable user identities, tenant endpoints, document IDs,
-repository paths, and credentials belong only in ignored runtime config or the
-operator credential store. Public templates contain names and placeholders,
-not working values.
-
-Career-intelligence tools start with an empty company watchlist. The user must
-specify a company or position. Explicitly requested companies may use a
-reviewed public provider; every other target receives a structured web-search
-fallback. Snapshots and evidence remain workspace-local, so the provider
-catalog does not embed personal targets.
-
-## Architecture
-
-Bot messages pass through four responsibility layers: **Channel → Gateway →
-Application → Agent**. Execution results return through Application and
-Gateway; Channel reports provider acknowledgements to Gateway. Assembly,
-Console, and Evaluation sit outside these message-processing layers.
-
-```mermaid
-flowchart LR
-    subgraph Runtime["Bot runtime · message flow"]
-        direction LR
-        CH["Channel<br/>connection · codec · delivery"]
-        G["Gateway<br/>admission · session · run · outbox"]
-        A["Application<br/>actor · workspace · context · exchange"]
-        R["Agent<br/>backend · model · tools · delegation"]
-        CH <--> G <--> A <--> R
-    end
-    AU["Authorization<br/>principal · admission · audit"]
-    AU -. policy .-> G
-    subgraph Surroundings["Outside the message layers"]
-        S["Assembly / instance host<br/>BotSpec · startup · shutdown"]
-        C["Console<br/>configuration · control · observation"]
-        E["Evaluation<br/>isolated trials · records"]
-    end
-    S -. lifecycle .-> Runtime
-    C -. "state / control" .-> Runtime
-    C -. "Evaluation API" .-> E
-    E -. "isolated execution" .-> R
-```
-
-The [four-layer runtime baseline](https://github.com/Ling-ye/AgentStrata/blob/main/specs/runtime-four-layer-definition/spec.md)
-is the standing SDD architecture standard. Related runtime designs must follow it;
-[SDD-lite](https://github.com/Ling-ye/AgentStrata/blob/main/docs/sdd.md) defines when to reference the baseline
-and how existing architecture checks support it.
-
-Solid arrows show message and result flow; dotted arrows show supporting
-relationships, not required message stages. Authorization, contracts, model
-access, tools, and storage support the four layers. The Channel verifies its
-provider connection and structured events; the Gateway uses authorization
-policies to decide admission and roles.
-
-The instance host assembles and starts the runtime in the bot process; assembly
-does not require another service. Console uses existing configuration, durable
-observation, and control interfaces. Evaluation owns an independent lifecycle
-and reuses shared Agent assembly for isolated trials. Neither requires every
-operation to traverse the message chain. ACP is an authenticated local client
-that connects directly to Gateway; Feishu retains its legacy adapter path.
-
-Message arrows are not Python import arrows: Gateway imports the Channel port
-and injects its inbound callback, while Channel does not import Gateway. Agent
-code does not import concrete Channels, platforms, Gateway, or BotSpec internals. See
-[architecture.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/architecture.md)
-and [runtime.md](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.md).
-
-## Included surfaces
-
-| Area | Support |
-| --- | --- |
-| Platforms | QQ through a Gateway-owned OneBot Channel; Feishu through a legacy adapter edge |
-| Agent backends | Native; LangGraph; Codex |
-| Models | OpenAI-compatible chat/research APIs; Codex CLI device authentication |
-| Capabilities | Local tool packs; in-process web search; reviewed MCP bindings; RAG; memory; private Wiki |
-| Operations | React/FastAPI Console BFF; diagnostics; task/context observability; logs |
-| Deployment | Linux / WSL; Console and Evaluation systemd user services; desired-state Docker infrastructure |
-| Evaluation | Three manual Console entries: LLM evaluation, Agent evaluation, and system testing. Metadata groups project suites and public benchmarks, with capability filters and explicit readiness. The unified 65-Case Agent task suite replaces the two retired project suites; IFEval directly tests models with pinned official checkers. Seven legacy synthetic QQ Cases retain their boundary; Profile comparisons remain available from CLI |
-
-The direct-Agent track bypasses ACP and platform transport. The existing
-synthetic QQ message-flow track uses the current OneBot Channel probe followed by the isolated attestation/ACP
-path and is retained only as a legacy regression suite; it is not evidence for
-the new Gateway. Gateway contract and integration tests instead use a fake
-loopback OneBot provider, the real Channel/Gateway code, and a deterministic
-Agent. Real QQ/NapCat/OneBot connectivity remains a platform external check;
-none of these local tracks counts as real QQ or external-user end-to-end
-evidence.
-
-Third-party MCP servers and Skills are not downloaded, installed, or enabled
-automatically. Review source, license, command, secret use, and remote write
-behavior before adding a binding.
-
-The Evaluation service is part of this repository and release. Direct Agent
-scoring uses the pinned DeepEval SDK inside isolated Trial processes, with an
-independently configured judge model. It does not add an experiment tracker,
-remote evaluation scheduler, or second report store.
-Console-only restarts leave managed evaluations running. Code updates require
-an atomic service-owned maintenance lease: the service proves idle and blocks
-new Evaluations for the entire build and restart window, so a new supervisor
-never adopts a worker that already loaded an older release. The in-Console
-update action requires an independent `systemd-run --user` transient unit;
-if that unit cannot be created, it fails before running the update script or
-acquiring the maintenance lease.
-
-Image-understanding Cases are configured; image generation is reported as not
-configured. SWE-bench Verified, WebArena, and Canary self-update remain planned,
-not runnable capabilities. Repository tests do not claim real commercial-LLM,
-live-QQ, or Canary end-to-end validation; see the
-[operations runbook](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md#evaluation)
-for manual commands and evidence boundaries.
-
-## Public-boundary checks
-
-The public scanner covers the index, modified tracked files, untracked
-candidates, path names, endpoints, document identifiers, identities, machine
-paths, backup artifacts, and credentials without printing matched values or
-paths:
-
-Source files and historical blobs keep the full public-boundary policy.
-Repository links and contact or sign-off email addresses in commit and tag
-messages are treated as normal public collaboration metadata; use
-`--strict-git-identities` when bootstrap verification must restrict only the
-author, committer, and tagger header emails.
-
-```bash
-python scripts/check_public_repo.py
-python scripts/check_public_repo.py --history
-```
-
-Operators can add organization-specific exact values without committing them:
-
-```bash
-chmod 600 /absolute/private/literals.txt
-python scripts/check_public_repo.py \
-  --private-literals-file /absolute/private/literals.txt
-```
-
-The literal file must be outside the repository, owned by the current user,
-mode `0600`, a regular non-symbolic single-link file, and valid UTF-8 with one
-unique non-empty literal per line. CI uses only public rules; private literal
-files and private reports never belong in Git.
-
-## Documentation
-
-| Goal | Guide |
-| --- | --- |
-| Browse all documentation | [Documentation center](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md) |
-| Understand project history and architecture evolution | [Project history](https://github.com/Ling-ye/AgentStrata/blob/main/docs/project-history.md) |
-| Create and configure a bot | [BotSpec reference](https://github.com/Ling-ye/AgentStrata/blob/main/docs/bot-spec.md) |
-| Install on Linux / WSL | [Deployment guide](https://github.com/Ling-ye/AgentStrata/blob/main/docs/deployment.md) |
-| Update, restart, inspect, or diagnose | [Operations runbook](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md) |
-| Understand boundaries and data flow | [Architecture](https://github.com/Ling-ye/AgentStrata/blob/main/docs/architecture.md) · [Runtime](https://github.com/Ling-ye/AgentStrata/blob/main/docs/runtime.md) |
-| Use the Console and Evaluations | [Operations Console](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md) |
-
-测评中心按LLM测评、Agent测评、系统测试组织，默认 Agent测评；各入口按项目测评与公开基准分组，支持能力标签筛选，待接入项目默认折叠。项目测评统一为 64 道 Agent 任务，采用执行事实主判与必要语义判定，题单为快速 12、离线完整 60、安全 11、红队 12、联网 2、Skill 2；红队支持独立分类与攻击面标签；GAIA 和 SWE-bench 可下载固定官方数据并自动识别缓存，镜像就绪状态单独显示；AgentBench FC 提供 DB/OS 本地准备脚本，并核验实际 worker 与题目索引；IFEval 模型直测默认载入官方 541 道原题；BFCL 采用 V4 官方单轮 13 类 3,641 题和固定官方评分核心，均保留显式调试子集与实际模型请求、正文和函数调用输出，QQ 回归保持 Legacy 合成链路边界。新运行保存对象类型，历史缺失信息不回填。文件维护方法见 [业务 Case 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-business-cases.md)；概念定义见 [测评术语](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-glossary.md)，使用方式见 [Console 文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/console.md)。
-
-[Agent 题库逐题审查](https://github.com/Ling-ye/AgentStrata/blob/main/docs/evaluation-agent-task-audit.md) 记录版本 4 的题意修正、删除理由与验证边界。
-
-测评题目默认展示预期回答／行为，结果可直接对照本次冻结预期与实际回答。
-新记录采用 v2 结果契约，分别保存执行证据、评分和结构化异常；未评分与实际零分区分。
-旧格式记录原地归档，仅保留摘要和原始导出。设计见
-[测评结果链路](https://github.com/Ling-ye/AgentStrata/blob/main/specs/evaluation-result-pipeline/spec.md)。
-
-The Console has a separate **AI Harness Repair** page alongside Evaluation. Enter a
-Case instance ID copied from Evaluation results, or an instance-bound robot task ID.
-Every recorded Case execution has its own stable ID; Harness resolves the source on the server.
-Harness owns evidence, repair hypotheses, frozen verification plans, isolated worktrees and repair history.
-Both sources accept investigative hints; robot tasks can also supply an expected behavior.
-Deterministic defects use frozen pytest regressions. Agent behavior cases are registered through
-Evaluation and run the real Agent and model with isolated product tools and frozen fixtures.
-Scoring expectations never become Agent input. Both paths protect repository unit regressions;
-model cases use at least three trials per group and an independent confirmation before review.
-Candidates may change product code and constrained Bot prompt/configuration declarations, while
-model selection, resource authority, scoring and control code stay fixed. Invalid execution or
-judge evidence blocks repair rather than counting as a product failure.
-New Console repairs default to a read-only AI review and a local commit containing the verified
-fix and portable regressions. Check logs, hypotheses and comparisons remain available for review.
-API/CLI callers opt in explicitly; no remote push, main merge, PR creation or deployment is performed.
-Setup and commands: [Harness operations](https://github.com/Ling-ye/AgentStrata/blob/main/docs/operations.md).
-
-## Development
-
-Linux/WSL Python regression tests require the system packages `bubblewrap` and
-`ripgrep` (`sudo apt-get install bubblewrap ripgrep` on Ubuntu/Debian). CI installs
-both and verifies that a bubblewrap sandbox can start before running tests.
-
-```bash
-python -m pip install -e ".[agent,acp,dev,evaluation]"
-.venv/bin/python scripts/check_repo.py fast
-```
-
-The daily `fast` profile runs approximately 1,000 regression cases selected in
-`tests/fast.txt`, together with all static checks. Run focused tests for changed
-features outside that list. Full pytest discovery and CI keep all Python tests.
-Run `.venv/bin/python scripts/check_repo.py full` before broad runtime,
-packaging, deployment, or Console changes. Architecture, public contracts,
-deployment workflows, and migrations use
-[SDD-lite](https://github.com/Ling-ye/AgentStrata/blob/main/docs/sdd.md).
-The fast profile also audits exact tool-pack membership and checks that Agent,
-Console, MCP, subagent, and workflow catalog projections cannot silently drift.
-Isolated code-task validation reuses the source checkout's `.venv` and
-`console/web/node_modules` as read-only toolchains, so install both Python and
-Console development dependencies in the source checkout before starting the
-worker. Full validation also receives a read-only candidate Git index containing
-the exact task delta; the worker leaves the clone's real index unchanged and does
-not pass that candidate index into tests that create their own repositories.
-Each quick/full command runs offline in a newly materialized exact candidate tree
-with a fresh private home, so clone-local ignored files, shell profiles, and
-artifacts from earlier validation attempts cannot enter the next check.
-
-## Compatibility
-
-The public product, distribution, and executable are named `AgentStrata` /
-`agentstrata`. The `chatcopilot` Python namespace, `CHATCOPILOT_*` environment
-variables, systemd unit names, and existing `~/ChatCopilot*` runtime paths
-remain compatibility contracts.
-
-Unused Python forwarding imports were removed in L01. External scripts must use
-the current Core, Contracts and component-catalog modules; see the
-[retired import mapping](https://github.com/Ling-ye/AgentStrata/blob/main/specs/legacy-l01-import-removal/spec.md).
-This does not change bot configuration or migrate existing runtime data.
-
-```bash
-agentstrata --help
-python -m chatcopilot --help
-```
+Credentials and machine-specific values stay in private deployment configuration.
+Source changes use the repository's public-boundary and secret checks; visibility
+changes and releases additionally require full-history gates. See
+[release requirements](https://github.com/Ling-ye/AgentStrata/blob/main/docs/releasing.md) for the authoritative process.
 
 ## Contributing, security, and license
 

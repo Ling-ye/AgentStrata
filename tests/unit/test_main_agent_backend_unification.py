@@ -2467,19 +2467,14 @@ class SessionToolRelayTests(TestCase):
     def test_identity_filter_preserves_success_payload(self) -> None:
         private_path = str((Path.cwd() / "relay-owner" / "report.txt").resolve())
 
-        class OwnerExecutor:
-            def execute(self, _name, _arguments, *, request_text=""):
-                del request_text
-                return ToolResult(
-                    ok=True,
-                    summary=f"created {private_path}",
-                    outputs=[private_path],
-                    console=f"created {private_path}",
-                    doc_links=[],
-                )
-
         def owner_handler(_args: dict, _context: ToolContext) -> ToolResult:
-            return ToolResult(ok=True)
+            return ToolResult(
+                ok=True,
+                summary=f"created {private_path}",
+                outputs=[private_path],
+                console=f"created {private_path}",
+                doc_links=[],
+            )
 
         tool = ToolDef(
             name="owner_tool",
@@ -2490,7 +2485,7 @@ class SessionToolRelayTests(TestCase):
         )
         relay = SessionToolRelay(
             tools=(tool,),
-            executor=OwnerExecutor(),
+            executor=ToolExecutor(tools=[tool], caller_role_hint="owner"),
             payload_filter=lambda payload: dict(payload),
         )
         endpoint = relay.start()

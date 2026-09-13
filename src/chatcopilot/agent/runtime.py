@@ -221,6 +221,10 @@ class AgentRuntime:
         session_registry = ToolRegistry(self.tool_registry.providers.values())
         dynamic_pack_names: list[str] = []
 
+        from chatcopilot.agent.tools.result_reader import SessionResultStore
+
+        result_store = SessionResultStore(permission_filter)
+
         agent_providers = materialize_session_providers(
             SessionCapabilityContext(
                 session_id=session_id,
@@ -242,6 +246,7 @@ class AgentRuntime:
                 permission_filter=permission_filter,
                 file_sender=file_sender,
                 workspace_service=workspace_service,
+                result_store=result_store,
             ),
             tool_pack_names=self.session_capability_packs,
             profile=self.assembly_profile,
@@ -309,6 +314,7 @@ class AgentRuntime:
             file_sender=file_sender,
             workspace_service=workspace_service,
             caller_role_hint=caller_role_hint,
+            result_store=result_store if "read_tool_result" in visible_names else None,
         )
 
         workspace_root = None

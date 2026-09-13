@@ -10,6 +10,7 @@ from chatcopilot.agent.rag.provider import Retriever
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.agent.tools.executor import BackgroundSubmitter, PermissionFilter
 from chatcopilot.agent.tools.file_delivery import FileSender
+from chatcopilot.agent.tools.result_reader import SessionResultStore
 from chatcopilot.agent.tools.workspace_context import WorkspaceService
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.skills import SkillIndexEntry
@@ -73,6 +74,7 @@ class SessionCapabilityContext:
     file_sender: FileSender | None = None
     workspace_service: WorkspaceService | None = None
     contributed_tools: tuple[ToolDef, ...] = ()
+    result_store: SessionResultStore | None = None
 
 
 def materialize_runtime_providers(

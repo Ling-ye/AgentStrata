@@ -878,8 +878,11 @@ class CodexAgentBackend:
             if target == stable:
                 self._aliases.pop(alias, None)
         if state is not None:
-            state.relay.close()
-            state.gateway_config.unlink(missing_ok=True)
+            try:
+                state.relay.close()
+                state.gateway_config.unlink(missing_ok=True)
+            finally:
+                state.relay_executor.close()
 
     def discard_session(self, session: BackendSessionRef) -> None:
         """Invalidate native resume before closing a consistency-poisoned session."""

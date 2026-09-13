@@ -37,9 +37,10 @@ class ReadBotSkillToolTests(unittest.TestCase):
             result = handler({"skill_id": "alpha"}, ToolContext())
 
         self.assertIn("alpha", result.summary)
-        self.assertIn("# Alpha", result.summary)
-        self.assertIn("body-content-alpha", result.summary)
-        self.assertNotIn("description: 测试用 skill", result.summary)
+        self.assertIn("# Alpha", result.data["body"])
+        self.assertIn("body-content-alpha", result.data["body"])
+        self.assertNotIn("body-content-alpha", result.summary)
+        self.assertNotIn("description: 测试用 skill", result.data["body"])
         self.assertEqual(result.outputs, [str(skill_path)])
         self.assertEqual(result.data["body_path"], str(skill_path))
 

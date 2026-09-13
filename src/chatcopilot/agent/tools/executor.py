@@ -28,6 +28,7 @@ from chatcopilot.agent.tools.file_delivery import (
     set_current_file_sender,
 )
 from chatcopilot.agent.tools.registry import discover_tools
+from chatcopilot.agent.tools.result_reader import SessionResultStore
 from chatcopilot.agent.tools.workspace_context import WorkspaceService, bind_workspace_service
 from chatcopilot.contracts.execution_scope import bind_execution_scope
 from chatcopilot.core.caller_context import bind_caller_role
@@ -112,6 +113,7 @@ class ToolExecutor:
         workspace_service: Optional[WorkspaceService] = None,
         caller_role_hint: Optional[str] = None,
         job_context: Any = None,
+        result_store: SessionResultStore | None = None,
     ) -> None:
         self._tools: List[ToolDef] = tools if tools is not None else discover_tools()
         self._by_name: Dict[str, ToolDef] = {t.name: t for t in self._tools}
@@ -124,6 +126,26 @@ class ToolExecutor:
         self._workspace_service = workspace_service
         self._caller_role_hint = caller_role_hint or "unknown"
         self._job_context = job_context
+        self._result_store = result_store
+
+    def project_result(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Project only an already-filtered result for this live session."""
+        tool = self._by_name.get(tool_name)
+        if tool is None:
+            return payload
+        if self._result_store is None:
+            # Independent subagents have no main-session readback capability.
+            # Their context manager must keep the single body after deduplication.
+            field = tool.metadata.get("result_content_field")
+            data = payload.get("data")
+            if payload.get("ok") is True and isinstance(field, str) and isinstance(data, dict) and field in data:
+                return {**payload, "result_inline_required": True}
+            return payload
+        return self._result_store.project(tool, payload)
+
+    def close(self) -> None:
+        if self._result_store is not None:
+            self._result_store.close()
 
     def validate_call(
         self, tool_name: str, arguments: Dict[str, Any], *, role: Any = None

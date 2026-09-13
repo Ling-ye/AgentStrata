@@ -106,7 +106,7 @@ def _wrap_remote_tool(
         feedback = _maybe_mcp_health_feedback(config, remote_name, text)
         if feedback is not None:
             return _error_result(feedback)
-        summary = f"MCP {config.id}/{remote_name} returned:\n{text}"
+        summary = f"MCP {config.id}/{remote_name} returned successfully."
         try:
             content = json.loads(text)
         except (TypeError, ValueError):
@@ -152,6 +152,8 @@ def _wrap_remote_tool(
         module="chatcopilot.agent.mcp.client",
         artifact_kinds=(),
         metadata={
+            "result_content_field": "content",
+            "result_inline_only": config.risk != "search",
             "mcp_server_id": config.id,
             "mcp_remote_name": remote_name,
             "mcp_exposure": config.exposure,

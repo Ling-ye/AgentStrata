@@ -18,9 +18,8 @@ def _read_bot_skill(
     skill_id = require_arg(dict(args), "skill_id").strip()
     entry, body = read_skill_body_from_index(entries, skill_id)
     summary = (
-        f"已读取 skill `{entry.id}` 的完整流程（{entry.name}）。"
-        f"按其中规则执行后再回复用户，同会话同 skill 不再重复读取。\n\n"
-        f"----\n{body}"
+        f"已取得 skill `{entry.id}` 的流程文档（{entry.name}）。"
+        "正文已在当前上下文且版本相同时无需重复读取；压缩后或资料更新时可重读。"
     )
     return ToolResult(
         ok=True,
@@ -41,7 +40,7 @@ def _build_skill_tool(handler: Handler) -> ToolDef:
         summary=(
             "按需读取 BotSpec 注册的某个 skill 完整流程文档。"
             "PromptPlan 的可用 Skills 索引列出了 id 与触发条件；"
-            "命中触发条件时先调用本工具读取详细规则，再按规则执行；同会话同 skill 只读一次。"
+            "命中触发条件时先读取详细规则；当前上下文已含相同版本正文时复用，压缩后或更新时可重读。"
         ),
         input_schema=object_schema(
             {
@@ -67,6 +66,7 @@ def _build_skill_tool(handler: Handler) -> ToolDef:
         category="playbooks.reader",
         owner="agent",
         module=__name__,
+        metadata={"result_content_field": "body"},
     )
 
 

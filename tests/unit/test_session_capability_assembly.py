@@ -73,6 +73,7 @@ def test_catalog_declares_ordered_agent_session_contributors() -> None:
     assert tuple(entry.name for entry in entries) == (
         "agent.delegation",
         "search.unified",
+        "context.results",
     )
     assert all(entry.provider_factory_module for entry in entries)
     assert all(entry.runtime_scope == "agent_session" for entry in entries)

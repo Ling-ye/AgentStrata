@@ -534,6 +534,7 @@ class SessionToolRelay:
             # Fail here, before the payload reaches either output channel, when a
             # trusted filter accidentally returns a non-JSON value.
             json.dumps(result_payload, ensure_ascii=False, allow_nan=False)
+            result_payload = self._executor.project_result(name, result_payload)
         except Exception:  # noqa: BLE001 - relay failures are deliberately opaque
             result_payload = dict(_GENERIC_TOOL_FAILURE)
         finally:

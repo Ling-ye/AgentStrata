@@ -39,6 +39,7 @@ tests/unit/test_deterministic_operator_commands.py
 # Agent, backend, prompt and tool contracts
 tests/unit/test_tool_registry.py
 tests/unit/test_tool_executor_contract.py
+tests/unit/test_progressive_results.py
 tests/unit/test_tool_permission_schema.py
 tests/unit/test_component_catalog_audit.py
 tests/unit/test_component_catalog_cli.py
@@ -71,6 +72,7 @@ tests/unit/test_eval_artifact_guard.py
 tests/unit/test_evaluation_environments.py
 tests/unit/test_evaluation_service_protocol.py
 tests/unit/test_evaluation_execution_capture.py
+tests/unit/test_harness_evidence_context.py
 
 # Console configuration and observation
 tests/unit/test_console_task_flow.py
