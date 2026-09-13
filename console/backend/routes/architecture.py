@@ -116,3 +116,13 @@ async def gateway_run_stream(instance_id: str, run_id: str, request: Request,
 
     return StreamingResponse(generate(), media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@router.get("/{instance_id}/gateway-observation/runs/{run_id}/trace")
+def gateway_trace(instance_id: str, run_id: str, response: Response, after: int = Query(0, ge=0)):
+    return _read(response, lambda: gateway_observability.trace_record(get_instance(instance_id), run_id, after=after))
+
+
+@router.get("/{instance_id}/gateway-observation/runs/{run_id}/trace/steps/{span_id}")
+def gateway_trace_step(instance_id: str, run_id: str, span_id: str, response: Response):
+    return _read(response, lambda: gateway_observability.trace_record(get_instance(instance_id), run_id, span_id=span_id))

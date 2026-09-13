@@ -131,12 +131,12 @@ def test_case_instance_load_and_source_resolve_on_server_and_keep_original_attem
     }
     evaluator = ServiceEvaluator(client)
     preview = evaluator.load_instance(identifier)
-    assert not preview["blockers"] and "failures" not in preview
+    assert any("完整本地执行归档" in item for item in preview["blockers"]) and "failures" not in preview
     assert preview["case_instance"]["attempt"] == 2
     source = {"trials": [trial], "repetitions": 3, "passed_cases": ["a"]}
     evaluator.source = Mock(return_value=source)
     resolved = evaluator.source_instance(identifier)
-    evaluator.source.assert_called_once_with("eval-source", "suite:b", "main")
+    evaluator.source.assert_called_once_with("eval-source", "suite:b", "main", include_trace=False)
     assert resolved["case_instance_id"] == identifier and resolved["trial_id"] == "trial-b-2"
     assert resolved["repetitions"] == 3 and resolved["passed_cases"] == ["a"]
     client.case_instance.return_value["trial"] = {**trial, "outcome": "passed"}
@@ -216,6 +216,7 @@ def test_gateway_adapter_paginates_and_does_not_read_business_state(monkeypatch)
         "approvals": [],
     }
     reader = SimpleNamespace(
+        meta=Mock(return_value=None),
         body=Mock(return_value={"state": "available", "payload": {"text": "example"}}),
         configuration=Mock(return_value={"revision": "cfg"}),
     )
@@ -229,7 +230,7 @@ def test_gateway_adapter_paginates_and_does_not_read_business_state(monkeypatch)
     )
     monkeypatch.setattr(gateway_adapter, "events", page)
     source = task_source(reader, "sample", "run-example")
-    assert not source["blockers"]
+    assert any("旧记录" in item for item in source["blockers"])
     assert len(source["evidence"]["observations"]) == 2
     page.assert_called_once_with(reader, "run-example", after=1, limit=500)
     reader.body.assert_called_once_with("run-example", "input")
@@ -237,7 +238,7 @@ def test_gateway_adapter_paginates_and_does_not_read_business_state(monkeypatch)
     changed["run"]["state"] = "running"
     changed["run"]["details_expired"] = True
     monkeypatch.setattr(gateway_adapter, "detail", Mock(return_value=changed))
-    assert len(task_source(reader, "sample", "run-example")["blockers"]) == 2
+    assert len(task_source(reader, "sample", "run-example")["blockers"]) == 3
 
 
 @pytest.fixture(scope="module")
@@ -501,6 +502,7 @@ def test_gateway_task_evidence_reads_real_observation_database_without_writes(tm
         role="owner",
     )
     recorder.store.attach_body("run-source", "input", {"text": "Return the requested value"})
+    recorder.accepted("run-source", "Return the requested value", "owner")
     state.start_run(generation=generation, session_id="session-source", run_id="run-source")
     state.finish_run(
         generation=generation,
@@ -518,7 +520,11 @@ def test_gateway_task_evidence_reads_real_observation_database_without_writes(tm
     source = task_source(ObservationStore(state.root), "sample", "run-source")
     assert not source["blockers"]
     assert source["evidence"]["run"]["state"] == "failed"
-    assert source["evidence"]["observations"]
+    assert source["trace_bundle"]["trace"]["metadata"]["agentstrata"]["capture_state"] == "available"
+    from chatcopilot.core.trace_archive import TraceArchive
+    events = list(TraceArchive(recorder.store.root / "traces").portable_events(
+        source["trace_bundle"]["trace"]["uuid"]))
+    assert any(event["kind"] == "execution_result" and event["body"]["final_text"] == "Wrong value" for event in events)
     after = {
         str(file.relative_to(state.root)): file.read_bytes()
         for file in state.root.rglob("*")

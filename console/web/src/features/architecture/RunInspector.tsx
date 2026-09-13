@@ -6,6 +6,7 @@ import { DELIVERY_STAGES, layerName, OBSERVATION_NAMES, runState } from "./model
 import { bodyState, buildRunView, dateTime, duration, runDuration, stepDuration, stepIsOpen, stepState, rememberOpenedSteps, RUNTIME_LAYERS, RUNTIME_OPERATIONS, type FlowItem, type ObservationBody } from "./workbenchModel";
 import { ConfigFields, DetailScope, Disclosure, ObservationPayload, TaskDetailState, TextPreview } from "./ObservationContent";
 import ExecutionConfiguration from "./ExecutionConfiguration";
+import TracePanel from "../traces/TracePanel";
 import { agentProcess } from "./agentProcessModel";
 import AgentStreamContent from "./AgentStreamContent";
 
@@ -202,6 +203,7 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
   const toggle = (key: string, value: boolean) => setExpanded((current) => ({ ...current, [key]: value }));
   let stepIndex = 0;
   return <TaskDetailState instanceId={instanceId} runId={run.run_id}><section className="obs-run" aria-label="任务运行过程">
+    <TracePanel key={run.run_id} endpoint={`/api/bots/${encodeURIComponent(instanceId)}/gateway-observation/runs/${encodeURIComponent(run.run_id)}/trace`} active={!terminal} />
     <header className="obs-run-heading"><div><strong>任务运行</strong><code title={run.run_id}>{run.run_id}</code></div>
       <Tag color={runState(run.state).color}>{runState(run.state).label}</Tag></header>
     <div className="obs-run-meta"><span>开始 {dateTime(run.started_at ?? run.created_at)}</span><span>耗时 {duration(runDuration(run))}</span>

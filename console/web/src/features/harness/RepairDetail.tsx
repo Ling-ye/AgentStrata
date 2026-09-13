@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Empty, Space, Spin, Table, Tag, Typography } from "@arco-design/web-react";
 import { ACTIVE, ATTEMPT_LABELS, harnessApi, repairStatusLabel, sourceLabel, stageLabel } from "./api";
+import { HarnessTraces } from "../traces/TracePanel";
 const { Text } = Typography;
 const jsonStyle = { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 420, overflow: "auto" } as const;
 
@@ -68,6 +69,7 @@ export function RepairDetail({ taskId }: { taskId: string }) {
       <Text>{task.commit_in_main === true ? "该提交已包含在本地 main 中" : task.commit_in_main === false ? "该提交尚未包含在本地 main 中" : "当前无法确认本地 main 是否包含该提交"}；远端状态未查询。</Text>
     </section>}
     {task.commit_state === "unconfirmed" && <Alert type="warning" content="Git 分支已产生提交，但回执尚未完成核验；继续时只核对并补记，不能重复提交。" />}
+    <HarnessTraces key={taskId} taskId={taskId} active={ACTIVE.includes(task.status)} />
     <Text bold>自检与复测记录</Text>
     {Object.keys(task.evaluations ?? {}).length ? <Table size="small" rowKey="phase" pagination={false} scroll={{ x: 620 }}
       data={Object.entries(task.evaluations ?? {}).map(([phase, value]) => ({ phase, ...value }))} columns={[

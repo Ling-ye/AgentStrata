@@ -9,12 +9,15 @@ import logging
 import os
 import threading
 import time
+import traceback
 from typing import Any, Iterator, Mapping
 
 from chatcopilot.botspec.inspection import configuration_projection
 from chatcopilot.core.inspection import fingerprint, plain
 from chatcopilot.core.observation_context import observation_scope
 from chatcopilot.core.runtime_observation import current_runtime_stage
+from chatcopilot.core.trace_capture import TraceCapture
+from chatcopilot.core.trace_archive import TraceArchive
 from .observation_store import ObservationStore, decoded
 
 _LOG = logging.getLogger(__name__)
@@ -38,7 +41,8 @@ class _RunLogHandler(logging.Handler):
             self.recorder.record(active[1], {"kind": "log", "layer": "application", "entity_id": "workspace:instance",
                 "status": "failed" if record.levelno >= logging.ERROR else "recorded", "created_at": record.created,
                 "data": {"level": record.levelname, "logger": record.name, **stage_data}},
-                body={"message": record.getMessage(), "level": record.levelname, "logger": record.name})
+                body={"message": record.getMessage(), "level": record.levelname, "logger": record.name,
+                      "exception": "".join(traceback.format_exception(*record.exc_info)) if record.exc_info else None})
         except Exception:
             pass
 
@@ -55,7 +59,11 @@ class ObservationRecorder:
         self._thread: threading.Thread | None = None
         self._handler = _RunLogHandler(self)
         self._lock = threading.RLock()
+        self._traces: dict[str, TraceCapture] = {}
+        self._trace_scopes: set[str] = set()
+        self.trace_archive = TraceArchive(self.store.root / "traces")
         self.ready_at: float | None = None
+        self.version: str | None
         try:
             self.version = version("agentstrata")
         except PackageNotFoundError:
@@ -89,6 +97,7 @@ class ObservationRecorder:
             try:
                 self.refresh()
                 self.store.expire()
+                self.trace_archive.expire_all()
             except Exception:
                 _LOG.warning("Observation maintenance unavailable")
 
@@ -143,6 +152,12 @@ class ObservationRecorder:
                     result = connection.execute("SELECT result_json FROM runs WHERE run_id=?", (selected,)).fetchone()
                     if result and result[0]:
                         self.store.attach_body(selected, "result", decoded(result[0]))
+                        capture = self._traces.get(selected)
+                        if capture:
+                            capture.record({"kind": "execution_result", "status": run["state"],
+                                            "created_at": run["finished_at"]}, decoded(result[0]))
+                if run["state"] in {"completed", "failed", "aborted"} and selected not in self._trace_scopes:
+                    self._finish_trace(selected, run)
 
     def prepare(self, run_id: str, request: Any) -> None:
         self.refresh()
@@ -150,20 +165,55 @@ class ObservationRecorder:
         self.store.bind_run(run_id, config_id=self.config_id, role=role,
                             backend=str(self.configuration.get("backend", "")), model=str(self.configuration.get("model", "")))
         self.store.attach_body(run_id, "input", {"text": request.canonical_text})
+        capture = self._traces.get(run_id)
+        if capture:
+            capture.record({"kind": "prepared_turn", "status": "recorded"},
+                           {"text": request.canonical_text, "turn_context": request.turn_context})
 
-    def accepted(self, run_id: str, text: str, role: str) -> None:
+    def accepted(self, run_id: str, text: str, role: str, *, secrets: tuple[str, ...] = (),
+                 roots: dict[str, Any] | None = None) -> None:
         self.store.bind_run(run_id, config_id=self.config_id, role=role,
                             backend=str(self.configuration.get("backend", "")), model=str(self.configuration.get("model", "")))
         self.store.attach_body(run_id, "input", {"text": text})
+        if run_id not in self._traces and not self.store.meta("trace:" + run_id):
+            capture = TraceCapture({"kind": "robot_task", "run_id": run_id}, secrets=secrets, roots=roots)
+            self._traces[run_id] = capture
+            self.store.set_meta("trace:" + run_id, {"capture_state": "recording"})
+            capture.record({"kind": "execution_input", "status": "recorded"},
+                           {"text": text, "role": role, "configuration": self.configuration})
 
     @contextmanager
     def scope(self, run_id: str) -> Iterator[None]:
         token = _ACTIVE.set((self, run_id))
+        self._trace_scopes.add(run_id)
         try:
             with observation_scope(lambda kind, data: self.host_event(run_id, kind, data)):
                 yield
         finally:
+            self._trace_scopes.discard(run_id)
+            try:
+                from .observation_queries import detail
+                record = detail(self.store, run_id)
+                if record and record["run"]["state"] in {"completed", "failed", "aborted"}:
+                    self._finish_trace(run_id, record["run"])
+            except Exception:
+                _LOG.warning("Local trace finalization unavailable")
             _ACTIVE.reset(token)
+
+    def _finish_trace(self, run_id: str, run: dict[str, Any]) -> None:
+        capture = self._traces.pop(run_id, None)
+        if capture is None:
+            previous = self.store.meta("trace:" + run_id) or {}
+            if previous.get("capture_state") == "recording":
+                self.store.set_meta("trace:" + run_id, {"capture_state": "failed", "reason": "execution_interrupted"})
+            return
+        try:
+            capture.record({"kind": "execution_terminal", "status": run["state"]}, run)
+            reference = self.trace_archive.save(capture, run["state"])
+            self.store.set_meta("trace:" + run_id, reference)
+        except Exception:
+            self.store.set_meta("trace:" + run_id, {"capture_state": "failed"})
+            _LOG.warning("Local trace archive failed")
 
     def host_event(self, run_id: str, kind: str, data: dict[str, Any]) -> None:
         data = dict(data)
@@ -229,6 +279,12 @@ class ObservationRecorder:
                                          **{name: data[name] for name in ("flow_version", "runtime_layer", "stage_span_id", "trace_id") if name in data}}})
 
     def record(self, run_id: str, event: dict[str, Any], *, body: Any = None, context: bool = False) -> None:
+        capture = self._traces.get(run_id)
+        if capture is not None:
+            try:
+                capture.record(event, body)
+            except Exception:
+                capture.partial.add("event_capture_failed")
         try:
             data = event.get("data", {})
             for key in ("source", "target", "parent_span_id"):

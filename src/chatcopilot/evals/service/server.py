@@ -134,6 +134,9 @@ class EvaluationServiceRuntime:
             )
         if operation == "evaluations.case_instance":
             return self.application.case_instance(_required_text(payload, "case_instance_id"))
+        if operation == "evaluations.trace":
+            return self.application.trace_record(_required_text(payload, "case_instance_id"),
+                span_id=_optional_text(payload, "span_id") or "", after=int(payload.get("after", 0)))
         if operation == "evaluations.rerun":
             return self.application.clone(
                 _required_text(payload, "source_evaluation_id"),
@@ -151,6 +154,15 @@ class EvaluationServiceRuntime:
         operation: str,
         payload: Mapping[str, Any],
     ) -> Iterator[Any]:
+        if operation in {"evaluations.trace_export", "evaluations.trace_step"}:
+            from chatcopilot.core.private_sqlite import json_text
+            case_instance_id = _required_text(payload, "case_instance_id")
+            result = (self.application.trace_record(case_instance_id, span_id=_required_text(payload, "span_id"))
+                      if operation == "evaluations.trace_step" else self.application.trace_export(case_instance_id))
+            raw = json_text(result).encode()
+            for offset in range(0, len(raw), _REPORT_CHUNK_BYTES):
+                yield {"data": base64.b64encode(raw[offset:offset + _REPORT_CHUNK_BYTES]).decode()}
+            return
         if operation == "suites.prepare":
             yield from catalog.stream_prepare_suite(
                 _required_text(payload, "suite_id"),
@@ -238,6 +250,8 @@ class _RequestHandler(socketserver.BaseRequestHandler):
                 "suites.prepare",
                 "evaluations.follow",
                 "evaluations.report",
+                "evaluations.trace_export",
+                "evaluations.trace_step",
             }:
                 for item in runtime.stream(operation, payload):
                     _send_response(

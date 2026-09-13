@@ -70,6 +70,9 @@ class ServiceEvaluator:
         value = self.load(instance["evaluation_id"], target_id=instance["target_id"])
         value.pop("failures", None)
         trial = instance["trial"]
+        reference = trial.get("execution", {}).get("metadata", {}).get("trace") or {}
+        if not reference.get("trace_ref") or reference.get("capture_state") != "available":
+            value["blockers"].append("此 Case 没有完整本地执行归档，请采集新的测评")
         if not _repairable(trial):
             value["blockers"].append("该 Case 实例没有失败或执行错误，不能发起修复")
         value["case_instance"] = {
@@ -82,15 +85,22 @@ class ServiceEvaluator:
         instance = self._instance(case_instance_id)
         if not _repairable(instance["trial"]):
             raise HarnessError("not_failed", "该 Case 实例没有失败或执行错误")
-        source = self.source(instance["evaluation_id"], instance["case_ref"], instance["target_id"])
+        source = self.source(instance["evaluation_id"], instance["case_ref"], instance["target_id"], include_trace=False)
         if not any(trial.get("trial_id") == instance["trial_id"]
                    and trial.get("attempt") == instance["attempt"]
                    and trial.get("outcome") in {"failed", "error"} for trial in source["trials"]):
             raise HarnessError("source_mismatch", "Case 实例结果已变化，请重新加载")
+        reference = instance["trial"].get("execution", {}).get("metadata", {}).get("trace") or {}
+        if reference.get("trace_ref") and reference.get("capture_state") == "available":
+            bundle = self.client.trace_export(case_instance_id)
+            source = {**source, "trace_bundle": bundle}
+        else:
+            source = {**source, "blockers": [*source.get("blockers", []),
+                       "旧 Case 没有本地执行归档，请采集新的测评"]}
         return {**source, "case_instance_id": case_instance_id,
                 "trial_id": instance["trial_id"], "attempt": instance["attempt"]}
 
-    def source(self, evaluation_id: str, case_ref: str, target_id: str) -> dict[str, Any]:
+    def source(self, evaluation_id: str, case_ref: str, target_id: str, *, include_trace: bool = True) -> dict[str, Any]:
         record = self.client.get(evaluation_id)
         if record.get("archived") or record.get("result", {}).get("schema_version") != RESULT_SCHEMA_VERSION:
             raise HarnessError("source_archived", "旧格式测评已归档，请创建新的测评")
@@ -140,7 +150,7 @@ class ServiceEvaluator:
                 }
             )
         selected_definition = next(item for item in definition["cases"] if item["case_id"] == case_id)
-        return {
+        source = {
             **({"agent_case": selected_definition["agent_case"], "case_snapshot_id": case_id}
                if selected_definition.get("agent_case") else {}),
             "kind": "evaluation",
@@ -163,6 +173,14 @@ class ServiceEvaluator:
                 item for item in definition["cases"] if item["case_id"] == case_id
             ),
         }
+        if include_trace:
+            selected = next(trial for trial in trials if _repairable(trial))
+            reference = selected.get("execution", {}).get("metadata", {}).get("trace") or {}
+            if reference.get("capture_state") == "available" and selected.get("case_instance_id"):
+                source["trace_bundle"] = self.client.trace_export(selected["case_instance_id"])
+            else:
+                source["blockers"] = ["此 Case 没有完整本地执行归档，请采集新的测评"]
+        return source
 
     def prepare_agent_case(self, source: dict[str, Any], check_cancel: Callable[[], None]) -> dict[str, Any]:
         check_cancel()

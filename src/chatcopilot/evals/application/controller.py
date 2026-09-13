@@ -456,11 +456,24 @@ class EvaluationApplication:
         self.result_store = EvaluationResultStore(self.root)
         self._result_storage_errors: dict[str, str] = {}
         self._recover_interrupted()
+        self._expire_trace_archives()
         for evaluation_id in self.result_store.pending():
             try:
                 self.get(evaluation_id)
             except (KeyError, ValueError, OSError):
                 LOGGER.warning("Evaluation ingestion recovery pending: %s", evaluation_id)
+
+    def _expire_trace_archives(self) -> None:
+        from chatcopilot.core.trace_archive import TraceArchive
+        for directory in self.root.iterdir():
+            if directory.name.startswith(".") or not (directory / "traces").exists():
+                continue
+            try:
+                state = self._state(directory.name)
+                if state.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
+                    TraceArchive(directory / "traces").expire_all()
+            except (OSError, ValueError, KeyError):
+                LOGGER.warning("Evaluation trace retention unavailable")
 
     def _ensure_private_root(self) -> None:
         self.root.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -495,6 +508,7 @@ class EvaluationApplication:
         expected_conditions: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         bot = self._resolve_bot(bot_id)
+        self._expire_trace_archives()
         effective_env = evaluation_subprocess_env(bot_env(bot, self.repository_root))
         bot_spec_digest = _bot_spec_sha256(bot, self.repository_root)
         clean_request = dict(request)
@@ -1036,6 +1050,30 @@ class EvaluationApplication:
         if len(trials) != 1 or trials[0].get("case_instance_id") != case_instance_id:
             raise KeyError(case_instance_id)
         return {**identity, "trial": trials[0]}
+
+    def _trace_selection(self, case_instance_id: str):
+        from chatcopilot.core.trace_archive import TraceArchive
+        item = self.case_instance(case_instance_id)
+        directory = self._verified_evaluation_dir(item["evaluation_id"])
+        trial = item["trial"]
+        reference = trial.get("execution", {}).get("metadata", {}).get("trace") or {"capture_state": "not_recorded"}
+        source = {"kind": "evaluation", "evaluation_id": item["evaluation_id"], "trial_id": item["trial_id"],
+                  "case_id": trial["case_id"], "target_id": item["target_id"], "attempt": item["attempt"]}
+        return TraceArchive(directory / "traces"), reference, source
+
+    def trace_record(self, case_instance_id: str, *, span_id: str = "", after: int = 0) -> dict[str, Any]:
+        archive, reference, source = self._trace_selection(case_instance_id)
+        if not reference.get("trace_ref"):
+            return {**reference, "spans": []}
+        if span_id:
+            return archive.step(reference["trace_ref"], span_id, source=source, sha256=reference["sha256"])
+        return archive.summary(reference["trace_ref"], after=after, source=source, sha256=reference["sha256"])
+
+    def trace_export(self, case_instance_id: str) -> dict[str, Any]:
+        archive, reference, source = self._trace_selection(case_instance_id)
+        if not reference.get("trace_ref"):
+            raise ValueError("This archived Trial has no complete local trace")
+        return archive.export(reference["trace_ref"], source=source, sha256=reference["sha256"])
 
     def active_for_bot(self, bot_id: str) -> dict[str, Any] | None:
         with self._creation_guard(), self._lock:

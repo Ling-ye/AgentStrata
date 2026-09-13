@@ -203,6 +203,15 @@ def test_harness_case_instance_resolves_saved_evidence_before_creating_task(tmp_
         result["config_snapshot"]["definition_snapshot"]["cases"] = [
             {"case_id": case, "definition_sha256": case * 64} for case in ("a", "b")
         ]
+        from chatcopilot.core.trace_capture import TraceCapture
+        from chatcopilot.core.trace_archive import TraceArchive
+        selected = result["trials"][1]
+        capture = TraceCapture({"kind": "evaluation", "evaluation_id": identifier,
+            "trial_id": selected["trial_id"], "case_id": selected["case_id"],
+            "target_id": selected["target_id"], "attempt": selected["attempt"]})
+        capture.record({"kind": "fixture_execution", "status": "failed"}, selected["execution"])
+        selected["execution"].setdefault("metadata", {})["trace"] = TraceArchive(
+            service.artifact_root / identifier / "traces").save(capture, "failed")
         file.write_text(json.dumps(result))
         trials = service.client.get(identifier)["result"]["trials"]
         controller = HarnessController(REPOSITORY_ROOT, root=tmp_path / "repairs", evaluator=ServiceEvaluator(service.client))
@@ -211,6 +220,11 @@ def test_harness_case_instance_resolves_saved_evidence_before_creating_task(tmp_
         created = controller.start_case_instance(trials[1]["case_instance_id"], RepairOptions("test-model"), request_id="one", launch=False)
         assert created["source"]["case_instance_id"] == trials[1]["case_instance_id"]
         assert created["source"]["case_ref"] == "fixture-suite:b"
+        frozen = controller.trace_records(created["task_id"])
+        assert len(frozen) == 1 and frozen[0]["expires_at"] is None
+        trace_page = controller.trace_record(created["task_id"], frozen[0]["trace_ref"])
+        step = controller.trace_record(created["task_id"], frozen[0]["trace_ref"], span_id=trace_page["spans"][0]["id"])
+        assert step["output"]["final_text"] == selected["execution"]["final_text"]
         evidence = controller.evidence(created["task_id"])
         assert evidence["trials"][0]["execution"]["final_text"] == result["trials"][1]["execution"]["final_text"]
         again = controller.start_case_instance(trials[1]["case_instance_id"], RepairOptions("test-model"), request_id="one", launch=False)

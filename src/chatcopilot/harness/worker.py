@@ -41,7 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, cancel)
     signal.signal(signal.SIGINT, cancel)
     try:
-        result = run_task(store, args.task, ServiceEvaluator(), CodexCoder())
+        result = run_task(store, args.task, ServiceEvaluator(), CodexCoder(
+            lambda root, ref: store.register_trace(args.task, root, ref)))
         return 0 if result["status"] in {"fixed", "not_reproduced", "cancelled"} else 1
     finally:
         os.close(fd)

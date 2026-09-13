@@ -7,6 +7,8 @@ import hashlib
 import os
 import shlex
 import sys
+import uuid
+import logging
 from pathlib import Path
 from typing import Any, Callable
 
@@ -34,6 +36,9 @@ from chatcopilot.harness.workspace import protected_paths, writable_paths
 
 
 class CodexCoder:
+    def __init__(self, trace_publisher: Callable[[Path, dict[str, Any]], None] | None = None) -> None:
+        self.trace_publisher = trace_publisher
+
     def preflight(self) -> tuple[Path, Path]:
         require_bubblewrap()
         raw = os.environ.get("CHATCOPILOT_CODEX_BIN", "")
@@ -73,7 +78,38 @@ class CodexCoder:
         draft = private_directory(output / "draft")
         return self._execute(worktree, evidence, options, output, check_cancel, draft=draft)
 
-    def _execute(
+    def _execute(self, worktree: Path, evidence: dict[str, Any], options: RepairOptions,
+                 output: Path, check_cancel: Callable[[], None], *, draft: Path | None = None,
+                 reviewing: bool = False) -> dict[str, Any]:
+        from chatcopilot.core.trace_capture import TraceCapture, capture_scope
+        from chatcopilot.core.trace_archive import TraceArchive
+        capture = TraceCapture({"kind": "harness", "execution_id": uuid.uuid4().hex,
+                                "phase": "review" if reviewing else "prepare" if draft else "coding"},
+                               roots={"workspace": worktree, "output": output})
+        result: dict[str, Any] = {}
+        status = "failed"
+        try:
+            with capture_scope(capture):
+                result = self._execute_impl(worktree, evidence, options, output, check_cancel,
+                                            draft=draft, reviewing=reviewing)
+            status = "completed"
+            return result
+        except BaseException as exc:
+            capture.record({"kind": "coding_error", "status": "failed"},
+                           {"code": type(exc).__name__, "message": str(exc)})
+            raise
+        finally:
+            try:
+                capture.record({"kind": "coding_result", "status": status},
+                               {key: result.get(key) for key in ("usage", "final_text")})
+                result["trace"] = TraceArchive(output / "traces").save(capture, status, retained=True)
+                if self.trace_publisher:
+                    self.trace_publisher(output / "traces", result["trace"])
+            except Exception:
+                logging.getLogger(__name__).warning("Harness trace archive failed")
+                result["trace"] = {"capture_state": "failed"}
+
+    def _execute_impl(
         self,
         worktree: Path,
         evidence: dict[str, Any],
@@ -107,6 +143,11 @@ class CodexCoder:
         execution_directory = draft or worktree
         protected = protected_paths(worktree, str((evidence.get("source") or {}).get("bot_id", "")))
         source = evidence.get("source") or {}
+        source_trace = source.get("trace_archive")
+        if source_trace:
+            from chatcopilot.core.trace_archive import TraceArchive
+            archive = TraceArchive(Path(source_trace))
+            archive.load(source["trace"]["trace_ref"], sha256=source["trace"]["sha256"])
         frozen_tests = (
             (Path(source["test_path"]).parent,)
             if source.get("kind") == "robot_task" and source.get("test_path")
@@ -123,6 +164,7 @@ class CodexCoder:
                         *frozen_tests,
                         *((evidence_path.parent,) if evidence_path else ()),
                         *((draft,) if draft else ()),
+                        *((Path(source_trace),) if source_trace else ()),
                     )
                 )
             ),
@@ -192,6 +234,12 @@ class CodexCoder:
             turn_context=evidence_text,
         )
         events: list[dict[str, Any]] = []
+        from chatcopilot.core.trace_capture import current_capture
+        capture = current_capture()
+        if capture:
+            capture.record({"kind": "coding_request", "status": "recorded", "data": {"model": options.model}},
+                           {"prompt": prompt, "source_trace": source.get("trace"),
+                            "coverage": "adapter_visible", "omitted": ["provider_internal_context"]})
         usage: dict[str, Any] = {}
         final_text = ""
         with credential_lease(auth, "worker", runtime_home, blocking=False):
@@ -247,6 +295,9 @@ class CodexCoder:
                         if key in item
                     }
                     safe = redact_observability_payload(projected).value
+                    if capture:
+                        capture.record({"kind": str(item.get("type")),
+                                        "status": "failed" if item.get("exit_code") else "recorded"}, projected)
                     if item.get("type") == "agent_message":
                         final_text = str(safe.get("text", ""))
                     stream.write(json_text(safe) + "\n")

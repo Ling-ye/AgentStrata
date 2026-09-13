@@ -5,6 +5,7 @@ import { Alert, Button, Empty, Input, Select, Space, Spin, Table, Tag, Typograph
 import type { EvaluationRecord, EvaluationTrial } from "./model";
 import { evaluationApi, normalizeTrial } from "./evaluationApi";
 import { InstanceId } from "./InstanceId";
+import TracePanel from "../traces/TracePanel";
 import { factChecks, factCheckLabel } from "./trialModel";
 import { durationLabel, EXCLUSION_LABELS, OUTCOME_LABELS, rateLabel, VERDICT_LABELS } from "./insightsModel";
 
@@ -78,6 +79,7 @@ function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: E
   const responseText = typeof response.content === "string" ? response.content : trial.final_text;
   const status = captureLabel(asText(asObject(trial.evidence.execution).state) || trial.capture_state || "");
   return <div className="eval-trial-detail">
+    {!!trial.case_instance_id && <TracePanel key={trial.case_instance_id} endpoint={`/api/evals/case-instances/${encodeURIComponent(trial.case_instance_id)}/trace`} active={active} />}
     {!!trial.case_instance_id && <InstanceId id={trial.case_instance_id} label="Case 实例 ID" />}
     {query.isLoading && <Spin tip="正在读取输入输出…" />}
     {query.isError && <Alert type="error" content="读取本条测试详情失败，其他测试点仍可查看。" action={<Button onClick={() => void query.refetch()}>重试</Button>} />}

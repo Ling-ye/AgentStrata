@@ -443,6 +443,7 @@ class TurnOps:
                 parent_span_id=state.root_span,
                 depth=self.session.trace_depth,
                 data=tool_result.to_llm_payload(),
+                execution_result=tool_result.to_llm_payload(),
                 model_result=model_result,
                 tool_call_id=tool_call.get("id"), model_span_id=state.model_span_id,
                 backend=str(getattr(self.session, "backend_name", "native")),

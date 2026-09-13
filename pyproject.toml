@@ -51,6 +51,7 @@ evaluation = [
     "pyarrow>=18",
 ]
 agent = [
+    "deepeval==4.2.2",
     "openai>=1.40.0",
     "mcp>=1.27,<2",
     "langgraph>=1.2,<2",

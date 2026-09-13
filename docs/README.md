@@ -20,6 +20,7 @@
 | 参与开发 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | [`sdd.md`](sdd.md)、[`ai-debugging.md`](ai-debugging.md) |
 | 让 AI 修改某个领域 | [`../AGENTS.md`](../AGENTS.md) 的任务导航 | 只读取相关领域契约及所引用规格 |
 | 理解资料、工具结果与 Harness 证据如何按需读取 | [`architecture.md#资料与工具结果按需读取`](architecture.md#资料与工具结果按需读取) | [`progressive-disclosure`](../specs/progressive-disclosure/spec.md) |
+| 查看本地执行轨迹、上下文与冻结证据 | [`local-traces.md`](local-traces.md) | [`local-deepeval-tracing`](../specs/local-deepeval-tracing/spec.md) |
 
 ## 文档分层
 

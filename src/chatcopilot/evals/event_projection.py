@@ -36,6 +36,8 @@ def project_evaluation_event(event: object) -> dict[str, Any]:
     message, tool-schema, or resource body.
     """
 
+    from chatcopilot.core.trace_capture import capture_agent_event
+    capture_agent_event(event)
     if isinstance(event, ContextSnapshotPrepared):
         return _project_context_snapshot(event)
     if isinstance(event, Mapping):

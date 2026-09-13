@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,37 @@ def run_task(
     coder: Coder,
     *,
     committer: Publisher,
+) -> dict[str, Any]:
+    from chatcopilot.core.trace_capture import TraceCapture, capture_scope
+    from chatcopilot.core.trace_archive import TraceArchive
+    capture = TraceCapture({"kind": "harness", "task_id": task_id, "phase": "workflow",
+                            "execution_id": uuid.uuid4().hex})
+    root = store.root / "jobs" / task_id / "phase-traces"
+    pending = {"trace_ref": capture.ref, "capture_state": "recording", "source": capture.source,
+               "started_at": capture.started, "finished_at": None, "expires_at": None}
+    store.register_trace(task_id, root, pending)
+    status = "failed"
+    try:
+        with capture_scope(capture):
+            result = _run_task(store, task_id, verifier, coder, committer=committer)
+        status = result["status"]
+        return result
+    finally:
+        reference = {**pending, "capture_state": "failed"}
+        try:
+            reference = TraceArchive(root).save(capture, status, retained=True)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("Harness workflow trace unavailable")
+        try:
+            store.register_trace(task_id, root, reference)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("Harness workflow trace index unavailable")
+
+
+def _run_task(
+    store: HarnessStore, task_id: str, verifier: Verifier, coder: Coder, *, committer: Publisher,
 ) -> dict[str, Any]:
     task = store.get(task_id)
     if task["status"] == "cancel_requested":

@@ -124,6 +124,7 @@ def detail(store: ObservationStore, run_id: str) -> dict[str, Any] | None:
     if row is None:
         return None
     run = _run(row)
+    run["trace"] = store.meta("trace:" + run_id) or {"capture_state": "not_recorded"}
     event_page = events(store, run_id)
     return {"run": run, **event_page, "observations_available": bool(event_page["observations"]),
             "events": [], "receipts": run.pop("receipts"), "outbox": run.pop("outbox"),

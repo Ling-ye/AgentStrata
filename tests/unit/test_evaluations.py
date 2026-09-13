@@ -215,6 +215,35 @@ def _process_tree_probe_executor(request: TrialExecutionRequest) -> EvaluationTr
     raise ValueError(f"unknown process-tree probe mode {mode!r}")
 
 
+def _trace_capture_executor(request: TrialExecutionRequest) -> EvaluationTrial:
+    from dataclasses import replace
+    from chatcopilot.contracts.agent import ContextSnapshotPrepared, LlmCallStarted, LlmCallFinished
+    from chatcopilot.evals.event_projection import project_evaluation_event
+    text = "完整上下文" * 100000
+    project_evaluation_event(LlmCallStarted(model="synthetic", iteration=0, trace_id="t", span_id="m"))
+    project_evaluation_event(ContextSnapshotPrepared(snapshot_id="ctx", backend="native", model="synthetic", iteration=0,
+        trace_id="t", span_id="m", session_messages=({"role": "user", "content": text},),
+        effective_messages=({"role": "user", "content": text},)))
+    project_evaluation_event(LlmCallFinished(model="synthetic", iteration=0, ok=True,
+        finish_reason="stop", usage={}, trace_id="t", span_id="m"))
+    return replace(_trial(request), trial_id=supervisor_module._trial_id(request))
+
+
+def test_supervised_trial_transfers_full_context_outside_result_frame(tmp_path: Path):
+    from chatcopilot.core.trace_archive import TraceArchive
+    request = _supervisor_trial_request(tmp_path)
+    trial = evaluation_module._execute_supervised_trial(request,
+        budget=supervisor_module._TrialExecutionBudget(seconds=30, scope="case"), cancel_check=None,
+        executor=_trace_capture_executor)
+    reference = trial.execution.metadata["trace"]
+    assert reference["capture_state"] == "available"
+    assert len(json.dumps(trial.execution.metadata)) < 2000
+    archive = TraceArchive(request.output / "traces")
+    page = archive.summary(reference["trace_ref"], sha256=reference["sha256"])
+    context = next(item for item in page["spans"] if item["name"] == "ContextSnapshotPrepared")
+    assert archive.step(reference["trace_ref"], context["id"])["output"]["effective_messages"][0]["content"] == "完整上下文" * 100000
+
+
 def _definition_drift_executor(_request: TrialExecutionRequest) -> EvaluationTrial:
     raise evaluation_module._EvaluationDefinitionDrift("fixture definition changed")
 

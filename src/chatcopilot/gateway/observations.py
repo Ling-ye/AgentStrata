@@ -43,7 +43,7 @@ class RunObserver:
     def accepted(self, text: str, role: str) -> None:
         if self.recorder is not None:
             try:
-                self.recorder.accepted(self.run_id, text, role)
+                self.recorder.accepted(self.run_id, text, role, secrets=tuple(self._secrets), roots=self._roots)
             except Exception:
                 _LOG.warning("Gateway accepted input observation unavailable")
 

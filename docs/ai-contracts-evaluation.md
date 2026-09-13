@@ -4,6 +4,11 @@
 
 返回 [AI 协作入口](../AGENTS.md)；用户操作见 [文档中心](README.md)。
 
+本地 DeepEval trace 归档与现有 Trial/checkpoint 分开，执行单元结束后由所属宿主写入；
+完整上下文在 Evaluation 摘要投影前采集，分块经受监督 IPC 交给 Core。新 Harness 来源
+冻结归档及正文，旧无归档记录只供历史导出，不补造内容。契约见
+[本地执行记录规格](../specs/local-deepeval-tracing/spec.md)，操作见 [本地执行记录](local-traces.md)。
+
 ## 章节索引
 
 - [单 Case Harness 独立性](#rule-1)

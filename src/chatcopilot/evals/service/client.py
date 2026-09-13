@@ -85,6 +85,22 @@ class EvaluationServiceClient:
     def health(self) -> dict[str, Any]:
         return self._mapping(self._call("health", {}))
 
+    def trace_record(self, case_instance_id: str, *, span_id: str = "", after: int = 0) -> dict[str, Any]:
+        if span_id:
+            return self._trace_json_stream("evaluations.trace_step", {"case_instance_id": case_instance_id, "span_id": span_id})
+        return self._mapping(self._call("evaluations.trace", {
+            "case_instance_id": case_instance_id, "span_id": span_id, "after": after}))
+
+    def trace_export(self, case_instance_id: str) -> dict[str, Any]:
+        return self._trace_json_stream("evaluations.trace_export", {"case_instance_id": case_instance_id})
+
+    def _trace_json_stream(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        import json
+        data = bytearray()
+        for chunk in self._stream(operation, payload):
+            data.extend(base64.b64decode(chunk["data"], validate=True))
+        return self._mapping(json.loads(data))
+
     def maintenance_status(self) -> dict[str, Any]:
         return self._mapping(self._call("maintenance.status", {}))
 

@@ -114,9 +114,23 @@ class HarnessStore:
             raise HarnessError("not_found", "修复任务不存在")
         return json.loads(row[0])
 
+    def register_trace(self, task_id: str, root: Path, reference: dict[str, Any]) -> None:
+        relative = root.absolute().relative_to((self.root / "jobs" / task_id).absolute())
+        if any(part in {".", ".."} for part in relative.parts):
+            raise ValueError("Trace root is outside this Harness task")
+        current = self.get(task_id)
+        records = dict(current.get("trace_records", {}))
+        records[reference["trace_ref"]] = {**reference, "directory": relative.as_posix()}
+        self.update(task_id, trace_records=records)
+
     def update(
         self, task_id: str, *, if_status: frozenset[str] | None = None, **changes: Any
     ) -> dict[str, Any]:
+        from chatcopilot.core.trace_capture import current_capture
+        capture = current_capture()
+        if capture and any(key in changes for key in ("stage", "status", "evaluations", "verification_plan")):
+            capture.record({"kind": "harness_phase", "status": str(changes.get("status", "recorded")),
+                            "data": {"name": changes.get("stage", "state_update")}}, changes)
         with self.database.connect(write=True) as connection:
             row = connection.execute(
                 "SELECT payload FROM tasks WHERE task_id=?", (task_id,)
@@ -144,6 +158,11 @@ class HarnessStore:
         return value
 
     def save_attempt(self, task_id: str, number: int, payload: dict[str, Any]) -> None:
+        from chatcopilot.core.trace_capture import current_capture
+        capture = current_capture()
+        if capture:
+            capture.record({"kind": "harness_attempt", "status": payload.get("status", "recorded"),
+                            "data": {"name": f"attempt-{number}"}}, payload)
         with self.database.connect(write=True) as connection:
             connection.execute(
                 "INSERT INTO attempts VALUES(?,?,?) ON CONFLICT(task_id,number) DO UPDATE SET payload=excluded.payload",

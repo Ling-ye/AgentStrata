@@ -22,7 +22,26 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
     if record is None:
         raise HarnessError("not_found", "此实例中没有该机器人任务 ID")
     run = record["run"]
+    reference = store.meta("trace:" + run_id) or {}
+    if reference.get("trace_ref"):
+        from chatcopilot.core.trace_archive import TraceArchive
+        archive = TraceArchive(store.root / "traces")
+        blockers = []
+        if run["state"] not in {"completed", "failed", "aborted"}:
+            blockers.append("机器人任务尚未结束")
+        bundle = archive.export(reference["trace_ref"], source={"kind": "robot_task", "run_id": run_id},
+                                sha256=reference["sha256"])
+        if reference.get("capture_state") != "available":
+            blockers.append("本地执行记录存在缺失，请检查采集原因")
+        evidence = redact_observability_payload({"run": run, "trace": reference,
+            "configuration": store.configuration(run["config_id"]) if run.get("config_id") else None,
+            "receipts": record["receipts"], "outbox": record["outbox"], "approvals": record["approvals"]}).value
+        revision = reference["sha256"]
+        return {"kind": "robot_task", "bot_id": bot_id, "run_id": run_id, "revision": revision,
+                "evidence": evidence, "trace_bundle": bundle, "blockers": blockers,
+                "failure_signature": [{"run_id": run_id, "revision": revision}]}
     blockers = []
+    blockers.append("旧记录没有本地 DeepEval 归档，仅可导出查看，请采集新的运行")
     if run["state"] not in {"completed", "failed", "aborted"}:
         blockers.append("机器人任务尚未结束")
     if run.get("details_expired"):

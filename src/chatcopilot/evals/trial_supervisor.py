@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+from dataclasses import replace
 import time
 from typing import Any, Callable, Iterator, Literal, Mapping
 
@@ -25,6 +26,12 @@ _TRIAL_STARTUP_TIMEOUT_SECONDS = 15.0
 _TRIAL_TERMINATE_GRACE_SECONDS = 5.0
 _TRIAL_SUBTREE_TERM_GRACE_SECONDS = 0.5
 _TRIAL_SUBTREE_KILL_GRACE_SECONDS = 2.0
+
+
+def trace_source(request: TrialExecutionRequest) -> dict[str, Any]:
+    return {"kind": "evaluation", "evaluation_id": request.evaluation_id,
+            "trial_id": _trial_id(request), "case_id": request.case.case_id,
+            "target_id": request.target.target_id, "attempt": request.attempt}
 
 class _TrialExecutionCancelled(RuntimeError):
     """The controlling Evaluation cancelled one in-flight Trial."""
@@ -266,8 +273,28 @@ def _execute_trial_in_fork(
         from chatcopilot.evals.trial_capture import capture
 
         phase = "execution"
-        with capture(lambda observation: _send_trial_ipc_frame(sender, {"kind": "observation", "execution": observation})):
-            trial = executor(request)
+        from chatcopilot.core.trace_capture import TraceCapture, capture_scope
+        from chatcopilot.core.trace_transfer import frames
+        from chatcopilot.evals.redaction import collect_env_secrets
+        recorded = TraceCapture(trace_source(request), secrets=tuple(collect_env_secrets()),
+                                roots={"output": request.output})
+        from dataclasses import asdict
+        recorded.record({"kind": "trial_configuration", "status": "recorded"}, {
+            "target": asdict(request.target), "definition_fingerprint": request.frozen_definition_fingerprint,
+            "environment_fingerprint": request.frozen_environment_fingerprint})
+        trace_status = "error"
+        try:
+            with capture_scope(recorded), capture(lambda observation: _send_trial_ipc_frame(sender, {"kind": "observation", "execution": observation})):
+                trial = executor(request)
+                trace_status = trial.outcome
+        finally:
+            try:
+                for frame in frames(recorded, trace_status):
+                    _send_trial_ipc_frame(sender, {"kind": "trace", "frame": frame})
+            except Exception:
+                # Capture remains diagnostic. The parent independently reports
+                # a missing/incomplete archive, never an invented complete one.
+                pass
         phase = "result_validation"
         if not isinstance(trial, EvaluationTrial):
             raise ResultContractError("executor: expected EvaluationTrial")
@@ -311,7 +338,7 @@ def _await_inner_trial_frame(receiver: Any, executor_pid: int, outer_sender: Any
         try:
             if receiver.poll(0.05):
                 frame = _recv_trial_ipc_frame(receiver)
-                if frame.get("kind") == "observation" and outer_sender is not None:
+                if frame.get("kind") in {"observation", "trace"} and outer_sender is not None:
                     _send_trial_ipc_frame(outer_sender, frame)
                     continue
                 return frame
@@ -520,6 +547,9 @@ def _execute_supervised_trial(
     deadline = started + budget.seconds
     startup_deadline = min(deadline, started + _TRIAL_STARTUP_TIMEOUT_SECONDS)
     latest_execution: dict[str, Any] | None = None
+    from chatcopilot.core.trace_transfer import TraceReceiver
+    from chatcopilot.core.trace_archive import TraceArchive
+    trace_receiver = TraceReceiver(trace_source(request))
 
     def preserve_interrupted_timing() -> None:
         if latest_execution is None or observation_callback is None:
@@ -573,6 +603,11 @@ def _execute_supervised_trial(
                     _terminate_trial_process(process, receiver=receiver)
                     raise ResultContractError("supervised Trial exited without evidence") from exc
                 kind = message.get("kind")
+                if kind == "trace":
+                    if not ready or set(message) != {"kind", "frame"} or not isinstance(message["frame"], dict):
+                        raise ResultContractError("Invalid trace transfer frame")
+                    trace_receiver.receive(message["frame"])
+                    continue
                 if kind == "ready":
                     if ready or message != {"kind": "ready", "pid": process.pid}:
                         _terminate_trial_process(process, receiver=receiver)
@@ -589,6 +624,8 @@ def _execute_supervised_trial(
                     continue
                 if kind in {"startup_error", "error", "definition_drift"}:
                     _await_clean_trial_supervisor_exit(process)
+                    if trace_receiver.complete:
+                        trace_receiver.publish(TraceArchive(request.output / "traces"))
                     if set(message) not in ({"kind", "error_type", "message"}, {"kind", "error_type", "message", "failure"}):
                         raise ResultContractError("supervised Trial returned a malformed error frame")
                     if kind == "definition_drift":
@@ -629,7 +666,12 @@ def _execute_supervised_trial(
                             "supervised Trial returned malformed canonical evidence"
                         ) from exc
                     _await_clean_trial_supervisor_exit(process)
-                    return trial
+                    try:
+                        trace_record = trace_receiver.publish(TraceArchive(request.output / "traces"))
+                    except (OSError, ValueError):
+                        trace_record = {"capture_state": "failed"}
+                    return replace(trial, execution=replace(trial.execution,
+                        metadata={**trial.execution.metadata, "trace": trace_record}))
                 _terminate_trial_process(process, receiver=receiver)
                 raise ResultContractError(f"supervised Trial returned unknown control frame {kind!r}")
 
@@ -678,4 +720,3 @@ def _preserved_environment() -> Iterator[None]:
     finally:
         os.environ.clear()
         os.environ.update(before)
-

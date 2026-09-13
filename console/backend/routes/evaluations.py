@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any, Iterator, Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
@@ -16,6 +16,24 @@ from console.backend.routes.common import (
 KEEPALIVE = "\x00"
 
 router = APIRouter(prefix="/api/evals", tags=["evaluations"])
+
+
+@router.get("/case-instances/{case_instance_id}/trace")
+def case_trace(case_instance_id: str, request: Request, response: Response, after: int = Query(0, ge=0)):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return get_evaluation_client(request).trace_record(case_instance_id, after=after)
+    except EvaluationServiceError as exc:
+        raise_evaluation_service_error(exc)
+
+
+@router.get("/case-instances/{case_instance_id}/trace/steps/{span_id}")
+def case_trace_step(case_instance_id: str, span_id: str, request: Request, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return get_evaluation_client(request).trace_record(case_instance_id, span_id=span_id)
+    except EvaluationServiceError as exc:
+        raise_evaluation_service_error(exc)
 
 
 class ComparisonEvaluationRequest(BaseModel):

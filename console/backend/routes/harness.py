@@ -167,6 +167,24 @@ def evidence(request: Request, task_id: str):
     return _call(lambda: _controller(request).evidence(task_id))
 
 
+@router.get("/tasks/{task_id}/traces")
+def traces(request: Request, task_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return _call(lambda: _controller(request).trace_records(task_id))
+
+
+@router.get("/tasks/{task_id}/traces/{ref}")
+def trace_record(request: Request, task_id: str, ref: str, response: Response, after: int = Query(0, ge=0)):
+    response.headers["Cache-Control"] = "no-store"
+    return _call(lambda: _controller(request).trace_record(task_id, ref, after=after))
+
+
+@router.get("/tasks/{task_id}/traces/{ref}/steps/{span_id}")
+def trace_step(request: Request, task_id: str, ref: str, span_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return _call(lambda: _controller(request).trace_record(task_id, ref, span_id=span_id))
+
+
 @router.get("/tasks/{task_id}/reproducer")
 def reproducer(request: Request, task_id: str):
     content = _call(lambda: _controller(request).reproducer(task_id))

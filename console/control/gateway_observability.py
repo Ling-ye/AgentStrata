@@ -71,6 +71,21 @@ def body(inst: BotInstance, run_id: str, body_id: str) -> dict[str, Any] | None:
     return _safe(inst, store.body(run_id, body_id))
 
 
+def trace_record(inst: BotInstance, run_id: str, *, span_id: str = "", after: int = 0) -> dict[str, Any]:
+    from chatcopilot.core.trace_archive import TraceArchive
+    store = reader(inst)
+    if observation_queries.detail(store, run_id) is None:
+        raise ValueError("Run not found")
+    reference = store.meta("trace:" + run_id) or {"capture_state": "not_recorded"}
+    if not reference.get("trace_ref"):
+        return {**reference, "spans": []}
+    archive = TraceArchive(store.root / "traces")
+    kwargs = {"source": {"kind": "robot_task", "run_id": run_id}, "sha256": reference["sha256"]}
+    if span_id:
+        return archive.step(reference["trace_ref"], span_id, **kwargs)
+    return archive.summary(reference["trace_ref"], after=after, **kwargs)
+
+
 def metrics(inst: BotInstance, filters: RunFilter) -> dict[str, Any]:
     store = reader(inst)
     return _safe(inst, observation_queries.metrics(store, filters))

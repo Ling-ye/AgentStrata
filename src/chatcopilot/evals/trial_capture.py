@@ -46,6 +46,12 @@ def _serialized_capture(function: Callable[..., Any]) -> Callable[..., Any]:
 
 @_serialized_capture
 def record_turn(value: dict[str, Any]) -> None:
+    from chatcopilot.core.trace_capture import current_capture
+    trace = current_capture()
+    if trace:
+        trace.record({"kind": "evaluation_turn", "status": "completed" if value.get("completed") else "running",
+                      "data": {key: value.get(key) for key in ("conversation_id", "turn_index")}},
+                     {key: item for key, item in value.items() if key != "events"})
     current = _current.get()
     if current is None:
         return
