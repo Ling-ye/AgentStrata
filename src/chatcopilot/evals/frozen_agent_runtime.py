@@ -7,7 +7,7 @@ from typing import Any
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput
 from chatcopilot.application.agent_runtime import AgentRuntimeAssemblyProfile, AgentRuntimeOverrides, assemble_agent_runtime
 from chatcopilot.application.execution_scope import execution_scope
-from chatcopilot.contracts.agent import AgentTask
+from chatcopilot.contracts.agent import AgentTask, ResourceRef
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.core.config import load_config
 from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService, Workspace
@@ -27,6 +27,20 @@ def run(case: EvalCase, *, bot: str, workspace_root: Path) -> TrialObservation:
         path = root / relative_path(name)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
+    resources = []
+    if declaration.get("resources"):
+        from chatcopilot.evals.case_images import CaseImages
+        image_root = case.metadata.get("image_root")
+        if not image_root:
+            raise ValueError("trusted Case image storage is missing")
+        images = CaseImages(Path(image_root))
+        for ref in declaration["resources"]:
+            data = images.read(ref)
+            path = root / (ref["sha256"] + {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}[ref["media_type"]])
+            with path.open("xb") as stream:
+                stream.write(data)
+            path.chmod(0o600)
+            resources.append(ResourceRef(path.name, str(path), media_type=ref["media_type"], size_bytes=len(data), sha256=ref["sha256"]))
     runtime = load_evaluation_runtime(bot)
     role, channel = declaration["role"], declaration["channel_kind"]
     workspace = Workspace(root=root.resolve(), chat_kind="group" if channel == "group" else "p2p",
@@ -53,7 +67,7 @@ def run(case: EvalCase, *, bot: str, workspace_root: Path) -> TrialObservation:
             turn = {"conversation_id": case.case_id, "turn_index": 0, "input": case.input, "completed": False}
             record_turn(turn)
             with execution_phase("agent"):
-                result = session.run_task(AgentTask(text=case.input, turn_context=case.context),
+                result = session.run_task(AgentTask(text=case.input, turn_context=case.context, resources=tuple(resources)),
                                           on_event=lambda event: events.append(event_to_dict(event)))
             record_turn({**turn, "completed": True, "final_text": result.final_text, "stop_reason": result.stop_reason})
             capture = execution_snapshot()

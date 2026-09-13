@@ -763,7 +763,8 @@ def _assert_suite_trial_definition_current(request: TrialExecutionRequest) -> No
         if manifest.plugin_id == "frozen-agent":
             from chatcopilot.evals.agent_case import evaluation_cases
             loaded_cases = evaluation_cases({"snapshot_id": request.case.case_id,
-                                             "case": request.case.metadata["agent_case"]})
+                                             "case": request.case.metadata["agent_case"],
+                                             **({"image_root": request.case.metadata["image_root"]} if request.case.metadata.get("image_root") else {})})
         else:
             loaded_cases = plugin.load_cases(CaseLoadContext(manifest=manifest, auto_prepare=False))
         selected_cases = _select_suite_cases(loaded_cases, expected_case_ids)

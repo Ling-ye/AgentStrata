@@ -50,10 +50,12 @@ class HarnessController:
         root: Path | None = None,
         evaluator: ServiceEvaluator | None = None,
         task_reader: Callable[[str, str], dict[str, Any]] | None = None,
+        image_reader: Callable[[str, str], builtins.list[bytes]] | None = None,
     ) -> None:
         self.repository = repository.resolve(strict=True)
         self.settings = configuration()
         self.task_reader = task_reader
+        self.image_reader = image_reader
         self.store = HarnessStore(root or default_root(self.repository))
         socket_path = self.settings.get("CHATCOPILOT_EVALUATION_SOCKET")
         self.evaluator = evaluator or ServiceEvaluator(
@@ -150,6 +152,7 @@ class HarnessController:
         launch: bool,
         review_and_commit: bool,
         feedback: RepairFeedback | None = None,
+        continuation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if type(review_and_commit) is not bool:
             raise ValueError("review_and_commit 必须为布尔值")
@@ -199,9 +202,11 @@ class HarnessController:
         task_id = "repair-" + uuid.uuid4().hex
         bundle = source.get("trace_bundle")
         source = {key: value for key, value in source.items() if key != "trace_bundle"}
+        from chatcopilot.harness.preparation import acceptance
         task: dict[str, Any] = {
             "task_id": task_id,
             "pipeline_version": PIPELINE_VERSION,
+            "acceptance": acceptance(source),
             "request_key": request_id,
             "request_digest": request_digest,
             "context_key": context,
@@ -212,6 +217,10 @@ class HarnessController:
             "source": source,
             "evidence_digest": evidence.digest,
             "options": asdict(options),
+            **({"continued_from": continuation["task_id"], "elapsed_seconds": continuation.get("elapsed_seconds", 0),
+                "prior_diagnosis": continuation["source"].get("diagnosis"),
+                "prior_evaluations": continuation.get("evaluations", {}),
+                "prior_material": continuation.get("diagnostic_material", {})} if continuation else {}),
             "review_and_commit": review_and_commit,
             "unit": "agentstrata-harness-" + task_id[7:],
             "dispatch_state": "creating",
@@ -229,9 +238,99 @@ class HarnessController:
             except (ValueError, OSError) as exc:
                 return self.store.update(task_id, status="blocked", stage="self_check", dispatch_state="not_started",
                     error_code="trace_freeze_failed", message="来源执行记录无法冻结：" + type(exc).__name__)
-        if created and launch:
+        if created and task["acceptance"]["requires_image"] and not source.get("image_resources"):
+            try:
+                images = self.image_reader(source["bot_id"], source["run_id"]) if self.image_reader else []
+                refs = [self.evaluator.client.import_case_image(self._image_scope(source), data) for data in images]
+            except Exception as exc:
+                task = self.store.update(task_id, status="blocked", stage="image_collection", dispatch_state="not_started",
+                    next_action="technical_failure", error_code="image_collection_failed", message=safe_error(exc))
+                return self.get(task_id)
+            if refs:
+                source = {**source, "image_resources": refs}
+                task = self.store.update(task_id, source=source)
+            else:
+                task = self.store.update(task_id, status="waiting_input", stage="waiting_image",
+                    next_action="upload_image", dispatch_state="not_started", error_code="image_required",
+                    message="本任务没有可用的已留存原图；请补充原图一次，随后自动继续诊断和验收")
+        if created and launch and task["status"] == "queued":
             self._launch(task)
         return self.get(task["task_id"])
+
+    @staticmethod
+    def _image_scope(source: dict[str, Any]) -> str:
+        return hashlib.sha256(json_text({key: source.get(key) for key in
+            ("kind", "bot_id", "run_id", "case_instance_id")}).encode()).hexdigest()
+
+    def supply_image(self, task_id: str, data: bytes) -> dict[str, Any]:
+        task = self.store.get(task_id)
+        if task["status"] != "waiting_input" or task.get("next_action") != "upload_image":
+            from chatcopilot.core.image_content import validate_image_bytes
+            digest = validate_image_bytes(data).sha256
+            if any(ref["sha256"] == digest for ref in task["source"].get("image_resources", [])):
+                return self.get(task_id)
+            raise HarnessError("conflict", "任务当前不在等待原图")
+        if task.get("pipeline_version") != PIPELINE_VERSION:
+            raise HarnessError("source_archived", "旧任务请先创建接续任务")
+        source = task["source"]
+        reference = self.evaluator.client.import_case_image(self._image_scope(source), data)
+        changed, claimed = self.store.claim_image(task_id, reference)
+        if claimed:
+            self._launch(changed)
+        return self.get(task_id)
+
+    def continue_task(self, task_id: str, *, launch: bool = True) -> dict[str, Any]:
+        old = self.store.get(task_id)
+        if old["status"] in ACTIVE:
+            raise HarnessError("conflict", "原任务仍有活动执行，不能创建接续任务")
+        if old.get("dispatch_state") == "scheduled" and self._unit_active(old["unit"]):
+            raise HarnessError("conflict", "原 worker 尚未结束")
+        if old.get("current_evaluation_id"):
+            local_only = old["source"].get("test_sha256") and not (old["source"].get("case_snapshot_id") or old["source"].get("agent_source"))
+            if not local_only:
+                external_id = old["current_evaluation_id"] + ("-agent" if old["source"].get("agent_source") else "")
+                external = self.evaluator.client.get(external_id)
+                if external["status"] in {"queued", "running"}:
+                    raise HarnessError("conflict", "原验证仍在执行")
+            # Old local pytest receipts may be left 'running' after a dead worker.
+            # Preserve the old record; the checked worker owns that entire process tree.
+        source = old.get("preparation_input") or old["source"]
+        keys = {"kind", "bot_id", "run_id", "revision", "evidence", "failure_signature", "feedback", "warnings",
+                "blockers", "trace", "trace_archive", "trace_reading", "image_resources", "requires_image", "original_input"}
+        if source.get("kind") != "robot_task":
+            raise HarnessError("unsupported_source", "测评来源请通过原 Case 实例重新发起")
+        source = {key: value for key, value in source.items() if key in keys}
+        if self.task_reader:
+            fresh = self._task_source(source["bot_id"], source["run_id"])
+            if fresh.get("blockers"):
+                raise HarnessError("source_incomplete", "；".join(fresh["blockers"]))
+            if "requires_image" in fresh:
+                source["requires_image"] = fresh["requires_image"]
+            if fresh.get("original_input"):
+                source["original_input"] = fresh["original_input"]
+        if source.get("trace_archive") and source.get("trace"):
+            from chatcopilot.core.trace_archive import TraceArchive
+            ref = source["trace"]
+            source["trace_bundle"] = TraceArchive(Path(source["trace_archive"])).export(
+                ref["trace_ref"], source=ref["source"], sha256=ref["sha256"])
+        material = {}
+        if old["source"].get("test_sha256"):
+            from chatcopilot.harness.local_verifier import _read
+            test_path = Path(old["source"]["test_path"])
+            old_root = self.store.root / "jobs" / task_id
+            if not test_path.is_relative_to(old_root) or test_path.resolve() != test_path:
+                raise HarnessError("artifact_changed", "旧复现测试位置变化")
+            content = _read(test_path)
+            if hashlib.sha256(content).hexdigest() != old["source"]["test_sha256"]:
+                raise HarnessError("artifact_changed", "旧复现测试摘要变化")
+            import json
+            material = {"test": content.decode("utf-8"), "checks": [
+                json.loads(_read(path, max_bytes=64 * 1024 * 1024)) for path in sorted((old_root / "checks").glob("*/result.json"))]}
+        identity = {"kind": "robot_task", "bot_id": source["bot_id"], "run_id": source["run_id"]}
+        return self._start(lambda: ProblemEvidence(source["run_id"], "robot_task", old["evidence_digest"], source),
+            identity, RepairOptions(**old["options"]), request_id="continue-" + task_id,
+            launch=launch, review_and_commit=old.get("review_and_commit", False),
+            feedback=RepairFeedback(**source.get("feedback", {})), continuation={**old, "diagnostic_material": material})
 
     def _launch(self, task: dict[str, Any]) -> None:
         try:
@@ -391,14 +490,18 @@ class HarnessController:
 
     def resume(self, task_id: str) -> dict[str, Any]:
         task = self.store.get(task_id)
+        if task.get("pipeline_version", PIPELINE_VERSION) != PIPELINE_VERSION:
+            raise HarnessError("source_archived", "旧 worker 保留原状；请创建接续任务加载当前验证流程")
         if task["status"] in ACTIVE:
             return self.get(task_id)
         if task["source"].get("kind") == "evaluation" and task["source"].get("result_schema_version") != 2:
             raise HarnessError("source_archived", "旧测评来源已归档；请使用新测评发起修复")
         if task["source"].get("blockers"):
             raise HarnessError("source_incomplete", "来源证据不完整；补充观测后重新加载并发起")
-        if task["status"] not in {"blocked", "interrupted", "cancelled"}:
+        if task["status"] not in {"blocked", "interrupted", "cancelled", "waiting_input"}:
             raise HarnessError("conflict", "此任务已结束；需要新的修复请重新发起")
+        if task["status"] == "waiting_input" and not task["source"].get("image_resources"):
+            raise HarnessError("image_required", "请先补充原图，系统会自动继续")
         if task.get("dispatch_state") == "scheduled" and self._unit_active(task["unit"]):
             raise HarnessError("conflict", "原 worker 尚未结束")
         if task.get("worktree") and manifest_digest(
@@ -468,7 +571,10 @@ class HarnessController:
         source = self.store.get(task_id)["source"]
         if not source.get("test_sha256"):
             raise HarnessError("not_found", "任务尚未建立冻结复现测试")
-        path = self.store.root / "jobs" / task_id / "reproducer" / "frozen" / "test_reproduction.py"
+        path = Path(source["test_path"])
+        root = self.store.root / "jobs" / task_id / "reproducer" / "frozen"
+        if not path.is_relative_to(root) or path.resolve() != path:
+            raise HarnessError("artifact_changed", "复现测试不在本任务冻结目录")
         private_file(path)
         with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
             content = stream.read()
@@ -534,6 +640,7 @@ class HarnessController:
                 "context_key",
                 "commit_intent",
                 "trace_records",
+                "preparation_input",
             }
         }
         source = task["source"]

@@ -73,6 +73,17 @@ def runtime_stage(operation: str, runtime_layer: str, *, trace_id: str,
         if stage.status == "succeeded":
             stage.status = "aborted" if isinstance(exc, asyncio.CancelledError) or type(exc).__name__ == "CancellationRequested" else "failed"
         error = capture_payload(lambda error=exc: {"code": str(getattr(error, "code", type(error).__name__)), "message": str(error)[:2048]})
+        chain = []
+        cause = exc
+        seen = set()
+        import re
+        while cause is not None and id(cause) not in seen:
+            seen.add(id(cause))
+            code = getattr(cause, "code", "")
+            chain.append({"type": type(cause).__name__, "code": code if isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,99}", code) else ""})
+            cause = cause.__cause__ or (None if cause.__suppress_context__ else cause.__context__)
+        error["causes"] = chain
+        error["stage"] = operation
         stage.metadata["code"] = error.get("code", type(exc).__name__)
         raise
     finally:

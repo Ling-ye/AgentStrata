@@ -159,3 +159,37 @@ def configuration_comparison(current, loaded, *, stale: bool) -> tuple[str, str]
     if loaded["reference_revision"] != current.get("reference_revision"):
         return "pending", "上下文配置引用存在尚未加载的变更"
     return "applied", "当前配置与服务上报配置一致"
+
+
+def retained_task_images(inst: BotInstance, run_id: str) -> list[bytes]:
+    """Only paths recorded by this run's trusted host, within this instance workspace."""
+    from chatcopilot.core.image_content import validate_image_bytes, HARD_IMAGE_INPUT_MAX_BYTES
+    from chatcopilot.core.private_sqlite import private_file
+    import os
+    store = reader(inst)
+    record = observation_queries.detail(store, run_id)
+    if not record or record["run"]["state"] not in {"completed", "failed", "aborted"}:
+        raise ValueError("image source is not a terminal bound run")
+    refs = store.meta("retained_resources:" + run_id) or []
+    if not refs or not inst.workspace_root:
+        return []
+    root = Path(inst.workspace_root).absolute()
+    images = []
+    for ref in refs:
+        path = Path(ref["path"])
+        if not path.is_relative_to(root) or path.resolve() != path:
+            raise ValueError("retained image escapes the bound workspace")
+        try:
+            before = private_file(path)
+        except FileNotFoundError:
+            continue
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                raise ValueError("retained image changed")
+            data = stream.read(HARD_IMAGE_INPUT_MAX_BYTES + 1)
+        image = validate_image_bytes(data, declared_media_type=ref["media_type"], expected_sha256=ref["sha256"])
+        if image.size_bytes != ref["size_bytes"]:
+            raise ValueError("retained image size changed")
+        images.append(image.data)
+    return images

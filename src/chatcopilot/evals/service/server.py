@@ -78,6 +78,11 @@ class EvaluationServiceRuntime:
                 self._optional_bot(payload),
                 repository_root=self.repository_root,
             )
+        if operation == "cases.validate":
+            from chatcopilot.evals.agent_case import validate_case
+            return validate_case(payload.get("case"))
+        if operation == "cases.image.import":
+            return self.application.import_case_image(payload)
         if operation == "cases.register":
             return self.application.register_case(payload.get("case"))
         if operation == "cases.snapshot":

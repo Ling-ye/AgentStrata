@@ -57,7 +57,7 @@ def finish_candidate(
             raise HarnessError("artifact_changed", "候选补丁与验收记录不一致")
         evidence = {
             "source": task["source"],
-            "reproduction": task["evaluations"]["reproduce"],
+            "reproduction": task["evaluations"][task.get("reproduction_phase", "reproduce")],
             "verification": {
                 "target": attempt["verification"],
                 "confirmation": attempt.get("confirmation"),

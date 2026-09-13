@@ -7,7 +7,7 @@ import { HarnessTraces } from "../traces/TracePanel";
 const { Text } = Typography;
 const jsonStyle = { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 420, overflow: "auto" } as const;
 
-export function RepairDetail({ taskId, onRestart }: { taskId: string; onRestart: (task: RepairTask) => void }) {
+export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; onRestart: (task: RepairTask) => void; onSelect?: (id: string) => void }) {
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -16,10 +16,21 @@ export function RepairDetail({ taskId, onRestart }: { taskId: string; onRestart:
     retry: false, refetchInterval: value => ACTIVE.includes(value.state.data?.status ?? "") ? 2000 : false });
   const evidence = useQuery({ queryKey: ["harness-evidence", taskId], queryFn: () => harnessApi.evidence(taskId), enabled: showEvidence, retry: false });
   const task = query.data;
-  async function action(value: "cancel" | "resume") {
+  async function action(value: "cancel" | "resume" | "continue") {
     setBusy(true); setError("");
     try {
       const result = await harnessApi.action(taskId, value);
+      client.setQueryData(["harness-task", result.task_id], result);
+      if (result.task_id !== taskId) onSelect?.(result.task_id);
+      await client.invalidateQueries({ queryKey: ["harness-history"] });
+    } catch (value) { setError(value instanceof Error ? value.message : String(value)); }
+    finally { setBusy(false); }
+  }
+  async function upload(file?: File) {
+    if (!file) return;
+    setBusy(true); setError("");
+    try {
+      const result = await harnessApi.image(taskId, file);
       client.setQueryData(["harness-task", taskId], result);
       await client.invalidateQueries({ queryKey: ["harness-history"] });
     } catch (value) { setError(value instanceof Error ? value.message : String(value)); }
@@ -33,6 +44,20 @@ export function RepairDetail({ taskId, onRestart }: { taskId: string; onRestart:
     {task.source.case_instance_id && <Text copyable>Case 实例 ID：{task.source.case_instance_id}</Text>}
     <Space wrap><Tag color={task.status === "fixed" ? "green" : "blue"}>{repairStatusLabel(task)}</Tag>
       <Text>阶段：{stageLabel(task.stage)}</Text><Text type="secondary">已用 {Math.round(task.elapsed_seconds ?? 0)} 秒 / {task.options.timeout_seconds} 秒</Text></Space>
+    {task.continued_from && <Text copyable>接续自：{task.continued_from}（已累计原任务用时）</Text>}
+    {task.next_action === "upload_image" && <section aria-label="补充原图">
+      <Alert type="warning" content="请提供原任务中的图片。上传后自动继续，无需判断技术方案；原图仅保存在私有材料中。" />
+      <input aria-label="选择原图并继续" type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={busy}
+        onChange={event => void upload(event.target.files?.[0])} />
+    </section>}
+    {task.acceptance && <section aria-label="完整验收覆盖"><Text bold>完整验收覆盖</Text>
+      {task.acceptance.items.map(item => <p key={item.id}><Tag color={task.acceptance_coverage?.[item.id]?.passed ? "green" : "orange"}>
+        {task.acceptance_coverage?.[item.id]?.passed ? "通过" : "待验证"}</Tag>{item.text || "原任务预期"}</p>)}
+    </section>}
+    {!!task.preparation_revisions?.length && <section aria-label="准备修订记录"><Text bold>准备修订记录</Text>
+      {task.preparation_revisions.map(revision => <p key={revision.revision}>第 {revision.revision} 版 · {revision.status === "validated" ? "试运行通过" : revision.status === "running" ? "自动修正中" : "已记录失败"}
+        {revision.error && `：${revision.error.code} · ${revision.error.message}`}</p>)}
+    </section>}
     {task.message && <Alert type={task.status === "fixed" ? "success" : "info"} content={task.message} />}
     {!!task.source.warnings?.length && <Alert type="warning" title="来源证据缺口"
       content={task.source.warnings.map(warning => warning.message).join("；")} />}
@@ -52,9 +77,11 @@ export function RepairDetail({ taskId, onRestart }: { taskId: string; onRestart:
       {task.worktree && <p><Text copyable>工作区：{task.worktree}</Text></p>}
       {task.verified_at && <Text>验证时间：{new Date(task.verified_at * 1000).toLocaleString()}</Text>}</div>
     <Space wrap>{ACTIVE.includes(task.status) && <Button status="danger" loading={busy} onClick={() => void action("cancel")}>取消</Button>}
-      {["blocked", "interrupted", "cancelled"].includes(task.status) && !task.source.blockers?.length &&
+      {["blocked", "interrupted", "cancelled"].includes(task.status) && (task.pipeline_version ?? 4) >= 4 && !task.source.blockers?.length &&
         <Button loading={busy} onClick={() => void action("resume")}>检查并继续</Button>}
-      {!ACTIVE.includes(task.status) && (task.source.run_id || task.source.case_instance_id) &&
+      {!ACTIVE.includes(task.status) && task.source.kind === "robot_task" && task.status !== "waiting_input" &&
+        <Button loading={busy} onClick={() => void action("continue")}>接续修复（累计预算）</Button>}
+      {!ACTIVE.includes(task.status) && task.status !== "waiting_input" && (task.source.run_id || task.source.case_instance_id) &&
         <Button disabled={busy} onClick={() => onRestart(task)}>重新发起修复</Button>}
       <Button onClick={() => void query.refetch()}>刷新状态</Button>
       {task.source.test_sha256 && <a href={`/api/harness/tasks/${encodeURIComponent(taskId)}/reproducer`} download>下载冻结复现测试</a>}</Space>
@@ -80,7 +107,7 @@ export function RepairDetail({ taskId, onRestart }: { taskId: string; onRestart:
       data={Object.entries(task.evaluations ?? {}).map(([phase, value]) => ({ phase, ...value }))} columns={[
         { title: "阶段", render: (_, row) => stageLabel(row.phase) },
         { title: "验证记录", render: (_, row) => <Text copyable>{row.evaluation_id}</Text> },
-        { title: "进度", render: (_, row) => row.complete ? `通过 ${row.passed_cases?.length ?? 0} / ${row.case_ids.length}` : "执行中" },
+        { title: "进度", render: (_, row) => row.complete ? `通过 ${row.passed_cases?.length ?? 0} / ${(row.case_ids?.length ?? 0)}` : "执行中" },
       ]} /> : <Empty description="完成来源自检后，将在这里显示复现和回归验证记录" />}
     {!!task.commit_checks?.length && <section><Text bold>宿主检查记录</Text>{task.commit_checks.map((check, index) => <details key={index}><summary>{check.label} · {check.exit_code === 0 ? "通过" : "未通过"}</summary><pre style={jsonStyle}>{check.output}</pre></details>)}</section>}
     <Text bold>修复尝试</Text>

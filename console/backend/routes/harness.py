@@ -77,7 +77,9 @@ def _controller(request: Request):
             raise HarnessError("unsupported_source", "此实例不提供 Gateway 任务观测")
         return task_source(reader(instance), instance.instance_id, run_id)
 
-    return HarnessController(repo_root(), task_reader=task_reader)
+    from console.control.gateway_observability import retained_task_images
+    return HarnessController(repo_root(), task_reader=task_reader,
+                             image_reader=lambda bot_id, run_id: retained_task_images(get_instance(bot_id), run_id))
 
 
 def _mutation_access(request: Request) -> None:
@@ -220,3 +222,21 @@ def patch(request: Request, task_id: str, number: int):
         media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="candidate-{number}.patch"'},
     )
+
+
+@router.post("/tasks/{task_id}/continue")
+def continue_task(request: Request, task_id: str):
+    _mutation_access(request)
+    return _call(lambda: _controller(request).continue_task(task_id))
+
+
+@router.post("/tasks/{task_id}/image")
+async def supply_image(request: Request, task_id: str):
+    from chatcopilot.core.image_content import HARD_IMAGE_INPUT_MAX_BYTES
+    _mutation_access(request)
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > HARD_IMAGE_INPUT_MAX_BYTES:
+            raise HTTPException(413, "图片超过大小上限")
+    return _call(lambda: _controller(request).supply_image(task_id, bytes(data)))

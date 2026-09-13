@@ -67,6 +67,8 @@ def _index_bytes(path: Path) -> bytes:
 
 def regression_ref(task: dict[str, Any]) -> dict[str, Any]:
     source = task["source"]
+    if source.get("case_snapshot_id") and source.get("agent_case", {}).get("resources"):
+        return {"kind": "private_agent_case", "id": source["case_snapshot_id"], "case_ref": source.get("case_ref", "")}
     if source.get("case_snapshot_id"):
         content = json_text(source["agent_case"]).encode()
         sha = _sha(content)

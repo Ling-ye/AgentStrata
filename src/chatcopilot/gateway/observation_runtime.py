@@ -166,6 +166,12 @@ class ObservationRecorder:
         self.store.bind_run(run_id, config_id=self.config_id, role=role,
                             backend=str(self.configuration.get("backend", "")), model=str(self.configuration.get("model", "")))
         self.store.attach_body(run_id, "input", {"text": request.canonical_text})
+        resources = getattr(request, "resource_refs", ())
+        if resources:
+            # Private locator index is never projected into trace/model input.
+            self.store.set_meta("retained_resources:" + run_id, [
+                {"path": ref.path, "sha256": ref.sha256, "media_type": ref.media_type,
+                 "size_bytes": ref.size_bytes} for ref in resources if (ref.media_type or "").startswith("image/")])
         capture = self._traces.get(run_id)
         if capture:
             capture.record({"kind": "prepared_turn", "status": "recorded"},

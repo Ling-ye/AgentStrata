@@ -182,6 +182,9 @@ class ServiceEvaluator:
                 source["blockers"] = ["此 Case 没有完整本地执行归档，请采集新的测评"]
         return source
 
+    def validate_agent_case(self, case: dict[str, Any]) -> dict[str, Any]:
+        return self.client.validate_case(case)
+
     def prepare_agent_case(self, source: dict[str, Any], check_cancel: Callable[[], None]) -> dict[str, Any]:
         check_cancel()
         snapshot = self.client.register_case(source["agent_case"])

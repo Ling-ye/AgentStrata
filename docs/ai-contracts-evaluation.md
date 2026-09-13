@@ -52,7 +52,12 @@
   worktree 目标及保护集验收通过才可接受候选，原始成绩不改写。新任务显式启用
   review_and_commit 后，一次只读 AI 审核批准且宿主检查通过才允许将修复与冻结测试
   一并提交至本地任务分支；拒绝或无法确认时保留产物并停止，旧记录不补审或补提交。
-  规格见 `specs/evaluation-case-harness/spec.md`。
+  规格见 `specs/evaluation-case-harness/spec.md` 与 `specs/harness-autonomous-validation/spec.md`。
+  v4 在冻结前自动试运行、独立审查和修订草案；参考答案完整保留为必需验收项。
+  同一计划可以组合 pytest 和真实 Agent，各自保留重复次数与证据。私有图片由 Evaluation
+  经分块导入接口校验、按来源作用域和摘要保存，通过 AgentTask.resources 传入后端；
+  验收同时检查宿主传图回执和语义评分，原图不公开收录。旧记录使用幂等接续并累计预算，
+  缺原图时等待补充后继续本任务；子验证失败先写终态，再自动修订或报告技术失败。
 
 <a id="rule-2"></a>
 

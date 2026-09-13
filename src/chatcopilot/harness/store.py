@@ -148,7 +148,7 @@ class HarnessStore:
             value = {**current, **changes, "updated_at": time.time()}
             active_key = (
                 value["active_key"]
-                if value["status"] in ACTIVE or value.get("current_evaluation_id")
+                if value["status"] in ACTIVE or value["status"] == "waiting_input" or value.get("current_evaluation_id")
                 else None
             )
             connection.execute(
@@ -178,6 +178,23 @@ class HarnessStore:
                 )
             ]
 
+    def claim_image(self, task_id: str, reference: dict[str, str]) -> tuple[dict[str, Any], bool]:
+        with self.creation_guard(), self.database.connect(write=True) as connection:
+            row = connection.execute("SELECT payload FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            if row is None:
+                raise HarnessError("not_found", "修复任务不存在")
+            task = json.loads(row[0])
+            if task["status"] != "waiting_input":
+                if task["source"].get("image_resources") == [reference]:
+                    return task, False
+                raise HarnessError("conflict", "任务已接受其他输入")
+            task.update(status="queued", dispatch_state="creating", next_action=None, error_code=None,
+                        message="原图已补充，自动继续", updated_at=time.time(),
+                        source={**task["source"], "image_resources": [reference]})
+            connection.execute("UPDATE tasks SET status='queued',active_key=?,payload=?,updated_at=? WHERE task_id=?",
+                               (task["active_key"], json_text(task), task["updated_at"], task_id))
+            return task, True
+
     def claim_resume(self, task_id: str) -> tuple[dict[str, Any], bool]:
         with self.creation_guard(), self.database.connect(write=True) as connection:
             row = connection.execute(
@@ -186,12 +203,13 @@ class HarnessStore:
             if row is None:
                 raise HarnessError("not_found", "修复任务不存在")
             task = json.loads(row[0])
-            if task["status"] not in {"blocked", "interrupted", "cancelled"}:
+            if task["status"] not in {"blocked", "interrupted", "cancelled", "waiting_input"}:
                 return task, False
             task.update(
                 status="queued",
                 dispatch_state="creating",
                 message="准备继续",
+                error_code=None, next_action=None,
                 updated_at=time.time(),
             )
             connection.execute(

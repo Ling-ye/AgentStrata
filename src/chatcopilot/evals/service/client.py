@@ -138,6 +138,22 @@ class EvaluationServiceClient:
         ):
             yield str(item)
 
+    def import_case_image(self, scope: str, data: bytes) -> dict[str, Any]:
+        import base64
+        from chatcopilot.core.image_content import validate_image_bytes
+        image = validate_image_bytes(data)
+        reference = {"scope": scope, "sha256": image.sha256, "media_type": image.media_type}
+        for offset in range(0, len(data), 512 * 1024):
+            receipt = self._mapping(self._call("cases.image.import", {
+                "reference": reference, "offset": offset, "total": len(data),
+                "data": base64.b64encode(data[offset:offset + 512 * 1024]).decode("ascii")}))
+        if not receipt.get("complete"):
+            raise ValueError("Case image import incomplete")
+        return reference
+
+    def validate_case(self, case: dict[str, Any]) -> dict[str, Any]:
+        return self._mapping(self._call("cases.validate", {"case": case}))
+
     def register_case(self, case: dict[str, Any]) -> dict[str, Any]:
         return self._mapping(self._call("cases.register", {"case": case}))
 

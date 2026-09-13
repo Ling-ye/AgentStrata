@@ -17,6 +17,12 @@ export interface Review {
   decision?: "approved" | "rejected" | "inconclusive"; problem?: string; reason?: string; evidence_refs?: string[];
 }
 export interface RepairTask {
+  pipeline_version?: number;
+  continued_from?: string;
+  next_action?: string;
+  preparation_revisions?: Array<{ revision: number; status: string; error?: { code: string; message: string } }>;
+  acceptance?: { original: string; items: Array<{ id: string; text: string }> };
+  acceptance_coverage?: Record<string, { checks: string[]; passed: boolean }>;
   hypothesis?: { reason: string; expected_behavior: string; evidence_refs: string[] };
   verification_plan?: { real_agent: boolean; repetitions: number; primary_checks: string[]; checks: string[]; snapshot_id: string };
   planned_agent_trials?: number;
@@ -40,7 +46,7 @@ export interface RepairTask {
 export const ACTIVE = ["queued", "running", "cancel_requested"];
 export const REPAIR_LABELS: Record<string, string> = {
   queued: "等待启动", running: "执行中", cancel_requested: "正在取消", fixed: "已修复 · 待合入",
-  not_reproduced: "当前未复现", failed: "修复未通过", blocked: "受阻", cancelled: "已取消", interrupted: "已中断",
+  waiting_input: "等待原图", not_reproduced: "当前未复现", failed: "修复未通过", blocked: "受阻", cancelled: "已取消", interrupted: "已中断",
 };
 export const ATTEMPT_LABELS: Record<string, string> = {
   coding: "生成候选", verifying: "复测中", reviewing: "AI 审核中", committing: "本地提交中", review_rejected: "审核认为未修复", review_inconclusive: "审核未能确认", accepted: "验收通过", rejected: "验收未通过",
@@ -50,7 +56,7 @@ export function stageLabel(stage: string): string {
   if (stage.startsWith("repository-verify-")) return `第 ${stage.slice(18)} 轮仓库回归`;
   if (stage.startsWith("confirm-")) return `第 ${stage.slice(8)} 轮独立确认`;
   if (stage.startsWith("verify-")) return `第 ${stage.slice(7)} 轮复测`;
-  return ({ queued: "等待启动", self_check: "来源自检", prepare_reproducer: "建立复现测试",
+  return ({ auto_correcting: "自动修正复现方案", waiting_image: "等待原图", queued: "等待启动", self_check: "来源自检", prepare_reproducer: "建立复现测试",
     review: "AI 审核", commit: "本地提交", reproduce: "确认当前问题", baseline: "建立回归基线", repository_baseline: "仓库回归基线", coding: "生成候选", done: "完成" } as Record<string, string>)[stage] ?? stage;
 }
 export function sourceLabel(task: RepairTask): string {
@@ -71,10 +77,13 @@ export const harnessApi = {
   get: (taskId: string, signal?: AbortSignal) => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}`, { signal }),
   evidence: (taskId: string) => request<Record<string, unknown>>(`/tasks/${encodeURIComponent(taskId)}/evidence`),
   start: (body: StartRepair) => request<RepairTask>("/tasks", post(body)),
-  action: (taskId: string, action: "cancel" | "resume") => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/${action}`, { method: "POST" }),
+  image: (taskId: string, file: File) => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/image`, { method: "POST", body: file }),
+  action: (taskId: string, action: "cancel" | "resume" | "continue") => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/${action}`, { method: "POST" }),
 };
 
 export function repairStatusLabel(task: RepairTask): string {
+  if (task.next_action === "technical_failure") return "技术失败";
+  if (task.status === "running" && task.stage === "auto_correcting") return "自动修正中";
   if (task.local_commit) return task.commit_in_main === true ? "已进入本地 main" : "已本地提交";
   if (task.commit_state === "unconfirmed") return "本地提交待核验";
   return REPAIR_LABELS[task.status] ?? task.status;

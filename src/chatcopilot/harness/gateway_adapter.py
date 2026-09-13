@@ -25,6 +25,11 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
     run = record["run"]
     if run.get("run_id") != run_id:
         raise HarnessError("source_mismatch", "任务观测与请求 ID 不一致")
+    input_body = store.body(run_id, run["input_ref"]) if run.get("input_ref") else None
+    original_input = (input_body or {}).get("payload") or {}
+    original_input = original_input.get("text", "") if isinstance(original_input, dict) else ""
+    input_fields = {"original_input": original_input} if isinstance(original_input, str) and original_input else {}
+    input_fields["requires_image"] = False
     blockers = []
     warnings: list[dict[str, str]] = []
     bundle = None
@@ -40,12 +45,16 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
             warnings.append({"code": "trace_expired", "message": "本地执行归档正文已过期，使用仍可读取的观测诊断"})
         except FileNotFoundError:
             warnings.append({"code": "trace_missing", "message": "本地执行归档文件缺失，使用仍可读取的观测诊断"})
+        if bundle:
+            spans = bundle.get("trace", {}).get("baseSpans", [])
+            input_fields["requires_image"] = any(_image_input(span.get(field)) for span in spans
+                if span.get("name") in {"channel.receive", "application.prepare"} for field in ("input", "output"))
         if bundle and reference.get("capture_state") == "available":
             evidence = redact_observability_payload({"run": run, "trace": reference,
                 "configuration": store.configuration(run["config_id"]) if run.get("config_id") else None,
                 "receipts": record["receipts"], "outbox": record["outbox"], "approvals": record["approvals"]}).value
             revision = hashlib.sha256(json_text(evidence).encode()).hexdigest()
-            return {"kind": "robot_task", "bot_id": bot_id, "run_id": run_id, "revision": revision,
+            return {**input_fields, "kind": "robot_task", "bot_id": bot_id, "run_id": run_id, "revision": revision,
                     "evidence": evidence, "trace_bundle": bundle, "blockers": blockers, "warnings": warnings,
                     "failure_signature": [{"run_id": run_id, "revision": revision}]}
         if bundle:
@@ -67,7 +76,10 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
         warnings.append({"code": "events_incomplete", "message": "任务事件超过单次证据包容量，诊断材料不含全部事件"})
     refs = {event["body_ref"] for event in observations if event.get("body_ref")}
     refs.update(run[key] for key in ("input_ref", "result_ref") if run.get(key))
-    bodies = {ref: store.body(run_id, ref) for ref in sorted(refs)}
+    bodies = {ref: input_body if ref == run.get("input_ref") else store.body(run_id, ref) for ref in sorted(refs)}
+    input_fields["requires_image"] = input_fields["requires_image"] or any(
+        _image_input((bodies.get(event.get("body_ref")) or {}).get("payload")) for event in observations
+        if (event.get("metadata", {}).get("operation") or event.get("name")) in {"channel.receive", "application.prepare"})
     if not run.get("input_ref") or not bodies.get(run["input_ref"]):
         warnings.append({"code": "input_missing", "message": "缺少实际输入记录，需确认能否建立对应原问题的复现"})
     if any(not body or body.get("state") != "available" for body in bodies.values()):
@@ -97,6 +109,7 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
         warnings.append({"code": "evidence_truncated", "message": "观测快照已截断，不能据此声称已覆盖完整任务行为"})
     revision = hashlib.sha256(json_text({"evidence": evidence.value, "warnings": warnings}).encode()).hexdigest()
     return {
+        **input_fields,
         "kind": "robot_task",
         "bot_id": bot_id,
         "run_id": run_id,
@@ -107,3 +120,14 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
         **({"trace_bundle": bundle} if bundle else {}),
         "failure_signature": [{"run_id": run_id, "revision": revision}],
     }
+
+
+def _image_input(value: Any) -> bool:
+    """Inspect only trusted Channel/Application input summaries, never prose keywords."""
+    if not isinstance(value, dict):
+        return False
+    resources = value.get("resources")
+    if isinstance(resources, list) and any(isinstance(ref, dict) and
+        (ref.get("kind") == "image" or str(ref.get("media_type", "")).startswith("image/")) for ref in resources):
+        return True
+    return any(_image_input(value.get(key)) for key in ("input", "output"))

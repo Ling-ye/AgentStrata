@@ -105,7 +105,7 @@ def _run_task(
         phases = dict(current.get("evaluations", {}))
         digest = manifest_digest(source_manifest(worktree))
         existing = phases.get(phase, {})
-        if existing.get("complete"):
+        if existing.get("complete") and not existing.get("retryable"):
             if existing["source_digest"] != digest and phase.startswith(("verify-", "confirm-")):
                 raise HarnessError("workspace_changed", "已完成验证与候选不一致")
             if existing.get("error"):
@@ -122,20 +122,27 @@ def _run_task(
             current_evaluation_id=evaluation_id,
             working_digest=digest,
         )
-        receipt = verifier.run(store.get(task_id), candidate(), evaluation_id, cases, check_cancel)
-        check_cancel()
-        if manifest_digest(source_manifest(worktree)) != digest or receipt.candidate_digest != digest:
-            raise HarnessError("workspace_changed", "测评期间候选内容变化，结果不能用于验收")
+        try:
+            receipt = verifier.run(store.get(task_id), candidate(), evaluation_id, cases, check_cancel)
+            check_cancel()
+            if manifest_digest(source_manifest(worktree)) != digest or receipt.candidate_digest != digest:
+                raise HarnessError("workspace_changed", "测评期间候选内容变化，结果不能用于验收")
+        except Exception as exc:
+            retryable = getattr(exc, "code", "") in {"evaluation_unavailable", "result_pending"}
+            phases[phase].update(complete=True, retryable=retryable, case_ids=cases, passed_cases=[], failed_cases=cases,
+                error={"code": getattr(exc, "code", "execution_error"), "type": type(exc).__name__, "message": safe_error(exc)})
+            store.update(task_id, evaluations=phases, current_evaluation_id=evaluation_id if retryable else None)
+            raise
         validation_error = None
         try:
-            receipt.require_valid(cases, plan.repetitions)
+            receipt.require_valid(cases, plan.check_repetitions or plan.repetitions)
         except HarnessError as exc:
             validation_error = exc
         passed = receipt.passed
         record = {
             **phases[phase],
             "complete": True,
-            "kind": "agent" if plan.real_agent else "deterministic",
+            "kind": "mixed" if plan.check_repetitions else "agent" if plan.real_agent else "deterministic",
             "test_sha256": source.get("test_sha256"),
             "checks": [asdict(check) for check in receipt.checks],
             "evidence_refs": receipt.evidence_refs,
@@ -185,14 +192,93 @@ def _run_task(
             baseline_manifest=baseline,
             working_digest=current_digest,
         )
-        store.update(task_id, stage="prepare_reproducer")
-        source, hypothesis, plan = verifier.prepare(
-            store.get(task_id), candidate(), coder,
-            replace(options, timeout_seconds=max(1, int(deadline - time.monotonic()))), check_cancel,
-        )
-        store.update(task_id, source=source, hypothesis=asdict(hypothesis), verification_plan=plan.to_payload(),
-                     planned_agent_trials=(2 * options.max_attempts + 1) * len(plan.checks) * plan.repetitions if plan.real_agent else 0)
-        reproduction = evaluate("reproduce", list(plan.primary_checks))
+        current = store.get(task_id)
+        if not current.get("preparation_input"):
+            store.update(task_id, preparation_input=current["source"])
+
+        def prepare_plan(failure=None):
+            nonlocal source, plan
+            current = store.get(task_id)
+            if failure is not None:
+                source_input = {**current["preparation_input"]}
+                if current["source"].get("image_resources"):
+                    source_input["image_resources"] = current["source"]["image_resources"]
+                store.update(task_id, verification_plan=None, source=source_input,
+                             preparation_failure=failure, stage="auto_correcting")
+            else:
+                store.update(task_id, stage="prepare_reproducer")
+            source, hypothesis, plan = verifier.prepare(
+                store.get(task_id), candidate(), coder,
+                replace(options, timeout_seconds=max(1, int(deadline - time.monotonic()))), check_cancel)
+            generation = int(current.get("plan_generation", 0))
+            if failure is not None or not current.get("verification_plan"):
+                generation += 1
+            store.update(task_id, source=source, hypothesis=asdict(hypothesis), verification_plan=plan.to_payload(),
+                         plan_generation=generation,
+                         planned_agent_trials=(2 * options.max_attempts + 1) * sum(
+                             plan.check_repetitions.get(name, plan.repetitions) for name in plan.checks
+                             if not name.startswith("reproduction")) if plan.real_agent else 0)
+
+        def reproducible_baseline():
+            while True:
+                generation = store.get(task_id)["plan_generation"]
+                phase = "reproduce" if generation == 1 else f"reproduce-r{generation}"
+                store.update(task_id, reproduction_phase=phase)
+                try:
+                    return evaluate(phase, list(plan.primary_checks))
+                except HarnessError as exc:
+                    if not correctable(exc):
+                        raise
+                    prepare_plan({"code": exc.code, "message": safe_error(exc),
+                                  "evaluation": store.get(task_id)["evaluations"][phase]})
+
+        def correctable(exc):
+            return source.get("kind") == "robot_task" and exc.code in {
+                "verification_test_definition", "verification_domain_exception", "verification_environment",
+                "verification_evidence", "verification_judge", "test_collection_error", "reproduction_error"}
+
+        def verify_candidate(number):
+            nonlocal reproduction, source, plan, library, protected
+            while True:
+                generation = store.get(task_id)["plan_generation"]
+                phase = f"verify-{number}" if generation == 1 else f"verify-{number}-r{generation}"
+                try:
+                    return evaluate(phase, list(plan.checks))
+                except HarnessError as exc:
+                    if not correctable(exc):
+                        raise
+                    evidence = {"code": exc.code, "message": safe_error(exc),
+                                "evaluation": store.get(task_id)["evaluations"][phase]}
+                    patch = store.root / "jobs" / task_id / f"attempt-{number}" / "candidate.patch"
+                    from chatcopilot.harness.local_verifier import _read
+                    patch_bytes = _read(patch, max_bytes=16 * 1024 * 1024)
+                    candidate_digest = candidate().digest
+                    workspace.restore(worktree, baseline, candidate_digest)
+                    store.update(task_id, working_digest=candidate().digest)
+                    try:
+                        prepare_plan(evidence)
+                        reproduction = reproducible_baseline()
+                        if set(plan.primary_checks).issubset(reproduction["passed_cases"]):
+                            raise HarnessError("revised_not_reproduced", "修订后的测试未在原基线上复现，不能据此接受已有补丁")
+                        remaining = [name for name in plan.checks if name not in plan.primary_checks]
+                        revised_baseline = evaluate(f"baseline-r{store.get(task_id)['plan_generation']}", remaining) if remaining else {"passed_cases": []}
+                        protected = set(plan.protected_checks) | set(revised_baseline["passed_cases"])
+                        prior = store.get(task_id).get("regression_baseline_versions", {})
+                        prior[str(generation)] = library
+                        library = verifier.regressions(store.get(task_id), candidate(), check_cancel)
+                        store.update(task_id, regression_baseline=library, regression_baseline_versions=prior,
+                                     protected_cases=sorted(protected))
+                    finally:
+                        # Restore precisely the saved candidate, without re-executing its coder.
+                        subprocess.run(["git", "-C", str(worktree), "apply", "--binary", "-"],
+                                       input=patch_bytes, check=True, capture_output=True, timeout=30)
+                        if candidate().digest != candidate_digest:
+                            raise HarnessError("workspace_changed", "测试修订后候选内容发生变化")
+                        store.update(task_id, working_digest=candidate_digest)
+                    source = store.get(task_id)["source"]
+
+        prepare_plan()
+        reproduction = reproducible_baseline()
         source = store.get(task_id)["source"]
         if set(plan.primary_checks).issubset(reproduction["passed_cases"]):
             store.update(
@@ -288,7 +374,7 @@ def _run_task(
                         workspace.restore(worktree, baseline, digest)
                         store.update(task_id, working_digest=manifest_digest(baseline))
                         continue
-                verification = evaluate(f"verify-{number}", list(plan.checks))
+                verification = verify_candidate(number)
                 if library.get("case_ids"):
                     store.update(task_id, stage=f"repository-verify-{number}")
                     regression_result = attempt.get(
@@ -308,8 +394,14 @@ def _run_task(
                     )
                 )
                 accepted = set(plan.primary_checks).issubset(passing) and not regressions
+                coverage = {item: {"checks": checks, "passed": bool(checks) and set(checks).issubset(passing)}
+                            for item, checks in plan.coverage.items()}
+                if coverage:
+                    accepted = accepted and all(item["passed"] for item in coverage.values())
+                store.update(task_id, acceptance_coverage=coverage)
                 if accepted and plan.real_agent:
-                    confirmation = evaluate(f"confirm-{number}", list(plan.checks))
+                    generation = store.get(task_id)["plan_generation"]
+                    confirmation = evaluate(f"confirm-{number}" if generation == 1 else f"confirm-{number}-r{generation}", list(plan.checks))
                     attempt["confirmation"] = confirmation
                     accepted = (set(plan.primary_checks) | protected).issubset(confirmation["passed_cases"])
                 attempt.update(
@@ -349,7 +441,8 @@ def _run_task(
         code = getattr(exc, "code", "execution_error")
         store.update(
             task_id,
-            status="blocked" if isinstance(exc, HarnessError) else "interrupted",
+            status="waiting_input" if code == "image_required" else "blocked" if isinstance(exc, HarnessError) else "interrupted",
+            next_action="upload_image" if code == "image_required" else "technical_failure",
             error_code=code,
             message=safe_error(exc),
         )

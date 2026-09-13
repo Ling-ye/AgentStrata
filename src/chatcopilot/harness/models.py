@@ -9,7 +9,7 @@ import os
 
 from chatcopilot.core.observability_redaction import redact_observability_payload
 
-PIPELINE_VERSION = 3
+PIPELINE_VERSION = 4
 
 ACTIVE = frozenset({"queued", "running", "cancel_requested"})
 TERMINAL = frozenset({"fixed", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})
@@ -110,6 +110,8 @@ class VerificationPlan:
     repetitions: int
     real_agent: bool = False
     snapshot_id: str = ""
+    check_repetitions: dict[str, int] = field(default_factory=dict)
+    coverage: dict[str, list[str]] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -136,8 +138,8 @@ class VerificationResult:
     checks: tuple[VerificationCheck, ...]
     evidence_refs: tuple[str, ...] = ()
 
-    def require_valid(self, check_ids: list[str], repetitions: int) -> None:
-        expected = {(name, n) for name in check_ids for n in range(1, repetitions + 1)}
+    def require_valid(self, check_ids: list[str], repetitions: int | dict[str, int]) -> None:
+        expected = {(name, n) for name in check_ids for n in range(1, (repetitions[name] if isinstance(repetitions, dict) else repetitions) + 1)}
         actual = [(check.check_id, check.repetition) for check in self.checks]
         if len(actual) != len(expected) or set(actual) != expected:
             raise HarnessError("incomplete_verification", "验证结果缺失、重复或身份不一致")

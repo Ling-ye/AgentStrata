@@ -196,9 +196,15 @@ class CodexCoder:
                 "不得通过 mock 最终回答、比较两份人工答案或硬编码该题回复制造修复成功。",
             )
         )
-        prompt = render_codex_prompt(
-            plan,
-            user_message=(
+        preparation_review = reviewing and evidence.get("verification", {}).get("phase") == "preparation"
+        review_prompt = (
+            "只读审查复现草案：目前尚未修复产品，不要求基线通过。检查测试是否调用真实产品、覆盖 acceptance 全部预期、"
+            "不虚构接口或指定私有实现、不替换产品逻辑/最终回答/评分。外部依赖隔离要对应实际接口；领域异常须有"
+            "具体因果证据和对照输入，不能将 fixture、权限、导入故障包装成产品断言。检查参考答案未进入目标输入。"
+            "问题指向草案时 rejected 并给出可操作修改；证据不足时 inconclusive；草案和覆盖有效时 approved。"
+            '最后只返回 JSON：{"decision":"approved|rejected|inconclusive","problem":"草案问题","reason":"证据与原因",'
+            '"evidence_refs":["source","reproduction"]}。'
+            if preparation_review else (
                 "独立核对 source、reproduction、verification、patch、regression 中的证据。"
                 "检查原问题是否真正解决、测试是否表达预期，是否弱化校验或针对样例硬编码，"
                 "测试是否使用合成数据且适合公开长期运行；pytest须离线，Agent Case使用真实模型和冻结工具环境。已有测试通过不能代替判断。"
@@ -207,16 +213,23 @@ class CodexCoder:
                 '最后一条消息只返回 JSON：{"decision":"approved|rejected|inconclusive",'
                 '"problem":"仍存在的问题，批准时可为空","reason":"判断理由",'
                 '"evidence_refs":["source","patch"]}。引用只使用上述五个证据键，不提供分数。'
+
+            )
+        )
+        prompt = render_codex_prompt(
+            plan,
+            user_message=(
+                review_prompt
                 if reviewing
                 else (
                     "只读分析原 Case 的失败证据，在草案目录写 diagnosis.json，包含 reproducible、reason、expected_behavior。"
                     "reason 给出根因假设及具体证据引用，expected_behavior 沿用原 Case 预期，不创建新题或改变评分。"
                     if source.get("kind", "evaluation") == "evaluation" else
-                    "调查原始任务和已有上下文，选择 pytest 或 agent 验证，先写 diagnosis.json："
+                    "调查原始任务和已有上下文，选择 pytest、agent 或 mixed 组合验证，先写 diagnosis.json："
                     "source.warnings 说明原始材料缺口，不代表无法诊断；利用已有事件、输入输出、配置和反馈核对实际产品代码。"
                     "缺归档本身不是拒绝复现的理由；若验证确实依赖缺失材料，返回 reproducible=false 并具体说明缺什么及原因。"
                     "不得把用户反馈补写为历史事实，也不得把未捕获行为当成已经验证。"
-                    '{"reproducible":true,"verification_kind":"pytest|agent","reason":"根因假设、证据和覆盖范围","expected_behavior":"有依据的预期"}。'
+                    '{"reproducible":true,"verification_kind":"pytest|agent|mixed","reason":"根因假设、证据和覆盖范围","expected_behavior":"有依据的预期"}。'
                     "确定性代码缺陷写 test_reproduction.py，可包含多个相关测试，调用真实产品代码、使用合成数据和临时目录、"
                     "离线执行，不得依赖文件位置；模块文档字符串概括可公开的问题。"
                     "需要真实 Agent/模型时，写 agent_case.json。格式为 "
@@ -230,6 +243,12 @@ class CodexCoder:
                     "不能把参考答案放进 input/context，不以模型最终回答的 mock 替代执行；原问题只做必要的合成身份替换，"
                     "reason 必须解释与原始失败的对应关系，不能另造更容易通过的问题。"
                 )
+                + "每轮必须读取 acceptance 与 previous_revision 中的失败证据，修正草案；不要重复相同失败。"
+                "diagnosis.json 增加 coverage 对象：每个 acceptance.items 的 id 映射到具体测试名列表。不得删除任何必需预期。"
+                "mixed 同时写 test_reproduction.py 和 agent_case.json。图片必须有物化测试、真实传图及语义评分；图片引用由宿主提供。"
+                "禁止 create=True 虚构私有函数、指定未来实现、替换产品逻辑或最终回答。只隔离现有外部依赖。"
+                "产品领域异常需结合对照输入验证原因，再用具体类型和原因码表达可观察结果；不能笼统捕获异常后 assert False。"
+                "宿主负责运行试验和回归；准备只做必要的局部检查，不运行 full/fast 全套或启动模型测评。"
                 + f"当前工作目录是 {draft}，直接写 diagnosis.json。产品源码位于 {worktree}，只读。预期不明确时返回 reproducible=false。"
                 if draft
                 else "调查并修复证据中的目标 Case，保持其他已通过 Case 的行为。执行相关局部检查。"

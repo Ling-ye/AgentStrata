@@ -39,10 +39,14 @@ CREATE TABLE IF NOT EXISTS case_instances (
 class EvaluationResultStore:
     def __init__(self, root: Path) -> None:
         self.database = PrivateDatabase(root / "results.sqlite3", _SCHEMA)
+        from chatcopilot.evals.case_images import CaseImages
+        self.images = CaseImages(root / ".case-images")
 
     def register_case(self, value: dict[str, Any]) -> dict[str, Any]:
         from chatcopilot.evals.agent_case import case_identity, validate_case
         case = validate_case(value)
+        for ref in case.get("resources", []):
+            self.images.read(ref)
         ident = case_identity(case)
         raw = json_text(case)
         with self.database.connect(write=True) as connection:
@@ -59,6 +63,10 @@ class EvaluationResultStore:
         if row is None:
             raise KeyError(snapshot_id)
         result = {"snapshot_id": snapshot_id, "case": json.loads(row[0])}
+        if result["case"].get("resources"):
+            for ref in result["case"]["resources"]:
+                self.images.read(ref)
+            result["image_root"] = str(self.images.root)
         evaluation_cases(result)
         return result
 

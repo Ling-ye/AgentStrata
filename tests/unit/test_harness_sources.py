@@ -447,8 +447,12 @@ def test_environment_errors_and_skips_cannot_be_reproductions(
             "rows": {"test_repro": {"outcome": outcome, "assertion_failure": assertion}}
         },
     )
-    with pytest.raises(HarnessError, match="行为断言"):
-        verifier.run(task, worktree, "verification", ["reproduction"], lambda: None)
+    receipt = verifier.run(task, worktree, "verification", ["reproduction"], lambda: None)
+    from chatcopilot.harness.verification import result_from_trials
+    from chatcopilot.harness.models import CandidateRef
+    result = result_from_trials(receipt, "local-pytest", CandidateRef(worktree, "digest", "base"))
+    with pytest.raises(HarnessError, match="有效产品行为证据"):
+        result.require_valid(["reproduction"], 1)
     frozen.write_text("def test_repro(): assert True\n")
     with pytest.raises(HarnessError, match="测试已变化"):
         verifier.run(task, worktree, "verification", ["reproduction"], lambda: None)
@@ -546,7 +550,7 @@ def test_reference_answer_cannot_replace_reproduction(repository, tmp_path):
     coder = SimpleNamespace(prepare=prepare, run=Mock())
     evaluator = Mock()
     result = run_task(controller.store, task["task_id"], evaluator, coder)
-    assert result["status"] == "blocked" and result["error_code"] == "not_reproducible"
+    assert result["status"] == "blocked" and result["error_code"] == "preparation_no_progress"
     assert "需要真实模型" in result["message"]
     assert "verified_digest" not in result and "test_sha256" not in result["source"]
     coder.run.assert_not_called()

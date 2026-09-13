@@ -25,6 +25,18 @@ def main() -> int:
         def pytest_runtest_makereport(self, item, call):
             outcome = yield
             report = outcome.get_result()
+            chain = []
+            error = call.excinfo.value if call.excinfo else None
+            seen = set()
+            while error is not None and id(error) not in seen:
+                seen.add(id(error))
+                code = getattr(error, "code", "")
+                # Only stable identifiers; exception messages may contain credentials/URLs.
+                import re
+                chain.append({"type": type(error).__name__, "module": type(error).__module__,
+                              "code": code if isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,99}", code) else ""})
+                error = error.__cause__ or (None if error.__suppress_context__ else error.__context__)
+            report.harness_exception_chain = chain
             report.harness_assertion_failure = bool(
                 call.excinfo and call.excinfo.errisinstance(AssertionError)
             )
@@ -42,6 +54,9 @@ def main() -> int:
         def pytest_runtest_logreport(self, report):
             row = rows.setdefault(report.nodeid, {"outcome": "not_run", "phases": []})
             row["phases"].append({"when": report.when, "outcome": report.outcome})
+            if report.failed:
+                row["failure_phase"] = report.when
+                row["exception_chain"] = getattr(report, "harness_exception_chain", [])
             if report.when == "call" and row["outcome"] not in {"failed", "error"}:
                 row.update(
                     outcome=report.outcome,

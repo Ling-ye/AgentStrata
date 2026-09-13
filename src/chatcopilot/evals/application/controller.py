@@ -490,6 +490,11 @@ class EvaluationApplication:
             label="Evaluation root",
         )
 
+    def import_case_image(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._creation_guard(), self._lock:
+            self._require_creation_allowed_locked()
+            return self.result_store.images.import_chunk(payload["reference"], payload["offset"], payload["data"], payload["total"])
+
     def register_case(self, declaration: dict[str, Any]) -> dict[str, Any]:
         with self._creation_guard(), self._lock:
             self._require_creation_allowed_locked()

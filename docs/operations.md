@@ -859,13 +859,20 @@ pytest 在无网络、无实例状态或凭据的隔离副本中执行。Agent C
 `read_text_head`、`write_workspace_file`、`list_workspace`、`unzip_attachment` 和
 `read_bot_skill`；生产投递、联网查询和全局状态工具需要独立依赖 fixture，不能用假回答
 替代。Codex 验证及编程会话禁用账号连接器，编程会话也禁用联网搜索。外部依赖无法本地复现时
-记录受阻；准备被中断时保留草案，重新发起任务，不重放同一模型回合。
+保存具体失败证据。准备会自动试运行、审查和修订测试；每版草案及原因在详情中展示，
+不需要操作者判断导入、fixture 或异常表达问题。重复失败或预算耗尽时给出技术失败原因。
+图片任务先查找同一来源绑定的留存材料，没有可用原图时显示「等待原图」；在详情选择
+原图后自动继续当前任务。图片在私有存储中保存，通过真实 Agent 资源入口执行，
+下载成功、实际传图和参考答案语义全部通过才可验收。
 
 页面加载机器人任务后，可填写「修复提示」和「参考答案／预期行为」。前者提供待验证
 的调查线索，后者记录你希望得到的答案或行为，可附解释与来源线索，默认允许语义等价。
 两项均可留空；切换来源会清空，提交失败保留。内容在修复详情及来源证据中可查，
 启动后固定；更正时重新发起任务，不沿用旧参考答案下的候选验收结论。旧受阻记录的
-「重新发起修复」会带入来源、反馈和执行选项，重新加载证据并使用新的请求 ID，不改写原记录。
+「接续修复（累计预算）」带入来源、反馈、诊断和执行选项，创建一次新 worker 并累计旧任务用时；
+重复点击返回同一接续任务，旧记录和冻结 worker 保留。需要更改参考答案才使用「重新发起修复」。
+补图 API 为 `POST /api/harness/tasks/{task_id}/image`（原始图片字节），接续入口为
+`POST /api/harness/tasks/{task_id}/continue`；均沿用本机同源操作边界。
 API 的机器人任务请求可携带 `feedback.repair_hint`、`feedback.expected_behavior`，
 测评来源允许 `feedback.repair_hint`，不允许覆盖原参考答案。CLI `start` 也支持 `--repair-hint`。CLI 可以直接指定操作者已确认的实例观测目录，不依赖
 Console，并使用下面两个可选参数：
@@ -896,7 +903,8 @@ python -m chatcopilot.harness start --evaluation <evaluation-id> --case <case-re
 机器人复现测试从生成时就采用离线合成数据，在隔离副本按最终回归路径执行，并在
 审核批准后原样收录到 `tests/unit/harness_regressions/`；完整 pytest / CI 和后续
 Harness 修复会执行其基线版本中的该集合。已有打包 Case 继续关联原定义；登记的
-Agent Case 原样收录为 `tests/agent_regressions/<digest>/case.json`，普通单元测试不隐式
+可公开的 Agent Case 原样收录为 `tests/agent_regressions/<digest>/case.json`；包含私有图片的
+Case 留在 Evaluation 私有登记中，组合任务只收录合成的确定性回归。普通单元测试不隐式
 调用模型。通过显式 `evals run --suite agentstrata-regression-v1 --bot <bot-id>` 运行已收录
 回归，或用 `evals run --request <request.json>` 执行包含 `case_snapshot` 的冻结请求。
 公开服务客户端提供 `register_case(case)`、`frozen_case(snapshot_id)`；启动 Suite 的请求

@@ -18,14 +18,14 @@ def result_from_trials(receipt: dict[str, Any], target: str, candidate: Candidat
             continue
         error = row.get("error") or {}
         outcome = row["outcome"]
-        failure_kind = "product" if outcome == "failed" else ""
-        if outcome == "error":
+        failure_kind = row.get("failure_kind") or ("product" if outcome == "failed" else "")
+        if outcome == "error" and not row.get("failure_kind"):
             code = error.get("code", "")
             if error.get("stage") == "scoring" or code == "judge_error":
                 failure_kind = "judge"
             else:
                 failure_kind = "environment"
-        elif outcome not in {"passed", "failed"}:
+        elif outcome not in {"passed", "failed"} and not row.get("failure_kind"):
             failure_kind = "evidence"
         checks.append(VerificationCheck(row["case_id"], row["attempt"], outcome,
                                         failure_kind, row))
@@ -38,6 +38,8 @@ class CaseVerification:
         self.store = store
         self.evaluator = evaluator
         self.local_verifier = local
+        self.local_verifier.store = store
+        self.local_verifier.validate_case = getattr(evaluator, "validate_agent_case", None)
 
     def prepare(self, task: dict[str, Any], candidate: CandidateRef, coder: Coder,
                 options: RepairOptions, check_cancel: Callable[[], None]
@@ -55,7 +57,8 @@ class CaseVerification:
         real_agent = source.get("kind") == "evaluation" and source.get("executor") in {"agent_isolated", "agent_configured"}
         if source.get("agent_case") and source.get("kind") == "robot_task" and not source.get("case_snapshot_id"):
             prepare = getattr(self.evaluator, "prepare_agent_case")
-            source = prepare(source, check_cancel)
+            agent_source = prepare(source, check_cancel)
+            source = {**source, "agent_source": agent_source} if source.get("test_sha256") else agent_source
             real_agent = True
         real_agent = real_agent or bool(source.get("case_snapshot_id"))
         repetitions = max(3, source["repetitions"]) if real_agent else source["repetitions"]
@@ -65,8 +68,19 @@ class CaseVerification:
             str(diagnosis.get("expected_behavior") or (source.get("case_definition") or {}).get("expected_behavior") or "满足冻结 Case 的全部验收标准"),
         )
         primary = tuple(source.get("reproduction_ids") or (source["case_id"],))
-        plan = VerificationPlan(primary, tuple(source["case_ids"]), tuple(source["passed_cases"]),
-                                repetitions, real_agent, source.get("case_snapshot_id", ""))
+        checks = tuple(source["case_ids"])
+        repeat_map = {}
+        if source.get("agent_source"):
+            agent_ids = tuple(source["agent_source"]["case_ids"])
+            primary = (*primary, *agent_ids)
+            checks = (*checks, *agent_ids)
+            repeat_map = {name: 3 if name in agent_ids else 1 for name in checks}
+        coverage = {}
+        for item in (task.get("acceptance") or {}).get("items", []):
+            agent_ids = source.get("agent_source", {}).get("case_ids") or ([] if source.get("test_sha256") else list(primary))
+            coverage[item["id"]] = list(agent_ids if item["verification"] == "agent" and agent_ids else source.get("reproduction_ids", primary))
+        plan = VerificationPlan(primary, checks, tuple(source["passed_cases"]),
+                                repetitions, real_agent, source.get("case_snapshot_id", ""), repeat_map, coverage)
         if source.get("kind", "evaluation") == "evaluation":
             source = {key: value for key, value in source.items() if key not in {"diagnosis", "preparation"}}
         return source, hypothesis, plan
@@ -74,6 +88,24 @@ class CaseVerification:
     def run(self, task: dict[str, Any], candidate: CandidateRef, run_id: str,
             checks: list[str], check_cancel: Callable[[], None]) -> VerificationResult:
         source = task["source"]
+        if source.get("agent_source"):
+            agent_source = source["agent_source"]
+            agent_ids = [name for name in checks if name in agent_source["case_ids"]]
+            local_ids = [name for name in checks if name not in agent_ids]
+            results = []
+            if local_ids:
+                receipt = self.local_verifier.run(task, candidate.path, run_id + "-local", local_ids, check_cancel)
+                results.append(result_from_trials(receipt, "local-pytest", candidate))
+            if agent_ids:
+                receipt = self.evaluator.run({**task, "source": agent_source}, candidate.path, run_id + "-agent", agent_ids, check_cancel)
+                results.append(result_from_trials(receipt, receipt["target_id"], candidate))
+                if not agent_source.get("conditions"):
+                    if not receipt.get("conditions"):
+                        raise HarnessError("verification_evidence", "首次 Agent 验证缺少冻结条件")
+                    self.store.update(task["task_id"], source={**source, "agent_source": {**agent_source,
+                        "conditions": receipt["conditions"], "target_id": receipt["target_id"]}})
+            return VerificationResult(run_id, candidate.digest, tuple(c for r in results for c in r.checks),
+                                      tuple(ref for r in results for ref in r.evidence_refs))
         port = self.local_verifier if source.get("test_sha256") else self.evaluator
         receipt = port.run({**task, "source": {**source, "repetitions": task["verification_plan"]["repetitions"]}},
                            candidate.path, run_id, checks, check_cancel)

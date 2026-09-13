@@ -30,6 +30,12 @@ def score(case: EvalCase, observation: TrialObservation) -> tuple[JudgeResult, d
                 raise ValueError("required post-state evidence is missing")
             passed = state["exists"] and (kind == "file_exists" or state["text"] == check["value"])
         checks.append({"assertion": check, "passed": bool(passed)})
+    if declaration.get("resources"):
+        expected = {(ref["sha256"], ref["media_type"]) for ref in declaration["resources"]}
+        dispatched = {(ref.get("sha256"), ref.get("media_type"))
+                      for event in observation.events if event.get("type") == "InputResourcesDispatched" and event.get("request_id")
+                      for ref in event.get("resources", [])}
+        checks.append({"assertion": {"kind": "image_dispatched"}, "passed": expected.issubset(dispatched)})
     passed = all(item["passed"] for item in checks)
     facts = JudgeResult(float(passed), 1.0, passed,
                         reasons=tuple("failed: " + item["assertion"]["kind"] for item in checks if not item["passed"]))

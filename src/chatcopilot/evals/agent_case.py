@@ -12,7 +12,7 @@ from chatcopilot.evals.models import EvalCase
 
 SCHEMA = "agentstrata.agent-case/v1"
 SUITE = "agentstrata-regression-v1"
-_FIELDS = {"schema", "title", "input", "context", "role", "channel_kind", "allowed_tools", "fixtures", "assertions", "expected_behavior", "semantic"}
+_FIELDS = {"schema", "title", "input", "context", "role", "channel_kind", "allowed_tools", "fixtures", "assertions", "expected_behavior", "semantic", "resources"}
 _ASSERTIONS = {
     "final_contains": {"kind", "value"}, "final_not_contains": {"kind", "value"},
     "tool_called": {"kind", "name", "arguments"}, "tool_not_called": {"kind", "name"},
@@ -79,6 +79,14 @@ def validate_case(value: Any) -> dict[str, Any]:
             raise ValueError("required tool assertion is outside the frozen allowed tools")
         if "arguments" in check and not isinstance(check["arguments"], dict):
             raise ValueError("assertion arguments must be an object")
+    if "resources" in case:
+        from chatcopilot.evals.case_images import image_reference
+        refs = case["resources"]
+        if not isinstance(refs, list) or not refs:
+            raise ValueError("Case resources must contain image references")
+        case["resources"] = [image_reference(ref) for ref in refs]
+        if len({ref["scope"] for ref in refs}) != 1 or len({ref["sha256"] for ref in refs}) != len(refs):
+            raise ValueError("Case image scopes or identities are inconsistent")
     if len(json_text(case).encode()) > 512 * 1024:
         raise ValueError("Agent Case exceeds the service evidence boundary")
     return json.loads(json_text(case))
@@ -96,7 +104,7 @@ def evaluation_cases(snapshot: dict[str, Any]) -> tuple[EvalCase, ...]:
     return (EvalCase(case_id=identity, input=case["input"], category="agent_regression",
                      expected_behavior=case["expected_behavior"], context=case["context"],
                      metadata={"plugin": "frozen-agent", "driver": "agent_configured",
-                               "agent_case": case, "case_source": {"kind": "agent_regression"}}),)
+                               "agent_case": case, **({"image_root": snapshot["image_root"]} if snapshot.get("image_root") else {}), "case_source": {"kind": "agent_regression"}}),)
 
 
 def load_regressions(repository: Path) -> tuple[dict[str, Any], ...]:
@@ -109,6 +117,8 @@ def load_regressions(repository: Path) -> tuple[dict[str, Any], ...]:
             raise ValueError("Agent regression path changed")
         require_regular_file(path.lstat())
         case = validate_case(json.loads(path.read_text()))
+        if case.get("resources"):
+            raise ValueError("private Case images cannot be published as a regression")
         ident = case_identity(case)
         if path.parent.name != ident.removeprefix("snapshot-"):
             raise ValueError("Agent regression directory does not match content")

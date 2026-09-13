@@ -193,7 +193,7 @@ export default function HarnessPage() {
       </Card>
     </Space>
     <Drawer title="AI Harness 修复记录" visible={!!taskId} width="min(900px, 100vw)" footer={null} onCancel={() => openTask("")}>
-      {taskId && <RepairDetail key={taskId} taskId={taskId} onRestart={restart} />}
+      {taskId && <RepairDetail key={taskId} taskId={taskId} onRestart={restart} onSelect={openTask} />}
     </Drawer>
   </PageSection>;
 }
