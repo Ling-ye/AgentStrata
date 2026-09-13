@@ -102,7 +102,8 @@ class HarnessController:
             value = self._task_source(bot_id, source_id)
             value = {
                 key: value[key]
-                for key in ("kind", "bot_id", "run_id", "revision", "blockers", "evidence")
+                for key in ("kind", "bot_id", "run_id", "revision", "blockers", "evidence", "warnings")
+                if key in value
             }
         else:
             raise ValueError("未知的修复来源类型")
@@ -168,6 +169,8 @@ class HarnessController:
             return self.get(previous["task_id"])
         evidence = source_loader()
         source = evidence.material
+        if source.get("blockers"):
+            raise HarnessError("source_incomplete", "；".join(source["blockers"]))
         if feedback_payload:
             source = {**source, "feedback": feedback_payload}
         commit = git_output(self.repository, "rev-parse", "HEAD")
@@ -226,16 +229,7 @@ class HarnessController:
             except (ValueError, OSError) as exc:
                 return self.store.update(task_id, status="blocked", stage="self_check", dispatch_state="not_started",
                     error_code="trace_freeze_failed", message="来源执行记录无法冻结：" + type(exc).__name__)
-        if created and source.get("blockers"):
-            task = self.store.update(
-                task_id,
-                status="blocked",
-                stage="self_check",
-                error_code="source_incomplete",
-                message="；".join(source["blockers"]),
-                dispatch_state="not_started",
-            )
-        elif created and launch:
+        if created and launch:
             self._launch(task)
         return self.get(task["task_id"])
 
@@ -560,6 +554,7 @@ class HarnessController:
                 "target_id",
                 "case_ids",
                 "blockers",
+                "warnings",
                 "diagnosis",
                 "feedback",
                 "test_sha256",

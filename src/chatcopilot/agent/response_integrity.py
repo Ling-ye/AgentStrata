@@ -30,6 +30,40 @@ _OPERATION_HINTS = {
     "task": ("task", "job", "workflow", "delegate", "submit"),
 }
 
+# Negation and conditions apply to their clause, including a coordinated list
+# ("不能声称文件已修改、消息已发送"). A later independent assertion is checked
+# separately; an explanation must never exempt the rest of the answer.
+_CLAUSE_BOUNDARY = re.compile(r"[。！？!?；;\n]|但是|不过|然而|实际上|事实上|随后|然后|但")
+_NON_ASSERTION = re.compile(
+    r"(?:不能|不可|不应|不得|不要|无法)(?:直接|随意|随便|擅自)?(?:声称|宣称|说|表示|认为|确认)"
+    r"|(?:没有|未曾|并未)(?:声称|宣称|表示|确认)"
+    r"|(?:如果|假如|假设|倘若|只有|除非|是否|能否)"
+)
+_QUOTED = re.compile(r'“[^”\n]*”|「[^」\n]*」|"[^"\n]*"|`[^`\n]*`')
+_QUOTE_INTRO = re.compile(r"(?:例如|比如|示例|示范|引用|原文|字符串|文档(?:中)?(?:写道|写着|提到)?)[：:、，,\s]*$")
+_QUOTE_EXPLANATION = re.compile(r"^[\s，,]*(?:只是|仅是|是)(?:一个|一段)?(?:示例|例子|引用|字符串)")
+
+
+def _asserted_clauses(text: str) -> list[str]:
+    def mask_example(match: re.Match[str]) -> str:
+        prefix = _CLAUSE_BOUNDARY.split(text[:match.start()])[-1]
+        if _QUOTE_INTRO.search(prefix) or _QUOTE_EXPLANATION.search(text[match.end():]):
+            return " " * len(match.group())
+        return match.group()
+
+    return _CLAUSE_BOUNDARY.split(_QUOTED.sub(mask_example, text))
+
+
+def _claims_operation(text: str, pattern: re.Pattern[str]) -> bool:
+    for clause in _asserted_clauses(text):
+        # A comma ends a condition/negation when the next clause starts a new
+        # subject; enumeration with 、 retains the original scope.
+        for part in re.split(r"[，,](?=\s*(?:我|我们|文件|目录|消息|邮件|任务|作业|人格|人设|记忆))", clause):
+            for match in pattern.finditer(part):
+                if not _NON_ASSERTION.search(part[:match.start()]):
+                    return True
+    return False
+
 
 @dataclass(frozen=True)
 class ResponseIntegrityResult:
@@ -60,7 +94,7 @@ class ResponseIntegrityCheck:
         ):
             issues.append("verification_claim_without_evidence")
         for kind, pattern in _SIDE_EFFECT_CLAIMS.items():
-            if pattern.search(final_text) and not _has_receipt(
+            if _claims_operation(final_text, pattern) and not _has_receipt(
                 normalized_operations,
                 _OPERATION_HINTS[kind],
             ):

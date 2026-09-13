@@ -155,29 +155,44 @@ def test_mismatched_case_instance_never_resolves_to_a_different_source():
     client.get.assert_not_called()
 
 
-def test_task_selfcheck_is_persisted_and_never_dispatches_with_missing_evidence(
+def test_task_start_blocker_is_rejected_before_persistence_or_dispatch(
     tmp_path, monkeypatch
 ):
-    reader = Mock(return_value=robot_source(blockers=["缺少实际输入记录"]))
+    reader = Mock(return_value=robot_source(blockers=["机器人任务尚未结束"]))
+    controller = HarnessController(ROOT, root=tmp_path / "private", task_reader=reader)
+    launch = Mock()
+    monkeypatch.setattr(controller, "_launch", launch)
+    with pytest.raises(HarnessError, match="尚未结束"):
+        controller.start_task(
+            "sample", "run-example", RepairOptions("test-model"), request_id="one",
+            feedback=RepairFeedback(expected_behavior="用户预期"),
+        )
+    launch.assert_not_called()
+    reader.assert_called_once_with("sample", "run-example")
+    assert controller.list()["tasks"] == []
+
+
+def test_task_missing_archive_dispatches_and_keeps_feedback_and_gaps(tmp_path, monkeypatch):
+    source = {**robot_source(), "warnings": [{"code": "trace_unavailable", "message": "归档失败"}]}
+    reader = Mock(return_value=source)
     controller = HarnessController(ROOT, root=tmp_path / "private", task_reader=reader)
     launch = Mock()
     monkeypatch.setattr(controller, "_launch", launch)
     result = controller.start_task(
         "sample", "run-example", RepairOptions("test-model"), request_id="one",
-        feedback=RepairFeedback(expected_behavior="参考答案不能补全观测"),
+        feedback=RepairFeedback(expected_behavior="正常回答问题"),
     )
-    assert result["status"] == "blocked" and result["stage"] == "self_check"
-    launch.assert_not_called()
-    reader.assert_called_once_with("sample", "run-example")
+    assert result["status"] == "queued"
+    launch.assert_called_once()
+    assert result["source"]["warnings"] == source["warnings"]
+    assert result["source"]["feedback"]["expected_behavior"] == "正常回答问题"
     reader.side_effect = RuntimeError("offline")
     again = controller.start_task(
         "sample", "run-example", RepairOptions("test-model"), request_id="one",
-        feedback=RepairFeedback(expected_behavior="参考答案不能补全观测"),
+        feedback=RepairFeedback(expected_behavior="正常回答问题"),
     )
     assert again["task_id"] == result["task_id"]
-    assert controller.list()["tasks"][0]["task_id"] == result["task_id"]
-    with pytest.raises(HarnessError, match="来源证据不完整"):
-        controller.resume(result["task_id"])
+    launch.assert_called_once()
 
 
 def test_history_pagination_search_and_bot_binding(tmp_path):
@@ -230,7 +245,8 @@ def test_gateway_adapter_paginates_and_does_not_read_business_state(monkeypatch)
     )
     monkeypatch.setattr(gateway_adapter, "events", page)
     source = task_source(reader, "sample", "run-example")
-    assert source["blockers"] == ["缺少本地执行记录，无法自动修复"]
+    assert source["blockers"] == []
+    assert [warning["code"] for warning in source["warnings"]] == ["trace_unavailable"]
     assert len(source["evidence"]["observations"]) == 2
     page.assert_called_once_with(reader, "run-example", after=1, limit=500)
     reader.body.assert_called_once_with("run-example", "input")
@@ -238,7 +254,43 @@ def test_gateway_adapter_paginates_and_does_not_read_business_state(monkeypatch)
     changed["run"]["state"] = "running"
     changed["run"]["details_expired"] = True
     monkeypatch.setattr(gateway_adapter, "detail", Mock(return_value=changed))
-    assert len(task_source(reader, "sample", "run-example")["blockers"]) == 3
+    changed_source = task_source(reader, "sample", "run-example")
+    assert changed_source["blockers"] == ["机器人任务尚未结束"]
+    assert {item["code"] for item in changed_source["warnings"]} == {"trace_unavailable", "details_expired"}
+
+
+@pytest.mark.parametrize("state", ["partial", "expired", "missing", "tampered"])
+def test_trace_gaps_allow_diagnosis_but_tampered_evidence_does_not(tmp_path, monkeypatch, state):
+    from chatcopilot.core.trace_archive import TraceArchive
+    from chatcopilot.core.trace_capture import TraceCapture
+    from chatcopilot.harness import gateway_adapter
+    capture = TraceCapture({"kind": "robot_task", "run_id": "run-example"})
+    capture.record({"kind": "execution_input"}, {"text": "synthetic input"})
+    if state == "partial":
+        capture.partial.add("missing_end_event")
+    archive = TraceArchive(tmp_path / "traces")
+    reference = archive.save(capture, "completed")
+    if state == "expired":
+        monkeypatch.setattr("chatcopilot.core.trace_archive.time.time", lambda: reference["expires_at"] + 1)
+    elif state == "missing":
+        archive.directory(reference["trace_ref"]).joinpath("trace.json").unlink()
+    elif state == "tampered":
+        reference["sha256"] = "0" * 64
+    record = {"run": {"run_id": "run-example", "state": "completed", "input_ref": "input", "config_id": "cfg"},
+              "observations": [{"seq": 1, "body_ref": "input"}], "has_more": False,
+              "receipts": [], "outbox": [], "approvals": []}
+    reader = SimpleNamespace(root=tmp_path, meta=lambda _: reference,
+                             body=lambda *_: {"state": "available", "payload": {"text": "synthetic input"}},
+                             configuration=lambda _: {"revision": "cfg"})
+    monkeypatch.setattr(gateway_adapter, "detail", lambda *_: record)
+    if state == "tampered":
+        with pytest.raises(ValueError, match="digest changed"):
+            task_source(reader, "sample", "run-example")
+    else:
+        source = task_source(reader, "sample", "run-example")
+        assert not source["blockers"]
+        assert source["warnings"][0]["code"] == "trace_" + state
+        assert bool(source.get("trace_bundle")) == (state == "partial")
 
 
 @pytest.fixture(scope="module")
@@ -249,6 +301,9 @@ def repository(tmp_path_factory):
 
 
 class LocalFixture:
+    def regressions(self, *args):
+        return {"case_ids": [], "passed_cases": [], "failed_cases": []}
+
     def prepare(self, task, worktree, coder, options, check_cancel):
         return {
             **task["source"],
@@ -307,6 +362,31 @@ def test_daily_task_fix_is_gated_by_target_and_previously_passing_tests(
     assert result["evaluations"]["verify-1"]["test_sha256"] == "frozen-test"
     evaluator.run.assert_not_called()
     assert not evaluator.cancel.called
+
+
+@pytest.mark.parametrize("candidate_outcome,status", [("passed", "fixed"), ("skipped", "failed"), ("error", "blocked")])
+def test_repository_skip_is_not_a_target_failure_or_a_passing_regression(repository, tmp_path, candidate_outcome, status):
+    class Local(LocalFixture):
+        def prepare(self, task, *args):
+            return {**task["source"], "test_sha256": "frozen-test", "case_ids": ["reproduction"]}
+
+        def regressions(self, task, worktree, check_cancel, checks=None):
+            changed = (worktree / "src/chatcopilot/core/harness_probe.py").exists()
+            outcome = candidate_outcome if changed else "passed"
+            return {"case_ids": ["required", "platform-only"],
+                    "passed_cases": ["required"] if outcome == "passed" else [],
+                    "failed_cases": ["platform-only"] + ([] if outcome == "passed" else ["required"]),
+                    "rows": {"required": {"outcome": outcome}, "platform-only": {"outcome": "skipped"}}}
+
+    controller = HarnessController(repository, root=tmp_path / "private", task_reader=lambda *_: robot_source())
+    task = controller.start_task("sample", "run-example", RepairOptions("test-model", max_attempts=1), launch=False)
+    def code(worktree, *_):
+        (worktree / "src/chatcopilot/core/harness_probe.py").write_text("VALUE = 'fixed'\n")
+        return {}
+    result = run_task(controller.store, task["task_id"], Mock(), SimpleNamespace(run=code), local_verifier=Local())
+    assert result["status"] == status
+    assert result["regression_baseline"]["passed_cases"] == ["required"]
+    assert result["regression_baseline"]["rows"]["platform-only"]["outcome"] == "skipped"
 
 
 @pytest.fixture
@@ -438,7 +518,9 @@ def test_generated_test_is_frozen_and_reused_with_real_candidate_import(local_te
     product.write_text("VALUE = 1\n")
     second = verifier.run(task, worktree, "verify", task["source"]["case_ids"], lambda: None)
     assert {row["outcome"] for row in second["result"]["trials"]} == {"passed"}
-    assert len(second["result"]["trials"]) == 2
+    assert len(second["result"]["trials"]) == 1
+    library = verifier.regressions(task, worktree, lambda: None)
+    assert library["passed_cases"] == ["tests/unit/test_existing.py::test_existing"]
     assert first["test_sha256"] == second["test_sha256"] == hashlib.sha256(test_bytes).hexdigest()
     assert first["code_source"]["sha256"] != second["code_source"]["sha256"]
     assert task["source"]["feedback"] == feedback

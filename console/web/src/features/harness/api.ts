@@ -1,10 +1,12 @@
 export type SourceKind = "evaluation" | "robot_task";
 export interface RepairFeedback { repair_hint?: string; expected_behavior?: string }
+export interface SourceWarning { code: string; message: string }
 export interface CaseInstance { case_instance_id: string; evaluation_id: string; case_id: string; case_ref: string; target_id: string; trial_id: string; attempt: number; outcome: string }
 export interface SourcePreview {
   repetitions?: number;
   kind: SourceKind; bot_id: string; evaluation_id?: string; run_id?: string;
   status?: string; revision?: string; blockers: string[]; case_instance?: CaseInstance;
+  warnings?: SourceWarning[];
   evidence?: Record<string, unknown>; history: RepairTask[];
 }
 export interface Verification {
@@ -23,6 +25,7 @@ export interface RepairTask {
   source: { kind?: SourceKind; evaluation_id?: string; run_id?: string; bot_id: string;
     case_id: string; case_ref?: string; target_id: string; case_ids: string[]; case_instance_id?: string; trial_id?: string; attempt?: number;
     blockers?: string[]; test_sha256?: string; test_relative_path?: string; regression_id?: string; feedback?: RepairFeedback;
+    warnings?: SourceWarning[];
     diagnosis?: { reason: string; expected_behavior?: string } };
   review_and_commit?: boolean; uncommitted?: boolean | null; commit_state?: string; commit_in_main?: boolean | null;
   local_commit?: { sha: string; branch: string; paths: string[]; message: string };

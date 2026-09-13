@@ -115,6 +115,20 @@ def _codex_auth_payload(token: str) -> dict[str, object]:
 
 
 class BackendRegistryTests(TestCase):
+    def test_explanatory_answer_survives_native_integrity_check(self) -> None:
+        answer = "我能解释运行框架；没有回执不能声称文件已修改、消息已发送或任务已完成。"
+        llm = mock.Mock(model="fixture-model")
+        llm.chat.return_value = ChatResult(content=answer)
+        backend = build_backend("native", tool_names=set(), llm=llm, runtime_config=ChatConfig(),
+                                tool_executor=ToolExecutor(caller_role_hint="owner", tools=[]), tools_schema=[])
+        session = backend.open_session(BackendOpenRequest(session_id="integrity", prompt_plan=prompt_plan("system")))
+        events = []
+        result = backend.stream_turn(session, AgentTask("解释框架设计"), on_event=events.append)
+        self.assertEqual(result.final_text, answer)
+        self.assertTrue(result.response_integrity.ok)
+        self.assertEqual(next(event.text for event in events if isinstance(event, FinalText)), answer)
+        backend.close_session(session)
+
     def test_three_main_backends_are_code_registered(self) -> None:
         self.assertEqual(AGENT_BACKEND_IDS, ("native", "langgraph", "codex"))
         self.assertEqual(backend_ids(), frozenset(AGENT_BACKEND_IDS))
@@ -171,6 +185,33 @@ class BackendRegistryTests(TestCase):
 
 
 class CodexBackendResumeTests(TestCase):
+    def test_explanatory_answer_survives_codex_integrity_check(self) -> None:
+        answer = "我能解释运行框架；没有回执不能声称文件已修改、消息已发送或任务已完成。"
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            auth_root = _main_auth_root(root)
+            routing = SimpleNamespace(code_command="codex exec --model {model} --cd {workdir}",
+                code_model="gpt-test", code_reasoning_effort="medium", code_timeout_seconds=30,
+                code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR")
+            backend = CodexAgentBackend(tool_names=set(), runtime_config=SimpleNamespace(routing=routing), tools=())
+            session = backend.open_session(BackendOpenRequest(session_id="integrity", prompt_plan=prompt_plan("system"),
+                options={"workspace_root": root, "backend_state_root": root / "state", "role_hint": "owner"}))
+            response = subprocess.CompletedProcess(["codex"], 0, "\n".join([
+                json.dumps({"type": "thread.started", "thread_id": "thread-integrity"}),
+                json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": answer}}),
+            ]), "")
+            events = []
+            with (
+                mock.patch.dict(os.environ, {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)}),
+                mock.patch("chatcopilot.external_tools.codex_cli.command._resolve_executable", return_value="/usr/bin/codex"),
+                mock.patch("chatcopilot.agent.backends.codex.build_codex_subprocess_env", return_value={}),
+                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay([response])),
+            ):
+                result = backend.stream_turn(session, AgentTask("解释框架设计"), on_event=events.append)
+            self.assertEqual(result.final_text, answer)
+            self.assertTrue(result.response_integrity.ok)
+            self.assertEqual(next(event.text for event in events if isinstance(event, FinalText)), answer)
+
     def test_main_credential_root_rejects_default_personal_home(self) -> None:
         with (
             mock.patch.dict(

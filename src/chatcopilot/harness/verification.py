@@ -86,9 +86,6 @@ class CaseVerification:
 
     def regressions(self, task: dict[str, Any], candidate: CandidateRef,
                     check_cancel: Callable[[], None], checks: list[str] | None = None) -> dict[str, Any]:
-        if task["source"].get("test_sha256"):
-            # The local plan already contains every collected repository unit test.
-            return {"case_ids": [], "passed_cases": [], "failed_cases": []}
         value = self.local_verifier.regressions(task, candidate.path, check_cancel, checks)
         for row in value.get("rows", {}).values():
             if row["outcome"] == "error":

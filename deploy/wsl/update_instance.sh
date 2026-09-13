@@ -5,7 +5,7 @@
 #   1. Generate runtime env from bots/<id>/local.env.
 #   2. Sync code from the control repo to the instance wsl_home.
 #   3. Reconcile the locked runtime on every update, rebuilding through bootstrap
-#      when dependency inputs changed and using an idempotent frozen sync otherwise.
+#      when dependency inputs changed and using an idempotent locked sync otherwise.
 #   4. Restart chatcopilot@<id>; with --enable, enable it only after a successful start.
 set -uo pipefail
 
@@ -288,7 +288,7 @@ if [ "$DRY_RUN" = 1 ]; then
     echo "[DRY-RUN] BotSpec dev.code_tasks requirement: deferred until locked source CLI reconciliation"
     echo "[DRY-RUN] would ensure source venv from: '$SRC/uv.lock'"
     echo "[DRY-RUN] would run locked installer: bash '$SRC/deploy/wsl/install_wsl_env.sh' --no-system-packages --skip-cc-connect --with-console-deps --venv '$SRC/.venv' --no-verify"
-    echo "[DRY-RUN] would reconcile source CLI with uv sync --frozen before executing '$VENV_PY'"
+    echo "[DRY-RUN] would reconcile source CLI with uv sync --locked before executing '$VENV_PY'"
     echo "[DRY-RUN] would export: PYTHONPATH='$SRC/src\${PYTHONPATH:+:\$PYTHONPATH}'"
     echo "[DRY-RUN] would run: '$VENV_PY' -m chatcopilot bot provision-env --bot '$BOT_FOR_CMD'"
     if [ -n "$CHANGED_FILES" ]; then

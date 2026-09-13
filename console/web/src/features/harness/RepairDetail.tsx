@@ -2,11 +2,12 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Empty, Space, Spin, Table, Tag, Typography } from "@arco-design/web-react";
 import { ACTIVE, ATTEMPT_LABELS, harnessApi, repairStatusLabel, sourceLabel, stageLabel } from "./api";
+import type { RepairTask } from "./api";
 import { HarnessTraces } from "../traces/TracePanel";
 const { Text } = Typography;
 const jsonStyle = { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 420, overflow: "auto" } as const;
 
-export function RepairDetail({ taskId }: { taskId: string }) {
+export function RepairDetail({ taskId, onRestart }: { taskId: string; onRestart: (task: RepairTask) => void }) {
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -33,6 +34,8 @@ export function RepairDetail({ taskId }: { taskId: string }) {
     <Space wrap><Tag color={task.status === "fixed" ? "green" : "blue"}>{repairStatusLabel(task)}</Tag>
       <Text>阶段：{stageLabel(task.stage)}</Text><Text type="secondary">已用 {Math.round(task.elapsed_seconds ?? 0)} 秒 / {task.options.timeout_seconds} 秒</Text></Space>
     {task.message && <Alert type={task.status === "fixed" ? "success" : "info"} content={task.message} />}
+    {!!task.source.warnings?.length && <Alert type="warning" title="来源证据缺口"
+      content={task.source.warnings.map(warning => warning.message).join("；")} />}
     {task.verification_plan && <Text type="secondary">验证范围：{task.verification_plan.real_agent ? "真实 Agent 与隔离工具环境" : "冻结的确定性复现测试"}；每组 {task.verification_plan.repetitions} 次，{task.verification_plan.checks.length} 个检查项{task.planned_agent_trials ? `，最多 ${task.planned_agent_trials} 次 Agent 执行` : ""}。</Text>}
     {task.hypothesis && <section><Text bold>根因假设与验收预期</Text><p>{task.hypothesis.reason}</p><p>{task.hypothesis.expected_behavior}</p></section>}
     {task.source.feedback && <section aria-label="本次修复补充内容">
@@ -51,6 +54,8 @@ export function RepairDetail({ taskId }: { taskId: string }) {
     <Space wrap>{ACTIVE.includes(task.status) && <Button status="danger" loading={busy} onClick={() => void action("cancel")}>取消</Button>}
       {["blocked", "interrupted", "cancelled"].includes(task.status) && !task.source.blockers?.length &&
         <Button loading={busy} onClick={() => void action("resume")}>检查并继续</Button>}
+      {!ACTIVE.includes(task.status) && (task.source.run_id || task.source.case_instance_id) &&
+        <Button disabled={busy} onClick={() => onRestart(task)}>重新发起修复</Button>}
       <Button onClick={() => void query.refetch()}>刷新状态</Button>
       {task.source.test_sha256 && <a href={`/api/harness/tasks/${encodeURIComponent(taskId)}/reproducer`} download>下载冻结复现测试</a>}</Space>
     {task.source.diagnosis && <Alert type="info" title="复现依据" content={`${task.source.diagnosis.reason}；预期行为：${task.source.diagnosis.expected_behavior}`} />}

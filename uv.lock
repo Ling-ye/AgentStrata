@@ -47,6 +47,7 @@ acp = [
     { name = "agent-client-protocol" },
 ]
 agent = [
+    { name = "deepeval" },
     { name = "langgraph" },
     { name = "mcp" },
     { name = "openai" },
@@ -95,6 +96,7 @@ requires-dist = [
     { name = "absl-py", marker = "extra == 'evaluation'", specifier = ">=2,<3" },
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.10.0" },
     { name = "build", marker = "extra == 'dev'", specifier = "==1.5.0" },
+    { name = "deepeval", marker = "extra == 'agent'", specifier = "==4.2.2" },
     { name = "deepeval", marker = "extra == 'evaluation'", specifier = "==4.2.2" },
     { name = "fastapi", marker = "extra == 'console'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.110" },

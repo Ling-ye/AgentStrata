@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from importlib.metadata import PackageNotFoundError
 import json
 import os
 from pathlib import Path
@@ -56,6 +57,39 @@ def test_reader_never_initializes_missing_database(tmp_path):
     with pytest.raises(GatewayStateError):
         gateway_runs(root)
     assert not root.exists()
+
+
+@pytest.mark.parametrize("failure,code", [
+    (PackageNotFoundError("deepeval"), "trace_dependency_missing"),
+    (ValueError("invalid synthetic trace"), "trace_archive_failed"),
+    (OSError("synthetic write failure"), "trace_archive_failed"),
+])
+def test_trace_archive_failure_retains_actionable_error_without_changing_run(state, monkeypatch, failure, code):
+    store, generation, run = state
+    recorder = ObservationRecorder(store, generation)
+    recorder.accepted(run, "synthetic input", "owner")
+    def fail(*args, **kwargs):
+        raise failure
+    monkeypatch.setattr(recorder.trace_archive, "save", fail)
+    before = store.get_run(run)
+    recorder._finish_trace(run, {"state": "completed"})
+    error = recorder.store.meta("trace:" + run)
+    assert error["capture_state"] == "failed"
+    assert error["error"]["code"] == code
+    assert error["error"]["type"] == type(failure).__name__
+    assert store.get_run(run) == before
+
+
+def test_trace_archive_error_redacts_capture_secrets(state, monkeypatch):
+    store, generation, run = state
+    recorder = ObservationRecorder(store, generation)
+    private = "synthetic-archive-secret"
+    recorder.accepted(run, "synthetic input", "owner", secrets=(private,))
+    def fail(*args, **kwargs):
+        raise OSError("write failed: " + private)
+    monkeypatch.setattr(recorder.trace_archive, "save", fail)
+    recorder._finish_trace(run, {"state": "completed"})
+    assert private not in json.dumps(recorder.store.meta("trace:" + run))
 
 
 def test_read_only_snapshot_includes_committed_wal_without_touching_source(state):

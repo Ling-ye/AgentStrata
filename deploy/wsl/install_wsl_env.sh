@@ -542,13 +542,35 @@ install_python_env() {
     )
     run "${uv_env[@]}" "$UV_BIN" python install --no-bin "$PYTHON_VERSION" --no-config
     local sync_args=(
-        sync --frozen --python "$PYTHON_VERSION" --extra agent --extra acp
+        sync --locked --python "$PYTHON_VERSION" --extra agent --extra acp
     )
     if [ "$INSTALL_CONSOLE_DEPS" -eq 1 ]; then
-        sync_args+=(--extra console --extra evaluation)
+        # Console launches Harness verification/review workers with this same
+        # interpreter; their trusted repository/commit checks need dev tools.
+        sync_args+=(--extra console --extra evaluation --extra dev)
     fi
     sync_args+=(--no-config)
     run "${uv_env[@]}" "$UV_BIN" "${sync_args[@]}"
+    if [ "$DRY_RUN" -eq 0 ]; then
+        info "checking local trace archive in the installed Python environment"
+        "${uv_env[@]}" PYTHONPATH="$REPO_ROOT/src" "$VENV_DIR/bin/python" - <<'PY'
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from chatcopilot.core.trace_capture import TraceCapture
+from chatcopilot.core.trace_archive import TraceArchive
+
+capture = TraceCapture({"kind": "installation", "probe": "local-trace"})
+capture.record({"kind": "installation_probe"}, {"text": "local archive readiness"})
+with TemporaryDirectory(prefix="agentstrata-trace-probe-") as directory:
+    archive = TraceArchive(Path(directory) / "traces")
+    reference = archive.save(capture, "completed")
+    archived = archive.load(reference["trace_ref"], source=capture.source, sha256=reference["sha256"])
+    events = list(archive.portable_events(reference["trace_ref"]))
+    assert archived["metadata"]["agentstrata"]["capture_state"] == "available"
+    assert events[0]["body"] == {"text": "local archive readiness"}
+print("OK: local trace archive write/read")
+PY
+    fi
     [ "$DRY_RUN" -eq 1 ] || ok "isolated Python $PYTHON_VERSION environment ready: $VENV_DIR"
 }
 

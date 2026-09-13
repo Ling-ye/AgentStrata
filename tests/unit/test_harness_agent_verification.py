@@ -158,12 +158,35 @@ def test_multiple_pytest_assertions_are_frozen_and_reused(tmp_path):
         return {}
     task["source"] = verifier.prepare(task, root, SimpleNamespace(prepare=prepare), RepairOptions("test-model"), lambda: None)
     assert len(task["source"]["reproduction_ids"]) == 2
+    assert task["source"]["case_ids"] == task["source"]["reproduction_ids"]
     before = verifier.run(task, root, "before", task["source"]["case_ids"], lambda: None)
     assert [t["outcome"] for t in before["result"]["trials"]].count("failed") == 2
     (root / "src/probe.py").write_text("VALUE = 1\n")
     after = verifier.run(task, root, "after", task["source"]["case_ids"], lambda: None)
     assert {t["outcome"] for t in after["result"]["trials"]} == {"passed"}
     assert len(verifier.regressions({"task_id": "repair-regressions"}, root, lambda: None)["passed_cases"]) == 1
+
+
+def test_pytest_source_uses_repository_protection_without_promoting_skips(tmp_path):
+    from chatcopilot.harness.verification import CaseVerification
+    from chatcopilot.harness.models import CandidateRef
+    candidate = CandidateRef(tmp_path, "digest", "base")
+    calls = []
+    def regressions(*args):
+        calls.append(args)
+        return {"case_ids": ["existing", "platform-only"], "passed_cases": ["existing"],
+                "failed_cases": ["platform-only"], "rows": {
+                    "existing": {"outcome": "passed"}, "platform-only": {"outcome": "skipped"}}}
+    port = CaseVerification(None, SimpleNamespace(regressions=regressions), None)
+    task = {"source": {"test_sha256": "frozen"}}
+    baseline = port.regressions(task, candidate, lambda: None)
+    assert baseline["passed_cases"] == ["existing"]
+    assert baseline["rows"]["platform-only"]["outcome"] == "skipped"
+    assert len(calls) == 1
+    baseline["rows"]["platform-only"]["outcome"] = "error"
+    port.local_verifier = SimpleNamespace(regressions=lambda *args: baseline)
+    with pytest.raises(HarnessError, match="环境错误"):
+        port.regressions(task, candidate, lambda: None)
 
 
 def test_evaluation_hint_does_not_replace_the_frozen_expectation(repository, tmp_path):

@@ -15,6 +15,16 @@ The guided path supports Ubuntu 22.04/24.04/26.04 and Debian 11/12/13 on amd64 o
 
 ## Design
 
+Runtime dependency installation follows the [four-layer baseline](../runtime-four-layer-definition/spec.md):
+the instance host owns readiness; Agent business logic does not install dependencies. The installer uses
+`uv sync --locked` for `agent + acp`, including DeepEval 4.2.2 for local trace DTOs. A stale lock fails
+instead of silently omitting newly declared dependencies. After synchronization, the installed Python
+must save and read a disposable private trace and verify its body, without a model or network call;
+`--no-verify` skips only the broader BotSpec/import checks, not this dependency readiness probe.
+The optional Console environment also installs the existing `dev` extra: its Harness workers use
+the same interpreter for frozen tests and trusted commit checks (including Ruff). Robot-only
+installation remains `agent + acp`; no evaluation or development extras are added to that runtime.
+
 The terminal wizard is a resumable state machine derived from current BotSpec, private env, Docker, NapCat and systemd state; it does not create a second workflow-state file. `--dry-run` is read-only, never asks for secrets, and shows downloads, package changes, target paths and follow-up actions. A conflicting bot directory fails closed; `--resume` accepts only the guided QQ/Native shape and preserves configured secret values when the operator submits an empty answer.
 
 The guided BotSpec uses a generic OpenAI-compatible chat prefix, `native` backend, `workspace.read_write` and `memory.chat`, plus private workspace and file-upload features. It does not inherit the built-in Lingye bot's persona, search, Codex, code-worker or MCP configuration. Provisioning fields and receipts are generated from the actual BotSpec and platform adapter. Secret values never enter argv, JSON, logs or receipts. Candidate env content is validated before a same-directory mode-`0600` atomic replacement that preserves unmanaged keys and comments and rejects unsafe filesystem targets.
@@ -40,6 +50,8 @@ The final doctor output uses `agentstrata-deployment-check/v1` with `ready`, `ne
 - Documentation separates first installation, post-installation operations and exceptional WSL recovery, without duplicating the deployment sequence.
 
 ## Verification
+
+Dependency repair verification (2026-09-13): `uv lock --check` passed after adding the missing DeepEval agent association without package upgrades. A fresh agent + acp environment and the existing WSL bot environment both saved, reloaded and checked a local DeepEval 4.2.2 trace. The Console environment also contains the declared development tools used by Harness checks. Installer/update validation passed; the final repository full gate passed all 12 checks (3871 Python tests passed, 1 skipped). This follow-up did not rerun the six-distribution container matrix or a real QQ message roundtrip.
 
 Repository verification completed in the isolated implementation worktree:
 

@@ -18,6 +18,7 @@ from chatcopilot.core.observation_context import observation_scope
 from chatcopilot.core.runtime_observation import current_runtime_stage
 from chatcopilot.core.trace_capture import TraceCapture
 from chatcopilot.core.trace_archive import TraceArchive
+from chatcopilot.core.observability_redaction import redact_observability_payload
 from .observation_store import ObservationStore, decoded
 
 _LOG = logging.getLogger(__name__)
@@ -211,9 +212,17 @@ class ObservationRecorder:
             capture.record({"kind": "execution_terminal", "status": run["state"]}, run)
             reference = self.trace_archive.save(capture, run["state"])
             self.store.set_meta("trace:" + run_id, reference)
-        except Exception:
-            self.store.set_meta("trace:" + run_id, {"capture_state": "failed"})
-            _LOG.warning("Local trace archive failed")
+        except Exception as exc:
+            missing_sdk = isinstance(exc, PackageNotFoundError) and exc.name == "deepeval"
+            reason = ("运行环境缺少 DeepEval，请通过实例更新同步依赖" if missing_sdk else
+                      "本地执行归档失败，请检查记录中的异常类型和详情")
+            details = redact_observability_payload(
+                {"message": str(exc)}, secrets=capture.secrets, roots=capture.roots,
+            ).value
+            error = {"code": "trace_dependency_missing" if missing_sdk else "trace_archive_failed",
+                     "type": type(exc).__name__, "message": reason, "detail": details["message"]}
+            self.store.set_meta("trace:" + run_id, {"capture_state": "failed", "error": error})
+            _LOG.warning("Local trace archive failed: run=%s code=%s type=%s", run_id, error["code"], error["type"])
 
     def host_event(self, run_id: str, kind: str, data: dict[str, Any]) -> None:
         data = dict(data)

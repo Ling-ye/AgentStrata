@@ -213,6 +213,9 @@ class CodexCoder:
                     "reason 给出根因假设及具体证据引用，expected_behavior 沿用原 Case 预期，不创建新题或改变评分。"
                     if source.get("kind", "evaluation") == "evaluation" else
                     "调查原始任务和已有上下文，选择 pytest 或 agent 验证，先写 diagnosis.json："
+                    "source.warnings 说明原始材料缺口，不代表无法诊断；利用已有事件、输入输出、配置和反馈核对实际产品代码。"
+                    "缺归档本身不是拒绝复现的理由；若验证确实依赖缺失材料，返回 reproducible=false 并具体说明缺什么及原因。"
+                    "不得把用户反馈补写为历史事实，也不得把未捕获行为当成已经验证。"
                     '{"reproducible":true,"verification_kind":"pytest|agent","reason":"根因假设、证据和覆盖范围","expected_behavior":"有依据的预期"}。'
                     "确定性代码缺陷写 test_reproduction.py，可包含多个相关测试，调用真实产品代码、使用合成数据和临时目录、"
                     "离线执行，不得依赖文件位置；模块文档字符串概括可公开的问题。"

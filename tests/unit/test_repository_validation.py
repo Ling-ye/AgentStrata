@@ -164,6 +164,20 @@ def test_build_smoke_detects_tracked_file_changes(tmp_path: Path) -> None:
     assert build_smoke._changed_paths(before, after) == (tracked,)
 
 
+def test_requirements_check_detects_dependency_missing_from_runtime_lock(monkeypatch, tmp_path):
+    sync = _load_script("sync_requirements.py")
+    monkeypatch.setattr(sync, "ROOT", tmp_path)
+    monkeypatch.setattr(sync, "rendered_requirements", lambda: {})
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="sample"\n[project.optional-dependencies]\nagent=["deepeval==4.2.2"]\n')
+    lock = ('[[package]]\nname="sample"\nsource={editable="."}\n'
+            '[package.optional-dependencies]\nagent=[]\n')
+    (tmp_path / "uv.lock").write_text(lock)
+    assert sync.check() == ["uv.lock (agent dependency group; run uv lock)"]
+    (tmp_path / "uv.lock").write_text(lock.replace('agent=[]', 'agent=[{name="deepeval"}]'))
+    assert sync.check() == []
+
+
 def test_gitleaks_wrapper_enforces_private_three_scope_scans() -> None:
     script = (ROOT / "scripts" / "check_secrets.sh").read_text(encoding="utf-8")
 

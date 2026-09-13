@@ -21,6 +21,10 @@ _HASH = re.compile(r"[a-f0-9]{64}\Z")
 GROUPS = ("baseSpans", "agentSpans", "llmSpans", "toolSpans", "retrieverSpans")
 
 
+class TraceExpired(ValueError):
+    """An intact reference whose retained body is no longer available."""
+
+
 def _directory(path: Path) -> None:
     current = Path(path.absolute().anchor)
     for part in path.absolute().parts[1:]:
@@ -148,7 +152,7 @@ class TraceArchive:
         if not _HASH.fullmatch(digest) or digest not in meta["artifacts"]:
             raise ValueError("Artifact does not belong to this trace")
         if meta["expires_at"] is not None and meta["expires_at"] <= time.time():
-            raise ValueError("Trace body expired")
+            raise TraceExpired("Trace body expired")
         raw = _read(self.directory(trace["uuid"]) / "artifacts" / f"{digest}.json")
         self._check_body(meta, digest, raw)
         return _json(raw)
@@ -221,6 +225,9 @@ class TraceArchive:
     def export(self, ref: str, *, source: dict[str, Any] | None = None,
                sha256: str | None = None) -> dict[str, Any]:
         trace = self.load(ref, source=source, sha256=sha256)
+        expires = metadata(trace)["expires_at"]
+        if expires is not None and expires <= time.time():
+            raise TraceExpired("Trace body expired")
         artifacts = {}
         for digest in metadata(trace)["artifacts"]:
             self._body(trace, digest)

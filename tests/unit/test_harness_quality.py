@@ -219,7 +219,9 @@ def test_frozen_test_uses_final_repository_path_before_and_after_fix(tmp_path):
     product.write_text("VALUE = 1\n")
     second = verifier.run(task, root, "after", source["case_ids"], lambda: None)
     assert first["result"]["trials"][0]["outcome"] == "failed"
-    assert len(second["result"]["trials"]) == 2
+    assert len(second["result"]["trials"]) == 1
+    library = verifier.regressions(task, root, lambda: None)
+    assert len(library["passed_cases"]) == 2
     assert {row["outcome"] for row in second["result"]["trials"]} == {"passed"}
     assert source["test_sha256"] == hashlib.sha256(content).hexdigest()
     assert not (root / source["test_relative_path"]).exists()

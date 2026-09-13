@@ -4,7 +4,7 @@ import { Alert, Button, Card, Checkbox, Drawer, Input, InputNumber, Select, Spac
 import { api } from "../api";
 import PageSection from "../shared/ui/PageSection";
 import { harnessApi, REPAIR_LABELS, repairStatusLabel, sourceLabel, stageLabel,
-  type SourceKind, type SourcePreview, type StartRepair } from "../features/harness/api";
+  type RepairTask, type SourceKind, type SourcePreview, type StartRepair } from "../features/harness/api";
 import { caseInstanceId, selectedInstance } from "../features/harness/caseInstance";
 import { RepairDetail } from "../features/harness/RepairDetail";
 import { repairModels } from "../features/harness/repairModels";
@@ -57,22 +57,36 @@ export default function HarnessPage() {
     setRepairHint(""); setExpectedBehavior("");
     setModel("");
   }
-  async function load() {
-    if (starting || !sourceId.trim() || (kind === "robot_task" && !botId)) return;
+  async function load(sourceKind = kind, sourceValue = sourceId, sourceBot = botId, resetModel = true) {
+    if (starting || !sourceValue.trim() || (sourceKind === "robot_task" && !sourceBot)) return;
     const current = ++generation.current;
-    setLoading(true); setError(""); setPreview(undefined); setLoadedId(""); setModel("");
+    setLoading(true); setError(""); setPreview(undefined); setLoadedId("");
+    if (resetModel) setModel("");
     try {
-      const id = kind === "evaluation" ? caseInstanceId(sourceId) : sourceId.trim();
-      const value = await harnessApi.load(kind, id, kind === "robot_task" ? botId : "");
+      const id = sourceKind === "evaluation" ? caseInstanceId(sourceValue) : sourceValue.trim();
+      const value = await harnessApi.load(sourceKind, id, sourceKind === "robot_task" ? sourceBot : "");
       if (current !== generation.current) return;
-      if (kind === "evaluation" && !selectedInstance(value, id)) throw new Error("返回的 Case 实例与输入 ID 不一致，请重新加载来源");
+      if (sourceKind === "evaluation" && !selectedInstance(value, id)) throw new Error("返回的 Case 实例与输入 ID 不一致，请重新加载来源");
       setPreview(value);
       setLoadedId(id);
     } catch (value) { if (current === generation.current) setError(value instanceof Error ? value.message : String(value)); }
     finally { if (current === generation.current) setLoading(false); }
   }
+  function restart(task: RepairTask) {
+    const sourceKind = task.source.kind ?? "evaluation";
+    const id = sourceKind === "robot_task" ? task.source.run_id! : task.source.case_instance_id!;
+    setKind(sourceKind); setSourceId(id); setBotId(task.source.bot_id);
+    setRepairHint(task.source.feedback?.repair_hint ?? "");
+    setExpectedBehavior(task.source.feedback?.expected_behavior ?? "");
+    setModel(task.options.model); setEffort(task.options.reasoning_effort);
+    setAttempts(task.options.max_attempts); setHours(task.options.timeout_seconds / 3600);
+    setReviewAndCommit(task.review_and_commit ?? false);
+    submitted.current = { body: "", requestId: "" };
+    openTask("");
+    void load(sourceKind, id, task.source.bot_id, false);
+  }
   async function start() {
-    if (!preview || starting || loading || inspection.isFetching || inspection.isError || models.error || !models.options.some(option => option.value === model)) return;
+    if (!preview || preview.blockers.length || starting || loading || inspection.isFetching || inspection.isError || models.error || !models.options.some(option => option.value === model)) return;
     const trial = selectedInstance(preview, loadedId);
     if (kind === "evaluation" && (!trial || !["failed", "error"].includes(trial.outcome) || preview.blockers.length)) return;
     const body = { source_kind: kind, ...(kind === "evaluation" ? {
@@ -114,13 +128,15 @@ export default function HarnessPage() {
               onChange={value => { setSourceId(value); resetPreview(); }} onPressEnter={() => void load()} /></div>
           </div>
           {kind === "evaluation" && <Text type="secondary">在测评结果中复制失败项的「Case 实例 ID」，粘贴后加载。Harness 会自动获取这次执行的信息，每次只处理一个 Case。</Text>}
-          {kind === "robot_task" && <Text type="secondary">任务将先建立冻结验证计划，按问题实际运行 Agent 或离线测试。缺失证据或无法在隔离环境中复现时，会记录受阻原因。</Text>}
+          {kind === "robot_task" && <Text type="secondary">提交后自动诊断，建立冻结验证计划并运行 Agent 或离线测试；复现出问题后自动修复。归档缺失时先使用已有观测，确实缺少验证所需材料时会说明原因。</Text>}
           <Button loading={loading} disabled={starting || !sourceId.trim() || (kind === "robot_task" && !botId)} onClick={() => void load()}>加载来源</Button>
           {error && <Alert type="error" content={error} />}
           {kind === "robot_task" && bots.isError && <Alert type="error" content="机器人实例列表读取失败，请刷新后重试" />}
           {preview && <>
             <Alert type={blocked ? "warning" : "info"} content={blocked ? preview.blockers.join("；") :
               kind === "evaluation" ? "已根据 Case 实例 ID 加载来源；启动前会再次验证这次执行的失败结果。" : "已加载任务证据。启动后将先核对预期行为并建立冻结复现测试。"} />
+            {!!preview.warnings?.length && <Alert type="warning" title="来源证据缺口 · 可开始诊断"
+              content={preview.warnings.map(warning => warning.message).join("；")} />}
             {kind === "evaluation" && trial && <div aria-label="待修复 Case 详情" style={{ overflowWrap: "anywhere" }}>
               <div>Case 实例 ID：{trial.case_instance_id}</div><div>所属测评：{trial.evaluation_id}</div><div>Case：{trial.case_ref}</div><div>Target：{trial.target_id} · 第 {trial.attempt} 次执行</div>
               <div>执行结果：{({ failed: "失败", error: "执行错误", passed: "通过", skipped: "跳过" } as Record<string, string>)[trial.outcome] || trial.outcome}</div>
@@ -148,11 +164,13 @@ export default function HarnessPage() {
               </div>
               {!inspection.isFetching && (inspection.isError || models.error) && <Alert type="error" content={inspection.isError ? "机器人模型配置读取失败" : models.error}
                 action={<Button size="small" onClick={() => void inspection.refetch()}>重试</Button>} />}
+              {!inspection.isFetching && !inspection.isError && !models.error && !!selectedModel && !models.options.some(option => option.value === selectedModel) &&
+                <Alert type="warning" content="原修复模型当前不可用，请重新选择模型。" />}
               <Text type="secondary">真实 Agent 每个验证 Case 最多 {(2 * attempts + 1) * Math.max(3, preview.repetitions ?? 3)} 次执行（基线、候选与独立确认）；完整数量在验证计划冻结后展示，评分和回归共用总预算。</Text>
               <Checkbox checked={reviewAndCommit} disabled={starting} onChange={setReviewAndCommit}>AI 审核通过后，收录回归测试并创建本地提交（不推送）</Checkbox>
               <Text type="secondary">从本地 HEAD 创建专属 worktree 和分支。目标和保护集通过后执行所选后续动作；审核与提交共用本次预算，合入主分支由你决定。</Text>
-              <Button type="primary" loading={starting} disabled={loading || inspection.isFetching || inspection.isError || !!models.error || !models.options.some(option => option.value === model) || (kind === "evaluation" && (!trial || !["failed", "error"].includes(trial.outcome) || blocked))} onClick={() => void start()}>
-                {blocked ? "保存自检受阻记录" : "开始自检与修复"}</Button>
+              <Button type="primary" loading={starting} disabled={blocked || loading || inspection.isFetching || inspection.isError || !!models.error || !models.options.some(option => option.value === model) || (kind === "evaluation" && (!trial || !["failed", "error"].includes(trial.outcome)))} onClick={() => void start()}>
+                开始修复</Button>
             </>}
           </>}
         </Space>
@@ -175,7 +193,7 @@ export default function HarnessPage() {
       </Card>
     </Space>
     <Drawer title="AI Harness 修复记录" visible={!!taskId} width="min(900px, 100vw)" footer={null} onCancel={() => openTask("")}>
-      {taskId && <RepairDetail key={taskId} taskId={taskId} />}
+      {taskId && <RepairDetail key={taskId} taskId={taskId} onRestart={restart} />}
     </Drawer>
   </PageSection>;
 }

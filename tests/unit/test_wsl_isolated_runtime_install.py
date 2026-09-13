@@ -69,7 +69,7 @@ def test_installer_pins_isolated_minimal_runtimes() -> None:
     assert "92804e2f635c1791bb497437d94b15970f0d6d74811979315624cbb0f45b778d" in script
     assert "89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7" in script
     assert "23a5637c2470fde09fcc1acc77c1b92e04e3d7e3e6e80ff7df6f5831958d1477" in script
-    assert 'sync --frozen --python "$PYTHON_VERSION" --extra agent --extra acp' in script
+    assert 'sync --locked --python "$PYTHON_VERSION" --extra agent --extra acp' in script
     assert 'python install --no-bin "$PYTHON_VERSION"' in script
     assert 'RUNTIME_ROOT="${AGENTSTRATA_RUNTIME_ROOT:-$HOME/.local/share/agentstrata}"' in script
     assert "--retry 5 --retry-all-errors" in script
@@ -112,7 +112,7 @@ def test_dry_run_is_zero_write_and_reports_x86_artifacts(tmp_path: Path) -> None
     assert list((tmp_path / "home").iterdir()) == []
     assert "uv-x86_64-unknown-linux-gnu.tar.gz" in completed.stdout
     assert "node-v24.20.0-linux-x64.tar.xz" in completed.stdout
-    assert "uv sync --frozen --python 3.13.15 --extra agent --extra acp" in completed.stdout
+    assert "uv sync --locked --python 3.13.15 --extra agent --extra acp" in completed.stdout
     assert "--link-mode" not in completed.stdout
     assert "--no-config" in completed.stdout
     assert "dry-run completed; no files or packages were changed" in completed.stdout
@@ -136,7 +136,7 @@ def test_console_dependencies_are_an_explicit_locked_extra(tmp_path: Path) -> No
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "uv sync --frozen --python 3.13.15 --extra agent --extra acp --extra console --extra evaluation" in completed.stdout
+    assert "uv sync --locked --python 3.13.15 --extra agent --extra acp --extra console --extra evaluation --extra dev" in completed.stdout
     assert "--link-mode" not in completed.stdout
     assert "--no-config" in completed.stdout
     assert "ensurepip" not in INSTALLER.read_text(encoding="utf-8")

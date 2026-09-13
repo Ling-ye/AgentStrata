@@ -110,11 +110,6 @@ class LocalVerifier:
         collected = self._pytest(prepared_task, worktree, [path], check_cancel, collect=True)
         if not collected["collected"]:
             raise HarnessError("invalid_reproducer", "复现文件必须包含可执行测试")
-        regression = self._pytest(
-            prepared_task, worktree, ["tests/unit"], check_cancel, collect=True
-        )
-        if not regression["collected"]:
-            raise HarnessError("regression_unavailable", "没有可用的仓库单元回归测试")
         nodeids = collected["collected"]
         identifiers = {name: "reproduction" if len(nodeids) == 1 else
                        "reproduction-" + hashlib.sha256(name.encode()).hexdigest()[:16] for name in nodeids}
@@ -125,11 +120,7 @@ class LocalVerifier:
             "test_nodeid": collected["collected"][0],
             "diagnosis": diagnosis,
             "preparation": coding,
-            "case_ids": [
-                *identifiers.values(),
-                *(name for name in regression["collected"] if name not in identifiers),
-                *self._static_commands(worktree),
-            ],
+            "case_ids": list(identifiers.values()),
         }
 
     def run(

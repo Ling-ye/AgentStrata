@@ -53,6 +53,8 @@ export default function TracePanel({ endpoint, active = false, title = "本地�
       {query.isLoading && <Spin tip="正在读取执行记录…" />}
       {query.isError && <Alert type="error" content={String(query.error)} action={<Button onClick={() => void query.refetch()}>重试</Button>} />}
       {first && <><p>{captureLabels[first.capture_state] || first.capture_state} · 已加载 {spans.length} / {first.span_count ?? 0} 个步骤</p>
+        {first.error && <Alert type="error" title={first.error.message}
+          content={<>{first.error.type} · {first.error.code}{first.error.detail && <div>{first.error.detail}</div>}</>} />}
         {!!first.capture_reasons?.length && <Alert type="warning" content={`采集原因：${first.capture_reasons.join("、")}`} />}
         <Space wrap className="trace-filters"><Input aria-label="搜索执行步骤" placeholder="搜索步骤或模型" value={text} onChange={setText} allowClear />
           <Select aria-label="步骤类型" value={type} onChange={setType} options={[

@@ -286,7 +286,7 @@ def test_update_script_dry_run_reports_selected_python_and_pythonpath() -> None:
 
     assert "[DRY-RUN] would ensure source venv from:" in text
     assert "[DRY-RUN] would run locked installer:" in text
-    assert "[DRY-RUN] would reconcile source CLI with uv sync --frozen" in text
+    assert "[DRY-RUN] would reconcile source CLI with uv sync --locked" in text
     assert '[DRY-RUN] would export: PYTHONPATH=' in text
     assert '[DRY-RUN] would run: \'$VENV_PY\' -m chatcopilot bot provision-env' in text
     assert "[DRY-RUN] selected update mode:" in text

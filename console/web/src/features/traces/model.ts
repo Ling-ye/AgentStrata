@@ -4,6 +4,7 @@ export interface TraceSpan {
 }
 export interface TracePage {
   capture_state: string; execution_status?: string; capture_reasons?: string[];
+  error?: { code: string; type: string; message: string; detail?: string };
   spans: TraceSpan[]; span_count?: number; next_cursor: number; has_more: boolean;
 }
 export const captureLabels: Record<string, string> = {

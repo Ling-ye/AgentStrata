@@ -8,6 +8,7 @@ from typing import Any
 
 from chatcopilot.core.observability_redaction import redact_observability_payload
 from chatcopilot.core.private_sqlite import json_text
+from chatcopilot.core.trace_archive import TraceArchive, TraceExpired
 from chatcopilot.gateway.observation_queries import detail, events
 from chatcopilot.gateway.observation_store import ObservationStore
 from chatcopilot.harness.models import HarnessError
@@ -22,29 +23,39 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
     if record is None:
         raise HarnessError("not_found", "此实例中没有该机器人任务 ID")
     run = record["run"]
-    reference = store.meta("trace:" + run_id) or {}
-    if reference.get("trace_ref"):
-        from chatcopilot.core.trace_archive import TraceArchive
-        archive = TraceArchive(store.root / "traces")
-        blockers = []
-        if run["state"] not in {"completed", "failed", "aborted"}:
-            blockers.append("机器人任务尚未结束")
-        bundle = archive.export(reference["trace_ref"], source={"kind": "robot_task", "run_id": run_id},
-                                sha256=reference["sha256"])
-        if reference.get("capture_state") != "available":
-            blockers.append("本地执行记录存在缺失，请检查采集原因")
-        evidence = redact_observability_payload({"run": run, "trace": reference,
-            "configuration": store.configuration(run["config_id"]) if run.get("config_id") else None,
-            "receipts": record["receipts"], "outbox": record["outbox"], "approvals": record["approvals"]}).value
-        revision = reference["sha256"]
-        return {"kind": "robot_task", "bot_id": bot_id, "run_id": run_id, "revision": revision,
-                "evidence": evidence, "trace_bundle": bundle, "blockers": blockers,
-                "failure_signature": [{"run_id": run_id, "revision": revision}]}
-    blockers = ["缺少本地执行记录，无法自动修复"]
+    if run.get("run_id") != run_id:
+        raise HarnessError("source_mismatch", "任务观测与请求 ID 不一致")
+    blockers = []
+    warnings: list[dict[str, str]] = []
+    bundle = None
     if run["state"] not in {"completed", "failed", "aborted"}:
         blockers.append("机器人任务尚未结束")
+    reference = store.meta("trace:" + run_id) or {}
+    if reference.get("trace_ref"):
+        archive = TraceArchive(store.root / "traces")
+        try:
+            bundle = archive.export(reference["trace_ref"], source={"kind": "robot_task", "run_id": run_id},
+                                    sha256=reference["sha256"])
+        except TraceExpired:
+            warnings.append({"code": "trace_expired", "message": "本地执行归档正文已过期，使用仍可读取的观测诊断"})
+        except FileNotFoundError:
+            warnings.append({"code": "trace_missing", "message": "本地执行归档文件缺失，使用仍可读取的观测诊断"})
+        if bundle and reference.get("capture_state") == "available":
+            evidence = redact_observability_payload({"run": run, "trace": reference,
+                "configuration": store.configuration(run["config_id"]) if run.get("config_id") else None,
+                "receipts": record["receipts"], "outbox": record["outbox"], "approvals": record["approvals"]}).value
+            revision = hashlib.sha256(json_text(evidence).encode()).hexdigest()
+            return {"kind": "robot_task", "bot_id": bot_id, "run_id": run_id, "revision": revision,
+                    "evidence": evidence, "trace_bundle": bundle, "blockers": blockers, "warnings": warnings,
+                    "failure_signature": [{"run_id": run_id, "revision": revision}]}
+        if bundle:
+            warnings.append({"code": "trace_partial", "message": "本地执行归档部分缺失，诊断时需核对验证所需材料"})
+    else:
+        error = reference.get("error") or {}
+        warnings.append({"code": error.get("code") or "trace_unavailable",
+                         "message": error.get("message") or "本地执行归档不可用，先用已有任务事件、正文和反馈诊断"})
     if run.get("details_expired"):
-        blockers.append("任务详情已过期，无法建立可靠复现")
+        warnings.append({"code": "details_expired", "message": "部分任务详情已过期"})
     observations = list(record["observations"])
     page = record
     # Bound the evidence package, and expose incomplete captures instead of
@@ -53,26 +64,27 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
         page = events(store, run_id, after=page["next_cursor"], limit=500)
         observations.extend(page["observations"])
     if page["has_more"]:
-        blockers.append("任务事件超过单次证据包容量，需缩小复现范围")
+        warnings.append({"code": "events_incomplete", "message": "任务事件超过单次证据包容量，诊断材料不含全部事件"})
     refs = {event["body_ref"] for event in observations if event.get("body_ref")}
     refs.update(run[key] for key in ("input_ref", "result_ref") if run.get(key))
     bodies = {ref: store.body(run_id, ref) for ref in sorted(refs)}
     if not run.get("input_ref") or not bodies.get(run["input_ref"]):
-        blockers.append("缺少实际输入记录")
+        warnings.append({"code": "input_missing", "message": "缺少实际输入记录，需确认能否建立对应原问题的复现"})
     if any(not body or body.get("state") != "available" for body in bodies.values()):
-        blockers.append("任务正文缺失、过期或截断")
+        warnings.append({"code": "bodies_incomplete", "message": "任务正文缺失、过期或截断"})
     configuration = store.configuration(run["config_id"]) if run.get("config_id") else None
     if not configuration:
-        blockers.append("缺少执行时配置快照")
+        warnings.append({"code": "configuration_missing", "message": "缺少执行时配置快照"})
     if not observations:
-        blockers.append("缺少执行事件")
+        warnings.append({"code": "events_missing", "message": "缺少执行事件"})
     if run.get("capture_state") in {"truncated", "capture_failed"} or any(
         event.get("body_state") in {"truncated", "capture_failed"} for event in observations
     ):
-        blockers.append("部分执行详情采集失败或截断")
+        warnings.append({"code": "capture_incomplete", "message": "部分执行详情采集失败或截断"})
     evidence = redact_observability_payload(
         {
             "run": run,
+            "trace": reference,
             "observations": observations,
             "bodies": bodies,
             "configuration": configuration,
@@ -82,8 +94,8 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
         }
     )
     if evidence.truncated:
-        blockers.append("证据包已截断，不能自动判断完整任务行为")
-    revision = hashlib.sha256(json_text(evidence.value).encode()).hexdigest()
+        warnings.append({"code": "evidence_truncated", "message": "观测快照已截断，不能据此声称已覆盖完整任务行为"})
+    revision = hashlib.sha256(json_text({"evidence": evidence.value, "warnings": warnings}).encode()).hexdigest()
     return {
         "kind": "robot_task",
         "bot_id": bot_id,
@@ -91,5 +103,7 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
         "revision": revision,
         "evidence": evidence.value,
         "blockers": blockers,
+        "warnings": warnings,
+        **({"trace_bundle": bundle} if bundle else {}),
         "failure_signature": [{"run_id": run_id, "revision": revision}],
     }

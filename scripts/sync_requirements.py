@@ -74,6 +74,16 @@ def check() -> list[str]:
     for path, expected in rendered_requirements().items():
         if not path.is_file() or path.read_text(encoding="utf-8") != expected:
             drift.append(str(path.relative_to(ROOT)))
+    project = _metadata()["project"]
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    package = next(item for item in lock["package"] if item.get("source") == {"editable": "."})
+    declared = {"core": project.get("dependencies", []), **project.get("optional-dependencies", {})}
+    locked = {"core": package.get("dependencies", []), **package.get("optional-dependencies", {})}
+    for group in sorted(declared.keys() | locked.keys()):
+        expected = {_distribution_name(item) for item in declared.get(group, [])}
+        actual = {_distribution_name(item["name"]) for item in locked.get(group, [])}
+        if expected != actual:
+            drift.append(f"uv.lock ({group} dependency group; run uv lock)")
     return drift
 
 
