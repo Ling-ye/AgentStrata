@@ -140,6 +140,47 @@ def test_current_pass_ends_without_coder(repository, tmp_path):
     assert coder.calls == 0 and len(evaluator.calls) == 1
 
 
+def test_sqlite_journal_churn_does_not_interrupt_or_repeat_coding(repository, tmp_path, monkeypatch):
+    from test_private_sqlite import sqlite_commit_at_stat
+    evaluator = FakeEvaluator()
+    controller, task_id = task_fixture(repository, tmp_path, evaluator, attempts=1)
+    interleavings = []
+
+    class CodingWithPolls(FakeCoder):
+        preparations = 0
+
+        def poll(self, check_cancel):
+            operations = (
+                check_cancel,
+                lambda: controller.store.update(task_id, heartbeat_at=time.time()),
+                lambda: controller.get(task_id),
+                lambda: controller.list(),
+            )
+            for operation in operations:
+                with sqlite_commit_at_stat(monkeypatch, controller.store.database) as observed:
+                    operation()
+                assert observed == ["-journal"]
+                interleavings.extend(observed)
+
+        def prepare(self, worktree, evidence, options, output, check_cancel):
+            self.preparations += 1
+            self.poll(check_cancel)
+            return super().prepare(worktree, evidence, options, output, check_cancel)
+
+        def run(self, worktree, evidence, options, output, check_cancel):
+            self.poll(check_cancel)
+            return super().run(worktree, evidence, options, output, check_cancel)
+
+    coder = CodingWithPolls()
+    result = run_task(controller.store, task_id, evaluator, coder)
+    assert result["status"] == "fixed"
+    assert coder.preparations == 1 and coder.calls == 1
+    assert len(interleavings) == 8
+    assert len(controller.store.attempts(task_id)) == 1
+    with controller.store.database.connect() as connection:
+        assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+
+
 def test_fix_preserves_original_failure_and_allows_other_existing_failures(repository, tmp_path):
     evaluator, coder = FakeEvaluator(), FakeCoder()
     controller, task_id = task_fixture(repository, tmp_path, evaluator)
@@ -251,7 +292,8 @@ def test_missing_or_duplicate_trials_never_pass(rows):
         passed_cases({"trials": rows}, "main", ["a"], 2)
 
 
-def test_result_database_is_explicit_and_idempotent(tmp_path):
+def test_result_database_is_explicit_and_idempotent(tmp_path, monkeypatch):
+    from test_private_sqlite import sqlite_commit_at_stat
     store = EvaluationResultStore(tmp_path / "evals")
     request = {"evaluation_id": "eval-new", "case_ids": ["b"]}
     result = {
@@ -272,8 +314,12 @@ def test_result_database_is_explicit_and_idempotent(tmp_path):
     result = result_payload(result)
     store.register(request)
     for _ in range(2):
-        store.synchronize("eval-new", result=result, state={"status": "completed"})
-    assert store.get("eval-new")["result"] == result
+        with sqlite_commit_at_stat(monkeypatch, store.database) as observed:
+            store.synchronize("eval-new", result=result, state={"status": "completed"})
+        assert observed == ["-journal"]
+    with sqlite_commit_at_stat(monkeypatch, store.database) as observed:
+        assert store.get("eval-new")["result"] == result
+    assert observed == ["-journal"]
     assert store.get("eval-old") is None
     assert store.pending() == []
     altered = copy.deepcopy(result)

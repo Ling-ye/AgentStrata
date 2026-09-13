@@ -65,8 +65,12 @@ class PrivateDatabase:
         before = private_file(self.path)
         for suffix in ("-journal", "-wal", "-shm"):
             auxiliary = Path(str(self.path) + suffix)
-            if auxiliary.exists() or auxiliary.is_symlink():
+            try:
                 private_file(auxiliary)
+            except FileNotFoundError:
+                # SQLite can unlink these files when another connection commits
+                # or closes. Only their absence is optional, not their safety.
+                pass
         connection = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True, timeout=5)
         connection.row_factory = sqlite3.Row
         try:

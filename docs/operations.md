@@ -924,6 +924,11 @@ Harness 的 `harness.sqlite3` 只保存任务和尝试，两者不跨库写表�
 或进程内后台任务降级。详情含 worker unit、工作区、候选摘要和逐轮验收引用；
 先检查任务详情，再检查对应 unit 的 journal。不要在任务活动期间手工改动其工作区。
 
+若旧任务报 `harness.sqlite3-journal` 不存在，应先更新修复了 SQLite 辅助文件检查竞态的
+服务；这个文件由 SQLite 随事务创建和删除，不应手工创建或删除。更新不会替换旧任务的
+冻结 worker。准备阶段已中断且没有生成草案时，用「重新发起修复」带入原来源、反馈和选项，
+确认后启动新任务；保留旧记录、日志和 `reproducer/started`，不要删除标记强行继续。
+
 独立 worker 从私有 `~/.config/agentstrata/harness.env` 读取执行器配置，示例为
 `deploy/wsl/harness.env.example`；引用已配置的原生 Linux Codex 可执行文件和专用
 worker 凭据目录，不自动继承机器人的 `local.env`。Console 安装包含现有 `dev` 依赖组，

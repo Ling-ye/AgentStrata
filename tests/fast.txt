@@ -57,6 +57,7 @@ tests/unit/test_mcp_client_provider.py
 tests/unit/test_search_coordinator.py
 
 # Files, resources and persistent conversation state
+tests/unit/test_private_sqlite.py
 tests/unit/test_file_integrity.py
 tests/unit/test_archive_extraction.py
 tests/unit/test_gateway_resources.py
