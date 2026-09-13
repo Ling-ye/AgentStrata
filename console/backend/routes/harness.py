@@ -29,7 +29,7 @@ class CreateRepair(BaseModel):
     request_id: str
     model: str = Field(min_length=1)
     review_and_commit: StrictBool = False
-    reasoning_effort: str = "medium"
+    reasoning_effort: str = "xhigh"
     max_attempts: int = Field(default=3, ge=1)
     timeout_seconds: int = Field(default=7200, ge=1)
 

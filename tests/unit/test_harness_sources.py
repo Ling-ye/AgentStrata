@@ -230,7 +230,7 @@ def test_gateway_adapter_paginates_and_does_not_read_business_state(monkeypatch)
     )
     monkeypatch.setattr(gateway_adapter, "events", page)
     source = task_source(reader, "sample", "run-example")
-    assert any("旧记录" in item for item in source["blockers"])
+    assert source["blockers"] == ["缺少本地执行记录，无法自动修复"]
     assert len(source["evidence"]["observations"]) == 2
     page.assert_called_once_with(reader, "run-example", after=1, limit=500)
     reader.body.assert_called_once_with("run-example", "input")

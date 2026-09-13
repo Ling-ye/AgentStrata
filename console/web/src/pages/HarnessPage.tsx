@@ -7,6 +7,7 @@ import { harnessApi, REPAIR_LABELS, repairStatusLabel, sourceLabel, stageLabel,
   type SourceKind, type SourcePreview, type StartRepair } from "../features/harness/api";
 import { caseInstanceId, selectedInstance } from "../features/harness/caseInstance";
 import { RepairDetail } from "../features/harness/RepairDetail";
+import { repairModels } from "../features/harness/repairModels";
 
 const { Text } = Typography;
 const taskFromHash = () => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("task") ?? "";
@@ -23,11 +24,11 @@ export default function HarnessPage() {
   const [error, setError] = useState("");
   const [repairHint, setRepairHint] = useState("");
   const [expectedBehavior, setExpectedBehavior] = useState("");
-  const [model, setModel] = useState("");
+  const [selectedModel, setModel] = useState("");
   const [reviewAndCommit, setReviewAndCommit] = useState(true);
-  const [effort, setEffort] = useState("medium");
+  const [effort, setEffort] = useState("xhigh");
   const [attempts, setAttempts] = useState(3);
-  const [seconds, setSeconds] = useState(7200);
+  const [hours, setHours] = useState(2);
   const [taskId, setTaskId] = useState(taskFromHash);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -35,6 +36,11 @@ export default function HarnessPage() {
   const generation = useRef(0);
   const submitted = useRef({ body: "", requestId: "" });
   const bots = useQuery({ queryKey: ["bots"], queryFn: api.listBots });
+  const inspection = useQuery({ queryKey: ["inspection", preview?.bot_id],
+    queryFn: ({ signal }) => api.inspection(preview!.bot_id, undefined, undefined, signal),
+    enabled: !!preview?.bot_id, retry: false, staleTime: 0 });
+  const models = repairModels(inspection.data?.current);
+  const model = selectedModel || models.defaultModel;
   const history = useQuery({ queryKey: ["harness-history", page, search, status],
     queryFn: ({ signal }) => harnessApi.history(page, search, status, signal), retry: false, refetchInterval: 5000 });
   useEffect(() => {
@@ -49,11 +55,12 @@ export default function HarnessPage() {
   function resetPreview() {
     generation.current++; setPreview(undefined); setLoadedId(""); setError(""); setLoading(false);
     setRepairHint(""); setExpectedBehavior("");
+    setModel("");
   }
   async function load() {
     if (starting || !sourceId.trim() || (kind === "robot_task" && !botId)) return;
     const current = ++generation.current;
-    setLoading(true); setError(""); setPreview(undefined); setLoadedId("");
+    setLoading(true); setError(""); setPreview(undefined); setLoadedId(""); setModel("");
     try {
       const id = kind === "evaluation" ? caseInstanceId(sourceId) : sourceId.trim();
       const value = await harnessApi.load(kind, id, kind === "robot_task" ? botId : "");
@@ -65,7 +72,7 @@ export default function HarnessPage() {
     finally { if (current === generation.current) setLoading(false); }
   }
   async function start() {
-    if (!preview || starting || loading) return;
+    if (!preview || starting || loading || inspection.isFetching || inspection.isError || models.error || !models.options.some(option => option.value === model)) return;
     const trial = selectedInstance(preview, loadedId);
     if (kind === "evaluation" && (!trial || !["failed", "error"].includes(trial.outcome) || preview.blockers.length)) return;
     const body = { source_kind: kind, ...(kind === "evaluation" ? {
@@ -75,7 +82,7 @@ export default function HarnessPage() {
         ...(repairHint.trim() ? { repair_hint: repairHint } : {}),
         ...(kind === "robot_task" && expectedBehavior.trim() ? { expected_behavior: expectedBehavior } : {}),
       } } : {}), model: model.trim(), reasoning_effort: effort,
-      max_attempts: attempts, timeout_seconds: seconds, review_and_commit: reviewAndCommit };
+      max_attempts: attempts, timeout_seconds: Math.round(hours * 3600), review_and_commit: reviewAndCommit };
     const identity = JSON.stringify(body);
     if (submitted.current.body !== identity) submitted.current = { body: identity, requestId: crypto.randomUUID() };
     setStarting(true); setError("");
@@ -131,15 +138,20 @@ export default function HarnessPage() {
             </Space>
             {(!blocked || kind === "robot_task") && <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: 16 }}>
-                <div>修复模型<Input aria-label="修复模型" value={model} disabled={starting} onChange={setModel} placeholder="输入已配置的 Codex 模型" /></div>
-                <div>推理强度<Select aria-label="修复推理强度" value={effort} disabled={starting} onChange={setEffort} options={["low", "medium", "high", "xhigh"].map(value => ({ value, label: value }))} /></div>
+                <div>修复模型<Select aria-label="修复模型" value={model || undefined} disabled={starting || inspection.isFetching || inspection.isError || !!models.error}
+                  loading={inspection.isFetching} onChange={setModel} options={models.options} showSearch placeholder="选择机器人已配置的模型" /></div>
+                <div>推理强度<Select aria-label="修复推理强度" value={effort} disabled={starting} onChange={setEffort} options={[
+                  { value: "low", label: "低" }, { value: "medium", label: "中" }, { value: "high", label: "高" }, { value: "xhigh", label: "极高" },
+                ]} /></div>
                 <div>最多候选次数<InputNumber aria-label="最多候选次数" min={1} precision={0} value={attempts} disabled={starting} onChange={setAttempts} style={{ width: "100%" }} /></div>
-                <div>总时间预算（秒）<InputNumber aria-label="修复时间预算" min={1} precision={0} value={seconds} disabled={starting} onChange={setSeconds} style={{ width: "100%" }} /></div>
+                <div>总时间预算（小时）<InputNumber aria-label="修复时间预算" min={0.01} step={0.5} precision={2} value={hours} disabled={starting} onChange={setHours} style={{ width: "100%" }} /></div>
               </div>
+              {!inspection.isFetching && (inspection.isError || models.error) && <Alert type="error" content={inspection.isError ? "机器人模型配置读取失败" : models.error}
+                action={<Button size="small" onClick={() => void inspection.refetch()}>重试</Button>} />}
               <Text type="secondary">真实 Agent 每个验证 Case 最多 {(2 * attempts + 1) * Math.max(3, preview.repetitions ?? 3)} 次执行（基线、候选与独立确认）；完整数量在验证计划冻结后展示，评分和回归共用总预算。</Text>
               <Checkbox checked={reviewAndCommit} disabled={starting} onChange={setReviewAndCommit}>AI 审核通过后，收录回归测试并创建本地提交（不推送）</Checkbox>
               <Text type="secondary">从本地 HEAD 创建专属 worktree 和分支。目标和保护集通过后执行所选后续动作；审核与提交共用本次预算，合入主分支由你决定。</Text>
-              <Button type="primary" loading={starting} disabled={loading || !model.trim() || (kind === "evaluation" && (!trial || !["failed", "error"].includes(trial.outcome) || blocked))} onClick={() => void start()}>
+              <Button type="primary" loading={starting} disabled={loading || inspection.isFetching || inspection.isError || !!models.error || !models.options.some(option => option.value === model) || (kind === "evaluation" && (!trial || !["failed", "error"].includes(trial.outcome) || blocked))} onClick={() => void start()}>
                 {blocked ? "保存自检受阻记录" : "开始自检与修复"}</Button>
             </>}
           </>}

@@ -40,8 +40,7 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
         return {"kind": "robot_task", "bot_id": bot_id, "run_id": run_id, "revision": revision,
                 "evidence": evidence, "trace_bundle": bundle, "blockers": blockers,
                 "failure_signature": [{"run_id": run_id, "revision": revision}]}
-    blockers = []
-    blockers.append("旧记录没有本地 DeepEval 归档，仅可导出查看，请采集新的运行")
+    blockers = ["缺少本地执行记录，无法自动修复"]
     if run["state"] not in {"completed", "failed", "aborted"}:
         blockers.append("机器人任务尚未结束")
     if run.get("details_expired"):

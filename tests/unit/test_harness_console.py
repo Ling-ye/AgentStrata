@@ -41,6 +41,9 @@ def test_local_start_uses_public_controller(app):
     assert response.status_code == 200
     assert app.state.harness.start_case_instance.call_args.args[0] == body()["case_instance_id"]
     assert app.state.harness.start_case_instance.call_args.kwargs["request_id"] == "stable-request"
+    options = app.state.harness.start_case_instance.call_args.args[1]
+    assert options.reasoning_effort == "xhigh"
+    assert options.timeout_seconds == 7200
 
 
 def test_remote_and_cross_origin_writes_do_not_start_worker(app):
