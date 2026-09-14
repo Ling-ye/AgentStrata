@@ -38,10 +38,20 @@ export interface RepairTask {
   regression?: { kind: string; id: string; path?: string; case_ref?: string };
   message?: string; branch?: string; worktree?: string; verified_digest?: string; verified_at?: number;
   candidate_available?: boolean; elapsed_seconds?: number; error_code?: string; current_evaluation_id?: string;
+  heartbeat_at?: number; current_attempt?: number;
   options: { model: string; max_attempts: number; reasoning_effort: string; timeout_seconds: number };
   evaluations?: Record<string, Verification>;
   attempts?: Array<{ number: number; status: string; changed_files?: string[]; error?: string; checks?: string[];
     review?: Review; repository_regressions?: { passed_cases: string[]; failed_cases: string[] }; patch_sha256?: string; coding?: { events: Array<Record<string, unknown>> }; regressions?: string[]; verification?: Verification }>;
+}
+export interface RepairProgress {
+  state: "ready" | "empty" | "partial";
+  source: { id: string; kind: "prepare" | "coding" | "review"; number: number | null; current: boolean } | null;
+  updated_at: number | null;
+  events: Array<{ id: string; type: "agent_message" | "command_execution"; text?: string;
+    command?: string; aggregated_output?: string; exit_code?: number | null; truncated: boolean }>;
+  truncated: boolean;
+  message: string | null;
 }
 export const ACTIVE = ["queued", "running", "cancel_requested"];
 export const REPAIR_LABELS: Record<string, string> = {
@@ -75,6 +85,7 @@ export const harnessApi = {
   load: (kind: SourceKind, sourceId: string, botId: string) => request<SourcePreview>("/sources/load", post({ kind, source_id: sourceId, bot_id: botId })),
   history: (page: number, search: string, status: string, signal?: AbortSignal) => request<{ tasks: RepairTask[]; total: number }>(`/tasks?${new URLSearchParams({ page: String(page), search, status })}`, { signal }),
   get: (taskId: string, signal?: AbortSignal) => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}`, { signal }),
+  progress: (taskId: string, signal?: AbortSignal) => request<RepairProgress>(`/tasks/${encodeURIComponent(taskId)}/progress`, { signal, cache: "no-store" }),
   evidence: (taskId: string) => request<Record<string, unknown>>(`/tasks/${encodeURIComponent(taskId)}/evidence`),
   start: (body: StartRepair) => request<RepairTask>("/tasks", post(body)),
   image: (taskId: string, file: File) => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/image`, { method: "POST", body: file }),

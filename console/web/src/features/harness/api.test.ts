@@ -17,6 +17,13 @@ describe("independent Harness source selection", () => {
     await harnessApi.history(3, "eval a", "blocked");
     expect(fetch.mock.calls[0][0]).toBe("/api/harness/tasks?page=3&search=eval+a&status=blocked");
   });
+  it("reads public progress without caching and supports cancelling old task requests", async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ state: "empty", events: [] }) });
+    vi.stubGlobal("fetch", fetch);
+    const signal = new AbortController().signal;
+    await harnessApi.progress("repair example", signal);
+    expect(fetch.mock.calls[0]).toEqual(["/api/harness/tasks/repair%20example/progress", { signal, cache: "no-store" }]);
+  });
   it("reports explicit backend blockers", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, json: async () => ({ detail: { message: "证据已过期" } }) }));
     await expect(harnessApi.load("robot_task", "run-source", "sample")).rejects.toThrow("证据已过期");

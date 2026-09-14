@@ -1,0 +1,31 @@
+.repair-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+}
+
+.repair-progress-events {
+  margin: 0;
+  padding: 0 0 0 24px;
+  max-height: 400px;
+  overflow: auto;
+  border-block: 1px solid var(--color-border-2);
+}
+
+.repair-progress-events li {
+  padding: 12px 8px 12px 0;
+  border-bottom: 1px solid var(--color-border-2);
+}
+
+.repair-progress pre {
+  margin: 8px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+
+.repair-progress summary {
+  cursor: pointer;
+}

@@ -175,6 +175,16 @@ def traces(request: Request, task_id: str, response: Response):
     return _call(lambda: _controller(request).trace_records(task_id))
 
 
+@router.get("/tasks/{task_id}/progress")
+def progress(request: Request, task_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return _call(lambda: _controller(request).progress(task_id))
+    except HTTPException as exc:
+        exc.headers = {**(exc.headers or {}), "Cache-Control": "no-store"}
+        raise
+
+
 @router.get("/tasks/{task_id}/traces/{ref}")
 def trace_record(request: Request, task_id: str, ref: str, response: Response, after: int = Query(0, ge=0)):
     response.headers["Cache-Control"] = "no-store"

@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Empty, Space, Spin, Table, Tag, Typography } from "@arco-design/web-react";
-import { ACTIVE, ATTEMPT_LABELS, harnessApi, repairStatusLabel, sourceLabel, stageLabel } from "./api";
+import { ACTIVE, ATTEMPT_LABELS, harnessApi, sourceLabel, stageLabel } from "./api";
 import type { RepairTask } from "./api";
 import { HarnessTraces } from "../traces/TracePanel";
+import { RepairProgress } from "./RepairProgress";
 const { Text } = Typography;
 const jsonStyle = { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 420, overflow: "auto" } as const;
 
@@ -42,8 +43,7 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
     {(error || query.isError) && <Alert type="error" content={error || String(query.error)} />}
     <Text copyable>{task.task_id}</Text><Text>{sourceLabel(task)}</Text>
     {task.source.case_instance_id && <Text copyable>Case 实例 ID：{task.source.case_instance_id}</Text>}
-    <Space wrap><Tag color={task.status === "fixed" ? "green" : "blue"}>{repairStatusLabel(task)}</Tag>
-      <Text>阶段：{stageLabel(task.stage)}</Text><Text type="secondary">已用 {Math.round(task.elapsed_seconds ?? 0)} 秒 / {task.options.timeout_seconds} 秒</Text></Space>
+    <RepairProgress key={taskId} task={task} refreshTask={() => query.refetch()} />
     {task.continued_from && <Text copyable>接续自：{task.continued_from}（已累计原任务用时）</Text>}
     {task.next_action === "upload_image" && <section aria-label="补充原图">
       <Alert type="warning" content="请提供原任务中的图片。上传后自动继续，无需判断技术方案；原图仅保存在私有材料中。" />

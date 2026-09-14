@@ -448,6 +448,12 @@ class HarnessController:
                        for item in task.get("trace_records", {}).values()),
                       key=lambda item: item.get("finished_at") or item.get("started_at", 0))
 
+    def progress(self, task_id: str) -> dict[str, Any]:
+        from chatcopilot.harness.progress import read_progress
+
+        task = self.store.get(task_id)
+        return read_progress(self.store.root, task, self.store.attempts(task_id))
+
     def trace_record(self, task_id: str, ref: str, *, span_id: str = "", after: int = 0):
         from chatcopilot.core.trace_archive import TraceArchive
         task = self.store.get(task_id)
