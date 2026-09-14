@@ -21,7 +21,7 @@ from chatcopilot.core.config import load_config
 from chatcopilot.core.persistent_state import FilesystemPersistentConversationState
 from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService, Workspace
 from chatcopilot.evals.business_cases import PersonaPort
-from chatcopilot.evals.capability_executor import _stage_resources
+from chatcopilot.evals.capability_executor import _stage_resources, _input_resource_dispatch_evidence
 from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime, permission_filter
 from chatcopilot.evals.execution_support import event_to_dict
 from chatcopilot.evals.isolated_executor import _trial_environment
@@ -312,6 +312,8 @@ def run(definition, *, suite_id: str, bot: str, workspace_root: Path) -> TrialOb
                 data = event_to_dict(value)
                 data["turn_index"] = turn_index
                 data["actor"] = turn_actor
+                if scene.file_evidence:
+                    scene.file_evidence.observe(data)
                 events.append(data)
                 sample_execution()
 
@@ -363,6 +365,14 @@ def run(definition, *, suite_id: str, bot: str, workspace_root: Path) -> TrialOb
                     }
                 )
         snapshot = scene.snapshot()
+        for item in resource_evidence:
+            resource = resources[item["resource_id"]]
+            item["availability"] = "bound_to_declared_turns"
+            if scene.file_evidence:
+                source = scene.file_evidence.inputs.get(Path(resource.path).relative_to(root).as_posix())
+                if source:
+                    item["reference_text"] = source["text"]
+                    item["content_role"] = "resource_reference_for_judge; binding alone does not prove reading"
         if family == "persona":
             snapshot["persona_baselines"] = persona_baselines
             snapshot["trusted_role"] = role
@@ -392,7 +402,15 @@ def run(definition, *, suite_id: str, bot: str, workspace_root: Path) -> TrialOb
             post_state=snapshot,
             evidence=(
                 *resource_evidence,
+                *_input_resource_dispatch_evidence(events),
                 *turns,
+                {"kind": "task_tools", "tools": [
+                    {"name": t.name, "description": t.summary}
+                    for t in provider.packs["eval.task"] if t.name in names
+                ]},
+                *(({"kind": "task_file_evidence", **{key: snapshot[key] for key in (
+                    "native_reads", "artifacts", "artifact_read_errors",
+                )}},) if scene.file_evidence else ()),
                 {"kind": "task_snapshot", "case_id": definition.case_id, "scenario_id": family, "mode": mode, "state": snapshot},
             ),
         )

@@ -208,7 +208,7 @@ def test_group_memory_requires_persistence_and_new_bound_sessions(change, tmp_pa
 
 def test_deleted_skill_question_is_absent_and_its_mode_is_rejected():
     manifest = get_manifest("agentstrata-agent-tasks-v1")
-    assert (manifest.version, manifest.data_version, manifest.scorer_version) == ("4", "4", "agent-tasks/v2")
+    assert (manifest.version, manifest.data_version, manifest.scorer_version) == ("5", "5", "agent-tasks/v3")
     assert "skill-missing-input" not in {c.case_id for c in get_cases(manifest.suite_id)}
     assert all("skill-missing-input" not in p.case_ids for p in manifest.presets)
     with pytest.raises(ValueError, match="unsupported"):

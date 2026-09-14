@@ -1,6 +1,6 @@
 schema: 1
 suite_id: agentstrata-agent-tasks-v1
-version: '4'
+version: '5'
 name: Agent 任务能力
 subject_type: agent
 capability_tags:
@@ -33,19 +33,19 @@ driver_id: agent_configured
 requires_bot: true
 source_type: project
 purpose: engineering_regression
-data_version: '4'
+data_version: '5'
 split: 64 道版本化任务，其中 Agent 红队专项 12 道
 coverage: 任务、工具、上下文、文件、权限、委托与隔离代码；非真实 QQ 或生产部署
 target_scope: Agent runtime · 隔离场景
 execution_scope: agent_runtime/isolated_task_scenarios
 native_method: 确定性执行事实 + 必要语义判定
 scorer_origin: project_adapter
-scorer_version: agent-tasks/v2
+scorer_version: agent-tasks/v3
 files:
 - path: cases.yaml
   role: cases
   media_type: application/yaml
-  sha256: 5c8b77532d782c909ecfc21275518f50a2816ae515b415cae1cd21fde86c0041
+  sha256: f517cf382d4400d4bb551021d278095f92ace168bedcd597811774ad3d543be9
 - path: fixtures/order-card.png
   role: fixture
   resource_id: order-card

@@ -72,13 +72,14 @@ def test_runtime_binds_role_scope_and_actor_sessions_without_model(monkeypatch, 
     assert opened[-1]["permission_filter"](tool) is not None
 
 
-def test_native_session_executes_real_registry_and_fact_scoring(monkeypatch, tmp_path):
+def test_native_session_executes_real_registry_and_fact_scoring(monkeypatch, tmp_path, deepeval_judge):
     from copy import deepcopy
     import json
     from chatcopilot.core.llm_client import ChatResult, LLMClient
     from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
     from chatcopilot.evals.registry import get_cases
     from tests.evaluation_fixtures import execute_agent_task as execute
+    deepeval_judge.value = 1
 
     runtime = replace(
         load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False),
@@ -120,6 +121,46 @@ def test_native_session_executes_real_registry_and_fact_scoring(monkeypatch, tmp
     result = execute(case, bot="controlled", workspace_root=tmp_path, options={})
     assert result.status == "passed", result.error
     assert len(calls) == 2 and result.metadata["tool_calls"][0]["result"]["stock"] == 17
+
+
+def test_runtime_collects_native_source_and_host_file_readback(monkeypatch, tmp_path):
+    import json
+    from chatcopilot.evals.agent_tasks.verifier import verify
+    from tests.unit.test_agent_task_fairness import command_events
+
+    d = next(d for d in load_case_definitions(get_manifest("agentstrata-agent-tasks-v1"))
+             if d.case_id == "artifact-document-report")
+    config = SimpleNamespace(
+        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST")), subagents=SubagentSpec(),
+        skills=(), prompt_profile=BotPromptProfile(identity="fixture", response_style="concise"),
+        agent_backend="codex", capability_policies=(), mcp_servers=(),
+    )
+
+    class Agent:
+        def new_session(self, **kwargs):
+            root = kwargs["workspace_service"].resolve_workspace_root()
+
+            class Session:
+                def run_task(self, task, *, on_event):
+                    for event in command_events(root, "cat sales.txt"):
+                        on_event(event)
+                    (root / "sales.json").write_text(json.dumps(d.assertions[0].arguments["report_json"]))
+                    return SimpleNamespace(final_text="已生成 sales.json，净销售额 40 元。", stop_reason="end_turn")
+
+            return Session()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(target, "load_evaluation_runtime", lambda _: config)
+    monkeypatch.setattr(target, "load_config", lambda **_: SimpleNamespace())
+    monkeypatch.setattr(target, "assemble_agent_runtime", lambda *a, **kw: Agent())
+    obs = target.run(d, suite_id="agentstrata-agent-tasks-v1", bot="fixture", workspace_root=tmp_path)
+    assert verify(d, d.assertions[0], obs).passed
+    files = next(e for e in obs.evidence if e["kind"] == "task_file_evidence")
+    assert files["native_reads"][0]["source"] == "sales.txt"
+    assert files["native_reads"][0]["actor"] == "a"
+    assert files["artifacts"][0]["source"] == "sales.json" and files["artifacts"][0]["readback"]
 
 
 @pytest.mark.parametrize("case_id", [

@@ -44,6 +44,7 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("agent-tasks", "agent_configured"): (
         "chatcopilot.evals.agent_tasks.scenes", "chatcopilot.evals.agent_tasks.runtime",
         "chatcopilot.evals.agent_tasks.verifier", "chatcopilot.evals.agent_tasks.code_fixture",
+        "chatcopilot.evals.agent_tasks.evidence",
         "chatcopilot.evals.capability_executor", "chatcopilot.evals.capability_verifiers",
         "chatcopilot.evals.deepeval_engine", "chatcopilot.evals.trial_capture",
     ),

@@ -14,6 +14,7 @@ from chatcopilot.contracts.tools import ToolDef, ToolResult
 from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.workspace import IDENTITY_FILENAME
 from chatcopilot.core.file_integrity import trusted_source_sha256
+from .evidence import TaskFileEvidence, file_record
 
 MODES = {
     "catalog": {
@@ -65,6 +66,15 @@ SKILLS = {"career": "ai-career-intelligence", "jd": "ai-jd-analysis"}
 
 def validate(definition) -> None:
     params = definition.scenario_params
+    for assertion in definition.assertions:
+        if "allow_clarification" in assertion.arguments:
+            if (type(assertion.arguments["allow_clarification"]) is not bool
+                    or not definition.quality.get("enabled")
+                    or (definition.scenario_id, params.get("mode")) not in {
+                        ("catalog", "lookup"), ("catalog", "archive"), ("catalog", "clarify"),
+                        ("retrieval", "unknown"),
+                    }):
+                raise ValueError("clarification requires a supported scenario and semantic scoring")
     if (
         definition.scenario_id not in MODES
         or params.get("mode") not in MODES[definition.scenario_id]
@@ -135,6 +145,7 @@ class Scene:
     actor: str = "a"
     code: Any = None
     file_baseline: dict[str, str] | None = None
+    file_evidence: TaskFileEvidence | None = None
 
     def __post_init__(self):
         validate(self.definition)
@@ -499,14 +510,18 @@ class Scene:
                 return ok(committed=True, file="report.txt", sha256=digest)
 
             def deliver(a):
-                path = self.root / "report.txt"
-                if a["file"] != "report.txt" or not path.is_file():
+                path = self.root / a["file"]
+                try:
+                    record = file_record(self.root, path)
+                    if not self.file_evidence or record["source"] in self.file_evidence.baseline:
+                        return fail("NOT_FOUND")
+                except (OSError, ValueError):
                     return fail("NOT_FOUND")
                 ack = self.mode != "delivery-unknown"
                 receipt = {
-                    "file": "report.txt",
+                    "file": record["source"],
                     "acknowledged": ack,
-                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "sha256": record["sha256"],
                 }
                 self.data["delivery"].append(receipt)
                 return ok(**receipt)
@@ -570,6 +585,9 @@ class Scene:
             tools.extend(self.code.tools(self.tool))
         if self.mode == "injection" and self.file_baseline is None:
             self.file_baseline = self.ordinary_files()
+        if (self.family in {"files", "retrieval"}
+                or any(a.arguments.get("allow_clarification") for a in self.definition.assertions)) and self.file_evidence is None:
+            self.file_evidence = TaskFileEvidence(self.root)
         return tuple(tools)
 
     def ordinary_files(self):
@@ -591,11 +609,11 @@ class Scene:
 
     def snapshot(self):
         data = deepcopy(self.data)
-        path = self.root / "report.txt"
-        data["report"] = path.read_text() if path.is_file() else None
-        data["report_sha256"] = (
-            hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
-        )
+        files = self.file_evidence.snapshot() if self.file_evidence else {}
+        data.update(files)
+        report = next((a for a in files.get("artifacts", []) if a["source"] == "report.txt"), None)
+        data["report"] = report["text"] if report else None
+        data["report_sha256"] = report["sha256"] if report else None
         if self.code:
             data["code"] = self.code.snapshot()
         if self.mode == "injection":

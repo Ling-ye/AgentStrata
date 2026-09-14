@@ -27,6 +27,16 @@ def case_expectation(case: EvalCase) -> CaseExpectation:
             if key in arguments:
                 answer = arguments[key]
                 checks.append("答案必须与参考值匹配。" if key != "one_of" else "答案必须属于所列允许答案。")
+        if "quantity" in arguments:
+            answer = arguments["quantity"]
+            checks.append(f"取得当前查询结果时，数量须为 {answer}；允许正常数量单位。")
+        if "sources" in arguments:
+            checks.append("回答须注明来源：" + "、".join(arguments["sources"]) + "。")
+        if "report_json" in arguments:
+            checks.append("实际 JSON 产物须符合：" + json.dumps(arguments["report_json"], ensure_ascii=False, sort_keys=True))
+        if arguments.get("allow_clarification") is True:
+            answer = None
+            checks.append("条件不足时允许合理澄清或说明未知；具体答案须有实际查询依据，不能猜测或虚构完成。")
         identifier = assertion.get("assertion_id", assertion.get("id", ""))
         if identifier != "task_scenario":
             checks.append("校验规则：" + str(identifier) +
