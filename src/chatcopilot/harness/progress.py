@@ -22,6 +22,16 @@ BODY_BYTES = 8 * 1024
 
 def _logs(task: dict[str, Any], attempts: list[dict[str, Any]]):
     stage = task["stage"]
+    if task.get("source", {}).get("governance_version") == 2:
+        for record in task.get("progress_sources", []):
+            path = Path(record["path"])
+            if path.is_absolute() or ".." in path.parts or "\\" in record["path"]:
+                raise ValueError("Invalid progress source")
+            yield path.parts, {key: value for key, value in {
+                **record, "current": record["id"] == task.get("current_source")
+                and record["kind"] == ("prepare" if stage == "prepare_reproducer" else stage)
+            }.items() if key != "path"}
+        return
     if task.get("source", {}).get("kind") == "code_health":
         yield ("audit", "public-events.jsonl"), {
             "id": "audit", "kind": "audit", "number": None, "current": stage == "audit",

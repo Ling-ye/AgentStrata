@@ -257,3 +257,37 @@ def test_release_runbook_preserves_signed_tag_and_draft_boundaries() -> None:
     assert "scripts/check_secrets.sh history" in runbook
     assert "draft GitHub Release" in runbook
     assert "不发布 PyPI" in runbook
+
+
+def test_pytest_inventory_tracks_identities_and_skips(tmp_path: Path) -> None:
+    gate = _load_script("check_repo.py")
+    report = tmp_path / "tests.xml"
+    report.write_text('<testsuites><testsuite><testcase classname="m" name="a"/><testcase classname="m" name="b"><skipped/></testcase></testsuite></testsuites>')
+    first = gate._test_inventory(report)
+    assert first['count'] == 2 and first['skipped_ids'] == ['m::b']
+    report.write_text('<testsuites><testsuite><testcase classname="m" name="b"/><testcase classname="m" name="a"/></testsuite></testsuites>')
+    second = gate._test_inventory(report)
+    assert second['sha256'] == first['sha256'] and second['skipped_ids'] == []
+
+
+def test_repository_report_collects_real_pytest_inventory(tmp_path: Path, monkeypatch) -> None:
+    import json
+    import sys
+    gate = _load_script('check_repo.py')
+    test = tmp_path / 'test_inventory.py'
+    test.write_text("""import pytest
+
+def test_executes():
+    assert 2 + 2 == 4
+
+@pytest.mark.skip(reason="fixture")
+def test_skipped():
+    assert False
+""")
+    monkeypatch.setattr(gate, '_profiles', lambda: {'fast': (gate.Check('core tests', (sys.executable, '-m', 'pytest', str(test), '-q'), cwd=tmp_path),)})
+    output = tmp_path / 'report'
+    monkeypatch.setattr(sys, 'argv', ['check_repo.py', 'fast', '--report-dir', str(output)])
+    assert gate.main() == 0
+    record = json.loads((output / 'manifest.json').read_text())['checks'][0]
+    assert record['test_inventory']['count'] == 2
+    assert len(record['test_inventory']['skipped_ids']) == 1

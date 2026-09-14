@@ -34,11 +34,24 @@ IGNORED_TOP_LEVEL = frozenset(
 )
 
 
+def is_private_environment_path(rel: str) -> bool:
+    path = PurePosixPath(rel)
+    name = path.name
+    if ".env" in path.parts[:-1]:
+        return True
+    if name == ".env.example" or name == "env.example" or name.endswith(".env.example"):
+        return False
+    return (name == ".env" or name.startswith(".env.") or name.endswith(".env")
+            or ".env" in path.parts[:-1])
+
+
 def is_deployable_source_path(rel: str) -> bool:
     path = PurePosixPath(str(rel).replace("\\", "/"))
     if not path.parts or path.is_absolute():
         return False
     if any(part in {"", ".", ".."} for part in path.parts):
+        return False
+    if is_private_environment_path(rel):
         return False
     if path.parts[0] in IGNORED_TOP_LEVEL:
         return False

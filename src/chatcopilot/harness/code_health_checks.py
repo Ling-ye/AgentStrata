@@ -28,6 +28,35 @@ class CodeHealthChecks:
         self.directory = directory
         self.repository = repository
         self.logs: list[dict[str, Any]] = []
+        self.ledger: Any = None
+        self.frozen: Path | None = None
+
+    def bind(self, ledger: Any, frozen: Path) -> None:
+        self.ledger, self.frozen = ledger, frozen
+
+    def view(self, root: Path, destination: Path, *, baseline: tuple[Path, dict[str, Any]] | None = None,
+             checkers: bool = True) -> tuple[Path, ...]:
+        from chatcopilot.harness.health_policy import policy_path, checker_path
+        manifest = baseline[1] if baseline else self.ledger.manifest(root) if self.ledger else source_manifest(root)
+        copy_sources(baseline[0] if baseline else root, destination, manifest)
+        if self.frozen is not None:
+            for name in self.ledger.original:
+                if policy_path(name) or (checkers and checker_path(name)):
+                    target = destination / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes((self.frozen / name).read_bytes())
+                    target.chmod(0o700 if self.ledger.original[name]["executable"] else 0o600)
+        if self.ledger is not None:
+            for name, record in self.ledger.generated_tests.items():
+                target = destination / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                content = self.ledger.test_contents[record["sha256"]]
+                target.write_bytes(content)
+                target.chmod(0o600)
+        git_dirs = tuple(dict.fromkeys(Path(git_output(root, "rev-parse", "--path-format=absolute", flag))
+                                       for flag in ("--git-common-dir", "--git-dir")))
+        (destination / ".git").write_text("gitdir: " + str(git_dirs[-1]) + "\n")
+        return git_dirs
 
     def command(self, root: Path, argv: list[str], output: Path, check_cancel: Callable[[], None],
                 *, reads: tuple[Path, ...] = (), writes: tuple[Path, ...] = (),
@@ -39,7 +68,7 @@ class CodeHealthChecks:
         account = pwd.getpwuid(os.getuid())
         extra = ["--unshare-net", "--dir", account.pw_dir, "--setenv", "HOME", account.pw_dir,
                  "--setenv", "USER", account.pw_name, "--setenv", "LOGNAME", account.pw_name,
-                 "--setenv", "PYTHONPATH", str(root / "src") + os.pathsep + str(root),
+                 "--setenv", "PYTHONPATH", "",
                  "--setenv", "PYTHONDONTWRITEBYTECODE", "1", "--setenv", "DEEPEVAL_TELEMETRY_OPT_OUT", "YES",
                  "--setenv", "DO_NOT_TRACK", "1"]
         for name in ("/etc/alternatives", "/etc/os-release", "/etc/lsb-release"):
@@ -73,16 +102,25 @@ class CodeHealthChecks:
 
     def scan(self, root: Path, scope: str, check_cancel: Callable[[], None]) -> dict[str, Any]:
         output = private_directory(self.directory / "checks" / uuid.uuid4().hex)
+        candidate_root = root
+        if self.ledger is not None:
+            view = output / "source"
+            self.view(root, view)
+            candidate_root = output / "candidate"
+            self.view(root, candidate_root, checkers=False)
+            root = view
         commands = {
-            "architecture": [sys.executable, "scripts/check_architecture.py", "--json"],
-            "ruff": [sys.executable, "-m", "ruff", "check", "src", "tests", "scripts", "console",
-                     "--no-cache", "--output-format", "json"],
+            "architecture": [sys.executable, "scripts/check_architecture.py", "--json", "--root", str(candidate_root)],
+            "ruff": [sys.executable, "-m", "ruff", "check",
+                     *(str(candidate_root / n) for n in ("src", "tests", "scripts", "console")),
+                     "--config", str(candidate_root / "pyproject.toml"), "--no-cache", "--output-format", "json"],
             "sdd": [sys.executable, "scripts/check_sdd_specs.py"],
         }
         reports, rows = [], []
         for name, argv in commands.items():
             check_cancel()
-            code, text = self.command(root, argv, output / name, check_cancel)
+            reads = tuple(dict.fromkeys((candidate_root, *((self.frozen,) if self.frozen else ()))))
+            code, text = self.command(candidate_root if name == "ruff" else root, argv, output / name, check_cancel, reads=reads)
             if code not in {0, 1}:
                 raise HarnessError("check_failed", f"{name} 检查未正常执行；查看检查日志")
             reports.append({"name": name, "exit_code": code,
@@ -97,7 +135,7 @@ class CodeHealthChecks:
                                                 "根据四层职责和现有公开入口调整依赖", detector=name))
                 elif name == "ruff":
                     for item in json.loads(text):
-                        path = Path(item["filename"]).relative_to(root).as_posix()
+                        path = Path(item["filename"]).relative_to(candidate_root).as_posix()
                         rows.append(finding("hygiene", path, item["location"]["row"],
                                             f"{item['code']}: {item['message']}", item["message"],
                                             "修正问题，保留当前检查规则", detector=name))
@@ -107,9 +145,9 @@ class CodeHealthChecks:
                                         disposition="needs_decision"))
             except (ValueError, KeyError, TypeError) as exc:
                 raise HarnessError("check_invalid", f"{name} 检查没有返回有效结果") from exc
-        from chatcopilot.harness.code_health_workspace import permitted
+        from chatcopilot.harness.health_policy import policy_path
         for row in rows:
-            if not row["path"] or not in_scope(row["path"], scope) or not permitted(row["path"], root, scope):
+            if not row["path"] or not in_scope(row["path"], scope) or policy_path(row["path"]):
                 row["disposition"] = "needs_decision"
         return {"checks": reports, "findings": rows}
 
@@ -118,39 +156,62 @@ class CodeHealthChecks:
         """Use the repository gate unchanged, with writable build/cache locations only."""
         output = private_directory(self.directory / "checks" / uuid.uuid4().hex)
         snapshot = output / "source"
-        copy_sources(baseline[0] if baseline else root, snapshot, baseline[1] if baseline else source_manifest(root))
-        git_dirs = tuple(dict.fromkeys(Path(git_output(root, "rev-parse", "--path-format=absolute", flag))
-                                       for flag in ("--git-common-dir", "--git-dir")))
-        (snapshot / ".git").write_text("gitdir: " + str(git_dirs[-1]) + "\n")
+        git_dirs = self.view(root, snapshot, baseline=baseline)
+        test_view = output / "candidate"
+        if self.ledger is not None:
+            self.view(root, test_view, baseline=baseline, checkers=False)
         index_directory = private_directory(output / "git-index")
-        index_environment = verification_index(snapshot, index_directory)
-        caches = tuple(private_directory(snapshot / name) for name in (
+        checked = test_view if self.ledger is not None else snapshot
+        index_environment = verification_index(checked, index_directory,
+            manifest=self.ledger.manifest(checked) if self.ledger is not None else None)
+        caches = tuple(private_directory(tree / name) for tree in dict.fromkeys((snapshot, checked)) for name in (
             ".cache", ".mypy_cache", ".ruff_cache", ".pytest_cache", "build", "dist",
             "src/agentstrata.egg-info", "scratch_unit_tests", "reports/evals/test-runs",
             "console/web/dist",
         ))
         bindings: list[str] = [part for key, value in index_environment.items() for part in ("--setenv", key, value)]
-        fixture = snapshot / "tests/fixtures/codebase_read"
+        fixture = checked / "tests/fixtures/codebase_read"
         if fixture.is_dir():
             # Tests use disposable fixture siblings while existing fixtures remain immutable.
             caches += (fixture,)
             bindings += [part for path in fixture.rglob("*") if path.is_file()
                          for part in ("--ro-bind", str(path), str(path))]
+        module_reads: tuple[Path, ...] = ()
         if profile == "full":
+            try:
+                import tomllib
+            except ModuleNotFoundError:
+                import tomli as tomllib
+            from packaging.utils import canonicalize_name, canonicalize_version
+            project = tomllib.loads((snapshot / "pyproject.toml").read_text())["project"]
+            release = canonicalize_name(project["name"]) + "-" + canonicalize_version(project["version"], strip_trailing_zero=False)
+            if Path(release).name != release:
+                raise HarnessError("configuration_invalid", "发行目录必须位于候选构建目录内")
+            caches += (private_directory(checked / release),)
             modules = (self.repository / "console/web/node_modules").resolve()
             if not modules.is_dir():
                 raise HarnessError("dependencies_missing", "前端依赖未安装，无法执行完整验收")
             target = private_directory(snapshot / "console/web/node_modules")
+            # A read-only dependency view with a writable cache mountpoint; never mkdir
+            # beneath the operator's read-only node_modules mount.
+            for entry in modules.iterdir():
+                if entry.name != ".cache":
+                    (target / entry.name).symlink_to(entry)
+            private_directory(target / ".cache")
+            module_reads = (modules,)
             cache = private_directory(output / "node-cache")
             info = output / "tsconfig.tsbuildinfo"
             info.touch(mode=0o600)
             (snapshot / "console/web/tsconfig.tsbuildinfo").touch(mode=0o600)
-            bindings += ["--ro-bind", str(modules), str(target), "--bind", str(cache), str(target / ".cache"),
+            bindings += ["--bind", str(cache), str(target / ".cache"),
                          "--bind", str(info), str(snapshot / "console/web/tsconfig.tsbuildinfo")]
         reports = output / "report"
         code, _ = self.command(snapshot, [sys.executable, "scripts/check_repo.py", profile, "--keep-going",
+                                         *(["--candidate-root", str(test_view)] if self.ledger is not None else []),
                                          "--report-dir", str(reports)], output / "process", check_cancel,
-                               reads=(*git_dirs, index_directory), writes=(*caches, private_directory(reports)), bindings=tuple(bindings))
+                               reads=(*git_dirs, index_directory, *module_reads, *((test_view,) if self.ledger is not None else ()),
+                                      *((self.frozen,) if self.frozen else ())),
+                               writes=(*caches, private_directory(reports)), bindings=tuple(bindings))
         path = reports / "manifest.json"
         if not path.is_file():
             raise HarnessError("check_invalid", "仓库验收未产生完整报告")
@@ -159,8 +220,11 @@ class CodeHealthChecks:
             raise HarnessError("check_invalid", "仓库验收报告未完成")
         checks = [{"name": item["name"], "status": item["status"], "exit_code": item["exit_code"],
                    "failed_ids": item.get("failed_ids", []),
+                   **({"test_inventory": item["test_inventory"]} if "test_inventory" in item else {}),
                    "log": (reports / Path(item["log_path"]).name).relative_to(self.directory).as_posix()}
                   for item in result["checks"]]
+        if any(c["name"] in {"core tests", "full Python tests"} and not c.get("test_inventory") for c in checks):
+            raise HarnessError("incomplete_verification", "仓库测试缺少执行集合与跳过证据")
         # The manifest contains worker paths; persist the private redacted projection too.
         for log in reports.glob("*"):
             if log.is_file():
@@ -170,6 +234,24 @@ class CodeHealthChecks:
         return {"profile": profile, "passed": code == 0 and result["ok"] is True,
                 "checks": checks, "report": path.relative_to(self.directory).as_posix()}
 
+    def run_test(self, root: Path, content: bytes, check_cancel: Callable[[], None]) -> dict[str, Any]:
+        from chatcopilot.harness.local_verifier import LocalVerifier
+        output = private_directory(self.directory / "checks" / uuid.uuid4().hex)
+        view = output / "source"
+        self.view(root, view, checkers=False)
+        verifier = LocalVerifier(self.directory / "test-runtime")
+        result = verifier.run_frozen_test(view, content, check_cancel, manifest=self.ledger.manifest(view))
+        if result.get("errors") or result.get("exit_code") not in {0, 1} or not result.get("rows"):
+            raise HarnessError("verification_environment", "回归测试未形成完整执行结果")
+        if set(result["rows"]) != set(result["collected"]) or any(r["outcome"] not in {"passed", "failed"} for r in result["rows"].values()):
+            raise HarnessError("incomplete_verification", "回归测试缺失、跳过或发生执行错误")
+        evidence = Path(result["evidence_directory"]) / "pytest.log"
+        evidence.write_text(str(redact_observability_payload({"text": evidence.read_text(errors="replace")}).value["text"]))
+        self.logs.append({"name": "冻结回归测试", "exit_code": result["exit_code"],
+                          "log": evidence.relative_to(self.directory).as_posix()})
+        return result
+
+
 
 def compare_verification(baseline: dict[str, Any], candidate: dict[str, Any]) -> list[str] | None:
     """Existing deterministic findings are compared by scan; pytest failures by node id.
@@ -177,10 +259,16 @@ def compare_verification(baseline: dict[str, Any], candidate: dict[str, Any]) ->
     Unknown failures remain blocking. The normal repository gate is never weakened.
     None means insufficient evidence or a regression; a list records retained debt.
     """
-    if candidate["passed"]:
-        return []
     before = {row["name"]: row for row in baseline["checks"]}
     after = {row["name"]: row for row in candidate["checks"]}
+    for name, row in before.items():
+        inventory = row.get("test_inventory")
+        if inventory:
+            current = after.get(name, {}).get("test_inventory", {})
+            if current.get("sha256") != inventory["sha256"] or set(current.get("skipped_ids", [])) - set(inventory["skipped_ids"]):
+                return None
+    if candidate["passed"]:
+        return []
     if not before or set(before) != set(after):
         return None
     retained = []

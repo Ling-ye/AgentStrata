@@ -16,7 +16,9 @@ from chatcopilot.core.source_snapshot import source_manifest
 from chatcopilot.harness.api import HarnessController
 from chatcopilot.harness.code_health import run_task
 from chatcopilot.harness.code_health_rules import finding, parse_audit
-from chatcopilot.harness import code_health_workspace as workspace
+from chatcopilot.harness.code_health_workspace import save_patch
+from chatcopilot.harness.health_ledger import SourceLedger
+from chatcopilot.harness.health_policy import protected_paths
 from chatcopilot.harness.models import HarnessError, RepairOptions
 from console.backend.routes.harness import router
 
@@ -59,6 +61,10 @@ class Checks:
     def __init__(self, passed=True):
         self.passed = passed
         self.profiles = []
+        self.logs = []
+
+    def bind(self, ledger, frozen):
+        self.ledger = ledger
 
     def scan(self, root, scope, cancel):
         cancel()
@@ -79,7 +85,9 @@ class Coder:
 
     def audit(self, root, evidence, options, output, check_cancel):
         self.calls.append("audit")
-        return {"findings": [], "inspected_paths": [target()["path"]], "summary": "Reviewed source"}
+        return {"findings": [], "inspected_paths": [target()["path"]], "summary": "Reviewed source",
+                "submitted_batch": evidence["batch"]["id"],
+                "submitted_blocks": [b["block_sha256"] for b in evidence["batch"]["blocks"]]}
 
     def run(self, root, evidence, options, output, check_cancel):
         self.calls.append("run")
@@ -151,7 +159,7 @@ def test_clean_repository_audits_without_failure_case(repo, tmp_path):
     coder = Coder()
     result = run_task(controller.store, ident, coder, checks=Checks())
     assert result["status"] == "not_reproduced"
-    assert coder.calls == ["audit"]
+    assert coder.calls == ["audit", "audit"]
     assert "case_id" not in result["source"]
 
 
@@ -170,7 +178,7 @@ def test_failed_checks_are_never_accepted(repo, tmp_path):
     coder = Coder()
     result = run_task(controller.store, ident, coder, checks=Checks(passed=False))
     assert result["status"] == "failed"
-    assert coder.calls == ["audit", "run"]
+    assert coder.calls == ["audit", "run", "audit"]
     assert controller.store.attempts(ident)[0]["verification"]["passed"] is False
 
 
@@ -187,11 +195,12 @@ def test_cancellation_and_review_drift_do_not_claim_success(repo, tmp_path):
 def test_protected_changes_fail_and_document_changes_are_allowed(repo, tmp_path):
     controller, ident = start(repo, tmp_path)
     baseline = controller.store.get(ident)["baseline_manifest"]
+    ledger = SourceLedger(controller.store.root / "jobs" / ident / "source", baseline, tmp_path / "inventory", repo)
     (repo / "docs/guide.md").write_text("Updated guide\n")
-    assert workspace.changes(repo, baseline, "docs") == ["docs/guide.md"]
+    assert ledger.changes(repo, baseline, "docs")[0] == ["docs/guide.md"]
     (repo / "tests/test_example.py").write_text("def test_ok():\n    pass\n")
-    with pytest.raises(HarnessError, match="受保护"):
-        workspace.changes(repo, baseline, "all")
+    with pytest.raises(HarnessError, match="固定标准"):
+        ledger.changes(repo, baseline, "all")
 
 
 def test_source_drift_during_freeze_is_blocked(repo, tmp_path, monkeypatch):
@@ -258,9 +267,8 @@ def test_native_and_outer_permissions_agree_for_protected_directory(repo):
         import tomli as tomllib
     from chatcopilot.agent.backends.codex_permissions import permission_config
     from chatcopilot.contracts.execution_scope import ExecutionScope
-    protected = repo / "src/chatcopilot/authorization"
-    protected.mkdir()
-    assert protected not in workspace.writable_paths(repo, "runtime")
+    protected = repo / "tests"
+    assert protected in protected_paths(repo)
     scope = ExecutionScope(readable_roots=(repo,), writable_roots=(repo / "src",),
                            protected_roots=(protected,), native_write=True)
     config = permission_config(scope, workdir=repo, private_paths=(str(protected / "secret"),), network_access=False)
@@ -292,12 +300,13 @@ def test_snapshot_patch_supports_binary_unicode_and_deletion(repo, tmp_path):
     task = controller.store.get(ident)
     root = prepare(repo, controller.store.root, ident, task["base_commit"])
     frozen = controller.store.root / "jobs" / ident / "source"
-    workspace.restore(root, frozen, task["baseline_manifest"])
+    ledger = SourceLedger(frozen, task["baseline_manifest"], tmp_path / "inventory", repo)
+    ledger.install(root, frozen, task["baseline_manifest"])
     (root / "docs/guide.md").unlink()
     (root / "docs/中文 文件.bin").write_bytes(b"\x00\xffbinary")
-    names = workspace.changes(root, task["baseline_manifest"], "docs")
+    names, _ = ledger.changes(root, task["baseline_manifest"], "docs")
     output = tmp_path / "binary.patch"
-    workspace.save_patch(root, frozen, names, output)
+    save_patch(root, frozen, names, output)
     git(repo, "apply", "--check", str(output))
 
 
@@ -352,3 +361,269 @@ def test_repository_gate_keeps_failure_when_collecting_baseline(tmp_path, monkey
     assert len(report["checks"]) == count
     if keep_going:
         assert report["checks"][-1]["status"] == "passed"
+
+
+class MultiChecks(Checks):
+    def scan(self, root, scope, cancel):
+        cancel()
+        rows = []
+        for path in sorted((root / "src").rglob("*.py")):
+            if "unused = True" in path.read_text():
+                rows.append(finding("hygiene", path.relative_to(root).as_posix(), 1, "Unused assignment", "unused = True",
+                                    "Remove", detector="ruff", group_key=path.stem))
+        return {"checks": [], "findings": rows}
+
+
+class MultiCoder(Coder):
+    def __init__(self, fail="", cancel=None, decision=False):
+        super().__init__()
+        self.fail, self.cancel_after, self.decision = fail, cancel, decision
+
+    def audit(self, root, evidence, options, output, check_cancel):
+        result = super().audit(root, evidence, options, output, check_cancel)
+        if self.decision and evidence["batch"]["area"].startswith("src"):
+            result["findings"] = [finding("boundary", target()["path"], 1, "Policy decision", "Business policy unknown",
+                "Owner decides", detector="codex", disposition="needs_decision", group_key="decision")]
+        return result
+
+    def run(self, root, evidence, options, output, check_cancel):
+        self.calls.append("run")
+        row = evidence["selected_findings"][0]
+        if row["group_key"] == self.fail:
+            if self.cancel_after:
+                self.cancel_after()
+                check_cancel()
+            return {}
+        path = root / row["path"]
+        path.write_text(path.read_text().replace("unused = True\n", ""))
+        return {}
+
+    def review(self, root, evidence, options, output, check_cancel):
+        return {"decision": "approved", "problem": "", "reason": "Verified", "evidence_refs": ["patch", "verification"]}
+
+
+def multi_repo(repo):
+    for name in ("a", "b", "c"):
+        (repo / f"src/chatcopilot/core/{name}.py").write_text("unused = True\nvalue = 1\n")
+    (repo / target()["path"]).write_text("value = 1\n")
+
+
+def test_two_checkpoints_survive_failed_group_and_cumulative_patch(repo, tmp_path):
+    multi_repo(repo)
+    controller, ident = start(repo, tmp_path, options=RepairOptions("test", max_attempts=3))
+    result = run_task(controller.store, ident, MultiCoder(fail="c", decision=True), checks=MultiChecks())
+    assert result["status"] == "fixed"
+    assert result["governance_summary"] == {"found": 4, "fixed": 2, "needs_decision": 1, "remaining": 1,
+        "coverage": "complete", "completed_batches": 2, "total_batches": 2}
+    assert len(result["governance"]["checkpoints"]) == 2
+    attempts = controller.store.attempts(ident)
+    assert [a["number"] for a in attempts] == [1, 2, 3, 4]
+    assert [a["group_attempt"] for a in attempts] == [1, 1, 1, 2]
+    patch = controller.candidate_patch(ident)
+    assert b"a.py" in patch and b"b.py" in patch and b"c.py" not in patch
+    assert "unused = True" in (Path(result["worktree"]) / "src/chatcopilot/core/c.py").read_text()
+    assert controller.get(ident)["checkpoint_available"] is True
+    checkpoint = controller.store.root / "jobs" / ident / result["checkpoint"]["path"] / "candidate.patch"
+    checkpoint.write_bytes(b"changed")
+    with pytest.raises(HarnessError, match="摘要"):
+        controller.candidate_patch(ident)
+
+
+def test_cancel_keeps_only_accepted_checkpoints_and_incomplete_coverage(repo, tmp_path):
+    multi_repo(repo)
+    controller, ident = start(repo, tmp_path)
+    coder = MultiCoder(fail="c", cancel=lambda: controller.store.update(ident, status="cancel_requested"))
+    result = run_task(controller.store, ident, coder, checks=MultiChecks())
+    assert result["status"] == "cancelled"
+    assert result["governance_summary"]["coverage"] == "partial"
+    assert result["governance_summary"]["fixed"] == 2
+    assert controller.get(ident)["candidate_available"]
+    assert b"c.py" not in controller.candidate_patch(ident)
+
+
+def test_missing_audit_receipt_never_counts_as_completed(repo, tmp_path):
+    (repo / target()["path"]).write_text("value = 1\n")
+    controller, ident = start(repo, tmp_path)
+    coder = Coder()
+    coder.audit = lambda *args: {"findings": [], "summary": "Looks good", "inspected_paths": []}
+    result = run_task(controller.store, ident, coder, checks=Checks())
+    assert result["status"] == "blocked"
+    assert result["governance_summary"]["coverage"] == "partial"
+    assert all(b["error_code"] == "audit_incomplete" for b in result["governance"]["coverage"])
+
+
+def test_legacy_counts_are_projected_without_writing_history(repo, tmp_path):
+    controller, ident = start(repo, tmp_path)
+    source = controller.store.get(ident)["source"]
+    source.pop("governance_version")
+    row = {**target(), "disposition": "needs_decision"}
+    controller.store.update(ident, source=source, status="not_reproduced", governance={"findings": [row]})
+    original = controller.store.get(ident)
+    detail = controller.get(ident)
+    history = controller.list(kind="code_health")["tasks"][0]
+    assert detail["governance_summary"] == history["governance_summary"]
+    assert detail["governance_summary"]["found"] == detail["governance_summary"]["needs_decision"] == 1
+    assert detail["governance_summary"]["fixed"] == 0
+    assert detail["governance_summary"]["coverage"] == "unknown"
+    assert controller.store.get(ident) == original
+
+
+class SemanticChecks(Checks):
+    def scan(self, root, scope, cancel):
+        cancel()
+        return {"checks": [], "findings": []}
+
+    def run_test(self, root, content, cancel):
+        cancel()
+        failed = "unused = True" in (root / target()["path"]).read_text()
+        return {"exit_code": int(failed), "collected": ["test_behavior"], "errors": [],
+                "rows": {"test_behavior": {"outcome": "failed" if failed else "passed", "assertion_failure": failed}}}
+
+
+class SemanticCoder(Coder):
+    def audit(self, root, evidence, options, output, check_cancel):
+        result = super().audit(root, evidence, options, output, check_cancel)
+        if evidence["batch"]["area"].startswith("src"):
+            result["findings"] = [{**target(), "detector": "codex", "rule_id": "obsolete"}]
+        return result
+
+    def prepare(self, root, evidence, options, output, check_cancel):
+        import json
+        self.calls.append("prepare")
+        draft = output / "draft"
+        draft.mkdir(mode=0o700)
+        for name, text in {"test_reproduction.py": "def test_behavior():\n    assert True\n",
+            "diagnosis.json": json.dumps({"kind": "bugfix", "reason": "Known behavior contract"})}.items():
+            (draft / name).write_text(text)
+            (draft / name).chmod(0o600)
+        return {}
+
+
+def test_semantic_group_prepares_reviews_freezes_and_delivers_regression(repo, tmp_path):
+    controller, ident = start(repo, tmp_path)
+    coder = SemanticCoder()
+    result = run_task(controller.store, ident, coder, checks=SemanticChecks())
+    assert result["status"] == "fixed"
+    assert coder.calls == ["audit", "prepare", "review", "run", "review", "audit"]
+    group = result["governance"]["groups"][0]
+    assert group["proof"]["baseline"]["exit_code"] == 1
+    attempt = controller.store.attempts(ident)[0]
+    assert attempt["regression_test"]["exit_code"] == 0
+    tests = [n for n in attempt["changed_files"] if n.startswith("tests/")]
+    assert len(tests) == 1 and (Path(result["worktree"]) / tests[0]).is_file()
+    assert b"test_behavior" in controller.candidate_patch(ident)
+    assert not (repo / tests[0]).exists()
+
+
+def test_failed_dependency_is_deferred_while_independent_group_runs(repo, tmp_path):
+    multi_repo(repo)
+    class DependencyChecks(MultiChecks):
+        def scan(self, root, scope, cancel):
+            result = super().scan(root, scope, cancel)
+            for row in result["findings"]:
+                if row["group_key"] == "b":
+                    row["depends_on"] = ["a"]
+            return result
+    controller, ident = start(repo, tmp_path)
+    result = run_task(controller.store, ident, MultiCoder(fail="a"), checks=DependencyChecks())
+    groups = {g["key"]: g["status"] for g in result["governance"]["groups"]}
+    assert groups == {"a": "failed", "b": "deferred", "c": "accepted"}
+
+
+def test_budget_preserves_checkpoint_and_marks_scope_incomplete(repo, tmp_path, monkeypatch):
+    from chatcopilot.harness import code_health
+    multi_repo(repo)
+    now = [10.0]
+    monkeypatch.setattr(code_health.time, "monotonic", lambda: now[0])
+    class BudgetCoder(MultiCoder):
+        def run(self, root, evidence, options, output, check_cancel):
+            if evidence["selected_findings"][0]["group_key"] == "b":
+                now[0] = 200.0
+                check_cancel()
+            return super().run(root, evidence, options, output, check_cancel)
+    controller, ident = start(repo, tmp_path, options=RepairOptions("test", timeout_seconds=100))
+    result = run_task(controller.store, ident, BudgetCoder(), checks=MultiChecks())
+    assert result["error_code"] == "budget_exhausted"
+    assert result["governance_summary"]["fixed"] == 1
+    assert result["governance_summary"]["coverage"] == "partial"
+    assert controller.get(ident)["checkpoint_available"]
+
+
+def test_semantic_bug_cannot_downgrade_its_proof_to_refactor(repo, tmp_path):
+    import json
+    class DowngradeCoder(SemanticCoder):
+        def prepare(self, root, evidence, options, output, check_cancel):
+            super().prepare(root, evidence, options, output, check_cancel)
+            (output / "draft/diagnosis.json").write_text(json.dumps({"kind": "refactor", "reason": "No failure needed", "structural_before": "Duplicate code"}))
+    controller, ident = start(repo, tmp_path)
+    coder = DowngradeCoder()
+    result = run_task(controller.store, ident, coder, checks=SemanticChecks())
+    assert result["governance_summary"]["fixed"] == 0
+    assert result["governance_summary"]["needs_decision"] == 1
+    assert "run" not in coder.calls
+    assert "不能把行为缺陷" in result["governance"]["groups"][0]["reason"]
+
+
+def test_old_acceptance_is_not_recomputed_with_new_inventory_rules(repo, tmp_path, monkeypatch):
+    controller, ident = start(repo, tmp_path)
+    source = controller.store.get(ident)['source']
+    source.pop('governance_version')
+    controller.store.update(ident, status='fixed', source=source, governance={'findings': [target()], 'resolved_ids': [target()['id']]})
+    monkeypatch.setattr(controller, '_candidate_available', Mock(side_effect=AssertionError('legacy result was rejudged')))
+    original = controller.store.get(ident)
+    result = controller.get(ident)
+    assert result['candidate_available'] is None
+    assert result['status'] == 'fixed' and result['governance_summary']['fixed'] == 1
+    assert controller.store.get(ident) == original
+
+
+def test_passing_exit_cannot_hide_changed_tests_or_new_skips():
+    from chatcopilot.harness.code_health_checks import compare_verification
+    baseline = {'passed': True, 'checks': [{'name': 'core tests', 'exit_code': 0,
+        'test_inventory': {'sha256': 'fixed-tests', 'count': 2, 'skipped_ids': []}}]}
+    candidate = copy.deepcopy(baseline)
+    assert compare_verification(baseline, candidate) == []
+    candidate['checks'][0]['test_inventory']['skipped_ids'] = ['test_missing']
+    assert compare_verification(baseline, candidate) is None
+    candidate['checks'][0]['test_inventory'] = {'sha256': 'fewer-tests', 'count': 1, 'skipped_ids': []}
+    assert compare_verification(baseline, candidate) is None
+    candidate['checks'][0].pop('test_inventory')
+    assert compare_verification(baseline, candidate) is None
+
+
+def test_preparation_can_correct_its_reason_without_rewriting_a_valid_test(repo, tmp_path):
+    import json
+    class CorrectingCoder(SemanticCoder):
+        def __init__(self):
+            super().__init__()
+            self.revisions = 0
+        def prepare(self, root, evidence, options, output, check_cancel):
+            self.revisions += 1
+            super().prepare(root, evidence, options, output, check_cancel)
+            if self.revisions == 1:
+                (output / 'draft/diagnosis.json').write_text(json.dumps({'kind': 'bugfix', 'reason': ''}))
+    controller, ident = start(repo, tmp_path, options=RepairOptions('test', max_attempts=3))
+    coder = CorrectingCoder()
+    result = run_task(controller.store, ident, coder, checks=SemanticChecks())
+    assert result['status'] == 'fixed' and coder.revisions == 2
+
+
+def test_out_of_scope_debt_does_not_become_a_decision_group(repo, tmp_path):
+    controller, ident = start(repo, tmp_path, scope='docs')
+    coder = Coder()
+    result = run_task(controller.store, ident, coder, checks=Checks())
+    assert result['governance_summary']['found'] == 0
+    assert result['governance']['before']['findings']  # Retained for regression comparison.
+    assert 'run' not in coder.calls
+
+
+def test_structural_evidence_must_be_renderable_text(repo, tmp_path):
+    import json
+    class InvalidEvidenceCoder(SemanticCoder):
+        def prepare(self, root, evidence, options, output, check_cancel):
+            super().prepare(root, evidence, options, output, check_cancel)
+            (output / 'draft/diagnosis.json').write_text(json.dumps({'kind': 'bugfix', 'reason': 'Contract', 'structural_before': {'unexpected': 'object'}}))
+    controller, ident = start(repo, tmp_path)
+    result = run_task(controller.store, ident, InvalidEvidenceCoder(), checks=SemanticChecks())
+    assert result['governance_summary']['needs_decision'] == 1
+    assert '结构依据必须为文本' in result['governance']['groups'][0]['reason']

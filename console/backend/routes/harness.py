@@ -255,6 +255,12 @@ def resume(request: Request, task_id: str):
     return _call(lambda: _controller(request).resume(task_id))
 
 
+@router.get("/tasks/{task_id}/candidate-patch")
+def candidate_patch(request: Request, task_id: str):
+    return Response(_call(lambda: _controller(request).candidate_patch(task_id)), media_type="text/x-diff",
+                    headers={"Content-Disposition": 'attachment; filename="candidate.patch"'})
+
+
 @router.get("/tasks/{task_id}/attempts/{number}/patch")
 def patch(request: Request, task_id: str, number: int):
     content = _call(lambda: _controller(request).patch(task_id, number))

@@ -83,10 +83,13 @@ class CodexCoder:
         from chatcopilot.harness.code_health_rules import parse_audit
         result = self._execute(worktree, evidence, options, output, check_cancel, auditing=True)
         try:
-            audit = parse_audit(json.loads(result.pop("final_text")), worktree, evidence["source"]["scope"])
+            batch = evidence.get("batch")
+            delivered = tuple(b["path"] for b in batch["blocks"] if "content" in b) if batch else ()
+            audit = parse_audit(json.loads(result.pop("final_text")), worktree, evidence["source"]["scope"], delivered_paths=delivered)
         except (ValueError, KeyError, TypeError) as exc:
             raise HarnessError("audit_invalid", "Codex 巡检未返回完整结构化结果") from exc
-        return {**audit, "execution": result}
+        return {**audit, "execution": result, **({"submitted_batch": batch["id"],
+                "submitted_blocks": [b["block_sha256"] for b in batch["blocks"] if "content" in b]} if batch else {})}
 
     def _execute(self, worktree: Path, evidence: dict[str, Any], options: RepairOptions,
                  output: Path, check_cancel: Callable[[], None], *, draft: Path | None = None,
@@ -145,6 +148,7 @@ class CodexCoder:
             with os.fdopen(fd, "w") as stream:
                 stream.write(evidence_text)
             evidence_text = json_text({
+                **({"batch": evidence["batch"]} if evidence.get("batch") else {}),
                 "evidence_file": str(evidence_path),
                 "sha256": hashlib.sha256(evidence_text.encode()).hexdigest(),
                 **evidence_index(evidence, stage="review" if reviewing else "prepare" if draft else "repair"),
@@ -160,8 +164,8 @@ class CodexCoder:
         health_writes: tuple[Path, ...] = ()
         helper_directory: Path | None = None
         if health:
-            from chatcopilot.harness.code_health_workspace import protected_paths as health_protected
-            from chatcopilot.harness.code_health_workspace import writable_paths as health_writable
+            from chatcopilot.harness.health_policy import protected_paths as health_protected
+            from chatcopilot.harness.health_policy import writable_paths as health_writable
             protected = health_protected(worktree)
             health_writes = health_writable(worktree, source["scope"])
             # Codex dispatches this helper by argv[0]. Keep the alias in the task's
@@ -170,7 +174,9 @@ class CodexCoder:
             (helper_directory / "codex-linux-sandbox").symlink_to(binary)
             health_policy = (
                 "只读检查代码治理证据，不修改任何源码、规则或验收记录。" if reviewing or auditing else
-                "仅清理本次选中的代码治理问题，保持可观察行为。不得修改规则、检查器、测试、权限或运行控制。"
+                "只在 draft 中编写验证草案，产品源码只读。" if draft else
+                "仅修改候选实现；候选中的快照、Harness 和检查器实现可以修复。"
+                "实际运行的宿主、既有测试、黄金原则、忽略规则、权限策略和凭据保持冻结。不得削弱标准。"
             )
             if auditing:
                 health_prompt = (
@@ -178,9 +184,14 @@ class CodexCoder:
                     "寻找重复实现、过时分支、猜测数据结构及文档失真。相似不等于语义等价；无静态引用不等于无用。"
                     "兼容性、权限、外部数据或公开契约影响不明时 disposition=needs_decision；有证据且行为保持的清理用 candidate。"
                     "不制造问题，不声称检查未读取的文件，不运行仓库全套检查。"
+                    "batch 中包含本批实际投递的源码块；逐块检查这些内容，其他文件只作为相关上下文。"
+                    "发现位于基础设施实现中的问题也应提出候选，不要仅因为模块曾受保护就标记待判断。"
+                    "相同根因使用一致的 group_key（模块:符号:缺陷），related_paths 列出相关实现与调用方。"
+                    "depends_on 仅引用已有分组标识，没有明确依赖用空列表；change_kind 为 bugfix 或 refactor。"
                     '最后只返回 JSON：{"findings":[{"rule_id":"规则 id","path":"仓库相对文件",'
                     '"line":1,"summary":"具体问题","evidence":"实际源码与调用依据",'
-                    '"recommendation":"保持语义的修改建议","disposition":"candidate|needs_decision"}],'
+                    '"recommendation":"修改建议","disposition":"candidate|needs_decision",'
+                    '"group_key":"模块:符号:缺陷","related_paths":["仓库相对路径"],"depends_on":[],"change_kind":"bugfix|refactor"}],'
                     '"inspected_paths":["实际读取的仓库相对文件"],"summary":"发现与覆盖局限"}。没有发现时返回空 findings。'
                 )
             elif reviewing:
@@ -191,6 +202,27 @@ class CodexCoder:
                     '最后只返回 JSON：{"decision":"approved|rejected|inconclusive",'
                     '"problem":"仍存问题，批准可为空","reason":"有依据的审查理由",'
                     '"evidence_refs":["source","patch","verification"]}。'
+                )
+                if evidence.get("verification", {}).get("phase") == "health_preparation":
+                    health_prompt = (
+                        "只读审核验证草案，当前尚未修复代码。核对测试确实调用现有候选实现，"
+                        "断言来自固定契约而非假实现；环境错误、空测试、跳过不能作为复现。"
+                        "bugfix 应在原实现出现真实行为断言失败；refactor 应保留通过的行为测试并有结构依据。"
+                        "检查新增测试覆盖问题及相关权限/私有数据的反例，不能修改任何材料。"
+                        '最后返回 JSON：{"decision":"approved|rejected|inconclusive","problem":"问题，批准可为空",'
+                        '"reason":"依据","evidence_refs":["source","reproduction","patch"]}。'
+                    )
+            elif draft:
+                health_prompt = (
+                    "为 selected_findings 建立最小的离线验证依据，源码只读。在当前 draft 目录写 test_reproduction.py 和 diagnosis.json。"
+                    "测试必须调用当前产品实现，使用临时目录和合成资料；不得虚构接口、替换被测逻辑或吞掉环境异常。"
+                    "候选源码包括快照、Harness 或检查器时也直接测试其行为；正在运行的验证驱动不属于被测实现。"
+                    "pytest 的 rootdir 是候选快照；可通过 Path(__file__).resolve().parents[3] 定位仓库，"
+                    "测试最终位于 tests/unit/harness_regressions/。环境文件问题使用临时 Git 仓库和假配置验证公开模板与私有文件。"
+                    'diagnosis.json 格式：{"kind":"bugfix|refactor","reason":"固定契约和真实调用依据",'
+                    '"structural_before":"重构需写原结构及改善目标"}。'
+                    "bugfix 在原代码应触发断言失败，refactor 在原代码保持通过；不要为重构制造虚假的行为失败。"
+                    "previous_revision 是上次失败证据，必要时修订测试。只做局部检查，不运行 full/fast 或模型测评。"
                 )
             else:
                 health_prompt = (
@@ -206,7 +238,7 @@ class CodexCoder:
             archive.load(source["trace"]["trace_ref"], sha256=source["trace"]["sha256"])
         frozen_tests = (
             (Path(source["test_path"]).parent,)
-            if source.get("kind") == "robot_task" and source.get("test_path")
+            if source.get("kind") in {"robot_task", "code_health"} and source.get("test_path")
             else ()
         )
         scope = ExecutionScope(
@@ -226,7 +258,7 @@ class CodexCoder:
                     )
                 )
             ),
-            writable_roots=() if reviewing or auditing else health_writes if health else (draft,) if draft else writable_paths(worktree, str(source.get("bot_id", ""))),
+            writable_roots=() if reviewing or auditing else (draft,) if draft else health_writes if health else writable_paths(worktree, str(source.get("bot_id", ""))),
             protected_roots=protected,
             native_write=not (reviewing or auditing),
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +30,20 @@ class Check:
 
 def _python(*args: str) -> tuple[str, ...]:
     return (sys.executable, *args)
+
+
+def _mypy(root: Path | None, *paths: str) -> tuple[str, ...]:
+    if root is None:
+        return _python("-m", "mypy", *paths)
+    # Load the installed driver before exposing source paths as package metadata.
+    # Mypy uses sys.path to distinguish local targets from untyped imports.
+    driver = "\n".join((
+        "import sys",
+        "from mypy.main import main",
+        "sys.path.extend(sys.argv[1:3])",
+        "main(args=sys.argv[3:])",
+    ))
+    return _python("-I", "-c", driver, str(root), str(root / "src"), *paths)
 
 
 def _executable(name: str) -> str:
@@ -74,33 +90,39 @@ def _fast_test_paths() -> tuple[str, ...]:
     return paths
 
 
-def _profiles() -> dict[str, tuple[Check, ...]]:
+def _profiles(candidate_root: Path | None = None) -> dict[str, tuple[Check, ...]]:
+    test_root = candidate_root or ROOT
+    test_imports = ("-o", "pythonpath=" + str(test_root / "src") + " " + str(test_root)) if candidate_root else ()
+    target_args = ("--root", str(test_root)) if candidate_root else ()
     common = (
         Check("SDD metadata", _python("scripts/check_sdd_specs.py")),
         Check(
             "public repository boundary",
-            _python("scripts/check_public_repo.py"),
+            _python("scripts/check_public_repo.py", *target_args),
             uses_repository_index=True,
         ),
-        Check("architecture boundaries", _python("scripts/check_architecture.py")),
+        Check("architecture boundaries", _python("scripts/check_architecture.py", *target_args)),
         Check("requirements drift", _python("scripts/sync_requirements.py", "--check")),
         Check(
             "UTF-8 source normalization",
-            _python("scripts/normalize_utf8.py"),
+            _python("scripts/normalize_utf8.py", *target_args),
             uses_repository_index=True,
         ),
-        Check("Ruff", _python("-m", "ruff", "check", "src", "tests", "scripts", "console")),
+        Check("Ruff", _python("-m", "ruff", "check",
+                              *(str(candidate_root / name) for name in ("src", "tests", "scripts", "console")),
+                              "--config", str(test_root / "pyproject.toml")) if candidate_root else
+              _python("-m", "ruff", "check", "src", "tests", "scripts", "console"), cwd=test_root),
         Check(
             "typed contracts",
-            _python(
-                "-m",
-                "mypy",
+            _mypy(
+                candidate_root,
                 "src/chatcopilot/contracts",
                 "src/chatcopilot/agent/session_protocol.py",
                 "src/chatcopilot/evals/models.py",
                 "src/chatcopilot/evals/result_codec.py",
                 "src/chatcopilot/evals/trial_runner.py",
             ),
+            cwd=test_root,
         ),
         Check("component catalog", _python("scripts/check_component_catalog.py")),
     )
@@ -111,10 +133,12 @@ def _profiles() -> dict[str, tuple[Check, ...]]:
             _python(
                 "-m",
                 "pytest",
+                *test_imports,
                 *_fast_test_paths(),
                 "-q",
                 _pytest_basetemp("fast"),
             ),
+            cwd=test_root,
         ),
     )
     full = (
@@ -122,7 +146,7 @@ def _profiles() -> dict[str, tuple[Check, ...]]:
         Check("installed dependency consistency", _python("-m", "pip", "check")),
         Check(
             "Python wheel build smoke",
-            _python("scripts/build_smoke.py"),
+            _python("scripts/build_smoke.py", *(("--source-root", str(test_root)) if candidate_root else ())),
             uses_repository_index=True,
         ),
         Check(
@@ -130,9 +154,11 @@ def _profiles() -> dict[str, tuple[Check, ...]]:
             _python(
                 "-m",
                 "pytest",
+                *test_imports,
                 "-q",
                 _pytest_basetemp("full"),
             ),
+            cwd=test_root,
         ),
         Check(
             "console production build",
@@ -170,6 +196,17 @@ def _failure_excerpt(output: str, *, limit: int = 12_000) -> str:
     return text[:limit]
 
 
+def _test_inventory(path: Path) -> dict[str, object]:
+    cases = list(ET.parse(path).getroot().iter("testcase"))
+    identities = sorted({case.get("classname", "") + "::" + case.get("name", "") for case in cases})
+    if not identities:
+        raise ValueError("pytest did not report any executed test identities")
+    skipped = sorted({case.get("classname", "") + "::" + case.get("name", "")
+                      for case in cases if case.find("skipped") is not None})
+    return {"sha256": hashlib.sha256(json.dumps(identities).encode()).hexdigest(),
+            "count": len(identities), "skipped_ids": skipped}
+
+
 def _write_private(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
     try:
@@ -196,6 +233,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("profile", choices=("fast", "full"))
     parser.add_argument("--keep-going", action="store_true", help="collect every check for baseline comparison")
+    parser.add_argument("--candidate-root", type=Path, help="isolated candidate test tree; checker definitions stay here")
     parser.add_argument(
         "--report-dir",
         type=Path,
@@ -220,7 +258,8 @@ def main() -> int:
         _write_manifest(report_dir, manifest)
 
     failure_exit = 0
-    for index, check in enumerate(_profiles()[args.profile], start=1):
+    profiles = _profiles(args.candidate_root.resolve()) if args.candidate_root else _profiles()
+    for index, check in enumerate(profiles[args.profile], start=1):
         print(f"\n==> {check.name}", flush=True)
         started_at = time.time()
         record: dict[str, object] = {
@@ -270,8 +309,9 @@ def main() -> int:
             )
             combined_output = ""
         else:
+            junit = report_dir / f"{index:02d}-pytest.xml" if check.name in {"core tests", "full Python tests"} else None
             completed = subprocess.run(
-                check.argv,
+                (*check.argv, *(("--junitxml=" + str(junit),) if junit else ())),
                 cwd=check.cwd,
                 check=False,
                 env=_check_env(
@@ -303,6 +343,13 @@ def main() -> int:
             log_path = report_dir / f"{index:02d}-{_slug(check.name)}.log"
             _write_private(log_path, combined_output)
             record["log_path"] = str(log_path)
+        if report_dir is not None and check.name in {"core tests", "full Python tests"}:
+            try:
+                record["test_inventory"] = _test_inventory(junit)
+            except (OSError, ValueError, ET.ParseError) as exc:
+                completed.returncode = completed.returncode or 1
+                combined_output += "\nIncomplete test evidence: " + str(exc)
+                _write_private(log_path, combined_output)
         finished_at = time.time()
         failed_ids = (
             tuple(dict.fromkeys(_FAILED_NODE_RE.findall(combined_output)))

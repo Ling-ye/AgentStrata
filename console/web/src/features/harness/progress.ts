@@ -7,6 +7,7 @@ export function heartbeatStatus(task: Pick<ProgressTask, "heartbeat_at" | "statu
 }
 
 export function progressSourceLabel(source: NonNullable<RepairProgress["source"]>): string {
+  if (source.label) return source.label;
   if (source.kind === "audit") return "代码只读巡检";
   if (source.kind === "prepare") return source.number == null ? "复现准备" : `准备第 ${source.number} 版`;
   return `第 ${source.number} 次${source.kind === "coding" ? "修复" : "审核"}`;

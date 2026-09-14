@@ -16,6 +16,7 @@ def main() -> int:
     os.umask(0o022)
     request = json.loads(Path(sys.argv[1]).read_text())
     output = Path(sys.argv[2])
+    sys.path[:0] = [str(Path(request["root"]) / "src"), request["root"]]
     rows: dict[str, dict] = {}
     collected: list[str] = []
     errors: list[str] = []

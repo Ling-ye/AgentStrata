@@ -253,3 +253,14 @@ def test_route_uses_public_controller_and_never_caches(context, code, status):
     assert response.status_code == status
     assert response.headers["cache-control"] == "no-store"
     read.assert_called_once_with("repair-example")
+
+
+def test_governance_log_is_current_only_during_its_actual_phase():
+    from chatcopilot.harness.progress import _logs
+    task = {'stage': 'verify', 'source': {'governance_version': 2}, 'current_source': 'attempt-1',
+            'progress_sources': [{'id': 'attempt-1', 'path': 'attempt-1/public-events.jsonl', 'kind': 'coding', 'number': 1}]}
+    assert list(_logs(task, []))[0][1]['current'] is False
+    task['stage'] = 'coding'
+    assert list(_logs(task, []))[0][1]['current'] is True
+    task['stage'] = 'repository_baseline'
+    assert list(_logs(task, []))[0][1]['current'] is False

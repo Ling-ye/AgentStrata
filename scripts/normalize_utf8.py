@@ -36,8 +36,9 @@ def bom_files(root: Path = ROOT) -> tuple[Path, ...]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--root", type=Path, default=ROOT)
     args = parser.parse_args()
-    paths = bom_files()
+    paths = bom_files(args.root)
     if args.write:
         for path in paths:
             path.write_bytes(path.read_bytes()[len(BOM):])
@@ -45,7 +46,7 @@ def main() -> int:
         return 0
     if paths:
         for path in paths:
-            print(path.relative_to(ROOT))
+            print(path.relative_to(args.root))
         return 1
     print("OK: tracked Python files are UTF-8 without BOM")
     return 0

@@ -1136,6 +1136,7 @@ def verify_release_artifacts(
 
 
 def main(argv: list[str] | None = None) -> int:
+    global ROOT
     parser = argparse.ArgumentParser(
         description="Verify exact release members and isolated wheel runtime behavior."
     )
@@ -1151,7 +1152,10 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="resolve normal-install dependencies only from this local wheelhouse",
     )
+    parser.add_argument("--source-root", type=Path)
     args = parser.parse_args(argv)
+    if args.source_root:
+        ROOT = args.source_root.resolve()
     if args.wheelhouse is not None and not args.normal_install:
         parser.error("--wheelhouse requires --normal-install")
     try:

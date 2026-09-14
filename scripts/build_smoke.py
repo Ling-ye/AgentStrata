@@ -2,6 +2,7 @@
 """Build and verify distributions while proving tracked content is immutable."""
 from __future__ import annotations
 
+import argparse
 import hashlib
 import subprocess
 import sys
@@ -49,6 +50,12 @@ def _single_artifact(output_dir: Path, pattern: str, label: str) -> Path | None:
 
 
 def main() -> int:
+    global ROOT
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source-root", type=Path)
+    args = parser.parse_args()
+    if args.source_root:
+        ROOT = args.source_root.resolve()
     paths = _tracked_paths()
     before = _snapshot(paths)
     status = 0
@@ -83,6 +90,7 @@ def main() -> int:
                         str(wheel),
                         "--sdist",
                         str(sdist),
+                        *(["--source-root", str(ROOT)] if args.source_root else []),
                     ),
                     cwd=ROOT,
                     check=False,

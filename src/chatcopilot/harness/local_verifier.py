@@ -50,6 +50,20 @@ class LocalVerifier:
     def __init__(self, root: Path) -> None:
         self.root = root
 
+    def run_frozen_test(self, worktree: Path, content: bytes, check_cancel: Callable[[], None], *, manifest: dict[str, Any]) -> dict[str, Any]:
+        digest = hashlib.sha256(content).hexdigest()
+        directory = private_directory(self.root / "frozen-tests" / digest)
+        path = directory / "test_reproduction.py"
+        if path.exists() and _read(path) != content:
+            raise HarnessError("reproducer_changed", "冻结测试已变化")
+        if not path.exists():
+            path.write_bytes(content)
+            path.chmod(0o600)
+        relative = f"tests/unit/harness_regressions/test_{digest}.py"
+        return self._pytest({"task_id": "check-" + digest[:20], "source": {
+            "test_path": str(path), "test_sha256": digest, "test_relative_path": relative}},
+            worktree, [relative], check_cancel, manifest=manifest)
+
     def prepare(
         self, task: dict[str, Any], worktree: Path, coder: Any, options: RepairOptions,
         check_cancel: Callable[[], None],
@@ -329,6 +343,7 @@ class LocalVerifier:
         *,
         collect: bool = False,
         selected: list[str] | None = None,
+        manifest: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         output = private_directory(
             self.root / "jobs" / task["task_id"] / "checks" / uuid.uuid4().hex
@@ -340,7 +355,7 @@ class LocalVerifier:
             git_common = Path(git_output(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"))
             git_roots = tuple(dict.fromkeys((git_common, git_directory)))
         snapshot = output / "source"
-        copy_sources(worktree, snapshot, source_manifest(worktree))
+        copy_sources(worktree, snapshot, source_manifest(worktree) if manifest is None else manifest)
         if source.get("test_relative_path"):
             content = _read(Path(source["test_path"]))
             if hashlib.sha256(content).hexdigest() != source["test_sha256"]:
@@ -403,7 +418,7 @@ class LocalVerifier:
             "--unshare-net",
             "--setenv",
             "PYTHONPATH",
-            str(worktree / "src") + os.pathsep + str(worktree),
+            "",
             "--setenv",
             "PYTHONDONTWRITEBYTECODE",
             "1",

@@ -4,8 +4,9 @@ import { Alert, Button, Descriptions, Drawer, Empty, Input, InputNumber, Select,
 import PageSection from "../shared/ui/PageSection";
 import { ACTIVE, harnessApi, stageLabel } from "../features/harness/api";
 import { RepairProgress } from "../features/harness/RepairProgress";
-import { healthApi, healthLabels, healthStatus, findingStatus, type Check, type Finding, type HealthTask, type Scope } from "../features/codeHealth/api";
+import { healthApi, healthLabels, healthStatus, healthSummary, findingStatus, type Check, type Finding, type HealthTask, type Scope } from "../features/codeHealth/api";
 import "../features/codeHealth/style.css";
+import HealthLedger from "../features/codeHealth/HealthLedger";
 
 const { Text } = Typography;
 const taskFromHash = () => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("task") ?? "";
@@ -64,7 +65,7 @@ export default function CodeHealthPage() {
         <details><summary>高级参数</summary><Space wrap style={{ marginTop: 12 }}>
           <label>推理强度<Select aria-label="推理强度" style={{ width: 120 }} value={effort} onChange={setEffort} disabled={starting}
             options={["minimal", "low", "medium", "high", "xhigh", "max"]} /></label>
-          <label>最多尝试<InputNumber aria-label="最多尝试" min={1} precision={0} value={attempts} onChange={setAttempts} disabled={starting} style={{ width: 120 }} /></label>
+          <label>每组最多尝试<InputNumber aria-label="每组最多尝试" min={1} precision={0} value={attempts} onChange={setAttempts} disabled={starting} style={{ width: 120 }} /></label>
           <label>总时限（小时）<InputNumber aria-label="总时限" min={0.1} precision={1} value={hours} onChange={setHours} disabled={starting} style={{ width: 140 }} /></label>
         </Space></details>
         <Space wrap><Button type="primary" loading={starting} disabled={!config.data || !(model.trim() || config.data.default_model)} onClick={() => void start()}>开始垃圾回收</Button>
@@ -85,6 +86,7 @@ export default function CodeHealthPage() {
         pagination={{ current: page, pageSize: 20, total: history.data?.total ?? 0, onChange: setPage }} columns={[
           { title: "任务", dataIndex: "task_id", render: (_, row) => <Button type="text" onClick={() => openTask(row.task_id)}>{row.task_id.slice(0, 19)}</Button> },
           { title: "状态", render: (_, row) => <Tag>{healthStatus(row)}</Tag> },
+          { title: "结果", render: (_, row) => healthSummary(row) },
           { title: "阶段", render: (_, row) => stageLabel(row.stage) },
           { title: "源码基准", render: (_, row) => <Text title={row.source.snapshot_digest}>{row.source.snapshot_digest.slice(0, 10)}</Text> },
           { title: "启动时间", render: (_, row) => new Date(row.created_at * 1000).toLocaleString() },
@@ -127,13 +129,15 @@ function HealthDetail({ id }: { id: string }) {
     <RepairProgress task={task} refreshTask={() => query.refetch()} title="治理进度" statusLabel={healthStatus(task)} />
     {query.isError && <Alert type="error" content={String(query.error)} />}
     {task.message && <Alert type={task.status === "fixed" && task.candidate_available ? "success" : "info"} content={task.message} />}
-    {task.status === "fixed" && !task.candidate_available && <Alert type="warning" content="候选已变化或不可读取，历史验收不能证明当前内容仍然有效。" />}
+    {task.status === "fixed" && task.candidate_available === false && <Alert type="warning" content="候选已变化或不可读取，历史验收不能证明当前内容仍然有效。" />}
     {error && <Alert type="error" content={error} />}
     {ACTIVE.includes(task.status) && <Button status="danger" loading={cancelling} disabled={task.status === "cancel_requested"} onClick={() => void cancel()}>取消本次治理</Button>}
     <Descriptions column={1} size="small" data={[
       { label: "任务", value: task.task_id }, { label: "源码快照", value: task.source.snapshot_digest },
       { label: "基准提交", value: task.base_commit }, { label: "候选目录", value: task.worktree ?? "尚未创建" },
     ]} />
+    <Alert type="info" content={healthSummary(task)} />
+    <HealthLedger task={task} />
     <Tabs defaultActiveTab="findings">
       <Tabs.TabPane key="findings" title={`发现 ${findings.length}`}>
         {task.governance?.audit_summary && <p>{task.governance.audit_summary}</p>}
@@ -147,7 +151,7 @@ function HealthDetail({ id }: { id: string }) {
         <Space direction="vertical" size={20} style={{ width: "100%" }}>
           {!task.attempts?.length && <Empty description="尚未生成清理候选" />}
           {task.attempts?.map(attempt => <section key={attempt.number}>
-            <Space wrap><Text bold>第 {attempt.number} 次候选</Text><Tag>{attempt.status === "accepted" ? "验收通过" : attempt.status === "rejected" ? "未通过" : "处理中"}</Tag>
+            <Space wrap><Text bold>候选 #{attempt.number}{attempt.group_attempt ? ` · 组内第 ${attempt.group_attempt} 次` : ""}</Text><Tag>{attempt.status === "accepted" ? "验收通过" : attempt.status === "rejected" ? "未通过" : "处理中"}</Tag>
               {attempt.patch_sha256 && <a href={healthApi.patchUrl(id, attempt.number)} download>下载本次补丁</a>}</Space>
             {attempt.changed_files?.length && <pre>{attempt.changed_files.join("\n")}</pre>}
             {attempt.error && <Alert type="warning" content={attempt.error} />}
@@ -157,7 +161,7 @@ function HealthDetail({ id }: { id: string }) {
           </section>)}
         </Space>
       </Tabs.TabPane>
-      <Tabs.TabPane key="checks" title="检查记录">{checkTable(task.check_logs?.length ? task.check_logs : task.governance?.before.checks ?? [])}</Tabs.TabPane>
+      <Tabs.TabPane key="checks" title="检查记录">{checkTable(task.check_logs?.length ? task.check_logs : task.governance?.before?.checks ?? [])}</Tabs.TabPane>
     </Tabs>
     <Drawer title="检查日志" visible={!!logRef} onCancel={() => setLogRef("")} footer={null} width="min(100vw, 860px)">
       {log.isError ? <Alert type="error" content={String(log.error)} /> : log.isPending ? <Spin /> :

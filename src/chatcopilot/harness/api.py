@@ -67,7 +67,7 @@ class HarnessController:
         from chatcopilot.harness.code_health_rules import RULES
         return {"rules": list(RULES), "scopes": [
             {"value": "all", "label": "全部可治理源码"}, {"value": "runtime", "label": "运行时源码"},
-            {"value": "console", "label": "控制台前端"}, {"value": "docs", "label": "说明文档"}],
+            {"value": "console", "label": "控制台（前后端）"}, {"value": "docs", "label": "说明文档"}],
             "default_model": self.settings.get("CHATCOPILOT_HARNESS_MODEL", ""),
             "defaults": {"reasoning_effort": "medium", "max_attempts": 3, "timeout_seconds": 7200},
             "base_commit": git_output(self.repository, "rev-parse", "HEAD")}
@@ -87,7 +87,7 @@ class HarnessController:
         commit = git_output(self.repository, "rev-parse", "HEAD")
         manifest = source_manifest(self.repository)
         digest = manifest_digest(manifest)
-        source = {"kind": "code_health", "scope": scope, "snapshot_digest": digest}
+        source = {"kind": "code_health", "scope": scope, "snapshot_digest": digest, "governance_version": 2}
         context = _digest(source)
         ident = "repair-" + uuid.uuid4().hex
         task, created = self.store.create({
@@ -491,9 +491,10 @@ class HarnessController:
             **self._public(task),
             "attempts": self.store.attempts(task_id),
             **self._commit_status(task),
-            "candidate_available": self._candidate_available(task)
-            if task["status"] == "fixed"
-            else False,
+            "candidate_available": None
+            if task["source"].get("kind") == "code_health" and task["source"].get("governance_version") != 2
+            else self._candidate_available(task) if task["status"] == "fixed" or task.get("checkpoint") else False,
+            "checkpoint_available": self._checkpoint_available(task),
         }
 
     def trace_records(self, task_id: str) -> list[dict[str, Any]]:
@@ -527,6 +528,10 @@ class HarnessController:
         self, *, page: int = 1, limit: int = 20, search: str = "", status: str = "", kind: str = ""
     ) -> dict[str, Any]:
         result = self.store.page(page=page, limit=limit, search=search, status=status, kind=kind)
+        for task in result["tasks"]:
+            if task["source"].get("kind") == "code_health" and not task.get("governance_summary"):
+                from chatcopilot.harness.health_batches import summary
+                task["governance_summary"] = summary(self.store.get(task["task_id"]).get("governance", {}))
         result["tasks"] = [self._public(task) for task in result["tasks"]]
         return result
 
@@ -639,6 +644,8 @@ class HarnessController:
         governance = task.get("governance", {})
         records = [governance.get("before", {}), governance.get("after", {})]
         records.extend(governance.get("baselines", {}).values())
+        for group in governance.get("groups", []):
+            records.extend(group.get("baselines", {}).values())
         for attempt in self.store.attempts(task_id):
             records.extend((attempt.get("verification", {}), attempt.get("after", {})))
         allowed = {check["log"] for record in records for check in record.get("checks", []) if "log" in check}
@@ -655,6 +662,37 @@ class HarnessController:
             stream.seek(max(0, size - 128 * 1024))
             text = stream.read().decode("utf-8", errors="replace")
         return {"text": text, "truncated": size > 128 * 1024}
+
+    def candidate_patch(self, task_id: str) -> bytes:
+        task = self.store.get(task_id)
+        if not self._checkpoint_available(task):
+            raise HarnessError("artifact_changed", "累计检查点缺失或与验收摘要不一致")
+        record = task["checkpoint"]
+        path = self.store.root / "jobs" / task_id / record["path"] / "candidate.patch"
+        private_file(path)
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+            content = stream.read()
+        if hashlib.sha256(content).hexdigest() != record["patch_sha256"]:
+            raise HarnessError("artifact_changed", "累计补丁与检查点摘要不一致")
+        return content
+
+    def _checkpoint_available(self, task: dict[str, Any]) -> bool:
+        from chatcopilot.core.source_snapshot import verify_copy
+        from chatcopilot.harness.health_ledger import source_files
+        record = task.get("checkpoint")
+        if not record or not task.get("verified_manifest"):
+            return False
+        try:
+            relative = Path(record["path"])
+            if relative.is_absolute() or ".." in relative.parts:
+                return False
+            root = self.store.root / "jobs" / task["task_id"] / relative / "source"
+            if root.resolve() != root or set(source_files(root)) != set(task["verified_manifest"]):
+                return False
+            verify_copy(root, task["verified_manifest"])
+            return manifest_digest(task["verified_manifest"]) == record["digest"] == task["verified_digest"]
+        except (OSError, ValueError, HarnessError):
+            return False
 
     def reproducer(self, task_id: str) -> bytes:
         source = self.store.get(task_id)["source"]
@@ -723,6 +761,8 @@ class HarnessController:
             not in {
                 "source",
                 "baseline_manifest",
+                "verified_manifest",
+                "progress_sources",
                 "request_digest",
                 "active_key",
                 "match_key",
@@ -733,12 +773,16 @@ class HarnessController:
             }
         }
         source = task["source"]
+        if source.get("kind") == "code_health":
+            from chatcopilot.harness.health_batches import summary
+            value["governance_summary"] = task.get("governance_summary") or summary(task.get("governance", {}))
         value["source"] = {
             key: source[key]
             for key in (
                 "kind",
                 "scope",
                 "snapshot_digest",
+                "governance_version",
                 "run_id",
                 "revision",
                 "evaluation_id",

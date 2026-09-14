@@ -33,3 +33,26 @@ it("only requests a registered check reference and escapes task identity", async
   await healthApi.log("repair example", "checks/one/log.txt");
   expect(fetch.mock.calls[0][0]).toBe("/api/harness/tasks/repair%20example/check-log?reference=checks%2Fone%2Flog.txt");
 });
+
+it("keeps cancellation and budgets distinct from partial improvements", () => {
+  const governance_summary = { found: 4, fixed: 2, needs_decision: 1, remaining: 1,
+    coverage: "partial" as const, completed_batches: 2, total_batches: 4 };
+  expect(healthStatus({ status: "fixed", governance_summary })).toBe("已修复部分");
+  expect(healthStatus({ status: "cancelled", governance_summary })).toBe("已取消");
+  expect(healthStatus({ status: "blocked", stop_reason: "budget_exhausted", governance_summary })).toBe("已达总时限");
+  expect(healthStatus({ status: "blocked", stop_reason: "execution_failed", governance_summary })).toBe("执行受阻");
+});
+
+it("does not invalidate archived acceptance using new snapshot rules", () => {
+  expect(healthStatus({ status: "fixed", candidate_available: null, governance_summary:
+    { found: 1, fixed: 1, needs_decision: 0, remaining: 0, coverage: "unknown", completed_batches: 0, total_batches: 0 }
+  })).toBe("历史验收通过");
+});
+
+it("keeps accepted findings tied to their checkpoint while the next candidate changes", () => {
+  const task = { candidate_available: false, checkpoint_available: true,
+    checkpoint: { number: 1 }, governance: { resolved_ids: ["finding"] } } as HealthTask;
+  expect(findingStatus({ id: "finding" } as Finding, task)).toBe("已保存在检查点");
+  task.checkpoint_available = false;
+  expect(findingStatus({ id: "finding" } as Finding, task)).toBe("检查点不可读取");
+});

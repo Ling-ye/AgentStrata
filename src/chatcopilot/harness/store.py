@@ -321,7 +321,7 @@ class HarnessStore:
             ).fetchone()[0]
             rows = connection.execute(
                 "SELECT json_remove(payload, '$.baseline_manifest', "
-                "'$.source.evidence', '$.source.trials', '$.evaluations', '$.governance') FROM tasks WHERE "
+                "'$.source.evidence', '$.source.trials', '$.evaluations', '$.governance', '$.verified_manifest', '$.progress_sources') FROM tasks WHERE "
                 + clause
                 + " ORDER BY updated_at DESC,task_id DESC LIMIT ? OFFSET ?",
                 (*args, limit, (page - 1) * limit),

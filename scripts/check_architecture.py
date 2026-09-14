@@ -749,9 +749,15 @@ def check_architecture() -> dict[str, dict[str, list[str]]]:
 
 
 def main() -> int:
+    global ROOT, SRC, RULES
+    from dataclasses import replace
     parser = argparse.ArgumentParser()
+    parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--json", action="store_true", help="emit structured violations")
     args = parser.parse_args()
+    target = args.root.resolve()
+    RULES = tuple(replace(rule, root=target / rule.root.relative_to(ROOT)) for rule in RULES)
+    ROOT, SRC = target, target / "src/chatcopilot"
     violations = check_architecture()
     if args.json:
         print(json.dumps({"violations": violations}, ensure_ascii=False, sort_keys=True))

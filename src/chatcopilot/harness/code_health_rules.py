@@ -8,6 +8,7 @@ from typing import Any
 
 from chatcopilot.core.private_sqlite import json_text
 from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.health_policy import scope_path
 
 RULES = (
     {"id": "architecture", "title": "遵守依赖与职责边界", "detector": "architecture",
@@ -24,9 +25,9 @@ RULES = (
      "reference": "docs/sdd.md", "guidance": "核对命令、符号和当前契约，保留历史记录的历史定位。"},
 )
 SCOPES = {
-    "all": ("src", "console/web/src", "docs"),
+    "all": ("src", "console", "scripts", "docs"),
     "runtime": ("src",),
-    "console": ("console/web/src",),
+    "console": ("console",),
     "docs": ("docs",),
 }
 
@@ -34,19 +35,23 @@ SCOPES = {
 def in_scope(path: str, scope: str) -> bool:
     if scope not in SCOPES:
         raise ValueError("未知扫描范围")
-    return any(path == root or path.startswith(root + "/") for root in SCOPES[scope])
+    return scope_path(path, scope)
 
 
 def finding(rule_id: str, path: str, line: int, summary: str, evidence: str,
-            recommendation: str, *, detector: str, disposition: str = "candidate") -> dict[str, Any]:
+            recommendation: str, *, detector: str, disposition: str = "candidate",
+            group_key: str = "", related_paths: list[str] | None = None,
+            depends_on: list[str] | None = None, change_kind: str = "bugfix") -> dict[str, Any]:
     identity = [rule_id, path, summary, evidence]
     return {"id": hashlib.sha256(json_text(identity).encode()).hexdigest()[:20],
             "rule_id": rule_id, "path": path, "line": line, "summary": summary,
             "evidence": evidence, "recommendation": recommendation,
-            "detector": detector, "disposition": disposition}
+            "detector": detector, "disposition": disposition,
+            "group_key": group_key or f"{rule_id}:{path}", "related_paths": related_paths or [path],
+            "depends_on": depends_on or [], "change_kind": change_kind}
 
 
-def parse_audit(value: Any, root: Path, scope: str) -> dict[str, Any]:
+def parse_audit(value: Any, root: Path, scope: str, *, delivered_paths: tuple[str, ...] = ()) -> dict[str, Any]:
     """Validate model output against source files; it never defines permissions."""
     if not isinstance(value, dict) or set(value) != {"findings", "inspected_paths", "summary"}:
         raise HarnessError("audit_invalid", "巡检结果缺少问题清单、阅读文件或摘要")
@@ -69,13 +74,15 @@ def parse_audit(value: Any, root: Path, scope: str) -> dict[str, Any]:
     inspected = list(dict.fromkeys(value["inspected_paths"]))
     for name in inspected:
         source_path(name, finding_scope=False)
-    if not any(in_scope(name, scope) for name in inspected):
+    if not delivered_paths and not any(in_scope(name, scope) for name in inspected):
         raise HarnessError("audit_incomplete", "巡检没有读取任何范围内源码，无法确认巡检结果")
     rows = []
     for item in value["findings"]:
-        if not isinstance(item, dict) or set(item) != {
+        required = {
             "rule_id", "path", "line", "summary", "evidence", "recommendation", "disposition"
-        }:
+        }
+        optional = {"group_key", "related_paths", "depends_on", "change_kind"}
+        if not isinstance(item, dict) or not required.issubset(item) or set(item) - required - optional:
             raise HarnessError("audit_invalid", "巡检问题字段无效")
         if item["rule_id"] not in {r["id"] for r in RULES}:
             raise HarnessError("audit_invalid", "巡检引用了未知规则")
@@ -88,5 +95,14 @@ def parse_audit(value: Any, root: Path, scope: str) -> dict[str, Any]:
             raise HarnessError("audit_invalid", "巡检问题没有完整证据和修复建议")
         if item["disposition"] not in {"candidate", "needs_decision"}:
             raise HarnessError("audit_invalid", "巡检处置类型无效")
+        if "group_key" in item and (not isinstance(item["group_key"], str) or not item["group_key"].strip()):
+            raise HarnessError("audit_invalid", "根因分组标识无效")
+        if item.get("change_kind", "bugfix") not in {"bugfix", "refactor"}:
+            raise HarnessError("audit_invalid", "变更类型无效")
+        for key in ("related_paths", "depends_on"):
+            if key in item and (not isinstance(item[key], list) or any(not isinstance(x, str) for x in item[key])):
+                raise HarnessError("audit_invalid", "关联路径或依赖格式无效")
+        for name in item.get("related_paths", []):
+            source_path(name, finding_scope=False)
         rows.append(finding(**item, detector="codex"))
     return {"findings": rows, "inspected_paths": inspected, "summary": value["summary"]}

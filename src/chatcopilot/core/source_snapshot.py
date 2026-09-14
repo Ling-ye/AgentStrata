@@ -34,8 +34,6 @@ def source_manifest(root: Path) -> dict[str, dict[str, Any]]:
         raise ValueError("source root must be canonical")
     result = {}
     for name in git_source_paths(root):
-        if name.endswith(".env") or Path(name).name.startswith(".env"):
-            continue
         path = root / name
         size = path.lstat().st_size
         digest = trusted_source_sha256(path, root=root, max_bytes=max(1, size))
@@ -79,7 +77,7 @@ def verify_copy(root: Path, manifest: dict[str, dict[str, Any]]) -> None:
             raise ValueError("frozen source identity changed")
 
 
-def verification_index(root: Path, output: Path) -> dict[str, str]:
+def verification_index(root: Path, output: Path, *, manifest: dict[str, Any] | None = None) -> dict[str, str]:
     """Project current source into a disposable index; never stage the operator's tree.
 
     Packaging checks use Git's file inventory. New, unstaged source must belong to
@@ -101,7 +99,7 @@ def verification_index(root: Path, output: Path) -> dict[str, str]:
             raise ValueError("Unable to prepare the disposable verification index")
         return result.stdout.strip()
 
-    manifest = source_manifest(root)
+    manifest = source_manifest(root) if manifest is None else manifest
     git("read-tree", "--empty")
     entries = []
     for name, record in manifest.items():

@@ -46,7 +46,7 @@ export interface RepairTask {
 }
 export interface RepairProgress {
   state: "ready" | "empty" | "partial";
-  source: { id: string; kind: "prepare" | "coding" | "review" | "audit"; number: number | null; current: boolean } | null;
+  source: { id: string; kind: "prepare" | "coding" | "review" | "audit"; label?: string; number: number | null; current: boolean } | null;
   updated_at: number | null;
   events: Array<{ id: string; type: "agent_message" | "command_execution"; text?: string;
     command?: string; aggregated_output?: string; exit_code?: number | null; truncated: boolean }>;
