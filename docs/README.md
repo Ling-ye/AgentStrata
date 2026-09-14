@@ -13,6 +13,7 @@
 | 首次安装到 Linux / WSL | [`deployment.md`](deployment.md) | [`operations.md`](operations.md) |
 | 更新、重启、看日志或诊断 | [`operations.md`](operations.md) | [`../deploy/wsl/README_WSL.md`](../deploy/wsl/README_WSL.md) |
 | 管理控制台或运行评测 | [`console.md`](console.md) | [`evaluation-glossary.md`](evaluation-glossary.md) |
+| 扫描并清理代码漂移 | [`console.md#代码治理`](console.md#代码治理) | [`operations.md#代码治理`](operations.md#代码治理)、[设计规格](../specs/code-health-gc/spec.md) |
 | 准备后续 GitHub Release | [`releasing.md`](releasing.md) | [`../CHANGELOG.md`](../CHANGELOG.md) |
 | 获取社区支持 | [`../SUPPORT.md`](../SUPPORT.md) | [`../SECURITY.md`](../SECURITY.md) |
 | 管理共享 Docker 服务 | [`../deploy/docker/README.md`](../deploy/docker/README.md) | [`operations.md`](operations.md) |

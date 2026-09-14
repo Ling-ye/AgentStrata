@@ -195,6 +195,7 @@ def _write_manifest(report_dir: Path, payload: dict[str, object]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("profile", choices=("fast", "full"))
+    parser.add_argument("--keep-going", action="store_true", help="collect every check for baseline comparison")
     parser.add_argument(
         "--report-dir",
         type=Path,
@@ -218,6 +219,7 @@ def main() -> int:
             pass
         _write_manifest(report_dir, manifest)
 
+    failure_exit = 0
     for index, check in enumerate(_profiles()[args.profile], start=1):
         print(f"\n==> {check.name}", flush=True)
         started_at = time.time()
@@ -323,16 +325,19 @@ def main() -> int:
             _write_manifest(report_dir, manifest)
         if completed.returncode:
             print(f"FAILED: {check.name} (exit {completed.returncode})", file=sys.stderr)
+            failure_exit = failure_exit or completed.returncode
+            if args.keep_going:
+                continue
             manifest.update({"finished_at": finished_at, "ok": False})
             if report_dir is not None:
                 _write_manifest(report_dir, manifest)
             return completed.returncode
     finished_at = time.time()
-    manifest.update({"finished_at": finished_at, "ok": True})
+    manifest.update({"finished_at": finished_at, "ok": not failure_exit})
     if report_dir is not None:
         _write_manifest(report_dir, manifest)
-    print(f"\nOK: repository {args.profile} profile")
-    return 0
+    print(f"\n{'FAILED' if failure_exit else 'OK'}: repository {args.profile} profile")
+    return failure_exit
 
 
 if __name__ == "__main__":

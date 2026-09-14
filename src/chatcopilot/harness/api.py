@@ -63,6 +63,57 @@ class HarnessController:
         )
         self.sources: SourceReader = RepairSources(self.evaluator, task_reader)
 
+    def code_health_config(self) -> dict[str, Any]:
+        from chatcopilot.harness.code_health_rules import RULES
+        return {"rules": list(RULES), "scopes": [
+            {"value": "all", "label": "全部可治理源码"}, {"value": "runtime", "label": "运行时源码"},
+            {"value": "console", "label": "控制台前端"}, {"value": "docs", "label": "说明文档"}],
+            "default_model": self.settings.get("CHATCOPILOT_HARNESS_MODEL", ""),
+            "defaults": {"reasoning_effort": "medium", "max_attempts": 3, "timeout_seconds": 7200},
+            "base_commit": git_output(self.repository, "rev-parse", "HEAD")}
+
+    def start_code_health(self, scope: str, options: RepairOptions, *, request_id: str,
+                          launch: bool = True) -> dict[str, Any]:
+        from chatcopilot.harness.code_health_rules import SCOPES
+        from chatcopilot.core.source_snapshot import verify_copy
+        if scope not in SCOPES or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_id):
+            raise ValueError("无效的扫描范围或请求 ID")
+        request_digest = _digest({"kind": "code_health", "scope": scope, "options": asdict(options)})
+        previous = self.store.by_request(request_id)
+        if previous is not None:
+            if previous["request_digest"] != request_digest:
+                raise HarnessError("conflict", "同一请求 ID 的内容已变化")
+            return self.get(previous["task_id"])
+        commit = git_output(self.repository, "rev-parse", "HEAD")
+        manifest = source_manifest(self.repository)
+        digest = manifest_digest(manifest)
+        source = {"kind": "code_health", "scope": scope, "snapshot_digest": digest}
+        context = _digest(source)
+        ident = "repair-" + uuid.uuid4().hex
+        task, created = self.store.create({
+            "task_id": ident, "pipeline_version": PIPELINE_VERSION, "request_key": request_id,
+            "request_digest": request_digest, "context_key": context, "match_key": context,
+            "active_key": _digest([context, asdict(options)]), "base_commit": commit,
+            "repository": str(self.repository), "source": source, "baseline_manifest": manifest,
+            "evidence_digest": digest, "options": asdict(options), "review_and_commit": False,
+            "unit": "agentstrata-harness-" + ident[7:], "dispatch_state": "creating",
+        })
+        if created:
+            try:
+                frozen = private_directory(self.store.root / "jobs" / ident) / "source"
+                copy_sources(self.repository, frozen, manifest)
+                verify_copy(frozen, manifest)
+                if (source_manifest(self.repository) != manifest
+                        or git_output(self.repository, "rev-parse", "HEAD") != commit):
+                    raise HarnessError("source_changed", "冻结期间源码发生变化，请重新启动治理")
+            except Exception as exc:
+                self.store.update(ident, status="blocked", stage="snapshot", dispatch_state="failed",
+                                  error_code=getattr(exc, "code", "snapshot_failed"), message=safe_error(exc))
+            else:
+                if launch:
+                    self._launch(task)
+        return self.get(task["task_id"])
+
     def start(
         self,
         evaluation_id: str,
@@ -339,7 +390,10 @@ class HarnessController:
             directory = private_directory(self.store.root / "jobs" / task["task_id"])
             runtime = directory / "runtime"
             if not runtime.exists():
-                copy_sources(self.repository, runtime, source_manifest(self.repository))
+                if task["source"].get("kind") == "code_health":
+                    copy_sources(directory / "source", runtime, task["baseline_manifest"])
+                else:
+                    copy_sources(self.repository, runtime, source_manifest(self.repository))
             environment = {
                 name: os.environ[name]
                 for name in (
@@ -470,9 +524,9 @@ class HarnessController:
         return archive.step(ref, span_id, **kwargs) if span_id else archive.summary(ref, after=after, **kwargs)
 
     def list(
-        self, *, page: int = 1, limit: int = 20, search: str = "", status: str = ""
+        self, *, page: int = 1, limit: int = 20, search: str = "", status: str = "", kind: str = ""
     ) -> dict[str, Any]:
-        result = self.store.page(page=page, limit=limit, search=search, status=status)
+        result = self.store.page(page=page, limit=limit, search=search, status=status, kind=kind)
         result["tasks"] = [self._public(task) for task in result["tasks"]]
         return result
 
@@ -496,6 +550,8 @@ class HarnessController:
 
     def resume(self, task_id: str) -> dict[str, Any]:
         task = self.store.get(task_id)
+        if task["source"].get("kind") == "code_health":
+            raise HarnessError("new_snapshot_required", "代码治理请重新启动，以当前源码创建新快照")
         if task.get("pipeline_version", PIPELINE_VERSION) != PIPELINE_VERSION:
             raise HarnessError("source_archived", "旧 worker 保留原状；请创建接续任务加载当前验证流程")
         if task["status"] in ACTIVE:
@@ -566,12 +622,39 @@ class HarnessController:
         return content
 
     def evidence(self, task_id: str) -> dict[str, Any]:
-        source = self.store.get(task_id)["source"]
+        task = self.store.get(task_id)
+        source = task["source"]
+        if source.get("kind") == "code_health":
+            return task.get("governance", {})
         return {
             key: source[key]
             for key in ("evidence", "feedback", "trials", "case_definition", "diagnosis", "conditions", "agent_case")
             if key in source
         }
+
+    def check_log(self, task_id: str, reference: str) -> dict[str, Any]:
+        task = self.store.get(task_id)
+        if task["source"].get("kind") != "code_health":
+            raise HarnessError("not_found", "此任务没有代码治理检查")
+        governance = task.get("governance", {})
+        records = [governance.get("before", {}), governance.get("after", {})]
+        records.extend(governance.get("baselines", {}).values())
+        for attempt in self.store.attempts(task_id):
+            records.extend((attempt.get("verification", {}), attempt.get("after", {})))
+        allowed = {check["log"] for record in records for check in record.get("checks", []) if "log" in check}
+        allowed.update(check["log"] for check in task.get("check_logs", []))
+        if reference not in allowed:
+            raise HarnessError("not_found", "此任务没有登记该检查日志")
+        root = self.store.root / "jobs" / task_id
+        path = root / reference
+        if path.resolve() != path or not path.is_relative_to(root):
+            raise HarnessError("artifact_changed", "检查日志位置已变化")
+        private_file(path)
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+            size = os.fstat(stream.fileno()).st_size
+            stream.seek(max(0, size - 128 * 1024))
+            text = stream.read().decode("utf-8", errors="replace")
+        return {"text": text, "truncated": size > 128 * 1024}
 
     def reproducer(self, task_id: str) -> bytes:
         source = self.store.get(task_id)["source"]
@@ -654,6 +737,8 @@ class HarnessController:
             key: source[key]
             for key in (
                 "kind",
+                "scope",
+                "snapshot_digest",
                 "run_id",
                 "revision",
                 "evaluation_id",

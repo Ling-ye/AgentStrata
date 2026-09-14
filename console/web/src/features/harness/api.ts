@@ -46,13 +46,15 @@ export interface RepairTask {
 }
 export interface RepairProgress {
   state: "ready" | "empty" | "partial";
-  source: { id: string; kind: "prepare" | "coding" | "review"; number: number | null; current: boolean } | null;
+  source: { id: string; kind: "prepare" | "coding" | "review" | "audit"; number: number | null; current: boolean } | null;
   updated_at: number | null;
   events: Array<{ id: string; type: "agent_message" | "command_execution"; text?: string;
     command?: string; aggregated_output?: string; exit_code?: number | null; truncated: boolean }>;
   truncated: boolean;
   message: string | null;
 }
+export type ProgressTask = Pick<RepairTask, "task_id" | "status" | "stage" | "options" | "elapsed_seconds" |
+  "heartbeat_at" | "current_attempt" | "preparation_revisions" | "next_action" | "local_commit" | "commit_in_main" | "commit_state">;
 export const ACTIVE = ["queued", "running", "cancel_requested"];
 export const REPAIR_LABELS: Record<string, string> = {
   queued: "等待启动", running: "执行中", cancel_requested: "正在取消", fixed: "已修复 · 待合入",
@@ -67,6 +69,7 @@ export function stageLabel(stage: string): string {
   if (stage.startsWith("confirm-")) return `第 ${stage.slice(8)} 轮独立确认`;
   if (stage.startsWith("verify-")) return `第 ${stage.slice(7)} 轮复测`;
   return ({ auto_correcting: "自动修正复现方案", waiting_image: "等待原图", queued: "等待启动", self_check: "来源自检", prepare_reproducer: "建立复现测试",
+    snapshot: "冻结源码", scan: "规则检查", audit: "只读巡检", verify: "候选验收",
     review: "AI 审核", commit: "本地提交", reproduce: "确认当前问题", baseline: "建立回归基线", repository_baseline: "仓库回归基线", coding: "生成候选", done: "完成" } as Record<string, string>)[stage] ?? stage;
 }
 export function sourceLabel(task: RepairTask): string {
@@ -74,16 +77,17 @@ export function sourceLabel(task: RepairTask): string {
 }
 export type StartRepair = { source_kind: SourceKind; case_instance_id?: string;
   bot_id?: string; run_id?: string; feedback?: RepairFeedback; review_and_commit?: boolean; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number };
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function harnessRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/harness${path}`, init);
   const value = await response.json();
   if (!response.ok) throw new Error(typeof value.detail === "string" ? value.detail : value.detail?.message || "Harness 暂不可用");
   return value as T;
 }
+const request = harnessRequest;
 const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 export const harnessApi = {
   load: (kind: SourceKind, sourceId: string, botId: string) => request<SourcePreview>("/sources/load", post({ kind, source_id: sourceId, bot_id: botId })),
-  history: (page: number, search: string, status: string, signal?: AbortSignal) => request<{ tasks: RepairTask[]; total: number }>(`/tasks?${new URLSearchParams({ page: String(page), search, status })}`, { signal }),
+  history: (page: number, search: string, status: string, signal?: AbortSignal, kind = "") => request<{ tasks: RepairTask[]; total: number }>(`/tasks?${new URLSearchParams({ page: String(page), search, status, ...(kind ? { kind } : {}) })}`, { signal }),
   get: (taskId: string, signal?: AbortSignal) => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}`, { signal }),
   progress: (taskId: string, signal?: AbortSignal) => request<RepairProgress>(`/tasks/${encodeURIComponent(taskId)}/progress`, { signal, cache: "no-store" }),
   evidence: (taskId: string) => request<Record<string, unknown>>(`/tasks/${encodeURIComponent(taskId)}/evidence`),
@@ -92,7 +96,7 @@ export const harnessApi = {
   action: (taskId: string, action: "cancel" | "resume" | "continue") => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/${action}`, { method: "POST" }),
 };
 
-export function repairStatusLabel(task: RepairTask): string {
+export function repairStatusLabel(task: ProgressTask): string {
   if (task.next_action === "technical_failure") return "技术失败";
   if (task.status === "running" && task.stage === "auto_correcting") return "自动修正中";
   if (task.local_commit) return task.commit_in_main === true ? "已进入本地 main" : "已本地提交";

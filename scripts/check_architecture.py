@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -749,8 +750,12 @@ def check_architecture() -> dict[str, dict[str, list[str]]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.parse_args()
+    parser.add_argument("--json", action="store_true", help="emit structured violations")
+    args = parser.parse_args()
     violations = check_architecture()
+    if args.json:
+        print(json.dumps({"violations": violations}, ensure_ascii=False, sort_keys=True))
+        return 1 if violations else 0
     if not violations:
         modules = _production_modules()
         edges = {

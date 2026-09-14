@@ -20,6 +20,7 @@
 | 机器人实例 | 任务 / 分层配置 / 运行状态 / 能力与工具，四个同级页签；任务内左侧列表、右侧流程，窄屏单列切换；服务日志统一入口 |
 | 组件目录 | 按 tools / prompts / agents / context 四个 surface 统一浏览工具、提示词、Agent 和上下文组件（只读卡片） |
 | 质量评测 | 新建评测 / 评测记录 / 任务集 |
+| 代码治理 | 当前工作区扫描、清理候选、验证证据与分页历史；共用 Harness 任务宿主 |
 | 设置 | 控制台本身 |
 
 ### 控制台 API
@@ -39,4 +40,3 @@
 - 后端 `console/control/yaml_editor.py` 使用 `ruamel.yaml` round-trip 编辑 `bot.yaml` 和 `mcp/servers.yaml`，保留注释和格式；该依赖已声明在 `console/requirements.txt`，`deploy_console.sh` / `setup_console.sh` 安装时会一并装入 venv。
 - `console/control/catalog.py` 通过 `component_catalog` 读取 tool pack / tool feature / MCP catalog / subagent preset / workflow DTO，并聚合提示词占位和上下文来源占位为统一 `CatalogItem`。
 -  编辑后点「保存并重启」会先取得同实例 TaskManager 串行资格，再写入源仓配置并调用统一 `update_instance.sh`；该入口通常同步后快速应用配置并重启，只有依赖、安装脚本变化或实例 venv 缺失时才完整 bootstrap。仅「保存配置」同步写源仓。配置修改留在 WSL 源仓，由用户在 WSL git 工作区提交。
-

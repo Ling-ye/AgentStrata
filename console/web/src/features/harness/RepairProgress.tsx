@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Empty, Space, Spin, Tag, Typography } from "@arco-design/web-react";
-import { ACTIVE, harnessApi, repairStatusLabel, stageLabel, type RepairTask } from "./api";
+import { ACTIVE, harnessApi, repairStatusLabel, stageLabel, type ProgressTask } from "./api";
 import { heartbeatStatus, progressSourceLabel, repairRoundLabel } from "./progress";
 import "./progress.css";
 
 const { Text } = Typography;
 
-export function RepairProgress({ task, refreshTask }: { task: RepairTask; refreshTask: () => Promise<unknown> }) {
+export function RepairProgress({ task, refreshTask, title = "修复进度", statusLabel }: {
+  task: ProgressTask; refreshTask: () => Promise<unknown>; title?: string; statusLabel?: string;
+}) {
   const client = useQueryClient();
   const active = ACTIVE.includes(task.status);
   const wasActive = useRef(active);
@@ -34,13 +36,13 @@ export function RepairProgress({ task, refreshTask }: { task: RepairTask; refres
   const heartbeat = heartbeatStatus(task, now);
   const round = repairRoundLabel(task);
   const data = query.data;
-  return <section className="repair-progress" aria-label="修复进度">
-    <Space wrap><Text bold>修复进度</Text>
+  return <section className="repair-progress" aria-label={title}>
+    <Space wrap><Text bold>{title}</Text>
       <Button size="small" loading={query.isFetching} onClick={() => {
         setNow(Date.now());
         void Promise.all([refreshTask(), query.refetch()]);
       }}>刷新进度</Button></Space>
-    <Space wrap><Tag color={task.status === "fixed" ? "green" : "blue"}>{repairStatusLabel(task)}</Tag>
+    <Space wrap><Tag color={task.status === "fixed" ? "green" : "blue"}>{statusLabel ?? repairStatusLabel(task)}</Tag>
       <Text>阶段：{stageLabel(task.stage)}</Text>{round && <Text>{round}</Text>}
       <Text type="secondary">{task.elapsed_seconds == null ? "用时尚未记录" : `已用 ${Math.round(task.elapsed_seconds)} 秒`} / {task.options.timeout_seconds} 秒</Text>
       <Text type="secondary">{heartbeat.label}</Text></Space>

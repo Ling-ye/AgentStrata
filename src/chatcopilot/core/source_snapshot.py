@@ -77,3 +77,40 @@ def verify_copy(root: Path, manifest: dict[str, dict[str, Any]]) -> None:
             or bool(path.stat().st_mode & stat.S_IXUSR) != expected["executable"]
         ):
             raise ValueError("frozen source identity changed")
+
+
+def verification_index(root: Path, output: Path) -> dict[str, str]:
+    """Project current source into a disposable index; never stage the operator's tree.
+
+    Packaging checks use Git's file inventory. New, unstaged source must belong to
+    that inventory too. Objects and the index live entirely in private artifacts;
+    no hooks, attributes/filters, refs or repository index are written.
+    """
+    output = private_directory(output)
+    objects = private_directory(output / "objects")
+    common = git_output(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    overrides = {"GIT_INDEX_FILE": str(output / "index"), "GIT_OBJECT_DIRECTORY": str(objects),
+                 "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(Path(common) / "objects")}
+    environment = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    environment.update(overrides)
+
+    def git(*args: str, data: bytes | None = None) -> bytes:
+        result = subprocess.run(["git", "-C", str(root), *args], input=data, capture_output=True,
+                                env=environment, timeout=60)
+        if result.returncode:
+            raise ValueError("Unable to prepare the disposable verification index")
+        return result.stdout.strip()
+
+    manifest = source_manifest(root)
+    git("read-tree", "--empty")
+    entries = []
+    for name, record in manifest.items():
+        content = (root / name).read_bytes()
+        if hashlib.sha256(content).hexdigest() != record["sha256"]:
+            raise ValueError("Source changed while preparing verification index")
+        blob = git("hash-object", "-w", "--no-filters", "--stdin", data=content)
+        mode = b"100755" if record["executable"] else b"100644"
+        entries.append(mode + b" " + blob + b"\t" + os.fsencode(name) + b"\0")
+    git("update-index", "-z", "--index-info", data=b"".join(entries))
+    (output / "index").chmod(0o600)
+    return overrides

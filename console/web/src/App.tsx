@@ -8,16 +8,17 @@ const BotsPage = lazy(() => import("./pages/BotsPage"));
 const ToolsPage = lazy(() => import("./pages/ToolsPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const HarnessPage = lazy(() => import("./pages/HarnessPage"));
+const CodeHealthPage = lazy(() => import("./pages/CodeHealthPage"));
 const EvalsPage = lazy(() => import("./pages/EvalsPage"));
 
 const { Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
 export default function App() {
-  const [page, setPage] = useState<PageKey>(() => { const candidate = window.location.hash.slice(1).split("?")[0]; return ["overview", "services", "bots", "tools", "evals", "harness", "settings"].includes(candidate) ? candidate as PageKey : "overview"; });
+  const [page, setPage] = useState<PageKey>(() => { const candidate = window.location.hash.slice(1).split("?")[0]; return ["overview", "services", "bots", "tools", "evals", "harness", "code-health", "settings"].includes(candidate) ? candidate as PageKey : "overview"; });
   const navigate = useCallback((next: PageKey) => { window.location.hash = next; setPage(next); }, []);
   useEffect(() => {
-    const update = () => { const next = window.location.hash.slice(1).split("?")[0]; if (["overview", "services", "bots", "tools", "evals", "harness", "settings"].includes(next)) setPage(next as PageKey); };
+    const update = () => { const next = window.location.hash.slice(1).split("?")[0]; if (["overview", "services", "bots", "tools", "evals", "harness", "code-health", "settings"].includes(next)) setPage(next as PageKey); };
     window.addEventListener("hashchange", update);
     return () => window.removeEventListener("hashchange", update);
   }, []);
@@ -53,6 +54,7 @@ export default function App() {
           {page === "tools" && <ToolsPage visible />}
           {page === "evals" && <EvalsPage visible />}
           {page === "harness" && <HarnessPage />}
+          {page === "code-health" && <CodeHealthPage />}
           {page === "settings" && <SettingsPage />}
         </Suspense>
       </Content>

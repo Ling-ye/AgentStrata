@@ -19,6 +19,10 @@ worktree 中调用 Codex，使用原题单复测。目标通过且原有通过�
 
 ## Design
 
+本规格的 Case/机器人失败修复与[代码治理](../code-health-gc/spec.md)共用 Harness 任务设施。
+`code_health` 是独立来源和执行流程，使用当前工作区快照，不要求失败 Case，也不启用本规格
+的自动提交；两类任务共享维护锁、worker、公开进度和 artifact 读取，历史按类型筛选。
+
 遵循 [四层运行时基线](../runtime-four-layer-definition/spec.md) 与
 [Evaluation 服务边界](../evaluation-service-boundary/spec.md)。Harness 是四层之外的可选
 配套模块，独立命令与按需 systemd worker 拥有修复生命周期；Evaluation 只拥有测评与

@@ -18,6 +18,7 @@ def permission_config(
         filesystem.update(dict.fromkeys(map(str, scope.readable_roots), "read"))
         if scope.native_write and not read_only:
             filesystem.update(dict.fromkeys(map(str, scope.writable_roots), "write"))
+        filesystem.update(dict.fromkeys(map(str, scope.protected_roots), "read"))
     else:
         filesystem[str(workdir)] = "read"
     filesystem.update(dict.fromkeys(private_paths, "deny"))

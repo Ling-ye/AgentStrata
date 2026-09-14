@@ -60,6 +60,16 @@ class LoadSource(BaseModel):
     bot_id: str = ""
 
 
+class CreateCodeHealth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scope: Literal["all", "runtime", "console", "docs"] = "all"
+    request_id: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    reasoning_effort: str = "medium"
+    max_attempts: int = Field(default=3, ge=1)
+    timeout_seconds: int = Field(default=7200, ge=1)
+
+
 def _controller(request: Request):
     from chatcopilot.harness.api import HarnessController
 
@@ -151,6 +161,25 @@ def load_source(request: Request, body: LoadSource):
     return _call(lambda: _controller(request).load_source(body.kind, body.source_id, body.bot_id))
 
 
+@router.get("/code-health/config")
+def code_health_config(request: Request):
+    return _call(lambda: _controller(request).code_health_config())
+
+
+@router.post("/code-health/tasks")
+def create_code_health(request: Request, body: CreateCodeHealth):
+    from chatcopilot.harness.models import RepairOptions
+    _mutation_access(request)
+    return _call(lambda: _controller(request).start_code_health(
+        body.scope, RepairOptions(body.model, body.reasoning_effort, body.max_attempts, body.timeout_seconds),
+        request_id=body.request_id))
+
+
+@router.get("/tasks/{task_id}/check-log")
+def check_log(request: Request, task_id: str, reference: str):
+    return _call(lambda: _controller(request).check_log(task_id, reference))
+
+
 @router.get("/tasks")
 def history(
     request: Request,
@@ -158,10 +187,12 @@ def history(
     limit: int = Query(20, ge=1, le=100),
     search: str = Query("", max_length=256),
     status: str = "",
+    kind: Literal["", "repair", "code_health"] = "",
 ):
     return _call(
-        lambda: _controller(request).list(page=page, limit=limit, search=search, status=status)
-    )
+            lambda: _controller(request).list(page=page, limit=limit, search=search, status=status,
+                                              **({"kind": kind} if kind else {}))
+        )
 
 
 @router.get("/tasks/{task_id}/evidence")

@@ -42,7 +42,7 @@ export default function HarnessPage() {
   const models = repairModels(inspection.data?.current);
   const model = selectedModel || models.defaultModel;
   const history = useQuery({ queryKey: ["harness-history", page, search, status],
-    queryFn: ({ signal }) => harnessApi.history(page, search, status, signal), retry: false, refetchInterval: 5000 });
+    queryFn: ({ signal }) => harnessApi.history(page, search, status, signal, "repair"), retry: false, refetchInterval: 5000 });
   useEffect(() => {
     const update = () => setTaskId(taskFromHash());
     window.addEventListener("hashchange", update);

@@ -29,6 +29,12 @@
 
 ## 单 Case Harness 独立性
 
+代码治理是同一 Harness 宿主中的独立工作流，来源为 `code_health`，入口位于并列的
+「代码治理」页面。它复用任务存储、调度、维护锁和进度，冻结当前工作区并按规则扫描，
+不要求失败 Case，不调用 Evaluation，不继承自动提交。治理修改与验收以冻结源码为基准，
+独立审查通过后只交付候选。具体契约见 [代码治理](../specs/code-health-gc/spec.md)。
+以下单 Case 的复现、模型重复执行及提交规则仅适用于原有 Case/机器人任务修复。
+
 - **单 Case Harness 独立性**：`chatcopilot.harness` 拥有按需 worker、任务与尝试数据库；
   通过来源、验证、编程和 Git 交付适配器协作，Evaluation 不反向依赖 Harness。测评数据库由
   Evaluation 服务校验并保存新增结果，历史文件不批量迁移；Console 组合查询两个模块，

@@ -22,6 +22,10 @@ BODY_BYTES = 8 * 1024
 
 def _logs(task: dict[str, Any], attempts: list[dict[str, Any]]):
     stage = task["stage"]
+    if task.get("source", {}).get("kind") == "code_health":
+        yield ("audit", "public-events.jsonl"), {
+            "id": "audit", "kind": "audit", "number": None, "current": stage == "audit",
+        }
     preparing = stage in {"prepare_reproducer", "auto_correcting"}
     revisions = task.get("preparation_revisions", [])
     latest = max((row["revision"] for row in revisions), default=None)

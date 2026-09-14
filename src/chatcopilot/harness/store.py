@@ -300,15 +300,20 @@ class HarnessStore:
             ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
-    def page(self, *, page: int, limit: int, search: str, status: str) -> dict[str, Any]:
+    def page(self, *, page: int, limit: int, search: str, status: str, kind: str = "") -> dict[str, Any]:
         if page < 1 or not 1 <= limit <= 100 or len(search) > 256:
             raise ValueError("无效的历史查询参数")
+        if kind not in {"", "repair", "code_health"}:
+            raise ValueError("未知任务类型")
         clause = (
             "(?='' OR status=?) AND (?='' OR instr(lower(task_id || ' ' || "
             "COALESCE(json_extract(payload, '$.source.evaluation_id'),'') || ' ' || "
             "COALESCE(json_extract(payload, '$.source.case_instance_id'),'') || ' ' || "
             "COALESCE(json_extract(payload, '$.source.run_id'),'')), lower(?))>0)"
         )
+        if kind:
+            clause += " AND COALESCE(json_extract(payload, '$.source.kind'),'evaluation') " + (
+                "= 'code_health'" if kind == "code_health" else "!= 'code_health'")
         args = (status, status, search, search)
         with self.database.connect() as connection:
             total = connection.execute(
@@ -316,7 +321,7 @@ class HarnessStore:
             ).fetchone()[0]
             rows = connection.execute(
                 "SELECT json_remove(payload, '$.baseline_manifest', "
-                "'$.source.evidence', '$.source.trials', '$.evaluations') FROM tasks WHERE "
+                "'$.source.evidence', '$.source.trials', '$.evaluations', '$.governance') FROM tasks WHERE "
                 + clause
                 + " ORDER BY updated_at DESC,task_id DESC LIMIT ? OFFSET ?",
                 (*args, limit, (page - 1) * limit),

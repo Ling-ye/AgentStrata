@@ -792,6 +792,8 @@ Console 安装/更新入口先证明 Harness 空闲，并在整个更新过程�
 
 ## 单 Case AI Harness
 
+代码主动治理的使用方式见[代码治理](#代码治理)。两类任务共用后台设施和维护窗口。
+
 Harness 是可选的独立模块，通过同 UID Evaluation 客户端读取结果和提交复测，
 按需创建 systemd transient worker，没有常驻 Harness 服务。Console 关闭不取消任务。
 需要带 Git 元数据的源码仓库、Linux/WSL user systemd、bubblewrap 和原生 Codex 二进制。
@@ -952,3 +954,22 @@ Harness 的 `harness.sqlite3` 只保存任务和尝试，两者不跨库写表�
 `deploy/wsl/harness.env.example`；引用已配置的原生 Linux Codex 可执行文件和专用
 worker 凭据目录，不自动继承机器人的 `local.env`。Console 安装包含现有 `dev` 依赖组，
 供 Harness 的冻结测试和受信本地提交检查使用；机器人实例仍只安装 `agent + acp`。
+
+## 代码治理
+
+进入 Console「代码治理」，选择全部源码、运行时、控制台前端或文档范围，填写可用的 Codex
+模型，点击「开始垃圾回收」。默认使用当前工作区快照，包含未提交的源码；每轮交付一组相关
+问题的清理候选。高级参数沿用 Harness 的模型推理强度、最多 3 次尝试和 2 小时总期限，可调整。
+
+执行环境复用上一节的 `harness.env`、原生 Codex 和专用 worker 凭据。可用
+`CHATCOPILOT_HARNESS_MODEL` 配置页面默认模型，未配置时在页面填写。需要 Linux/WSL 的
+systemd 用户服务、bubblewrap 和项目开发依赖；修改前端时还需要已安装的 Console Node 依赖。
+任务共用 Harness 存储及维护窗口，关闭 Console 不取消后台工作。
+
+在详情查看问题依据、当前阶段、公开执行动态和检查日志。候选必须通过固定检查与独立审查，
+才显示「已验证，待人工提交」。下载的补丁相对于启动时的源码快照，不能把原工作区此前的修改
+当作此次清理成果。应用补丁前检查当前源码是否仍匹配该快照；提交仍由操作者完成。
+
+取消或中断后保留任务和证据，重新启动将创建新快照。不要在任务运行中编辑其候选目录。
+如果依赖、检查器或模型执行失败，先看相应阶段日志；失败或待判断项不会标记为已清理。
+治理不操作测评结果，不调用机器人，不自动提交、推送、创建 PR、合并或部署。
