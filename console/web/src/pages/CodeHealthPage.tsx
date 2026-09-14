@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Descriptions, Drawer, Empty, Input, InputNumber, Select, Space, Spin, Table, Tabs, Tag, Typography } from "@arco-design/web-react";
 import PageSection from "../shared/ui/PageSection";
+import { api } from "../api";
+import { repairModels } from "../features/harness/repairModels";
 import { ACTIVE, harnessApi, stageLabel } from "../features/harness/api";
 import { RepairProgress } from "../features/harness/RepairProgress";
 import { healthApi, healthLabels, healthStatus, healthSummary, findingStatus, type Check, type Finding, type HealthTask, type Scope } from "../features/codeHealth/api";
@@ -27,6 +29,18 @@ export default function CodeHealthPage() {
   const [rulesOpen, setRulesOpen] = useState(false);
   const submitted = useRef({ body: "", requestId: "" });
   const config = useQuery({ queryKey: ["code-health-config"], queryFn: ({ signal }) => healthApi.config(signal), retry: false });
+  const bots = useQuery({ queryKey: ["bots"], queryFn: api.listBots });
+  const inspections = useQueries({ queries: (bots.data ?? []).map(bot => ({
+    queryKey: ["inspection", bot.instance_id],
+    queryFn: ({ signal }: { signal: AbortSignal }) => api.inspection(bot.instance_id, undefined, undefined, signal),
+    retry: false, staleTime: 60_000,
+  })) });
+  const configuredModels = inspections.map(query => repairModels(query.data?.current));
+  const defaultModel = config.data?.default_model ?? "";
+  const modelOptions = [...new Set([defaultModel, ...configuredModels.flatMap(result => result.options.map(option => option.value))])]
+    .filter(Boolean).map(value => ({ value, label: value === defaultModel ? `${value}（治理默认配置）` : value }));
+  const modelsLoading = bots.isPending || inspections.some(query => query.isPending);
+  const modelsUnavailable = bots.isError || inspections.some((query, index) => query.isError || (!!query.data && !!configuredModels[index].error));
   const history = useQuery({ queryKey: ["code-health-history", page, search, status],
     queryFn: ({ signal }) => healthApi.history(page, search, status, signal), retry: false, refetchInterval: 5000 });
   useEffect(() => {
@@ -57,16 +71,25 @@ export default function CodeHealthPage() {
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
         {config.isError && <Alert type="error" content={String(config.error)} action={<Button onClick={() => void config.refetch()}>重试</Button>} />}
         <div className="code-health-form">
-          <label>扫描范围<Select aria-label="扫描范围" value={scope} options={config.data?.scopes ?? []} onChange={setScope} disabled={starting} /></label>
-          <label>Codex 模型<Input aria-label="Codex 模型" value={model} onChange={setModel} disabled={starting}
-            placeholder={config.data?.default_model || "填写已配置可用的 Codex 模型"} /></label>
+          <div className="code-health-field">扫描范围<Select aria-label="扫描范围" value={scope} options={config.data?.scopes ?? []}
+            loading={config.isPending} onChange={setScope} disabled={starting || !config.data} /></div>
+          <div className="code-health-field">Codex 模型<Select aria-label="Codex 模型" value={model || defaultModel || undefined}
+            onChange={setModel} disabled={starting} options={modelOptions} loading={modelsLoading} showSearch allowCreate
+            placeholder="选择或输入 Codex 模型" /></div>
         </div>
+        <Text type="secondary">模型选项来自治理默认配置和已有的机器人编码配置，也可输入其他 Codex 模型名称。</Text>
+        {modelsUnavailable && <Alert type="warning" content="部分编码模型配置未能读取，可重试或直接输入模型名称。"
+          action={<Button size="small" onClick={() => { void bots.refetch(); inspections.forEach(query => void query.refetch()); }}>重试模型列表</Button>} />}
         <Text type="secondary">启动时冻结当前工作区，包含未提交源码；清理在隔离工作区完成，交由你审核并提交。</Text>
         <details><summary>高级参数</summary><Space wrap style={{ marginTop: 12 }}>
-          <label>推理强度<Select aria-label="推理强度" style={{ width: 120 }} value={effort} onChange={setEffort} disabled={starting}
-            options={["minimal", "low", "medium", "high", "xhigh", "max"]} /></label>
-          <label>每组最多尝试<InputNumber aria-label="每组最多尝试" min={1} precision={0} value={attempts} onChange={setAttempts} disabled={starting} style={{ width: 120 }} /></label>
-          <label>总时限（小时）<InputNumber aria-label="总时限" min={0.1} precision={1} value={hours} onChange={setHours} disabled={starting} style={{ width: 140 }} /></label>
+          <div className="code-health-field">推理强度<Select aria-label="推理强度" style={{ width: 170 }} value={effort} onChange={setEffort} disabled={starting}
+            options={[
+              { value: "minimal", label: "极低（minimal）" }, { value: "low", label: "低（low）" },
+              { value: "medium", label: "中（medium）" }, { value: "high", label: "高（high）" },
+              { value: "xhigh", label: "极高（xhigh）" }, { value: "max", label: "最高（max）" },
+            ]} /></div>
+          <div className="code-health-field">每组最多尝试<InputNumber aria-label="每组最多尝试" min={1} precision={0} value={attempts} onChange={setAttempts} disabled={starting} style={{ width: 120 }} /></div>
+          <div className="code-health-field">总时限（小时）<InputNumber aria-label="总时限" min={0.1} precision={1} value={hours} onChange={setHours} disabled={starting} style={{ width: 140 }} /></div>
         </Space></details>
         <Space wrap><Button type="primary" loading={starting} disabled={!config.data || !(model.trim() || config.data.default_model)} onClick={() => void start()}>开始垃圾回收</Button>
           <Button onClick={() => setRulesOpen(true)}>查看黄金原则</Button>
