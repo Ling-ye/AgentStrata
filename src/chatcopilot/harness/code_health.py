@@ -131,9 +131,18 @@ class HealthRun:
                 made_progress = True
         self.save(current_group=None)
 
+    def model_source(self, *, snapshot: bool = False) -> dict[str, Any]:
+        source = self.task["source"]
+        return {**source, "baseline_root": str(self.frozen if snapshot else self.checkpoint_root),
+                "repository_context": {"directory_kind": "source_snapshot" if snapshot else "git_worktree",
+                    "base_commit": self.task["base_commit"], "original_branch": source.get("original_branch"),
+                    "snapshot_digest": source["snapshot_digest"],
+                    "checkpoint_digest": manifest_digest(self.original if snapshot else self.checkpoint_manifest),
+                    "git_worktree": None if snapshot else str(self.root)}}
+
     def process_group(self, group: dict[str, Any]) -> None:
         selected = [r for r in self.governance["findings"] if r["id"] in group["finding_ids"]]
-        source = {**self.task["source"], "baseline_root": str(self.checkpoint_root)}
+        source = self.model_source()
         evidence = {"source": source, "rules": RULES, "selected_findings": selected, "group": group["key"]}
         initial = manifest_digest(self.checkpoint_manifest)
         self.save(current_group=group["id"], current_attempt=None)
@@ -149,7 +158,7 @@ class HealthRun:
             else:
                 group["proof"] = {"kind": "mechanical", "checks": sorted({r["detector"] for r in selected})}
         except HarnessError as exc:
-            if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "workspace_changed", "policy_change"}:
+            if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "workspace_changed", "policy_change", "coding_environment"}:
                 raise
             group.update(status="needs_decision", reason=safe_error(exc), error_code=exc.code)
             for row in selected:
@@ -249,7 +258,7 @@ class HealthRun:
             except HarnessError as exc:
                 attempt.update(status="rejected", error_code=exc.code, error=safe_error(exc), finished_at=time.time())
                 self.store.save_attempt(self.ident, self.number, attempt)
-                if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "workspace_changed"}:
+                if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "workspace_changed", "coding_environment"}:
                     raise
                 previous = {k: attempt[k] for k in ("error_code", "error", "verification", "review", "regression_test") if k in attempt}
                 # Stable error plus candidate bytes: retries require new evidence or a different patch.
@@ -299,7 +308,7 @@ class HealthRun:
                 output = self.directory / "audit" / batch["id"]
                 self.record_call(output, "audit", batch["area"])
                 try:
-                    audit = self.coder.audit(self.frozen, {"source": {**self.task["source"], "baseline_root": str(self.frozen)},
+                    audit = self.coder.audit(self.frozen, {"source": self.model_source(snapshot=True),
                         "rules": RULES, "batch": batch}, self.remaining(), output, self.cancel)
                     verify_copy(self.frozen, self.original)
                     if audit.get("submitted_batch") != batch["id"] or audit.get("submitted_blocks") != [b["block_sha256"] for b in batch["blocks"]]:
@@ -308,7 +317,7 @@ class HealthRun:
                     self.add_findings(audit["findings"])
                 except HarnessError as exc:
                     entry.update(status="failed", reason=safe_error(exc), error_code=exc.code)
-                    if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "workspace_changed"}:
+                    if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "workspace_changed", "coding_environment"}:
                         raise
                     self.save()
             self.process_groups()

@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-_FAILED_NODE_RE = re.compile(r"^FAILED\s+(\S+)", re.MULTILINE)
+_FAILED_NODE_RE = re.compile(r"^(?:FAILED|SUBFAILED\(.*?\))\s+(\S+)", re.MULTILINE)
 
 
 @dataclass(frozen=True)

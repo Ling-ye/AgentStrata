@@ -104,11 +104,11 @@ export default function CodeHealthPage() {
           options={[{ value: "", label: "全部状态" }, ...Object.entries(healthLabels).map(([value, label]) => ({ value, label }))]} />
         <Button onClick={() => void history.refetch()}>刷新</Button></Space>
       {history.isError && <Alert type="error" content={String(history.error)} />}
-      <Table<HealthTask> rowKey="task_id" loading={history.isFetching} data={history.data?.tasks ?? []} scroll={{ x: 760 }}
+      <Table<HealthTask> rowKey="task_id" loading={history.isFetching} data={history.data?.tasks ?? []} scroll={{ x: 1100 }}
         noDataElement={<Empty description="尚无治理记录，可从上方开始一次垃圾回收" />}
         pagination={{ current: page, pageSize: 20, total: history.data?.total ?? 0, onChange: setPage }} columns={[
-          { title: "任务", dataIndex: "task_id", render: (_, row) => <Button type="text" onClick={() => openTask(row.task_id)}>{row.task_id.slice(0, 19)}</Button> },
-          { title: "状态", render: (_, row) => <Tag>{healthStatus(row)}</Tag> },
+          { title: "任务", dataIndex: "task_id", width: 210, render: (_, row) => <Button type="text" title={row.task_id} onClick={() => openTask(row.task_id)}>{row.task_id.slice(0, 19)}</Button> },
+          { title: "状态", width: 180, render: (_, row) => <Tag title={healthStatus(row)}>{healthStatus(row)}</Tag> },
           { title: "结果", render: (_, row) => healthSummary(row) },
           { title: "阶段", render: (_, row) => stageLabel(row.stage) },
           { title: "源码基准", render: (_, row) => <Text title={row.source.snapshot_digest}>{row.source.snapshot_digest.slice(0, 10)}</Text> },

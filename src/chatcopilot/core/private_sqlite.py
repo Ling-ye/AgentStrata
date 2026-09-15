@@ -25,15 +25,19 @@ def private_directory(path: Path) -> Path:
     return path
 
 
-def private_file(path: Path) -> os.stat_result:
-    info = path.lstat()
+def _require_private_file(info: os.stat_result, *, allow_unlinked: bool = False) -> None:
     if (
         not stat.S_ISREG(info.st_mode)
         or info.st_uid != os.getuid()
-        or info.st_nlink != 1
+        or info.st_nlink not in ((0, 1) if allow_unlinked else (1,))
         or info.st_mode & 0o077
     ):
         raise ValueError("private storage file requires current ownership, mode 0600 and one link")
+
+
+def private_file(path: Path) -> os.stat_result:
+    info = path.lstat()
+    _require_private_file(info)
     return info
 
 
@@ -66,7 +70,11 @@ class PrivateDatabase:
         for suffix in ("-journal", "-wal", "-shm"):
             auxiliary = Path(str(self.path) + suffix)
             try:
-                private_file(auxiliary)
+                # On tmpfs, stat may retain an inode reference while SQLite unlinks
+                # its sidecar and return nlink=0 instead of ENOENT. The removed inode
+                # must still be a private regular file owned by this user. Main DBs
+                # and all other private_file callers continue to require one link.
+                _require_private_file(auxiliary.lstat(), allow_unlinked=True)
             except FileNotFoundError:
                 # SQLite can unlink these files when another connection commits
                 # or closes. Only their absence is optional, not their safety.

@@ -74,6 +74,7 @@ test = [
     "tomli>=2; python_version < '3.11'",
 ]
 dev = [
+    "pip",
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "pytest",

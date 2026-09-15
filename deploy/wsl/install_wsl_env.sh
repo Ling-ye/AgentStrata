@@ -244,7 +244,7 @@ install_system_packages() {
         exit 1
     fi
 
-    local pkgs=(curl ca-certificates git jq xz-utils rsync dbus-user-session)
+    local pkgs=(curl ca-certificates git jq xz-utils rsync ripgrep dbus-user-session)
     local missing=()
     local pkg
     for pkg in "${pkgs[@]}"; do

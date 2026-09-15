@@ -360,7 +360,7 @@ def test_coding_stages_keep_feedback_untrusted_and_preserve_write_scopes(
     )
     monkeypatch.setattr(codex_adapter, "build_codex_subprocess_env", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
-        codex_adapter, "sandbox_command", lambda command, **_kwargs: ["bwrap", "--", *command]
+        codex_adapter, "wrap_command", lambda command, **_kwargs: ["bwrap", "--", *command]
     )
     decision = {
         "decision": "approved",

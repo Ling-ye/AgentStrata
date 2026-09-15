@@ -155,6 +155,7 @@ class CodexEnvironmentTests(TestCase):
             root = Path(tmp)
             permissive = root / "permissive"
             permissive.mkdir(mode=0o755)
+            permissive.chmod(0o755)  # Keep the unsafe fixture independent of the worker umask.
             target = root / "target"
             target.mkdir(mode=0o700)
             symlink = root / "symlink"

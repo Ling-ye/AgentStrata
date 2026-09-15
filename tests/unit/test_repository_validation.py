@@ -291,3 +291,25 @@ def test_skipped():
     record = json.loads((output / 'manifest.json').read_text())['checks'][0]
     assert record['test_inventory']['count'] == 2
     assert len(record['test_inventory']['skipped_ids']) == 1
+
+
+def test_repository_report_keeps_failed_unittest_subtests(tmp_path: Path, monkeypatch) -> None:
+    import json
+    import sys
+    gate = _load_script('check_repo.py')
+    test = tmp_path / 'test_subtest.py'
+    test.write_text("""import unittest
+
+class TestBehavior(unittest.TestCase):
+    def test_contract(self):
+        for value in (1, 2):
+            with self.subTest(value=value):
+                self.assertEqual(value, 1)
+""")
+    monkeypatch.setattr(gate, '_profiles', lambda: {'fast': (gate.Check('core tests', (sys.executable, '-m', 'pytest', str(test), '-q'), cwd=tmp_path),)})
+    output = tmp_path / 'report'
+    monkeypatch.setattr(sys, 'argv', ['check_repo.py', 'fast', '--report-dir', str(output)])
+    assert gate.main() == 1
+    record = json.loads((output / 'manifest.json').read_text())['checks'][0]
+    assert record['status'] == 'failed'
+    assert record['failed_ids'] == ['test_subtest.py::TestBehavior::test_contract']

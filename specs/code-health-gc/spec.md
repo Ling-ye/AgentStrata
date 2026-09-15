@@ -36,6 +36,31 @@ Console 调用 Harness 的公开入口；Harness 管任务、源码清单、候�
 新增忽略文件、测试及私有配置在忽略过滤之前拒绝；候选不能通过修改忽略规则藏匿改动。
 补丁、检查点和回滚也由宿主基于该清单完成。验证使用私有临时 Git 索引，不改操作者索引。
 
+### 源码快照与 Git 查询
+
+巡检的 `source` 是不含 `.git` 的纯源码快照，不执行 Git 检查，也不以 Git 可用作为读取
+契约和源码的前提。新任务冻结原始分支（detached HEAD 为 null）、基准提交和快照摘要；
+`source.repository_context` 向模型明确提供目录类型、冻结事实、当前检查点摘要及可查询的
+候选工作区路径。旧记录缺失的原始分支保持未知，不依据当前仓库补造历史信息。
+
+准备、编码和审核通过 `git -C <候选工作区>` 只读查询；草案目录和 `baseline_root` 均不是 Git 仓库。
+宿主解析真实 git-dir/common-dir，在外层 bubblewrap 和 Codex 原生权限中只读开放，
+不开放原工作区或 Git 写权限。继续设置 `GIT_OPTIONAL_LOCKS=0`，不注入进程级
+`GIT_DIR`、`GIT_WORK_TREE` 或其他检查的 `GIT_INDEX_FILE`。`git diff HEAD` 可能含
+启动前已有修改，修复成果仍以宿主相对初始快照导出的累计补丁为准。
+
+模型启动前，通过相同两层沙箱校验候选 Git 目录和基准提交；失败以 `coding_environment`
+终止并保留已验收检查点，不进入产品修复重试或待判断计数。纯快照跳过这项 Git 检查。
+宿主的 `rg` 可执行文件单独只读投影至固定工具目录，外层与模型命令共用 PATH；
+未安装时提示使用 grep/find，不阻断任务。当前运行任务和历史日志不随本次代码更新改写。
+Console 的 dev 依赖包含 full 检查与 sdist 重建所需的 pip，WSL 基础工具包含 ripgrep。
+worker 保持 `UMask=0077`；模拟不安全权限的测试显式设置目标权限，不依赖调用者 umask。
+仓库检查记录 pytest 的 `SUBFAILED` 子测试失败，不能因输出前缀不同遗漏失败节点。
+
+SQLite 辅助文件可在并发提交时被删除。宿主仅对 journal/WAL/SHM 接受已删除 inode 的
+零链接元数据，仍校验普通文件、当前属主和私有权限；主数据库及其他私有文件继续要求
+单链接。该处理不重新执行事务体，也不忽略 I/O、身份替换或仍存在的不安全文件。
+
 ### 固定验收与候选实现
 
 验证准备、编码、独立审核分别调用 Codex。准备和审核只读候选；编码不能修改既有测试或
@@ -106,33 +131,34 @@ Console 调用 Harness 的公开入口；Harness 管任务、源码清单、候�
 
 ## Verification
 
-2026-09-14 至 2026-09-15 在独立开发 worktree 完成开发，改动未暂存、提交、合入或部署。
+2026-09-15 已完成一次真实的自动发现、验证准备、修复、独立审查与检查点交付。
 
-- 定向回归 `tests/unit/test_code_health.py tests/unit/test_health_isolation.py
-  tests/unit/test_repository_validation.py tests/unit/test_harness_progress.py`：98 passed。覆盖分批输入、模板/私有文件分类、
-  固定检查器、候选实现加载、原测试与规则保护、准备修订、回归冻结、多组检查点、累计补丁、
-  依赖暂缓、无进展停止、取消与时限、范围外债务、测试集合/跳过变化、旧记录只读投影。
-- 原 Harness、来源、快照、进度与自主验证的相关联合集合有 128 passed、119 passed；
-  更广范围由后述全量测试覆盖。测试中的编程/审查替身只证明流程，不等于模型真实自修。
-- `scripts/check_repo.py full --keep-going --report-dir ...` 普通环境曾完整通过 12 项检查，
-  Python 为 4042 passed、1 skipped、10 warnings、154 subtests passed。
-- 冻结宿主下的完整 `CodeHealthChecks.verify(..., "full", ...)` 也曾完整通过 12 项，
-  Python 为 4045 passed、4 skipped。进一步补齐执行集合证据后，最后一轮隔离全量测试为
-  4050 passed、4 skipped、10 warnings、154 subtests passed；该轮唯一失败是新增测试字符串
-  被公开扫描识别为邮箱。改用语义等价的多行测试文本后，公开边界单项复测通过，相关
-  `test_repository_validation.py` 为 18 passed，未重新运行该轮已通过的其他检查。
-- 隔离环境的 4 项跳过包括 Windows 大小写路径测试和 3 项需要可发现 Codex CLI 的本地权限
-  测试；后 3 项在普通环境 full 中执行。这些权限测试不调用模型。
-- `npm --prefix console/web test`：23 files、205 tests passed；生产构建通过。
-  基于生产前端与受控 API，在 1360px/390px 下完成 17 项浏览器检查，无页面异常或页面横向
-  溢出，包含累计检查点、取消后的交付、旧发现计数和历史验收提示。不是生产部署验证。
-- 检查入口的隔离实跑发现并修复了相对 lint 配置、类型检查搜索路径、Node 缓存挂载及
-  sdist 临时目录问题，未放宽任何检查规则。途中另一次隔离 fast 出现现有 SQLite 多进程
-  心跳测试的辅助文件校验失败，后续完整测试通过；未修改 SQLite 保护，也不声称已消除
-  该间歇现象。未知失败仍会阻断候选。
-- 真实 Codex 的 `.env.example` 自修案例脚本已准备，但尚未执行：自动审批审查拒绝源码向
-  模型服务外发，要求用户明确确认目的地与数据范围。不能把上述替身、离线进程或浏览器
-  结果记为该项已经通过。尚未验证生产部署或长期优化效果。
+- 真实 Codex 使用 `gpt-5.6-sol`、high 推理强度，在运行时源码中自主发现顶层包说明将完整
+  平台误述为 channel-neutral contracts。按行为保持修正处理，自动创建调用真实包导入、
+  BotSpec 校验和公开 CLI 帮助入口的离线回归；原实现与候选各 1 passed，验证草案独立审查
+  approved，冻结后未改写测试。候选只修改包说明，由宿主附带冻结测试交付。
+- 第 1 次修复尝试的原始基线与候选 fast 门禁各 9 项全部通过：各 1185 passed、3 skipped、
+  36 warnings、34 subtests passed；未保留任何失败。最终独立代码审查 approved，宿主保存
+  检查点后，操作者通过正常取消接口停止后续巡检，结果为发现 1、已修复 1、待判断 0、
+  未处理 0。范围仅完成 1/115 个计划批次，不声称完成全范围扫描。
+- 停止后候选、检查点和冻结测试摘要一致。治理执行期间原工作区及冻结宿主源码未变化。
+  真实 Console 在桌面/窄屏显示有效检查点，累计补丁实际下载成功且 SHA-256 与宿主记录
+  一致；`git apply --check` 在 main 通过。没有暂存、提交、合入或自动部署治理候选。
+- 运行过程中发现并修复 SQLite 辅助文件删除竞态：真实 bubblewrap/tmpfs 捕获到已删除
+  journal 的零链接 inode，属主与 0600 权限正确。定向回归 103 passed，覆盖主库单链接、
+  文件类型、属主、私有权限、硬链接和 I/O 反例；同一 tmpfs 环境完成 3 轮、每轮 3 个角色
+  各 2000 次操作，多次观察到零链接事件且全部读写完成。失败任务与原始判定保持原样。
+- SQLite 修复后的 full 门禁 12 项全部通过：4084 passed、1 skipped、10 warnings、
+  154 subtests passed，前端生产构建通过。唯一跳过项是 Windows 专属路径大小写测试。
+  前述冻结 fast 的 3 个跳过项为其检查进程中无法发现 Codex CLI 的权限测试；独立真实两层
+  沙箱专项 11 passed，覆盖 Git 查询、写入拒绝、元数据不变及工具环境，不调用模型。
+- 最终日志审计发现终审模型曾误对无 Git 的 baseline_root 发起查询，随后按源码恢复并完成
+  审查；候选工作区没有 Git 元数据错误。补充快照提示后，适配器及直接调用方 28 passed。
+  窄屏历史表格列宽修正后，前端 23 files / 205 tests passed，生产构建与真实浏览器复验通过。
+- Console / Evaluation 已通过正式流程重建、重启和健康检查；SQLite 修复后 Console 再次
+  按操作者授权重启。最后的小范围前端与提示修正分别按上述针对性验证完成，不重复全量测试。
 
-私有验证入口、完整结果和截图保留在 `.cache/health-self-repair/`。v1 的既有验证作为
-历史证据保留在 Git 历史中，不替代本节 v2 验收。
+本轮真实场景为包说明的行为保持修正；`.env.example` 实现自修案例没有在本轮复跑。
+第一次真实任务发现的 CLI 帮助参数候选因存储竞态中止，未计入已验收成果。旧任务未补审、
+迁移或改判。完整记录、补丁、执行审计与截图保留在 `.cache/harness-live-one/run-2/`，
+SQLite 修复后 full 报告位于 `.cache/harness-live-one/after-sqlite-fix/full/`。

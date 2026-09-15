@@ -85,9 +85,11 @@ class HarnessController:
                 raise HarnessError("conflict", "同一请求 ID 的内容已变化")
             return self.get(previous["task_id"])
         commit = git_output(self.repository, "rev-parse", "HEAD")
+        branch = git_output(self.repository, "rev-parse", "--abbrev-ref", "HEAD")
         manifest = source_manifest(self.repository)
         digest = manifest_digest(manifest)
-        source = {"kind": "code_health", "scope": scope, "snapshot_digest": digest, "governance_version": 2}
+        source = {"kind": "code_health", "scope": scope, "snapshot_digest": digest, "governance_version": 2,
+                  "original_branch": None if branch == "HEAD" else branch}
         context = _digest(source)
         ident = "repair-" + uuid.uuid4().hex
         task, created = self.store.create({
@@ -104,7 +106,8 @@ class HarnessController:
                 copy_sources(self.repository, frozen, manifest)
                 verify_copy(frozen, manifest)
                 if (source_manifest(self.repository) != manifest
-                        or git_output(self.repository, "rev-parse", "HEAD") != commit):
+                        or git_output(self.repository, "rev-parse", "HEAD") != commit
+                        or git_output(self.repository, "rev-parse", "--abbrev-ref", "HEAD") != branch):
                     raise HarnessError("source_changed", "冻结期间源码发生变化，请重新启动治理")
             except Exception as exc:
                 self.store.update(ident, status="blocked", stage="snapshot", dispatch_state="failed",
@@ -783,6 +786,7 @@ class HarnessController:
                 "scope",
                 "snapshot_digest",
                 "governance_version",
+                "original_branch",
                 "run_id",
                 "revision",
                 "evaluation_id",

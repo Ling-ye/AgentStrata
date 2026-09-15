@@ -26,7 +26,8 @@ def database(tmp_path):
 
 
 @contextmanager
-def sqlite_commit_at_stat(monkeypatch, db, suffix="-journal", *, after_stat=False, sql="PRAGMA user_version=1"):
+def sqlite_commit_at_stat(monkeypatch, db, suffix="-journal", *, after_stat=False,
+                          unlinked_stat=False, sql="PRAGMA user_version=1"):
     """End a real SQLite transaction/connection at the sidecar inspection boundary."""
     writer = sqlite3.connect(db.path)
     auxiliary = Path(str(db.path) + suffix)
@@ -44,13 +45,22 @@ def sqlite_commit_at_stat(monkeypatch, db, suffix="-journal", *, after_stat=Fals
         if path == auxiliary and not observed:
             observed.append(suffix)
             info = original(path, *args, **kwargs) if after_stat else None
-            if suffix == "-journal":
-                writer.commit()
-            else:
-                writer.close()
-            assert not auxiliary.exists()
-            if info is not None:
-                return info
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW) if unlinked_stat else None
+            try:
+                if suffix == "-journal":
+                    writer.commit()
+                else:
+                    writer.close()
+                assert not auxiliary.exists()
+                if fd is not None:
+                    # Keep the kernel inode reference that an in-flight stat holds.
+                    info = os.fstat(fd)
+                    assert info.st_nlink == 0
+                if info is not None:
+                    return info
+            finally:
+                if fd is not None:
+                    os.close(fd)
         return original(path, *args, **kwargs)
 
     try:
@@ -228,3 +238,51 @@ def test_harness_multiprocess_heartbeats_and_polling_keep_all_updates(tmp_path):
             process.join(timeout=5)
         results.close()
         results.join_thread()
+
+
+@pytest.mark.parametrize("suffix", ["-journal", "-wal", "-shm"])
+@pytest.mark.parametrize("write", [False, True])
+def test_sqlite_can_report_unlinked_sidecar_inode(database, monkeypatch, suffix, write):
+    with sqlite_commit_at_stat(monkeypatch, database, suffix, unlinked_stat=True,
+                               sql="UPDATE counters SET value=value+1 WHERE id=1") as observed:
+        with database.connect(write=write) as connection:
+            assert connection.execute("SELECT value FROM counters").fetchone()[0] == 1
+            if write:
+                connection.execute("UPDATE counters SET value=value+1 WHERE id=1")
+    assert observed == [suffix]
+    with database.connect() as connection:
+        assert connection.execute("SELECT value FROM counters").fetchone()[0] == 1 + int(write)
+        assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+
+
+@pytest.mark.parametrize("unsafe", ["type", "owner", "mode"])
+def test_unlinked_sidecar_keeps_type_owner_and_mode_checks(database, monkeypatch, unsafe):
+    import stat
+    sidecar = Path(str(database.path) + "-journal")
+    info = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=os.getuid(), st_nlink=0)
+    if unsafe == "type":
+        info.st_mode = stat.S_IFLNK | 0o600
+    elif unsafe == "owner":
+        info.st_uid += 1
+    else:
+        info.st_mode |= 0o040
+    original = Path.lstat
+    monkeypatch.setattr(Path, "lstat", lambda path, *a, **kw: info if path == sidecar else original(path, *a, **kw))
+    with pytest.raises(ValueError, match="private storage file"):
+        with database.connect():
+            pytest.fail("unsafe unlinked metadata reached SQLite")
+
+
+def test_main_database_still_rejects_zero_links(database, monkeypatch):
+    fd = os.open(database.path, os.O_RDONLY)
+    try:
+        database.path.unlink()
+        info = os.fstat(fd)
+        assert info.st_nlink == 0
+    finally:
+        os.close(fd)
+    original = Path.lstat
+    monkeypatch.setattr(Path, "lstat", lambda path, *a, **kw: info if path == database.path else original(path, *a, **kw))
+    with pytest.raises(ValueError, match="private storage file"):
+        with database.connect():
+            pytest.fail("unlinked main database reached SQLite")

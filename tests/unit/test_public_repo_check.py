@@ -574,6 +574,7 @@ def test_private_report_rejects_repository_and_non_owner_only_directories(
 
     open_directory = tmp_path / "open-report"
     open_directory.mkdir(mode=0o755)
+    open_directory.chmod(0o755)  # Keep the unsafe fixture independent of the worker umask.
     with pytest.raises(checker.PublicRepoCheckError, match="owner-only"):
         checker._write_private_report(open_directory / "report.jsonl", [finding], root=repo)
 

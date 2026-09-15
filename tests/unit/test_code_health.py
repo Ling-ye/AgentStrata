@@ -627,3 +627,62 @@ def test_structural_evidence_must_be_renderable_text(repo, tmp_path):
     result = run_task(controller.store, ident, InvalidEvidenceCoder(), checks=SemanticChecks())
     assert result['governance_summary']['needs_decision'] == 1
     assert '结构依据必须为文本' in result['governance']['groups'][0]['reason']
+
+
+@pytest.mark.parametrize("detached", [False, True])
+def test_repository_facts_are_frozen_and_checkpoint_context_is_separate(repo, tmp_path, detached):
+    from chatcopilot.harness.code_health import HealthRun
+    from chatcopilot.core.source_snapshot import manifest_digest
+    if detached:
+        git(repo, "checkout", "--detach", "-q")
+    branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD").decode().strip()
+    (repo / target()["path"]).write_text("unused = True\nvalue = 9\n")
+    controller, ident = start(repo, tmp_path)
+    task = controller.store.get(ident)
+    git(repo, "checkout", "-q", "-b", "after-task-start")
+    run = HealthRun(controller.store, ident, Coder(), Checks())
+    audit = run.model_source(snapshot=True)["repository_context"]
+    assert audit["original_branch"] == (None if detached else branch)
+    assert audit["base_commit"] == task["base_commit"]
+    assert audit["snapshot_digest"] == manifest_digest(task["baseline_manifest"])
+    assert audit["directory_kind"] == "source_snapshot" and audit["git_worktree"] is None
+    run.root = tmp_path / "candidate"
+    run.checkpoint_manifest = {}
+    candidate = run.model_source()["repository_context"]
+    assert candidate["snapshot_digest"] == audit["snapshot_digest"]
+    assert candidate["checkpoint_digest"] != candidate["snapshot_digest"]
+    assert candidate["directory_kind"] == "git_worktree" and candidate["git_worktree"] == str(run.root)
+    run.task["source"].pop("original_branch")
+    assert run.model_source()["repository_context"]["original_branch"] is None
+
+
+@pytest.mark.parametrize("stage", ["audit", "prepare", "run", "review"])
+def test_environment_error_stops_without_retry_or_product_finding(repo, tmp_path, stage):
+    controller, ident = start(repo, tmp_path, options=RepairOptions("test", max_attempts=3))
+    coder = SemanticCoder()
+    failure = Mock(side_effect=HarnessError("coding_environment", "Git environment unavailable"))
+    setattr(coder, stage, failure)
+    result = run_task(controller.store, ident, coder, checks=SemanticChecks())
+    assert result["status"] == "blocked" and result["error_code"] == "coding_environment"
+    assert failure.call_count == 1
+    assert result["governance_summary"]["needs_decision"] == 0
+    assert result["governance_summary"]["coverage"] == "partial"
+
+
+def test_environment_error_preserves_earlier_checkpoints(repo, tmp_path):
+    multi_repo(repo)
+    controller, ident = start(repo, tmp_path, options=RepairOptions("test", max_attempts=3))
+
+    class InterruptedCoder(MultiCoder):
+        def run(self, root, evidence, *args):
+            if evidence["selected_findings"][0]["group_key"] == "c":
+                raise HarnessError("coding_environment", "Git environment unavailable")
+            return super().run(root, evidence, *args)
+
+    result = run_task(controller.store, ident, InterruptedCoder(), checks=MultiChecks())
+    assert result["status"] == "blocked" and result["error_code"] == "coding_environment"
+    assert result["governance_summary"]["fixed"] == 2
+    assert len(controller.store.attempts(ident)) == 3
+    patch = controller.candidate_patch(ident)
+    assert b"a.py" in patch and b"b.py" in patch and b"c.py" not in patch
+    assert controller.get(ident)["candidate_available"] is True

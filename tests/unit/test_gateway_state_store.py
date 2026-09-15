@@ -1176,11 +1176,13 @@ def test_store_rejects_unsafe_root_mode_symlink_and_hardlinked_database(
 ) -> None:
     unsafe = tmp_path / "unsafe"
     unsafe.mkdir(mode=0o755)
+    unsafe.chmod(0o755)  # Keep the unsafe fixture independent of the worker umask.
     with pytest.raises(PermissionError, match="mode 0700"):
         GatewayStateStore(unsafe)
 
     unsafe_anchor = tmp_path / "unsafe-anchor"
     unsafe_anchor.mkdir(mode=0o755)
+    unsafe_anchor.chmod(0o755)  # Keep the unsafe fixture independent of the worker umask.
     with pytest.raises(PermissionError, match="trusted state anchor.*mode 0700"):
         GatewayStateStore(
             unsafe_anchor / "state",

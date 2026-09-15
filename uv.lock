@@ -66,6 +66,7 @@ dev = [
     { name = "fastapi" },
     { name = "httpx2" },
     { name = "mypy" },
+    { name = "pip" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "setuptools" },
@@ -114,6 +115,7 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'desktop'", specifier = ">=2.2,<2.3" },
     { name = "openai", marker = "extra == 'agent'", specifier = ">=1.40.0" },
     { name = "pandas", marker = "extra == 'desktop'", specifier = "==2.3.3" },
+    { name = "pip", marker = "extra == 'dev'" },
     { name = "pyarrow", marker = "extra == 'evaluation'", specifier = ">=18" },
     { name = "pyinstaller", marker = "extra == 'desktop'", specifier = "==6.17.0" },
     { name = "pytest", marker = "extra == 'dev'" },
@@ -2236,6 +2238,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/03/4f/2750f7f6f025a1507cd3b7218691671eecfd0bbebebe8b39aa0fe1d360b8/pefile-2024.8.26.tar.gz", hash = "sha256:3ff6c5d8b43e8c37bb6e6dd5085658d658a7a0bdcd20b6a07b1fcfc1c4e9d632", size = 76008, upload-time = "2024-08-26T20:58:38.155Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/16/12b82f791c7f50ddec566873d5bdd245baa1491bac11d15ffb98aecc8f8b/pefile-2024.8.26-py3-none-any.whl", hash = "sha256:76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f", size = 74766, upload-time = "2024-08-26T21:01:02.632Z" },
+]
+
+[[package]]
+name = "pip"
+version = "26.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ae/15/4500e320e6b101ec3b719ae85b697d9940b6cda672bc555bd6016fc60c6f/pip-26.2.1.tar.gz", hash = "sha256:f6ad667e89a1fe78046c8f13232b247200f5258d7828f3f7883d660878e0813f", size = 1848877, upload-time = "2026-08-04T22:51:14.148Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl", hash = "sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e", size = 1816632, upload-time = "2026-08-04T22:51:12.472Z" },
 ]
 
 [[package]]
