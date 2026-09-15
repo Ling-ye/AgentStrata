@@ -334,11 +334,16 @@ def _competing_start_process(
     root: str,
     results: Any,
     release: Any,
+    initialized: Any,
 ) -> None:
     manager = EvaluationApplication(
         Path(root),
         validator=_ready_validator(),
     )
+    # This test mocks spawning (there is no live worker PID). Finish recovery in
+    # both applications before racing admission, otherwise the later constructor
+    # correctly recovers the first application's PID-less synthetic task as dead.
+    initialized.wait(timeout=10)
     try:
         with patch.object(manager, "_spawn"):
             evaluation = manager.start(
@@ -736,10 +741,11 @@ def test_separate_processes_atomically_claim_one_bot(
     context = multiprocessing.get_context("fork")
     results = context.Queue()
     release = context.Event()
+    initialized = context.Barrier(2)
     processes = [
         context.Process(
             target=_competing_start_process,
-            args=(str(root), results, release),
+            args=(str(root), results, release, initialized),
         )
         for _index in range(2)
     ]

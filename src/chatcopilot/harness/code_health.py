@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import hashlib
+import copy
+import logging
+import sqlite3
 import time
 from dataclasses import replace
 from itertools import groupby
 from pathlib import Path
 from typing import Any
 
-from chatcopilot.core.private_sqlite import json_text, private_directory
+from chatcopilot.core.private_sqlite import json_text, private_directory, storage_error_details
 from chatcopilot.core.source_snapshot import manifest_digest, verify_copy
 from chatcopilot.harness.code_health_checks import CodeHealthChecks, compare_verification
 from chatcopilot.harness.code_health_rules import RULES
@@ -77,11 +80,12 @@ class HealthRun:
         self.sources.append(record)
         self.save(stage="prepare_reproducer" if kind == "prepare" else kind, progress_sources=self.sources, current_source=relative)
 
-    def rollback(self) -> None:
+    def rollback(self, *, persist: bool = True) -> None:
         self.ledger.generated_tests = {n: r for n, r in self.ledger.generated_tests.items()
                                        if self.checkpoint_manifest.get(n) == r}
         self.ledger.install(self.root, self.checkpoint_root, self.checkpoint_manifest)
-        self.save(working_digest=manifest_digest(self.checkpoint_manifest))
+        if persist:
+            self.save(working_digest=manifest_digest(self.checkpoint_manifest))
 
     def add_findings(self, rows: list[dict[str, Any]]) -> None:
         existing = {row["id"] for row in self.governance["findings"]}
@@ -246,14 +250,18 @@ class HealthRun:
                           "group_id": group["id"], "digest": digest, "patch_sha256": patch_sha,
                           "path": checkpoint.relative_to(self.directory).as_posix(), "created_at": time.time(),
                           "changed_files": cumulative}
-                self.checkpoint_root, self.checkpoint_manifest = checkpoint / "source", manifest
+                previous_governance = copy.deepcopy(self.governance)
                 self.governance["checkpoints"].append(record)
                 self.governance["resolved_ids"].extend(group["finding_ids"])
                 group.update(status="accepted", checkpoint=record["number"])
                 attempt.update(status="accepted", finished_at=time.time(), regressions=[])
-                self.store.save_attempt(self.ident, self.number, attempt)
-                self.save(verified_digest=digest, verified_manifest=manifest, verified_at=time.time(),
-                          working_digest=digest, checkpoint=record)
+                try:
+                    self.save(accepted_attempt=attempt, verified_digest=digest, verified_manifest=manifest,
+                              verified_at=time.time(), working_digest=digest, checkpoint=record)
+                except Exception:
+                    self.governance = previous_governance
+                    raise
+                self.checkpoint_root, self.checkpoint_manifest = checkpoint / "source", manifest
                 return
             except HarnessError as exc:
                 attempt.update(status="rejected", error_code=exc.code, error=safe_error(exc), finished_at=time.time())
@@ -338,20 +346,47 @@ def run_task(store: HarnessStore, task_id: str, coder: Any, *, checks: Any = Non
     if task["status"] not in ACTIVE or task["source"].get("governance_version") != 2:
         return task
     run = HealthRun(store, task_id, coder, checks)
+    storage_failure = None
     try:
         run.execute()
     except Exception as exc:
-        code = getattr(exc, "code", "execution_failed")
-        for group in run.governance["groups"]:
-            if group["status"] in {"preparing", "coding"}:
-                group.update(status="interrupted", reason=safe_error(exc))
-        run.save(status="cancelled" if isinstance(exc, Cancelled) else "blocked", stage="done",
-                 stop_reason=code, error_code=code, message=safe_error(exc))
+        if isinstance(exc, sqlite3.Error) or storage_error_details(exc):
+            storage_failure = exc
+        else:
+            code = getattr(exc, "code", "execution_failed")
+            for group in run.governance["groups"]:
+                if group["status"] in {"preparing", "coding"}:
+                    group.update(status="interrupted", reason=safe_error(exc))
+            try:
+                run.save(status="cancelled" if isinstance(exc, Cancelled) else "blocked", stage="done",
+                         stop_reason=code, error_code=code, message=safe_error(exc))
+            except (sqlite3.Error, OSError) as error:
+                storage_failure = error
     finally:
+        if storage_failure is not None:
+            try:
+                # A commit may finish before close reports an I/O error. Resolve
+                # that ambiguity from the durable record before restoring bytes.
+                durable = store.get(task_id)
+                run.governance = durable.get("governance", run.governance)
+                if durable.get("checkpoint"):
+                    run.checkpoint_root = run.directory / durable["checkpoint"]["path"] / "source"
+                    run.checkpoint_manifest = durable["verified_manifest"]
+            except Exception:
+                logging.getLogger(__name__).error("Could not read durable checkpoint after storage failure")
         if run.root is not None:
             try:
-                run.rollback()
+                run.rollback(persist=False)
             except Exception as exc:
-                run.save(status="blocked", error_code="checkpoint_restore_failed", message=safe_error(exc))
-        run.save(elapsed_seconds=time.monotonic() - run.started, current_group=None, current_source=None)
+                if storage_failure is not None:
+                    logging.getLogger(__name__).error("Checkpoint restore failed after storage failure", exc_info=True)
+                else:
+                    run.save(status="blocked", error_code="checkpoint_restore_failed", message=safe_error(exc))
+    if storage_failure is not None:
+        return store.interrupt(task_id, storage_error=storage_failure)
+    try:
+        run.save(elapsed_seconds=time.monotonic() - run.started, current_group=None, current_source=None,
+                 working_digest=manifest_digest(run.checkpoint_manifest))
+    except (sqlite3.Error, OSError) as error:
+        return store.interrupt(task_id, storage_error=error)
     return store.get(task_id)

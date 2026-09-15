@@ -387,6 +387,8 @@ class HarnessController:
             feedback=RepairFeedback(**source.get("feedback", {})), continuation={**old, "diagnostic_material": material})
 
     def _launch(self, task: dict[str, Any]) -> None:
+        if task.get("pipeline_version") != PIPELINE_VERSION:
+            raise HarnessError("source_archived", "旧 worker 使用旧存储锁协议；请创建新任务或接续任务")
         try:
             if not shutil.which("systemd-run"):
                 raise HarnessError("worker_unavailable", "后台 Harness 需要可用的 systemd 用户服务")
@@ -484,12 +486,7 @@ class HarnessController:
         task = self.store.get(task_id)
         if task["status"] in ACTIVE and task.get("dispatch_state") in {"scheduled", "unknown"}:
             if not self._unit_active(task["unit"]):
-                task = self.store.update(
-                    task_id,
-                    if_status=ACTIVE,
-                    status="interrupted",
-                    message="worker 已停止，可检查工作区后继续",
-                )
+                task = self.store.interrupt(task_id)
         return {
             **self._public(task),
             "attempts": self.store.attempts(task_id),
@@ -560,7 +557,7 @@ class HarnessController:
         task = self.store.get(task_id)
         if task["source"].get("kind") == "code_health":
             raise HarnessError("new_snapshot_required", "代码治理请重新启动，以当前源码创建新快照")
-        if task.get("pipeline_version", PIPELINE_VERSION) != PIPELINE_VERSION:
+        if task.get("pipeline_version") != PIPELINE_VERSION:
             raise HarnessError("source_archived", "旧 worker 保留原状；请创建接续任务加载当前验证流程")
         if task["status"] in ACTIVE:
             return self.get(task_id)

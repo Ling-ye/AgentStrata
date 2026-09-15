@@ -140,6 +140,42 @@ def test_current_pass_ends_without_coder(repository, tmp_path):
     assert coder.calls == 0 and len(evaluator.calls) == 1
 
 
+def test_storage_interruption_does_not_charge_next_product_attempt(repository, tmp_path):
+    import sqlite3
+    evaluator = FakeEvaluator()
+    controller, task_id = task_fixture(repository, tmp_path, evaluator, attempts=1)
+
+    class InterruptedCoder(FakeCoder):
+        def run(self, *args):
+            super().run(*args)
+            with controller.store.database.connect(write=True):
+                raise sqlite3.OperationalError("injected host storage error")
+
+    failed = InterruptedCoder()
+    result = run_task(controller.store, task_id, evaluator, failed)
+    assert result["status"] == "blocked" and result["error_code"] == "storage_error"
+    attempt = controller.store.attempts(task_id)[0]
+    assert attempt["status"] == "interrupted" and attempt["counts_toward_budget"] is False
+    assert failed.calls == 1
+    controller.store.claim_resume(task_id)
+    coder = FakeCoder()
+    result = run_task(controller.store, task_id, evaluator, coder)
+    assert result["status"] == "fixed" and coder.calls == 1
+    assert [(a["number"], a["status"]) for a in controller.store.attempts(task_id)] == [(1, "interrupted"), (2, "accepted")]
+
+
+@pytest.mark.parametrize("version", [None, 4])
+def test_old_lock_protocol_cannot_resume_or_launch_frozen_worker(repository, tmp_path, version):
+    controller, task_id = task_fixture(repository, tmp_path, FakeEvaluator())
+    controller.store.update(task_id, status="blocked", pipeline_version=version)
+    before = controller.store.get(task_id)
+    for operation in (lambda: controller.resume(task_id), lambda: controller._launch(before)):
+        with pytest.raises(HarnessError) as caught:
+            operation()
+        assert caught.value.code == "source_archived"
+    assert controller.store.get(task_id) == before
+
+
 def test_sqlite_journal_churn_does_not_interrupt_or_repeat_coding(repository, tmp_path, monkeypatch):
     from test_private_sqlite import sqlite_commit_at_stat
     evaluator = FakeEvaluator()

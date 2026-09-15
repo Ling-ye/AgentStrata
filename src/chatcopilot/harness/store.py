@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
-import os
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 
-from chatcopilot.core.private_sqlite import PrivateDatabase, json_text, private_file
+from chatcopilot.core.private_sqlite import PrivateDatabase, json_text, private_lock, storage_error_details
 from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError
 
 _SCHEMA = """
@@ -33,22 +33,13 @@ class HarnessStore:
 
     @contextmanager
     def creation_guard(self, *, exclusive: bool = False):
-        """Share the existing database inode lock with the update process."""
-        import fcntl
-        path = self.root / "harness.sqlite3"
-        before = private_file(path)
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        try:
-            current = os.fstat(descriptor)
-            if (before.st_dev, before.st_ino) != (current.st_dev, current.st_ino):
-                raise HarnessError("maintenance_unknown", "Harness 数据库身份发生变化")
+        """Admission and maintenance share a stable lock separate from SQLite."""
+        with ExitStack() as stack:
             try:
-                fcntl.flock(descriptor, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+                descriptor = stack.enter_context(private_lock(self.root / "harness.lock", exclusive=exclusive))
             except BlockingIOError as exc:
                 raise HarnessError("maintenance_active", "Harness 正在维护或接受另一项操作，请稍后重试") from exc
             yield descriptor
-        finally:
-            os.close(descriptor)
 
     @contextmanager
     def maintenance(self):
@@ -124,8 +115,15 @@ class HarnessStore:
         self.update(task_id, trace_records=records)
 
     def update(
-        self, task_id: str, *, if_status: frozenset[str] | None = None, **changes: Any
+        self, task_id: str, *, if_status: frozenset[str] | None = None,
+        accepted_attempt: dict[str, Any] | None = None, **changes: Any
     ) -> dict[str, Any]:
+        if accepted_attempt is not None and (
+            accepted_attempt.get("status") != "accepted"
+            or accepted_attempt.get("review", {}).get("decision") != "approved"
+            or accepted_attempt.get("candidate_digest") != changes.get("verified_digest")
+        ):
+            raise ValueError("checkpoint requires its independently approved attempt")
         from chatcopilot.core.trace_capture import current_capture
         capture = current_capture()
         if capture and any(key in changes for key in ("stage", "status", "evaluations", "verification_plan")):
@@ -138,6 +136,8 @@ class HarnessStore:
             if row is None:
                 raise HarnessError("not_found", "修复任务不存在")
             current = json.loads(row[0])
+            if accepted_attempt is not None and current["status"] != "running":
+                raise Cancelled()
             if if_status is not None and current["status"] not in if_status:
                 return current
             if current["status"] == "cancel_requested" and changes.get("status") in {
@@ -155,7 +155,59 @@ class HarnessStore:
                 "UPDATE tasks SET status=?,active_key=?,payload=?,updated_at=? WHERE task_id=?",
                 (value["status"], active_key, json_text(value), value["updated_at"], task_id),
             )
+            if accepted_attempt is not None:
+                connection.execute(
+                    "INSERT INTO attempts VALUES(?,?,?) ON CONFLICT(task_id,number) DO UPDATE SET payload=excluded.payload",
+                    (task_id, accepted_attempt["number"], json_text(accepted_attempt)),
+                )
         return value
+
+    def interrupt(self, task_id: str, *, storage_error: BaseException | None = None) -> dict[str, Any]:
+        """Persist terminal task/attempt state together; never replay failed work."""
+        details = storage_error_details(storage_error) if storage_error is not None else None
+        if storage_error is not None and details is None:
+            details = {"database": self.database.path.name, "phase": "worker",
+                       "type": type(storage_error).__name__,
+                       "sqlite_errorcode": getattr(storage_error, "sqlite_errorcode", None),
+                       "sqlite_errorname": getattr(storage_error, "sqlite_errorname", None)}
+        code = "storage_error" if storage_error is not None else "worker_interrupted"
+        message = "宿主存储错误，任务已停止；保留已持久化的验收检查点。请检查 worker 日志。" if storage_error is not None else "worker 已停止，本次执行已中断"
+        try:
+            with self.database.connect(write=True) as connection:
+                row = connection.execute("SELECT payload FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+                if row is None:
+                    raise HarnessError("not_found", "修复任务不存在")
+                task = json.loads(row[0])
+                if storage_error is None and task["status"] not in ACTIVE:
+                    return task
+                now = time.time()
+                task.update(status="blocked" if storage_error is not None else "interrupted", stage="done",
+                            error_code=code, stop_reason=code, message=message, updated_at=now,
+                            current_source=None, current_group=None)
+                if details is not None:
+                    task["storage_error"] = details
+                for group in task.get("governance", {}).get("groups", []):
+                    if group["status"] in {"preparing", "coding"}:
+                        group.update(status="interrupted", reason=message, error_code=code)
+                for row in connection.execute("SELECT number,payload FROM attempts WHERE task_id=?", (task_id,)).fetchall():
+                    attempt = json.loads(row[1])
+                    if attempt["status"] in {"accepted", "rejected", "coding_failed", "interrupted"}:
+                        continue
+                    attempt.update(status="interrupted", error_code=code, error=message,
+                                   finished_at=now, counts_toward_budget=storage_error is None)
+                    if details is not None:
+                        attempt["storage_error"] = details
+                    connection.execute("UPDATE attempts SET payload=? WHERE task_id=? AND number=?",
+                                       (json_text(attempt), task_id, row[0]))
+                connection.execute("UPDATE tasks SET status=?,active_key=?,payload=?,updated_at=? WHERE task_id=?",
+                                   (task["status"], task["active_key"] if task.get("current_evaluation_id") else None,
+                                    json_text(task), now, task_id))
+                return task
+        except Exception:
+            if storage_error is not None:
+                logging.getLogger(__name__).error("Storage failure terminal state could not be persisted; worker must exit")
+                raise storage_error
+            raise
 
     def save_attempt(self, task_id: str, number: int, payload: dict[str, Any]) -> None:
         from chatcopilot.core.trace_capture import current_capture

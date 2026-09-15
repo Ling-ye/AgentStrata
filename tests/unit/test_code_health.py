@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import os
+import sqlite3
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -686,3 +687,83 @@ def test_environment_error_preserves_earlier_checkpoints(repo, tmp_path):
     patch = controller.candidate_patch(ident)
     assert b"a.py" in patch and b"b.py" in patch and b"c.py" not in patch
     assert controller.get(ident)["candidate_available"] is True
+
+
+@pytest.mark.parametrize("phase,accepted", [("review", 2), ("checkpoint", 2), ("after_commit", 3)])
+@pytest.mark.parametrize("code,name", [(5898, "SQLITE_IOERR_DELETE_NOENT"), (13, "SQLITE_FULL"), (8, "SQLITE_READONLY")])
+def test_storage_error_stops_groups_and_keeps_only_durable_checkpoints(repo, tmp_path, monkeypatch, phase, accepted, code, name):
+    multi_repo(repo)
+    controller, ident = start(repo, tmp_path, options=RepairOptions("test", max_attempts=3))
+    store = controller.store
+    error = sqlite3.OperationalError("injected storage failure")
+    error.sqlite_errorcode, error.sqlite_errorname = code, name
+    original_connect, original_update = sqlite3.connect, store.update
+    writes, reviews = [], []
+
+    class Connection(sqlite3.Connection):
+        def commit(self):
+            if phase == "checkpoint":
+                raise error
+            super().commit()
+        def close(self):
+            super().close()
+            if phase == "after_commit":
+                raise error
+
+    def update(task_id, **changes):
+        if changes.get("accepted_attempt", {}).get("number") == 3 and phase != "review":
+            writes.append(True)
+            with monkeypatch.context() as patch:
+                patch.setattr(sqlite3, "connect", lambda *a, **kw: original_connect(*a, **kw, factory=Connection))
+                return original_update(task_id, **changes)
+        return original_update(task_id, **changes)
+
+    class StorageCoder(MultiCoder):
+        def review(self, root, evidence, *args):
+            key = evidence["source"]["selected_findings"][0]["group_key"]
+            reviews.append(key)
+            if key == "c" and phase == "review":
+                with store.database.connect(write=True):
+                    raise error
+            return super().review(root, evidence, *args)
+
+    monkeypatch.setattr(store, "update", update)
+    result = run_task(store, ident, StorageCoder(), checks=MultiChecks())
+    assert result["status"] == "blocked" and result["error_code"] == "storage_error"
+    assert result["stage"] == "done" and result["current_source"] is None
+    assert result["storage_error"]["sqlite_errorcode"] == code
+    assert result["storage_error"]["sqlite_errorname"] == name
+    assert reviews == ["a", "b", "c"] and len(writes) == int(phase != "review")
+    attempts = store.attempts(ident)
+    assert [a["status"] for a in attempts] == ["accepted"] * accepted + ["interrupted"] * (3 - accepted)
+    if accepted < 3:
+        assert attempts[-1]["counts_toward_budget"] is False
+        assert attempts[-1]["storage_error"] == result["storage_error"]
+    assert len(result["governance"]["checkpoints"]) == accepted
+    assert result["governance_summary"]["fixed"] == accepted
+    patch = controller.candidate_patch(ident)
+    assert b"a.py" in patch and b"b.py" in patch
+    assert (b"c.py" in patch) == (accepted == 3)
+    assert controller.get(ident)["candidate_available"] is True
+
+
+def test_persistent_storage_failure_preserves_original_exception(repo, tmp_path, monkeypatch, caplog):
+    controller, ident = start(repo, tmp_path)
+    original = sqlite3.OperationalError("first I/O failure")
+    secondary = sqlite3.OperationalError("terminal write unavailable")
+    coder = Coder()
+    def review(*args):
+        monkeypatch.setattr(sqlite3, "connect", Mock(side_effect=secondary))
+        raise original
+    coder.review = review
+    with pytest.raises(sqlite3.OperationalError) as caught:
+        run_task(controller.store, ident, coder, checks=Checks())
+    assert caught.value is original
+    assert "terminal state could not be persisted" in caplog.text
+    # The worker exits; once storage is available the normal worker-loss path
+    # terminalizes its unfinished attempts. It never reruns the business body.
+    monkeypatch.undo()
+    result = controller.store.interrupt(ident)
+    assert result["status"] == "interrupted"
+    assert [a["status"] for a in controller.store.attempts(ident)] == ["interrupted"]
+    assert controller.get(ident)["candidate_available"] is False

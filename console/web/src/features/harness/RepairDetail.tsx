@@ -39,13 +39,15 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
   }
   if (query.isPending) return <Spin tip="读取修复记录…" />;
   if (!task) return <Alert type="error" content={String(query.error)} />;
+  const currentPipeline = task.pipeline_version === 5;
   return <Space direction="vertical" size={16} style={{ width: "100%", minWidth: 0 }}>
     {(error || query.isError) && <Alert type="error" content={error || String(query.error)} />}
     <Text copyable>{task.task_id}</Text><Text>{sourceLabel(task)}</Text>
     {task.source.case_instance_id && <Text copyable>Case 实例 ID：{task.source.case_instance_id}</Text>}
     <RepairProgress key={taskId} task={task} refreshTask={() => query.refetch()} />
     {task.continued_from && <Text copyable>接续自：{task.continued_from}（已累计原任务用时）</Text>}
-    {task.next_action === "upload_image" && <section aria-label="补充原图">
+    {!currentPipeline && !ACTIVE.includes(task.status) && <Alert type="info" content="此任务使用旧执行环境，请重新发起或接续修复。原记录保持不变。" />}
+    {currentPipeline && task.next_action === "upload_image" && <section aria-label="补充原图">
       <Alert type="warning" content="请提供原任务中的图片。上传后自动继续，无需判断技术方案；原图仅保存在私有材料中。" />
       <input aria-label="选择原图并继续" type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={busy}
         onChange={event => void upload(event.target.files?.[0])} />
@@ -77,11 +79,11 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
       {task.worktree && <p><Text copyable>工作区：{task.worktree}</Text></p>}
       {task.verified_at && <Text>验证时间：{new Date(task.verified_at * 1000).toLocaleString()}</Text>}</div>
     <Space wrap>{ACTIVE.includes(task.status) && <Button status="danger" loading={busy} onClick={() => void action("cancel")}>取消</Button>}
-      {["blocked", "interrupted", "cancelled"].includes(task.status) && (task.pipeline_version ?? 4) >= 4 && !task.source.blockers?.length &&
+      {["blocked", "interrupted", "cancelled"].includes(task.status) && currentPipeline && !task.source.blockers?.length &&
         <Button loading={busy} onClick={() => void action("resume")}>检查并继续</Button>}
-      {!ACTIVE.includes(task.status) && task.source.kind === "robot_task" && task.status !== "waiting_input" &&
+      {!ACTIVE.includes(task.status) && task.source.kind === "robot_task" && (!currentPipeline || task.status !== "waiting_input") &&
         <Button loading={busy} onClick={() => void action("continue")}>接续修复（累计预算）</Button>}
-      {!ACTIVE.includes(task.status) && task.status !== "waiting_input" && (task.source.run_id || task.source.case_instance_id) &&
+      {!ACTIVE.includes(task.status) && (!currentPipeline || task.status !== "waiting_input") && (task.source.run_id || task.source.case_instance_id) &&
         <Button disabled={busy} onClick={() => onRestart(task)}>重新发起修复</Button>}
       <Button onClick={() => void query.refetch()}>刷新状态</Button>
       {task.source.test_sha256 && <a href={`/api/harness/tasks/${encodeURIComponent(taskId)}/reproducer`} download>下载冻结复现测试</a>}</Space>

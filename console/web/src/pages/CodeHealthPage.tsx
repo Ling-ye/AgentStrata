@@ -144,9 +144,9 @@ function HealthDetail({ id }: { id: string }) {
   if (!task) return query.isError ? <Alert type="error" content={String(query.error)} /> : <Spin tip="读取任务…" />;
   if (task.source.kind !== "code_health") return <Alert type="error" content="此记录不是代码治理任务" />;
   const findings = task.governance?.findings ?? [];
-  const checkTable = (checks: Check[]) => <Table<Check> rowKey="log" size="small" pagination={false} data={checks} columns={[
-    { title: "检查", dataIndex: "name" }, { title: "结果", render: (_, row) => row.exit_code === 0 ? "通过" : row.existing_failure ? "保留既有失败" : `未通过（${row.exit_code}）` },
-    { title: "证据", render: (_, row) => <Button type="text" onClick={() => setLogRef(row.log)}>查看日志</Button> },
+  const checkTable = (checks: Check[]) => <Table<Check> rowKey="log" size="small" pagination={false} scroll={{ x: 480 }} data={checks} columns={[
+    { title: "检查", dataIndex: "name" }, { title: "结果", width: 140, render: (_, row) => <span style={{ whiteSpace: "nowrap" }}>{row.exit_code === 0 ? "通过" : row.existing_failure ? "保留既有失败" : `未通过（${row.exit_code}）`}</span> },
+    { title: "证据", width: 110, render: (_, row) => <Button type="text" onClick={() => setLogRef(row.log)}>查看日志</Button> },
   ]} />;
   return <Space className="code-health-detail" direction="vertical" size={16} style={{ width: "100%" }}>
     <RepairProgress task={task} refreshTask={() => query.refetch()} title="治理进度" statusLabel={healthStatus(task)} />
@@ -174,7 +174,7 @@ function HealthDetail({ id }: { id: string }) {
         <Space direction="vertical" size={20} style={{ width: "100%" }}>
           {!task.attempts?.length && <Empty description="尚未生成清理候选" />}
           {task.attempts?.map(attempt => <section key={attempt.number}>
-            <Space wrap><Text bold>候选 #{attempt.number}{attempt.group_attempt ? ` · 组内第 ${attempt.group_attempt} 次` : ""}</Text><Tag>{attempt.status === "accepted" ? "验收通过" : attempt.status === "rejected" ? "未通过" : "处理中"}</Tag>
+            <Space wrap><Text bold>候选 #{attempt.number}{attempt.group_attempt ? ` · 组内第 ${attempt.group_attempt} 次` : ""}</Text><Tag>{attempt.status === "accepted" ? "验收通过" : attempt.status === "rejected" ? "未通过" : attempt.status === "interrupted" ? "已中断" : "处理中"}</Tag>
               {attempt.patch_sha256 && <a href={healthApi.patchUrl(id, attempt.number)} download>下载本次补丁</a>}</Space>
             {attempt.changed_files?.length && <pre>{attempt.changed_files.join("\n")}</pre>}
             {attempt.error && <Alert type="warning" content={attempt.error} />}

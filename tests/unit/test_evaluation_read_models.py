@@ -184,7 +184,7 @@ def test_case_instance_ids_are_unique_stable_and_do_not_rewrite_results(tmp_path
         application.case_instance(ids[-1])
 
 
-def test_case_instance_index_upgrades_without_importing_or_changing_results(tmp_path):
+def test_case_instance_index_reopens_without_changing_results_or_rebuilding_schema(tmp_path):
     application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path)
     identifier = seed(application)
     original = json.loads((application.root / identifier / "result.json").read_text())
@@ -192,8 +192,6 @@ def test_case_instance_index_upgrades_without_importing_or_changing_results(tmp_
     store = application.result_store
     store.register(request)
     store.synchronize(identifier, result=original, state={"status": "completed"})
-    with store.database.connect(write=True) as connection:
-        connection.execute("DROP TABLE case_instances")
     application.result_store = EvaluationResultStore(application.root)
     instance_id = application.get(identifier)["result"]["trials"][0]["case_instance_id"]
     assert application.result_store.get(identifier)["result"] == original
@@ -201,6 +199,14 @@ def test_case_instance_index_upgrades_without_importing_or_changing_results(tmp_
     legacy = seed(application, 2)
     assert application.get(legacy)["result"]["trials"][0]["case_instance_id"]
     assert application.result_store.get(legacy) is None
+    # Construction is not an implicit schema upgrade/repair operation. Corrupting
+    # a version-1 schema must remain visible, without altering recorded results.
+    with store.database.connect(write=True) as connection:
+        connection.execute("DROP TABLE case_instances")
+    reopened = EvaluationResultStore(application.root)
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        reopened.identify_trials(identifier, original["trials"])
+    assert reopened.get(identifier)["result"] == original
 
 
 def test_case_instance_lookup_revalidates_source_and_rejects_fabricated_ids(tmp_path):

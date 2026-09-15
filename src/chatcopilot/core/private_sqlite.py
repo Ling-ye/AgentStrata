@@ -3,12 +3,71 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import stat
+import time
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+
+
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def private_lock(path: Path, *, exclusive: bool = True, timeout: float = 0) -> Iterator[int]:
+    """Lock a stable private inode, never a SQLite database or its sidecars."""
+    import fcntl
+
+    private_directory(path.parent)
+    try:
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        private_file(path)
+        descriptor = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        opened = os.fstat(descriptor)
+        _require_private_file(opened)
+        if stat.S_IMODE(opened.st_mode) != 0o600:
+            raise ValueError("private lock requires mode 0600")
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(descriptor, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if timeout == 0:
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("private storage initialization lock timed out") from None
+                time.sleep(min(0.05, remaining))
+        current = private_file(path)
+        if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+            raise ValueError("private lock identity changed while opening")
+        yield descriptor
+    finally:
+        # Keeping the pathname is essential: unlinking would permit two lock inodes.
+        os.close(descriptor)
+
+
+def storage_error_details(error: BaseException) -> dict[str, Any] | None:
+    return getattr(error, "storage_details", None)
+
+
+def _record_error(error: BaseException, database: str, phase: str) -> None:
+    details = {"database": database, "phase": phase, "type": type(error).__name__,
+               "sqlite_errorcode": getattr(error, "sqlite_errorcode", None),
+               "sqlite_errorname": getattr(error, "sqlite_errorname", None)}
+    if storage_error_details(error) is None:
+        error.storage_details = details
+    # No SQL text, parameters, exception message or frame locals in storage diagnostics.
+    frames = "".join(f'  File "{frame.filename}", line {frame.lineno}, in {frame.name}\n'
+                     for frame in traceback.extract_tb(error.__traceback__))
+    logger.error("Private storage failure %s\n%s", json_text(details), frames)
 
 
 def private_directory(path: Path) -> Path:
@@ -50,21 +109,72 @@ def json_text(value: Any) -> str:
 class PrivateDatabase:
     def __init__(self, path: Path, schema: str) -> None:
         self.path = path.absolute()
-        private_directory(self.path.parent)
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        os.close(fd)
-        with self.connect(write=True) as connection:
-            version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+        try:
+            self._initialize(schema)
+        except (sqlite3.Error, OSError) as error:
+            if storage_error_details(error) is None:
+                _record_error(error, self.path.name, "initialize")
+            raise
+
+    def _initialize(self, schema: str) -> None:
+        with private_lock(self.path.with_name(self.path.name + ".init.lock"), timeout=5):
+            try:
+                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            except FileExistsError:
+                # Never open/close an existing DB outside SQLite: close() would drop
+                # every POSIX SQLite lock this process holds on that inode.
+                pass
+            else:
+                os.close(fd)  # All constructors hold the init lock before SQLite opens.
+            with self.connect() as connection:
+                version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version == 1:
+                return
+            if version != 0:
                 raise ValueError("unsupported database schema version")
-            # Schema statements are fixed application text, never supplied by callers.
-            for statement in schema.split(";"):
-                if statement.strip():
-                    connection.execute(statement)
-            connection.execute("PRAGMA user_version=1")
+            with self.connect(write=True) as connection:
+                # Fixed application text; initialized stores never repeat DDL/writes.
+                for statement in schema.split(";"):
+                    if statement.strip():
+                        connection.execute(statement)
+                connection.execute("PRAGMA user_version=1")
 
     @contextmanager
     def connect(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
+        connection = None
+        failure = None
+        phase = "open"
+        try:
+            connection = self._open()
+            phase = "begin"
+            if not write:
+                connection.execute("PRAGMA query_only=ON")
+            connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+            phase = "transaction"
+            yield connection
+            if write:
+                phase = "commit"
+                connection.commit()
+        except BaseException as error:
+            failure = error
+            if isinstance(error, sqlite3.Error) or (phase != "transaction" and isinstance(error, OSError)):
+                _record_error(error, self.path.name, phase)
+            if connection is not None:
+                try:
+                    connection.rollback()
+                except Exception as secondary:
+                    _record_error(secondary, self.path.name, "rollback")
+            raise
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except Exception as error:
+                    _record_error(error, self.path.name, "close")
+                    if failure is None:
+                        raise
+
+    def _open(self) -> sqlite3.Connection:
         private_directory(self.path.parent)
         before = private_file(self.path)
         for suffix in ("-journal", "-wal", "-shm"):
@@ -88,14 +198,10 @@ class PrivateDatabase:
             connection.execute("PRAGMA trusted_schema=OFF")
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA synchronous=FULL")
-            if not write:
-                connection.execute("PRAGMA query_only=ON")
-            connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")
-            yield connection
-            if write:
-                connection.commit()
+            return connection
         except BaseException:
-            connection.rollback()
+            try:
+                connection.close()
+            except Exception as secondary:
+                _record_error(secondary, self.path.name, "close")
             raise
-        finally:
-            connection.close()

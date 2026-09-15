@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 import time
 import uuid
@@ -10,7 +11,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
-from chatcopilot.core.private_sqlite import json_text
+from chatcopilot.core.private_sqlite import json_text, storage_error_details
 from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
 from chatcopilot.harness.models import (
     Cancelled,
@@ -50,6 +51,10 @@ def run_task(
             result = _run_task(store, task_id, verifier, coder, committer=committer)
         status = result["status"]
         return result
+    except (sqlite3.Error, OSError) as error:
+        if not isinstance(error, sqlite3.Error) and not storage_error_details(error):
+            raise
+        return store.interrupt(task_id, storage_error=error)
     finally:
         reference = {**pending, "capture_state": "failed"}
         try:
@@ -297,7 +302,16 @@ def _run_task(
                 store.update(task_id, stage="repository_baseline")
                 library = verifier.regressions(store.get(task_id), candidate(), check_cancel)
                 store.update(task_id, regression_baseline=library)
-            for number in range(1, options.max_attempts + 1):
+            prior_attempts = store.attempts(task_id)
+            charged_numbers = [item["number"] for item in prior_attempts if item.get("counts_toward_budget", True)]
+            next_number = max((item["number"] for item in prior_attempts), default=0) + 1
+            if prior_attempts and prior_attempts[-1].get("counts_toward_budget") is False:
+                workspace.restore(worktree, baseline, store.get(task_id)["working_digest"])
+                store.update(task_id, working_digest=manifest_digest(baseline))
+            for slot in range(options.max_attempts):
+                number = charged_numbers[slot] if slot < len(charged_numbers) else next_number
+                if slot >= len(charged_numbers):
+                    next_number += 1
                 check_cancel()
                 attempts = {item["number"]: item for item in store.attempts(task_id)}
                 attempt = attempts.get(number)
@@ -427,6 +441,7 @@ def _run_task(
                     message="已达到尝试次数，目标或回归验收仍未通过",
                 )
 
+    storage_failure = None
     try:
         execute()
     except Cancelled:
@@ -438,22 +453,34 @@ def _run_task(
             else "修复任务已取消",
         )
     except Exception as exc:
-        code = getattr(exc, "code", "execution_error")
-        store.update(
-            task_id,
-            status="waiting_input" if code == "image_required" else "blocked" if isinstance(exc, HarnessError) else "interrupted",
-            next_action="upload_image" if code == "image_required" else "technical_failure",
-            error_code=code,
-            message=safe_error(exc),
-        )
+        if isinstance(exc, sqlite3.Error) or storage_error_details(exc):
+            storage_failure = exc
+        else:
+            code = getattr(exc, "code", "execution_error")
+            store.update(
+                task_id,
+                status="waiting_input" if code == "image_required" else "blocked" if isinstance(exc, HarnessError) else "interrupted",
+                next_action="upload_image" if code == "image_required" else "technical_failure",
+                error_code=code,
+                message=safe_error(exc),
+            )
     finally:
         changes: dict[str, Any] = {"elapsed_seconds": previous_elapsed + time.monotonic() - started}
-        if worktree is not None and store.get(task_id).get("error_code") != "workspace_changed":
+        if worktree is not None and (storage_failure is not None or store.get(task_id).get("error_code") != "workspace_changed"):
             try:
                 changes["working_digest"] = manifest_digest(source_manifest(worktree))
             except (OSError, ValueError):
                 pass
-        store.update(task_id, **changes)
+        if storage_failure is None:
+            store.update(task_id, **changes)
+    if storage_failure is not None:
+        result = store.interrupt(task_id, storage_error=storage_failure)
+        # Metadata recovery is separate from the interrupted business transaction.
+        # Keep its original error if even this terminal bookkeeping remains unwritable.
+        try:
+            return store.update(task_id, **changes)
+        except Exception:
+            raise storage_failure
     result = store.get(task_id)
     directory = store.root / "jobs" / task_id
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)

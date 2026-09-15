@@ -98,7 +98,8 @@ CandidateRef 交接。worker 装配来源、验证、编程和 Git 交付适配�
 feedback 独立于原始观测保存，参与幂等及候选身份，三阶段作为不可信
 任务材料使用。修改后发起新任务。计划、比较结果和有界脱敏检查日志在 Harness 展示。
 
-新任务使用 pipeline_version 4，自动修订与组合验收遵循 `specs/harness-autonomous-validation/spec.md`。确定性来源的目标检查只包含冻结复现断言；普通仓库单元与
+新任务使用 pipeline_version 5（独立存储锁协议），旧冻结 worker 不原地恢复；SQLite
+表结构与 user_version 保持不变。自动修订与组合验收仍遵循 `specs/harness-autonomous-validation/spec.md`。确定性来源的目标检查只包含冻结复现断言；普通仓库单元与
 静态检查走与 Agent 来源相同的 repository_baseline / repository-verify 通道。目标跳过或
 执行错误仍阻断；仓库基线的 skipped 保留原状态，不计入通过或保护集合，原通过项在候选中
 失败或跳过都算退化。仓库执行环境错误仍阻断。旧 worker 快照、任务和候选不迁移或复用。

@@ -6,9 +6,10 @@ import argparse
 import fcntl
 import os
 import signal
+import sqlite3
 from pathlib import Path
 
-from chatcopilot.core.private_sqlite import private_directory, private_file
+from chatcopilot.core.private_sqlite import private_directory, private_file, storage_error_details
 from chatcopilot.harness.codex_adapter import CodexCoder
 from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
 from chatcopilot.harness.models import ACTIVE
@@ -44,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
         result = run_task(store, args.task, ServiceEvaluator(), CodexCoder(
             lambda root, ref: store.register_trace(args.task, root, ref)))
         return 0 if result["status"] in {"fixed", "not_reproduced", "cancelled"} else 1
+    except (sqlite3.Error, OSError) as error:
+        if not isinstance(error, sqlite3.Error) and not storage_error_details(error):
+            raise
+        store.interrupt(args.task, storage_error=error)
+        return 1
     finally:
         os.close(fd)
 
