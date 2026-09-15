@@ -60,6 +60,18 @@ class LoadSource(BaseModel):
     bot_id: str = ""
 
 
+class TimeBudget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["time"]
+    seconds: int = Field(strict=True, ge=1)
+
+
+class FixedGroupsBudget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["fixed_groups"]
+    count: int = Field(strict=True, ge=1)
+
+
 class CreateCodeHealth(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scope: Literal["all", "runtime", "console", "docs"] = "all"
@@ -67,7 +79,8 @@ class CreateCodeHealth(BaseModel):
     model: str = Field(min_length=1)
     reasoning_effort: str = "medium"
     max_attempts: int = Field(default=3, ge=1)
-    timeout_seconds: int = Field(default=7200, ge=1)
+    budget: TimeBudget | FixedGroupsBudget = Field(discriminator="mode")
+    step_timeout_seconds: int = Field(default=1800, strict=True, ge=1)
 
 
 def _controller(request: Request):
@@ -168,10 +181,11 @@ def code_health_config(request: Request):
 
 @router.post("/code-health/tasks")
 def create_code_health(request: Request, body: CreateCodeHealth):
-    from chatcopilot.harness.models import RepairOptions
+    from chatcopilot.harness.models import CodeHealthOptions
     _mutation_access(request)
     return _call(lambda: _controller(request).start_code_health(
-        body.scope, RepairOptions(body.model, body.reasoning_effort, body.max_attempts, body.timeout_seconds),
+        body.scope, CodeHealthOptions(body.model, body.budget.model_dump(), body.reasoning_effort,
+                                     body.max_attempts, body.step_timeout_seconds),
         request_id=body.request_id))
 
 

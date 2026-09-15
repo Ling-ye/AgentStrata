@@ -20,7 +20,7 @@ from chatcopilot.harness.code_health_rules import finding, parse_audit
 from chatcopilot.harness.code_health_workspace import save_patch
 from chatcopilot.harness.health_ledger import SourceLedger
 from chatcopilot.harness.health_policy import protected_paths
-from chatcopilot.harness.models import HarnessError, RepairOptions
+from chatcopilot.harness.models import HarnessError, CodeHealthOptions
 from console.backend.routes.harness import router
 
 
@@ -48,7 +48,7 @@ def repo(tmp_path):
 
 def start(repo, tmp_path, *, options=None, request="health-request", scope="all"):
     controller = HarnessController(repo, root=tmp_path / "state")
-    task = controller.start_code_health(scope, options or RepairOptions("test-model", max_attempts=1),
+    task = controller.start_code_health(scope, options or CodeHealthOptions("test-model", {"mode": "time", "seconds": 7200}, max_attempts=1),
                                         request_id=request, launch=False)
     return controller, task["task_id"]
 
@@ -143,10 +143,10 @@ def test_snapshot_patch_preserves_dirty_index_new_deleted_and_modes(repo, tmp_pa
 
 def test_request_identity_and_history_filter(repo, tmp_path):
     controller, ident = start(repo, tmp_path)
-    same = controller.start_code_health("all", RepairOptions("test-model", max_attempts=1), request_id="health-request", launch=False)
+    same = controller.start_code_health("all", CodeHealthOptions("test-model", {"mode": "time", "seconds": 7200}, max_attempts=1), request_id="health-request", launch=False)
     assert same["task_id"] == ident
     with pytest.raises(HarnessError, match="请求 ID"):
-        controller.start_code_health("docs", RepairOptions("test-model"), request_id="health-request", launch=False)
+        controller.start_code_health("docs", CodeHealthOptions("test-model", {"mode": "time", "seconds": 7200}), request_id="health-request", launch=False)
     assert controller.list(kind="code_health")["total"] == 1
     assert controller.list(kind="repair")["total"] == 0
     assert "baseline_manifest" not in controller.list(kind="code_health")["tasks"][0]
@@ -233,7 +233,7 @@ def test_code_health_route_reuses_host_and_rejects_authority_fields():
     app = FastAPI()
     app.include_router(router)
     app.state.harness = SimpleNamespace(start_code_health=Mock(return_value={"task_id": "repair-example"}))
-    body = {"model": "test-model", "request_id": "request-health"}
+    body = {"model": "test-model", "request_id": "request-health", "budget": {"mode": "fixed_groups", "count": 1}}
     with TestClient(app, client=("127.0.0.1", 5000)) as client:
         assert client.post("/api/harness/code-health/tasks", json=body).status_code == 200
         for extra in ({"review_and_commit": True}, {"repository": "/tmp"}, {"command": "anything"}):
@@ -411,10 +411,10 @@ def multi_repo(repo):
 
 def test_two_checkpoints_survive_failed_group_and_cumulative_patch(repo, tmp_path):
     multi_repo(repo)
-    controller, ident = start(repo, tmp_path, options=RepairOptions("test", max_attempts=3))
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "time", "seconds": 7200}, max_attempts=3))
     result = run_task(controller.store, ident, MultiCoder(fail="c", decision=True), checks=MultiChecks())
     assert result["status"] == "fixed"
-    assert result["governance_summary"] == {"found": 4, "fixed": 2, "needs_decision": 1, "remaining": 1,
+    assert result["governance_summary"] == {"accepted_groups": 2, "found": 4, "fixed": 2, "needs_decision": 1, "remaining": 1,
         "coverage": "complete", "completed_batches": 2, "total_batches": 2}
     assert len(result["governance"]["checkpoints"]) == 2
     attempts = controller.store.attempts(ident)
@@ -542,7 +542,7 @@ def test_budget_preserves_checkpoint_and_marks_scope_incomplete(repo, tmp_path, 
                 now[0] = 200.0
                 check_cancel()
             return super().run(root, evidence, options, output, check_cancel)
-    controller, ident = start(repo, tmp_path, options=RepairOptions("test", timeout_seconds=100))
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "time", "seconds": 100}))
     result = run_task(controller.store, ident, BudgetCoder(), checks=MultiChecks())
     assert result["error_code"] == "budget_exhausted"
     assert result["governance_summary"]["fixed"] == 1
@@ -603,7 +603,7 @@ def test_preparation_can_correct_its_reason_without_rewriting_a_valid_test(repo,
             super().prepare(root, evidence, options, output, check_cancel)
             if self.revisions == 1:
                 (output / 'draft/diagnosis.json').write_text(json.dumps({'kind': 'bugfix', 'reason': ''}))
-    controller, ident = start(repo, tmp_path, options=RepairOptions('test', max_attempts=3))
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions('test', {'mode': 'time', 'seconds': 7200}, max_attempts=3))
     coder = CorrectingCoder()
     result = run_task(controller.store, ident, coder, checks=SemanticChecks())
     assert result['status'] == 'fixed' and coder.revisions == 2
@@ -659,7 +659,7 @@ def test_repository_facts_are_frozen_and_checkpoint_context_is_separate(repo, tm
 
 @pytest.mark.parametrize("stage", ["audit", "prepare", "run", "review"])
 def test_environment_error_stops_without_retry_or_product_finding(repo, tmp_path, stage):
-    controller, ident = start(repo, tmp_path, options=RepairOptions("test", max_attempts=3))
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "time", "seconds": 7200}, max_attempts=3))
     coder = SemanticCoder()
     failure = Mock(side_effect=HarnessError("coding_environment", "Git environment unavailable"))
     setattr(coder, stage, failure)
@@ -672,7 +672,7 @@ def test_environment_error_stops_without_retry_or_product_finding(repo, tmp_path
 
 def test_environment_error_preserves_earlier_checkpoints(repo, tmp_path):
     multi_repo(repo)
-    controller, ident = start(repo, tmp_path, options=RepairOptions("test", max_attempts=3))
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "time", "seconds": 7200}, max_attempts=3))
 
     class InterruptedCoder(MultiCoder):
         def run(self, root, evidence, *args):
@@ -693,7 +693,7 @@ def test_environment_error_preserves_earlier_checkpoints(repo, tmp_path):
 @pytest.mark.parametrize("code,name", [(5898, "SQLITE_IOERR_DELETE_NOENT"), (13, "SQLITE_FULL"), (8, "SQLITE_READONLY")])
 def test_storage_error_stops_groups_and_keeps_only_durable_checkpoints(repo, tmp_path, monkeypatch, phase, accepted, code, name):
     multi_repo(repo)
-    controller, ident = start(repo, tmp_path, options=RepairOptions("test", max_attempts=3))
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "time", "seconds": 7200}, max_attempts=3))
     store = controller.store
     error = sqlite3.OperationalError("injected storage failure")
     error.sqlite_errorcode, error.sqlite_errorname = code, name
@@ -767,3 +767,232 @@ def test_persistent_storage_failure_preserves_original_exception(repo, tmp_path,
     assert result["status"] == "interrupted"
     assert [a["status"] for a in controller.store.attempts(ident)] == ["interrupted"]
     assert controller.get(ident)["candidate_available"] is False
+
+
+@pytest.mark.parametrize("budget", [None, {}, {"mode": "time", "seconds": 0},
+    {"mode": "fixed_groups", "count": True}, {"mode": "fixed_groups", "count": 1.5},
+    {"mode": "time", "seconds": 10, "count": 1}, {"mode": "unknown", "count": 1}])
+def test_health_budget_rejects_ambiguous_limits(budget):
+    with pytest.raises(ValueError):
+        CodeHealthOptions("test", budget)
+
+
+def test_count_stops_at_first_durable_group_without_next_work(repo, tmp_path):
+    multi_repo(repo)
+    options = CodeHealthOptions("test", {"mode": "fixed_groups", "count": 1})
+    controller, ident = start(repo, tmp_path, options=options)
+    coder, checks = MultiCoder(), MultiChecks()
+    result = run_task(controller.store, ident, coder, checks=checks)
+    assert result["stop_reason"] == "fix_limit_reached" and result["status"] == "fixed"
+    assert result["governance_summary"]["accepted_groups"] == 1
+    assert [g["status"] for g in result["governance"]["groups"]] == ["accepted", "pending", "pending"]
+    assert coder.calls == ["audit", "run"] and checks.profiles == ["fast", "fast"]
+    assert result["governance_summary"]["coverage"] == "partial"
+    assert result["current_group"] is None and result["current_source"] is None
+    assert controller.get(ident)["checkpoint_available"]
+
+
+def test_failed_groups_do_not_use_success_quota(repo, tmp_path):
+    multi_repo(repo)
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "fixed_groups", "count": 1}))
+    result = run_task(controller.store, ident, MultiCoder(fail="a", decision=True), checks=MultiChecks())
+    assert result["stop_reason"] == "fix_limit_reached"
+    groups = {g["key"]: g["status"] for g in result["governance"]["groups"]}
+    assert groups == {"a": "failed", "b": "accepted", "c": "pending", "decision": "needs_decision"}
+    assert result["governance_summary"]["accepted_groups"] == 1
+
+
+def test_multiple_findings_in_one_group_count_once(repo, tmp_path):
+    class GroupChecks(Checks):
+        def scan(self, *args):
+            result = super().scan(*args)
+            if result["findings"]:
+                row = result["findings"][0]
+                result["findings"].append({**row, "id": "second-finding"})
+            return result
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "fixed_groups", "count": 2}))
+    result = run_task(controller.store, ident, Coder(), checks=GroupChecks())
+    assert result["stop_reason"] == "completed"
+    assert result["governance_summary"]["fixed"] == 2
+    assert result["governance_summary"]["accepted_groups"] == 1
+    assert "未达到数量目标" in result["message"]
+
+
+def test_count_mode_has_no_total_deadline(repo, tmp_path, monkeypatch):
+    from chatcopilot.harness import health_budget
+    now = [10.0]
+    monkeypatch.setattr(health_budget.time, "monotonic", lambda: now[0])
+    class SlowCoder(Coder):
+        def run(self, *args):
+            now[0] += 1000
+            return super().run(*args)
+        def review(self, *args):
+            now[0] += 1000
+            return super().review(*args)
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "fixed_groups", "count": 1}))
+    result = run_task(controller.store, ident, SlowCoder(), checks=Checks())
+    assert result["elapsed_seconds"] >= 2000
+    assert result["stop_reason"] == "fix_limit_reached"
+
+
+@pytest.mark.parametrize("budget,step,code", [({"mode": "time", "seconds": 100}, 1800, "budget_exhausted"),
+    ({"mode": "time", "seconds": 7200}, 30, "step_timeout"),
+    ({"mode": "fixed_groups", "count": 2}, 30, "step_timeout")])
+def test_raw_timeout_keeps_checkpoint_and_allocated_reason(repo, tmp_path, budget, step, code):
+    class TimeoutCoder(Coder):
+        def audit(self, *args):
+            if "run" in self.calls:
+                raise subprocess.TimeoutExpired(["bwrap", "secret-command"], 1)
+            return super().audit(*args)
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", budget, step_timeout_seconds=step))
+    result = run_task(controller.store, ident, TimeoutCoder(), checks=Checks())
+    assert result["error_code"] == code and result["stop_reason"] == code
+    assert "secret-command" not in result["message"] and "bwrap" not in result["message"]
+    assert result["failure"]["stage"] == "audit"
+    assert result["failure"]["limit_kind"] == code and result["failure"]["evidence_source"]
+    assert all(b["status"] not in {"running"} for b in result["governance"]["coverage"])
+    assert controller.get(ident)["checkpoint_available"]
+
+
+@pytest.mark.parametrize("phase", ["prepare", "run", "review"])
+def test_step_timeout_never_retries_product_or_drafts(repo, tmp_path, phase):
+    coder = SemanticCoder()
+    failed = Mock(side_effect=subprocess.TimeoutExpired(["private-executable"], 10))
+    setattr(coder, phase, failed)
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "fixed_groups", "count": 1}))
+    result = run_task(controller.store, ident, coder, checks=SemanticChecks())
+    assert result["stop_reason"] == "step_timeout" and failed.call_count == 1
+    assert all(g["status"] not in {"coding", "preparing"} for g in result["governance"]["groups"])
+    assert all(a["status"] == "interrupted" for a in controller.store.attempts(ident))
+
+
+def test_new_health_request_requires_budget_and_rejects_legacy_timeout():
+    app = FastAPI()
+    app.include_router(router)
+    call = Mock(return_value={"task_id": "repair-example"})
+    app.state.harness = SimpleNamespace(start_code_health=call)
+    body = {"model": "test", "request_id": "new"}
+    with TestClient(app, client=("127.0.0.1", 5000)) as client:
+        assert client.post("/api/harness/code-health/tasks", json=body).status_code == 422
+        for budget in ({"mode": "time", "seconds": 1}, {"mode": "fixed_groups", "count": 3}):
+            request = {**body, "budget": budget}
+            assert client.post("/api/harness/code-health/tasks", json=request).status_code == 200
+            assert call.call_args.args[1].budget == budget
+            assert call.call_args.args[1].step_timeout_seconds == 1800
+            assert client.post("/api/harness/code-health/tasks", json={**request, "timeout_seconds": 1080}).status_code == 422
+
+
+def test_budget_changes_conflict_and_old_record_is_read_only(repo, tmp_path):
+    options = CodeHealthOptions("test", {"mode": "fixed_groups", "count": 1})
+    controller, ident = start(repo, tmp_path, options=options)
+    for change in (CodeHealthOptions("test", {"mode": "fixed_groups", "count": 2}),
+                   CodeHealthOptions("test", {"mode": "time", "seconds": 100})):
+        with pytest.raises(HarnessError, match="请求 ID"):
+            controller.start_code_health("all", change, request_id="health-request", launch=False)
+    source = {**controller.store.get(ident)["source"], "governance_version": 2}
+    controller.store.update(ident, source=source)
+    old = controller.store.get(ident)
+    assert run_task(controller.store, ident, Mock(), checks=Checks()) == old
+    assert controller.get(ident)["candidate_available"] is None
+    assert controller.store.get(ident) == old
+
+
+class DocumentationCoder(SemanticCoder):
+    def audit(self, *args):
+        result = super().audit(*args)
+        for row in result["findings"]:
+            row.update(rule_id="documentation", change_kind="refactor")
+        return result
+
+    def run(self, root, evidence, options, output, check_cancel):
+        self.calls.append("run")
+        path = root / target()["path"]
+        path.write_text(path.read_text().replace("Old package description", "Current package description"))
+        return {}
+
+
+class DocumentationChecks(SemanticChecks):
+    def documentation(self, root, names, cancel):
+        self.profiles.append("documentation_only")
+        return {"profile": "documentation_only", "passed": True, "checks": []}
+
+
+def test_package_description_uses_light_checks_and_independent_review(repo, tmp_path):
+    (repo / target()["path"]).write_text('"""Old package description."""\nvalue = 1\n')
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "fixed_groups", "count": 1}))
+    coder, checks = DocumentationCoder(), DocumentationChecks()
+    result = run_task(controller.store, ident, coder, checks=checks)
+    assert result["stop_reason"] == "fix_limit_reached"
+    assert coder.calls == ["audit", "run", "review"]
+    assert checks.profiles == ["documentation_only"]
+    attempt = controller.store.attempts(ident)[0]
+    assert attempt["changed_files"] == [target()["path"]]
+    assert attempt["verification"]["structural_evidence"]["eligible"]
+    assert attempt["review"]["decision"] == "approved"
+
+
+def test_light_review_rejection_never_creates_checkpoint(repo, tmp_path):
+    (repo / target()["path"]).write_text('"""Old package description."""\nvalue = 1\n')
+    controller, ident = start(repo, tmp_path)
+    coder = DocumentationCoder(review="rejected")
+    result = run_task(controller.store, ident, coder, checks=DocumentationChecks())
+    assert result["governance_summary"]["accepted_groups"] == 0
+    assert not controller.get(ident)["checkpoint_available"]
+    assert "Old package" in (Path(result["worktree"]) / target()["path"]).read_text()
+
+
+def test_light_executable_change_is_rolled_back_before_standard_proof(repo, tmp_path):
+    class MixedCoder(SemanticCoder):
+        def audit(self, *args):
+            result = super().audit(*args)
+            for row in result["findings"]:
+                row["rule_id"] = "documentation"
+            return result
+        def prepare(self, root, *args):
+            assert "unused = True" in (root / target()["path"]).read_text()
+            return super().prepare(root, *args)
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "fixed_groups", "count": 1}))
+    coder, checks = MixedCoder(), DocumentationChecks()
+    result = run_task(controller.store, ident, coder, checks=checks)
+    assert result["stop_reason"] == "fix_limit_reached"
+    assert coder.calls == ["audit", "run", "prepare", "review", "run", "review"]
+    attempts = controller.store.attempts(ident)
+    assert [a["status"] for a in attempts] == ["rerouted", "accepted"]
+    assert attempts[0]["counts_toward_budget"] is False
+    assert "documentation_only" not in checks.profiles
+
+
+def test_documentation_checks_use_real_isolated_commands(repo, tmp_path):
+    from chatcopilot.core.source_snapshot import copy_sources
+    from chatcopilot.harness.code_health_checks import CodeHealthChecks
+    from chatcopilot.harness.health_budget import HealthBudget
+    script = Path(__file__).resolve().parents[2] / "scripts/check_public_repo.py"
+    (repo / "scripts").mkdir()
+    (repo / "scripts/check_public_repo.py").write_bytes(script.read_bytes())
+    (repo / "pyproject.toml").write_text('[tool.ruff]\ntarget-version = "py310"\n')
+    manifest = source_manifest(repo)
+    frozen = tmp_path / "frozen"
+    copy_sources(repo, frozen, manifest)
+    ledger = SourceLedger(frozen, manifest, tmp_path / "inventory", repo)
+    (repo / "docs/guide.md").write_text("# Updated guide\n\n[implementation](../src/chatcopilot/core/example.py)\n")
+    checks = CodeHealthChecks(tmp_path / "checks", repo,
+                              budget=HealthBudget(CodeHealthOptions("unused", {"mode": "fixed_groups", "count": 1})))
+    checks.bind(ledger, frozen)
+    result = checks.documentation(repo, ["docs/guide.md", target()["path"]], lambda: None)
+    assert result["passed"], result
+    assert {c["name"] for c in result["checks"]} == {"diff", "public", "ruff", "markdown links"}
+    assert all((checks.directory / c["log"]).is_file() for c in result["checks"])
+
+
+def test_verification_command_timeout_kills_isolated_process(repo, tmp_path):
+    import sys
+    from chatcopilot.harness.code_health_checks import CodeHealthChecks
+    from chatcopilot.harness.health_budget import HealthBudget
+    budget = HealthBudget(CodeHealthOptions("unused", {"mode": "fixed_groups", "count": 1}, step_timeout_seconds=1))
+    checks = CodeHealthChecks(tmp_path / "checks", repo, budget=budget)
+    with pytest.raises(HarnessError) as caught:
+        checks.command(repo, [sys.executable, "-c", "import time; print('started', flush=True); time.sleep(60)"],
+                       checks.directory / "slow", lambda: None)
+    assert caught.value.code == "step_timeout"
+    assert "started" in (checks.directory / "slow/stdout.log").read_text()
+    assert checks.logs[0]["exit_code"] != 0

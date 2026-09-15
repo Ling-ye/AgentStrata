@@ -183,15 +183,18 @@ class HarnessStore:
                 now = time.time()
                 task.update(status="blocked" if storage_error is not None else "interrupted", stage="done",
                             error_code=code, stop_reason=code, message=message, updated_at=now,
-                            current_source=None, current_group=None)
+                            current_source=None, current_group=None, current_attempt=None)
                 if details is not None:
                     task["storage_error"] = details
                 for group in task.get("governance", {}).get("groups", []):
                     if group["status"] in {"preparing", "coding"}:
                         group.update(status="interrupted", reason=message, error_code=code)
+                for batch in task.get("governance", {}).get("coverage") or []:
+                    if batch["status"] == "running":
+                        batch.update(status="interrupted", reason=message, error_code=code)
                 for row in connection.execute("SELECT number,payload FROM attempts WHERE task_id=?", (task_id,)).fetchall():
                     attempt = json.loads(row[1])
-                    if attempt["status"] in {"accepted", "rejected", "coding_failed", "interrupted"}:
+                    if attempt["status"] in {"accepted", "rejected", "coding_failed", "interrupted", "rerouted"}:
                         continue
                     attempt.update(status="interrupted", error_code=code, error=message,
                                    finished_at=now, counts_toward_budget=storage_error is None)

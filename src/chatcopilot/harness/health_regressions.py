@@ -66,7 +66,7 @@ def prepare_regression(root: Path, evidence: dict[str, Any], directory: Path, co
                     "diagnosis": diagnosis, "baseline": trial, "review": decision}
         except Exception as exc:
             if isinstance(exc, Cancelled) or getattr(exc, "code", "") in {
-                "budget_exhausted", "workspace_changed", "policy_change", "preparation_no_progress", "coding_environment"
+                "budget_exhausted", "step_timeout", "workspace_changed", "policy_change", "preparation_no_progress", "coding_environment"
             }:
                 raise
             previous = {"error_code": getattr(exc, "code", "test_definition"), "message": safe_error(exc)}

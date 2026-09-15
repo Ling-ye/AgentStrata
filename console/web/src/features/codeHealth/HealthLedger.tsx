@@ -28,7 +28,9 @@ export default function HealthLedger({ task }: { task: HealthTask }) {
         { title: "修复尝试", render: (_, row) => row.attempts.length },
       ]} expandedRowRender={row => <div>
         {task.governance?.findings.filter(f => row.finding_ids.includes(f.id)).map(f => <p key={f.id}>{f.summary} · {f.path}:{f.line}</p>)}
-        <p>验证依据：{row.proof?.kind === "mechanical" ? "固定结构与 lint 检查" : row.proof?.diagnosis?.reason ?? "尚未建立"}</p>
+        <p>验证依据：{row.proof?.kind === "documentation_only" ? "说明类轻量验收：宿主差异核对、定向检查和独立审查" :
+          row.proof?.kind === "mechanical" ? "固定结构与 lint 检查" : row.proof?.diagnosis?.reason ?? "尚未建立"}</p>
+        {row.route_reason && <p>改用标准验证：{row.route_reason}</p>}
         {row.proof?.diagnosis?.structural_before && <p>结构改进依据：{row.proof.diagnosis.structural_before}</p>}
         {row.proof?.sha256 && <p>冻结测试摘要：{row.proof.sha256}</p>}
         {row.reason && <p>原因：{row.reason}</p>}{row.stop_reason && <p>停止原因：{row.stop_reason}</p>}

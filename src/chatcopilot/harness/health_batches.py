@@ -88,7 +88,9 @@ def summary(governance: dict[str, Any]) -> dict[str, Any]:
     deferred = sum(row["id"] not in resolved and row["disposition"] == "needs_decision" for row in rows)
     coverage = governance.get("coverage")
     complete = bool(coverage is not None and all(b["status"] == "completed" for b in coverage))
-    return {"found": len(rows), "fixed": fixed, "needs_decision": deferred,
+    return {"found": len(rows), "fixed": fixed,
+            "accepted_groups": sum(g["status"] == "accepted" and bool(g.get("checkpoint")) for g in governance.get("groups", [])),
+            "needs_decision": deferred,
             "remaining": len(rows) - fixed - deferred,
             "coverage": "unknown" if coverage is None else "complete" if complete else "partial",
             "completed_batches": sum(b["status"] == "completed" for b in coverage or []),

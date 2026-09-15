@@ -6,7 +6,7 @@ import { api } from "../api";
 import { repairModels } from "../features/harness/repairModels";
 import { ACTIVE, harnessApi, stageLabel } from "../features/harness/api";
 import { RepairProgress } from "../features/harness/RepairProgress";
-import { healthApi, healthLabels, healthStatus, healthSummary, findingStatus, type Check, type Finding, type HealthTask, type Scope } from "../features/codeHealth/api";
+import { healthApi, healthLabels, healthStatus, healthSummary, findingStatus, type Check, type Finding, type StartHealth, type HealthTask, type Scope } from "../features/codeHealth/api";
 import "../features/codeHealth/style.css";
 import HealthLedger from "../features/codeHealth/HealthLedger";
 
@@ -17,9 +17,13 @@ export default function CodeHealthPage() {
   const client = useQueryClient();
   const [scope, setScope] = useState<Scope>("all");
   const [model, setModel] = useState("");
-  const [effort, setEffort] = useState("medium");
-  const [attempts, setAttempts] = useState(3);
-  const [hours, setHours] = useState(2);
+  const [effort, setEffort] = useState("");
+  const [attempts, setAttempts] = useState<number>();
+  const [hours, setHours] = useState<number>();
+  const [budgetMode, setBudgetMode] = useState<"time" | "fixed_groups">("fixed_groups");
+  const [count, setCount] = useState<number>();
+  const [stepMinutes, setStepMinutes] = useState<number>();
+  const initialized = useRef(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
   const [taskId, setTaskId] = useState(taskFromHash);
@@ -29,6 +33,14 @@ export default function CodeHealthPage() {
   const [rulesOpen, setRulesOpen] = useState(false);
   const submitted = useRef({ body: "", requestId: "" });
   const config = useQuery({ queryKey: ["code-health-config"], queryFn: ({ signal }) => healthApi.config(signal), retry: false });
+  useEffect(() => {
+    if (!config.data || initialized.current) return;
+    const defaults = config.data.defaults;
+    setEffort(defaults.reasoning_effort); setAttempts(defaults.max_attempts);
+    setHours(defaults.time_budget_seconds / 3600); setStepMinutes(defaults.step_timeout_seconds / 60);
+    setBudgetMode(defaults.budget.mode); setCount(defaults.budget.count);
+    initialized.current = true;
+  }, [config.data]);
   const bots = useQuery({ queryKey: ["bots"], queryFn: api.listBots });
   const inspections = useQueries({ queries: (bots.data ?? []).map(bot => ({
     queryKey: ["inspection", bot.instance_id],
@@ -52,9 +64,14 @@ export default function CodeHealthPage() {
     setTaskId(id);
     window.location.hash = id ? `code-health?task=${encodeURIComponent(id)}` : "code-health";
   }
+  const budgetValid = budgetMode === "fixed_groups" ? count != null && Number.isInteger(count) && count >= 1 :
+    hours != null && Number.isFinite(hours) && hours >= 0.01;
+  const settingsValid = budgetValid && attempts != null && attempts >= 1 && stepMinutes != null && stepMinutes >= 1;
   async function start() {
-    const body = { scope, model: model.trim() || config.data?.default_model || "", reasoning_effort: effort,
-      max_attempts: attempts, timeout_seconds: Math.round(hours * 3600) };
+    if (!settingsValid || count == null || hours == null || attempts == null || stepMinutes == null) return;
+    const body: Omit<StartHealth, "request_id"> = { scope, model: model.trim() || config.data?.default_model || "", reasoning_effort: effort,
+      max_attempts: attempts, step_timeout_seconds: Math.round(stepMinutes * 60),
+      budget: budgetMode === "time" ? { mode: "time", seconds: Math.round(hours * 3600) } : { mode: "fixed_groups", count } };
     const encoded = JSON.stringify(body);
     if (submitted.current.body !== encoded) submitted.current = { body: encoded, requestId: crypto.randomUUID() };
     setStarting(true); setError("");
@@ -77,6 +94,15 @@ export default function CodeHealthPage() {
             onChange={setModel} disabled={starting} options={modelOptions} loading={modelsLoading} showSearch allowCreate
             placeholder="选择或输入 Codex 模型" /></div>
         </div>
+        <div className="code-health-form">
+          <div className="code-health-field">停止条件<Select aria-label="停止条件" value={budgetMode} onChange={setBudgetMode}
+            disabled={starting || !config.data} options={[{ value: "fixed_groups", label: "按修复数量" }, { value: "time", label: "按总时间" }]} /></div>
+          {budgetMode === "fixed_groups" ? <div className="code-health-field">验收通过的问题组数<InputNumber aria-label="验收通过的问题组数"
+            min={1} precision={0} value={count} onChange={setCount} disabled={starting || !config.data} /></div> :
+            <div className="code-health-field">总时限（小时）<InputNumber aria-label="总时限（小时）" min={0.01} step={0.5}
+              value={hours} onChange={setHours} disabled={starting || !config.data} /></div>}
+        </div>
+        <Text type="secondary">{budgetMode === "fixed_groups" ? "按验收通过的问题组计数；失败和待判断项不计数，不设任务总时限。" : "到达总时限后停止，保留已验收检查点。"}</Text>
         <Text type="secondary">模型选项来自治理默认配置和已有的机器人编码配置，也可输入其他 Codex 模型名称。</Text>
         {modelsUnavailable && <Alert type="warning" content="部分编码模型配置未能读取，可重试或直接输入模型名称。"
           action={<Button size="small" onClick={() => { void bots.refetch(); inspections.forEach(query => void query.refetch()); }}>重试模型列表</Button>} />}
@@ -89,9 +115,9 @@ export default function CodeHealthPage() {
               { value: "xhigh", label: "极高（xhigh）" }, { value: "max", label: "最高（max）" },
             ]} /></div>
           <div className="code-health-field">每组最多尝试<InputNumber aria-label="每组最多尝试" min={1} precision={0} value={attempts} onChange={setAttempts} disabled={starting} style={{ width: 120 }} /></div>
-          <div className="code-health-field">总时限（小时）<InputNumber aria-label="总时限" min={0.1} precision={1} value={hours} onChange={setHours} disabled={starting} style={{ width: 140 }} /></div>
+          <div className="code-health-field">单次执行超时（分钟）<InputNumber aria-label="单次执行超时（分钟）" min={1} precision={0} value={stepMinutes} onChange={setStepMinutes} disabled={starting} style={{ width: 140 }} /></div>
         </Space></details>
-        <Space wrap><Button type="primary" loading={starting} disabled={!config.data || !(model.trim() || config.data.default_model)} onClick={() => void start()}>开始垃圾回收</Button>
+        <Space wrap><Button type="primary" loading={starting} disabled={!config.data || !settingsValid || !(model.trim() || config.data.default_model)} onClick={() => void start()}>开始垃圾回收</Button>
           <Button onClick={() => setRulesOpen(true)}>查看黄金原则</Button>
           {config.data && <Text type="secondary">当前 HEAD：{config.data.base_commit.slice(0, 10)}</Text>}</Space>
         {error && <Alert type="error" content={error} />}
@@ -152,6 +178,11 @@ function HealthDetail({ id }: { id: string }) {
     <RepairProgress task={task} refreshTask={() => query.refetch()} title="治理进度" statusLabel={healthStatus(task)} />
     {query.isError && <Alert type="error" content={String(query.error)} />}
     {task.message && <Alert type={task.status === "fixed" && task.candidate_available ? "success" : "info"} content={task.message} />}
+    {task.failure && <Alert type="warning" content={<Space direction="vertical">
+      <span>失败阶段：{stageLabel(task.failure.stage)}{task.failure.operation && ` · ${task.failure.operation}`}</span>
+      {task.failure.limit_seconds != null && <span>触发时限：{task.failure.limit_seconds} 秒</span>}
+      {task.failure.evidence_source && <span>执行证据：{task.failure.evidence_source}/public-events.jsonl</span>}
+    </Space>} />}
     {task.status === "fixed" && task.candidate_available === false && <Alert type="warning" content="候选已变化或不可读取，历史验收不能证明当前内容仍然有效。" />}
     {error && <Alert type="error" content={error} />}
     {ACTIVE.includes(task.status) && <Button status="danger" loading={cancelling} disabled={task.status === "cancel_requested"} onClick={() => void cancel()}>取消本次治理</Button>}
@@ -174,7 +205,7 @@ function HealthDetail({ id }: { id: string }) {
         <Space direction="vertical" size={20} style={{ width: "100%" }}>
           {!task.attempts?.length && <Empty description="尚未生成清理候选" />}
           {task.attempts?.map(attempt => <section key={attempt.number}>
-            <Space wrap><Text bold>候选 #{attempt.number}{attempt.group_attempt ? ` · 组内第 ${attempt.group_attempt} 次` : ""}</Text><Tag>{attempt.status === "accepted" ? "验收通过" : attempt.status === "rejected" ? "未通过" : attempt.status === "interrupted" ? "已中断" : "处理中"}</Tag>
+            <Space wrap><Text bold>候选 #{attempt.number}{attempt.group_attempt ? ` · 组内第 ${attempt.group_attempt} 次` : ""}</Text><Tag>{attempt.status === "accepted" ? "验收通过" : attempt.status === "rejected" ? "未通过" : attempt.status === "interrupted" ? "已中断" : attempt.status === "rerouted" ? "已转标准验证" : "处理中"}</Tag>
               {attempt.patch_sha256 && <a href={healthApi.patchUrl(id, attempt.number)} download>下载本次补丁</a>}</Space>
             {attempt.changed_files?.length && <pre>{attempt.changed_files.join("\n")}</pre>}
             {attempt.error && <Alert type="warning" content={attempt.error} />}

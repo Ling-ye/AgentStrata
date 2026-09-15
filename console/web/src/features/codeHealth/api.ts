@@ -1,10 +1,15 @@
-import { harnessRequest, type ProgressTask, type Review } from "../harness/api";
+import { harnessRequest, type ProgressTask, type Review, type GovernanceBudget } from "../harness/api";
 
 export type Scope = "all" | "runtime" | "console" | "docs";
 export interface Rule { id: string; title: string; detector: string; reference: string; guidance: string }
 export interface HealthConfig {
   rules: Rule[]; scopes: Array<{ value: Scope; label: string }>; default_model: string; base_commit: string;
-  defaults: { reasoning_effort: string; max_attempts: number; timeout_seconds: number };
+  defaults: { reasoning_effort: string; max_attempts: number; budget: { mode: "fixed_groups"; count: number };
+    step_timeout_seconds: number; time_budget_seconds: number };
+}
+export interface CodeHealthOptions {
+  model: string; reasoning_effort: string; max_attempts: number;
+  budget: GovernanceBudget; step_timeout_seconds: number;
 }
 export interface Finding {
   id: string; rule_id: string; path: string; line: number; summary: string; evidence: string;
@@ -17,12 +22,14 @@ export interface HealthAttempt {
   after?: { checks: Check[]; findings: Finding[] };
 }
 export interface HealthSummary {
+  accepted_groups?: number;
   found: number; fixed: number; needs_decision: number; remaining: number;
   coverage: "unknown" | "complete" | "partial"; completed_batches: number; total_batches: number;
 }
 export interface HealthGroup {
   id: string; key: string; status: string; finding_ids: string[]; attempts: number[];
   reason?: string; stop_reason?: string; depends_on: string[]; checkpoint?: number;
+  route_reason?: string;
   proof?: { kind: string; sha256?: string; diagnosis?: { reason: string; structural_before?: string } };
 }
 export interface Checkpoint { number: number; attempt: number; digest: string; changed_files: string[] }
@@ -36,10 +43,11 @@ export interface HealthTask extends ProgressTask {
   branch?: string; worktree?: string; candidate_available?: boolean | null; attempts?: HealthAttempt[];
   check_logs?: Check[]; governance_summary?: HealthSummary; current_group?: string; checkpoint?: Checkpoint;
   checkpoint_available?: boolean; stop_reason?: string;
+  failure?: { code: string; stage: string; operation?: string; limit_seconds?: number; evidence_source?: string };
   governance?: { version?: number; groups?: HealthGroup[]; coverage?: Coverage[]; checkpoints?: Checkpoint[]; before: { checks: Check[]; findings: Finding[] }; findings: Finding[];
     selected_ids?: string[]; resolved_ids?: string[]; audit_summary?: string; inspected_paths?: string[] };
 }
-export type StartHealth = ProgressTask["options"] & { scope: Scope; request_id: string };
+export type StartHealth = CodeHealthOptions & { scope: Scope; request_id: string };
 export const healthLabels: Record<string, string> = {
   queued: "等待启动", running: "执行中", cancel_requested: "正在取消", fixed: "已验证，待人工提交",
   not_reproduced: "扫描完成", failed: "候选未通过", blocked: "受阻", cancelled: "已取消", interrupted: "已中断",
@@ -53,6 +61,8 @@ export function healthStatus(task: Pick<HealthTask, "status" | "candidate_availa
   if (task.status === "fixed" && task.candidate_available === false) return "曾通过验收，候选已变化";
   if (task.status === "cancelled" || task.status === "interrupted") return healthLabels[task.status];
   if (task.stop_reason === "budget_exhausted") return "已达总时限";
+  if (task.stop_reason === "step_timeout") return "单次执行超时";
+  if (task.stop_reason === "fix_limit_reached") return "已达修复数量目标";
   if (task.stop_reason && task.stop_reason !== "completed") return "执行受阻";
   const counts = task.governance_summary;
   if (task.status === "fixed" && task.candidate_available == null && counts?.coverage === "unknown") return "历史验收通过";

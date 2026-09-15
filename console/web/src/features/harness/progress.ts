@@ -21,3 +21,13 @@ export function repairRoundLabel(task: Pick<ProgressTask, "stage" | "preparation
   }
   return task.current_attempt == null ? null : `第 ${task.current_attempt} 次修复`;
 }
+
+export function budgetLabel(task: ProgressTask): string {
+  const elapsed = task.elapsed_seconds == null ? "用时尚未记录" : `已用 ${Math.round(task.elapsed_seconds)} 秒`;
+  const budget = task.options.budget;
+  if (budget?.mode === "fixed_groups") {
+    return `已验收 ${task.governance_summary?.accepted_groups ?? 0}/${budget.count} 组 · ${elapsed}`;
+  }
+  const seconds = budget?.mode === "time" ? budget.seconds : task.options.timeout_seconds;
+  return seconds == null ? elapsed : `${elapsed} / 总时限 ${seconds} 秒`;
+}

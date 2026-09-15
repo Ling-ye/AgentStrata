@@ -24,12 +24,13 @@ from chatcopilot.harness.models import HarnessError
 
 
 class CodeHealthChecks:
-    def __init__(self, directory: Path, repository: Path) -> None:
+    def __init__(self, directory: Path, repository: Path, *, budget=None) -> None:
         self.directory = directory
         self.repository = repository
         self.logs: list[dict[str, Any]] = []
         self.ledger: Any = None
         self.frozen: Path | None = None
+        self.budget = budget
 
     def bind(self, ledger: Any, frozen: Path) -> None:
         self.ledger, self.frozen = ledger, frozen
@@ -59,6 +60,13 @@ class CodeHealthChecks:
         return git_dirs
 
     def command(self, root: Path, argv: list[str], output: Path, check_cancel: Callable[[], None],
+                **kwargs) -> tuple[int, str]:
+        if self.budget is None:
+            return self._command(root, argv, output, check_cancel, **kwargs)
+        with self.budget.step("验证 " + output.name, check_cancel) as (_, poll):
+            return self._command(root, argv, output, poll, **kwargs)
+
+    def _command(self, root: Path, argv: list[str], output: Path, check_cancel: Callable[[], None],
                 *, reads: tuple[Path, ...] = (), writes: tuple[Path, ...] = (),
                 bindings: tuple[str, ...] = ()) -> tuple[int, str]:
         private_directory(output)
@@ -234,7 +242,47 @@ class CodeHealthChecks:
         return {"profile": profile, "passed": code == 0 and result["ok"] is True,
                 "checks": checks, "report": path.relative_to(self.directory).as_posix()}
 
+    def documentation(self, root: Path, names: list[str], check_cancel: Callable[[], None]) -> dict[str, Any]:
+        from chatcopilot.harness.health_documentation import markdown_links
+        output = private_directory(self.directory / "checks" / uuid.uuid4().hex)
+        snapshot, candidate = output / "source", output / "candidate"
+        git_dirs = self.view(root, snapshot)
+        self.view(root, candidate, checkers=False)
+        index = private_directory(output / "git-index")
+        environment = verification_index(candidate, index, manifest=self.ledger.manifest(candidate))
+        bindings = tuple(part for key, value in environment.items() for part in ("--setenv", key, value))
+        commands = {
+            "diff": ["git", "-C", str(candidate), "diff", "--check", "--", *names],
+            "public": [sys.executable, "scripts/check_public_repo.py", "--root", str(candidate)],
+        }
+        python_names = [str(candidate / n) for n in names if n.endswith(".py")]
+        if python_names:
+            commands["ruff"] = [sys.executable, "-m", "ruff", "check", "--no-cache", *python_names,
+                                "--config", str(snapshot / "pyproject.toml")]
+        checks = []
+        for label, argv in commands.items():
+            code, _ = self.command(snapshot, argv, output / label, check_cancel,
+                                   reads=(candidate, index, *git_dirs), bindings=bindings)
+            checks.append({"name": label, "exit_code": code, "status": "passed" if code == 0 else "failed",
+                           "log": (output / label / "stdout.log").relative_to(self.directory).as_posix()})
+        check_cancel()
+        failures = markdown_links(candidate, names)
+        log = output / "markdown-links.log"
+        log.write_text("\n".join(failures) if failures else "本地链接检查通过\n", encoding="utf-8")
+        log.chmod(0o600)
+        checks.append({"name": "markdown links", "exit_code": int(bool(failures)),
+                       "status": "failed" if failures else "passed", "log": log.relative_to(self.directory).as_posix()})
+        self.logs.extend(checks)
+        return {"profile": "documentation_only", "checks": checks,
+                "passed": all(c["exit_code"] == 0 for c in checks)}
+
     def run_test(self, root: Path, content: bytes, check_cancel: Callable[[], None]) -> dict[str, Any]:
+        if self.budget is None:
+            return self._run_test(root, content, check_cancel)
+        with self.budget.step("冻结回归测试", check_cancel) as (_, poll):
+            return self._run_test(root, content, poll)
+
+    def _run_test(self, root: Path, content: bytes, check_cancel: Callable[[], None]) -> dict[str, Any]:
         from chatcopilot.harness.local_verifier import LocalVerifier
         output = private_directory(self.directory / "checks" / uuid.uuid4().hex)
         view = output / "source"

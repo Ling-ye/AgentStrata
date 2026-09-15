@@ -6,7 +6,6 @@ import copy
 import logging
 import sqlite3
 import time
-from dataclasses import replace
 from itertools import groupby
 from pathlib import Path
 from typing import Any
@@ -17,10 +16,12 @@ from chatcopilot.harness.code_health_checks import CodeHealthChecks, compare_ver
 from chatcopilot.harness.code_health_rules import RULES
 from chatcopilot.harness.code_health_workspace import save_patch
 from chatcopilot.harness.health_batches import build_batches, descriptor, save_batch, summary
+from chatcopilot.harness.health_budget import HealthBudget, BudgetedCoder
+from chatcopilot.harness.health_documentation import eligible, classify as classify_documentation
 from chatcopilot.harness.health_ledger import SourceLedger
 from chatcopilot.harness.health_policy import policy_path, scope_path, requires_regression
 from chatcopilot.harness.health_regressions import frozen_content, prepare_regression
-from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError, RepairOptions, review_decision, safe_error
+from chatcopilot.harness.models import ACTIVE, GOVERNANCE_VERSION, CodeHealthOptions, Cancelled, HarnessError, RepairOptions, review_decision, safe_error
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.workspace import prepare
 
@@ -32,18 +33,19 @@ class HealthRun:
         self.directory = private_directory(store.root / "jobs" / task_id)
         self.frozen = self.directory / "source"
         self.original = self.task["baseline_manifest"]
-        self.options = RepairOptions(**self.task["options"])
-        self.started = time.monotonic()
-        self.deadline = self.started + self.options.timeout_seconds
+        self.options = CodeHealthOptions(**self.task["options"])
+        self.budget = HealthBudget(self.options)
+        self.coder = BudgetedCoder(coder, self.budget)
+        self.started = self.budget.started
         self.heartbeat = 0.0
         self.root: Path | None = None
         self.scope = self.task["source"]["scope"]
-        self.checks = checks or CodeHealthChecks(self.directory, Path(self.task["repository"]))
+        self.checks = checks or CodeHealthChecks(self.directory, Path(self.task["repository"]), budget=self.budget)
         self.ledger = SourceLedger(self.frozen, self.original, private_directory(self.directory / "inventory"),
                                    Path(self.task["repository"]))
         self.checks.bind(self.ledger, self.frozen)
         self.checkpoint_root, self.checkpoint_manifest = self.frozen, self.original
-        self.governance: dict[str, Any] = {"version": 2, "findings": [], "resolved_ids": [], "groups": [],
+        self.governance: dict[str, Any] = {"version": GOVERNANCE_VERSION, "findings": [], "resolved_ids": [], "groups": [],
                                            "coverage": None, "checkpoints": []}
         self.number = 0
         self.sources: list[dict[str, Any]] = []
@@ -56,15 +58,25 @@ class HealthRun:
         if self.store.get(self.ident)["status"] == "cancel_requested":
             raise Cancelled()
         now = time.monotonic()
-        if now >= self.deadline:
-            raise HarnessError("budget_exhausted", "代码治理已达到本次总时限")
+        self.budget.check()
         if now - self.heartbeat > 5:
             self.heartbeat = now
             self.save(heartbeat_at=time.time(), elapsed_seconds=now - self.started)
 
     def remaining(self) -> RepairOptions:
         self.cancel()
-        return replace(self.options, timeout_seconds=max(1, int(self.deadline - time.monotonic())))
+        return RepairOptions(self.options.model, self.options.reasoning_effort, self.options.max_attempts,
+                             self.options.step_timeout_seconds)
+
+    def target_reached(self) -> bool:
+        return (self.options.budget["mode"] == "fixed_groups"
+                and summary(self.governance)["accepted_groups"] >= self.options.budget["count"])
+
+    def finish(self, reason: str) -> None:
+        counts = summary(self.governance)
+        self.save(status="fixed", stage="done", stop_reason=reason,
+                  message=f"已验收 {counts['accepted_groups']} 个问题组，修复 {counts['fixed']} 项；"
+                          f"范围巡检 {counts['completed_batches']}/{counts['total_batches']} 批")
 
     def assert_source(self, digest: str) -> None:
         if manifest_digest(self.ledger.manifest(self.root)) != digest:
@@ -132,6 +144,8 @@ class HealthRun:
                     continue
                 self.cancel()
                 self.process_group(group)
+                if self.target_reached():
+                    return
                 made_progress = True
         self.save(current_group=None)
 
@@ -152,6 +166,8 @@ class HealthRun:
         self.save(current_group=group["id"], current_attempt=None)
         group["status"] = "preparing"
         proof = None
+        if eligible(selected) and self.process_documentation(group, evidence, initial):
+            return
         try:
             if any(row["detector"] == "codex" or requires_regression(row["path"]) for row in selected):
                 proof = prepare_regression(self.root, evidence, private_directory(self.directory / "groups" / group["id"]),
@@ -162,7 +178,7 @@ class HealthRun:
             else:
                 group["proof"] = {"kind": "mechanical", "checks": sorted({r["detector"] for r in selected})}
         except HarnessError as exc:
-            if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "workspace_changed", "policy_change", "coding_environment"}:
+            if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "step_timeout", "workspace_changed", "policy_change", "coding_environment"}:
                 raise
             group.update(status="needs_decision", reason=safe_error(exc), error_code=exc.code)
             for row in selected:
@@ -242,31 +258,14 @@ class HealthRun:
                 if decision["decision"] != "approved":
                     raise HarnessError("review_rejected", decision["problem"] + "；" + decision["reason"])
                 self.cancel()
-                checkpoint = private_directory(self.directory / "checkpoints" / str(self.number))
-                self.ledger.checkpoint(self.root, checkpoint / "source", manifest)
-                cumulative = sorted(n for n in self.original.keys() | manifest.keys() if self.original.get(n) != manifest.get(n))
-                patch_sha = save_patch(self.root, self.frozen, cumulative, checkpoint / "candidate.patch")
-                record = {"number": len(self.governance["checkpoints"]) + 1, "attempt": self.number,
-                          "group_id": group["id"], "digest": digest, "patch_sha256": patch_sha,
-                          "path": checkpoint.relative_to(self.directory).as_posix(), "created_at": time.time(),
-                          "changed_files": cumulative}
-                previous_governance = copy.deepcopy(self.governance)
-                self.governance["checkpoints"].append(record)
-                self.governance["resolved_ids"].extend(group["finding_ids"])
-                group.update(status="accepted", checkpoint=record["number"])
-                attempt.update(status="accepted", finished_at=time.time(), regressions=[])
-                try:
-                    self.save(accepted_attempt=attempt, verified_digest=digest, verified_manifest=manifest,
-                              verified_at=time.time(), working_digest=digest, checkpoint=record)
-                except Exception:
-                    self.governance = previous_governance
-                    raise
-                self.checkpoint_root, self.checkpoint_manifest = checkpoint / "source", manifest
+                self.accept(group, attempt, digest, manifest)
                 return
             except HarnessError as exc:
                 attempt.update(status="rejected", error_code=exc.code, error=safe_error(exc), finished_at=time.time())
                 self.store.save_attempt(self.ident, self.number, attempt)
-                if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "workspace_changed", "coding_environment"}:
+                if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "step_timeout", "workspace_changed", "coding_environment"}:
+                    attempt.update(status="interrupted", counts_toward_budget=False)
+                    self.store.save_attempt(self.ident, self.number, attempt)
                     raise
                 previous = {k: attempt[k] for k in ("error_code", "error", "verification", "review", "regression_test") if k in attempt}
                 # Stable error plus candidate bytes: retries require new evidence or a different patch.
@@ -288,6 +287,100 @@ class HealthRun:
                     break
         group.update(status="failed", reason=previous.get("error", "候选没有通过验收"))
         self.save()
+
+    def process_documentation(self, group, evidence, initial) -> bool:
+        """A rejected boundary reroutes from the checkpoint before standard preparation."""
+        previous = {}
+        seen = set()
+        for group_attempt in range(1, self.options.max_attempts + 1):
+            self.cancel()
+            self.number += 1
+            output = private_directory(self.directory / f"attempt-{self.number}")
+            attempt = {"version": GOVERNANCE_VERSION, "number": self.number, "group_id": group["id"],
+                       "group_attempt": group_attempt, "status": "coding", "started_at": time.time()}
+            group["attempts"].append(self.number)
+            group["status"] = "coding"
+            self.store.save_attempt(self.ident, self.number, attempt)
+            self.save(current_attempt=self.number)
+            try:
+                self.record_call(output, "coding", "说明类候选")
+                attempt["coding"] = self.coder.run(self.root, {**evidence, "verification_route": "documentation_only",
+                    "previous_attempt": previous}, self.remaining(), output, self.cancel)
+                names, manifest = self.ledger.changes(self.root, self.checkpoint_manifest, self.scope)
+                if not names:
+                    raise HarnessError("no_changes", "Codex 没有产生候选改动")
+                proof = classify_documentation(self.checkpoint_root, self.root, names, self.checkpoint_manifest, manifest)
+                if not proof["eligible"]:
+                    attempt.update(status="rerouted", route_reason=proof["reason"], counts_toward_budget=False,
+                                   finished_at=time.time())
+                    self.store.save_attempt(self.ident, self.number, attempt)
+                    group["route_reason"] = proof["reason"]
+                    self.rollback()
+                    self.assert_source(initial)
+                    self.save()
+                    return False
+                group["proof"] = proof
+                digest = manifest_digest(manifest)
+                attempt.update(changed_files=names, candidate_digest=digest, status="verifying",
+                    patch_sha256=save_patch(self.root, self.checkpoint_root, names, output / "candidate.patch"))
+                self.store.save_attempt(self.ident, self.number, attempt)
+                self.save(stage="verify", working_digest=digest)
+                verification = self.checks.documentation(self.root, names, self.cancel)
+                verification.update(accepted=verification["passed"], structural_evidence=proof)
+                attempt["verification"] = verification
+                self.store.save_attempt(self.ident, self.number, attempt)
+                self.assert_source(digest)
+                if not verification["passed"]:
+                    raise HarnessError("verification_failed", "说明类候选未通过定向检查；查看检查日志")
+                self.record_call(output / "review", "review", "说明类候选独立审核")
+                review = self.coder.review(self.root, {"source": {**evidence["source"], "selected_findings": evidence["selected_findings"]},
+                    "reproduction": proof, "verification": verification,
+                    "patch": (output / "candidate.patch").read_text(), "regression": {}},
+                    self.remaining(), output / "review", self.cancel)
+                decision = review_decision({k: review[k] for k in ("decision", "problem", "reason", "evidence_refs")})
+                attempt["review"] = decision
+                self.assert_source(digest)
+                if decision["decision"] != "approved":
+                    raise HarnessError("review_rejected", decision["problem"] + "；" + decision["reason"])
+                self.cancel()
+                self.accept(group, attempt, digest, manifest)
+                return True
+            except HarnessError as exc:
+                if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "step_timeout", "workspace_changed", "coding_environment", "policy_change"}:
+                    raise
+                previous = {"error_code": exc.code, "error": safe_error(exc)}
+                attempt.update(status="rejected", **previous, finished_at=time.time())
+                self.store.save_attempt(self.ident, self.number, attempt)
+                signature = (exc.code, attempt.get("candidate_digest"), safe_error(exc))
+                self.rollback()
+                if signature in seen:
+                    break
+                seen.add(signature)
+        group.update(status="failed", reason=previous.get("error", "说明候选未通过审核"))
+        self.save()
+        return True
+
+    def accept(self, group, attempt, digest, manifest) -> None:
+        checkpoint = private_directory(self.directory / "checkpoints" / str(self.number))
+        self.ledger.checkpoint(self.root, checkpoint / "source", manifest)
+        cumulative = sorted(n for n in self.original.keys() | manifest.keys() if self.original.get(n) != manifest.get(n))
+        patch_sha = save_patch(self.root, self.frozen, cumulative, checkpoint / "candidate.patch")
+        record = {"number": len(self.governance["checkpoints"]) + 1, "attempt": self.number,
+                  "group_id": group["id"], "digest": digest, "patch_sha256": patch_sha,
+                  "path": checkpoint.relative_to(self.directory).as_posix(), "created_at": time.time(),
+                  "changed_files": cumulative}
+        previous_governance = copy.deepcopy(self.governance)
+        self.governance["checkpoints"].append(record)
+        self.governance["resolved_ids"].extend(group["finding_ids"])
+        group.update(status="accepted", checkpoint=record["number"])
+        attempt.update(status="accepted", finished_at=time.time(), regressions=[])
+        try:
+            self.save(accepted_attempt=attempt, verified_digest=digest, verified_manifest=manifest,
+                      verified_at=time.time(), working_digest=digest, checkpoint=record)
+        except Exception:
+            self.governance = previous_governance
+            raise
+        self.checkpoint_root, self.checkpoint_manifest = checkpoint / "source", manifest
 
     def execute(self) -> None:
         self.cancel()
@@ -325,11 +418,17 @@ class HealthRun:
                     self.add_findings(audit["findings"])
                 except HarnessError as exc:
                     entry.update(status="failed", reason=safe_error(exc), error_code=exc.code)
-                    if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "workspace_changed", "coding_environment"}:
+                    if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "step_timeout", "workspace_changed", "coding_environment"}:
                         raise
                     self.save()
             self.process_groups()
+            if self.target_reached():
+                self.finish("fix_limit_reached")
+                return
         self.process_groups(final=True)
+        if self.target_reached():
+            self.finish("fix_limit_reached")
+            return
         self.cancel()
         counts = summary(self.governance)
         status = "fixed" if counts["fixed"] else "not_reproduced" if not counts["found"] else "blocked"
@@ -338,12 +437,14 @@ class HealthRun:
         if counts["coverage"] != "complete" and not counts["fixed"]:
             status = "blocked"
         self.save(status=status, stage="done", stop_reason="completed",
-                  message=f"发现 {counts['found']} 项，已修复 {counts['fixed']} 项，待判断 {counts['needs_decision']} 项，未处理 {counts['remaining']} 项")
+                  message=f"发现 {counts['found']} 项，已修复 {counts['fixed']} 项，待判断 {counts['needs_decision']} 项，未处理 {counts['remaining']} 项"
+                  + (f"；已验收 {counts['accepted_groups']}/{self.options.budget['count']} 组，当前可执行批次已结束，未达到数量目标"
+                     if self.options.budget["mode"] == "fixed_groups" else ""))
 
 
 def run_task(store: HarnessStore, task_id: str, coder: Any, *, checks: Any = None) -> dict[str, Any]:
     task = store.get(task_id)
-    if task["status"] not in ACTIVE or task["source"].get("governance_version") != 2:
+    if task["status"] not in ACTIVE or task["source"].get("governance_version") != GOVERNANCE_VERSION:
         return task
     run = HealthRun(store, task_id, coder, checks)
     storage_failure = None
@@ -354,12 +455,24 @@ def run_task(store: HarnessStore, task_id: str, coder: Any, *, checks: Any = Non
             storage_failure = exc
         else:
             code = getattr(exc, "code", "execution_failed")
+            for batch in run.governance.get("coverage") or []:
+                if batch["status"] == "running":
+                    batch.update(status="interrupted", reason=safe_error(exc), error_code=code)
             for group in run.governance["groups"]:
                 if group["status"] in {"preparing", "coding"}:
                     group.update(status="interrupted", reason=safe_error(exc))
             try:
+                for attempt in store.attempts(task_id):
+                    if attempt["status"] in {"coding", "verifying", "reviewing"}:
+                        attempt.update(status="interrupted", error_code=code, error=safe_error(exc),
+                                       counts_toward_budget=False, finished_at=time.time())
+                        store.save_attempt(task_id, attempt["number"], attempt)
+                latest = store.get(task_id)
                 run.save(status="cancelled" if isinstance(exc, Cancelled) else "blocked", stage="done",
-                         stop_reason=code, error_code=code, message=safe_error(exc))
+                         stop_reason=code, error_code=code, message=safe_error(exc),
+                         failure={"code": code, "stage": latest["stage"],
+                                  "evidence_source": latest.get("current_source"),
+                                  **getattr(exc, "details", {})})
             except (sqlite3.Error, OSError) as error:
                 storage_failure = error
     finally:
@@ -381,11 +494,12 @@ def run_task(store: HarnessStore, task_id: str, coder: Any, *, checks: Any = Non
                 if storage_failure is not None:
                     logging.getLogger(__name__).error("Checkpoint restore failed after storage failure", exc_info=True)
                 else:
-                    run.save(status="blocked", error_code="checkpoint_restore_failed", message=safe_error(exc))
+                    run.save(status="blocked", error_code="checkpoint_restore_failed",
+                             stop_reason="checkpoint_restore_failed", message=safe_error(exc))
     if storage_failure is not None:
         return store.interrupt(task_id, storage_error=storage_failure)
     try:
-        run.save(elapsed_seconds=time.monotonic() - run.started, current_group=None, current_source=None,
+        run.save(elapsed_seconds=time.monotonic() - run.started, current_group=None, current_source=None, current_attempt=None,
                  working_digest=manifest_digest(run.checkpoint_manifest))
     except (sqlite3.Error, OSError) as error:
         return store.interrupt(task_id, storage_error=error)

@@ -53,8 +53,13 @@ export interface RepairProgress {
   truncated: boolean;
   message: string | null;
 }
-export type ProgressTask = Pick<RepairTask, "task_id" | "status" | "stage" | "options" | "elapsed_seconds" |
-  "heartbeat_at" | "current_attempt" | "preparation_revisions" | "next_action" | "local_commit" | "commit_in_main" | "commit_state">;
+export type GovernanceBudget = { mode: "time"; seconds: number } | { mode: "fixed_groups"; count: number };
+export type ProgressTask = Pick<RepairTask, "task_id" | "status" | "stage" | "elapsed_seconds" |
+  "heartbeat_at" | "current_attempt" | "preparation_revisions" | "next_action" | "local_commit" | "commit_in_main" | "commit_state"> & {
+  options: { model: string; max_attempts: number; reasoning_effort: string; timeout_seconds?: number;
+    budget?: GovernanceBudget; step_timeout_seconds?: number };
+  governance_summary?: { accepted_groups?: number };
+};
 export const ACTIVE = ["queued", "running", "cancel_requested"];
 export const REPAIR_LABELS: Record<string, string> = {
   queued: "等待启动", running: "执行中", cancel_requested: "正在取消", fixed: "已修复 · 待合入",

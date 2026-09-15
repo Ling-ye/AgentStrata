@@ -25,3 +25,14 @@ describe("repair progress facts", () => {
     expect(repairRoundLabel({ ...task, stage: "prepare_reproducer", preparation_revisions: [] })).toBeNull();
   });
 });
+
+
+it("displays success groups independently from elapsed time and legacy budgets", async () => {
+  const { budgetLabel } = await import("./progress");
+  const base = { task_id: "test", status: "running", stage: "audit", elapsed_seconds: 2000,
+    options: { model: "test", reasoning_effort: "medium", max_attempts: 3 } };
+  expect(budgetLabel({ ...base, options: { ...base.options, budget: { mode: "fixed_groups", count: 3 } },
+    governance_summary: { accepted_groups: 1 } })).toBe("已验收 1/3 组 · 已用 2000 秒");
+  expect(budgetLabel({ ...base, options: { ...base.options, budget: { mode: "time", seconds: 7200 } } })).toContain("总时限 7200 秒");
+  expect(budgetLabel({ ...base, options: { ...base.options, timeout_seconds: 1080 } })).toContain("总时限 1080 秒");
+});

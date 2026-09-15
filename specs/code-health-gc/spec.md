@@ -95,9 +95,32 @@ SQLite 辅助文件可在并发提交时被删除。宿主仅对 journal/WAL/SHM
 相关路径和组间依赖单独记录。待判断问题不阻断独立组；依赖未通过组的问题暂缓。
 全部计划批次完成才能显示「完成本轮范围巡检」，只证明计划输入已处理，不保证找出了全部缺陷。
 
-每组默认最多 3 次修复尝试，整个任务默认共用 2 小时时限，沿用现有参数入口。
+治理版本 3 使用独立 CodeHealthOptions。新请求必须提供 budget：
+`{mode: fixed_groups, count: N}` 或 `{mode: time, seconds: N}`，两者互斥且数值为正整数。
+默认按验收通过的问题组数停止，count=1；切换时间模式时默认 7200 秒。
+每组默认最多 3 次修复尝试，step_timeout_seconds 默认 1800，可由高级参数调整。
+数量模式没有任务总时限；时间模式使用单调时钟计算总时限。每次模型调用或验证命令
+使用单次时限与剩余总时限的较小值，记录限制来源，分别报告 step_timeout 或
+budget_exhausted。技术超时不计入产品修复重试，终态清理活动批次、组和尝试。
+取消和技术故障均保留已持久化检查点，错误摘要显示阶段、限制及证据入口。
+
+accepted_groups 仅统计已通过独立审核且检查点事务成功的问题组；原 fixed 仍统计发现条数。
+一个根因组解决多条发现仍计一组，失败、待判断和重试不增加成功计数。第 N 个检查点保存后
+以 fixed / fix_limit_reached 结束，不再启动后续工作。有限批次耗尽而数量未达时，按实际
+发现和覆盖结束，不重复巡检凑数。页面分别展示数量目标、已用时间与范围覆盖。
 同一错误和相同候选内容重复出现时结束本组；错误、候选摘要和尝试证据保留，继续其他独立组。
 任务内尝试编号唯一，另外记录所属组和组内次数。
+
+### 说明类轻量验收
+
+documentation 类发现中的普通 Markdown、Python 普通注释与模块包说明可先生成轻量候选。
+固定宿主核对实际差异：Python 去除模块 docstring 后 AST 与代码 token 必须相同，编码、
+类型检查、lint 等指令不得改变；函数和类 docstring、CLI/工具消费的模块说明走标准流程。
+标准、提示词、配置、检查器、权限和关键基础设施不进入轻量路径。
+轻量候选进行差异、语法/lint、公开边界和 Markdown 本地链接检查，并独立审核说明与源码
+及契约的一致性，记录 documentation_only 证据，不新增行为测试或重复两轮 fast。
+实际差异超范围时恢复组前检查点，记录路由原因，再建立标准回归依据；路由重选不消耗
+产品修复尝试。独立审核仍可拒绝候选，未验收内容不能进入检查点。
 
 每组通过固定验证与独立审核后保存不可变检查点，并计算相对于初始源码的累计补丁。
 后续组失败只回滚到最近检查点。取消、预算耗尽、执行异常时恢复并交付已经验收的检查点；
@@ -132,7 +155,7 @@ Harness 与 EvaluationResultStore 共用 PrivateDatabase。构造过程由各库
 ### API、历史与页面
 
 保留 `POST /api/harness/code-health/tasks`、配置、历史、详情、进度、取消及组内补丁接口。
-来源增加 `governance_version=2`；`governance` 记录 coverage/groups/checkpoints，attempt
+新来源使用 `governance_version=3`；`governance` 记录 coverage/groups/checkpoints，attempt
 增加 version/group_id/group_attempt。详情与分页摘要显示发现、已修复、待判断和未处理数量。
 新增 `GET /api/harness/tasks/{id}/candidate-patch` 读取最近已验收的累计补丁。
 `check-log` 只允许读取本任务已登记的检查日志。任务 payload 增加轻量摘要，分页不传大清单。
@@ -148,6 +171,10 @@ Harness 与 EvaluationResultStore 共用 PrivateDatabase。构造过程由各库
 
 ## Acceptance
 
+- 数量模式默认验收 1 组后停止；失败和多条同组发现不影响计数，达到目标后无后续执行。
+  时间模式及单次执行超时分别归因，终态不遗留活动批次或尝试；两者都保留持久化检查点。
+- 普通说明候选经宿主差异检查、定向检查和独立审查交付，不生成行为测试或运行两轮 fast；
+  可执行差异恢复检查点后转标准验证。旧治理记录与补丁保持不变，新建接口显式声明预算。
 - 隔离候选中的 `.env.example` 漏纳入问题可由真实 Codex 建立回归、修复、独立审核；宿主
   版本、凭据排除规则和原工作区不变。
 - 候选改写检查器为始终成功、通过忽略规则藏文件、改写既有测试，不能替换固定验收或蒙混过关。
@@ -156,6 +183,22 @@ Harness 与 EvaluationResultStore 共用 PrivateDatabase。构造过程由各库
 - Case、快照、权限、日志、Console 回归及 full 门禁通过，完成桌面与窄屏浏览器检查。
 
 ## Verification
+
+2026-09-16 完成双预算、超时归因和说明类轻量验收（离线验证）：
+
+- 治理、说明判定、Git 环境、Console、进度、质量与 Case 直接调用方定向测试 201 passed；
+  包括真实 bubblewrap 定向检查和验证命令超时终止。前端相关测试 37 passed。
+- 执行一次 `scripts/check_repo.py full --keep-going`：全量 Python 4180 passed、1 skipped、
+  10 warnings、154 subtests passed（602.78 秒）；唯一跳过项为 Windows 路径大小写行为。
+  其余静态、类型、依赖及 Console 生产构建检查通过。初次打包检查因两个新增模块尚未
+  进入 Git 索引而报告 sdist 清单不一致，保留原失败；随后使用 verification_index 的私有
+  索引和 objects 复验 `scripts/build_smoke.py`，wheel/sdist 精确清单及隔离运行通过，
+  操作者索引摘要未变化。不将原 full 报告改写为通过，也未重复执行全量测试。
+- 真实 Chromium 页面交互配合模拟 API，验证数量/时间请求、默认值、数量达标/预算耗尽
+  显示、补丁链接、1440px 桌面及 390px 窄屏；无页面异常或横向溢出。补丁正文与完整性
+  由后端隔离测试验证，浏览器检查不作为真实治理或模型执行证据。
+- 原受阻任务的更新时间和已验收补丁摘要未变化；未启动真实模型、更新服务、应用旧补丁
+  或操作用户 Git 暂存、提交及发布。证据保存在 `.cache/health-budget/`。
 
 2026-09-15 完成 SQLite 描述符/锁生命周期修复及真实 docs 治理验收：
 

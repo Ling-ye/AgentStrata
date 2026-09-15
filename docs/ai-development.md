@@ -24,6 +24,10 @@ QQ Gateway 不调用 Feishu legacy 的 render-cc-config/render-session-env 流�
 跨层、部署、依赖、打包或广泛改动使用 `full`；CI 保留 Python 3.10/3.13 全量覆盖。
 裸 `pytest` 仍是全量发现。清单按职责维护，不按数量截断参数矩阵。
 
+代码治理宿主的普通说明候选有独立的轻量验收例外：固定宿主确认实际差异后执行定向
+检查和独立审查，不为纯说明增加行为测试或重复两轮 fast。判定条件和记录格式以
+[代码治理规格](../specs/code-health-gc/spec.md#说明类轻量验收)为准；代码或标准变更仍遵守上面的验证范围。
+
 ```bash
 # Public-boundary checks for the current change
 python scripts/check_public_repo.py

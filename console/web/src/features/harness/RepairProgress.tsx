@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Empty, Space, Spin, Tag, Typography } from "@arco-design/web-react";
 import { ACTIVE, harnessApi, repairStatusLabel, stageLabel, type ProgressTask } from "./api";
-import { heartbeatStatus, progressSourceLabel, repairRoundLabel } from "./progress";
+import { heartbeatStatus, progressSourceLabel, repairRoundLabel, budgetLabel } from "./progress";
 import "./progress.css";
 
 const { Text } = Typography;
@@ -44,7 +44,7 @@ export function RepairProgress({ task, refreshTask, title = "修复进度", stat
       }}>刷新进度</Button></Space>
     <Space wrap><Tag color={task.status === "fixed" ? "green" : "blue"}>{statusLabel ?? repairStatusLabel(task)}</Tag>
       <Text>阶段：{stageLabel(task.stage)}</Text>{round && <Text>{round}</Text>}
-      <Text type="secondary">{task.elapsed_seconds == null ? "用时尚未记录" : `已用 ${Math.round(task.elapsed_seconds)} 秒`} / {task.options.timeout_seconds} 秒</Text>
+      <Text type="secondary">{budgetLabel(task)}</Text>
       <Text type="secondary">{heartbeat.label}</Text></Space>
     {heartbeat.stale && <Alert type="warning" content="心跳暂未更新；可刷新确认，任务状态以实际执行结果为准。" />}
     {query.isError && <Alert type="error" content={`进度读取失败：${String(query.error)}。已显示的内容保留，可刷新重试。`} />}

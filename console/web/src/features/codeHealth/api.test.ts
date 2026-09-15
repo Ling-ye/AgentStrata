@@ -13,7 +13,7 @@ it("uses the shared host with an explicit governance history filter", async () =
 it("submits source scope and execution parameters without Git authority", async () => {
   const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ task_id: "example" }) });
   vi.stubGlobal("fetch", fetch);
-  const body = { scope: "all" as const, model: "test-model", reasoning_effort: "medium", max_attempts: 3, timeout_seconds: 7200, request_id: "request" };
+  const body = { scope: "all" as const, model: "test-model", reasoning_effort: "medium", max_attempts: 3, budget: { mode: "fixed_groups" as const, count: 1 }, step_timeout_seconds: 1800, request_id: "request" };
   await healthApi.start(body);
   expect(fetch.mock.calls[0][0]).toBe("/api/harness/code-health/tasks");
   expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(body);
@@ -41,6 +41,8 @@ it("keeps cancellation and budgets distinct from partial improvements", () => {
   expect(healthStatus({ status: "cancelled", governance_summary })).toBe("已取消");
   expect(healthStatus({ status: "blocked", stop_reason: "budget_exhausted", governance_summary })).toBe("已达总时限");
   expect(healthStatus({ status: "blocked", stop_reason: "execution_failed", governance_summary })).toBe("执行受阻");
+  expect(healthStatus({ status: "blocked", stop_reason: "step_timeout", governance_summary })).toBe("单次执行超时");
+  expect(healthStatus({ status: "fixed", stop_reason: "fix_limit_reached", governance_summary })).toBe("已达修复数量目标");
 });
 
 it("does not invalidate archived acceptance using new snapshot rules", () => {

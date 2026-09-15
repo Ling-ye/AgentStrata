@@ -26,7 +26,7 @@ from chatcopilot.harness.config import configuration
 from chatcopilot.harness.models import ACTIVE, HarnessError, RepairFeedback, RepairOptions, safe_error
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.sources import RepairSources
-from chatcopilot.harness.models import PIPELINE_VERSION, ProblemEvidence, SourceReader
+from chatcopilot.harness.models import PIPELINE_VERSION, GOVERNANCE_VERSION, CodeHealthOptions, ProblemEvidence, SourceReader
 from chatcopilot.harness.workspace import context_key
 
 
@@ -69,13 +69,17 @@ class HarnessController:
             {"value": "all", "label": "全部可治理源码"}, {"value": "runtime", "label": "运行时源码"},
             {"value": "console", "label": "控制台（前后端）"}, {"value": "docs", "label": "说明文档"}],
             "default_model": self.settings.get("CHATCOPILOT_HARNESS_MODEL", ""),
-            "defaults": {"reasoning_effort": "medium", "max_attempts": 3, "timeout_seconds": 7200},
+            "defaults": {"reasoning_effort": "medium", "max_attempts": 3,
+                         "budget": {"mode": "fixed_groups", "count": 1}, "time_budget_seconds": 7200,
+                         "step_timeout_seconds": 1800},
             "base_commit": git_output(self.repository, "rev-parse", "HEAD")}
 
-    def start_code_health(self, scope: str, options: RepairOptions, *, request_id: str,
+    def start_code_health(self, scope: str, options: CodeHealthOptions, *, request_id: str,
                           launch: bool = True) -> dict[str, Any]:
         from chatcopilot.harness.code_health_rules import SCOPES
         from chatcopilot.core.source_snapshot import verify_copy
+        if not isinstance(options, CodeHealthOptions):
+            raise ValueError("代码治理必须明确选择预算模式")
         if scope not in SCOPES or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_id):
             raise ValueError("无效的扫描范围或请求 ID")
         request_digest = _digest({"kind": "code_health", "scope": scope, "options": asdict(options)})
@@ -88,7 +92,7 @@ class HarnessController:
         branch = git_output(self.repository, "rev-parse", "--abbrev-ref", "HEAD")
         manifest = source_manifest(self.repository)
         digest = manifest_digest(manifest)
-        source = {"kind": "code_health", "scope": scope, "snapshot_digest": digest, "governance_version": 2,
+        source = {"kind": "code_health", "scope": scope, "snapshot_digest": digest, "governance_version": GOVERNANCE_VERSION,
                   "original_branch": None if branch == "HEAD" else branch}
         context = _digest(source)
         ident = "repair-" + uuid.uuid4().hex
@@ -387,6 +391,8 @@ class HarnessController:
             feedback=RepairFeedback(**source.get("feedback", {})), continuation={**old, "diagnostic_material": material})
 
     def _launch(self, task: dict[str, Any]) -> None:
+        if task["source"].get("kind") == "code_health" and task["source"].get("governance_version") != GOVERNANCE_VERSION:
+            raise HarnessError("new_snapshot_required", "旧治理任务保留历史；请重新创建源码快照")
         if task.get("pipeline_version") != PIPELINE_VERSION:
             raise HarnessError("source_archived", "旧 worker 使用旧存储锁协议；请创建新任务或接续任务")
         try:
@@ -492,7 +498,7 @@ class HarnessController:
             "attempts": self.store.attempts(task_id),
             **self._commit_status(task),
             "candidate_available": None
-            if task["source"].get("kind") == "code_health" and task["source"].get("governance_version") != 2
+            if task["source"].get("kind") == "code_health" and task["source"].get("governance_version") != GOVERNANCE_VERSION
             else self._candidate_available(task) if task["status"] == "fixed" or task.get("checkpoint") else False,
             "checkpoint_available": self._checkpoint_available(task),
         }
