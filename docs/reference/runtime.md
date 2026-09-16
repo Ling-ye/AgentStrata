@@ -34,7 +34,15 @@ Application 的 `ActorTurnExecutor` 准备回合、管理 actor 和待确认交�
 
 ## Owner 斜杠指令准入与生命周期
 
-去除平台 envelope 后，用户正文去除前导空白并以 ASCII `/name` token 开头、后接空白或正文结束时才识别为斜杠指令；绝对路径、URL、`//name` 和正文中间的 slash 仍是普通输入。所有已识别指令一律只允许本轮认证 Gateway `Principal`、准入和身份激活共同确认的可信 Owner；统一门禁位于身份激活之后、资源 materialization 及 Session/Agent/模型/工具之前，群准入、昵称、历史回合或共享 session 不得提升权限。`/help` 必须从当前 Bot 实际注册且启用的同一命令目录生成；`/state` 只投影当前会话和可信 runtime 绑定的当前 Bot systemd unit 的有界脱敏状态。`/restart` 不接受目标或参数，只重启当前 Bot unit，不清理 workspace、journal、memory、persona、backend resume 或 task/job 状态，也不操作外部 OneBot provider；仅在接受回复送达和指令 task 终态持久化后，才允许通过 Bot cgroup 外的 systemd transient unit 延迟执行，任何身份、投递、持久化、systemd、同实例 transient-unit 冲突或调度异常都失败关闭，禁止用进程内后台任务、`nohup` 或 `setsid` 降级，也不得把“请求已接受”描述为“重启已完成”。timer 注册后的回执落盘失败只能 best-effort 停止 transient units；即使目标 generation 尚未变化也不得声称已撤销，因为 systemd manager 可能已经排队 restart。
+去除平台 envelope 后，用户正文去除前导空白并以 ASCII `/name` token 开头、后接空白或正文结束时才识别为斜杠指令；绝对路径、URL、`//name` 和正文中间的 slash 仍是普通输入。
+
+所有已识别指令一律只允许本轮认证 Gateway `Principal`、准入和身份激活共同确认的可信 Owner；统一门禁位于身份激活之后、资源 materialization 及 Session/Agent/模型/工具之前，群准入、昵称、历史回合或共享 session 不得提升权限。
+
+`/help` 必须从当前 Bot 实际注册且启用的同一命令目录生成；`/state` 只投影当前会话和可信 runtime 绑定的当前 Bot systemd unit 的有界脱敏状态。
+
+`/restart` 不接受目标或参数，只重启当前 Bot unit，不清理 workspace、journal、memory、persona、backend resume 或 task/job 状态，也不操作外部 OneBot provider；仅在接受回复送达和指令 task 终态持久化后，才允许通过 Bot cgroup 外的 systemd transient unit 延迟执行，任何身份、投递、持久化、systemd、同实例 transient-unit 冲突或调度异常都失败关闭，禁止用进程内后台任务、`nohup` 或 `setsid` 降级，也不得把“请求已接受”描述为“重启已完成”。
+
+timer 注册后的回执落盘失败只能 best-effort 停止 transient units；即使目标 generation 尚未变化也不得声称已撤销，因为 systemd manager 可能已经排队 restart。
 
 ## 任务诊断与 Gateway durable state 分层
 

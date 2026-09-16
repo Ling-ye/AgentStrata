@@ -26,15 +26,9 @@ state.
 
 ## Design
 
- The public operator commands are:
-
-```bash
-python -m chatcopilot bot codex-auth login \
-  --bot bots/lingye-copilot-qq/bot.yaml --lane all
-
-python -m chatcopilot bot codex-auth status \
-  --bot bots/lingye-copilot-qq/bot.yaml --lane all --json
-```
+ Public login/status commands are maintained in the
+[authentication guide](../../docs/guides/services.md). This specification records
+credential isolation and the outstanding live acceptance conditions.
 
  `--lane` accepts `main`, `worker`, or `all`; `all` performs the
 main and worker device authorizations sequentially.  Login runs the
@@ -65,12 +59,12 @@ identifiers associated with the old credential: main sessions start without the
 old resume ID, while worker tasks retain their worktrees and attempt records but
 resume without the old Codex session ID.
 
- Native resume argv must follow the pinned Codex CLI grammar: all
-`exec`-scoped options are emitted before the `resume` subcommand, followed by
-the native session ID and `-` for the stdin prompt.  Main and
-worker use only options supported by both fresh and resumed invocations; worker
-web search is expressed as the supported `web_search="live"` config rather than
-the incompatible legacy `--search` flag.
+ The main Backend uses the App Server session protocol; the independent worker
+uses the supported CLI `exec/resume` flow. Credential generation invalidates the
+corresponding native session identifier in either flow, but worker CLI argv rules
+must not be applied to the main App Server. Execution details are maintained in
+[Agent contracts](../../docs/reference/agent.md) and
+[task delivery](../../docs/reference/delivery.md).
 
  Status reports only lane state (`missing`, `recognized`, `ready`,
 `invalid`, or `busy`), safe timestamps, and stable non-secret error codes; it
@@ -79,13 +73,11 @@ CLI output.  Authentication failures shown to chat users use a
 short actionable message, while raw stderr remains available only in private
 task diagnostics and never becomes `final_text`.
 
- The former desktop-import command is retired and must fail closed
-with a pointer to `bot codex-auth login`; managed `worktree` and `workspace`
-runtime code must never copy from, mount, inspect, or fall back to a desktop or
-personal `.codex` directory.  The explicit high-risk `host`
-compatibility mode remains outside this dual-lane contract and continues to
-inherit the operator's host Codex environment as documented by its existing
-access-mode contract.
+ The former desktop-import command is retired and must fail closed with a pointer
+to the independent login workflow. Current access modes are `workspace` and
+`worktree`, as defined by [Backend contracts](../../src/chatcopilot/contracts/agent_backend.py).
+Neither may copy from, mount, inspect or fall back to a desktop or personal Codex
+home; there is no `host` access-mode exception.
 
 ## Acceptance
 
@@ -105,9 +97,9 @@ access-mode contract.
   permissive credentials never replace authoritative state.
 -  Explicit re-login invalidates the affected lane's old native
   resume identifiers without deleting worker worktrees or attempts.
--  A second main turn and a resumed worker attempt preserve all
-  required execution policy while producing argv accepted by the pinned Codex
-  CLI; exec-only options never appear after the `resume` subcommand.
+-  A second main turn and a resumed worker attempt preserve the execution policy
+  through their respective App Server and CLI protocols. Worker CLI arguments
+  follow the supported resume grammar; main sessions retain their own protocol.
 -  `status --json` returns only the documented safe states,
   timestamps, and error codes, and reports a held lane as `busy`.
 -  User-visible authentication errors contain remediation but no

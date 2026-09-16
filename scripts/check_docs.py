@@ -16,7 +16,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_DOCS = {"README.md", "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md", "SUPPORT.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md", ".github/pull_request_template.md"}
 SKIP_DIRS = {".git", ".cache", ".worktrees", ".venv", "node_modules", "dist", "build", "__pycache__", "vendor", "fixtures", "prompts", "skills"}
-SOURCE_ROOTS = {"src", "tests", "scripts", "console", "bots", "deploy", "requirements"}
+SOURCE_ROOTS = {"src", "tests", "scripts", "console", "bots", "deploy", "requirements", ".github", ".cursor"}
 _HEADING = re.compile(r"^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
 _REFERENCE = re.compile(r'^ {0,3}\[([^\]]+)\]:\s*(<[^>]+>|\S+)')
 _RESULT = re.compile(r"\b\d[\d,]*\s+(?:passed|failed|skipped|subtests?\s+passed|tests?\s+passed)\b", re.I)
@@ -40,6 +40,7 @@ class Document:
     links: list[Link] = field(default_factory=list)
     issues: list[dict] = field(default_factory=list)
     prose: list[str] = field(default_factory=list)
+    paragraphs: list[tuple[int, str]] = field(default_factory=list)
 
 
 def issue(rule: str, path: str, line: int, message: str, **extra) -> dict:
@@ -112,11 +113,25 @@ def inline_targets(line: str) -> list[str]:
     return result
 
 
+def table_separator(line: str) -> bool:
+    return "|" in line and all(re.fullmatch(r":?-{3,}:?", part.strip())
+                               for part in line.strip().strip("|").split("|"))
+
+
 def parse(name: str, text: str) -> Document:
     doc = Document(name, text)
     references, visible, headings, occurrences = {}, [], [], defaultdict(int)
     fence, frontmatter = "", text.startswith("---\n")
     source_level = None
+    in_table = False
+    paragraph: list[str] = []
+    paragraph_line = 1
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            doc.paragraphs.append((paragraph_line, " ".join(paragraph)))
+            paragraph.clear()
+
     lines = text.splitlines()
     for number, line in enumerate(lines, 1):
         if frontmatter:
@@ -125,6 +140,7 @@ def parse(name: str, text: str) -> Document:
             continue
         boundary = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
         if boundary:
+            flush_paragraph()
             token = boundary[1]
             if not fence:
                 fence = token
@@ -140,6 +156,7 @@ def parse(name: str, text: str) -> Document:
             continue
         match = _HEADING.match(line)
         if match:
+            flush_paragraph()
             level, title = len(match[1]), match[2]
             headings = [(n, s) for n, s in headings if n < level] + [(level, title)]
             base = slug(title)
@@ -151,6 +168,7 @@ def parse(name: str, text: str) -> Document:
             if title in {"源码入口", "Source entrypoints"}:
                 source_level = level
         elif number < len(lines) and re.match(r"^ {0,3}(?:=+|-+)\s*$", lines[number]) and line.strip():
+            flush_paragraph()
             base = slug(line.strip())
             count = occurrences[base]
             occurrences[base] += 1
@@ -158,15 +176,29 @@ def parse(name: str, text: str) -> Document:
         doc.anchors.update(html.unescape(a) for a in re.findall(r'<a\s+(?:id|name)=[\"\x27]([^\"\x27]+)', line, re.I))
         definition = _REFERENCE.match(line)
         if definition:
+            flush_paragraph()
             references[" ".join(definition[1].lower().split())] = definition[2].strip("<>")
             continue
         visible.append((number, line, source_level is not None))
         doc.prose.append(line)
         example = any(_EXAMPLE.search(title) for _, title in headings)
+        if not line.strip() or "|" not in line:
+            in_table = False
+        if table_separator(line) or (number < len(lines) and table_separator(lines[number])):
+            in_table = True
+        if match or example or in_table or not line.strip() or line.lstrip().startswith(("|", ">")) or re.fullmatch(r"\s*[-=*]{3,}\s*", line):
+            flush_paragraph()
+        else:
+            if re.match(r"^\s*(?:[-+*]|\d+[.)])\s+", line):
+                flush_paragraph()
+            if not paragraph:
+                paragraph_line = number
+            paragraph.append(line.strip())
         if not example and (_RESULT.search(line) or _RUN_HEADING.search(line)):
             doc.issues.append(issue("run-record", name, number, "单次执行报告不属于维护文档"))
         if not example and _TEMP_REPORT.search(line) and re.search(r"(?:日志|截图|证据|报告).*(?:位于|保存在)|(?:验证|复验|运行)记录", line):
             doc.issues.append(issue("run-record", name, number, "临时验证产物位置应保留在交付或 CI 中"))
+    flush_paragraph()
     for number, line, source in visible:
         # Inline code may contain literal Markdown examples. A link label can itself
         # contain code, so blank it without removing surrounding link syntax.
@@ -183,6 +215,15 @@ def parse(name: str, text: str) -> Document:
             if label in references:
                 doc.links.append(Link(references[label], number, source))
     return doc
+
+
+def visible_prose(text: str) -> str:
+    """Count displayed prose, not destination URLs or markup."""
+    text = re.sub(r"!?\[([^\]]*)\]\((?:<[^>]*>|[^)]*)\)", r"\1", text)
+    text = re.sub(r"!?\[([^\]]*)\]\[[^\]]*\]", r"\1", text)
+    text = re.sub(r"<[^>]*>|https?://\S+", "", text)
+    text = re.sub(r"^[\s*+\-\d.)]+", "", text)
+    return " ".join(html.unescape(text).replace("`", "").split())
 
 
 def local_target(root: Path, name: str, target: str) -> tuple[str, str] | None:
@@ -209,7 +250,7 @@ def local_target(root: Path, name: str, target: str) -> tuple[str, str] | None:
     return resolved.relative_to(root).as_posix(), unquote(url.fragment)
 
 
-def check(root: Path, changed_paths: tuple[str, ...] = ()) -> dict:
+def check(root: Path, changed_paths: tuple[str, ...] | None = None) -> dict:
     root = root.resolve()
     documents, violations, hints = {}, [], []
     for name in discover(root):
@@ -257,6 +298,9 @@ def check(root: Path, changed_paths: tuple[str, ...] = ()) -> dict:
                 paragraphs[normalized].add(name)
         if len(doc.text.splitlines()) > 300:
             hints.append(issue("long-document", name, 1, "正文较长，请按独立任务判断是否拆分；这不是长度门禁"))
+        for line, paragraph in doc.paragraphs:
+            if len(visible_prose(paragraph)) > 500:
+                hints.append(issue("dense-paragraph", name, line, "段落或列表项信息密集，请按独立问题拆分；这不是长度门禁"))
     reached = set()
     queue = deque(name for name in ("README.md", "AGENTS.md") if name in documents)
     while queue:
@@ -272,7 +316,7 @@ def check(root: Path, changed_paths: tuple[str, ...] = ()) -> dict:
         if len(names) > 1:
             first, *others = sorted(names)
             hints.append(issue("possible-duplication", first, 1, "多篇文档包含相同长段落，请核对唯一事实源", related_paths=others))
-    for changed in sorted(set(changed_paths)):
+    for changed in sorted(set(changed_paths or ())):
         p = PurePosixPath(changed)
         if p.is_absolute() or ".." in p.parts or "\\" in changed:
             raise ValueError("变更路径必须为仓库相对路径")
@@ -280,24 +324,31 @@ def check(root: Path, changed_paths: tuple[str, ...] = ()) -> dict:
             matched = [e for e in entries if changed == e["path"] or changed.startswith(e["path"] + "/")]
             if matched:
                 hints.append(issue("source-changed", name, matched[0]["line"], "关联源码有变更，请核对描述；不要求无条件修改文档", source_path=changed))
-    return {"violations": violations, "review_hints": hints, "documents": sorted(documents), "source_links": dict(sources)}
+    return {"violations": violations, "review_hints": hints, "documents": sorted(documents), "source_links": dict(sources),
+            "change_context": {"known": changed_paths is not None, "paths": sorted(set(changed_paths or ()))}}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--changed-path", action="append", default=[])
+    parser.add_argument("--changed-path", action="append")
+    parser.add_argument("--changes-known", action="store_true", help="caller supplied the complete change set, which may be empty")
     args = parser.parse_args(argv)
     if not args.root.is_dir():
         parser.error("candidate root is not a directory")
     try:
-        result = check(args.root, tuple(args.changed_path))
+        changes = tuple(args.changed_path or ()) if args.changes_known or args.changed_path is not None else None
+        result = check(args.root, changes)
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
     if args.json:
         print(json.dumps(result, ensure_ascii=False))
     else:
+        if result["change_context"]["known"]:
+            print(f"SOURCE CHANGES: 已提供 {len(result['change_context']['paths'])} 个变更路径")
+        else:
+            print("SOURCE CHANGES: 未提供变更范围，仅检查文档结构与正文规则")
         for item in result["violations"]:
             print(f"{item['path']}:{item['line']}: {item['rule']}: {item['message']}")
         for item in result["review_hints"]:

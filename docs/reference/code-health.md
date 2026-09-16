@@ -152,11 +152,13 @@ Harness 与 EvaluationResultStore 共用 PrivateDatabase。构造过程由各库
 数据库持续不可写时记录终态保存失败并结束 worker；恢复可读写后由现有 worker 存活检查
 将遗留活动任务及尝试标为中断，原始存储详情保留在 worker 日志。
 
-首次切换独立锁协议时须使用一次维护窗口，同时保护旧数据库锁和新锁入口，证明 Harness
-及 Evaluation 空闲，通过 SQLite 备份 API 保存一致性副本，停止旧进程后统一更新与重启。
-常规运行不保留双锁协议。旧任务的冻结宿主、补丁、日志及失败结论保持不变。
-流程版本升为 5，现有版本检查阻止恢复或启动旧协议的冻结 worker；旧 Case/机器人任务
-通过原有接续入口创建新 worker，治理任务重新启动新快照。SQLite user_version 仍为 1。
+涉及存储或 worker 协议更新时，在维护锁内确认 Harness 与 Evaluation 空闲，并通过 SQLite
+备份 API 保存一致性副本。常规运行使用当前独立锁协议，不保留旧双锁切换流程。
+
+任务是否可运行由当前宿主的 `PIPELINE_VERSION` 和 `GOVERNANCE_VERSION` 分别判断，定义见
+[models.py](../../src/chatcopilot/harness/models.py)。不匹配的冻结 worker 不直接恢复；Case/机器人
+任务按接续入口创建新 worker，治理任务创建新快照，原补丁、日志和失败结论保持只读。
+SQLite 的 `user_version` 是独立的数据库结构版本，不能与任务流程或治理版本混用。
 
 ## API、历史与页面
 

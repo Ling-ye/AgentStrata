@@ -88,6 +88,7 @@ tests/unit/test_repository_validation.py
 tests/unit/test_architecture_boundaries.py
 tests/unit/test_sdd_specs.py
 tests/unit/test_docs.py
+tests/unit/test_documentation_changes.py
 tests/unit/test_health_documentation.py
 tests/unit/test_botspec_gateway_channels.py
 tests/unit/test_botspec_runtime_env.py

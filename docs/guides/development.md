@@ -30,11 +30,18 @@ uv run agentstrata botspec validate bots/lingye-copilot-qq/bot.yaml
 
 `fast` 按 tests/fast.txt 的完整文件清单执行；`full` 还检查依赖、发行资源、完整 Python 回归和 Console 构建。只要新增变化、失败或具体风险没有出现，已通过的检查不重复执行。
 
-源码变化的文档关联可单独查看，结果是待审查提示，不要求无条件改文档：
+`docs/fast/full` 默认收集本 checkout 的已暂存、未暂存和未忽略的新文件，输出关联文档。
+比较指定提交或分支时使用 `--docs-base`；删除与重命名同样参与关联。提示只要求核对，
+没有事实变化时无需修改文档。
 
 ```bash
+.venv/bin/python scripts/check_repo.py docs --docs-base HEAD~1
 .venv/bin/python scripts/check_docs.py --changed-path src/chatcopilot/harness/models.py
 ```
+
+检查入口也接受可重复的 `--changed-path`。隔离候选的清单由调用方提供，不从操作者仓库补取；
+没有提供时会明确显示未评估变更影响，而非“无变更”。无效的显式基准会报错。
+CI 按 PR 的 base SHA 或 push 的 before SHA 比较；手动运行可填写 `docs_base`，留空只分析工作区。
 
 ## 修改 Console
 

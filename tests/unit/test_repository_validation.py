@@ -117,7 +117,7 @@ def test_ci_retains_complete_python_coverage_independently_of_fast():
         {"python-version": "3.13", "gate": "python-tests"},
     ]
     commands = {step.get("if"): step["run"] for step in job["steps"] if "run" in step}
-    assert commands["matrix.gate == 'full'"] == "python scripts/check_repo.py ${{ matrix.gate }}"
+    assert 'python scripts/check_repo.py ${{ matrix.gate }} "${doc_args[@]}"' in commands["matrix.gate == 'full'"]
     assert commands["matrix.gate == 'python-tests'"] == "python -m pytest -q"
 
 

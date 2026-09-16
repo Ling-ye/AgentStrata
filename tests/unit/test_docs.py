@@ -153,11 +153,51 @@ def test_untrusted_changed_paths_and_symlinks(checker, repo, tmp_path):
 
 def test_length_and_duplication_are_review_hints(checker, repo):
     paragraph = "Stable prose describing a reusable responsibility. " * 5
-    write(repo, "docs/guides/run.md", "# Run\n\n" + paragraph + "\n\n" + "text\n" * 301)
+    write(repo, "docs/guides/run.md", "# Run\n\n" + paragraph + "\n\n" + "text\n\n" * 151)
     write(repo, "docs/reference/runtime.md", "# Runtime\n\n" + paragraph + "\n\n## 源码入口\n[code](../../src/runtime.py)\n")
     result = checker.check(repo)
     assert result["violations"] == []
     assert {x["rule"] for x in result["review_hints"]} == {"long-document", "possible-duplication"}
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_dense_paragraph_is_not_bypassed_by_line_wrapping(checker, repo, wrapped):
+    text = "完整的权限判断需要保留。" * 60
+    if wrapped:
+        text = "\n".join(text[i:i + 60] for i in range(0, len(text), 60))
+    write(repo, "docs/guides/run.md", "# Run\n\n" + text + "\n")
+    result = checker.check(repo)
+    assert result["violations"] == []
+    assert [(h["rule"], h["line"]) for h in result["review_hints"]] == [("dense-paragraph", 3)]
+
+
+def test_dense_list_item_and_excluded_material(checker, repo):
+    text = "规范必须保留实际边界。" * 60
+    write(repo, "docs/guides/run.md", f"# Run\n\n- {text}\n- short\n")
+    assert any(h["rule"] == "dense-paragraph" and h["line"] == 3 for h in checker.check(repo)["review_hints"])
+    content = f"# Run\n\n[short](https://example.com/{'x' * 800})\n\n| title |\n| --- |\n| {text} |\n\n```text\n{text}\n```\n\n## 示例\n\n{text}\n"
+    write(repo, "docs/guides/run.md", content)
+    assert not any(h["rule"] == "dense-paragraph" for h in checker.check(repo)["review_hints"])
+
+
+def test_unknown_and_confirmed_empty_change_sets_are_distinct(checker, repo, capsys):
+    assert checker.check(repo)["change_context"]["known"] is False
+    assert checker.check(repo, ())["change_context"] == {"known": True, "paths": []}
+    assert checker.main(["--root", str(repo), "--changes-known", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["change_context"] == {"known": True, "paths": []}
+
+
+def test_tables_without_outer_pipes_are_not_dense_paragraphs(checker, repo):
+    write(repo, "docs/guides/run.md", "# Run\n\nField | Description\n--- | ---\nvalue | " + "说明" * 400 + "\n")
+    assert not any(h["rule"] == "dense-paragraph" for h in checker.check(repo)["review_hints"])
+
+
+def test_configuration_sources_are_associated(checker, repo):
+    write(repo, ".github/workflows/ci.yml", "name: CI\n")
+    write(repo, "docs/reference/runtime.md", "# Runtime\n\n## 源码入口\n[CI](../../.github/workflows/ci.yml)\n")
+    result = checker.check(repo, (".github/workflows/ci.yml",))
+    assert not result["violations"]
+    assert result["review_hints"][0]["source_path"] == ".github/workflows/ci.yml"
 
 
 def test_two_hop_routes_cover_development_tasks():

@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      docs_base:
+        description: Optional commit/ref for documentation impact analysis
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -49,6 +54,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -75,7 +81,14 @@ jobs:
         run: npm ci
       - name: Run repository gate
         if: matrix.gate == 'full'
-        run: python scripts/check_repo.py ${{ matrix.gate }}
+        env:
+          DOCS_BASE: ${{ github.event.pull_request.base.sha || github.event.before || inputs.docs_base || '' }}
+        run: |
+          doc_args=()
+          if [[ -n "$DOCS_BASE" ]]; then
+            doc_args+=(--docs-base "$DOCS_BASE")
+          fi
+          python scripts/check_repo.py ${{ matrix.gate }} "${doc_args[@]}"
       - name: Run complete Python regression
         if: matrix.gate == 'python-tests'
         run: python -m pytest -q

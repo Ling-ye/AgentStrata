@@ -12,8 +12,8 @@ import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, replace
+from pathlib import Path, PurePosixPath
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +88,56 @@ def _fast_test_paths() -> tuple[str, ...]:
         ):
             raise ValueError(f"invalid fast test file: {name}")
     return paths
+
+
+def _documentation_changes(root: Path, *, base_ref: str | None = None,
+                           explicit: list[str] | None = None, isolated: bool = False) -> tuple[str, ...] | None:
+    """Read changes in this checkout only; snapshots require caller-owned input."""
+    names = set(explicit or ())
+    for name in names:
+        if not name or PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts or "\\" in name:
+            raise ValueError("documentation changes require repository-relative paths")
+    if isolated or not (root / ".git").exists():
+        if base_ref is not None:
+            raise ValueError("--docs-base requires a real checkout, not an isolated candidate or source snapshot")
+        return tuple(sorted(names)) if explicit is not None else None
+
+    environment = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+
+    def git(*args: str) -> bytes:
+        try:
+            result = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(root), *args],
+                                    env=environment, capture_output=True, check=False)
+        except OSError as exc:
+            raise ValueError("cannot collect documentation changes: Git could not be started") from exc
+        if result.returncode:
+            raise ValueError("cannot collect documentation changes: Git query or base reference failed")
+        return result.stdout
+
+    if Path(os.fsdecode(git("rev-parse", "--show-toplevel")).rstrip("\n")).resolve() != root.resolve():
+        raise ValueError("documentation changes must come from the exact checked repository root")
+    if base_ref is not None:
+        if base_ref and len(base_ref) in {40, 64} and set(base_ref) == {"0"}:
+            names.update(os.fsdecode(n) for n in git("ls-files", "-z").split(b"\0") if n)
+        else:
+            resolved = git("rev-parse", "--verify", "--end-of-options", base_ref + "^{commit}").decode().strip()
+            fields = iter(git("diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z",
+                              "--find-renames", resolved, "--").split(b"\0"))
+            for status in fields:
+                if status:
+                    names.add(os.fsdecode(next(fields)))
+                    if status[:1] in {b"R", b"C"}:
+                        names.add(os.fsdecode(next(fields)))
+    # Porcelain -z handles unborn HEAD, staged and unstaged changes, and preserves
+    # both rename paths without parsing Git's quoted display format.
+    fields = iter(git("status", "--porcelain=v1", "-z", "--untracked-files=all").split(b"\0"))
+    for row in fields:
+        if row:
+            names.add(os.fsdecode(row[3:]))
+            if b"R" in row[:2] or b"C" in row[:2]:
+                names.add(os.fsdecode(next(fields)))
+    return tuple(sorted(names))
 
 
 def _profiles(candidate_root: Path | None = None) -> dict[str, tuple[Check, ...]]:
@@ -239,12 +289,19 @@ def main() -> int:
     parser.add_argument("profile", choices=("docs", "fast", "full"))
     parser.add_argument("--keep-going", action="store_true", help="collect every check for baseline comparison")
     parser.add_argument("--candidate-root", type=Path, help="isolated candidate test tree; checker definitions stay here")
+    parser.add_argument("--docs-base", help="base commit/ref for documentation impact; defaults to local uncommitted changes")
+    parser.add_argument("--changed-path", action="append", help="additional caller-owned changed path; repeat as needed")
     parser.add_argument(
         "--report-dir",
         type=Path,
         help="write a private JSON manifest and complete per-check logs",
     )
     args = parser.parse_args()
+    try:
+        documentation_changes = _documentation_changes(ROOT, base_ref=args.docs_base,
+                                                      explicit=args.changed_path, isolated=args.candidate_root is not None)
+    except ValueError as exc:
+        parser.error(str(exc))
     report_dir = args.report_dir.expanduser().resolve() if args.report_dir else None
     manifest: dict[str, object] = {
         "schema_version": 1,
@@ -253,6 +310,8 @@ def main() -> int:
         "finished_at": None,
         "ok": False,
         "checks": [],
+        "documentation_changes": {"known": documentation_changes is not None,
+                                  "base": args.docs_base, "paths": list(documentation_changes or ())},
     }
     if report_dir is not None:
         report_dir.mkdir(parents=True, exist_ok=True)
@@ -265,6 +324,9 @@ def main() -> int:
     failure_exit = 0
     profiles = _profiles(args.candidate_root.resolve()) if args.candidate_root else _profiles()
     for index, check in enumerate(profiles[args.profile], start=1):
+        if check.name == "documentation" and documentation_changes is not None:
+            check = replace(check, argv=(*check.argv, "--changes-known",
+                                        *(f"--changed-path={name}" for name in documentation_changes)))
         print(f"\n==> {check.name}", flush=True)
         started_at = time.time()
         record: dict[str, object] = {
