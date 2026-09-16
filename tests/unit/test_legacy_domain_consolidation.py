@@ -17,6 +17,41 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class DeterministicHelperTests(unittest.TestCase):
+    def test_codex_process_runner_without_deadline_streams_and_drains(self) -> None:
+        lines = []
+        result = run_codex_process(
+            [sys.executable, "-c", "import time; print('start',flush=True); time.sleep(.1); print('done')"],
+            cwd=ROOT, prompt="", timeout_seconds=None, env=dict(os.environ), on_stdout_line=lines.append,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(lines, ["start", "done"])
+
+    def test_codex_process_runner_passes_none_to_injected_executor(self) -> None:
+        runner = mock.Mock(return_value=subprocess.CompletedProcess(["codex"], 0, "ok", ""))
+        run_codex_process(["codex"], cwd=ROOT, prompt="", timeout_seconds=None, env={}, runner=runner)
+        self.assertIsNone(runner.call_args.kwargs["timeout"])
+
+    @unittest.skipUnless(os.name == "posix", "process group assertion requires POSIX")
+    def test_no_deadline_can_cancel_after_parent_exits_with_inherited_pipes(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "child.pid"
+            started = time.monotonic()
+
+            def cancel() -> None:
+                if pid_file.exists() and time.monotonic() - started > .3:
+                    raise RuntimeError("explicit cancellation")
+
+            with self.assertRaisesRegex(RuntimeError, "explicit cancellation"):
+                run_codex_process([sys.executable, "-c",
+                    "import pathlib,subprocess,sys; "
+                    "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+                    "pathlib.Path(sys.argv[1]).write_text(str(p.pid))", str(pid_file)],
+                    cwd=ROOT, prompt="", timeout_seconds=None, env=dict(os.environ),
+                    on_stdout_line=lambda line: None, on_poll=cancel)
+            self.assertLess(time.monotonic() - started, 5)
+            stat = Path(f"/proc/{pid_file.read_text()}/stat")
+            self.assertTrue(not stat.exists() or stat.read_text().split(")", 1)[1].split()[0] == "Z")
+
     def test_positive_int_env_accepts_only_positive_integers(self) -> None:
         with mock.patch.dict(os.environ, {"LIMIT": " 7 "}, clear=False):
             self.assertEqual(positive_int_from_env("LIMIT"), 7)

@@ -69,9 +69,8 @@ class HarnessController:
             {"value": "all", "label": "全部可治理源码"}, {"value": "runtime", "label": "运行时源码"},
             {"value": "console", "label": "控制台（前后端）"}, {"value": "docs", "label": "说明文档"}],
             "default_model": self.settings.get("CHATCOPILOT_HARNESS_MODEL", ""),
-            "defaults": {"reasoning_effort": "medium", "max_attempts": 3,
-                         "budget": {"mode": "fixed_groups", "count": 1}, "time_budget_seconds": 7200,
-                         "step_timeout_seconds": 1800},
+            "defaults": {"reasoning_effort": "xhigh", "max_attempts": 3,
+                         "budget": {"mode": "fixed_groups", "count": 1}, "time_budget_seconds": 7200},
             "base_commit": git_output(self.repository, "rev-parse", "HEAD")}
 
     def start_code_health(self, scope: str, options: CodeHealthOptions, *, request_id: str,

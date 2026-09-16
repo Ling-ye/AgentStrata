@@ -81,7 +81,7 @@ class _SerializedCallbackDispatcher:
         *,
         on_stdout_line: StdoutLineSink,
         on_poll: ProcessPollSink | None,
-        deadline: float,
+        deadline: float | None,
     ) -> None:
         self._on_stdout_line = on_stdout_line
         self._on_poll = on_poll
@@ -113,9 +113,9 @@ class _SerializedCallbackDispatcher:
         while self._poll_pending.is_set():
             if not required:
                 return True
-            if self._should_stop() or time.monotonic() >= self._deadline:
+            if self._should_stop() or _remaining(self._deadline) <= 0:
                 return False
-            time.sleep(min(0.005, max(0.0, self._deadline - time.monotonic())))
+            time.sleep(min(0.005, _remaining(self._deadline)))
         self._poll_pending.set()
         if self._enqueue(("poll", None), wait=required):
             return True
@@ -129,8 +129,8 @@ class _SerializedCallbackDispatcher:
         self._abort.set()
         self._producers_done.set()
 
-    def join_until(self, deadline: float) -> bool:
-        self._thread.join(timeout=max(0.0, deadline - time.monotonic()))
+    def join_until(self, deadline: float | None) -> bool:
+        self._thread.join(timeout=None if deadline is None else _remaining(deadline))
         return not self._thread.is_alive()
 
     def raise_if_failed(self) -> None:
@@ -143,7 +143,7 @@ class _SerializedCallbackDispatcher:
 
     def _enqueue(self, item: tuple[str, str | None], *, wait: bool) -> bool:
         while not self._should_stop():
-            remaining = self._deadline - time.monotonic()
+            remaining = _remaining(self._deadline)
             if remaining <= 0:
                 return False
             try:
@@ -193,7 +193,7 @@ def run_codex_process(
     *,
     cwd: Path,
     prompt: str,
-    timeout_seconds: int,
+    timeout_seconds: int | None,
     env: dict[str, str],
     runner: ProcessRunner | None = None,
     on_stdout_line: StdoutLineSink | None = None,
@@ -209,7 +209,7 @@ def run_codex_process(
     ``Popen``.
     """
 
-    timeout = max(1, int(timeout_seconds))
+    timeout = None if timeout_seconds is None else max(1, int(timeout_seconds))
     execute = runner or subprocess.run
     if on_stdout_line is None or runner is not None or execute is not _DEFAULT_PROCESS_RUNNER:
         completed = execute(
@@ -264,7 +264,7 @@ def run_codex_process(
     reader_errors: list[BaseException] = []
     writer_errors: list[BaseException] = []
     stdout_line_truncated = threading.Event()
-    deadline = time.monotonic() + timeout
+    deadline = None if timeout is None else time.monotonic() + timeout
     callbacks = _SerializedCallbackDispatcher(
         on_stdout_line=on_stdout_line,
         on_poll=on_poll,
@@ -347,7 +347,7 @@ def run_codex_process(
             returncode = process.poll()
             if returncode is not None:
                 break
-            remaining = deadline - time.monotonic()
+            remaining = _remaining(deadline)
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(command, timeout)
             try:
@@ -358,7 +358,11 @@ def run_codex_process(
         if not callbacks.enqueue_poll(required=True):
             callbacks.raise_if_failed()
             raise subprocess.TimeoutExpired(command, timeout)
-        if not _join_threads_until(threads, deadline):
+        def poll_drain() -> None:
+            callbacks.raise_if_failed()
+            callbacks.enqueue_poll()
+
+        if not _join_threads_until(threads, deadline, on_wait=poll_drain):
             callbacks.raise_if_failed()
             raise subprocess.TimeoutExpired(command, timeout)
         callbacks.close()
@@ -403,12 +407,20 @@ def run_codex_process(
     return completed
 
 
+def _remaining(deadline: float | None) -> float:
+    return float("inf") if deadline is None else max(0.0, deadline - time.monotonic())
+
+
 def _join_threads_until(
     threads: tuple[threading.Thread, ...],
-    deadline: float,
+    deadline: float | None,
+    *, on_wait: Callable[[], None] | None = None,
 ) -> bool:
     for thread in threads:
-        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        while thread.is_alive() and _remaining(deadline) > 0:
+            thread.join(timeout=min(0.05, _remaining(deadline)))
+            if on_wait is not None:
+                on_wait()
     return not any(thread.is_alive() for thread in threads)
 
 

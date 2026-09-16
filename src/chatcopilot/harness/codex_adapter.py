@@ -32,7 +32,7 @@ from chatcopilot.external_tools.codex_cli import (
     validate_auth_root_path,
 )
 from chatcopilot.external_tools.codex_cli.process_runner import run_codex_process
-from chatcopilot.harness.models import HarnessError, RepairOptions, review_decision
+from chatcopilot.harness.models import HarnessError, RepairOptions, CodingOptions, review_decision
 from chatcopilot.harness.evidence_context import evidence_index
 from chatcopilot.harness.workspace import protected_paths, writable_paths
 
@@ -63,7 +63,7 @@ class CodexCoder:
         self,
         worktree: Path,
         evidence: dict[str, Any],
-        options: RepairOptions,
+        options: RepairOptions | CodingOptions,
         output: Path,
         check_cancel: Callable[[], None],
     ) -> dict[str, Any]:
@@ -73,14 +73,14 @@ class CodexCoder:
         self,
         worktree: Path,
         evidence: dict[str, Any],
-        options: RepairOptions,
+        options: RepairOptions | CodingOptions,
         output: Path,
         check_cancel: Callable[[], None],
     ) -> dict[str, Any]:
         draft = private_directory(output / "draft")
         return self._execute(worktree, evidence, options, output, check_cancel, draft=draft)
 
-    def audit(self, worktree: Path, evidence: dict[str, Any], options: RepairOptions,
+    def audit(self, worktree: Path, evidence: dict[str, Any], options: RepairOptions | CodingOptions,
               output: Path, check_cancel: Callable[[], None]) -> dict[str, Any]:
         from chatcopilot.harness.code_health_rules import parse_audit
         result = self._execute(worktree, evidence, options, output, check_cancel, auditing=True)
@@ -93,7 +93,7 @@ class CodexCoder:
         return {**audit, "execution": result, **({"submitted_batch": batch["id"],
                 "submitted_blocks": [b["block_sha256"] for b in batch["blocks"] if "content" in b]} if batch else {})}
 
-    def _execute(self, worktree: Path, evidence: dict[str, Any], options: RepairOptions,
+    def _execute(self, worktree: Path, evidence: dict[str, Any], options: RepairOptions | CodingOptions,
                  output: Path, check_cancel: Callable[[], None], *, draft: Path | None = None,
                  reviewing: bool = False, auditing: bool = False) -> dict[str, Any]:
         from chatcopilot.core.trace_capture import TraceCapture, capture_scope
@@ -128,7 +128,7 @@ class CodexCoder:
         self,
         worktree: Path,
         evidence: dict[str, Any],
-        options: RepairOptions,
+        options: RepairOptions | CodingOptions,
         output: Path,
         check_cancel: Callable[[], None],
         *,
@@ -469,7 +469,7 @@ class CodexCoder:
         self,
         worktree: Path,
         evidence: dict[str, Any],
-        options: RepairOptions,
+        options: RepairOptions | CodingOptions,
         output: Path,
         check_cancel: Callable[[], None],
     ) -> dict[str, Any]:

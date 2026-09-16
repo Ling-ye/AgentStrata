@@ -26,18 +26,13 @@ class HealthBudget:
     def step(self, label: str, cancel: Callable[[], None]):
         cancel()
         self.check()
-        now = time.monotonic()
-        deadline = now + self.options.step_timeout_seconds
-        code = "step_timeout"
-        if self.deadline is not None and self.deadline <= deadline:
-            deadline, code = self.deadline, "budget_exhausted"
-        seconds = max(1, math.ceil(deadline - now))
+        deadline = self.deadline
+        seconds = None if deadline is None else max(1, math.ceil(deadline - time.monotonic()))
 
         def expired() -> HarnessError:
-            limit = self.options.budget["seconds"] if code == "budget_exhausted" else self.options.step_timeout_seconds
-            reason = "任务总时限" if code == "budget_exhausted" else "单次执行时限"
-            error = HarnessError(code, f"{label}：已达{reason} {limit} 秒")
-            error.details = {"operation": label, "limit_kind": code, "limit_seconds": limit,
+            limit = self.options.budget["seconds"]
+            error = HarnessError("budget_exhausted", f"{label}：已达任务总时限 {limit} 秒")
+            error.details = {"operation": label, "limit_kind": "budget_exhausted", "limit_seconds": limit,
                              "allocated_seconds": seconds}
             return error
 
@@ -49,13 +44,15 @@ class HealthBudget:
                 if exc.code == "budget_exhausted":
                     raise expired() from exc
                 raise
-            if time.monotonic() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 raise expired()
 
         try:
             yield seconds, poll
             poll()
         except subprocess.TimeoutExpired as exc:
+            if deadline is None:
+                raise HarnessError("execution_timeout", f"{label}：底层执行器报告超时；本任务未设置时间预算，查看执行记录") from exc
             raise expired() from exc
 
 

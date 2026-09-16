@@ -414,7 +414,7 @@ def test_two_checkpoints_survive_failed_group_and_cumulative_patch(repo, tmp_pat
     controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "time", "seconds": 7200}, max_attempts=3))
     result = run_task(controller.store, ident, MultiCoder(fail="c", decision=True), checks=MultiChecks())
     assert result["status"] == "fixed"
-    assert result["governance_summary"] == {"accepted_groups": 2, "found": 4, "fixed": 2, "needs_decision": 1, "remaining": 1,
+    assert result["governance_summary"] == {"discovered_groups": 4, "selected_groups": 0, "accepted_groups": 2, "found": 4, "fixed": 2, "needs_decision": 1, "remaining": 1,
         "coverage": "complete", "completed_batches": 2, "total_batches": 2}
     assert len(result["governance"]["checkpoints"]) == 2
     attempts = controller.store.attempts(ident)
@@ -824,44 +824,48 @@ def test_count_mode_has_no_total_deadline(repo, tmp_path, monkeypatch):
     monkeypatch.setattr(health_budget.time, "monotonic", lambda: now[0])
     class SlowCoder(Coder):
         def run(self, *args):
-            now[0] += 1000
+            assert args[2].timeout_seconds is None
+            now[0] += 100_000
             return super().run(*args)
         def review(self, *args):
-            now[0] += 1000
+            assert args[2].timeout_seconds is None
+            now[0] += 100_000
             return super().review(*args)
     controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "fixed_groups", "count": 1}))
     result = run_task(controller.store, ident, SlowCoder(), checks=Checks())
-    assert result["elapsed_seconds"] >= 2000
+    assert result["elapsed_seconds"] >= 200_000
     assert result["stop_reason"] == "fix_limit_reached"
 
 
-@pytest.mark.parametrize("budget,step,code", [({"mode": "time", "seconds": 100}, 1800, "budget_exhausted"),
-    ({"mode": "time", "seconds": 7200}, 30, "step_timeout"),
-    ({"mode": "fixed_groups", "count": 2}, 30, "step_timeout")])
-def test_raw_timeout_keeps_checkpoint_and_allocated_reason(repo, tmp_path, budget, step, code):
+@pytest.mark.parametrize("budget,code", [({"mode": "time", "seconds": 100}, "budget_exhausted"),
+    ({"mode": "time", "seconds": 7200}, "budget_exhausted"),
+    ({"mode": "fixed_groups", "count": 2}, "execution_timeout")])
+def test_raw_timeout_keeps_checkpoint_and_allocated_reason(repo, tmp_path, budget, code):
     class TimeoutCoder(Coder):
         def audit(self, *args):
             if "run" in self.calls:
                 raise subprocess.TimeoutExpired(["bwrap", "secret-command"], 1)
             return super().audit(*args)
-    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", budget, step_timeout_seconds=step))
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", budget))
     result = run_task(controller.store, ident, TimeoutCoder(), checks=Checks())
     assert result["error_code"] == code and result["stop_reason"] == code
     assert "secret-command" not in result["message"] and "bwrap" not in result["message"]
     assert result["failure"]["stage"] == "audit"
-    assert result["failure"]["limit_kind"] == code and result["failure"]["evidence_source"]
+    assert result["failure"]["evidence_source"]
+    if code == "budget_exhausted":
+        assert result["failure"]["limit_kind"] == code
     assert all(b["status"] not in {"running"} for b in result["governance"]["coverage"])
     assert controller.get(ident)["checkpoint_available"]
 
 
 @pytest.mark.parametrize("phase", ["prepare", "run", "review"])
-def test_step_timeout_never_retries_product_or_drafts(repo, tmp_path, phase):
+def test_executor_timeout_never_retries_product_or_drafts(repo, tmp_path, phase):
     coder = SemanticCoder()
     failed = Mock(side_effect=subprocess.TimeoutExpired(["private-executable"], 10))
     setattr(coder, phase, failed)
     controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "fixed_groups", "count": 1}))
     result = run_task(controller.store, ident, coder, checks=SemanticChecks())
-    assert result["stop_reason"] == "step_timeout" and failed.call_count == 1
+    assert result["stop_reason"] == "execution_timeout" and failed.call_count == 1
     assert all(g["status"] not in {"coding", "preparing"} for g in result["governance"]["groups"])
     assert all(a["status"] == "interrupted" for a in controller.store.attempts(ident))
 
@@ -874,11 +878,12 @@ def test_new_health_request_requires_budget_and_rejects_legacy_timeout():
     body = {"model": "test", "request_id": "new"}
     with TestClient(app, client=("127.0.0.1", 5000)) as client:
         assert client.post("/api/harness/code-health/tasks", json=body).status_code == 422
-        for budget in ({"mode": "time", "seconds": 1}, {"mode": "fixed_groups", "count": 3}):
+        for budget in ({"mode": "time", "seconds": 1}, {"mode": "fixed_groups", "count": 3}, {"mode": "discovered_groups", "count": 1}):
             request = {**body, "budget": budget}
             assert client.post("/api/harness/code-health/tasks", json=request).status_code == 200
             assert call.call_args.args[1].budget == budget
-            assert call.call_args.args[1].step_timeout_seconds == 1800
+            assert call.call_args.args[1].reasoning_effort == "xhigh"
+            assert client.post("/api/harness/code-health/tasks", json={**request, "step_timeout_seconds": 1800}).status_code == 422
             assert client.post("/api/harness/code-health/tasks", json={**request, "timeout_seconds": 1080}).status_code == 422
 
 
@@ -988,11 +993,148 @@ def test_verification_command_timeout_kills_isolated_process(repo, tmp_path):
     import sys
     from chatcopilot.harness.code_health_checks import CodeHealthChecks
     from chatcopilot.harness.health_budget import HealthBudget
-    budget = HealthBudget(CodeHealthOptions("unused", {"mode": "fixed_groups", "count": 1}, step_timeout_seconds=1))
+    budget = HealthBudget(CodeHealthOptions("unused", {"mode": "time", "seconds": 1}))
     checks = CodeHealthChecks(tmp_path / "checks", repo, budget=budget)
     with pytest.raises(HarnessError) as caught:
         checks.command(repo, [sys.executable, "-c", "import time; print('started', flush=True); time.sleep(60)"],
                        checks.directory / "slow", lambda: None)
-    assert caught.value.code == "step_timeout"
+    assert caught.value.code == "budget_exhausted"
     assert "started" in (checks.directory / "slow/stdout.log").read_text()
     assert checks.logs[0]["exit_code"] != 0
+
+
+def test_time_mode_does_not_stop_after_one_success(repo, tmp_path):
+    multi_repo(repo)
+    options = CodeHealthOptions("test", {"mode": "time", "seconds": 7200})
+    controller, ident = start(repo, tmp_path, options=options)
+    result = run_task(controller.store, ident, MultiCoder(), checks=MultiChecks())
+    assert result["governance_summary"]["accepted_groups"] == 3
+    assert result["stop_reason"] == "completed"
+
+
+def test_count_budget_validation_commands_survive_large_clock_jump(repo, tmp_path, monkeypatch):
+    import sys
+    from chatcopilot.harness import health_budget
+    from chatcopilot.harness.code_health_checks import CodeHealthChecks
+    now = [1.0]
+    monkeypatch.setattr(health_budget.time, "monotonic", lambda: now[0])
+    budget = health_budget.HealthBudget(CodeHealthOptions("unused", {"mode": "fixed_groups", "count": 1}))
+    checks = CodeHealthChecks(tmp_path / "checks", repo, budget=budget)
+    def poll():
+        now[0] += 100_000
+    code, text = checks.command(repo, [sys.executable, "-c", "print('completed')"],
+                                checks.directory / "unlimited", poll)
+    assert code == 0 and "completed" in text
+    assert budget.deadline is None and now[0] > 100_000
+
+
+def test_code_health_defaults_are_extreme_and_have_no_secondary_time_limit(repo, tmp_path):
+    controller, _ = start(repo, tmp_path)
+    defaults = controller.code_health_config()["defaults"]
+    assert defaults["reasoning_effort"] == "xhigh"
+    assert defaults["max_attempts"] == 3
+    assert "step_timeout_seconds" not in defaults
+    assert CodeHealthOptions("test", {"mode": "fixed_groups", "count": 1}).reasoning_effort == "xhigh"
+
+
+def test_discovery_limit_repairs_first_static_group_before_any_audit(repo, tmp_path):
+    multi_repo(repo)
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "discovered_groups", "count": 1}))
+    coder = MultiCoder()
+    result = run_task(controller.store, ident, coder, checks=MultiChecks())
+    assert result["status"] == "fixed" and result["stop_reason"] == "discovery_limit_reached"
+    assert coder.calls == ["run"]
+    assert result["governance_summary"]["discovered_groups"] == 3
+    assert result["governance_summary"]["selected_groups"] == result["governance_summary"]["accepted_groups"] == 1
+    assert result["governance_summary"]["completed_batches"] == 0
+    assert [g["status"] for g in result["governance"]["groups"]] == ["accepted", "pending", "pending"]
+    patch = controller.candidate_patch(ident)
+    assert b"a.py" in patch and b"b.py" not in patch and b"c.py" not in patch
+
+
+def test_discovery_limit_interrupts_same_domain_batches_to_start_repair(repo, tmp_path):
+    (repo / "src/chatcopilot/core/z_following.py").write_text("# later source block\n" * 6000)
+    controller, ident = start(repo, tmp_path, scope="runtime",
+                              options=CodeHealthOptions("test", {"mode": "discovered_groups", "count": 1}))
+    coder = SemanticCoder()
+    result = run_task(controller.store, ident, coder, checks=SemanticChecks())
+    coverage = result["governance"]["coverage"]
+    assert len(coverage) > 1 and len({b["area"] for b in coverage}) == 1
+    assert coder.calls == ["audit", "prepare", "review", "run", "review"]
+    assert coverage[0]["status"] == "completed" and all(b["status"] == "pending" for b in coverage[1:])
+    assert result["stop_reason"] == "discovery_limit_reached" and result["status"] == "fixed"
+
+
+@pytest.mark.parametrize("count,fail,status,states", [(1, "a", "failed", ["failed", "pending", "pending"]),
+    (2, "b", "fixed", ["accepted", "failed", "pending"])])
+def test_failed_discovery_target_does_not_select_a_replacement(repo, tmp_path, count, fail, status, states):
+    multi_repo(repo)
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "discovered_groups", "count": count}, max_attempts=1))
+    coder = MultiCoder(fail=fail)
+    result = run_task(controller.store, ident, coder, checks=MultiChecks())
+    assert result["status"] == status and result["stop_reason"] == "discovery_limit_reached"
+    assert coder.calls == ["run"] * count
+    assert result["governance_summary"]["accepted_groups"] == count - 1
+    assert [g["status"] for g in result["governance"]["groups"]] == states
+    assert controller.get(ident)["checkpoint_available"] == (count > 1)
+
+
+def test_discovery_target_needing_decision_ends_without_new_audits(repo, tmp_path):
+    class DecisionChecks(MultiChecks):
+        def scan(self, *args):
+            result = super().scan(*args)
+            result["findings"][0]["disposition"] = "needs_decision"
+            return result
+    multi_repo(repo)
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "discovered_groups", "count": 1}))
+    coder = MultiCoder()
+    result = run_task(controller.store, ident, coder, checks=DecisionChecks())
+    assert result["status"] == "blocked" and result["stop_reason"] == "discovery_limit_reached"
+    assert coder.calls == [] and result["governance_summary"]["selected_groups"] == 1
+
+
+@pytest.mark.parametrize("count,accepted,status", [(1, 0, "blocked"), (2, 2, "fixed")])
+def test_discovery_target_dependencies_stay_inside_selected_groups(repo, tmp_path, count, accepted, status):
+    class DependentChecks(MultiChecks):
+        def scan(self, *args):
+            result = super().scan(*args)
+            for row in result["findings"]:
+                if row["group_key"] == "a":
+                    row["depends_on"] = ["b"]
+            return result
+    multi_repo(repo)
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "discovered_groups", "count": count}))
+    coder = MultiCoder()
+    result = run_task(controller.store, ident, coder, checks=DependentChecks())
+    assert result["status"] == status and result["governance_summary"]["accepted_groups"] == accepted
+    assert result["governance"]["groups"][-1]["status"] == "pending"
+    assert "audit" not in coder.calls
+
+
+def test_discovery_shortage_repairs_available_groups_after_finite_scan(repo, tmp_path):
+    multi_repo(repo)
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "discovered_groups", "count": 5}))
+    coder = MultiCoder()
+    result = run_task(controller.store, ident, coder, checks=MultiChecks())
+    assert result["stop_reason"] == "completed" and result["status"] == "fixed"
+    assert result["governance_summary"]["accepted_groups"] == result["governance_summary"]["selected_groups"] == 3
+    assert result["governance_summary"]["coverage"] == "complete"
+    assert "未达到发现数量目标" in result["message"]
+
+
+def test_discovered_budget_rejects_cross_mode_parameters():
+    for budget in ({"mode": "discovered_groups", "count": 0}, {"mode": "discovered_groups", "count": True},
+                   {"mode": "discovered_groups", "count": 1, "seconds": 30}):
+        with pytest.raises(ValueError):
+            CodeHealthOptions("test", budget)
+
+
+def test_discovery_mode_without_findings_ends_after_finite_scan(repo, tmp_path):
+    (repo / target()["path"]).write_text("value = 1\n")
+    controller, ident = start(repo, tmp_path, options=CodeHealthOptions("test", {"mode": "discovered_groups", "count": 1}))
+    coder = Coder()
+    result = run_task(controller.store, ident, coder, checks=Checks())
+    assert result["status"] == "not_reproduced" and result["stop_reason"] == "completed"
+    assert result["governance_summary"]["coverage"] == "complete"
+    assert result["governance"]["selected_group_ids"] == []
+    assert coder.calls == ["audit", "audit"]

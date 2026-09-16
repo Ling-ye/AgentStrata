@@ -35,4 +35,7 @@ it("displays success groups independently from elapsed time and legacy budgets",
     governance_summary: { accepted_groups: 1 } })).toBe("已验收 1/3 组 · 已用 2000 秒");
   expect(budgetLabel({ ...base, options: { ...base.options, budget: { mode: "time", seconds: 7200 } } })).toContain("总时限 7200 秒");
   expect(budgetLabel({ ...base, options: { ...base.options, timeout_seconds: 1080 } })).toContain("总时限 1080 秒");
+  expect(budgetLabel({ ...base, options: { ...base.options, budget: { mode: "discovered_groups", count: 1 } },
+    governance_summary: { discovered_groups: 3, selected_groups: 1, accepted_groups: 0 } })).toBe(
+    "已发现 3 组（目标 1 组） · 本轮选中 1 组 · 已验收 0 组 · 已用 2000 秒");
 });

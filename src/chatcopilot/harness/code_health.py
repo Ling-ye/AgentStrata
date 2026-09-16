@@ -21,7 +21,7 @@ from chatcopilot.harness.health_documentation import eligible, classify as class
 from chatcopilot.harness.health_ledger import SourceLedger
 from chatcopilot.harness.health_policy import policy_path, scope_path, requires_regression
 from chatcopilot.harness.health_regressions import frozen_content, prepare_regression
-from chatcopilot.harness.models import ACTIVE, GOVERNANCE_VERSION, CodeHealthOptions, Cancelled, HarnessError, RepairOptions, review_decision, safe_error
+from chatcopilot.harness.models import ACTIVE, GOVERNANCE_VERSION, CodeHealthOptions, CodingOptions, Cancelled, HarnessError, review_decision, safe_error
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.workspace import prepare
 
@@ -63,14 +63,36 @@ class HealthRun:
             self.heartbeat = now
             self.save(heartbeat_at=time.time(), elapsed_seconds=now - self.started)
 
-    def remaining(self) -> RepairOptions:
+    def remaining(self) -> CodingOptions:
         self.cancel()
-        return RepairOptions(self.options.model, self.options.reasoning_effort, self.options.max_attempts,
-                             self.options.step_timeout_seconds)
+        return CodingOptions(self.options.model, self.options.reasoning_effort, self.options.max_attempts, None)
 
     def target_reached(self) -> bool:
         return (self.options.budget["mode"] == "fixed_groups"
                 and summary(self.governance)["accepted_groups"] >= self.options.budget["count"])
+
+    def discovery_target_reached(self) -> bool:
+        return (self.options.budget["mode"] == "discovered_groups"
+                and len(self.governance["groups"]) >= self.options.budget["count"])
+
+    def repair_discovered(self) -> None:
+        """Freeze the first N root causes, repair them, then end this discovery run."""
+        selected = self.governance["groups"][:self.options.budget["count"]]
+        self.governance["selected_group_ids"] = [g["id"] for g in selected]
+        self.save(stage="prepare_reproducer", current_source=None)
+        self.process_groups(final=True)
+        self.cancel()
+        accepted = sum(g["status"] == "accepted" for g in selected)
+        failed = sum(g["status"] == "failed" for g in selected)
+        pending = len(selected) - accepted - failed
+        status = "fixed" if accepted else "failed" if failed else "blocked" if selected else "not_reproduced"
+        if not selected and summary(self.governance)["coverage"] != "complete":
+            status = "blocked"
+        reached = self.discovery_target_reached()
+        self.save(status=status, stage="done", stop_reason="discovery_limit_reached" if reached else "completed",
+                  message=f"发现 {len(self.governance['groups'])} 个问题组，本轮选中 {len(selected)} 组；"
+                          f"验收通过 {accepted} 组，修复未通过 {failed} 组，待判断或依赖未就绪 {pending} 组。"
+                          + ("已停止后续巡检。" if reached else "本轮巡检已结束，未达到发现数量目标。"))
 
     def finish(self, reason: str) -> None:
         counts = summary(self.governance)
@@ -135,18 +157,24 @@ class HealthRun:
             made_progress = False
             groups = {g["key"]: g for g in self.governance["groups"]}
             for group in self.governance["groups"]:
+                selection = self.governance.get("selected_group_ids")
+                if selection is not None and group["id"] not in selection:
+                    continue
                 if group["status"] != "pending":
                     continue
                 dependencies = [groups.get(key) for key in group["depends_on"]]
                 if any(dep is None or dep["status"] != "accepted" for dep in dependencies):
-                    if final:
-                        group.update(status="deferred", reason="依赖问题组尚未通过验收")
                     continue
                 self.cancel()
                 self.process_group(group)
                 if self.target_reached():
                     return
                 made_progress = True
+        if final:
+            selection = self.governance.get("selected_group_ids")
+            for group in self.governance["groups"]:
+                if group["status"] == "pending" and (selection is None or group["id"] in selection):
+                    group.update(status="deferred", reason="依赖问题组尚未通过验收；本轮不扩大修复目标")
         self.save(current_group=None)
 
     def model_source(self, *, snapshot: bool = False) -> dict[str, Any]:
@@ -178,7 +206,7 @@ class HealthRun:
             else:
                 group["proof"] = {"kind": "mechanical", "checks": sorted({r["detector"] for r in selected})}
         except HarnessError as exc:
-            if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "step_timeout", "workspace_changed", "policy_change", "coding_environment"}:
+            if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "execution_timeout", "workspace_changed", "policy_change", "coding_environment"}:
                 raise
             group.update(status="needs_decision", reason=safe_error(exc), error_code=exc.code)
             for row in selected:
@@ -263,7 +291,7 @@ class HealthRun:
             except HarnessError as exc:
                 attempt.update(status="rejected", error_code=exc.code, error=safe_error(exc), finished_at=time.time())
                 self.store.save_attempt(self.ident, self.number, attempt)
-                if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "step_timeout", "workspace_changed", "coding_environment"}:
+                if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "execution_timeout", "workspace_changed", "coding_environment"}:
                     attempt.update(status="interrupted", counts_toward_budget=False)
                     self.store.save_attempt(self.ident, self.number, attempt)
                     raise
@@ -346,7 +374,7 @@ class HealthRun:
                 self.accept(group, attempt, digest, manifest)
                 return True
             except HarnessError as exc:
-                if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "step_timeout", "workspace_changed", "coding_environment", "policy_change"}:
+                if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "execution_timeout", "workspace_changed", "coding_environment", "policy_change"}:
                     raise
                 previous = {"error_code": exc.code, "error": safe_error(exc)}
                 attempt.update(status="rejected", **previous, finished_at=time.time())
@@ -395,6 +423,9 @@ class HealthRun:
         before = self.checks.scan(self.root, self.scope, self.cancel)
         self.governance["before"] = before
         self.add_findings(before["findings"])
+        if self.discovery_target_reached():
+            self.repair_discovered()
+            return
         batch_directory = private_directory(self.directory / "audit-batches")
         for _, domain in groupby(enumerate(batches), key=lambda pair: pair[1]["area"]):
             for index, batch in domain:
@@ -418,13 +449,21 @@ class HealthRun:
                     self.add_findings(audit["findings"])
                 except HarnessError as exc:
                     entry.update(status="failed", reason=safe_error(exc), error_code=exc.code)
-                    if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "step_timeout", "workspace_changed", "coding_environment"}:
+                    if isinstance(exc, Cancelled) or exc.code in {"budget_exhausted", "execution_timeout", "workspace_changed", "coding_environment"}:
                         raise
                     self.save()
+                if self.discovery_target_reached():
+                    self.repair_discovered()
+                    return
+            if self.options.budget["mode"] == "discovered_groups":
+                continue
             self.process_groups()
             if self.target_reached():
                 self.finish("fix_limit_reached")
                 return
+        if self.options.budget["mode"] == "discovered_groups":
+            self.repair_discovered()
+            return
         self.process_groups(final=True)
         if self.target_reached():
             self.finish("fix_limit_reached")

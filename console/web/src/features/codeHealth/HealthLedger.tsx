@@ -10,12 +10,14 @@ export default function HealthLedger({ task }: { task: HealthTask }) {
   const counts = task.governance_summary;
   const groups = task.governance?.groups;
   const coverage = task.governance?.coverage;
+  const selection = task.governance?.selected_group_ids;
   return <Space direction="vertical" size={16} style={{ width: "100%" }}>
     <Typography.Text>
       {counts?.coverage === "complete" ? "完成本轮范围巡检" : counts?.coverage === "partial" ?
         `范围巡检尚未完成：${counts.completed_batches}/${counts.total_batches} 批` : "历史覆盖信息：未知"}
       {counts?.coverage === "complete" && "；表示计划输入已处理，不保证找出了全部缺陷。"}
     </Typography.Text>
+    {selection && <Alert type="info" content={`本轮仅修复最先发现的 ${selection.length} 个问题组，其余发现保留为后续处理；不会为凑够成功数量继续巡检。`} />}
     {task.checkpoint && <Alert type={task.checkpoint_available ? "success" : "warning"} content={
       <Space wrap><span>已验收检查点 #{task.checkpoint.number} · {task.checkpoint.changed_files.length} 个累计变更文件</span>
         {task.checkpoint_available ? <a href={healthApi.candidateUrl(task.task_id)} download>下载已验证累计补丁</a> : <span>检查点缺失或摘要不一致，无法交付</span>}
@@ -24,7 +26,7 @@ export default function HealthLedger({ task }: { task: HealthTask }) {
       <Table<HealthGroup> rowKey="id" data={groups} size="small" scroll={{ x: 620 }} pagination={{ pageSize: 10 }} columns={[
         { title: "根因与调用范围", dataIndex: "key" },
         { title: "问题数", render: (_, row) => row.finding_ids.length },
-        { title: "进度", render: (_, row) => <Tag color={row.id === task.current_group ? "blue" : undefined}>{labels[row.status] ?? row.status}</Tag> },
+        { title: "进度", render: (_, row) => <Tag color={row.id === task.current_group ? "blue" : undefined}>{selection && !selection.includes(row.id) ? "本轮未选中" : labels[row.status] ?? row.status}</Tag> },
         { title: "修复尝试", render: (_, row) => row.attempts.length },
       ]} expandedRowRender={row => <div>
         {task.governance?.findings.filter(f => row.finding_ids.includes(f.id)).map(f => <p key={f.id}>{f.summary} · {f.path}:{f.line}</p>)}

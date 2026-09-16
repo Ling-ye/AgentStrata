@@ -41,7 +41,7 @@ def wrap_command(command: list[str], *, scope: ExecutionScope, cwd: Path,
 
 def check_git(binary: Path, *, scope: ExecutionScope, cwd: Path, root: Path,
               metadata: tuple[Path, ...], expected_head: str, runtime_home: Path, config: tuple[str, ...],
-              environment: dict[str, str], rg: Path | None, timeout: int,
+              environment: dict[str, str], rg: Path | None, timeout: int | None,
               check_cancel: Callable[[], None]) -> None:
     # The native CLI's sandbox subcommand runs a local command, without a model
     # or credentials. Use the same nested boundary as the subsequent model tools.
@@ -57,7 +57,7 @@ def check_git(binary: Path, *, scope: ExecutionScope, cwd: Path, root: Path,
             environment=environment, rg=rg, bindings=("--dir", "/sandbox-home/codex-preflight", "--setenv", "CODEX_HOME", "/sandbox-home/codex-preflight",
                 "--dir", str(runtime_home), "--ro-bind", "/dev/null", str(runtime_home / "auth.json"),
                 "--ro-bind", "/dev/null", str(runtime_home / "config.toml"))),
-            cwd=cwd, capture_output=True, text=True, timeout=min(10, timeout), env={"PATH": os.defpath})
+            cwd=cwd, capture_output=True, text=True, timeout=min(10, timeout) if timeout is not None else 10, env={"PATH": os.defpath})
         lines = result.stdout.strip().splitlines()
         expected_dirs = set(map(str, metadata))
         if (result.returncode or len(lines) != 4 or lines[0] != str(root)

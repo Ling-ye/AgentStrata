@@ -20,9 +20,8 @@ export default function CodeHealthPage() {
   const [effort, setEffort] = useState("");
   const [attempts, setAttempts] = useState<number>();
   const [hours, setHours] = useState<number>();
-  const [budgetMode, setBudgetMode] = useState<"time" | "fixed_groups">("fixed_groups");
+  const [budgetMode, setBudgetMode] = useState<"time" | "fixed_groups" | "discovered_groups">("fixed_groups");
   const [count, setCount] = useState<number>();
-  const [stepMinutes, setStepMinutes] = useState<number>();
   const initialized = useRef(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
@@ -37,7 +36,7 @@ export default function CodeHealthPage() {
     if (!config.data || initialized.current) return;
     const defaults = config.data.defaults;
     setEffort(defaults.reasoning_effort); setAttempts(defaults.max_attempts);
-    setHours(defaults.time_budget_seconds / 3600); setStepMinutes(defaults.step_timeout_seconds / 60);
+    setHours(defaults.time_budget_seconds / 3600);
     setBudgetMode(defaults.budget.mode); setCount(defaults.budget.count);
     initialized.current = true;
   }, [config.data]);
@@ -64,14 +63,14 @@ export default function CodeHealthPage() {
     setTaskId(id);
     window.location.hash = id ? `code-health?task=${encodeURIComponent(id)}` : "code-health";
   }
-  const budgetValid = budgetMode === "fixed_groups" ? count != null && Number.isInteger(count) && count >= 1 :
+  const budgetValid = budgetMode !== "time" ? count != null && Number.isInteger(count) && count >= 1 :
     hours != null && Number.isFinite(hours) && hours >= 0.01;
-  const settingsValid = budgetValid && attempts != null && attempts >= 1 && stepMinutes != null && stepMinutes >= 1;
+  const settingsValid = budgetValid && attempts != null && attempts >= 1;
   async function start() {
-    if (!settingsValid || count == null || hours == null || attempts == null || stepMinutes == null) return;
+    if (!settingsValid || count == null || hours == null || attempts == null) return;
     const body: Omit<StartHealth, "request_id"> = { scope, model: model.trim() || config.data?.default_model || "", reasoning_effort: effort,
-      max_attempts: attempts, step_timeout_seconds: Math.round(stepMinutes * 60),
-      budget: budgetMode === "time" ? { mode: "time", seconds: Math.round(hours * 3600) } : { mode: "fixed_groups", count } };
+      max_attempts: attempts,
+      budget: budgetMode === "time" ? { mode: "time", seconds: Math.round(hours * 3600) } : { mode: budgetMode, count } };
     const encoded = JSON.stringify(body);
     if (submitted.current.body !== encoded) submitted.current = { body: encoded, requestId: crypto.randomUUID() };
     setStarting(true); setError("");
@@ -96,27 +95,28 @@ export default function CodeHealthPage() {
         </div>
         <div className="code-health-form">
           <div className="code-health-field">停止条件<Select aria-label="停止条件" value={budgetMode} onChange={setBudgetMode}
-            disabled={starting || !config.data} options={[{ value: "fixed_groups", label: "按修复数量" }, { value: "time", label: "按总时间" }]} /></div>
-          {budgetMode === "fixed_groups" ? <div className="code-health-field">验收通过的问题组数<InputNumber aria-label="验收通过的问题组数"
+            disabled={starting || !config.data} options={[{ value: "fixed_groups", label: "按修复数量" }, { value: "discovered_groups", label: "按发现问题数" }, { value: "time", label: "按总时间" }]} /></div>
+          {budgetMode !== "time" ? <div className="code-health-field">{budgetMode === "discovered_groups" ? "发现问题组数" : "验收通过的问题组数"}<InputNumber aria-label={budgetMode === "discovered_groups" ? "发现问题组数" : "验收通过的问题组数"}
             min={1} precision={0} value={count} onChange={setCount} disabled={starting || !config.data} /></div> :
             <div className="code-health-field">总时限（小时）<InputNumber aria-label="总时限（小时）" min={0.01} step={0.5}
               value={hours} onChange={setHours} disabled={starting || !config.data} /></div>}
         </div>
-        <Text type="secondary">{budgetMode === "fixed_groups" ? "按验收通过的问题组计数；失败和待判断项不计数，不设任务总时限。" : "到达总时限后停止，保留已验收检查点。"}</Text>
-        <Text type="secondary">模型选项来自治理默认配置和已有的机器人编码配置，也可输入其他 Codex 模型名称。</Text>
-        {modelsUnavailable && <Alert type="warning" content="部分编码模型配置未能读取，可重试或直接输入模型名称。"
-          action={<Button size="small" onClick={() => { void bots.refetch(); inspections.forEach(query => void query.refetch()); }}>重试模型列表</Button>} />}
-        <Text type="secondary">启动时冻结当前工作区，包含未提交源码；清理在隔离工作区完成，交由你审核并提交。</Text>
-        <details><summary>高级参数</summary><Space wrap style={{ marginTop: 12 }}>
-          <div className="code-health-field">推理强度<Select aria-label="推理强度" style={{ width: 170 }} value={effort} onChange={setEffort} disabled={starting}
+        <div className="code-health-form">
+          <div className="code-health-field">推理强度<Select aria-label="推理强度" value={effort} onChange={setEffort} disabled={starting}
             options={[
               { value: "minimal", label: "极低（minimal）" }, { value: "low", label: "低（low）" },
               { value: "medium", label: "中（medium）" }, { value: "high", label: "高（high）" },
               { value: "xhigh", label: "极高（xhigh）" }, { value: "max", label: "最高（max）" },
             ]} /></div>
-          <div className="code-health-field">每组最多尝试<InputNumber aria-label="每组最多尝试" min={1} precision={0} value={attempts} onChange={setAttempts} disabled={starting} style={{ width: 120 }} /></div>
-          <div className="code-health-field">单次执行超时（分钟）<InputNumber aria-label="单次执行超时（分钟）" min={1} precision={0} value={stepMinutes} onChange={setStepMinutes} disabled={starting} style={{ width: 140 }} /></div>
-        </Space></details>
+          <div className="code-health-field">单个问题最多尝试<InputNumber aria-label="单个问题最多尝试" min={1} precision={0} value={attempts} onChange={setAttempts} disabled={starting || !config.data} /></div>
+        </div>
+        <Text type="secondary">同一问题达到尝试上限仍未通过时，转向其他问题；相同候选出现相同失败时提前停止。</Text>
+        <Text type="secondary">{budgetMode === "discovered_groups" ? "发现指定数量的问题组后停止巡检，立即修复最先发现的这些问题；失败或待判断时如实结束，不继续寻找替代问题，不设时间限制。" :
+          budgetMode === "fixed_groups" ? "按验收通过的问题组计数；失败和待判断项不计数，不设时间限制。" : "不限制修复问题数量；到达总时限后停止，保留已验收检查点。"}</Text>
+        <Text type="secondary">模型选项来自治理默认配置和已有的机器人编码配置，也可输入其他 Codex 模型名称。</Text>
+        {modelsUnavailable && <Alert type="warning" content="部分编码模型配置未能读取，可重试或直接输入模型名称。"
+          action={<Button size="small" onClick={() => { void bots.refetch(); inspections.forEach(query => void query.refetch()); }}>重试模型列表</Button>} />}
+        <Text type="secondary">启动时冻结当前工作区，包含未提交源码；清理在隔离工作区完成，交由你审核并提交。</Text>
         <Space wrap><Button type="primary" loading={starting} disabled={!config.data || !settingsValid || !(model.trim() || config.data.default_model)} onClick={() => void start()}>开始垃圾回收</Button>
           <Button onClick={() => setRulesOpen(true)}>查看黄金原则</Button>
           {config.data && <Text type="secondary">当前 HEAD：{config.data.base_commit.slice(0, 10)}</Text>}</Space>

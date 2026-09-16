@@ -5,11 +5,11 @@ export interface Rule { id: string; title: string; detector: string; reference: 
 export interface HealthConfig {
   rules: Rule[]; scopes: Array<{ value: Scope; label: string }>; default_model: string; base_commit: string;
   defaults: { reasoning_effort: string; max_attempts: number; budget: { mode: "fixed_groups"; count: number };
-    step_timeout_seconds: number; time_budget_seconds: number };
+    time_budget_seconds: number };
 }
 export interface CodeHealthOptions {
   model: string; reasoning_effort: string; max_attempts: number;
-  budget: GovernanceBudget; step_timeout_seconds: number;
+  budget: GovernanceBudget;
 }
 export interface Finding {
   id: string; rule_id: string; path: string; line: number; summary: string; evidence: string;
@@ -22,6 +22,7 @@ export interface HealthAttempt {
   after?: { checks: Check[]; findings: Finding[] };
 }
 export interface HealthSummary {
+  discovered_groups?: number; selected_groups?: number;
   accepted_groups?: number;
   found: number; fixed: number; needs_decision: number; remaining: number;
   coverage: "unknown" | "complete" | "partial"; completed_batches: number; total_batches: number;
@@ -45,7 +46,7 @@ export interface HealthTask extends ProgressTask {
   checkpoint_available?: boolean; stop_reason?: string;
   failure?: { code: string; stage: string; operation?: string; limit_seconds?: number; evidence_source?: string };
   governance?: { version?: number; groups?: HealthGroup[]; coverage?: Coverage[]; checkpoints?: Checkpoint[]; before: { checks: Check[]; findings: Finding[] }; findings: Finding[];
-    selected_ids?: string[]; resolved_ids?: string[]; audit_summary?: string; inspected_paths?: string[] };
+    selected_ids?: string[]; selected_group_ids?: string[]; resolved_ids?: string[]; audit_summary?: string; inspected_paths?: string[] };
 }
 export type StartHealth = CodeHealthOptions & { scope: Scope; request_id: string };
 export const healthLabels: Record<string, string> = {
@@ -61,8 +62,15 @@ export function healthStatus(task: Pick<HealthTask, "status" | "candidate_availa
   if (task.status === "fixed" && task.candidate_available === false) return "曾通过验收，候选已变化";
   if (task.status === "cancelled" || task.status === "interrupted") return healthLabels[task.status];
   if (task.stop_reason === "budget_exhausted") return "已达总时限";
+  if (task.stop_reason === "execution_timeout") return "执行器报告超时";
   if (task.stop_reason === "step_timeout") return "单次执行超时";
   if (task.stop_reason === "fix_limit_reached") return "已达修复数量目标";
+  if (task.stop_reason === "discovery_limit_reached") {
+    if (task.status === "failed") return "选中问题未通过验收";
+    if (task.status === "blocked") return "选中问题待判断";
+    const counts = task.governance_summary;
+    return counts?.selected_groups && counts.accepted_groups === counts.selected_groups ? "已修复选中问题" : "已修复部分选中问题";
+  }
   if (task.stop_reason && task.stop_reason !== "completed") return "执行受阻";
   const counts = task.governance_summary;
   if (task.status === "fixed" && task.candidate_available == null && counts?.coverage === "unknown") return "历史验收通过";
@@ -78,6 +86,8 @@ export function findingStatus(finding: Finding, task: HealthTask): string {
     if (task.checkpoint) return task.checkpoint_available === false ? "检查点不可读取" : "已保存在检查点";
     return task.candidate_available === false ? "验收后候选已变化" : "本次已解决";
   }
+  const selection = task.governance?.selected_group_ids;
+  if (selection && !task.governance?.groups?.some(g => selection.includes(g.id) && g.finding_ids.includes(finding.id))) return "本轮未选中";
   if (finding.disposition === "needs_decision") return "待判断";
   return task.governance?.selected_ids?.includes(finding.id) ? "本次目标" : "后续可处理";
 }

@@ -10,7 +10,7 @@ import os
 from chatcopilot.core.observability_redaction import redact_observability_payload
 
 PIPELINE_VERSION = 5
-GOVERNANCE_VERSION = 3
+GOVERNANCE_VERSION = 4
 
 ACTIVE = frozenset({"queued", "running", "cancel_requested"})
 TERMINAL = frozenset({"fixed", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})
@@ -84,19 +84,27 @@ class RepairOptions:
 class CodeHealthOptions:
     model: str
     budget: dict[str, Any]
-    reasoning_effort: str = "medium"
+    reasoning_effort: str = "xhigh"
     max_attempts: int = 3
-    step_timeout_seconds: int = 1800
 
     def __post_init__(self) -> None:
-        RepairOptions(self.model, self.reasoning_effort, self.max_attempts, self.step_timeout_seconds)
+        RepairOptions(self.model, self.reasoning_effort, self.max_attempts)
         if not isinstance(self.budget, dict):
             raise ValueError("必须明确选择代码治理预算模式")
-        key = {"time": "seconds", "fixed_groups": "count"}.get(self.budget.get("mode"))
+        key = {"time": "seconds", "fixed_groups": "count", "discovered_groups": "count"}.get(self.budget.get("mode"))
         if (key is None or set(self.budget) != {"mode", key}
                 or type(self.budget[key]) is not int or self.budget[key] < 1):
-            raise ValueError("预算必须为总时间或验收问题组数，额度必须为正整数")
+            raise ValueError("预算必须为总时间、验收问题组数或发现问题组数，额度必须为正整数")
         object.__setattr__(self, "budget", dict(self.budget))
+
+
+@dataclass(frozen=True)
+class CodingOptions:
+    """Host-projected call options; None means no execution deadline."""
+    model: str
+    reasoning_effort: str
+    max_attempts: int
+    timeout_seconds: int | None
 
 
 @dataclass(frozen=True)

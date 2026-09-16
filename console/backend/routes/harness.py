@@ -72,15 +72,20 @@ class FixedGroupsBudget(BaseModel):
     count: int = Field(strict=True, ge=1)
 
 
+class DiscoveredGroupsBudget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["discovered_groups"]
+    count: int = Field(strict=True, ge=1)
+
+
 class CreateCodeHealth(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scope: Literal["all", "runtime", "console", "docs"] = "all"
     request_id: str = Field(min_length=1)
     model: str = Field(min_length=1)
-    reasoning_effort: str = "medium"
+    reasoning_effort: str = "xhigh"
     max_attempts: int = Field(default=3, ge=1)
-    budget: TimeBudget | FixedGroupsBudget = Field(discriminator="mode")
-    step_timeout_seconds: int = Field(default=1800, strict=True, ge=1)
+    budget: TimeBudget | FixedGroupsBudget | DiscoveredGroupsBudget = Field(discriminator="mode")
 
 
 def _controller(request: Request):
@@ -185,7 +190,7 @@ def create_code_health(request: Request, body: CreateCodeHealth):
     _mutation_access(request)
     return _call(lambda: _controller(request).start_code_health(
         body.scope, CodeHealthOptions(body.model, body.budget.model_dump(), body.reasoning_effort,
-                                     body.max_attempts, body.step_timeout_seconds),
+                                     body.max_attempts),
         request_id=body.request_id))
 
 

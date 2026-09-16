@@ -13,7 +13,7 @@ it("uses the shared host with an explicit governance history filter", async () =
 it("submits source scope and execution parameters without Git authority", async () => {
   const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ task_id: "example" }) });
   vi.stubGlobal("fetch", fetch);
-  const body = { scope: "all" as const, model: "test-model", reasoning_effort: "medium", max_attempts: 3, budget: { mode: "fixed_groups" as const, count: 1 }, step_timeout_seconds: 1800, request_id: "request" };
+  const body = { scope: "all" as const, model: "test-model", reasoning_effort: "xhigh", max_attempts: 3, budget: { mode: "fixed_groups" as const, count: 1 }, request_id: "request" };
   await healthApi.start(body);
   expect(fetch.mock.calls[0][0]).toBe("/api/harness/code-health/tasks");
   expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(body);
@@ -57,4 +57,14 @@ it("keeps accepted findings tied to their checkpoint while the next candidate ch
   expect(findingStatus({ id: "finding" } as Finding, task)).toBe("已保存在检查点");
   task.checkpoint_available = false;
   expect(findingStatus({ id: "finding" } as Finding, task)).toBe("检查点不可读取");
+});
+
+it("discovery threshold does not imply successful repair", () => {
+  const base = { stop_reason: "discovery_limit_reached", governance_summary: {
+    found: 3, fixed: 1, needs_decision: 0, remaining: 2, discovered_groups: 3, selected_groups: 1,
+    accepted_groups: 1, completed_batches: 1, total_batches: 10, coverage: "partial" as const } };
+  expect(healthStatus({ ...base, status: "fixed" })).toBe("已修复选中问题");
+  expect(healthStatus({ ...base, status: "failed" })).toBe("选中问题未通过验收");
+  expect(healthStatus({ ...base, status: "blocked" })).toBe("选中问题待判断");
+  expect(healthStatus({ ...base, status: "fixed", governance_summary: { ...base.governance_summary, selected_groups: 2 } })).toBe("已修复部分选中问题");
 });
