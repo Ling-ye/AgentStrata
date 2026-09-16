@@ -939,6 +939,11 @@ python -m chatcopilot.harness retry-delivery <repair-id>
 python -m chatcopilot.harness retry-cleanup <repair-id>
 ```
 
+Console 安装会在定时器启动成功后才显示完成。若仅对账定时器启动失败，可单独重跑上面的
+`install_harness_delivery_timer.py` 安装命令，无需重启 Console 或 Evaluation。用
+`systemctl --user status agentstrata-harness-delivery.timer --no-pager` 查看定时器状态，
+用 `journalctl --user -u agentstrata-harness-delivery.timer -u agentstrata-harness-delivery.service -n 80 --no-pager` 查看加载和执行错误。
+
 PR 创建并核实提交后，本地工作区与任务分支会清理；日志、源码快照、回归证据和 Git 恢复档案保留。
 失败任务也先归档再清理，归档损坏、现场外部改动或仍在执行时停止删除。主干前进时自动恢复任务
 工作区、合入最新 main、复验和审核，通过后普通推送；冲突时保留 PR 并报告受阻。

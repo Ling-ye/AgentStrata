@@ -98,3 +98,4 @@ tests/integration/test_acp_streaming_updates.py
 tests/integration/test_lingye_botspec_smoke.py
 
 tests/unit/test_harness_pr_delivery.py
+tests/unit/test_harness_delivery_install.py

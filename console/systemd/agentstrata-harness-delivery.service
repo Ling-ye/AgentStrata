@@ -4,7 +4,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory="@@REPO@@"
+WorkingDirectory=@@REPO@@
 Environment="PYTHONPATH=@@REPO@@/src"
 ExecStart="@@PYTHON@@" -m chatcopilot.harness.delivery_runtime --repository-root "@@REPO@@"
 UMask=0077

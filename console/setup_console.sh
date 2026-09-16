@@ -48,6 +48,8 @@ print_service_diagnostics() {
     echo "  journalctl --user -u $EVALUATION_UNIT_NAME --no-pager -n 120" >&2
     echo "  systemctl --user status $UNIT_NAME --no-pager -l" >&2
     echo "  journalctl --user -u $UNIT_NAME --no-pager -n 120" >&2
+    echo "  systemctl --user status agentstrata-harness-delivery.timer agentstrata-harness-delivery.service --no-pager -l" >&2
+    echo "  journalctl --user -u agentstrata-harness-delivery.timer -u agentstrata-harness-delivery.service --no-pager -n 120" >&2
     echo "  bash $REPO_ROOT/deploy/wsl/deploy_console.sh --status" >&2
 }
 
@@ -304,13 +306,15 @@ if ! maintenance_leave; then
 fi
 trap - EXIT
 
+if ! systemctl --user start agentstrata-harness-delivery.timer; then
+    err "Harness PR 对账定时器启动失败"
+    print_service_diagnostics
+    exit 1
+fi
+ok "Harness PR 对账定时器已启动（每分钟检查一次）"
+
 echo
 ok "完成。浏览器打开： http://localhost:8910"
 echo "  Evaluation：systemctl --user status $EVALUATION_UNIT_NAME"
 echo "  查看状态：systemctl --user status $UNIT_NAME"
 echo "  看日志：  journalctl --user -u $UNIT_NAME -f"
-
-if ! systemctl --user start agentstrata-harness-delivery.timer; then
-    err "Harness PR 对账定时器启动失败"
-    exit 1
-fi
