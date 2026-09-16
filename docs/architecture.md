@@ -32,6 +32,13 @@ Channel 投递，取得可信回执后再请求 Application 提交交换。授�
 会话交接实现见[分层职责精简重构](../specs/runtime-layer-responsibility-refactor/spec.md)。
 后续相关规格必须按 [SDD 规范](sdd.md)引用该基线，说明职责、交接契约和依赖方向。
 
+各业务领域内部同时遵守 [六层源码依赖基线](../specs/domain-layered-dependencies/spec.md)：
+**Types → Config → Repo → Service → Runtime → UI**。该顺序从基础到上层排列，右侧层
+只能依赖规格矩阵获准的左侧层，禁止反向依赖和循环依赖；允许跳层仍须遵守公开入口和
+跨领域边界。四层规定运行时职责与交接，六层规定领域内部源码依赖，两者同时生效。
+规则适用于新增模块、新增依赖和结构性修改，存量按涉及范围逐步调整，不强制六个目录。
+当前六层规则由规范与评审约束，现有架构检查通过不代表全仓六层合规。
+
 消息方向与 Python import 方向分别约束。Gateway 依赖 Channel 端口并注入入站回调，
 Channel 不导入 Gateway；Gateway 调用 Application，Application 调用 Agent。
 `scripts/check_architecture.py` 检查静态依赖，四层箭头不替代该检查：
