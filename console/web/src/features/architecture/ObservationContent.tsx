@@ -5,7 +5,7 @@ import { Alert, Button, Spin } from "@arco-design/web-react";
 import { api } from "../../api";
 import { bodyState } from "./workbenchModel";
 import { DetailScope, useDetailValue } from "./observationDetailState";
-import StructuredData from "./StructuredData";
+import StructuredData, { JsonData } from "./StructuredData";
 export { DetailScope, TaskDetailState } from "./observationDetailState";
 
 export const FIELD_NAMES: Record<string, string> = {
@@ -120,10 +120,11 @@ const BODY_METADATA = new Set(["name", "trace_id", "span_id", "parent_span_id", 
 const COVERAGE: Record<string, string> = { exact_model_input: "精确模型输入", adapter_visible: "仅适配器可见部分", partial: "部分采集", provider_opaque: "Provider 未公开" };
 
 export function ObservationPayload({ instanceId, runId, reference, expired = false, captureState, title, active = true, bodyField,
-  select, preview = false, messages = false, contentId }: {
+  select, preview = false, messages = false, contentId, showTitle = true, showRaw = true }: {
   instanceId: string; runId: string; reference?: string; expired?: boolean; captureState?: string; title: string; active?: boolean;
   bodyField?: "input" | "output";
   select?: (value: unknown) => unknown; preview?: boolean; messages?: boolean; contentId?: string;
+  showTitle?: boolean; showRaw?: boolean;
 }) {
   const { ref, visible } = useInView();
   const query = useQuery({ queryKey: ["observation-body", instanceId, runId, reference],
@@ -139,13 +140,13 @@ export function ObservationPayload({ instanceId, runId, reference, expired = fal
   const primary = selected;
   const extra = bodyField && fields && bodyField in fields ? Object.fromEntries(Object.entries(fields).filter(([key]) => key !== bodyField)) : {};
   return <section ref={ref} className={"obs-payload" + (preview ? " obs-process-preview" : "")} aria-label={title}><DetailScope id={"body:" + (contentId ?? reference ?? title)}>
-    <div className="obs-pane-heading"><strong>{title}</strong><span>{bodyState(state)}{typeof fields?.coverage === "string" ? " · " + (COVERAGE[fields.coverage] ?? fields.coverage) : ""}</span></div>
+    <div className="obs-pane-heading">{showTitle && <strong>{title}</strong>}<span>{bodyState(state)}{typeof fields?.coverage === "string" ? " · " + (COVERAGE[fields.coverage] ?? fields.coverage) : ""}</span></div>
     {state === "expired" ? <p className="obs-muted">详细正文已到期，结构化记录仍保留。</p> : query.error ?
       <Alert type="error" content={<span>详情读取失败：{query.error.message} <Button size="mini" onClick={() => void query.refetch()}>重试</Button></span>} /> :
       query.isFetching ? <Spin size={16} /> : query.data && Object.prototype.hasOwnProperty.call(query.data, "payload") ? <>
         {preview ? <div className="obs-process-preview-text">{processPreview(primary)}</div> : <PayloadContent value={primary} messages={messages} />}
         {!!Object.keys(extra).length && <DetailScope id="metadata"><ConfigFields value={extra} /></DetailScope>}
-        {!preview && <Disclosure title="原始记录"><StructuredData value={payload} labels={FIELD_NAMES} /></Disclosure>}
+        {!preview && showRaw && <Disclosure title="原始记录"><JsonData value={payload} /></Disclosure>}
       </> : <p className="obs-muted">{reference && !visible ? "滚动到此处时加载" : reference ? "等待读取" : bodyState(state)}</p>}
   </DetailScope></section>;
 }

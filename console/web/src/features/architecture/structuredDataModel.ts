@@ -12,9 +12,6 @@ export function valueSummary(value: unknown): string {
   if (value === "") return '""';
   return String(value);
 }
-export function isObjectArray(value: unknown): value is Record<string, unknown>[] {
-  return Array.isArray(value) && value.length > 0 && value.every((row) => row !== null && typeof row === "object" && !Array.isArray(row));
-}
 export interface DataMatch { path: string; key: string; value: unknown }
 /** Search only the supplied, already-loaded JSON. Iterative traversal also handles deep payloads. */
 export function searchData(value: unknown, query: string, limit = 100): { matches: DataMatch[]; more: boolean } {

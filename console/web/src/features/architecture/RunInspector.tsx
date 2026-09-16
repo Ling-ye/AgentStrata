@@ -3,11 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Tag } from "@arco-design/web-react";
 import type { GatewayObservation, GatewayRunDetail } from "./model";
 import { DELIVERY_STAGES, layerName, runState } from "./model";
-import { bodyState, buildRunView, dateTime, duration, runDuration, stepDuration, stepState, RUNTIME_LAYERS, RUNTIME_OPERATIONS, type FlowItem, type ObservationBody } from "./workbenchModel";
+import { bodyState, buildRunView, dateTime, duration, runDuration, stepDuration, stepState, RUNTIME_LAYERS, RUNTIME_OPERATIONS, type DisplayStep, type FlowItem, type ObservationBody } from "./workbenchModel";
 import { ConfigFields, DetailScope, Disclosure, ObservationPayload, TaskDetailState, TextPreview } from "./ObservationContent";
 import ExecutionConfiguration from "./ExecutionConfiguration";
 import TracePanel from "../traces/TracePanel";
-import { agentProcess } from "./agentProcessModel";
+import { agentProcess, rawRecordOwners } from "./agentProcessModel";
+import { JsonData } from "./StructuredData";
 import AgentStreamContent from "./AgentStreamContent";
 import ExecutionWorkspace from "./ExecutionWorkspace";
 import { executionTitle } from "./executionModel";
@@ -27,21 +28,35 @@ function errorText(value: unknown) {
 }
 
 type BodyScope = { instanceId: string; runId: string; expired: boolean; active: boolean };
-function EventBody({ event, title, scope }: { event: GatewayObservation; title: string; scope: BodyScope }) {
-  return <ObservationPayload {...scope} reference={event.body_ref} captureState={event.body_state} title={title} />;
+function EventBody({ event, title, scope, showRaw = true, showTitle = true }: {
+  event: GatewayObservation; title: string; scope: BodyScope; showRaw?: boolean; showTitle?: boolean;
+}) {
+  return <ObservationPayload {...scope} reference={event.body_ref} captureState={event.body_state} title={title} showRaw={showRaw} showTitle={showTitle} />;
 }
-function Permissions({ events, scope }: { events: GatewayObservation[]; scope: BodyScope }) {
+function supplementaryRecords(step: DisplayStep, contexts: boolean) {
+  return [
+    ...(contexts ? step.contexts.map((event) => ({ id: `context:${event.seq}`, event, secondary: true })) : []),
+    ...step.permissions.map((event) => ({ id: `permission:${event.seq}`, event, secondary: true })),
+    ...step.logs.map((event) => ({ id: `log:${event.seq}`, event, secondary: true })),
+  ];
+}
+function Permissions({ events, scope, rawOwners = rawRecordOwners(events.map((event) => ({ id: `permission:${event.seq}`, event }))) }: {
+  events: GatewayObservation[]; scope: BodyScope; rawOwners?: ReadonlySet<string>;
+}) {
   return <>{events.map((event) => <div key={event.seq} className="obs-permission">
     <div className="obs-permission-summary"><Tag color={event.data?.allowed === true ? "green" : event.data?.allowed === false ? "red" : "gray"}>
       {event.data?.allowed === true ? "允许" : event.data?.allowed === false ? "拒绝" : "决定未记录"}</Tag>
       <span>{String(event.data?.name ?? "")}</span><span>{event.data?.phase === "execution" ? "执行检查" : event.data?.phase === "visibility" ? "可见性检查" : "检查阶段未记录"}</span>
       <code>{String(event.data?.code ?? "")}</code></div>
-    <Disclosure stateKey={`permission:${event.seq}`} title="权限记录"><EventBody event={event} title="权限详情" scope={scope} /></Disclosure>
+    <Disclosure stateKey={`permission:${event.seq}`} title="权限记录"><EventBody event={event} title="权限详情" scope={scope}
+      showTitle={false} showRaw={rawOwners.has(`permission:${event.seq}`)} /></Disclosure>
   </div>)}</>;
 }
-function Logs({ events, scope }: { events: GatewayObservation[]; scope: BodyScope }) {
+function Logs({ events, scope, rawOwners = rawRecordOwners(events.map((event) => ({ id: `log:${event.seq}`, event }))) }: {
+  events: GatewayObservation[]; scope: BodyScope; rawOwners?: ReadonlySet<string>;
+}) {
   return <>{events.map((event) => <Disclosure key={event.seq} stateKey={`log:${event.seq}`} title={String(event.data?.level ?? "INFO") + " · " + dateTime(event.created_at) + " · " + String(event.data?.logger ?? "")}>
-    <EventBody event={event} title="日志正文" scope={scope} />
+    <EventBody event={event} title="日志正文" scope={scope} showRaw={rawOwners.has(`log:${event.seq}`)} />
   </Disclosure>)}</>;
 }
 
@@ -60,7 +75,7 @@ function StepCard({ item, index, terminal, scope, hasMore }: {
   const cached = useQuery<ObservationBody>({ queryKey: ["observation-body", scope.instanceId, scope.runId, event.body_ref], enabled: false });
   const body = !scope.expired && cached.data?.payload && typeof cached.data.payload === "object" ?
     cached.data.payload as Record<string, unknown> : {};
-  const error = errorText(step.delivery?.errorCode || body.error || body.message && event.status === "failed" && body.message || event.data?.code);
+  const error = errorText(step.delivery?.errorCode || body.error || body.error_code || body.message && event.status === "failed" && body.message || event.data?.code);
   const rawSummary = String(body.summary || event.data?.summary || event.data?.finish_reason ||
     (event.data?.catalog_tool_count != null ? "工具列表：" + event.data.catalog_tool_count + " 项" : event.data?.tool_count != null ? "本次可用工具 " + event.data.tool_count + " 个" : ""));
   const summary = ["completed", "in_progress", "stop"].includes(rawSummary) ? "" : rawSummary;
@@ -72,6 +87,11 @@ function StepCard({ item, index, terminal, scope, hasMore }: {
   const boundary = step.start ?? event;
   const process = agentProcess(step);
   const payloadEvents = [step.start, step.finish ?? (!step.start ? event : undefined)].filter((item): item is GatewayObservation => !!item);
+  const panels = process.panels.filter((panel) => panel.secondary || step.finish || !step.deltas?.length || panel.id === "input");
+  const rawOwners = rawRecordOwners([
+    ...(process.supported ? panels : payloadEvents.map((event) => ({ id: `event:${event.seq}`, event }))),
+    ...supplementaryRecords(step, !process.supported),
+  ]);
   return <DetailScope id={`step:${step.key}`}><article data-step-key={step.key} data-entity-id={event.entity_id} data-status={state.status}
     data-runtime-layer={item.layer} data-stage-key={item.stageKey} data-process-kind={process.kind}
     className={"obs-step-card" + (state.status === "failed" ? " is-failed" : "")}
@@ -93,13 +113,12 @@ function StepCard({ item, index, terminal, scope, hasMore }: {
       </div>
     </div>
     {!step.finish && !!step.deltas?.length && <AgentStreamContent {...scope} expired={!!scope.expired} events={step.deltas} />}
-    {process.supported && <div className="obs-step-payloads obs-process-panels">{process.panels.filter((panel) => !panel.secondary &&
-      (step.finish || !step.deltas?.length || panel.id === "input")).map((panel) =>
+    {process.supported && <div className="obs-step-payloads obs-process-panels">{panels.filter((panel) => !panel.secondary).map((panel) =>
       <DetailScope id={panel.id} key={panel.id}><ObservationPayload {...scope}
         reference={panel.event?.body_ref} captureState={panel.event?.body_state ?? (!terminal && panel.id === "output" ? "pending" : "not_recorded")}
-        title={panel.title} select={panel.select} messages={panel.messages} contentId={panel.id} />
+        title={panel.title} select={panel.select} messages={panel.messages} contentId={panel.id} showRaw={rawOwners.has(panel.id)} />
       </DetailScope>)}</div>}
-    {step.permissions.length > 0 && <div className="obs-step-permissions"><Permissions events={step.permissions} scope={scope} /></div>}
+    {step.permissions.length > 0 && <div className="obs-step-permissions"><Permissions events={step.permissions} scope={scope} rawOwners={rawOwners} /></div>}
     <div className="obs-step-body" id={"obs-step-body-" + event.seq}>
       {step.missingParent && <p className="obs-muted">{hasMore ? "上级调用尚未取得，还有后续记录可加载。" : "上级调用未采集，本步骤的输入、结果和状态可独立查看。"}</p>}
       {item.missingStage && <p className="obs-muted">{hasMore ? "所属阶段尚未取得。" : "所属阶段未记录，本步骤保留原始关联。"}</p>}
@@ -107,22 +126,22 @@ function StepCard({ item, index, terminal, scope, hasMore }: {
       {event.data?.relation === "background_task" && <Alert type="info" content={"后台任务 " + String(event.data.related_task_id) + " · " + String(event.data.related_task_state ?? "状态未记录") + "。独立执行过程尚未接入。"} />}
       {!process.supported && <div className="obs-step-payloads">{payloadEvents.map((item) => <DetailScope key={item.seq} id={`event:${item.seq}`}><section>
         {item.body_ref || item.body_state && item.body_state !== "not_recorded" ?
-          <EventBody event={item} scope={scope} title={item.phase === "start" ? "调用参数" : item.phase === "finish" ? "调用结果" : "阶段数据"} /> :
+          <EventBody event={item} scope={scope} showRaw={rawOwners.has(`event:${item.seq}`)} title={item.phase === "start" ? "调用参数" : item.phase === "finish" ? "调用结果" : "阶段数据"} /> :
           <><h4>{item.phase === "start" ? "调用输入" : item.phase === "finish" ? "调用结果" : "阶段数据"}</h4>
             <ConfigFields value={visibleMetadata(item)} />
             {item.kind.startsWith("LlmCall") && <p className="obs-muted">{item.phase === "start" ? "输入正文见下方关联上下文。" : "此阶段未记录模型返回正文。"}</p>}</>}
       </section></DetailScope>)}</div>}
-      {process.supported && process.panels.filter((panel) => panel.secondary).map((panel) => <Disclosure key={panel.id} stateKey={panel.id} title={panel.title}>
+      {process.supported && panels.filter((panel) => panel.secondary).map((panel) => <Disclosure key={panel.id} stateKey={panel.id} title={panel.title}>
         <ObservationPayload {...scope} reference={panel.event?.body_ref} captureState={panel.event?.body_state}
-          title={panel.title} select={panel.select} messages={panel.messages} contentId={panel.id} />
+          title={panel.title} select={panel.select} messages={panel.messages} contentId={panel.id} showTitle={false} showRaw={rawOwners.has(panel.id)} />
       </Disclosure>)}
       {!process.supported && step.contexts.map((context) => <Disclosure key={context.seq} stateKey={`context:${context.seq}`} title="上下文">
-        <EventBody event={context} scope={scope} title="模型可见上下文" />
+        <EventBody event={context} scope={scope} title="模型可见上下文" showRaw={rawOwners.has(`context:${context.seq}`)} />
       </Disclosure>)}
       {event.kind.startsWith("LlmCall") && !step.contexts.length && <p className="obs-muted">未记录可关联的上下文快照</p>}
       {(boundary.entity_id || boundary.refs?.length) && <ExecutionConfiguration {...scope} event={boundary} />}
-      {!!step.logs.length && <section aria-label="步骤日志"><h4>步骤日志</h4><Logs events={step.logs} scope={scope} /></section>}
-      <Disclosure title="阶段原始记录"><TextPreview text={JSON.stringify({ start: step.start, finish: step.finish, event: !step.start && !step.finish ? event : undefined }, null, 2)} /></Disclosure>
+      {!!step.logs.length && <section aria-label="步骤日志"><h4>步骤日志</h4><Logs events={step.logs} scope={scope} rawOwners={rawOwners} /></section>}
+      <Disclosure title="事件元数据"><JsonData value={{ start: step.start, finish: step.finish, event: !step.start && !step.finish ? event : undefined }} /></Disclosure>
     </div>
   </article></DetailScope>;
 }
@@ -137,6 +156,7 @@ function StageCard({ item, terminal, scope, hasMore }: { item: FlowItem; termina
   const error = step.delivery?.errorCode || event.data?.error_code || event.data?.code || body.error;
   const absentStart = hasMore ? "not_loaded" : "not_recorded";
   const absentFinish = terminal ? absentStart : "pending";
+  const rawOwners = rawRecordOwners([{ id: "input", event: step.start }, { id: "output", event: step.finish }, ...supplementaryRecords(step, true)]);
   return <DetailScope id={`step:${step.key}`}><article className="obs-runtime-stage" data-step-key={step.key}
     data-runtime-layer={item.layer} data-operation={item.operation} data-status={state.status}>
     <header className="obs-stage-heading"><div><span className="obs-stage-layer">{item.layer && RUNTIME_LAYERS[item.layer]}</span>
@@ -148,14 +168,14 @@ function StageCard({ item, terminal, scope, hasMore }: { item: FlowItem; termina
     {!!error && <p className="obs-step-error">{errorText(error)}</p>}
     {step.missingParent && <p className="obs-muted">{hasMore ? "上级阶段尚未取得。" : "上级阶段未记录。"}</p>}
     <div className="obs-step-payloads obs-stage-payloads">
-      <ObservationPayload {...scope} reference={step.start?.body_ref} captureState={step.start ? step.start.body_state : absentStart} title="输入" bodyField="input" />
-      <ObservationPayload {...scope} reference={step.finish?.body_ref} captureState={step.finish ? step.finish.body_state : absentFinish} title="输出" bodyField="output" />
+      <ObservationPayload {...scope} reference={step.start?.body_ref} captureState={step.start ? step.start.body_state : absentStart} title="输入" bodyField="input" showRaw={rawOwners.has("input")} />
+      <ObservationPayload {...scope} reference={step.finish?.body_ref} captureState={step.finish ? step.finish.body_state : absentFinish} title="输出" bodyField="output" showRaw={rawOwners.has("output")} />
     </div>
-    {!!step.permissions.length && <Permissions events={step.permissions} scope={scope} />}
-    {step.contexts.map((context) => <Disclosure key={context.seq} stateKey={`context:${context.seq}`} title="上下文"><EventBody event={context} scope={scope} title="模型可见上下文" /></Disclosure>)}
-    {(boundary.entity_id || boundary.refs?.length) && <Disclosure title="执行时配置"><ExecutionConfiguration {...scope} event={boundary} /></Disclosure>}
-    {!!step.logs.length && <section aria-label="阶段日志"><h4>阶段日志</h4><Logs events={step.logs} scope={scope} /></section>}
-    <Disclosure title="阶段原始记录"><TextPreview text={JSON.stringify({ start: step.start, finish: step.finish }, null, 2)} /></Disclosure>
+    {!!step.permissions.length && <Permissions events={step.permissions} scope={scope} rawOwners={rawOwners} />}
+    {step.contexts.map((context) => <Disclosure key={context.seq} stateKey={`context:${context.seq}`} title="上下文"><EventBody event={context} scope={scope} title="模型可见上下文" showRaw={rawOwners.has(`context:${context.seq}`)} /></Disclosure>)}
+    {(boundary.entity_id || boundary.refs?.length) && <Disclosure title="执行时配置"><ExecutionConfiguration {...scope} event={boundary} showTitle={false} /></Disclosure>}
+    {!!step.logs.length && <section aria-label="阶段日志"><h4>阶段日志</h4><Logs events={step.logs} scope={scope} rawOwners={rawOwners} /></section>}
+    <Disclosure title="事件元数据"><JsonData value={{ start: step.start, finish: step.finish }} /></Disclosure>
   </article></DetailScope>;
 }
 
@@ -183,8 +203,8 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
     {!!run.details_expired && <Alert type="info" content="详细正文已到期；任务摘要和阶段指标仍保留。" />}
     {["truncated", "capture_failed"].includes(run.capture_state ?? "") && <Alert type="warning" content={"任务记录" + bodyState(run.capture_state!) + "，部分过程或正文不可用。"} />}
     {(detail.truncated || detail.sanitization_truncated) && <Alert type="warning" content="当前响应包含截断记录，不能视为完整过程。" />}
-    <Disclosure title="任务输入"><ObservationPayload {...scope} reference={run.input_ref} title="任务输入" /></Disclosure>
-    <Disclosure title="执行时配置"><ExecutionConfiguration {...scope} /></Disclosure>
+    <Disclosure title="任务输入"><ObservationPayload {...scope} reference={run.input_ref} title="任务输入" showTitle={false} /></Disclosure>
+    <Disclosure title="执行时配置"><ExecutionConfiguration {...scope} showTitle={false} /></Disclosure>
     <ExecutionWorkspace flow={view.flow} instanceId={instanceId} runId={run.run_id} terminal={terminal} hasMore={hasMore}
       expired={!!run.details_expired} active={visible} renderDetail={(item) => item.kind === "stage" ?
         <StageCard key={item.step.key} item={item} terminal={terminal} scope={scope} hasMore={hasMore} /> :

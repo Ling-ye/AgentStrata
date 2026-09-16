@@ -1,7 +1,7 @@
 .structured-data { min-width: 0; font-size: 12px; }
 .structured-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .structured-toolbar .arco-input-group-wrapper { flex: 1 1 150px; min-width: 100px; max-width: 280px; }
-.structured-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; min-width: 0; padding: 5px 0; border-bottom: 1px solid var(--cc-bg-subtle); }
+.structured-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; min-width: 0; padding: 4px 0; border-bottom: 1px solid var(--cc-bg-subtle); }
 .structured-toggle { appearance: none; border: 0; color: var(--cc-text-secondary); background: transparent; width: 16px; flex: 0 0 16px; padding: 0; cursor: pointer; }
 .structured-toggle:focus-visible { outline: 2px solid var(--cc-primary); }
 .structured-key { color: var(--cc-text-primary); overflow-wrap: anywhere; }
@@ -11,14 +11,6 @@
 .structured-value.is-null, .structured-value.is-missing { color: var(--cc-text-tertiary); font-style: italic; }
 .structured-value.is-number, .structured-value.is-boolean { color: var(--cc-primary); font-variant-numeric: tabular-nums; }
 .structured-children { margin-left: 8px; padding-left: 12px; border-left: var(--cc-border); }
-.structured-actions { display: inline-flex; gap: 0; flex-shrink: 0; }
-.structured-actions .arco-btn { padding: 0 4px; font-size: 11px; }
-.structured-table-scroll { overflow: auto; max-width: 100%; }
-.structured-table { border-collapse: collapse; width: 100%; font-size: 12px; }
-.structured-table th, .structured-table td { text-align: left; vertical-align: top; border: var(--cc-border); padding: 6px; min-width: 130px; max-width: 400px; }
-.structured-table th:first-child { min-width: 40px; }
-.structured-table thead th { background: var(--cc-bg-subtle); font-weight: 500; }
-.structured-table small { display: block; color: var(--cc-text-tertiary); }
 .structured-json { margin: 8px 0; padding: 10px; background: var(--cc-bg-subtle); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-width: 100%; }
 .structured-match-path { display: block; margin-top: 10px; color: var(--cc-text-tertiary); overflow-wrap: anywhere; }
 @media (max-width: 600px) { .structured-children { padding-left: 7px; margin-left: 3px; } .structured-label { display: none; } }

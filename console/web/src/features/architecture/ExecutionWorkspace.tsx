@@ -140,9 +140,9 @@ export default function ExecutionWorkspace({ flow, instanceId, runId, terminal, 
           <strong>{edge.label}</strong><p><button onClick={() => selectNode(edge.source)}>{model.byId.get(edge.source)?.title}</button> → <button onClick={() => selectNode(edge.target)}>{model.byId.get(edge.target)?.title}</button></p>
           <StructuredData value={{ field: edge.field, value: edge.value, event_sequence: edge.event.seq,
             ...(edge.messageIndex == null ? {} : { message_pointer: `/effective_messages/${edge.messageIndex}` }) }} />
-          {edge.kind === "input" && <><ObservationPayload {...scope} reference={model.byId.get(edge.source)?.item.step.finish?.body_ref}
+          {edge.kind === "input" && <><ObservationPayload {...scope} showRaw={false} reference={model.byId.get(edge.source)?.item.step.finish?.body_ref}
             title="来源：交给模型的工具结果" select={(value) => (value as Record<string, unknown>)?.model_result} />
-            <ObservationPayload {...scope} reference={edge.event.body_ref} captureState={edge.event.body_state} title={`去向：输入消息 ${edge.messageIndex! + 1}`}
+            <ObservationPayload {...scope} showRaw={false} reference={edge.event.body_ref} captureState={edge.event.body_state} title={`去向：输入消息 ${edge.messageIndex! + 1}`}
               select={(value) => ((value as Record<string, unknown>)?.effective_messages as unknown[])?.[edge.messageIndex!]} messages /></>}
         </section></DetailScope>}
         {!selected && <Empty description={selection.selected && hasMore ? "所选步骤尚未加载，请加载后续记录" : "选择一个阶段或调用查看输入输出"} />}

@@ -5,8 +5,9 @@ import type { GatewayObservation } from "./model";
 import { recordedConfiguration } from "./configurationModel";
 import { ConfigFields, DetailScope, FIELD_NAMES, useInView } from "./ObservationContent";
 
-export default function ExecutionConfiguration({ instanceId, runId, event, active }: {
+export default function ExecutionConfiguration({ instanceId, runId, event, active, showTitle = true }: {
   instanceId: string; runId: string; event?: GatewayObservation; active: boolean;
+  showTitle?: boolean;
 }) {
   const { ref, visible } = useInView();
   const query = useQuery({ queryKey: ["execution-configuration", instanceId, runId, event?.seq],
@@ -14,7 +15,7 @@ export default function ExecutionConfiguration({ instanceId, runId, event, activ
     enabled: active && visible, staleTime: Infinity, retry: false });
   const config = recordedConfiguration(query.data, event);
   return <section ref={ref} className="obs-execution-config" aria-label={event ? "步骤执行时配置" : "任务执行时配置"}>
-    <div className="obs-pane-heading"><strong>{event ? "执行时配置" : "任务配置记录"}</strong>
+    <div className="obs-pane-heading">{showTitle && <strong>{event ? "执行时配置" : "任务配置记录"}</strong>}
       {config && <span>版本 {config.configuration_revision?.slice(0, 10) ?? "未记录"}</span>}</div>
     {query.error ? <Alert type="error" content={<span>配置记录读取失败 <Button size="mini" onClick={() => void query.refetch()}>重试</Button></span>} /> :
       query.isFetching ? <Spin size={16} /> : !query.data ? <p className="obs-muted">滚动到此处时加载</p> :

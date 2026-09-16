@@ -5,6 +5,17 @@ export type ProcessPanel = {
   id: string; title: string; event?: GatewayObservation;
   select?: (value: unknown) => unknown; messages?: boolean; secondary?: boolean;
 };
+/** Compute ownership per step, without registering mounted readers or loading any bodies. */
+export function rawRecordOwners(panels: Array<Pick<ProcessPanel, "id" | "event" | "secondary">>) {
+  const seen = new Set<string>(), owners = new Set<string>();
+  const ordered = [...panels.filter((panel) => !panel.secondary), ...panels.filter((panel) => panel.secondary)];
+  for (const panel of ordered) {
+    const reference = panel.event?.body_ref;
+    if (!reference || seen.has(reference)) continue;
+    seen.add(reference); owners.add(panel.id);
+  }
+  return owners;
+}
 const fields = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const select = (key: string) => (value: unknown) => fields(value)[key];
 export function structuredText(value: unknown): unknown {
@@ -45,7 +56,7 @@ export function agentProcess(step: DisplayStep) {
     message ? ({ progress: "Agent 进度消息", final: "Agent 最终消息", response: "Agent 响应消息" }[String(event.data?.message_kind)] ?? "Agent 消息") :
     ACTIVITIES[kind] ? ACTIVITIES[kind] + (kind === "subagent" || kind === "workflow" ? " · " + name.replace(/^[^:]+:/, "") : "") : name;
   const source = { host: "宿主执行记录", provider: "Provider 活动", adapter: "适配器可见", session_gateway: "Session Gateway 记录" }[String(event.data?.source)] ?? "";
-  const panels: ProcessPanel[] = catalog ? [{ id: "catalog", title: "工具接入记录", event, select: (value) => { const data = fields(value); return { "提供工具": data.tools, "来源": "Session Gateway", ...(data.error_code ? { "错误码": data.error_code } : {}) }; } }] : modelCall || execution ? [
+  const panels: ProcessPanel[] = catalog ? [{ id: "catalog", title: "提供工具", event, select: select("tools") }] : modelCall || execution ? [
     { id: "input", title: execution ? "提交的消息" : "本轮发送的消息", event: step.contexts[0], select: select("effective_messages"), messages: true },
     { id: "output", title: execution ? "执行输出" : "本轮模型响应", event: step.finish ?? step.update, select: response },
     { id: "request", title: "请求参数", event: step.start, select: select("request_parameters"), secondary: true },

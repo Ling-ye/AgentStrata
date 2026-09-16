@@ -78,8 +78,34 @@ def test_actual_rounds_and_filtered_tool_messages_reach_observation_index(record
     tool_body = next(x for x in saved if x['kind'] == 'ToolFinished')
     body = recorder.store.body(run_id, tool_body['body_ref'])['payload']
     assert body['model_result']['tool_call_id'] == 'real-call-a'
+    contexts = [row for row in saved if row['kind'] == 'ContextSnapshotPrepared']
+    assert contexts[0]['data']['input_tool_refs'] == []
+    assert contexts[1]['data']['input_tool_refs'] == [
+        {'tool_call_id': 'real-call-a', 'message_index': next(
+            index for index, message in enumerate(calls[1])
+            if message.get('role') == 'tool' and message.get('tool_call_id') == 'real-call-a'
+        )}
+    ]
+    assert 'model-output' not in repr(contexts[1]['data'])
     assert all(x['data'].get('stage_span_id') == 'host:actor' for x in saved if x['kind'] != 'run_state')
     assert history(recorder.store, RunFilter())['runs'][0]['total_tokens'] == 14
+
+
+def test_context_input_references_only_describe_actual_tool_messages():
+    event = ContextSnapshotPrepared(
+        snapshot_id='ctx', backend='native', model='fixture', iteration=1,
+        session_messages=({'role': 'tool', 'tool_call_id': 'removed-by-context'},),
+        effective_messages=(
+            {'role': 'user', 'tool_call_id': 'not-a-tool'},
+            {'role': 'tool', 'tool_call_id': ''},
+            {'role': 'tool', 'tool_call_id': 5},
+            {'role': 'tool', 'tool_call_id': 'actual', 'content': 'private body'},
+        ),
+    )
+    projection = AgentProcessAdapter().project(event)
+    assert projection.event['data']['input_tool_refs'] == [{'tool_call_id': 'actual', 'message_index': 3}]
+    assert 'private body' not in repr(projection.event)
+    assert 'removed-by-context' not in repr(projection.event)
 
 
 def test_codex_adapter_records_public_items_without_delivery_events():

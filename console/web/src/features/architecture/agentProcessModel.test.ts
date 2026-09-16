@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentProcess, processPreview } from "./agentProcessModel";
+import { agentProcess, processPreview, rawRecordOwners } from "./agentProcessModel";
 import { buildRunView, stepIsOpen, rememberOpenedSteps } from "./workbenchModel";
 import type { GatewayObservation } from "./model";
 const event = (seq: number, extra: Partial<GatewayObservation>): GatewayObservation => ({
@@ -13,8 +13,11 @@ describe("Agent process presentation adapter", () => {
       const model = agentProcess(buildRunView([item]).steps[0]);
       expect(model.title).toBe(title);
       expect(model.panels[0].event?.seq).toBe(1);
-      expect(model.panels).toHaveLength(1);
-      expect(model.title).not.toContain("工具调用");
+    expect(model.panels).toHaveLength(1);
+    expect(model.title).not.toContain("工具调用");
+    expect(model.panels[0].title).toBe("提供工具");
+    const tools = [{ name: "lookup", parameters: { query: { type: "string" } } }];
+    expect(model.panels[0].select?.({ tools, source: "session_gateway", error_code: "fixture-error" })).toBe(tools);
     }
   });
   it("uses real rounds and direct effective input instead of a backend-specific component", () => {
@@ -84,5 +87,40 @@ describe("Agent process presentation adapter", () => {
     expect(resource.supported).toBe(false);
     const custom = agentProcess(buildRunView([event(1, { kind: "SpanFinished", phase: "finish", name: "检查资料", data: { process_kind: "research" } })]).steps[0]);
     expect(custom.panels[1].select?.({ findings: ["已取得资料"], capture_state: "available" })).toEqual({ findings: ["已取得资料"] });
+  });
+});
+
+describe("step-local raw body ownership", () => {
+  const body = (reference?: string) => event(1, { body_ref: reference });
+  it("keeps one full record for split context and tool result panels", () => {
+    const panels = [
+      { id: "input", event: body("context") },
+      { id: "context", event: body("context"), secondary: true },
+      { id: "output", event: body("tool-output") },
+      { id: "model-result", event: body("tool-output"), secondary: true },
+    ];
+    expect([...rawRecordOwners(panels)]).toEqual(["input", "output"]);
+    expect(panels).toHaveLength(4);
+  });
+  it("prefers the primary panel even when a secondary panel is declared first", () => {
+    expect([...rawRecordOwners([{ id: "context", event: body("shared"), secondary: true }, { id: "input", event: body("shared") }])]).toEqual(["input"]);
+  });
+  it("does not deduplicate distinct references or carry ownership between steps", () => {
+    const panels = [{ id: "input", event: body("one") }, { id: "output", event: body("two") }];
+    expect([...rawRecordOwners(panels)]).toEqual(["input", "output"]);
+    expect([...rawRecordOwners(panels)]).toEqual(["input", "output"]);
+  });
+  it("waits for a real reference and assigns arriving records without changing existing owners", () => {
+    const first = [{ id: "input", event: body("request") }, { id: "output", event: body() }, { id: "model-result", secondary: true }];
+    expect([...rawRecordOwners(first)]).toEqual(["input"]);
+    expect([...rawRecordOwners([first[0], { id: "output", event: body("reply") }, { id: "model-result", event: body("reply"), secondary: true }])])
+      .toEqual(["input", "output"]);
+  });
+  it("retains an accessible secondary owner when the primary panel is not displayed", () => {
+    expect([...rawRecordOwners([{ id: "context", event: body("ctx"), secondary: true }])]).toEqual(["context"]);
+  });
+  it("can deduplicate supplementary logs and permissions within the same step", () => {
+    expect([...rawRecordOwners([{ id: "output", event: body("shared") }, { id: "log:2", event: body("shared"), secondary: true },
+      { id: "permission:3", event: body("permission"), secondary: true }])]).toEqual(["output", "permission:3"]);
   });
 });
