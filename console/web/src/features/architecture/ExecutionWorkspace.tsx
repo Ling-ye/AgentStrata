@@ -1,6 +1,18 @@
 import { Component, lazy, Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { Alert, Button, Checkbox, Empty, Input, Radio, Space, Spin, Tag } from "@arco-design/web-react";
-import { buildExecutionModel, layerSummaries, PROCESS_LABELS, type ExecutionNode, type ExecutionRelation } from "./executionModel";
+import {
+  agentExecutionScope,
+  buildExecutionModel,
+  executionStageProjection,
+  layerSummaries,
+  PROCESS_LABELS,
+  visibleGraph,
+  type AgentExecutionScope,
+  type ExecutionModel,
+  type ExecutionNode,
+  type ExecutionRelation,
+  type RuntimeStageProjection,
+} from "./executionModel";
 import { RUNTIME_LAYERS, dateTime, duration, stepDuration, stepState, type FlowItem, type RuntimeLayer } from "./workbenchModel";
 import { DetailScope, Disclosure, ObservationPayload } from "./ObservationContent";
 import StructuredData from "./StructuredData";
@@ -8,24 +20,33 @@ import { readSessionValue, saveSessionValue } from "./taskWorkspaceState";
 import "../../styles/execution-workspace.css";
 
 const AgentExecutionGraph = lazy(() => import("./AgentExecutionGraph"));
-class GraphBoundary extends Component<{ children: ReactNode; onTree: () => void }, { failed: boolean }> {
+const LAYERS = ["channel", "gateway", "application", "agent"] as const;
+const LAYER_TITLES: Record<RuntimeLayer, string> = {
+  channel: "Channel", gateway: "Gateway", application: "Application", agent: "Agent",
+};
+const FAILED_STATES = new Set(["failed", "error", "unknown", "delivery_unknown", "incomplete", "cancelled", "aborted"]);
+const RUNNING_STATES = new Set(["running", "pending", "submitting"]);
+
+class GraphBoundary extends Component<{ children: ReactNode; onList: () => void }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   render() {
-    return this.state.failed ? <Alert type="error" content="图组件加载失败，可刷新页面或继续查看调用树。"
-      action={<Button size="mini" onClick={this.props.onTree}>查看调用树</Button>} /> : this.props.children;
+    return this.state.failed ? <Alert type="error" content="图组件加载失败，可刷新页面或切换执行列表。"
+      action={<Button size="mini" onClick={this.props.onList}>查看执行列表</Button>} /> : this.props.children;
   }
 }
-type View = "stages" | "graph" | "tree";
-interface Selection { view: View; selected: string; pinned: string; layer: RuntimeLayer | "" }
+
+type AgentView = "list" | "graph";
+interface Selection { selected: string; pinned: string; agentView: AgentView }
 function restore(key: string): Selection {
   const value = readSessionValue(key) as Partial<Selection> | null;
-  return { view: value && ["stages", "graph", "tree"].includes(value.view ?? "") ? value.view! : "stages",
-    selected: typeof value?.selected === "string" ? value.selected : "", pinned: typeof value?.pinned === "string" ? value.pinned : "",
-    layer: value?.layer && value.layer in RUNTIME_LAYERS ? value.layer : "" };
+  return { selected: typeof value?.selected === "string" ? value.selected : "",
+    pinned: typeof value?.pinned === "string" ? value.pinned : "",
+    agentView: value?.agentView === "graph" ? "graph" : "list" };
 }
-function NodeRow({ node, selected, terminal, hasMore, tree, onSelect }: {
-  node: ExecutionNode; selected: boolean; terminal: boolean; hasMore: boolean; tree?: boolean; onSelect: () => void;
+
+function NodeRow({ node, selected, terminal, hasMore, tree, childCount, onSelect }: {
+  node: ExecutionNode; selected: boolean; terminal: boolean; hasMore: boolean; tree?: boolean; childCount?: number; onSelect: () => void;
 }) {
   const state = stepState(node.item.step, terminal, hasMore);
   const usage = node.item.step.event.data?.usage as { total_tokens?: number } | undefined;
@@ -36,11 +57,115 @@ function NodeRow({ node, selected, terminal, hasMore, tree, onSelect }: {
     <span className="execution-row-title"><span className="execution-node-kind">{PROCESS_LABELS[node.kind] ?? "步骤"}</span>
       <strong>{node.title}</strong><Tag size="small" color={state.color}>{state.label}</Tag></span>
     <span className="execution-row-meta"><span>{node.item.layer ? RUNTIME_LAYERS[node.item.layer] : "职责未记录"}</span>
+      {childCount != null && <span>{childCount} 个内部调用</span>}
       {node.item.step.agentName && <span>{node.item.step.agentName}</span>}
       <time>{dateTime(node.item.step.start?.created_at ?? node.item.step.event.created_at)}</time>
       <span>{duration(stepDuration(node.item.step, terminal))}</span>
       {usage?.total_tokens != null && <span>{usage.total_tokens.toLocaleString()} Token</span>}</span>
   </button>;
+}
+
+function RuntimeStageGrid({ projection, summary, activeStageId, selectedId, terminal, hasMore, limit, onSelect, onMore, onLocate }: {
+  projection: RuntimeStageProjection;
+  summary: ReturnType<typeof layerSummaries>;
+  activeStageId: string;
+  selectedId: string;
+  terminal: boolean;
+  hasMore: boolean;
+  limit: number;
+  onSelect: (id: string) => void;
+  onMore: () => void;
+  onLocate: () => void;
+}) {
+  return <section className="execution-runtime" aria-label="四层运行轨迹">
+    <header className="execution-runtime-heading"><div><strong>四层运行轨迹</strong>
+      <span className="obs-muted">按真实交接顺序从上向下排列</span></div>
+      <Button size="mini" disabled={!projection.stages.length} onClick={onLocate}>定位当前 / 异常</Button></header>
+    <div className="execution-runtime-grid">
+      <div className="execution-runtime-grid-header"><span>顺序</span>{summary.map((item) =>
+        <span key={item.layer} className="execution-runtime-layer" data-runtime-layer={item.layer}>
+          <strong>{LAYER_TITLES[item.layer]}</strong><small>{RUNTIME_LAYERS[item.layer]} · {item.stages} 段</small>
+          <small className={item.failed ? "is-error" : ""}>{item.label}</small>
+        </span>)}</div>
+      {projection.stages.map((group, index) => {
+        const layer = group.stage.item.layer;
+        const column = layer ? LAYERS.indexOf(layer) + 2 : 2;
+        return <div className="execution-runtime-row" data-runtime-layer={layer} key={group.stage.id}>
+          <span className="execution-runtime-sequence">{String(index + 1).padStart(2, "0")}</span>
+          <div className="execution-runtime-stage" style={{ gridColumn: column }}>
+            <NodeRow node={group.stage} selected={group.stage.id === activeStageId} terminal={terminal} hasMore={hasMore}
+              childCount={group.nodes.length} onSelect={() => onSelect(group.stage.id)} />
+          </div>
+        </div>;
+      })}
+      {!projection.stages.length && <Empty description={hasMore ? "四层阶段尚未取得" : "没有已记录的四层阶段"} />}
+    </div>
+    {!!projection.unbound.length && <section className="execution-unbound-section" aria-label="未归属运行记录">
+      <header><strong>观测缺口</strong><span className="obs-muted">保留真实记录，不推测所属阶段</span></header>
+      {projection.unbound.map((group) => <section className="execution-unbound-group" key={group.key} data-runtime-layer={group.layer}>
+        <div className="execution-unbound-heading"><strong>{group.missingStage ? hasMore ? "所属阶段尚未取得" : "所属阶段未记录" : "未归属记录"}</strong>
+          <span>{group.layer ? RUNTIME_LAYERS[group.layer] : "职责未记录"} · {group.nodes.length} 条</span></div>
+        <div className="execution-agent-list">{group.nodes.slice(0, limit).map((node) =>
+          <NodeRow key={node.id} node={node} selected={node.id === selectedId} terminal={terminal} hasMore={hasMore}
+            tree onSelect={() => onSelect(node.id)} />)}</div>
+        {group.nodes.length > limit && <Button size="mini" onClick={onMore}>显示后续记录（剩余 {group.nodes.length - limit}）</Button>}
+      </section>)}
+    </section>}
+  </section>;
+}
+
+function AgentExecutionPanel({ model, scope, selected, edgeId, view, query, errorsOnly, terminal, hasMore, storageKey,
+  limit, expanded, onSelect, onEdge, onView, onQuery, onErrorsOnly, onMore, onExpanded }: {
+  model: ExecutionModel;
+  scope: AgentExecutionScope;
+  selected: string;
+  edgeId: string;
+  view: AgentView;
+  query: string;
+  errorsOnly: boolean;
+  terminal: boolean;
+  hasMore: boolean;
+  storageKey: string;
+  limit: number;
+  expanded: boolean;
+  onSelect: (id: string) => void;
+  onEdge: (edge: ExecutionRelation) => void;
+  onView: (view: AgentView) => void;
+  onQuery: (value: string) => void;
+  onErrorsOnly: (value: boolean) => void;
+  onMore: () => void;
+  onExpanded: () => void;
+}) {
+  const effectiveView: AgentView = scope.root ? view : "list";
+  const list = visibleGraph(model, { collapsed: new Set(), search: query, errorsOnly, terminal, hasMore, scope: scope.ids });
+  const nodes = list.nodes.filter((node) => node.id !== scope.root?.id);
+  const locate = () => {
+    const current = scope.nodes.find((node) => FAILED_STATES.has(stepState(node.item.step, terminal, hasMore).status)) ??
+      scope.nodes.find((node) => RUNNING_STATES.has(stepState(node.item.step, terminal, hasMore).status));
+    if (current) { onQuery(""); onErrorsOnly(false); onSelect(current.id); }
+  };
+  return <section className="execution-agent-panel" aria-label="Agent 执行过程">
+    <header className="execution-agent-heading"><div><strong>{scope.root ? "Agent 执行" : "未归属的 Agent 记录"}</strong>
+      <span className="obs-muted">{Math.max(0, scope.nodes.length - (scope.root ? 1 : 0))} 个内部调用</span></div>
+      {scope.root && <Radio.Group type="button" size="small" value={effectiveView} onChange={onView}
+        options={[{ label: "执行列表", value: "list" }, { label: "调用关系图", value: "graph" }]} />}</header>
+    <div className="execution-agent-toolbar"><Input.Search size="small" allowClear aria-label="搜索 Agent 调用"
+      placeholder="搜索模型、工具或调用 ID" value={query} onChange={onQuery} />
+      <Checkbox checked={errorsOnly} onChange={onErrorsOnly}>只看异常</Checkbox>
+      <Space wrap size="mini"><Button size="mini" disabled={!scope.nodes.length} onClick={locate}>定位当前 / 异常</Button>
+        {effectiveView === "graph" && <Button size="mini" onClick={onExpanded}>{expanded ? "退出放大" : "放大工作台"}</Button>}</Space>
+      <span className="obs-muted">已加载 {scope.nodes.length} 个 Agent 节点{hasMore ? " · 还有后续记录" : ""}</span></div>
+    {effectiveView === "graph" ? <GraphBoundary key={scope.key} onList={() => onView("list")}>
+      <Suspense fallback={<Spin tip="正在加载 Agent 图…" />}><AgentExecutionGraph model={model} scope={scope.ids}
+        storageKey={`${storageKey}:agent:${scope.key}`} selected={selected} edgeId={edgeId} query={query} errorsOnly={errorsOnly}
+        terminal={terminal} hasMore={hasMore} onSelect={onSelect} onEdge={onEdge} /></Suspense>
+    </GraphBoundary> : <div className="execution-agent-list" aria-label="Agent 执行列表">
+      {nodes.slice(0, limit).map((node) => <NodeRow key={node.id} node={node} selected={node.id === selected}
+        terminal={terminal} hasMore={hasMore} tree onSelect={() => onSelect(node.id)} />)}
+      {nodes.length > limit && <Button onClick={onMore}>显示后续调用（剩余 {nodes.length - limit}）</Button>}
+      {!nodes.length && <Empty description={hasMore ? "尚未取得匹配的 Agent 调用" : "没有匹配的 Agent 调用"} />}
+    </div>}
+  </section>;
 }
 
 export default function ExecutionWorkspace({ flow, instanceId, runId, terminal, hasMore, expired, active, renderDetail }: {
@@ -52,84 +177,58 @@ export default function ExecutionWorkspace({ flow, instanceId, runId, terminal, 
   const [query, setQuery] = useState("");
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [edgeId, setEdgeId] = useState("");
-  const [expandedCanvas, setExpandedCanvas] = useState(false);
+  const [expandedAgent, setExpandedAgent] = useState(false);
   const [limit, setLimit] = useState(() => {
     const saved = readSessionValue(storageKey + ":list-limit");
     return typeof saved === "number" && Number.isSafeInteger(saved) && saved >= 150 ? saved : 150;
   });
   const model = useMemo(() => buildExecutionModel(flow), [flow]);
+  const projection = useMemo(() => executionStageProjection(model), [model]);
   const summary = layerSummaries(model, terminal, hasMore);
+  const agentScope = useMemo(() => agentExecutionScope(model, selection.selected), [model, selection.selected]);
   useEffect(() => saveSessionValue(storageKey, selection), [storageKey, selection]);
   useEffect(() => saveSessionValue(storageKey + ":list-limit", limit), [storageKey, limit]);
   useEffect(() => {
-    if (!selection.selected && model.nodes.length) {
-      const initial = model.nodes.find((node) => stepState(node.item.step, terminal, hasMore).status === "failed") ??
-        model.nodes.find((node) => stepState(node.item.step, terminal, hasMore).status === "running") ?? model.nodes[0];
-      setSelection((value) => ({ ...value, selected: value.selected || initial.id }));
-    }
-  }, [selection.selected, model, terminal, hasMore]);
+    if (selection.selected && (model.byId.has(selection.selected) || hasMore)) return;
+    const failed = projection.stages.find((group) => [group.stage, ...group.nodes].some((node) =>
+      FAILED_STATES.has(stepState(node.item.step, terminal, hasMore).status)));
+    const running = projection.stages.find((group) => [group.stage, ...group.nodes].some((node) =>
+      RUNNING_STATES.has(stepState(node.item.step, terminal, hasMore).status)));
+    const initial = failed?.stage ?? running?.stage ?? projection.stages[0]?.stage ?? projection.unbound[0]?.nodes[0] ?? model.nodes[0];
+    if (initial) setSelection((value) => value.selected === initial.id ? value : { ...value, selected: initial.id });
+  }, [selection.selected, model, projection, terminal, hasMore]);
   const selectNode = (id: string) => { setSelection((value) => ({ ...value, selected: id })); setEdgeId(""); };
+  const selectStage = (id: string) => {
+    selectNode(id); setQuery(""); setErrorsOnly(false); setLimit(150); setExpandedAgent(false);
+  };
   const selected = model.byId.get(selection.selected);
   const pinned = model.byId.get(selection.pinned);
+  const selectedStage = model.stages.find((group) => group.stage?.id === selection.selected || group.nodes.some((node) => node.id === selection.selected))?.stage;
   const edge = model.relations.find((item) => item.id === edgeId);
-  const scope = { instanceId, runId, expired, active };
-  const matches = (node: ExecutionNode) => (!selection.layer || node.item.layer === selection.layer) &&
-    (!query.trim() || `${node.title} ${node.id} ${node.kind}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) &&
-    (!errorsOnly || ["failed", "error", "unknown", "delivery_unknown", "incomplete", "cancelled", "aborted"].includes(stepState(node.item.step, terminal, hasMore).status));
-  const visibleNodes = model.nodes.filter(matches);
-  const groups = model.stages.map((group) => ({ ...group, nodes: group.nodes.filter(matches) }))
-    .filter((group) => group.nodes.length || group.stage && matches(group.stage));
+  const bodyScope = { instanceId, runId, expired, active };
   const related = selected ? model.relations.filter((relation) => relation.source === selected.id || relation.target === selected.id) : [];
   const selectEdge = (relation: ExecutionRelation) => { setEdgeId(relation.id); setSelection((value) => ({ ...value, selected: relation.target })); };
+  const locateStage = () => {
+    const failed = projection.stages.find((group) => [group.stage, ...group.nodes].some((node) =>
+      FAILED_STATES.has(stepState(node.item.step, terminal, hasMore).status)));
+    const running = projection.stages.find((group) => [group.stage, ...group.nodes].some((node) =>
+      RUNNING_STATES.has(stepState(node.item.step, terminal, hasMore).status)));
+    const target = failed?.stage ?? running?.stage ?? projection.stages[0]?.stage;
+    if (target) selectStage(target.id);
+  };
   const jumpToInspector = () => document.getElementById("execution-inspector")?.scrollIntoView({ block: "start", behavior: "smooth" });
-  return <section className={"execution-workspace" + (expandedCanvas ? " is-expanded" : "")} aria-label="四层任务工作台">
-    <div className="execution-layer-overview" aria-label="四层总览">{summary.map((item, index) =>
-      <button key={item.layer} type="button" data-runtime-layer={item.layer} aria-pressed={selection.layer === item.layer}
-        onClick={() => { setSelection((value) => ({ ...value, layer: value.layer === item.layer ? "" : item.layer,
-          view: item.layer === "agent" ? "graph" : "stages" })); setLimit(150); }}>
-        <span className="execution-layer-name"><small>0{index + 1}</small><strong>{({ channel: "Channel", gateway: "Gateway", application: "Application", agent: "Agent" })[item.layer]}</strong></span>
-        <span>{RUNTIME_LAYERS[item.layer]} · {item.stages} 段 / {item.nodes - item.stages} 步</span>
-        <span className={item.failed ? "is-error" : ""}>{item.label}</span>
-      </button>)}</div>
-    <div className="execution-toolbar"><Radio.Group type="button" size="small" value={selection.view}
-      onChange={(view: View) => { setSelection((value) => ({ ...value, view, layer: view === "graph" ? "" : value.layer })); setLimit(150); }}
-      options={[{ label: "四层过程", value: "stages" }, { label: "Agent 图", value: "graph" }, { label: "调用树", value: "tree" }]} />
-      <Space wrap size="mini"><Button size="mini" onClick={() => {
-        const current = model.nodes.find((node) => stepState(node.item.step, terminal, hasMore).status === "running") ??
-          model.nodes.find((node) => stepState(node.item.step, terminal, hasMore).status === "failed");
-        if (current) { selectNode(current.id); setSelection((value) => ({ ...value, layer: "" })); setQuery(""); setErrorsOnly(false); setLimit(model.nodes.length); }
-      }}>定位当前 / 异常</Button><Button size="mini" onClick={() => setExpandedCanvas(!expandedCanvas)}>{expandedCanvas ? "退出放大" : "放大工作台"}</Button></Space>
-    </div>
-    <div className="execution-filters"><Input.Search size="small" allowClear aria-label="搜索运行步骤" placeholder="搜索步骤、模型或调用 ID" value={query}
-      onChange={(value) => { setQuery(value); setLimit(150); }} /><Checkbox checked={errorsOnly} onChange={setErrorsOnly}>只看异常</Checkbox>
-      {selection.layer && <Button type="text" size="mini" onClick={() => setSelection((value) => ({ ...value, layer: "" }))}>清除 {RUNTIME_LAYERS[selection.layer]} 筛选</Button>}
-      <span className="obs-muted">已加载 {model.nodes.length} 个阶段 / 步骤{hasMore ? " · 还有后续记录" : ""}</span>
-    </div>
-    <div className="execution-columns">
-      <div className="execution-navigation">
-        {selection.view === "graph" ? <GraphBoundary onTree={() => setSelection((value) => ({ ...value, view: "tree" }))}><Suspense fallback={<Spin tip="正在加载 Agent 图…" />}>
-          <AgentExecutionGraph model={model} storageKey={storageKey} selected={selection.selected} edgeId={edgeId}
-            query={query} errorsOnly={errorsOnly} terminal={terminal} hasMore={hasMore} onSelect={selectNode} onEdge={selectEdge} />
-        </Suspense></GraphBoundary> : selection.view === "tree" ? <div className="execution-tree" aria-label="调用树">
-          {visibleNodes.slice(0, limit).map((node) => <NodeRow key={node.id} node={node} selected={node.id === selection.selected}
-            terminal={terminal} hasMore={hasMore} onSelect={() => selectNode(node.id)} tree />)}
-          {visibleNodes.length > limit && <Button onClick={() => setLimit(limit + 150)}>显示后续步骤（剩余 {visibleNodes.length - limit}）</Button>}
-          {!visibleNodes.length && <Empty description="没有匹配的调用" />}
-        </div> : <div className="execution-stages" aria-label="四层执行过程">
-          {groups.slice(0, limit).map((group, index) => <section className="execution-stage-group" key={group.stage?.id ?? group.nodes[0]?.id ?? index}
-            data-runtime-layer={group.stage?.item.layer ?? group.nodes[0]?.item.layer}>
-            {group.stage ? <NodeRow node={group.stage} selected={group.stage.id === selection.selected}
-              terminal={terminal} hasMore={hasMore} onSelect={() => selectNode(group.stage!.id)} /> :
-              <div className="execution-unbound">{hasMore ? "所属阶段尚未取得" : "独立记录 / 所属阶段未记录"}</div>}
-            {group.nodes.slice(0, limit).map((node) => <NodeRow key={node.id} node={node} selected={node.id === selection.selected}
-              terminal={terminal} hasMore={hasMore} onSelect={() => selectNode(node.id)} tree />)}
-            {group.nodes.length > limit && <Button size="mini" onClick={() => setLimit(limit + 150)}>显示段内后续步骤（剩余 {group.nodes.length - limit}）</Button>}
-          </section>)}
-          {groups.length > limit && <Button onClick={() => setLimit(limit + 150)}>显示后续阶段</Button>}
-          {!groups.length && <Empty description={hasMore ? "尚未取得匹配过程，可加载后续记录" : "没有匹配的四层过程"} />}
-        </div>}
-        {selected && <Button className="execution-inspector-jump" size="small" onClick={jumpToInspector}>查看所选步骤详情 ↓</Button>}
-      </div>
+  return <section className="execution-workspace" aria-label="四层任务工作台">
+    <RuntimeStageGrid projection={projection} summary={summary} activeStageId={selectedStage?.id ?? ""}
+      selectedId={selection.selected} terminal={terminal} hasMore={hasMore} limit={limit}
+      onSelect={selectStage} onMore={() => setLimit(limit + 150)} onLocate={locateStage} />
+    {selected && <Button className="execution-inspector-jump" size="small" onClick={jumpToInspector}>查看所选步骤详情 ↓</Button>}
+    <div className={`execution-detail-layout${agentScope ? " has-agent" : ""}${expandedAgent && agentScope ? " is-expanded" : ""}`}>
+      {agentScope && <AgentExecutionPanel model={model} scope={agentScope} selected={selection.selected} edgeId={edgeId}
+        view={selection.agentView} query={query} errorsOnly={errorsOnly} terminal={terminal} hasMore={hasMore}
+        storageKey={storageKey} limit={limit} expanded={expandedAgent} onSelect={selectNode} onEdge={selectEdge}
+        onView={(agentView) => { setSelection((value) => ({ ...value, agentView })); if (agentView === "list") setExpandedAgent(false); }}
+        onQuery={(value) => { setQuery(value); setLimit(150); }} onErrorsOnly={(value) => { setErrorsOnly(value); setLimit(150); }}
+        onMore={() => setLimit(limit + 150)} onExpanded={() => setExpandedAgent((value) => !value)} />}
       <aside className="execution-inspector" id="execution-inspector" aria-label="结构化详情检查器">
         <header className="obs-pane-heading"><strong>结构化详情</strong>{selected && <Button size="mini"
           onClick={() => setSelection((value) => ({ ...value, pinned: value.pinned === value.selected ? "" : value.selected }))}>
@@ -140,9 +239,9 @@ export default function ExecutionWorkspace({ flow, instanceId, runId, terminal, 
           <strong>{edge.label}</strong><p><button onClick={() => selectNode(edge.source)}>{model.byId.get(edge.source)?.title}</button> → <button onClick={() => selectNode(edge.target)}>{model.byId.get(edge.target)?.title}</button></p>
           <StructuredData value={{ field: edge.field, value: edge.value, event_sequence: edge.event.seq,
             ...(edge.messageIndex == null ? {} : { message_pointer: `/effective_messages/${edge.messageIndex}` }) }} />
-          {edge.kind === "input" && <><ObservationPayload {...scope} showRaw={false} reference={model.byId.get(edge.source)?.item.step.finish?.body_ref}
+          {edge.kind === "input" && <><ObservationPayload {...bodyScope} showRaw={false} reference={model.byId.get(edge.source)?.item.step.finish?.body_ref}
             title="来源：交给模型的工具结果" select={(value) => (value as Record<string, unknown>)?.model_result} />
-            <ObservationPayload {...scope} showRaw={false} reference={edge.event.body_ref} captureState={edge.event.body_state} title={`去向：输入消息 ${edge.messageIndex! + 1}`}
+            <ObservationPayload {...bodyScope} showRaw={false} reference={edge.event.body_ref} captureState={edge.event.body_state} title={`去向：输入消息 ${edge.messageIndex! + 1}`}
               select={(value) => ((value as Record<string, unknown>)?.effective_messages as unknown[])?.[edge.messageIndex!]} messages /></>}
         </section></DetailScope>}
         {!selected && <Empty description={selection.selected && hasMore ? "所选步骤尚未加载，请加载后续记录" : "选择一个阶段或调用查看输入输出"} />}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildExecutionModel, layerSummaries, spanKey, visibleGraph } from "./executionModel";
+import { agentExecutionScope, buildExecutionModel, executionStageProjection, layerSummaries, spanKey, visibleGraph } from "./executionModel";
 import type { GatewayObservation } from "./model";
 import { buildRunView } from "./workbenchModel";
 
@@ -80,6 +80,37 @@ describe("shared execution projection", () => {
     const records = [event(0, "prepare", undefined, "RuntimeStageFinished", { runtime_layer: "application", operation: "application.prepare" }), ...base(),
       event(9, "result", undefined, "RuntimeStageFinished", { runtime_layer: "application", operation: "application.result" })];
     expect(project(records).stages.map((stage) => stage.stage?.item.operation)).toEqual(["application.prepare", "agent.execute", "application.result"]);
+  });
+  it("projects only real runtime stages into the four-layer track and keeps missing ownership separate", () => {
+    const model = project([...base(),
+      event(7, "missing-tool", undefined, "ToolFinished", { stage_span_id: "missing-stage", tool_call_id: "missing" }),
+      event(8, "independent", undefined, "custom", { stage_span_id: undefined, process_kind: "event" })]);
+    const projection = executionStageProjection(model);
+    expect(projection.stages.map((group) => group.stage.item.operation)).toEqual(["agent.execute"]);
+    expect(projection.stages[0].nodes.map((node) => node.item.step.event.span_id)).toEqual(["agent", "model1", "tool", "model2"]);
+    expect(projection.unbound).toHaveLength(2);
+    expect(projection.unbound.find((group) => group.missingStage)?.nodes[0].item.step.event.span_id).toBe("missing-tool");
+    expect(projection.unbound.find((group) => !group.missingStage)?.nodes[0].item.step.event.span_id).toBe("independent");
+  });
+  it("scopes Agent list and graph nodes to the selected real stage", () => {
+    const model = project([...base(),
+      event(10, "stage-two", undefined, "RuntimeStageFinished", { operation: "agent.execute", stage_span_id: "stage-two" }),
+      event(11, "tool-two", "stage-two", "ToolFinished", { stage_span_id: "stage-two", tool_call_id: "second" })]);
+    const scope = agentExecutionScope(model, spanKey("trace", "stage-two")!)!;
+    expect(scope.root?.item.step.event.span_id).toBe("stage-two");
+    expect(scope.nodes.map((node) => node.item.step.event.span_id)).toEqual(["stage-two", "tool-two"]);
+    expect(scope.ids.has(spanKey("trace", "tool")!)).toBe(false);
+    const visible = visibleGraph(model, { scope: scope.ids, terminal: true, hasMore: false, collapsed: new Set() });
+    expect(visible.nodes.map((node) => node.item.step.event.span_id)).toEqual(["stage-two", "tool-two"]);
+    expect(visible.relations.every((relation) => scope.ids.has(relation.source) && scope.ids.has(relation.target))).toBe(true);
+  });
+  it("allows unbound Agent records in the list without inventing a graph root", () => {
+    const model = project([...base(), event(7, "orphan", undefined, "ToolFinished", {
+      stage_span_id: "missing-stage", tool_call_id: "orphan",
+    })]);
+    const scope = agentExecutionScope(model, spanKey("trace", "orphan")!)!;
+    expect(scope.root).toBeUndefined();
+    expect(scope.nodes.map((node) => node.item.step.event.span_id)).toEqual(["orphan"]);
   });
   it("collapses descendants while retaining the owning Agent and filters with ancestry", () => {
     const model = project([...base(), event(7, "sub", "agent", "SpanFinished", { process_kind: "subagent" }),

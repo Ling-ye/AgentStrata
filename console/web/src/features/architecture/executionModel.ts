@@ -28,6 +28,18 @@ export interface ExecutionModel {
   gaps: RelationGap[];
   stages: Array<{ stage?: ExecutionNode; nodes: ExecutionNode[] }>;
 }
+export interface RuntimeStageProjection {
+  stages: Array<{ stage: ExecutionNode; nodes: ExecutionNode[] }>;
+  unbound: Array<{ key: string; layer?: RuntimeLayer; missingStage: boolean; nodes: ExecutionNode[] }>;
+}
+export interface AgentExecutionScope {
+  key: string;
+  root?: ExecutionNode;
+  nodes: ExecutionNode[];
+  ids: ReadonlySet<string>;
+  relations: ExecutionRelation[];
+  gaps: RelationGap[];
+}
 
 export const spanKey = (trace?: string, span?: string) => trace && span ? JSON.stringify([trace, span]) : undefined;
 export const PROCESS_LABELS: Record<string, string> = { stage: "阶段", agent: "主 Agent", model_call: "模型调用",
@@ -121,6 +133,52 @@ export function buildExecutionModel(flow: FlowItem[]): ExecutionModel {
   return { nodes, byId, relations, gaps, stages };
 }
 
+/** Separate real runtime stages from recorded calls whose owning stage is unavailable. */
+export function executionStageProjection(model: ExecutionModel): RuntimeStageProjection {
+  const stages: RuntimeStageProjection["stages"] = [];
+  const unbound: RuntimeStageProjection["unbound"] = [];
+  const unboundByKey = new Map<string, RuntimeStageProjection["unbound"][number]>();
+  for (const group of model.stages) {
+    if (group.stage) {
+      stages.push({ stage: group.stage, nodes: group.nodes });
+      continue;
+    }
+    for (const node of group.nodes) {
+      const missingStage = !!node.item.stageKey;
+      const key = missingStage ? `missing:${node.item.stageKey}` : `unbound:${node.item.layer ?? "unknown"}`;
+      let projected = unboundByKey.get(key);
+      if (!projected) {
+        projected = { key, layer: node.item.layer, missingStage, nodes: [] };
+        unboundByKey.set(key, projected);
+        unbound.push(projected);
+      }
+      projected.nodes.push(node);
+    }
+  }
+  return { stages, unbound };
+}
+
+/** Resolve the selected Agent stage (or unbound Agent records) without inventing a stage root. */
+export function agentExecutionScope(model: ExecutionModel, selectedId: string): AgentExecutionScope | undefined {
+  const stage = model.stages.find((group) => group.stage?.id === selectedId || group.nodes.some((node) => node.id === selectedId));
+  let key: string, root: ExecutionNode | undefined, nodes: ExecutionNode[] | undefined;
+  if (stage?.stage?.item.layer === "agent") {
+    key = stage.stage.id;
+    root = stage.stage;
+    nodes = [stage.stage, ...stage.nodes];
+  } else {
+    const unbound = executionStageProjection(model).unbound.find((group) =>
+      group.layer === "agent" && group.nodes.some((node) => node.id === selectedId));
+    if (!unbound) return undefined;
+    key = unbound.key;
+    nodes = unbound.nodes;
+  }
+  const ids = new Set(nodes.map((node) => node.id));
+  return { key, root, nodes, ids,
+    relations: model.relations.filter((relation) => ids.has(relation.source) && ids.has(relation.target)),
+    gaps: model.gaps.filter((gap) => ids.has(gap.nodeId)) };
+}
+
 export function layerSummaries(model: ExecutionModel, terminal: boolean, hasMore: boolean) {
   return (Object.keys(RUNTIME_LAYERS) as RuntimeLayer[]).map((layer) => {
     const nodes = model.nodes.filter((node) => node.item.layer === layer);
@@ -138,19 +196,23 @@ export function layerSummaries(model: ExecutionModel, terminal: boolean, hasMore
 
 export function visibleGraph(model: ExecutionModel, options: {
   collapsed: ReadonlySet<string>; focus?: string; search?: string; errorsOnly?: boolean; terminal: boolean; hasMore: boolean;
+  scope?: ReadonlySet<string>;
 }) {
-  const agentNodes = model.nodes.filter((node) => node.item.layer === "agent");
+  const agentNodes = model.nodes.filter((node) => options.scope ? options.scope.has(node.id) : node.item.layer === "agent");
   const ids = new Set(agentNodes.map((node) => node.id));
+  const focus = options.focus && ids.has(options.focus) ? options.focus : undefined;
   const ancestors = (node: ExecutionNode) => {
     const chain: string[] = []; let parent = node.parentId;
-    while (parent && !chain.includes(parent) && parent !== node.id) { chain.push(parent); parent = model.byId.get(parent)?.parentId; }
+    while (parent && ids.has(parent) && !chain.includes(parent) && parent !== node.id) {
+      chain.push(parent); parent = model.byId.get(parent)?.parentId;
+    }
     return chain;
   };
   const needle = options.search?.trim().toLocaleLowerCase();
   let nodes = agentNodes.filter((node) => {
     const parents = ancestors(node);
-    return (!options.focus || node.id === options.focus || parents.includes(options.focus)) &&
-      !parents.some((parent) => options.collapsed.has(parent) && parent !== options.focus);
+    return (!focus || node.id === focus || parents.includes(focus)) &&
+      !parents.some((parent) => options.collapsed.has(parent) && parent !== focus);
   });
   if (needle || options.errorsOnly) {
     const matched = nodes.filter((node) => (!needle || `${node.title} ${node.id} ${node.kind}`.toLocaleLowerCase().includes(needle)) &&

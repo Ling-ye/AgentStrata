@@ -43,9 +43,9 @@ function restore(key: string): SavedGraph {
     viewport: viewport && [viewport.x, viewport.y, viewport.zoom].every(Number.isFinite) && viewport.zoom > 0 ? viewport : undefined };
 }
 
-export default function AgentExecutionGraph({ model, selected, edgeId, terminal, hasMore, query, errorsOnly, storageKey, onSelect, onEdge }: {
+export default function AgentExecutionGraph({ model, scope, selected, edgeId, terminal, hasMore, query, errorsOnly, storageKey, onSelect, onEdge }: {
   model: ExecutionModel; selected: string; edgeId: string; terminal: boolean; hasMore: boolean; query: string; errorsOnly: boolean;
-  storageKey: string; onSelect: (id: string) => void; onEdge: (edge: ExecutionRelation) => void;
+  scope: ReadonlySet<string>; storageKey: string; onSelect: (id: string) => void; onEdge: (edge: ExecutionRelation) => void;
 }) {
   const key = storageKey + ":graph";
   const [saved, setSaved] = useState(() => restore(key));
@@ -57,8 +57,8 @@ export default function AgentExecutionGraph({ model, selected, edgeId, terminal,
   const api = useRef<ReactFlowInstance<FlowNode> | null>(null);
   const fitted = useRef(!!saved.viewport);
   const collapsed = useMemo(() => new Set(saved.collapsed), [saved.collapsed]);
-  const graph = useMemo(() => visibleGraph(model, { collapsed, focus: saved.focus, search: query, errorsOnly, terminal, hasMore }),
-    [model, collapsed, saved.focus, query, errorsOnly, terminal, hasMore]);
+  const graph = useMemo(() => visibleGraph(model, { collapsed, focus: saved.focus, search: query, errorsOnly, terminal, hasMore, scope }),
+    [model, collapsed, saved.focus, query, errorsOnly, terminal, hasMore, scope]);
   // Only identity/topology affects layout. Streaming text and token updates never restart the worker.
   const topology = JSON.stringify({ nodes: graph.nodes.map((node) => node.id),
     edges: graph.relations.map((edge) => [edge.id, edge.source, edge.target]) });
@@ -73,7 +73,7 @@ export default function AgentExecutionGraph({ model, selected, edgeId, terminal,
       if (cancelled) return;
       setPositions(Object.fromEntries((result.children ?? []).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }])));
       setBusy(false);
-    }).catch((reason) => { if (!cancelled) { setBusy(false); setError(`图布局失败：${String(reason)}。可切换调用树继续查看。`); } });
+    }).catch((reason) => { if (!cancelled) { setBusy(false); setError(`图布局失败：${String(reason)}。可切换执行列表继续查看。`); } });
     return () => { cancelled = true; elk.terminateWorker(); };
   }, [topology, revision]);
   useEffect(() => {
@@ -90,9 +90,12 @@ export default function AgentExecutionGraph({ model, selected, edgeId, terminal,
   const toggle = (id: string) => setSaved((value) => ({ ...value,
     collapsed: value.collapsed.includes(id) ? value.collapsed.filter((item) => item !== id) : [...value.collapsed, id] }));
   const focus = (id: string) => { setSaved((value) => ({ ...value, focus: id })); fitted.current = false; onSelect(id); };
-  const neighbors = new Set(model.relations.filter((edge) => edge.source === selected || edge.target === selected).flatMap((edge) => [edge.source, edge.target]));
+  const scopedRelations = model.relations.filter((edge) => scope.has(edge.source) && scope.has(edge.target));
+  const neighbors = new Set(scopedRelations.filter((edge) => edge.source === selected || edge.target === selected).flatMap((edge) => [edge.source, edge.target]));
   const children = new Map<string, number>();
-  for (const node of model.nodes) if (node.parentId) children.set(node.parentId, (children.get(node.parentId) ?? 0) + 1);
+  for (const node of model.nodes) if (scope.has(node.id) && node.parentId && scope.has(node.parentId)) {
+    children.set(node.parentId, (children.get(node.parentId) ?? 0) + 1);
+  }
   const nodes: FlowNode[] = graph.nodes.map((node, index) => ({ id: node.id, type: "execution", selected: node.id === selected,
     position: positions[node.id] ?? { x: index % 4 * 300, y: Math.floor(index / 4) * 160 },
     data: { node, terminal, hasMore, highlighted: neighbors.has(node.id), children: children.get(node.id) ?? 0,
@@ -112,7 +115,7 @@ export default function AgentExecutionGraph({ model, selected, edgeId, terminal,
     {saved.focus && <Button size="mini" onClick={() => { setSaved((value) => ({ ...value, focus: "" })); fitted.current = false; }}>返回完整 Agent 图</Button>}
   </Space><span className="obs-muted">{graph.nodes.length} 个节点{graph.hidden > 0 ? ` · ${graph.hidden} 个已折叠或筛选` : ""}{hasMore ? " · 记录未加载完整" : ""}</span></div>
     {error && <Alert type="error" content={error} />}
-    {saved.focus && !model.byId.has(saved.focus) && <Alert type="info" content="聚焦的调用尚未取得，可加载后续记录或返回完整图。" />}
+    {saved.focus && !scope.has(saved.focus) && <Alert type="info" content="聚焦的调用不在当前 Agent 阶段，可返回完整图。" />}
     <div className="execution-graph" aria-label="Agent 执行有向图" aria-busy={busy}>
       {busy && <div className="execution-graph-loading"><Spin size={16} /> 正在排列节点</div>}
       {nodes.length ? <ReactFlow<FlowNode> nodes={nodes} edges={edges} nodeTypes={nodeTypes}
@@ -121,7 +124,7 @@ export default function AgentExecutionGraph({ model, selected, edgeId, terminal,
         onlyRenderVisibleElements panOnScroll={false} zoomOnScroll={false} zoomOnPinch
         onMoveEnd={(_, viewport) => setSaved((value) => ({ ...value, viewport }))}
         onNodeClick={(_, node) => onSelect(node.id)} onEdgeClick={(_, edge) => {
-          const relation = model.relations.find((item) => item.id === edge.id); if (relation) onEdge(relation);
+          const relation = graph.relations.find((item) => item.id === edge.id); if (relation) onEdge(relation);
         }}><Background gap={24} /><Controls showInteractive={false} /><MiniMap pannable zoomable /></ReactFlow> :
         <Empty description={hasMore ? "尚未取得匹配的 Agent 调用" : "没有匹配的 Agent 调用"} />}
     </div>
