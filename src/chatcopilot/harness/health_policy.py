@@ -8,8 +8,8 @@ from pathlib import Path
 from chatcopilot.core.source_manifest import is_private_environment_path
 from chatcopilot.harness.models import HarnessError
 
-POLICY_PREFIXES = ("tests", "specs", ".github", ".cursor", "requirements", "src/chatcopilot/evals/suites")
-POLICY_NAMES = frozenset({"AGENTS.md", ".gitignore", ".gitattributes", "pyproject.toml",
+POLICY_PREFIXES = ("tests", "specs", ".github", ".cursor", "requirements", "docs/reference", "src/chatcopilot/evals/suites")
+POLICY_NAMES = frozenset({"AGENTS.md", "SECURITY.md", "CODE_OF_CONDUCT.md", ".gitignore", ".gitattributes", "pyproject.toml",
                           "uv.lock", "package.json", "package-lock.json", "pytest.ini",
                           "conftest.py", "tox.ini", "setup.cfg", "mypy.ini", "ruff.toml", ".ruff.toml",
                           "tsconfig.json", "vitest.config.ts", "rsbuild.config.ts"})
@@ -26,7 +26,7 @@ def policy_path(name: str) -> bool:
     path = Path(name)
     test_file = any(path.name.endswith(suffix) for suffix in (".test.ts", ".test.tsx", ".test.js", ".test.jsx", ".spec.ts", ".spec.tsx")) or "__tests__" in path.parts
     return (test_file or path.name in POLICY_NAMES or any(name == p or name.startswith(p + "/") for p in POLICY_PREFIXES)
-            or name in {"docs/sdd.md", "src/chatcopilot/evals/business_policy.py"} or (name.startswith("docs/") and path.name.startswith("ai-"))
+            or name in {"docs/maintenance.md", "src/chatcopilot/evals/business_policy.py"} or (name.startswith("docs/") and path.name.startswith("ai-"))
             or path.suffix in {".rules"} or is_private_environment_path(name))
 
 
@@ -41,11 +41,27 @@ def public_example(name: str) -> bool:
     return Path(name).name == ".env.example" or name.endswith(".env.example") or Path(name).name == "env.example"
 
 
+def documentation_file(name: str) -> bool:
+    """Read scope for maintainer prose, excluding executable prompts and licensed data."""
+    path = Path(name)
+    if any(part in {"prompts", "skills", "fixtures", "vendor"} for part in path.parts):
+        return False
+    return (path.suffix == ".md" and (name.startswith(("docs/", "specs/"))
+            or name in {"README.md", "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md", "SUPPORT.md", "CHANGELOG.md", "CODE_OF_CONDUCT.md", ".github/pull_request_template.md"}
+            or (path.name == "README.md" and path.parts[0] in {"src", "bots", "deploy", "console"}))
+            or name.startswith(".cursor/rules/") and path.suffix == ".mdc")
+
+
+def scan_path(name: str, scope: str) -> bool:
+    return scope_path(name, scope) or (scope in {"all", "docs"} and documentation_file(name))
+
+
 def scope_path(name: str, scope: str) -> bool:
     roots = {"all": ("src", "console", "scripts", "docs"), "runtime": ("src",),
              "console": ("console",), "docs": ("docs",)}
     return (any(name == p or name.startswith(p + "/") for p in roots[scope])
-            or (scope == "all" and public_example(name)))
+            or (scope == "all" and public_example(name))
+            or (scope in {"all", "docs"} and documentation_file(name) and not policy_path(name)))
 
 
 def writable_paths(root: Path, scope: str) -> tuple[Path, ...]:
@@ -53,7 +69,11 @@ def writable_paths(root: Path, scope: str) -> tuple[Path, ...]:
              if scope_path(name, scope)]
     if scope == "all":
         roots.extend((root / name).parent for name in source_files(root) if public_example(name))
-    return tuple(dict.fromkeys(p for p in roots if p.is_dir()))
+    if scope in {"all", "docs"}:
+        roots.extend(root / name for name in source_files(root)
+                     if documentation_file(name) and not policy_path(name)
+                     and not any((root / name).is_relative_to(parent) for parent in roots))
+    return tuple(dict.fromkeys(p for p in roots if p.exists()))
 
 
 def protected_paths(root: Path) -> tuple[Path, ...]:
@@ -91,4 +111,3 @@ def source_files(root: Path) -> list[str]:
         names.extend((Path(directory) / name).relative_to(root).as_posix() for name in sorted(files)
                      if Path(directory) != root or name != ".git")
     return names
-

@@ -14,8 +14,8 @@
 
 <!-- Paste commands and concise outcomes. Do not include secrets or private logs. -->
 
-- [ ] Focused tests pass.
-- [ ] `.venv/bin/python scripts/check_repo.py fast` passes.
+- [ ] Validation matches the change: ordinary prose uses `docs`; code uses focused tests and `fast` or `full` as required by the development guide.
+- [ ] Actual commands, results and skipped checks are reported here or in CI, without adding run logs to documentation.
 - [ ] User-visible changes were added to `CHANGELOG.md`, or are marked not user-visible.
 - [ ] `python scripts/check_public_repo.py` passes.
 - [ ] A spec was added or updated if this changes architecture, a public

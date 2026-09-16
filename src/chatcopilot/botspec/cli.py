@@ -393,7 +393,7 @@ def _cmd_configure(args: argparse.Namespace) -> int:
         print("[ERR] 引导式 configure 当前只支持 QQ")
         return 2
     if spec.agents.backend != "native" or "dev.code_tasks" in spec.tools.packs:
-        print("[ERR] 该 Bot 含高级 backend 或代码任务配置，请使用 docs/deployment.md 高级流程")
+        print("[ERR] 该 Bot 含高级 backend 或代码任务配置，请使用 docs/guides/deployment.md 高级流程")
         return 2
 
     by_id = {item.field: item for item in plan.fields}

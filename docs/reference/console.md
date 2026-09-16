@@ -1,0 +1,58 @@
+# Console 与前端边界
+
+修改页面、API 或配置编辑时阅读。Console 负责控制与观测，运行状态、执行、评分和交付事实仍由各领域提供。
+
+## 界面与数据
+
+保持现有 React、Rsbuild/Rspack、Arco Design 和 TanStack Query。共享视觉语义复用样式 tokens、业务组件与状态映射；操作页信息密集、可扫描，优先完整呈现加载、空、错误、禁用和窄屏状态。
+
+服务端读取走 Query；SSE 使用专用 hook。局部选择与展开留在组件中，异步响应必须绑定实例与任务。使用原生 Arco API；标签内部保持横向单行，超长时省略并可查看全文。
+
+观测与私有值见 [任务观测](observability.md)，开发步骤见 [开发指南](../guides/development.md)。
+
+## 源码入口
+
+- [console/web/package.json](../../console/web/package.json)
+- [console/web/src](../../console/web/src)
+- [console/backend/routes](../../console/backend/routes)
+- [console/control/yaml_editor.py](../../console/control/yaml_editor.py)
+- [console/control/catalog.py](../../console/control/catalog.py)
+
+## 控制台契约
+
+- 控制台是运维工作台，不是营销页：信息密集、安静、可扫描，优先支持重复运维操作和异常定位。
+- Console 管理视图直接展示实例配置与私有观测原值，包括身份名单、凭据、环境引用和路径；不再次脱敏已有可读取字段。值仅进入私有存储及禁止缓存的 API，不进入公开源码或诊断导出；历史已省略字段不能补造。共享 artifact、Evaluation、群聊/工具授权及隐藏推理边界保持，契约见 `docs/reference/observability.md`。
+- 保持 React 18 + Rsbuild/Rspack + Arco Design + TanStack Query；不默认引入 Tailwind、shadcn、MUI、Storybook 或 Playwright 视觉测试等新栈。
+- 触碰页面时使用原生 Arco API，不恢复旧 UI 语义兼容层。
+- 文本、状态标签和按钮层级优先复用 `styles/tokens.css`、`styles/components.css` 与 `shared/ui/status.ts`。
+- 修改后优先用当前 AI 环境已有浏览器工具检查桌面和窄屏；没有浏览器时至少完成构建并说明未做视觉验证。
+
+### 控制台页面
+
+| 页面 | 功能 |
+| --- | --- |
+| 总览 | 实例状态汇总 |
+| 服务管理 | 按 Channel 接入与外部能力查看服务职责、状态、诊断与日志 |
+| 机器人实例 | 任务 / 分层配置 / 运行状态 / 能力与工具，四个同级页签；任务内左侧列表、四层总览、Agent 图/调用树和结构化检查器，支持两步对照；窄屏单列切换，服务日志统一入口 |
+| 组件目录 | 按 tools / prompts / agents / context 四个 surface 统一浏览工具、提示词、Agent 和上下文组件（只读卡片） |
+| 测评页面 | 开始测试 / 运行记录 / 进步趋势 |
+| 代码治理 | 远端 main 巡检、验证证据、PR 自动交付、归档清理与分页历史；共用 Harness 任务宿主 |
+| 设置 | 控制台本身 |
+
+### 控制台 API
+
+| 端点 | 方法 | 用途 |
+| --- | --- | --- |
+| `/api/bots/{id}/gateway-observation` | GET | 当前实例 Gateway run 和独立准入审计 |
+| `/api/bots/{id}/gateway-observation/runs/{run_id}` | GET | 当前 run 的诊断事件、审批和交付回执 |
+| `/api/catalog` | GET | 统一组件目录（tools + prompts + agents + context） |
+| `/api/catalog/{item_id}` | GET | 单个目录条目 |
+| `/api/bots/{id}/tools` | GET | 读取实例当前工具配置 |
+| `/api/bots/{id}/tools` | PUT | 写回工具配置；`?apply=true` 时同步到运行实例并重启 |
+
+### 工具配置编辑机制
+
+- 前端 `BotToolEditor` 使用四面 DTO：`tools.packs/features/hide/mcp.servers` 与 `agents.presets/workflows`，并融合 inventory 诊断信息按 tools / prompts / agents / context 页签展示本地能力、MCP 健康、提示词、子代理预算、workflow 和上下文配置。
+- 后端 `console/control/yaml_editor.py` 使用 `ruamel.yaml` round-trip 编辑 `bot.yaml` 和 `mcp/servers.yaml`，保留注释和格式；该依赖已声明在 `console/requirements.txt`，`deploy_console.sh` / `setup_console.sh` 安装时会一并装入 venv。
+- `console/control/catalog.py` 通过 `component_catalog` 读取 tool pack / tool feature / MCP catalog / subagent preset / workflow DTO，并聚合提示词占位和上下文来源占位为统一 `CatalogItem`。
+-  编辑后点「保存并重启」会先取得同实例 TaskManager 串行资格，再写入源仓配置并调用统一 `update_instance.sh`；该入口通常同步后快速应用配置并重启，只有依赖、安装脚本变化或实例 venv 缺失时才完整 bootstrap。仅「保存配置」同步写源仓。配置修改留在 WSL 源仓，由用户在 WSL git 工作区提交。

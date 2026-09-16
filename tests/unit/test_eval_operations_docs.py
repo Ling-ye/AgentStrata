@@ -4,7 +4,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OPERATIONS = ROOT / "docs" / "operations.md"
+EVALUATION = ROOT / "docs" / "guides" / "evaluation.md"
+QQ_GUIDE = ROOT / "docs" / "guides" / "qq.md"
 QQ_ENV_EXAMPLE = ROOT / "bots" / "lingye-copilot-qq" / "local.env.example"
 
 REMOVED_EVAL_QQ_KEYS = (
@@ -18,9 +19,10 @@ EXTERNAL_CHECK_GROUP_KEY = "CHATCOPILOT_EXTERNAL_CHECK_QQ_GROUP_ID"
 
 
 def test_operations_documents_evaluation_and_external_check_cli() -> None:
-    text = OPERATIONS.read_text(encoding="utf-8")
+    text = EVALUATION.read_text(encoding="utf-8") + QQ_GUIDE.read_text(encoding="utf-8")
 
-    assert "--suite agentstrata-capabilities-v1" in text
+    assert "--suite agentstrata-agent-tasks-v1" in text
+    assert "--suite agentstrata-capabilities-v1" not in text
     assert "--preset full" in text
     assert "--preset qq-live" not in text
     assert "python -m chatcopilot bot external-check" in text

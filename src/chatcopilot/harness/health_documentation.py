@@ -6,9 +6,8 @@ import io
 import re
 import tokenize
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
 
-from chatcopilot.harness.health_policy import policy_path, requires_regression
+from chatcopilot.harness.health_policy import documentation_file, policy_path, requires_regression
 
 
 def documentation_path(name: str) -> bool:
@@ -17,7 +16,7 @@ def documentation_path(name: str) -> bool:
         return False
     if any("prompt" in part or "policy" in part or Path(part).stem in {"authorization", "config", "configs", "settings"} for part in path.parts):
         return False
-    return (name.startswith("docs/") and path.suffix == ".md") or (name.startswith("src/") and path.suffix == ".py")
+    return documentation_file(name) or (name.startswith("src/") and path.suffix == ".py")
 
 
 def eligible(findings: list[dict]) -> bool:
@@ -93,7 +92,12 @@ def classify(before: Path, after: Path, names: list[str], before_manifest: dict,
     for name in names:
         if not documentation_path(name):
             return {"eligible": False, "reason": f"{name} 不属于普通说明文本"}
-        if name not in before_manifest or name not in after_manifest or before_manifest[name]["executable"] != after_manifest[name]["executable"]:
+        old, new = before_manifest.get(name), after_manifest.get(name)
+        if name.endswith(".md") and any(row and row["executable"] for row in (old, new)):
+            return {"eligible": False, "reason": "可执行文档不属于普通说明"}
+        if name.endswith(".md") and (old is None or new is None):
+            continue
+        if old is None or new is None or old["executable"] != new["executable"]:
             return {"eligible": False, "reason": "文件新增、删除或可执行位变化需标准验证"}
         if name.endswith(".py"):
             try:
@@ -106,24 +110,3 @@ def classify(before: Path, after: Path, names: list[str], before_manifest: dict,
                 return {"eligible": False, "reason": f"{name} 的模块说明存在消费关系"}
     return {"eligible": True, "kind": "documentation_only", "paths": names,
             "reason": "宿主确认仅普通说明变化；Python 可执行结构、token 与检查指令一致，语义由独立审查确认"}
-
-
-def markdown_links(root: Path, names: list[str]) -> list[str]:
-    failures = []
-    for name in names:
-        if not name.endswith(".md"):
-            continue
-        text = (root / name).read_text(encoding="utf-8")
-        # Ignore fenced examples and inline code; inspect inline and reference links.
-        text = re.sub(r"(?ms)^\s*(`{3,}|~{3,})[^\n]*\n.*?^\s*\1\s*$", "", text)
-        text = re.sub(r"`[^`\n]*`", "", text)
-        targets = re.findall(r"\]\(\s*(<[^>]*>|[^\s)]+)", text)
-        targets += re.findall(r"(?m)^\s*\[[^\]]+\]:\s*(<[^>]*>|\S+)", text)
-        for target in targets:
-            url = urlsplit(target.strip("<>"))
-            if url.scheme or url.netloc or not url.path:
-                continue
-            path = ((root if url.path.startswith("/") else (root / name).parent) / unquote(url.path).lstrip("/")).resolve()
-            if not path.is_relative_to(root.resolve()) or not path.exists():
-                failures.append(f"{name}: 本地链接不存在或超出源码范围：{target}")
-    return failures

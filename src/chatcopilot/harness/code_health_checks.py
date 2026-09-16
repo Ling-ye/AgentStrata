@@ -123,8 +123,17 @@ class CodeHealthChecks:
                      *(str(candidate_root / n) for n in ("src", "tests", "scripts", "console")),
                      "--config", str(candidate_root / "pyproject.toml"), "--no-cache", "--output-format", "json"],
             "sdd": [sys.executable, "scripts/check_sdd_specs.py"],
+            "docs": [sys.executable, "scripts/check_docs.py", "--json", "--root", str(candidate_root)],
         }
-        reports, rows = [], []
+        if scope == "docs":
+            commands = {name: commands[name] for name in ("sdd", "docs")}
+        if self.ledger is not None:
+            current = self.ledger.manifest(candidate_root)
+            changed = sorted(n for n in self.ledger.original.keys() | current.keys()
+                             if self.ledger.original.get(n) != current.get(n))
+            for name in changed:
+                commands["docs"].extend(("--changed-path", name))
+        reports, rows, hints = [], [], []
         for name, argv in commands.items():
             check_cancel()
             reads = tuple(dict.fromkeys((candidate_root, *((self.frozen,) if self.frozen else ()))))
@@ -147,6 +156,13 @@ class CodeHealthChecks:
                         rows.append(finding("hygiene", path, item["location"]["row"],
                                             f"{item['code']}: {item['message']}", item["message"],
                                             "修正问题，保留当前检查规则", detector=name))
+                elif name == "docs":
+                    document_result = json.loads(text)
+                    for item in document_result["violations"]:
+                        rows.append(finding("documentation", item["path"], item["line"],
+                                            item["message"], json.dumps(item, ensure_ascii=False),
+                                            "按现行文档基线修正文档；不得削弱检查或修改规范", detector=name))
+                    hints.extend(document_result["review_hints"])
                 elif code:
                     rows.append(finding("documentation", "", 0, "SDD 结构检查未通过", text.strip(),
                                         "核对现有规格；验收规则文件由操作者处理", detector=name,
@@ -157,7 +173,7 @@ class CodeHealthChecks:
         for row in rows:
             if not row["path"] or not in_scope(row["path"], scope) or policy_path(row["path"]):
                 row["disposition"] = "needs_decision"
-        return {"checks": reports, "findings": rows}
+        return {"checks": reports, "findings": rows, "review_hints": hints}
 
     def verify(self, root: Path, profile: str, check_cancel: Callable[[], None], *,
                baseline: tuple[Path, dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -243,7 +259,6 @@ class CodeHealthChecks:
                 "checks": checks, "report": path.relative_to(self.directory).as_posix()}
 
     def documentation(self, root: Path, names: list[str], check_cancel: Callable[[], None]) -> dict[str, Any]:
-        from chatcopilot.harness.health_documentation import markdown_links
         output = private_directory(self.directory / "checks" / uuid.uuid4().hex)
         snapshot, candidate = output / "source", output / "candidate"
         git_dirs = self.view(root, snapshot)
@@ -254,7 +269,10 @@ class CodeHealthChecks:
         commands = {
             "diff": ["git", "-C", str(candidate), "diff", "--check", "--", *names],
             "public": [sys.executable, "scripts/check_public_repo.py", "--root", str(candidate)],
+            "docs": [sys.executable, "scripts/check_docs.py", "--root", str(candidate)],
         }
+        for name in names:
+            commands["docs"].extend(("--changed-path", name))
         python_names = [str(candidate / n) for n in names if n.endswith(".py")]
         if python_names:
             commands["ruff"] = [sys.executable, "-m", "ruff", "check", "--no-cache", *python_names,
@@ -265,13 +283,6 @@ class CodeHealthChecks:
                                    reads=(candidate, index, *git_dirs), bindings=bindings)
             checks.append({"name": label, "exit_code": code, "status": "passed" if code == 0 else "failed",
                            "log": (output / label / "stdout.log").relative_to(self.directory).as_posix()})
-        check_cancel()
-        failures = markdown_links(candidate, names)
-        log = output / "markdown-links.log"
-        log.write_text("\n".join(failures) if failures else "本地链接检查通过\n", encoding="utf-8")
-        log.chmod(0o600)
-        checks.append({"name": "markdown links", "exit_code": int(bool(failures)),
-                       "status": "failed" if failures else "passed", "log": log.relative_to(self.directory).as_posix()})
         self.logs.extend(checks)
         return {"profile": "documentation_only", "checks": checks,
                 "passed": all(c["exit_code"] == 0 for c in checks)}

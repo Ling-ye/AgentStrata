@@ -149,11 +149,11 @@ def test_current_scan_allows_exact_public_and_placeholder_values(tmp_path: Path)
     ("path", "unit"),
     [
         (
-            "index:docs/operations.md",
+            "index:docs/guides/instances.md",
             "chatcopilot" + "@" + "demo-bot.service",
         ),
         (
-            "worktree:deploy/wsl/README_WSL.md",
+            "worktree:docs/guides/wsl-troubleshooting.md",
             "chatcopilot-code-worker" + "@" + "demo-bot.service",
         ),
         (
@@ -185,7 +185,7 @@ def test_arbitrary_email_like_systemd_suffixes_are_not_allowed(
     checker = _load_checker()
     email = "person" + "@" + "private" + suffix
 
-    findings = checker.scan_text(email, path="index:docs/operations.md")
+    findings = checker.scan_text(email, path="index:docs/guides/instances.md")
 
     assert {finding.rule for finding in findings} == {"unexpected-email"}
 

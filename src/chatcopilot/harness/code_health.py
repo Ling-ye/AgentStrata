@@ -19,7 +19,7 @@ from chatcopilot.harness.health_batches import build_batches, descriptor, save_b
 from chatcopilot.harness.health_budget import HealthBudget, BudgetedCoder
 from chatcopilot.harness.health_documentation import eligible, classify as classify_documentation
 from chatcopilot.harness.health_ledger import SourceLedger
-from chatcopilot.harness.health_policy import policy_path, scope_path, requires_regression
+from chatcopilot.harness.health_policy import policy_path, scope_path, scan_path, documentation_file, requires_regression
 from chatcopilot.harness.health_regressions import frozen_content, prepare_regression
 from chatcopilot.harness.models import ACTIVE, GOVERNANCE_VERSION, CodeHealthOptions, CodingOptions, Cancelled, HarnessError, review_decision, safe_error
 from chatcopilot.harness.store import HarnessStore
@@ -125,7 +125,7 @@ class HealthRun:
         existing = {row["id"] for row in self.governance["findings"]}
         groups = {g["key"]: g for g in self.governance["groups"]}
         for row in rows:
-            if row["path"] and not scope_path(row["path"], self.scope):
+            if row["path"] and not scan_path(row["path"], self.scope):
                 continue
             if row["id"] in existing:
                 continue
@@ -440,8 +440,12 @@ class HealthRun:
                 output = self.directory / "audit" / batch["id"]
                 self.record_call(output, "audit", batch["area"])
                 try:
+                    document_batch = all(documentation_file(b["path"]) for b in batch["blocks"])
+                    rules = tuple(r for r in RULES if not document_batch or r["id"] == "documentation")
+                    hints = [row for row in before.get("review_hints", [])
+                             if row["path"] in {b["path"] for b in batch["blocks"]}]
                     audit = self.coder.audit(self.frozen, {"source": self.model_source(snapshot=True),
-                        "rules": RULES, "batch": batch}, self.remaining(), output, self.cancel)
+                        "rules": rules, "batch": batch, "review_hints": hints}, self.remaining(), output, self.cancel)
                     verify_copy(self.frozen, self.original)
                     if audit.get("submitted_batch") != batch["id"] or audit.get("submitted_blocks") != [b["block_sha256"] for b in batch["blocks"]]:
                         raise HarnessError("audit_incomplete", "缺少本批源码块的实际投递记录")

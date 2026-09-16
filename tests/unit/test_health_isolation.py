@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -125,6 +126,7 @@ def test_frozen_scan_preserves_relative_lint_rules_and_still_finds_errors(tmp_pa
     (root / "console/__init__.py").write_text("")
     (root / 'scripts/check_architecture.py').write_text('import json\nprint(json.dumps({"violations": {}}))\n')
     (root / 'scripts/check_sdd_specs.py').write_text('print("OK")\n')
+    (root / 'scripts/check_docs.py').write_bytes((Path(__file__).resolve().parents[2] / 'scripts/check_docs.py').read_bytes())
     (root / 'pyproject.toml').write_text('[tool.ruff.lint]\nselect = ["E4", "E7", "E9", "F"]\n[tool.ruff.lint.per-file-ignores]\n"src/demo.py" = ["F401"]\n')
     (root / 'src/demo.py').write_text('import math\n')
     frozen = tmp_path / 'scan-frozen'
@@ -140,3 +142,65 @@ def test_frozen_scan_preserves_relative_lint_rules_and_still_finds_errors(tmp_pa
     assert len(report['findings']) == 1
     assert report['findings'][0]['path'] == 'src/demo.py'
     assert 'F821' in report['findings'][0]['summary']
+
+
+def test_frozen_document_checker_reads_candidate_and_reports_protected_pages(tmp_path):
+    root, _, _ = fixture(tmp_path)
+    (root / "scripts/check_sdd_specs.py").write_text('print("OK")\n')
+    (root / "scripts/check_docs.py").write_bytes((Path(__file__).resolve().parents[2] / "scripts/check_docs.py").read_bytes())
+    (root / "docs/reference").mkdir(parents=True)
+    (root / "README.md").write_text("# Fixture\n\n[rule](docs/reference/domain.md)\n")
+    (root / "docs/reference/domain.md").write_text("# Domain\n\n## 源码入口\n[code](../../src/demo.py)\n[bad](#missing)\n")
+    manifest = source_manifest(root)
+    frozen = tmp_path / "docs-frozen"
+    copy_sources(root, frozen, manifest)
+    ledger = SourceLedger(frozen, manifest, tmp_path / "docs-inventory", root)
+    # A candidate implementation cannot substitute its always-successful checker.
+    (root / "scripts/check_docs.py").write_text('print(\'{"violations": [], "review_hints": []}\')\n')
+    checks = CodeHealthChecks(tmp_path / "checks", root)
+    checks.bind(ledger, frozen)
+    report = checks.scan(root, "docs", lambda: None)
+    assert len(report["findings"]) == 1
+    row = report["findings"][0]
+    assert row["path"] == "docs/reference/domain.md" and row["disposition"] == "needs_decision"
+    assert "anchor" in row["evidence"]
+    batches = build_batches(frozen, manifest, "docs")
+    assert any(b["path"] == row["path"] for batch in batches for b in batch["blocks"])
+    (root / "docs/reference/domain.md").rename(root / "docs/ordinary.md")
+    with pytest.raises(HarnessError, match="固定标准"):
+        ledger.changes(root, manifest, "docs")
+
+
+def test_root_document_write_is_file_scoped_in_real_sandbox(tmp_path):
+    from chatcopilot.contracts.execution_scope import ExecutionScope
+    from chatcopilot.core.scoped_process import sandbox_command
+
+    root = tmp_path / "candidate"
+    root.mkdir()
+    readme = root / "README.md"
+    protected = root / "AGENTS.md"
+    sibling = root / "ordinary.txt"
+    security, conduct = root / "SECURITY.md", root / "CODE_OF_CONDUCT.md"
+    for path in (readme, protected, sibling, security, conduct):
+        path.write_text("original")
+    scope = ExecutionScope(readable_roots=(root, Path(sys.prefix).resolve()),
+                           writable_roots=writable_paths(root, "docs"),
+                           protected_roots=protected_paths(root))
+    assert scope.writable_roots == (readme,)
+    code = """from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+(root / 'README.md').write_text('changed')
+for name in ('AGENTS.md', 'SECURITY.md', 'CODE_OF_CONDUCT.md', 'ordinary.txt', 'new.py'):
+    try:
+        (root / name).write_text('forbidden')
+    except OSError:
+        continue
+    raise RuntimeError('unexpected write authority')
+"""
+    result = subprocess.run(sandbox_command([sys.executable, "-c", code, str(root)], scope=scope, cwd=root), capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert readme.read_text() == "changed"
+    assert protected.read_text() == sibling.read_text() == "original"
+    assert security.read_text() == conduct.read_text() == "original"
+    assert not (root / "new.py").exists()

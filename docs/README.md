@@ -1,49 +1,29 @@
-# AgentStrata 文档中心
+# 开发任务地图
 
-这里是面向使用者、运维者和贡献者的文档入口。根目录
-[`README.md`](../README.md) 是唯一的项目介绍页；本页只负责导航，不复制正文。
+先选本次任务，读到足以行动为止。操作指南解释怎么做，领域正文解释为什么和修改边界，再沿源码入口核对实现。
 
-## 按目标阅读
+## 从任务开始
 
-| 我想要…… | 从这里开始 | 接着阅读 |
+| 本次任务 | 先读 | 需要机制与边界时 |
 | --- | --- | --- |
-| 了解项目定位与能力边界 | [`README.md`](../README.md) | [`architecture.md`](architecture.md)、[`runtime.md`](runtime.md) |
-| 了解公开前开发沿革与架构演进 | [`project-history.md`](project-history.md) | [`architecture.md`](architecture.md)、[`../specs/`](../specs/) |
-| 创建或配置机器人 | [`bot-spec.md`](bot-spec.md) | [`../bots/_template/README.md`](../bots/_template/README.md) |
-| 首次安装到 Linux / WSL | [`deployment.md`](deployment.md) | [`operations.md`](operations.md) |
-| 更新、重启、看日志或诊断 | [`operations.md`](operations.md) | [`../deploy/wsl/README_WSL.md`](../deploy/wsl/README_WSL.md) |
-| 管理控制台或运行评测 | [`console.md`](console.md) | [`evaluation-glossary.md`](evaluation-glossary.md) |
-| 扫描并清理代码漂移 | [`console.md#代码治理`](console.md#代码治理) | [`operations.md#代码治理`](operations.md#代码治理)、[设计规格](../specs/code-health-gc/spec.md) |
-| 准备后续 GitHub Release | [`releasing.md`](releasing.md) | [`../CHANGELOG.md`](../CHANGELOG.md) |
-| 获取社区支持 | [`../SUPPORT.md`](../SUPPORT.md) | [`../SECURITY.md`](../SECURITY.md) |
-| 管理共享 Docker 服务 | [`../deploy/docker/README.md`](../deploy/docker/README.md) | [`operations.md`](operations.md) |
-| 接入或修改外部工具 | [`external-tools-architecture.md`](external-tools-architecture.md) | [`architecture.md`](architecture.md) |
-| 参与开发 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | [`sdd.md`](sdd.md)、[`ai-debugging.md`](ai-debugging.md) |
-| 让 AI 修改某个领域 | [`../AGENTS.md`](../AGENTS.md) 的任务导航 | 只读取相关领域契约及所引用规格 |
-| 理解资料、工具结果与 Harness 证据如何按需读取 | [`architecture.md#资料与工具结果按需读取`](architecture.md#资料与工具结果按需读取) | [`progressive-disclosure`](../specs/progressive-disclosure/spec.md) |
-| 查看本地执行轨迹、上下文与冻结证据 | [`local-traces.md`](local-traces.md) | [`local-deepeval-tracing`](../specs/local-deepeval-tracing/spec.md) |
+| 准备开发环境、选择检查 | [开发](guides/development.md) | [架构总览](reference/architecture.md) |
+| 首次部署或管理实例 | [首次部署](guides/deployment.md) / [实例运维](guides/instances.md) | [配置](reference/configuration.md) |
+| QQ 登录、认证或外部服务 | [QQ](guides/qq.md) / [服务](guides/services.md) | [身份与资源](reference/identity-resources.md) / [服务边界](reference/services.md) |
+| 修改消息或平台接入 | [运行链](reference/runtime.md) | [身份与资源](reference/identity-resources.md) |
+| 修改 Agent、提示词、记忆 | [Agent](reference/agent.md) | [上下文](reference/context.md) |
+| 新增或修改工具 | [工具](reference/tools.md) | [配置](reference/configuration.md) |
+| 修改评分或运行测评 | [测评操作](guides/evaluation.md) | [Evaluation](reference/evaluation.md) / [服务协议](reference/evaluation-service.md) |
+| 编写题目和验收样本 | [用例指南](guides/evaluation-cases.md) | [题目约束](reference/evaluation-cases.md) / [术语](reference/evaluation-glossary.md) |
+| 修复失败或巡检源码 | [Harness 操作](guides/harness.md) | [修复契约](reference/harness.md) / [治理](reference/code-health.md) / [交付](reference/delivery.md) |
+| 修改 Console | [Console](reference/console.md) | [观测](reference/observability.md) / [归档](reference/local-traces.md) |
+| 排查运行失败 | [诊断](guides/debugging.md) | [WSL 恢复](guides/wsl-troubleshooting.md) |
+| 维护文档或准备发布 | [文档维护](maintenance.md) / [发布](guides/releasing.md) | [公开边界](reference/publication.md) / [规格](../specs/README.md) |
 
-## 文档分层
+## 模块入口
 
-- **入口**：`README.md` 回答“这是什么、适合谁、如何开始”。
-- **沿革**：`project-history.md` 说明各阶段的初始设计、暴露问题、架构优化和结果，
-  并链接相关规格；不复制私有 Git 对象、仓库坐标或运行值。
-- **操作**：`operations.md` 是日常命令的唯一集中速查；安装设计归
-  `deployment.md`，异常恢复归 `deploy/wsl/README_WSL.md`。
-- **参考**：架构、运行时、BotSpec、控制台和外部工具文档解释稳定契约与实现边界。
-- **决策记录**：`specs/` 保存已接受或已实现的设计决策，不是新读者的必读目录。
-- **协作规则**：`AGENTS.md` 面向 AI 协作者，不能替代用户文档或贡献指南。
+- [Bot 模板](../bots/_template/README.md)
+- [Docker 服务](../deploy/docker/README.md) / [跨平台部署公共脚本](../deploy/common/README.md)
+- [当前 Agent 题库](../src/chatcopilot/evals/suites/agentstrata-agent-tasks-v1/README.md)
+- [历史工程夹具说明](../src/chatcopilot/evals/suites/agentstrata-capabilities-v1/README.md)、[QQ 合成测试](../src/chatcopilot/evals/suites/agentstrata-qq-message-flow-v1/README.md)、[业务样例](../src/chatcopilot/evals/suites/project-business-v1/README.md)
 
-同一命令只在其事实源中完整说明；其他文档使用链接。这样可以避免一次行为变更需要
-同步修改三到四份文档，也让过期描述更容易被发现。
-
-首次阅读先选择一个目标，读到能够完成任务即可。字段与原理按需展开，历史规格用于理解
-决策背景。AI 的根协作入口保留全局边界，`ai-contracts-*.md` 保留可定位的领域规则，
-不要求每个任务读取所有规则。Markdown 折叠仅改变显示，不代表模型实际减少了上下文输入。
-
-## 命名约定
-
-公开产品、发行包和命令行程序使用 **AgentStrata** / `agentstrata`。
-`chatcopilot` Python namespace、`CHATCOPILOT_*` 环境变量、systemd unit 名和
-`~/ChatCopilot*` 运行路径仍是兼容契约。文档只在引用这些真实接口时保留旧名称，
-不再把 ChatCopilot 当作产品名。
+机器人 Prompt、Skill、数据和第三方许可由各自运行或许可契约管理，不能为了文档精简改变它们的行为。

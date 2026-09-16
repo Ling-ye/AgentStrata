@@ -101,6 +101,7 @@ def _profiles(candidate_root: Path | None = None) -> dict[str, tuple[Check, ...]
             _python("scripts/check_public_repo.py", *target_args),
             uses_repository_index=True,
         ),
+        Check("documentation", _python("scripts/check_docs.py", *target_args)),
         Check("architecture boundaries", _python("scripts/check_architecture.py", *target_args)),
         Check("requirements drift", _python("scripts/sync_requirements.py", "--check")),
         Check(
@@ -166,7 +167,11 @@ def _profiles(candidate_root: Path | None = None) -> dict[str, tuple[Check, ...]
             ROOT / "console" / "web",
         ),
     )
-    return {"fast": fast, "full": full}
+    docs = (
+        common[0], common[1], common[2],
+        Check("diff format", ("git", "diff", "--check"), cwd=test_root, uses_repository_index=True),
+    )
+    return {"docs": docs, "fast": fast, "full": full}
 
 
 def _preflight(check: Check) -> str | None:
@@ -231,7 +236,7 @@ def _write_manifest(report_dir: Path, payload: dict[str, object]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("profile", choices=("fast", "full"))
+    parser.add_argument("profile", choices=("docs", "fast", "full"))
     parser.add_argument("--keep-going", action="store_true", help="collect every check for baseline comparison")
     parser.add_argument("--candidate-root", type=Path, help="isolated candidate test tree; checker definitions stay here")
     parser.add_argument(

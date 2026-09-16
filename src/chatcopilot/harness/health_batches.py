@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from chatcopilot.core.private_sqlite import json_text
-from chatcopilot.harness.health_policy import scope_path, policy_path
+from chatcopilot.harness.health_policy import scan_path, policy_path, documentation_file
 from chatcopilot.harness.models import HarnessError
 
 # Leaves room for policy/context inside the existing 128 KiB evidence envelope.
@@ -18,7 +18,7 @@ BLOCK_BYTES = BATCH_BYTES // 2
 def build_batches(root: Path, manifest: dict[str, Any], scope: str) -> list[dict[str, Any]]:
     areas: dict[str, list[dict[str, Any]]] = {}
     for name in sorted(manifest):
-        if not scope_path(name, scope) or policy_path(name):
+        if not scan_path(name, scope) or (policy_path(name) and not documentation_file(name)):
             continue
         path = root / name
         raw = path.read_bytes()
@@ -46,7 +46,7 @@ def build_batches(root: Path, manifest: dict[str, Any], scope: str) -> list[dict
                 break
             offset, start = end, finish
     batches = []
-    for area in sorted(areas, key=lambda x: (not x.startswith("src/"), x)):
+    for area in sorted(areas, key=lambda x: (x not in {"README.md", "AGENTS.md", "docs/README.md"}, not x.startswith("src/"), x)):
         current: list[dict[str, Any]] = []
         for block in areas[area]:
             if block.get("binary"):

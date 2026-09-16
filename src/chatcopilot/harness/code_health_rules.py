@@ -8,7 +8,7 @@ from typing import Any
 
 from chatcopilot.core.private_sqlite import json_text
 from chatcopilot.harness.models import HarnessError
-from chatcopilot.harness.health_policy import scope_path
+from chatcopilot.harness.health_policy import scan_path
 
 RULES = (
     {"id": "architecture", "title": "遵守依赖与职责边界", "detector": "architecture",
@@ -16,13 +16,13 @@ RULES = (
     {"id": "hygiene", "title": "清理明确的代码错误与冗余", "detector": "ruff",
      "reference": "pyproject.toml", "guidance": "按当前 Ruff 规则处理，不能增加忽略或降低检查强度。"},
     {"id": "duplication", "title": "复用相同业务契约的实现", "detector": "codex",
-     "reference": "docs/ai-contracts-agent.md", "guidance": "追踪调用方和语义差异；相似代码本身不证明可合并。"},
+     "reference": "docs/reference/agent.md", "guidance": "追踪调用方和语义差异；相似代码本身不证明可合并。"},
     {"id": "boundary", "title": "在实际边界确认数据契约", "detector": "codex",
-     "reference": "docs/ai-contracts-runtime.md", "guidance": "沿来源追踪解析和授权；不按 get/hasattr 关键词认定错误。"},
+     "reference": "docs/reference/runtime.md", "guidance": "沿来源追踪解析和授权；不按 get/hasattr 关键词认定错误。"},
     {"id": "obsolete", "title": "以调用依据清理过时实现", "detector": "codex",
      "reference": "AGENTS.md", "guidance": "核对动态注册、公开导出和配置消费；兼容影响不明须等待判断。"},
-    {"id": "documentation", "title": "文档反映当前事实", "detector": "sdd/codex",
-     "reference": "docs/sdd.md", "guidance": "核对命令、符号和当前契约，保留历史记录的历史定位。"},
+    {"id": "documentation", "title": "文档反映当前事实", "detector": "docs/codex",
+     "reference": "docs/maintenance.md", "guidance": "按索引、领域正文、源码入口读取；核对具体冲突，不凭日期判过时。普通文档可修复，规范只报告；不写运行流水。"},
 )
 SCOPES = {
     "all": ("src", "console", "scripts", "docs"),
@@ -35,7 +35,7 @@ SCOPES = {
 def in_scope(path: str, scope: str) -> bool:
     if scope not in SCOPES:
         raise ValueError("未知扫描范围")
-    return scope_path(path, scope)
+    return scan_path(path, scope)
 
 
 def finding(rule_id: str, path: str, line: int, summary: str, evidence: str,

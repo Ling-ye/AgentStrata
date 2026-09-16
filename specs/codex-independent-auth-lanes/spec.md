@@ -118,18 +118,8 @@ access-mode contract.
 
 ## Verification
 
- On 2026-07-28, the focused CLI/authentication/lease/backend/
-worker/ACP suite passed with `118 passed, 11 subtests passed`.
-The SDD checker, architecture checker, both built-in BotSpec validations,
-compileall, focused mypy, and `git diff --check` also passed.
+Run focused CLI, authentication, credential-lease, Backend, worker and transport tests, followed by BotSpec, architecture and repository checks.
 
- The repository full gate passed with `1305 passed, 1 skipped,
-51 subtests passed`, including requirements drift, Ruff, typed contracts,
-dependency consistency, wheel build invariance, and the Console production
-build.
+Live rollout acceptance requires separate authorization for both lanes, safe status showing each lane ready, ordinary Codex chat and repeated non-mutating worker smoke checks. Verify that refresh-token reuse does not recur; offline tests do not satisfy this operator-controlled authorization gate.
 
- Live WSL acceptance remains a rollout gate: perform both device
-authorizations, confirm both lanes are `ready` through the safe status command,
-then run ordinary Codex chat and a non-mutating worker smoke twice to prove
-refresh-token reuse does not recur.  The specification remains
-`accepted` until that operator-controlled authorization and smoke complete.
+检查范围与命令按 [开发与验证约定](../../docs/guides/development.md) 选择；单次结果保留在交付说明或 CI 日志中。

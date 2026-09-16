@@ -34,6 +34,7 @@ def test_validation_profiles_include_static_and_runtime_checks(
     assert fast_names == [
         "SDD metadata",
         "public repository boundary",
+        "documentation",
         "architecture boundaries",
         "requirements drift",
         "UTF-8 source normalization",
@@ -48,6 +49,10 @@ def test_validation_profiles_include_static_and_runtime_checks(
         "full Python tests",
         "console production build",
     ]
+    assert [c.name for c in profiles["docs"]] == [
+        "SDD metadata", "public repository boundary", "documentation", "diff format",
+    ]
+    assert all("pytest" not in c.argv and "build" not in c.argv for c in profiles["docs"])
     fast_pytest = profiles["fast"][-1]
     full_pytest = profiles["full"][-2]
     assert fast_pytest.argv[3:-2] == check_repo._fast_test_paths()
@@ -248,7 +253,7 @@ def test_gitleaks_policy_covers_network_and_query_leaks() -> None:
 
 
 def test_release_runbook_preserves_signed_tag_and_draft_boundaries() -> None:
-    runbook = (ROOT / "docs" / "releasing.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "guides" / "releasing.md").read_text(encoding="utf-8")
 
     assert "0.1.0.dev0" in runbook
     assert "git tag -s v0.1.0" in runbook

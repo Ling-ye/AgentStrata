@@ -26,4 +26,4 @@ List observable acceptance criteria. Do not encode implementation path allowlist
 
 ## Verification
 
-List the checks that establish the acceptance criteria. Recorded results may use any clear format.
+Describe reusable checks, acceptance scenarios, and evidence limits. Keep per-run dates, counts, timings, logs, temporary environment details, and retry outcomes in delivery notes or CI artifacts rather than this specification.

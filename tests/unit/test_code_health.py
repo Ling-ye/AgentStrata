@@ -893,14 +893,15 @@ def test_new_health_request_requires_budget_and_rejects_legacy_timeout():
             assert client.post("/api/harness/code-health/tasks", json={**request, "timeout_seconds": 1080}).status_code == 422
 
 
-def test_budget_changes_conflict_and_old_record_is_read_only(repo, tmp_path):
+@pytest.mark.parametrize("old_version", [2, 5])
+def test_budget_changes_conflict_and_old_record_is_read_only(repo, tmp_path, old_version):
     options = CodeHealthOptions("test", {"mode": "fixed_groups", "count": 1})
     controller, ident = start(repo, tmp_path, options=options)
     for change in (CodeHealthOptions("test", {"mode": "fixed_groups", "count": 2}),
                    CodeHealthOptions("test", {"mode": "time", "seconds": 100})):
         with pytest.raises(HarnessError, match="请求 ID"):
             controller.start_code_health("all", change, request_id="health-request", launch=False)
-    source = {**controller.store.get(ident)["source"], "governance_version": 2}
+    source = {**controller.store.get(ident)["source"], "governance_version": old_version}
     controller.store.update(ident, source=source)
     old = controller.store.get(ident)
     assert run_task(controller.store, ident, Mock(), checks=Checks()) == old
@@ -980,6 +981,8 @@ def test_documentation_checks_use_real_isolated_commands(repo, tmp_path):
     script = Path(__file__).resolve().parents[2] / "scripts/check_public_repo.py"
     (repo / "scripts").mkdir()
     (repo / "scripts/check_public_repo.py").write_bytes(script.read_bytes())
+    (repo / "scripts/check_docs.py").write_bytes((script.parent / "check_docs.py").read_bytes())
+    (repo / "README.md").write_text("# Fixture\n\n[guide](docs/guide.md)\n")
     (repo / "pyproject.toml").write_text('[tool.ruff]\ntarget-version = "py310"\n')
     manifest = source_manifest(repo)
     frozen = tmp_path / "frozen"
@@ -991,7 +994,7 @@ def test_documentation_checks_use_real_isolated_commands(repo, tmp_path):
     checks.bind(ledger, frozen)
     result = checks.documentation(repo, ["docs/guide.md", target()["path"]], lambda: None)
     assert result["passed"], result
-    assert {c["name"] for c in result["checks"]} == {"diff", "public", "ruff", "markdown links"}
+    assert {c["name"] for c in result["checks"]} == {"diff", "public", "ruff", "docs"}
     assert all((checks.directory / c["log"]).is_file() for c in result["checks"])
 
 

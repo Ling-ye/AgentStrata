@@ -68,7 +68,7 @@ Console 和 Evaluation 仍是四层之外的配套部分；六层中的 Runtime 
 
 涉及领域内部架构或依赖结构变更的 SDD 必须引用本规格，并在已有 `Design` 章节说明
 受影响职责、依赖方向和公开入口；涉及运行时的设计同时引用四层基线。普通修复沿用
-[SDD-lite](../../docs/sdd.md) 的范围，不增加固定审批表、元数据字段或顶层章节。
+[SDD-lite](../../docs/maintenance.md) 的范围，不增加固定审批表、元数据字段或顶层章节。
 
 当前通过规范与评审执行六层规则。现有 [架构检查器](../../scripts/check_architecture.py)
 检查跨领域依赖、专项边界与循环，尚未全面检查领域内部的六层职责及依赖矩阵。
@@ -99,9 +99,9 @@ Console 和 Evaluation 仍是四层之外的配套部分；六层中的 Runtime 
 
 ## Verification
 
-计划执行 `git diff --check`、`.venv/bin/python scripts/check_sdd_specs.py` 和
-`.venv/bin/python scripts/check_repo.py fast`，并人工核对入口链接、矩阵和正反例一致性。
-执行后记录实际结果；当前尚未记录本次检查结果。
+- 结构与格式：使用 `git diff --check` 和 `.venv/bin/python scripts/check_sdd_specs.py`。
+- 规则一致性：核对两个入口均引用本规格，职责矩阵、正反例与四层运行时基线一致。
+- 仓库回归：按 [开发与验证约定](../../docs/guides/development.md) 选择相关检查；现有
+  `.venv/bin/python scripts/check_repo.py fast` 包含静态检查与日常回归，但不证明全仓六层合规。
 
-这些检查验证文档结构和现有仓库回归，不能证明全仓遵循六层规则，也不作为真实模型或
-QQ/NapCat 端到端证据。本次不启动模型测评、全仓迁移或新的六层自动检查。
+单次执行日期、测试数量、耗时和临时故障记录放在交付说明或 CI 日志中，不写入本规格。

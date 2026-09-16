@@ -1,5 +1,5 @@
 # Daily regression: complete files; extended regression remains in full and CI.
-# Selection rationale: specs/daily-test-profile/spec.md
+# Selection rationale: docs/guides/development.md
 
 # Gateway and QQ message delivery
 tests/unit/test_gateway_protocol.py
@@ -87,6 +87,8 @@ tests/unit/test_console_operator_values.py
 tests/unit/test_repository_validation.py
 tests/unit/test_architecture_boundaries.py
 tests/unit/test_sdd_specs.py
+tests/unit/test_docs.py
+tests/unit/test_health_documentation.py
 tests/unit/test_botspec_gateway_channels.py
 tests/unit/test_botspec_runtime_env.py
 tests/unit/test_command_timeouts.py

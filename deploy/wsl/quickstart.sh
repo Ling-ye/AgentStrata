@@ -758,7 +758,7 @@ validate_resume_paths() {
                         key_label="legacy transport override ($key)"
                     fi
                     finish_failed "starter_profile" "新手恢复流程不接受高级配置键：$key_label" \
-                        "移除 $key，或改用 docs/deployment.md 的高级流程"
+                        "移除 $key，或改用 docs/guides/deployment.md 的高级流程"
                     ;;
             esac
             validate_guided_env_value "$key" "$PARSED_ENV_VALUE" \
@@ -970,7 +970,7 @@ validate_resume_text_shape() {
 preflight_resume_bot() {
     validate_resume_paths
     validate_resume_text_shape \
-        || finish_failed "starter_profile" "BotSpec 不符合 canonical starter 形状" "使用 docs/deployment.md 的高级部署流程"
+        || finish_failed "starter_profile" "BotSpec 不符合 canonical starter 形状" "使用 docs/guides/deployment.md 的高级部署流程"
 }
 
 doctor_ready() {
@@ -1152,7 +1152,7 @@ add_check "isolated_runtime" "pass" "固定用户级 Python Gateway 运行时已
 
 if [ "$RESUME_HAS_BOT" -eq 1 ]; then
     validate_resume_bot \
-        || finish_failed "starter_profile" "已有 Bot 不是可由新手流程恢复的 QQ/Native starter" "使用 docs/deployment.md 的高级部署流程"
+        || finish_failed "starter_profile" "已有 Bot 不是可由新手流程恢复的 QQ/Native starter" "使用 docs/guides/deployment.md 的高级部署流程"
 fi
 
 ensure_docker

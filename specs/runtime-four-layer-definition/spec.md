@@ -15,7 +15,7 @@ AgentStrata 由机器人运行时，以及启动装配、控制观测、独立�
 
 本规格是长期有效的运行时架构基线。后续涉及运行时架构、跨层契约、运行部署或相关数据迁移的
 SDD 必须遵循并引用本规格；局部规格不能另行定义运行层级。基线变更须明确提出并单独审议，
-同时更新相关规则与验证。工作流见 [SDD-lite](../../docs/sdd.md)。本次固化不改变运行行为、
+同时更新相关规则与验证。工作流见 [SDD-lite](../../docs/maintenance.md)。本次固化不改变运行行为、
 公开接口、存储、Console 布局，也不推进其他 Legacy 清理项。
 
 ## Design
@@ -71,80 +71,20 @@ Evaluation 的设计按需说明与运行时的边界。普通修复遵循 SDD-l
 填写“不适用”；不新增 frontmatter 字段或顶层章节。职责归属由规范与评审约束，跨层行为由
 针对性测试验证，静态检查不能证明全部运行时语义。
 
-### 2026-09-08 实施记录（历史）
-
-以下保留首次统一职责定义时的实施范围与表述，不作为新的分层定义：
-
-- Channel 负责原生连接、结构化平台事件校验与转换、平台资源获取实现和实际投递；Gateway
-  负责主体采信、准入、角色策略调用、run、持久化与交付协调；Application 负责 actor 会话、
-  工作区、上下文和交换提交；Agent 负责 Backend、模型与工具执行和委托。
-- 实例宿主负责装配和启停，不属于四层消息处理职责。GatewayRuntimeHost 保留现有名称、
-  文件位置和唯一构建入口；AgentRuntime 继续指 Agent 执行引擎。装配位于分层之外不要求独立进程。
-- 四层箭头表示入站职责顺序，不替代源码依赖规则。Gateway 注入 Channel 回调；Channel
-  不导入 Gateway。授权、Contracts、模型访问、工具和存储是支撑模块，不新增串行层。
-- Gateway 内部入站接口改名为 GatewayIngressPort，对应参数与成员使用 gateway_ingress，
-  同步全部仓内消费者与导出。保持 authorize_inbound 和 handle_authorized_inbound 的调用语义。
-  修正 CanonicalInboundEvent 注释：准入成功后、执行前持久化；不改变准入及副作用顺序。
-- 沿用 CanonicalInboundEvent、OutboundEnvelope、DeliveryReceipt、PreparedTurn、TurnOutcome、
-  ExchangeRef 及 Agent task/event/result。Application 在获准后经资源端口调用 Channel 下载实现；
-  Gateway 确认交付后才请求 Application 提交交换。
-- Console 通过现有查询与控制入口工作，Evaluation 使用独立生命周期与隔离执行；ACP 仍可作为
-  本地协议入口直连 Gateway，Legacy edge 保留。配套部分不要求所有请求穿过四层消息链。
-- Console 的配置与观测分组不等同于运行层。仅将组件目录的“全部层”“按后端层筛选组件”改为
-  分组措辞，保留页面布局、基础配置/能力分类、API layer 字段、实体 ID、配置指纹及历史快照。
-- 同步当前架构文档、协作入口、运行路径和相关规格引用。既有实施历史与验证结论保留原义。
-
-当次验收范围：
-
-- 当前架构入口一致描述四层职责、配套部分和实例宿主，不把授权或控制台画成消息必经层。
-- 入站、取消、恢复与交付回归仍通过；准入拒绝不持久化正文、不触发附件、Agent 或工具副作用。
-- 所有仓内入站调用方使用新命名；没有重复装配工厂或新增跨层依赖。
-- Console 配置归属、历史任务快照和关联字段保持；组件目录采用分组措辞。
-- 保留已有未提交改动和受保护脚本；不暂存、提交、部署或修改真实机器人配置与 workspace。
-
 ## Acceptance
 
 - 本规格是唯一长期基线，SDD 规范、模板、协作入口和当前架构说明引用同一事实源。
 - 后续相关规格明确说明职责、结构化交接和依赖方向；普通修复不增加文档负担。
 - 装配、Console、Evaluation、直接 Gateway 客户端与提前结束的操作不被误算为额外运行层或缺层错误。
 - 代表性违规依赖被现有检查拒绝；当前合法依赖和配套入口通过，不增加第二套检查器。
-- 历史规格保留原始实施与验证记录；当前规范引用不将旧分层描述作为现行标准。
+- 历史规格保留设计取舍和实施背景；当前规范引用不将旧分层描述作为现行标准。
 - 本次不改变运行流程、数据和界面；保留已有改动与暂存状态，不提交、部署或操作真实实例。
 
 ## Verification
 
-### 架构基线固化验证
+- 运行 SDD 与架构检查，验证反向依赖拒绝、结构化端口、实例装配、ACP 直接入口、Console 和独立 Evaluation 边界。
+- 核对相关规格与文档链接、四层职责和交接一致性；元数据与章节结构遵循 SDD-lite。
+- 涉及运行行为时执行 Channel、Gateway、Application、实例宿主及交付/取消定向回归；涉及展示时检查前端分组和响应式交互。
+- 静态依赖与受控 Agent/OneBot 夹具不能证明真实模型、QQ 或生产启停。
 
-2026-09-09 本次使用隔离 worktree 与 Python 3.13.15 验证：
-
-- SDD 与架构专项测试：29 passed，包含反向依赖拒绝、合法结构化端口、实例装配、ACP、Console
-  与独立 Agent 评测的静态依赖用例。
-- scripts/check_repo.py fast：9 项检查通过；3010 passed、1 skipped、122 subtests passed。
-  跳过项为 Windows 路径大小写专属用例；架构为 517 模块、1637 条静态边、0 个环。
-- 22 个本地文档链接可解析；历史 Design、Acceptance 和 Verification 的原文保留检查通过；
-  git diff --check 通过。运行源码、SDD 格式检查器与现有架构规则没有修改。
-
-本次只修改规范、引用和回归测试，保留原有 SDD 四个元数据字段和四个章节。未执行真实模型、
-QQ 或生产启停端到端验证；以下历史结果不作为本次验收证据。
-
-### 2026-09-08 首次定义实施验证（历史原文）
-
-2026-09-08 本次在承接当前未提交内容的隔离工作树中验证，使用 Python 3.10.12、pytest 9.1.1，
-固定 PYTHONPATH=src 并核对实际导入来源：
-
-- Gateway、Channel、Application、实例宿主、观测配置与 Evaluation 服务接口专项回归：141 passed。
-- npm --prefix console/web test：11 个文件、115 项测试通过；npm --prefix console/web run build 通过。
-- scripts/check_repo.py fast：2903 passed、1 skipped、127 subtests passed；SDD、公开信息边界、
-  架构、依赖清单、UTF-8、Ruff、类型和组件目录检查通过。架构为 521 个模块、1607 条静态依赖、0 个环。
-- 当前生产构建的 Chrome headless 验收：1440×1000 与 390×844 下 5 项检查通过、0 页面异常，
-  覆盖分组措辞、原分组筛选和键盘 Enter/Tab/Space；API 使用确定性夹具，未连接真实机器人。
-- 9 个 Python 文件去除文档字符串并执行约定改名后的 AST 与实施前一致；配置投影、存储、展示
-  映射和受保护脚本的内容及 mode 未变。69 个相对文档链接可解析，git diff --check 通过。
-
-首次 fast 的公开信息检查命中两个临时依赖软链接中的机器路径；移除本次创建的链接后重新执行
-完整 fast 通过，未修改扫描规则。默认仓库环境缺少 pytest，验证使用已有完整测试环境，不改动
-默认环境。各专项与 fast 有重叠，不合计测试数量。
-
-本次未运行 full profile 的打包及其他专属检查，未执行真实模型、QQ/NapCat、MCP/CDN 或生产启停。
-浏览器范围为组件目录，不将其描述为机器人实例页或真实消息端到端验收。全部交付保持未暂存、
-未提交，不部署、不替换运行服务前端产物，不修改真实配置或 workspace。
+检查范围与命令按 [开发与验证约定](../../docs/guides/development.md) 选择；单次结果保留在交付说明或 CI 日志中。

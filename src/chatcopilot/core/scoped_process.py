@@ -41,10 +41,10 @@ def scope_mounts(scope: ExecutionScope) -> list[str]:
         if (
             not root.is_absolute()
             or root.resolve() != root
-            or not root.is_dir()
+            or not (root.is_dir() or root.is_file())
             or root.is_symlink()
         ):
-            raise ValueError("execution scope requires canonical existing directories")
+            raise ValueError("execution scope requires canonical existing files or directories")
     args = _parents(roots)
     for root in sorted(roots, key=lambda p: len(p.parts)):
         args.extend(
