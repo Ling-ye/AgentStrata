@@ -41,7 +41,7 @@ uv run agentstrata botspec validate bots/lingye-copilot-qq/bot.yaml
 
 检查入口也接受可重复的 `--changed-path`。隔离候选的清单由调用方提供，不从操作者仓库补取；
 没有提供时会明确显示未评估变更影响，而非“无变更”。无效的显式基准会报错。
-CI 按 PR 的 base SHA 或 push 的 before SHA 比较；手动运行可填写 `docs_base`，留空只分析工作区。
+当前 CI 仅执行公开边界与 Console 检查，不执行 Python `docs/fast/full` 门禁；提交前按上表在本地选择检查范围。
 
 ## 修改 Console
 
