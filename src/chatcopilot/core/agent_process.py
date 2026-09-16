@@ -150,6 +150,14 @@ class AgentProcessAdapter:
                 body[key] = omitted.messages
                 body["private_reasoning_omission_count"] += omitted.omission_count
             data["snapshot_id"] = event.snapshot_id
+            # Explicit references from the actual model input, without loading bodies in the graph UI.
+            data["input_tool_refs"] = [
+                {"tool_call_id": message["tool_call_id"], "message_index": index}
+                for index, message in enumerate(event.effective_messages)
+                if message.get("role") == "tool"
+                and isinstance(message.get("tool_call_id"), str)
+                and message["tool_call_id"]
+            ]
         elif isinstance(event, ToolAuthorizationChecked):
             process_kind, kind, layer = "permission", "tool_authorization", "authorization"
             entity, status = f"tool:{event.name}", "succeeded" if event.allowed else "failed"

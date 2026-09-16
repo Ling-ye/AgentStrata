@@ -1,28 +1,17 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Empty, Space, Tag } from "@arco-design/web-react";
+import { Alert, Button, Tag } from "@arco-design/web-react";
 import type { GatewayObservation, GatewayRunDetail } from "./model";
-import { DELIVERY_STAGES, layerName, OBSERVATION_NAMES, runState } from "./model";
-import { bodyState, buildRunView, dateTime, duration, runDuration, stepDuration, stepIsOpen, stepState, rememberOpenedSteps, RUNTIME_LAYERS, RUNTIME_OPERATIONS, type FlowItem, type ObservationBody } from "./workbenchModel";
+import { DELIVERY_STAGES, layerName, runState } from "./model";
+import { bodyState, buildRunView, dateTime, duration, runDuration, stepDuration, stepState, RUNTIME_LAYERS, RUNTIME_OPERATIONS, type FlowItem, type ObservationBody } from "./workbenchModel";
 import { ConfigFields, DetailScope, Disclosure, ObservationPayload, TaskDetailState, TextPreview } from "./ObservationContent";
 import ExecutionConfiguration from "./ExecutionConfiguration";
 import TracePanel from "../traces/TracePanel";
 import { agentProcess } from "./agentProcessModel";
 import AgentStreamContent from "./AgentStreamContent";
+import ExecutionWorkspace from "./ExecutionWorkspace";
+import { executionTitle } from "./executionModel";
 
-const EVENT_LABELS: Record<string, string> = {
-  ContextSnapshotPrepared: "准备上下文", session_capabilities: "本次可用能力",
-  InputResourcesDispatched: "输入资源", TurnError: "任务异常",
-  AgentProcessCaptureFailed: "执行过程采集失败",
-  ToolCatalogObserved: "MCP 工具接入",
-};
-function label(event: GatewayObservation) {
-  if (event.kind === "ToolCatalogObserved") return event.data?.catalog_phase === "failed" ? "MCP 工具接入失败" : event.data?.catalog_phase === "list_response_prepared" ? "已处理 MCP 工具列表请求" : "MCP 服务初始化";
-  const name = event.name || event.model || String(event.data?.name || event.data?.model || "");
-  if (event.kind.startsWith("LlmCall")) return "模型调用 · " + (name || "未记录模型");
-  if (event.kind.startsWith("Tool")) return "工具调用 · " + name;
-  return name || EVENT_LABELS[event.kind] || OBSERVATION_NAMES[event.kind] || event.kind;
-}
 const METADATA = new Set(["name", "model", "trace_id", "span_id", "parent_span_id", "depth", "configuration_id", "context_snapshot_id", "snapshot_id", "flow_version", "runtime_layer", "stage_span_id"]);
 function visibleMetadata(event?: GatewayObservation) {
   return Object.fromEntries(Object.entries(event?.data ?? {}).filter(([key, value]) => !METADATA.has(key) && value !== "" && value != null));
@@ -63,9 +52,8 @@ function route(event: GatewayObservation) {
   return typeof source === "string" && typeof target === "string" ? name(source) + " → " + name(target) : "";
 }
 
-function StepCard({ item, index, open, terminal, scope, onToggle, hasMore }: {
-  item: FlowItem; index: number; open: boolean; terminal: boolean; scope: BodyScope; hasMore: boolean;
-  onToggle: (key: string, value: boolean) => void;
+function StepCard({ item, index, terminal, scope, hasMore }: {
+  item: FlowItem; index: number; terminal: boolean; scope: BodyScope; hasMore: boolean;
 }) {
   const step = item.step;
   const event = step.event;
@@ -89,10 +77,9 @@ function StepCard({ item, index, open, terminal, scope, onToggle, hasMore }: {
     className={"obs-step-card" + (state.status === "failed" ? " is-failed" : "")}
     style={{ "--step-depth": Math.min(step.depth, 6) } as CSSProperties}>
     <div className="obs-step-header">
-      <button type="button" className="obs-step-toggle" aria-expanded={open} aria-controls={"obs-step-body-" + event.seq}
-        onClick={() => onToggle(step.key, !open)}>
+      <div className="obs-step-toggle">
         <span className="obs-step-dot" aria-hidden />
-        <span className="obs-step-main"><span className="obs-step-title"><span className="obs-step-index">{String(index + 1).padStart(2, "0")}</span><strong>{process.supported ? process.title : label(event)}</strong><Tag size="small" color={state.color}>{state.label}</Tag></span>
+        <span className="obs-step-main"><span className="obs-step-title"><span className="obs-step-index">{String(index + 1).padStart(2, "0")}</span><strong>{executionTitle(item)}</strong><Tag size="small" color={state.color}>{state.label}</Tag></span>
           {!process.supported && <span className="obs-step-route">{item.layer && <b>{RUNTIME_LAYERS[item.layer]} · </b>}{route(boundary) || (!item.layer ? "职责归属未记录" : "层内调用")}</span>}
           {summary && <span className="obs-step-summary">{summary}</span>}
           {process.supported && <span className="obs-step-route">{step.agentName}{process.source ? " · " + process.source : ""}{event.data?.backend ? " · " + String(event.data.backend) : ""}
@@ -103,18 +90,17 @@ function StepCard({ item, index, open, terminal, scope, onToggle, hasMore }: {
         <span className="obs-step-facts"><span>{dateTime(step.start?.created_at ?? event.created_at)}</span><strong>{duration(elapsed)}</strong>
           {tokens != null && <span>实际 {tokens.toLocaleString()} Token</span>}
           {typeof estimated === "number" && estimated > 0 && <span>输入估算 {estimated.toLocaleString()} Token</span>}</span>
-        <span className="obs-step-chevron" aria-hidden>{open ? "−" : "+"}</span>
-      </button>
+      </div>
     </div>
     {!step.finish && !!step.deltas?.length && <AgentStreamContent {...scope} expired={!!scope.expired} events={step.deltas} />}
     {process.supported && <div className="obs-step-payloads obs-process-panels">{process.panels.filter((panel) => !panel.secondary &&
       (step.finish || !step.deltas?.length || panel.id === "input")).map((panel) =>
       <DetailScope id={panel.id} key={panel.id}><ObservationPayload {...scope}
         reference={panel.event?.body_ref} captureState={panel.event?.body_state ?? (!terminal && panel.id === "output" ? "pending" : "not_recorded")}
-        title={panel.title} select={panel.select} preview={!open && !process.message && process.kind !== "reasoning"} messages={panel.messages} contentId={panel.id} />
+        title={panel.title} select={panel.select} messages={panel.messages} contentId={panel.id} />
       </DetailScope>)}</div>}
     {step.permissions.length > 0 && <div className="obs-step-permissions"><Permissions events={step.permissions} scope={scope} /></div>}
-    {open && <div className="obs-step-body" id={"obs-step-body-" + event.seq}>
+    <div className="obs-step-body" id={"obs-step-body-" + event.seq}>
       {step.missingParent && <p className="obs-muted">{hasMore ? "上级调用尚未取得，还有后续记录可加载。" : "上级调用未采集，本步骤的输入、结果和状态可独立查看。"}</p>}
       {item.missingStage && <p className="obs-muted">{hasMore ? "所属阶段尚未取得。" : "所属阶段未记录，本步骤保留原始关联。"}</p>}
       {step.delivery && <p className="obs-muted">投递状态来自此消息的交付记录 · {dateTime(step.delivery.observedAt)}</p>}
@@ -137,7 +123,7 @@ function StepCard({ item, index, open, terminal, scope, onToggle, hasMore }: {
       {(boundary.entity_id || boundary.refs?.length) && <ExecutionConfiguration {...scope} event={boundary} />}
       {!!step.logs.length && <section aria-label="步骤日志"><h4>步骤日志</h4><Logs events={step.logs} scope={scope} /></section>}
       <Disclosure title="阶段原始记录"><TextPreview text={JSON.stringify({ start: step.start, finish: step.finish, event: !step.start && !step.finish ? event : undefined }, null, 2)} /></Disclosure>
-    </div>}
+    </div>
   </article></DetailScope>;
 }
 
@@ -173,37 +159,21 @@ function StageCard({ item, terminal, scope, hasMore }: { item: FlowItem; termina
   </article></DetailScope>;
 }
 
-function loadExpanded(key: string): Record<string, boolean> {
-  try {
-    const value = JSON.parse(sessionStorage.getItem(key) || "{}");
-    return value && typeof value === "object" && !Array.isArray(value) ?
-      Object.fromEntries(Object.entries(value).filter(([, item]) => typeof item === "boolean")) as Record<string, boolean> : {};
-  } catch { return {}; }
-}
-
 export default function RunInspector({ instanceId, detail, events, visible, onMore, hasMore, fetchingMore }: {
   instanceId: string; detail: GatewayRunDetail; events: GatewayObservation[]; visible: boolean;
   onMore: () => void; hasMore: boolean; fetchingMore: boolean;
 }) {
   const run = detail.run;
-  const storageKey = "obs:steps:" + instanceId + ":" + run.run_id;
-  const [expanded, setExpanded] = useState(() => loadExpanded(storageKey));
   const [, tick] = useState(0);
   const view = useMemo(() => buildRunView(events, detail), [events, detail]);
-  const stageCount = view.flow.filter((item) => item.kind === "stage").length;
   const terminal = ["completed", "failed", "aborted"].includes(run.state);
   const scope: BodyScope = { instanceId, runId: run.run_id, expired: !!run.details_expired, active: visible };
-  useEffect(() => { setExpanded((current) => rememberOpenedSteps(view.steps, current, terminal)); }, [view.steps, terminal]);
-  useEffect(() => { try { sessionStorage.setItem(storageKey, JSON.stringify(expanded)); } catch { /* Browser storage can be disabled. */ } }, [expanded, storageKey]);
   useEffect(() => {
     if (terminal || !visible) return;
     const timer = window.setInterval(() => tick((value) => value + 1), 1000);
     return () => window.clearInterval(timer);
   }, [terminal, visible]);
-  const toggle = (key: string, value: boolean) => setExpanded((current) => ({ ...current, [key]: value }));
-  let stepIndex = 0;
   return <TaskDetailState instanceId={instanceId} runId={run.run_id}><section className="obs-run" aria-label="任务运行过程">
-    <TracePanel key={run.run_id} endpoint={`/api/bots/${encodeURIComponent(instanceId)}/gateway-observation/runs/${encodeURIComponent(run.run_id)}/trace`} active={!terminal} />
     <header className="obs-run-heading"><div><strong>任务运行</strong><code title={run.run_id}>{run.run_id}</code></div>
       <Tag color={runState(run.state).color}>{runState(run.state).label}</Tag></header>
     <div className="obs-run-meta"><span>开始 {dateTime(run.started_at ?? run.created_at)}</span><span>耗时 {duration(runDuration(run))}</span>
@@ -213,20 +183,15 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
     {!!run.details_expired && <Alert type="info" content="详细正文已到期；任务摘要和阶段指标仍保留。" />}
     {["truncated", "capture_failed"].includes(run.capture_state ?? "") && <Alert type="warning" content={"任务记录" + bodyState(run.capture_state!) + "，部分过程或正文不可用。"} />}
     {(detail.truncated || detail.sanitization_truncated) && <Alert type="warning" content="当前响应包含截断记录，不能视为完整过程。" />}
-    <ObservationPayload {...scope} reference={run.input_ref} title="任务输入" />
+    <Disclosure title="任务输入"><ObservationPayload {...scope} reference={run.input_ref} title="任务输入" /></Disclosure>
     <Disclosure title="执行时配置"><ExecutionConfiguration {...scope} /></Disclosure>
-    <div className="obs-flow-toolbar"><strong>执行过程 · {stageCount > 0 ? `${stageCount} 段 · ` : ""}{view.flow.length - stageCount} 步{hasMore ? "（还有后续记录）" : ""}</strong><Space size="small">
-      <Button size="mini" onClick={() => setExpanded((current) => ({ ...current, ...Object.fromEntries(view.steps.map((step) => [step.key, true])) }))}>展开全部</Button>
-      <Button size="mini" onClick={() => setExpanded((current) => ({ ...current, ...Object.fromEntries(view.steps.map((step) => [step.key, false])) }))}>收起全部</Button>
-    </Space></div>
-    {run.backend === "codex" && !hasMore && !view.steps.some((step) => step.event.data?.process_kind === "reasoning") &&
-      <p className="obs-muted">{terminal ? "本轮未记录公开推理摘要；以下显示已采集的消息与执行活动。" : "正在等待公开摘要或执行活动；模型未提供的内容不会补写。"}</p>}
-    <div className="obs-flow" aria-label="执行时间轴">{view.flow.length ? view.flow.map((item) => item.kind === "stage" ?
-      <StageCard key={item.step.key} item={item} terminal={terminal} scope={scope} hasMore={hasMore} /> :
-      <StepCard key={item.step.key} item={item} index={stepIndex++} open={stepIsOpen(item.step, expanded, terminal)} terminal={terminal} scope={scope}
-        onToggle={toggle} hasMore={hasMore} />) :
-      <Empty description={hasMore ? "尚未取得四层运行过程，可继续加载" : "未采集四层运行过程"} />}</div>
+    <ExecutionWorkspace flow={view.flow} instanceId={instanceId} runId={run.run_id} terminal={terminal} hasMore={hasMore}
+      expired={!!run.details_expired} active={visible} renderDetail={(item) => item.kind === "stage" ?
+        <StageCard key={item.step.key} item={item} terminal={terminal} scope={scope} hasMore={hasMore} /> :
+        <StepCard key={item.step.key} item={item} index={view.steps.findIndex((step) => step.key === item.step.key)} terminal={terminal}
+          scope={scope} hasMore={hasMore} />} />
     {hasMore && <Button long loading={fetchingMore} onClick={onMore}>加载后续记录</Button>}
+    <TracePanel key={run.run_id} endpoint={`/api/bots/${encodeURIComponent(instanceId)}/gateway-observation/runs/${encodeURIComponent(run.run_id)}/trace`} active={!terminal && visible} title="原始执行记录" />
     <section className="obs-run-result">
       <ObservationPayload {...scope} reference={run.result_ref} title="任务结果" />
       {!run.result_ref && !run.details_expired && run.final_text && <TextPreview text={run.final_text} />}
