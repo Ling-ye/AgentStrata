@@ -9,6 +9,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- New code-governance and AI Harness tasks start from remote main and deliver
+  independently verified changes through formal pull requests with squash auto-merge,
+  resumable archives, and task-owned worktree/branch cleanup. Historical tasks stay read-only.
+
 - Public AgentStrata product identity, Python distribution, and CLI entry point.
 - English project landing page, security policy, contribution guide, trademark
   policy, Issue Forms, pull-request template, and third-party notices.

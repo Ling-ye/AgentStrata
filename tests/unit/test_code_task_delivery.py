@@ -256,7 +256,7 @@ def test_github_actor_lookup_preserves_http_failure_semantics(
         def json() -> dict[str, Any]:
             return {}
 
-    monkeypatch.setattr(delivery.requests, "request", lambda *_args, **_kwargs: Response())
+    monkeypatch.setattr(delivery.github_transport.requests, "request", lambda *_args, **_kwargs: Response())
 
     with pytest.raises(ToolHandlerError) as unavailable:
         delivery._verify_github_actor(config, stage="preparing")
@@ -280,7 +280,7 @@ def test_github_actor_lookup_rejects_invalid_json(
         def json() -> dict[str, Any]:
             raise ValueError("invalid GitHub response")
 
-    monkeypatch.setattr(delivery.requests, "request", lambda *_args, **_kwargs: Response())
+    monkeypatch.setattr(delivery.github_transport.requests, "request", lambda *_args, **_kwargs: Response())
 
     with pytest.raises(ToolHandlerError) as invalid:
         delivery._verify_github_actor(config, stage="preparing")

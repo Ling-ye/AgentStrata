@@ -13,7 +13,7 @@ import tempfile
 import time
 from typing import Any, Iterator, Mapping, Sequence
 
-import requests
+from chatcopilot.core import github_transport
 
 from chatcopilot.contracts.code_tasks import validate_code_task_title
 from chatcopilot.contracts.tools import ToolHandlerError
@@ -1017,42 +1017,11 @@ def _github_request(
     json_body: Mapping[str, Any] | None = None,
     stage: str = "delivering",
 ) -> Any:
-    token = config.token
     try:
-        response = requests.request(
-            method,
-            f"{_GITHUB_API_ROOT}{path}",
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {token}",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "AgentStrata-code-task-worker",
-            },
-            params=dict(params or {}),
-            json=dict(json_body) if json_body is not None else None,
-            timeout=_API_TIMEOUT_SECONDS,
-        )
-    except requests.RequestException as exc:
-        raise ToolHandlerError(
-            f"GitHub request failed: {type(exc).__name__}",
-            error_code="code_task_github_unavailable",
-            stage=stage,
-        ) from exc
-    if response.status_code < 200 or response.status_code >= 300:
-        raise ToolHandlerError(
-            f"GitHub request failed with HTTP {response.status_code}",
-            error_code="code_task_github_request_failed",
-            stage=stage,
-            details={"status_code": response.status_code},
-        )
-    try:
-        return response.json()
-    except ValueError as exc:
-        raise ToolHandlerError(
-            "GitHub returned invalid JSON",
-            error_code="code_task_github_response_invalid",
-            stage=stage,
-        ) from exc
+        return github_transport.request(config.token, method, path, params=params, body=json_body)
+    except github_transport.GitHubError as exc:
+        raise ToolHandlerError(str(exc), error_code="code_task_" + exc.code, stage=stage,
+                               details={"status_code": exc.status} if exc.status else {}) from exc
 
 
 def _delivery_state(job_dir: Path) -> dict[str, Any]:
@@ -1119,30 +1088,10 @@ def _verify_github_actor(
     stage: str,
 ) -> str:
     payload = _github_request(config, "GET", "/user", stage=stage)
-    if not isinstance(payload, Mapping):
-        raise ToolHandlerError(
-            "GitHub actor lookup returned an invalid response",
-            error_code="code_task_github_response_invalid",
-            stage=stage,
-        )
-    login = payload.get("login")
-    if (
-        payload.get("type") != "User"
-        or not isinstance(login, str)
-        or _GITHUB_LOGIN_RE.fullmatch(login) is None
-    ):
-        raise ToolHandlerError(
-            "GitHub actor lookup returned an invalid response",
-            error_code="code_task_github_response_invalid",
-            stage=stage,
-        )
-    if login.casefold() != config.actor.casefold():
-        raise ToolHandlerError(
-            "authenticated GitHub actor does not match configured actor",
-            error_code="code_task_github_actor_mismatch",
-            stage=stage,
-        )
-    return login
+    try:
+        return github_transport.actor(payload, config.actor)
+    except github_transport.GitHubError as exc:
+        raise ToolHandlerError(str(exc), error_code="code_task_" + exc.code, stage=stage) from exc
 
 
 def _verify_source_origin(
@@ -1228,64 +1177,10 @@ def _github_git_url(config: GitHubDeliveryConfig) -> str:
 
 
 def _load_token_file(raw: str) -> tuple[Path, str]:
-    if not raw:
-        raise ToolHandlerError(
-            f"{_TOKEN_FILE_ENV} is required",
-            error_code="code_task_github_token_missing",
-            stage="preparing",
-        )
-    candidate = Path(raw).expanduser()
-    if not candidate.is_absolute():
-        raise ToolHandlerError(
-            "GitHub token file must be an absolute non-symlink path",
-            error_code="code_task_github_token_invalid",
-            stage="preparing",
-        )
-    flags = os.O_RDONLY
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(candidate, flags)
-    except OSError as exc:
-        raise ToolHandlerError(
-            "GitHub token file is unavailable",
-            error_code="code_task_github_token_missing",
-            stage="preparing",
-        ) from exc
-    try:
-        info = os.fstat(fd)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
-            or info.st_nlink != 1
-            or stat.S_IMODE(info.st_mode) != 0o600
-        ):
-            raise ToolHandlerError(
-                "GitHub token file must be a single-link file owned by the "
-                "worker user with mode 0600",
-                error_code="code_task_github_token_permissions",
-                stage="preparing",
-            )
-        try:
-            stream = os.fdopen(fd, "r", encoding="utf-8")
-            fd = -1
-            with stream:
-                token = stream.read().strip()
-        except (OSError, UnicodeDecodeError) as exc:
-            raise ToolHandlerError(
-                "GitHub token file is unavailable",
-                error_code="code_task_github_token_missing",
-                stage="preparing",
-            ) from exc
-    finally:
-        if fd >= 0:
-            os.close(fd)
-    if len(token) < 20 or any(char.isspace() for char in token):
-        raise ToolHandlerError(
-            "GitHub token file is empty or malformed",
-            error_code="code_task_github_token_invalid",
-            stage="preparing",
-        )
-    return candidate, token
+        return github_transport.load_token_file(raw)
+    except github_transport.GitHubError as exc:
+        raise ToolHandlerError(str(exc), error_code="code_task_" + exc.code, stage="preparing") from exc
 
 
 @contextmanager

@@ -144,7 +144,7 @@ def test_start_task_cli_passes_feedback_without_changing_commit_option(monkeypat
                      "--repair-hint", "检查分词", "--expected-behavior", "保留换行\n及空格"]) == 0
     kwargs = controller.start_task.call_args.kwargs
     assert kwargs["feedback"].to_payload() == {"repair_hint": "检查分词", "expected_behavior": "保留换行\n及空格"}
-    assert kwargs["review_and_commit"] is False
+    assert "review_and_commit" not in kwargs
     assert "repair-example" in capsys.readouterr().out
 
 
@@ -159,23 +159,12 @@ def test_frontend_cannot_supply_host_paths_or_status(app):
     app.state.harness.start_case_instance.assert_not_called()
 
 
-def test_review_commit_is_explicit_and_boolean(app):
+def test_legacy_commit_option_is_rejected(app):
     with TestClient(app, client=("127.0.0.1", 41000)) as client:
         assert client.post("/api/harness/tasks", json=body()).status_code == 200
-        assert app.state.harness.start_case_instance.call_args.kwargs["review_and_commit"] is False
-        assert (
-            client.post(
-                "/api/harness/tasks", json={**body(), "review_and_commit": True}
-            ).status_code
-            == 200
-        )
-        assert app.state.harness.start_case_instance.call_args.kwargs["review_and_commit"] is True
-        assert (
-            client.post(
-                "/api/harness/tasks", json={**body(), "review_and_commit": "true"}
-            ).status_code
-            == 422
-        )
+        assert "review_and_commit" not in app.state.harness.start_case_instance.call_args.kwargs
+        for value in (True, False, "true"):
+            assert client.post("/api/harness/tasks", json={**body(), "review_and_commit": value}).status_code == 422
 
 
 @pytest.mark.parametrize("field", ["evaluation_id", "case_ref", "target_id"])

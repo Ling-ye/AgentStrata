@@ -35,7 +35,7 @@ def finish_candidate(
     deadline: float,
 ) -> bool:
     task = store.get(task_id)
-    if not task.get("review_and_commit"):
+    if not task.get("delivery") and not task.get("review_and_commit"):
         return True
     worktree = Path(task["worktree"])
     number = attempt["number"]
@@ -148,6 +148,10 @@ def finish_candidate(
             return False
         if manifest_digest(source_manifest(worktree)) != attempt["candidate_digest"]:
             raise HarnessError("workspace_changed", "审核期间候选内容发生变化")
+    if task.get("delivery"):
+        attempt["status"] = "accepted"
+        store.save_attempt(task_id, number, attempt)
+        return True
     attempt["status"] = "committing"
     store.save_attempt(task_id, number, attempt)
     store.update(task_id, stage="commit")

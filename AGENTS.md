@@ -11,7 +11,7 @@
 - 修改前核对仓库、分支、工作区和 worktree，保护用户未提交、已暂存及无关改动。
 - 未经明确授权不执行 add、commit、amend、push、PR、merge、rebase、tag 或 Release；各动作分别判断。
   交互式 AI 默认不暂存、不提交，简短中文提交草案仅在需要时提供。
-  Owner 显式调用的受控 code-worker 交付和 Harness review_and_commit 的精确例外，见
+  Owner 显式调用的受控 code-worker 交付和新 Harness 任务 PR 自动交付的精确例外，见
   [Git 交付契约](docs/ai-contracts-operations.md)；它们不授权交互式 AI 提交。
 - 默认使用 WSL/Linux。实际越过权限、秘密或数据完整性边界时立即披露。
 - 保持干净的当前设计，不增加推测性兼容层；涉及旧接口或数据兼容风险时先说明并询问处理方式。

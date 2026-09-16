@@ -8,13 +8,14 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from tests.harness_delivery_fixture import offline_harness_delivery  # noqa: F401
 
 from chatcopilot.core.private_sqlite import private_directory
 from chatcopilot.core.source_snapshot import git_output, source_manifest
 from chatcopilot.harness.api import HarnessController
 from chatcopilot.harness.local_commit import LocalCommitter
 from chatcopilot.harness.local_verifier import LocalVerifier
-from chatcopilot.harness.models import HarnessError, RepairFeedback, RepairOptions
+from chatcopilot.harness.models import RepairFeedback, RepairOptions
 from test_case_harness import run_task
 from test_case_harness import FakeCoder, FakeEvaluator
 
@@ -62,9 +63,9 @@ def setup(repository, tmp_path):
         "sample-suite:b",
         "main",
         RepairOptions("test-model"),
-        review_and_commit=True,
         launch=False,
     )
+    controller.store.update(task["task_id"], delivery=None, review_and_commit=True)
     publisher = LocalCommitter(ROOT)
     publisher.checks = Mock()
     return controller, task["task_id"], evaluator, publisher
@@ -163,10 +164,9 @@ def test_enabling_review_changes_request_identity_but_old_requests_keep_behavior
 ):
     controller = HarnessController(repository, root=tmp_path / "private", evaluator=FakeEvaluator())
     args = ("eval-source", "sample-suite:b", "main", RepairOptions("test-model"))
-    old = controller.start(*args, request_id="stable", launch=False)
-    new = controller.start(*args, review_and_commit=True, launch=False)
-    assert old["task_id"] != new["task_id"] and not old["review_and_commit"]
-    with pytest.raises(HarnessError, match="内容已变化"):
+    task = controller.start(*args, request_id="stable", launch=False)
+    assert task["delivery"]["base_branch"] == "main"
+    with pytest.raises(TypeError, match="review_and_commit"):
         controller.start(*args, request_id="stable", review_and_commit=True, launch=False)
 
 
@@ -283,9 +283,10 @@ def test_robot_fix_and_identical_frozen_regression_share_one_commit(repository, 
         repository, root=tmp_path / "private", task_reader=lambda *_: robot_source()
     )
     task = controller.start_task(
-        "sample", "run-example", RepairOptions("test-model"), review_and_commit=True, launch=False,
+        "sample", "run-example", RepairOptions("test-model"), launch=False,
         feedback=feedback,
     )
+    controller.store.update(task["task_id"], delivery=None, review_and_commit=True)
     publisher = LocalCommitter(ROOT)
     publisher.checks = Mock()
     result = run_task(

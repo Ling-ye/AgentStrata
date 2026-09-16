@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from tests.harness_delivery_fixture import offline_harness_delivery, frozen_test_source, approve_fixture  # noqa: F401
 
 from chatcopilot.core.private_sqlite import private_directory
 from chatcopilot.evals.agent_case import SCHEMA, case_identity, validate_case
@@ -178,17 +179,20 @@ def test_preparation_budget_is_not_reset(tmp_path, monkeypatch):
 
 
 def test_waiting_image_continuation_is_idempotent_and_keeps_budget(tmp_path, monkeypatch):
+    import subprocess
     from pathlib import Path
     from chatcopilot.harness.api import HarnessController
     from chatcopilot.harness.models import RepairFeedback
     from test_harness_sources import robot_source
     client = SimpleNamespace(import_case_image=lambda scope, data: {**reference(scope), "sha256": hashlib.sha256(data).hexdigest()})
-    controller = HarnessController(Path(__file__).resolve().parents[2], root=tmp_path / "harness",
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "clone", "--quiet", "--shared", str(Path(__file__).resolve().parents[2]), str(repository)], check=True)
+    controller = HarnessController(repository, root=tmp_path / "harness",
         evaluator=SimpleNamespace(client=client), task_reader=lambda *_: robot_source())
     original = controller.start_task("sample", "run-example", RepairOptions("test"),
         feedback=RepairFeedback(expected_behavior="理解图片中的内容"), launch=False)
     assert original["status"] == "waiting_input"
-    controller.store.update(original["task_id"], status="blocked", pipeline_version=3, elapsed_seconds=123.5)
+    controller.store.update(original["task_id"], status="blocked", elapsed_seconds=123.5)
     original_record = controller.store.get(original["task_id"])
     continued = controller.continue_task(original["task_id"], launch=False)
     assert continued["task_id"] != original["task_id"] and continued["status"] == "waiting_input"
@@ -254,7 +258,7 @@ def test_revision_after_candidate_rechecks_original_baseline_and_candidate(tmp_p
             assert not marker.exists(), "new test must be prepared on original baseline"
             self.revision += 1
             checks = (f"target-{self.revision}",)
-            return task["source"], RepairHypothesis("fixture", "fixed"), VerificationPlan(checks, checks, (), 1)
+            return frozen_test_source(task, candidate.path), RepairHypothesis("fixture", "fixed"), VerificationPlan(checks, checks, (), 1)
         def run(self, task, candidate, run_id, checks, check):
             fixed = (candidate.path / "src/chatcopilot/core/harness_probe.py").exists()
             calls.append((self.revision, fixed))
@@ -270,7 +274,7 @@ def test_revision_after_candidate_rechecks_original_baseline_and_candidate(tmp_p
         coding.append(1)
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text("VALUE = 'fixed'\n")
         return {}
-    result = run_task(controller.store, task["task_id"], Verifier(), SimpleNamespace(run=code), committer=None)
+    result = run_task(controller.store, task["task_id"], Verifier(), SimpleNamespace(run=code, review=approve_fixture), committer=None)
     assert result["status"] == "fixed", result.get("message")
     assert len(coding) == 1
     assert calls == [(1, False), (1, True), (2, False), (2, True)]

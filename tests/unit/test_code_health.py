@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from tests.harness_delivery_fixture import offline_harness_delivery  # noqa: F401
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -46,7 +47,11 @@ def repo(tmp_path):
     return root
 
 
-def start(repo, tmp_path, *, options=None, request="health-request", scope="all"):
+def start(repo, tmp_path, *, options=None, request="health-request", scope="all", commit_fixture=True):
+    if commit_fixture and git(repo, "status", "--porcelain").strip():
+        # Test setup represents committed remote source; operator-dirty tests opt out.
+        git(repo, "add", "--all")
+        git(repo, "commit", "--allow-empty", "-qm", "upstream fixture")
     controller = HarnessController(repo, root=tmp_path / "state")
     task = controller.start_code_health(scope, options or CodeHealthOptions("test-model", {"mode": "time", "seconds": 7200}, max_attempts=1),
                                         request_id=request, launch=False)
@@ -120,23 +125,25 @@ def test_snapshot_patch_preserves_dirty_index_new_deleted_and_modes(repo, tmp_pa
     (repo / ".env").write_text("PRIVATE_DATA=fixture\n")
     index = (repo / ".git/index").read_bytes()
     before = source_manifest(repo)
-    controller, task_id = start(repo, tmp_path)
+    controller, task_id = start(repo, tmp_path, commit_fixture=False)
     raw = controller.store.get(task_id)
-    assert raw["baseline_manifest"] == before
+    assert raw["baseline_manifest"] != before
+    assert "docs/guide.md" in raw["baseline_manifest"]
+    assert "docs/new guide.md" not in raw["baseline_manifest"]
     assert ".env" not in before
     outcome = run_task(controller.store, task_id, Coder(), checks=Checks())
     assert outcome["status"] == "fixed"
     assert source_manifest(repo) == before
     assert (repo / ".git/index").read_bytes() == index
     patch = controller.patch(task_id, 1)
-    assert b"-unused = True" in patch and b"value = 9" in patch
-    assert b"value = 1" not in patch and b"user new file" not in patch
+    assert b"-unused = True" in patch and b"value = 1" in patch
+    assert b"value = 9" not in patch and b"user new file" not in patch
     patch_path = tmp_path / "candidate.patch"
     patch_path.write_bytes(patch)
-    git(repo, "apply", "--check", str(patch_path))
     candidate = Path(outcome["worktree"])
-    assert not (candidate / "docs/guide.md").exists()
-    assert (candidate / "docs/new guide.md").stat().st_mode & 0o111
+    assert (candidate / "docs/guide.md").exists()
+    assert not (candidate / "docs/new guide.md").exists()
+    git(candidate, "apply", "--check", "--reverse", str(patch_path))
     assert git(candidate, "rev-parse", "HEAD").decode().strip() == outcome["base_commit"]
     assert controller.get(task_id)["candidate_available"] is True
 
@@ -169,7 +176,7 @@ def test_review_is_independent_from_publication(repo, tmp_path, decision):
     controller, ident = start(repo, tmp_path)
     result = run_task(controller.store, ident, Coder(review=decision), checks=Checks())
     assert result["status"] == "failed"
-    assert not result["review_and_commit"] and "local_commit" not in result
+    assert result["delivery"]["state"] == "pending" and "local_commit" not in result
     assert "unused = True" in (Path(result["worktree"]) / target()["path"]).read_text()
     assert controller.store.attempts(ident)[0]["review"]["decision"] == decision
 
@@ -204,18 +211,18 @@ def test_protected_changes_fail_and_document_changes_are_allowed(repo, tmp_path)
         ledger.changes(repo, baseline, "all")
 
 
-def test_source_drift_during_freeze_is_blocked(repo, tmp_path, monkeypatch):
-    from chatcopilot.harness import api
-    original = api.copy_sources
+def test_candidate_source_drift_during_freeze_is_blocked(repo, tmp_path, monkeypatch):
+    from chatcopilot.harness import delivery
+    original = delivery.copy_sources
 
     def changing(source, destination, manifest):
         original(source, destination, manifest)
         (source / target()["path"]).write_text("concurrent change\n")
 
-    monkeypatch.setattr(api, "copy_sources", changing)
+    monkeypatch.setattr(delivery, "copy_sources", changing)
     controller, ident = start(repo, tmp_path)
     result = controller.get(ident)
-    assert result["status"] == "blocked" and result["error_code"] == "source_changed"
+    assert result["status"] == "blocked" and result["error_code"] == "snapshot_failed"
 
 
 def test_audit_requires_existing_in_scope_evidence(repo):
@@ -636,14 +643,13 @@ def test_repository_facts_are_frozen_and_checkpoint_context_is_separate(repo, tm
     from chatcopilot.core.source_snapshot import manifest_digest
     if detached:
         git(repo, "checkout", "--detach", "-q")
-    branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD").decode().strip()
     (repo / target()["path"]).write_text("unused = True\nvalue = 9\n")
     controller, ident = start(repo, tmp_path)
     task = controller.store.get(ident)
     git(repo, "checkout", "-q", "-b", "after-task-start")
     run = HealthRun(controller.store, ident, Coder(), Checks())
     audit = run.model_source(snapshot=True)["repository_context"]
-    assert audit["original_branch"] == (None if detached else branch)
+    assert audit["original_branch"] == "main"
     assert audit["base_commit"] == task["base_commit"]
     assert audit["snapshot_digest"] == manifest_digest(task["baseline_manifest"])
     assert audit["directory_kind"] == "source_snapshot" and audit["git_worktree"] is None

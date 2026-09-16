@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Checkbox, Drawer, Input, InputNumber, Select, Space, Table, Tag, Typography } from "@arco-design/web-react";
+import { Alert, Button, Card, Drawer, Input, InputNumber, Select, Space, Table, Tag, Typography } from "@arco-design/web-react";
 import { api } from "../api";
 import PageSection from "../shared/ui/PageSection";
-import { harnessApi, REPAIR_LABELS, repairStatusLabel, sourceLabel, stageLabel,
+import { harnessApi, REPAIR_LABELS, deliveryLabel, repairStatusLabel, sourceLabel, stageLabel,
   type RepairTask, type SourceKind, type SourcePreview, type StartRepair } from "../features/harness/api";
 import { caseInstanceId, selectedInstance } from "../features/harness/caseInstance";
 import { RepairDetail } from "../features/harness/RepairDetail";
@@ -25,7 +25,6 @@ export default function HarnessPage() {
   const [repairHint, setRepairHint] = useState("");
   const [expectedBehavior, setExpectedBehavior] = useState("");
   const [selectedModel, setModel] = useState("");
-  const [reviewAndCommit, setReviewAndCommit] = useState(true);
   const [effort, setEffort] = useState("xhigh");
   const [attempts, setAttempts] = useState(3);
   const [hours, setHours] = useState(2);
@@ -80,7 +79,6 @@ export default function HarnessPage() {
     setExpectedBehavior(task.source.feedback?.expected_behavior ?? "");
     setModel(task.options.model); setEffort(task.options.reasoning_effort);
     setAttempts(task.options.max_attempts); setHours(task.options.timeout_seconds / 3600);
-    setReviewAndCommit(task.review_and_commit ?? false);
     submitted.current = { body: "", requestId: "" };
     openTask("");
     void load(sourceKind, id, task.source.bot_id, false);
@@ -96,7 +94,7 @@ export default function HarnessPage() {
         ...(repairHint.trim() ? { repair_hint: repairHint } : {}),
         ...(kind === "robot_task" && expectedBehavior.trim() ? { expected_behavior: expectedBehavior } : {}),
       } } : {}), model: model.trim(), reasoning_effort: effort,
-      max_attempts: attempts, timeout_seconds: Math.round(hours * 3600), review_and_commit: reviewAndCommit };
+      max_attempts: attempts, timeout_seconds: Math.round(hours * 3600) };
     const identity = JSON.stringify(body);
     if (submitted.current.body !== identity) submitted.current = { body: identity, requestId: crypto.randomUUID() };
     setStarting(true); setError("");
@@ -167,10 +165,9 @@ export default function HarnessPage() {
               {!inspection.isFetching && !inspection.isError && !models.error && !!selectedModel && !models.options.some(option => option.value === selectedModel) &&
                 <Alert type="warning" content="原修复模型当前不可用，请重新选择模型。" />}
               <Text type="secondary">真实 Agent 每个验证 Case 最多 {(2 * attempts + 1) * Math.max(3, preview.repetitions ?? 3)} 次执行（基线、候选与独立确认）；完整数量在验证计划冻结后展示，评分和回归共用总预算。</Text>
-              <Checkbox checked={reviewAndCommit} disabled={starting} onChange={setReviewAndCommit}>AI 审核通过后，收录回归测试并创建本地提交（不推送）</Checkbox>
-              <Text type="secondary">从本地 HEAD 创建专属 worktree 和分支。目标和保护集通过后执行所选后续动作；审核与提交共用本次预算，合入主分支由你决定。</Text>
+              <Text type="secondary">从最新远端 main 创建专属分支，复测与独立审核通过后创建正式 PR，等待 CI 通过自动合并。PR 交付后自动归档并清理本地工作区。</Text>
               <Button type="primary" loading={starting} disabled={blocked || loading || inspection.isFetching || inspection.isError || !!models.error || !models.options.some(option => option.value === model) || (kind === "evaluation" && (!trial || !["failed", "error"].includes(trial.outcome)))} onClick={() => void start()}>
-                开始修复</Button>
+                开始修复并自动交付 PR</Button>
             </>}
           </>}
         </Space>
@@ -186,6 +183,7 @@ export default function HarnessPage() {
           pagination={{ current: page, pageSize: 20, total: history.data?.total ?? 0, onChange: setPage }} columns={[
             { title: "来源", width: 340, render: (_, task) => <Button type="text" onClick={() => openTask(task.task_id)} style={{ whiteSpace: "normal", height: "auto", textAlign: "left", overflowWrap: "anywhere" }}>{sourceLabel(task)}</Button> },
             { title: "状态", render: (_, task) => <Tag color={task.status === "fixed" ? "green" : "blue"}>{repairStatusLabel(task)}</Tag> },
+            { title: "PR 交付", render: (_, task) => task.delivery ? <Tag>{deliveryLabel(task.delivery.state)}</Tag> : "历史记录" },
             { title: "阶段", render: (_, task) => stageLabel(task.stage) },
             { title: "更新时间", render: (_, task) => new Date(task.updated_at * 1000).toLocaleString() },
             { title: "操作", render: (_, task) => <Button size="small" onClick={() => openTask(task.task_id)}>查看记录</Button> },

@@ -17,25 +17,17 @@ from typing import Any, Callable
 from chatcopilot.core.private_sqlite import json_text, private_directory, private_file
 from chatcopilot.core.source_snapshot import (
     copy_sources,
-    git_output,
     manifest_digest,
     source_manifest,
 )
 from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
-from chatcopilot.harness.config import configuration
+from chatcopilot.harness.config import configuration, default_root
 from chatcopilot.harness.models import ACTIVE, HarnessError, RepairFeedback, RepairOptions, safe_error
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.sources import RepairSources
 from chatcopilot.harness.models import PIPELINE_VERSION, GOVERNANCE_VERSION, CodeHealthOptions, ProblemEvidence, SourceReader
 from chatcopilot.harness.workspace import context_key
 
-
-def default_root(repository: Path) -> Path:
-    configured = configuration().get("CHATCOPILOT_HARNESS_ROOT")
-    if configured:
-        return Path(configured).expanduser().absolute()
-    identity = hashlib.sha256(str(repository.resolve()).encode()).hexdigest()[:16]
-    return Path.home() / ".local" / "state" / "agentstrata" / "harness" / identity
 
 
 def _digest(value: Any) -> str:
@@ -71,12 +63,11 @@ class HarnessController:
             "default_model": self.settings.get("CHATCOPILOT_HARNESS_MODEL", ""),
             "defaults": {"reasoning_effort": "xhigh", "max_attempts": 3,
                          "budget": {"mode": "fixed_groups", "count": 1}, "time_budget_seconds": 7200},
-            "base_commit": git_output(self.repository, "rev-parse", "HEAD")}
+            "base_commit": None, "base_branch": "main", "source_mode": "remote_main"}
 
     def start_code_health(self, scope: str, options: CodeHealthOptions, *, request_id: str,
                           launch: bool = True) -> dict[str, Any]:
         from chatcopilot.harness.code_health_rules import SCOPES
-        from chatcopilot.core.source_snapshot import verify_copy
         if not isinstance(options, CodeHealthOptions):
             raise ValueError("代码治理必须明确选择预算模式")
         if scope not in SCOPES or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_id):
@@ -87,37 +78,25 @@ class HarnessController:
             if previous["request_digest"] != request_digest:
                 raise HarnessError("conflict", "同一请求 ID 的内容已变化")
             return self.get(previous["task_id"])
-        commit = git_output(self.repository, "rev-parse", "HEAD")
-        branch = git_output(self.repository, "rev-parse", "--abbrev-ref", "HEAD")
-        manifest = source_manifest(self.repository)
-        digest = manifest_digest(manifest)
-        source = {"kind": "code_health", "scope": scope, "snapshot_digest": digest, "governance_version": GOVERNANCE_VERSION,
-                  "original_branch": None if branch == "HEAD" else branch}
+        from chatcopilot.harness.delivery import remote_baseline
+        delivery = remote_baseline(self.repository, self.settings)
+        commit = delivery["base_sha"]
+        source = {"kind": "code_health", "scope": scope, "snapshot_digest": commit,
+                  "governance_version": GOVERNANCE_VERSION, "original_branch": "main"}
+        digest = commit
         context = _digest(source)
         ident = "repair-" + uuid.uuid4().hex
         task, created = self.store.create({
             "task_id": ident, "pipeline_version": PIPELINE_VERSION, "request_key": request_id,
             "request_digest": request_digest, "context_key": context, "match_key": context,
-            "active_key": _digest([context, asdict(options)]), "base_commit": commit,
-            "repository": str(self.repository), "source": source, "baseline_manifest": manifest,
-            "evidence_digest": digest, "options": asdict(options), "review_and_commit": False,
+            "active_key": _digest([context, asdict(options), delivery]), "base_commit": commit,
+            "repository": str(self.repository), "source": source,
+            "evidence_digest": digest, "options": asdict(options), "delivery": delivery,
             "unit": "agentstrata-harness-" + ident[7:], "dispatch_state": "creating",
         })
-        if created:
-            try:
-                frozen = private_directory(self.store.root / "jobs" / ident) / "source"
-                copy_sources(self.repository, frozen, manifest)
-                verify_copy(frozen, manifest)
-                if (source_manifest(self.repository) != manifest
-                        or git_output(self.repository, "rev-parse", "HEAD") != commit
-                        or git_output(self.repository, "rev-parse", "--abbrev-ref", "HEAD") != branch):
-                    raise HarnessError("source_changed", "冻结期间源码发生变化，请重新启动治理")
-            except Exception as exc:
-                self.store.update(ident, status="blocked", stage="snapshot", dispatch_state="failed",
-                                  error_code=getattr(exc, "code", "snapshot_failed"), message=safe_error(exc))
-            else:
-                if launch:
-                    self._launch(task)
+        if created and self._initialize(task):
+            if launch:
+                self._launch(self.store.get(task["task_id"]))
         return self.get(task["task_id"])
 
     def start(
@@ -129,7 +108,7 @@ class HarnessController:
         *,
         request_id: str | None = None,
         launch: bool = True,
-        review_and_commit: bool = False, feedback: RepairFeedback | None = None,
+        feedback: RepairFeedback | None = None,
     ) -> dict[str, Any]:
         if feedback and feedback.expected_behavior.strip():
             raise ValueError("Case 只能补充修复线索，不能覆盖原评分预期")
@@ -139,19 +118,19 @@ class HarnessController:
             options,
             request_id=request_id,
             launch=launch,
-            review_and_commit=review_and_commit, feedback=feedback,
+            feedback=feedback,
         )
 
     def start_case_instance(
         self, case_instance_id: str, options: RepairOptions, *, request_id: str | None = None,
-        launch: bool = True, review_and_commit: bool = False, feedback: RepairFeedback | None = None,
+        launch: bool = True, feedback: RepairFeedback | None = None,
     ) -> dict[str, Any]:
         if feedback and feedback.expected_behavior.strip():
             raise ValueError("Case 只能补充修复线索，不能覆盖原评分预期")
         return self._start(
             lambda: self.sources.load({"case_instance_id": case_instance_id}),
             {"case_instance_id": case_instance_id}, options,
-            request_id=request_id, launch=launch, review_and_commit=review_and_commit, feedback=feedback,
+            request_id=request_id, launch=launch, feedback=feedback,
         )
 
     def load_source(self, kind: str, source_id: str, bot_id: str = "") -> dict[str, Any]:
@@ -186,7 +165,6 @@ class HarnessController:
         *,
         request_id: str | None = None,
         launch: bool = True,
-        review_and_commit: bool = False,
         feedback: RepairFeedback | None = None,
     ) -> dict[str, Any]:
         return self._start(
@@ -195,7 +173,6 @@ class HarnessController:
             options,
             request_id=request_id,
             launch=launch,
-            review_and_commit=review_and_commit,
             feedback=feedback,
         )
 
@@ -207,14 +184,9 @@ class HarnessController:
         *,
         request_id: str | None,
         launch: bool,
-        review_and_commit: bool,
         feedback: RepairFeedback | None = None,
         continuation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if type(review_and_commit) is not bool:
-            raise ValueError("review_and_commit 必须为布尔值")
-        if review_and_commit:
-            identity = {**identity, "review_and_commit": True}
         feedback_payload = feedback.to_payload() if feedback else {}
         if feedback_payload:
             identity = {**identity, "feedback": feedback_payload}
@@ -233,27 +205,30 @@ class HarnessController:
             raise HarnessError("source_incomplete", "；".join(source["blockers"]))
         if feedback_payload:
             source = {**source, "feedback": feedback_payload}
-        commit = git_output(self.repository, "rev-parse", "HEAD")
+        from chatcopilot.harness.delivery import remote_baseline
+        delivery = remote_baseline(self.repository, self.settings)
+        commit = delivery["base_sha"]
         context = context_key(source)
         signature = source["failure_signature"] or [identity]
         match = _digest({"context": context, "signature": signature})
         active = _digest(
             {
                 "pipeline_version": PIPELINE_VERSION,
+                "delivery": delivery,
                 "match": match,
                 "commit": commit,
                 "options": asdict(options),
                 "cases": source.get("case_ids", []),
                 **({"case_instance_id": source["case_instance_id"]} if source.get("case_instance_id") else {}),
-                **({"review_and_commit": True} if review_and_commit else {}),
                 **({"feedback": feedback_payload} if feedback_payload else {}),
             }
         )
         for old in self.store.history(context_key=context):
             if (
-                old["status"] == "fixed"
+                old.get("pipeline_version") == PIPELINE_VERSION
+                and old["status"] == "fixed"
                 and old["active_key"] == active
-                and self._candidate_available(old)
+                and (self._candidate_available(old) or self._archived_candidate_available(old))
             ):
                 return {**self._public(old), "reused": True}
         task_id = "repair-" + uuid.uuid4().hex
@@ -278,11 +253,14 @@ class HarnessController:
                 "prior_diagnosis": continuation["source"].get("diagnosis"),
                 "prior_evaluations": continuation.get("evaluations", {}),
                 "prior_material": continuation.get("diagnostic_material", {})} if continuation else {}),
-            "review_and_commit": review_and_commit,
+            "delivery": delivery,
             "unit": "agentstrata-harness-" + task_id[7:],
             "dispatch_state": "creating",
         }
         task, created = self.store.create(task)
+        if created and not self._initialize(task):
+            return self.get(task["task_id"])
+        task = self.store.get(task["task_id"])
         if created and bundle:
             from chatcopilot.core.trace_archive import TraceArchive
             try:
@@ -338,6 +316,8 @@ class HarnessController:
 
     def continue_task(self, task_id: str, *, launch: bool = True) -> dict[str, Any]:
         old = self.store.get(task_id)
+        if old.get("pipeline_version") != PIPELINE_VERSION:
+            raise HarnessError("source_archived", "旧任务只读保留，请重新加载来源创建任务")
         if old["status"] in ACTIVE:
             raise HarnessError("conflict", "原任务仍有活动执行，不能创建接续任务")
         if old.get("dispatch_state") == "scheduled" and self._unit_active(old["unit"]):
@@ -386,8 +366,18 @@ class HarnessController:
         identity = {"kind": "robot_task", "bot_id": source["bot_id"], "run_id": source["run_id"]}
         return self._start(lambda: ProblemEvidence(source["run_id"], "robot_task", old["evidence_digest"], source),
             identity, RepairOptions(**old["options"]), request_id="continue-" + task_id,
-            launch=launch, review_and_commit=old.get("review_and_commit", False),
+            launch=launch,
             feedback=RepairFeedback(**source.get("feedback", {})), continuation={**old, "diagnostic_material": material})
+
+    def _initialize(self, task: dict[str, Any]) -> bool:
+        from chatcopilot.harness.delivery import initialize
+        try:
+            initialize(self.store, task["task_id"])
+            return True
+        except Exception as exc:
+            self.store.update(task["task_id"], status="blocked", stage="snapshot", dispatch_state="failed",
+                              error_code=getattr(exc, "code", "snapshot_failed"), message=safe_error(exc))
+            return False
 
     def _launch(self, task: dict[str, Any]) -> None:
         if task["source"].get("kind") == "code_health" and task["source"].get("governance_version") != GOVERNANCE_VERSION:
@@ -400,10 +390,7 @@ class HarnessController:
             directory = private_directory(self.store.root / "jobs" / task["task_id"])
             runtime = directory / "runtime"
             if not runtime.exists():
-                if task["source"].get("kind") == "code_health":
-                    copy_sources(directory / "source", runtime, task["baseline_manifest"])
-                else:
-                    copy_sources(self.repository, runtime, source_manifest(self.repository))
+                copy_sources(self.repository, runtime, source_manifest(self.repository))
             environment = {
                 name: os.environ[name]
                 for name in (
@@ -498,7 +485,7 @@ class HarnessController:
             **self._commit_status(task),
             "candidate_available": None
             if task["source"].get("kind") == "code_health" and task["source"].get("governance_version") != GOVERNANCE_VERSION
-            else self._candidate_available(task) if task["status"] == "fixed" or task.get("checkpoint") else False,
+            else (self._candidate_available(task) or self._archived_candidate_available(task)) if task["status"] == "fixed" or task.get("checkpoint") else False,
             "checkpoint_available": self._checkpoint_available(task),
         }
 
@@ -542,7 +529,13 @@ class HarnessController:
 
     def cancel(self, task_id: str) -> dict[str, Any]:
         task = self.store.get(task_id)
-        if task["status"] not in ACTIVE and not task.get("current_evaluation_id"):
+        if task.get("pipeline_version") != PIPELINE_VERSION:
+            raise HarnessError("source_archived", "旧任务只读保留")
+        self.store.update(task_id, delivery_cancel_requested=True)
+        if task["status"] == "waiting_input":
+            task = self.store.update(task_id, status="cancelled", message="修复任务已取消")
+        if task["status"] not in ACTIVE and (not task.get("current_evaluation_id") or task.get("delivery_evaluation")):
+            self._delivery_action(task_id, "cancel")
             return self.get(task_id)
         changed = self.store.update(
             task_id,
@@ -557,6 +550,23 @@ class HarnessController:
         if task.get("dispatch_state") != "scheduled" or not self._unit_active(task["unit"]):
             self.store.update(task_id, status="cancelled", message="修复任务已取消")
         return self.get(task_id)
+
+    def _delivery_action(self, task_id: str, action: str) -> dict[str, Any]:
+        from chatcopilot.harness.delivery_runtime import launch_delivery
+        task = self.store.get(task_id)
+        if task.get("pipeline_version") != PIPELINE_VERSION or not task.get("delivery"):
+            raise HarnessError("source_archived", "旧任务只读保留")
+        if task["status"] in {*ACTIVE, "waiting_input"}:
+            raise HarnessError("conflict", "修复尚未结束")
+        self.store.update(task_id, delivery_request=action)
+        launch_delivery(self.store, task_id)
+        return self.get(task_id)
+
+    def retry_delivery(self, task_id: str) -> dict[str, Any]:
+        return self._delivery_action(task_id, "retry")
+
+    def retry_cleanup(self, task_id: str) -> dict[str, Any]:
+        return self._delivery_action(task_id, "cleanup")
 
     def resume(self, task_id: str) -> dict[str, Any]:
         task = self.store.get(task_id)
@@ -576,6 +586,10 @@ class HarnessController:
             raise HarnessError("image_required", "请先补充原图，系统会自动继续")
         if task.get("dispatch_state") == "scheduled" and self._unit_active(task["unit"]):
             raise HarnessError("conflict", "原 worker 尚未结束")
+        if task.get("archive") and task.get("worktree") and not Path(task["worktree"]).exists():
+            from chatcopilot.harness.delivery_archive import restore
+            restore(self.store, task_id)
+            task = self.store.get(task_id)
         if task.get("worktree") and manifest_digest(
             source_manifest(Path(task["worktree"]))
         ) != task.get("working_digest"):
@@ -588,6 +602,9 @@ class HarnessController:
                 self.store.save_attempt(task_id, attempt["number"], attempt)
         task, claimed = self.store.claim_resume(task_id)
         if claimed:
+            if task.get("delivery"):
+                task = self.store.update(task_id, delivery_cancel_requested=False,
+                    delivery={**task["delivery"], "state": "pending", "error_code": None})
             self._launch(task)
         return self.get(task_id)
 
@@ -644,8 +661,8 @@ class HarnessController:
 
     def check_log(self, task_id: str, reference: str) -> dict[str, Any]:
         task = self.store.get(task_id)
-        if task["source"].get("kind") != "code_health":
-            raise HarnessError("not_found", "此任务没有代码治理检查")
+        if task["source"].get("kind") != "code_health" and not task.get("delivery"):
+            raise HarnessError("not_found", "此任务没有登记检查日志")
         governance = task.get("governance", {})
         records = [governance.get("before", {}), governance.get("after", {})]
         records.extend(governance.get("baselines", {}).values())
@@ -655,6 +672,9 @@ class HarnessController:
             records.extend((attempt.get("verification", {}), attempt.get("after", {})))
         allowed = {check["log"] for record in records for check in record.get("checks", []) if "log" in check}
         allowed.update(check["log"] for check in task.get("check_logs", []))
+        allowed.update(check["log"] for check in task.get("delivery", {}).get("public_checks", {}).get("checks", []))
+        for record in task.get("delivery_verifications", []):
+            allowed.update(record["path"] + "/" + check["log"] for check in record.get("verification", {}).get("checks", []))
         if reference not in allowed:
             raise HarnessError("not_found", "此任务没有登记该检查日志")
         root = self.store.root / "jobs" / task_id
@@ -714,8 +734,22 @@ class HarnessController:
             raise HarnessError("artifact_changed", "复现测试与验证记录不一致")
         return content
 
+    def _archived_candidate_available(self, task: dict[str, Any]) -> bool:
+        if not task.get("delivery") or not task.get("archive") or not task.get("verified_digest"):
+            return False
+        try:
+            from chatcopilot.harness.delivery_archive import verify_archive
+            _, record = verify_archive(self.store, task)
+            expected = task.get("publication_candidate", {}).get("digest") or task["verified_digest"]
+            return manifest_digest(record["manifest"]) == expected
+        except (OSError, ValueError, HarnessError):
+            return False
+
     @staticmethod
     def _commit_status(task: dict[str, Any]) -> dict[str, Any]:
+        if task.get("delivery"):
+            return {"uncommitted": not bool(task["delivery"].get("commit_sha")),
+                    "commit_state": task["delivery"]["state"], "commit_in_main": None}
         receipt = task.get("local_commit")
         intent = task.get("commit_intent") or {}
         if not receipt and not intent:
@@ -754,7 +788,7 @@ class HarnessController:
                 and manifest_digest(source_manifest(Path(task["worktree"])))
                 == task["verified_digest"]
             )
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError, RuntimeError):
             return False
 
     @staticmethod
@@ -773,6 +807,8 @@ class HarnessController:
                 "match_key",
                 "context_key",
                 "commit_intent",
+                "publication_intent",
+                "publication_candidate",
                 "trace_records",
                 "preparation_input",
             }

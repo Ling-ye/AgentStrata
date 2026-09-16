@@ -175,7 +175,7 @@ class LocalVerifier:
                     prepared.update(test_path=str(frozen), test_nodeids=identifiers, test_nodeid=nodes[0],
                         reproduction_ids=list(identifiers.values()), case_ids=list(identifiers.values()),
                         preparation_trial=trial, preparation_digest=digest)
-                    if task.get("review_and_commit"):
+                    if task.get("delivery") or task.get("review_and_commit"):
                         prepared["regression_id"] = "pytest-" + test_hash
                 if task.get("pipeline_version", 3) >= 4:
                     from chatcopilot.harness.models import review_decision
@@ -272,7 +272,7 @@ class LocalVerifier:
         if cases is None and not list(folder.rglob("test_*.py")):
             return {"case_ids": [], "passed_cases": [], "failed_cases": []}
         result = self._pytest(
-            {**task, "source": {key: value for key, value in task.get("source", {}).items() if key != "test_relative_path" or task.get("review_and_commit")}},
+            {**task, "source": {key: value for key, value in task.get("source", {}).items() if key != "test_relative_path" or task.get("delivery") or task.get("review_and_commit")}},
             worktree, ["tests/unit"], check_cancel,
             selected=[name for name in cases if not name.startswith("repository:")] if cases is not None else None
         )

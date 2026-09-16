@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from tests.harness_delivery_fixture import offline_harness_delivery  # noqa: F401
 from fastapi.testclient import TestClient
 from fastapi.responses import StreamingResponse
 from starlette.requests import Request
@@ -214,7 +215,9 @@ def test_harness_case_instance_resolves_saved_evidence_before_creating_task(tmp_
             service.artifact_root / identifier / "traces").save(capture, "failed")
         file.write_text(json.dumps(result))
         trials = service.client.get(identifier)["result"]["trials"]
-        controller = HarnessController(REPOSITORY_ROOT, root=tmp_path / "repairs", evaluator=ServiceEvaluator(service.client))
+        repository = tmp_path / "repository"
+        subprocess.run(["git", "clone", "--quiet", "--shared", str(REPOSITORY_ROOT), str(repository)], check=True)
+        controller = HarnessController(repository, root=tmp_path / "repairs", evaluator=ServiceEvaluator(service.client))
         preview = controller.load_source("evaluation", trials[1]["case_instance_id"])
         assert not preview["blockers"] and preview["case_instance"]["case_id"] == "b"
         created = controller.start_case_instance(trials[1]["case_instance_id"], RepairOptions("test-model"), request_id="one", launch=False)

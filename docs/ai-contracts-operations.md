@@ -86,7 +86,7 @@
 
 ## Git 写操作只接受当前请求的明确授权
 
-- **Git 写操作只接受当前请求的明确授权**： 当前交互式 AI 协作者不得自行执行 `git add` / `git commit` / `git push`；既有发布自动化例外是 Owner 明确调用 `start_code_task`，由受信 code-worker 在任务专属 `codex/<instance-id>/<task-id>` 分支上提交、非强制推送并创建草稿 PR。 该例外不授权 merge、force-push、部署或修改操作者工作区。另允许操作者明确启用 Harness 的 `review_and_commit`：仅由受信宿主在任务专属 `feat/harness-<task-id>` worktree 中暂存经验证的精确文件清单并创建一个本地提交，提交说明必须标记 AI Harness；不执行 Git hooks、push、PR、merge、rebase、tag 或部署，不扩大编程/审核 Agent 的 Git 权限。
+- **Git 写操作只接受当前请求的明确授权**： 当前交互式 AI 协作者不得自行执行 `git add` / `git commit` / `git push`；既有发布自动化例外是 Owner 明确调用 `start_code_task`，由受信 code-worker 在任务专属 `codex/<instance-id>/<task-id>` 分支上提交、非强制推送并创建草稿 PR。 该例外不授权 merge、force-push、部署或修改操作者工作区。新 Harness/代码治理任务按冻结远端 main 创建 `feat/harness-<task-id>` worktree；启动操作授权受信宿主在独立验收通过后提交精确文件、普通推送、创建正式 PR、启用 squash 自动合并，并在可恢复归档核验后清理任务自有资源。GitHub 检查与审查不得绕过；主干前进需重新验收。历史记录只读，新请求拒绝 `review_and_commit`，不扩大编程/审核 Agent 的 Git 权限；不更新操作者本地 main 或部署。完整契约见 `specs/harness-pr-delivery/spec.md`。
 
 <a id="rule-12"></a>
 

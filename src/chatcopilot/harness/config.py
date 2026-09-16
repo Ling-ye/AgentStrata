@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from pathlib import Path
 
 from chatcopilot.core.private_sqlite import private_file
@@ -10,6 +11,11 @@ from chatcopilot.core.private_sqlite import private_file
 ENVIRONMENT_KEYS = frozenset(
     {
         "CHATCOPILOT_HARNESS_ROOT",
+        "CHATCOPILOT_HARNESS_GITHUB_REPOSITORY",
+        "CHATCOPILOT_HARNESS_GITHUB_ACTOR",
+        "CHATCOPILOT_HARNESS_GITHUB_TOKEN_FILE",
+        "CHATCOPILOT_HARNESS_GIT_AUTHOR_NAME",
+        "CHATCOPILOT_HARNESS_GIT_AUTHOR_EMAIL",
         "CHATCOPILOT_HARNESS_MODEL",
         "CHATCOPILOT_CODEX_BIN",
         "CHATCOPILOT_CODEX_BOT_HOME",
@@ -52,3 +58,11 @@ def configuration() -> dict[str, str]:
                     values[key] = value
     values.update({key: os.environ[key] for key in ENVIRONMENT_KEYS if os.environ.get(key)})
     return values
+
+
+def default_root(repository: Path) -> Path:
+    configured = configuration().get("CHATCOPILOT_HARNESS_ROOT")
+    if configured:
+        return Path(configured).expanduser().absolute()
+    identity = hashlib.sha256(str(repository.resolve()).encode()).hexdigest()[:16]
+    return Path.home() / ".local" / "state" / "agentstrata" / "harness" / identity

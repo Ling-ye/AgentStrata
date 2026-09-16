@@ -1,3 +1,5 @@
+import { DeliveryPanel } from "./DeliveryPanel";
+import { deliveryActive } from "./api";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Empty, Space, Spin, Table, Tag, Typography } from "@arco-design/web-react";
@@ -14,7 +16,7 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
   const [error, setError] = useState("");
   const [showEvidence, setShowEvidence] = useState(false);
   const query = useQuery({ queryKey: ["harness-task", taskId], queryFn: ({ signal }) => harnessApi.get(taskId, signal),
-    retry: false, refetchInterval: value => ACTIVE.includes(value.state.data?.status ?? "") ? 2000 : false });
+    retry: false, refetchInterval: value => deliveryActive(value.state.data) ? 2000 : false });
   const evidence = useQuery({ queryKey: ["harness-evidence", taskId], queryFn: () => harnessApi.evidence(taskId), enabled: showEvidence, retry: false });
   const task = query.data;
   async function action(value: "cancel" | "resume" | "continue") {
@@ -39,14 +41,14 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
   }
   if (query.isPending) return <Spin tip="读取修复记录…" />;
   if (!task) return <Alert type="error" content={String(query.error)} />;
-  const currentPipeline = task.pipeline_version === 5;
+  const currentPipeline = task.pipeline_version === 6;
   return <Space direction="vertical" size={16} style={{ width: "100%", minWidth: 0 }}>
     {(error || query.isError) && <Alert type="error" content={error || String(query.error)} />}
     <Text copyable>{task.task_id}</Text><Text>{sourceLabel(task)}</Text>
     {task.source.case_instance_id && <Text copyable>Case 实例 ID：{task.source.case_instance_id}</Text>}
     <RepairProgress key={taskId} task={task} refreshTask={() => query.refetch()} />
     {task.continued_from && <Text copyable>接续自：{task.continued_from}（已累计原任务用时）</Text>}
-    {!currentPipeline && !ACTIVE.includes(task.status) && <Alert type="info" content="此任务使用旧执行环境，请重新发起或接续修复。原记录保持不变。" />}
+    {!currentPipeline && !ACTIVE.includes(task.status) && <Alert type="info" content="此任务使用旧执行环境，仅保留历史记录；新流程请从来源重新创建任务。" />}
     {currentPipeline && task.next_action === "upload_image" && <section aria-label="补充原图">
       <Alert type="warning" content="请提供原任务中的图片。上传后自动继续，无需判断技术方案；原图仅保存在私有材料中。" />
       <input aria-label="选择原图并继续" type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={busy}
@@ -60,6 +62,7 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
       {task.preparation_revisions.map(revision => <p key={revision.revision}>第 {revision.revision} 版 · {revision.status === "validated" ? "试运行通过" : revision.status === "running" ? "自动修正中" : "已记录失败"}
         {revision.error && `：${revision.error.code} · ${revision.error.message}`}</p>)}
     </section>}
+    <DeliveryPanel task={task} refresh={() => query.refetch()} />
     {task.message && <Alert type={task.status === "fixed" ? "success" : "info"} content={task.message} />}
     {!!task.source.warnings?.length && <Alert type="warning" title="来源证据缺口"
       content={task.source.warnings.map(warning => warning.message).join("；")} />}
@@ -81,14 +84,14 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
     <Space wrap>{ACTIVE.includes(task.status) && <Button status="danger" loading={busy} onClick={() => void action("cancel")}>取消</Button>}
       {["blocked", "interrupted", "cancelled"].includes(task.status) && currentPipeline && !task.source.blockers?.length &&
         <Button loading={busy} onClick={() => void action("resume")}>检查并继续</Button>}
-      {!ACTIVE.includes(task.status) && task.source.kind === "robot_task" && (!currentPipeline || task.status !== "waiting_input") &&
+      {!ACTIVE.includes(task.status) && task.source.kind === "robot_task" && (currentPipeline && task.status !== "waiting_input") &&
         <Button loading={busy} onClick={() => void action("continue")}>接续修复（累计预算）</Button>}
-      {!ACTIVE.includes(task.status) && (!currentPipeline || task.status !== "waiting_input") && (task.source.run_id || task.source.case_instance_id) &&
+      {!ACTIVE.includes(task.status) && (currentPipeline && task.status !== "waiting_input") && (task.source.run_id || task.source.case_instance_id) &&
         <Button disabled={busy} onClick={() => onRestart(task)}>重新发起修复</Button>}
       <Button onClick={() => void query.refetch()}>刷新状态</Button>
       {task.source.test_sha256 && <a href={`/api/harness/tasks/${encodeURIComponent(taskId)}/reproducer`} download>下载冻结复现测试</a>}</Space>
     {task.source.diagnosis && <Alert type="info" title="复现依据" content={`${task.source.diagnosis.reason}；预期行为：${task.source.diagnosis.expected_behavior}`} />}
-    {task.review_and_commit && <section><Text bold>AI 审核</Text>
+    {(task.delivery || task.review_and_commit) && <section><Text bold>AI 审核</Text>
       {(task.attempts ?? []).filter(attempt => attempt.review).map(attempt => <div key={attempt.number} style={{ marginTop: 12 }}>
         <Alert type={attempt.review?.decision === "approved" ? "success" : "warning"}
           title={attempt.review?.decision === "approved" ? "审核通过" : attempt.review?.decision === "rejected" ? "AI 审核认为问题未解决" : "AI 审核未能确认修复"}

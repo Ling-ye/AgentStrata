@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from chatcopilot.evals.service import EvaluationServiceError
 from chatcopilot.gateway.state_store import GatewayStateError
@@ -28,7 +28,6 @@ class CreateRepair(BaseModel):
     feedback: RepairFeedback | None = None
     request_id: str
     model: str = Field(min_length=1)
-    review_and_commit: StrictBool = False
     reasoning_effort: str = "xhigh"
     max_attempts: int = Field(default=3, ge=1)
     timeout_seconds: int = Field(default=7200, ge=1)
@@ -159,7 +158,6 @@ def create(request: Request, body: CreateRepair):
                 body.run_id,
                 options,
                 request_id=body.request_id,
-                review_and_commit=body.review_and_commit,
                 feedback=body.feedback,
             )
         )
@@ -169,7 +167,6 @@ def create(request: Request, body: CreateRepair):
             options,
             feedback=body.feedback,
             request_id=body.request_id,
-            review_and_commit=body.review_and_commit,
         )
     )
 
@@ -306,3 +303,15 @@ async def supply_image(request: Request, task_id: str):
         if len(data) > HARD_IMAGE_INPUT_MAX_BYTES:
             raise HTTPException(413, "图片超过大小上限")
     return _call(lambda: _controller(request).supply_image(task_id, bytes(data)))
+
+
+@router.post("/tasks/{task_id}/retry-delivery")
+def retry_delivery(request: Request, task_id: str):
+    _mutation_access(request)
+    return _call(lambda: _controller(request).retry_delivery(task_id))
+
+
+@router.post("/tasks/{task_id}/retry-cleanup")
+def retry_cleanup(request: Request, task_id: str):
+    _mutation_access(request)
+    return _call(lambda: _controller(request).retry_cleanup(task_id))

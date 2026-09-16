@@ -254,6 +254,10 @@ sed "s#%h/ChatCopilot#$REPO_ROOT#g" "$EVALUATION_TEMPLATE" \
 chmod 644 "$USER_UNIT_DIR/$UNIT_NAME" "$USER_UNIT_DIR/$EVALUATION_UNIT_NAME"
 ok "已安装单元：$USER_UNIT_DIR/$UNIT_NAME"
 ok "已安装单元：$USER_UNIT_DIR/$EVALUATION_UNIT_NAME"
+if ! "$VENV/bin/python" "$REPO_ROOT/scripts/install_harness_delivery_timer.py" --repository "$REPO_ROOT" --no-start; then
+    err "Harness PR 对账单元安装失败"
+    exit 1
+fi
 
 # ---- 4. lingering + Evaluation 健康门禁 + Console ----
 if command -v loginctl >/dev/null 2>&1; then
@@ -270,7 +274,7 @@ fi
 if ! systemctl --user daemon-reload 2>/dev/null; then
     warn "daemon-reload 失败（检查 XDG_RUNTIME_DIR）"
 fi
-if ! systemctl --user enable "$EVALUATION_UNIT_NAME" "$UNIT_NAME" 2>/dev/null; then
+if ! systemctl --user enable "$EVALUATION_UNIT_NAME" "$UNIT_NAME" agentstrata-harness-delivery.timer 2>/dev/null; then
     err "enable 失败。"
     print_service_diagnostics
     exit 1
@@ -305,3 +309,8 @@ ok "完成。浏览器打开： http://localhost:8910"
 echo "  Evaluation：systemctl --user status $EVALUATION_UNIT_NAME"
 echo "  查看状态：systemctl --user status $UNIT_NAME"
 echo "  看日志：  journalctl --user -u $UNIT_NAME -f"
+
+if ! systemctl --user start agentstrata-harness-delivery.timer; then
+    err "Harness PR 对账定时器启动失败"
+    exit 1
+fi

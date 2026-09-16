@@ -854,7 +854,7 @@ HTTP API 可通过 `GET /api/evals/case-instances/<case-instance-id>` 查询单�
 只读 API 为 `GET /api/harness/tasks/<repair-id>/progress`，不创建或恢复任务，也不修改既有日志。
 
 修复绑定被选中的失败实例；模型验证每组至少三次，原重复数更高时沿用。其他已通过
-Case 继续作为回归保护集，其他失败 Case 不要求一起修好。先按原条件确认当前本地 HEAD 仍失败；未提交
+Case 继续作为回归保护集，其他失败 Case 不要求一起修好。先按原条件确认最新远端 main 仍失败；未提交
 修改不进入基线，当前通过则标记「当前未复现」。
 仅支持具有完整定义快照、实际执行 AgentStrata 的隔离 Suite；Profile comparison、
 dry-run 与 direct-LLM 测评不进入修复流程。旧定义缺失时重新运行测评。
@@ -902,16 +902,11 @@ python -m chatcopilot.harness list --page 2 --search <source-id> --status blocke
 每个任务创建 `feat/harness-<id>` 分支和专属 worktree。允许修改运行时产品源码、Bot 提示词及受约束声明；
 模型／backend、凭据位置、资源授权、测试、评分与控制实现固定。候选进行 Python 语法与 Git diff 检查，并
 复测原题单；模型候选还需同条件独立确认。目标和保护集通过才记录「已修复」，其他原失败项可保持失败。此结论仅指
-该 worktree 在指定条件下验证通过。未显式启用审核提交时，只保留未提交产物。
+该 worktree 在指定条件下验证通过，远端交付进度另行展示。
 
-新任务可启用 `--review-and-commit`（Console 默认勾选，API 的同名下划线字段默认
-false）。审核及提交沿用修复任务的模型、推理配置和剩余时间预算，只有一次只读
-审核；拒绝或无法确认后保留问题、理由、证据和产物，不自动修改测试并重审。
-历史任务不自动升级交付方式，也不提供补录操作。
-
-```bash
-python -m chatcopilot.harness start --evaluation <evaluation-id> --case <case-ref> --target <target-id> --model <codex-model> --review-and-commit
-```
+新任务统一进行独立审核、公开边界与秘密检查，然后提交和普通推送任务分支、创建目标为 main 的
+正式 PR，启用 squash 自动合并。旧 `--review-and-commit` / `review_and_commit` 不再接受。
+历史任务、旧补丁和旧 worktree 只读保留，不自动续跑或发布。
 
 机器人复现测试从生成时就采用离线合成数据，在隔离副本按最终回归路径执行，并在
 审核批准后原样收录到 `tests/unit/harness_regressions/`；完整 pytest / CI 和后续
@@ -922,18 +917,36 @@ Case 留在 Evaluation 私有登记中，组合任务只收录合成的确定性
 回归，或用 `evals run --request <request.json>` 执行包含 `case_snapshot` 的冻结请求。
 公开服务客户端提供 `register_case(case)`、`frozen_case(snapshot_id)`；启动 Suite 的请求
 使用 `case_snapshot_id`，服务读取自己的不可变登记数据，不接受客户端替换冻结内容。
-原始日志、账号和任务 ID 只保存在私有数据库；Git 中使用公开回归标识关联。
+原始机器人/测评标识、日志和账号只保存在私有数据库；Git 只使用本次修复 ID 和可公开回归标识关联。
 
-受信宿主将产品修复和新增回归测试生成一个本地提交，说明以 `[AI Harness] 自动修复：`
-开头，并标记 `Generated-by: AI Harness` 与 `Regression-Id`。使用仓库已有 Git 身份；
-身份必须通过公开仓库检查。Ruff、公开信息和敏感信息检查使用 worker 冻结的受信
-版本；Gitleaks 扫描器沿用仓库脚本的固定版本下载及哈希校验，网络或检查不可用时
-停止提交。检查记录保留有界脱敏输出，详情页可查看。编程和审核 Agent 均没有 Git 写权限。
+### Harness PR 交付配置与恢复
 
-提交内容与验证摘要绑定，已有暂存内容或外部修改会阻断。本地 Git 提交意图在推进
-分支前持久化；恢复时核对真实父提交、文件树及说明，不重复创建提交。Git 已完成
-而数据库中断时，先核验并补记回执；不要手动改动任务 worktree 或暂存区。
-自动流程不执行 Git hooks、不推送、不创建 PR、不合入 main 或部署。
+在操作者私有 `harness.env` 中配置 `CHATCOPILOT_HARNESS_GITHUB_REPOSITORY`、
+`CHATCOPILOT_HARNESS_GITHUB_ACTOR`、`CHATCOPILOT_HARNESS_GITHUB_TOKEN_FILE`、
+`CHATCOPILOT_HARNESS_GIT_AUTHOR_NAME` 和 `CHATCOPILOT_HARNESS_GIT_AUTHOR_EMAIL`。
+无秘密示例见 `deploy/wsl/harness.env.example`。token 另存为当前用户拥有、非符号链接、单链接、
+0600 文件；需要目标仓库 Contents/Pull requests 读写，以及读取检查结果和分支保护的权限。
+宿主在启动前及交付前核对实际 GitHub actor，不继承 Bot 的凭据。
+
+仓库应启用 squash、auto-merge，并配置 main 的必需检查。管理员只在设置阶段开启仓库 auto-merge，
+交付身份不绕过保护。安装每分钟一次的短时对账任务（先查看渲染结果）：
+
+```bash
+.venv/bin/python scripts/install_harness_delivery_timer.py --dry-run
+.venv/bin/python scripts/install_harness_delivery_timer.py
+python -m chatcopilot.harness get <repair-id>
+python -m chatcopilot.harness retry-delivery <repair-id>
+python -m chatcopilot.harness retry-cleanup <repair-id>
+```
+
+PR 创建并核实提交后，本地工作区与任务分支会清理；日志、源码快照、回归证据和 Git 恢复档案保留。
+失败任务也先归档再清理，归档损坏、现场外部改动或仍在执行时停止删除。主干前进时自动恢复任务
+工作区、合入最新 main、复验和审核，通过后普通推送；冲突时保留 PR 并报告受阻。
+PR 合并或关闭后，只删除仍指向登记提交的任务远端分支。对账在 Console 关闭后仍可工作。
+
+取消在发布前阻止外部交付，已有 PR 时关闭自动合并并保留 PR；与合并竞争时以 GitHub 回执为准。
+界面分别显示修复、交付和清理结果。“修复成功”不等于“已合并”；CI 失败不能绕过，也不自动扩大
+产品修复范围。新流程不会执行 Git hooks、改写远端历史、更新操作者本地 main 或部署机器人。
 
 测评中心和机器人任务流只展示原始运行事实，修复状态统一显示在 AI Harness 页面。
 新增平台测评由 Evaluation 保存到自己的 `results.sqlite3`；
@@ -958,7 +971,7 @@ worker 凭据目录，不自动继承机器人的 `local.env`。Console 安装�
 ## 代码治理
 
 进入 Console「代码治理」，选择全部源码、运行时、控制台（前后端）或文档范围，填写可用的 Codex
-模型，点击「开始垃圾回收」。默认使用当前工作区快照，包含未提交源码和公开环境示例；
+模型，点击「开始治理并自动交付 PR」。启动时冻结最新远端 main，包含公开环境示例，排除本地未提交改动；
 在预算内逐组优化，每组通过后保存检查点。主表单提供三种停止条件：
 
 - **按修复数量**：默认验收通过 1 个问题组后停止，可调整数量。失败、待判断和重复尝试
@@ -982,7 +995,7 @@ systemd 用户服务、bubblewrap 和项目开发依赖；修改前端时还需�
 普通说明修改由宿主核对实际差异后采用轻量验收，记录定向检查和独立审查；代码、权限或
 标准修改仍须标准验证。轻量验收不生成行为测试或运行两轮 fast。
 验收结果与停止原因分别显示。「已验证累计补丁」相对于启动时的源码快照，组内补丁相对于上一检查点；不能把原工作区此前的修改
-当作此次清理成果。应用补丁前检查当前源码是否仍匹配该快照；提交仍由操作者完成。
+当作此次清理成果。应用补丁前检查当前源码是否仍匹配该快照；新任务通过上述 PR 流程交付。
 
 取消或预算耗尽时保留已经验收的检查点和累计补丁；未验收改动恢复到最近检查点。
 「已达修复数量目标」「已达总时限」和执行故障分别显示。达到数量目标只证明已经
@@ -990,4 +1003,4 @@ systemd 用户服务、bubblewrap 和项目开发依赖；修改前端时还需�
 旧 timeout_seconds 和 step_timeout_seconds 请求不再接受；旧任务参数、结论和补丁保留，不迁移或续跑。
 进程意外停止时保留已持久化检查点；重新启动将创建新快照。不要在任务运行中编辑其候选目录。
 如果依赖、检查器或模型执行失败，先看相应阶段日志；失败或待判断项不会标记为已清理。
-治理不操作测评结果，不调用机器人，不自动提交、推送、创建 PR、合并或部署。
+治理不操作测评结果、不调用机器人。已有验收成果在部分失败或时间耗尽后仍交付；主动取消停止发布。归档、PR 与清理规则同上。

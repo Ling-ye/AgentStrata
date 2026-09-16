@@ -12,7 +12,7 @@ from pathlib import Path
 from chatcopilot.core.private_sqlite import private_directory, private_file, storage_error_details
 from chatcopilot.harness.codex_adapter import CodexCoder
 from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
-from chatcopilot.harness.models import ACTIVE
+from chatcopilot.harness.models import ACTIVE, PIPELINE_VERSION
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.assembly import run_task
 
@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     os.umask(0o077)
     store = HarnessStore(args.root)
     task = store.get(args.task)
-    if task["status"] not in ACTIVE:
+    if task.get("pipeline_version") != PIPELINE_VERSION or task["status"] not in ACTIVE:
         return 0
     directory = private_directory(args.root / "jobs" / task["task_id"])
     fd = os.open(directory / "worker.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -37,13 +37,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     def cancel(_signum, _frame):
-        store.update(args.task, status="cancel_requested")
+        current = store.get(args.task)
+        store.update(args.task, delivery_cancel_requested=True,
+                     **({"status": "cancel_requested"} if current["status"] in ACTIVE else {}))
 
     signal.signal(signal.SIGTERM, cancel)
     signal.signal(signal.SIGINT, cancel)
     try:
-        result = run_task(store, args.task, ServiceEvaluator(), CodexCoder(
-            lambda root, ref: store.register_trace(args.task, root, ref)))
+        with store.creation_guard():
+            result = run_task(store, args.task, ServiceEvaluator(), CodexCoder(
+                lambda root, ref: store.register_trace(args.task, root, ref)))
         return 0 if result["status"] in {"fixed", "not_reproduced", "cancelled"} else 1
     except (sqlite3.Error, OSError) as error:
         if not isinstance(error, sqlite3.Error) and not storage_error_details(error):

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from tests.harness_delivery_fixture import offline_harness_delivery, frozen_test_source, approve_fixture  # noqa: F401
 
 from chatcopilot.core.private_sqlite import private_directory
 from chatcopilot.harness.api import HarnessController
@@ -44,16 +45,16 @@ def robot_source(*, blockers=()):
     RepairFeedback(expected_behavior="保留换行"),
     RepairFeedback("检查输入处理", "保留换行"),
 ])
-def test_feedback_is_saved_separately_and_read_after_restart(tmp_path, feedback):
+def test_feedback_is_saved_separately_and_read_after_restart(tmp_path, feedback, repository):
     original = robot_source()
     before = copy.deepcopy(original)
     root = tmp_path / "private"
-    controller = HarnessController(ROOT, root=root, task_reader=lambda *_: original)
+    controller = HarnessController(repository, root=root, task_reader=lambda *_: original)
     task = controller.start_task(
         "sample", "run-example", RepairOptions("test-model"), feedback=feedback, launch=False
     )
     expected = feedback.to_payload() if feedback else {}
-    reopened = HarnessController(ROOT, root=root)
+    reopened = HarnessController(repository, root=root)
     assert reopened.get(task["task_id"])["source"].get("feedback", {}) == expected
     assert reopened.evidence(task["task_id"]).get("feedback", {}) == expected
     assert reopened.evidence(task["task_id"])["evidence"] == before["evidence"]
@@ -61,8 +62,8 @@ def test_feedback_is_saved_separately_and_read_after_restart(tmp_path, feedback)
     assert reopened.store.get(task["task_id"])["source"]["revision"] == before["revision"]
 
 
-def test_feedback_changes_request_and_candidate_identity_but_keeps_source_history(tmp_path, monkeypatch):
-    controller = HarnessController(ROOT, root=tmp_path / "private", task_reader=lambda *_: robot_source())
+def test_feedback_changes_request_and_candidate_identity_but_keeps_source_history(tmp_path, monkeypatch, repository):
+    controller = HarnessController(repository, root=tmp_path / "private", task_reader=lambda *_: robot_source())
     args = ("sample", "run-example", RepairOptions("test-model"))
     feedback = RepairFeedback("检查输入", "保留换行")
     first = controller.start_task(*args, feedback=feedback, request_id="original", launch=False)
@@ -84,8 +85,8 @@ def test_feedback_changes_request_and_candidate_identity_but_keeps_source_histor
     assert controller.get(first["task_id"])["source"]["feedback"] == feedback.to_payload()
 
 
-def test_empty_feedback_uses_same_identity_as_omitted_feedback(tmp_path):
-    controller = HarnessController(ROOT, root=tmp_path / "private", task_reader=lambda *_: robot_source())
+def test_empty_feedback_uses_same_identity_as_omitted_feedback(tmp_path, repository):
+    controller = HarnessController(repository, root=tmp_path / "private", task_reader=lambda *_: robot_source())
     args = ("sample", "run-example", RepairOptions("test-model"))
     first = controller.start_task(*args, request_id="same", launch=False)
     again = controller.start_task(*args, feedback=RepairFeedback("\n", " "), request_id="same", launch=False)
@@ -156,10 +157,10 @@ def test_mismatched_case_instance_never_resolves_to_a_different_source():
 
 
 def test_task_start_blocker_is_rejected_before_persistence_or_dispatch(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, repository
 ):
     reader = Mock(return_value=robot_source(blockers=["机器人任务尚未结束"]))
-    controller = HarnessController(ROOT, root=tmp_path / "private", task_reader=reader)
+    controller = HarnessController(repository, root=tmp_path / "private", task_reader=reader)
     launch = Mock()
     monkeypatch.setattr(controller, "_launch", launch)
     with pytest.raises(HarnessError, match="尚未结束"):
@@ -172,10 +173,10 @@ def test_task_start_blocker_is_rejected_before_persistence_or_dispatch(
     assert controller.list()["tasks"] == []
 
 
-def test_task_missing_archive_dispatches_and_keeps_feedback_and_gaps(tmp_path, monkeypatch):
+def test_task_missing_archive_dispatches_and_keeps_feedback_and_gaps(tmp_path, monkeypatch, repository):
     source = {**robot_source(), "warnings": [{"code": "trace_unavailable", "message": "归档失败"}]}
     reader = Mock(return_value=source)
-    controller = HarnessController(ROOT, root=tmp_path / "private", task_reader=reader)
+    controller = HarnessController(repository, root=tmp_path / "private", task_reader=reader)
     launch = Mock()
     monkeypatch.setattr(controller, "_launch", launch)
     result = controller.start_task(
@@ -195,11 +196,11 @@ def test_task_missing_archive_dispatches_and_keeps_feedback_and_gaps(tmp_path, m
     launch.assert_called_once()
 
 
-def test_history_pagination_search_and_bot_binding(tmp_path):
+def test_history_pagination_search_and_bot_binding(tmp_path, repository):
     def reader(bot, run):
         return {**robot_source(), "bot_id": bot, "run_id": run}
 
-    controller = HarnessController(ROOT, root=tmp_path / "private", task_reader=reader)
+    controller = HarnessController(repository, root=tmp_path / "private", task_reader=reader)
     for index in range(23):
         controller.start_task("sample", f"run-{index}", RepairOptions("test-model"), launch=False)
     first, second = controller.list(), controller.list(page=2)
@@ -306,8 +307,7 @@ class LocalFixture:
 
     def prepare(self, task, worktree, coder, options, check_cancel):
         return {
-            **task["source"],
-            "test_sha256": "frozen-test",
+            **frozen_test_source(task, worktree),
             "case_ids": ["reproduction", "protected", "old_failure"],
         }
 
@@ -330,7 +330,7 @@ class LocalFixture:
                     for case in case_ids
                 ]
             },
-            "test_sha256": "frozen-test",
+            "test_sha256": task["source"]["test_sha256"],
         }
 
 
@@ -351,7 +351,7 @@ def test_daily_task_fix_is_gated_by_target_and_previously_passing_tests(
         )
         return {}
 
-    coder = SimpleNamespace(run=code)
+    coder = SimpleNamespace(run=code, review=approve_fixture)
     evaluator = Mock()
     result = run_task(
         controller.store, task["task_id"], evaluator, coder, local_verifier=LocalFixture()
@@ -359,7 +359,7 @@ def test_daily_task_fix_is_gated_by_target_and_previously_passing_tests(
     assert result["status"] == ("failed" if regression else "fixed")
     assert result["protected_cases"] == ["protected"]
     assert result["current_evaluation_id"] is None
-    assert result["evaluations"]["verify-1"]["test_sha256"] == "frozen-test"
+    assert result["evaluations"]["verify-1"]["test_sha256"] == result["source"]["test_sha256"]
     evaluator.run.assert_not_called()
     assert not evaluator.cancel.called
 
@@ -368,7 +368,7 @@ def test_daily_task_fix_is_gated_by_target_and_previously_passing_tests(
 def test_repository_skip_is_not_a_target_failure_or_a_passing_regression(repository, tmp_path, candidate_outcome, status):
     class Local(LocalFixture):
         def prepare(self, task, *args):
-            return {**task["source"], "test_sha256": "frozen-test", "case_ids": ["reproduction"]}
+            return {**super().prepare(task, *args), "case_ids": ["reproduction"]}
 
         def regressions(self, task, worktree, check_cancel, checks=None):
             changed = (worktree / "src/chatcopilot/core/harness_probe.py").exists()
@@ -383,7 +383,7 @@ def test_repository_skip_is_not_a_target_failure_or_a_passing_regression(reposit
     def code(worktree, *_):
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text("VALUE = 'fixed'\n")
         return {}
-    result = run_task(controller.store, task["task_id"], Mock(), SimpleNamespace(run=code), local_verifier=Local())
+    result = run_task(controller.store, task["task_id"], Mock(), SimpleNamespace(run=code, review=approve_fixture), local_verifier=Local())
     assert result["status"] == status
     assert result["regression_baseline"]["passed_cases"] == ["required"]
     assert result["regression_baseline"]["rows"]["platform-only"]["outcome"] == "skipped"

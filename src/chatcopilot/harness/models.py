@@ -9,8 +9,8 @@ import os
 
 from chatcopilot.core.observability_redaction import redact_observability_payload
 
-PIPELINE_VERSION = 5
-GOVERNANCE_VERSION = 4
+PIPELINE_VERSION = 6
+GOVERNANCE_VERSION = 5
 
 ACTIVE = frozenset({"queued", "running", "cancel_requested"})
 TERMINAL = frozenset({"fixed", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})

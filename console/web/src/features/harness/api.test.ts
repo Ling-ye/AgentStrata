@@ -53,3 +53,22 @@ it("keeps local commit and main inclusion as separate facts", () => {
   expect(stageLabel("review")).toBe("AI 审核");
   expect(stageLabel("commit")).toBe("本地提交");
 });
+
+it("keeps repair acceptance separate from PR and cleanup outcomes", async () => {
+  const { deliveryLabel, deliveryActive } = await import("./api");
+  const task = { status: "fixed", delivery: { state: "checks_failed" }, cleanup: { local: "cleaned" } } as RepairTask;
+  expect(repairStatusLabel(task)).toBe("修复验收通过");
+  expect(deliveryLabel(task.delivery!.state)).toBe("CI 未通过");
+  expect(deliveryActive(task)).toBe(true);
+  expect(deliveryActive({ ...task, delivery: { ...task.delivery!, state: "merged" } })).toBe(false);
+});
+
+it("sends explicit delivery and cleanup retries to task-owned endpoints", async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ task_id: "repair-example" }) });
+  vi.stubGlobal("fetch", fetch);
+  await harnessApi.action("repair-example", "retry-delivery");
+  await harnessApi.action("repair-example", "retry-cleanup");
+  expect(fetch.mock.calls.map(call => call[0])).toEqual([
+    "/api/harness/tasks/repair-example/retry-delivery", "/api/harness/tasks/repair-example/retry-cleanup",
+  ]);
+});

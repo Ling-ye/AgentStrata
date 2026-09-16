@@ -10,7 +10,8 @@ created: 2026-09-13
 ## Summary
 
 Harness v4 在冻结前试运行和修订复现方案，按不可缩减的用户预期组合验证。
-保留 v3 记录和 worker；接续创建新的执行记录并继承已用预算。
+旧记录只读保留；当前协议内的接续继承已用预算。新任务的交付与清理见
+[PR 交付契约](../harness-pr-delivery/spec.md)。
 
 ## Design
 

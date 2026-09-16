@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
+from tests.harness_delivery_fixture import offline_harness_delivery  # noqa: F401
 
 from chatcopilot.core.source_snapshot import git_output, manifest_digest, source_manifest
 from chatcopilot.evals.application.result_store import EvaluationResultStore
@@ -117,6 +118,11 @@ class FakeCoder:
         self.calls += 1
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text(f"VALUE = {text!r}\n")
         return {"summary": text}
+
+    def review(self, worktree, evidence, options, output, check_cancel):
+        check_cancel()
+        return {"decision": "approved", "problem": "", "reason": "controlled independent review",
+                "evidence_refs": ["source", "patch", "verification"]}
 
 
 def task_fixture(repository, tmp_path, evaluator, *, attempts=3):

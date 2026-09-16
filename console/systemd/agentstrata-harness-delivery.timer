@@ -1,0 +1,10 @@
+[Unit]
+Description=Check pending AgentStrata Harness PR deliveries
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+Unit=agentstrata-harness-delivery.service
+
+[Install]
+WantedBy=timers.target

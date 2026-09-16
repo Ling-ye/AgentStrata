@@ -16,7 +16,17 @@ export interface Verification {
 export interface Review {
   decision?: "approved" | "rejected" | "inconclusive"; problem?: string; reason?: string; evidence_refs?: string[];
 }
+export interface Delivery {
+  checks?: Array<{ name: string; status: string; conclusion?: string; url?: string }>;
+  state: string; repository: string; base_branch: string; base_sha: string;
+  commit_sha?: string; merge_sha?: string; branch?: string; pr_url?: string; pr_number?: number;
+  auto_merge?: boolean; message?: string; error_code?: string;
+}
 export interface RepairTask {
+  delivery?: Delivery;
+  cleanup?: { local?: string; remote?: string; error?: string };
+  archive?: { digest: string; path: string; head: string };
+
   pipeline_version?: number;
   continued_from?: string;
   next_action?: string;
@@ -56,14 +66,14 @@ export interface RepairProgress {
 export type GovernanceBudget = { mode: "time"; seconds: number } | { mode: "fixed_groups"; count: number } |
   { mode: "discovered_groups"; count: number };
 export type ProgressTask = Pick<RepairTask, "task_id" | "status" | "stage" | "elapsed_seconds" |
-  "heartbeat_at" | "current_attempt" | "preparation_revisions" | "next_action" | "local_commit" | "commit_in_main" | "commit_state"> & {
+  "heartbeat_at" | "current_attempt" | "preparation_revisions" | "next_action" | "local_commit" | "commit_in_main" | "commit_state" | "delivery" | "cleanup" | "archive"> & {
   options: { model: string; max_attempts: number; reasoning_effort: string; timeout_seconds?: number;
     budget?: GovernanceBudget };
   governance_summary?: { accepted_groups?: number; discovered_groups?: number; selected_groups?: number };
 };
 export const ACTIVE = ["queued", "running", "cancel_requested"];
 export const REPAIR_LABELS: Record<string, string> = {
-  queued: "等待启动", running: "执行中", cancel_requested: "正在取消", fixed: "已修复 · 待合入",
+  queued: "等待启动", running: "执行中", cancel_requested: "正在取消", fixed: "修复验收通过",
   waiting_input: "等待原图", not_reproduced: "当前未复现", failed: "修复未通过", blocked: "受阻", cancelled: "已取消", interrupted: "已中断",
 };
 export const ATTEMPT_LABELS: Record<string, string> = {
@@ -82,7 +92,7 @@ export function sourceLabel(task: RepairTask): string {
   return task.source.kind === "robot_task" ? `机器人任务 ${task.source.run_id}` : `测评 ${task.source.evaluation_id} · ${task.source.case_id}`;
 }
 export type StartRepair = { source_kind: SourceKind; case_instance_id?: string;
-  bot_id?: string; run_id?: string; feedback?: RepairFeedback; review_and_commit?: boolean; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number };
+  bot_id?: string; run_id?: string; feedback?: RepairFeedback; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number };
 export async function harnessRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/harness${path}`, init);
   const value = await response.json();
@@ -99,7 +109,7 @@ export const harnessApi = {
   evidence: (taskId: string) => request<Record<string, unknown>>(`/tasks/${encodeURIComponent(taskId)}/evidence`),
   start: (body: StartRepair) => request<RepairTask>("/tasks", post(body)),
   image: (taskId: string, file: File) => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/image`, { method: "POST", body: file }),
-  action: (taskId: string, action: "cancel" | "resume" | "continue") => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/${action}`, { method: "POST" }),
+  action: (taskId: string, action: "cancel" | "resume" | "retry-delivery" | "retry-cleanup" | "continue") => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/${action}`, { method: "POST" }),
 };
 
 export function repairStatusLabel(task: ProgressTask): string {
@@ -108,4 +118,14 @@ export function repairStatusLabel(task: ProgressTask): string {
   if (task.local_commit) return task.commit_in_main === true ? "已进入本地 main" : "已本地提交";
   if (task.commit_state === "unconfirmed") return "本地提交待核验";
   return REPAIR_LABELS[task.status] ?? task.status;
+}
+
+export function deliveryLabel(state: string): string {
+  return ({ pending: "等待交付", committed: "已提交任务分支", pushed: "已推送", pr_open: "PR 已创建",
+    waiting_checks: "等待 CI 与自动合并", checks_failed: "CI 未通过", updating: "同步主干并复验", retryable: "交付等待重试",
+    blocked: "交付受阻", merged: "已合并到远端 main", closed: "PR 已关闭", cancelled: "交付已取消",
+    cancel_pending: "正在停止交付", paused: "自动合并已暂停", no_changes: "无可交付成果" } as Record<string, string>)[state] ?? state;
+}
+export function deliveryActive(task?: { status: string; delivery?: Delivery }): boolean {
+  return !!task && (ACTIVE.includes(task.status) || ["pending", "committed", "pushed", "pr_open", "waiting_checks", "checks_failed", "updating", "retryable", "cancel_pending"].includes(task.delivery?.state ?? ""));
 }

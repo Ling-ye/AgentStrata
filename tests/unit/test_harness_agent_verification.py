@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.harness_delivery_fixture import offline_harness_delivery  # noqa: F401
 
 from chatcopilot.core.candidate_configuration import validate_configuration
 from chatcopilot.core.private_sqlite import private_directory

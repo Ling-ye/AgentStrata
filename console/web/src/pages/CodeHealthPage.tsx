@@ -1,3 +1,5 @@
+import { DeliveryPanel } from "../features/harness/DeliveryPanel";
+import { deliveryActive, deliveryLabel } from "../features/harness/api";
 import { useEffect, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Descriptions, Drawer, Empty, Input, InputNumber, Select, Space, Spin, Table, Tabs, Tag, Typography } from "@arco-design/web-react";
@@ -116,10 +118,10 @@ export default function CodeHealthPage() {
         <Text type="secondary">模型选项来自治理默认配置和已有的机器人编码配置，也可输入其他 Codex 模型名称。</Text>
         {modelsUnavailable && <Alert type="warning" content="部分编码模型配置未能读取，可重试或直接输入模型名称。"
           action={<Button size="small" onClick={() => { void bots.refetch(); inspections.forEach(query => void query.refetch()); }}>重试模型列表</Button>} />}
-        <Text type="secondary">启动时冻结当前工作区，包含未提交源码；清理在隔离工作区完成，交由你审核并提交。</Text>
-        <Space wrap><Button type="primary" loading={starting} disabled={!config.data || !settingsValid || !(model.trim() || config.data.default_model)} onClick={() => void start()}>开始垃圾回收</Button>
+        <Text type="secondary">从最新远端 main 开始治理；已验收成果自动创建正式 PR，等待 CI 通过后合并，随后清理任务资源。</Text>
+        <Space wrap><Button type="primary" loading={starting} disabled={!config.data || !settingsValid || !(model.trim() || config.data.default_model)} onClick={() => void start()}>开始治理并自动交付 PR</Button>
           <Button onClick={() => setRulesOpen(true)}>查看黄金原则</Button>
-          {config.data && <Text type="secondary">当前 HEAD：{config.data.base_commit.slice(0, 10)}</Text>}</Space>
+          {config.data && <Text type="secondary">目标：远端 main（启动时冻结）</Text>}</Space>
         {error && <Alert type="error" content={error} />}
       </Space>
     </PageSection>
@@ -135,6 +137,7 @@ export default function CodeHealthPage() {
         pagination={{ current: page, pageSize: 20, total: history.data?.total ?? 0, onChange: setPage }} columns={[
           { title: "任务", dataIndex: "task_id", width: 210, render: (_, row) => <Button type="text" title={row.task_id} onClick={() => openTask(row.task_id)}>{row.task_id.slice(0, 19)}</Button> },
           { title: "状态", width: 180, render: (_, row) => <Tag title={healthStatus(row)}>{healthStatus(row)}</Tag> },
+          { title: "PR 交付", render: (_, row) => row.delivery ? <Tag>{deliveryLabel(row.delivery.state)}</Tag> : "历史记录" },
           { title: "结果", render: (_, row) => healthSummary(row) },
           { title: "阶段", render: (_, row) => stageLabel(row.stage) },
           { title: "源码基准", render: (_, row) => <Text title={row.source.snapshot_digest}>{row.source.snapshot_digest.slice(0, 10)}</Text> },
@@ -158,7 +161,7 @@ function HealthDetail({ id }: { id: string }) {
   const [cancelling, setCancelling] = useState(false);
   const [logRef, setLogRef] = useState("");
   const query = useQuery({ queryKey: ["code-health-task", id], queryFn: ({ signal }) => healthApi.get(id, signal),
-    retry: false, refetchInterval: state => ACTIVE.includes(state.state.data?.status ?? "") ? 2000 : false });
+    retry: false, refetchInterval: state => deliveryActive(state.state.data) ? 2000 : false });
   const log = useQuery({ queryKey: ["code-health-log", id, logRef], enabled: !!logRef,
     queryFn: ({ signal }) => healthApi.log(id, logRef, signal), retry: false });
   const task = query.data;
@@ -177,6 +180,7 @@ function HealthDetail({ id }: { id: string }) {
   return <Space className="code-health-detail" direction="vertical" size={16} style={{ width: "100%" }}>
     <RepairProgress task={task} refreshTask={() => query.refetch()} title="治理进度" statusLabel={healthStatus(task)} />
     {query.isError && <Alert type="error" content={String(query.error)} />}
+    <DeliveryPanel task={task} refresh={() => query.refetch()} />
     {task.message && <Alert type={task.status === "fixed" && task.candidate_available ? "success" : "info"} content={task.message} />}
     {task.failure && <Alert type="warning" content={<Space direction="vertical">
       <span>失败阶段：{stageLabel(task.failure.stage)}{task.failure.operation && ` · ${task.failure.operation}`}</span>

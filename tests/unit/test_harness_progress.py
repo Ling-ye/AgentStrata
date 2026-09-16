@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from tests.harness_delivery_fixture import offline_harness_delivery  # noqa: F401
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

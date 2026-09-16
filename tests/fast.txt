@@ -96,3 +96,5 @@ tests/integration/test_gateway_onebot_roundtrip.py
 tests/integration/test_access_control.py
 tests/integration/test_acp_streaming_updates.py
 tests/integration/test_lingye_botspec_smoke.py
+
+tests/unit/test_harness_pr_delivery.py

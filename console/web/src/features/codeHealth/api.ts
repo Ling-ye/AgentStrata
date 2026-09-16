@@ -3,7 +3,7 @@ import { harnessRequest, type ProgressTask, type Review, type GovernanceBudget }
 export type Scope = "all" | "runtime" | "console" | "docs";
 export interface Rule { id: string; title: string; detector: string; reference: string; guidance: string }
 export interface HealthConfig {
-  rules: Rule[]; scopes: Array<{ value: Scope; label: string }>; default_model: string; base_commit: string;
+  rules: Rule[]; scopes: Array<{ value: Scope; label: string }>; default_model: string; base_commit: string | null;
   defaults: { reasoning_effort: string; max_attempts: number; budget: { mode: "fixed_groups"; count: number };
     time_budget_seconds: number };
 }
@@ -39,7 +39,7 @@ export interface Coverage {
   blocks: Array<{ path: string; start_line?: number; end_line?: number; sha256: string; block_sha256?: string }>;
 }
 export interface HealthTask extends ProgressTask {
-  base_commit: string; created_at: number; updated_at: number; message?: string; error_code?: string;
+  base_commit: string | null; created_at: number; updated_at: number; message?: string; error_code?: string;
   source: { kind: "code_health"; scope: Scope; snapshot_digest: string };
   branch?: string; worktree?: string; candidate_available?: boolean | null; attempts?: HealthAttempt[];
   check_logs?: Check[]; governance_summary?: HealthSummary; current_group?: string; checkpoint?: Checkpoint;
