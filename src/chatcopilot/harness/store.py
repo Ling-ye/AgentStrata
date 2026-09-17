@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import time
 from contextlib import ExitStack, contextmanager
@@ -30,6 +31,24 @@ class HarnessStore:
     def __init__(self, root: Path) -> None:
         self.root = root.absolute()
         self.database = PrivateDatabase(self.root / "harness.sqlite3", _SCHEMA)
+
+    @contextmanager
+    def control_guard(self, task_id: str):
+        """Serialize control operations without holding a database transaction."""
+        digest = hashlib.sha256(task_id.encode()).hexdigest()
+        with self.creation_guard(), ExitStack() as stack:
+            try:
+                stack.enter_context(private_lock(self.root / ("control-" + digest + ".lock"), timeout=5))
+            except (BlockingIOError, TimeoutError) as exc:
+                raise HarnessError("conflict", "该任务的控制操作尚未结束，请稍后重试") from exc
+            yield
+
+    def active_tasks(self, pipeline_version: int) -> list[str]:
+        with self.database.connect() as connection:
+            placeholders = ",".join("?" for _ in ACTIVE)
+            return [row[0] for row in connection.execute(
+                f"SELECT task_id FROM tasks WHERE status IN ({placeholders}) "
+                "AND json_extract(payload, '$.pipeline_version')=?", (*ACTIVE, pipeline_version))]
 
     @contextmanager
     def creation_guard(self, *, exclusive: bool = False):
@@ -140,7 +159,7 @@ class HarnessStore:
                 raise Cancelled()
             if if_status is not None and current["status"] not in if_status:
                 return current
-            if current["status"] == "cancel_requested" and changes.get("status") in {
+            if current["status"] in {"cancel_requested", "cancelled"} and changes.get("status") in {
                 "running",
                 "fixed",
             }:
@@ -162,7 +181,8 @@ class HarnessStore:
                 )
         return value
 
-    def interrupt(self, task_id: str, *, storage_error: BaseException | None = None) -> dict[str, Any]:
+    def interrupt(self, task_id: str, *, storage_error: BaseException | None = None,
+                  if_status: frozenset[str] = ACTIVE) -> dict[str, Any]:
         """Persist terminal task/attempt state together; never replay failed work."""
         details = storage_error_details(storage_error) if storage_error is not None else None
         if storage_error is not None and details is None:
@@ -178,7 +198,7 @@ class HarnessStore:
                 if row is None:
                     raise HarnessError("not_found", "修复任务不存在")
                 task = json.loads(row[0])
-                if storage_error is None and task["status"] not in ACTIVE:
+                if storage_error is None and task["status"] not in if_status:
                     return task
                 now = time.time()
                 task.update(status="blocked" if storage_error is not None else "interrupted", stage="done",

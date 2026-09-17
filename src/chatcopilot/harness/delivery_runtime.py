@@ -6,14 +6,15 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import subprocess
-import sys
 from typing import Any
 
 from chatcopilot.core.private_sqlite import private_file
 from chatcopilot.harness.config import configuration
 from chatcopilot.harness.delivery import PENDING, reconcile
 from chatcopilot.harness.models import ACTIVE, HarnessError, PIPELINE_VERSION
+from chatcopilot.harness.control_service import HarnessLifecycle
+from chatcopilot.harness.control_types import WorkerState
+from chatcopilot.harness.worker_runtime import SystemdWorkerControl
 from chatcopilot.harness.store import HarnessStore
 
 
@@ -21,27 +22,17 @@ def launch_delivery(store: HarnessStore, task_id: str) -> None:
     task = store.get(task_id)
     if task.get("pipeline_version") != PIPELINE_VERSION or not task.get("delivery"):
         raise HarnessError("source_archived", "旧任务只读保留")
-    runtime = store.root / "jobs" / task_id / "runtime"
-    if not runtime.exists():
-        # A pre-launch failure has no running host; freeze the current trusted host for cleanup.
-        from chatcopilot.core.source_snapshot import copy_sources, source_manifest
-        host = Path(__file__).resolve().parents[3]
-        copy_sources(host, runtime, source_manifest(host))
-    if runtime.resolve() != runtime or not (runtime / "src/chatcopilot/harness/delivery_runtime.py").is_file():
-        raise HarnessError("delivery_runtime_missing", "冻结的交付宿主不可用")
-    unit = "agentstrata-harness-delivery-" + task_id[7:]
-    command = ["systemd-run", "--user", "--quiet", "--collect", "--unit", unit,
-               "--property=Type=exec", "--property=KillMode=control-group", "--property=UMask=0077",
-               "--property=WorkingDirectory=" + str(runtime), "--setenv=PYTHONPATH=" + str(runtime / "src")]
     settings = configuration()
-    for key, value in settings.items():
-        command.append("--setenv=" + key + "=" + value)
-    command += [sys.executable, "-m", "chatcopilot.harness.delivery_runtime", "--root", str(store.root), "--task", task_id]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
-    if result.returncode:
-        active = subprocess.run(["systemctl", "--user", "is-active", unit], capture_output=True, timeout=10)
-        if active.returncode:
-            raise HarnessError("delivery_worker_unavailable", "交付后台任务未启动，请检查 systemd 用户服务")
+    workers = SystemdWorkerControl(Path(__file__).resolve().parents[3], store.root, settings)
+    with store.control_guard(task_id):
+        task = store.get(task_id)
+        if task["status"] in {*ACTIVE, "waiting_input"}:
+            return
+        if workers.observe(task) != WorkerState.INACTIVE:
+            return
+        result = workers.launch_delivery(task)
+        if result.state == "failed":
+            raise HarnessError(result.code, result.message)
 
 
 def pending(store: HarnessStore) -> list[str]:
@@ -104,6 +95,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.task:
         run_one(store, args.task)
     else:
+        from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
+        settings = configuration()
+        socket_path = settings.get("CHATCOPILOT_EVALUATION_SOCKET")
+        lifecycle = HarnessLifecycle(store, SystemdWorkerControl(args.repository_root, store.root, settings),
+            ServiceEvaluator(socket_path=Path(socket_path) if socket_path else None))
+        lifecycle.reconcile_active()
         for ident in pending(store):
             try:
                 launch_delivery(store, ident)

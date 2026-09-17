@@ -16,6 +16,7 @@ Harness 是可选的独立模块，通过同 UID Evaluation 客户端读取结�
 `worker` lane 必须已经登录。凭据操作沿用本文的 Codex 凭据命令，不使用个人桌面
 认证目录。配置文件不执行 shell，仅展开值开头的 `~`、`$HOME`、`${HOME}`；
 进程环境优先。`CHATCOPILOT_HARNESS_ENV` 可指定另一份私有配置文件。
+Console 在启动时装载 Harness 配置快照；修改后重启 Console，现有 worker 仍使用其冻结运行环境。
 
 默认修复数据库位于用户状态目录的 `agentstrata/harness/<repository-hash>/`，
 可通过 `CHATCOPILOT_HARNESS_ROOT` 指定；任务、runtime 快照、补丁和工作区都属于
@@ -29,9 +30,15 @@ python -m chatcopilot.harness --help
 python -m chatcopilot.harness start --evaluation <evaluation-id> --case <case-ref> --target <target-id> --model <codex-model>
 python -m chatcopilot.harness list
 python -m chatcopilot.harness get <repair-id>
+python -m chatcopilot.harness reconcile <repair-id>
 python -m chatcopilot.harness cancel <repair-id>
 python -m chatcopilot.harness resume <repair-id>
 ```
+
+`get/list` 只读取已记录的状态，不再顺带把失联任务改成中断。正常进度由 worker 持续写入，
+异常退出由现有每分钟 Harness 定时任务核对；没有运行定时器时，执行 `reconcile` 主动核对。
+取消显示「取消中」时，不代表进程已经停止；存活未知或外部测评尚未确认结束时保留任务占用，
+排除运行环境故障后再次取消或核对即可。恢复与接续会先确认原执行停止。
 
 创建时可设置 `--max-attempts`（默认 3）、`--timeout-seconds`（默认 7200）、
 `--reasoning-effort` 和稳定 `--request-id`。继续使用原冻结代码和剩余预算；编程阶段

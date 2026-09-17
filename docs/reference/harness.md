@@ -18,6 +18,27 @@ Case/机器人失败修复以冻结证据复现问题；代码治理以远端 ma
 
 ## 修复契约
 
+### 控制与生命周期
+
+`HarnessController` 保留公开操作与查询。`control_types` 定义 worker 存活三态及调度结果，
+`control_service` 通过端口统一取消、恢复、接续与失联核对；`worker_runtime` 持有装配时的配置快照，
+负责 systemd、冻结目录和进程事实。存活判断检查任务的执行锁、修复与交付 unit，以及尚未完成的
+systemd job。调度结果 unknown 不等于进程停止，未知时保留取消请求与任务占用。
+
+控制操作使用同一任务锁，并保留全局维护锁和 worker 执行锁。取消只在 worker 自行收尾，或宿主确认
+停止后完成；测评取消的请求回执不等于外部测评已经结束。失败或未结束时保留关联供重试。
+状态写入使用事务条件保护，迟到的 worker 不得把取消状态恢复成运行或成功。
+
+`get/list/progress` 不探测进程或推进生命周期。Console 启动时装配控制入口；初始化失败仅使 Harness
+入口不可用，不影响其他页面。现有每分钟定时入口先核对活动任务，再处理交付；单项失败不阻止其他任务。
+CLI 的 `reconcile` 可主动核对，取消、恢复和接续也会立即检查运行事实。定时器不可用时不能承诺
+失联状态的自动更新时限。完整设计见 [Harness 控制生命周期](../../specs/harness-control-lifecycle/spec.md)。
+
+六层静态门禁目前只覆盖控制 Types/Service 及直接 CLI/Console 入口，包含函数内导入与重导出检查；
+其他 Harness 模块仍按领域基线逐步整理。静态检查不是 Python 执行沙箱，也不能证明运行时状态正确。
+
+### 验收与交付
+
 - **单 Case Harness 独立性**：`chatcopilot.harness` 拥有按需 worker、任务与尝试数据库；
   通过来源、验证、编程和 Git 交付适配器协作，Evaluation 不反向依赖 Harness。测评数据库由
   Evaluation 服务校验并保存新增结果，历史文件不批量迁移；Console 组合查询两个模块，

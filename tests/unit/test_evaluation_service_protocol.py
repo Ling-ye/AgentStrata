@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 from fastapi.responses import StreamingResponse
 from starlette.requests import Request
 
+
 from chatcopilot.evals.service import (
     EvaluationReportStream,
     EvaluationServiceClient,
@@ -49,6 +50,10 @@ from chatcopilot.evals.application.bots import temporary_eval_env
 from chatcopilot.evals.profiles import get_profile
 from console.backend.app import app
 from console.backend.routes.evaluations import export_evaluation
+
+@pytest.fixture(autouse=True)
+def isolate_optional_console_harness(monkeypatch):
+    monkeypatch.setattr(app.state, "harness", object(), raising=False)
 
 @pytest.fixture(autouse=True)
 def explicit_ifeval_debug_data(monkeypatch):

@@ -31,6 +31,58 @@ def test_architecture_graph_detects_strongly_connected_components(checker) -> No
     assert components == (("a", "b", "c"),)
 
 
+@pytest.mark.parametrize("name,source", [
+    ("control_types", "from .store import HarnessStore\n"),
+    ("control_types", "import os\n"),
+    ("control_service", "from .worker_runtime import SystemdWorkerControl\n"),
+    ("control_service", "def launch():\n    from chatcopilot.harness import worker_runtime\n"),
+    ("control_service", "import subprocess\n"),
+    ("control_service", "__import__('chatcopilot.harness.worker_runtime')\n"),
+    ("__main__", "from .store import HarnessStore\n"),
+    ("__main__", "controller.store.maintenance()\n"),
+    ("__main__", "from .api import HarnessStore\n"),
+    ("__main__", "import chatcopilot.harness.api as controls\ncontrols.HarnessStore()\n"),
+])
+def test_harness_control_gate_rejects_reverse_and_ui_dependencies(checker, tmp_path, monkeypatch, name, source):
+    folder = tmp_path / "src/chatcopilot/harness"
+    folder.mkdir(parents=True)
+    (folder / "__init__.py").write_text("")
+    for module in ("store", "worker_runtime", "api"):
+        (folder / (module + ".py")).write_text("")
+    (folder / (name + ".py")).write_text(source)
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    assert checker._harness_control_checks()["harness_control_layer_boundaries"]
+
+
+def test_harness_control_gate_follows_package_reexports(checker, tmp_path, monkeypatch):
+    folder = tmp_path / "src/chatcopilot/harness"
+    folder.mkdir(parents=True)
+    (folder / "__init__.py").write_text("")
+    (folder / "control_service.py").write_text("from .models import HiddenWorker\n")
+    (folder / "models.py").write_text("from .worker_runtime import HiddenWorker\n")
+    (folder / "worker_runtime.py").write_text("class HiddenWorker: pass\n")
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    violations = checker._harness_control_checks()["harness_control_layer_boundaries"]
+    assert any("through imports" in message for messages in violations.values() for message in messages)
+
+
+def test_harness_control_gate_allows_ports_and_public_ui(checker, tmp_path, monkeypatch):
+    folder = tmp_path / "src/chatcopilot/harness"
+    folder.mkdir(parents=True)
+    for name, source in {
+        "__init__": "", "store": "", "models": "", "api": "",
+        "control_types": "from typing import Protocol\n",
+        "control_service": "from .control_types import WorkerControlPort\nfrom .store import HarnessStore\n",
+        "__main__": "from .api import HarnessController\nfrom .models import HarnessError\ncontroller.reconcile(task)\n",
+    }.items():
+        (folder / (name + ".py")).write_text(source)
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    assert checker._harness_control_checks() == {}
+
+
 def test_harness_dependency_direction_and_private_evaluator_imports(checker, tmp_path, monkeypatch):
     assert "harness" not in checker.AREA_DEPENDENCIES["evals"]
     assert "harness" not in checker.AREA_DEPENDENCIES["core"]

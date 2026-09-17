@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import hashlib
 from pathlib import Path
+from typing import Mapping
 
 from chatcopilot.core.private_sqlite import private_file
 
@@ -60,8 +61,8 @@ def configuration() -> dict[str, str]:
     return values
 
 
-def default_root(repository: Path) -> Path:
-    configured = configuration().get("CHATCOPILOT_HARNESS_ROOT")
+def default_root(repository: Path, settings: Mapping[str, str] | None = None) -> Path:
+    configured = (configuration() if settings is None else settings).get("CHATCOPILOT_HARNESS_ROOT")
     if configured:
         return Path(configured).expanduser().absolute()
     identity = hashlib.sha256(str(repository.resolve()).encode()).hexdigest()[:16]

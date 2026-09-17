@@ -33,6 +33,10 @@ def offline_harness_delivery(monkeypatch):
 
     from chatcopilot.harness import delivery_runtime
     monkeypatch.setattr(delivery_runtime, "launch_delivery", lambda *_args: None)
+    from chatcopilot.harness.worker_runtime import SystemdWorkerControl
+    from chatcopilot.harness.control_types import DispatchResult, WorkerState
+    monkeypatch.setattr(SystemdWorkerControl, "observe", lambda *_args: WorkerState.INACTIVE)
+    monkeypatch.setattr(SystemdWorkerControl, "launch_delivery", lambda *_args: DispatchResult("scheduled"))
     monkeypatch.setattr(delivery, "remote_baseline", baseline)
     monkeypatch.setattr(delivery, "initialize", initialize)
     monkeypatch.setattr(delivery, "reconcile", lambda store, task_id, **_kwargs: store.get(task_id))

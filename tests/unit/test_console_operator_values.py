@@ -125,6 +125,7 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
         state.finish_run(generation=generation, session_id='session', run_id='run-values', outcome='completed',
                          result={'final_text': values['QQ_ALLOW_FROM']})
     monkeypatch.setattr(architecture, 'get_instance', lambda identity: instances[identity])
+    monkeypatch.setattr(app.state, "harness", object(), raising=False)
     with TestClient(app) as client:
         for recorder in recorders:
             recorder.refresh()

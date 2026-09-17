@@ -739,12 +739,84 @@ def _semantic_invariants() -> dict[str, dict[str, list[str]]]:
     return violations
 
 
+def _harness_control_checks() -> dict[str, dict[str, list[str]]]:
+    """Only the migrated control slice is covered, not all existing Harness code."""
+    modules = _production_modules()
+    prefix = "chatcopilot.harness."
+    types = prefix + "control_types"
+    service = prefix + "control_service"
+    ui = {prefix + "__main__", "console.backend.routes.harness"}
+    service_dependencies = {types, prefix + "models", prefix + "store"}
+    public_modules = {prefix + "api", prefix + "models", types}
+    implementations = {prefix + name for name in (
+        "worker_runtime", "worker", "assembly", "api", "delivery_runtime", "delivery",
+        "codex_adapter", "evaluation_adapter", "local_verifier", "github_delivery")}
+    public_symbols = {
+        prefix + "api": {"HarnessController"},
+        prefix + "models": {"HarnessError", "RepairOptions", "RepairFeedback", "CodeHealthOptions"},
+    }
+    violations: dict[str, list[str]] = {}
+
+    def reject(record: ModuleFile, detail: str) -> None:
+        violations.setdefault(record.path.relative_to(ROOT).as_posix(), []).append(detail)
+
+    for name in ({types, service} | ui) & modules.keys():
+        record = modules[name]
+        references = _import_references(record, modules)
+        tree = ast.parse(record.path.read_text(encoding="utf-8-sig"))
+        for reference in references:
+            target = reference.target or reference.imported
+            if name == types and target.split(".")[0] not in {"__future__", "dataclasses", "enum", "typing", "collections"}:
+                reject(record, "Types must be pure: " + target)
+            if name == service:
+                if target.startswith("chatcopilot") and target not in service_dependencies:
+                    reject(record, "Service requires a Types port, not " + target)
+                if target.split(".")[0] in {"subprocess", "os", "sys", "fcntl", "signal", "multiprocessing"}:
+                    reject(record, "Service cannot own processes: " + target)
+            if name in ui and target.startswith("chatcopilot.harness") and target not in public_modules:
+                reject(record, "UI must use the public Harness control surface: " + target)
+        for node in ast.walk(tree):
+            if name in {types, service} and isinstance(node, ast.Call):
+                function = node.func
+                if ((isinstance(function, ast.Name) and function.id in {"__import__", "eval", "exec"})
+                        or (isinstance(function, ast.Attribute) and function.attr == "import_module")):
+                    reject(record, "Dynamic imports cannot bypass the control boundary")
+            if name in ui and isinstance(node, ast.Attribute) and node.attr in {
+                "store", "database", "HarnessStore", "SystemdWorkerControl", "HarnessLifecycle"}:
+                reject(record, "UI bypasses public controls: " + node.attr)
+            if name in ui and isinstance(node, ast.ImportFrom):
+                base = _absolute_import_base(record, node)
+                if base in public_symbols:
+                    for alias in node.names:
+                        if alias.name not in public_symbols[base]:
+                            reject(record, "UI imports a non-public control symbol: " + alias.name)
+
+        # An allowed foundational module must not re-export a runtime adapter
+        # and thereby hide a reverse dependency from the Service.
+        if name == service:
+            visited: set[str] = set()
+            pending = [r.target for r in references if r.target in modules]
+            while pending:
+                target = pending.pop()
+                if target is None or target in visited:
+                    continue
+                visited.add(target)
+                if target in implementations:
+                    reject(record, "Service reaches a concrete implementation through imports: " + target)
+                    continue
+                dependency = modules[target]
+                if dependency.path.exists():
+                    pending.extend(r.target for r in _import_references(dependency, modules) if r.target in modules)
+    return {"harness_control_layer_boundaries": violations} if violations else {}
+
+
 def check_architecture() -> dict[str, dict[str, list[str]]]:
     violations: dict[str, dict[str, list[str]]] = {}
     _merge(violations, check_rules())
     _merge(violations, _graph_checks())
     _merge(violations, _compatibility_import_checks())
     _merge(violations, _semantic_invariants())
+    _merge(violations, _harness_control_checks())
     return violations
 
 

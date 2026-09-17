@@ -9,8 +9,6 @@ from typing import Any
 
 from chatcopilot.harness.api import HarnessController
 from chatcopilot.harness.models import RepairFeedback, RepairOptions
-from chatcopilot.harness.config import configuration
-from chatcopilot.harness.gateway_adapter import read_task
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -45,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     listing.add_argument("--page", type=int, default=1)
     listing.add_argument("--search", default="")
     listing.add_argument("--status", default="")
-    for name in ("get", "cancel", "resume", "retry-delivery", "retry-cleanup"):
+    for name in ("get", "cancel", "resume", "reconcile", "retry-delivery", "retry-cleanup"):
         sub.add_parser(name).add_argument("task")
     args = parser.parse_args(argv)
     value: Any
@@ -53,25 +51,18 @@ def main(argv: list[str] | None = None) -> int:
         controller = HarnessController(
             args.repository_root,
             root=args.root,
-            task_reader=(lambda bot, run: read_task(args.gateway_state_root, bot, run))
-            if args.command == "start-task"
-            else None,
+            gateway_state_root=args.gateway_state_root if args.command == "start-task" else None,
         )
         if args.command == "maintenance":
-            import os
-            import subprocess
             command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
-            if not command:
-                raise ValueError("maintenance requires an explicit command")
-            with controller.store.maintenance() as descriptor:
-                return subprocess.run(command, pass_fds=(descriptor,), env={**os.environ, "CHATCOPILOT_HARNESS_MAINTENANCE_HELD": "1"}, check=False).returncode
+            return controller.maintenance(command)
         if args.command == "start":
             value = controller.start(
                 args.evaluation,
                 args.case,
                 args.target,
                 RepairOptions(
-                    args.model or configuration().get("CHATCOPILOT_HARNESS_MODEL", ""),
+                    args.model or controller.default_model,
                     args.reasoning_effort,
                     args.max_attempts,
                     args.timeout_seconds,
@@ -84,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.bot,
                 args.run,
                 RepairOptions(
-                    args.model or configuration().get("CHATCOPILOT_HARNESS_MODEL", ""),
+                    args.model or controller.default_model,
                     args.reasoning_effort,
                     args.max_attempts,
                     args.timeout_seconds,

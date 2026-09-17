@@ -23,6 +23,7 @@ from chatcopilot.harness.health_policy import policy_path, scope_path, scan_path
 from chatcopilot.harness.health_regressions import frozen_content, prepare_regression
 from chatcopilot.harness.models import ACTIVE, GOVERNANCE_VERSION, CodeHealthOptions, CodingOptions, Cancelled, HarnessError, review_decision, safe_error
 from chatcopilot.harness.store import HarnessStore
+from chatcopilot.harness.control_service import check_cancellation
 from chatcopilot.harness.workspace import prepare
 
 
@@ -55,8 +56,7 @@ class HealthRun:
                           check_logs=self.checks.logs, **values)
 
     def cancel(self) -> None:
-        if self.store.get(self.ident)["status"] == "cancel_requested":
-            raise Cancelled()
+        check_cancellation(self.store.get(self.ident))
         now = time.monotonic()
         self.budget.check()
         if now - self.heartbeat > 5:

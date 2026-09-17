@@ -326,6 +326,37 @@ def test_cancel_before_execution(repository, tmp_path):
     assert not evaluator.calls and not coder.calls
 
 
+@pytest.mark.parametrize("cancel_status", ["cancel_requested", "cancelled"])
+def test_running_case_worker_stops_before_more_coding_or_verification(repository, tmp_path, cancel_status):
+    evaluator = FakeEvaluator()
+    controller, task_id = task_fixture(repository, tmp_path, evaluator)
+
+    class CancellingCoder(FakeCoder):
+        def run(self, worktree, evidence, options, output, check_cancel):
+            controller.store.update(task_id, status=cancel_status)
+            check_cancel()
+            pytest.fail("cancelled worker continued coding")
+
+    result = run_task(controller.store, task_id, evaluator, CancellingCoder())
+    assert result["status"] == "cancelled"
+    assert not any("verify" in ident for ident in evaluator.calls)
+
+
+@pytest.mark.parametrize("code", ["evaluation_unavailable", "result_pending"])
+def test_case_worker_keeps_cancel_pending_when_external_stop_is_unconfirmed(repository, tmp_path, code):
+    class PendingCancellation(FakeEvaluator):
+        def run(self, task, worktree, evaluation_id, case_ids, check_cancel):
+            controller.store.update(task_id, status="cancel_requested", delivery_cancel_requested=True)
+            raise HarnessError(code, "fixture external cancellation pending")
+
+    evaluator = PendingCancellation()
+    controller, task_id = task_fixture(repository, tmp_path, evaluator)
+    result = run_task(controller.store, task_id, evaluator, FakeCoder())
+    assert result["status"] == "cancel_requested"
+    assert result["current_evaluation_id"]
+    assert result["evaluations"]["reproduce"]["retryable"]
+
+
 @pytest.mark.parametrize(
     "rows", [[], [{"case_id": "a", "target_id": "main", "attempt": 1, "outcome": "passed"}] * 2]
 )
@@ -428,15 +459,16 @@ def test_private_database_rejects_symlink(tmp_path):
 
 
 def test_terminal_completion_wins_over_stale_worker_probe(repository, tmp_path, monkeypatch):
+    from chatcopilot.harness.control_types import WorkerState
     controller, task_id = task_fixture(repository, tmp_path, FakeEvaluator())
     controller.store.update(task_id, status="running", dispatch_state="scheduled")
 
     def completed(_unit):
         controller.store.update(task_id, status="fixed")
-        return False
+        return WorkerState.INACTIVE
 
-    monkeypatch.setattr(controller, "_unit_active", completed)
-    assert controller.get(task_id)["status"] == "fixed"
+    monkeypatch.setattr(controller.lifecycle.workers, "observe", completed)
+    assert controller.reconcile(task_id)["status"] == "fixed"
 
 
 def test_resume_claim_is_taken_once(repository, tmp_path):

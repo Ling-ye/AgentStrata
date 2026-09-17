@@ -25,6 +25,7 @@ from chatcopilot.harness.models import (
     safe_error,
 )
 from chatcopilot.harness.store import HarnessStore
+from chatcopilot.harness.control_service import check_cancellation
 from chatcopilot.harness import workspace
 from chatcopilot.harness.quality import finish_candidate
 
@@ -88,8 +89,7 @@ def _run_task(
     def check_cancel() -> None:
         nonlocal heartbeat
         current = store.get(task_id)
-        if current["status"] == "cancel_requested":
-            raise Cancelled()
+        check_cancellation(current)
         if time.monotonic() >= deadline:
             raise HarnessError("budget_exhausted", "本次修复的时间预算已用完")
         if time.monotonic() - heartbeat > 5:
@@ -457,9 +457,11 @@ def _run_task(
             storage_failure = exc
         else:
             code = getattr(exc, "code", "execution_error")
+            cancelling = (store.get(task_id)["status"] in {"cancel_requested", "cancelled"}
+                          and code in {"evaluation_unavailable", "result_pending"})
             store.update(
                 task_id,
-                status="waiting_input" if code == "image_required" else "blocked" if isinstance(exc, HarnessError) else "interrupted",
+                status="cancel_requested" if cancelling else "waiting_input" if code == "image_required" else "blocked" if isinstance(exc, HarnessError) else "interrupted",
                 next_action="upload_image" if code == "image_required" else "technical_failure",
                 error_code=code,
                 message=safe_error(exc),

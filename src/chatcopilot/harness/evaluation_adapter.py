@@ -14,6 +14,7 @@ from chatcopilot.evals.service import (
     EvaluationServiceUnavailable,
 )
 from chatcopilot.harness.models import Cancelled, HarnessError, passed_cases
+from chatcopilot.harness.control_types import EVALUATION_TERMINAL_STATES
 
 
 class ServiceEvaluator:
@@ -210,10 +211,10 @@ class ServiceEvaluator:
         check_cancel: Callable[[], None],
     ) -> dict[str, Any]:
         source = task["source"]
-        check_cancel()
         request = {**source["request"], "repetitions": source["repetitions"], "case_ids": case_ids, "preset": "custom"}
         descriptor = {"path": str(worktree), "sha256": manifest_digest(source_manifest(worktree))}
         try:
+            check_cancel()
             try:
                 record = self.client.get(evaluation_id)
             except EvaluationServiceError as exc:
@@ -233,11 +234,11 @@ class ServiceEvaluator:
                 record = self.client.get(evaluation_id)
             check_cancel()
         except Cancelled:
-            self.client.cancel(evaluation_id)
+            self.cancel_confirmed(evaluation_id)
             raise
         except HarnessError as exc:
             if exc.code == "budget_exhausted":
-                self.client.cancel(evaluation_id)
+                self.cancel_confirmed(evaluation_id)
             raise
         except EvaluationServiceUnavailable as exc:
             raise HarnessError(
@@ -270,6 +271,30 @@ class ServiceEvaluator:
         except EvaluationServiceError as exc:
             if exc.code != "not_found":
                 raise
+
+    def execution_status(self, evaluation_id: str) -> str:
+        try:
+            return str(self.client.get(evaluation_id)["status"])
+        except EvaluationServiceError as exc:
+            if exc.code != "not_found":
+                raise
+            return "not_found"
+
+    def cancel_confirmed(self, evaluation_id: str) -> None:
+        """Keep the workflow's external reference until stop is confirmed."""
+        try:
+            if self.execution_status(evaluation_id) in EVALUATION_TERMINAL_STATES:
+                return
+            try:
+                self.cancel(evaluation_id)
+            except EvaluationServiceError:
+                if self.execution_status(evaluation_id) in EVALUATION_TERMINAL_STATES:
+                    return
+                raise
+            if self.execution_status(evaluation_id) not in EVALUATION_TERMINAL_STATES:
+                raise HarnessError("result_pending", "测评取消尚未确认结束，保留原 ID 等待核对")
+        except EvaluationServiceError as exc:
+            raise HarnessError("evaluation_unavailable", "无法确认测评已取消，保留原 ID 等待核对") from exc
 
 
 def _repairable(trial: dict[str, Any]) -> bool:

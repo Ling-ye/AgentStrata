@@ -46,6 +46,35 @@ def test_local_start_uses_public_controller(app):
     assert options.timeout_seconds == 7200
 
 
+def test_query_requires_startup_assembly_and_never_initializes_storage():
+    isolated = FastAPI()
+    isolated.include_router(router)
+    with TestClient(isolated) as client:
+        assert client.get("/api/harness/tasks/repair-example").status_code == 503
+
+
+def test_console_assembles_harness_before_requests_and_keeps_queries_read_only(monkeypatch):
+    from console.backend import app as backend
+    controller = SimpleNamespace(get=Mock(return_value={"status": "running"}))
+    monkeypatch.setattr(backend.app.state, "harness", None, raising=False)
+    factory = Mock(return_value=controller)
+    monkeypatch.setattr(backend, "create_controller", factory)
+    with TestClient(backend.app) as client:
+        factory.assert_called_once_with()
+        assert client.get("/api/harness/tasks/repair-example").json()["status"] == "running"
+        assert client.get("/api/harness/tasks/repair-example").json()["status"] == "running"
+        factory.assert_called_once_with()
+
+
+def test_optional_harness_assembly_failure_does_not_disable_console(monkeypatch):
+    from console.backend import app as backend
+    monkeypatch.setattr(backend.app.state, "harness", None, raising=False)
+    monkeypatch.setattr(backend, "create_controller", Mock(side_effect=ValueError("fixture config")))
+    with TestClient(backend.app) as client:
+        assert client.get("/openapi.json").status_code == 200
+        assert client.get("/api/harness/tasks/repair-example").status_code == 503
+
+
 def test_remote_and_cross_origin_writes_do_not_start_worker(app):
     with TestClient(app, client=("192.0.2.5", 41000)) as client:
         assert client.post("/api/harness/tasks", json=body()).status_code == 403

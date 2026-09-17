@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,9 +27,21 @@ from console.backend.routes import (  # noqa: E402
 )
 from chatcopilot.evals.service import EvaluationServiceClient  # noqa: E402
 from console.backend.tasks import TaskManager  # noqa: E402
+from console.backend.harness_runtime import create_controller  # noqa: E402
 
 
-app = FastAPI(title="AgentStrata Console", version="1.0")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    if getattr(application.state, "harness", None) is None:
+        try:
+            application.state.harness = create_controller()
+        except Exception:
+            # Optional Harness failure must not disable unrelated Console pages.
+            logging.getLogger(__name__).error("Harness control initialization failed")
+    yield
+
+
+app = FastAPI(title="AgentStrata Console", version="1.0", lifespan=lifespan)
 
 @app.middleware("http")
 async def private_api_responses(request, call_next):
