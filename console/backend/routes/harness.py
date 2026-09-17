@@ -206,6 +206,25 @@ def traces(request: Request, task_id: str, response: Response):
     return _call(lambda: _controller(request).trace_records(task_id))
 
 
+@router.get("/tasks/{task_id}/flow")
+def repair_flow(request: Request, task_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return _call(lambda: _controller(request).flow(task_id))
+
+
+@router.get("/tasks/{task_id}/flow/steps/{step_id}")
+def repair_step(request: Request, task_id: str, step_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return _call(lambda: _controller(request).flow(task_id, step_id=step_id))
+
+
+@router.get("/tasks/{task_id}/commands")
+def repair_commands(request: Request, task_id: str, response: Response,
+                    source_id: str = Query("", max_length=200), cursor: str = Query("", max_length=1000)):
+    response.headers["Cache-Control"] = "no-store"
+    return _call(lambda: _controller(request).commands(task_id, source_id=source_id, cursor=cursor))
+
+
 @router.get("/tasks/{task_id}/progress")
 def progress(request: Request, task_id: str, response: Response):
     response.headers["Cache-Control"] = "no-store"
@@ -239,8 +258,9 @@ def reproducer(request: Request, task_id: str):
 
 
 @router.get("/tasks/{task_id}")
-def get(request: Request, task_id: str):
-    return _call(lambda: _controller(request).get(task_id))
+def get(request: Request, task_id: str, response: Response, summary: bool = False):
+    response.headers["Cache-Control"] = "no-store"
+    return _call(lambda: _controller(request).summary(task_id) if summary else _controller(request).get(task_id))
 
 
 @router.post("/tasks/{task_id}/cancel")

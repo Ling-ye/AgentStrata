@@ -2,9 +2,9 @@ import { useState } from "react";
 import { Alert, Button, Descriptions, Space, Tag, Typography } from "@arco-design/web-react";
 import { deliveryActive, deliveryLabel, harnessApi, type RepairTask } from "./api";
 
-export function DeliveryPanel({ task, refresh }: {
+export function DeliveryPanel({ task, refresh, actionsOnly = false }: {
   task: Pick<RepairTask, "task_id" | "status" | "delivery" | "cleanup" | "archive">;
-  refresh: () => unknown;
+  refresh: () => unknown; actionsOnly?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -18,7 +18,7 @@ export function DeliveryPanel({ task, refresh }: {
   const labels: Record<string, string> = { pending: "等待任务进程退出后清理", not_created: "未创建本地工作区", archived: "已归档", cleaned: "已清理", restored: "已恢复用于复验", blocked: "清理受阻" };
   return <section aria-label="PR 交付与清理" style={{ overflowWrap: "anywhere" }}>
     <Space wrap><Typography.Text bold>PR 交付</Typography.Text><Tag color={delivery.state === "merged" ? "green" : "blue"}>{deliveryLabel(delivery.state)}</Tag></Space>
-    <Descriptions column={1} size="small" data={[
+    {!actionsOnly && <><Descriptions column={1} size="small" data={[
       { label: "目标", value: `${delivery.repository} → ${delivery.base_branch}` },
       { label: "PR", value: delivery.pr_url ? <a href={delivery.pr_url} target="_blank" rel="noreferrer">PR #{delivery.pr_number}</a> : "尚未创建" },
       { label: "验收提交", value: delivery.commit_sha ?? "等待生成" },
@@ -32,7 +32,7 @@ export function DeliveryPanel({ task, refresh }: {
       {check.url ? <a href={check.url} target="_blank" rel="noreferrer">{check.name}</a> : check.name} · {check.conclusion ?? check.status}
     </Tag>)}</Space>}
     {task.cleanup?.error && <Alert type="warning" content={task.cleanup.error} />}
-    <Space wrap style={{ marginTop: 12 }}>
+    </>}<Space wrap style={{ marginTop: 12 }}>
       {["blocked", "retryable", "paused"].includes(delivery.state) && <Button loading={busy} onClick={() => void action("retry-delivery")}>重试交付</Button>}
       {task.cleanup?.local === "blocked" && <Button loading={busy} onClick={() => void action("retry-cleanup")}>重试清理</Button>}
       {deliveryActive(task) && !["queued", "running", "cancel_requested"].includes(task.status) && <Button status="danger" loading={busy} onClick={() => void action("cancel")}>停止自动交付</Button>}

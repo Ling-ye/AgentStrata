@@ -133,6 +133,28 @@ class HarnessStore:
         records[reference["trace_ref"]] = {**reference, "directory": relative.as_posix()}
         self.update(task_id, trace_records=records)
 
+    def save_flow_step(self, task_id: str, step: dict[str, Any]) -> None:
+        """Merge one observation without racing cancellation or other task updates."""
+        with self.database.connect(write=True) as connection:
+            row = connection.execute("SELECT payload FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            if row is None:
+                raise HarnessError("not_found", "修复任务不存在")
+            task = json.loads(row[0])
+            steps = task.setdefault("flow_steps", [])
+            index = next((i for i, value in enumerate(steps) if value["id"] == step["id"]), len(steps))
+            if index < len(steps) and steps[index]["status"] != "running":
+                return
+            # Late observations never turn a cancelled task's active step into success.
+            if task.get("status") in {"cancel_requested", "cancelled", "interrupted"}:
+                step = {**step, "status": "cancelled" if task["status"] != "interrupted" else "interrupted",
+                        "conclusion": "任务已取消或中断；本步骤未确认完成", "finished_at": time.time()}
+            if index == len(steps):
+                steps.append(step)
+            else:
+                steps[index] = step
+            task["flow_version"] = 1
+            connection.execute("UPDATE tasks SET payload=? WHERE task_id=?", (json_text(task), task_id))
+
     def update(
         self, task_id: str, *, if_status: frozenset[str] | None = None,
         accepted_attempt: dict[str, Any] | None = None, **changes: Any
@@ -165,6 +187,12 @@ class HarnessStore:
             }:
                 raise Cancelled()
             value = {**current, **changes, "updated_at": time.time()}
+            if "status" in changes and value["status"] not in ACTIVE:
+                from chatcopilot.harness.flow_receipts import close_unfinished_steps
+                close_unfinished_steps(value, value["updated_at"])
+            if any(key in changes for key in ("delivery", "cleanup", "local_commit")):
+                from chatcopilot.harness.flow_receipts import record_delivery
+                record_delivery(current, value, value["updated_at"])
             active_key = (
                 value["active_key"]
                 if value["status"] in ACTIVE or value["status"] == "waiting_input" or value.get("current_evaluation_id")
@@ -204,6 +232,8 @@ class HarnessStore:
                 task.update(status="blocked" if storage_error is not None else "interrupted", stage="done",
                             error_code=code, stop_reason=code, message=message, updated_at=now,
                             current_source=None, current_group=None, current_attempt=None)
+                from chatcopilot.harness.flow_receipts import close_unfinished_steps
+                close_unfinished_steps(task, now)
                 if details is not None:
                     task["storage_error"] = details
                 for group in task.get("governance", {}).get("groups", []):

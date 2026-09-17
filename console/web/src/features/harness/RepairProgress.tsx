@@ -7,8 +7,8 @@ import "./progress.css";
 
 const { Text } = Typography;
 
-export function RepairProgress({ task, refreshTask, title = "修复进度", statusLabel }: {
-  task: ProgressTask; refreshTask: () => Promise<unknown>; title?: string; statusLabel?: string;
+export function RepairProgress({ task, refreshTask, title = "修复进度", statusLabel, summaryOnly = false }: {
+  task: ProgressTask; refreshTask: () => Promise<unknown>; title?: string; statusLabel?: string; summaryOnly?: boolean;
 }) {
   const client = useQueryClient();
   const active = ACTIVE.includes(task.status);
@@ -16,9 +16,9 @@ export function RepairProgress({ task, refreshTask, title = "修复进度", stat
   const [now, setNow] = useState(Date.now);
   const query = useQuery({ queryKey: ["harness-progress", task.task_id],
     queryFn: ({ signal }) => harnessApi.progress(task.task_id, signal), retry: false,
-    refetchInterval: active ? 2000 : false });
+    enabled: !summaryOnly, refetchInterval: active && !summaryOnly ? 2000 : false });
   useEffect(() => {
-    if (wasActive.current && !active) {
+    if (!summaryOnly && wasActive.current && !active) {
       // Cancel a poll that may have started before the terminal task snapshot,
       // then fetch once more to include the worker's final flushed output.
       const queryKey = ["harness-progress", task.task_id];
@@ -26,7 +26,7 @@ export function RepairProgress({ task, refreshTask, title = "修复进度", stat
         client.invalidateQueries({ queryKey, exact: true }));
     }
     wasActive.current = active;
-  }, [active, task.task_id, client]);
+  }, [active, task.task_id, client, summaryOnly]);
   useEffect(() => {
     setNow(Date.now());
     if (!active) return;
@@ -40,14 +40,14 @@ export function RepairProgress({ task, refreshTask, title = "修复进度", stat
     <Space wrap><Text bold>{title}</Text>
       <Button size="small" loading={query.isFetching} onClick={() => {
         setNow(Date.now());
-        void Promise.all([refreshTask(), query.refetch()]);
+        void Promise.all([refreshTask(), ...(!summaryOnly ? [query.refetch()] : [])]);
       }}>刷新进度</Button></Space>
     <Space wrap><Tag color={task.status === "fixed" ? "green" : "blue"}>{statusLabel ?? repairStatusLabel(task)}</Tag>
       <Text>阶段：{stageLabel(task.stage)}</Text>{round && <Text>{round}</Text>}
       <Text type="secondary">{budgetLabel(task)}</Text>
       <Text type="secondary">{heartbeat.label}</Text></Space>
     {heartbeat.stale && <Alert type="warning" content="心跳暂未更新；可刷新确认，任务状态以实际执行结果为准。" />}
-    {query.isError && <Alert type="error" content={`进度读取失败：${String(query.error)}。已显示的内容保留，可刷新重试。`} />}
+    {!summaryOnly && <>{query.isError && <Alert type="error" content={`进度读取失败：${String(query.error)}。已显示的内容保留，可刷新重试。`} />}
     {data?.message && <Alert type="warning" content={data.message} />}
     {data?.source && <Space wrap><Text>动态来源：{progressSourceLabel(data.source)}</Text>
       {!data.source.current && <Text type="secondary">其他阶段的最近记录，并非当前动作</Text>}
@@ -64,6 +64,6 @@ export function RepairProgress({ task, refreshTask, title = "修复进度", stat
           {event.truncated && <Text type="secondary">此条内容过长，仅展示摘要。</Text>}
         </li>)}
       </ol>}
-    {data?.truncated && <Text type="secondary">仅展示最近记录及有界正文；完整执行归档可在执行结束后查看。</Text>}
+    {data?.truncated && <Text type="secondary">仅展示最近记录及有界正文；完整执行归档可在执行结束后查看。</Text>}</>}
   </section>;
 }

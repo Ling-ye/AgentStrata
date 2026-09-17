@@ -412,11 +412,35 @@ class HarnessController:
                        for item in task.get("trace_records", {}).values()),
                       key=lambda item: item.get("finished_at") or item.get("started_at", 0))
 
+    def summary(self, task_id: str) -> dict[str, Any]:
+        value = self.get(task_id)
+        result = {key: value[key] for key in ("task_id", "status", "stage", "base_commit", "created_at", "updated_at",
+            "pipeline_version", "continued_from", "next_action", "message", "branch", "worktree", "verified_at",
+            "candidate_available", "elapsed_seconds", "error_code", "heartbeat_at", "current_attempt", "options",
+            "local_commit", "commit_state", "commit_in_main", "cleanup", "archive") if key in value}
+        result["source"] = {key: item for key, item in value["source"].items() if key in {
+            "kind", "run_id", "evaluation_id", "case_id", "case_instance_id", "bot_id", "target_id", "case_ids", "blockers", "warnings", "test_sha256"}}
+        result["preparation_revisions"] = [{"revision": r["revision"], "status": r["status"]} for r in value.get("preparation_revisions", [])]
+        if value.get("delivery"):
+            result["delivery"] = {k: v for k, v in value["delivery"].items() if k != "checks"}
+        return result
+
     def progress(self, task_id: str) -> dict[str, Any]:
         from chatcopilot.harness.progress import read_progress
 
         task = self.store.get(task_id)
         return read_progress(self.store.root, task, self.store.attempts(task_id))
+
+    def flow(self, task_id: str, *, step_id: str = "") -> dict[str, Any]:
+        from chatcopilot.harness.flow import project_flow, step_detail
+        task = self.store.get(task_id)
+        attempts = self.store.attempts(task_id)
+        return step_detail(task, attempts, step_id) if step_id else project_flow(task, attempts)
+
+    def commands(self, task_id: str, *, source_id: str = "", cursor: str = "") -> dict[str, Any]:
+        from chatcopilot.harness.command_logs import read_commands
+        return read_commands(self.store.root, self.store.get(task_id), self.store.attempts(task_id),
+                             source_id=source_id, cursor=cursor)
 
     def trace_record(self, task_id: str, ref: str, *, span_id: str = "", after: int = 0):
         from chatcopilot.core.trace_archive import TraceArchive
@@ -683,6 +707,8 @@ class HarnessController:
                 "publication_candidate",
                 "trace_records",
                 "preparation_input",
+                "flow_steps",
+                "evaluation_history",
             }
         }
         source = task["source"]

@@ -51,6 +51,10 @@ def _logs(task: dict[str, Any], attempts: list[dict[str, Any]]):
             "id": f"prepare-{number}", "kind": "prepare", "number": number,
             "current": preparing and number == latest,
         }
+        yield ("reproducer", f"revision-{number}", "review", "public-events.jsonl"), {
+            "id": f"prepare-review-{number}", "kind": "review", "number": number,
+            "label": f"第 {number} 版复现方案审核", "current": False,
+        }
     for row in attempts:
         number = row["number"]
         if type(number) is not int or number < 1:
@@ -150,6 +154,9 @@ def read_progress(root: Path, task: dict[str, Any], attempts: list[dict[str, Any
     try:
         candidates = []
         for parts, source in _logs(task, attempts):
+            if task.get("flow_version"):
+                active_source = next((s.get("source_id") for s in reversed(task.get("flow_steps", [])) if s["status"] == "running"), None)
+                source = {**source, "current": source["id"] == active_source and task["status"] in {"queued", "running", "cancel_requested"}}
             try:
                 with _open_log(root, task["task_id"], parts) as fd:
                     info = os.fstat(fd)

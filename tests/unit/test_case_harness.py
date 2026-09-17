@@ -237,6 +237,16 @@ def test_fix_preserves_original_failure_and_allows_other_existing_failures(repos
     assert controller.get(task_id)["candidate_available"] is True
     assert b"harness_probe.py" in controller.patch(task_id, 1)
     assert git_output(Path(result["worktree"]), "rev-parse", "HEAD") == result["base_commit"]
+    flow = controller.flow(task_id)
+    recorded = {step["phase"]: step for step in flow["steps"] if step["id"].startswith("step-")}
+    assert {"snapshot", "plan", "reproduce", "coding", "verify-1", "review"}.issubset(recorded)
+    # Existing unprotected failures do not turn an accepted candidate's mandatory checks red.
+    assert recorded["verify-1"]["status"] == "completed"
+    assert "未通过 1 项" in recorded["verify-1"]["conclusion"]
+    before = copy.deepcopy(controller.store.get(task_id))
+    detail = controller.flow(task_id, step_id=recorded["coding"]["id"])
+    assert detail["input"]["protected_cases"] == ["a"]
+    assert controller.store.get(task_id) == before
 
 
 def test_regression_rejects_candidate_and_next_attempt_starts_from_base(repository, tmp_path):

@@ -42,6 +42,8 @@ describe("independent Harness source selection", () => {
     expect(sourceLabel({ source: { kind: "robot_task", run_id: "run-source" } } as RepairTask)).toBe("机器人任务 run-source");
     expect(stageLabel("prepare_reproducer")).toBe("建立复现测试");
     expect(stageLabel("verify-2")).toBe("第 2 轮复测");
+    expect(stageLabel("verify-2-r3")).toBe("第 2 轮复测（方案第 3 代）");
+    expect(stageLabel("reproduce-r2")).toBe("确认原问题（方案第 2 代）");
   });
 });
 

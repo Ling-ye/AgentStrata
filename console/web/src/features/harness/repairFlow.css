@@ -1,0 +1,30 @@
+.repair-flow, .repair-step-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.repair-flow-group, .repair-flow-step, .repair-command-logs { border: 1px solid var(--color-border-2); border-radius: 6px; min-width: 0; }
+.repair-flow summary, .repair-command-logs > summary { cursor: pointer; padding: 12px; overflow-wrap: anywhere; }
+.repair-flow-group > summary { background: var(--color-fill-1); display: flex; gap: 10px; align-items: center; }
+.repair-flow-group > summary::before { content: ""; width: 0; height: 0; border-block: 4px solid transparent; border-inline-start: 5px solid var(--color-text-3); }
+.repair-flow-group[open] > summary::before { transform: rotate(90deg); }
+.repair-flow-children { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-inline-start: 2px solid var(--color-border-2); margin-left: 8px; }
+.repair-step-heading { display: inline-flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.repair-step-heading time { color: var(--color-text-3); font-size: 12px; }
+.repair-input-preview, .repair-conclusion { display: block; margin-top: 8px; white-space: pre-wrap; }
+.repair-input-preview { color: var(--color-text-3); font-size: 12px; }
+.repair-group-result { display: block; flex-basis: 100%; font-size: 12px; color: var(--color-text-2); }
+.repair-flow-group > summary { flex-wrap: wrap; }
+.repair-live-message { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.repair-conclusion { color: var(--color-text-1); }
+.repair-step-body { padding: 0 12px 12px; }
+.repair-step-columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.repair-step-columns section { min-width: 0; }
+.repair-step-body h4 { margin: 10px 0; }
+.repair-command-logs > div { padding: 12px; }
+.repair-command-logs > summary { display: flex; align-items: center; gap: 12px; }
+.repair-command-list { padding-left: 24px; }
+.repair-command-list li { padding: 12px 0; border-bottom: 1px solid var(--color-border-2); }
+.repair-command-list pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; }
+.repair-execution-message { border-top: 1px solid var(--color-border-2); padding: 12px 0; }
+@media (max-width: 600px) {
+  .repair-flow-children { padding: 8px 4px 8px 8px; margin-left: 0; }
+  .repair-flow-group > summary { flex-wrap: wrap; }
+  .repair-step-body { padding: 0 8px 8px; }
+}

@@ -98,7 +98,9 @@ class CodexCoder:
                  reviewing: bool = False, auditing: bool = False) -> dict[str, Any]:
         from chatcopilot.core.trace_capture import TraceCapture, capture_scope
         from chatcopilot.core.trace_archive import TraceArchive
+        from chatcopilot.harness.flow_records import step_binding
         capture = TraceCapture({"kind": "harness", "execution_id": uuid.uuid4().hex,
+                                **step_binding(),
                                 "phase": "audit" if auditing else "review" if reviewing else "prepare" if draft else "coding"},
                                roots={"workspace": worktree, "output": output})
         result: dict[str, Any] = {}

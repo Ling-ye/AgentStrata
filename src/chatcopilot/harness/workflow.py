@@ -28,6 +28,7 @@ from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.control_service import check_cancellation
 from chatcopilot.harness import workspace
 from chatcopilot.harness.quality import finish_candidate
+from chatcopilot.harness.flow_records import record_step, source_inputs, step_binding
 
 
 def run_task(
@@ -104,7 +105,7 @@ def _run_task(
         assert worktree is not None
         return CandidateRef(worktree, manifest_digest(source_manifest(worktree)), task["base_commit"])
 
-    def evaluate(phase: str, cases: list[str]) -> dict[str, Any]:
+    def _evaluate(phase: str, cases: list[str]) -> dict[str, Any]:
         assert worktree is not None and plan is not None
         current = store.get(task_id)
         phases = dict(current.get("evaluations", {}))
@@ -119,10 +120,15 @@ def _run_task(
         if existing and existing["source_digest"] != digest:
             raise HarnessError("workspace_changed", "恢复测评时发现候选内容变化")
         evaluation_id = existing.get("evaluation_id") or "eval-harness-" + task_id[7:] + "-" + phase
-        phases[phase] = {"evaluation_id": evaluation_id, "source_digest": digest, "complete": False}
+        history = dict(current.get("evaluation_history", {}))
+        if existing.get("flow_step_id"):
+            history[existing["flow_step_id"]] = existing
+        phases[phase] = {"evaluation_id": evaluation_id, "source_digest": digest, "complete": False,
+                         "flow_step_id": step_binding().get("flow_step_id")}
         store.update(
             task_id,
             evaluations=phases,
+            evaluation_history=history,
             stage=phase,
             current_evaluation_id=evaluation_id,
             working_digest=digest,
@@ -165,6 +171,46 @@ def _run_task(
             raise validation_error
         return record
 
+    def evaluate(phase: str, cases: list[str]) -> dict[str, Any]:
+        current = store.get(task_id)
+        existing = current.get("evaluations", {}).get(phase, {})
+        if existing.get("complete") and not existing.get("retryable"):
+            return _evaluate(phase, cases)
+        number = current.get("current_attempt")
+        group = f"attempt-{number}" if number else "baseline"
+        title = "确认原问题" if phase.startswith("reproduce") else "保护集基线" if phase.startswith("baseline") else "独立确认" if phase.startswith("confirm-") else "候选复测"
+        with record_step(store, task_id, phase, title, group=group, attempt=number,
+                inputs={"checks": cases, "plan": plan.to_payload(), "candidate_digest": candidate().digest},
+                locator={"section": "evaluations", "key": phase}) as step:
+            value = _evaluate(phase, cases)
+            failures = value.get("failed_cases", [])
+            if phase.startswith("reproduce"):
+                step.conclusion = "已复现原问题：目标检查出现预期失败" if failures else "当前版本未复现原问题"
+            elif phase.startswith("baseline"):
+                step.conclusion = f"基线完成：通过 {len(value.get('passed_cases', []))} 项，未通过 {len(failures)} 项"
+            else:
+                required = set(plan.primary_checks) | set(current.get("protected_cases", []))
+                missing = required - set(value.get("passed_cases", []))
+                step.outcome = "failed" if missing else "completed"
+                step.conclusion = ("必需验收项未通过" if missing else "必需验收项通过") + f"；通过 {len(value.get('passed_cases', []))} 项，未通过 {len(failures)} 项"
+            step.evidence = {key: value[key] for key in ("evaluation_id", "source_digest", "passed_cases", "failed_cases", "evidence_refs") if key in value}
+            return value
+
+    def repository_checks(phase: str, checks: list[str] | None = None) -> dict[str, Any]:
+        current = store.get(task_id)
+        number = current.get("current_attempt")
+        with record_step(store, task_id, phase, "仓库回归基线" if phase == "repository_baseline" else "仓库回归",
+                group=f"attempt-{number}" if number else "baseline", attempt=number,
+                inputs={"checks": checks, "candidate_digest": candidate().digest},
+                locator={"section": "attempts", "number": number, "field": "repository_regressions"} if phase != "repository_baseline" else
+                        {"section": "regression_baseline", "generation": current.get("plan_generation")}) as step:
+            value = verifier.regressions(store.get(task_id), candidate(), check_cancel, checks)
+            failed = value.get("failed_cases", [])
+            step.conclusion = f"通过 {len(value.get('passed_cases', []))} 项，未通过 {len(failed)} 项"
+            step.outcome = "failed" if failed and phase != "repository_baseline" else "completed"
+            step.evidence = {key: value[key] for key in ("passed_cases", "failed_cases", "case_ids") if key in value}
+            return value
+
     plan: VerificationPlan | None = None
 
     def execute() -> None:
@@ -183,20 +229,25 @@ def _run_task(
                 store.finish_verified(task_id, recovered_attempt["number"], recovered_attempt)
             return
         check_cancel()
-        worktree = workspace.prepare(
-            Path(task["repository"]), store.root, task_id, task["base_commit"]
-        )
-        current_digest = manifest_digest(source_manifest(worktree))
-        if task.get("working_digest") and task["working_digest"] != current_digest:
-            raise HarnessError("workspace_changed", "工作区被外部修改，不能继续原修复任务")
-        baseline = task.get("baseline_manifest") or source_manifest(worktree)
-        store.update(
-            task_id,
-            worktree=str(worktree),
-            branch="feat/harness-" + task_id[7:],
-            baseline_manifest=baseline,
-            working_digest=current_digest,
-        )
+        with record_step(store, task_id, "snapshot", "冻结源码与工作区", group="source",
+                inputs={"base_commit": task["base_commit"], "source": source_inputs(source)},
+                locator={"section": "workspace"}) as step:
+            worktree = workspace.prepare(
+                Path(task["repository"]), store.root, task_id, task["base_commit"]
+            )
+            current_digest = manifest_digest(source_manifest(worktree))
+            if task.get("working_digest") and task["working_digest"] != current_digest:
+                raise HarnessError("workspace_changed", "工作区被外部修改，不能继续原修复任务")
+            baseline = task.get("baseline_manifest") or source_manifest(worktree)
+            store.update(
+                task_id,
+                worktree=str(worktree),
+                branch="feat/harness-" + task_id[7:],
+                baseline_manifest=baseline,
+                working_digest=current_digest,
+            )
+            step.conclusion = "已冻结基线源码并确认工作区一致"
+            step.evidence = {"base_commit": task["base_commit"], "source_digest": current_digest}
         current = store.get(task_id)
         if not current.get("preparation_input"):
             store.update(task_id, preparation_input=current["source"])
@@ -212,17 +263,26 @@ def _run_task(
                              preparation_failure=failure, stage="auto_correcting")
             else:
                 store.update(task_id, stage="prepare_reproducer")
-            source, hypothesis, plan = verifier.prepare(
-                store.get(task_id), candidate(), coder,
-                replace(options, timeout_seconds=max(1, int(deadline - time.monotonic()))), check_cancel)
-            generation = int(current.get("plan_generation", 0))
-            if failure is not None or not current.get("verification_plan"):
-                generation += 1
-            store.update(task_id, source=source, hypothesis=asdict(hypothesis), verification_plan=plan.to_payload(),
-                         plan_generation=generation,
-                         planned_agent_trials=(2 * options.max_attempts + 1) * sum(
-                             plan.check_repetitions.get(name, plan.repetitions) for name in plan.checks
-                             if not name.startswith("reproduction")) if plan.real_agent else 0)
+            generation = int(current.get("plan_generation", 0)) + int(failure is not None or not current.get("verification_plan"))
+            number = current.get("current_attempt")
+            with record_step(store, task_id, "plan", "建立并冻结验收方案", group=f"attempt-{number}" if number else "preparation",
+                    inputs={"source": source_inputs(current["source"]), "generation": generation,
+                            "previous_failure": {k: failure[k] for k in ("code", "message") if k in failure} if failure else None},
+                    locator={"section": "plans", "generation": generation}, attempt=number, generation=generation) as step:
+                source, hypothesis, plan = verifier.prepare(
+                    store.get(task_id), candidate(), coder,
+                    replace(options, timeout_seconds=max(1, int(deadline - time.monotonic()))), check_cancel)
+                generation = int(current.get("plan_generation", 0))
+                if failure is not None or not current.get("verification_plan"):
+                    generation += 1
+                store.update(task_id, source=source, hypothesis=asdict(hypothesis), verification_plan=plan.to_payload(),
+                             plan_generation=generation,
+                             planned_agent_trials=(2 * options.max_attempts + 1) * sum(
+                                 plan.check_repetitions.get(name, plan.repetitions) for name in plan.checks
+                                 if not name.startswith("reproduction")) if plan.real_agent else 0)
+
+                step.conclusion = "验收方案已冻结，后续复测使用此版本"
+                step.evidence = {"hypothesis": asdict(hypothesis), "plan": plan.to_payload(), "generation": generation}
 
         def reproducible_baseline():
             while True:
@@ -270,7 +330,7 @@ def _run_task(
                         protected = set(plan.protected_checks) | set(revised_baseline["passed_cases"])
                         prior = store.get(task_id).get("regression_baseline_versions", {})
                         prior[str(generation)] = library
-                        library = verifier.regressions(store.get(task_id), candidate(), check_cancel)
+                        library = repository_checks("repository_baseline")
                         store.update(task_id, regression_baseline=library, regression_baseline_versions=prior,
                                      protected_cases=sorted(protected))
                     finally:
@@ -300,7 +360,7 @@ def _run_task(
             library = store.get(task_id).get("regression_baseline")
             if library is None:
                 store.update(task_id, stage="repository_baseline")
-                library = verifier.regressions(store.get(task_id), candidate(), check_cancel)
+                library = repository_checks("repository_baseline")
                 store.update(task_id, regression_baseline=library)
             prior_attempts = store.attempts(task_id)
             charged_numbers = [item["number"] for item in prior_attempts if item.get("counts_toward_budget", True)]
@@ -338,42 +398,48 @@ def _run_task(
                         "protected_cases": sorted(protected),
                     }
                     try:
-                        coding = coder.run(
-                            worktree,
-                            evidence,
-                            replace(
-                                options, timeout_seconds=max(1, int(deadline - time.monotonic()))
-                            ),
-                            output,
-                            check_cancel,
-                        )
-                        check_cancel()
-                        changed = workspace.delta(worktree, baseline, str(source.get("bot_id", "")))
-                        if not changed:
-                            raise HarnessError("empty_candidate", "编程执行器未生成产品改动")
-                        for name in changed:
-                            if name.endswith(".py") and (worktree / name).exists():
-                                compile((worktree / name).read_bytes(), name, "exec")
-                        subprocess.run(
-                            ["git", "-C", str(worktree), "diff", "--check"],
-                            check=True,
-                            capture_output=True,
-                            timeout=30,
-                        )
-                        patch_hash = workspace.save_patch(
-                            worktree, baseline, output / "candidate.patch"
-                        )
-                        digest = manifest_digest(source_manifest(worktree))
-                        attempt.update(
-                            status="verifying",
-                            changed_files=changed,
-                            candidate_digest=digest,
-                            patch_sha256=patch_hash,
-                            coding=coding,
-                            checks=["python_syntax", "git_diff_check"],
-                        )
-                        store.save_attempt(task_id, number, attempt)
-                        store.update(task_id, working_digest=digest)
+                        with record_step(store, task_id, "coding", "生成候选", group=f"attempt-{number}", attempt=number,
+                                inputs={"source": source_inputs(source), "hypothesis": store.get(task_id).get("hypothesis"),
+                                        "protected_cases": sorted(protected), "previous_attempts": [a["number"] for a in attempts.values()]},
+                                locator={"section": "attempts", "number": number, "field": "coding"}, source_id=f"coding-{number}") as step:
+                            coding = coder.run(
+                                worktree,
+                                evidence,
+                                replace(
+                                    options, timeout_seconds=max(1, int(deadline - time.monotonic()))
+                                ),
+                                output,
+                                check_cancel,
+                            )
+                            check_cancel()
+                            changed = workspace.delta(worktree, baseline, str(source.get("bot_id", "")))
+                            if not changed:
+                                raise HarnessError("empty_candidate", "编程执行器未生成产品改动")
+                            for name in changed:
+                                if name.endswith(".py") and (worktree / name).exists():
+                                    compile((worktree / name).read_bytes(), name, "exec")
+                            subprocess.run(
+                                ["git", "-C", str(worktree), "diff", "--check"],
+                                check=True,
+                                capture_output=True,
+                                timeout=30,
+                            )
+                            patch_hash = workspace.save_patch(
+                                worktree, baseline, output / "candidate.patch"
+                            )
+                            digest = manifest_digest(source_manifest(worktree))
+                            attempt.update(
+                                status="verifying",
+                                changed_files=changed,
+                                candidate_digest=digest,
+                                patch_sha256=patch_hash,
+                                coding=coding,
+                                checks=["python_syntax", "git_diff_check"],
+                            )
+                            store.save_attempt(task_id, number, attempt)
+                            store.update(task_id, working_digest=digest)
+                            step.conclusion = "已生成候选改动；等待复测与审核"
+                            step.evidence = {"changed_files": changed, "patch_sha256": patch_hash, "candidate_digest": digest}
                     except (HarnessError, SyntaxError, subprocess.SubprocessError) as exc:
                         if isinstance(exc, Cancelled) or getattr(exc, "code", "") in {
                             "budget_exhausted",
@@ -393,9 +459,7 @@ def _run_task(
                     store.update(task_id, stage=f"repository-verify-{number}")
                     regression_result = attempt.get(
                         "repository_regressions"
-                    ) or verifier.regressions(
-                        store.get(task_id), candidate(), check_cancel, library["case_ids"]
-                    )
+                    ) or repository_checks(f"repository-verify-{number}", library["case_ids"])
                     attempt["repository_regressions"] = regression_result
                 else:
                     regression_result = {"passed_cases": []}
@@ -421,6 +485,7 @@ def _run_task(
                 attempt.update(
                     status="accepted" if accepted else "rejected",
                     verification=verification,
+                    acceptance_coverage=coverage,
                     regressions=regressions,
                     finished_at=time.time(),
                 )

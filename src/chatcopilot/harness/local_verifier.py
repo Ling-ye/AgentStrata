@@ -22,6 +22,7 @@ from chatcopilot.core.scoped_process import sandbox_command
 from chatcopilot.core.source_snapshot import copy_sources, git_output, manifest_digest, source_manifest
 from chatcopilot.harness.models import HarnessError, RepairOptions, safe_error
 from chatcopilot.harness.preparation import acceptance, classify, require_coverage, review_test
+from chatcopilot.harness.flow_records import record_step, source_inputs
 
 
 def _read(path: Path, *, max_bytes: int = 1024 * 1024) -> bytes:
@@ -84,7 +85,8 @@ class LocalVerifier:
                 raise HarnessError("preparation_interrupted", "该准备执行尚无终态；保留草案，请检查执行器状态")
             started.touch(mode=0o600)
             record = {"revision": revision, "status": "running", "reason": feedback,
-                      "baseline_digest": digest, "started_at": time.time()}
+                      "baseline_digest": digest, "started_at": time.time(),
+                      "attempt": task.get("current_attempt"), "generation": task.get("plan_generation", 0) + 1}
             def save() -> None:
                 (output / "record.json").write_text(json_text(record))
                 (output / "record.json").chmod(0o600)
@@ -93,9 +95,15 @@ class LocalVerifier:
                                       stage="auto_correcting", acceptance=requirements)
             save()
             try:
-                coding = coder.prepare(worktree, {"source": task["source"], "acceptance": requirements,
-                    "previous_revision": feedback, "revision": revision,
-                    "prior_diagnosis": task.get("prior_diagnosis"), "prior_material": task.get("prior_material", {})}, options, output, check_cancel)
+                with record_step(getattr(self, "store", None), task["task_id"], "prepare", "生成复现方案",
+                        group=f"prepare-{revision}", revision=revision, attempt=task.get("current_attempt"), generation=record["generation"],
+                        inputs={"source": source_inputs(task["source"]), "acceptance": requirements,
+                                "previous_failure": {k: feedback[k] for k in ("code", "message", "error") if k in feedback}},
+                        locator={"section": "preparation", "revision": revision, "field": "diagnosis"}, source_id=f"prepare-{revision}") as step:
+                    coding = coder.prepare(worktree, {"source": task["source"], "acceptance": requirements,
+                        "previous_revision": feedback, "revision": revision,
+                        "prior_diagnosis": task.get("prior_diagnosis"), "prior_material": task.get("prior_material", {})}, options, output, check_cancel)
+                    step.conclusion = "复现草案已生成；等待校验与试运行"
                 check_cancel()
                 if manifest_digest(source_manifest(worktree)) != digest:
                     raise HarnessError("protected_change", "复现准备修改了产品代码")
@@ -104,6 +112,7 @@ class LocalVerifier:
                 if not isinstance(diagnosis, dict):
                     raise HarnessError("invalid_diagnosis", "复现说明必须为 JSON 对象")
                 record["diagnosis"] = diagnosis
+                save()
                 if diagnosis.get("reproducible") is not True:
                     raise HarnessError("not_reproducible", str(diagnosis.get("reason", "缺少复现依据")))
                 if not diagnosis.get("reason") or not diagnosis.get("expected_behavior"):
@@ -156,8 +165,17 @@ class LocalVerifier:
                         repetitions=1, test_path=str(trial_file), test_sha256=test_hash,
                         test_relative_path=f"tests/unit/harness_regressions/test_{test_hash}.py")
                     prepared_task = {**task, "source": prepared}
-                    trial = self._pytest(prepared_task, worktree, [prepared["test_relative_path"]], check_cancel)
-                    record["trial"] = trial
+                    with record_step(getattr(self, "store", None), task["task_id"], "prepare_trial", "复现方案试运行",
+                            group=f"prepare-{revision}", revision=revision, attempt=task.get("current_attempt"), generation=record["generation"],
+                            inputs={"test_sha256": test_hash, "diagnosis": diagnosis, "baseline_digest": digest},
+                            locator={"section": "preparation", "revision": revision, "field": "trial"}) as step:
+                        trial = self._pytest(prepared_task, worktree, [prepared["test_relative_path"]], check_cancel)
+                        record["trial"] = trial
+                        save()
+                        invalid_trial = [classify(row) for row in trial["rows"].values() if classify(row) not in {"", "product"}]
+                        step.outcome = "failed" if invalid_trial or not trial["collected"] else "completed"
+                        step.conclusion = "试运行需修订：" + "、".join(invalid_trial) if invalid_trial else "试运行已执行，产品断言失败可用于复现依据" if trial["collected"] else "没有收集到测试"
+
                     if not trial["collected"] or set(trial["collected"]) != set(trial["rows"]):
                         raise HarnessError("invalid_reproducer", "测试未完整收集和执行")
                     invalid = [(name, classify(row)) for name, row in trial["rows"].items()
@@ -179,13 +197,21 @@ class LocalVerifier:
                         prepared["regression_id"] = "pytest-" + test_hash
                 if task.get("pipeline_version", 3) >= 4:
                     from chatcopilot.harness.models import review_decision
-                    review = coder.review(worktree, {"source": prepared,
-                        "reproduction": record.get("trial", {}),
-                        "verification": {"phase": "preparation", "acceptance": requirements, "diagnosis": diagnosis},
-                        "patch": content.decode("utf-8"), "regression": {"agent_case": prepared.get("agent_case")}},
-                        options, private_directory(output / "review"), check_cancel)
-                    decision = review_decision({key: review[key] for key in ("decision", "problem", "reason", "evidence_refs") if key in review})
-                    record["review"] = decision
+                    with record_step(getattr(self, "store", None), task["task_id"], "prepare_review", "复现方案审核",
+                            group=f"prepare-{revision}", revision=revision, attempt=task.get("current_attempt"), generation=record["generation"],
+                            inputs={"diagnosis": diagnosis, "acceptance": requirements, "draft_sha256": record.get("draft_sha256")},
+                            locator={"section": "preparation", "revision": revision, "field": "review"}, source_id=f"prepare-review-{revision}") as step:
+                        review = coder.review(worktree, {"source": prepared,
+                            "reproduction": record.get("trial", {}),
+                            "verification": {"phase": "preparation", "acceptance": requirements, "diagnosis": diagnosis},
+                            "patch": content.decode("utf-8"), "regression": {"agent_case": prepared.get("agent_case")}},
+                            options, private_directory(output / "review"), check_cancel)
+                        decision = review_decision({key: review[key] for key in ("decision", "problem", "reason", "evidence_refs") if key in review})
+                        record["review"] = decision
+                        save()
+                        step.outcome = "completed" if decision["decision"] == "approved" else "failed"
+                        step.conclusion = decision["reason"]
+                        step.evidence = decision
                     if manifest_digest(source_manifest(worktree)) != digest:
                         raise HarnessError("protected_change", "草案审核修改了产品代码")
                     if decision["decision"] != "approved":

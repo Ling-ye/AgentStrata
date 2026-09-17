@@ -81,6 +81,10 @@ export const ATTEMPT_LABELS: Record<string, string> = {
   coding_failed: "生成失败", interrupted: "已中断",
 };
 export function stageLabel(stage: string): string {
+  const revised = /^(repository-verify|verify|confirm)-(\d+)-r(\d+)$/.exec(stage);
+  if (revised) return `第 ${revised[2]} 轮${revised[1] === "repository-verify" ? "仓库回归" : revised[1] === "confirm" ? "独立确认" : "复测"}（方案第 ${revised[3]} 代）`;
+  const baseline = /^(reproduce|baseline)-r(\d+)$/.exec(stage);
+  if (baseline) return `${baseline[1] === "reproduce" ? "确认原问题" : "建立回归基线"}（方案第 ${baseline[2]} 代）`;
   if (stage.startsWith("repository-verify-")) return `第 ${stage.slice(18)} 轮仓库回归`;
   if (stage.startsWith("confirm-")) return `第 ${stage.slice(8)} 轮独立确认`;
   if (stage.startsWith("verify-")) return `第 ${stage.slice(7)} 轮复测`;
@@ -105,8 +109,9 @@ export const harnessApi = {
   load: (kind: SourceKind, sourceId: string, botId: string) => request<SourcePreview>("/sources/load", post({ kind, source_id: sourceId, bot_id: botId })),
   history: (page: number, search: string, status: string, signal?: AbortSignal, kind = "") => request<{ tasks: RepairTask[]; total: number }>(`/tasks?${new URLSearchParams({ page: String(page), search, status, ...(kind ? { kind } : {}) })}`, { signal }),
   get: (taskId: string, signal?: AbortSignal) => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}`, { signal }),
+  summary: (taskId: string, signal?: AbortSignal) => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}?summary=true`, { signal, cache: "no-store" }),
   progress: (taskId: string, signal?: AbortSignal) => request<RepairProgress>(`/tasks/${encodeURIComponent(taskId)}/progress`, { signal, cache: "no-store" }),
-  evidence: (taskId: string) => request<Record<string, unknown>>(`/tasks/${encodeURIComponent(taskId)}/evidence`),
+  evidence: (taskId: string, signal?: AbortSignal) => request<Record<string, unknown>>(`/tasks/${encodeURIComponent(taskId)}/evidence`, { signal, cache: "no-store" }),
   start: (body: StartRepair) => request<RepairTask>("/tasks", post(body)),
   image: (taskId: string, file: File) => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/image`, { method: "POST", body: file }),
   action: (taskId: string, action: "cancel" | "resume" | "retry-delivery" | "retry-cleanup" | "continue") => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/${action}`, { method: "POST" }),

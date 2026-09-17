@@ -22,6 +22,7 @@ from chatcopilot.harness.models import (
     safe_error,
 )
 from chatcopilot.harness.store import HarnessStore
+from chatcopilot.harness.flow_records import record_step
 
 
 def finish_candidate(
@@ -83,27 +84,35 @@ def finish_candidate(
                 store.root / "jobs" / task_id / f"attempt-{number}" / "review"
             )
             try:
-                result = coder.review(
-                    worktree,
-                    evidence,
-                    replace(options, timeout_seconds=max(1, int(deadline - time.monotonic()))),
-                    directory,
-                    check_cancel,
-                )
-                decision = review_decision(
-                    {
-                        key: result[key]
-                        for key in ("decision", "problem", "reason", "evidence_refs")
-                        if key in result
+                with record_step(store, task_id, "review", "AI 修复审核", group=f"attempt-{number}", attempt=number,
+                        inputs={"candidate_digest": attempt["candidate_digest"], "patch_sha256": attempt["patch_sha256"],
+                                "verification": {"target": attempt["verification"].get("passed_cases", []),
+                                                 "regressions": attempt.get("regressions", [])}},
+                        locator={"section": "attempts", "number": number, "field": "review"}, source_id=f"review-{number}") as step:
+                    result = coder.review(
+                        worktree,
+                        evidence,
+                        replace(options, timeout_seconds=max(1, int(deadline - time.monotonic()))),
+                        directory,
+                        check_cancel,
+                    )
+                    decision = review_decision(
+                        {
+                            key: result[key]
+                            for key in ("decision", "problem", "reason", "evidence_refs")
+                            if key in result
+                        }
+                    )
+                    review = {
+                        **review,
+                        **decision,
+                        "state": "complete",
+                        "finished_at": time.time(),
+                        "execution": result.get("execution", {}),
                     }
-                )
-                review = {
-                    **review,
-                    **decision,
-                    "state": "complete",
-                    "finished_at": time.time(),
-                    "execution": result.get("execution", {}),
-                }
+                    step.outcome = "completed" if decision["decision"] == "approved" else "failed"
+                    step.conclusion = decision["reason"]
+                    step.evidence = decision
             except Exception as exc:
                 review = {
                     **review,
