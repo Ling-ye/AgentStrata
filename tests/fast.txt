@@ -103,3 +103,5 @@ tests/integration/test_lingye_botspec_smoke.py
 tests/unit/test_harness_pr_delivery.py
 tests/unit/test_harness_delivery_install.py
 tests/unit/test_harness_lifecycle.py
+tests/unit/test_harness_worker_locks.py
+tests/unit/test_harness_delivery_cancellation.py

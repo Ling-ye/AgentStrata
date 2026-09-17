@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from chatcopilot.harness.control_types import EVALUATION_TERMINAL_STATES, EvaluationControlPort, WorkerControlPort, WorkerState
+from chatcopilot.harness.control_types import EVALUATION_TERMINAL_STATES, EvaluationControlPort, WorkerControlPort, WorkerState, external_evaluation_id
 from chatcopilot.harness.models import ACTIVE, GOVERNANCE_VERSION, PIPELINE_VERSION, Cancelled, HarnessError
 from chatcopilot.harness.store import HarnessStore
 
@@ -34,6 +34,8 @@ class HarnessLifecycle:
             raise HarnessError("worker_unavailable", "无法确认原 worker 已停止，请稍后核对")
 
     def _require_evaluation_stopped(self, task: dict[str, Any]) -> None:
+        if task.get("delivery_evaluation"):
+            raise HarnessError("conflict", "交付复测尚未收尾，不能恢复或接续修复")
         ident = self._external_evaluation(task)
         if ident and not self._evaluation_stopped(ident):
             raise HarnessError("conflict", "原验证尚未确认结束")
@@ -93,9 +95,13 @@ class HarnessLifecycle:
             task = self.store.get(task_id)
             self.require_current(task)
             task = self.store.update(task_id, delivery_cancel_requested=True)
-            task = self.store.update(task_id,
-                if_status=frozenset({*ACTIVE, "waiting_input", "blocked", "interrupted"}),
-                status="cancel_requested")
+            if task.get("delivery_evaluation"):
+                self.delivery_locked(task_id, "cancel")
+                return self.store.get(task_id)
+            if task["status"] in {*ACTIVE, "waiting_input"} or task.get("current_evaluation_id"):
+                task = self.store.update(task_id,
+                    if_status=frozenset({*ACTIVE, "waiting_input", "blocked", "interrupted"}),
+                    status="cancel_requested")
             if task["status"] == "cancel_requested":
                 task = self._reconcile_locked(task_id)
             if task["status"] not in ACTIVE and task.get("delivery"):
@@ -104,13 +110,7 @@ class HarnessLifecycle:
 
     @staticmethod
     def _external_evaluation(task: dict[str, Any]) -> str | None:
-        ident = task.get("current_evaluation_id")
-        source = task["source"]
-        if not ident or task.get("delivery_evaluation"):
-            return None
-        if source.get("agent_source"):
-            return ident + "-agent"
-        return None if source.get("test_sha256") else ident
+        return external_evaluation_id(task["source"], task.get("current_evaluation_id"))
 
     def _cancel_evaluation(self, task: dict[str, Any]) -> bool:
         ident = self._external_evaluation(task)
@@ -134,7 +134,7 @@ class HarnessLifecycle:
     def _reconcile_locked(self, task_id: str) -> dict[str, Any]:
         task = self.store.get(task_id)
         self.require_current(task)
-        if task["status"] not in ACTIVE:
+        if task["status"] not in ACTIVE or task.get("delivery_evaluation"):
             return task
         if task["status"] == "cancel_requested":
             external_stopped = self._cancel_evaluation(task)

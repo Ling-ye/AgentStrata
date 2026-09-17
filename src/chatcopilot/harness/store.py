@@ -33,12 +33,13 @@ class HarnessStore:
         self.database = PrivateDatabase(self.root / "harness.sqlite3", _SCHEMA)
 
     @contextmanager
-    def control_guard(self, task_id: str):
+    def control_guard(self, task_id: str, *, wait: bool = False):
         """Serialize control operations without holding a database transaction."""
         digest = hashlib.sha256(task_id.encode()).hexdigest()
         with self.creation_guard(), ExitStack() as stack:
             try:
-                stack.enter_context(private_lock(self.root / ("control-" + digest + ".lock"), timeout=5))
+                stack.enter_context(private_lock(self.root / ("control-" + digest + ".lock"),
+                                                timeout=None if wait else 5))
             except (BlockingIOError, TimeoutError) as exc:
                 raise HarnessError("conflict", "该任务的控制操作尚未结束，请稍后重试") from exc
             yield
@@ -195,7 +196,8 @@ class HarnessStore:
                 record_delivery(current, value, value["updated_at"])
             active_key = (
                 value["active_key"]
-                if value["status"] in ACTIVE or value["status"] == "waiting_input" or value.get("current_evaluation_id")
+                if value["status"] in ACTIVE or value["status"] == "waiting_input"
+                or value.get("current_evaluation_id") or value.get("delivery_evaluation")
                 else None
             )
             connection.execute(
@@ -253,7 +255,7 @@ class HarnessStore:
                     connection.execute("UPDATE attempts SET payload=? WHERE task_id=? AND number=?",
                                        (json_text(attempt), task_id, row[0]))
                 connection.execute("UPDATE tasks SET status=?,active_key=?,payload=?,updated_at=? WHERE task_id=?",
-                                   (task["status"], task["active_key"] if task.get("current_evaluation_id") else None,
+                                   (task["status"], task["active_key"] if task.get("current_evaluation_id") or task.get("delivery_evaluation") else None,
                                     json_text(task), now, task_id))
                 return task
         except Exception:

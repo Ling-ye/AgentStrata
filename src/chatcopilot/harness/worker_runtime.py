@@ -2,17 +2,54 @@
 from __future__ import annotations
 
 import fcntl
+from contextlib import ExitStack, contextmanager
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
-from chatcopilot.core.private_sqlite import private_directory, private_file
+from chatcopilot.core.private_sqlite import private_directory, private_file, private_lock
 from chatcopilot.core.source_snapshot import copy_sources, source_manifest
 from chatcopilot.harness.control_types import DispatchResult, WorkerState
+from chatcopilot.harness.models import ACTIVE, HarnessError, PIPELINE_VERSION
+from chatcopilot.harness.store import HarnessStore
+
+
+def _worker_directory(root: Path, task_id: str) -> Path:
+    if not task_id or Path(task_id).name != task_id or task_id in {".", ".."}:
+        raise ValueError("invalid Harness task path")
+    directory = root / "jobs" / task_id
+    if directory.resolve() != directory:
+        raise ValueError("Harness task directory contains a symlink")
+    return directory
+
+
+@contextmanager
+def worker_execution(store: HarnessStore, task_id: str, *, delivery: bool = False) -> Iterator[dict[str, Any] | None]:
+    """Register execution under the control lock, then keep only execution/maintenance locks."""
+    with ExitStack() as lifetime:
+        lifetime.enter_context(store.creation_guard())
+        with store.control_guard(task_id, wait=True):
+            task = store.get(task_id)
+            if task.get("pipeline_version") != PIPELINE_VERSION:
+                raise HarnessError("source_archived", "旧任务只读保留，请创建新任务")
+            eligible = (bool(task.get("delivery")) and task["status"] not in {*ACTIVE, "waiting_input"}
+                        and not task.get("current_evaluation_id")) if delivery else (
+                task["status"] in {"queued", "running"} and not task.get("delivery_evaluation"))
+            if eligible:
+                if delivery:
+                    from chatcopilot.harness.delivery_archive import task_paths
+                    _, directory, _, _ = task_paths(store, task)
+                else:
+                    directory = _worker_directory(store.root, task_id)
+                try:
+                    lifetime.enter_context(private_lock(directory / "worker.lock"))
+                except BlockingIOError as exc:
+                    raise HarnessError("worker_active", "本任务已有 worker 执行") from exc
+        yield task if eligible else None
 
 
 class SystemdWorkerControl:
@@ -28,13 +65,7 @@ class SystemdWorkerControl:
         return "agentstrata-harness-delivery-" + task["task_id"][7:]
 
     def _directory(self, task: dict[str, Any]) -> Path:
-        ident = task["task_id"]
-        if not ident or Path(ident).name != ident or ident in {".", ".."}:
-            raise ValueError("invalid Harness task path")
-        directory = self.root / "jobs" / ident
-        if directory.resolve() != directory:
-            raise ValueError("Harness task directory contains a symlink")
-        return directory
+        return _worker_directory(self.root, task["task_id"])
 
     @staticmethod
     def _unit_state(unit: str) -> WorkerState:

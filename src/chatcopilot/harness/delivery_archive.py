@@ -113,7 +113,7 @@ def archive(store: Any, task_id: str) -> dict[str, Any]:
 def cleanup_local(store: Any, task_id: str) -> None:
     task = store.get(task_id)
     repository, _, root, branch = task_paths(store, task)
-    if task["status"] in {*ACTIVE, "waiting_input"} or task.get("current_evaluation_id"):
+    if task["status"] in {*ACTIVE, "waiting_input"} or task.get("current_evaluation_id") or task.get("delivery_evaluation"):
         raise HarnessError("cleanup_active", "任务仍在执行，暂不清理")
     if not task.get("worktree"):
         if root.exists():

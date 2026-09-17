@@ -460,10 +460,12 @@ def test_pending_revalidation_retains_evaluation_identity(task, monkeypatch):
     coder = SimpleNamespace(review=lambda *args: {"decision": "approved", "problem": "", "reason": "fixture", "evidence_refs": ["verification"]})
     with pytest.raises(HarnessError, match="durable"):
         delivery_validation.revalidate(store, ident, Path(record["worktree"]), repo, coder, Verifier(), lambda: None)
-    assert store.get(ident)["current_evaluation_id"] == calls[0]
+    assert store.get(ident)["delivery_evaluation"]["id"] == calls[0]
+    assert store.get(ident).get("current_evaluation_id") is None
     delivery_validation.revalidate(store, ident, Path(record["worktree"]), repo, coder, Verifier(), lambda: None)
     assert calls[0] == calls[1]
-    assert store.get(ident)["current_evaluation_id"] is None
+    assert store.get(ident)["delivery_evaluation"] is None
+    assert store.get(ident).get("current_evaluation_id") is None
 
 
 def test_cleanup_waits_for_managed_worker_exit(task, monkeypatch):

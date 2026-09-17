@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 @contextmanager
-def private_lock(path: Path, *, exclusive: bool = True, timeout: float = 0) -> Iterator[int]:
-    """Lock a stable private inode, never a SQLite database or its sidecars."""
+def private_lock(path: Path, *, exclusive: bool = True, timeout: float | None = 0) -> Iterator[int]:
+    """Lock a stable private inode; timeout=None waits until its owner releases it."""
     import fcntl
 
     private_directory(path.parent)
@@ -33,13 +33,14 @@ def private_lock(path: Path, *, exclusive: bool = True, timeout: float = 0) -> I
         _require_private_file(opened)
         if stat.S_IMODE(opened.st_mode) != 0o600:
             raise ValueError("private lock requires mode 0600")
-        deadline = time.monotonic() + timeout
+        deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             try:
-                fcntl.flock(descriptor, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+                flags = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                fcntl.flock(descriptor, flags if timeout is None else flags | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
-                if timeout == 0:
+                if deadline is None or timeout == 0:
                     raise
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:

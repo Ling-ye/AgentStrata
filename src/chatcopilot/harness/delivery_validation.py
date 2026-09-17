@@ -66,8 +66,7 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
         for repetition in range(2 if plan.real_agent else 1):
             check_cancel()
             evaluation_id = "eval-harness-" + task_id[7:] + "-delivery-" + manifest_digest(manifest)[:12] + "-" + str(repetition)
-            store.update(task_id, current_evaluation_id=evaluation_id,
-                         delivery_evaluation={"id": evaluation_id, "digest": manifest_digest(manifest)})
+            store.update(task_id, delivery_evaluation={"id": evaluation_id, "digest": manifest_digest(manifest)})
             pending_result = False
             try:
                 result = verifier.run(store.get(task_id), CandidateRef(root, manifest_digest(manifest), task["base_commit"]),
@@ -81,7 +80,7 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
                 raise
             finally:
                 if not pending_result:
-                    store.update(task_id, current_evaluation_id=None, delivery_evaluation=None)
+                    store.update(task_id, delivery_evaluation=None)
         regression = verifier.regressions(store.get(task_id), CandidateRef(root, manifest_digest(manifest), task["base_commit"]), check_cancel)
         previous = task.get("regression_baseline", {}).get("passed_cases", [])
         if not set(previous).issubset(regression.get("passed_cases", [])):

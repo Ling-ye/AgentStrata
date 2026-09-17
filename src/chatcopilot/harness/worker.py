@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import os
 import signal
 import sqlite3
 from pathlib import Path
 
-from chatcopilot.core.private_sqlite import private_directory, private_file, storage_error_details
+from chatcopilot.core.private_sqlite import storage_error_details
 from chatcopilot.harness.codex_adapter import CodexCoder
 from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
-from chatcopilot.harness.models import ACTIVE, PIPELINE_VERSION
+from chatcopilot.harness.models import ACTIVE, HarnessError
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.assembly import run_task
+from chatcopilot.harness.worker_runtime import worker_execution
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -24,37 +24,31 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     os.umask(0o077)
     store = HarnessStore(args.root)
-    task = store.get(args.task)
-    if task.get("pipeline_version") != PIPELINE_VERSION or task["status"] not in ACTIVE:
-        return 0
-    directory = private_directory(args.root / "jobs" / task["task_id"])
-    fd = os.open(directory / "worker.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    try:
-        private_file(directory / "worker.lock")
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except (BlockingIOError, ValueError):
-        os.close(fd)
-        return 2
-
     def cancel(_signum, _frame):
         current = store.get(args.task)
         store.update(args.task, delivery_cancel_requested=True,
                      **({"status": "cancel_requested"} if current["status"] in ACTIVE else {}))
 
-    signal.signal(signal.SIGTERM, cancel)
-    signal.signal(signal.SIGINT, cancel)
     try:
-        with store.creation_guard():
-            result = run_task(store, args.task, ServiceEvaluator(), CodexCoder(
-                lambda root, ref: store.register_trace(args.task, root, ref)))
-        return 0 if result["status"] in {"fixed", "not_reproduced", "cancelled"} else 1
-    except (sqlite3.Error, OSError) as error:
-        if not isinstance(error, sqlite3.Error) and not storage_error_details(error):
-            raise
-        store.interrupt(args.task, storage_error=error)
-        return 1
-    finally:
-        os.close(fd)
+        with worker_execution(store, args.task) as task:
+            if task is None:
+                return 0
+            signal.signal(signal.SIGTERM, cancel)
+            signal.signal(signal.SIGINT, cancel)
+            try:
+                result = run_task(store, args.task, ServiceEvaluator(), CodexCoder(
+                    lambda root, ref: store.register_trace(args.task, root, ref)))
+                return 0 if result["status"] in {"fixed", "not_reproduced", "cancelled"} else 1
+            except (sqlite3.Error, OSError) as error:
+                if not isinstance(error, sqlite3.Error) and not storage_error_details(error):
+                    raise
+                store.interrupt(args.task, storage_error=error)
+                return 1
+    except HarnessError as error:
+        if error.code == "worker_active":
+            return 2
+        raise
+
 
 
 if __name__ == "__main__":

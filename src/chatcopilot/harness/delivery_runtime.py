@@ -2,19 +2,17 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 from pathlib import Path
 from typing import Any
 
-from chatcopilot.core.private_sqlite import private_file
 from chatcopilot.harness.config import configuration
 from chatcopilot.harness.delivery import PENDING, reconcile
 from chatcopilot.harness.models import ACTIVE, HarnessError, PIPELINE_VERSION
 from chatcopilot.harness.control_service import HarnessLifecycle
 from chatcopilot.harness.control_types import WorkerState
-from chatcopilot.harness.worker_runtime import SystemdWorkerControl
+from chatcopilot.harness.worker_runtime import SystemdWorkerControl, worker_execution
 from chatcopilot.harness.store import HarnessStore
 
 
@@ -55,20 +53,10 @@ def run_one(store: HarnessStore, task_id: str) -> dict[str, Any]:
     from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
     from chatcopilot.harness.local_verifier import LocalVerifier
     from chatcopilot.harness.verification import CaseVerification
-    from chatcopilot.harness.delivery_archive import task_paths
-    task = store.get(task_id)
-    _, directory, _, _ = task_paths(store, task)
-    path = directory / "worker.lock"
-    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
-        private_file(path)
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except (BlockingIOError, ValueError):
-        os.close(fd)
-        return store.get(task_id)
-    try:
-        with store.creation_guard():
-            task = store.get(task_id)
+        with worker_execution(store, task_id, delivery=True) as task:
+            if task is None:
+                return store.get(task_id)
             action = task.get("delivery_request")
             coder = CodexCoder(lambda root, ref: store.register_trace(task_id, root, ref))
             verifier = CaseVerification(ServiceEvaluator(), LocalVerifier(store.root), store)
@@ -76,11 +64,15 @@ def run_one(store: HarnessStore, task_id: str) -> dict[str, Any]:
                                retry=action == "retry" or task["delivery"]["state"] in {"merged", "closed"},
                                cleanup_only=action == "cleanup" or (not action and task["delivery"]["state"] not in PENDING
                                    and task.get("cleanup", {}).get("local") == "pending"))
-            if store.get(task_id).get("delivery_request") == action:
+            cancellation_pending = (result.get("delivery_evaluation") or
+                result["delivery"]["state"] not in {"cancelled", "merged", "closed"})
+            if store.get(task_id).get("delivery_request") == action and not (action == "cancel" and cancellation_pending):
                 store.update(task_id, delivery_request=None)
             return result
-    finally:
-        os.close(fd)
+    except HarnessError as error:
+        if error.code == "worker_active":
+            return store.get(task_id)
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:

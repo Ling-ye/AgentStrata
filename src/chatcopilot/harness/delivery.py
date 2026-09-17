@@ -13,6 +13,7 @@ from chatcopilot.harness import delivery_archive, delivery_candidate
 from chatcopilot.harness.delivery_checks import publication_checks
 from chatcopilot.harness.github_delivery import DeliveryConfig, GitHubDelivery, git
 from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError, PIPELINE_VERSION, safe_error
+from chatcopilot.harness.control_types import external_evaluation_id
 from chatcopilot.harness.workspace import prepare
 
 PENDING = frozenset({"pending", "committed", "pushed", "pr_open", "waiting_checks", "checks_failed", "updating", "retryable", "cancel_pending"})
@@ -84,7 +85,7 @@ def _update_main(store: Any, task_id: str, client: GitHubDelivery, main: str, co
     from chatcopilot.harness.delivery_validation import revalidate
     task = store.get(task_id)
     state = task["delivery"]
-    inflight = bool(task.get("current_evaluation_id") and task.get("delivery_evaluation"))
+    inflight = bool(task.get("delivery_evaluation"))
     if inflight and state.get("update_base_sha") != main:
         raise HarnessError("delivery_update_in_flight", "原主干复测仍在执行，先完成或取消该测评")
     # Persist ownership of the disable request, so retry does not mistake it for a human action.
@@ -161,21 +162,24 @@ def reconcile(store: Any, task_id: str, *, client: GitHubDelivery | None = None,
     task = store.get(task_id)
     if task.get("pipeline_version") != PIPELINE_VERSION or not task.get("delivery"):
         raise HarnessError("source_archived", "旧任务只读保留")
-    if task["status"] in {*ACTIVE, "waiting_input"} or (task.get("current_evaluation_id") and not task.get("delivery_evaluation")):
+    if task["status"] in {*ACTIVE, "waiting_input"} or task.get("current_evaluation_id"):
         return task
     if cleanup_only:
         _cleanup(store, task_id)
         return store.get(task_id)
     state = task["delivery"]
-    if state["state"] not in PENDING and not retry:
+    cancelling = task.get("delivery_cancel_requested") or task["status"] == "cancelled"
+    if state["state"] not in PENDING and not retry and not cancelling:
         return task
     try:
         _reconcile(store, task_id, client=client, coder=coder, verifier=verifier)
     except Cancelled:
         _save(store, task_id, state="cancel_pending", error_code=None, message="等待核对 PR 并关闭自动合并")
     except Exception as exc:
+        current = store.get(task_id)
+        cancelling = current.get("delivery_cancel_requested") or current["status"] == "cancelled"
         transient = isinstance(exc, github_transport.GitHubError) and (exc.code == "github_unavailable" or exc.status == 429 or exc.status >= 500)
-        _save(store, task_id, state="retryable" if transient else "blocked", error_code=getattr(exc, "code", "delivery_failed"),
+        _save(store, task_id, state="cancel_pending" if cancelling else "retryable" if transient else "blocked", error_code=getattr(exc, "code", "delivery_failed"),
               message=safe_error(exc))
     finally:
         _cleanup(store, task_id)
@@ -189,16 +193,13 @@ def _reconcile(store: Any, task_id: str, *, client: GitHubDelivery | None, coder
     if state.get("branch", branch) != branch:
         raise HarnessError("delivery_target_changed", "交付分支不属于本任务")
     cancelled = task.get("delivery_cancel_requested") or task["status"] == "cancelled"
-    if cancelled and task.get("current_evaluation_id") and task.get("delivery_evaluation"):
-        if verifier is None:
-            raise HarnessError("delivery_validator_unavailable", "取消复测需要 Evaluation 适配器")
-        evaluator = verifier.evaluator
-        evaluator.cancel(task["current_evaluation_id"])
-        record = evaluator.client.get(task["current_evaluation_id"])
-        if record["status"] in {"queued", "running"}:
-            _save(store, task_id, state="cancel_pending", message="等待受管复测进程退出")
-            return
-        store.update(task_id, current_evaluation_id=None, delivery_evaluation=None)
+    if cancelled and task.get("delivery_evaluation"):
+        external_id = external_evaluation_id(task["source"], task["delivery_evaluation"]["id"])
+        if external_id:
+            if verifier is None:
+                raise HarnessError("delivery_validator_unavailable", "取消复测需要 Evaluation 适配器")
+            verifier.evaluator.cancel_confirmed(external_id)
+        store.update(task_id, delivery_evaluation=None)
     if cancelled and not state.get("pr_number") and not state.get("commit_sha"):
         _save(store, task_id, state="cancelled", message="已取消交付")
         return
