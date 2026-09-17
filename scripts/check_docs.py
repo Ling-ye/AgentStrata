@@ -16,7 +16,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_DOCS = {"README.md", "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md", "SUPPORT.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md", ".github/pull_request_template.md"}
 SKIP_DIRS = {".git", ".cache", ".worktrees", ".venv", "node_modules", "dist", "build", "__pycache__", "vendor", "fixtures", "prompts", "skills"}
-SOURCE_ROOTS = {"src", "tests", "scripts", "console", "bots", "deploy", "requirements", ".github", ".cursor"}
+SOURCE_ROOTS = {"src", "tests", "scripts", "console", "bots", "deploy", "requirements", ".github"}
 _HEADING = re.compile(r"^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
 _REFERENCE = re.compile(r'^ {0,3}\[([^\]]+)\]:\s*(<[^>]+>|\S+)')
 _RESULT = re.compile(r"\b\d[\d,]*\s+(?:passed|failed|skipped|subtests?\s+passed|tests?\s+passed)\b", re.I)
@@ -55,13 +55,12 @@ def authored_document(name: str) -> bool:
     if any(part in SKIP_DIRS for part in p.parts):
         return False
     return (name.startswith(("docs/", "specs/")) and p.suffix == ".md"
-            or name.startswith(".cursor/rules/") and p.suffix == ".mdc"
             or p.name == "README.md" and p.parts[0] in {"src", "bots", "console", "deploy"})
 
 
 def discover(root: Path) -> list[str]:
     names = [name for name in sorted(ROOT_DOCS) if (root / name).is_file()]
-    for top in ("docs", "specs", ".cursor/rules", "src", "bots", "console", "deploy"):
+    for top in ("docs", "specs", "src", "bots", "console", "deploy"):
         directory = root / top
         if not directory.exists():
             continue
@@ -310,7 +309,7 @@ def check(root: Path, changed_paths: tuple[str, ...] | None = None) -> dict:
         reached.add(name)
         queue.extend(sorted(graph[name] - reached))
     for name in documents:
-        if name not in reached and name != "specs/_template/spec.md" and not name.startswith(".cursor/"):
+        if name not in reached and name != "specs/_template/spec.md":
             violations.append(issue("orphan", name, 1, "维护文档无法从 README 或 AGENTS 的链接进入"))
     for names in paragraphs.values():
         if len(names) > 1:
