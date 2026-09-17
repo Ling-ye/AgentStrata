@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 import subprocess
+import sqlite3
 
 import pytest
 
@@ -431,7 +432,8 @@ def test_delivery_credentials_are_not_in_the_coder_environment(task, monkeypatch
     assert "GH_TOKEN" not in env and "CHATCOPILOT_HARNESS_GITHUB_TOKEN_FILE" not in env
 
 
-def test_pending_revalidation_retains_evaluation_identity(task, monkeypatch):
+@pytest.mark.parametrize("failure_type", [HarnessError, sqlite3.OperationalError])
+def test_pending_revalidation_retains_evaluation_identity(task, monkeypatch, failure_type):
     from types import SimpleNamespace
     from chatcopilot.harness import delivery_validation
     from chatcopilot.harness.models import VerificationPlan, VerificationResult, VerificationCheck
@@ -451,14 +453,18 @@ def test_pending_revalidation_retains_evaluation_identity(task, monkeypatch):
     class Verifier:
         def run(self, task, candidate, run_id, checks, cancel):
             calls.append(run_id)
+            assert task["delivery_evaluation"]["id"] == run_id
+            assert task.get("current_evaluation_id") is None
             if len(calls) == 1:
-                raise HarnessError("result_pending", "result is not durable yet")
+                if failure_type is HarnessError:
+                    raise HarnessError("result_pending", "result is not durable yet")
+                raise sqlite3.OperationalError("controlled host storage failure")
             return VerificationResult(run_id, candidate.digest, (VerificationCheck("target", 1, "passed"),))
         def regressions(self, *args):
             return {"passed_cases": []}
     monkeypatch.setattr(delivery_validation, "CodeHealthChecks", Checks)
     coder = SimpleNamespace(review=lambda *args: {"decision": "approved", "problem": "", "reason": "fixture", "evidence_refs": ["verification"]})
-    with pytest.raises(HarnessError, match="durable"):
+    with pytest.raises(failure_type):
         delivery_validation.revalidate(store, ident, Path(record["worktree"]), repo, coder, Verifier(), lambda: None)
     assert store.get(ident)["delivery_evaluation"]["id"] == calls[0]
     assert store.get(ident).get("current_evaluation_id") is None

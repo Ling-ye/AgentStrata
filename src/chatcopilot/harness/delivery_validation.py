@@ -67,20 +67,15 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
             check_cancel()
             evaluation_id = "eval-harness-" + task_id[7:] + "-delivery-" + manifest_digest(manifest)[:12] + "-" + str(repetition)
             store.update(task_id, delivery_evaluation={"id": evaluation_id, "digest": manifest_digest(manifest)})
-            pending_result = False
-            try:
-                result = verifier.run(store.get(task_id), CandidateRef(root, manifest_digest(manifest), task["base_commit"]),
-                                      evaluation_id, list(plan.checks), check_cancel)
-                result.require_valid(list(plan.checks), plan.check_repetitions or plan.repetitions)
-                if result.candidate_digest != manifest_digest(manifest) or not expected.issubset(result.passed):
-                    raise HarnessError("delivery_revalidation_failed", "同步主干后的目标复测未通过")
-                trials.append(asdict(result))
-            except HarnessError as exc:
-                pending_result = exc.code in {"evaluation_unavailable", "result_pending"}
-                raise
-            finally:
-                if not pending_result:
-                    store.update(task_id, delivery_evaluation=None)
+            # A returned result confirms execution finished. An exception (including
+            # host storage failure) does not, so leave ownership for reconciliation.
+            result = verifier.run(store.get(task_id), CandidateRef(root, manifest_digest(manifest), task["base_commit"]),
+                                  evaluation_id, list(plan.checks), check_cancel)
+            store.update(task_id, delivery_evaluation=None)
+            result.require_valid(list(plan.checks), plan.check_repetitions or plan.repetitions)
+            if result.candidate_digest != manifest_digest(manifest) or not expected.issubset(result.passed):
+                raise HarnessError("delivery_revalidation_failed", "同步主干后的目标复测未通过")
+            trials.append(asdict(result))
         regression = verifier.regressions(store.get(task_id), CandidateRef(root, manifest_digest(manifest), task["base_commit"]), check_cancel)
         previous = task.get("regression_baseline", {}).get("passed_cases", [])
         if not set(previous).issubset(regression.get("passed_cases", [])):
