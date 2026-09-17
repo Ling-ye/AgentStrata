@@ -49,11 +49,14 @@ export default function BotsPage({ loadError, visible = true }: Props) {
   const taskStream = useEventStreamLines();
   const logStream = useEventStreamLines();
   const [provisionBot, setProvisionBot] = useState<BotInstance | null>(null);
+  const [instanceInfoOpen, setInstanceInfoOpen] = useState(false);
   const [taskResultStatus, setTaskResultStatus] = useState<Task["status"] | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [selectedBotId, setSelectedBotId] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("instance") || "");
   const [activeTab, setActiveTab] = useState(tabFromLocation);
   const activeTaskId = useRef<string | null>(null);
+
+  useEffect(() => { setInstanceInfoOpen(false); }, [selectedBotId]);
 
   useEffect(() => {
     const navigate = () => {
@@ -93,6 +96,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
     params.set("instance", selectedBotId);
     params.set("tab", tab);
     params.delete("entity");
+    params.delete("section");
     setActiveTab(botTabFromParams(params));
     window.history.replaceState(null, "", "#bots?" + params);
   };
@@ -223,8 +227,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
         ) : (
           <div className="bot-instance-workspace obs-instance-workspace">
             <div className="obs-instance-selector"><span>机器人实例</span><Select aria-label="选择机器人实例" value={selectedBotId} onChange={(id) => {
-              setSelectedBotId(id);
-              window.history.replaceState(null, "", "#bots?" + new URLSearchParams({ instance: id, tab: activeTab }));
+              window.location.hash = "bots?" + new URLSearchParams({ instance: id, tab: activeTab });
             }}
               options={bots.map((bot) => ({ value: bot.instance_id, label: `${bot.display_name} · ${rosterState(statuses[bot.instance_id]).label}` }))} />
               <Tag>{bots.length} 个实例</Tag></div>
@@ -239,6 +242,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                         {rosterState(selectedStatus).label}
                       </Tag>
                       <Tag className="cc-tag-meta">{selectedBot.platform || "?"}</Tag>
+                      <Button size="small" onClick={() => setInstanceInfoOpen(true)}>实例信息</Button>
                     </Space>
                   </div>
                   <div className="bot-instance-detail-actions">
@@ -296,12 +300,11 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                       status={selectedStatus}
                     />
                   </Tabs.TabPane>
-                  <Tabs.TabPane title="能力与工具" key="capabilities" />
                 </Tabs>
                 <BotToolEditor key={`config:${selectedBot.instance_id}`} instanceId={selectedBot.instance_id}
                   isDeployed={selectedBot.is_deployed} inventory={selectedInventory} running={selectedStatus?.running}
-                  view={activeTab === "capabilities" ? "capabilities" : "configuration"}
-                  visible={visible && ["configuration", "capabilities"].includes(activeTab)}
+                  visible={visible && activeTab === "configuration"}
+                  infoVisible={visible && instanceInfoOpen} onInfoClose={() => setInstanceInfoOpen(false)}
                   onApplyTask={(task, onSuccess) => openApplyToolConfig(selectedBot, task, onSuccess)} />
                 <ObservationWorkbench key={selectedBot.instance_id} bot={selectedBot} visible={visible && activeTab === "tasks"} />
               </section>

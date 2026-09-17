@@ -1,13 +1,11 @@
-import { configurationTabForEntity } from "./configurationPresentation";
 import type { ObservationFilters } from "./workbenchModel";
 
-export type BotTab = "tasks" | "configuration" | "runtime" | "capabilities";
+export type BotTab = "tasks" | "configuration" | "runtime";
 export function botTabFromParams(params: URLSearchParams): BotTab {
   const tab = params.get("tab");
   if (tab === "observation" || tab === "history" || tab === "tasks") return "tasks";
-  if (params.has("entity") && (!tab || tab === "configuration" || tab === "capabilities")) return configurationTabForEntity(params.get("entity")!);
-  if (tab === "configuration" || tab === "runtime" || tab === "capabilities") return tab;
-  return params.has("entity") ? "configuration" : "tasks";
+  if (tab === "configuration" || tab === "runtime") return tab;
+  return !tab && params.has("entity") ? "configuration" : "tasks";
 }
 
 export function readSessionValue(key: string): unknown {

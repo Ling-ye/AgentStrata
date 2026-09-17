@@ -33,7 +33,7 @@
 | --- | --- |
 | 总览 | 实例状态汇总 |
 | 服务管理 | 按 Channel 接入与外部能力查看服务职责、状态、诊断与日志 |
-| 机器人实例 | 任务 / 分层配置 / 运行状态 / 能力与工具，四个同级页签；任务内左侧列表、四层运行轨迹、Agent 内执行列表/关系图和结构化检查器，支持两步对照；窄屏单列切换，服务日志统一入口 |
+| 机器人实例 | 任务 / 分层配置 / 运行状态，三个同级页签；分层配置使用四层导航、分组列表与详情抽屉；任务内左侧列表、四层运行轨迹、Agent 内执行列表/关系图和结构化检查器，支持两步对照；服务日志统一入口 |
 | 组件目录 | 按 tools / prompts / agents / context 四个 surface 统一浏览工具、提示词、Agent 和上下文组件（只读卡片） |
 | 测评页面 | 开始测试 / 运行记录 / 进步趋势 |
 | 代码治理 | 远端 main 巡检、验证证据、PR 自动交付、归档清理与分页历史；共用 Harness 任务宿主 |
@@ -50,9 +50,40 @@
 | `/api/bots/{id}/tools` | GET | 读取实例当前工具配置 |
 | `/api/bots/{id}/tools` | PUT | 写回工具配置；`?apply=true` 时同步到运行实例并重启 |
 
+### 四层配置工作台
+
+配置导航按 [四层运行时职责](../../specs/runtime-four-layer-definition/spec.md) 组织；这是 Console
+展示归属，不改变后端实体 `layer`、BotSpec 格式或历史任务快照。完整字段、环境解析值和运行信息
+放在详情抽屉中，列表仅显示名称、关键值和真实状态。
+
+| 层 | 分组与归属 |
+| --- | --- |
+| Channel | 渠道连接、平台适配；包括 QQ/OneBot 和现有 Feishu adapter |
+| Gateway | 网关与协议、身份与准入；包括 Owner/Admin、私聊准入和固定权限策略 |
+| Application | 会话与工作区、记忆与知识、资料与项目、输入处理；包括 RAG、Wiki、Skills、代码仓库和运行特性 |
+| Agent | 模型与提示词、工具包、MCP、搜索、子 Agent 与委托、具体工具 |
+
+实例名称、ID、部署、服务和版本信息由实例标题旁的「实例信息」抽屉提供，不构成第五层。
+Application 管资料来源与装配，Agent 管调用这些资源的工具，已配置的关联条目可相互跳转。
+同一实体拆成不同分组时保留原始 ID，以分组和 ID 组合定位，不重复展示同一配置字段。
+
+- 跨层搜索支持名称、ID、字段和配置值；结果显示所属层和分组，选择后打开对应详情。
+  地址使用 `instance/tab/layer/section/entity`，未指定条目时恢复该实例上次所选层，首次进入 Channel。
+  原「能力与工具」入口已移除，旧无效页签地址回到任务页。
+- 桌面详情抽屉宽 520px；内容区域不足 860px 时导航改为层选择器、列表堆叠、抽屉全宽。
+  关闭详情保留列表位置与焦点。未配置、不适用、读取失败、截断及过期运行状态分别显示。
+- 同实例共享一份草稿，切换层或页签、刷新观测不覆盖修改；放弃恢复已保存配置。
+  离开页面或切换实例时提醒丢弃草稿，刷新和关闭浏览器使用原生未保存提醒。
+
 ### 工具配置编辑机制
 
-- 前端 `BotToolEditor` 使用四面 DTO：`tools.packs/features/hide/mcp.servers` 与 `agents.presets/workflows`，并融合 inventory 诊断信息按 tools / prompts / agents / context 页签展示本地能力、MCP 健康、提示词、子代理预算、workflow 和上下文配置。
+- 前端 `BotToolEditor` 沿用 `tools.packs/features/hide/mcp.servers` 与 `agents.presets/workflows` DTO。
+  工具包、MCP、子 Agent 和 Workflow 在 Agent 层操作；运行特性在 Application 层操作。
+  工具包与运行特性分别从对应目录添加；无可添加 Workflow 时不展示添加按钮。
+  模型、环境变量、权限和其他未有写入入口的字段保持只读。
 - 后端 `console/control/yaml_editor.py` 使用 `ruamel.yaml` round-trip 编辑 `bot.yaml` 和 `mcp/servers.yaml`，保留注释和格式；该依赖已声明在 `console/requirements.txt`，`deploy_console.sh` / `setup_console.sh` 安装时会一并装入 venv。
 - `console/control/catalog.py` 通过 `component_catalog` 读取 tool pack / tool feature / MCP catalog / subagent preset / workflow DTO，并聚合提示词占位和上下文来源占位为统一 `CatalogItem`。
 -  编辑后点「保存并重启」会先取得同实例 TaskManager 串行资格，再写入源仓配置并调用统一 `update_instance.sh`；该入口通常同步后快速应用配置并重启，只有依赖、安装脚本变化或实例 venv 缺失时才完整 bootstrap。仅「保存配置」同步写源仓。配置修改留在 WSL 源仓，由用户在 WSL git 工作区提交。
+- 仅在存在草稿、待应用配置或正在应用的任务时展示底部操作栏。未部署实例仅可保存；保存失败保留草稿。
+  应用任务启动不等于配置已写入或已生效，任务最终状态独立查询，关闭日志不停止检查。
+  「已应用」只采用有效的运行观测；服务停止、观测过期或读取失败时显示暂无法确认。

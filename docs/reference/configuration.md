@@ -245,7 +245,9 @@ Application 在 `project_agent_runtime()` 捕获配置与环境、解析研究/�
 
 ## 配置投影归 BotSpec
 
-`botspec/inspection.py` 解释 BotSpec 字段、环境引用并生成配置投影；`core/inspection.py` 只做通用序列化和指纹。Console 分层配置保留记忆、RAG、MCP、子 Agent 等基础配置；Wiki、Skills、搜索 Provider、工具包和具体工具归能力与工具，历史任务保留执行时快照与原实体 ID。
+`botspec/inspection.py` 解释 BotSpec 字段、环境引用并生成配置投影；`core/inspection.py` 只做通用序列化和指纹。
+Console 将配置与能力统一投影到四层导航，具体归属和编辑入口见 [四层配置工作台](console.md#四层配置工作台)。
+该展示映射不改变 BotSpec 格式、后端 `layer` 或原始实体 ID；历史任务继续保留执行时快照。
 
 ## 开发命令超时快照
 

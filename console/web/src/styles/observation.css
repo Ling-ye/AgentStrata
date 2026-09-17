@@ -123,13 +123,6 @@
 .obs-execution-config-item + .obs-execution-config-item { padding-top: 8px; border-top: var(--cc-border); }
 .obs-config-toolbar .obs-config-version { margin-top: 8px; }
 .obs-config-version { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 5px; color: var(--cc-text-tertiary); font-variant-numeric: tabular-nums; }
-.obs-config-anchors { display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 10px 0; border-top: var(--cc-border); border-bottom: var(--cc-border); }
-.obs-layer { margin-bottom: 22px; scroll-margin-top: 100px; }
-.obs-layer h3 { display: flex; justify-content: space-between; font-size: 13px; padding: 10px 0; border-bottom: var(--cc-border); }
-.obs-layer h3 small { color: var(--cc-text-tertiary); font-weight: 400; }
-.obs-entity { padding: 12px 8px; margin-bottom: 10px; border-bottom: var(--cc-border); scroll-margin-top: 100px; }
-.obs-entity.is-selected { box-shadow: inset 3px 0 var(--cc-primary); background: var(--cc-bg-primary-subtle); }
-.obs-entity h4 { font-size: 12px; margin: 12px 0 6px; }
 .obs-entity-states { display: flex; gap: 4px; flex-wrap: wrap; margin: 8px 0; }
 .obs-table-scroll { width: 100%; min-width: 0; overflow-x: auto; margin-bottom: 12px; }
 .obs-table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
@@ -170,12 +163,9 @@
   .obs-fields > div { grid-template-columns: minmax(60px, 30%) minmax(0, 1fr); gap: 8px; }
 }
 
-.obs-config-search { display: flex; gap: 12px; }
-.obs-config-search > .arco-select { max-width: 220px; }
 .obs-config-save { position: sticky; bottom: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; background: var(--color-bg-2); border-top: 1px solid var(--color-border-2); }
 .obs-hidden-tools > div { display: flex; justify-content: space-between; gap: 8px; margin: 8px 0; }
 .obs-parameter-table { overflow-x: auto; }
-.obs-entity .obs-pane-heading { flex-wrap: wrap; gap: 8px; }
 @media (max-width: 600px) { .obs-config-search, .obs-config-save { flex-direction: column; align-items: stretch; } .obs-config-search > .arco-select { max-width: none; } }
 
 .obs-process-panels { padding: 8px 14px 12px 32px; }
@@ -192,3 +182,60 @@
 }
 .obs-stream-content { min-width: 0; padding: 12px 16px; overflow-wrap: anywhere; }
 .obs-new-activity { position: sticky; top: 8px; z-index: 2; margin-bottom: 8px; }
+
+/* Four-layer configuration navigation is independent of recorded entity layers. */
+.bot-tool-editor { container-type: inline-size; min-width: 0; }
+.bot-tool-editor[hidden], .obs-configuration[hidden] { display: none; }
+.config-workspace { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: start; }
+.config-layer-nav { position: sticky; top: 80px; display: flex; flex-direction: column; gap: 4px; }
+.config-layer-nav button { border: 0; border-radius: var(--cc-control-radius); background: transparent; color: var(--cc-text-primary); padding: 12px; text-align: left; cursor: pointer; }
+.config-layer-nav button strong, .config-layer-nav button span { display: block; }
+.config-layer-nav button strong { font-size: 13px; font-weight: 500; }
+.config-layer-nav button span { margin-top: 5px; font-size: 12px; color: var(--cc-text-secondary); }
+.config-layer-nav button:hover { background: var(--cc-bg-subtle); }
+.config-layer-nav button[aria-current="page"] { background: var(--cc-bg-primary-subtle); color: var(--cc-primary); }
+.config-layer-select { display: none; }
+.config-layer-content { min-width: 0; }
+.config-layer-content > header h3 { margin: 0; font-size: 16px; }
+.config-layer-content > header p { margin: 6px 0 20px; }
+.config-group { margin-bottom: 20px; border: var(--cc-border); border-radius: var(--cc-control-radius); overflow: hidden; }
+.config-group > .obs-pane-heading { padding: 10px 12px; min-height: 48px; background: var(--cc-bg-subtle); flex-wrap: wrap; }
+.config-group h4 { margin: 0; font-size: 13px; }
+.config-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(130px, auto) auto; align-items: center; gap: 12px; padding: 14px 12px; border-top: var(--cc-border); }
+.config-row.is-selected { background: var(--cc-bg-primary-subtle); box-shadow: inset 3px 0 var(--cc-primary); }
+.config-row-main { min-width: 0; }
+.config-row-main > button { font-weight: 500; }
+.config-row-summary { display: block; margin-top: 5px; color: var(--cc-text-secondary); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.config-row .obs-entity-states { margin: 0; max-width: 220px; }
+.config-row .arco-tag { max-width: 100%; white-space: nowrap; }
+.config-group-empty { padding: 12px; margin: 0; color: var(--cc-text-tertiary); border-top: var(--cc-border); }
+.config-search-results { border: var(--cc-border); border-radius: var(--cc-control-radius); padding: 12px; }
+.config-search-results > button { display: flex; justify-content: space-between; gap: 12px; width: 100%; padding: 12px 4px; border: 0; border-bottom: var(--cc-border); background: transparent; text-align: left; color: var(--cc-text-primary); cursor: pointer; }
+.config-search-results > button:hover { background: var(--cc-bg-primary-subtle); }
+.config-search-results > button strong { font-weight: 500; overflow-wrap: anywhere; }
+.config-search-results > button span { color: var(--cc-text-secondary); }
+.config-detail-drawer .arco-drawer-title { overflow-wrap: anywhere; }
+.config-detail-actions { margin: 14px 0; }
+.config-values { margin: 0; }
+.config-values > div { display: grid; grid-template-columns: minmax(90px, 35%) minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: var(--cc-border); }
+.config-values dt { color: var(--cc-text-secondary); overflow-wrap: anywhere; }
+.config-values dd { margin: 0; min-width: 0; }
+.config-values .config-values > div { grid-template-columns: minmax(60px, 40%) minmax(0, 1fr); gap: 8px; }
+.config-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+.config-value-list { padding-left: 18px; margin: 0; }
+.config-detail-drawer .obs-fields { min-width: 0; }
+.config-detail-drawer .obs-disclosure { margin-top: 16px; }
+.config-detail-drawer .arco-btn { max-width: 100%; white-space: normal; height: auto; min-height: 28px; overflow-wrap: anywhere; }
+.config-instance-section + .config-instance-section { border-top: var(--cc-border); margin-top: 20px; padding-top: 12px; }
+.config-group .obs-hidden-tools { padding: 12px; border-top: var(--cc-border); }
+.obs-config-save > span small { display: block; margin-top: 4px; color: var(--cc-text-secondary); }
+@container (max-width: 859px) {
+  .config-workspace { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .config-layer-nav { display: none; }
+  .config-layer-select { display: block; }
+  .config-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .config-row-main { grid-column: 1 / -1; }
+  .config-row .obs-entity-states { max-width: none; }
+  .config-search-results > button { flex-direction: column; gap: 4px; }
+  .obs-config-save { flex-wrap: wrap; }
+}

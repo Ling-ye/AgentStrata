@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Layout, Spin, Typography } from "@arco-design/web-react";
 import Sidebar, { type PageKey } from "./components/Sidebar";
+import { NavigationGuardContext, useGuardedHash } from "./shared/navigationGuard";
 
 const OverviewPage = lazy(() => import("./pages/OverviewPage"));
 const ServicesPage = lazy(() => import("./pages/ServicesPage"));
@@ -15,13 +16,9 @@ const { Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
 export default function App() {
-  const [page, setPage] = useState<PageKey>(() => { const candidate = window.location.hash.slice(1).split("?")[0]; return ["overview", "services", "bots", "tools", "evals", "harness", "code-health", "settings"].includes(candidate) ? candidate as PageKey : "overview"; });
-  const navigate = useCallback((next: PageKey) => { window.location.hash = next; setPage(next); }, []);
-  useEffect(() => {
-    const update = () => { const next = window.location.hash.slice(1).split("?")[0]; if (["overview", "services", "bots", "tools", "evals", "harness", "code-health", "settings"].includes(next)) setPage(next as PageKey); };
-    window.addEventListener("hashchange", update);
-    return () => window.removeEventListener("hashchange", update);
-  }, []);
+  const { hash, navigate, registerGuard } = useGuardedHash();
+  const candidate = hash.slice(1).split("?")[0];
+  const page: PageKey = ["overview", "services", "bots", "tools", "evals", "harness", "code-health", "settings"].includes(candidate) ? candidate as PageKey : "overview";
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const checkBackend = useCallback(async () => {
@@ -38,7 +35,7 @@ export default function App() {
   }, [checkBackend]);
 
   return (
-    <Layout className="console-layout">
+    <NavigationGuardContext.Provider value={registerGuard}><Layout className="console-layout">
       <Sider className="console-sider" width="var(--cc-sidebar-width)">
         <div className="console-logo">
           <Title heading={5} className="console-logo-title">AgentStrata</Title>
@@ -58,6 +55,6 @@ export default function App() {
           {page === "settings" && <SettingsPage />}
         </Suspense>
       </Content>
-    </Layout>
+    </Layout></NavigationGuardContext.Provider>
   );
 }

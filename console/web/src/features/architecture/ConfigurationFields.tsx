@@ -1,6 +1,19 @@
 import { ConfigFields, Disclosure, FIELD_NAMES, TextPreview } from "./ObservationContent";
 import type { InspectionEntity } from "./workbenchModel";
 
+export function ConfigurationValues({ value }: { value: unknown }) {
+  if (value == null) return <span className="obs-muted">未配置</span>;
+  if (Array.isArray(value)) return value.length ? <ol className="config-value-list">{value.map((item, index) =>
+    <li key={index}><ConfigurationValues value={item} /></li>)}</ol> : <span className="obs-muted">空列表</span>;
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+    return entries.length ? <dl className="config-values">{entries.map(([key, item]) => <div key={key}>
+      <dt title={key}>{FIELD_NAMES[key] ?? key}</dt><dd><ConfigurationValues value={item} /></dd>
+    </div>)}</dl> : <span className="obs-muted">无额外配置参数</span>;
+  }
+  return <span className="config-value">{typeof value === "boolean" ? value ? "是" : "否" : value === "" ? "空字符串" : String(value)}</span>;
+}
+
 const ENV_NAMES: Record<string, string> = {
   QQ_ALLOW_FROM: "私聊用户白名单", CHATCOPILOT_OWNERS: "Owner", CHATCOPILOT_ADMINS: "Admin",
   QQ_ACCOUNT: "机器人账号", QQ_ACCESS_TOKEN: "OneBot 认证令牌", CHATCOPILOT_GATEWAY_PORT: "监听端口",
@@ -37,8 +50,8 @@ export default function ConfigurationFields({ entity }: { entity: InspectionEnti
   const schema = parameters && typeof parameters === "object" ? parameters as Record<string, unknown> : null;
   const properties = schema?.properties && typeof schema.properties === "object" ? schema.properties as Record<string, Record<string, unknown>> : null;
   return <>
-    <ConfigFields value={fields} missingLabel="未配置" />
-    {!!Object.keys(remainder).length && <ConfigFields value={remainder} missingLabel="未配置" />}
+    <ConfigurationValues value={fields} />
+    {!!Object.keys(remainder).length && <ConfigurationValues value={remainder} />}
     {parameters != null && <Disclosure title="工具参数">{properties ? <div className="obs-parameter-table"><table className="obs-table"><thead><tr><th>参数</th><th>类型</th><th>必填</th><th>说明</th></tr></thead>
       <tbody>{Object.entries(properties).map(([name, field]) => <tr key={name}><td>{name}</td><td>{String(field.type ?? "未记录")}</td>
         <td>{Array.isArray(schema?.required) && schema.required.includes(name) ? "是" : "否"}</td><td>{String(field.description ?? "—")}</td></tr>)}</tbody></table>

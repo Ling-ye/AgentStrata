@@ -1,225 +1,127 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Message } from "@arco-design/web-react";
-
 import { api } from "../../../api";
 import { useBotToolConfig, useCatalog } from "../../catalog/useCatalog";
-import type { BotToolConfig, McpServerRef } from "../../../types";
-import {
-  groupCatalog,
-  indexBy,
-  type BotToolEditorProps,
-  type PickerTarget,
-} from "./model";
+import type { BotToolConfig } from "../../../types";
+import { groupCatalog, indexBy, type BotToolEditorProps, type PickerTarget } from "./model";
+import { draftIsDirty, draftReducer } from "./draftModel";
 
-export function useBotToolEditor({
-  instanceId,
-  isDeployed = false,
-  inventory,
-  onApplyTask,
-}: BotToolEditorProps) {
-  const { data: catalogData } = useCatalog();
+export function useBotToolEditor({ instanceId, isDeployed = false, onApplyTask }: BotToolEditorProps) {
+  const catalog = useCatalog();
   const { data: toolConfig, isLoading, refetch, error } = useBotToolConfig(instanceId);
-  const [draft, setDraft] = useState<BotToolConfig | null>(null);
+  const [state, dispatch] = useReducer(draftReducer, { saved: null, draft: null });
+  const { draft } = state;
+  const dirty = draftIsDirty(state);
   const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [unappliedSave, setUnappliedSave] = useState(false);
+  const acknowledgeApplied = useCallback(() => setUnappliedSave(false), []);
+  const [apply, setApply] = useState<{ id: string; submitted: BotToolConfig } | null>(null);
   const [pickerTarget, setPickerTarget] = useState<PickerTarget>(null);
   const queryClient = useQueryClient();
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
+  const scope = useRef<object>({});
+  useEffect(() => { scope.current = {}; return () => { scope.current = {}; }; }, [instanceId]);
+  const busy = saving || !!apply;
+  useEffect(() => { if (toolConfig && !busy) dispatch({ type: "receive", config: toolConfig }); }, [toolConfig, busy]);
+  const catalogByKind = useMemo(() => groupCatalog(catalog.data), [catalog.data]);
+  const mcpCatalogByRef = useMemo(() => indexBy(catalogByKind.mcp, (item) => item.id.replace(/^mcp:/, "")), [catalogByKind.mcp]);
+  const applyQuery = useQuery({ queryKey: ["configuration-apply", instanceId, apply?.id],
+    queryFn: () => api.task(apply!.id), enabled: !!apply, refetchInterval: apply ? 1000 : false });
+
+  const invalidate = useCallback(async () => {
+    await Promise.all(["inspection", "bot-inventory", "bot-status"].map((key) => queryClient.invalidateQueries({ queryKey: [key, instanceId] })));
+  }, [queryClient, instanceId]);
+  const refreshSaved = useCallback(async (submitted: BotToolConfig, requestScope: object) => {
+    const refreshed = await refetch();
+    if (scope.current !== requestScope) return;
+    const config = refreshed.isSuccess ? refreshed.data : submitted;
+    if (!refreshed.isSuccess) queryClient.setQueryData(["bot-tools", instanceId], submitted);
+    dispatch({ type: "saved", submitted, config });
+    await invalidate();
+  }, [refetch, invalidate, queryClient, instanceId]);
 
   useEffect(() => {
-    if (toolConfig && !dirty) setDraft({ ...toolConfig });
-  }, [toolConfig, dirty]);
-
-  const catalogByKind = useMemo(() => groupCatalog(catalogData), [catalogData]);
-  const toolPackById = useMemo(
-    () => indexBy(inventory?.tool_packs, (item) => item.id),
-    [inventory],
-  );
-  const mcpByRef = useMemo(
-    () => indexBy(inventory?.mcp_services, (item) => item.ref),
-    [inventory],
-  );
-  const subagentByName = useMemo(
-    () => indexBy(inventory?.agent_presets, (item) => item.name),
-    [inventory],
-  );
-  const mcpCatalogByRef = useMemo(
-    () => indexBy(catalogByKind.mcp, (item) => item.id.replace(/^mcp:/, "")),
-    [catalogByKind.mcp],
-  );
-
-  const removeToolPack = useCallback((pack: string) => {
-    setDraft((current) => current ? {
-      ...current,
-      tools: { ...current.tools, packs: current.tools.packs.filter((item) => item !== pack) },
-    } : current);
-    setDirty(true);
-  }, []);
-
-  const removeFeature = useCallback((feature: string) => {
-    setDraft((current) => current ? {
-      ...current,
-      tools: { ...current.tools, features: current.tools.features.filter((item) => item !== feature) },
-    } : current);
-    setDirty(true);
-  }, []);
-
-  const removeHiddenTool = useCallback((toolName: string) => {
-    setDraft((current) => current ? {
-      ...current,
-      tools: { ...current.tools, hide: current.tools.hide.filter((item) => item !== toolName) },
-    } : current);
-    setDirty(true);
-  }, []);
-
-  const removeMcp = useCallback((ref: string) => {
-    setDraft((current) => current ? {
-      ...current,
-      tools: {
-        ...current.tools,
-        mcp: { servers: current.tools.mcp.servers.filter((item) => item.ref !== ref) },
-      },
-    } : current);
-    setDirty(true);
-  }, []);
-
-  const toggleMcp = useCallback((ref: string, enabled: boolean) => {
-    setDraft((current) => current ? {
-      ...current,
-      tools: {
-        ...current.tools,
-        mcp: {
-          servers: current.tools.mcp.servers.map(
-            (item) => item.ref === ref ? { ...item, enabled } : item,
-          ),
-        },
-      },
-    } : current);
-    setDirty(true);
-  }, []);
-
-  const removeAgentPreset = useCallback((name: string) => {
-    setDraft((current) => current ? {
-      ...current,
-      agents: { ...current.agents, presets: current.agents.presets.filter((item) => item !== name) },
-    } : current);
-    setDirty(true);
-  }, []);
-
-  const removeWorkflow = useCallback((name: string) => {
-    setDraft((current) => current ? {
-      ...current,
-      agents: { ...current.agents, workflows: current.agents.workflows.filter((item) => item !== name) },
-    } : current);
-    setDirty(true);
-  }, []);
-
-  const handlePickerConfirm = useCallback((added: string[]) => {
-    if (!draft || !pickerTarget) return;
-    if (pickerTarget === "capability") {
-      const packs = added.filter((name) => catalogByKind.tool_pack.some((item) => item.name === name));
-      const features = added.filter((name) => catalogByKind.tool_feature.some((item) => item.name === name));
-      setDraft({
-        ...draft,
-        tools: {
-          ...draft.tools,
-          packs: [...draft.tools.packs, ...packs],
-          features: [...draft.tools.features, ...features],
-        },
-      });
-    } else if (pickerTarget === "mcp") {
-      const servers: McpServerRef[] = added.map((name) => {
-        const item = catalogByKind.mcp.find((candidate) => candidate.name === name);
-        return { ref: item?.id.replace("mcp:", "") ?? name, enabled: true };
-      });
-      setDraft({
-        ...draft,
-        tools: { ...draft.tools, mcp: { servers: [...draft.tools.mcp.servers, ...servers] } },
-      });
-    } else if (pickerTarget === "subagent") {
-      setDraft({ ...draft, agents: { ...draft.agents, presets: [...draft.agents.presets, ...added] } });
+    const result = applyQuery.data;
+    if (!apply || !result || !["done", "failed"].includes(result.status)) return;
+    const requestScope = scope.current;
+    const submitted = apply.submitted;
+    setApply(null);
+    if (result.status === "done") {
+      setSaving(true);
+      void refreshSaved(submitted, requestScope).finally(() => { if (scope.current === requestScope) setSaving(false); });
     } else {
-      setDraft({ ...draft, agents: { ...draft.agents, workflows: [...draft.agents.workflows, ...added] } });
+      setSaveError("应用任务失败，修改已保留。请查看任务日志，并刷新确认源配置与运行状态。");
+      // An apply task can fail after writing the files. Refresh the saved baseline
+      // without treating the requested draft as an acknowledged successful write.
+      void Promise.all([refetch(), invalidate()]);
     }
-    setDirty(true);
+  }, [apply, applyQuery.data, refreshSaved, invalidate, refetch]);
+
+  const change = useCallback((update: (current: BotToolConfig) => BotToolConfig) => { dispatch({ type: "change", update }); setSaveError(null); }, []);
+  const removeToolPack = (pack: string) => change((current) => ({ ...current, tools: { ...current.tools, packs: current.tools.packs.filter((item) => item !== pack) } }));
+  const removeFeature = (feature: string) => change((current) => ({ ...current, tools: { ...current.tools, features: current.tools.features.filter((item) => item !== feature) } }));
+  const removeHiddenTool = (name: string) => change((current) => ({ ...current, tools: { ...current.tools, hide: current.tools.hide.filter((item) => item !== name) } }));
+  const removeMcp = (ref: string) => change((current) => ({ ...current, tools: { ...current.tools, mcp: { servers: current.tools.mcp.servers.filter((item) => item.ref !== ref) } } }));
+  const toggleMcp = (ref: string, enabled: boolean) => change((current) => ({ ...current, tools: { ...current.tools, mcp: { servers: current.tools.mcp.servers.map((item) => item.ref === ref ? { ...item, enabled } : item) } } }));
+  const removeAgentPreset = (name: string) => change((current) => ({ ...current, agents: { ...current.agents, presets: current.agents.presets.filter((item) => item !== name) } }));
+  const removeWorkflow = (name: string) => change((current) => ({ ...current, agents: { ...current.agents, workflows: current.agents.workflows.filter((item) => item !== name) } }));
+  const discard = useCallback(() => { dispatch({ type: "discard" }); setSaveError(null); }, []);
+
+  const handlePickerConfirm = (added: string[]) => {
+    if (!draft || !pickerTarget || busy) return;
+    change((current) => {
+      if (pickerTarget === "tool_pack" || pickerTarget === "tool_feature") {
+        const key = pickerTarget === "tool_pack" ? "packs" : "features";
+        const allowed = added.filter((name) => catalogByKind[pickerTarget].some((item) => item.name === name));
+        return { ...current, tools: { ...current.tools, [key]: [...new Set([...current.tools[key], ...allowed])] } };
+      }
+      if (pickerTarget === "mcp") {
+        const servers = added.flatMap((name) => {
+          const item = catalogByKind.mcp.find((candidate) => candidate.name === name);
+          return item ? [{ ref: item.id.replace(/^mcp:/, ""), enabled: true }] : [];
+        });
+        return { ...current, tools: { ...current.tools, mcp: { servers: [...current.tools.mcp.servers, ...servers] } } };
+      }
+      const key = pickerTarget === "subagent" ? "presets" : "workflows";
+      return { ...current, agents: { ...current.agents, [key]: [...new Set([...current.agents[key], ...added])] } };
+    });
     setPickerTarget(null);
-  }, [draft, pickerTarget, catalogByKind]);
-
-  const handleSave = useCallback(async (apply: boolean) => {
-    if (!draft || saving) return;
-    const submitted = draft;
-    const refresh = async () => {
-      const refreshed = await refetch();
-      if (draftRef.current === submitted) {
-        setDraft(refreshed.data ?? submitted);
-        setDirty(false);
-      }
-      await Promise.all(["inspection", "bot-inventory", "bot-status"].map((key) => queryClient.invalidateQueries({ queryKey: [key, instanceId] })));
-    };
-    setSaving(true);
-    try {
-      const result = await api.updateBotTools(instanceId, draft, { apply: apply && isDeployed });
-      if ("warnings" in result && result.warnings?.length) Message.warning(result.warnings.join("; "));
-      if ("id" in result) {
-        Message.info("保存并更新任务已启动…");
-        onApplyTask?.(result, () => { void refresh(); });
-        await refresh();
-        return;
-      }
-      Message.success("配置已保存");
-      await refresh();
-      if (apply && !isDeployed) Message.warning("实例尚未部署，配置仅写入源仓。");
-    } catch (error) {
-      Message.error(`保存失败: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setSaving(false);
-    }
-  }, [draft, instanceId, isDeployed, onApplyTask, refetch, queryClient, saving]);
-
-  const toolPackSet = new Set(draft?.tools.packs ?? []);
-  const featureList = draft?.tools.features ?? [];
-  const featureSet = new Set(featureList);
-  const mcpRefSet = new Set(draft?.tools.mcp.servers.map((item) => item.ref) ?? []);
-  const agentPresetSet = new Set(draft?.agents.presets ?? []);
-  const workflowSet = new Set(draft?.agents.workflows ?? []);
-  const pickerItems = pickerTarget === "capability"
-    ? [...catalogByKind.tool_pack, ...catalogByKind.tool_feature]
-    : pickerTarget === "mcp" ? catalogByKind.mcp
-      : pickerTarget === "subagent" ? catalogByKind.subagent
-        : pickerTarget === "workflow" ? catalogByKind.workflow : [];
-  const pickerSelected = pickerTarget === "capability"
-    ? new Set([...toolPackSet, ...featureSet])
-    : pickerTarget === "mcp"
-      ? new Set(Array.from(mcpRefSet).map((ref) => mcpCatalogByRef.get(ref)?.name ?? ref))
-      : pickerTarget === "subagent" ? agentPresetSet
-        : pickerTarget === "workflow" ? workflowSet : new Set<string>();
-
-  return {
-    error,
-    catalogByKind,
-    dirty,
-    draft,
-    featureList,
-    handlePickerConfirm,
-    handleSave,
-    isLoading,
-    mcpByRef,
-    mcpCatalogByRef,
-    pickerItems,
-    pickerSelected,
-    pickerTarget,
-    removeAgentPreset,
-    removeFeature,
-    removeHiddenTool,
-    removeMcp,
-    removeToolPack,
-    removeWorkflow,
-    saving,
-    setPickerTarget,
-    subagentByName,
-    toggleMcp,
-    toolPackById,
   };
+
+  const handleSave = async (applyToRuntime: boolean) => {
+    if (!draft || busy) return;
+    const submitted = draft;
+    const requestScope = scope.current;
+    setSaving(true); setSaveError(null);
+    try {
+      const result = await api.updateBotTools(instanceId, submitted, { apply: applyToRuntime && isDeployed });
+      if (scope.current !== requestScope) return;
+      if ("warnings" in result && result.warnings?.length) Message.warning(result.warnings.join("；"));
+      if ("id" in result) {
+        setApply({ id: result.id, submitted });
+        Message.info("应用任务已启动，等待配置写入和重启结果。");
+        onApplyTask?.(result, () => { if (scope.current === requestScope) void invalidate(); });
+      } else {
+        setUnappliedSave(true);
+        await refreshSaved(submitted, requestScope);
+        if (scope.current === requestScope) Message.success(isDeployed ? "配置已保存，等待应用到服务。" : "配置已保存，部署后生效。");
+      }
+    } catch (cause) {
+      if (scope.current === requestScope) {
+        setSaveError(`保存失败：${cause instanceof Error ? cause.message : String(cause)}。修改已保留。`);
+        void refetch();
+      }
+    } finally {
+      if (scope.current === requestScope) setSaving(false);
+    }
+  };
+
+  const pickerItems = pickerTarget ? catalogByKind[pickerTarget] ?? [] : [];
+  const pickerSelected = new Set(pickerTarget === "tool_pack" ? draft?.tools.packs : pickerTarget === "tool_feature" ? draft?.tools.features :
+    pickerTarget === "mcp" ? draft?.tools.mcp.servers.map((item) => mcpCatalogByRef.get(item.ref)?.name ?? item.ref) :
+      pickerTarget === "subagent" ? draft?.agents.presets : draft?.agents.workflows);
+  return { error, catalogError: catalog.error, catalogLoading: catalog.isLoading, catalogByKind, dirty, draft, discard, handlePickerConfirm, handleSave, isLoading, unappliedSave, acknowledgeApplied,
+    pickerItems, pickerSelected, pickerTarget, removeAgentPreset, removeFeature, removeHiddenTool, removeMcp, removeToolPack, removeWorkflow,
+    saving: busy, applying: !!apply, saveError: saveError ?? (applyQuery.isError && apply ? "应用任务状态读取失败，正在重试。" : null), setPickerTarget, toggleMcp };
 }

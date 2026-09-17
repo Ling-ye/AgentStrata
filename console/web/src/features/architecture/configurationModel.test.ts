@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { latestConfiguration, recordedConfiguration } from "./configurationModel";
+import { currentInspection, latestConfiguration, recordedConfiguration } from "./configurationModel";
 import type { Configuration, Inspection, InspectionEntity } from "./workbenchModel";
 import type { GatewayObservation } from "./model";
 
@@ -18,6 +18,18 @@ const inspection: Inspection = {
 };
 
 describe("current settings and historical configuration text", () => {
+  it.each([{ running: false }, { failed: true }, { applying: true }])("does not claim applied or live state when %j", (options) => {
+    const result = currentInspection({ ...inspection, configuration_status: "applied" }, options, 12)!;
+    expect(result.configuration_status).toBe("unknown");
+    expect(result.loaded_stale).toBe(true);
+    expect(result.current).toBe(inspection.current);
+    expect(latestConfiguration(result)!.entities.every((entity) => entity.loaded == null && entity.connected == null)).toBe(true);
+  });
+  it("expires old observations and preserves fresh pending/applied facts", () => {
+    expect(currentInspection({ ...inspection, configuration_status: "applied" }, {}, 30)?.configuration_status).toBe("unknown");
+    expect(currentInspection({ ...inspection, configuration_status: "pending" }, {}, 12)?.configuration_status).toBe("pending");
+    expect(currentInspection({ ...inspection, configuration_status: "applied" }, {}, 12)?.configuration_status).toBe("applied");
+  });
   it("shows latest edits immediately while retaining real connection state separately", () => {
     const current = latestConfiguration(inspection)!;
     expect(current.model).toBe("edited-model");

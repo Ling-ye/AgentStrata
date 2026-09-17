@@ -33,7 +33,7 @@ export interface BotToolEditorProps {
   onApplyTask?: (task: Task, onSuccess: () => void) => void;
 }
 
-export type PickerTarget = "capability" | "mcp" | "subagent" | "workflow" | null;
+export type PickerTarget = "tool_pack" | "tool_feature" | "mcp" | "subagent" | "workflow" | null;
 export type SurfaceKey = "tools" | "prompts" | "agents" | "context";
 
 export function groupCatalog(items: CatalogItem[] | undefined): Record<string, CatalogItem[]> {
