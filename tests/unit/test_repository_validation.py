@@ -109,16 +109,28 @@ def test_fast_selection_rejects_invalid_manifest(monkeypatch, tmp_path, selectio
         check_repo._profiles()
 
 
-def test_ci_retains_complete_python_coverage_independently_of_fast():
+def test_ci_public_boundary_preserves_history_scans_and_read_only_permissions():
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-    job = workflow["jobs"]["python"]
-    assert job["strategy"]["matrix"]["include"] == [
-        {"python-version": "3.10", "gate": "full"},
-        {"python-version": "3.13", "gate": "python-tests"},
-    ]
-    commands = {step.get("if"): step["run"] for step in job["steps"] if "run" in step}
-    assert 'python scripts/check_repo.py ${{ matrix.gate }} "${doc_args[@]}"' in commands["matrix.gate == 'full'"]
-    assert commands["matrix.gate == 'python-tests'"] == "python -m pytest -q"
+    assert workflow["permissions"] == {"contents": "read"}
+    assert set(workflow["jobs"]) == {"public-boundary", "console"}
+    for job in workflow["jobs"].values():
+        assert job.get("permissions", workflow["permissions"]) == {"contents": "read"}
+        checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+        assert checkout["with"]["persist-credentials"] is False
+    job = workflow["jobs"]["public-boundary"]
+    checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"]["fetch-depth"] == 0
+    assert [step["run"] for step in job["steps"] if "run" in step] == [
+        "python scripts/check_public_repo.py --history", "bash scripts/check_secrets.sh history"]
+    events = workflow.get("on", workflow.get(True))
+    assert {"push", "pull_request", "workflow_dispatch"}.issubset(events)
+
+
+def test_ci_console_runs_locked_install_tests_and_build():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    job = workflow["jobs"]["console"]
+    assert job["defaults"]["run"]["working-directory"] == "console/web"
+    assert [step["run"] for step in job["steps"] if "run" in step] == ["npm ci", "npm test", "npm run build"]
 
 
 def test_validation_subprocesses_use_one_wsl_temp_root(

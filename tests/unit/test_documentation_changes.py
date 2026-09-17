@@ -9,7 +9,6 @@ import sys
 from unittest.mock import Mock
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -130,30 +129,21 @@ def test_runner_passes_confirmed_empty_context(gate, monkeypatch, capsys):
     capsys.readouterr()
 
 
-def workflow_gate():
-    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
-    job = workflow["jobs"]["python"]
-    step = next(s for s in job["steps"] if s.get("name") == "Run repository gate")
-    return workflow, job, step
-
-
-def test_ci_selects_event_baseline_without_widening_permissions():
-    workflow, job, step = workflow_gate()
-    assert workflow["permissions"] == {"contents": "read"}
-    assert next(s for s in job["steps"] if s.get("name") == "Check out source")["with"]["fetch-depth"] == 0
-    assert step["env"]["DOCS_BASE"] == "${{ github.event.pull_request.base.sha || github.event.before || inputs.docs_base || '' }}"
-    events = workflow.get("on", workflow.get(True))
-    assert events["workflow_dispatch"]["inputs"]["docs_base"]["required"] is False
-
-
 @pytest.mark.parametrize("base", ["", "1" * 40, "0" * 40, "refs/heads/topic", "; touch SHOULD_NOT_EXIST #"])
-def test_ci_shell_passes_baseline_as_one_literal_argument(tmp_path, base):
-    _, _, step = workflow_gate()
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts/check_repo.py").write_text("import json,sys\nprint(json.dumps(sys.argv[1:]))\n")
-    script = step["run"].replace("${{ matrix.gate }}", "full")
-    completed = subprocess.run(["bash", "--noprofile", "--norc", "-c", script], cwd=tmp_path,
-                               env={"PATH": str(Path(sys.executable).parent) + os.pathsep + os.defpath, "DOCS_BASE": base},
-                               check=True, capture_output=True, text=True)
-    assert json.loads(completed.stdout) == ["full", *(["--docs-base", base] if base else [])]
+def test_local_cli_passes_literal_baseline_and_changed_paths(gate, tmp_path, monkeypatch, capfd, base):
+    checker = tmp_path / "documentation checker.py"
+    checker.write_text("import json,sys\nprint(json.dumps(sys.argv[1:]))\n")
+    changed = "src/中文 空格; touch SHOULD_NOT_EXIST.py"
+    collect = Mock(return_value=(changed,))
+    monkeypatch.setattr(gate, "ROOT", tmp_path)
+    monkeypatch.setattr(gate, "_documentation_changes", collect)
+    monkeypatch.setattr(gate, "_profiles", lambda: {
+        "docs": (gate.Check("documentation", (sys.executable, str(checker)), cwd=tmp_path),),
+    })
+    monkeypatch.setattr(sys, "argv", ["check_repo.py", "docs", *(["--docs-base", base] if base else [])])
+
+    assert gate.main() == 0
+    collect.assert_called_once_with(tmp_path, base_ref=base or None, explicit=None, isolated=False)
+    arguments = next(line for line in capfd.readouterr().out.splitlines() if line.startswith("["))
+    assert json.loads(arguments) == ["--changes-known", "--changed-path=" + changed]
     assert not (tmp_path / "SHOULD_NOT_EXIST").exists()

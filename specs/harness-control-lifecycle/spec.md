@@ -1,7 +1,7 @@
 ---
 id: harness-control-lifecycle
 type: architecture
-status: accepted
+status: implemented
 created: 2026-09-17
 ---
 

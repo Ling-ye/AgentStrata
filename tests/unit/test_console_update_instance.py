@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -1090,7 +1091,8 @@ def test_bot_workspace_exposes_single_update_button() -> None:
     assert "onApplyTask=" in text
 
 
-def test_bot_tool_editor_applies_config_via_unified_update() -> None:
+def test_bot_tool_editor_tracks_apply_completion_before_accepting_saved_config() -> None:
+    """Static hook wiring; draft behavior and API execution have separate runtime tests."""
     component = Path("console/web/src/components/BotToolEditor.tsx").read_text(
         encoding="utf-8"
     )
@@ -1098,13 +1100,18 @@ def test_bot_tool_editor_applies_config_via_unified_update() -> None:
         "console/web/src/features/bots/tool-editor/useBotToolEditor.ts"
     ).read_text(encoding="utf-8")
 
-    assert "apply: apply && isDeployed" in hook
+    save_parameter = re.search(r"const handleSave\s*=\s*async\s*\(\s*(\w+):\s*boolean\s*\)", hook)
+    assert save_parameter is not None
+    assert re.search(rf"apply:\s*{re.escape(save_parameter[1])}\s*&&\s*isDeployed", hook)
     assert "保存并重启" in component
     assert "onRestart" not in component + hook
-    task_branch = hook.split('if ("id" in result)', 1)[1].split("return;", 1)[0]
-    assert "onApplyTask?.(result, () => {" in task_branch
-    assert "void refresh()" in task_branch
-    assert "await refresh()" in task_branch
+    task_branch = hook.split('if ("id" in result)', 1)[1].split("} else {", 1)[0]
+    assert "setApply(" in task_branch and "result.id" in task_branch
+    assert "onApplyTask?.(result," in task_branch
+    assert "refreshSaved(" not in task_branch and "Message.success(" not in task_branch
+    assert "api.task(apply!.id)" in hook
+    completion = hook.split('if (result.status === "done")', 1)[1].split("} else {", 1)[0]
+    assert "refreshSaved(submitted, requestScope)" in completion
 
 
 def test_bot_update_task_resolves_terminal_state_in_drawer() -> None:
