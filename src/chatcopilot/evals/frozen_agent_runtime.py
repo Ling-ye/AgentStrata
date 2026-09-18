@@ -17,6 +17,7 @@ from chatcopilot.evals.execution_support import cleanup, event_to_dict, usage_su
 from chatcopilot.evals.isolated_executor import _isolated_subagents, _trial_environment
 from chatcopilot.evals.models import EvalCase, TrialObservation
 from chatcopilot.evals.trial_capture import execution_phase, execution_snapshot, record_turn
+from chatcopilot.evals.image_delivery_fixture import ImageDeliveryFixture
 
 
 def run(case: EvalCase, *, bot: str, workspace_root: Path) -> TrialObservation:
@@ -47,7 +48,7 @@ def run(case: EvalCase, *, bot: str, workspace_root: Path) -> TrialObservation:
                           chat_id="regression", user_id="evaluation", user_name="Evaluation").ensure()
     allowed = frozenset(declaration["allowed_tools"])
     events: list[dict[str, Any]] = []
-    with _trial_environment(workspace, root):
+    with _trial_environment(workspace, root), ImageDeliveryFixture(workspace_root, workspace, declaration) as fixtures:
         agent = assemble_agent_runtime(runtime, chat_config=load_config(env_prefix=runtime.spec.llm.env_prefix),
             profile=AgentRuntimeAssemblyProfile.DETACHED,
             overrides=AgentRuntimeOverrides(
@@ -63,7 +64,7 @@ def run(case: EvalCase, *, bot: str, workspace_root: Path) -> TrialObservation:
                     execution_scope=execution_scope(role, root, (root,) if role == "owner" else ())),
                 permission_filter=permission_filter(allowed, role=role), caller_role_hint=role,
                 caller_identity=SessionIdentity(chat_kind=workspace.chat_kind,
-                    chat_id=workspace.chat_id, user_id=workspace.user_id))
+                    chat_id=workspace.chat_id, user_id=workspace.user_id), file_sender=fixtures.sender)
             turn = {"conversation_id": case.case_id, "turn_index": 0, "input": case.input, "completed": False}
             record_turn(turn)
             with execution_phase("agent"):
@@ -87,7 +88,8 @@ def run(case: EvalCase, *, bot: str, workspace_root: Path) -> TrialObservation:
                 events=tuple(events), tool_calls=tuple(calls), post_state=post_state,
                 usage=usage_summary(events).get("usage_totals", {}),
                 evidence=({"kind": "isolated_agent", "case_id": case.case_id,
-                           "execution": capture, "fixture_paths": sorted(declaration["fixtures"])},))
+                           "execution": capture, "fixture_paths": sorted(declaration["fixtures"])},
+                          fixtures.evidence()))
         finally:
             cleanup(agent.close)
 

@@ -8,6 +8,10 @@
 
 PromptPlan 保留 host policy、runtime facts、bot instructions、untrusted data 四个信任分区。用户资料、网页、工具输出和历史记录不能提升为宿主规则。
 
+Codex App Server 的 developerInstructions 只承载前两个宿主分区及宿主执行策略；
+Bot 指令、人格、历史和原请求通过 user 输入投递。开始与续接都投递当前宿主规则，
+上下文快照记录两个实际消息，避免把历史里的能力否认当成当前工具权限或重复注入宿主正文。
+
 ## 源码入口
 
 - [src/chatcopilot/agent/tools/result_reader.py](../../src/chatcopilot/agent/tools/result_reader.py)

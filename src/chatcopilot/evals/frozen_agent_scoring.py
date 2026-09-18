@@ -24,6 +24,10 @@ def score(case: EvalCase, observation: TrialObservation) -> tuple[JudgeResult, d
             passed = not calls
         elif kind == "tool_result_contains":
             passed = any(c["ok"] and check["value"] in json.dumps(c["result"], ensure_ascii=False) for c in calls)
+        elif kind == "image_delivered":
+            passed = any(row.get("stage") == "provider_acknowledged" and row.get("provider_message_id") and "image" in row.get("segments", [])
+                         for evidence in observation.evidence if evidence.get("kind") == "isolated_image_delivery"
+                         for row in evidence.get("receipts", []))
         else:
             state = observation.post_state.get(check["path"])
             if state is None:

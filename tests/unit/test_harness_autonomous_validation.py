@@ -5,7 +5,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from tests.harness_delivery_fixture import offline_harness_delivery, frozen_test_source, approve_fixture  # noqa: F401
+from tests.harness_delivery_fixture import freeze_fixture, candidate_submission, offline_harness_delivery, frozen_test_source, approve_fixture  # noqa: F401
 
 from chatcopilot.core.private_sqlite import private_directory
 from chatcopilot.evals.agent_case import SCHEMA, case_identity, validate_case
@@ -84,8 +84,8 @@ def test_correct_answer_without_image_dispatch_fails():
 
 
 def test_full_expectation_cannot_omit_vision_or_semantics():
-    requirements = acceptance({"feedback": {"expected_behavior": "正确解释图片", "repair_hint": "图片不能读取"}})
-    assert {item["id"] for item in requirements["items"]} == {"expected_behavior", "image_materialized", "image_dispatched"}
+    requirements = acceptance({"requires_image": True, "feedback": {"expected_behavior": "正确解释图片", "repair_hint": "图片不能读取"}})
+    assert {item["id"] for item in requirements["items"]} == {"expected_behavior", "input_image_materialized", "image_dispatched"}
     with pytest.raises(HarnessError, match="遗漏"):
         require_coverage(requirements, {"coverage": {"image_materialized": ["download"]}}, local=True, agent=False)
     with pytest.raises(HarnessError):
@@ -149,25 +149,23 @@ def make_preparer(tmp_path, drafts, monkeypatch, results):
         "decision": "approved", "problem": "", "reason": "controlled reviewer fixture", "evidence_refs": ["reproduction"]}), calls, executed
 
 
-def test_domain_exception_revises_before_freeze_without_replaying_same_draft(tmp_path, monkeypatch):
+def test_domain_exception_returns_to_bounded_round_owner(tmp_path, monkeypatch):
     domain = {"outcome": "failed", "exception_chain": [{"type": "DomainError", "code": "resource_fetch_failed"}]}
     assertion = {"outcome": "failed", "assertion_failure": True}
     verifier, task, repo, coder, calls, executed = make_preparer(tmp_path,
         [b"def test_value(): product()\n", b"def test_value(): assert product() == 1\n"], monkeypatch, [domain, assertion])
-    source = verifier.prepare(task, repo, coder, RepairOptions("test"), lambda: None)
-    assert len(calls) == len(executed) == 2
-    assert calls[1]["previous_revision"]["error"]["code"] == "domain_exception"
-    assert "/frozen/2/" in source["test_path"]
-    records = sorted((verifier.root / "jobs" / task["task_id"] / "reproducer").glob("revision-*/record.json"))
-    assert [json.loads(p.read_text())["status"] for p in records] == ["failed", "validated"]
+    with pytest.raises(HarnessError) as caught:
+        freeze_fixture(verifier, task, repo, coder, RepairOptions("test"), lambda: None)
+    assert caught.value.code == "verification_domain_exception"
+    assert len(calls) == len(executed) == 1
 
 
 def test_repeated_draft_is_not_executed_again(tmp_path, monkeypatch):
     verifier, task, repo, coder, calls, executed = make_preparer(tmp_path, [b"def test_value(): product()\n"], monkeypatch,
         [{"outcome": "failed", "exception_chain": [{"type": "NameError"}]}])
-    with pytest.raises(HarnessError, match="草案未变化"):
-        verifier.prepare(task, repo, coder, RepairOptions("test"), lambda: None)
-    assert len(calls) == 2 and len(executed) == 1
+    with pytest.raises(HarnessError, match="产品行为证据"):
+        freeze_fixture(verifier, task, repo, coder, RepairOptions("test"), lambda: None)
+    assert len(calls) == len(executed) == 1
 
 
 def test_preparation_budget_is_not_reset(tmp_path, monkeypatch):
@@ -175,7 +173,7 @@ def test_preparation_budget_is_not_reset(tmp_path, monkeypatch):
     def budget():
         raise HarnessError("budget_exhausted", "shared budget")
     with pytest.raises(HarnessError, match="shared budget"):
-        verifier.prepare(task, repo, coder, RepairOptions("test"), budget)
+        freeze_fixture(verifier, task, repo, coder, RepairOptions("test"), budget)
 
 
 def test_waiting_image_continuation_is_idempotent_and_keeps_budget(tmp_path, monkeypatch):
@@ -188,7 +186,7 @@ def test_waiting_image_continuation_is_idempotent_and_keeps_budget(tmp_path, mon
     repository = tmp_path / "repository"
     subprocess.run(["git", "clone", "--quiet", "--shared", str(Path(__file__).resolve().parents[2]), str(repository)], check=True)
     controller = HarnessController(repository, root=tmp_path / "harness",
-        evaluator=SimpleNamespace(client=client), task_reader=lambda *_: robot_source())
+        evaluator=SimpleNamespace(client=client), task_reader=lambda *_: {**robot_source(), "requires_image": True})
     original = controller.start_task("sample", "run-example", RepairOptions("test"),
         feedback=RepairFeedback(expected_behavior="理解图片中的内容"), launch=False)
     assert original["status"] == "waiting_input"
@@ -249,10 +247,12 @@ def test_revision_after_candidate_rechecks_original_baseline_and_candidate(tmp_p
     root = tmp_path / "repository"
     subprocess.run(["git", "clone", "--quiet", "--shared", str(Path(__file__).resolve().parents[2]), str(root)], check=True)
     controller = HarnessController(root, root=tmp_path / "private", task_reader=lambda *_: robot_source())
-    task = controller.start_task("sample", "run-example", RepairOptions("test", max_attempts=1), launch=False)
+    task = controller.start_task("sample", "run-example", RepairOptions("test", max_attempts=2), launch=False)
     calls = []
     class Verifier:
         revision = 0
+        def capabilities(self):
+            return {}
         def prepare(self, task, candidate, coder, options, check):
             marker = candidate.path / "src/chatcopilot/core/harness_probe.py"
             assert not marker.exists(), "new test must be prepared on original baseline"
@@ -273,14 +273,14 @@ def test_revision_after_candidate_rechecks_original_baseline_and_candidate(tmp_p
     def code(worktree, *args):
         coding.append(1)
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text("VALUE = 'fixed'\n")
-        return {}
+        return candidate_submission()
     result = run_task(controller.store, task["task_id"], Verifier(), SimpleNamespace(run=code, review=approve_fixture), committer=None)
     assert result["status"] == "fixed", result.get("message")
-    assert len(coding) == 1
+    assert len(coding) == 2
     assert calls == [(1, False), (1, True), (2, False), (2, True)]
     assert result["evaluations"]["verify-1"]["complete"] and result["evaluations"]["verify-1"]["error"]["code"] == "verification_test_definition"
     assert result["evaluations"]["reproduce-r2"]["failed_cases"] == ["target-2"]
-    assert result["evaluations"]["verify-1-r2"]["passed_cases"] == ["target-2"]
+    assert result["evaluations"]["verify-2"]["passed_cases"] == ["target-2"]
     assert result["current_evaluation_id"] is None
 
 
@@ -300,10 +300,9 @@ def test_preparer_rejects_unbound_images_before_registration(tmp_path, monkeypat
         for file in draft.iterdir():
             file.chmod(0o600)
         return {}
-    with pytest.raises(HarnessError, match="草案未变化"):
-        verifier.prepare(task, repo, SimpleNamespace(prepare=prepare), RepairOptions("test"), lambda: None)
-    record = json.loads((verifier.root / "jobs" / task["task_id"] / "reproducer/revision-1/record.json").read_text())
-    assert record["error"]["code"] == "image_scope" and not executed
+    with pytest.raises(HarnessError, match="宿主绑定"):
+        freeze_fixture(verifier, task, repo, SimpleNamespace(prepare=prepare), RepairOptions("test"), lambda: None)
+    assert not executed
 
 
 def test_collection_details_are_given_to_next_preparation(tmp_path, monkeypatch):
@@ -319,8 +318,10 @@ def test_collection_details_are_given_to_next_preparation(tmp_path, monkeypatch)
             raise error
         return {"collected": ["test_value"], "rows": {"test_value": {"outcome": "failed", "assertion_failure": True}}}
     monkeypatch.setattr(verifier, "_pytest", trial)
-    verifier.prepare(task, repo, coder, RepairOptions("test"), lambda: None)
-    assert calls[1]["previous_revision"]["failure_evidence"]["result"]["errors"] == ["ImportError: missing_fixture"]
+    with pytest.raises(HarnessError) as caught:
+        freeze_fixture(verifier, task, repo, coder, RepairOptions("test"), lambda: None)
+    assert caught.value.evidence["result"]["errors"] == ["ImportError: missing_fixture"]
+    assert len(calls) == 1
 
 
 def test_fixture_classification_survives_receipt_translation(tmp_path):
@@ -344,7 +345,7 @@ def test_reference_word_already_in_original_question_is_not_leakage(tmp_path, mo
             file.chmod(0o600)
         return {}
     coder.prepare = prepare
-    prepared = verifier.prepare(task, repo, coder, RepairOptions("test"), lambda: None)
+    prepared = freeze_fixture(verifier, task, repo, coder, RepairOptions("test"), lambda: None)
     assert prepared["agent_case"]["input"] == "Is it red or blue?"
     assert prepared["agent_case"]["expected_behavior"] == "red"
 

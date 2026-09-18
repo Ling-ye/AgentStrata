@@ -71,7 +71,7 @@ from chatcopilot.core.model_selection import (
     validate_frozen_code_model_selection,
 )
 from chatcopilot.contracts.prompt import PromptPlan
-from chatcopilot.agent.context.prompt_plan import render_codex_prompt
+from chatcopilot.agent.context.prompt_plan import render_codex_prompt, render_codex_developer
 from chatcopilot.external_tools.codex_cli.command import (
     build_app_server_command,
     build_codex_subprocess_env,
@@ -404,9 +404,10 @@ class CodexAgentBackend:
             )
             subprocess_env = self._subprocess_env(state, command[0])
             prompt = self._prompt(state, task)
+            developer = render_codex_developer(state.prompt_plan, execution_policy=self._execution_policy_prompt(state))
             image_receipts = validated_image_resource_receipts(task)
             tool_schemas = self._context_tool_schemas(state)
-            effective_messages = ({"role": "user", "content": prompt},)
+            effective_messages = ({"role": "developer", "content": developer}, {"role": "user", "content": prompt})
             captured_messages, resource_path_omission_count = (
                 _replace_task_resource_paths(
                     {
@@ -420,7 +421,7 @@ class CodexAgentBackend:
             trace_id, parent_span_id, llm_span_id, snapshot_id = self._turn_trace_ids(
                 state,
                 task,
-                prompt=prompt,
+                prompt=developer + "\n" + prompt,
             )
             resumed = bool(state.native_session_id)
             context_kind = "codex_native_resume" if resumed else "codex_app_server"
@@ -540,6 +541,7 @@ class CodexAgentBackend:
                 on_notification=projector.consume_notification,
                 on_thread=projector.bind_thread,
                 on_poll=poll_codex_process,
+                developer_instructions=developer,
             )
             if cancellation is not None:
                 cancellation.raise_if_cancelled()
@@ -970,6 +972,8 @@ class CodexAgentBackend:
                 network_access=self._policy.network_access, read_only=self._policy.sandbox_mode == "read-only"))
         if not self._policy.connected_apps:
             extra_config.append("features.apps=false")
+        if not self._policy.image_generation:
+            extra_config.append("features.image_generation=false")
         command = build_app_server_command(
             template=routing.code_command,
             model=effective_selection.model,
@@ -1258,6 +1262,7 @@ class CodexAgentBackend:
             user_message=frame_task_message(task),
             execution_policy=self._execution_policy_prompt(state),
             turn_context=task.turn_context or "",
+            trusted_separately=True,
         )
 
     def _context_tool_schemas(
@@ -1373,6 +1378,8 @@ class CodexAgentBackend:
                     "network_access": self._policy.network_access,
                     "sandbox_mode": self._policy.sandbox_mode,
                     "web_search_mode": self._policy.web_search_mode,
+                    "image_generation": self._policy.image_generation,
+                    "connected_apps": self._policy.connected_apps,
                 },
                 "tool_surface": {},
                 "resource_policy": "native-scoped-v3",

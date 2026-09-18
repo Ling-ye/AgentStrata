@@ -77,6 +77,11 @@ class _ImageDownloadBatch:
     failures: tuple[str, ...]
 
 
+def _resolve_image_dns(host: str, port: int):
+    """Network dependency seam; public-address validation remains with the downloader."""
+    return socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+
+
 class _PinnedHTTPConnection(http.client.HTTPConnection):
     def __init__(self, host: str, port: int, address: str) -> None:
         super().__init__(host, port=port, timeout=_IMAGE_TIMEOUT_SECONDS)
@@ -344,7 +349,7 @@ def _resolve_public_url(url: str) -> _ResolvedPublicUrl:
         if host.lower() in {"localhost", "localhost.localdomain"}:
             raise ValueError("拒绝 localhost 图片 URL")
         try:
-            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            infos = _resolve_image_dns(host, port)
         except socket.gaierror as exc:
             raise ValueError(f"无法解析图片 URL host: {host}") from exc
         resolved_addresses: list[str] = []

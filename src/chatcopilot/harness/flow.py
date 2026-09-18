@@ -127,8 +127,8 @@ def flow_rows(task: dict[str, Any], attempts: list[dict[str, Any]]) -> list[dict
         if attempt.get("verification") is not None:
             add(f"attempt-{n}-result", "本轮验收结果", f"attempt-{n}", "acceptance", attempt,
                 locator={"section": "attempts", "number": n}, attempt=n,
-                status="completed" if attempt["status"] == "accepted" else "failed" if attempt["status"] in {"rejected", "review_rejected"} else "running",
-                conclusion="本轮验收通过" if attempt["status"] == "accepted" else "本轮验收未通过" if attempt["status"] in {"rejected", "review_rejected"} else "等待审核或最终验收",
+                status="completed" if attempt["status"] in {"accepted", "needs_review"} else "failed" if attempt["status"] in {"rejected", "review_rejected", "blocked"} else "running",
+                conclusion="局部候选已验证；完整目标仍有缺口" if attempt["status"] == "needs_review" else "本轮验收通过" if attempt["status"] == "accepted" else "本轮验收未通过" if attempt["status"] in {"rejected", "review_rejected", "blocked"} else "等待审核或最终验收",
                 finished_at=attempt.get("finished_at"))
     delivery = task.get("delivery") or {}
     for index, check in enumerate(task.get("commit_checks", [])):

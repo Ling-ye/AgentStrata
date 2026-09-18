@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from tests.harness_delivery_fixture import offline_harness_delivery  # noqa: F401
+from tests.harness_delivery_fixture import freeze_fixture, offline_harness_delivery  # noqa: F401
 
 from chatcopilot.core.candidate_configuration import validate_configuration
 from chatcopilot.core.private_sqlite import private_directory
@@ -29,6 +29,42 @@ def declaration(**changes):
     return validate_case({"schema": SCHEMA, "title": "Read the fixture", "input": "Read note.txt and report its value",
                          "expected_behavior": "Report the actual file value", "fixtures": {"note.txt": "sample-value"},
                          "assertions": [{"kind": "final_contains", "value": "sample-value"}], **changes})
+
+
+def test_robot_case_cannot_change_host_recorded_channel():
+    from unittest.mock import Mock
+    from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
+    client = Mock()
+    source = {"agent_case": declaration(role="owner", channel_kind="private"),
+        "evidence": {"run": {"role": "owner", "conversation_kind": "group"}}}
+    with pytest.raises(HarnessError, match="会话类型"):
+        ServiceEvaluator(client).prepare_agent_case(source, lambda: None)
+    client.register_case.assert_not_called()
+
+
+def test_definition_and_transport_failures_are_not_conflated():
+    from unittest.mock import Mock
+    from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
+    from chatcopilot.evals.service import EvaluationServiceError, EvaluationServiceUnavailable
+    client = Mock()
+    client.validate_case.side_effect = EvaluationServiceError("invalid_request", "missing fixture")
+    with pytest.raises(ValueError, match="fixture"):
+        ServiceEvaluator(client).validate_agent_case({})
+    client.validate_case.side_effect = EvaluationServiceError("fixture_missing", "dependency unavailable")
+    with pytest.raises(HarnessError) as missing:
+        ServiceEvaluator(client).validate_agent_case({})
+    assert missing.value.code == "fixture_missing"
+    client.validate_case.side_effect = EvaluationServiceUnavailable("offline")
+    with pytest.raises(HarnessError, match="暂不可用"):
+        ServiceEvaluator(client).validate_agent_case({})
+    assert client.validate_case.call_count == 4
+
+
+def test_capability_error_keeps_structured_identity_across_service():
+    from chatcopilot.evals.agent_case import CaseCapabilityUnavailable
+    from chatcopilot.evals.service.server import _error_payload
+    assert _error_payload(CaseCapabilityUnavailable("wording may change"))["code"] == "fixture_missing"
+    assert _error_payload(ValueError("invalid fixture path"))["code"] == "invalid_request"
 
 
 @pytest.mark.parametrize("outcome,error", [
@@ -157,7 +193,7 @@ def test_multiple_pytest_assertions_are_frozen_and_reused(tmp_path):
         for file in draft.iterdir():
             file.chmod(0o600)
         return {}
-    task["source"] = verifier.prepare(task, root, SimpleNamespace(prepare=prepare), RepairOptions("test-model"), lambda: None)
+    task["source"] = freeze_fixture(verifier, task, root, SimpleNamespace(prepare=prepare), RepairOptions("test-model"), lambda: None)
     assert len(task["source"]["reproduction_ids"]) == 2
     assert task["source"]["case_ids"] == task["source"]["reproduction_ids"]
     before = verifier.run(task, root, "before", task["source"]["case_ids"], lambda: None)

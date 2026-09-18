@@ -181,6 +181,7 @@ def _isolated_subagents(value: SubagentSpec) -> SubagentSpec:
         codex=CodexMainSessionPolicy(
             network_access=False,
             connected_apps=False,
+            image_generation=False,
             web_search_mode="disabled",
             sandbox_mode="read-only",
         ),

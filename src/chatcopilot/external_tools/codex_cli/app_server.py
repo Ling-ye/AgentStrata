@@ -11,9 +11,6 @@ import threading
 import time
 from typing import Any, Callable
 
-from chatcopilot.contracts.cancellation import CancellationRequested
-
-
 class AppServerProcess:
     def __init__(self, command: list[str], *, cwd: Path, env: dict[str, str],
                  timeout_seconds: float, on_notification: Callable[[str, dict], None],
@@ -146,7 +143,7 @@ class AppServerProcess:
 
     def __exit__(self, exc_type, exc, traceback) -> None:
         try:
-            if exc_type and issubclass(exc_type, (CancellationRequested, subprocess.TimeoutExpired)):
+            if exc_type:
                 try:
                     self.interrupt()
                 except (OSError, RuntimeError, ValueError):
@@ -176,13 +173,17 @@ class AppServerProcess:
 def run_app_server(command: list[str], *, cwd: Path, env: dict[str, str], prompt: str,
                    model: str, effort: str, thread_id: str, image_paths: tuple[str, ...],
                    timeout_seconds: float, on_notification: Callable[[str, dict], None],
-                   on_thread: Callable[[str], None], on_poll: Callable[[], None]) -> subprocess.CompletedProcess:
+                   on_thread: Callable[[str], None], on_poll: Callable[[], None],
+                   output_schema: dict[str, Any] | None = None,
+                   developer_instructions: str | None = None) -> subprocess.CompletedProcess:
     with AppServerProcess(command, cwd=cwd, env=env, timeout_seconds=timeout_seconds,
                           on_notification=on_notification, on_poll=on_poll) as rpc:
         rpc.request("initialize", {"clientInfo": {"name": "agentstrata", "version": "1"},
                                    "capabilities": {"experimentalApi": True}})
         rpc.send({"method": "initialized", "params": {}})
         params: dict[str, Any] = {"cwd": str(cwd), "model": model, "approvalPolicy": "never"}
+        if developer_instructions is not None:
+            params["developerInstructions"] = developer_instructions
         if thread_id:
             params["threadId"] = thread_id
             # Resume state is provider-owned; replaying its entire history into
@@ -199,7 +200,8 @@ def run_app_server(command: list[str], *, cwd: Path, env: dict[str, str], prompt
         inputs = [{"type": "text", "text": prompt}]
         inputs.extend({"type": "localImage", "path": path} for path in image_paths)
         turn = rpc.request("turn/start", {"threadId": native_id, "input": inputs,
-            "model": model, "effort": effort, "summary": "auto", "approvalPolicy": "never"})
+            "model": model, "effort": effort, "summary": "auto", "approvalPolicy": "never",
+            **({"outputSchema": output_schema} if output_schema is not None else {})})
         turn_id = (turn.get("turn") or {}).get("id")
         if not isinstance(turn_id, str) or not turn_id or rpc.turn_id and turn_id != rpc.turn_id:
             raise RuntimeError("App Server turn identity mismatch")

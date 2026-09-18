@@ -70,7 +70,7 @@ from chatcopilot.core.wiki import WikiStore
 from chatcopilot.core.workspace_runtime import Workspace
 
 
-FileSenderFactory = Callable[[Principal, WorkspaceView], FileSender | None]
+FileSenderFactory = Callable[[Principal, WorkspaceView, str], FileSender | None]
 BackgroundSubmitterFactory = Callable[[Principal, WorkspaceView], BackgroundSubmitter | None]
 
 
@@ -250,7 +250,7 @@ class ActorSessionFactory:
         )
         try:
             file_sender = (
-                self._file_sender_factory(principal, binding.workspace)
+                self._file_sender_factory(principal, binding.workspace, session_id)
                 if self._file_sender_factory is not None
                 else None
             )

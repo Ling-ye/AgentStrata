@@ -34,7 +34,8 @@ export function RepairProgress({ task, refreshTask, title = "修复进度", stat
     return () => window.clearInterval(timer);
   }, [active, task.heartbeat_at]);
   const heartbeat = heartbeatStatus(task, now);
-  const round = repairRoundLabel(task);
+  const round = task.pipeline_version === 8 && task.current_attempt != null
+    ? `第 ${task.current_attempt}/${task.options.max_attempts} 轮修复` : repairRoundLabel(task);
   const data = query.data;
   return <section className="repair-progress" aria-label={title}>
     <Space wrap><Text bold>{title}</Text>
@@ -46,6 +47,13 @@ export function RepairProgress({ task, refreshTask, title = "修复进度", stat
       <Text>阶段：{stageLabel(task.stage)}</Text>{round && <Text>{round}</Text>}
       <Text type="secondary">{budgetLabel(task)}</Text>
       <Text type="secondary">{heartbeat.label}</Text></Space>
+    {task.remaining_seconds != null && <Text>剩余预算：{Math.ceil(task.remaining_seconds / 60)} 分钟</Text>}
+    {!!task.candidate_checkpoint?.changed_files.length && <Text>候选已保存：{task.candidate_checkpoint.changed_files.length} 个文件</Text>}
+    {task.acceptance_coverage && <Space wrap>{Object.entries(task.acceptance_coverage).map(([name, result]) =>
+      <Tag key={name} color={result.passed ? "green" : "orange"}>{name}：{result.passed ? "已验证" : "未验证"}</Tag>)}</Space>}
+    {!!task.verification_gaps?.length && <Alert type="warning" content={
+      task.verification_gaps.map(gap => `${gap.requirement}：${gap.message}`).join("；")} />}
+    {task.stop_reason && !active && <Text>停止原因：{task.stop_reason}</Text>}
     {heartbeat.stale && <Alert type="warning" content="心跳暂未更新；可刷新确认，任务状态以实际执行结果为准。" />}
     {!summaryOnly && <>{query.isError && <Alert type="error" content={`进度读取失败：${String(query.error)}。已显示的内容保留，可刷新重试。`} />}
     {data?.message && <Alert type="warning" content={data.message} />}

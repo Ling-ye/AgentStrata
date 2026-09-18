@@ -975,9 +975,10 @@ class CodexBackendResumeTests(TestCase):
             self.assertIn("provider_internal_turns", finished.visible_response["omitted"])
             self.assertEqual(context.session_messages[-1]["role"], "user")
             self.assertIn("inspect context", context.session_messages[-1]["content"])
-            self.assertEqual(context.effective_messages[0]["role"], "user")
-            self.assertIn("system baseline", context.effective_messages[0]["content"])
-            self.assertIn("inspect context", context.effective_messages[0]["content"])
+            self.assertEqual(context.effective_messages[0]["role"], "developer")
+            self.assertEqual(context.effective_messages[1]["role"], "user")
+            self.assertIn("system baseline", context.effective_messages[1]["content"])
+            self.assertIn("inspect context", context.effective_messages[1]["content"])
             self.assertEqual(context.tool_schemas[0]["name"], "dynamic_echo")
             self.assertGreater(context.estimated_tokens, 0)
             self.assertEqual(
@@ -2190,7 +2191,9 @@ class CodexBackendPolicyTests(TestCase):
             return_value="/usr/bin/codex",
         ):
             command = backend._command(state)
-        prompt = backend._prompt(state, AgentTask("do work"))
+        from chatcopilot.agent.context.prompt_plan import render_codex_developer
+        prompt = render_codex_developer(state.prompt_plan, execution_policy=backend._execution_policy_prompt(state))
+        prompt += backend._prompt(state, AgentTask("do work"))
         backend.close_session(ref)
         return command, prompt
 
@@ -2251,6 +2254,7 @@ class CodexBackendPolicyTests(TestCase):
             network_access=False,
             web_search_mode="disabled",
             sandbox_mode="read-only",
+            image_generation=False,
         )
         with TemporaryDirectory() as tmp:
             command, prompt = self._command_and_prompt(Path(tmp), policy)
@@ -2258,6 +2262,7 @@ class CodexBackendPolicyTests(TestCase):
         self.assertTrue(any('"read"' in item and "permissions.agentstrata.filesystem" in item for item in command))
         self.assertIn("permissions.agentstrata.network.enabled=false", command)
         self.assertIn('web_search="disabled"', command)
+        self.assertIn("features.image_generation=false", command)
         self.assertNotIn("features.network_proxy.enabled=true", command)
         self.assertNotIn('features.network_proxy.domains={ "*" = "allow" }', command)
         self.assertIn("web search is disabled", prompt)
@@ -2269,6 +2274,7 @@ class CodexBackendPolicyTests(TestCase):
             CodexMainSessionPolicy(network_access=False),
             CodexMainSessionPolicy(web_search_mode="disabled"),
             CodexMainSessionPolicy(sandbox_mode="read-only"),
+            CodexMainSessionPolicy(image_generation=False),
         )
 
         for policy in variants:
@@ -2279,6 +2285,7 @@ class CodexBackendPolicyTests(TestCase):
         for field_name in (
             "allow_delegate_tools",
             "allow_unified_search_tool",
+            "image_generation",
         ):
             with (
                 self.subTest(field=field_name),

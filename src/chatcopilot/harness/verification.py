@@ -5,7 +5,7 @@ from dataclasses import replace
 from typing import Any, Callable
 
 from chatcopilot.harness.models import (
-    CandidateRef, Coder, Evaluator, HarnessError, RepairHypothesis, RepairOptions,
+    CandidateRef, Evaluator, HarnessError, RepairHypothesis,
     ProblemEvidence, RepairFeedback,
     VerificationCheck, VerificationPlan, VerificationResult,
 )
@@ -41,8 +41,11 @@ class CaseVerification:
         self.local_verifier.store = store
         self.local_verifier.validate_case = getattr(evaluator, "validate_agent_case", None)
 
-    def prepare(self, task: dict[str, Any], candidate: CandidateRef, coder: Coder,
-                options: RepairOptions, check_cancel: Callable[[], None]
+    def capabilities(self) -> dict[str, Any]:
+        return self.evaluator.capabilities()
+
+    def prepare(self, task: dict[str, Any], candidate: CandidateRef, output,
+                proposal: dict[str, Any], check_cancel: Callable[[], None]
                 ) -> tuple[dict[str, Any], RepairHypothesis, VerificationPlan]:
         source = task["source"]
         problem = ProblemEvidence(str(source.get("run_id") or source.get("case_instance_id") or source.get("case_ref")),
@@ -53,7 +56,7 @@ class CaseVerification:
             return (source, RepairHypothesis(**task["hypothesis"]),
                     VerificationPlan.from_payload(task["verification_plan"]))
         if not source.get("test_sha256") and (source.get("kind", "evaluation") == "evaluation" or not source.get("case_snapshot_id")):
-            source = self.local_verifier.prepare(task, candidate.path, coder, options, check_cancel)
+            source = self.local_verifier.prepare(task, candidate.path, output, proposal, check_cancel)
         real_agent = source.get("kind") == "evaluation" and source.get("executor") in {"agent_isolated", "agent_configured"}
         if source.get("agent_case") and source.get("kind") == "robot_task" and not source.get("case_snapshot_id"):
             prepare = getattr(self.evaluator, "prepare_agent_case")
@@ -76,9 +79,24 @@ class CaseVerification:
             checks = (*checks, *agent_ids)
             repeat_map = {name: 3 if name in agent_ids else 1 for name in checks}
         coverage = {}
+        declared = {row["requirement"]: row["checks"] for row in proposal["coverage"]}
         for item in (task.get("acceptance") or {}).get("items", []):
             agent_ids = source.get("agent_source", {}).get("case_ids") or ([] if source.get("test_sha256") else list(primary))
-            coverage[item["id"]] = list(agent_ids if item["verification"] == "agent" and agent_ids else source.get("reproduction_ids", primary))
+            covered = declared.get(item["id"], [])
+            available = list(agent_ids if item["verification"] == "agent" else source.get("reproduction_ids", primary))
+            node_ids = source.get("test_nodeids", {})
+            resolved = []
+            for name in covered:
+                if name in available:
+                    resolved.append(name)
+                else:
+                    matches = [ident for node, ident in node_ids.items()
+                               if node.rsplit("::", 1)[-1].split("[", 1)[0] == name and ident in available]
+                    if matches:
+                        resolved.extend(matches)
+                    elif name == "agent_case" and real_agent:
+                        resolved.extend(agent_ids)
+            coverage[item["id"]] = sorted(set(resolved)) if (item["verification"] != "agent" or real_agent) else []
         plan = VerificationPlan(primary, checks, tuple(source["passed_cases"]),
                                 repetitions, real_agent, source.get("case_snapshot_id", ""), repeat_map, coverage)
         if source.get("kind", "evaluation") == "evaluation":

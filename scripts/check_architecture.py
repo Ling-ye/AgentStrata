@@ -186,6 +186,7 @@ RULES = (
         forbidden=("chatcopilot.evals", "chatcopilot.agent", "chatcopilot.external_tools", "chatcopilot.gateway"),
         allowed=tuple(("src/chatcopilot/harness/" + file, module) for file, modules in (
             ("evaluation_adapter.py", ("chatcopilot.evals.service",)),
+            ("repair_session.py", ("chatcopilot.external_tools.codex_cli",)),
             ("gateway_adapter.py", ("chatcopilot.gateway.observation_queries", "chatcopilot.gateway.observation_store")),
             ("codex_adapter.py", ("chatcopilot.agent.backends.codex_permissions", "chatcopilot.agent.context.prompt_plan",
                                   "chatcopilot.external_tools.codex_cli", "chatcopilot.external_tools.codex_cli.process_runner")),

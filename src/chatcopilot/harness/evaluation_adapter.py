@@ -23,6 +23,18 @@ class ServiceEvaluator:
     ) -> None:
         self.client = client or EvaluationServiceClient(socket_path)
 
+    @staticmethod
+    def _read_once_more(operation, check_cancel=lambda: None):
+        """Retry a read at most once; a mutation with an uncertain acknowledgement is never replayed."""
+        for attempt in range(2):
+            check_cancel()
+            try:
+                return operation()
+            except EvaluationServiceUnavailable:
+                if attempt:
+                    raise
+                time.sleep(0.1)
+
     def load(self, evaluation_id: str, *, target_id: str | None = None) -> dict[str, Any]:
         record = self.client.get(evaluation_id)
         result = record.get("result") or {}
@@ -184,16 +196,37 @@ class ServiceEvaluator:
         return source
 
     def validate_agent_case(self, case: dict[str, Any]) -> dict[str, Any]:
-        return self.client.validate_case(case)
+        try:
+            return self._read_once_more(lambda: self.client.validate_case(case))
+        except EvaluationServiceUnavailable as exc:
+            raise HarnessError("evaluation_unavailable", "验证能力服务暂不可用") from exc
+        except EvaluationServiceError as exc:
+            # Invalid declarations are author-correctable; transport faults are not.
+            if exc.code == "fixture_missing":
+                raise HarnessError("fixture_missing", exc.message) from exc
+            if exc.code == "invalid_request":
+                raise ValueError(exc.message) from exc
+            raise HarnessError("verification_environment", exc.message) from exc
+
+    def capabilities(self) -> dict[str, Any]:
+        try:
+            return self._read_once_more(self.client.case_capabilities)
+        except EvaluationServiceUnavailable as exc:
+            raise HarnessError("evaluation_unavailable", "验证能力服务暂不可用；未启动模型") from exc
 
     def prepare_agent_case(self, source: dict[str, Any], check_cancel: Callable[[], None]) -> dict[str, Any]:
         check_cancel()
-        snapshot = self.client.register_case(source["agent_case"])
-        case = snapshot["case"]
+        case = source["agent_case"]
         # The draft may use synthetic inputs, but cannot change the observed actor's role.
         role = (source.get("evidence", {}).get("run") or {}).get("role")
         if role and case["role"] != role:
             raise HarnessError("source_mismatch", "复现不能改变原任务主体的权限角色")
+        conversation = (source.get("evidence", {}).get("run") or {}).get("conversation_kind")
+        channel_kind = {"group": "group", "p2p": "private", "private": "private"}.get(conversation)
+        if channel_kind and case["channel_kind"] != channel_kind:
+            raise HarnessError("source_mismatch", "复现不能改变原任务的会话类型")
+        snapshot = self.client.register_case(case)
+        case = snapshot["case"]
         return {**source, "agent_case": case, "case_snapshot_id": snapshot["snapshot_id"],
                 "case_id": snapshot["snapshot_id"], "case_ids": [snapshot["snapshot_id"]],
                 "target_id": "", "passed_cases": [], "repetitions": 3,
@@ -216,7 +249,7 @@ class ServiceEvaluator:
         try:
             check_cancel()
             try:
-                record = self.client.get(evaluation_id)
+                record = self._read_once_more(lambda: self.client.get(evaluation_id), check_cancel)
             except EvaluationServiceError as exc:
                 if exc.code != "not_found":
                     raise
@@ -231,7 +264,7 @@ class ServiceEvaluator:
             while record["status"] in {"queued", "running"}:
                 check_cancel()
                 time.sleep(0.5)
-                record = self.client.get(evaluation_id)
+                record = self._read_once_more(lambda: self.client.get(evaluation_id), check_cancel)
             check_cancel()
         except Cancelled:
             self.cancel_confirmed(evaluation_id)
@@ -256,6 +289,10 @@ class ServiceEvaluator:
         result = record.get("result") or {}
         # The complete identity matrix, rather than an aggregate score, is the gate.
         target = source["target_id"] or result["targets"][0]["target_id"]
+        observed = (source.get("evidence", {}).get("run") or {})
+        actual_target = next((item for item in result["targets"] if item["target_id"] == target), {})
+        if any(observed.get(key) and actual_target.get(key) != observed[key] for key in ("model", "backend")):
+            raise HarnessError("source_mismatch", "验证模型或 backend 与原任务不同，不能作为原目标的验收证据")
         passed_cases(result, target, case_ids, source["repetitions"])
         return {
             "evaluation_id": evaluation_id,

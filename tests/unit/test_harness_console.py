@@ -43,7 +43,7 @@ def test_local_start_uses_public_controller(app):
     assert app.state.harness.start_case_instance.call_args.kwargs["request_id"] == "stable-request"
     options = app.state.harness.start_case_instance.call_args.args[1]
     assert options.reasoning_effort == "xhigh"
-    assert options.timeout_seconds == 7200
+    assert options.timeout_seconds == 3600
 
 
 def test_query_requires_startup_assembly_and_never_initializes_storage():

@@ -211,6 +211,7 @@ def render_codex_prompt(
     user_message: str,
     execution_policy: str = "",
     turn_context: str = "",
+    trusted_separately: bool = False,
 ) -> str:
     partitions = _partition_layers(plan)
     envelope = {
@@ -223,7 +224,19 @@ def render_codex_prompt(
         "user_message": user_message,
         "untrusted_turn_context": (turn_context or "").strip(),
     }
+    if trusted_separately:
+        for key in ("host_policy", "runtime_facts", "runtime_execution_policy"):
+            envelope.pop(key)
     return json.dumps(envelope, ensure_ascii=False, sort_keys=True)
+
+
+def render_codex_developer(plan: PromptPlan, *, execution_policy: str = "") -> str:
+    """Only host-owned partitions enter Codex's native developer instruction channel."""
+    partitions = _partition_layers(plan)
+    return json.dumps({"schema_version": 2,
+        "host_policy": _render_layers(partitions["trusted_policy"]),
+        "runtime_facts": _render_layers(partitions["trusted_runtime_fact"]),
+        "runtime_execution_policy": execution_policy.strip()}, ensure_ascii=False, sort_keys=True)
 
 
 def render_receipt(

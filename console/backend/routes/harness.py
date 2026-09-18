@@ -29,7 +29,7 @@ class CreateRepair(BaseModel):
     model: str = Field(min_length=1)
     reasoning_effort: str = "xhigh"
     max_attempts: int = Field(default=3, ge=1)
-    timeout_seconds: int = Field(default=7200, ge=1)
+    timeout_seconds: int = Field(default=3600, ge=1)
 
     @model_validator(mode="after")
     def selected_source(self):

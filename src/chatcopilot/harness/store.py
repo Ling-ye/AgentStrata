@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS attempts (
  task_id TEXT NOT NULL REFERENCES tasks(task_id), number INTEGER NOT NULL,
  payload TEXT NOT NULL, PRIMARY KEY(task_id, number)
 );
+CREATE TABLE IF NOT EXISTS repair_steps (
+ task_id TEXT NOT NULL REFERENCES tasks(task_id), step_id TEXT NOT NULL,
+ payload TEXT NOT NULL, PRIMARY KEY(task_id, step_id)
+);
 """
 
 
@@ -141,6 +145,17 @@ class HarnessStore:
             if row is None:
                 raise HarnessError("not_found", "修复任务不存在")
             task = json.loads(row[0])
+            if (task.get("pipeline_version") or 0) >= 8:
+                old = connection.execute("SELECT payload FROM repair_steps WHERE task_id=? AND step_id=?",
+                                         (task_id, step["id"])).fetchone()
+                if old and json.loads(old[0])["status"] != "running":
+                    return
+                if task["status"] in {"cancel_requested", "cancelled", "interrupted", "blocked", "failed", "needs_review"}:
+                    step = {**step, "status": "cancelled" if task["status"] in {"cancel_requested", "cancelled"} else "interrupted",
+                            "conclusion": "任务已停止；本步骤未确认完成", "finished_at": time.time()}
+                connection.execute("INSERT INTO repair_steps VALUES(?,?,?) ON CONFLICT(task_id,step_id) DO UPDATE SET payload=excluded.payload",
+                                   (task_id, step["id"], json_text(step)))
+                return
             steps = task.setdefault("flow_steps", [])
             index = next((i for i, value in enumerate(steps) if value["id"] == step["id"]), len(steps))
             if index < len(steps) and steps[index]["status"] != "running":
@@ -155,6 +170,11 @@ class HarnessStore:
                 steps[index] = step
             task["flow_version"] = 1
             connection.execute("UPDATE tasks SET payload=? WHERE task_id=?", (json_text(task), task_id))
+
+    def flow_steps(self, task_id: str) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT payload FROM repair_steps WHERE task_id=? ORDER BY rowid", (task_id,)).fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     def update(
         self, task_id: str, *, if_status: frozenset[str] | None = None,
@@ -185,12 +205,22 @@ class HarnessStore:
             if current["status"] in {"cancel_requested", "cancelled"} and changes.get("status") in {
                 "running",
                 "fixed",
+                "needs_review",
             }:
                 raise Cancelled()
             value = {**current, **changes, "updated_at": time.time()}
             if "status" in changes and value["status"] not in ACTIVE:
                 from chatcopilot.harness.flow_receipts import close_unfinished_steps
                 close_unfinished_steps(value, value["updated_at"])
+                if (value.get("pipeline_version") or 0) >= 8:
+                    rows = connection.execute("SELECT step_id,payload FROM repair_steps WHERE task_id=?", (task_id,)).fetchall()
+                    for ident, payload in rows:
+                        observation = json.loads(payload)
+                        if observation["status"] == "running":
+                            observation.update(status="cancelled" if value["status"] == "cancelled" else "interrupted",
+                                               interrupted_at=value["updated_at"], conclusion="任务已停止；本步骤未记录可靠终态")
+                            connection.execute("UPDATE repair_steps SET payload=? WHERE task_id=? AND step_id=?",
+                                               (json_text(observation), task_id, ident))
             if any(key in changes for key in ("delivery", "cleanup", "local_commit")):
                 from chatcopilot.harness.flow_receipts import record_delivery
                 record_delivery(current, value, value["updated_at"])

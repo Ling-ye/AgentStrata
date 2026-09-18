@@ -162,6 +162,38 @@ def test_publish_cleanup_and_merge_receipt(task):
     assert command(repo, "rev-parse", "main") == base
 
 
+def test_mixed_repair_adopts_both_exact_frozen_tests(task, tmp_path):
+    import hashlib
+    from chatcopilot.core.private_sqlite import json_text
+    from chatcopilot.evals.agent_case import case_identity, validate_case, SCHEMA
+    store, ident, _, _ = task
+    content = b"def test_regression():\n    assert 2 * 2 == 4\n"
+    path = tmp_path / "frozen.py"
+    path.write_bytes(content)
+    path.chmod(0o600)
+    sha = hashlib.sha256(content).hexdigest()
+    case = validate_case({"schema": SCHEMA, "title": "Frozen case", "input": "Say four",
+        "expected_behavior": "four", "assertions": [{"kind": "final_contains", "value": "four"}]})
+    source = {"kind": "robot_task", "test_path": str(path), "test_sha256": sha,
+        "test_relative_path": f"tests/unit/harness_regressions/test_{sha}.py",
+        "agent_source": {"case_snapshot_id": case_identity(case), "agent_case": case}}
+    store.update(ident, source=source)
+    frozen = candidate(store, ident)
+    root = Path(store.get(ident)["worktree"])
+    refs = store.get(ident)["regressions"]
+    assert [ref["kind"] for ref in refs] == ["pytest", "agent_case"]
+    assert (root / refs[0]["path"]).read_bytes() == content
+    assert (root / refs[1]["path"]).read_text() == json_text(case)
+    assert all(ref["path"] in frozen["paths"] for ref in refs)
+
+
+def test_partial_candidate_cannot_enter_publication_even_directly(task):
+    store, ident, _, _ = task
+    store.update(ident, status="needs_review", source={"kind": "robot_task"})
+    with pytest.raises(HarnessError, match="交付资格"):
+        candidate(store, ident)
+
+
 @pytest.mark.parametrize("failure", ["fail_create_after", "fail_push_after"])
 def test_uncertain_remote_write_retries_without_duplicate_commit_or_pr(task, failure):
     store, ident, client, _ = task

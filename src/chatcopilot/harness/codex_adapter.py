@@ -18,11 +18,13 @@ from chatcopilot.agent.context.prompt_plan import (
     PromptBuildInput,
     PromptPlanBuilder,
     render_codex_prompt,
+    render_codex_developer,
 )
 from chatcopilot.contracts.execution_scope import ExecutionScope
 from chatcopilot.contracts.prompt import BotPromptProfile
 from chatcopilot.core.observability_redaction import redact_observability_payload
 from chatcopilot.core.private_sqlite import json_text, private_directory, private_file
+from chatcopilot.core.source_snapshot import git_output
 from chatcopilot.core.scoped_process import require_bubblewrap
 from chatcopilot.harness.codex_environment import check_git, git_metadata, shell_environment, wrap_command
 from chatcopilot.external_tools.codex_cli import (
@@ -32,9 +34,12 @@ from chatcopilot.external_tools.codex_cli import (
     validate_auth_root_path,
 )
 from chatcopilot.external_tools.codex_cli.process_runner import run_codex_process
+from chatcopilot.external_tools.codex_cli import build_app_server_command
 from chatcopilot.harness.models import HarnessError, RepairOptions, CodingOptions, review_decision
 from chatcopilot.harness.evidence_context import evidence_index
 from chatcopilot.harness.workspace import protected_paths, writable_paths
+from chatcopilot.harness.repair_types import ActionProgress, submission
+from chatcopilot.harness.repair_session import run_session
 
 
 class CodexCoder:
@@ -139,6 +144,9 @@ class CodexCoder:
         auditing: bool = False,
     ) -> dict[str, Any]:
         binary, auth = self.preflight()
+        repair = evidence.get("repair_v2") is True
+        if repair and not reviewing:
+            draft = private_directory(output / "draft")
         private_directory(output)
         evidence_text = json_text(evidence)
         evidence_path = None
@@ -158,8 +166,19 @@ class CodexCoder:
                 **evidence_index(evidence, stage="review" if reviewing else "prepare" if draft else "repair"),
                 "instructions": "完整证据位于只读 JSON 文件；JSON pointer 指向原始位置。按 read_order 阅读；source 中原问题、原预期和 feedback 必须完整核对。先看异常位置和缺失节，再按需查原文；计数不是验收结论，未展示的失败也必须核对。不要一次打印整个文件。",
             })
-        runtime_home = output / "codex-home"
-        execution_directory = draft or worktree
+        task_root = worktree.parent
+        previous_evidence = None
+        reference = (evidence.get("previous_failure") or {}).get("evidence_ref")
+        if repair and reference:
+            previous_evidence = Path(reference["path"])
+            if previous_evidence.resolve() != previous_evidence or not previous_evidence.is_relative_to(task_root):
+                raise HarnessError("artifact_changed", "前轮验证证据路径变化")
+            private_file(previous_evidence)
+            if hashlib.sha256(previous_evidence.read_bytes()).hexdigest() != reference["sha256"]:
+                raise HarnessError("artifact_changed", "前轮验证证据摘要变化")
+        runtime_home = (private_directory(task_root / "sessions" / ("reviewer" if reviewing else "author"))
+                        if repair else output / "codex-home")
+        execution_directory = worktree if repair else draft or worktree
         protected = protected_paths(worktree, str((evidence.get("source") or {}).get("bot_id", "")))
         source = evidence.get("source") or {}
         health = source.get("kind") == "code_health"
@@ -254,9 +273,24 @@ class CodexCoder:
                         "宿主会核对实际差异并进行定向检查和独立审核；需要行为改动时明确报告。"
                     )
         rg_executable = shutil.which("rg")
+        if repair:
+            helper_directory = private_directory(task_root / "sessions" / "bin")
+            alias = helper_directory / "codex-linux-sandbox"
+            if alias.is_symlink():
+                if alias.resolve() != binary:
+                    raise HarnessError("coding_environment", "任务沙箱执行器身份变化")
+            elif alias.exists():
+                raise HarnessError("coding_environment", "任务沙箱执行器路径被占用")
+            else:
+                alias.symlink_to(binary)
         rg = Path(rg_executable).resolve() if rg_executable else None
-        git_roots = git_metadata(worktree) if health and not auditing else ()
+        git_roots = git_metadata(worktree) if (health or repair) and not auditing else ()
         tool_environment = shell_environment(binary, helper_directory)
+        runtime_identity = hashlib.sha256(json_text({
+            "binary": str(binary), "size": binary.stat().st_size, "modified_ns": binary.stat().st_mtime_ns,
+            "python": sys.version, "executable": sys.executable, "shell": tool_environment,
+            "adapter": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        }).encode()).hexdigest() if repair else ""
         repository_prompt = ""
         if health:
             repository_prompt = (
@@ -291,12 +325,15 @@ class CodexCoder:
                         *((helper_directory,) if helper_directory else ()),
                         *((Path(source["baseline_root"]),) if health else ()),
                         *((evidence_path.parent,) if evidence_path else ()),
+                        *((previous_evidence,) if previous_evidence else ()),
                         *((draft,) if draft else ()),
                         *((Path(source_trace),) if source_trace else ()),
                     )
                 )
             ),
-            writable_roots=() if reviewing or auditing else (draft,) if draft else health_writes if health else writable_paths(worktree, str(source.get("bot_id", ""))),
+            writable_roots=() if reviewing or auditing else
+                (*writable_paths(worktree, str(source.get("bot_id", ""))), draft) if repair else
+                (draft,) if draft else health_writes if health else writable_paths(worktree, str(source.get("bot_id", ""))),
             protected_roots=tuple(dict.fromkeys((*protected, *git_roots))),
             native_write=not (reviewing or auditing),
         )
@@ -310,7 +347,7 @@ class CodexCoder:
                 model=options.model,
                 role="owner",
                 channel_kind="private",
-                session_policy=(health_policy or (
+                session_policy=(("在任务独立工作区调查并修复原目标，在指定草案目录写新增测试。原有测试、评分与宿主只读。" if repair and not reviewing else health_policy) or (
                     "只读审核修复是否解决原问题、测试是否符合契约，不能修改任何代码、测试或验收记录。"
                     if reviewing
                     else "只分析来源证据并创建验证草案，产品代码只读。不得重放生产消息或访问外部服务。"
@@ -385,11 +422,35 @@ class CodexCoder:
             turn_context=evidence_text,
         )
         events: list[dict[str, Any]] = []
+        if repair:
+            task_text = (
+                "独立审核候选代码和测试，核对原请求、真实调用路径、基线/候选对照及验收缺口。"
+                "regression 中的冻结测试也是候选交付内容：作者不可写仓库测试，宿主在发布时按 path 收录相同字节；"
+                "不要仅因测试尚未写入 worktree 就拒绝。请审查测试本身及实际对照证据。"
+                "源码和记录只读。局部候选可以获准人工审阅，但必须保留 gaps；不能声称完整目标已通过。"
+                "禁止以模型自述、关键词检查、模拟最终回答或替换被测逻辑作为修复证据。"
+                if reviewing else
+                "在同一轮调查并修改产品，执行定向局部检查，然后提交结构化结果。无需先完成整套复现才能开始修改。"
+                f"新增 pytest 测试写入 {draft}/test_reproduction.py，真实 Agent 声明写入 {draft}/agent_case.json。"
+                "宿主会把测试复制到 tests/unit/harness_regressions/，运行 cwd 是冻结仓库根且产品 src 可导入。"
+                "测试不得依赖 attempt/draft 的外部目录布局；仅用正常产品模块导入或仓库 cwd。"
+                "测试调用真实产品，仅替换外部依赖。现有测试与评分不可修改。"
+                "verification_kind 为 pytest、agent、mixed 或已有测评来源的 existing。"
+                "确定性代码缺陷只用 pytest；只有目标确实涉及模型行为时才使用 agent/mixed，不为普通函数修复增加模型测评。"
+                "coverage.requirement 必须逐字使用 acceptance.items[].id（例如 expected_behavior），不得改写为中文目标说明。"
+                "coverage.checks 使用实际 pytest 函数名（不加文件名、解释或用例数量），参数化测试填函数名；"
+                "Agent 检查填 agent_case，已有测评填原 Case ID。完整目标无法验证时列出 gaps，保留局部候选。"
+                "输出图片任务声明 goal_capabilities=[image_delivery]，不得要求用户上传输入原图。"
+                "仅使用 verification_capabilities 中受信 fixture；必要能力缺失且没有可验证局部修复时返回 blocked。"
+                "不得放大任务目标。不要运行仓库全套测试，宿主会在隔离快照中执行正式验收。"
+            )
+            prompt = render_codex_prompt(plan, user_message=task_text, turn_context=evidence_text, trusted_separately=True)
+        progress = ActionProgress()
         from chatcopilot.core.trace_capture import current_capture
         capture = current_capture()
         if capture:
             capture.record({"kind": "coding_request", "status": "recorded", "data": {"model": options.model}},
-                           {"prompt": prompt, "source_trace": source.get("trace"),
+                           {"prompt": prompt, **({"developer_instructions": render_codex_developer(plan)} if repair else {}), "source_trace": source.get("trace"),
                             "coverage": "adapter_visible", "omitted": ["provider_internal_context"]})
         usage: dict[str, Any] = {}
         final_text = ""
@@ -398,9 +459,9 @@ class CodexCoder:
         )
         if git_roots:
             check_git(binary, scope=scope, cwd=execution_directory, root=worktree, metadata=git_roots,
-                      expected_head=source["repository_context"]["base_commit"], runtime_home=runtime_home, config=config,
+                      expected_head=git_output(worktree, "rev-parse", "HEAD") if repair else source["repository_context"]["base_commit"], runtime_home=runtime_home, config=config,
                       environment=tool_environment, rg=rg, timeout=options.timeout_seconds, check_cancel=check_cancel)
-        with credential_lease(auth, "worker", runtime_home, blocking=False):
+        with credential_lease(auth, "worker", runtime_home, blocking=False) as lease:
             command = build_codex_command(
                 shlex.quote(str(binary)) + " exec",
                 model=options.model,
@@ -409,11 +470,16 @@ class CodexCoder:
                 sandbox_mode=None,
                 shell_env_overrides=tool_environment,
                 skip_git_repo_check=True,
-                extra_config=(*config, "mcp_servers={}", "features.hooks=false", "features.apps=false", 'web_search="disabled"'),
+                extra_config=(*config, "mcp_servers={}", "features.hooks=false", "features.apps=false", "features.image_generation=false", 'web_search="disabled"'),
             )
             command.extend(["--json", "--ignore-rules", "-"])
+            if repair:
+                command = build_app_server_command(shlex.quote(str(binary)) + " exec",
+                    model=options.model, workdir=execution_directory, reasoning_effort=options.reasoning_effort,
+                    web_search_mode="disabled", shell_env_overrides=tool_environment,
+                    extra_config=(*config, "mcp_servers={}", "features.hooks=false", "features.apps=false", "features.image_generation=false"))
             environment = build_codex_subprocess_env(str(binary), runtime_home=runtime_home)
-            bindings = ["--dir", str(output), "--bind", str(runtime_home), str(runtime_home)]
+            bindings = ["--dir", str(output), "--dir", str(runtime_home.parent), "--bind", str(runtime_home), str(runtime_home)]
             for name in (
                 "CODEX_HOME",
                 "CODEX_SQLITE_HOME",
@@ -439,6 +505,8 @@ class CodexCoder:
                     if event.get("type") == "turn.completed":
                         usage.update(event.get("usage") or {})
                     item = event.get("item") or {}
+                    if repair and event.get("type") == "item.completed":
+                        progress.observe(item)
                     if event.get("type") != "item.completed" or item.get("type") not in {
                         "agent_message",
                         "command_execution",
@@ -460,7 +528,15 @@ class CodexCoder:
                     if len(events) < 50:
                         events.append(safe)
 
-                completed = run_codex_process(
+                completed = None
+                session = None
+                if repair:
+                    session = run_session(outer, root=execution_directory, home=runtime_home, environment=environment,
+                        prompt=prompt, options=options, task_id=evidence["task_id"], generation=lease.generation,
+                        reviewing=reviewing, observe=observe, cancel=check_cancel,
+                        developer_instructions=render_codex_developer(plan), environment_identity=runtime_identity)
+                else:
+                    completed = run_codex_process(
                     outer,
                     cwd=execution_directory,
                     prompt=prompt,
@@ -469,9 +545,17 @@ class CodexCoder:
                     on_stdout_line=observe,
                     on_poll=check_cancel,
                 )
-            if completed.returncode:
+            if completed is not None and completed.returncode:
                 raise HarnessError("coding_failed", "Codex 执行失败；查看任务中的公开执行记录")
-        return {"events": events, "usage": usage, "log": log_path.name, "final_text": final_text}
+        result = {"events": events, "usage": usage, "log": log_path.name, "final_text": final_text}
+        if repair:
+            result["session"] = session
+            if not reviewing:
+                try:
+                    result["submission"] = submission(json.loads(final_text))
+                except ValueError as exc:
+                    raise HarnessError("invalid_submission", "执行器未返回结构化候选结论") from exc
+        return result
 
     def review(
         self,

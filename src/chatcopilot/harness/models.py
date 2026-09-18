@@ -9,11 +9,11 @@ import os
 
 from chatcopilot.core.observability_redaction import redact_observability_payload
 
-PIPELINE_VERSION = 7
+PIPELINE_VERSION = 8
 GOVERNANCE_VERSION = 6
 
 ACTIVE = frozenset({"queued", "running", "cancel_requested"})
-TERMINAL = frozenset({"fixed", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})
+TERMINAL = frozenset({"fixed", "needs_review", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})
 
 
 class HarnessError(RuntimeError):
@@ -67,7 +67,7 @@ class RepairOptions:
     model: str
     reasoning_effort: str = "medium"
     max_attempts: int = 3
-    timeout_seconds: int = 7200
+    timeout_seconds: int = 3600
 
     def __post_init__(self) -> None:
         if not self.model.strip() or any(char.isspace() for char in self.model):
@@ -190,8 +190,9 @@ class SourceReader(Protocol):
 
 
 class Verifier(Protocol):
-    def prepare(self, task: dict[str, Any], candidate: CandidateRef, coder: Coder,
-                options: RepairOptions, check_cancel: Callable[[], None]
+    def capabilities(self) -> dict[str, Any]: ...
+    def prepare(self, task: dict[str, Any], candidate: CandidateRef, output: Path,
+                proposal: dict[str, Any], check_cancel: Callable[[], None]
                 ) -> tuple[dict[str, Any], RepairHypothesis, VerificationPlan]: ...
     def run(self, task: dict[str, Any], candidate: CandidateRef, run_id: str,
             checks: list[str], check_cancel: Callable[[], None]) -> VerificationResult: ...
@@ -206,6 +207,7 @@ class Publisher(Protocol):
 
 
 class Evaluator(Protocol):
+    def capabilities(self) -> dict[str, Any]: ...
     def source(self, evaluation_id: str, case_ref: str, target_id: str) -> dict[str, Any]: ...
     def run(
         self,

@@ -10,9 +10,12 @@ import os
 from pathlib import Path
 import signal
 import stat
+import time
+import uuid
 from typing import Any, Protocol
 
 from chatcopilot.application.actor_runtime import ActorSessionFactory, ActorTurnExecutor
+from chatcopilot.application.file_delivery import create_file_sender
 from chatcopilot.application.agent_runtime import assemble_agent_runtime
 from chatcopilot.application.resources import ResourceMaterializationService
 from chatcopilot.application.sessions import SessionManager
@@ -29,6 +32,7 @@ from chatcopilot.contracts.authorization import AuthorizationDecision
 from chatcopilot.contracts.gateway_protocol import EventFrame, GatewayScope, RequestFrame
 from chatcopilot.contracts.gateway_rpc import ChatErrorEvent
 from chatcopilot.contracts.identity import Role
+from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef, OutboundEnvelope
 from chatcopilot.core.access import get_admins, get_owners
 from chatcopilot.core.config import load_config
 
@@ -615,6 +619,44 @@ def build_gateway_runtime_host(
                 decision=decision,
             )
 
+        def file_sender_factory(principal, workspace, session_id):
+            if principal.channel != "qq":
+                return None
+            loop = asyncio.get_running_loop()
+            account = ChannelAccountRef(principal.channel, principal.account_id)
+            conversation = ConversationRef(principal.conversation.chat_kind, principal.conversation.chat_id)
+
+            async def deliver(segments):
+                session = state_store.get_session(session_id)
+                if (session is None or session.account != account or session.conversation != conversation
+                        or not session.active_run_id):
+                    raise GatewayRuntimeLifecycleError("delivery_scope_changed", "File delivery has no bound active conversation")
+                run = state_store.get_run(session.active_run_id)
+                if run is None or run.state != "running":
+                    raise GatewayRuntimeLifecycleError("delivery_run_inactive", "File delivery requires an active run")
+                envelope = OutboundEnvelope("outbound_" + uuid.uuid4().hex, account, conversation, segments,
+                                            time.time(), session_id=session_id, run_id=run.run_id)
+                receipt = await channel_runtime.send(envelope)
+                if receipt.outbound_id != envelope.outbound_id:
+                    raise GatewayRuntimeLifecycleError("delivery_receipt_mismatch", "File delivery receipt does not match")
+                return receipt
+
+            def dispatch(segments):
+                # Agent tools run off the Gateway loop; never synchronously block that loop.
+                try:
+                    current = asyncio.get_running_loop()
+                except RuntimeError:
+                    current = None
+                if current is loop or not loop.is_running():
+                    raise GatewayRuntimeLifecycleError("delivery_loop_unavailable", "File delivery must run on an Agent tool worker")
+                future = asyncio.run_coroutine_threadsafe(deliver(segments), loop)
+                try:
+                    return future.result(timeout=config.onebot.action_timeout_seconds + 5)
+                except BaseException:
+                    future.cancel()
+                    raise
+            return create_file_sender(workspace, dispatch)
+
         actor_factory = ActorSessionFactory(
             runtime=runtime,
             agent_runtime=agent_runtime,
@@ -623,6 +665,7 @@ def build_gateway_runtime_host(
             wiki_root=config.wiki_root,
             policy_version=config.policy_version,
             on_authorization_decision=record_authorization_decision,
+            file_sender_factory=file_sender_factory,
         )
         actor_executor = ActorTurnExecutor(actor_factory, resource_materializer=ResourceMaterializationService(
             QqCdnResourceFetcher()))

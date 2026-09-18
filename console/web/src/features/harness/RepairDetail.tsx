@@ -48,7 +48,7 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
   }
   if (query.isPending) return <Spin tip="读取修复记录…" />;
   if (!task) return <Alert type="error" content={String(query.error)} />;
-  const currentPipeline = task.pipeline_version === 6;
+  const currentPipeline = task.archived === false;
   return <TaskDetailState instanceId="harness" runId={taskId}><Space direction="vertical" size={16} style={{ width: "100%", minWidth: 0 }}>
     {(error || query.isError) && <Alert type="error" content={error || String(query.error)} />}
     <Text copyable>{task.task_id}</Text><Text>{sourceLabel(task)}</Text>
@@ -65,13 +65,15 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
     {!!task.source.warnings?.length && <Alert type="warning" title="来源证据缺口"
       content={task.source.warnings.map(warning => warning.message).join("；")} />}
     {task.status === "fixed" && task.candidate_available === false && <Alert type="warning" content="验证后的工作区已变化或不可用，不能直接复用旧结论。" />}
-    <Space wrap>{ACTIVE.includes(task.status) && <Button status="danger" loading={busy} onClick={() => void action("cancel")}>取消</Button>}
+    <Space wrap>{currentPipeline && ACTIVE.includes(task.status) && <Button status="danger" loading={busy} onClick={() => void action("cancel")}>取消</Button>}
       {["blocked", "interrupted", "cancelled"].includes(task.status) && currentPipeline && !task.source.blockers?.length &&
         <Button loading={busy} onClick={() => void action("resume")}>检查并继续</Button>}
       {!ACTIVE.includes(task.status) && task.source.kind === "robot_task" && (currentPipeline && task.status !== "waiting_input") &&
         <Button loading={busy} onClick={() => void action("continue")}>接续修复（累计预算）</Button>}
-      {!ACTIVE.includes(task.status) && (currentPipeline && task.status !== "waiting_input") && (task.source.run_id || task.source.case_instance_id) &&
+      {!ACTIVE.includes(task.status) && task.status !== "waiting_input" && (task.source.run_id || task.source.case_instance_id) &&
         <Button disabled={busy} onClick={() => onRestart(task)}>重新发起修复</Button>}
+      {!!task.candidate_checkpoint?.changed_files.length && <a
+        href={`/api/harness/tasks/${encodeURIComponent(taskId)}/attempts/${task.candidate_checkpoint.number}/patch`} download>下载保留候选</a>}
       <Button onClick={() => void query.refetch()}>刷新状态</Button>
       {task.source.test_sha256 && <a href={`/api/harness/tasks/${encodeURIComponent(taskId)}/reproducer`} download>下载冻结复现测试</a>}</Space>
     {task.commit_state === "unconfirmed" && <Alert type="warning" content="提交回执尚未核验；继续时会检查实际提交状态。" />}

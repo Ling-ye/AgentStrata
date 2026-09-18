@@ -13,7 +13,7 @@ from chatcopilot.core.private_sqlite import private_directory
 from chatcopilot.core.source_snapshot import manifest_digest, source_manifest, verify_copy
 from chatcopilot.harness.delivery_archive import verify_worktree
 from chatcopilot.harness.github_delivery import git
-from chatcopilot.harness.local_commit import regression_content, regression_ref
+from chatcopilot.harness.local_commit import regression_content, regression_refs
 from chatcopilot.harness.models import HarnessError
 
 
@@ -27,6 +27,8 @@ def accepted(store: Any, task: dict[str, Any]) -> bool:
 
 def candidate(store: Any, task_id: str) -> dict[str, Any]:
     task = store.get(task_id)
+    if not accepted(store, task):
+        raise HarnessError("incomplete_verification", "候选未完整验收，不具备交付资格")
     if task.get("publication_candidate"):
         return task["publication_candidate"]
     root = verify_worktree(store, task)
@@ -48,8 +50,10 @@ def candidate(store: Any, task_id: str) -> dict[str, Any]:
         approved = [a for a in attempts if a.get("status") == "accepted" and a.get("candidate_digest") == task["verified_digest"]]
         if len(approved) != 1 or manifest_digest(source_manifest(root)) != task["verified_digest"]:
             raise HarnessError("incomplete_verification", "修复候选缺少唯一验收身份")
-        reference = regression_ref(task)
-        if reference["kind"] in {"pytest", "agent_case"}:
+        references = regression_refs(task)
+        for reference in references:
+            if reference["kind"] not in {"pytest", "agent_case"}:
+                continue
             content = regression_content(task, reference)
             if hashlib.sha256(content).hexdigest() != reference["sha256"]:
                 raise HarnessError("reproducer_changed", "冻结回归测试已变化")
@@ -59,7 +63,7 @@ def candidate(store: Any, task_id: str) -> dict[str, Any]:
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
             destination.chmod(0o600)
-        store.update(task_id, regression=reference)
+        store.update(task_id, regression=references[0], regressions=references)
         current = source_manifest(root)
         title = "[AI Harness] 修复已复现问题并收录回归验证"
         profile = "fast"

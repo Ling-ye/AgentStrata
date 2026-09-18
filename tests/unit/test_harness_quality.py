@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from tests.harness_delivery_fixture import offline_harness_delivery  # noqa: F401
+from tests.harness_delivery_fixture import freeze_fixture, candidate_submission, offline_harness_delivery  # noqa: F401
 
 from chatcopilot.core.private_sqlite import private_directory
 from chatcopilot.core.source_snapshot import git_output, source_manifest
@@ -41,7 +41,7 @@ class ReviewedCoder(FakeCoder):
     def review(self, worktree, evidence, options, output, check_cancel):
         check_cancel()
         self.reviews += 1
-        assert evidence["reproduction"]["failed_cases"] == ["b"]
+        assert "b" in evidence["reproduction"]["failed_cases"]
         assert evidence["verification"]["target"]["passed_cases"] == ["a", "b"]
         assert "harness_probe.py" in evidence["patch"]
         if self.change:
@@ -62,13 +62,25 @@ def setup(repository, tmp_path):
         "eval-source",
         "sample-suite:b",
         "main",
-        RepairOptions("test-model"),
+        RepairOptions("test-model", max_attempts=1),
         launch=False,
     )
-    controller.store.update(task["task_id"], delivery=None, review_and_commit=True)
+    controller.store.update(task["task_id"], delivery=None)
     publisher = LocalCommitter(ROOT)
     publisher.checks = Mock()
     return controller, task["task_id"], evaluator, publisher
+
+
+def publish_verified(controller, task_id, publisher):
+    """Exercise the legacy publisher explicitly; v2 repair never implicitly invokes it."""
+    task = controller.store.get(task_id)
+    attempt = controller.store.attempts(task_id)[-1]
+    assert task["status"] == "fixed" and attempt["review"]["decision"] == "approved"
+    controller.store.update(task_id, review_and_commit=True, status="running")
+    receipt = publisher.publish(controller.store, task_id, attempt, lambda: None)
+    attempt.update(local_commit=receipt, delivered_digest=receipt["content_digest"])
+    controller.store.finish_verified(task_id, attempt["number"], attempt)
+    return controller.store.get(task_id)
 
 
 def test_real_local_commit_preserves_operator_branch_and_creates_one_commit(setup):
@@ -77,6 +89,8 @@ def test_real_local_commit_preserves_operator_branch_and_creates_one_commit(setu
     coder = ReviewedCoder()
     result = run_task(controller.store, task_id, evaluator, coder, committer=publisher)
     assert result["status"] == "fixed", result.get("message")
+    assert "local_commit" not in result
+    result = publish_verified(controller, task_id, publisher)
     worktree = Path(result["worktree"])
     sha = result["local_commit"]["sha"]
     assert git_output(worktree, "rev-parse", "HEAD") == sha
@@ -99,7 +113,7 @@ def test_negative_review_stops_without_commit_and_keeps_candidate(setup, decisio
     coder = ReviewedCoder(decision)
     result = run_task(controller.store, task_id, evaluator, coder, committer=publisher)
     assert result["status"] == status
-    assert result["stage"] == "review" and "原问题" in result["message"]
+    assert result["stage"] == "done"
     assert Path(result["worktree"], "src/chatcopilot/core/harness_probe.py").is_file()
     assert git_output(Path(result["worktree"]), "rev-parse", "HEAD") == result["base_commit"]
     assert "local_commit" not in result and coder.calls == 1 and coder.reviews == 1
@@ -145,12 +159,17 @@ def test_database_failure_after_git_commit_recovers_without_review_or_second_com
     monkeypatch.setattr(controller.store, "update", update)
     coder = ReviewedCoder()
     first = run_task(controller.store, task_id, evaluator, coder, committer=publisher)
-    assert first["status"] == "interrupted"
+    assert first["status"] == "fixed"
+    with pytest.raises(OSError, match="database outage"):
+        publish_verified(controller, task_id, publisher)
     sha = git_output(Path(first["worktree"]), "rev-parse", "HEAD")
     assert sha != first["base_commit"] and "local_commit" not in first
     assert controller.get(task_id)["commit_state"] == "unconfirmed"
-    controller.store.update(task_id, status="queued", elapsed_seconds=99999)
-    second = run_task(controller.store, task_id, evaluator, coder, committer=publisher)
+    attempt = controller.store.attempts(task_id)[-1]
+    receipt = publisher.publish(controller.store, task_id, attempt, lambda: None)
+    attempt.update(local_commit=receipt, delivered_digest=receipt["content_digest"])
+    controller.store.finish_verified(task_id, attempt["number"], attempt)
+    second = controller.store.get(task_id)
     assert second["status"] == "fixed" and second["local_commit"]["sha"] == sha
     assert coder.reviews == 1 and coder.calls == 1 and publisher.checks.call_count == 1
     assert (
@@ -209,7 +228,7 @@ def test_frozen_test_uses_final_repository_path_before_and_after_fix(tmp_path):
             file.chmod(0o600)
         return {}
 
-    task["source"] = verifier.prepare(
+    task["source"] = freeze_fixture(verifier,
         task, root, SimpleNamespace(prepare=prepare), RepairOptions("test-model"), lambda: None
     )
     source = task["source"]
@@ -264,7 +283,8 @@ def test_robot_fix_and_identical_frozen_regression_share_one_commit(repository, 
 
     def repair(worktree, evidence, *args):
         assert evidence["source"]["feedback"] == feedback.to_payload()
-        return run(worktree, evidence, *args)
+        run(worktree, evidence, *args)
+        return candidate_submission()
 
     coder.run = repair
 
@@ -286,7 +306,7 @@ def test_robot_fix_and_identical_frozen_regression_share_one_commit(repository, 
         "sample", "run-example", RepairOptions("test-model"), launch=False,
         feedback=feedback,
     )
-    controller.store.update(task["task_id"], delivery=None, review_and_commit=True)
+    controller.store.update(task["task_id"], delivery=None)
     publisher = LocalCommitter(ROOT)
     publisher.checks = Mock()
     result = run_task(
@@ -298,6 +318,7 @@ def test_robot_fix_and_identical_frozen_regression_share_one_commit(repository, 
         committer=publisher,
     )
     assert result["status"] == "fixed", result.get("message")
+    result = publish_verified(controller, task["task_id"], publisher)
     root = Path(result["worktree"])
     assert (root / result["regression"]["path"]).read_bytes() == content
     changed = git_output(
@@ -321,12 +342,15 @@ def test_actual_public_boundary_blocks_private_candidate_before_commit(setup):
         str(file.relative_to(objects)) for file in objects.rglob("*") if file.is_file()
     }
     result = run_task(controller.store, task_id, evaluator, coder, committer=LocalCommitter(ROOT))
-    assert result["status"] == "blocked", result.get("message")
-    assert result["error_code"] == "commit_check_failed"
+    assert result["status"] == "fixed", result.get("message")
+    from chatcopilot.harness.models import HarnessError
+    with pytest.raises(HarnessError) as caught:
+        publish_verified(controller, task_id, LocalCommitter(ROOT))
+    assert caught.value.code == "commit_check_failed"
     assert before_objects == {
         str(file.relative_to(objects)) for file in objects.rglob("*") if file.is_file()
     }
-    assert "公开信息" in result["message"] and "local_commit" not in result
+    assert "公开信息" in str(caught.value) and "local_commit" not in controller.store.get(task_id)
     assert git_output(Path(result["worktree"]), "rev-parse", "HEAD") == result["base_commit"]
     assert git_output(Path(result["worktree"]), "diff", "--cached", "--name-only") == ""
 
@@ -431,5 +455,5 @@ def test_review_exception_persists_inconclusive_result_and_does_not_retry(setup)
     assert first["status"] == "blocked" and first["error_code"] == "review_inconclusive"
     controller.store.update(task_id, status="queued")
     second = run_task(controller.store, task_id, evaluator, coder, committer=publisher)
-    assert second["status"] == "blocked" and coder.review.call_count == 1
+    assert second["status"] == "failed" and coder.review.call_count == 1
     assert "local_commit" not in second

@@ -78,6 +78,9 @@ class EvaluationServiceRuntime:
                 self._optional_bot(payload),
                 repository_root=self.repository_root,
             )
+        if operation == "cases.capabilities":
+            from chatcopilot.evals.agent_case import capabilities
+            return capabilities()
         if operation == "cases.validate":
             from chatcopilot.evals.agent_case import validate_case
             return validate_case(payload.get("case"))
@@ -435,6 +438,9 @@ def _error_payload(exc: Exception) -> dict[str, Any]:
         return {"code": "not_found", "message": "Evaluation resource not found"}
     if isinstance(exc, RuntimeError):
         return {"code": "conflict", "message": str(exc)}
+    from chatcopilot.evals.agent_case import CaseCapabilityUnavailable
+    if isinstance(exc, CaseCapabilityUnavailable):
+        return {"code": exc.code, "message": str(exc)}
     if isinstance(exc, (ProtocolError, ValueError, OSError)):
         return {"code": "invalid_request", "message": str(exc)}
     return {"code": "internal_error", "message": "Evaluation service failed"}

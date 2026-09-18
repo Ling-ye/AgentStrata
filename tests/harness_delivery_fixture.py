@@ -56,3 +56,25 @@ def frozen_test_source(task, worktree):
 def approve_fixture(*_args):
     return {"decision": "approved", "problem": "", "reason": "controlled review fixture",
             "evidence_refs": ["source", "patch", "verification"]}
+
+
+def freeze_fixture(verifier, task, root, author, options, cancel):
+    """Produce one test draft, then exercise the v2 host's single-submission boundary."""
+    import json
+    from chatcopilot.core.private_sqlite import private_directory
+    from chatcopilot.evals.agent_case import validate_case
+    from chatcopilot.harness.preparation import acceptance
+    output = private_directory(verifier.root / "jobs" / task["task_id"] / "test-submission")
+    author.prepare(root, {"source": task["source"]}, options, output, cancel)
+    diagnosis = json.loads((output / "draft/diagnosis.json").read_text())
+    task["source"].setdefault("original_input", diagnosis.get("expected_behavior", "fixture"))
+    task["acceptance"] = acceptance(task["source"])
+    verifier.validate_case = validate_case
+    proposal = {"verification_kind": diagnosis.get("verification_kind", "pytest"), "summary": diagnosis["reason"],
+                "coverage": [{"requirement": name, "checks": checks} for name, checks in diagnosis.get("coverage", {}).items()]}
+    return verifier.prepare(task, root, output, proposal, cancel)
+
+
+def candidate_submission():
+    return {"submission": {"decision": "candidate", "summary": "controlled candidate", "verification_kind": "pytest",
+        "goal_capabilities": [], "coverage": [{"requirement": "expected_behavior", "checks": ["reproduction"]}], "gaps": []}}

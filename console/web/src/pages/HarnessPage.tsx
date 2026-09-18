@@ -27,7 +27,7 @@ export default function HarnessPage() {
   const [selectedModel, setModel] = useState("");
   const [effort, setEffort] = useState("xhigh");
   const [attempts, setAttempts] = useState(3);
-  const [hours, setHours] = useState(2);
+  const [hours, setHours] = useState(1);
   const [taskId, setTaskId] = useState(taskFromHash);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");

@@ -191,7 +191,7 @@ def _factory(
     root.chmod(0o700)
     agent = fake or _FakeAgentRuntime()
 
-    def file_sender_factory(_principal, _workspace):
+    def file_sender_factory(_principal, _workspace, _session_id):
         return lambda files, message: SimpleNamespace(
             sent_names=tuple(files),
             sent_paths=tuple(files),

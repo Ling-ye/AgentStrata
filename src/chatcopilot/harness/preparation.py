@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import re
 from typing import Any
 
 from chatcopilot.harness.models import HarnessError
@@ -11,17 +10,22 @@ from chatcopilot.harness.models import HarnessError
 
 def acceptance(source: dict[str, Any]) -> dict[str, Any]:
     feedback = source.get("feedback", {})
-    expected = feedback.get("expected_behavior") or source.get("case_definition", {}).get("expected_behavior", "")
-    # This is a conservative coverage requirement, not a claim about historical pixels.
-    image = bool(source.get("image_resources")) or (bool(source["requires_image"]) if "requires_image" in source else bool(
-        re.search(r"图片|原图|图像|照片|image|picture|photo", str(feedback), re.I)))
+    expected = (feedback.get("expected_behavior") or source.get("case_definition", {}).get("expected_behavior")
+                or source.get("original_input") or "")
+    # Input resources are facts. Output delivery is a separate, reviewed goal capability.
+    image = bool(source.get("image_resources")) or bool(source.get("requires_image"))
     items = [{"id": "expected_behavior", "text": expected, "required": True,
               "verification": "agent" if image else "behavior"}]
     if image:
         items.extend({"id": name, "text": label, "required": True, "verification": kind}
                      for name, label, kind in (
-                         ("image_materialized", "图片可获取并物化", "pytest"),
+                         ("input_image_materialized", "输入图片可获取并物化", "pytest"),
                          ("image_dispatched", "原图实际传入视觉后端", "agent")))
+    if "image_delivery" in source.get("goal_capabilities", []):
+        items.extend({"id": name, "text": label, "required": True, "verification": kind}
+                     for name, label, kind in (
+                         ("image_materialized", "候选图片下载校验并物化", "pytest"),
+                         ("image_delivered", "真实会话发送链路产生图片与完整回执", "pytest")))
     return {"original": expected, "sha256": hashlib.sha256(expected.encode()).hexdigest(),
             "requires_image": image, "items": items}
 

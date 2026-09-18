@@ -22,6 +22,11 @@ Application 的 `ActorTurnExecutor` 准备回合、管理 actor 和待确认交�
 
 ## Backend 创建具体 session
 
+生产 QQ 会话通过 ActorSessionFactory 注入绑定工作区与 Gateway session 的 FileSender。
+文件在工作区内读取并校验，投递经真实 ChannelRuntime 与 OneBot driver；只有当前 run 仍活动且
+完整 provider acknowledgement 匹配时返回成功。图片工具与最终文本拥有各自的出站和回执，不将文本
+回复回执当成图片交付证据。发送结果未知时不自动重试。
+
 通用 AgentRuntime 只准备公共输入，Native/LangGraph/Codex adapter 创建各自 session；`BackendOpenRequest.options` 只承载类型化目录、隔离、恢复和角色提示参数，不传构造函数。
 
 ## 新增 Gateway 通道

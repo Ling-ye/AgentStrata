@@ -12,12 +12,13 @@ from chatcopilot.evals.models import EvalCase
 
 SCHEMA = "agentstrata.agent-case/v1"
 SUITE = "agentstrata-regression-v1"
-_FIELDS = {"schema", "title", "input", "context", "role", "channel_kind", "allowed_tools", "fixtures", "assertions", "expected_behavior", "semantic", "resources"}
+_FIELDS = {"schema", "title", "input", "context", "role", "channel_kind", "allowed_tools", "fixtures", "assertions", "expected_behavior", "semantic", "resources", "external_fixtures"}
 _ASSERTIONS = {
     "final_contains": {"kind", "value"}, "final_not_contains": {"kind", "value"},
     "tool_called": {"kind", "name", "arguments"}, "tool_not_called": {"kind", "name"},
     "tool_result_contains": {"kind", "name", "value"},
     "file_equals": {"kind", "path", "value"}, "file_exists": {"kind", "path"},
+    "image_delivered": {"kind"},
 }
 # These tools operate through the real product handlers and the trial workspace.
 # External tools require a purpose-built dependency fixture before registration.
@@ -26,6 +27,18 @@ LOCAL_PACKS = ("workspace.read_write", "playbooks.reader")
 # workspace or packaged playbooks. Delivery, network and global-state tools
 # require separate dependency fixtures and are intentionally unavailable here.
 ISOLATED_TOOLS = frozenset({"read_text_head", "write_workspace_file", "list_workspace", "unzip_attachment", "read_bot_skill"})
+IMAGE_TOOLS = frozenset({"download_image_urls", "send_image_urls_to_user", "send_files_to_user"})
+
+
+def capabilities() -> dict[str, Any]:
+    return {"schema": SCHEMA, "tools": sorted(ISOLATED_TOOLS | IMAGE_TOOLS), "fixtures": ["workspace", "input_image", "http", "delivery"],
+            "external_network": False, "production_delivery": False,
+            "case_fields": sorted(_FIELDS), "assertions": sorted(_ASSERTIONS)}
+
+
+class CaseCapabilityUnavailable(ValueError):
+    """A missing trusted dependency, distinct from an author-correctable definition."""
+    code = "fixture_missing"
 
 
 def relative_path(value: Any) -> str:
@@ -52,8 +65,11 @@ def validate_case(value: Any) -> dict[str, Any]:
     names = case["allowed_tools"]
     if not isinstance(names, list) or any(not isinstance(n, str) or not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]*", n) for n in names) or len(names) != len(set(names)):
         raise ValueError("invalid allowed tools")
-    if set(names) - ISOLATED_TOOLS:
-        raise ValueError("required tool has no isolated dependency fixture")
+    if "external_fixtures" in case:
+        from chatcopilot.evals.image_delivery_fixture import validate_fixtures
+        validate_fixtures(case["external_fixtures"])
+    if set(names) - (ISOLATED_TOOLS | (IMAGE_TOOLS if case.get("external_fixtures") else frozenset())):
+        raise CaseCapabilityUnavailable("required tool has no isolated dependency fixture")
     if not isinstance(case["fixtures"], dict):
         raise ValueError("fixtures must map relative paths to text")
     for path, content in case["fixtures"].items():
@@ -66,6 +82,8 @@ def validate_case(value: Any) -> dict[str, Any]:
     for check in checks:
         if not isinstance(check, dict) or check.get("kind") not in _ASSERTIONS:
             raise ValueError("untrusted Agent Case assertion")
+        if check["kind"] == "image_delivered" and not case.get("external_fixtures"):
+            raise CaseCapabilityUnavailable("image delivery assertion requires isolated dependency fixture")
         fields = _ASSERTIONS[check["kind"]]
         if set(check) - fields or fields - {"arguments"} - set(check):
             raise ValueError("invalid assertion fields")

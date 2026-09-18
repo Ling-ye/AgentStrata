@@ -20,9 +20,8 @@ from chatcopilot.core.file_integrity import require_regular_file
 from chatcopilot.core.private_sqlite import json_text, private_directory, private_file
 from chatcopilot.core.scoped_process import sandbox_command
 from chatcopilot.core.source_snapshot import copy_sources, git_output, manifest_digest, source_manifest
-from chatcopilot.harness.models import HarnessError, RepairOptions, safe_error
-from chatcopilot.harness.preparation import acceptance, classify, require_coverage, review_test
-from chatcopilot.harness.flow_records import record_step, source_inputs
+from chatcopilot.harness.models import HarnessError, safe_error
+from chatcopilot.harness.preparation import classify, review_test
 
 
 def _read(path: Path, *, max_bytes: int = 1024 * 1024) -> bytes:
@@ -66,174 +65,82 @@ class LocalVerifier:
             worktree, [relative], check_cancel, manifest=manifest)
 
     def prepare(
-        self, task: dict[str, Any], worktree: Path, coder: Any, options: RepairOptions,
-        check_cancel: Callable[[], None],
+        self, task: dict[str, Any], worktree: Path, output: Path,
+        proposal: dict[str, Any], check_cancel: Callable[[], None],
     ) -> dict[str, Any]:
-        directory = private_directory(self.root / "jobs" / task["task_id"] / "reproducer")
-        requirements = task.get("acceptance") or acceptance(task["source"])
-        history = list(task.get("preparation_revisions", []))
-        digest = manifest_digest(source_manifest(worktree))
-        # Resume starts a new immutable draft; incomplete external calls are never replayed.
-        feedback = task.get("preparation_failure") or {}
-        seen = {r.get("draft_sha256") for r in history if r.get("draft_sha256")}
-        while True:
-            check_cancel()
-            revision = len(history) + 1
-            output = private_directory(directory / f"revision-{revision}")
-            started = output / "started"
-            if started.exists():
-                raise HarnessError("preparation_interrupted", "该准备执行尚无终态；保留草案，请检查执行器状态")
-            started.touch(mode=0o600)
-            record = {"revision": revision, "status": "running", "reason": feedback,
-                      "baseline_digest": digest, "started_at": time.time(),
-                      "attempt": task.get("current_attempt"), "generation": task.get("plan_generation", 0) + 1}
-            def save() -> None:
-                (output / "record.json").write_text(json_text(record))
-                (output / "record.json").chmod(0o600)
-                if getattr(self, "store", None) is not None:
-                    self.store.update(task["task_id"], preparation_revisions=[*history, record],
-                                      stage="auto_correcting", acceptance=requirements)
-            save()
+        """Freeze and validate one submitted draft. Retrying belongs to the repair loop."""
+        check_cancel()
+        source = task["source"]
+        if source.get("kind", "evaluation") == "evaluation":
+            return source
+        requirements = task["acceptance"]
+        kind = proposal["verification_kind"]
+        local, agent = kind in {"pytest", "mixed"}, kind in {"agent", "mixed"}
+        if not (local or agent):
+            raise HarnessError("test_definition", "机器人修复必须提供实际验证草案")
+        diagnosis = {"reason": proposal["summary"], "expected_behavior": requirements["original"],
+                     "verification_kind": kind,
+                     "coverage": {row["requirement"]: row["checks"] for row in proposal["coverage"]}}
+        prepared = {**source, "diagnosis": diagnosis}
+        draft = output / "draft"
+        if agent:
+            case = json.loads(_read(draft / "agent_case.json"))
+            if case.get("resources") and not source.get("image_resources"):
+                raise HarnessError("image_scope", "草案只能使用宿主绑定的原图")
+            if source.get("original_input"):
+                case["input"] = source["original_input"]
+            case["expected_behavior"] = requirements["original"]
+            if requirements["requires_image"]:
+                if not source.get("image_resources"):
+                    raise HarnessError("image_required", "需要原图才能执行视觉验收")
+                case["resources"] = source["image_resources"]
+                case["semantic"] = True
+            reference = source.get("feedback", {}).get("expected_behavior", "")
+            if reference and reference in case.get("context", ""):
+                raise HarnessError("test_definition", "参考答案不能进入目标 Agent 上下文")
             try:
-                with record_step(getattr(self, "store", None), task["task_id"], "prepare", "生成复现方案",
-                        group=f"prepare-{revision}", revision=revision, attempt=task.get("current_attempt"), generation=record["generation"],
-                        inputs={"source": source_inputs(task["source"]), "acceptance": requirements,
-                                "previous_failure": {k: feedback[k] for k in ("code", "message", "error") if k in feedback}},
-                        locator={"section": "preparation", "revision": revision, "field": "diagnosis"}, source_id=f"prepare-{revision}") as step:
-                    coding = coder.prepare(worktree, {"source": task["source"], "acceptance": requirements,
-                        "previous_revision": feedback, "revision": revision,
-                        "prior_diagnosis": task.get("prior_diagnosis"), "prior_material": task.get("prior_material", {})}, options, output, check_cancel)
-                    step.conclusion = "复现草案已生成；等待校验与试运行"
-                check_cancel()
-                if manifest_digest(source_manifest(worktree)) != digest:
-                    raise HarnessError("protected_change", "复现准备修改了产品代码")
-                draft = output / "draft"
-                diagnosis = json.loads(_read(draft / "diagnosis.json"))
-                if not isinstance(diagnosis, dict):
-                    raise HarnessError("invalid_diagnosis", "复现说明必须为 JSON 对象")
-                record["diagnosis"] = diagnosis
-                save()
-                if diagnosis.get("reproducible") is not True:
-                    raise HarnessError("not_reproducible", str(diagnosis.get("reason", "缺少复现依据")))
-                if not diagnosis.get("reason") or not diagnosis.get("expected_behavior"):
-                    raise HarnessError("missing_expectation", "复现测试没有说明证据和预期行为")
-                if task["source"].get("kind", "evaluation") == "evaluation":
-                    record.update(status="validated", finished_at=time.time())
-                    save()
-                    return {**task["source"], "diagnosis": diagnosis, "preparation": coding}
-                kind = diagnosis.get("verification_kind", "pytest")
-                has_local, has_agent = kind in {"pytest", "mixed"}, kind in {"agent", "mixed"}
-                if not (has_local or has_agent):
-                    raise HarnessError("test_definition", "未知验证类型")
-                content = _read(draft / "test_reproduction.py") if has_local else b""
-                case = json.loads(_read(draft / "agent_case.json")) if has_agent else None
-                draft_hash = hashlib.sha256(content + json_text(case).encode()).hexdigest()
-                record["draft_sha256"] = draft_hash
-                if draft_hash in seen:
-                    raise HarnessError("preparation_no_progress", "草案未变化；已保存此前失败证据，不重复执行")
-                seen.add(draft_hash)
-                if task.get("pipeline_version", 3) >= 4:
-                    require_coverage(requirements, diagnosis, local=has_local, agent=has_agent)
-                prepared = {**task["source"], "diagnosis": diagnosis, "preparation": coding}
-                if case is not None:
-                    if case.get("resources") and not task["source"].get("image_resources"):
-                        raise HarnessError("image_scope", "草案不得自行引入图片引用；只能使用宿主绑定到本来源的原图")
-                    if task["source"].get("original_input"):
-                        case["input"] = task["source"]["original_input"]
-                    if requirements["original"]:
-                        case["expected_behavior"] = requirements["original"]
-                    if requirements["requires_image"]:
-                        if not task["source"].get("image_resources"):
-                            raise HarnessError("image_required", "需要原图才能执行完整视觉验收；请补充原任务图片一次")
-                        case["resources"] = task["source"]["image_resources"]
-                        case["semantic"] = True
-                    reference = requirements["original"]
-                    if reference and (reference in case.get("context", "") or
-                        (reference in case.get("input", "") and case.get("input") != task["source"].get("original_input"))):
-                        raise HarnessError("test_definition", "参考答案进入目标 Agent 输入；请仅保留原问题和必要上下文")
-                    prepared["agent_case"] = self.validate_case(case) if getattr(self, "validate_case", None) else case
-                if has_local:
-                    review_test(content)
-                    if not content:
-                        raise HarnessError("invalid_reproducer", "复现测试为空")
-                    compile(content, "test_reproduction.py", "exec")
-                    test_hash = hashlib.sha256(content).hexdigest()
-                    trial_file = output / "test_reproduction.py"
-                    trial_file.write_bytes(content)
-                    trial_file.chmod(0o600)
-                    prepared.update(target_id="local-pytest", case_id="reproduction", passed_cases=[],
-                        repetitions=1, test_path=str(trial_file), test_sha256=test_hash,
-                        test_relative_path=f"tests/unit/harness_regressions/test_{test_hash}.py")
-                    prepared_task = {**task, "source": prepared}
-                    with record_step(getattr(self, "store", None), task["task_id"], "prepare_trial", "复现方案试运行",
-                            group=f"prepare-{revision}", revision=revision, attempt=task.get("current_attempt"), generation=record["generation"],
-                            inputs={"test_sha256": test_hash, "diagnosis": diagnosis, "baseline_digest": digest},
-                            locator={"section": "preparation", "revision": revision, "field": "trial"}) as step:
-                        trial = self._pytest(prepared_task, worktree, [prepared["test_relative_path"]], check_cancel)
-                        record["trial"] = trial
-                        save()
-                        invalid_trial = [classify(row) for row in trial["rows"].values() if classify(row) not in {"", "product"}]
-                        step.outcome = "failed" if invalid_trial or not trial["collected"] else "completed"
-                        step.conclusion = "试运行需修订：" + "、".join(invalid_trial) if invalid_trial else "试运行已执行，产品断言失败可用于复现依据" if trial["collected"] else "没有收集到测试"
-
-                    if not trial["collected"] or set(trial["collected"]) != set(trial["rows"]):
-                        raise HarnessError("invalid_reproducer", "测试未完整收集和执行")
-                    invalid = [(name, classify(row)) for name, row in trial["rows"].items()
-                               if row["outcome"] != "passed" and classify(row) != "product"]
-                    if invalid:
-                        raise HarnessError(invalid[0][1], "试运行需修订：" + json_text(invalid))
-                    frozen_dir = private_directory(directory / "frozen" / str(revision))
-                    frozen = frozen_dir / "test_reproduction.py"
-                    with frozen.open("xb") as stream:
-                        stream.write(content)
-                    frozen.chmod(0o600)
-                    nodes = trial["collected"]
-                    identifiers = {name: "reproduction" if len(nodes) == 1 else
-                        "reproduction-" + hashlib.sha256(name.encode()).hexdigest()[:16] for name in nodes}
-                    prepared.update(test_path=str(frozen), test_nodeids=identifiers, test_nodeid=nodes[0],
-                        reproduction_ids=list(identifiers.values()), case_ids=list(identifiers.values()),
-                        preparation_trial=trial, preparation_digest=digest)
-                    if task.get("delivery") or task.get("review_and_commit"):
-                        prepared["regression_id"] = "pytest-" + test_hash
-                if task.get("pipeline_version", 3) >= 4:
-                    from chatcopilot.harness.models import review_decision
-                    with record_step(getattr(self, "store", None), task["task_id"], "prepare_review", "复现方案审核",
-                            group=f"prepare-{revision}", revision=revision, attempt=task.get("current_attempt"), generation=record["generation"],
-                            inputs={"diagnosis": diagnosis, "acceptance": requirements, "draft_sha256": record.get("draft_sha256")},
-                            locator={"section": "preparation", "revision": revision, "field": "review"}, source_id=f"prepare-review-{revision}") as step:
-                        review = coder.review(worktree, {"source": prepared,
-                            "reproduction": record.get("trial", {}),
-                            "verification": {"phase": "preparation", "acceptance": requirements, "diagnosis": diagnosis},
-                            "patch": content.decode("utf-8"), "regression": {"agent_case": prepared.get("agent_case")}},
-                            options, private_directory(output / "review"), check_cancel)
-                        decision = review_decision({key: review[key] for key in ("decision", "problem", "reason", "evidence_refs") if key in review})
-                        record["review"] = decision
-                        save()
-                        step.outcome = "completed" if decision["decision"] == "approved" else "failed"
-                        step.conclusion = decision["reason"]
-                        step.evidence = decision
-                    if manifest_digest(source_manifest(worktree)) != digest:
-                        raise HarnessError("protected_change", "草案审核修改了产品代码")
-                    if decision["decision"] != "approved":
-                        raise HarnessError("test_definition", decision["problem"] + "；" + decision["reason"])
-                record.update(status="validated", finished_at=time.time())
-                save()
-                return prepared
-            except Exception as exc:
-                code = getattr(exc, "code", "test_definition")
-                if getattr(exc, "evidence", None):
-                    record["failure_evidence"] = exc.evidence
-                record.update(status="failed", finished_at=time.time(), error={"code": code,
-                              "type": type(exc).__name__, "message": safe_error(exc)})
-                save()
-                history.append(dict(record))
-                if code in {"cancelled", "budget_exhausted", "protected_change", "image_required",
-                            "preparation_no_progress", "artifact_changed", "reproducer_changed"}:
-                    raise
-                feedback = record
-                # A missing draft can repeat without a hash. Do not spin on the same executor failure.
-                if len(history) > 1 and "draft_sha256" not in record and record["error"] == history[-2].get("error"):
-                    raise HarnessError("preparation_no_progress", "准备执行连续产生相同错误：" + safe_error(exc)) from exc
+                prepared["agent_case"] = self.validate_case(case)
+            except (ValueError, HarnessError) as exc:
+                if local and getattr(exc, "code", "") == "fixture_missing":
+                    prepared["verification_gaps"] = [{"requirement": "expected_behavior",
+                        "code": "fixture_missing", "message": str(exc)}]
+                else:
+                    if isinstance(exc, HarnessError):
+                        raise
+                    raise HarnessError(getattr(exc, "code", "test_definition"), str(exc)) from exc
+        if local:
+            content = _read(draft / "test_reproduction.py")
+            review_test(content)
+            compile(content, "test_reproduction.py", "exec")
+            sha = hashlib.sha256(content).hexdigest()
+            reproduction = private_directory(self.root / "jobs" / task["task_id"] / "reproducer")
+            frozen_root = private_directory(reproduction / "frozen")
+            frozen_dir = private_directory(frozen_root / sha)
+            frozen = frozen_dir / "test_reproduction.py"
+            if frozen.exists():
+                if _read(frozen) != content:
+                    raise HarnessError("reproducer_changed", "冻结测试摘要变化")
+            else:
+                with frozen.open("xb") as stream:
+                    stream.write(content)
+                frozen.chmod(0o600)
+            prepared.update(target_id="local-pytest", case_id="reproduction", passed_cases=[], repetitions=1,
+                test_path=str(frozen), test_sha256=sha,
+                test_relative_path=f"tests/unit/harness_regressions/test_{sha}.py")
+            trial = self._pytest({**task, "source": prepared}, worktree, [prepared["test_relative_path"]], check_cancel)
+            if not trial["collected"] or set(trial["collected"]) != set(trial["rows"]):
+                raise HarnessError("test_definition", "测试未完整收集和执行")
+            invalid = [classify(row) for row in trial["rows"].values() if classify(row) not in {"", "product"}]
+            if invalid:
+                raise HarnessError("verification_" + invalid[0], "基线测试未形成产品行为证据")
+            nodes = trial["collected"]
+            ids = {name: "reproduction" if len(nodes) == 1 else
+                   "reproduction-" + hashlib.sha256(name.split("::", 1)[-1].encode()).hexdigest()[:16] for name in nodes}
+            prepared.update(test_nodeids=ids, test_nodeid=nodes[0], reproduction_ids=list(ids.values()),
+                            case_ids=list(ids.values()), preparation_trial=trial,
+                            preparation_digest=manifest_digest(source_manifest(worktree)),
+                            regression_id="pytest-" + sha)
+        return prepared
 
     def run(
         self,
@@ -328,7 +235,6 @@ class LocalVerifier:
 
     def _static_checks(self, task: dict[str, Any], worktree: Path, check_cancel: Callable[[], None],
                        selected: list[str] | None) -> dict[str, Any]:
-        from chatcopilot.harness.models import safe_error
         rows = {}
         commands = self._static_commands(worktree)
         for name in selected if selected is not None else commands:
@@ -421,7 +327,7 @@ class LocalVerifier:
         scope = ExecutionScope(
             readable_roots=(worktree, runner.parent, reproduction, *git_roots),
             writable_roots=(output, *scratch),
-            protected_roots=fixture_files,
+            protected_roots=(*git_roots, *fixture_files),
             native_write=False,
         )
         command = sandbox_command(
@@ -479,7 +385,7 @@ class LocalVerifier:
             or process.returncode != result["exit_code"]
         ):
             error = HarnessError("test_collection_error", "测试收集或执行框架异常，不能作为行为失败处理")
-            error.evidence = {"phase": "collection", "result": result}
+            error.evidence = {"phase": "collection", "evidence_directory": str(output), "result": result}
             raise error
         result["evidence_directory"] = str(output)
         return result

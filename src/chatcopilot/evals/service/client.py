@@ -154,6 +154,9 @@ class EvaluationServiceClient:
     def validate_case(self, case: dict[str, Any]) -> dict[str, Any]:
         return self._mapping(self._call("cases.validate", {"case": case}))
 
+    def case_capabilities(self) -> dict[str, Any]:
+        return self._mapping(self._call("cases.capabilities", {}))
+
     def register_case(self, case: dict[str, Any]) -> dict[str, Any]:
         return self._mapping(self._call("cases.register", {"case": case}))
 

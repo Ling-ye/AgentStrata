@@ -101,8 +101,19 @@ def regression_ref(task: dict[str, Any]) -> dict[str, Any]:
 
 
 def regression_content(task: dict[str, Any], reference: dict[str, Any]) -> bytes:
-    return (json_text(task["source"]["agent_case"]).encode() if reference["kind"] == "agent_case"
+    source = task["source"]
+    if reference["kind"] == "agent_case" and source.get("agent_source"):
+        source = source["agent_source"]
+    return (json_text(source["agent_case"]).encode() if reference["kind"] == "agent_case"
             else _read(Path(task["source"]["test_path"])))
+
+
+def regression_refs(task: dict[str, Any]) -> list[dict[str, Any]]:
+    """Mixed validation publishes both frozen contracts, not just the primary one."""
+    references = [regression_ref(task)]
+    if task["source"].get("agent_source"):
+        references.append(regression_ref({**task, "source": task["source"]["agent_source"]}))
+    return references
 
 
 class LocalCommitter:

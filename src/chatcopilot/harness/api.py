@@ -402,7 +402,8 @@ class HarnessController:
             **self._commit_status(task),
             "candidate_available": None
             if task["source"].get("kind") == "code_health" and task["source"].get("governance_version") != GOVERNANCE_VERSION
-            else (self._candidate_available(task) or self._archived_candidate_available(task)) if task["status"] == "fixed" or task.get("checkpoint") else False,
+            else self._partial_candidate_available(task) or
+                 ((self._candidate_available(task) or self._archived_candidate_available(task)) if task["status"] == "fixed" or task.get("checkpoint") else False),
             "checkpoint_available": self._checkpoint_available(task),
         }
 
@@ -415,8 +416,9 @@ class HarnessController:
     def summary(self, task_id: str) -> dict[str, Any]:
         value = self.get(task_id)
         result = {key: value[key] for key in ("task_id", "status", "stage", "base_commit", "created_at", "updated_at",
-            "pipeline_version", "continued_from", "next_action", "message", "branch", "worktree", "verified_at",
-            "candidate_available", "elapsed_seconds", "error_code", "heartbeat_at", "current_attempt", "options",
+            "pipeline_version", "archived", "continued_from", "next_action", "message", "branch", "worktree", "verified_at",
+            "candidate_available", "elapsed_seconds", "remaining_seconds", "stop_reason", "verification_gaps", "acceptance_coverage",
+            "candidate_checkpoint", "error_code", "heartbeat_at", "current_attempt", "options",
             "local_commit", "commit_state", "commit_in_main", "cleanup", "archive") if key in value}
         result["source"] = {key: item for key, item in value["source"].items() if key in {
             "kind", "run_id", "evaluation_id", "case_id", "case_instance_id", "bot_id", "target_id", "case_ids", "blockers", "warnings", "test_sha256"}}
@@ -434,6 +436,8 @@ class HarnessController:
     def flow(self, task_id: str, *, step_id: str = "") -> dict[str, Any]:
         from chatcopilot.harness.flow import project_flow, step_detail
         task = self.store.get(task_id)
+        if task.get("pipeline_version", 0) >= 8:
+            task = {**task, "flow_steps": self.store.flow_steps(task_id)}
         attempts = self.store.attempts(task_id)
         return step_detail(task, attempts, step_id) if step_id else project_flow(task, attempts)
 
@@ -677,6 +681,16 @@ class HarnessController:
             }
 
     @staticmethod
+    def _partial_candidate_available(task: dict[str, Any]) -> bool:
+        checkpoint = task.get("candidate_checkpoint", {})
+        if task["status"] == "fixed" or not checkpoint.get("changed_files"):
+            return False
+        try:
+            return manifest_digest(source_manifest(Path(task["worktree"]))) == checkpoint["candidate_digest"]
+        except (OSError, ValueError, KeyError, RuntimeError):
+            return False
+
+    @staticmethod
     def _candidate_available(task: dict[str, Any]) -> bool:
         try:
             return (
@@ -706,6 +720,7 @@ class HarnessController:
                 "publication_intent",
                 "publication_candidate",
                 "trace_records",
+                "review_cache",
                 "preparation_input",
                 "flow_steps",
                 "evaluation_history",
@@ -750,4 +765,5 @@ class HarnessController:
         value["uncommitted"] = (
             False if task.get("local_commit") else None if task.get("commit_intent") else True
         )
+        value["archived"] = task.get("pipeline_version") != PIPELINE_VERSION
         return value

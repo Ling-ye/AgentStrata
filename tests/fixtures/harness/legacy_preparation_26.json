@@ -1,0 +1,163 @@
+{
+  "source_task_id": "repair-e93e107477ef43deb2ea03ba4a2547b6",
+  "elapsed_seconds": 7200.909328243986,
+  "coding_attempts": 0,
+  "revisions": [
+    {
+      "revision": 1,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "805eb2fc9667274c455c259a264e5463bdc4bad4100cdcf5e9486e2b33999fba"
+    },
+    {
+      "revision": 2,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "385fbc5030ed8e65f3ba0079cd6b910e818f84e94df3bad767381915c585c305"
+    },
+    {
+      "revision": 3,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "fcb785cf3dd6b9dad08e1c5f0eaaa5d6e08adad37b55899c7597efd0ebfcb415"
+    },
+    {
+      "revision": 4,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "1ce9c13a7128dce59853b5a9a5221bc05c795dee003cabf1294de43e0acfb440"
+    },
+    {
+      "revision": 5,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "1e7668ff783713eada0f93bb822ba91bb0bdfe76a73a811fdfc6d9beb029d45e"
+    },
+    {
+      "revision": 6,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "c3bbe4433e9a14b8151e94d349c791e73edd74bbe6e6a2216e35d7e09f2193d4"
+    },
+    {
+      "revision": 7,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "e9d0416ffe6ea65ef7ca0c6087e37a831d8a4cb176c3cc11fc141bba33e9a053"
+    },
+    {
+      "revision": 8,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "66d85b2d6ca2cd486a5d73d756fb5efbd065d41db796bbafdda9c766abb93c89"
+    },
+    {
+      "revision": 9,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "c9e9069d3a2659744f962431e0d8007a2347af86731bde4950cb4b9457773719"
+    },
+    {
+      "revision": 10,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "9dd58b83592f25c76139f8598c94500c9a1779890536bf146af0c5fedd387e74"
+    },
+    {
+      "revision": 11,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "31f7c2b0e5c53ef3a9c80f51a64616304848b50f25166def4bd704bbe7d2daa3"
+    },
+    {
+      "revision": 12,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "0c28363d7123f9cd746df8efee7a01ad6d20dd6a840e048d2f6274a117a6ecf5"
+    },
+    {
+      "revision": 13,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "535e85e125943c9ef1f5ad1b38813bf837841e0b1319e980d228201bc88200ea"
+    },
+    {
+      "revision": 14,
+      "status": "failed",
+      "legacy_code": "test_definition",
+      "message_sha256": "7197f936fcb246a03b7dd9ec96dacdc3b3f7f1cbed7c7b0542b763c5efb4f53c"
+    },
+    {
+      "revision": 15,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "1e3a1acbe3ff0f0d410883523d01cc6af3aa6c10e91f462dc50ca0384cfc94d7"
+    },
+    {
+      "revision": 16,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "91a618cd61331780282db2ce7c48c369ea9aaad07002d7ae6cc21d9264f98e58"
+    },
+    {
+      "revision": 17,
+      "status": "failed",
+      "legacy_code": "test_definition",
+      "message_sha256": "ba23d8ab31abdd7341f7e88e9befca15704784f074129c56905795f03e1fdc08"
+    },
+    {
+      "revision": 18,
+      "status": "failed",
+      "legacy_code": "test_definition",
+      "message_sha256": "895a0d8e3cc46e3f308e22e42e6a8d3199d3f135173a505f3d3d0d9aae6317e4"
+    },
+    {
+      "revision": 19,
+      "status": "failed",
+      "legacy_code": "test_definition",
+      "message_sha256": "60600a3e96f1b04678c404819bfd8acd0092f20ed35a9cda2cf9246520fe398d"
+    },
+    {
+      "revision": 20,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "b42a418aadccb33489e909eca46637ae69e9221634ef5e830cda70610758960c"
+    },
+    {
+      "revision": 21,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "1f67c49f384d75a464e4c92158960337b8e6e0e9b76fa78e89b43f468b9c2c2f"
+    },
+    {
+      "revision": 22,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "c3f32b7c186a4ead586c2ca0f4d58f38b94e0913a5809af4ca6c7f6241070081"
+    },
+    {
+      "revision": 23,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "3ae7b37fbda91148b1a9332798b515bca81466f02e7ff9446f2d0f677c9dd9dc"
+    },
+    {
+      "revision": 24,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "2881caf2c826f15a9915ef21b858e20f08a13130b66881ffbee5681eebc6b201"
+    },
+    {
+      "revision": 25,
+      "status": "failed",
+      "legacy_code": "not_reproducible",
+      "message_sha256": "92109e27c10da008ffec29c81eacf49413b3b889209ab0280424498d4c405b4a"
+    },
+    {
+      "revision": 26,
+      "status": "failed",
+      "legacy_code": "budget_exhausted",
+      "message_sha256": "75a01af99ade5088c925aa77b4e953e8135824d4fe697414e3017a515397b9f3"
+    }
+  ]
+}

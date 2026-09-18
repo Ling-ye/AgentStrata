@@ -23,6 +23,7 @@ _AREAS = (
     "core",
     "external_tools",
     "gateway",
+    "harness",
     "middleware",
     "platforms",
     "protocols",

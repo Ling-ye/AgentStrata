@@ -28,11 +28,16 @@ export interface RepairTask {
   archive?: { digest: string; path: string; head: string };
 
   pipeline_version?: number;
+  archived?: boolean;
   continued_from?: string;
   next_action?: string;
   preparation_revisions?: Array<{ revision: number; status: string; error?: { code: string; message: string } }>;
   acceptance?: { original: string; items: Array<{ id: string; text: string }> };
   acceptance_coverage?: Record<string, { checks: string[]; passed: boolean }>;
+  verification_gaps?: Array<{ requirement: string; code: string; message: string }>;
+  stop_reason?: string;
+  remaining_seconds?: number;
+  candidate_checkpoint?: { number: number; candidate_digest: string; changed_files: string[] };
   hypothesis?: { reason: string; expected_behavior: string; evidence_refs: string[] };
   verification_plan?: { real_agent: boolean; repetitions: number; primary_checks: string[]; checks: string[]; snapshot_id: string };
   planned_agent_trials?: number;
@@ -66,7 +71,8 @@ export interface RepairProgress {
 export type GovernanceBudget = { mode: "time"; seconds: number } | { mode: "fixed_groups"; count: number } |
   { mode: "discovered_groups"; count: number };
 export type ProgressTask = Pick<RepairTask, "task_id" | "status" | "stage" | "elapsed_seconds" |
-  "heartbeat_at" | "current_attempt" | "preparation_revisions" | "next_action" | "local_commit" | "commit_in_main" | "commit_state" | "delivery" | "cleanup" | "archive"> & {
+  "heartbeat_at" | "current_attempt" | "preparation_revisions" | "next_action" | "local_commit" | "commit_in_main" | "commit_state" | "delivery" | "cleanup" | "archive" |
+  "pipeline_version" | "verification_gaps" | "acceptance_coverage" | "stop_reason" | "remaining_seconds" | "candidate_checkpoint"> & {
   options: { model: string; max_attempts: number; reasoning_effort: string; timeout_seconds?: number;
     budget?: GovernanceBudget };
   governance_summary?: { accepted_groups?: number; discovered_groups?: number; selected_groups?: number };
@@ -74,10 +80,12 @@ export type ProgressTask = Pick<RepairTask, "task_id" | "status" | "stage" | "el
 export const ACTIVE = ["queued", "running", "cancel_requested"];
 export const REPAIR_LABELS: Record<string, string> = {
   queued: "等待启动", running: "执行中", cancel_requested: "正在取消", fixed: "修复验收通过",
+  needs_review: "局部候选待审阅",
   waiting_input: "等待原图", not_reproduced: "当前未复现", failed: "修复未通过", blocked: "受阻", cancelled: "已取消", interrupted: "已中断",
 };
 export const ATTEMPT_LABELS: Record<string, string> = {
   coding: "生成候选", verifying: "复测中", reviewing: "AI 审核中", committing: "本地提交中", review_rejected: "审核认为未修复", review_inconclusive: "审核未能确认", accepted: "验收通过", rejected: "验收未通过",
+  needs_review: "局部验证通过", blocked: "需要补充条件",
   coding_failed: "生成失败", interrupted: "已中断",
 };
 export function stageLabel(stage: string): string {
@@ -89,7 +97,7 @@ export function stageLabel(stage: string): string {
   if (stage.startsWith("confirm-")) return `第 ${stage.slice(8)} 轮独立确认`;
   if (stage.startsWith("verify-")) return `第 ${stage.slice(7)} 轮复测`;
   return ({ auto_correcting: "自动修正复现方案", waiting_image: "等待原图", queued: "等待启动", self_check: "来源自检", prepare_reproducer: "建立复现测试",
-    snapshot: "冻结源码", scan: "规则检查", audit: "只读巡检", verify: "候选验收",
+    snapshot: "冻结源码", definition: "冻结验证草案", regressions: "仓库回归", scan: "规则检查", audit: "只读巡检", verify: "候选验收",
     review: "AI 审核", commit: "本地提交", reproduce: "确认当前问题", baseline: "建立回归基线", repository_baseline: "仓库回归基线", coding: "生成候选", done: "完成" } as Record<string, string>)[stage] ?? stage;
 }
 export function sourceLabel(task: RepairTask): string {

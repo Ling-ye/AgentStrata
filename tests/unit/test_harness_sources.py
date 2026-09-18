@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from tests.harness_delivery_fixture import offline_harness_delivery, frozen_test_source, approve_fixture  # noqa: F401
+from tests.harness_delivery_fixture import freeze_fixture, candidate_submission, offline_harness_delivery, frozen_test_source, approve_fixture  # noqa: F401
 
 from chatcopilot.core.private_sqlite import private_directory
 from chatcopilot.harness.api import HarnessController
@@ -29,6 +29,7 @@ def robot_source(*, blockers=()):
         "run_id": "run-example",
         "revision": "evidence-revision",
         "evidence": {"request": "expected behavior"},
+        "original_input": "expected behavior",
         "blockers": list(blockers),
         "failure_signature": [{"error": "wrong_result"}],
         "case_id": "reproduction",
@@ -349,7 +350,7 @@ def test_daily_task_fix_is_gated_by_target_and_previously_passing_tests(
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text(
             "VALUE = 'fixed " + ("regression" if regression else "") + "'\n"
         )
-        return {}
+        return candidate_submission()
 
     coder = SimpleNamespace(run=code, review=approve_fixture)
     evaluator = Mock()
@@ -382,7 +383,7 @@ def test_repository_skip_is_not_a_target_failure_or_a_passing_regression(reposit
     task = controller.start_task("sample", "run-example", RepairOptions("test-model", max_attempts=1), launch=False)
     def code(worktree, *_):
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text("VALUE = 'fixed'\n")
-        return {}
+        return candidate_submission()
     result = run_task(controller.store, task["task_id"], Mock(), SimpleNamespace(run=code, review=approve_fixture), local_verifier=Local())
     assert result["status"] == status
     assert result["regression_baseline"]["passed_cases"] == ["required"]
@@ -514,7 +515,7 @@ def test_generated_test_is_frozen_and_reused_with_real_candidate_import(local_te
             file.chmod(0o600)
         return {}
 
-    task["source"] = verifier.prepare(
+    task["source"] = freeze_fixture(verifier,
         task, worktree, SimpleNamespace(prepare=prepare), RepairOptions("test-model"), lambda: None
     )
     first = verifier.run(task, worktree, "reproduce", ["reproduction"], lambda: None)
@@ -547,13 +548,16 @@ def test_reference_answer_cannot_replace_reproduction(repository, tmp_path):
         file.chmod(0o600)
         return {}
 
-    coder = SimpleNamespace(prepare=prepare, run=Mock())
+    coder = SimpleNamespace(run=Mock(return_value={"submission": {
+        "decision": "blocked", "summary": "需要真实模型与外部搜索验证", "verification_kind": "agent",
+        "goal_capabilities": [], "coverage": [], "gaps": [{"requirement": "expected_behavior",
+        "code": "fixture_missing", "message": "缺少搜索 fixture"}]}}))
     evaluator = Mock()
     result = run_task(controller.store, task["task_id"], evaluator, coder)
-    assert result["status"] == "blocked" and result["error_code"] == "preparation_no_progress"
+    assert result["status"] == "blocked" and result["error_code"] == "fixture_missing"
     assert "需要真实模型" in result["message"]
     assert "verified_digest" not in result and "test_sha256" not in result["source"]
-    coder.run.assert_not_called()
+    coder.run.assert_called_once()
     evaluator.run.assert_not_called()
 
 

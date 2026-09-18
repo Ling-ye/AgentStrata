@@ -48,6 +48,7 @@ def source_record():
         "case_id": "b",
         "target_id": "main",
         "case_ids": ["a", "b", "c"],
+        "case_definition": {"expected_behavior": "Return the expected value"},
         "repetitions": 2,
         "passed_cases": ["a"],
         "trials": [],
@@ -97,6 +98,9 @@ class FakeEvaluator:
     def cancel(self, evaluation_id):
         pass
 
+    def capabilities(self):
+        return {"fixtures": ["workspace"], "external_network": False}
+
 
 class FakeCoder:
     def __init__(self, candidates=("fixed",)):
@@ -117,7 +121,8 @@ class FakeCoder:
         text = self.candidates[min(self.calls, len(self.candidates) - 1)]
         self.calls += 1
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text(f"VALUE = {text!r}\n")
-        return {"summary": text}
+        return {"submission": {"decision": "candidate", "summary": text, "verification_kind": "existing",
+            "goal_capabilities": [], "coverage": [{"requirement": "expected_behavior", "checks": ["b"]}], "gaps": []}}
 
     def review(self, worktree, evidence, options, output, check_cancel):
         check_cancel()
@@ -216,8 +221,8 @@ def test_sqlite_journal_churn_does_not_interrupt_or_repeat_coding(repository, tm
     coder = CodingWithPolls()
     result = run_task(controller.store, task_id, evaluator, coder)
     assert result["status"] == "fixed"
-    assert coder.preparations == 1 and coder.calls == 1
-    assert len(interleavings) == 8
+    assert coder.preparations == 0 and coder.calls == 1
+    assert len(interleavings) == 4
     assert len(controller.store.attempts(task_id)) == 1
     with controller.store.database.connect() as connection:
         assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
@@ -239,17 +244,17 @@ def test_fix_preserves_original_failure_and_allows_other_existing_failures(repos
     assert git_output(Path(result["worktree"]), "rev-parse", "HEAD") == result["base_commit"]
     flow = controller.flow(task_id)
     recorded = {step["phase"]: step for step in flow["steps"] if step["id"].startswith("step-")}
-    assert {"snapshot", "plan", "reproduce", "coding", "verify-1", "review"}.issubset(recorded)
+    assert {"reproduce", "coding", "verify-1", "review"}.issubset(recorded)
     # Existing unprotected failures do not turn an accepted candidate's mandatory checks red.
     assert recorded["verify-1"]["status"] == "completed"
     assert "未通过 1 项" in recorded["verify-1"]["conclusion"]
     before = copy.deepcopy(controller.store.get(task_id))
     detail = controller.flow(task_id, step_id=recorded["coding"]["id"])
-    assert detail["input"]["protected_cases"] == ["a"]
+    assert detail["input"]["goal"]["original"] == "Return the expected value"
     assert controller.store.get(task_id) == before
 
 
-def test_regression_rejects_candidate_and_next_attempt_starts_from_base(repository, tmp_path):
+def test_regression_rejects_candidate_and_next_round_improves_it(repository, tmp_path):
     evaluator, coder = FakeEvaluator(), FakeCoder(("fixed regression", "fixed"))
     controller, task_id = task_fixture(repository, tmp_path, evaluator)
     result = run_task(controller.store, task_id, evaluator, coder)
@@ -277,7 +282,8 @@ def test_no_false_success_after_attempt_limit(repository, tmp_path):
     controller, task_id = task_fixture(repository, tmp_path, evaluator, attempts=1)
     result = run_task(controller.store, task_id, evaluator, coder)
     assert result["status"] == "failed" and "verified_digest" not in result
-    assert not (Path(result["worktree"]) / "src/chatcopilot/core/harness_probe.py").exists()
+    assert (Path(result["worktree"]) / "src/chatcopilot/core/harness_probe.py").exists()
+    assert result["candidate_checkpoint"]["changed_files"]
 
 
 def test_idempotent_create_and_request_drift(repository, tmp_path):
