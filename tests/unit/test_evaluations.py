@@ -2437,7 +2437,7 @@ def test_target_runtime_fingerprint_covers_resolved_chat_behavior(
         replace(config, runtime=replace(config.runtime, turn_timeout_seconds=90)),
         replace(config, runtime=replace(config.runtime, hard_timeout_seconds=180)),
         replace(config, runtime=replace(config.runtime, topic_classifier_enabled=True)),
-        replace(config, routing=replace(config.routing, code_prefixes=("/different",))),
+        replace(config, routing=replace(config.routing, code_model="different-code-model")),
         replace(config, routing=replace(config.routing, code_command="codex exec --json")),
         replace(config, routing=replace(config.routing, code_timeout_seconds=901)),
     )

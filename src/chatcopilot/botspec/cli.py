@@ -736,8 +736,6 @@ def _cmd_route_explain(args: argparse.Namespace) -> int:
     print("request_override=false")
     print(f"chat.prefix={spec.llm.env_prefix}")
     print(f"chat.model={config.llm.model}")
-    print(f"research.execution={config.routing.research_execution}")
-    print(f"research.web_search={config.routing.research_web_search}")
     print(f"research.source={research_agent_source}")
     print(f"research.model={research_config.model}")
     if spec.agents.backend == "codex":

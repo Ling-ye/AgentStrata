@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from chatcopilot.evals.application import EvaluationApplication
 from chatcopilot.harness.control_types import WorkerState
 from chatcopilot.harness.cutover_runtime import cutover
 from chatcopilot.harness.models import HarnessError
@@ -29,9 +30,11 @@ def clients(state=WorkerState.INACTIVE):
     return SimpleNamespace(observe=lambda task: state), SimpleNamespace(client=Mock(), execution_status=lambda ident: "completed")
 
 
-def test_archive_reset_retains_original_artifacts_and_consistent_database(old_store):
+def test_archive_reset_retains_original_artifacts_and_consistent_database(old_store, tmp_path):
     store, ident = old_store
     workers, evaluator = clients()
+    application = EvaluationApplication(tmp_path / "evaluations")
+    evaluator.client = Mock(wraps=application)
     before = store.get(ident)
     assert cutover(store, workers, evaluator)["applied"] is False
     assert store.get(ident) == before
@@ -45,7 +48,9 @@ def test_archive_reset_retains_original_artifacts_and_consistent_database(old_st
     assert archived["task_id"] == ident
     assert (store.root / "jobs" / ident / before["artifact_fields"]["source"]["path"]).is_file()
     evaluator.client.enter_maintenance.assert_called_once()
-    evaluator.client.leave_maintenance.assert_called_once()
+    lease = evaluator.client.enter_maintenance.call_args.args[0]
+    evaluator.client.leave_maintenance.assert_called_once_with(lease)
+    assert application.maintenance_status() is None
 
 
 @pytest.mark.parametrize("state", [WorkerState.ACTIVE, WorkerState.UNKNOWN])

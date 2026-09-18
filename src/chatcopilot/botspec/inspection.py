@@ -65,8 +65,7 @@ def configuration_projection(
     llm = data.get("llm") or {}
     chat = llm.get("chat") or {"env_prefix": llm.get("env_prefix")}
     research = llm.get("research") or {"env_prefix": llm.get("research_env_prefix"),
-                                       "model": llm.get("research_model"),
-                                       "execution": llm.get("research_execution")}
+                                       "model": llm.get("research_model")}
     for slot, config in (("chat", chat), ("research", research), ("code", llm.get("code", {}))):
         add("agent", f"model-slot:{slot}", f"模型 · {slot}", config)
     add("agent", "prompts:instance", "提示词配置", data.get("prompts", {}))

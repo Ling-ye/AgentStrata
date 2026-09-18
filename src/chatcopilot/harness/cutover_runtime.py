@@ -42,7 +42,7 @@ def cutover(store, workers, evaluator, *, apply=False, github=None):
                   "applied": False, "retained_jobs": str(store.root / "jobs")}
         if not apply or not tasks:
             return result
-        lease = "harness-cutover-" + uuid.uuid4().hex
+        lease = uuid.uuid4().hex
         evaluator.client.enter_maintenance(lease)
         try:
             archive = private_directory(store.root / "archives" / (str(int(time.time())) + "-" + uuid.uuid4().hex[:8]))

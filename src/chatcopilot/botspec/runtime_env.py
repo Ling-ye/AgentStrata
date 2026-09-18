@@ -52,20 +52,13 @@ def apply_runtime_env(runtime: BotRuntimeContext) -> None:
 
 
 def llm_runtime_env_defaults(llm: LLMSpec) -> dict[str, str]:
-    """Translate versioned BotSpec LLM policy into legacy runtime env keys."""
+    """Project the active Codex model and execution settings into runtime env."""
 
     prefix = llm.env_prefix
     code = getattr(llm, "code", None)
     if code is None:
         return {}
     values = {
-        f"{prefix}_ROUTER_ENABLED": "false",
-        f"{prefix}_ROUTER_MODE": code.mode,
-        f"{prefix}_ROUTER_CODE_PREFIXES": ",".join(code.prefixes),
-        f"{prefix}_ROUTER_CHAT_PREFIXES": ",".join(code.chat_prefixes),
-        f"{prefix}_RESEARCH_EXECUTION": llm.research_execution,
-        f"{prefix}_RESEARCH_PREFIXES": ",".join(llm.research_prefixes),
-        f"{prefix}_RESEARCH_WEB_SEARCH": llm.research_web_search,
         f"{prefix}_CODE_PROVIDER": code.provider,
         f"{prefix}_CODE_MODEL": code.model,
         f"{prefix}_CODE_REASONING_EFFORT": code.reasoning_effort,
@@ -78,7 +71,6 @@ def llm_runtime_env_defaults(llm: LLMSpec) -> dict[str, str]:
             sort_keys=True,
         ),
         f"{prefix}_CODE_COMMAND": code.command,
-        f"{prefix}_CODE_WORKDIR_ENV": code.workdir_env,
         f"{prefix}_CODE_TIMEOUT_SECONDS": str(code.timeout_seconds),
     }
     if code.code_task_profile:

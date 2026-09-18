@@ -1209,12 +1209,10 @@ def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
     live_source = (tmp_path / "live-source-sentinel").resolve()
     evaluation_workspace.mkdir()
     live_source.mkdir()
-    custom_workdir_env = "AGENTSTRATA_TEST_LIVE_CODE_ROOT"
-    monkeypatch.setenv(custom_workdir_env, str(live_source))
+    monkeypatch.setenv("CHATCOPILOT_DEV_ROOT", str(live_source))
 
     config = ChatConfig()
     config.llm.api_key = "eval-local-placeholder"
-    config.routing.code_workdir_env = custom_workdir_env
     runtime = SimpleNamespace(
         spec=SimpleNamespace(
             context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")

@@ -230,9 +230,6 @@ class BotSpecRuntimeEnvTests(unittest.TestCase):
                 llm=LLMSpec(
                     env_prefix="CHATCOPILOT_DEMO",
                     research_env_prefix="CHATCOPILOT_DEMO_RESEARCH",
-                    research_execution="agent",
-                    research_prefixes=("/research", "/调研"),
-                    research_web_search="live",
                     code=CodeLLMSpec(
                         enabled=True,
                         model="botspec-code-model",
@@ -255,19 +252,9 @@ class BotSpecRuntimeEnvTests(unittest.TestCase):
             ):
                 apply_runtime_env(runtime)
 
-                self.assertEqual(os.environ["CHATCOPILOT_DEMO_ROUTER_ENABLED"], "false")
-                self.assertEqual(
-                    os.environ["CHATCOPILOT_DEMO_RESEARCH_EXECUTION"],
-                    "agent",
-                )
-                self.assertEqual(
-                    os.environ["CHATCOPILOT_DEMO_RESEARCH_PREFIXES"],
-                    "/research,/调研",
-                )
-                self.assertEqual(
-                    os.environ["CHATCOPILOT_DEMO_RESEARCH_WEB_SEARCH"],
-                    "live",
-                )
+                self.assertFalse(any("_ROUTER_" in key for key in os.environ))
+                for suffix in ("EXECUTION", "PREFIXES", "WEB_SEARCH"):
+                    self.assertNotIn("CHATCOPILOT_DEMO_RESEARCH_" + suffix, os.environ)
                 self.assertEqual(os.environ["CHATCOPILOT_DEMO_CODE_MODEL"], "env-code-model")
                 self.assertEqual(
                     os.environ["CHATCOPILOT_DEMO_CODE_REASONING_EFFORT"],

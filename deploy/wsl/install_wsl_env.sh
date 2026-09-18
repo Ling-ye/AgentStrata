@@ -15,7 +15,6 @@ UV_VERSION="0.12.5"
 PYTHON_VERSION="3.13.15"
 NODE_VERSION="24.20.0"
 CC_CONNECT_VERSION="1.4.0-beta.3"
-CC_CONNECT_PKG="cc-connect@$CC_CONNECT_VERSION"
 RUNTIME_ROOT="${AGENTSTRATA_RUNTIME_ROOT:-$HOME/.local/share/agentstrata}"
 UV_INSTALL_DIR="$RUNTIME_ROOT/uv/$UV_VERSION"
 PYTHON_INSTALL_DIR="$RUNTIME_ROOT/python"
@@ -46,8 +45,6 @@ Options:
   --skip-web              Pass --skip-web when --with-console is used.
   --no-system-packages    Do not install apt packages; isolated runtimes are still installed.
   --skip-cc-connect       Do not install the private Node.js/cc-connect toolchain.
-  --skip-lark-cli         Deprecated no-op; Lark CLI is never installed here.
-  --cc-connect-pkg PKG    Compatibility flag; only cc-connect@1.4.0-beta.3 is accepted.
   --venv DIR              Python environment path (default: .venv).
   --init-env              Copy deploy/wsl/env.example to ~/.chatcopilot.env if absent.
   --no-verify             Skip import and BotSpec validation checks.
@@ -63,14 +60,6 @@ while [ "$#" -gt 0 ]; do
         --skip-web) SKIP_WEB=1 ;;
         --no-system-packages) INSTALL_SYSTEM_PACKAGES=0 ;;
         --skip-cc-connect) INSTALL_CC_CONNECT=0 ;;
-        --skip-lark-cli) ;;
-        --cc-connect-pkg)
-            [ "$#" -ge 2 ] || { echo "[ERR] --cc-connect-pkg needs a value" >&2; exit 2; }
-            if [ "$2" != "$CC_CONNECT_PKG" ]; then
-                echo "[ERR] only the locked package $CC_CONNECT_PKG is supported" >&2
-                exit 2
-            fi
-            shift ;;
         --venv)
             [ "$#" -ge 2 ] || { echo "[ERR] --venv needs a value" >&2; exit 2; }
             VENV_DIR="$2"

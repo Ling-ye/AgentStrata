@@ -57,9 +57,7 @@ class LLMConfig:
 
 @dataclass
 class RuntimeConfig:
-    default_auto_mode: str = "confirm"
     max_tool_retries: int = 3
-    stream: bool = True
     max_context_tokens: int = 16000
     sliding_window_turns: int = 3
     tool_result_summary_max_tokens: int = 500
@@ -89,21 +87,12 @@ class RuntimeConfig:
 
 @dataclass
 class RoutingConfig:
-    enabled: bool = False
-    mode: str = 'rules'
-    default_route: str = 'chat'
-    code_prefixes: tuple[str, ...] = ('/code', '/codex', '\u7528codex')
-    chat_prefixes: tuple[str, ...] = ('/chat', '/deepseek', '/ds')
-    research_execution: str = 'agent'
-    research_prefixes: tuple[str, ...] = ('/research', '/deep-research', '/调研')
-    research_web_search: str = 'live'
     code_provider: str = 'codex_cli'
     code_model: str = 'gpt-5.5'
     code_reasoning_effort: str = 'medium'
     code_profiles: dict[str, CodeModelProfile] = field(default_factory=dict)
     code_task_profile: str = ''
     code_command: str = 'codex exec --model {model} --cd {workdir}'
-    code_workdir_env: str = 'CHATCOPILOT_DEV_ROOT'
     code_timeout_seconds: int = 900
 
 @dataclass
@@ -139,19 +128,6 @@ def _coerce_bool(raw: Any, fallback: bool) -> bool:
     if text in {"0", "false", "no", "n", "off"}:
         return False
     return fallback
-
-
-def _coerce_bool_strict(raw: Any, fallback: bool, *, field: str) -> bool:
-    if raw is None or raw == "":
-        return fallback
-    if isinstance(raw, bool):
-        return raw
-    text = str(raw).strip().lower()
-    if text in {"1", "true", "yes", "y", "on"}:
-        return True
-    if text in {"0", "false", "no", "n", "off"}:
-        return False
-    raise ValueError(f"{field} must be a boolean")
 
 
 def _coerce_int(raw: Any, fallback: int) -> int:
@@ -193,16 +169,6 @@ def _coerce_float(raw: Any, fallback: float) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return fallback
-
-
-def _coerce_csv_tuple(raw: Any, fallback: tuple[str, ...]) -> tuple[str, ...]:
-    if raw is None or raw == '':
-        return fallback
-    if isinstance(raw, (list, tuple)):
-        values = [str(item).strip() for item in raw]
-    else:
-        values = [part.strip() for part in str(raw).split(',')]
-    return tuple(item for item in values if item) or fallback
 
 
 def _coerce_code_profiles(
@@ -274,14 +240,9 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
         cfg.llm.api_key = str(llm_raw.get("api_key", cfg.llm.api_key) or cfg.llm.api_key)
         cfg.llm.timeout = _coerce_int(llm_raw.get("timeout"), cfg.llm.timeout)
 
-        cfg.runtime.default_auto_mode = str(
-            rt_raw.get("default_auto_mode", cfg.runtime.default_auto_mode)
-            or cfg.runtime.default_auto_mode
-        ).strip().lower()
         cfg.runtime.max_tool_retries = _coerce_int(
             rt_raw.get("max_tool_retries"), cfg.runtime.max_tool_retries
         )
-        cfg.runtime.stream = _coerce_bool(rt_raw.get("stream"), cfg.runtime.stream)
         cfg.runtime.max_context_tokens = _coerce_int(
             rt_raw.get("max_context_tokens"), cfg.runtime.max_context_tokens
         )
@@ -346,39 +307,6 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
             cfg.runtime.topic_previous_assistant_max_chars,
         )
 
-        cfg.routing.enabled = _coerce_bool_strict(
-            routing_raw.get('enabled'),
-            cfg.routing.enabled,
-            field="routing.enabled",
-        )
-        cfg.routing.mode = str(routing_raw.get('mode', cfg.routing.mode) or cfg.routing.mode).strip().lower()
-        cfg.routing.default_route = str(
-            routing_raw.get('default_route', cfg.routing.default_route) or cfg.routing.default_route
-        ).strip().lower()
-        cfg.routing.code_prefixes = _coerce_csv_tuple(
-            routing_raw.get('code_prefixes'), cfg.routing.code_prefixes
-        )
-        cfg.routing.chat_prefixes = _coerce_csv_tuple(
-            routing_raw.get('chat_prefixes'), cfg.routing.chat_prefixes
-        )
-        cfg.routing.research_execution = str(
-            routing_raw.get(
-                'research_execution',
-                cfg.routing.research_execution,
-            )
-            or cfg.routing.research_execution
-        ).strip().lower()
-        cfg.routing.research_prefixes = _coerce_csv_tuple(
-            routing_raw.get('research_prefixes'),
-            cfg.routing.research_prefixes,
-        )
-        cfg.routing.research_web_search = str(
-            routing_raw.get(
-                'research_web_search',
-                cfg.routing.research_web_search,
-            )
-            or cfg.routing.research_web_search
-        ).strip().lower()
         cfg.routing.code_provider = str(
             routing_raw.get('code_provider', cfg.routing.code_provider) or cfg.routing.code_provider
         ).strip().lower()
@@ -407,9 +335,6 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
         cfg.routing.code_command = str(
             routing_raw.get('code_command', cfg.routing.code_command) or cfg.routing.code_command
         ).strip()
-        cfg.routing.code_workdir_env = str(
-            routing_raw.get('code_workdir_env', cfg.routing.code_workdir_env) or cfg.routing.code_workdir_env
-        ).strip()
         cfg.routing.code_timeout_seconds = _coerce_positive_int_strict(
             routing_raw.get('code_timeout_seconds'),
             cfg.routing.code_timeout_seconds,
@@ -424,15 +349,8 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
         os.environ.get(f"{env_prefix}_API_KEY", cfg.llm.api_key) or cfg.llm.api_key
     )
     cfg.llm.timeout = _coerce_int(os.environ.get(f"{env_prefix}_TIMEOUT"), cfg.llm.timeout)
-    cfg.runtime.default_auto_mode = (
-        os.environ.get(f"{env_prefix}_AUTO_MODE", cfg.runtime.default_auto_mode)
-        or cfg.runtime.default_auto_mode
-    ).strip().lower()
     cfg.runtime.max_tool_retries = _coerce_int(
         os.environ.get(f"{env_prefix}_MAX_RETRIES"), cfg.runtime.max_tool_retries
-    )
-    cfg.runtime.stream = _coerce_bool(
-        os.environ.get(f"{env_prefix}_STREAM"), cfg.runtime.stream
     )
     cfg.runtime.max_context_tokens = _coerce_int(
         os.environ.get(f"{env_prefix}_MAX_CONTEXT_TOKENS"), cfg.runtime.max_context_tokens
@@ -507,45 +425,6 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
         cfg.runtime.topic_previous_assistant_max_chars,
     )
 
-    cfg.routing.enabled = _coerce_bool_strict(
-        os.environ.get(f'{env_prefix}_ROUTER_ENABLED'),
-        cfg.routing.enabled,
-        field=f"{env_prefix}_ROUTER_ENABLED",
-    )
-    cfg.routing.mode = (
-        os.environ.get(f'{env_prefix}_ROUTER_MODE', cfg.routing.mode)
-        or cfg.routing.mode
-    ).strip().lower()
-    cfg.routing.default_route = (
-        os.environ.get(f'{env_prefix}_ROUTER_DEFAULT_ROUTE', cfg.routing.default_route)
-        or cfg.routing.default_route
-    ).strip().lower()
-    cfg.routing.code_prefixes = _coerce_csv_tuple(
-        os.environ.get(f'{env_prefix}_ROUTER_CODE_PREFIXES'),
-        cfg.routing.code_prefixes,
-    )
-    cfg.routing.chat_prefixes = _coerce_csv_tuple(
-        os.environ.get(f'{env_prefix}_ROUTER_CHAT_PREFIXES'),
-        cfg.routing.chat_prefixes,
-    )
-    cfg.routing.research_execution = (
-        os.environ.get(
-            f'{env_prefix}_RESEARCH_EXECUTION',
-            cfg.routing.research_execution,
-        )
-        or cfg.routing.research_execution
-    ).strip().lower()
-    cfg.routing.research_prefixes = _coerce_csv_tuple(
-        os.environ.get(f'{env_prefix}_RESEARCH_PREFIXES'),
-        cfg.routing.research_prefixes,
-    )
-    cfg.routing.research_web_search = (
-        os.environ.get(
-            f'{env_prefix}_RESEARCH_WEB_SEARCH',
-            cfg.routing.research_web_search,
-        )
-        or cfg.routing.research_web_search
-    ).strip().lower()
     cfg.routing.code_provider = (
         os.environ.get(f'{env_prefix}_CODE_PROVIDER', cfg.routing.code_provider)
         or cfg.routing.code_provider
@@ -577,10 +456,6 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
         os.environ.get(f'{env_prefix}_CODE_COMMAND', cfg.routing.code_command)
         or cfg.routing.code_command
     ).strip()
-    cfg.routing.code_workdir_env = (
-        os.environ.get(f'{env_prefix}_CODE_WORKDIR_ENV', cfg.routing.code_workdir_env)
-        or cfg.routing.code_workdir_env
-    ).strip()
     cfg.routing.code_timeout_seconds = _coerce_positive_int_strict(
         os.environ.get(f'{env_prefix}_CODE_TIMEOUT_SECONDS'),
         cfg.routing.code_timeout_seconds,
@@ -591,8 +466,6 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
             f"{env_prefix}_CODE_ALLOWED_ROLES is retired; remove this environment variable"
         )
 
-    if cfg.runtime.default_auto_mode not in {"confirm", "auto"}:
-        cfg.runtime.default_auto_mode = "confirm"
     if cfg.runtime.topic_classifier_mode not in {"llm", "rules", "off"}:
         cfg.runtime.topic_classifier_mode = "off"
     if cfg.runtime.topic_uncertain_mode not in {"continue", "new_topic"}:
@@ -641,29 +514,8 @@ def load_llm_profile(
 
 
 def _validate_routing_config(config: RoutingConfig) -> None:
-    allowed = {
-        "mode": (config.mode, {"rules", "off"}),
-        "default_route": (config.default_route, {"chat", "code"}),
-        "research_execution": (
-            config.research_execution,
-            {"agent", "codex"},
-        ),
-        "research_web_search": (
-            config.research_web_search,
-            {"disabled", "cached", "indexed", "live"},
-        ),
-        "code_provider": (config.code_provider, {"codex_cli"}),
-    }
-    for field_name, (value, choices) in allowed.items():
-        if value not in choices:
-            expected = ", ".join(sorted(choices))
-            raise ValueError(f"routing.{field_name} must be one of: {expected}; got {value!r}")
-    if not config.code_prefixes:
-        raise ValueError("routing.code_prefixes must not be empty")
-    if not config.chat_prefixes:
-        raise ValueError("routing.chat_prefixes must not be empty")
-    if not config.research_prefixes:
-        raise ValueError("routing.research_prefixes must not be empty")
+    if config.code_provider != "codex_cli":
+        raise ValueError("routing.code_provider must be codex_cli")
     if config.code_reasoning_effort not in CODEX_REASONING_EFFORTS:
         expected = ", ".join(sorted(CODEX_REASONING_EFFORTS))
         raise ValueError(

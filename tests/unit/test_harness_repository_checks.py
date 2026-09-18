@@ -33,7 +33,7 @@ def test_public_environment_template_is_included(name):
     assert is_deployable_source_path(name)
 
 @pytest.mark.parametrize("name", ["src/chatcopilot/evals/suites/project-business-v1/cases.yaml",
-    "src/chatcopilot/evals/business_policy.py", "console/web/src/features/codeHealth/api.test.ts"])
+    "src/chatcopilot/evals/business_policy.py", "console/web/src/features/harness/repairV2.test.ts"])
 def test_existing_expectations_and_frontend_tests_remain_fixed(name):
     assert policy_path(name)
 

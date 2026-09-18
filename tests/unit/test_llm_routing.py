@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import asdict
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -16,13 +17,27 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class LlmRuntimeConfigTests(unittest.TestCase):
+    def test_retired_runtime_overrides_do_not_change_effective_configuration(self) -> None:
+        prefix = "CHATCOPILOT_RETIREDTEST"
+        path = Path("/tmp/chatcopilot-missing-retired.yaml")
+        baseline = load_config(path, env_prefix=prefix)
+        obsolete = {
+            "AUTO_MODE": "auto", "STREAM": "false", "ROUTER_ENABLED": "true",
+            "ROUTER_MODE": "invalid", "ROUTER_DEFAULT_ROUTE": "code",
+            "ROUTER_CODE_PREFIXES": "/old-code", "ROUTER_CHAT_PREFIXES": "/old-chat",
+            "RESEARCH_EXECUTION": "codex", "RESEARCH_PREFIXES": "/old-research",
+            "RESEARCH_WEB_SEARCH": "invalid", "CODE_WORKDIR_ENV": "OLD_ROOT",
+        }
+        with mock.patch.dict(os.environ, {prefix + "_" + k: v for k, v in obsolete.items()}):
+            effective = load_config(path, env_prefix=prefix)
+        self.assertEqual(asdict(effective), asdict(baseline))
+
     def test_codex_command_configuration_keeps_safe_defaults(self) -> None:
         config = load_config(
             Path("/tmp/chatcopilot-missing-routing.yaml"),
             env_prefix="CHATCOPILOT_ROUTETEST",
         )
 
-        self.assertFalse(config.routing.enabled)
         self.assertEqual(config.routing.code_provider, "codex_cli")
         self.assertEqual(
             config.routing.code_command,
@@ -39,7 +54,6 @@ class LlmRuntimeConfigTests(unittest.TestCase):
             ),
             prefix + "_CODE_TASK_PROFILE": "sol-high",
             prefix + "_CODE_COMMAND": "codex exec --model {model} --cwd {workdir}",
-            prefix + "_CODE_WORKDIR_ENV": "CHATCOPILOT_TEST_ROOT",
             prefix + "_CODE_TIMEOUT_SECONDS": "17",
         }
         with mock.patch.dict(os.environ, env, clear=False):
@@ -52,7 +66,6 @@ class LlmRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(config.routing.code_reasoning_effort, "high")
         self.assertEqual(config.routing.code_profiles["sol-high"].model, "gpt-5.6-sol")
         self.assertEqual(config.routing.code_task_profile, "sol-high")
-        self.assertEqual(config.routing.code_workdir_env, "CHATCOPILOT_TEST_ROOT")
         self.assertEqual(config.routing.code_timeout_seconds, 17)
 
     def test_invalid_codex_runtime_configuration_fails_visibly(self) -> None:

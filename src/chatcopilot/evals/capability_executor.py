@@ -2206,8 +2206,8 @@ class _EvaluationWorkspaceService(MiddlewareWorkspaceService):
 
     The configured Codex backend consumes the workspace returned here through
     ``BackendOpenRequest.options['workspace_root']``.  Keeping that value
-    explicit means a deployment-specific ``routing.code_workdir_env`` cannot
-    redirect an Evaluation session into the live source tree.
+    explicit prevents host project environment defaults from redirecting an
+    Evaluation session into the live source tree.
     """
 
     def __init__(self, workspace: Workspace) -> None:

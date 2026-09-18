@@ -128,7 +128,13 @@ OneBot provider 不解释私聊名单或分配角色。Gateway 先认证 transpo
   未提供的 base URL、API key 和 timeout 继承 `chat`。统一搜索路由和 `PersonaDraftAgent` 使用该槽，
   不能误用主 Codex 模型名或日常模型槽。
 - `llm.code`：Codex lane 的模型、reasoning effort、profile 白名单、任务 profile、
-  超时和允许角色。
+  执行命令和超时；`enabled` 控制模型命令可用性，模型控制固定为 Owner。
+
+主 Agent 由 `agents.backend` 选择。模型槽不再提供 `llm.code.mode/prefixes/chat_prefixes/workdir_env`
+或 `llm.research.execution/prefixes/web_search`；搜索策略由 `agents.unified_search` 管理。
+Core 不再解析无执行消费者的 `runtime.default_auto_mode/stream` 与旧路由开关，也不再
+导出对应环境默认值或把它们计入测评行为指纹。Codex 工作区由宿主执行请求确定。配置清理范围见
+[配置收敛规格](../../specs/obsolete-configuration-removal/spec.md)。
 
 启用 `dev.code_tasks` 时必须用 `llm.code.code_task_profile` 引用已声明 profile。机器
 环境变量优先级高于 BotSpec 默认值；secret 只进入 `local.env` 或 credential store。

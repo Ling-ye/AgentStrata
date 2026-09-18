@@ -2625,9 +2625,7 @@ def _configured_model(backend: str, config: Any) -> tuple[str, str]:
 
 
 _RUNTIME_CONFIG_FINGERPRINT_FIELDS = (
-    "default_auto_mode",
     "max_tool_retries",
-    "stream",
     "max_context_tokens",
     "sliding_window_turns",
     "tool_result_summary_max_tokens",
@@ -2650,21 +2648,12 @@ _RUNTIME_CONFIG_FINGERPRINT_FIELDS = (
     "topic_previous_assistant_max_chars",
 )
 _ROUTING_CONFIG_FINGERPRINT_FIELDS = (
-    "enabled",
-    "mode",
-    "default_route",
-    "code_prefixes",
-    "chat_prefixes",
-    "research_execution",
-    "research_prefixes",
-    "research_web_search",
     "code_provider",
     "code_model",
     "code_reasoning_effort",
     "code_profiles",
     "code_task_profile",
     "code_command",
-    "code_workdir_env",
     "code_timeout_seconds",
 )
 

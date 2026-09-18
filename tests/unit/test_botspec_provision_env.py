@@ -768,9 +768,6 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                         env_prefix: CHATCOPILOT_ROUTE
                       research:
                         env_prefix: CHATCOPILOT_ROUTE_RESEARCH
-                        execution: agent
-                        prefixes: [/research, /调研]
-                        web_search: live
                       code:
                         enabled: true
                         model: botspec-code-model
@@ -803,19 +800,9 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             content = runtime_env.read_text(encoding="utf-8")
-            self.assertIn("export CHATCOPILOT_ROUTE_ROUTER_ENABLED=false", content)
-            self.assertIn(
-                "export CHATCOPILOT_ROUTE_RESEARCH_EXECUTION=agent",
-                content,
-            )
-            self.assertIn(
-                "export CHATCOPILOT_ROUTE_RESEARCH_PREFIXES='/research,/调研'",
-                content,
-            )
-            self.assertIn(
-                "export CHATCOPILOT_ROUTE_RESEARCH_WEB_SEARCH=live",
-                content,
-            )
+            self.assertNotIn("CHATCOPILOT_ROUTE_ROUTER_", content)
+            for suffix in ("EXECUTION", "PREFIXES", "WEB_SEARCH"):
+                self.assertNotIn("CHATCOPILOT_ROUTE_RESEARCH_" + suffix, content)
             self.assertIn("export CHATCOPILOT_ROUTE_CODE_MODEL=local-code-model", content)
             self.assertIn(
                 "export CHATCOPILOT_ROUTE_CODE_REASONING_EFFORT=medium",

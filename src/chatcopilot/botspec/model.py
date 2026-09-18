@@ -67,19 +67,15 @@ class ChannelsSpec:
 
 @dataclass(frozen=True)
 class CodeLLMSpec:
-    """Versioned non-secret policy for the Codex mutation route."""
+    """Versioned non-secret Codex model controls and backend execution settings."""
 
     enabled: bool = False
-    mode: str = "rules"
-    prefixes: tuple[str, ...] = ("/code", "/codex", "用codex")
-    chat_prefixes: tuple[str, ...] = ("/chat", "/deepseek", "/ds")
     provider: str = "codex_cli"
     model: str = "gpt-5.5"
     reasoning_effort: str = "medium"
     profiles: dict[str, CodeModelProfile] = field(default_factory=dict)
     code_task_profile: str | None = None
     command: str = "codex exec --model {model} --cd {workdir}"
-    workdir_env: str = "CHATCOPILOT_DEV_ROOT"
     timeout_seconds: int = 900
 
 
@@ -90,9 +86,6 @@ class LLMSpec:
     env_prefix: str = "CHATCOPILOT_CHAT"
     research_env_prefix: str | None = None
     research_model: str | None = None
-    research_execution: str = "agent"
-    research_prefixes: tuple[str, ...] = ("/research", "/deep-research", "/调研")
-    research_web_search: str = "live"
     code: CodeLLMSpec = field(default_factory=CodeLLMSpec)
 
 

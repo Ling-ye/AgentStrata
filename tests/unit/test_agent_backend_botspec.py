@@ -115,6 +115,24 @@ class AgentBackendBotSpecTests(unittest.TestCase):
 
         self.assertEqual(len(errors), 1)
 
+    def test_unused_model_slot_routing_fields_are_rejected(self) -> None:
+        for slot, name, value in (
+            ("code", "mode", "rules"),
+            ("code", "workdir_env", "OLD_ROOT"),
+            ("code", "prefixes", "[/code]"),
+            ("code", "chat_prefixes", "[/chat]"),
+            ("research", "execution", "agent"),
+            ("research", "prefixes", "[/research]"),
+            ("research", "web_search", "live"),
+        ):
+            with self.subTest(slot=slot, name=name), TemporaryDirectory(dir="/tmp") as tmp:
+                path = _write_bot(Path(tmp), "backend: native")
+                with path.open("a", encoding="utf-8") as handle:
+                    handle.write(f"llm:\n  {slot}:\n    {name}: {value}\n")
+                errors = [issue.field for issue in validate_botspec(load_botspec(path))
+                          if issue.level == "error"]
+                self.assertIn(f"llm.{slot}.{name}", errors)
+
 
 if __name__ == "__main__":
     unittest.main()

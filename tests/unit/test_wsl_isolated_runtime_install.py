@@ -431,18 +431,18 @@ def test_dry_run_with_existing_node_does_not_fill_missing_archive_cache(
     assert "already installed" not in completed.stdout
 
 
-def test_unlocked_cc_connect_override_is_rejected() -> None:
-    completed = subprocess.run(
-        ["bash", str(INSTALLER), "--cc-connect-pkg", "cc-connect@latest"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=False,
-    )
-
-    assert completed.returncode == 2
-    assert "only the locked package cc-connect@1.4.0-beta.3 is supported" in completed.stderr
+def test_obsolete_installer_flags_are_rejected() -> None:
+    for option in ("--skip-lark-cli", "--cc-connect-pkg"):
+        completed = subprocess.run(
+            ["bash", str(INSTALLER), option],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        assert completed.returncode == 2
+        assert "unknown argument: " + option in completed.stderr
 
 
 def test_fake_uv_is_rejected_before_execution_in_real_and_dry_run(tmp_path: Path) -> None:

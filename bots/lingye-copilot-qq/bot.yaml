@@ -26,7 +26,6 @@ llm:
     model: gpt-5.6-terra
   code:
     enabled: true
-    mode: rules
     model: gpt-5.6-terra
     reasoning_effort: medium
     profiles:

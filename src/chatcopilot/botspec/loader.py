@@ -4,6 +4,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import stat
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -496,6 +497,15 @@ def _validate_gateway_channels(
 
 
 def _validate_llm_spec(spec: BotSpec, issues: list[ValidationIssue]) -> None:
+    raw_llm = spec.raw.get("llm") or {}
+    for slot, allowed in (
+        ("chat", {"env_prefix"}),
+        ("research", {"env_prefix", "model"}),
+        ("code", {item.name for item in fields(CodeLLMSpec)} | {"default_route"}),
+    ):
+        raw = raw_llm.get(slot) or {}
+        for name in sorted(set(raw) - allowed):
+            issues.append(ValidationIssue("error", f"llm.{slot}.{name} 不是当前模型槽配置字段", f"llm.{slot}.{name}"))
     if not _ENV_PREFIX_RE.fullmatch(spec.llm.env_prefix):
         issues.append(
             ValidationIssue(
@@ -515,30 +525,6 @@ def _validate_llm_spec(spec: BotSpec, issues: list[ValidationIssue]) -> None:
                 "llm.research.env_prefix",
             )
         )
-    if spec.llm.research_execution != "agent":
-        issues.append(
-            ValidationIssue(
-                "error",
-                "llm.research.execution 仅支持 agent；主 Agent 之间禁止路由或委派",
-                "llm.research.execution",
-            )
-        )
-    if not spec.llm.research_prefixes:
-        issues.append(
-            ValidationIssue(
-                "error",
-                "llm.research.prefixes 不能为空",
-                "llm.research.prefixes",
-            )
-        )
-    if spec.llm.research_web_search not in {"disabled", "cached", "indexed", "live"}:
-        issues.append(
-            ValidationIssue(
-                "error",
-                "llm.research.web_search 仅支持 disabled / cached / indexed / live",
-                "llm.research.web_search",
-            )
-        )
     code = spec.llm.code
     raw_llm = spec.raw.get("llm") if isinstance(spec.raw, dict) else None
     raw_code = raw_llm.get("code") if isinstance(raw_llm, dict) else None
@@ -550,30 +536,12 @@ def _validate_llm_spec(spec: BotSpec, issues: list[ValidationIssue]) -> None:
                 "llm.code.default_route",
             )
         )
-    if code.mode not in {"rules", "off"}:
-        issues.append(
-            ValidationIssue(
-                "error",
-                "llm.code.mode 仅支持 rules / off",
-                "llm.code.mode",
-            )
-        )
     if code.provider != "codex_cli":
         issues.append(
             ValidationIssue(
                 "error",
                 "llm.code.provider 当前仅支持 codex_cli",
                 "llm.code.provider",
-            )
-        )
-    if not code.prefixes:
-        issues.append(ValidationIssue("error", "llm.code.prefixes 不能为空", "llm.code.prefixes"))
-    if not code.chat_prefixes:
-        issues.append(
-            ValidationIssue(
-                "error",
-                "llm.code.chat_prefixes 不能为空",
-                "llm.code.chat_prefixes",
             )
         )
     if code.reasoning_effort not in CODEX_REASONING_EFFORTS:
@@ -785,36 +753,11 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
             env_prefix=chat_env_prefix,
             research_env_prefix=research_env_prefix,
             research_model=_optional_str(llm_research.get("model")),
-            research_execution=str(
-                llm_research.get("execution", "agent")
-            ).strip().lower()
-            or "agent",
-            research_prefixes=tuple(
-                _str_list(
-                    llm_research.get(
-                        "prefixes",
-                        ["/research", "/deep-research", "/调研"],
-                    )
-                )
-            ),
-            research_web_search=str(
-                llm_research.get("web_search", "live")
-            ).strip().lower()
-            or "live",
             code=CodeLLMSpec(
                 enabled=_strict_bool(
                     llm_code.get("enabled", _MISSING),
                     "llm.code.enabled",
                     False,
-                ),
-                mode=str(llm_code.get("mode", "rules")).strip().lower() or "rules",
-                prefixes=tuple(
-                    _str_list(llm_code.get("prefixes", ["/code", "/codex", "用codex"]))
-                ),
-                chat_prefixes=tuple(
-                    _str_list(
-                        llm_code.get("chat_prefixes", ["/chat", "/deepseek", "/ds"])
-                    )
                 ),
                 provider=str(llm_code.get("provider", "codex_cli")).strip().lower()
                 or "codex_cli",
@@ -836,10 +779,6 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
                     )
                 ).strip()
                 or "codex exec --model {model} --cd {workdir}",
-                workdir_env=str(
-                    llm_code.get("workdir_env", "CHATCOPILOT_DEV_ROOT")
-                ).strip()
-                or "CHATCOPILOT_DEV_ROOT",
                 timeout_seconds=_strict_positive_int(
                     llm_code.get("timeout_seconds"),
                     "llm.code.timeout_seconds",
