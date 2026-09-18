@@ -17,6 +17,7 @@ import pytest
 from chatcopilot.core.source_snapshot import git_output
 from chatcopilot.harness import codex_adapter, codex_environment
 from chatcopilot.harness.models import HarnessError, RepairOptions
+from chatcopilot.harness.agent_types import AgentCall, Role
 
 
 def git(root, *args):
@@ -33,6 +34,10 @@ def repository(tmp_path):
     git(root, "config", "user.email", "test@example.com")
     (root / "src").mkdir()
     (root / "src/example.py").write_text("value = 1\n")
+    (root / "src/chatcopilot/core").mkdir(parents=True)
+    (root / "src/chatcopilot/core/probe.py").write_text("value = 1\n")
+    (root / "tests").mkdir()
+    (root / "tests/test_probe.py").write_text("def test_probe(): pass\n")
     (root / ".env.example").write_text("EXAMPLE=public\n")
     git(root, "add", ".")
     git(root, "commit", "-qm", "fixture")
@@ -62,17 +67,17 @@ def intercept_adapter(monkeypatch, binary, tmp_path):
 
     @contextlib.contextmanager
     def lease(_auth, _role, runtime_home, **kwargs):
-        runtime_home.mkdir(mode=0o700)
+        runtime_home.mkdir(mode=0o700, exist_ok=True)
         (runtime_home / "auth.json").write_text("synthetic-credential")
         (runtime_home / "config.toml").write_text("")
-        yield
+        yield SimpleNamespace(generation=1)
 
     monkeypatch.setattr(codex_adapter, "credential_lease", lease)
     return adapter
 
 
 @pytest.mark.parametrize("kind,stage", [("linked", "prepare"), ("linked", "run"),
-    ("linked", "review"), ("ordinary", "run"), ("detached", "run")])
+    ("linked", "review"), ("linked", "main"), ("linked", "plan"), ("ordinary", "run"), ("detached", "run")])
 def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_path, monkeypatch, native_binary, kind, stage):
     root = repository
     if kind == "linked":
@@ -83,7 +88,7 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
     (root / "src/example.py").write_text("value = 2\n")
     before = metadata_bytes(root)
     head = git_output(root, "rev-parse", "HEAD")
-    evidence = {"source": {"kind": "code_health", "scope": "all", "baseline_root": str(root),
+    evidence = {"source": {"kind": "robot_task", "baseline_root": str(root),
         "repository_context": {"base_commit": head, "directory_kind": "git_worktree"}}}
     adapter = intercept_adapter(monkeypatch, native_binary, tmp_path)
     output = tmp_path / "execution"
@@ -91,6 +96,7 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
     draft = output / "draft" if stage == "prepare" else None
     if draft:
         draft.mkdir(mode=0o700)
+    role_name = {"prepare": "test", "run": "coding", "review": "review", "main": "main", "plan": "plan"}[stage]
     seen = {}
     real_permissions = codex_adapter.permission_config
 
@@ -113,16 +119,24 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
         "assert not any(name in os.environ for name in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'))",
         "rg = shutil.which('rg')",
         "search = subprocess.run(['rg', 'value', 'src/example.py'], cwd=prefix[-1], capture_output=True, text=True) if rg else None",
-        f"private_visible = os.access({str(output / 'codex-home/auth.json')!r}, os.R_OK)",
+        f"private_visible = os.access({str(root.parent / 'sessions' / role_name / 'auth.json')!r}, os.R_OK)",
         f"original_visible = os.path.exists({str(repository / 'src/example.py')!r})",
-        "print(json.dumps(dict(reads=reads, denied=denied, rg=rg, search=search.stdout if search else None, private_visible=private_visible, original_visible=original_visible)))",
+        "from pathlib import Path",
+        "def write_probe(name):",
+        "    try:",
+        "        p=Path(name); p.parent.mkdir(parents=True, exist_ok=True); p.write_text('candidate write'); return True",
+        "    except OSError: return False",
+        f"role_writes=[write_probe(p) for p in {[str(root/'src/chatcopilot/core/probe.py'), str(root/'tests/test_probe.py'), str(output/'draft/probe.py')]!r}]",
+        "print(json.dumps(dict(reads=reads, denied=denied, rg=rg, role_writes=role_writes, search=search.stdout if search else None, private_visible=private_visible, original_visible=original_visible)))",
     ])
 
     def process(outer, **kwargs):
+        kwargs["cwd"] = kwargs["root"]
+        kwargs["env"] = kwargs["environment"]
         native = [str(native_binary), "sandbox", "-P", "agentstrata", "-C", str(kwargs["cwd"])]
         for entry in seen["config"]:
             native += ["-c", entry]
-        native += ["--", "/bin/bash", "-lc", shlex.join([sys.executable, "-c", script])]
+        native += ["--", "/bin/bash", "-lc", shlex.join([str(Path(sys.executable).parent.resolve() / Path(sys.executable).name), "-c", script])]
         command = outer[:outer.index("--") + 1] + native
         result = subprocess.run(command, capture_output=True, text=True, timeout=30, env=kwargs["env"])
         assert result.returncode == 0, result.stdout + result.stderr
@@ -130,23 +144,25 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
         assert report["reads"] == expected
         assert all(report["denied"]), report
         assert not report["private_visible"]
+        assert report["role_writes"][:2] == [stage == "run", False]
+        # Unmounted /tmp paths may be writable only in the private namespace;
+        # authority concerns changes to host files, not disposable scratch data.
+        assert (root / "src/chatcopilot/core/probe.py").read_text() == ("candidate write" if stage == "run" else "value = 1\n")
+        assert (root / "tests/test_probe.py").read_text() == "def test_probe(): pass\n"
+        assert (output / "draft/probe.py").exists() is (stage == "prepare")
         if kind == "linked":
             assert not report["original_visible"]
         if shutil.which("rg"):
             assert report["rg"] == "/sandbox-tools/rg"
             assert report["search"] == "value = 2\n"
-        prompt = json.loads(kwargs["prompt"])
-        assert "相对初始源码快照" in prompt["host_policy"]
-        assert str(root) in prompt["host_policy"]
-        assert kwargs["cwd"] == (draft or root)
+        assert kwargs["cwd"] == root
         seen["model_boundary"] = True
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(codex_adapter, "run_codex_process", process)
+    monkeypatch.setattr(codex_adapter, "run_session", process)
     for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
         monkeypatch.setenv(name, str(tmp_path / "foreign-git-state"))
-    adapter._execute_impl(root, evidence, RepairOptions("unused"), output, lambda: None,
-                          draft=draft, reviewing=stage == "review")
+    adapter._execute_impl(root, AgentCall("fixture", Role(role_name), 1, "fixture", {**evidence, "base_commit": head}), RepairOptions("unused"), output, lambda: None)
     assert seen["model_boundary"]
     assert metadata_bytes(root) == before
     for path in codex_environment.git_metadata(root):
@@ -165,37 +181,9 @@ def test_environment_failure_prevents_model_start(repository, tmp_path, monkeypa
         (tmp_path / "empty").mkdir()
     adapter = intercept_adapter(monkeypatch, native_binary, tmp_path)
     model = Mock()
-    monkeypatch.setattr(codex_adapter, "run_codex_process", model)
+    monkeypatch.setattr(codex_adapter, "run_session", model)
     with pytest.raises(HarnessError) as exc:
-        adapter._execute_impl(root, {"source": {"kind": "code_health", "scope": "all", "baseline_root": str(root),
-            "repository_context": {"base_commit": "0" * 40 if broken == "wrong_head" else head}}},
+        adapter._execute_impl(root, AgentCall("fixture", Role.CODING, 1, "fixture", {"source": {}, "base_commit": "0" * 40 if broken == "wrong_head" else head}),
             RepairOptions("unused"), tmp_path / "output", lambda: None)
     assert exc.value.code == "coding_environment"
     model.assert_not_called()
-
-
-@pytest.mark.parametrize("rg_path", [None, "/usr/bin/rg", "/opt/custom-tools/rg"])
-def test_snapshot_prompt_and_tool_projection(tmp_path, monkeypatch, rg_path):
-    root = tmp_path / "snapshot"
-    root.mkdir()
-    adapter = intercept_adapter(monkeypatch, Path("/usr/bin/codex"), tmp_path)
-    original_which = shutil.which
-    monkeypatch.setattr(codex_adapter.shutil, "which", lambda name: rg_path if name == "rg" else original_which(name))
-    check = Mock(side_effect=AssertionError("snapshots must not run Git preflight"))
-    monkeypatch.setattr(codex_adapter, "check_git", check)
-    seen = {}
-
-    def process(command, **kwargs):
-        prompt = json.loads(kwargs["prompt"])
-        assert "纯源码快照" in prompt["host_policy"]
-        assert ("grep/find" in prompt["host_policy"]) is (rg_path is None)
-        if rg_path:
-            assert command[command.index("/sandbox-tools/rg") - 2:command.index("/sandbox-tools/rg") + 1] == ["--ro-bind", rg_path, "/sandbox-tools/rg"]
-        seen["command"] = command
-        return SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr(codex_adapter, "run_codex_process", process)
-    adapter._execute_impl(root, {"source": {"kind": "code_health", "scope": "all", "baseline_root": str(root)}},
-        RepairOptions("unused"), tmp_path / "output", lambda: None, auditing=True)
-    assert seen and not (root / ".git").exists()
-    check.assert_not_called()

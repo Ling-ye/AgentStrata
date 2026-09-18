@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from chatcopilot.harness.control_types import EVALUATION_TERMINAL_STATES, EvaluationControlPort, WorkerControlPort, WorkerState, external_evaluation_id
-from chatcopilot.harness.models import ACTIVE, GOVERNANCE_VERSION, PIPELINE_VERSION, Cancelled, HarnessError
+from chatcopilot.harness.models import ACTIVE, PIPELINE_VERSION, Cancelled, HarnessError
 from chatcopilot.harness.store import HarnessStore
 
 
@@ -43,8 +43,6 @@ class HarnessLifecycle:
     def prepare_resume_locked(self, task_id: str) -> dict[str, Any]:
         task = self.store.get(task_id)
         self.require_current(task)
-        if task["source"].get("kind") == "code_health":
-            raise HarnessError("new_snapshot_required", "代码治理请重新启动，以当前源码创建新快照")
         self.require_stopped(task)
         task = self._reconcile_locked(task_id)
         self._require_evaluation_stopped(task)
@@ -78,8 +76,6 @@ class HarnessLifecycle:
     def launch_locked(self, task_id: str) -> None:
         task = self.store.get(task_id)
         self.require_current(task)
-        if task["source"].get("kind") == "code_health" and task["source"].get("governance_version") != GOVERNANCE_VERSION:
-            raise HarnessError("new_snapshot_required", "旧治理任务保留历史，请重新创建源码快照")
         if task["status"] != "queued":
             return
         result = self.workers.launch(task)

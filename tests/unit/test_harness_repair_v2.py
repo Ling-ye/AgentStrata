@@ -6,11 +6,12 @@ import json
 from pathlib import Path
 import subprocess
 
+from tests.harness_delivery_fixture import RoleFixture
 import pytest
 
-from chatcopilot.harness.models import RepairOptions, RepairHypothesis, VerificationPlan, VerificationResult, VerificationCheck, HarnessError
+from chatcopilot.harness.models import RepairOptions, VerificationPlan, VerificationResult, VerificationCheck, HarnessError
 from chatcopilot.harness.store import HarnessStore
-from chatcopilot.harness.workflow import run_task
+from chatcopilot.harness.repair_runtime import run_task
 from chatcopilot.harness.preparation import acceptance
 from chatcopilot.harness.repair_types import ActionProgress
 
@@ -18,7 +19,7 @@ from chatcopilot.harness.repair_types import ActionProgress
 def proposal(**changes):
     return {"decision": "candidate", "summary": "fix observed value", "verification_kind": "pytest",
             "goal_capabilities": [], "coverage": [{"requirement": "expected_behavior", "checks": ["target"]}],
-            "gaps": [], **changes}
+            "gaps": [], "notes": [], **changes}
 
 
 @pytest.fixture
@@ -37,9 +38,12 @@ def repair(tmp_path):
     store = HarnessStore(tmp_path / "private")
     ident = "repair-" + "a" * 32
     source = {"kind": "robot_task", "original_input": "Return one", "bot_id": "fixture"}
-    store.create({"task_id": ident, "pipeline_version": 8, "request_key": "request", "request_digest": "req",
+    store.create({"task_id": ident, "pipeline_version": 9, "request_key": "request", "request_digest": "req",
                   "match_key": "match", "context_key": "context", "active_key": "active", "source": source,
                   "repository": str(repo), "base_commit": git("rev-parse", "HEAD"), "options": asdict(RepairOptions("fixture"))})
+    from chatcopilot.harness.artifact_repository import ArtifactRepository
+    artifacts = ArtifactRepository(store.root / "jobs" / ident)
+    store.update(ident, principles=asdict(artifacts.principles(Path(__file__).resolve().parents[2])))
     return store, ident, repo
 
 
@@ -52,7 +56,7 @@ class Verifier:
         return {"fixtures": ["workspace"]}
 
     def prepare(self, task, candidate, output, proposed, cancel):
-        return task["source"], RepairHypothesis("observed value", "Return one"), VerificationPlan(
+        return task["source"], VerificationPlan(
             ("target",), ("target",), (), 1, coverage={"expected_behavior": ["target"] if self.covered else []})
 
     def run(self, task, candidate, ident, checks, cancel):
@@ -65,7 +69,9 @@ class Verifier:
         return {"case_ids": [], "passed_cases": [], "failed_cases": []}
 
 
-class Coder:
+
+
+class Coder(RoleFixture):
     def __init__(self, values=(1,), proposed=None):
         self.values, self.proposed, self.calls = values, proposed, 0
 
@@ -140,7 +146,7 @@ def test_historical_definition_paraphrases_exhaust_no_progress_not_versions(repa
             raise HarnessError(row["legacy_code"], row["message_sha256"])
     coder = Coder((2, 3, 4))
     result = run_task(store, ident, InvalidDefinitions(), coder)
-    assert result["stop_reason"] == "no_progress" and coder.calls == 2
+    assert result["stop_reason"] == "no_progress" and coder.calls == 1
     assert len(store.attempts(ident)) == 2
 
 
@@ -208,10 +214,11 @@ def test_mixed_validation_tracks_actual_external_child_until_confirmed(repair):
     store, ident, _ = repair
     class Pending(Verifier):
         def prepare(self, task, *args):
-            source, hypothesis, plan = super().prepare(task, *args)
-            return {**source, "test_sha256": "test", "agent_source": {"case_ids": ["agent"]}}, hypothesis, plan
+            source, plan = super().prepare(task, *args)
+            return {**source, "test_sha256": "test", "agent_source": {"case_ids": ["agent"]}}, plan
         def run(self, task, candidate, evaluation_id, checks, cancel):
-            assert task["current_evaluation_id"] == evaluation_id + "-agent"
+            assert store.get(task["task_id"])["current_evaluation_id"] == evaluation_id + "-agent"
+            assert "current_evaluation_id" not in task
             raise HarnessError("evaluation_unavailable", "External completion unknown")
     result = run_task(store, ident, Pending(), Coder())
     assert result["status"] == "blocked"

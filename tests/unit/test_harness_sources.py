@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.harness_delivery_fixture import RoleNamespace
+
 import copy
 import hashlib
 import subprocess
@@ -352,7 +354,7 @@ def test_daily_task_fix_is_gated_by_target_and_previously_passing_tests(
         )
         return candidate_submission()
 
-    coder = SimpleNamespace(run=code, review=approve_fixture)
+    coder = RoleNamespace(run=code, review=approve_fixture)
     evaluator = Mock()
     result = run_task(
         controller.store, task["task_id"], evaluator, coder, local_verifier=LocalFixture()
@@ -384,7 +386,7 @@ def test_repository_skip_is_not_a_target_failure_or_a_passing_regression(reposit
     def code(worktree, *_):
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text("VALUE = 'fixed'\n")
         return candidate_submission()
-    result = run_task(controller.store, task["task_id"], Mock(), SimpleNamespace(run=code, review=approve_fixture), local_verifier=Local())
+    result = run_task(controller.store, task["task_id"], Mock(), RoleNamespace(run=code, review=approve_fixture), local_verifier=Local())
     assert result["status"] == status
     assert result["regression_baseline"]["passed_cases"] == ["required"]
     assert result["regression_baseline"]["rows"]["platform-only"]["outcome"] == "skipped"
@@ -548,7 +550,7 @@ def test_reference_answer_cannot_replace_reproduction(repository, tmp_path):
         file.chmod(0o600)
         return {}
 
-    coder = SimpleNamespace(run=Mock(return_value={"submission": {
+    coder = RoleNamespace(run=Mock(return_value={"submission": {
         "decision": "blocked", "summary": "需要真实模型与外部搜索验证", "verification_kind": "agent",
         "goal_capabilities": [], "coverage": [], "gaps": [{"requirement": "expected_behavior",
         "code": "fixture_missing", "message": "缺少搜索 fixture"}]}}))

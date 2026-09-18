@@ -274,11 +274,12 @@ def test_coder_archive_is_bound_to_the_active_business_step(store, monkeypatch, 
     coder = CodexCoder(lambda root, ref: store.register_trace("repair-example", root, ref))
     def execute(*args, **kwargs):
         current_capture().record({"kind": "coding_request"}, {"prompt": "synthetic input"})
-        return {"final_text": "synthetic output"}
+        return {"final_text": json.dumps({"summary": "synthetic output", "notes": [], "needs_replan": False, "gaps": []})}
     monkeypatch.setattr(coder, "_execute_impl", execute)
     with record_step(store, "repair-example", "coding", "候选", group="attempt-1", inputs={}):
         ident = step_binding()["flow_step_id"]
-        coder._execute(tmp_path, {"source": {}}, RepairOptions("synthetic"),
+        from chatcopilot.harness.agent_types import AgentCall, Role
+        coder.execute(tmp_path, AgentCall("repair-example", Role.CODING, 1, "fixture", {"source": {}}), RepairOptions("synthetic"),
                        store.root / "jobs" / "repair-example" / "attempt-1", lambda: None)
     detail = step_detail(store.get("repair-example"), [], ident)
     assert len(detail["traces"]) == 1

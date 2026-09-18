@@ -20,7 +20,8 @@ from chatcopilot.core.file_integrity import require_regular_file
 from chatcopilot.core.private_sqlite import json_text, private_directory, private_file
 from chatcopilot.core.scoped_process import sandbox_command
 from chatcopilot.core.source_snapshot import copy_sources, git_output, manifest_digest, source_manifest
-from chatcopilot.harness.models import HarnessError, safe_error
+from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.config import safe_error
 from chatcopilot.harness.preparation import classify, review_test
 
 
@@ -49,6 +50,7 @@ def _read(path: Path, *, max_bytes: int = 1024 * 1024) -> bytes:
 class LocalVerifier:
     def __init__(self, root: Path) -> None:
         self.root = root
+        self.python = str(Path(sys.executable).parent.resolve() / Path(sys.executable).name)
 
     def run_frozen_test(self, worktree: Path, content: bytes, check_cancel: Callable[[], None], *, manifest: dict[str, Any]) -> dict[str, Any]:
         digest = hashlib.sha256(content).hexdigest()
@@ -223,14 +225,13 @@ class LocalVerifier:
             "rows": result["rows"],
         }
 
-    @staticmethod
-    def _static_commands(worktree: Path) -> dict[str, list[str]]:
-        commands = {"repository:" + name: [sys.executable, str(worktree / "scripts" / name)]
+    def _static_commands(self, worktree: Path) -> dict[str, list[str]]:
+        commands = {"repository:" + name: [self.python, str(worktree / "scripts" / name)]
                     for name in ("check_architecture.py", "check_sdd_specs.py")
                     if (worktree / "scripts" / name).is_file()}
         for path in sorted((worktree / "bots").glob("*/bot.yaml")):
             commands["repository:" + path.relative_to(worktree).as_posix()] = [
-                sys.executable, "-m", "chatcopilot", "botspec", "validate", str(path)]
+                self.python, "-m", "chatcopilot", "botspec", "validate", str(path)]
         return commands
 
     def _static_checks(self, task: dict[str, Any], worktree: Path, check_cancel: Callable[[], None],
@@ -241,7 +242,7 @@ class LocalVerifier:
             if name not in commands:
                 raise HarnessError("incomplete_tests", "必要仓库检查已变化")
             output = private_directory(self.root / "jobs" / task["task_id"] / "checks" / uuid.uuid4().hex)
-            command = sandbox_command(commands[name], scope=ExecutionScope(readable_roots=(worktree,),
+            command = sandbox_command(commands[name], scope=ExecutionScope(readable_roots=(worktree, Path(self.python).parent.parent.resolve()),
                                       writable_roots=(output,), native_write=False), cwd=worktree)
             boundary = command.index("--")
             command[boundary:boundary] = ["--unshare-net", "--setenv", "PYTHONPATH", str(worktree / "src") + os.pathsep + str(worktree),
@@ -325,13 +326,13 @@ class LocalVerifier:
             self.root / "jobs" / task["task_id"] / "reproducer"
         )
         scope = ExecutionScope(
-            readable_roots=(worktree, runner.parent, reproduction, *git_roots),
+            readable_roots=(worktree, runner.parent, reproduction, Path(self.python).parent.parent.resolve(), *git_roots),
             writable_roots=(output, *scratch),
             protected_roots=(*git_roots, *fixture_files),
             native_write=False,
         )
         command = sandbox_command(
-            [sys.executable, str(runner), str(request), str(report)], scope=scope, cwd=worktree
+            [self.python, str(runner), str(request), str(report)], scope=scope, cwd=worktree
         )
         boundary = command.index("--")
         runtime_bindings = [arg for name in ("/etc/alternatives", "/etc/os-release", "/etc/lsb-release")

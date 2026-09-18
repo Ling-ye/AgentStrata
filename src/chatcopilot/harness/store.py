@@ -7,10 +7,11 @@ import hashlib
 import logging
 import time
 from contextlib import ExitStack, contextmanager
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from chatcopilot.core.private_sqlite import PrivateDatabase, json_text, private_lock, storage_error_details
+from chatcopilot.core.private_sqlite import PrivateDatabase, json_text, private_directory, private_lock, storage_error_details
 from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError
 
 _SCHEMA = """
@@ -35,6 +36,34 @@ class HarnessStore:
     def __init__(self, root: Path) -> None:
         self.root = root.absolute()
         self.database = PrivateDatabase(self.root / "harness.sqlite3", _SCHEMA)
+
+    def _dump(self, task: dict[str, Any]) -> str:
+        """Keep searchable identities in SQLite; immutable bodies live in task artifacts."""
+        from chatcopilot.harness.artifact_repository import ArtifactRepository
+        private_directory(self.root / "jobs")
+        artifacts = ArtifactRepository(self.root / "jobs" / task["task_id"])
+        value = dict(task)
+        refs = dict(value.pop("artifact_fields", {}))
+        for key in ("baseline_manifest", "verified_manifest", "preparation_input", "evaluations",
+                    "evaluation_history", "regression_baseline", "regression_baseline_versions"):
+            if key in value:
+                refs[key] = asdict(artifacts.put(key, task.get("current_attempt") or 0, value.pop(key)))
+        source = value.get("source")
+        if source is not None:
+            refs["source"] = asdict(artifacts.put("source", 1, source))
+            value["source"] = {key: source[key] for key in ("kind", "bot_id", "run_id", "evaluation_id", "case_id",
+                "case_instance_id", "case_ref", "suite_id", "target_id", "revision", "warnings", "blockers", "feedback") if key in source}
+        value["artifact_fields"] = refs
+        return json_text(value)
+
+    def _load(self, payload: str) -> dict[str, Any]:
+        from chatcopilot.harness.artifact_repository import ArtifactRepository
+        value = json.loads(payload)
+        refs = value.get("artifact_fields", {})
+        if refs:
+            artifacts = ArtifactRepository(self.root / "jobs" / value["task_id"])
+            value.update({key: artifacts.read(ref) for key, ref in refs.items()})
+        return value
 
     @contextmanager
     def control_guard(self, task_id: str, *, wait: bool = False):
@@ -80,11 +109,14 @@ class HarnessStore:
             row = connection.execute(
                 "SELECT payload FROM tasks WHERE request_key=?", (request_key,)
             ).fetchone()
-        return json.loads(row[0]) if row else None
+        return self._load(row[0]) if row else None
 
     def create(self, task: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         now = time.time()
         with self.creation_guard(), self.database.connect(write=True) as connection:
+            from chatcopilot.harness.models import PIPELINE_VERSION
+            if connection.execute("SELECT 1 FROM tasks WHERE COALESCE(json_extract(payload, '$.pipeline_version'), 0) != ? LIMIT 1", (PIPELINE_VERSION,)).fetchone():
+                raise HarnessError("cutover_required", "旧 Harness 记录需要先执行维护归档切换")
             old = connection.execute(
                 "SELECT payload FROM tasks WHERE request_key=? OR active_key=?",
                 (task["request_key"], task["active_key"]),
@@ -113,7 +145,7 @@ class HarnessStore:
                     task["context_key"],
                     task["active_key"],
                     "queued",
-                    json_text(task),
+                    self._dump(task),
                     now,
                     now,
                 ),
@@ -127,7 +159,28 @@ class HarnessStore:
             ).fetchone()
         if row is None:
             raise HarnessError("not_found", "修复任务不存在")
+        return self._load(row[0])
+
+    def control_state(self, task_id: str) -> dict[str, Any]:
+        """Polling must not deserialize source traces or all verification artifacts."""
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT payload FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        if row is None:
+            raise HarnessError("not_found", "修复任务不存在")
         return json.loads(row[0])
+
+    def heartbeat(self, task_id: str, *, elapsed_seconds: float, remaining_seconds: float) -> None:
+        with self.database.connect(write=True) as connection:
+            row = connection.execute("SELECT payload FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            if row is None:
+                raise HarnessError("not_found", "修复任务不存在")
+            task = json.loads(row[0])
+            if task["status"] not in ACTIVE:
+                return
+            now = time.time()
+            task.update(heartbeat_at=now, elapsed_seconds=elapsed_seconds,
+                        remaining_seconds=remaining_seconds, updated_at=now)
+            connection.execute("UPDATE tasks SET payload=?,updated_at=? WHERE task_id=?", (json_text(task), now, task_id))
 
     def register_trace(self, task_id: str, root: Path, reference: dict[str, Any]) -> None:
         relative = root.absolute().relative_to((self.root / "jobs" / task_id).absolute())
@@ -144,7 +197,7 @@ class HarnessStore:
             row = connection.execute("SELECT payload FROM tasks WHERE task_id=?", (task_id,)).fetchone()
             if row is None:
                 raise HarnessError("not_found", "修复任务不存在")
-            task = json.loads(row[0])
+            task = self._load(row[0])
             if (task.get("pipeline_version") or 0) >= 8:
                 old = connection.execute("SELECT payload FROM repair_steps WHERE task_id=? AND step_id=?",
                                          (task_id, step["id"])).fetchone()
@@ -169,12 +222,12 @@ class HarnessStore:
             else:
                 steps[index] = step
             task["flow_version"] = 1
-            connection.execute("UPDATE tasks SET payload=? WHERE task_id=?", (json_text(task), task_id))
+            connection.execute("UPDATE tasks SET payload=? WHERE task_id=?", (self._dump(task), task_id))
 
     def flow_steps(self, task_id: str) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
             rows = connection.execute("SELECT payload FROM repair_steps WHERE task_id=? ORDER BY rowid", (task_id,)).fetchall()
-        return [json.loads(row[0]) for row in rows]
+        return [self._load(row[0]) for row in rows]
 
     def update(
         self, task_id: str, *, if_status: frozenset[str] | None = None,
@@ -197,7 +250,7 @@ class HarnessStore:
             ).fetchone()
             if row is None:
                 raise HarnessError("not_found", "修复任务不存在")
-            current = json.loads(row[0])
+            current = self._load(row[0])
             if accepted_attempt is not None and current["status"] != "running":
                 raise Cancelled()
             if if_status is not None and current["status"] not in if_status:
@@ -210,6 +263,7 @@ class HarnessStore:
                 raise Cancelled()
             value = {**current, **changes, "updated_at": time.time()}
             if "status" in changes and value["status"] not in ACTIVE:
+                value["current_role"] = None
                 from chatcopilot.harness.flow_receipts import close_unfinished_steps
                 close_unfinished_steps(value, value["updated_at"])
                 if (value.get("pipeline_version") or 0) >= 8:
@@ -232,7 +286,7 @@ class HarnessStore:
             )
             connection.execute(
                 "UPDATE tasks SET status=?,active_key=?,payload=?,updated_at=? WHERE task_id=?",
-                (value["status"], active_key, json_text(value), value["updated_at"], task_id),
+                (value["status"], active_key, self._dump(value), value["updated_at"], task_id),
             )
             if accepted_attempt is not None:
                 connection.execute(
@@ -257,7 +311,7 @@ class HarnessStore:
                 row = connection.execute("SELECT payload FROM tasks WHERE task_id=?", (task_id,)).fetchone()
                 if row is None:
                     raise HarnessError("not_found", "修复任务不存在")
-                task = json.loads(row[0])
+                task = self._load(row[0])
                 if storage_error is None and task["status"] not in if_status:
                     return task
                 now = time.time()
@@ -268,12 +322,6 @@ class HarnessStore:
                 close_unfinished_steps(task, now)
                 if details is not None:
                     task["storage_error"] = details
-                for group in task.get("governance", {}).get("groups", []):
-                    if group["status"] in {"preparing", "coding"}:
-                        group.update(status="interrupted", reason=message, error_code=code)
-                for batch in task.get("governance", {}).get("coverage") or []:
-                    if batch["status"] == "running":
-                        batch.update(status="interrupted", reason=message, error_code=code)
                 for row in connection.execute("SELECT number,payload FROM attempts WHERE task_id=?", (task_id,)).fetchall():
                     attempt = json.loads(row[1])
                     if attempt["status"] in {"accepted", "rejected", "coding_failed", "interrupted", "rerouted"}:
@@ -286,7 +334,7 @@ class HarnessStore:
                                        (json_text(attempt), task_id, row[0]))
                 connection.execute("UPDATE tasks SET status=?,active_key=?,payload=?,updated_at=? WHERE task_id=?",
                                    (task["status"], task["active_key"] if task.get("current_evaluation_id") or task.get("delivery_evaluation") else None,
-                                    json_text(task), now, task_id))
+                                    self._dump(task), now, task_id))
                 return task
         except Exception:
             if storage_error is not None:
@@ -309,7 +357,7 @@ class HarnessStore:
     def attempts(self, task_id: str) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
             return [
-                json.loads(row[0])
+                self._load(row[0])
                 for row in connection.execute(
                     "SELECT payload FROM attempts WHERE task_id=? ORDER BY number", (task_id,)
                 )
@@ -320,7 +368,7 @@ class HarnessStore:
             row = connection.execute("SELECT payload FROM tasks WHERE task_id=?", (task_id,)).fetchone()
             if row is None:
                 raise HarnessError("not_found", "修复任务不存在")
-            task = json.loads(row[0])
+            task = self._load(row[0])
             if task["status"] != "waiting_input":
                 if task["source"].get("image_resources") == [reference]:
                     return task, False
@@ -329,7 +377,7 @@ class HarnessStore:
                         message="原图已补充，自动继续", updated_at=time.time(),
                         source={**task["source"], "image_resources": [reference]})
             connection.execute("UPDATE tasks SET status='queued',active_key=?,payload=?,updated_at=? WHERE task_id=?",
-                               (task["active_key"], json_text(task), task["updated_at"], task_id))
+                               (task["active_key"], self._dump(task), task["updated_at"], task_id))
             return task, True
 
     def claim_resume(self, task_id: str) -> tuple[dict[str, Any], bool]:
@@ -339,7 +387,7 @@ class HarnessStore:
             ).fetchone()
             if row is None:
                 raise HarnessError("not_found", "修复任务不存在")
-            task = json.loads(row[0])
+            task = self._load(row[0])
             if task["status"] not in {"blocked", "interrupted", "cancelled", "waiting_input"}:
                 return task, False
             task.update(
@@ -351,7 +399,7 @@ class HarnessStore:
             )
             connection.execute(
                 "UPDATE tasks SET status='queued',active_key=?,payload=?,updated_at=? WHERE task_id=?",
-                (task["active_key"], json_text(task), task["updated_at"], task_id),
+                (task["active_key"], self._dump(task), task["updated_at"], task_id),
             )
             return task, True
 
@@ -368,7 +416,7 @@ class HarnessStore:
             ).fetchone()
             if row is None:
                 raise HarnessError("not_found", "修复任务不存在")
-            task = json.loads(row[0])
+            task = self._load(row[0])
             if task["status"] != "running":
                 raise Cancelled()
             if task.get("delivery") and attempt.get("review", {}).get("decision") != "approved":
@@ -395,7 +443,7 @@ class HarnessStore:
             )
             connection.execute(
                 "UPDATE tasks SET status='fixed',active_key=NULL,payload=?,updated_at=? WHERE task_id=?",
-                (json_text(task), task["updated_at"], task_id),
+                (self._dump(task), task["updated_at"], task_id),
             )
 
     def history(self, *, context_key: str | None = None) -> list[dict[str, Any]]:
@@ -409,7 +457,7 @@ class HarnessStore:
                     "SELECT payload FROM tasks WHERE context_key=? ORDER BY updated_at DESC",
                     (context_key,),
                 ).fetchall()
-        return [json.loads(row[0]) for row in rows]
+        return [self._load(row[0]) for row in rows]
 
     def related(self, evaluation_id: str, contexts: set[str]) -> list[dict[str, Any]]:
         clause = "json_extract(payload, '$.source.evaluation_id')=?"
@@ -423,7 +471,7 @@ class HarnessStore:
                 "FROM tasks WHERE " + clause + " ORDER BY updated_at DESC",
                 parameters,
             ).fetchall()
-        return [json.loads(row[0]) for row in rows]
+        return [self._load(row[0]) for row in rows]
 
     def source_history(self, kind: str, source_id: str, bot_id: str) -> list[dict[str, Any]]:
         args: tuple[str, ...]
@@ -437,12 +485,12 @@ class HarnessStore:
             rows = connection.execute(
                 "SELECT payload FROM tasks WHERE " + clause + " ORDER BY updated_at DESC", args
             ).fetchall()
-        return [json.loads(row[0]) for row in rows]
+        return [self._load(row[0]) for row in rows]
 
     def page(self, *, page: int, limit: int, search: str, status: str, kind: str = "") -> dict[str, Any]:
         if page < 1 or not 1 <= limit <= 100 or len(search) > 256:
             raise ValueError("无效的历史查询参数")
-        if kind not in {"", "repair", "code_health"}:
+        if kind not in {"", "repair"}:
             raise ValueError("未知任务类型")
         clause = (
             "(?='' OR status=?) AND (?='' OR instr(lower(task_id || ' ' || "
@@ -450,9 +498,7 @@ class HarnessStore:
             "COALESCE(json_extract(payload, '$.source.case_instance_id'),'') || ' ' || "
             "COALESCE(json_extract(payload, '$.source.run_id'),'')), lower(?))>0)"
         )
-        if kind:
-            clause += " AND COALESCE(json_extract(payload, '$.source.kind'),'evaluation') " + (
-                "= 'code_health'" if kind == "code_health" else "!= 'code_health'")
+
         args = (status, status, search, search)
         with self.database.connect() as connection:
             total = connection.execute(

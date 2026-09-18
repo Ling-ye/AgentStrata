@@ -24,6 +24,8 @@ def app():
         resume=Mock(return_value={"status": "queued"}),
         patch=Mock(return_value=b"diff --git a/example.py b/example.py\n"),
     )
+    from chatcopilot.harness.api import HarnessController
+    value.state.harness.start_request = lambda request: HarnessController.start_request(value.state.harness, request)
     return value
 
 

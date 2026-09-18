@@ -17,7 +17,8 @@ from typing import Any, Callable
 from chatcopilot.core.private_sqlite import json_text, private_directory, private_file
 from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
 from chatcopilot.harness.local_verifier import _read
-from chatcopilot.harness.models import HarnessError, safe_error
+from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.config import safe_error
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.workspace import permitted_change
 

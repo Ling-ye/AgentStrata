@@ -89,7 +89,9 @@ tests/unit/test_architecture_boundaries.py
 tests/unit/test_sdd_specs.py
 tests/unit/test_docs.py
 tests/unit/test_documentation_changes.py
-tests/unit/test_health_documentation.py
+tests/unit/test_harness_multi_agent.py
+tests/unit/test_harness_repository_checks.py
+tests/unit/test_harness_cutover.py
 tests/unit/test_botspec_gateway_channels.py
 tests/unit/test_botspec_runtime_env.py
 tests/unit/test_command_timeouts.py

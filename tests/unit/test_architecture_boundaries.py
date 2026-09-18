@@ -83,6 +83,25 @@ def test_harness_control_gate_allows_ports_and_public_ui(checker, tmp_path, monk
     assert checker._harness_control_checks() == {}
 
 
+@pytest.mark.parametrize("name,source", [
+    ("workflow", "from .codex_adapter import CodexCoder\n"),
+    ("role_service", "from .worker_runtime import SystemdWorkerControl\n"),
+    ("artifact_repository", "from .role_service import RoleWorkflow\n"),
+    ("agent_types", "from .store import HarnessStore\n"),
+    ("__init__", "from .codex_adapter import CodexCoder\n"),
+    ("unknown_module", ""),
+])
+def test_harness_complete_layer_gate_rejects_reverse_dependencies_and_hidden_exports(checker, tmp_path, monkeypatch, name, source):
+    folder = tmp_path / "src/chatcopilot/harness"
+    folder.mkdir(parents=True)
+    for module in ("__init__", "codex_adapter", "worker_runtime", "role_service", "store"):
+        (folder / (module + ".py")).write_text("")
+    (folder / (name + ".py")).write_text(source)
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    assert checker._harness_layer_checks()["harness_layer_boundaries"]
+
+
 def test_harness_dependency_direction_and_private_evaluator_imports(checker, tmp_path, monkeypatch):
     assert "harness" not in checker.AREA_DEPENDENCIES["evals"]
     assert "harness" not in checker.AREA_DEPENDENCIES["core"]

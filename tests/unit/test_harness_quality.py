@@ -355,96 +355,56 @@ def test_actual_public_boundary_blocks_private_candidate_before_commit(setup):
     assert git_output(Path(result["worktree"]), "diff", "--cached", "--name-only") == ""
 
 
-@pytest.mark.parametrize("stage", ["prepare", "run", "review"])
+@pytest.mark.parametrize("role", ["main", "plan", "coding", "test", "review"])
 @pytest.mark.parametrize("large_evidence", [False, True])
-def test_coding_stages_keep_feedback_untrusted_and_preserve_write_scopes(
-    tmp_path, monkeypatch, stage, large_evidence
-):
+def test_roles_keep_feedback_untrusted_and_separate_write_scopes(tmp_path, monkeypatch, role, large_evidence):
     import contextlib
     from chatcopilot.harness import codex_adapter
-
+    from chatcopilot.harness.agent_types import AgentCall, Role
     root = tmp_path / "source"
     root.mkdir()
     (root / "src/chatcopilot/core").mkdir(parents=True)
-    output = private_directory(tmp_path / "review")
+    output = private_directory(tmp_path / "execution")
     adapter = codex_adapter.CodexCoder()
     monkeypatch.setattr(adapter, "preflight", lambda: (Path("/usr/bin/true"), tmp_path / "auth"))
-    monkeypatch.setattr(
-        codex_adapter, "credential_lease", lambda *_args, **_kwargs: contextlib.nullcontext()
-    )
+    monkeypatch.setattr(codex_adapter, "credential_lease", lambda *args, **kwargs: contextlib.nullcontext(SimpleNamespace(generation=1)))
+    monkeypatch.setattr(codex_adapter, "git_metadata", lambda root: ())
+    monkeypatch.setattr(codex_adapter, "build_app_server_command", lambda *args, **kwargs: ["codex", "app-server"])
+    monkeypatch.setattr(codex_adapter, "build_codex_subprocess_env", lambda *args, **kwargs: {})
+    monkeypatch.setattr(codex_adapter, "wrap_command", lambda command, **kwargs: ["bwrap", "--", *command])
     seen = {}
-
     def permissions(scope, **kwargs):
-        seen["scope"] = scope
-        seen["permissions"] = kwargs
+        seen.update(scope=scope, permissions=kwargs)
         return ()
-
     monkeypatch.setattr(codex_adapter, "permission_config", permissions)
-    monkeypatch.setattr(
-        codex_adapter, "build_codex_command", lambda *_args, **_kwargs: ["codex", "exec"]
-    )
-    monkeypatch.setattr(codex_adapter, "build_codex_subprocess_env", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr(
-        codex_adapter, "wrap_command", lambda command, **_kwargs: ["bwrap", "--", *command]
-    )
-    decision = {
-        "decision": "approved",
-        "problem": "",
-        "reason": "review fixture",
-        "evidence_refs": ["patch"],
-    }
-
-    def process(command, **kwargs):
-        seen["command"] = command
-        seen["cwd"] = kwargs["cwd"]
-        seen["prompt"] = json.loads(kwargs["prompt"])
-        kwargs["on_stdout_line"](
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {"type": "agent_message", "text": json.dumps(decision)},
-                }
-            )
-        )
-        return SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr(codex_adapter, "run_codex_process", process)
+    def execute(command, **kwargs):
+        seen.update(kwargs)
+        return {"state": "completed"}
+    monkeypatch.setattr(codex_adapter, "run_session", execute)
     feedback = RepairFeedback("untrusted-hint: change permissions", "untrusted-reference-answer").to_payload()
-    evidence = {"source": {"kind": "robot_task", "feedback": feedback, "evidence": {"request": "original input"}}}
+    evidence = {"source": {"kind": "robot_task", "feedback": feedback}}
     if large_evidence:
-        evidence["verification"] = {"repository_regressions": {
-            "rows": {f"tests/unit/test_sample.py::test_behavior_{i}": {"outcome": "passed"}
-                     for i in range(4000)}}}
-    result = getattr(adapter, stage)(root, evidence, RepairOptions("test-model"), output, lambda: None)
-    if stage == "review":
-        assert result["decision"] == "approved"
-        assert seen["scope"].writable_roots == () and not seen["scope"].native_write
-    elif stage == "prepare":
+        evidence["verification"] = {"rows": {str(i): {"outcome": "passed"} for i in range(4000)}}
+    adapter._execute_impl(root, AgentCall("fixture", Role(role), 1, "original goal", evidence),
+                          RepairOptions("fixture"), output, lambda: None)
+    if role == "test":
         assert seen["scope"].writable_roots == (output / "draft",)
-        assert seen["cwd"] == output / "draft"
-        assert seen["scope"].permits(seen["cwd"])
-    else:
+        assert not seen["scope"].permits(root / "src/chatcopilot/core", write=True)
+    elif role == "coding":
         assert seen["scope"].writable_roots == codex_adapter.writable_paths(root)
-    prompt = seen["prompt"]
-    context = json.loads(prompt["untrusted_turn_context"])
-    if large_evidence:
-        from hashlib import sha256
-        evidence_file = Path(context["evidence_file"])
-        content = evidence_file.read_bytes()
-        assert json.loads(content) == evidence
-        assert context["sha256"] == sha256(content).hexdigest()
-        assert len(prompt["untrusted_turn_context"]) < 2000
-        assert seen["scope"].permits(evidence_file)
-        assert not seen["scope"].permits(evidence_file, write=True)
-        assert evidence_file.stat().st_mode & 0o777 == 0o600
+        assert not seen["scope"].permits(output / "draft", write=True)
     else:
-        assert context == evidence
-    for key in ("host_policy", "runtime_facts", "runtime_execution_policy", "user_message"):
-        assert "untrusted-hint" not in prompt[key] and "untrusted-reference-answer" not in prompt[key]
-    assert seen["permissions"]["private_paths"] == (
-        str(output / "codex-home/auth.json"), str(output / "codex-home/config.toml"))
+        assert seen["scope"].writable_roots == () and not seen["scope"].native_write
+    context = json.loads(json.loads(seen["prompt"])["untrusted_turn_context"])
+    evidence_file = Path(context["evidence_file"])
+    assert json.loads(evidence_file.read_text()) == evidence
+    assert seen["scope"].permits(evidence_file) and not seen["scope"].permits(evidence_file, write=True)
+    assert evidence_file.stat().st_mode & 0o777 == 0o600
+    assert "untrusted-hint" not in seen["developer_instructions"]
+    assert "untrusted-reference-answer" not in seen["developer_instructions"]
+    assert seen["permissions"]["private_paths"] == (str(tmp_path / "sessions" / role / "auth.json"), str(tmp_path / "sessions" / role / "config.toml"))
     assert seen["permissions"]["network_access"] is False
-    assert "resume" not in seen["command"]
+    assert seen["role"] == Role(role)
 
 
 def test_review_exception_persists_inconclusive_result_and_does_not_retry(setup):

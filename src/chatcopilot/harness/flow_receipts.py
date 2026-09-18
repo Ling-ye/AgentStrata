@@ -13,7 +13,7 @@ def close_unfinished_steps(task: dict[str, Any], now: float) -> None:
 
 
 def record_delivery(previous: dict[str, Any], current: dict[str, Any], now: float) -> None:
-    if not current.get("flow_version") or current.get("source", {}).get("kind") == "code_health":
+    if not current.get("flow_version"):
         return
     steps = list(current.get("flow_steps", []))
     delivery = current.get("delivery") or {}

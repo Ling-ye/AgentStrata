@@ -39,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
     task_start.add_argument("--expected-behavior", default="", help="参考答案或预期行为")
     maintenance = sub.add_parser("maintenance", help="证明 Harness 空闲并在命令期间阻止创建和恢复任务")
     maintenance.add_argument("argv", nargs=argparse.REMAINDER)
+    reset = sub.add_parser("cutover", help="确认旧任务空闲并归档；默认只检查")
+    reset.add_argument("--apply", action="store_true", help="归档旧任务并启用空的新协议记录")
     listing = sub.add_parser("list")
     listing.add_argument("--page", type=int, default=1)
     listing.add_argument("--search", default="")
@@ -56,7 +58,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "maintenance":
             command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
             return controller.maintenance(command)
-        if args.command == "start":
+        if args.command == "cutover":
+            value = controller.cutover(apply=args.apply)
+        elif args.command == "start":
             value = controller.start(
                 args.evaluation,
                 args.case,

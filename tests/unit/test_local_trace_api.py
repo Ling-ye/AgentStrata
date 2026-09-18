@@ -14,7 +14,7 @@ from chatcopilot.evals.service.client import EvaluationServiceClient
 from chatcopilot.evals.service.server import EvaluationServiceRuntime
 from chatcopilot.gateway.observation_store import ObservationStore
 from chatcopilot.harness.api import HarnessController
-from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.models import HarnessError, PIPELINE_VERSION
 from chatcopilot.harness.store import HarnessStore
 
 
@@ -49,7 +49,7 @@ def test_gateway_trace_http_is_run_bound_and_not_cached(tmp_path, monkeypatch):
 def test_harness_reader_uses_registered_source_and_digest(tmp_path):
     store = HarnessStore(tmp_path / "harness")
     for task_id in ("task-a", "task-b"):
-        store.create({"task_id": task_id, "request_key": task_id, "match_key": task_id,
+        store.create({"task_id": task_id, "pipeline_version": PIPELINE_VERSION, "request_key": task_id, "match_key": task_id,
                       "context_key": task_id, "active_key": task_id})
     capture = TraceCapture({"kind": "harness", "task_id": "task-a", "phase": "coding"})
     capture.record({"kind": "coding_request"}, {"prompt": "synthetic"})

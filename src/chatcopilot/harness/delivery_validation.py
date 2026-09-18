@@ -8,11 +8,10 @@ from typing import Any, Callable
 
 from chatcopilot.core.private_sqlite import private_directory
 from chatcopilot.core.source_snapshot import copy_sources, manifest_digest, source_manifest
-from chatcopilot.harness.code_health_checks import CodeHealthChecks, compare_verification
-from chatcopilot.harness.code_health_workspace import save_patch
-from chatcopilot.harness.health_documentation import classify
-from chatcopilot.harness.health_ledger import SourceLedger
-from chatcopilot.harness.models import CandidateRef, CodingOptions, HarnessError, VerificationPlan, review_decision
+from chatcopilot.harness.repository_checks import RepositoryChecks, compare_verification
+from chatcopilot.harness.patches import save_patch
+from chatcopilot.harness.verification_ledger import SourceLedger
+from chatcopilot.harness.models import VerificationRequest, CandidateRef, CodingOptions, HarnessError, VerificationPlan, review_decision
 
 
 def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, verifier: Any,
@@ -32,7 +31,7 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
                 raise HarnessError("reproducer_changed", "同步主干改变了冻结回归测试")
             ledger.generated_tests[name] = old[name]
             ledger.test_contents[old[name]["sha256"]] = (root / name).read_bytes()
-    checks = CodeHealthChecks(directory, Path(task["repository"]))
+    checks = RepositoryChecks(directory, Path(task["repository"]))
     checks.bind(ledger, frozen)
     paths = sorted(p for p in base_manifest.keys() | manifest.keys() if base_manifest.get(p) != manifest.get(p))
     if any(p not in approval["paths"] for p in paths):
@@ -40,51 +39,35 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
     patch = directory / "candidate.patch"
     save_patch(root, frozen, paths, patch)
     profile = approval["profile"]
-    if profile == "documentation_only":
-        proof = classify(frozen, root, paths, base_manifest, manifest)
-        if not proof["eligible"]:
-            raise HarnessError("delivery_scope_changed", "同步主干后不再是普通说明差异")
-        verification = checks.documentation(root, paths, check_cancel)
-        if not verification["passed"]:
-            raise HarnessError("delivery_revalidation_failed", "同步主干后的文档验收未通过")
-    else:
-        baseline = checks.verify(base, profile, check_cancel)
-        verification = checks.verify(root, profile, check_cancel)
-        if compare_verification(baseline, verification) is None:
-            raise HarnessError("delivery_revalidation_failed", "同步主干后的仓库验收出现回归或缺失证据")
+    baseline = checks.verify(base, profile, check_cancel)
+    verification = checks.verify(root, profile, check_cancel)
+    if compare_verification(baseline, verification) is None:
+        raise HarnessError("delivery_revalidation_failed", "同步主干后的仓库验收出现回归或缺失证据")
     trials = []
-    if task["source"].get("kind", "evaluation") == "code_health":
-        for name in ledger.generated_tests:
-            if name.endswith(".py"):
-                result = checks.run_test(root, (root / name).read_bytes(), check_cancel)
-                if any(r["outcome"] != "passed" for r in result["rows"].values()):
-                    raise HarnessError("delivery_revalidation_failed", "同步主干后的冻结回归未通过")
-                trials.append(result)
-    else:
-        plan = VerificationPlan.from_payload(task["verification_plan"])
-        expected = set(plan.primary_checks) | set(task.get("protected_cases", []))
-        for repetition in range(2 if plan.real_agent else 1):
-            check_cancel()
-            evaluation_id = "eval-harness-" + task_id[7:] + "-delivery-" + manifest_digest(manifest)[:12] + "-" + str(repetition)
-            store.update(task_id, delivery_evaluation={"id": evaluation_id, "digest": manifest_digest(manifest)})
-            # A returned result confirms execution finished. An exception (including
-            # host storage failure) does not, so leave ownership for reconciliation.
-            result = verifier.run(store.get(task_id), CandidateRef(root, manifest_digest(manifest), task["base_commit"]),
-                                  evaluation_id, list(plan.checks), check_cancel)
-            store.update(task_id, delivery_evaluation=None)
-            result.require_valid(list(plan.checks), plan.check_repetitions or plan.repetitions)
-            if result.candidate_digest != manifest_digest(manifest) or not expected.issubset(result.passed):
-                raise HarnessError("delivery_revalidation_failed", "同步主干后的目标复测未通过")
-            trials.append(asdict(result))
-        regression = verifier.regressions(store.get(task_id), CandidateRef(root, manifest_digest(manifest), task["base_commit"]), check_cancel)
-        previous = task.get("regression_baseline", {}).get("passed_cases", [])
-        if not set(previous).issubset(regression.get("passed_cases", [])):
-            raise HarnessError("delivery_revalidation_failed", "同步主干后的保护集出现回归")
-        trials.append(regression)
+    plan = VerificationPlan.from_payload(task["verification_plan"])
+    expected = set(plan.primary_checks) | set(task.get("protected_cases", []))
+    for repetition in range(2 if plan.real_agent else 1):
+        check_cancel()
+        evaluation_id = "eval-harness-" + task_id[7:] + "-delivery-" + manifest_digest(manifest)[:12] + "-" + str(repetition)
+        store.update(task_id, delivery_evaluation={"id": evaluation_id, "digest": manifest_digest(manifest)})
+        # A returned result confirms execution finished. An exception (including
+        # host storage failure) does not, so leave ownership for reconciliation.
+        result = verifier.run(VerificationRequest.from_task(store.get(task_id)), CandidateRef(root, manifest_digest(manifest), task["base_commit"]),
+                              evaluation_id, list(plan.checks), check_cancel)
+        store.update(task_id, delivery_evaluation=None)
+        result.require_valid(list(plan.checks), plan.check_repetitions or plan.repetitions)
+        if result.candidate_digest != manifest_digest(manifest) or not expected.issubset(result.passed):
+            raise HarnessError("delivery_revalidation_failed", "同步主干后的目标复测未通过")
+        trials.append(asdict(result))
+    regression = verifier.regressions(VerificationRequest.from_task(store.get(task_id)), CandidateRef(root, manifest_digest(manifest), task["base_commit"]), check_cancel)
+    previous = task.get("regression_baseline", {}).get("passed_cases", [])
+    if not set(previous).issubset(regression.get("passed_cases", [])):
+        raise HarnessError("delivery_revalidation_failed", "同步主干后的保护集出现回归")
+    trials.append(regression)
     source = {**task["source"], "baseline_root": str(frozen), "repository_context": {
         "directory_kind": "git_worktree", "base_commit": task["delivery"].get("update_base_sha"),
         "original_branch": "main", "git_worktree": str(root), "snapshot_digest": manifest_digest(base_manifest)}}
-    result = coder.review(root, {"source": source, "patch": patch.read_text(),
+    result = coder.review(root, {"task_id": task_id, "source": source, "patch": patch.read_text(),
         "reproduction": task.get("evaluations", {}), "verification": verification, "regression": trials},
         CodingOptions(task["options"]["model"], task["options"]["reasoning_effort"], 1, None), directory / "review", check_cancel)
     review = review_decision({key: result[key] for key in ("decision", "problem", "reason", "evidence_refs") if key in result})

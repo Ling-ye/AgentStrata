@@ -34,7 +34,7 @@ export function RepairProgress({ task, refreshTask, title = "修复进度", stat
     return () => window.clearInterval(timer);
   }, [active, task.heartbeat_at]);
   const heartbeat = heartbeatStatus(task, now);
-  const round = task.pipeline_version === 8 && task.current_attempt != null
+  const round = task.pipeline_version === 9 && task.current_attempt != null
     ? `第 ${task.current_attempt}/${task.options.max_attempts} 轮修复` : repairRoundLabel(task);
   const data = query.data;
   return <section className="repair-progress" aria-label={title}>

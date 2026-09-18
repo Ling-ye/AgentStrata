@@ -22,10 +22,11 @@ from chatcopilot.harness.config import configuration, default_root
 from chatcopilot.harness.control_service import HarnessLifecycle
 from chatcopilot.harness.control_types import WorkerControlPort
 from chatcopilot.harness.worker_runtime import SystemdWorkerControl
-from chatcopilot.harness.models import HarnessError, RepairFeedback, RepairOptions, safe_error
+from chatcopilot.harness.models import HarnessError, RepairFeedback, RepairOptions
+from chatcopilot.harness.config import safe_error
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.sources import RepairSources
-from chatcopilot.harness.models import PIPELINE_VERSION, GOVERNANCE_VERSION, CodeHealthOptions, ProblemEvidence, SourceReader
+from chatcopilot.harness.models import PIPELINE_VERSION, ProblemEvidence, SourceReader
 from chatcopilot.harness.workspace import context_key
 
 
@@ -68,50 +69,12 @@ class HarnessController:
     def default_model(self) -> str:
         return self.settings.get("CHATCOPILOT_HARNESS_MODEL", "")
 
-    def code_health_config(self) -> dict[str, Any]:
-        from chatcopilot.harness.code_health_rules import RULES
-        return {"rules": list(RULES), "scopes": [
-            {"value": "all", "label": "全部可治理源码"}, {"value": "runtime", "label": "运行时源码"},
-            {"value": "console", "label": "控制台（前后端）"}, {"value": "docs", "label": "说明文档"}],
-            "default_model": self.settings.get("CHATCOPILOT_HARNESS_MODEL", ""),
-            "defaults": {"reasoning_effort": "xhigh", "max_attempts": 3,
-                         "budget": {"mode": "fixed_groups", "count": 1}, "time_budget_seconds": 7200},
-            "base_commit": None, "base_branch": "main", "source_mode": "remote_main"}
-
-    def start_code_health(self, scope: str, options: CodeHealthOptions, *, request_id: str,
-                          launch: bool = True) -> dict[str, Any]:
-        from chatcopilot.harness.code_health_rules import SCOPES
-        if not isinstance(options, CodeHealthOptions):
-            raise ValueError("代码治理必须明确选择预算模式")
-        if scope not in SCOPES or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_id):
-            raise ValueError("无效的扫描范围或请求 ID")
-        request_digest = _digest({"kind": "code_health", "scope": scope, "options": asdict(options)})
-        previous = self.store.by_request(request_id)
-        if previous is not None:
-            if previous["request_digest"] != request_digest:
-                raise HarnessError("conflict", "同一请求 ID 的内容已变化")
-            return self.get(previous["task_id"])
-        from chatcopilot.harness.delivery import remote_baseline
-        delivery = remote_baseline(self.repository, self.settings)
-        commit = delivery["base_sha"]
-        source = {"kind": "code_health", "scope": scope, "snapshot_digest": commit,
-                  "governance_version": GOVERNANCE_VERSION, "original_branch": "main"}
-        digest = commit
-        context = _digest(source)
-        ident = "repair-" + uuid.uuid4().hex
-        with self.lifecycle.operation(ident):
-            task, created = self.store.create({
-                "task_id": ident, "pipeline_version": PIPELINE_VERSION, "request_key": request_id,
-                "request_digest": request_digest, "context_key": context, "match_key": context,
-                "active_key": _digest([context, asdict(options), delivery]), "base_commit": commit,
-                "repository": str(self.repository), "source": source,
-                "evidence_digest": digest, "options": asdict(options), "delivery": delivery,
-                "unit": "agentstrata-harness-" + ident[7:], "dispatch_state": "creating",
-            })
-            if created and self._initialize(task):
-                if launch:
-                    self._launch(self.store.get(task["task_id"]))
-            return self.get(task["task_id"])
+    def start_request(self, request, *, launch: bool = True):
+        if request.source_kind == "robot_task":
+            return self.start_task(request.bot_id, request.run_id, request.options,
+                request_id=request.request_id, feedback=request.feedback, launch=launch)
+        return self.start_case_instance(request.case_instance_id, request.options,
+            request_id=request.request_id, feedback=request.feedback, launch=launch)
 
     def start(
         self,
@@ -376,6 +339,9 @@ class HarnessController:
         from chatcopilot.harness.delivery import initialize
         try:
             initialize(self.store, task["task_id"])
+            from chatcopilot.harness.artifact_repository import ArtifactRepository
+            artifacts = ArtifactRepository(self.store.root / "jobs" / task["task_id"])
+            self.store.update(task["task_id"], principles=asdict(artifacts.principles(Path(__file__).resolve().parents[3])))
             return True
         except Exception as exc:
             self.store.update(task["task_id"], status="blocked", stage="snapshot", dispatch_state="failed",
@@ -394,17 +360,22 @@ class HarnessController:
         with self.store.maintenance() as descriptor:
             return SystemdWorkerControl.maintenance(command, descriptor)
 
+    def cutover(self, *, apply: bool = False):
+        from chatcopilot.harness.cutover_runtime import cutover
+        from chatcopilot.harness.github_delivery import DeliveryConfig, GitHubDelivery
+        with self.store.database.connect() as connection:
+            remote = connection.execute("SELECT 1 FROM tasks WHERE json_extract(payload, '$.delivery.pr_number') IS NOT NULL LIMIT 1").fetchone()
+        client = GitHubDelivery(DeliveryConfig.load(self.settings)) if remote else None
+        return cutover(self.store, self.lifecycle.workers, self.evaluator, apply=apply, github=client)
+
     def get(self, task_id: str) -> dict[str, Any]:
         task = self.store.get(task_id)
         return {
             **self._public(task),
             "attempts": self.store.attempts(task_id),
             **self._commit_status(task),
-            "candidate_available": None
-            if task["source"].get("kind") == "code_health" and task["source"].get("governance_version") != GOVERNANCE_VERSION
-            else self._partial_candidate_available(task) or
-                 ((self._candidate_available(task) or self._archived_candidate_available(task)) if task["status"] == "fixed" or task.get("checkpoint") else False),
-            "checkpoint_available": self._checkpoint_available(task),
+            "candidate_available": self._partial_candidate_available(task) or
+                 ((self._candidate_available(task) or self._archived_candidate_available(task)) if task["status"] == "fixed" else False),
         }
 
     def trace_records(self, task_id: str) -> list[dict[str, Any]]:
@@ -439,7 +410,15 @@ class HarnessController:
         if task.get("pipeline_version", 0) >= 8:
             task = {**task, "flow_steps": self.store.flow_steps(task_id)}
         attempts = self.store.attempts(task_id)
-        return step_detail(task, attempts, step_id) if step_id else project_flow(task, attempts)
+        if not step_id:
+            return project_flow(task, attempts)
+        result = step_detail(task, attempts, step_id)
+        ref = (result.get("evidence") or {}).get("output")
+        if ref:
+            from chatcopilot.harness.artifact_repository import ArtifactRepository
+            result["result"] = ArtifactRepository(self.store.root / "jobs" / task_id).read(ref)
+            result["detail_state"] = "available"
+        return result
 
     def commands(self, task_id: str, *, source_id: str = "", cursor: str = "") -> dict[str, Any]:
         from chatcopilot.harness.command_logs import read_commands
@@ -465,10 +444,6 @@ class HarnessController:
         self, *, page: int = 1, limit: int = 20, search: str = "", status: str = "", kind: str = ""
     ) -> dict[str, Any]:
         result = self.store.page(page=page, limit=limit, search=search, status=status, kind=kind)
-        for task in result["tasks"]:
-            if task["source"].get("kind") == "code_health" and not task.get("governance_summary"):
-                from chatcopilot.harness.health_batches import summary
-                task["governance_summary"] = summary(self.store.get(task["task_id"]).get("governance", {}))
         result["tasks"] = [self._public(task) for task in result["tasks"]]
         return result
 
@@ -551,8 +526,6 @@ class HarnessController:
     def evidence(self, task_id: str) -> dict[str, Any]:
         task = self.store.get(task_id)
         source = task["source"]
-        if source.get("kind") == "code_health":
-            return task.get("governance", {})
         return {
             key: source[key]
             for key in ("evidence", "feedback", "trials", "case_definition", "diagnosis", "conditions", "agent_case")
@@ -561,13 +534,7 @@ class HarnessController:
 
     def check_log(self, task_id: str, reference: str) -> dict[str, Any]:
         task = self.store.get(task_id)
-        if task["source"].get("kind") != "code_health" and not task.get("delivery"):
-            raise HarnessError("not_found", "此任务没有登记检查日志")
-        governance = task.get("governance", {})
-        records = [governance.get("before", {}), governance.get("after", {})]
-        records.extend(governance.get("baselines", {}).values())
-        for group in governance.get("groups", []):
-            records.extend(group.get("baselines", {}).values())
+        records = []
         for attempt in self.store.attempts(task_id):
             records.extend((attempt.get("verification", {}), attempt.get("after", {})))
         allowed = {check["log"] for record in records for check in record.get("checks", []) if "log" in check}
@@ -590,34 +557,19 @@ class HarnessController:
 
     def candidate_patch(self, task_id: str) -> bytes:
         task = self.store.get(task_id)
-        if not self._checkpoint_available(task):
-            raise HarnessError("artifact_changed", "累计检查点缺失或与验收摘要不一致")
-        record = task["checkpoint"]
-        path = self.store.root / "jobs" / task_id / record["path"] / "candidate.patch"
-        private_file(path)
-        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
-            content = stream.read()
-        if hashlib.sha256(content).hexdigest() != record["patch_sha256"]:
-            raise HarnessError("artifact_changed", "累计补丁与检查点摘要不一致")
-        return content
-
-    def _checkpoint_available(self, task: dict[str, Any]) -> bool:
-        from chatcopilot.core.source_snapshot import verify_copy
-        from chatcopilot.harness.health_ledger import source_files
-        record = task.get("checkpoint")
-        if not record or not task.get("verified_manifest"):
-            return False
-        try:
-            relative = Path(record["path"])
-            if relative.is_absolute() or ".." in relative.parts:
-                return False
-            root = self.store.root / "jobs" / task["task_id"] / relative / "source"
-            if root.resolve() != root or set(source_files(root)) != set(task["verified_manifest"]):
-                return False
-            verify_copy(root, task["verified_manifest"])
-            return manifest_digest(task["verified_manifest"]) == record["digest"] == task["verified_digest"]
-        except (OSError, ValueError, HarnessError):
-            return False
+        if task.get("archive"):
+            from chatcopilot.harness.delivery_archive import verify_archive
+            folder, record = verify_archive(self.store, task)
+            path = folder / "candidate.patch"
+            private_file(path)
+            content = path.read_bytes()
+            if hashlib.sha256(content).hexdigest() != record["patch_sha256"]:
+                raise HarnessError("artifact_changed", "归档补丁摘要变化")
+            return content
+        attempt = task.get("candidate_checkpoint", {}).get("number") or task.get("accepted_candidate", {}).get("attempt")
+        if attempt is None:
+            raise HarnessError("not_found", "任务尚无候选补丁")
+        return self.patch(task_id, attempt)
 
     def reproducer(self, task_id: str) -> bytes:
         source = self.store.get(task_id)["source"]
@@ -724,12 +676,10 @@ class HarnessController:
                 "preparation_input",
                 "flow_steps",
                 "evaluation_history",
+                "artifact_fields",
             }
         }
         source = task["source"]
-        if source.get("kind") == "code_health":
-            from chatcopilot.harness.health_batches import summary
-            value["governance_summary"] = task.get("governance_summary") or summary(task.get("governance", {}))
         value["source"] = {
             key: source[key]
             for key in (

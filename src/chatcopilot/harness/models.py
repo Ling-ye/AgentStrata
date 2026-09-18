@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from collections.abc import Iterator, Mapping
+import hashlib
+import json
 from pathlib import Path
 from typing import Any, Callable, Protocol
-import os
 
-from chatcopilot.core.observability_redaction import redact_observability_payload
 
-PIPELINE_VERSION = 8
-GOVERNANCE_VERSION = 6
+PIPELINE_VERSION = 9
 
 ACTIVE = frozenset({"queued", "running", "cancel_requested"})
 TERMINAL = frozenset({"fixed", "needs_review", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})
@@ -25,21 +25,6 @@ class HarnessError(RuntimeError):
 class Cancelled(HarnessError):
     def __init__(self) -> None:
         super().__init__("cancelled", "修复任务已取消")
-
-
-def safe_error(error: Exception, extra_secrets: tuple[str, ...] = ()) -> str:
-    secrets = (
-        *extra_secrets,
-        *(
-            value
-            for name, value in os.environ.items()
-            if any(
-                part in name.lower() for part in ("secret", "token", "password", "api_key", "proxy")
-            )
-        ),
-    )
-    value = redact_observability_payload({"error": str(error)}, secrets=secrets).value
-    return str(value.get("error", type(error).__name__))[:1000]
 
 
 @dataclass(frozen=True)
@@ -81,30 +66,33 @@ class RepairOptions:
 
 
 @dataclass(frozen=True)
-class CodeHealthOptions:
-    model: str
-    budget: dict[str, Any]
-    reasoning_effort: str = "xhigh"
-    max_attempts: int = 3
-
-    def __post_init__(self) -> None:
-        RepairOptions(self.model, self.reasoning_effort, self.max_attempts)
-        if not isinstance(self.budget, dict):
-            raise ValueError("必须明确选择代码治理预算模式")
-        key = {"time": "seconds", "fixed_groups": "count", "discovered_groups": "count"}.get(self.budget.get("mode"))
-        if (key is None or set(self.budget) != {"mode", key}
-                or type(self.budget[key]) is not int or self.budget[key] < 1):
-            raise ValueError("预算必须为总时间、验收问题组数或发现问题组数，额度必须为正整数")
-        object.__setattr__(self, "budget", dict(self.budget))
-
-
-@dataclass(frozen=True)
 class CodingOptions:
     """Host-projected call options; None means no execution deadline."""
     model: str
     reasoning_effort: str
     max_attempts: int
     timeout_seconds: int | None
+
+
+@dataclass(frozen=True)
+class RepairRequest:
+    source_kind: str
+    options: RepairOptions
+    request_id: str
+    case_instance_id: str = ""
+    bot_id: str = ""
+    run_id: str = ""
+    feedback: RepairFeedback = field(default_factory=RepairFeedback)
+
+    def __post_init__(self) -> None:
+        if self.source_kind == "evaluation":
+            if not self.case_instance_id or self.bot_id or self.run_id or self.feedback.expected_behavior.strip():
+                raise ValueError("测评只接受 Case 实例和修复提示，不能提供人工答案")
+        elif self.source_kind == "robot_task":
+            if not self.bot_id or not self.run_id or self.case_instance_id:
+                raise ValueError("机器人来源需要 bot_id 和 run_id")
+        else:
+            raise ValueError("未知修复来源")
 
 
 @dataclass(frozen=True)
@@ -185,18 +173,57 @@ class VerificationResult:
                 for check in self.checks if check.check_id == name)}
 
 
+@dataclass(frozen=True)
+class VerificationRequest(Mapping[str, Any]):
+    """Only validation inputs cross the verifier port, never the full mutable task."""
+    task_id: str
+    source: dict[str, Any]
+    acceptance: dict[str, Any]
+    verification_plan: dict[str, Any] | None
+    delivery: bool
+
+    @classmethod
+    def from_task(cls, task: dict[str, Any]) -> VerificationRequest:
+        return cls(task["task_id"], task["source"], task.get("acceptance", {}),
+                   task.get("verification_plan"), bool(task.get("delivery")))
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in self.__dataclass_fields__:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.__dataclass_fields__)
+
+    def __len__(self) -> int:
+        return len(self.__dataclass_fields__)
+
+
+def acceptance_digest(task: dict[str, Any], attempt: dict[str, Any]) -> str:
+    """Bind the receipt to the exact goal, test definition, environment and results."""
+    source = task["source"]
+    agent = source.get("agent_source", source)
+    value = {"candidate": attempt["candidate_digest"], "goal": task.get("acceptance"),
+        "plan": task.get("verification_plan"), "problem": task.get("problem_ref"),
+        "principles": task.get("principles"), "environment": task.get("environment"),
+        "test": source.get("test_sha256"), "case": agent.get("case_snapshot_id"),
+        "conditions": agent.get("conditions"), "verification": attempt.get("verification"),
+        "confirmation": attempt.get("confirmation"), "regressions": attempt.get("repository_regressions")}
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 class SourceReader(Protocol):
     def load(self, reference: dict[str, str]) -> ProblemEvidence: ...
 
 
 class Verifier(Protocol):
     def capabilities(self) -> dict[str, Any]: ...
-    def prepare(self, task: dict[str, Any], candidate: CandidateRef, output: Path,
+    def prepare(self, task: VerificationRequest, candidate: CandidateRef, output: Path,
                 proposal: dict[str, Any], check_cancel: Callable[[], None]
-                ) -> tuple[dict[str, Any], RepairHypothesis, VerificationPlan]: ...
-    def run(self, task: dict[str, Any], candidate: CandidateRef, run_id: str,
+                ) -> tuple[dict[str, Any], VerificationPlan]: ...
+    def run(self, task: VerificationRequest, candidate: CandidateRef, run_id: str,
             checks: list[str], check_cancel: Callable[[], None]) -> VerificationResult: ...
-    def regressions(self, task: dict[str, Any], candidate: CandidateRef,
+    def regressions(self, task: VerificationRequest, candidate: CandidateRef,
                     check_cancel: Callable[[], None], checks: list[str] | None = None
                     ) -> dict[str, Any]: ...
 

@@ -13,6 +13,7 @@ SUBMISSION_SCHEMA = {
     "properties": {
         "decision": {"type": "string", "enum": ["candidate", "blocked", "not_reproduced"]},
         "summary": {"type": "string"},
+        "notes": {"type": "array", "items": {"type": "string"}},
         "verification_kind": {"type": "string", "enum": ["pytest", "agent", "mixed", "existing"]},
         "goal_capabilities": {"type": "array", "items": {"type": "string", "enum": ["image_delivery"]}},
         "coverage": {"type": "array", "items": {"type": "object", "properties": {
@@ -20,11 +21,11 @@ SUBMISSION_SCHEMA = {
             "checks": {"type": "array", "items": {"type": "string"}}},
             "required": ["requirement", "checks"], "additionalProperties": False}},
         "gaps": {"type": "array", "items": {"type": "object", "properties": {
-            "requirement": {"type": "string"},
+            "requirement": {"type": "string", "enum": ["expected_behavior", "input_image_materialized", "image_materialized", "image_dispatched", "image_delivered"]},
             "code": {"type": "string", "enum": ["fixture_missing", "material_missing", "permission_missing", "unverified"]},
             "message": {"type": "string"}}, "required": ["requirement", "code", "message"], "additionalProperties": False}},
     },
-    "required": ["decision", "summary", "verification_kind", "goal_capabilities", "coverage", "gaps"],
+    "required": ["decision", "summary", "notes", "verification_kind", "goal_capabilities", "coverage", "gaps"],
     "additionalProperties": False,
 }
 

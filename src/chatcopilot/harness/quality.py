@@ -12,15 +12,8 @@ from chatcopilot.core.private_sqlite import json_text, private_directory, privat
 from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
 from chatcopilot.harness.local_commit import regression_content, regression_ref
 from chatcopilot.harness.local_verifier import _read
-from chatcopilot.harness.models import (
-    Cancelled,
-    Coder,
-    Publisher,
-    HarnessError,
-    RepairOptions,
-    review_decision,
-    safe_error,
-)
+from chatcopilot.harness.models import Cancelled, Coder, Publisher, HarnessError, RepairOptions, review_decision
+from chatcopilot.harness.config import safe_error
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.flow_records import record_step
 

@@ -12,7 +12,7 @@ import uuid
 import pytest
 
 from chatcopilot.harness.api import HarnessController
-from chatcopilot.harness.code_health import HealthRun
+from chatcopilot.harness.control_service import check_cancellation
 from chatcopilot.harness.control_types import DispatchResult, WorkerState
 from chatcopilot.harness.models import Cancelled, HarnessError, PIPELINE_VERSION
 from chatcopilot.harness.worker_runtime import SystemdWorkerControl
@@ -73,10 +73,8 @@ def test_cancel_keeps_occupancy_until_worker_stop_is_confirmed(control, state, d
     assert controller.cancel(ident)["status"] == "cancel_requested"
     assert occupied(controller, ident)
     assert workers.probes == [ident]
-    worker = HealthRun.__new__(HealthRun)
-    worker.store, worker.ident = controller.store, ident
     with pytest.raises(Cancelled):
-        worker.cancel()
+        check_cancellation(controller.store.get(ident))
     workers.state = WorkerState.INACTIVE
     assert controller.reconcile(ident)["status"] == "cancelled"
     assert not occupied(controller, ident)
@@ -89,10 +87,8 @@ def test_completed_cancellation_cannot_be_revived_by_late_worker(control):
     for state in ("running", "fixed"):
         with pytest.raises(Cancelled):
             controller.store.update(ident, status=state)
-    worker = HealthRun.__new__(HealthRun)
-    worker.store, worker.ident = controller.store, ident
     with pytest.raises(Cancelled):
-        worker.cancel()
+        check_cancellation(controller.store.get(ident))
 
 
 @pytest.mark.parametrize("source,suffix", [({"kind": "evaluation"}, ""),
@@ -362,7 +358,7 @@ def test_worker_execution_lock_prevents_false_inactive(control, monkeypatch):
     controller, _, _ = control
     ident = task(controller)
     directory = controller.store.root / "jobs" / ident
-    directory.mkdir(mode=0o700, parents=True)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd = os.open(directory / "worker.lock", os.O_CREAT | os.O_RDWR, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -378,7 +374,7 @@ def test_dispatch_timeout_is_unknown_and_does_not_overwrite_frozen_runtime(contr
     controller, _, _ = control
     ident = task(controller)
     directory = controller.store.root / "jobs" / ident / "runtime" / "src" / "chatcopilot" / "harness"
-    directory.mkdir(mode=0o700, parents=True)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     marker = directory / "worker.py"
     marker.write_text("frozen worker")
     runtime = SystemdWorkerControl(controller.repository, controller.store.root, {})

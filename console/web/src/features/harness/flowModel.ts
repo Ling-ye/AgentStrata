@@ -32,7 +32,7 @@ export function descendants(flow: RepairFlow, id: string): FlowStep[] {
   return flow.steps.filter(s => ids.has(s.parent_id));
 }
 export function flowChildren(flow: RepairFlow, id: string): Array<{ kind: "group" | "step"; id: string }> {
-  const phases = ["source", "snapshot", "plan", "prepare", "prepare_trial", "prepare_review", "prepare_result", "reproduce", "baseline", "repository_baseline", "coding", "verify", "repository", "confirm", "review", "acceptance"];
+  const phases = ["source", "snapshot", "main", "plan", "test", "prepare", "prepare_trial", "prepare_review", "prepare_result", "reproduce", "baseline", "repository_baseline", "coding", "verify", "repository", "confirm", "review", "acceptance"];
   const items = [
     ...flow.groups.filter(g => g.parent_id === id && descendants(flow, g.id).length).map(g => {
       const steps = descendants(flow, g.id);

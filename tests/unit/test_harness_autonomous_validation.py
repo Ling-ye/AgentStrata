@@ -1,9 +1,11 @@
+
 """Autonomous draft correction and complete, private multimodal acceptance."""
 import base64
 import hashlib
 import json
-from types import SimpleNamespace
 
+from tests.harness_delivery_fixture import RoleNamespace
+from types import SimpleNamespace
 import pytest
 from tests.harness_delivery_fixture import freeze_fixture, candidate_submission, offline_harness_delivery, frozen_test_source, approve_fixture  # noqa: F401
 
@@ -241,8 +243,8 @@ def test_revision_after_candidate_rechecks_original_baseline_and_candidate(tmp_p
     import subprocess
     from pathlib import Path
     from chatcopilot.harness.api import HarnessController
-    from chatcopilot.harness.models import RepairHypothesis, VerificationPlan
-    from chatcopilot.harness.workflow import run_task
+    from chatcopilot.harness.models import VerificationPlan
+    from chatcopilot.harness.repair_runtime import run_task
     from test_harness_sources import robot_source
     root = tmp_path / "repository"
     subprocess.run(["git", "clone", "--quiet", "--shared", str(Path(__file__).resolve().parents[2]), str(root)], check=True)
@@ -258,7 +260,7 @@ def test_revision_after_candidate_rechecks_original_baseline_and_candidate(tmp_p
             assert not marker.exists(), "new test must be prepared on original baseline"
             self.revision += 1
             checks = (f"target-{self.revision}",)
-            return frozen_test_source(task, candidate.path), RepairHypothesis("fixture", "fixed"), VerificationPlan(checks, checks, (), 1)
+            return frozen_test_source(task, candidate.path), VerificationPlan(checks, checks, (), 1)
         def run(self, task, candidate, run_id, checks, check):
             fixed = (candidate.path / "src/chatcopilot/core/harness_probe.py").exists()
             calls.append((self.revision, fixed))
@@ -274,9 +276,9 @@ def test_revision_after_candidate_rechecks_original_baseline_and_candidate(tmp_p
         coding.append(1)
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text("VALUE = 'fixed'\n")
         return candidate_submission()
-    result = run_task(controller.store, task["task_id"], Verifier(), SimpleNamespace(run=code, review=approve_fixture), committer=None)
+    result = run_task(controller.store, task["task_id"], Verifier(), RoleNamespace(run=code, review=approve_fixture), committer=None)
     assert result["status"] == "fixed", result.get("message")
-    assert len(coding) == 2
+    assert len(coding) == 1
     assert calls == [(1, False), (1, True), (2, False), (2, True)]
     assert result["evaluations"]["verify-1"]["complete"] and result["evaluations"]["verify-1"]["error"]["code"] == "verification_test_definition"
     assert result["evaluations"]["reproduce-r2"]["failed_cases"] == ["target-2"]

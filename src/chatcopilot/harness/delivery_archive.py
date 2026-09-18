@@ -65,6 +65,10 @@ def verify_archive(store: Any, task: dict[str, Any]) -> tuple[Path, dict[str, An
     private_file(bundle)
     if hashlib.sha256(bundle.read_bytes()).hexdigest() != data["bundle_sha256"]:
         raise HarnessError("archive_changed", "恢复所需 Git 数据已变化")
+    patch = folder / "candidate.patch"
+    private_file(patch)
+    if hashlib.sha256(patch.read_bytes()).hexdigest() != data["patch_sha256"]:
+        raise HarnessError("archive_changed", "归档补丁已变化")
     return folder, data
 
 
@@ -95,7 +99,11 @@ def archive(store: Any, task_id: str) -> dict[str, Any]:
     git(root, "bundle", "create", str(folder / "recovery.bundle"), "HEAD")
     (folder / "recovery.bundle").chmod(0o600)
     git(repository, "bundle", "verify", str(folder / "recovery.bundle"))
-    data = {"head": head, "branch": branch, "base_sha": task["base_commit"], "manifest": manifest,
+    from chatcopilot.harness.patches import save_patch
+    before = task["baseline_manifest"]
+    paths = sorted(name for name in before.keys() | manifest.keys() if before.get(name) != manifest.get(name))
+    patch_sha = save_patch(root, directory / "source", paths, folder / "candidate.patch")
+    data = {"patch_sha256": patch_sha, "head": head, "branch": branch, "base_sha": task["base_commit"], "manifest": manifest,
             "bundle_sha256": hashlib.sha256((folder / "recovery.bundle").read_bytes()).hexdigest()}
     raw = json_text(data).encode()
     (folder / "manifest.json").write_bytes(raw)
@@ -172,7 +180,7 @@ def restore(store: Any, task_id: str) -> Path:
         git(repository, "worktree", "add", str(root), branch)
     else:
         git(repository, "worktree", "add", "-b", branch, str(root), data["head"])
-    from chatcopilot.harness.health_policy import source_files
+    from chatcopilot.harness.verification_policy import source_files
     for name in source_files(root):
         if name not in data["manifest"]:
             (root / name).unlink()

@@ -22,20 +22,14 @@ BODY_BYTES = 8 * 1024
 
 def _logs(task: dict[str, Any], attempts: list[dict[str, Any]]):
     stage = task["stage"]
-    if task.get("source", {}).get("governance_version") == 2:
-        for record in task.get("progress_sources", []):
-            path = Path(record["path"])
-            if path.is_absolute() or ".." in path.parts or "\\" in record["path"]:
-                raise ValueError("Invalid progress source")
-            yield path.parts, {key: value for key, value in {
-                **record, "current": record["id"] == task.get("current_source")
-                and record["kind"] == ("prepare" if stage == "prepare_reproducer" else stage)
-            }.items() if key != "path"}
+    if task.get("pipeline_version", 0) >= 9:
+        for row in attempts:
+            number = row["number"]
+            for role in ("main", "plan", "coding", "test", "review"):
+                yield (f"attempt-{number}", role, "public-events.jsonl"), {
+                    "id": f"{role}-{number}", "kind": role, "number": number,
+                    "current": task.get("current_role") == role and task.get("current_attempt") == number}
         return
-    if task.get("source", {}).get("kind") == "code_health":
-        yield ("audit", "public-events.jsonl"), {
-            "id": "audit", "kind": "audit", "number": None, "current": stage == "audit",
-        }
     preparing = stage in {"prepare_reproducer", "auto_correcting"}
     revisions = task.get("preparation_revisions", [])
     latest = max((row["revision"] for row in revisions), default=None)

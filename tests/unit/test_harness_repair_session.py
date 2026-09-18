@@ -6,6 +6,7 @@ import pytest
 
 from chatcopilot.core.private_sqlite import private_directory
 from chatcopilot.harness import repair_session
+from chatcopilot.harness.agent_types import Role, SCHEMAS
 from chatcopilot.harness.models import HarnessError, RepairOptions
 
 
@@ -21,15 +22,15 @@ def test_author_resumes_but_reviewer_starts_independent_threads(tmp_path, monkey
     author, reviewer = private_directory(tmp_path / "author"), private_directory(tmp_path / "reviewer")
     def run(home, reviewing=False, generation=1, environment_identity="env-1"):
         return repair_session.run_session(["fixture"], root=tmp_path, home=home, environment={}, prompt="frozen evidence",
-            options=RepairOptions("test"), task_id="task", generation=generation, reviewing=reviewing,
+            options=RepairOptions("test"), task_id="task", generation=generation, role=Role.REVIEW if reviewing else Role.CODING,
             observe=lambda _: None, cancel=lambda: None, environment_identity=environment_identity)
     run(author)
     run(author)
     run(reviewer, True)
     run(reviewer, True)
     assert [r["thread_id"] for r in seen] == ["", "thread-1", "", ""]
-    assert seen[0]["output_schema"] == repair_session.SUBMISSION_SCHEMA
-    assert seen[2]["output_schema"] == repair_session.REVIEW_SCHEMA
+    assert seen[0]["output_schema"] == SCHEMAS[Role.CODING]
+    assert seen[2]["output_schema"] == SCHEMAS[Role.REVIEW]
     with pytest.raises(HarnessError, match="身份变化"):
         run(author, generation=2)
     with pytest.raises(HarnessError, match="环境"):
@@ -45,7 +46,7 @@ def test_uncertain_acceptance_never_replays_a_turn(tmp_path, monkeypatch):
         raise RuntimeError("connection lost")
     monkeypatch.setattr(repair_session, "run_app_server", disconnect)
     args = dict(root=tmp_path, home=private_directory(tmp_path / "home"), environment={}, prompt="task",
-                options=RepairOptions("test"), task_id="task", generation=1, reviewing=False,
+                options=RepairOptions("test"), task_id="task", generation=1, role=Role.CODING,
                 observe=lambda _: None, cancel=lambda: None)
     with pytest.raises(RuntimeError):
         repair_session.run_session(["fixture"], **args)
@@ -69,7 +70,7 @@ def test_resumed_thread_usage_is_turn_delta_not_last_request(tmp_path, monkeypat
     home = private_directory(tmp_path / "home")
     for _ in range(2):
         repair_session.run_session(["fixture"], root=tmp_path, home=home, environment={}, prompt="task",
-            options=RepairOptions("test"), task_id="task", generation=1, reviewing=False,
+            options=RepairOptions("test"), task_id="task", generation=1, role=Role.CODING,
             observe=lambda value: observed.append(json.loads(value)), cancel=lambda: None)
     assert [item["usage"]["input_tokens"] for item in observed] == [100, 150]
 

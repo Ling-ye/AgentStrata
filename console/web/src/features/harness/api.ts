@@ -97,7 +97,7 @@ export function stageLabel(stage: string): string {
   if (stage.startsWith("confirm-")) return `第 ${stage.slice(8)} 轮独立确认`;
   if (stage.startsWith("verify-")) return `第 ${stage.slice(7)} 轮复测`;
   return ({ auto_correcting: "自动修正复现方案", waiting_image: "等待原图", queued: "等待启动", self_check: "来源自检", prepare_reproducer: "建立复现测试",
-    snapshot: "冻结源码", definition: "冻结验证草案", regressions: "仓库回归", scan: "规则检查", audit: "只读巡检", verify: "候选验收",
+    environment: "准备独立依赖环境", snapshot: "冻结源码", definition: "冻结验证草案", regressions: "仓库回归", main: "主 Agent 安排任务", plan: "根因与修复计划", test: "独立验证设计", verify: "候选验收",
     review: "AI 审核", commit: "本地提交", reproduce: "确认当前问题", baseline: "建立回归基线", repository_baseline: "仓库回归基线", coding: "生成候选", done: "完成" } as Record<string, string>)[stage] ?? stage;
 }
 export function sourceLabel(task: RepairTask): string {

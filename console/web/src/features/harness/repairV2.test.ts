@@ -7,7 +7,7 @@ import { REPAIR_LABELS, type ProgressTask } from "./api";
 
 it("shows bounded rounds, saved candidate and unverified requirements without a success claim", () => {
   const task: ProgressTask = {
-    task_id: "repair-fixture", pipeline_version: 8, status: "needs_review", stage: "done",
+    task_id: "repair-fixture", pipeline_version: 9, status: "needs_review", stage: "done",
     current_attempt: 2, elapsed_seconds: 100, remaining_seconds: 3500, stop_reason: "acceptance_gap",
     options: { model: "fixture", reasoning_effort: "medium", max_attempts: 3, timeout_seconds: 3600 },
     acceptance_coverage: { expected_behavior: { passed: false, checks: [] } },

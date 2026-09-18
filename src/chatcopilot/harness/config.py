@@ -6,6 +6,7 @@ import os
 import hashlib
 from pathlib import Path
 from typing import Mapping
+from chatcopilot.core.observability_redaction import redact_observability_payload
 
 from chatcopilot.core.private_sqlite import private_file
 
@@ -18,6 +19,7 @@ ENVIRONMENT_KEYS = frozenset(
         "CHATCOPILOT_HARNESS_GIT_AUTHOR_NAME",
         "CHATCOPILOT_HARNESS_GIT_AUTHOR_EMAIL",
         "CHATCOPILOT_HARNESS_MODEL",
+        "CHATCOPILOT_HARNESS_UV_BIN",
         "CHATCOPILOT_CODEX_BIN",
         "CHATCOPILOT_CODEX_BOT_HOME",
         "CHATCOPILOT_EVALUATION_SOCKET",
@@ -67,3 +69,18 @@ def default_root(repository: Path, settings: Mapping[str, str] | None = None) ->
         return Path(configured).expanduser().absolute()
     identity = hashlib.sha256(str(repository.resolve()).encode()).hexdigest()[:16]
     return Path.home() / ".local" / "state" / "agentstrata" / "harness" / identity
+
+
+def safe_error(error: Exception, extra_secrets: tuple[str, ...] = ()) -> str:
+    secrets = (
+        *extra_secrets,
+        *(
+            value
+            for name, value in os.environ.items()
+            if any(
+                part in name.lower() for part in ("secret", "token", "password", "api_key", "proxy")
+            )
+        ),
+    )
+    value = redact_observability_payload({"error": str(error)}, secrets=secrets).value
+    return str(value.get("error", type(error).__name__))[:1000]

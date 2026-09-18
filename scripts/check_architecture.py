@@ -754,7 +754,7 @@ def _harness_control_checks() -> dict[str, dict[str, list[str]]]:
         "codex_adapter", "evaluation_adapter", "local_verifier", "github_delivery")}
     public_symbols = {
         prefix + "api": {"HarnessController"},
-        prefix + "models": {"HarnessError", "RepairOptions", "RepairFeedback", "CodeHealthOptions"},
+        prefix + "models": {"HarnessError", "RepairOptions", "RepairFeedback", "RepairRequest"},
     }
     violations: dict[str, list[str]] = {}
 
@@ -811,6 +811,53 @@ def _harness_control_checks() -> dict[str, dict[str, list[str]]]:
     return {"harness_control_layer_boundaries": violations} if violations else {}
 
 
+# Classify the actual Harness modules; adding a module requires choosing its responsibility.
+HARNESS_LAYERS = {
+    "types": {"__init__", "models", "agent_types", "repair_types", "control_types", "preparation", "evidence_context"},
+    "config": {"config", "role_prompts"},
+    "repo": {"store", "artifact_repository", "flow_records", "flow_receipts", "flow", "progress", "command_logs", "verification_policy", "patches"},
+    "service": {"workflow", "role_service", "control_service"},
+    "runtime": {"api", "assembly", "codex_adapter", "codex_environment", "cutover_runtime", "delivery", "delivery_archive",
+                "delivery_candidate", "delivery_checks", "delivery_runtime", "delivery_validation", "evaluation_adapter",
+                "gateway_adapter", "github_delivery", "local_commit", "local_verifier", "pytest_runner", "quality",
+                "repair_repository", "repair_runtime", "repair_session", "repository_checks", "sources", "task_environment",
+                "verification", "verification_ledger", "worker", "worker_runtime", "workspace"},
+    "ui": {"__main__"},
+}
+
+
+def _harness_layer_checks() -> dict[str, dict[str, list[str]]]:
+    modules = _production_modules()
+    prefix = "chatcopilot.harness."
+    layers = {(prefix + name if name != "__init__" else prefix[:-1]): layer for layer, names in HARNESS_LAYERS.items() for name in names}
+    allowed = {"types": {"types"}, "config": {"types", "config"}, "repo": {"types", "config", "repo"},
+               "service": {"types", "config", "repo", "service"},
+               "runtime": {"types", "config", "repo", "service", "runtime"}, "ui": {"types", "ui"}}
+    violations = {}
+    for name, record in modules.items():
+        if name != prefix[:-1] and not name.startswith(prefix):
+            continue
+        errors = []
+        layer = layers.get(name)
+        if layer is None:
+            errors.append("Harness module has no responsibility classification")
+        else:
+            for reference in _import_references(record, modules):
+                target = reference.target or reference.imported
+                if target in layers and layers[target] not in allowed[layer]:
+                    if layer == "ui" and target == prefix + "api":
+                        continue
+                    errors.append(f"{layer} cannot depend on {layers[target]}: {target}")
+            if layer in {"types", "service"}:
+                tree = ast.parse(record.path.read_text(encoding="utf-8-sig"))
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"__import__", "eval", "exec"}:
+                        errors.append("Dynamic execution cannot bypass Harness role boundaries")
+        if errors:
+            violations[record.path.relative_to(ROOT).as_posix()] = sorted(set(errors))
+    return {"harness_layer_boundaries": violations} if violations else {}
+
+
 def check_architecture() -> dict[str, dict[str, list[str]]]:
     violations: dict[str, dict[str, list[str]]] = {}
     _merge(violations, check_rules())
@@ -818,6 +865,7 @@ def check_architecture() -> dict[str, dict[str, list[str]]]:
     _merge(violations, _compatibility_import_checks())
     _merge(violations, _semantic_invariants())
     _merge(violations, _harness_control_checks())
+    _merge(violations, _harness_layer_checks())
     return violations
 
 

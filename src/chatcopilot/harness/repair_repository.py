@@ -19,6 +19,19 @@ class RepairArtifacts:
         self.task = task
         self.worktree = workspace.prepare(Path(task["repository"]), root, task["task_id"], task["base_commit"])
 
+    @staticmethod
+    def manifest(root: Path):
+        return source_manifest(root)
+
+    @staticmethod
+    def digest(root: Path):
+        return manifest_digest(source_manifest(root))
+
+    def attempt_directory(self, number: int) -> Path:
+        output = private_directory(self.directory / f"attempt-{number}")
+        private_directory(output / "draft")
+        return output
+
     def snapshot(self, name: str) -> CandidateRef:
         manifest = source_manifest(self.worktree)
         snapshots = private_directory(self.directory / "snapshots")
@@ -47,6 +60,19 @@ class RepairArtifacts:
         return {"changed_files": changed, "candidate_digest": candidate.digest, "patch_sha256": digest,
                 "snapshot_path": str(candidate.path), "patch_path": f"attempt-{number}/candidate.patch",
                 "captured_at": time.time()}
+
+    @staticmethod
+    def copy_draft(source: Path, target: Path) -> None:
+        private_directory(target)
+        for name in ("test_reproduction.py", "agent_case.json"):
+            path = source / name
+            if path.exists():
+                private_file(path)
+                content = path.read_bytes()
+                destination = target / name
+                with destination.open("xb") as stream:
+                    stream.write(content)
+                destination.chmod(0o600)
 
     def require_git_identity(self) -> None:
         if git_output(self.worktree, "rev-parse", "HEAD") != self.task["base_commit"]:

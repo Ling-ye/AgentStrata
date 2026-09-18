@@ -58,34 +58,6 @@ class LoadSource(BaseModel):
     bot_id: str = ""
 
 
-class TimeBudget(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    mode: Literal["time"]
-    seconds: int = Field(strict=True, ge=1)
-
-
-class FixedGroupsBudget(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    mode: Literal["fixed_groups"]
-    count: int = Field(strict=True, ge=1)
-
-
-class DiscoveredGroupsBudget(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    mode: Literal["discovered_groups"]
-    count: int = Field(strict=True, ge=1)
-
-
-class CreateCodeHealth(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    scope: Literal["all", "runtime", "console", "docs"] = "all"
-    request_id: str = Field(min_length=1)
-    model: str = Field(min_length=1)
-    reasoning_effort: str = "xhigh"
-    max_attempts: int = Field(default=3, ge=1)
-    budget: TimeBudget | FixedGroupsBudget | DiscoveredGroupsBudget = Field(discriminator="mode")
-
-
 def _controller(request: Request):
     configured = getattr(request.app.state, "harness", None)
     if configured is None:
@@ -135,24 +107,10 @@ def create(request: Request, body: CreateRepair):
             body.model, body.reasoning_effort, body.max_attempts, body.timeout_seconds
         )
     )
-    if body.source_kind == "robot_task":
-        return _call(
-            lambda: _controller(request).start_task(
-                body.bot_id,
-                body.run_id,
-                options,
-                request_id=body.request_id,
-                feedback=body.feedback,
-            )
-        )
-    return _call(
-        lambda: _controller(request).start_case_instance(
-            body.case_instance_id,
-            options,
-            feedback=body.feedback,
-            request_id=body.request_id,
-        )
-    )
+    from chatcopilot.harness.models import RepairRequest
+    payload = _call(lambda: RepairRequest(body.source_kind, options, body.request_id,
+        body.case_instance_id, body.bot_id, body.run_id, body.feedback or RepairFeedback()))
+    return _call(lambda: _controller(request).start_request(payload))
 
 
 @router.post("/sources/load")
@@ -160,19 +118,9 @@ def load_source(request: Request, body: LoadSource):
     return _call(lambda: _controller(request).load_source(body.kind, body.source_id, body.bot_id))
 
 
-@router.get("/code-health/config")
-def code_health_config(request: Request):
-    return _call(lambda: _controller(request).code_health_config())
-
-
-@router.post("/code-health/tasks")
-def create_code_health(request: Request, body: CreateCodeHealth):
-    from chatcopilot.harness.models import CodeHealthOptions
-    _mutation_access(request)
-    return _call(lambda: _controller(request).start_code_health(
-        body.scope, CodeHealthOptions(body.model, body.budget.model_dump(), body.reasoning_effort,
-                                     body.max_attempts),
-        request_id=body.request_id))
+@router.get("/tasks/{task_id}/candidate-patch")
+def candidate_patch(request: Request, task_id: str):
+    return Response(_call(lambda: _controller(request).candidate_patch(task_id)), media_type="text/x-diff")
 
 
 @router.get("/tasks/{task_id}/check-log")
@@ -187,7 +135,7 @@ def history(
     limit: int = Query(20, ge=1, le=100),
     search: str = Query("", max_length=256),
     status: str = "",
-    kind: Literal["", "repair", "code_health"] = "",
+    kind: Literal["", "repair"] = "",
 ):
     return _call(
             lambda: _controller(request).list(page=page, limit=limit, search=search, status=status,
@@ -273,12 +221,6 @@ def cancel(request: Request, task_id: str):
 def resume(request: Request, task_id: str):
     _mutation_access(request)
     return _call(lambda: _controller(request).resume(task_id))
-
-
-@router.get("/tasks/{task_id}/candidate-patch")
-def candidate_patch(request: Request, task_id: str):
-    return Response(_call(lambda: _controller(request).candidate_patch(task_id)), media_type="text/x-diff",
-                    headers={"Content-Disposition": 'attachment; filename="candidate.patch"'})
 
 
 @router.get("/tasks/{task_id}/attempts/{number}/patch")

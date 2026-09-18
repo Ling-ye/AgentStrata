@@ -10,19 +10,24 @@ from typing import Any
 
 from chatcopilot.core import github_transport
 from chatcopilot.core.private_sqlite import private_directory
-from chatcopilot.core.source_snapshot import manifest_digest, source_manifest, verify_copy
+from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
 from chatcopilot.harness.delivery_archive import verify_worktree
 from chatcopilot.harness.github_delivery import git
 from chatcopilot.harness.local_commit import regression_content, regression_refs
-from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.models import HarnessError, acceptance_digest
 
 
 def accepted(store: Any, task: dict[str, Any]) -> bool:
     if task.get("delivery_cancel_requested") or task["status"] in {"cancelled", "cancel_requested"}:
         return False
-    if task["source"].get("kind", "evaluation") == "code_health":
-        return bool(task.get("checkpoint") and task.get("verified_manifest"))
-    return task["status"] == "fixed" and bool(task.get("verified_digest"))
+    receipt = task.get("accepted_candidate") or {}
+    attempts = [a for a in store.attempts(task["task_id"]) if a.get("number") == receipt.get("attempt") and a.get("status") == "accepted"]
+    if len(attempts) != 1 or receipt.get("verification_digest") != acceptance_digest(task, attempts[0]):
+        return False
+    return (task["status"] == "fixed" and bool(task.get("verified_digest"))
+            and receipt.get("candidate_digest") == task["verified_digest"]
+            and receipt.get("goal_digest") == task.get("acceptance", {}).get("sha256")
+            and bool(receipt.get("verification_digest")) and bool(receipt.get("review_binding")))
 
 
 def candidate(store: Any, task_id: str) -> dict[str, Any]:
@@ -34,39 +39,29 @@ def candidate(store: Any, task_id: str) -> dict[str, Any]:
     root = verify_worktree(store, task)
     before = task["baseline_manifest"]
     attempts = store.attempts(task_id)
-    if task["source"].get("kind", "evaluation") == "code_health":
-        checkpoint = task["checkpoint"]
-        patch = store.root / "jobs" / task_id / checkpoint["path"] / "candidate.patch"
-        if hashlib.sha256(patch.read_bytes()).hexdigest() != checkpoint["patch_sha256"]:
-            raise HarnessError("artifact_changed", "累计补丁与验收记录不一致")
-        approved = [a for a in attempts if a.get("status") == "accepted"]
-        current = task["verified_manifest"]
-        verify_copy(root, current)
-        if source_manifest(root) != current:
-            raise HarnessError("workspace_changed", "候选不是已验收检查点")
-        title = f"[代码治理] 修复 {len(approved)} 个已验收问题组"
-        profile = "documentation_only" if all(a.get("verification", {}).get("profile") == "documentation_only" for a in approved) else "full" if any(a.get("verification", {}).get("profile") == "full" for a in approved) else "fast"
-    else:
-        approved = [a for a in attempts if a.get("status") == "accepted" and a.get("candidate_digest") == task["verified_digest"]]
-        if len(approved) != 1 or manifest_digest(source_manifest(root)) != task["verified_digest"]:
-            raise HarnessError("incomplete_verification", "修复候选缺少唯一验收身份")
-        references = regression_refs(task)
-        for reference in references:
-            if reference["kind"] not in {"pytest", "agent_case"}:
-                continue
-            content = regression_content(task, reference)
-            if hashlib.sha256(content).hexdigest() != reference["sha256"]:
-                raise HarnessError("reproducer_changed", "冻结回归测试已变化")
-            destination = root / reference["path"]
-            if destination.exists() and destination.read_bytes() != content:
-                raise HarnessError("regression_conflict", "回归测试路径已被其他内容占用")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(content)
-            destination.chmod(0o600)
-        store.update(task_id, regression=references[0], regressions=references)
-        current = source_manifest(root)
-        title = "[AI Harness] 修复已复现问题并收录回归验证"
-        profile = "fast"
+    approved = [a for a in attempts if a.get("status") == "accepted" and a.get("candidate_digest") == task["verified_digest"]]
+    if len(approved) != 1 or manifest_digest(source_manifest(root)) != task["verified_digest"]:
+        raise HarnessError("incomplete_verification", "修复候选缺少唯一验收身份")
+    references = regression_refs(task)
+    for reference in references:
+        if reference["kind"] not in {"pytest", "agent_case"}:
+            continue
+        content = regression_content(task, reference)
+        if hashlib.sha256(content).hexdigest() != reference["sha256"]:
+            raise HarnessError("reproducer_changed", "冻结回归测试已变化")
+        destination = root / reference["path"]
+        if destination.exists() and destination.read_bytes() != content:
+            raise HarnessError("regression_conflict", "回归测试路径已被其他内容占用")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+        destination.chmod(0o600)
+    store.update(task_id, regression=references[0], regressions=references)
+    current = source_manifest(root)
+    title = "[AI Harness] 修复已复现问题并收录回归验证"
+    profile = "fast"
+    receipt = task["accepted_candidate"]
+    if len(approved) != 1 or approved[0]["number"] != receipt["attempt"] or approved[0].get("review", {}).get("binding") != receipt["review_binding"]:
+        raise HarnessError("incomplete_verification", "交付凭据与审查版本不一致")
     if not approved or any(a.get("review", {}).get("decision") != "approved" or a.get("regressions") for a in approved):
         raise HarnessError("review_required", "交付必须有独立审核和完整通过的验收证据")
     paths = sorted(n for n in before.keys() | current.keys() if before.get(n) != current.get(n))

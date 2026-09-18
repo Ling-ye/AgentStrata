@@ -26,7 +26,7 @@
 | Agent、PromptPlan、记忆、工具 | [Agent](docs/reference/agent.md)、[上下文](docs/reference/context.md)、[工具](docs/reference/tools.md) |
 | BotSpec、环境、部署、发布 | [配置](docs/reference/configuration.md)、[公开边界](docs/reference/publication.md) |
 | Evaluation、评分、来源 | [Evaluation](docs/reference/evaluation.md)、[服务协议](docs/reference/evaluation-service.md) |
-| Harness、治理、交付 | [Harness](docs/reference/harness.md)、[治理](docs/reference/code-health.md)、[交付](docs/reference/delivery.md) |
+| Harness、治理、交付 | [Harness](docs/reference/harness.md)、[黄金原则](docs/reference/harness-principles.md)、[交付](docs/reference/delivery.md) |
 | Console、观测 | [Console](docs/reference/console.md)、[观测](docs/reference/observability.md) |
 | 开发与验证、故障诊断 | [开发](docs/guides/development.md)、[诊断](docs/guides/debugging.md) |
 | 文档与 SDD | [维护入口](docs/maintenance.md)、[文档治理基线](specs/documentation-governance/spec.md) |

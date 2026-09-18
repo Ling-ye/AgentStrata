@@ -22,7 +22,7 @@
 | 注册、权限和外部能力 | [工具](tools.md) |
 | BotSpec、环境和配置投影 | [配置](configuration.md) |
 | Case、评分、监督与结果 | [Evaluation](evaluation.md) |
-| 修复、代码治理和 PR 交付 | [Harness](harness.md) |
+| 修复与 PR 交付 | [Harness](harness.md) |
 | 私有配置、过程展示和前端 | [Console](console.md) |
 
 ## 为什么按领域组织

@@ -12,7 +12,8 @@ from chatcopilot.core.source_snapshot import copy_sources, manifest_digest, sour
 from chatcopilot.harness import delivery_archive, delivery_candidate
 from chatcopilot.harness.delivery_checks import publication_checks
 from chatcopilot.harness.github_delivery import DeliveryConfig, GitHubDelivery, git
-from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError, PIPELINE_VERSION, safe_error
+from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError, PIPELINE_VERSION
+from chatcopilot.harness.config import safe_error
 from chatcopilot.harness.control_types import external_evaluation_id
 from chatcopilot.harness.workspace import prepare
 
@@ -50,8 +51,6 @@ def initialize(store: Any, task_id: str, client: GitHubDelivery | None = None) -
     if source_manifest(root) != manifest:
         raise HarnessError("snapshot_failed", "冻结期间任务源码变化")
     source = task["source"]
-    if source.get("kind", "evaluation") == "code_health":
-        source = {**source, "snapshot_digest": manifest_digest(manifest), "original_branch": "main"}
     store.update(task_id, baseline_manifest=manifest, source=source)
 
 

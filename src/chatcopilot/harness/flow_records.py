@@ -9,7 +9,8 @@ from typing import Any, Iterator
 import uuid
 
 from chatcopilot.core.observability_redaction import redact_observability_payload
-from chatcopilot.harness.models import Cancelled, safe_error
+from chatcopilot.harness.models import Cancelled
+from chatcopilot.harness.config import safe_error
 from chatcopilot.harness.store import HarnessStore
 
 _STEP: ContextVar[dict[str, str]] = ContextVar("harness_flow_step", default={})
@@ -33,7 +34,7 @@ def record_step(store: HarnessStore | None, task_id: str, phase: str, title: str
                 source_id: str | None = None, generation: int | None = None) -> Iterator[StepResult]:
     result = StepResult()
     task = store.get(task_id) if store is not None else {}
-    enabled = store is not None and task.get("source", {}).get("kind") != "code_health"
+    enabled = store is not None
     if not enabled:
         yield result
         return

@@ -9,7 +9,6 @@ const BotsPage = lazy(() => import("./pages/BotsPage"));
 const ToolsPage = lazy(() => import("./pages/ToolsPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const HarnessPage = lazy(() => import("./pages/HarnessPage"));
-const CodeHealthPage = lazy(() => import("./pages/CodeHealthPage"));
 const EvalsPage = lazy(() => import("./pages/EvalsPage"));
 
 const { Sider, Content } = Layout;
@@ -18,7 +17,7 @@ const { Title, Text } = Typography;
 export default function App() {
   const { hash, navigate, registerGuard } = useGuardedHash();
   const candidate = hash.slice(1).split("?")[0];
-  const page: PageKey = ["overview", "services", "bots", "tools", "evals", "harness", "code-health", "settings"].includes(candidate) ? candidate as PageKey : "overview";
+  const page: PageKey = ["overview", "services", "bots", "tools", "evals", "harness", "settings"].includes(candidate) ? candidate as PageKey : "overview";
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const checkBackend = useCallback(async () => {
@@ -51,7 +50,6 @@ export default function App() {
           {page === "tools" && <ToolsPage visible />}
           {page === "evals" && <EvalsPage visible />}
           {page === "harness" && <HarnessPage />}
-          {page === "code-health" && <CodeHealthPage />}
           {page === "settings" && <SettingsPage />}
         </Suspense>
       </Content>

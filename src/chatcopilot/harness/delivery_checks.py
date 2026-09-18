@@ -13,7 +13,8 @@ from typing import Any, Callable
 from chatcopilot.core.github_transport import git_environment
 from chatcopilot.core.private_sqlite import private_directory
 from chatcopilot.harness.github_delivery import git
-from chatcopilot.harness.models import HarnessError, safe_error
+from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.config import safe_error
 
 
 def publication_checks(store: Any, task_id: str, check_cancel: Callable[[], None]) -> None:

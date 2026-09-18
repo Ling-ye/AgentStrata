@@ -1,6 +1,0 @@
-.code-health-page { display: flex; flex-direction: column; gap: 20px; }
-.code-health-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 16px; }
-.code-health-field { display: flex; flex-direction: column; gap: 8px; }
-.code-health-page summary { cursor: pointer; }
-.code-health-detail, .code-health-detail td { overflow-wrap: anywhere; min-width: 0; }
-.code-health-detail pre, .code-health-log { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 60vh; overflow: auto; }

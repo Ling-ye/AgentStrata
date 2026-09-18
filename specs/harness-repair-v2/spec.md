@@ -1,13 +1,15 @@
 ---
 id: harness-repair-v2
 type: architecture
-status: accepted
+status: superseded
 created: 2026-09-18
 ---
 
 # 隔离修复会话与宿主验收
 
 ## Summary
+
+角色分配与新任务协议由[多 Agent 修复](../harness-multi-agent/spec.md)取代；本规格保留历史设计背景。
 
 机器人与 Case 修复采用持续编码会话和统一有界轮次，取消独立的递归准备循环。
 默认总预算为 3600 秒、最多三个完整轮次；无法完整验收时保留候选和缺口，不自动交付。

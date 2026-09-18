@@ -5,8 +5,7 @@ from dataclasses import replace
 from typing import Any, Callable
 
 from chatcopilot.harness.models import (
-    CandidateRef, Evaluator, HarnessError, RepairHypothesis,
-    ProblemEvidence, RepairFeedback,
+    CandidateRef, Evaluator, HarnessError, VerificationRequest,
     VerificationCheck, VerificationPlan, VerificationResult,
 )
 
@@ -44,17 +43,12 @@ class CaseVerification:
     def capabilities(self) -> dict[str, Any]:
         return self.evaluator.capabilities()
 
-    def prepare(self, task: dict[str, Any], candidate: CandidateRef, output,
+    def prepare(self, task: VerificationRequest, candidate: CandidateRef, output,
                 proposal: dict[str, Any], check_cancel: Callable[[], None]
-                ) -> tuple[dict[str, Any], RepairHypothesis, VerificationPlan]:
+                ) -> tuple[dict[str, Any], VerificationPlan]:
         source = task["source"]
-        problem = ProblemEvidence(str(source.get("run_id") or source.get("case_instance_id") or source.get("case_ref")),
-                                  source.get("kind", "evaluation"), str(source.get("revision", "")),
-                                  source.get("evidence") or source.get("case_definition") or {},
-                                  RepairFeedback(**source.get("feedback", {})))
         if task.get("verification_plan"):
-            return (source, RepairHypothesis(**task["hypothesis"]),
-                    VerificationPlan.from_payload(task["verification_plan"]))
+            return source, VerificationPlan.from_payload(task["verification_plan"])
         if not source.get("test_sha256") and (source.get("kind", "evaluation") == "evaluation" or not source.get("case_snapshot_id")):
             source = self.local_verifier.prepare(task, candidate.path, output, proposal, check_cancel)
         real_agent = source.get("kind") == "evaluation" and source.get("executor") in {"agent_isolated", "agent_configured"}
@@ -65,11 +59,6 @@ class CaseVerification:
             real_agent = True
         real_agent = real_agent or bool(source.get("case_snapshot_id"))
         repetitions = max(3, source["repetitions"]) if real_agent else source["repetitions"]
-        diagnosis = source.get("diagnosis") or {}
-        hypothesis = RepairHypothesis(
-            str(diagnosis.get("reason") or f"依据 {problem.source_id} 调查根因"),
-            str(diagnosis.get("expected_behavior") or (source.get("case_definition") or {}).get("expected_behavior") or "满足冻结 Case 的全部验收标准"),
-        )
         primary = tuple(source.get("reproduction_ids") or (source["case_id"],))
         checks = tuple(source["case_ids"])
         repeat_map = {}
@@ -101,9 +90,9 @@ class CaseVerification:
                                 repetitions, real_agent, source.get("case_snapshot_id", ""), repeat_map, coverage)
         if source.get("kind", "evaluation") == "evaluation":
             source = {key: value for key, value in source.items() if key not in {"diagnosis", "preparation"}}
-        return source, hypothesis, plan
+        return source, plan
 
-    def run(self, task: dict[str, Any], candidate: CandidateRef, run_id: str,
+    def run(self, task: VerificationRequest, candidate: CandidateRef, run_id: str,
             checks: list[str], check_cancel: Callable[[], None]) -> VerificationResult:
         source = task["source"]
         if source.get("agent_source"):
@@ -134,7 +123,7 @@ class CaseVerification:
             self.store.update(task["task_id"], source=source)
         return replace(result_from_trials(receipt, source["target_id"] or receipt["target_id"], candidate), run_id=run_id)
 
-    def regressions(self, task: dict[str, Any], candidate: CandidateRef,
+    def regressions(self, task: VerificationRequest, candidate: CandidateRef,
                     check_cancel: Callable[[], None], checks: list[str] | None = None) -> dict[str, Any]:
         value = self.local_verifier.regressions(task, candidate.path, check_cancel, checks)
         for row in value.get("rows", {}).values():

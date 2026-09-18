@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 
+from tests.harness_delivery_fixture import RoleFixture
 import pytest
 from tests.harness_delivery_fixture import offline_harness_delivery  # noqa: F401
 
@@ -102,7 +103,9 @@ class FakeEvaluator:
         return {"fixtures": ["workspace"], "external_network": False}
 
 
-class FakeCoder:
+
+
+class FakeCoder(RoleFixture):
     def __init__(self, candidates=("fixed",)):
         self.candidates = list(candidates)
         self.calls = 0
@@ -456,7 +459,7 @@ def test_changed_scoring_conditions_fail_before_execution():
 
 
 def test_exception_records_redact_inherited_sensitive_environment(monkeypatch):
-    from chatcopilot.harness.models import safe_error
+    from chatcopilot.harness.config import safe_error
 
     secret = "fixture" + "-private-value"
     monkeypatch.setenv("HTTP_PROXY", secret)

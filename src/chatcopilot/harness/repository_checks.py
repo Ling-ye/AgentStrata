@@ -19,25 +19,23 @@ from chatcopilot.core.observability_redaction import redact_observability_payloa
 from chatcopilot.core.private_sqlite import private_directory
 from chatcopilot.core.scoped_process import sandbox_command
 from chatcopilot.core.source_snapshot import copy_sources, git_output, source_manifest, verification_index
-from chatcopilot.harness.code_health_rules import finding, in_scope
 from chatcopilot.harness.models import HarnessError
 
 
-class CodeHealthChecks:
-    def __init__(self, directory: Path, repository: Path, *, budget=None) -> None:
+class RepositoryChecks:
+    def __init__(self, directory: Path, repository: Path) -> None:
         self.directory = directory
         self.repository = repository
         self.logs: list[dict[str, Any]] = []
         self.ledger: Any = None
         self.frozen: Path | None = None
-        self.budget = budget
 
     def bind(self, ledger: Any, frozen: Path) -> None:
         self.ledger, self.frozen = ledger, frozen
 
     def view(self, root: Path, destination: Path, *, baseline: tuple[Path, dict[str, Any]] | None = None,
              checkers: bool = True) -> tuple[Path, ...]:
-        from chatcopilot.harness.health_policy import policy_path, checker_path
+        from chatcopilot.harness.verification_policy import policy_path, checker_path
         manifest = baseline[1] if baseline else self.ledger.manifest(root) if self.ledger else source_manifest(root)
         copy_sources(baseline[0] if baseline else root, destination, manifest)
         if self.frozen is not None:
@@ -61,10 +59,7 @@ class CodeHealthChecks:
 
     def command(self, root: Path, argv: list[str], output: Path, check_cancel: Callable[[], None],
                 **kwargs) -> tuple[int, str]:
-        if self.budget is None:
-            return self._command(root, argv, output, check_cancel, **kwargs)
-        with self.budget.step("验证 " + output.name, check_cancel) as (_, poll):
-            return self._command(root, argv, output, poll, **kwargs)
+        return self._command(root, argv, output, check_cancel, **kwargs)
 
     def _command(self, root: Path, argv: list[str], output: Path, check_cancel: Callable[[], None],
                 *, reads: tuple[Path, ...] = (), writes: tuple[Path, ...] = (),
@@ -107,73 +102,6 @@ class CodeHealthChecks:
                     self.logs.append({"name": f"{Path(argv[1]).name} · {path.stem}", "exit_code": process.returncode,
                                       "log": path.relative_to(self.directory).as_posix()})
         return process.returncode, raw
-
-    def scan(self, root: Path, scope: str, check_cancel: Callable[[], None]) -> dict[str, Any]:
-        output = private_directory(self.directory / "checks" / uuid.uuid4().hex)
-        candidate_root = root
-        if self.ledger is not None:
-            view = output / "source"
-            self.view(root, view)
-            candidate_root = output / "candidate"
-            self.view(root, candidate_root, checkers=False)
-            root = view
-        commands = {
-            "architecture": [sys.executable, "scripts/check_architecture.py", "--json", "--root", str(candidate_root)],
-            "ruff": [sys.executable, "-m", "ruff", "check",
-                     *(str(candidate_root / n) for n in ("src", "tests", "scripts", "console")),
-                     "--config", str(candidate_root / "pyproject.toml"), "--no-cache", "--output-format", "json"],
-            "sdd": [sys.executable, "scripts/check_sdd_specs.py"],
-            "docs": [sys.executable, "scripts/check_docs.py", "--json", "--root", str(candidate_root)],
-        }
-        if scope == "docs":
-            commands = {name: commands[name] for name in ("sdd", "docs")}
-        if self.ledger is not None:
-            current = self.ledger.manifest(candidate_root)
-            changed = sorted(n for n in self.ledger.original.keys() | current.keys()
-                             if self.ledger.original.get(n) != current.get(n))
-            for name in changed:
-                commands["docs"].extend(("--changed-path", name))
-        reports, rows, hints = [], [], []
-        for name, argv in commands.items():
-            check_cancel()
-            reads = tuple(dict.fromkeys((candidate_root, *((self.frozen,) if self.frozen else ()))))
-            code, text = self.command(candidate_root if name == "ruff" else root, argv, output / name, check_cancel, reads=reads)
-            if code not in {0, 1}:
-                raise HarnessError("check_failed", f"{name} 检查未正常执行；查看检查日志")
-            reports.append({"name": name, "exit_code": code,
-                            "log": (output / name / "stdout.log").relative_to(self.directory).as_posix()})
-            try:
-                if name == "architecture":
-                    violations = json.loads(text)["violations"]
-                    for rule, files in violations.items():
-                        for path, details in files.items():
-                            location = path if (root / path).is_file() else ""
-                            rows.append(finding("architecture", location, 0, rule, "; ".join(details),
-                                                "根据四层职责和现有公开入口调整依赖", detector=name))
-                elif name == "ruff":
-                    for item in json.loads(text):
-                        path = Path(item["filename"]).relative_to(candidate_root).as_posix()
-                        rows.append(finding("hygiene", path, item["location"]["row"],
-                                            f"{item['code']}: {item['message']}", item["message"],
-                                            "修正问题，保留当前检查规则", detector=name))
-                elif name == "docs":
-                    document_result = json.loads(text)
-                    for item in document_result["violations"]:
-                        rows.append(finding("documentation", item["path"], item["line"],
-                                            item["message"], json.dumps(item, ensure_ascii=False),
-                                            "按现行文档基线修正文档；不得削弱检查或修改规范", detector=name))
-                    hints.extend(document_result["review_hints"])
-                elif code:
-                    rows.append(finding("documentation", "", 0, "SDD 结构检查未通过", text.strip(),
-                                        "核对现有规格；验收规则文件由操作者处理", detector=name,
-                                        disposition="needs_decision"))
-            except (ValueError, KeyError, TypeError) as exc:
-                raise HarnessError("check_invalid", f"{name} 检查没有返回有效结果") from exc
-        from chatcopilot.harness.health_policy import policy_path
-        for row in rows:
-            if not row["path"] or not in_scope(row["path"], scope) or policy_path(row["path"]):
-                row["disposition"] = "needs_decision"
-        return {"checks": reports, "findings": rows, "review_hints": hints}
 
     def verify(self, root: Path, profile: str, check_cancel: Callable[[], None], *,
                baseline: tuple[Path, dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -258,59 +186,6 @@ class CodeHealthChecks:
         return {"profile": profile, "passed": code == 0 and result["ok"] is True,
                 "checks": checks, "report": path.relative_to(self.directory).as_posix()}
 
-    def documentation(self, root: Path, names: list[str], check_cancel: Callable[[], None]) -> dict[str, Any]:
-        output = private_directory(self.directory / "checks" / uuid.uuid4().hex)
-        snapshot, candidate = output / "source", output / "candidate"
-        git_dirs = self.view(root, snapshot)
-        self.view(root, candidate, checkers=False)
-        index = private_directory(output / "git-index")
-        environment = verification_index(candidate, index, manifest=self.ledger.manifest(candidate))
-        bindings = tuple(part for key, value in environment.items() for part in ("--setenv", key, value))
-        commands = {
-            "diff": ["git", "-C", str(candidate), "diff", "--check", "--", *names],
-            "public": [sys.executable, "scripts/check_public_repo.py", "--root", str(candidate)],
-            "docs": [sys.executable, "scripts/check_docs.py", "--root", str(candidate)],
-        }
-        for name in names:
-            commands["docs"].extend(("--changed-path", name))
-        python_names = [str(candidate / n) for n in names if n.endswith(".py")]
-        if python_names:
-            commands["ruff"] = [sys.executable, "-m", "ruff", "check", "--no-cache", *python_names,
-                                "--config", str(snapshot / "pyproject.toml")]
-        checks = []
-        for label, argv in commands.items():
-            code, _ = self.command(snapshot, argv, output / label, check_cancel,
-                                   reads=(candidate, index, *git_dirs), bindings=bindings)
-            checks.append({"name": label, "exit_code": code, "status": "passed" if code == 0 else "failed",
-                           "log": (output / label / "stdout.log").relative_to(self.directory).as_posix()})
-        self.logs.extend(checks)
-        return {"profile": "documentation_only", "checks": checks,
-                "passed": all(c["exit_code"] == 0 for c in checks)}
-
-    def run_test(self, root: Path, content: bytes, check_cancel: Callable[[], None]) -> dict[str, Any]:
-        if self.budget is None:
-            return self._run_test(root, content, check_cancel)
-        with self.budget.step("冻结回归测试", check_cancel) as (_, poll):
-            return self._run_test(root, content, poll)
-
-    def _run_test(self, root: Path, content: bytes, check_cancel: Callable[[], None]) -> dict[str, Any]:
-        from chatcopilot.harness.local_verifier import LocalVerifier
-        output = private_directory(self.directory / "checks" / uuid.uuid4().hex)
-        view = output / "source"
-        self.view(root, view, checkers=False)
-        verifier = LocalVerifier(self.directory / "test-runtime")
-        result = verifier.run_frozen_test(view, content, check_cancel, manifest=self.ledger.manifest(view))
-        if result.get("errors") or result.get("exit_code") not in {0, 1} or not result.get("rows"):
-            raise HarnessError("verification_environment", "回归测试未形成完整执行结果")
-        if set(result["rows"]) != set(result["collected"]) or any(r["outcome"] not in {"passed", "failed"} for r in result["rows"].values()):
-            raise HarnessError("incomplete_verification", "回归测试缺失、跳过或发生执行错误")
-        evidence = Path(result["evidence_directory"]) / "pytest.log"
-        evidence.write_text(str(redact_observability_payload({"text": evidence.read_text(errors="replace")}).value["text"]))
-        self.logs.append({"name": "冻结回归测试", "exit_code": result["exit_code"],
-                          "log": evidence.relative_to(self.directory).as_posix()})
-        return result
-
-
 
 def compare_verification(baseline: dict[str, Any], candidate: dict[str, Any]) -> list[str] | None:
     """Existing deterministic findings are compared by scan; pytest failures by node id.
@@ -337,9 +212,7 @@ def compare_verification(baseline: dict[str, Any], candidate: dict[str, Any]) ->
         original = before[name]
         if original["exit_code"] != 1 or row["exit_code"] != 1:
             return None
-        if name in {"Ruff", "architecture boundaries", "SDD metadata"}:
-            retained.append(name)
-        elif name in {"core tests", "full Python tests"} and row.get("failed_ids"):
+        if name in {"core tests", "full Python tests"} and row.get("failed_ids"):
             if not set(row["failed_ids"]).issubset(original.get("failed_ids", [])):
                 return None
             retained.extend(row["failed_ids"])

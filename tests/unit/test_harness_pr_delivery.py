@@ -11,9 +11,9 @@ import pytest
 from chatcopilot.core.source_snapshot import copy_sources, manifest_digest, source_manifest
 from chatcopilot.harness import delivery, delivery_archive
 from chatcopilot.harness.delivery_candidate import candidate, commit
-from chatcopilot.harness.code_health_workspace import save_patch
+from chatcopilot.harness.patches import save_patch
 from chatcopilot.harness.github_delivery import DeliveryConfig, GitHubDelivery, git
-from chatcopilot.harness.models import HarnessError, PIPELINE_VERSION, GOVERNANCE_VERSION
+from chatcopilot.harness.models import HarnessError, PIPELINE_VERSION
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.delivery_runtime import pending
 
@@ -101,6 +101,13 @@ class Remote(GitHubDelivery):
         self.pr.update(state="closed", merged=True, merge_commit_sha=sha, auto_merge=None)
 
 
+def refresh_acceptance(store, ident):
+    from chatcopilot.harness.models import acceptance_digest
+    task = store.get(ident)
+    receipt = task["accepted_candidate"]
+    store.update(ident, accepted_candidate={**receipt, "verification_digest": acceptance_digest(task, store.attempts(ident)[0])})
+
+
 @pytest.fixture
 def task(tmp_path, monkeypatch):
     monkeypatch.setattr(delivery, "publication_checks", lambda _store, _ident, cancel: cancel())
@@ -123,7 +130,7 @@ def task(tmp_path, monkeypatch):
     ident = "repair-" + "a" * 32
     store.create({"task_id": ident, "pipeline_version": PIPELINE_VERSION, "request_key": ident, "request_digest": ident,
         "context_key": ident, "match_key": ident, "active_key": ident, "repository": str(repo), "base_commit": base,
-        "source": {"kind": "code_health", "scope": "docs", "governance_version": GOVERNANCE_VERSION}, "delivery": state,
+        "source": {"kind": "evaluation", "case_id": "case", "case_ref": "fixture:case", "suite_id": "fixture", "conditions": {"cases": {"case": "frozen"}}}, "delivery": state,
         "options": {"model": "test", "reasoning_effort": "high", "max_attempts": 1, "budget": {"mode": "fixed_groups", "count": 1}}})
     delivery.initialize(store, ident, client)
     root = Path(store.get(ident)["worktree"])
@@ -134,10 +141,12 @@ def task(tmp_path, monkeypatch):
     copy_sources(root, checkpoint / "source", manifest)
     sha = save_patch(root, store.root / "jobs" / ident / "source", ["docs/guide.md"], checkpoint / "candidate.patch")
     store.save_attempt(ident, 1, {"number": 1, "status": "accepted", "candidate_digest": manifest_digest(manifest),
-        "changed_files": ["docs/guide.md"], "review": {"decision": "approved"}, "verification": {"profile": "documentation_only", "passed": True}, "regressions": []})
+        "changed_files": ["docs/guide.md"], "review": {"decision": "approved", "binding": "review-fixture"}, "verification": {"profile": "documentation_only", "passed": True}, "regressions": []})
     store.update(ident, status="fixed", working_digest=manifest_digest(manifest), verified_digest=manifest_digest(manifest),
         verified_manifest=manifest, checkpoint={"path": "checkpoints/1", "patch_sha256": sha, "digest": manifest_digest(manifest)},
-        governance_summary={"accepted_groups": 1, "remaining": 2, "coverage": "partial"})
+        acceptance={"sha256": "goal-fixture"}, accepted_candidate={"candidate_digest": manifest_digest(manifest),
+            "goal_digest": "goal-fixture", "verification_digest": "verification-fixture", "review_binding": "review-fixture", "attempt": 1})
+    refresh_acceptance(store, ident)
     return store, ident, client, repo
 
 
@@ -178,6 +187,7 @@ def test_mixed_repair_adopts_both_exact_frozen_tests(task, tmp_path):
         "test_relative_path": f"tests/unit/harness_regressions/test_{sha}.py",
         "agent_source": {"case_snapshot_id": case_identity(case), "agent_case": case}}
     store.update(ident, source=source)
+    refresh_acceptance(store, ident)
     frozen = candidate(store, ident)
     root = Path(store.get(ident)["worktree"])
     refs = store.get(ident)["regressions"]
@@ -257,11 +267,11 @@ def test_closed_pr_cleans_remote_branch_without_reopening(task):
 
 
 @pytest.mark.parametrize("status", ["blocked", "failed", "interrupted"])
-def test_partial_accepted_governance_publishes(task, status):
+def test_partial_repair_cannot_publish(task, status):
     store, ident, client, _ = task
     store.update(ident, status=status, stop_reason="budget_exhausted")
     result = delivery.reconcile(store, ident, client=client)
-    assert result["delivery"]["state"] == "waiting_checks"
+    assert result["delivery"]["state"] == "no_changes"
     assert result["status"] == status
 
 
@@ -485,8 +495,9 @@ def test_pending_revalidation_retains_evaluation_identity(task, monkeypatch, fai
     class Verifier:
         def run(self, task, candidate, run_id, checks, cancel):
             calls.append(run_id)
-            assert task["delivery_evaluation"]["id"] == run_id
-            assert task.get("current_evaluation_id") is None
+            assert store.get(task["task_id"])["delivery_evaluation"]["id"] == run_id
+            assert "delivery_evaluation" not in task
+            assert store.get(task["task_id"]).get("current_evaluation_id") is None
             if len(calls) == 1:
                 if failure_type is HarnessError:
                     raise HarnessError("result_pending", "result is not durable yet")
@@ -494,7 +505,7 @@ def test_pending_revalidation_retains_evaluation_identity(task, monkeypatch, fai
             return VerificationResult(run_id, candidate.digest, (VerificationCheck("target", 1, "passed"),))
         def regressions(self, *args):
             return {"passed_cases": []}
-    monkeypatch.setattr(delivery_validation, "CodeHealthChecks", Checks)
+    monkeypatch.setattr(delivery_validation, "RepositoryChecks", Checks)
     coder = SimpleNamespace(review=lambda *args: {"decision": "approved", "problem": "", "reason": "fixture", "evidence_refs": ["verification"]})
     with pytest.raises(failure_type):
         delivery_validation.revalidate(store, ident, Path(record["worktree"]), repo, coder, Verifier(), lambda: None)
