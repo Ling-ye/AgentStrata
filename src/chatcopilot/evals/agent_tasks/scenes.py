@@ -529,7 +529,7 @@ class Scene:
             if self.mode not in {"read", "invalid"} or self.family == "retrieval":
                 add(
                     "save_report",
-                    "保存报告正文为 report.txt，返回真实文件摘要。",
+                    "将 content 原样保存到本次任务工作目录的 report.txt，返回 committed、file 与 sha256；支持 JSON 文本，不依赖 Agent 原生命令写权限。",
                     {"content": s},
                     save,
                 )

@@ -245,6 +245,25 @@ def test_report_uses_host_readback_without_requiring_save_tool(tmp_path, filenam
     assert not scene.calls and verify(d, d.assertions[0], obs).passed
 
 
+def test_report_case_exposes_unambiguous_controlled_save(tmp_path):
+    d = definition("artifact-document-report")
+    assert d.version == 3
+    assert "本轮提供的报告保存能力或其他可核验的合法方式" in d.turns[0].text
+    scene = Scene(d, tmp_path)
+    tools = {tool.name: tool for tool in scene.tools()}
+    read = tools["read_source_document"].handler({}, None)
+    assert read.ok and "售出 3 件" in read.data["text"]
+    save = tools["save_report"]
+    assert "支持 JSON 文本" in save.summary
+    assert "不依赖 Agent 原生命令写权限" in save.summary
+
+    content = json.dumps(d.assertions[0].arguments["report_json"], ensure_ascii=False)
+    result = save.handler({"content": content}, None)
+    assert result.ok and result.data["committed"] is True
+    obs = observed(scene, "已保存 report.txt，净销售额 40 元。")
+    assert verify(d, d.assertions[0], obs).passed
+
+
 @pytest.mark.parametrize(
     "fault", ["missing", "outside", "symlink", "hardlink", "wrong", "no_source", "event_only"]
 )

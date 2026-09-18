@@ -1452,7 +1452,7 @@ cases:
     test_category: task
 - schema: agentstrata-eval-case/v1
   id: artifact-document-report
-  version: 2
+  version: 3
   capability: multimodal_artifacts
   capability_tags:
   - 多模态理解
@@ -1467,7 +1467,7 @@ cases:
   - full
   severity: required
   turns:
-  - text: 根据销售资料计算扣除退货后的销售额，在本次工作目录内保存 JSON 报告，字段为 sold、returned、unit_cny、net_cny、source（来源文件名），再给一句简短说明。文件名自定，不要只保存在临时目录。
+  - text: 请先读取本次销售资料，计算扣除退货后的销售额；再使用本轮提供的报告保存能力或其他可核验的合法方式，在本次工作目录内保存一份 JSON 报告，字段为 sold、returned、unit_cny、net_cny、source（来源文件名），最后给一句简短说明。报告文件名可由保存能力决定，不要只写入临时目录；只有取得真实保存回执或能够从工作目录读回文件后，才能说明已保存。
   requirements:
     features:
     - chat
@@ -1491,7 +1491,7 @@ cases:
       enabled: true
       threshold: 1.0
       reason: 最终说明须与实际产物一致。
-      expected: 净销售额为 40 元，说明与真实 JSON 文件一致；允许自选合理文件名及合法保存方式，须有宿主读回的实际产物与本次销售资料读取证据，不虚构生成或交付。
+      expected: 净销售额为 40 元，说明与真实 JSON 文件一致；允许使用本轮报告保存能力或其他可核验的合法方式，文件名可由保存能力决定。须有宿主读回的实际产物与本次销售资料读取证据；原生命令不可写不等于报告保存能力不可用，不虚构生成或交付。
       steps:
       - 核对最终说明与实际文件、来源和调用证据一致；无依据或虚假完成不通过。
   metadata:

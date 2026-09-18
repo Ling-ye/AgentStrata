@@ -21,7 +21,7 @@ Console 按LLM测评、Agent测评、系统测试组织，Agent 任务题库见�
 
 ## Agent 任务题库与目录
 
-`agentstrata-agent-tasks-v1` 为唯一当前项目 Agent 套件：64 题，quick/full/security/live/skills/red-team=12/60/11/2/2/12。`agentstrata-capabilities-v1` 与 `project-business-v1` 已退役，原资源仅用于工程合同测试，正式创建和重跑拒绝，历史快照不改写。Case 通过静态 scenario_id 和参数提供隔离环境，不按新 Case ID 分派；输入不携带参考答案或操作脚本。事实验证结构、数值、依赖、真实产物与保护集，必要语义采用 strict GEval，不允许用 native 关闭。多主体评分必须保留全部回合与会话绑定，评分输入只供判分和复核；自然数量允许单位，拒绝操作不要求固定内部术语。版本 5 的模糊题显式允许合理澄清；结果导向题接受可核验的原生读源和宿主文件读回，协议与交付要求保持。逐题审查见 `docs/reference/evaluation-cases.md`。未记录证据、执行或评分异常不能算通过。IFEval 模型直测复用固定官方检查器，约束不丢弃、未知或参数异常失败关闭，旧 Agent 运行不自动转换。源码、许可、数据和修改说明一并打包。红队通过 Case metadata 的 test_category/red_team_surface 分类，不能用普通异常处理题冒充对抗覆盖；新增题必须同时检查攻击效果与正常功能。GAIA/SWE-bench 使用固定官方版本与私有缓存，缺附件或镜像不得标可运行；准备数据不自动下载全部镜像或调用模型。下载凭据使用私有 CHATCOPILOT_HF_TOKEN 或本机登录，不进入题目和产物。规格见 `docs/reference/evaluation.md` 与 `docs/reference/evaluation.md`。
+`agentstrata-agent-tasks-v1` 为唯一当前项目 Agent 套件：64 题，quick/full/security/live/skills/red-team=12/60/11/2/2/12。`agentstrata-capabilities-v1` 与 `project-business-v1` 已退役，原资源仅用于工程合同测试，正式创建和重跑拒绝，历史快照不改写。Case 通过静态 scenario_id 和参数提供隔离环境，不按新 Case ID 分派；输入不携带参考答案或操作脚本。事实验证结构、数值、依赖、真实产物与保护集，必要语义采用 strict GEval，不允许用 native 关闭。多主体评分必须保留全部回合与会话绑定，评分输入只供判分和复核；自然数量允许单位，拒绝操作不要求固定内部术语。版本 6 的模糊题显式允许合理澄清；结果导向题接受可核验的原生读源和宿主文件读回，协议与交付要求保持。逐题审查见 `docs/reference/evaluation-cases.md`。未记录证据、执行或评分异常不能算通过。IFEval 模型直测复用固定官方检查器，约束不丢弃、未知或参数异常失败关闭，旧 Agent 运行不自动转换。源码、许可、数据和修改说明一并打包。红队通过 Case metadata 的 test_category/red_team_surface 分类，不能用普通异常处理题冒充对抗覆盖；新增题必须同时检查攻击效果与正常功能。GAIA/SWE-bench 使用固定官方版本与私有缓存，缺附件或镜像不得标可运行；准备数据不自动下载全部镜像或调用模型。下载凭据使用私有 CHATCOPILOT_HF_TOKEN 或本机登录，不进入题目和产物。规格见 `docs/reference/evaluation.md` 与 `docs/reference/evaluation.md`。
 
 ## LLM 官方数据与输出
 
