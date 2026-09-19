@@ -136,32 +136,32 @@ def test_green_baseline_gc_is_accepted_without_test_or_extra_main(governance):
     assert not accepted(store, store.get(ident))
 
 
-def test_single_issue_mode_is_passed_to_plan_and_accepts_one_finding(governance):
+def test_governance_always_accepts_only_one_finding(governance):
     store, ident, _ = governance
-    store.update(ident, options=asdict(RepairOptions("fixture", single_issue=True)))
     roles = GovernanceRoles()
 
     result = run_task(store, ident, GreenVerifier(), roles)
 
     assert result["status"] == "fixed", result.get("message")
     contexts = {role: evidence for role, evidence in roles.contexts}
-    assert contexts[Role.PLAN]["governance_policy"] == {"single_issue": True}
+    assert "governance_policy" not in contexts[Role.PLAN]
+    assert store.get(ident)["governance_finding_id"] == "unused"
 
 
-def test_single_issue_mode_rejects_multiple_findings(governance):
+def test_governance_rejects_multiple_findings(governance):
     from types import SimpleNamespace
     from chatcopilot.harness.governance_repository import bind_report
     from chatcopilot.harness.models import HarnessError
 
     store, ident, repo = governance
-    store.update(ident, current_attempt=1, options=asdict(RepairOptions("fixture", single_issue=True)))
+    store.update(ident, current_attempt=1)
     roles = GovernanceRoles()
     plan = roles.execute(repo, SimpleNamespace(role=Role.PLAN, evidence={}), None, None, lambda: None).payload
     second = {**plan["findings"][0], "id": "duplicate", "summary": "Second entropy issue"}
     plan["findings"] = [*plan["findings"], second]
     artifacts = ArtifactRepository(store.root / "jobs" / ident)
 
-    with pytest.raises(HarnessError, match="单问题模式"):
+    with pytest.raises(HarnessError, match="最多报告一个"):
         bind_report(store, ident, artifacts, plan, repo)
 
 
@@ -333,3 +333,39 @@ def test_generated_test_draft_is_not_a_governance_product_path(governance):
     context = artifacts.read(store.get(ident)["governance_context"])
     with pytest.raises(HarnessError, match="Test 草案"):
         validate_report(value, context, repo)
+
+
+def test_replanning_cannot_switch_frozen_finding_or_clear_it(governance):
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from chatcopilot.harness.governance_repository import bind_report
+    from chatcopilot.harness.models import HarnessError
+    store, ident, repo = governance
+    store.update(ident, current_attempt=1)
+    artifacts = ArtifactRepository(store.root / "jobs" / ident)
+    plan = GovernanceRoles().execute(repo, SimpleNamespace(role=Role.PLAN, evidence={}), None, None, lambda: None).payload
+    bind_report(store, ident, artifacts, plan, repo)
+    original = store.get(ident)["frozen_finding"]
+    for field, replacement in (("id", "another"), ("affected_paths", ["other.py"]), ("acceptance_criteria", ["different goal"])):
+        changed = deepcopy(plan)
+        changed["findings"][0][field] = replacement
+        changed["selected_finding_id"] = changed["findings"][0]["id"]
+        with pytest.raises(HarnessError, match="返工不能"):
+            bind_report(store, ident, artifacts, changed, repo)
+    empty = {**plan, "findings": [], "selected_finding_id": "", "decision": "no_changes"}
+    with pytest.raises(HarnessError, match="返工不能"):
+        bind_report(store, ident, artifacts, empty, repo)
+    bind_report(store, ident, artifacts, plan, repo)
+    assert store.get(ident)["frozen_finding"] == original
+
+
+def test_count_mode_full_single_issue_workflow_passes_none_to_roles(governance):
+    store, ident, _ = governance
+    store.update(ident, options=asdict(RepairOptions("fixture", timeout_seconds=None)))
+    class CountRoles(GovernanceRoles):
+        def execute(self, root, call, options, output, cancel):
+            assert options.timeout_seconds is None
+            return super().execute(root, call, options, output, cancel)
+    result = run_task(store, ident, GreenVerifier(), CountRoles())
+    assert result["status"] == "fixed"
+    assert result["remaining_seconds"] is None

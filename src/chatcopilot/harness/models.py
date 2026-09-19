@@ -52,8 +52,7 @@ class RepairOptions:
     model: str
     reasoning_effort: str = "medium"
     max_attempts: int = 3
-    timeout_seconds: int = 3600
-    single_issue: bool = False
+    timeout_seconds: int | None = 3600
 
     def __post_init__(self) -> None:
         if not self.model.strip() or any(char.isspace() for char in self.model):
@@ -62,35 +61,8 @@ class RepairOptions:
             raise ValueError("不支持的推理强度")
         if type(self.max_attempts) is not int or self.max_attempts < 1:
             raise ValueError("修复次数必须为正整数")
-        if type(self.timeout_seconds) is not int or self.timeout_seconds < 1:
+        if self.timeout_seconds is not None and (type(self.timeout_seconds) is not int or self.timeout_seconds < 1):
             raise ValueError("任务时间预算必须为正整数")
-        if type(self.single_issue) is not bool:
-            raise ValueError("单问题模式必须为布尔值")
-
-
-@dataclass(frozen=True)
-class GovernanceSchedule:
-    enabled: bool = False
-    interval_hours: int = 24
-    options: RepairOptions | None = None
-    repair_hint: str = ""
-
-    def __post_init__(self):
-        if type(self.enabled) is not bool or type(self.interval_hours) is not int or self.interval_hours < 1:
-            raise ValueError("定时开关必须为布尔值，间隔必须为正整数小时")
-        if self.enabled and self.options is None:
-            raise ValueError("启用定时代码熵回收必须明确模型与预算")
-        if not isinstance(self.repair_hint, str):
-            raise ValueError("熵回收提示必须为文本")
-
-    @classmethod
-    def from_payload(cls, value):
-        return cls(value.get("enabled", False), value.get("interval_hours", 24),
-                   RepairOptions(**value["options"]) if value.get("options") else None,
-                   value.get("repair_hint", ""))
-
-    def to_payload(self):
-        return asdict(self)
 
 @dataclass(frozen=True)
 class CodingOptions:
@@ -112,17 +84,14 @@ class RepairRequest:
     feedback: RepairFeedback = field(default_factory=RepairFeedback)
 
     def __post_init__(self) -> None:
-        if self.source_kind != "code_health" and self.options.single_issue:
-            raise ValueError("单问题模式仅适用于代码熵回收")
+        if self.options.timeout_seconds is None:
+            raise ValueError("故障修复必须指定时间预算")
         if self.source_kind == "evaluation":
             if not self.case_instance_id or self.bot_id or self.run_id or self.feedback.expected_behavior.strip():
                 raise ValueError("测评只接受 Case 实例和修复提示，不能提供人工答案")
         elif self.source_kind == "robot_task":
             if not self.bot_id or not self.run_id or self.case_instance_id:
                 raise ValueError("机器人来源需要 bot_id 和 run_id")
-        elif self.source_kind == "code_health":
-            if self.bot_id or self.run_id or self.case_instance_id or self.feedback.expected_behavior.strip():
-                raise ValueError("代码熵回收使用仓库契约，只接受可选回收提示")
         else:
             raise ValueError("未知修复来源")
 

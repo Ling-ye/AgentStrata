@@ -11,6 +11,13 @@ from chatcopilot.harness.api import HarnessController
 from chatcopilot.harness.models import RepairFeedback, RepairOptions
 
 
+def _governance_options(args, default_model):
+    from chatcopilot.harness.governance_types import GovernanceOptions
+    stop = ({"mode": "findings", "count": args.findings} if args.findings is not None else
+            {"mode": "time", "seconds": args.timeout_seconds if args.timeout_seconds is not None else 3600})
+    return GovernanceOptions(args.model or default_model, args.reasoning_effort, args.max_attempts, stop)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository-root", type=Path, default=Path.cwd())
@@ -45,10 +52,10 @@ def main(argv: list[str] | None = None) -> int:
     gc.add_argument("--model", default="")
     gc.add_argument("--reasoning-effort", default="medium")
     gc.add_argument("--max-attempts", type=int, default=3)
-    gc.add_argument("--timeout-seconds", type=int, default=3600)
-    gc.add_argument("--single-issue", action="store_true", help="发现第一个问题后停止调查，只修复这一项")
+    gc_stop = gc.add_mutually_exclusive_group()
+    gc_stop.add_argument("--timeout-seconds", type=int, help="整次回收累计执行秒数；默认 3600")
+    gc_stop.add_argument("--findings", type=int, help="问题发现数上限；逐项修复并合并后继续")
     gc.add_argument("--request-id")
-    gc.add_argument("--repair-hint", default="")
     sub.add_parser("gc-tick", help="执行一次已启用的熵回收定时触发")
     schedule = sub.add_parser("gc-schedule", help="查看或配置熵回收定时；默认关闭")
     enabled = schedule.add_mutually_exclusive_group()
@@ -58,9 +65,11 @@ def main(argv: list[str] | None = None) -> int:
     schedule.add_argument("--model", default="")
     schedule.add_argument("--reasoning-effort", default="medium")
     schedule.add_argument("--max-attempts", type=int, default=3)
-    schedule.add_argument("--timeout-seconds", type=int, default=3600)
-    schedule.add_argument("--single-issue", action="store_true", help="每次只发现并修复一个问题")
-    schedule.add_argument("--repair-hint", default="")
+    schedule_stop = schedule.add_mutually_exclusive_group()
+    schedule_stop.add_argument("--timeout-seconds", type=int)
+    schedule_stop.add_argument("--findings", type=int)
+    for name in ("get-gc", "cancel-gc", "resume-gc"):
+        sub.add_parser(name).add_argument("run")
     listing = sub.add_parser("list")
     listing.add_argument("--page", type=int, default=1)
     listing.add_argument("--search", default="")
@@ -81,21 +90,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "cutover":
             value = controller.cutover(apply=args.apply)
         elif args.command == "start-gc":
-            value = controller.start_code_health(
-                RepairOptions(args.model or controller.default_model, args.reasoning_effort,
-                              args.max_attempts, args.timeout_seconds, args.single_issue),
-                request_id=args.request_id, feedback=RepairFeedback(args.repair_hint))
+            value = controller.start_code_health(_governance_options(args, controller.default_model), request_id=args.request_id)
+        elif args.command in {"get-gc", "cancel-gc", "resume-gc"}:
+            action = {"get-gc": controller.governance_run, "cancel-gc": controller.cancel_governance_run,
+                      "resume-gc": controller.resume_governance_run}[args.command]
+            value = action(args.run)
         elif args.command == "gc-tick":
             value = controller.governance_tick()
         elif args.command == "gc-schedule":
-            from chatcopilot.harness.models import GovernanceSchedule
+            from chatcopilot.harness.governance_types import GovernanceSchedule
             if not args.enable and not args.disable:
                 value = controller.governance_schedule()
             else:
-                options = (RepairOptions(args.model or controller.default_model, args.reasoning_effort,
-                                         args.max_attempts, args.timeout_seconds, args.single_issue) if args.enable else None)
-                value = controller.set_governance_schedule(
-                    GovernanceSchedule(args.enable, args.interval_hours, options, args.repair_hint))
+                options = _governance_options(args, controller.default_model) if args.enable else None
+                value = controller.set_governance_schedule(GovernanceSchedule(args.enable, args.interval_hours, options))
         elif args.command == "start":
             value = controller.start(
                 args.evaluation,

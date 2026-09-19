@@ -79,7 +79,7 @@ export default function HarnessPage() {
     setRepairHint(task.source.feedback?.repair_hint ?? "");
     setExpectedBehavior(task.source.feedback?.expected_behavior ?? "");
     setModel(task.options.model); setEffort(task.options.reasoning_effort);
-    setAttempts(task.options.max_attempts); setHours(task.options.timeout_seconds / 3600);
+    setAttempts(task.options.max_attempts); setHours((task.options.timeout_seconds ?? 3600) / 3600);
     submitted.current = { body: "", requestId: "" };
     openTask("");
     void load(sourceKind, id, task.source.bot_id ?? "", false);

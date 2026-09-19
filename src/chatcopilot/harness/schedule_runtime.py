@@ -10,9 +10,9 @@ import time
 import uuid
 
 from chatcopilot.harness.config import safe_error
-from chatcopilot.harness.models import HarnessError, RepairFeedback
+from chatcopilot.harness.models import HarnessError
 from chatcopilot.harness.schedule_repository import ScheduleRepository
-from chatcopilot.harness.models import GovernanceSchedule
+from chatcopilot.harness.governance_types import GovernanceSchedule
 
 
 def _quote(value):
@@ -47,7 +47,11 @@ class GovernanceScheduler:
 
     def configure(self, settings: GovernanceSchedule):
         with self.store.locked():
-            previous = self.store.read()
+            try:
+                previous = self.store.read()
+            except ValueError:
+                # Explicit resave replaces an unsupported configuration; no migration.
+                previous = {}
             value = {**settings.to_payload(), "revision": uuid.uuid4().hex, "last_run": previous.get("last_run")}
             # A failed disable still prevents a pending timer from creating new work.
             self.store.write(value)
@@ -102,16 +106,15 @@ class GovernanceScheduler:
             previous = value.get("last_run") or {}
             if previous.get("request_id") == request_id and previous.get("status") in {"created", "skipped"}:
                 return {**previous, "duplicate": True}
-            active = self.controller.store.active_governance(str(self.controller.repository))
-            if active:
-                result = {"status": "skipped", "reason": "governance_active", "task_id": active}
+            active = self.controller.active_governance_run()
+            if active or self.controller.store.active_governance(str(self.controller.repository)):
+                result = {"status": "skipped", "reason": "governance_active", **({"run_id": active} if active else {})}
             else:
                 pending = {"request_id": request_id, "at": now, "status": "dispatching"}
                 self.store.write({**value, "last_run": pending})
                 try:
-                    task = self.controller.start_code_health(settings.options, request_id=request_id,
-                        feedback=RepairFeedback(settings.repair_hint))
-                    result = {"status": "created", "task_id": task["task_id"]}
+                    run = self.controller.start_code_health(settings.options, request_id=request_id)
+                    result = {"status": "created", "run_id": run["run_id"]}
                 except Exception as exc:
                     self.store.write({**value, "last_run": {**pending, "status": "failed", "message": safe_error(exc)}})
                     raise

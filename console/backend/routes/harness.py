@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/harness", tags=["harness"])
 
 class CreateRepair(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    source_kind: Literal["evaluation", "robot_task", "code_health"] = "evaluation"
+    source_kind: Literal["evaluation", "robot_task"] = "evaluation"
     case_instance_id: str = ""
     bot_id: str = ""
     run_id: str = ""
@@ -30,17 +30,10 @@ class CreateRepair(BaseModel):
     reasoning_effort: str = "xhigh"
     max_attempts: int = Field(default=3, ge=1)
     timeout_seconds: int = Field(default=3600, ge=1)
-    single_issue: bool = False
 
     @model_validator(mode="after")
     def selected_source(self):
-        if self.source_kind == "code_health":
-            valid = not (self.case_instance_id or self.bot_id or self.run_id)
-            if self.feedback and self.feedback.expected_behavior.strip():
-                raise ValueError("代码熵回收不能覆盖 SDD 或黄金原则")
-        elif self.source_kind == "evaluation":
-            if self.single_issue:
-                raise ValueError("单问题模式仅适用于代码熵回收")
+        if self.source_kind == "evaluation":
             if self.feedback and self.feedback.expected_behavior.strip():
                 raise ValueError("测评 Case 只能补充修复线索，不能覆盖原参考答案")
             valid = (
@@ -48,8 +41,6 @@ class CreateRepair(BaseModel):
                 and not (self.bot_id or self.run_id)
             )
         else:
-            if self.single_issue:
-                raise ValueError("单问题模式仅适用于代码熵回收")
             valid = (
                 self.bot_id
                 and self.run_id
@@ -67,13 +58,28 @@ class LoadSource(BaseModel):
     bot_id: str = ""
 
 
+class TimeStop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["time"] = "time"
+    seconds: int = Field(default=3600, ge=1, strict=True)
+
+
+class FindingsStop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["findings"] = "findings"
+    count: int = Field(default=1, ge=1, strict=True)
+
+
 class GovernanceOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str = Field(min_length=1)
     reasoning_effort: str = "medium"
     max_attempts: int = Field(default=3, ge=1)
-    timeout_seconds: int = Field(default=3600, ge=1)
-    single_issue: bool = False
+    stop_condition: TimeStop | FindingsStop = Field(default_factory=TimeStop, discriminator="mode")
+
+
+class CreateGovernanceRun(GovernanceOptions):
+    request_id: str
 
 
 class GovernanceScheduleBody(BaseModel):
@@ -81,7 +87,6 @@ class GovernanceScheduleBody(BaseModel):
     enabled: bool = False
     interval_hours: int = Field(default=24, ge=1)
     options: GovernanceOptions | None = None
-    repair_hint: str = ""
 
 
 def _controller(request: Request):
@@ -130,7 +135,7 @@ def create(request: Request, body: CreateRepair):
     _mutation_access(request)
     options = _call(
         lambda: RepairOptions(
-            body.model, body.reasoning_effort, body.max_attempts, body.timeout_seconds, body.single_issue
+            body.model, body.reasoning_effort, body.max_attempts, body.timeout_seconds
         )
     )
     from chatcopilot.harness.models import RepairRequest
@@ -174,6 +179,37 @@ def governance_config(request: Request):
     return _call(lambda: _controller(request).governance_config())
 
 
+@router.post("/code-health/runs")
+def start_governance_run(request: Request, body: CreateGovernanceRun):
+    _mutation_access(request)
+    from chatcopilot.harness.governance_types import GovernanceOptions as RunOptions
+    return _call(lambda: _controller(request).start_code_health(
+        RunOptions.from_payload(body.model_dump(exclude={"request_id"})), request_id=body.request_id))
+
+
+@router.get("/code-health/runs")
+def governance_runs(request: Request, page: int = Query(1, ge=1), limit: int = Query(20, ge=1, le=100),
+                    search: str = Query("", max_length=256), status: str = ""):
+    return _call(lambda: _controller(request).governance_runs(page=page, limit=limit, search=search, status=status))
+
+
+@router.get("/code-health/runs/{run_id}")
+def governance_run(request: Request, run_id: str):
+    return _call(lambda: _controller(request).governance_run(run_id))
+
+
+@router.post("/code-health/runs/{run_id}/cancel")
+def cancel_governance_run(request: Request, run_id: str):
+    _mutation_access(request)
+    return _call(lambda: _controller(request).cancel_governance_run(run_id))
+
+
+@router.post("/code-health/runs/{run_id}/resume")
+def resume_governance_run(request: Request, run_id: str):
+    _mutation_access(request)
+    return _call(lambda: _controller(request).resume_governance_run(run_id))
+
+
 @router.get("/code-health/schedule")
 def governance_schedule(request: Request):
     return _call(lambda: _controller(request).governance_schedule())
@@ -182,7 +218,7 @@ def governance_schedule(request: Request):
 @router.put("/code-health/schedule")
 def save_governance_schedule(request: Request, body: GovernanceScheduleBody):
     _mutation_access(request)
-    from chatcopilot.harness.models import GovernanceSchedule
+    from chatcopilot.harness.governance_types import GovernanceSchedule
     return _call(lambda: _controller(request).set_governance_schedule(
         GovernanceSchedule.from_payload(body.model_dump())))
 

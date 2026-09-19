@@ -2,9 +2,9 @@ import { useState } from "react";
 import { Alert, Button, Descriptions, Space, Tag, Typography } from "@arco-design/web-react";
 import { deliveryActive, deliveryLabel, harnessApi, type RepairTask } from "./api";
 
-export function DeliveryPanel({ task, refresh, actionsOnly = false }: {
+export function DeliveryPanel({ task, refresh, actionsOnly = false, readOnly = false }: {
   task: Pick<RepairTask, "task_id" | "status" | "delivery" | "cleanup" | "archive">;
-  refresh: () => unknown; actionsOnly?: boolean;
+  refresh: () => unknown; actionsOnly?: boolean; readOnly?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -32,11 +32,11 @@ export function DeliveryPanel({ task, refresh, actionsOnly = false }: {
       {check.url ? <a href={check.url} target="_blank" rel="noreferrer">{check.name}</a> : check.name} · {check.conclusion ?? check.status}
     </Tag>)}</Space>}
     {task.cleanup?.error && <Alert type="warning" content={task.cleanup.error} />}
-    </>}<Space wrap style={{ marginTop: 12 }}>
+    </>}{!readOnly && <Space wrap style={{ marginTop: 12 }}>
       {["blocked", "retryable", "paused"].includes(delivery.state) && <Button loading={busy} onClick={() => void action("retry-delivery")}>重试交付</Button>}
       {task.cleanup?.local === "blocked" && <Button loading={busy} onClick={() => void action("retry-cleanup")}>重试清理</Button>}
       {deliveryActive(task) && !["queued", "running", "cancel_requested"].includes(task.status) && <Button status="danger" loading={busy} onClick={() => void action("cancel")}>停止自动交付</Button>}
-    </Space>
+    </Space>}
     {error && <Alert type="error" content={error} />}
     <p><Typography.Text type="secondary">合并状态来自 GitHub；本地 main 和运行实例不会自动更新。</Typography.Text></p>
   </section>;

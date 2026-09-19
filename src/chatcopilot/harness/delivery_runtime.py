@@ -39,6 +39,8 @@ def pending(store: HarnessStore) -> list[str]:
     result = []
     for row in rows:
         task = json.loads(row[0])
+        if task.get("source", {}).get("kind") == "code_health" and not task.get("governance_run_id"):
+            continue
         state = task.get("delivery", {}).get("state")
         if task["status"] not in {*ACTIVE, "waiting_input"} and task.get("delivery") and (
             state in PENDING or task.get("delivery_request") or task.get("cleanup", {}).get("local") == "pending"
@@ -107,6 +109,9 @@ def main(argv: list[str] | None = None) -> int:
                 # Leave durable work pending; the next timer tick can dispatch again.
                 import logging
                 logging.getLogger(__name__).warning("Harness delivery dispatch unavailable for %s", ident)
+        from chatcopilot.harness.api import HarnessController
+        from chatcopilot.harness.governance_runtime import reconcile_runs
+        reconcile_runs(HarnessController(args.repository_root, root=store.root))
     return 0
 
 

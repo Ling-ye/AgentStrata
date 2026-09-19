@@ -748,13 +748,14 @@ def _harness_control_checks() -> dict[str, dict[str, list[str]]]:
     service = prefix + "control_service"
     ui = {prefix + "__main__", "console.backend.routes.harness"}
     service_dependencies = {types, prefix + "models", prefix + "store"}
-    public_modules = {prefix + "api", prefix + "models", types}
+    public_modules = {prefix + "api", prefix + "models", prefix + "governance_types", types}
     implementations = {prefix + name for name in (
         "worker_runtime", "worker", "assembly", "api", "delivery_runtime", "delivery",
         "codex_adapter", "evaluation_adapter", "local_verifier", "github_delivery")}
     public_symbols = {
         prefix + "api": {"HarnessController"},
-        prefix + "models": {"HarnessError", "RepairOptions", "RepairFeedback", "RepairRequest", "GovernanceSchedule"},
+        prefix + "governance_types": {"GovernanceOptions", "GovernanceSchedule"},
+        prefix + "models": {"HarnessError", "RepairOptions", "RepairFeedback", "RepairRequest"},
     }
     violations: dict[str, list[str]] = {}
 
@@ -813,15 +814,15 @@ def _harness_control_checks() -> dict[str, dict[str, list[str]]]:
 
 # Classify the actual Harness modules; adding a module requires choosing its responsibility.
 HARNESS_LAYERS = {
-    "types": {"__init__", "models", "agent_types", "repair_types", "control_types", "preparation", "evidence_context"},
+    "types": {"__init__", "models", "agent_types", "repair_types", "control_types", "governance_types", "preparation", "evidence_context"},
     "config": {"config", "role_prompts"},
-    "repo": {"store", "artifact_repository", "flow_records", "flow_receipts", "flow", "progress", "command_logs", "verification_policy", "patches", "governance_repository", "schedule_repository"},
-    "service": {"workflow", "role_service", "control_service", "context_briefs"},
+    "repo": {"store", "artifact_repository", "flow_records", "flow_receipts", "flow", "progress", "command_logs", "verification_policy", "patches", "governance_repository", "schedule_repository", "governance_run_repository"},
+    "service": {"workflow", "role_service", "control_service", "context_briefs", "governance_run_service", "task_budget"},
     "runtime": {"api", "assembly", "codex_adapter", "codex_environment", "cutover_runtime", "delivery", "delivery_archive",
                 "delivery_candidate", "delivery_checks", "delivery_runtime", "delivery_validation", "evaluation_adapter",
                 "gateway_adapter", "github_delivery", "local_commit", "local_verifier", "pytest_runner", "quality",
                 "repair_repository", "repair_runtime", "repair_session", "repository_checks", "sources", "task_environment",
-                "verification", "governance_verification", "schedule_runtime", "verification_ledger", "worker", "worker_runtime", "workspace"},
+                "verification", "governance_verification", "schedule_runtime", "governance_runtime", "verification_ledger", "worker", "worker_runtime", "workspace"},
     "ui": {"__main__"},
 }
 

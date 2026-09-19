@@ -217,17 +217,22 @@ worker 使用冻结 uv.lock 创建任务专用依赖环境。uv 不在 PATH 且 
 
 ## 代码熵回收与可选定时
 
-Console 的「代码熵回收」页选择模型与累计预算，可补充回收提示；启动后冻结远端 main，
-自主发现一个代码熵问题并复用 Harness 修复、验证、独立审查和 PR 自动交付。启用单问题模式后，
-Plan 确认第一个有证据的问题即停止继续发现，宿主拒绝包含多个 finding 的报告，只修复该问题后结束。
+Console 的「代码熵回收」页先选择按时间或按问题发现数停止，再选择模型、推理强度和
+每个问题的修复尝试上限。两种模式都发现一项后立即修复、验证和交付，PR 合并后再调查下一项。
+时间累计实际执行，等待 GitHub 不计时；数量模式无隐含时限。问题需判断或执行失败时停止推进。
 
 ```bash
-python -m chatcopilot.harness start-gc --model MODEL --repair-hint "检查重复职责与失效配置"
+python -m chatcopilot.harness start-gc --model MODEL --timeout-seconds 3600
+python -m chatcopilot.harness start-gc --model MODEL --findings 3 --max-attempts 3
+python -m chatcopilot.harness get-gc GC_RUN_ID
+python -m chatcopilot.harness cancel-gc GC_RUN_ID
+python -m chatcopilot.harness resume-gc GC_RUN_ID
 python -m chatcopilot.harness gc-schedule
-python -m chatcopilot.harness gc-schedule --enable --model MODEL --interval-hours 24
+python -m chatcopilot.harness gc-schedule --enable --model MODEL --interval-hours 24 --findings 2
 python -m chatcopilot.harness gc-schedule --disable
 ```
 
-定时默认关闭，开启后使用保存的模型、预算和提示，约一分钟首次触发。已有活动治理或
-待完成 PR 时跳过本次触发；关闭只影响后续创建，不取消已开始任务。完整行为见
+定时默认关闭，启用约一分钟后首次触发。已有活动回收或待完成 PR 时跳过，不排队；
+关闭只影响后续创建，不取消已开始批次。恢复保留原有消耗，重新发起才创建新预算。
+旧的单问题与回收提示参数已移除，旧定时设置需在页面重新保存。完整行为见
 [代码熵回收契约](../reference/code-health.md)。

@@ -1,26 +1,23 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { governanceApi } from "./governance";
-import { deliveryActive, harnessApi, repairStatusLabel, sourceLabel, type RepairTask } from "./api";
+import { deliveryActive, repairStatusLabel, sourceLabel, type RepairTask } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("starts GC through the common task API without a fabricated case or robot", async () => {
-  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ task_id: "repair-gc" }) });
+it("starts a sequential run with a mutually exclusive stopping condition", async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ run_id: "gc-example" }) });
   vi.stubGlobal("fetch", fetch);
-  await harnessApi.start({ source_kind: "code_health", request_id: "stable-gc", model: "fixture",
-    reasoning_effort: "medium", max_attempts: 3, timeout_seconds: 3600, single_issue: true,
-    feedback: { repair_hint: "inspect duplication" } });
-  expect(fetch.mock.calls[0][0]).toBe("/api/harness/tasks");
-  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
-    source_kind: "code_health", request_id: "stable-gc", model: "fixture", reasoning_effort: "medium",
-    max_attempts: 3, timeout_seconds: 3600, single_issue: true, feedback: { repair_hint: "inspect duplication" },
-  });
+  const body = { request_id: "stable-gc", model: "fixture", reasoning_effort: "medium", max_attempts: 3,
+    stop_condition: { mode: "findings" as const, count: 2 } };
+  await governanceApi.start(body);
+  expect(fetch.mock.calls[0][0]).toBe("/api/harness/code-health/runs");
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(body);
 });
 
 it("saves an explicit optional schedule without task side effects", async () => {
   const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ enabled: false }) });
   vi.stubGlobal("fetch", fetch);
-  const body = { enabled: false, interval_hours: 24, options: null, repair_hint: "" };
+  const body = { enabled: false, interval_hours: 24, options: null };
   await governanceApi.saveSchedule(body);
   expect(fetch.mock.calls[0][0]).toBe("/api/harness/code-health/schedule");
   expect(fetch.mock.calls[0][1].method).toBe("PUT");

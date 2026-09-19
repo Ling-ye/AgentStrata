@@ -7,6 +7,7 @@ import builtins
 import os
 import re
 import subprocess
+import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
@@ -70,25 +71,47 @@ class HarnessController:
         return self.settings.get("CHATCOPILOT_HARNESS_MODEL", "")
 
     def start_request(self, request, *, launch: bool = True):
-        if request.source_kind == "code_health":
-            return self.start_code_health(request.options, request_id=request.request_id,
-                feedback=request.feedback, launch=launch)
         if request.source_kind == "robot_task":
             return self.start_task(request.bot_id, request.run_id, request.options,
                 request_id=request.request_id, feedback=request.feedback, launch=launch)
         return self.start_case_instance(request.case_instance_id, request.options,
             request_id=request.request_id, feedback=request.feedback, launch=launch)
 
-    def start_code_health(self, options: RepairOptions, *, request_id: str | None = None,
-                          feedback: RepairFeedback | None = None, launch: bool = True):
+    def _governance_runs(self):
+        from chatcopilot.harness.governance_runtime import governance_runs
+        return governance_runs(self)
+
+    def start_code_health(self, options, *, request_id: str | None = None):
+        return self._governance_runs().start(options, request_id=request_id)
+
+    def governance_run(self, run_id):
+        return self._governance_runs().get(run_id)
+
+    def governance_runs(self, **kwargs):
+        return self._governance_runs().runs.page(repository=str(self.repository), **kwargs)
+
+    def active_governance_run(self):
+        runs = self._governance_runs().runs.active(str(self.repository))
+        if runs:
+            return runs[0]["run_id"]
+        busy = self.store.active_governance(str(self.repository))
+        return self.store.control_state(busy).get("governance_run_id") if busy else None
+
+    def cancel_governance_run(self, run_id):
+        return self._governance_runs().cancel(run_id)
+
+    def resume_governance_run(self, run_id):
+        return self._governance_runs().resume(run_id)
+
+    def _start_code_health_task(self, options: RepairOptions, *, request_id: str,
+                               run_id: str, sequence: int, launch: bool = True):
         from chatcopilot.harness.governance_repository import GOAL
-        if feedback and feedback.expected_behavior.strip():
-            raise ValueError("代码熵回收不能覆盖 SDD 或黄金原则")
         source = {"kind": "code_health", "repository": str(self.repository), "original_input": GOAL,
                   "failure_signature": [], "warnings": [], "blockers": []}
         return self._start(lambda: ProblemEvidence(str(self.repository), "code_health", _digest(source), source),
                            {"kind": "code_health", "repository": str(self.repository)}, options,
-                           request_id=request_id, feedback=feedback, launch=launch)
+                           request_id=request_id, launch=launch,
+                           governance={"governance_run_id": run_id, "governance_sequence": sequence})
 
     def start(
         self,
@@ -177,6 +200,7 @@ class HarnessController:
         launch: bool,
         feedback: RepairFeedback | None = None,
         continuation: dict[str, Any] | None = None,
+        governance: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         feedback_payload = feedback.to_payload() if feedback else {}
         if feedback_payload:
@@ -190,10 +214,11 @@ class HarnessController:
             if previous["request_digest"] != request_digest:
                 raise HarnessError("conflict", "同一请求 ID 的内容已变化")
             return self.get(previous["task_id"])
+        preparation_started = time.monotonic()
         evidence = source_loader()
         source = evidence.material
-        if source.get("kind") != "code_health" and options.single_issue:
-            raise ValueError("单问题模式仅适用于代码熵回收")
+        if source.get("kind") != "code_health" and options.timeout_seconds is None:
+            raise ValueError("故障修复必须指定时间预算")
         if source.get("blockers"):
             raise HarnessError("source_incomplete", "；".join(source["blockers"]))
         if feedback_payload:
@@ -244,6 +269,8 @@ class HarnessController:
             "source": source,
             "evidence_digest": evidence.digest,
             "options": asdict(options),
+            **(governance or {}),
+            **({"elapsed_seconds": time.monotonic() - preparation_started} if governance else {}),
             **({"continued_from": continuation["task_id"], "elapsed_seconds": continuation.get("elapsed_seconds", 0),
                 "prior_diagnosis": continuation["source"].get("diagnosis"),
                 "prior_evaluations": continuation.get("evaluations", {}),
@@ -355,11 +382,16 @@ class HarnessController:
 
     def _initialize(self, task: dict[str, Any]) -> bool:
         from chatcopilot.harness.delivery import initialize
+        from chatcopilot.harness.task_budget import TaskBudget
         try:
-            initialize(self.store, task["task_id"])
-            from chatcopilot.harness.artifact_repository import ArtifactRepository
-            artifacts = ArtifactRepository(self.store.root / "jobs" / task["task_id"])
-            self.store.update(task["task_id"], principles=asdict(artifacts.principles(Path(__file__).resolve().parents[3])))
+            with TaskBudget(self.store, task["task_id"], enabled=bool(task.get("governance_run_id"))) as budget:
+                budget.check()
+                initialize(self.store, task["task_id"])
+                from chatcopilot.harness.artifact_repository import ArtifactRepository
+                artifacts = ArtifactRepository(self.store.root / "jobs" / task["task_id"])
+                source = artifacts.directory / "source" if task["source"].get("kind") == "code_health" else Path(__file__).resolve().parents[3]
+                self.store.update(task["task_id"], principles=asdict(artifacts.principles(source)))
+                budget.check()
             return True
         except Exception as exc:
             self.store.update(task["task_id"], status="blocked", stage="snapshot", dispatch_state="failed",
@@ -458,7 +490,7 @@ class HarnessController:
 
     def governance_config(self):
         return {"default_model": self.default_model, "reasoning_effort": "medium", "max_attempts": 3,
-                "timeout_seconds": 3600, "interval_hours": 24}
+                "stop_condition": {"mode": "time", "seconds": 3600}, "interval_hours": 24}
 
     def governance_schedule(self):
         from chatcopilot.harness.schedule_runtime import GovernanceScheduler
@@ -495,6 +527,10 @@ class HarnessController:
         return result
 
     def cancel(self, task_id: str) -> dict[str, Any]:
+        task = self.store.get(task_id)
+        if task.get("governance_run_id"):
+            self.cancel_governance_run(task["governance_run_id"])
+            return self.get(task_id)
         self.lifecycle.cancel(task_id)
         return self.get(task_id)
 
@@ -503,12 +539,24 @@ class HarnessController:
         return self.get(task_id)
 
     def retry_delivery(self, task_id: str) -> dict[str, Any]:
+        self._require_standalone(task_id)
         return self._delivery_action(task_id, "retry")
 
     def retry_cleanup(self, task_id: str) -> dict[str, Any]:
         return self._delivery_action(task_id, "cleanup")
 
     def resume(self, task_id: str) -> dict[str, Any]:
+        self._require_standalone(task_id)
+        return self._resume_task(task_id)
+
+    def _require_standalone(self, task_id):
+        task = self.store.get(task_id)
+        if task.get("governance_run_id"):
+            raise HarnessError("governance_run_required", "请从熵回收批次恢复，不能绕过整次回收的停止条件")
+        if task["source"].get("kind") == "code_health":
+            raise HarnessError("source_archived", "旧代码熵回收任务只读保留，请重新发起批次")
+
+    def _resume_task(self, task_id: str) -> dict[str, Any]:
         with self.lifecycle.operation(task_id):
             task = self.lifecycle.prepare_resume_locked(task_id)
             if task.get("archive") and task.get("worktree") and not Path(task["worktree"]).exists():
@@ -763,5 +811,6 @@ class HarnessController:
         value["uncommitted"] = (
             False if task.get("local_commit") else None if task.get("commit_intent") else True
         )
-        value["archived"] = task.get("pipeline_version") != PIPELINE_VERSION
+        value["archived"] = task.get("pipeline_version") != PIPELINE_VERSION or (
+            source.get("kind") == "code_health" and not task.get("governance_run_id"))
         return value

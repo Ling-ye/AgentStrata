@@ -41,14 +41,14 @@ def _relative(name: str) -> bool:
     return bool(name) and not path.is_absolute() and ".." not in path.parts and path.as_posix() == name
 
 
-def validate_report(value: dict, context: dict, baseline: Path, *, single_issue: bool = False) -> dict:
+def validate_report(value: dict, context: dict, baseline: Path) -> dict:
     files = context["files"]
     reported = {Path(name).as_posix() for name in value["inspected_paths"]}
     inspected = reported & set(files)
     uninspected = [*value["uninspected"], *("未逐文件核实的报告路径：" + name for name in sorted(reported - set(files)))]
     ids = [finding["id"] for finding in value["findings"]]
-    if single_issue and len(ids) > 1:
-        raise HarnessError("invalid_role_result", "单问题模式最多报告一个代码熵问题")
+    if len(ids) > 1:
+        raise HarnessError("invalid_role_result", "每项任务最多报告一个代码熵问题，发现首个问题后应立即停止调查")
     if len(ids) != len(set(ids)) or any(not ident.strip() for ident in ids):
         raise HarnessError("invalid_role_result", "熵回收发现标识为空或重复")
     rules = {row["path"] for row in context["rules"]}
@@ -105,8 +105,18 @@ def validate_report(value: dict, context: dict, baseline: Path, *, single_issue:
 def bind_report(store, task_id: str, artifacts, value: dict, baseline: Path) -> dict:
     task = store.get(task_id)
     context = artifacts.read(task["governance_context"])
-    report = validate_report(value, context, baseline,
-                             single_issue=bool(task.get("options", {}).get("single_issue")))
+    report = validate_report(value, context, baseline)
+    finding = report["findings"][0] if report["findings"] else None
+    if task.get("frozen_finding"):
+        frozen = artifacts.read(task["frozen_finding"])
+        if not finding or any(finding[key] != frozen[key] for key in (
+                "id", "principle_refs", "evidence", "affected_paths", "acceptance_criteria")):
+            raise HarnessError("governance_target_changed", "返工不能更换或扩大已冻结的问题，请围绕原问题修复")
+        report["findings"] = [frozen]
+        report["selected"] = frozen if report["selected"] else None
+    elif finding:
+        reference = artifacts.put("frozen_finding", 1, finding)
+        store.update(task_id, frozen_finding=asdict(reference), governance_finding_id=finding["id"])
     reference = artifacts.put("governance_report", task["current_attempt"], report)
     source = {**task["source"], "governance_target": report["selected"],
               "governance_report": asdict(reference)}

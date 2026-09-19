@@ -34,7 +34,8 @@ def worker_execution(store: HarnessStore, task_id: str, *, delivery: bool = Fals
         lifetime.enter_context(store.creation_guard())
         with store.control_guard(task_id, wait=True):
             task = store.get(task_id)
-            if task.get("pipeline_version") != PIPELINE_VERSION:
+            if task.get("pipeline_version") != PIPELINE_VERSION or (
+                    task["source"].get("kind") == "code_health" and not task.get("governance_run_id")):
                 raise HarnessError("source_archived", "旧任务只读保留，请创建新任务")
             eligible = (bool(task.get("delivery")) and task["status"] not in {*ACTIVE, "waiting_input"}
                         and not task.get("current_evaluation_id")) if delivery else (

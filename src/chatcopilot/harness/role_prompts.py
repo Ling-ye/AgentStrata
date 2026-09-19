@@ -53,8 +53,8 @@ PROMPTS = {
 
 GOVERNANCE_PROMPTS = {
     Role.MAIN: "本任务是全仓代码熵回收；安排 Plan 依据冻结 SDD 与黄金原则自主调查，一个连贯主题一个 PR。"
-               "不要求先有业务失败，不要求发现数量；调查、实现和返修共用预算。",
-    Role.PLAN: "本任务是代码熵回收。先按 governance_context 规则索引理解当前契约，自主搜索和追踪调用者。"
+               "确认首个有充分证据的问题后停止发现，先完成该问题；调查、实现和返修共用预算。",
+    Role.PLAN: "本任务是代码熵回收。确认首个有充分证据的问题后立即停止继续发现，findings 最多一项；需要人工判断时也停止。未继续调查范围写入 uninspected。若提供 frozen_finding，返工必须保留其身份、规则引用、源码证据、文件范围和验收目标，不得重新发现或换题。先按 governance_context 规则索引理解当前契约，自主搜索和追踪调用者。"
                "findings.evidence 使用 baseline_root 中源码的 path、start_line、end_line（1 起始且包含结束行），"
                "宿主会按行提取原文，不要概述或复制成伪源码；principle_refs 使用规则文件路径，可带 :行号 或锚点。"
                "影响、affected_paths（仅 Coding 预计修改的产品文件）和明确 acceptance_criteria。"
@@ -75,12 +75,6 @@ GOVERNANCE_PROMPTS = {
                  "批准需 behavior_preserved=true，并在 improvements 提供实际变更路径、基线 before 原文片段、"
                  "候选 after 原文片段和改善理由。删除内容时 after 可空，新文件 before 可空，其他情况不能空。"
                  "证据不足返回 inconclusive；重新验证主干时仍需确认原问题与治理必要性。",
-}
-
-SINGLE_ISSUE_PROMPTS = {
-    Role.MAIN: "本任务启用了单问题模式；只安排一个问题的发现、修复和验收，不扩展第二个主题。",
-    Role.PLAN: "本任务启用了单问题模式。确认第一个有充分证据的代码熵问题后立即停止继续发现；"
-               "findings 最多输出一项，未继续调查的范围写入 uninspected。该问题需要人工判断时也应停止。",
 }
 
 GOVERNANCE_PROMPTS[Role.CODING] += (

@@ -13,7 +13,7 @@ import { GovernanceReport } from "./GovernanceReport";
 const { Text } = Typography;
 const jsonStyle = { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 420, overflow: "auto" } as const;
 
-export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; onRestart: (task: RepairTask) => void; onSelect?: (id: string) => void }) {
+export function RepairDetail({ taskId, onRestart, onSelect, managedRun = false }: { managedRun?: boolean; taskId: string; onRestart: (task: RepairTask) => void; onSelect?: (id: string) => void }) {
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -49,14 +49,14 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
   }
   if (query.isPending) return <Spin tip="读取修复记录…" />;
   if (!task) return <Alert type="error" content={String(query.error)} />;
-  const currentPipeline = task.archived === false;
+  const currentPipeline = task.archived === false && !managedRun;
   return <TaskDetailState instanceId="harness" runId={taskId}><Space direction="vertical" size={16} style={{ width: "100%", minWidth: 0 }}>
     {(error || query.isError) && <Alert type="error" content={error || String(query.error)} />}
     <Text copyable>{task.task_id}</Text><Text>{sourceLabel(task)}</Text>
     {task.source.case_instance_id && <Text copyable>Case 实例 ID：{task.source.case_instance_id}</Text>}
     <RepairProgress key={taskId} task={task} refreshTask={() => query.refetch()} title="任务概览" summaryOnly />
     {task.continued_from && <Text copyable>接续自：{task.continued_from}（已累计原任务用时）</Text>}
-    {!currentPipeline && !ACTIVE.includes(task.status) && <Alert type="info" content="此任务使用旧执行环境，仅保留历史记录；新流程请从来源重新创建任务。" />}
+    {task.archived && !ACTIVE.includes(task.status) && <Alert type="info" content="此任务使用旧执行环境，仅保留历史记录；新流程请从来源重新创建任务。" />}
     {currentPipeline && task.next_action === "upload_image" && <section aria-label="补充原图">
       <Alert type="warning" content="请提供原任务中的图片。上传后自动继续，无需判断技术方案；原图仅保存在私有材料中。" />
       <input aria-label="选择原图并继续" type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={busy}
@@ -73,7 +73,7 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
         <Button loading={busy} onClick={() => void action("continue")}>接续修复（累计预算）</Button>}
       {!ACTIVE.includes(task.status) && task.status !== "waiting_input" && (task.source.run_id || task.source.case_instance_id) &&
         <Button disabled={busy} onClick={() => onRestart(task)}>重新发起修复</Button>}
-      {!ACTIVE.includes(task.status) && task.source.kind === "code_health" &&
+      {!managedRun && !ACTIVE.includes(task.status) && task.source.kind === "code_health" &&
         <Button disabled={busy} onClick={() => onRestart(task)}>重新发起熵回收</Button>}
       {!!task.candidate_checkpoint?.changed_files.length && <a
         href={`/api/harness/tasks/${encodeURIComponent(taskId)}/attempts/${task.candidate_checkpoint.number}/patch`} download>下载保留候选</a>}
@@ -85,7 +85,7 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
       setCommandSelection({ open: true, source });
       window.requestAnimationFrame(() => document.getElementById("repair-command-logs")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     }} />
-    <DeliveryPanel task={task} refresh={() => query.refetch()} actionsOnly />
+    <DeliveryPanel task={task} refresh={() => query.refetch()} actionsOnly readOnly={managedRun || !!task.archived} />
     <CommandLogs key={`commands:${taskId}`} taskId={taskId} active={deliveryActive(task)} selection={commandSelection} setSelection={setCommandSelection} />
     <Text bold>原始资料</Text>
     <details><summary>任务与源码信息</summary>

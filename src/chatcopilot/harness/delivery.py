@@ -1,6 +1,7 @@
 """Durable PR delivery and reconciliation, independent of repair success state."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 import hashlib
 import time
@@ -14,6 +15,7 @@ from chatcopilot.harness.delivery_checks import publication_checks
 from chatcopilot.harness.github_delivery import DeliveryConfig, GitHubDelivery, git
 from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError, PIPELINE_VERSION
 from chatcopilot.harness.config import safe_error
+from chatcopilot.harness.task_budget import TaskBudget
 from chatcopilot.harness.control_types import external_evaluation_id
 from chatcopilot.harness.workspace import prepare
 
@@ -67,6 +69,17 @@ def _poll_cancel(store: Any, task_id: str) -> None:
         raise Cancelled()
 
 
+@contextmanager
+def _active_work(store, task_id):
+    with TaskBudget(store, task_id, enabled=bool(store.get(task_id).get("governance_run_id"))) as budget:
+        def poll():
+            _poll_cancel(store, task_id)
+            budget.check()
+        poll()
+        yield budget, poll
+        poll()
+
+
 def _cleanup(store: Any, task_id: str) -> None:
     try:
         delivery_archive.cleanup_local(store, task_id)
@@ -94,66 +107,68 @@ def _update_main(store: Any, task_id: str, client: GitHubDelivery, main: str, co
         client.disable(state)
     _poll_cancel(store, task_id)
     state = _save(store, task_id, auto_merge=False)
-    root = delivery_archive.restore(store, task_id)
-    repository, directory, _, branch = delivery_archive.task_paths(store, store.get(task_id))
-    client.fetch(repository, directory, main)
-    if not inflight and git(root, "diff", "--cached", "--name-only").strip():
-        raise HarnessError("index_changed", "主干更新前暂存区出现外部修改")
-    if not inflight and (git(root, "diff", "HEAD", "--name-only").strip() or git(root, "ls-files", "--others", "--exclude-standard").strip()):
-        # Resume a failed update from the last published commit, after preserving the exact owned bytes.
-        delivery_archive.archive(store, task_id)
-        extras = git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
-        git(root, "reset", "--hard", state["commit_sha"])
-        for raw in extras:
-            if raw:
-                path = root / raw.decode()
-                if path.exists():
-                    path.unlink()
-        store.update(task_id, working_digest=manifest_digest(source_manifest(root)))
-    baseline = directory / "revalidation-base"
-    if baseline.exists():
-        if (baseline.resolve() != baseline or git(baseline, "rev-parse", "--path-format=absolute", "--git-common-dir")
-                != git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")
-                or git(baseline, "rev-parse", "HEAD").decode().strip() != main or git(baseline, "status", "--porcelain").strip()):
-            raise HarnessError("delivery_update_interrupted", "主干验证工作区变化，保留现场")
-    else:
-        git(repository, "worktree", "add", "--detach", str(baseline), main)
-    env = github_transport.git_environment(author_name=state["author_name"], author_email=state["author_email"])
-    try:
-        try:
-            if not inflight:
-                git(root, "merge", "--no-commit", "--no-ff", main, env=env)
-        except HarnessError as exc:
-            # Preserve conflict bytes in the verified archive; do not resolve with a model implicitly.
+    with _active_work(store, task_id) as (budget, poll):
+        root = delivery_archive.restore(store, task_id)
+        repository, directory, _, branch = delivery_archive.task_paths(store, store.get(task_id))
+        client.fetch(repository, directory, main)
+        if not inflight and git(root, "diff", "--cached", "--name-only").strip():
+            raise HarnessError("index_changed", "主干更新前暂存区出现外部修改")
+        if not inflight and (git(root, "diff", "HEAD", "--name-only").strip() or git(root, "ls-files", "--others", "--exclude-standard").strip()):
+            # Resume a failed update from the last published commit, after preserving the exact owned bytes.
+            delivery_archive.archive(store, task_id)
+            extras = git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+            git(root, "reset", "--hard", state["commit_sha"])
+            for raw in extras:
+                if raw:
+                    path = root / raw.decode()
+                    if path.exists():
+                        path.unlink()
             store.update(task_id, working_digest=manifest_digest(source_manifest(root)))
-            raise HarnessError("delivery_merge_conflict", "最新 main 与任务变更冲突，已停止自动交付") from exc
-        store.update(task_id, working_digest=manifest_digest(source_manifest(root)))
-        index_path = Path(git(root, "rev-parse", "--path-format=absolute", "--git-path", "index").decode().strip())
-        index_digest = hashlib.sha256(index_path.read_bytes()).hexdigest()
-        if inflight and index_digest != task["delivery"].get("update_index_sha256"):
-            raise HarnessError("index_changed", "等待复测期间暂存区变化")
-        _save(store, task_id, update_index_sha256=index_digest)
-        revalidate(store, task_id, root, baseline, coder, verifier, lambda: _poll_cancel(store, task_id))
-        _poll_cancel(store, task_id)
-        if hashlib.sha256(index_path.read_bytes()).hexdigest() != index_digest:
-            raise HarnessError("index_changed", "主干复验期间暂存区出现外部修改")
-        tree = git(root, "write-tree").decode().strip()
-        # This is a task-branch merge, while the final main integration remains squash/linear.
-        sha = git(root, "commit-tree", tree, "-p", state["commit_sha"], "-p", main,
-                  data=b"Sync main and repeat Harness acceptance\n", env=env).decode().strip()
-        _save(store, task_id, update_commit_sha=sha, update_tree_sha=tree)
-        git(root, "update-ref", "refs/heads/" + branch, sha, state["commit_sha"])
-        git(root, "reset", "--mixed", "--quiet", sha)
-        store.update(task_id, working_head=sha)
-        _poll_cancel(store, task_id)
-        approval = store.get(task_id)["publication_candidate"]
-        _save(store, task_id, commit_sha=sha, tree_sha=tree, base_sha=main, state="pr_open", auto_merge=False,
-              candidate_digest=approval["digest"], push_previous=state["commit_sha"], update_base_sha=None)
-        publication_checks(store, task_id, lambda: _poll_cancel(store, task_id))
-        client.push(root, directory, branch, sha, previous=state["commit_sha"])
-        _save(store, task_id, push_previous=None, disabling_for_update=False)
-    finally:
-        git(repository, "worktree", "remove", "--force", str(baseline))
+        baseline = directory / "revalidation-base"
+        if baseline.exists():
+            if (baseline.resolve() != baseline or git(baseline, "rev-parse", "--path-format=absolute", "--git-common-dir")
+                    != git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")
+                    or git(baseline, "rev-parse", "HEAD").decode().strip() != main or git(baseline, "status", "--porcelain").strip()):
+                raise HarnessError("delivery_update_interrupted", "主干验证工作区变化，保留现场")
+        else:
+            git(repository, "worktree", "add", "--detach", str(baseline), main)
+        env = github_transport.git_environment(author_name=state["author_name"], author_email=state["author_email"])
+        try:
+            try:
+                if not inflight:
+                    git(root, "merge", "--no-commit", "--no-ff", main, env=env)
+            except HarnessError as exc:
+                # Preserve conflict bytes in the verified archive; do not resolve with a model implicitly.
+                store.update(task_id, working_digest=manifest_digest(source_manifest(root)))
+                raise HarnessError("delivery_merge_conflict", "最新 main 与任务变更冲突，已停止自动交付") from exc
+            store.update(task_id, working_digest=manifest_digest(source_manifest(root)))
+            index_path = Path(git(root, "rev-parse", "--path-format=absolute", "--git-path", "index").decode().strip())
+            index_digest = hashlib.sha256(index_path.read_bytes()).hexdigest()
+            if inflight and index_digest != task["delivery"].get("update_index_sha256"):
+                raise HarnessError("index_changed", "等待复测期间暂存区变化")
+            _save(store, task_id, update_index_sha256=index_digest)
+            revalidate(store, task_id, root, baseline, coder, verifier, poll,
+                           remaining=lambda: budget.remaining if budget.enabled else None)
+            poll()
+            if hashlib.sha256(index_path.read_bytes()).hexdigest() != index_digest:
+                raise HarnessError("index_changed", "主干复验期间暂存区出现外部修改")
+            tree = git(root, "write-tree").decode().strip()
+            # This is a task-branch merge, while the final main integration remains squash/linear.
+            sha = git(root, "commit-tree", tree, "-p", state["commit_sha"], "-p", main,
+                      data=b"Sync main and repeat Harness acceptance\n", env=env).decode().strip()
+            _save(store, task_id, update_commit_sha=sha, update_tree_sha=tree)
+            git(root, "update-ref", "refs/heads/" + branch, sha, state["commit_sha"])
+            git(root, "reset", "--mixed", "--quiet", sha)
+            store.update(task_id, working_head=sha)
+            poll()
+            approval = store.get(task_id)["publication_candidate"]
+            _save(store, task_id, commit_sha=sha, tree_sha=tree, base_sha=main, state="pr_open", auto_merge=False,
+                  candidate_digest=approval["digest"], push_previous=state["commit_sha"], update_base_sha=None)
+            publication_checks(store, task_id, poll)
+            client.push(root, directory, branch, sha, previous=state["commit_sha"])
+            _save(store, task_id, push_previous=None, disabling_for_update=False)
+        finally:
+            git(repository, "worktree", "remove", "--force", str(baseline))
 
 
 def reconcile(store: Any, task_id: str, *, client: GitHubDelivery | None = None, coder: Any = None,
@@ -208,10 +223,10 @@ def _reconcile(store: Any, task_id: str, *, client: GitHubDelivery | None, coder
     client = client or GitHubDelivery(DeliveryConfig.load())
     client.verify_target(state)
     if not state.get("commit_sha"):
-        if not root.exists():
-            root = delivery_archive.restore(store, task_id)
-        _poll_cancel(store, task_id)
-        delivery_candidate.commit(store, task_id)
+        with _active_work(store, task_id):
+            if not root.exists():
+                root = delivery_archive.restore(store, task_id)
+            delivery_candidate.commit(store, task_id)
         task = store.get(task_id)
         state = task["delivery"]
     if not state.get("pr_number"):
@@ -226,22 +241,24 @@ def _reconcile(store: Any, task_id: str, *, client: GitHubDelivery | None, coder
             _save(store, task_id, state="cancelled", message="已取消；未创建 PR")
             return
         else:
+            with _active_work(store, task_id) as (_, poll):
+                if not root.exists():
+                    root = delivery_archive.restore(store, task_id)
+                poll()
+                publication_checks(store, task_id, poll)
+                client.push(root, directory, branch, state["commit_sha"])
+                state = _save(store, task_id, state="pushed")
+                poll()
+                pr = client.ensure_pr(state, task["publication_candidate"]["title"], delivery_candidate.pr_body(task))
+                state = _pr_receipt(store, task_id, pr)
+    if state.get("push_previous"):
+        with _active_work(store, task_id) as (_, poll):
+            poll()
             if not root.exists():
                 root = delivery_archive.restore(store, task_id)
-            _poll_cancel(store, task_id)
-            publication_checks(store, task_id, lambda: _poll_cancel(store, task_id))
-            client.push(root, directory, branch, state["commit_sha"])
-            state = _save(store, task_id, state="pushed")
-            _poll_cancel(store, task_id)
-            pr = client.ensure_pr(state, task["publication_candidate"]["title"], delivery_candidate.pr_body(task))
-            state = _pr_receipt(store, task_id, pr)
-    if state.get("push_previous"):
-        _poll_cancel(store, task_id)
-        if not root.exists():
-            root = delivery_archive.restore(store, task_id)
-        publication_checks(store, task_id, lambda: _poll_cancel(store, task_id))
-        client.push(root, directory, branch, state["commit_sha"], previous=state["push_previous"])
-        state = _save(store, task_id, push_previous=None, disabling_for_update=False)
+            publication_checks(store, task_id, poll)
+            client.push(root, directory, branch, state["commit_sha"], previous=state["push_previous"])
+            state = _save(store, task_id, push_previous=None, disabling_for_update=False)
     pr = client.pull(state["pr_number"])
     client.verify_pr(pr, state)
     if pr.get("merged") or pr["state"] == "closed":
@@ -270,12 +287,13 @@ def _reconcile(store: Any, task_id: str, *, client: GitHubDelivery | None, coder
         client.verify_pr(pr, state)
     _poll_cancel(store, task_id)
     if not pr.get("auto_merge"):
-        # Record the desired action before the request; response-loss recovery observes the PR itself.
-        _save(store, task_id, enabling_auto_merge=True)
-        if client.merge_ready(state):
-            client.merge(state)
-        else:
-            client.enable(state)
+        with _active_work(store, task_id):
+            # Record the desired action before the request; response-loss recovery observes the PR itself.
+            _save(store, task_id, enabling_auto_merge=True)
+            if client.merge_ready(state):
+                client.merge(state)
+            else:
+                client.enable(state)
     pr = client.pull(state["pr_number"])
     client.verify_pr(pr, state)
     checks = client.check_summary(state)

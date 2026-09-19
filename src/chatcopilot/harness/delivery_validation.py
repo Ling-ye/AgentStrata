@@ -15,7 +15,7 @@ from chatcopilot.harness.models import VerificationRequest, CandidateRef, Coding
 
 
 def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, verifier: Any,
-               check_cancel: Callable[[], None]) -> dict[str, Any]:
+               check_cancel: Callable[[], None], *, remaining: Callable[[], float | None] = lambda: None) -> dict[str, Any]:
     task = store.get(task_id)
     approval = task["publication_candidate"]
     directory = private_directory(store.root / "jobs" / task_id / "revalidation" / uuid.uuid4().hex)
@@ -88,7 +88,8 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
         "original_branch": "main", "git_worktree": str(root), "snapshot_digest": manifest_digest(base_manifest)}}
     result = coder.review(root, {"task_id": task_id, "source": source, "patch": patch.read_text(), **governance_context,
         "reproduction": task.get("evaluations", {}), "verification": verification, "regression": trials},
-        CodingOptions(task["options"]["model"], task["options"]["reasoning_effort"], 1, None), directory / "review", check_cancel)
+        CodingOptions(task["options"]["model"], task["options"]["reasoning_effort"], 1,
+                      max(1, int(remaining())) if remaining() is not None else None), directory / "review", check_cancel)
     review = review_decision({key: result[key] for key in ("decision", "problem", "reason", "evidence_refs") if key in result})
     if plan.purpose == "governance" and review["decision"] == "approved":
         from chatcopilot.harness.governance_repository import require_improvement

@@ -413,7 +413,7 @@ def test_main_advance_is_revalidated_then_pushed_without_rewriting(task, tmp_pat
     main = advance_main(client, tmp_path)
     calls = []
 
-    def validate(store, task_id, root, baseline, coder, verifier, check_cancel):
+    def validate(store, task_id, root, baseline, coder, verifier, check_cancel, *, remaining):
         check_cancel()
         assert (root / "docs/guide.md").read_text() == "Correct explanation.\n"
         assert (root / "docs/other.md").read_text() == "Upstream change\n"
@@ -585,3 +585,71 @@ def test_wrong_github_actor_blocks_without_automatic_retry(task, monkeypatch):
     assert result['delivery']['state'] == 'blocked'
     assert result['delivery']['error_code'] == 'github_actor_mismatch'
     assert client.creations == 0 and ident not in pending(store)
+
+
+def bind_run_budget(task, stop):
+    from chatcopilot.harness.governance_run_repository import GovernanceRunRepository
+    from chatcopilot.harness.governance_types import GovernanceOptions
+    store, ident, _, repo = task
+    runs = GovernanceRunRepository(store)
+    run, _ = runs.create(str(repo), GovernanceOptions("test", stop_condition=stop).to_payload(), "budget-run")
+    store.update(ident, governance_run_id=run["run_id"], governance_sequence=1,
+        options={"model": "test", "reasoning_effort": "high", "max_attempts": 1,
+                 "timeout_seconds": stop.get("seconds")}, elapsed_seconds=0)
+    refresh_acceptance(store, ident)
+    return runs, run
+
+
+def test_gc_publication_stops_when_active_budget_expires(task, monkeypatch):
+    from chatcopilot.harness.task_budget import TaskBudget
+    store, ident, client, _ = task
+    bind_run_budget(task, {"mode": "time", "seconds": 5})
+    clock = [0]
+    class Budget(TaskBudget):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs, clock=lambda: clock[0])
+    monkeypatch.setattr(delivery, "TaskBudget", Budget)
+    def checks(_store, _ident, cancel):
+        clock[0] = 6
+        cancel()
+    monkeypatch.setattr(delivery, "publication_checks", checks)
+    result = delivery.reconcile(store, ident, client=client)
+    assert result["delivery"]["state"] == "blocked"
+    assert result["delivery"]["error_code"] == "budget_exhausted"
+    assert result["elapsed_seconds"] == 6
+    assert client.creations == 0
+    assert result["delivery"]["commit_sha"]  # Exact accepted candidate is retained.
+
+
+def test_count_mode_publication_has_no_deadline_and_waiting_does_not_charge(task, monkeypatch):
+    from chatcopilot.harness.task_budget import TaskBudget
+    store, ident, client, _ = task
+    bind_run_budget(task, {"mode": "findings", "count": 1})
+    clock = [0]
+    class Budget(TaskBudget):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs, clock=lambda: clock[0])
+    monkeypatch.setattr(delivery, "TaskBudget", Budget)
+    def checks(_store, _ident, cancel):
+        clock[0] += 7200
+        cancel()
+    monkeypatch.setattr(delivery, "publication_checks", checks)
+    result = delivery.reconcile(store, ident, client=client)
+    assert result["delivery"]["state"] == "waiting_checks", result["delivery"]
+    used = result["elapsed_seconds"]
+    assert used == 7200 and result["remaining_seconds"] is None
+    clock[0] += 86400
+    waited = delivery.reconcile(store, ident, client=client)
+    assert waited["elapsed_seconds"] == used and client.creations == 1
+
+
+def test_exhausted_gc_budget_still_observes_already_published_merge(task):
+    store, ident, client, _ = task
+    bind_run_budget(task, {"mode": "time", "seconds": 3600})
+    published = delivery.reconcile(store, ident, client=client)
+    assert published["delivery"]["state"] == "waiting_checks"
+    store.update(ident, elapsed_seconds=3600)
+    client.mark_merged(published["delivery"])
+    merged = delivery.reconcile(store, ident, client=client)
+    assert merged["delivery"]["state"] == "merged"
+    assert merged["elapsed_seconds"] == 3600

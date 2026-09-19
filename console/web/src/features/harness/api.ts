@@ -55,7 +55,7 @@ export interface RepairTask {
   message?: string; branch?: string; worktree?: string; verified_digest?: string; verified_at?: number;
   candidate_available?: boolean; elapsed_seconds?: number; error_code?: string; current_evaluation_id?: string;
   heartbeat_at?: number; current_attempt?: number;
-  options: { model: string; max_attempts: number; reasoning_effort: string; timeout_seconds: number; single_issue?: boolean };
+  options: { model: string; max_attempts: number; reasoning_effort: string; timeout_seconds: number | null };
   evaluations?: Record<string, Verification>;
   attempts?: Array<{ number: number; status: string; changed_files?: string[]; error?: string; checks?: string[];
     review?: Review; repository_regressions?: { passed_cases: string[]; failed_cases: string[] }; patch_sha256?: string; coding?: { events: Array<Record<string, unknown>> }; regressions?: string[]; verification?: Verification }>;
@@ -72,7 +72,7 @@ export interface RepairProgress {
 export type ProgressTask = Pick<RepairTask, "task_id" | "status" | "stage" | "elapsed_seconds" |
   "heartbeat_at" | "current_attempt" | "preparation_revisions" | "next_action" | "local_commit" | "commit_in_main" | "commit_state" | "delivery" | "cleanup" | "archive" |
   "pipeline_version" | "verification_gaps" | "acceptance_coverage" | "stop_reason" | "remaining_seconds" | "candidate_checkpoint"> & {
-  options: { model: string; max_attempts: number; reasoning_effort: string; timeout_seconds?: number };
+  options: { model: string; max_attempts: number; reasoning_effort: string; timeout_seconds?: number | null };
   source?: { kind?: SourceKind | "code_health" };
   governance_summary?: RepairTask["governance_summary"];
 };
@@ -103,8 +103,8 @@ export function sourceLabel(task: RepairTask): string {
   if (task.source.kind === "code_health") return `代码熵回收${task.governance_summary?.topic ? " · " + task.governance_summary.topic : ""}`;
   return task.source.kind === "robot_task" ? `机器人任务 ${task.source.run_id}` : `测评 ${task.source.evaluation_id} · ${task.source.case_id}`;
 }
-export type StartRepair = { source_kind: SourceKind | "code_health"; case_instance_id?: string;
-  bot_id?: string; run_id?: string; feedback?: RepairFeedback; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number; single_issue?: boolean };
+export type StartRepair = { source_kind: SourceKind; case_instance_id?: string;
+  bot_id?: string; run_id?: string; feedback?: RepairFeedback; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number };
 export async function harnessRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/harness${path}`, init);
   const value = await response.json();

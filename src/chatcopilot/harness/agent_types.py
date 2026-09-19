@@ -47,7 +47,7 @@ FINDING = object_schema(id=TEXT, summary=TEXT, impact=TEXT, principle_refs=TEXTS
 GC_PLAN = object_schema(**{
     **SCHEMAS[Role.PLAN]["properties"],
     "decision": {"type": "string", "enum": ["proceed", "blocked", "no_changes", "needs_review"]},
-    "findings": {"type": "array", "items": FINDING}, "selected_finding_id": TEXT,
+    "findings": {"type": "array", "maxItems": 1, "items": FINDING}, "selected_finding_id": TEXT,
     "inspected_paths": TEXTS, "uninspected": TEXTS,
 })
 GC_REVIEW = object_schema(**{

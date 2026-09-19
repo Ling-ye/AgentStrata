@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from chatcopilot.core.private_sqlite import json_text, storage_error_details
-from chatcopilot.harness.control_service import check_cancellation
+from chatcopilot.harness.task_budget import TaskBudget
 from chatcopilot.harness.flow_records import record_step
 from chatcopilot.harness.models import acceptance_digest, VerificationRequest, CandidateRef, Cancelled, HarnessError, RepairOptions, VerificationPlan, review_decision
 from chatcopilot.harness.config import safe_error
@@ -34,24 +34,15 @@ def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str,
         return task
     options = RepairOptions(**task["options"])
     governance = verification_purpose(task["source"]) == "governance"
-    started, elapsed = time.monotonic(), float(task.get("elapsed_seconds", 0))
-    deadline = started + max(0, options.timeout_seconds - elapsed)
-    heartbeat = 0.0
+    budget = TaskBudget(store, task_id)
+    budget.__enter__()
 
     def cancel():
-        nonlocal heartbeat
-        check_cancellation(store.control_state(task_id))
-        now = time.monotonic()
-        if now >= deadline:
-            raise HarnessError("budget_exhausted", "本次修复的时间预算已用完")
-        if now - heartbeat >= 5:
-            heartbeat = now
-            store.heartbeat(task_id, elapsed_seconds=elapsed + now - started,
-                         remaining_seconds=max(0, deadline - now))
+        budget.check()
 
     def remaining():
         cancel()
-        return replace(options, timeout_seconds=max(1, int(deadline - time.monotonic())))
+        return replace(options, timeout_seconds=max(1, int(budget.remaining)) if budget.remaining is not None else None)
 
     def finish(status, code="", message=""):
         return store.update(task_id, status=status, stage="done", stop_reason=code or status,
@@ -347,7 +338,7 @@ def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str,
                 if isinstance(exc, Cancelled):
                     raise
                 if code in {"budget_exhausted", "no_progress", "fixture_missing", "image_required", "protected_change",
-                            "workspace_changed", "index_changed", "verification_environment", "verification_judge", "verification_evidence",
+                            "workspace_changed", "index_changed", "governance_target_changed", "governance_run_stopped", "verification_environment", "verification_judge", "verification_evidence",
                             "evaluation_unavailable", "result_pending", "coding_environment", "review_inconclusive", "plan_blocked", "material_missing"}:
                     raise
                 if code in {"session_unconfirmed", "session_changed"}:
@@ -365,6 +356,5 @@ def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str,
         finish("cancel_requested" if pending_cancel else "blocked" if isinstance(exc, HarnessError) else "interrupted",
                getattr(exc, "code", "execution_error"), safe_error(exc))
     finally:
-        store.update(task_id, elapsed_seconds=elapsed + time.monotonic() - started,
-                     remaining_seconds=max(0, deadline - time.monotonic()))
+        budget.__exit__()
     return store.get(task_id)

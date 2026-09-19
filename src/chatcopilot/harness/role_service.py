@@ -101,9 +101,8 @@ class RoleWorkflow:
                     "acceptance": task["acceptance"], "baseline_root": str(baseline),
                     "verification_capabilities": capabilities}
         if governance:
-            evidence["governance_policy"] = {
-                "single_issue": bool(task.get("options", {}).get("single_issue")),
-            }
+            if task.get("frozen_finding"):
+                evidence["frozen_finding"] = self.artifacts.read(task["frozen_finding"])
         if failure:
             evidence.update(failure_brief=failure, failure_brief_ref=previous.get("brief_ref") if previous else None)
         if index_ref:

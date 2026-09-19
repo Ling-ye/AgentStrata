@@ -7,7 +7,7 @@ import tempfile
 
 from chatcopilot.core.private_sqlite import private_directory, private_file, private_lock, json_text
 from chatcopilot.harness.models import HarnessError
-from chatcopilot.harness.models import GovernanceSchedule
+from chatcopilot.harness.governance_types import GovernanceSchedule
 
 
 class ScheduleRepository:

@@ -14,12 +14,13 @@ from unittest.mock import Mock
 
 import pytest
 
-from chatcopilot.harness.models import GovernanceSchedule, HarnessError, RepairOptions
+from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.governance_types import GovernanceOptions, GovernanceSchedule
 from chatcopilot.harness.schedule_runtime import GovernanceScheduler
 
 
 def _settings(*, enabled: bool = True) -> GovernanceSchedule:
-    return GovernanceSchedule(enabled, 24, RepairOptions("fixture"), "inspect unused helpers")
+    return GovernanceSchedule(enabled, 24, GovernanceOptions("fixture"))
 
 
 def _scheduler(tmp_path: Path, *, command=None) -> tuple[GovernanceScheduler, SimpleNamespace, Mock]:
@@ -30,8 +31,9 @@ def _scheduler(tmp_path: Path, *, command=None) -> tuple[GovernanceScheduler, Si
     ))
     controller = SimpleNamespace(
         repository=repository,
+        active_governance_run=Mock(return_value=None),
         store=SimpleNamespace(root=tmp_path / "private", active_governance=Mock(return_value=None)),
-        start_code_health=Mock(return_value={"task_id": "repair-example"}),
+        start_code_health=Mock(return_value={"run_id": "gc-example"}),
     )
     return GovernanceScheduler(controller, unit_directory=tmp_path / "units", command=systemctl,
                                clock=lambda: 86_400), controller, systemctl
@@ -93,7 +95,7 @@ def test_gc_schedule_keeps_command_environment_timer_and_dispatch_safety(tmp_pat
     second = GovernanceScheduler(controller, unit_directory=runtime.units, command=systemctl,
                                  clock=runtime.clock).tick()
     assert second["duplicate"] is True
-    assert second["task_id"] == first["task_id"]
+    assert second["run_id"] == first["run_id"]
     controller.start_code_health.assert_called_once()
 
     unavailable = Mock(return_value=subprocess.CompletedProcess([], 1, "", "unavailable"))
