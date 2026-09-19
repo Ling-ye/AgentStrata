@@ -11,15 +11,39 @@ def run_task(store, task_id, evaluator, coder, *, local_verifier=None, committer
     if store.get(task_id).get("pipeline_version") != PIPELINE_VERSION:
         return store.get(task_id)
     local = local_verifier or LocalVerifier(store.root)
-    verifier = CaseVerification(evaluator, local, store)
+    governance = store.get(task_id)["source"].get("kind") == "code_health"
+    verifier_type = CaseVerification
+    if governance:
+        from chatcopilot.harness.governance_verification import GovernanceVerification
+        verifier_type = GovernanceVerification
+    verifier = verifier_type(evaluator, local, store)
     try:
         initialize(store, task_id)
         from dataclasses import asdict
         from pathlib import Path
         from chatcopilot.harness.artifact_repository import ArtifactRepository
         artifacts = ArtifactRepository(store.root / "jobs" / task_id)
+        frozen = artifacts.directory / "source"
         if not store.get(task_id).get("principles"):
-            store.update(task_id, principles=asdict(artifacts.principles(Path(__file__).resolve().parents[3])))
+            store.update(task_id, principles=asdict(artifacts.principles(frozen if governance else Path(__file__).resolve().parents[3])))
+        if governance and not store.get(task_id).get("governance_context"):
+            from chatcopilot.harness.governance_repository import freeze_context
+            from chatcopilot.harness.workspace import permitted_change
+            current = store.get(task_id)
+            manifest = current["baseline_manifest"]
+            context = freeze_context(artifacts, frozen, manifest,
+                [name for name in manifest if permitted_change(name, governance=True)], artifacts.read(current["principles"]))
+            prior = [row for row in store.history(context_key=current["context_key"])
+                     if row["task_id"] != task_id and row.get("governance_report")]
+            recent = None
+            if prior:
+                previous = prior[0]
+                report = ArtifactRepository(store.root / "jobs" / previous["task_id"]).read(previous["governance_report"])
+                recent = {"task_id": previous["task_id"], "base_commit": previous["base_commit"],
+                          "summary": report["summary"], "findings": report["findings"], "unresolved": report["unresolved"],
+                          "uninspected": report["uninspected"]}
+            store.update(task_id, governance_context=asdict(context), source={**current["source"],
+                         "governance_context": asdict(context), "previous_governance": recent})
         from chatcopilot.harness.task_environment import prepare_environment
         from chatcopilot.harness.control_service import check_cancellation
         import time

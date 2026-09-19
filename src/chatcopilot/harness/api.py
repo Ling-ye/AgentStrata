@@ -70,11 +70,25 @@ class HarnessController:
         return self.settings.get("CHATCOPILOT_HARNESS_MODEL", "")
 
     def start_request(self, request, *, launch: bool = True):
+        if request.source_kind == "code_health":
+            return self.start_code_health(request.options, request_id=request.request_id,
+                feedback=request.feedback, launch=launch)
         if request.source_kind == "robot_task":
             return self.start_task(request.bot_id, request.run_id, request.options,
                 request_id=request.request_id, feedback=request.feedback, launch=launch)
         return self.start_case_instance(request.case_instance_id, request.options,
             request_id=request.request_id, feedback=request.feedback, launch=launch)
+
+    def start_code_health(self, options: RepairOptions, *, request_id: str | None = None,
+                          feedback: RepairFeedback | None = None, launch: bool = True):
+        from chatcopilot.harness.governance_repository import GOAL
+        if feedback and feedback.expected_behavior.strip():
+            raise ValueError("代码治理不能覆盖 SDD 或黄金原则")
+        source = {"kind": "code_health", "repository": str(self.repository), "original_input": GOAL,
+                  "failure_signature": [], "warnings": [], "blockers": []}
+        return self._start(lambda: ProblemEvidence(str(self.repository), "code_health", _digest(source), source),
+                           {"kind": "code_health", "repository": str(self.repository)}, options,
+                           request_id=request_id, feedback=feedback, launch=launch)
 
     def start(
         self,
@@ -202,6 +216,8 @@ class HarnessController:
         )
         for old in self.store.history(context_key=context):
             if (
+                source.get("kind") != "code_health"
+                and
                 old.get("pipeline_version") == PIPELINE_VERSION
                 and old["status"] == "fixed"
                 and old["active_key"] == active
@@ -416,7 +432,11 @@ class HarnessController:
         ref = (result.get("evidence") or {}).get("output")
         if ref:
             from chatcopilot.harness.artifact_repository import ArtifactRepository
-            result["result"] = ArtifactRepository(self.store.root / "jobs" / task_id).read(ref)
+            artifacts = ArtifactRepository(self.store.root / "jobs" / task_id)
+            result["result"] = artifacts.read(ref)
+            execution = (result.get("evidence") or {}).get("execution")
+            if execution:
+                result["context_metrics"] = artifacts.read(execution).get("context_metrics")
             result["detail_state"] = "available"
         return result
 
@@ -424,6 +444,31 @@ class HarnessController:
         from chatcopilot.harness.command_logs import read_commands
         return read_commands(self.store.root, self.store.get(task_id), self.store.attempts(task_id),
                              source_id=source_id, cursor=cursor)
+
+    def governance(self, task_id: str) -> dict[str, Any]:
+        from chatcopilot.harness.artifact_repository import ArtifactRepository
+        task = self.store.get(task_id)
+        if task["source"].get("kind") != "code_health":
+            raise HarnessError("not_found", "此任务不是代码治理")
+        reference = task.get("governance_report")
+        return {"state": "available" if reference else "pending", "base_commit": task["base_commit"],
+                "report": ArtifactRepository(self.store.root / "jobs" / task_id).read(reference) if reference else None}
+
+    def governance_config(self):
+        return {"default_model": self.default_model, "reasoning_effort": "medium", "max_attempts": 3,
+                "timeout_seconds": 3600, "interval_hours": 24}
+
+    def governance_schedule(self):
+        from chatcopilot.harness.schedule_runtime import GovernanceScheduler
+        return GovernanceScheduler(self).get()
+
+    def set_governance_schedule(self, settings):
+        from chatcopilot.harness.schedule_runtime import GovernanceScheduler
+        return GovernanceScheduler(self).configure(settings)
+
+    def governance_tick(self):
+        from chatcopilot.harness.schedule_runtime import GovernanceScheduler
+        return GovernanceScheduler(self).tick()
 
     def trace_record(self, task_id: str, ref: str, *, span_id: str = "", after: int = 0):
         from chatcopilot.core.trace_archive import TraceArchive
@@ -709,6 +754,7 @@ class HarnessController:
                 "test_relative_path",
                 "regression_id",
                 "case_snapshot_id",
+                "governance_target",
             )
             if key in source
         }

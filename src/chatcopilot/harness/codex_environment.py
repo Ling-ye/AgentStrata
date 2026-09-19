@@ -55,8 +55,7 @@ def check_git(binary: Path, *, scope: ExecutionScope, cwd: Path, root: Path,
     try:
         result = subprocess.run(wrap_command(command, scope=scope, cwd=cwd,
             environment=environment, rg=rg, bindings=("--dir", "/sandbox-home/codex-preflight", "--setenv", "CODEX_HOME", "/sandbox-home/codex-preflight",
-                "--dir", str(runtime_home), "--ro-bind", "/dev/null", str(runtime_home / "auth.json"),
-                "--ro-bind", "/dev/null", str(runtime_home / "config.toml"))),
+                "--dir", str(runtime_home))),
             cwd=cwd, capture_output=True, text=True, timeout=min(10, timeout) if timeout is not None else 10, env={"PATH": os.defpath})
         lines = result.stdout.strip().splitlines()
         expected_dirs = set(map(str, metadata))

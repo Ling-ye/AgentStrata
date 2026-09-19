@@ -20,10 +20,12 @@ class Roles(Coder):
     def __init__(self, *args, order="code_first", **kwargs):
         super().__init__(*args, **kwargs)
         self.roles = []
+        self.evidence = []
         self.order = order
 
     def execute(self, root, call, options, output, cancel):
         self.roles.append(call.role)
+        self.evidence.append((call.role, call.evidence))
         result = super().execute(root, call, options, output, cancel)
         if call.role == Role.PLAN:
             result.payload["verification_order"] = self.order
@@ -38,6 +40,11 @@ def test_host_advances_without_repeated_main_calls(repair):
     assert roles.roles == [Role.MAIN, Role.PLAN, Role.CODING, Role.TEST, Role.CODING, Role.REVIEW]
     assert result["accepted_candidate"]["candidate_digest"] == result["verified_digest"]
     assert len(store.attempts(ident)) == 2
+    assert result["source_index_ref"]["kind"] == "source_index"
+    assert store.attempts(ident)[0]["failure_brief"]["kind"] == "failure_brief"
+    retry = [evidence for role, evidence in roles.evidence if role == Role.CODING][1]
+    assert retry["failure_brief"]["recommended_role"] == "coding"
+    assert "previous_failure" not in retry and "source_index" not in retry
 
 
 def test_test_definition_retry_does_not_rewrite_product(repair):

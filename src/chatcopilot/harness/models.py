@@ -13,7 +13,7 @@ from typing import Any, Callable, Protocol
 PIPELINE_VERSION = 9
 
 ACTIVE = frozenset({"queued", "running", "cancel_requested"})
-TERMINAL = frozenset({"fixed", "needs_review", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})
+TERMINAL = frozenset({"fixed", "needs_review", "no_changes", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})
 
 
 class HarnessError(RuntimeError):
@@ -66,6 +66,30 @@ class RepairOptions:
 
 
 @dataclass(frozen=True)
+class GovernanceSchedule:
+    enabled: bool = False
+    interval_hours: int = 24
+    options: RepairOptions | None = None
+    repair_hint: str = ""
+
+    def __post_init__(self):
+        if type(self.enabled) is not bool or type(self.interval_hours) is not int or self.interval_hours < 1:
+            raise ValueError("定时开关必须为布尔值，间隔必须为正整数小时")
+        if self.enabled and self.options is None:
+            raise ValueError("启用定时治理必须明确模型与预算")
+        if not isinstance(self.repair_hint, str):
+            raise ValueError("治理提示必须为文本")
+
+    @classmethod
+    def from_payload(cls, value):
+        return cls(value.get("enabled", False), value.get("interval_hours", 24),
+                   RepairOptions(**value["options"]) if value.get("options") else None,
+                   value.get("repair_hint", ""))
+
+    def to_payload(self):
+        return asdict(self)
+
+@dataclass(frozen=True)
 class CodingOptions:
     """Host-projected call options; None means no execution deadline."""
     model: str
@@ -91,6 +115,9 @@ class RepairRequest:
         elif self.source_kind == "robot_task":
             if not self.bot_id or not self.run_id or self.case_instance_id:
                 raise ValueError("机器人来源需要 bot_id 和 run_id")
+        elif self.source_kind == "code_health":
+            if self.bot_id or self.run_id or self.case_instance_id or self.feedback.expected_behavior.strip():
+                raise ValueError("代码治理使用仓库契约，只接受可选治理提示")
         else:
             raise ValueError("未知修复来源")
 
@@ -128,6 +155,7 @@ class VerificationPlan:
     snapshot_id: str = ""
     check_repetitions: dict[str, int] = field(default_factory=dict)
     coverage: dict[str, list[str]] = field(default_factory=dict)
+    purpose: str = "repair"
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -209,6 +237,9 @@ def acceptance_digest(task: dict[str, Any], attempt: dict[str, Any]) -> str:
         "test": source.get("test_sha256"), "case": agent.get("case_snapshot_id"),
         "conditions": agent.get("conditions"), "verification": attempt.get("verification"),
         "confirmation": attempt.get("confirmation"), "regressions": attempt.get("repository_regressions")}
+    if source.get("kind") == "code_health":
+        value["governance"] = {"target": source.get("governance_target"), "report": task.get("governance_report"),
+                               "review": attempt.get("review")}
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 

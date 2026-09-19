@@ -72,16 +72,17 @@ export default function HarnessPage() {
     finally { if (current === generation.current) setLoading(false); }
   }
   function restart(task: RepairTask) {
+    if (task.source.kind === "code_health") return;
     const sourceKind = task.source.kind ?? "evaluation";
     const id = sourceKind === "robot_task" ? task.source.run_id! : task.source.case_instance_id!;
-    setKind(sourceKind); setSourceId(id); setBotId(task.source.bot_id);
+    setKind(sourceKind); setSourceId(id); setBotId(task.source.bot_id ?? "");
     setRepairHint(task.source.feedback?.repair_hint ?? "");
     setExpectedBehavior(task.source.feedback?.expected_behavior ?? "");
     setModel(task.options.model); setEffort(task.options.reasoning_effort);
     setAttempts(task.options.max_attempts); setHours(task.options.timeout_seconds / 3600);
     submitted.current = { body: "", requestId: "" };
     openTask("");
-    void load(sourceKind, id, task.source.bot_id, false);
+    void load(sourceKind, id, task.source.bot_id ?? "", false);
   }
   async function start() {
     if (!preview || preview.blockers.length || starting || loading || inspection.isFetching || inspection.isError || models.error || !models.options.some(option => option.value === model)) return;

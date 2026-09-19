@@ -39,6 +39,9 @@ def repository(tmp_path):
     (root / "tests").mkdir()
     (root / "tests/test_probe.py").write_text("def test_probe(): pass\n")
     (root / ".env.example").write_text("EXAMPLE=public\n")
+    (root / "docs/reference").mkdir(parents=True)
+    (root / "docs/README.md").write_text("ordinary docs\n")
+    (root / "docs/reference/rules.md").write_text("frozen rules\n")
     git(root, "add", ".")
     git(root, "commit", "-qm", "fixture")
     return root
@@ -78,7 +81,8 @@ def intercept_adapter(monkeypatch, binary, tmp_path):
 
 @pytest.mark.parametrize("kind,stage", [("linked", "prepare"), ("linked", "run"),
     ("linked", "review"), ("linked", "main"), ("linked", "plan"), ("ordinary", "run"), ("detached", "run")])
-def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_path, monkeypatch, native_binary, kind, stage):
+@pytest.mark.parametrize("source_kind", ["robot_task", "code_health"])
+def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_path, monkeypatch, native_binary, kind, stage, source_kind):
     root = repository
     if kind == "linked":
         root = tmp_path / "candidate"
@@ -88,7 +92,7 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
     (root / "src/example.py").write_text("value = 2\n")
     before = metadata_bytes(root)
     head = git_output(root, "rev-parse", "HEAD")
-    evidence = {"source": {"kind": "robot_task", "baseline_root": str(root),
+    evidence = {"source": {"kind": source_kind, "baseline_root": str(root),
         "repository_context": {"base_commit": head, "directory_kind": "git_worktree"}}}
     adapter = intercept_adapter(monkeypatch, native_binary, tmp_path)
     output = tmp_path / "execution"
@@ -102,8 +106,10 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
 
     def permissions(scope, **kwargs):
         seen["scope"] = scope
-        seen["config"] = real_permissions(scope, **kwargs)
-        return seen["config"]
+        value = real_permissions(scope, **kwargs)
+        if kwargs.get("private_paths"):
+            seen["config"] = value
+        return value
 
     monkeypatch.setattr(codex_adapter, "permission_config", permissions)
     queries = [["rev-parse", "HEAD"], ["status", "--short", "--branch"], ["diff", "HEAD"], ["log", "-1", "--format=%H:%s"]]
@@ -126,7 +132,7 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
         "    try:",
         "        p=Path(name); p.parent.mkdir(parents=True, exist_ok=True); p.write_text('candidate write'); return True",
         "    except OSError: return False",
-        f"role_writes=[write_probe(p) for p in {[str(root/'src/chatcopilot/core/probe.py'), str(root/'tests/test_probe.py'), str(output/'draft/probe.py')]!r}]",
+        f"role_writes=[write_probe(p) for p in {[str(root/'src/chatcopilot/core/probe.py'), str(root/'tests/test_probe.py'), str(output/'draft/probe.py'), str(root/'docs/README.md'), str(root/'docs/reference/rules.md'), str(root/'docs/reference/new.md'), str(root/'.env.example'), str(root/'unexpected-root.py'), str(root/'.codex/config.toml')]!r}]",
         "print(json.dumps(dict(reads=reads, denied=denied, rg=rg, role_writes=role_writes, search=search.stdout if search else None, private_visible=private_visible, original_visible=original_visible)))",
     ])
 
@@ -145,6 +151,12 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
         assert all(report["denied"]), report
         assert not report["private_visible"]
         assert report["role_writes"][:2] == [stage == "run", False]
+        gc_write = stage == "run" and source_kind == "code_health"
+        assert report["role_writes"][3:] == [gc_write, False, False, gc_write, False, False]
+        assert (root / "docs/reference/rules.md").read_text() == "frozen rules\n"
+        assert not (root / "docs/reference/new.md").exists()
+        assert not (root / "unexpected-root.py").exists()
+        assert not (root / ".codex/config.toml").exists()
         # Unmounted /tmp paths may be writable only in the private namespace;
         # authority concerns changes to host files, not disposable scratch data.
         assert (root / "src/chatcopilot/core/probe.py").read_text() == ("candidate write" if stage == "run" else "value = 1\n")

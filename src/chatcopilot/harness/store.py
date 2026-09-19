@@ -117,6 +117,13 @@ class HarnessStore:
             from chatcopilot.harness.models import PIPELINE_VERSION
             if connection.execute("SELECT 1 FROM tasks WHERE COALESCE(json_extract(payload, '$.pipeline_version'), 0) != ? LIMIT 1", (PIPELINE_VERSION,)).fetchone():
                 raise HarnessError("cutover_required", "旧 Harness 记录需要先执行维护归档切换")
+            if task.get("source", {}).get("kind") == "code_health":
+                for row in connection.execute("SELECT payload FROM tasks WHERE json_extract(payload, '$.source.kind')='code_health'"):
+                    value = json.loads(row[0])
+                    if value.get("repository") == task["repository"] and self._governance_busy(value):
+                        if value["request_key"] == task["request_key"] and value["request_digest"] != task["request_digest"]:
+                            raise HarnessError("conflict", "同一请求 ID 的内容已变化")
+                        return self._load(row[0]), False
             old = connection.execute(
                 "SELECT payload FROM tasks WHERE request_key=? OR active_key=?",
                 (task["request_key"], task["active_key"]),
@@ -151,6 +158,22 @@ class HarnessStore:
                 ),
             )
         return task, True
+
+    @staticmethod
+    def _governance_busy(task: dict[str, Any]) -> bool:
+        delivery = task.get("delivery") or {}
+        pending = delivery.get("state") not in {"merged", "closed", "cancelled"}
+        return (task["status"] in ACTIVE or bool(task.get("current_evaluation_id") or task.get("delivery_evaluation"))
+                or pending and bool(task.get("accepted_candidate") or delivery.get("pr_number")
+                                    or delivery.get("commit_sha") or task.get("publication_intent")))
+
+    def active_governance(self, repository: str) -> str | None:
+        with self.database.connect() as connection:
+            for row in connection.execute("SELECT task_id,payload FROM tasks WHERE json_extract(payload, '$.source.kind')='code_health'"):
+                task = json.loads(row[1])
+                if task.get("repository") == repository and self._governance_busy(task):
+                    return row[0]
+        return None
 
     def get(self, task_id: str) -> dict[str, Any]:
         with self.database.connect() as connection:
@@ -259,6 +282,7 @@ class HarnessStore:
                 "running",
                 "fixed",
                 "needs_review",
+                "no_changes",
             }:
                 raise Cancelled()
             value = {**current, **changes, "updated_at": time.time()}
@@ -490,7 +514,7 @@ class HarnessStore:
     def page(self, *, page: int, limit: int, search: str, status: str, kind: str = "") -> dict[str, Any]:
         if page < 1 or not 1 <= limit <= 100 or len(search) > 256:
             raise ValueError("无效的历史查询参数")
-        if kind not in {"", "repair"}:
+        if kind not in {"", "repair", "code_health"}:
             raise ValueError("未知任务类型")
         clause = (
             "(?='' OR status=?) AND (?='' OR instr(lower(task_id || ' ' || "
@@ -500,6 +524,9 @@ class HarnessStore:
         )
 
         args = (status, status, search, search)
+        if kind:
+            clause += " AND COALESCE(json_extract(payload, '$.source.kind'),'evaluation') " + ("=?" if kind == "code_health" else "!=?")
+            args += ("code_health",)
         with self.database.connect() as connection:
             total = connection.execute(
                 "SELECT COUNT(*) FROM tasks WHERE " + clause, args

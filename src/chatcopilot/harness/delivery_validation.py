@@ -31,7 +31,9 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
                 raise HarnessError("reproducer_changed", "同步主干改变了冻结回归测试")
             ledger.generated_tests[name] = old[name]
             ledger.test_contents[old[name]["sha256"]] = (root / name).read_bytes()
-    checks = RepositoryChecks(directory, Path(task["repository"]))
+    environment = task.get("environment") or {}
+    checks = RepositoryChecks(directory, Path(task["repository"]),
+                              **({"python": environment["python"]} if environment.get("python") else {}))
     checks.bind(ledger, frozen)
     paths = sorted(p for p in base_manifest.keys() | manifest.keys() if base_manifest.get(p) != manifest.get(p))
     if any(p not in approval["paths"] for p in paths):
@@ -45,6 +47,23 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
         raise HarnessError("delivery_revalidation_failed", "同步主干后的仓库验收出现回归或缺失证据")
     trials = []
     plan = VerificationPlan.from_payload(task["verification_plan"])
+    from chatcopilot.harness.preparation import require_purpose
+    require_purpose(task["source"], plan)
+    governance_context = {}
+    if plan.purpose == "governance":
+        from chatcopilot.harness.artifact_repository import ArtifactRepository
+        from chatcopilot.harness.governance_repository import rule_path
+        import hashlib
+        artifacts = ArtifactRepository(store.root / "jobs" / task_id)
+        context = artifacts.read(task["governance_context"])
+        rules = {row["path"]: row["sha256"] for row in context["rules"]}
+        for reference in task["source"]["governance_target"]["principle_refs"]:
+            name = rule_path(reference)
+            if not (frozen / name).is_file() or hashlib.sha256((frozen / name).read_bytes()).hexdigest() != rules.get(name):
+                raise HarnessError("governance_rules_changed", "主干治理规则已变化，请重新调查并形成治理任务")
+        governance_context = {"principles": artifacts.navigation(task["principles"]),
+                              "governance_context": artifacts.navigation(task["governance_context"])}
+        verifier.delivery_context(task_id, manifest_digest(manifest), baseline, verification)
     expected = set(plan.primary_checks) | set(task.get("protected_cases", []))
     for repetition in range(2 if plan.real_agent else 1):
         check_cancel()
@@ -67,10 +86,14 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
     source = {**task["source"], "baseline_root": str(frozen), "repository_context": {
         "directory_kind": "git_worktree", "base_commit": task["delivery"].get("update_base_sha"),
         "original_branch": "main", "git_worktree": str(root), "snapshot_digest": manifest_digest(base_manifest)}}
-    result = coder.review(root, {"task_id": task_id, "source": source, "patch": patch.read_text(),
+    result = coder.review(root, {"task_id": task_id, "source": source, "patch": patch.read_text(), **governance_context,
         "reproduction": task.get("evaluations", {}), "verification": verification, "regression": trials},
         CodingOptions(task["options"]["model"], task["options"]["reasoning_effort"], 1, None), directory / "review", check_cancel)
     review = review_decision({key: result[key] for key in ("decision", "problem", "reason", "evidence_refs") if key in result})
+    if plan.purpose == "governance" and review["decision"] == "approved":
+        from chatcopilot.harness.governance_repository import require_improvement
+        product_paths = [name for name in paths if not name.startswith("tests/")]
+        review.update(require_improvement(task["source"]["governance_target"], result, frozen, root, product_paths))
     if review["decision"] != "approved" or source_manifest(root) != manifest:
         raise HarnessError("delivery_revalidation_failed", "同步主干后的独立审核未通过或候选已变化")
     record = {"path": directory.relative_to(store.root / "jobs" / task_id).as_posix(), "verification": verification,

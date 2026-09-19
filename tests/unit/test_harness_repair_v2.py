@@ -9,6 +9,8 @@ import subprocess
 from tests.harness_delivery_fixture import RoleFixture
 import pytest
 
+from chatcopilot.core.private_sqlite import json_text
+from chatcopilot.harness.artifact_repository import ArtifactRepository
 from chatcopilot.harness.models import RepairOptions, VerificationPlan, VerificationResult, VerificationCheck, HarnessError
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.repair_runtime import run_task
@@ -157,7 +159,9 @@ def test_two_rounds_without_evidence_stop_before_third(repair):
     assert result["error_code"] == "no_progress", result
     assert coder.calls == 2
     feedback = store.attempts(ident)[-1]["feedback"]
-    assert set(feedback) == {"stage", "code", "message", "requirements", "passed_requirements", "signature"}
+    assert set(feedback) == {"stage", "code", "message", "requirements", "passed_requirements", "signature", "brief_ref"}
+    brief = ArtifactRepository(store.root / "jobs" / ident).read(feedback["brief_ref"])
+    assert brief["recommended_role"] == "coding" and len(json_text(brief).encode()) <= 8192
 
 
 def test_budget_is_cumulative_and_does_not_start_model(repair):

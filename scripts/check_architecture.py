@@ -754,7 +754,7 @@ def _harness_control_checks() -> dict[str, dict[str, list[str]]]:
         "codex_adapter", "evaluation_adapter", "local_verifier", "github_delivery")}
     public_symbols = {
         prefix + "api": {"HarnessController"},
-        prefix + "models": {"HarnessError", "RepairOptions", "RepairFeedback", "RepairRequest"},
+        prefix + "models": {"HarnessError", "RepairOptions", "RepairFeedback", "RepairRequest", "GovernanceSchedule"},
     }
     violations: dict[str, list[str]] = {}
 
@@ -815,13 +815,13 @@ def _harness_control_checks() -> dict[str, dict[str, list[str]]]:
 HARNESS_LAYERS = {
     "types": {"__init__", "models", "agent_types", "repair_types", "control_types", "preparation", "evidence_context"},
     "config": {"config", "role_prompts"},
-    "repo": {"store", "artifact_repository", "flow_records", "flow_receipts", "flow", "progress", "command_logs", "verification_policy", "patches"},
-    "service": {"workflow", "role_service", "control_service"},
+    "repo": {"store", "artifact_repository", "flow_records", "flow_receipts", "flow", "progress", "command_logs", "verification_policy", "patches", "governance_repository", "schedule_repository"},
+    "service": {"workflow", "role_service", "control_service", "context_briefs"},
     "runtime": {"api", "assembly", "codex_adapter", "codex_environment", "cutover_runtime", "delivery", "delivery_archive",
                 "delivery_candidate", "delivery_checks", "delivery_runtime", "delivery_validation", "evaluation_adapter",
                 "gateway_adapter", "github_delivery", "local_commit", "local_verifier", "pytest_runner", "quality",
                 "repair_repository", "repair_runtime", "repair_session", "repository_checks", "sources", "task_environment",
-                "verification", "verification_ledger", "worker", "worker_runtime", "workspace"},
+                "verification", "governance_verification", "schedule_runtime", "verification_ledger", "worker", "worker_runtime", "workspace"},
     "ui": {"__main__"},
 }
 

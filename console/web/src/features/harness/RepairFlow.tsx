@@ -45,6 +45,7 @@ function StepBody({ taskId, step, active, commands }: { taskId: string; step: Fl
       {data.input_truncated && <Alert type="warning" content="关键输入保存时已有截断，以下内容并非完整输入。" />}</section>
       <section><h4>结论</h4><p>{data.conclusion}</p><h4>依据与结果</h4><DetailScope id="result"><StructuredData value={data.result ?? data.evidence ?? undefined}
         missingLabel={data.detail_state === "pending" ? "执行中，等待结果" : "此步骤的结果正文未记录"} /></DetailScope>
+        {data.context_metrics != null && <><h4>上下文指标</h4><DetailScope id="context-metrics"><StructuredData value={data.context_metrics} /></DetailScope></>}
         {data.evidence != null && data.result != null && <details><summary>结论依据快照</summary><DetailScope id="evidence"><StructuredData value={data.evidence} /></DetailScope></details>}</section></div>
     <Space wrap>{step.source_id && <Button size="small" onClick={() => commands(step.source_id!)}>查看命令日志</Button>}
       {step.attempt && step.phase === "coding" && step.status === "completed" && <a href={`/api/harness/tasks/${encodeURIComponent(taskId)}/attempts/${step.attempt}/patch`} download>下载候选补丁</a>}

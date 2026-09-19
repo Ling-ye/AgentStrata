@@ -72,3 +72,48 @@ def test_candidate_checker_cannot_replace_trusted_check_entry(tmp_path):
 def test_unknown_static_failure_is_not_accepted_as_existing_debt():
     before = {'passed': False, 'checks': [{'name': 'Ruff', 'exit_code': 1}]}
     assert compare_verification(before, copy.deepcopy(before)) is None
+
+
+def test_pytest_errors_cannot_be_retained_as_existing_debt():
+    before = {'passed': False, 'checks': [{'name': 'full Python tests', 'exit_code': 1,
+        'failed_ids': ['test_product.py::test_failure'],
+        'test_inventory': {'sha256': 'fixed-tests', 'count': 2, 'skipped_ids': [],
+                           'error_ids': ['test_storage.py::test_setup']}}]}
+    assert compare_verification(before, copy.deepcopy(before)) is None
+
+
+def test_repository_command_replaces_small_tmpfs_with_private_host_directory(tmp_path, monkeypatch):
+    root = tmp_path / 'repo'
+    root.mkdir()
+    output = tmp_path / 'checks' / 'process'
+    observed = {}
+
+    class Process:
+        returncode = 0
+        pid = 1
+
+        @staticmethod
+        def poll():
+            return 0
+
+    monkeypatch.setattr('chatcopilot.harness.repository_checks.sandbox_command',
+                        lambda argv, **kwargs: ['bwrap', '--tmpfs', '/tmp', '--', *argv])
+    def popen(command, **kwargs):
+        observed['command'] = command
+        return Process()
+    monkeypatch.setattr('chatcopilot.harness.repository_checks.subprocess.Popen', popen)
+    checks = RepositoryChecks(tmp_path / 'checks', root)
+    code, _ = checks.command(root, ['python', '-c', 'pass'], output, lambda: None)
+    assert code == 0
+    command = observed['command']
+    bind = command.index('--bind')
+    assert command[bind + 2] == '/tmp'
+    assert not (output / 'tmp').exists()
+
+
+def test_repository_diagnostic_is_redacted_and_bounded(monkeypatch):
+    from chatcopilot.harness.repository_checks import _diagnostic
+    secret = "diagnostic-token-value"
+    monkeypatch.setenv("HARNESS_TEST_TOKEN", secret)
+    value = _diagnostic(("failure " + secret + " ") * 500)
+    assert secret not in value and len(value) <= 1200

@@ -53,9 +53,10 @@ class RepairArtifacts:
 
     def capture(self, number: int, baseline: dict[str, Any]) -> dict[str, Any]:
         self.require_git_identity()
-        changed = workspace.delta(self.worktree, baseline, self.task["source"].get("bot_id"))
+        governance = self.task["source"].get("kind") == "code_health"
+        changed = workspace.delta(self.worktree, baseline, self.task["source"].get("bot_id"), governance=governance)
         output = private_directory(self.directory / f"attempt-{number}")
-        digest = workspace.save_patch(self.worktree, baseline, output / "candidate.patch")
+        digest = workspace.save_patch(self.worktree, baseline, output / "candidate.patch", governance=governance)
         candidate = self.snapshot(f"candidate-{number}")
         return {"changed_files": changed, "candidate_digest": candidate.digest, "patch_sha256": digest,
                 "snapshot_path": str(candidate.path), "patch_path": f"attempt-{number}/candidate.patch",

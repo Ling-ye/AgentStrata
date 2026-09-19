@@ -10,6 +10,7 @@ import shutil
 import sys
 import uuid
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -38,7 +39,7 @@ from chatcopilot.harness.evidence_context import evidence_index
 from chatcopilot.harness.workspace import protected_paths, writable_paths
 from chatcopilot.harness.repair_types import ActionProgress
 from chatcopilot.harness.agent_types import AgentCall, AgentResult, Role, role_result
-from chatcopilot.harness.role_prompts import COMMON, PROMPTS
+from chatcopilot.harness.role_prompts import COMMON, PROMPTS, GOVERNANCE_PROMPTS
 from chatcopilot.harness.repair_session import run_session
 
 
@@ -77,7 +78,8 @@ class CodexCoder:
         try:
             with capture_scope(capture):
                 execution = self._execute_impl(worktree, call, options, output, cancel)
-                payload = role_result(call.role, json.loads(execution.pop("final_text")))
+                payload = role_result(call.role, json.loads(execution.pop("final_text")),
+                                      governance=call.evidence.get("source", {}).get("kind") == "code_health")
             status = "completed"
             return AgentResult(payload, execution)
         except (ValueError, TypeError) as exc:
@@ -93,7 +95,8 @@ class CodexCoder:
     def review(self, worktree, evidence, options, output, check_cancel):
         call = AgentCall(evidence["task_id"], Role.REVIEW, 1, "独立审查精确候选", {**evidence, "base_commit": git_output(worktree, "rev-parse", "HEAD")})
         result = self.execute(worktree, call, options, output, check_cancel)
-        return {**review_decision(result.payload), "execution": result.execution}
+        standard = {key: result.payload[key] for key in ("decision", "problem", "reason", "evidence_refs")}
+        return {**result.payload, **review_decision(standard), "execution": result.execution}
 
     def _execute_impl(self, worktree: Path, call: AgentCall, options, output: Path, check_cancel):
         binary, auth = self.preflight()
@@ -102,6 +105,7 @@ class CodexCoder:
         private_directory(output)
         draft = private_directory(output / "draft") if role == Role.TEST else None
         evidence_text = json_text(evidence)
+        evidence_bytes = len(evidence_text.encode())
         evidence_path = private_directory(output / "evidence") / "evidence.json"
         fd = os.open(evidence_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "w") as stream:
@@ -113,7 +117,8 @@ class CodexCoder:
         runtime_home = private_directory(task_root / "sessions" / role.value)
         execution_directory = worktree
         source = evidence.get("source", {})
-        protected = protected_paths(worktree, str(source.get("bot_id", "")))
+        governance = source.get("kind") == "code_health"
+        protected = protected_paths(worktree, str(source.get("bot_id", "")), governance=governance)
         helper_directory = private_directory(task_root / "sessions" / "bin")
         alias = helper_directory / "codex-linux-sandbox"
         if alias.is_symlink():
@@ -140,7 +145,8 @@ class CodexCoder:
         for name in ("artifacts", "snapshots", "environment"):
             if (task_root / name).exists():
                 readable.append(task_root / name)
-        for ref in (source.get("trace_archive"), source.get("test_path")):
+        for ref in (source.get("trace_archive"), source.get("test_path"),
+                    source.get("baseline_root"), evidence.get("baseline_root")):
             if ref:
                 path = Path(ref)
                 if path.resolve() != path or not path.is_relative_to(task_root):
@@ -148,13 +154,14 @@ class CodexCoder:
                 readable.append(path)
         if draft:
             readable.append(draft)
-        writes = writable_paths(worktree, str(source.get("bot_id", ""))) if role == Role.CODING else (draft,) if draft else ()
+        writes = writable_paths(worktree, str(source.get("bot_id", "")), governance=governance) if role == Role.CODING else (draft,) if draft else ()
         scope = ExecutionScope(readable_roots=tuple(dict.fromkeys(readable)), writable_roots=writes,
                                protected_roots=(*protected, *git_roots), native_write=bool(writes))
         profile = BotPromptProfile(identity="AgentStrata Harness " + role.value, response_style="报告有证据的结论和缺口。")
+        instructions = PROMPTS[role] + (GOVERNANCE_PROMPTS.get(role, "") if governance else "")
         plan = PromptPlanBuilder().build(PromptBuildInput(profile=profile, backend="codex", model=options.model,
-            role="owner", channel_kind="private", session_policy=COMMON + PROMPTS[role]))
-        prompt = render_codex_prompt(plan, user_message=PROMPTS[role] + (f" draft={draft}" if draft else ""),
+            role="owner", channel_kind="private", session_policy=COMMON + instructions))
+        prompt = render_codex_prompt(plan, user_message=instructions + (f" draft={draft}" if draft else ""),
                                      turn_context=evidence_text, trusted_separately=True)
         events = []
         progress = ActionProgress()
@@ -166,12 +173,32 @@ class CodexCoder:
                             "coverage": "adapter_visible", "omitted": ["provider_internal_context"]})
         usage: dict[str, Any] = {}
         final_text = ""
+        context_metrics = {"prompt_bytes": len(prompt.encode()), "evidence_bytes": evidence_bytes,
+            "source_index_bytes": len(json_text(evidence.get("source_index")).encode()) if evidence.get("source_index") else 0,
+            "failure_brief_bytes": len(json_text(evidence.get("failure_brief")).encode()) if evidence.get("failure_brief") else 0,
+            "command_count": 0, "command_output_chars": 0, "max_command_output_chars": 0,
+            "truncated_command_count": 0, "context_budget_warning": []}
+        # Native Codex treats writable roots as directories. Exact root-file
+        # writes remain confined by the outer sandbox's individual file mounts.
+        native_scope = replace(scope, writable_roots=tuple(dict.fromkeys(
+            path.parent if path.is_file() else path for path in scope.writable_roots))) if governance and role == Role.CODING else scope
+        if governance and role == Role.CODING and worktree in native_scope.writable_roots:
+            # Native Codex protects these directories beneath writable roots.
+            # Create empty mountpoints in the task workspace before its root is
+            # mounted read-only; this does not create tracked product content.
+            for name in (".codex", ".agents"):
+                target = worktree / name
+                if target.is_symlink() or target.exists() and not target.is_dir():
+                    raise HarnessError("coding_environment", "任务沙箱保留目录不是普通目录")
+                target.mkdir(mode=0o700, exist_ok=True)
         config = permission_config(
-            scope, workdir=execution_directory, private_paths=(str(runtime_home / "auth.json"), str(runtime_home / "config.toml")), network_access=False
+            native_scope, workdir=execution_directory, private_paths=(str(runtime_home / "auth.json"),), network_access=False
         )
         if git_roots:
+            preflight_config = permission_config(
+                native_scope, workdir=execution_directory, private_paths=(), network_access=False)
             check_git(binary, scope=scope, cwd=execution_directory, root=worktree, metadata=git_roots,
-                      expected_head=evidence["base_commit"], runtime_home=runtime_home, config=config,
+                      expected_head=evidence["base_commit"], runtime_home=runtime_home, config=preflight_config,
                       environment=tool_environment, rg=rg, timeout=options.timeout_seconds, check_cancel=check_cancel)
         with credential_lease(auth, "worker", runtime_home, blocking=False) as lease:
             command = build_app_server_command(shlex.quote(str(binary)) + " exec",
@@ -208,6 +235,14 @@ class CodexCoder:
                     item = event.get("item") or {}
                     if event.get("type") == "item.completed":
                         progress.observe(item)
+                    if event.get("type") == "item.completed" and item.get("type") == "command_execution":
+                        command_output = str(item.get("aggregated_output", ""))
+                        context_metrics["command_count"] += 1
+                        context_metrics["command_output_chars"] += len(command_output)
+                        context_metrics["max_command_output_chars"] = max(
+                            context_metrics["max_command_output_chars"], len(command_output))
+                        if "chars omitted by Harness" in command_output:
+                            context_metrics["truncated_command_count"] += 1
                     if event.get("type") != "item.completed" or item.get("type") not in {
                         "agent_message",
                         "command_execution",
@@ -231,6 +266,19 @@ class CodexCoder:
 
                 session = run_session(outer, root=execution_directory, home=runtime_home, environment=environment,
                     prompt=prompt, options=options, task_id=call.task_id, generation=lease.generation,
-                    role=role, observe=observe, cancel=check_cancel,
-                    developer_instructions=render_codex_developer(plan), environment_identity=runtime_identity)
-        return {"events": events, "usage": usage, "log": log_path.name, "final_text": final_text, "session": session}
+                    role=role, attempt=call.revision, observe=observe, cancel=check_cancel,
+                    developer_instructions=render_codex_developer(plan), environment_identity=runtime_identity,
+                    governance=governance)
+        warnings = context_metrics["context_budget_warning"]
+        if role == Role.PLAN and context_metrics["command_output_chars"] > 64 * 1024:
+            warnings.append("plan_command_output")
+        if role == Role.PLAN and context_metrics["max_command_output_chars"] > 32 * 1024:
+            warnings.append("plan_single_command_output")
+        if role == Role.PLAN and usage.get("input_tokens", 0) > 120_000:
+            warnings.append("plan_input_tokens")
+        if evidence.get("source_index", {}).get("limits", {}).get("truncated"):
+            warnings.append("source_index_truncated")
+        if evidence.get("failure_brief", {}).get("limits", {}).get("truncated"):
+            warnings.append("failure_brief_truncated")
+        return {"events": events, "usage": usage, "context_metrics": context_metrics,
+                "log": log_path.name, "final_text": final_text, "session": session}

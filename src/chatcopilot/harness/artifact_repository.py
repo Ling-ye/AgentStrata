@@ -51,12 +51,27 @@ class ArtifactRepository:
         if isinstance(value, dict):
             navigation["sections"] = {key: {"pointer": "/" + key.replace("~", "~0").replace("/", "~1"),
                 "bytes": len(json_text(item).encode())} for key, item in value.items()}
-            navigation["inline_sections"] = {key: item for key, item in value.items() if len(json_text(item).encode()) <= 4096}
+            inline, omitted, used = {}, [], 0
+            for key, item in value.items():
+                size = len(json_text(item).encode())
+                if size <= 4096 and used + size <= 12288:
+                    inline[key] = item
+                    used += size
+                else:
+                    omitted.append(key)
+            navigation["inline_sections"] = inline
+            navigation["omitted_sections"] = omitted
+            navigation["inline_bytes"] = used
             if ref.kind == "principles":
                 navigation["documents"] = [{"path": row["path"], "sha256": row["sha256"],
                     "pointer": f"/documents/{index}/content", "bytes": len(row["content"].encode())}
                     for index, row in enumerate(value["documents"])]
-        if len(json_text(value).encode()) <= 4096:
+            if ref.kind == "governance_context":
+                navigation["documents"] = [{"path": row["path"], "sha256": row["sha256"],
+                    "pointer": f"/rules/{index}/content", "bytes": len(row["content"].encode())}
+                    for index, row in enumerate(value["rules"])]
+        special = {"source_index": 16384, "failure_brief": 8192, "target_context": 16384}.get(ref.kind, 4096)
+        if len(json_text(value).encode()) <= special:
             navigation["inline"] = value
         return navigation
 

@@ -13,6 +13,15 @@ POLICY_NAMES = frozenset({"AGENTS.md", "SECURITY.md", "CODE_OF_CONDUCT.md", ".gi
                           "conftest.py", "tox.ini", "setup.cfg", "mypy.ini", "ruff.toml", ".ruff.toml",
                           "tsconfig.json", "vitest.config.ts", "rsbuild.config.ts"})
 
+GOVERNANCE_AUTHORITY = frozenset({".gitleaks.toml", "src/chatcopilot/contracts/execution_scope.py",
+    "src/chatcopilot/authorization/policy.py", "src/chatcopilot/harness/verification_policy.py",
+    "scripts/verify_release_artifacts.py"})
+
+
+def governance_policy_path(name: str) -> bool:
+    return (policy_path(name) or name in GOVERNANCE_AUTHORITY or name.startswith("scripts/check_")
+            or name.startswith("src/chatcopilot/component_catalog/audit/"))
+
 CHECKER_PREFIXES = ("scripts/", "src/chatcopilot/component_catalog/audit")
 CHECKER_FILES = {"src/chatcopilot/component_catalog/__init__.py"}
 

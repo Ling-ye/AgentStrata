@@ -9,7 +9,8 @@ export interface FlowGroup { id: string; title: string; parent_id: string | null
 export interface RepairFlow { task_id: string; groups: FlowGroup[]; steps: FlowStep[]; current_step_id?: string; default_step_id?: string }
 export interface StepDetail {
   id: string; status: string; input: unknown; conclusion: string; evidence: unknown; result: unknown;
-  detail_state: string; input_truncated: boolean; traces: Array<{ trace_ref: string; capture_state: string }>;
+  detail_state: string; input_truncated: boolean; context_metrics?: unknown;
+  traces: Array<{ trace_ref: string; capture_state: string }>;
 }
 export interface CommandSource { id: string; kind: string; number: number | null; current: boolean; label?: string }
 export interface CommandEvent { id: string; command: string; aggregated_output?: string; exit_code?: number | null; truncated: boolean }

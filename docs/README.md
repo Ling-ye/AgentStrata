@@ -14,7 +14,7 @@
 | 新增或修改工具 | [工具](reference/tools.md) | [配置](reference/configuration.md) |
 | 修改评分或运行测评 | [测评操作](guides/evaluation.md) | [Evaluation](reference/evaluation.md) / [服务协议](reference/evaluation-service.md) |
 | 编写题目和验收样本 | [用例指南](guides/evaluation-cases.md) | [题目约束](reference/evaluation-cases.md) / [术语](reference/evaluation-glossary.md) |
-| 修复运行错误 | [Harness 操作](guides/harness.md) | [修复契约](reference/harness.md) / [黄金原则](reference/harness-principles.md) / [交付](reference/delivery.md) |
+| 修复运行错误 | [Harness 操作](guides/harness.md) | [修复契约](reference/harness.md) / [黄金原则](reference/harness-principles.md)、[代码治理](reference/code-health.md) / [交付](reference/delivery.md) |
 | 修改 Console | [Console](reference/console.md) | [观测](reference/observability.md) / [归档](reference/local-traces.md) |
 | 排查运行失败 | [诊断](guides/debugging.md) | [WSL 恢复](guides/wsl-troubleshooting.md) |
 | 维护文档或准备发布 | [文档维护](maintenance.md) / [发布](guides/releasing.md) | [公开边界](reference/publication.md) / [规格](../specs/README.md) |

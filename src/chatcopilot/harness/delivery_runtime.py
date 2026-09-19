@@ -59,7 +59,14 @@ def run_one(store: HarnessStore, task_id: str) -> dict[str, Any]:
                 return store.get(task_id)
             action = task.get("delivery_request")
             coder = CodexCoder(lambda root, ref: store.register_trace(task_id, root, ref))
-            verifier = CaseVerification(ServiceEvaluator(), LocalVerifier(store.root), store)
+            local = LocalVerifier(store.root)
+            if task.get("environment", {}).get("python"):
+                local.python = task["environment"]["python"]
+            verifier_type = CaseVerification
+            if task["source"].get("kind") == "code_health":
+                from chatcopilot.harness.governance_verification import GovernanceVerification
+                verifier_type = GovernanceVerification
+            verifier = verifier_type(ServiceEvaluator(), local, store)
             result = reconcile(store, task_id, coder=coder, verifier=verifier,
                                retry=action == "retry" or task["delivery"]["state"] in {"merged", "closed"},
                                cleanup_only=action == "cleanup" or (not action and task["delivery"]["state"] not in PENDING

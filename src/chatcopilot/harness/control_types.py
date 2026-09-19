@@ -13,6 +13,8 @@ def external_evaluation_id(source: dict[str, Any], run_id: str | None) -> str | 
     """Resolve a verification run to its external Agent execution, if any."""
     if not run_id:
         return None
+    if source.get("kind") == "code_health":
+        return None
     if source.get("agent_source"):
         return run_id + "-agent"
     return None if source.get("test_sha256") else run_id

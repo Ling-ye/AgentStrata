@@ -23,6 +23,9 @@ _READ_ORDER = {
     "repair": ("source", "reproduction", "previous_attempts", "protected_cases"),
     "review": ("source", "patch", "verification", "regression", "reproduction"),
 }
+_INLINE_SECTION_BYTES = 4_096
+_INLINE_TOTAL_BYTES = 12_288
+_SPECIAL_INLINE_BYTES = {"source_index": 16_384, "failure_brief": 8_192, "target_context": 16_384}
 
 
 def evidence_index(evidence: dict[str, Any], *, stage: str) -> dict[str, Any]:
@@ -56,6 +59,20 @@ def evidence_index(evidence: dict[str, Any], *, stage: str) -> dict[str, Any]:
 
     visit(evidence, "")
     order = list(dict.fromkeys((*_READ_ORDER[stage], *evidence)))
+    inline: dict[str, Any] = {}
+    omitted: list[str] = []
+    used = 0
+    for key in order:
+        if key not in evidence:
+            continue
+        size = len(json_text(evidence[key]).encode("utf-8"))
+        limit = _SPECIAL_INLINE_BYTES.get(key, _INLINE_SECTION_BYTES)
+        if size <= limit and (key in _SPECIAL_INLINE_BYTES or used + size <= _INLINE_TOTAL_BYTES):
+            inline[key] = evidence[key]
+            if key not in _SPECIAL_INLINE_BYTES:
+                used += size
+        else:
+            omitted.append(key)
     return {
         "stage": stage,
         "read_order": [key for key in order if key in evidence],
@@ -67,11 +84,10 @@ def evidence_index(evidence: dict[str, Any], *, stage: str) -> dict[str, Any]:
             }
             for key, value in evidence.items()
         },
-        "inline_sections": {
-            key: value
-            for key, value in evidence.items()
-            if len(json_text(value).encode("utf-8")) <= 4_096
-        },
+        "inline_sections": inline,
+        "omitted_sections": omitted,
+        "inline_bytes": used + sum(len(json_text(value).encode("utf-8")) for key, value in inline.items()
+                                     if key in _SPECIAL_INLINE_BYTES),
         "observed_status_counts": dict(statuses),
         "adverse_field_count": adverse_count,
         "adverse_locations": adverse,

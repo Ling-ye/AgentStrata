@@ -4,7 +4,7 @@
 
 ## 单 Case AI Harness
 
-主动巡检入口已移除，质量约束统一见[黄金原则](../reference/harness-principles.md)。
+[代码治理](../reference/code-health.md)可自主调查全仓，质量约束统一见[黄金原则](../reference/harness-principles.md)。
 
 Harness 是可选的独立模块，通过同 UID Evaluation 客户端读取结果和提交复测，
 按需创建 systemd transient worker，没有常驻 Harness 服务。Console 关闭不取消任务。
@@ -213,3 +213,19 @@ python -m chatcopilot.harness cutover --apply
 worker 使用冻结 uv.lock 创建任务专用依赖环境。uv 不在 PATH 且 WSL 安装目录存在
 多个版本时，用 CHATCOPILOT_HARNESS_UV_BIN 指定已安装的绝对路径。依赖缺失报告环境错误，
 不会让 Agent 修改宿主依赖。角色分工、预算与验收规则以[修复契约](../reference/harness.md)为准。
+
+## 代码治理与可选定时
+
+Console 的「代码治理」页选择模型与累计预算，可补充治理提示；启动后冻结远端 main，
+自主发现一个治理主题并复用 Harness 修复、验证、独立审查和 PR 自动交付。
+
+```bash
+python -m chatcopilot.harness start-gc --model MODEL --repair-hint "检查重复职责与失效配置"
+python -m chatcopilot.harness gc-schedule
+python -m chatcopilot.harness gc-schedule --enable --model MODEL --interval-hours 24
+python -m chatcopilot.harness gc-schedule --disable
+```
+
+定时默认关闭，开启后使用保存的模型、预算和提示，约一分钟首次触发。已有活动治理或
+待完成 PR 时跳过本次触发；关闭只影响后续创建，不取消已开始任务。完整行为见
+[代码治理契约](../reference/code-health.md)。

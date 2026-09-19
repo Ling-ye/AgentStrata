@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -37,6 +38,35 @@ SCHEMAS = {
                               problem=TEXT, reason=TEXT, evidence_refs={"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["source", "reproduction", "verification", "patch", "regression"]}}),
 }
 
+# The same roles use a distinct output contract for repository maintenance.
+FINDING = object_schema(id=TEXT, summary=TEXT, impact=TEXT, principle_refs=TEXTS,
+    evidence={"type": "array", "minItems": 1, "items": object_schema(path=TEXT,
+        start_line={"type": "integer", "minimum": 1}, end_line={"type": "integer", "minimum": 1})},
+    affected_paths=TEXTS, acceptance_criteria=TEXTS,
+    disposition={"type": "string", "enum": ["automatic", "needs_decision"]})
+GC_PLAN = object_schema(**{
+    **SCHEMAS[Role.PLAN]["properties"],
+    "decision": {"type": "string", "enum": ["proceed", "blocked", "no_changes", "needs_review"]},
+    "findings": {"type": "array", "items": FINDING}, "selected_finding_id": TEXT,
+    "inspected_paths": TEXTS, "uninspected": TEXTS,
+})
+GC_REVIEW = object_schema(**{
+    **SCHEMAS[Role.REVIEW]["properties"],
+    "finding_id": TEXT, "behavior_preserved": {"type": "boolean"},
+    "improvements": {"type": "array", "items": object_schema(path=TEXT, before=TEXT, after=TEXT, reason=TEXT)},
+})
+GC_CODING = deepcopy(SCHEMAS[Role.CODING])
+GC_TEST = deepcopy(SCHEMAS[Role.TEST])
+for contract in (GC_CODING, GC_TEST):
+    contract["properties"]["gaps"]["items"]["properties"]["code"] = {
+        "type": "string", "enum": ["fixture_missing", "material_missing", "permission_missing"],
+        "description": "A concrete missing prerequisite; pending host verification belongs in notes."}
+
+
+def role_schema(role: Role, *, governance: bool = False) -> dict[str, Any]:
+    return ({Role.PLAN: GC_PLAN, Role.CODING: GC_CODING, Role.TEST: GC_TEST, Role.REVIEW: GC_REVIEW}.get(role, SCHEMAS[role])
+            if governance else SCHEMAS[role])
+
 
 @dataclass(frozen=True)
 class ArtifactRef:
@@ -66,10 +96,10 @@ class AgentRunner(Protocol):
                 output: Path, cancel: Callable[[], None]) -> AgentResult: ...
 
 
-def role_result(role: Role, value: Any) -> dict[str, Any]:
+def role_result(role: Role, value: Any, *, governance: bool = False) -> dict[str, Any]:
     from jsonschema import ValidationError, validate
     try:
-        validate(value, SCHEMAS[role])
+        validate(value, role_schema(role, governance=governance))
     except ValidationError as exc:
         raise HarnessError("test_definition" if role == Role.TEST else "invalid_role_result",
                            f"{role.value} 未返回完整结构化产物") from exc

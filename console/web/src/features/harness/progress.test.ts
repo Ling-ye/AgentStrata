@@ -27,15 +27,10 @@ describe("repair progress facts", () => {
 });
 
 
-it("displays success groups independently from elapsed time and legacy budgets", async () => {
+it("displays the shared execution budget without issue-group quotas", async () => {
   const { budgetLabel } = await import("./progress");
-  const base = { task_id: "test", status: "running", stage: "audit", elapsed_seconds: 2000,
+  const base = { task_id: "test", status: "running", stage: "plan", elapsed_seconds: 2000,
     options: { model: "test", reasoning_effort: "medium", max_attempts: 3 } };
-  expect(budgetLabel({ ...base, options: { ...base.options, budget: { mode: "fixed_groups", count: 3 } },
-    governance_summary: { accepted_groups: 1 } })).toBe("已验收 1/3 组 · 已用 2000 秒");
-  expect(budgetLabel({ ...base, options: { ...base.options, budget: { mode: "time", seconds: 7200 } } })).toContain("总时限 7200 秒");
-  expect(budgetLabel({ ...base, options: { ...base.options, timeout_seconds: 1080 } })).toContain("总时限 1080 秒");
-  expect(budgetLabel({ ...base, options: { ...base.options, budget: { mode: "discovered_groups", count: 1 } },
-    governance_summary: { discovered_groups: 3, selected_groups: 1, accepted_groups: 0 } })).toBe(
-    "已发现 3 组（目标 1 组） · 本轮选中 1 组 · 已验收 0 组 · 已用 2000 秒");
+  expect(budgetLabel(base)).toBe("已用 2000 秒");
+  expect(budgetLabel({ ...base, options: { ...base.options, timeout_seconds: 3600 } })).toBe("已用 2000 秒 / 总时限 3600 秒");
 });

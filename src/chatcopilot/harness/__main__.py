@@ -41,6 +41,24 @@ def main(argv: list[str] | None = None) -> int:
     maintenance.add_argument("argv", nargs=argparse.REMAINDER)
     reset = sub.add_parser("cutover", help="确认旧任务空闲并归档；默认只检查")
     reset.add_argument("--apply", action="store_true", help="归档旧任务并启用空的新协议记录")
+    gc = sub.add_parser("start-gc", help="依据 SDD 与黄金原则启动全仓治理")
+    gc.add_argument("--model", default="")
+    gc.add_argument("--reasoning-effort", default="medium")
+    gc.add_argument("--max-attempts", type=int, default=3)
+    gc.add_argument("--timeout-seconds", type=int, default=3600)
+    gc.add_argument("--request-id")
+    gc.add_argument("--repair-hint", default="")
+    sub.add_parser("gc-tick", help="执行一次已启用的治理定时触发")
+    schedule = sub.add_parser("gc-schedule", help="查看或配置治理定时；默认关闭")
+    enabled = schedule.add_mutually_exclusive_group()
+    enabled.add_argument("--enable", action="store_true")
+    enabled.add_argument("--disable", action="store_true")
+    schedule.add_argument("--interval-hours", type=int, default=24)
+    schedule.add_argument("--model", default="")
+    schedule.add_argument("--reasoning-effort", default="medium")
+    schedule.add_argument("--max-attempts", type=int, default=3)
+    schedule.add_argument("--timeout-seconds", type=int, default=3600)
+    schedule.add_argument("--repair-hint", default="")
     listing = sub.add_parser("list")
     listing.add_argument("--page", type=int, default=1)
     listing.add_argument("--search", default="")
@@ -60,6 +78,22 @@ def main(argv: list[str] | None = None) -> int:
             return controller.maintenance(command)
         if args.command == "cutover":
             value = controller.cutover(apply=args.apply)
+        elif args.command == "start-gc":
+            value = controller.start_code_health(
+                RepairOptions(args.model or controller.default_model, args.reasoning_effort,
+                              args.max_attempts, args.timeout_seconds),
+                request_id=args.request_id, feedback=RepairFeedback(args.repair_hint))
+        elif args.command == "gc-tick":
+            value = controller.governance_tick()
+        elif args.command == "gc-schedule":
+            from chatcopilot.harness.models import GovernanceSchedule
+            if not args.enable and not args.disable:
+                value = controller.governance_schedule()
+            else:
+                options = (RepairOptions(args.model or controller.default_model, args.reasoning_effort,
+                                         args.max_attempts, args.timeout_seconds) if args.enable else None)
+                value = controller.set_governance_schedule(
+                    GovernanceSchedule(args.enable, args.interval_hours, options, args.repair_hint))
         elif args.command == "start":
             value = controller.start(
                 args.evaluation,

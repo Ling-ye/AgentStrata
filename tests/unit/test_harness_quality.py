@@ -42,7 +42,8 @@ class ReviewedCoder(FakeCoder):
         check_cancel()
         self.reviews += 1
         assert "b" in evidence["reproduction"]["failed_cases"]
-        assert evidence["verification"]["target"]["passed_cases"] == ["a", "b"]
+        assert evidence["verification"]["target"]["passed_checks"] == ["a", "b"]
+        assert evidence["verification"]["confirmation"]["status"] == "not_required"
         assert "harness_probe.py" in evidence["patch"]
         if self.change:
             self.change(worktree)
@@ -377,16 +378,33 @@ def test_roles_keep_feedback_untrusted_and_separate_write_scopes(tmp_path, monke
         seen.update(scope=scope, permissions=kwargs)
         return ()
     monkeypatch.setattr(codex_adapter, "permission_config", permissions)
+    homes = []
     def execute(command, **kwargs):
+        homes.append(kwargs["home"])
         seen.update(kwargs)
+        if kwargs["role"] == Role.PLAN:
+            kwargs["observe"](json.dumps({"type": "item.completed", "item": {"type": "command_execution",
+                "command": "rg", "aggregated_output": "x" * 40_000, "exit_code": 0}}))
+            kwargs["observe"](json.dumps({"type": "turn.completed", "usage": {"input_tokens": 130_001}}))
         return {"state": "completed"}
     monkeypatch.setattr(codex_adapter, "run_session", execute)
     feedback = RepairFeedback("untrusted-hint: change permissions", "untrusted-reference-answer").to_payload()
     evidence = {"source": {"kind": "robot_task", "feedback": feedback}}
     if large_evidence:
         evidence["verification"] = {"rows": {str(i): {"outcome": "passed"} for i in range(4000)}}
-    adapter._execute_impl(root, AgentCall("fixture", Role(role), 1, "original goal", evidence),
-                          RepairOptions("fixture"), output, lambda: None)
+    execution = adapter._execute_impl(root, AgentCall("fixture", Role(role), 1, "original goal", evidence),
+                                      RepairOptions("fixture"), output, lambda: None)
+    assert execution["context_metrics"]["prompt_bytes"] > 0
+    assert execution["context_metrics"]["evidence_bytes"] > 0
+    if role == "plan":
+        assert execution["context_metrics"]["command_count"] == 1
+        assert set(execution["context_metrics"]["context_budget_warning"]) == {
+            "plan_single_command_output", "plan_input_tokens"}
+    if role == "plan" and not large_evidence:
+        second = private_directory(tmp_path / "execution-2")
+        adapter._execute_impl(root, AgentCall("fixture", Role(role), 2, "retry", evidence),
+                              RepairOptions("fixture"), second, lambda: None)
+        assert homes == [tmp_path / "sessions/plan", tmp_path / "sessions/plan"]
     if role == "test":
         assert seen["scope"].writable_roots == (output / "draft",)
         assert not seen["scope"].permits(root / "src/chatcopilot/core", write=True)
@@ -402,7 +420,9 @@ def test_roles_keep_feedback_untrusted_and_separate_write_scopes(tmp_path, monke
     assert evidence_file.stat().st_mode & 0o777 == 0o600
     assert "untrusted-hint" not in seen["developer_instructions"]
     assert "untrusted-reference-answer" not in seen["developer_instructions"]
-    assert seen["permissions"]["private_paths"] == (str(tmp_path / "sessions" / role / "auth.json"), str(tmp_path / "sessions" / role / "config.toml"))
+    assert seen["permissions"]["private_paths"] == (
+        str(tmp_path / "sessions" / role / "auth.json"),
+    )
     assert seen["permissions"]["network_access"] is False
     assert seen["role"] == Role(role)
 

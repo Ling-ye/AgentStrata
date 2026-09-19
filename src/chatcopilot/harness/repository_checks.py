@@ -22,10 +22,17 @@ from chatcopilot.core.source_snapshot import copy_sources, git_output, source_ma
 from chatcopilot.harness.models import HarnessError
 
 
+def _diagnostic(value: Any) -> str:
+    from chatcopilot.harness.config import safe_error
+    text = safe_error(Exception(str(value or "")))
+    return text if len(text) <= 1200 else text[:1199] + "…"
+
+
 class RepositoryChecks:
-    def __init__(self, directory: Path, repository: Path) -> None:
+    def __init__(self, directory: Path, repository: Path, *, python: str | None = None) -> None:
         self.directory = directory
         self.repository = repository
+        self.python = python or sys.executable
         self.logs: list[dict[str, Any]] = []
         self.ledger: Any = None
         self.frozen: Path | None = None
@@ -65,6 +72,10 @@ class RepositoryChecks:
                 *, reads: tuple[Path, ...] = (), writes: tuple[Path, ...] = (),
                 bindings: tuple[str, ...] = ()) -> tuple[int, str]:
         private_directory(output)
+        # bubblewrap's anonymous /tmp is deliberately small.  The full gate has
+        # storage tests whose fixtures exceed that limit, so give each command a
+        # private host-backed temporary directory and remove it after execution.
+        command_tmp = private_directory(output / "tmp")
         scope = ExecutionScope(readable_roots=(root, *reads), writable_roots=(output, *writes), native_write=False)
         command = sandbox_command(argv, scope=scope, cwd=root)
         boundary = command.index("--")
@@ -73,7 +84,7 @@ class RepositoryChecks:
                  "--setenv", "USER", account.pw_name, "--setenv", "LOGNAME", account.pw_name,
                  "--setenv", "PYTHONPATH", "",
                  "--setenv", "PYTHONDONTWRITEBYTECODE", "1", "--setenv", "DEEPEVAL_TELEMETRY_OPT_OUT", "YES",
-                 "--setenv", "DO_NOT_TRACK", "1"]
+                 "--setenv", "DO_NOT_TRACK", "1", "--bind", str(command_tmp), "/tmp"]
         for name in ("/etc/alternatives", "/etc/os-release", "/etc/lsb-release"):
             if Path(name).exists():
                 extra += ["--ro-bind", name, name]
@@ -83,24 +94,27 @@ class RepositoryChecks:
                       "--setenv", "PATH", f"/sandbox-tools:{sys.prefix}/bin:/usr/local/bin:/usr/bin:/bin"]
         command[boundary:boundary] = [*extra, *bindings]
         stdout, stderr = output / "stdout.log", output / "stderr.log"
-        with stdout.open("xb") as out, stderr.open("xb") as err:
-            process = subprocess.Popen(command, stdout=out, stderr=err, start_new_session=True,
-                                       env={"PATH": os.defpath})
-            try:
-                while process.poll() is None:
-                    check_cancel()
-                    time.sleep(0.1)
-            finally:
-                if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                raw = stdout.read_text(encoding="utf-8", errors="replace")
-                for path in (stdout, stderr):
-                    text = path.read_text(encoding="utf-8", errors="replace")
-                    path.write_text(str(redact_observability_payload({"text": text}).value["text"]), encoding="utf-8")
-                    path.chmod(0o600)
-                    self.logs.append({"name": f"{Path(argv[1]).name} · {path.stem}", "exit_code": process.returncode,
-                                      "log": path.relative_to(self.directory).as_posix()})
+        try:
+            with stdout.open("xb") as out, stderr.open("xb") as err:
+                process = subprocess.Popen(command, stdout=out, stderr=err, start_new_session=True,
+                                           env={"PATH": os.defpath})
+                try:
+                    while process.poll() is None:
+                        check_cancel()
+                        time.sleep(0.1)
+                finally:
+                    if process.poll() is None:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                    raw = stdout.read_text(encoding="utf-8", errors="replace")
+                    for path in (stdout, stderr):
+                        text = path.read_text(encoding="utf-8", errors="replace")
+                        path.write_text(str(redact_observability_payload({"text": text}).value["text"]), encoding="utf-8")
+                        path.chmod(0o600)
+                        self.logs.append({"name": f"{Path(argv[1]).name} · {path.stem}", "exit_code": process.returncode,
+                                          "log": path.relative_to(self.directory).as_posix()})
+        finally:
+            shutil.rmtree(command_tmp, ignore_errors=True)
         return process.returncode, raw
 
     def verify(self, root: Path, profile: str, check_cancel: Callable[[], None], *,
@@ -158,10 +172,11 @@ class RepositoryChecks:
             bindings += ["--bind", str(cache), str(target / ".cache"),
                          "--bind", str(info), str(snapshot / "console/web/tsconfig.tsbuildinfo")]
         reports = output / "report"
-        code, _ = self.command(snapshot, [sys.executable, "scripts/check_repo.py", profile, "--keep-going",
+        code, _ = self.command(snapshot, [self.python, "scripts/check_repo.py", profile, "--keep-going",
                                          *(["--candidate-root", str(test_view)] if self.ledger is not None else []),
                                          "--report-dir", str(reports)], output / "process", check_cancel,
-                               reads=(*git_dirs, index_directory, *module_reads, *((test_view,) if self.ledger is not None else ()),
+                               reads=(*git_dirs, index_directory, *module_reads, Path(self.python).parent.parent.resolve(),
+                                      *((test_view,) if self.ledger is not None else ()),
                                       *((self.frozen,) if self.frozen else ())),
                                writes=(*caches, private_directory(reports)), bindings=tuple(bindings))
         path = reports / "manifest.json"
@@ -172,6 +187,7 @@ class RepositoryChecks:
             raise HarnessError("check_invalid", "仓库验收报告未完成")
         checks = [{"name": item["name"], "status": item["status"], "exit_code": item["exit_code"],
                    "failed_ids": item.get("failed_ids", []),
+                   **({"diagnostic": _diagnostic(item.get("first_failure"))} if item.get("first_failure") else {}),
                    **({"test_inventory": item["test_inventory"]} if "test_inventory" in item else {}),
                    "log": (reports / Path(item["log_path"]).name).relative_to(self.directory).as_posix()}
                   for item in result["checks"]]
@@ -199,7 +215,9 @@ def compare_verification(baseline: dict[str, Any], candidate: dict[str, Any]) ->
         inventory = row.get("test_inventory")
         if inventory:
             current = after.get(name, {}).get("test_inventory", {})
-            if current.get("sha256") != inventory["sha256"] or set(current.get("skipped_ids", [])) - set(inventory["skipped_ids"]):
+            if (inventory.get("error_ids") or current.get("error_ids")
+                    or current.get("sha256") != inventory["sha256"]
+                    or set(current.get("skipped_ids", [])) - set(inventory["skipped_ids"])):
                 return None
     if candidate["passed"]:
         return []

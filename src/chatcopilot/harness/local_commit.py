@@ -77,7 +77,7 @@ def regression_ref(task: dict[str, Any]) -> dict[str, Any]:
             raise HarnessError("regression_changed", "Agent 回归声明与冻结身份不一致")
         return {"kind": "agent_case", "id": source["case_snapshot_id"],
                 "path": f"tests/agent_regressions/{sha}/case.json", "sha256": sha}
-    if source.get("kind") == "robot_task":
+    if source.get("kind") in {"robot_task", "code_health"}:
         sha = source["test_sha256"]
         relative = f"tests/unit/harness_regressions/test_{sha}.py"
         if not re.fullmatch(r"[0-9a-f]{64}", sha) or source.get("test_relative_path") != relative:
@@ -111,6 +111,8 @@ def regression_content(task: dict[str, Any], reference: dict[str, Any]) -> bytes
 
 def regression_refs(task: dict[str, Any]) -> list[dict[str, Any]]:
     """Mixed validation publishes both frozen contracts, not just the primary one."""
+    if task["source"].get("kind") == "code_health" and not task["source"].get("test_sha256"):
+        return []
     references = [regression_ref(task)]
     if task["source"].get("agent_source"):
         references.append(regression_ref({**task, "source": task["source"]["agent_source"]}))

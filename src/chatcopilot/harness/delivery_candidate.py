@@ -15,12 +15,15 @@ from chatcopilot.harness.delivery_archive import verify_worktree
 from chatcopilot.harness.github_delivery import git
 from chatcopilot.harness.local_commit import regression_content, regression_refs
 from chatcopilot.harness.models import HarnessError, acceptance_digest
+from chatcopilot.harness.preparation import verification_purpose
 
 
 def accepted(store: Any, task: dict[str, Any]) -> bool:
     if task.get("delivery_cancel_requested") or task["status"] in {"cancelled", "cancel_requested"}:
         return False
     receipt = task.get("accepted_candidate") or {}
+    if (task.get("verification_plan") or {}).get("purpose", "repair") != verification_purpose(task["source"]):
+        return False
     attempts = [a for a in store.attempts(task["task_id"]) if a.get("number") == receipt.get("attempt") and a.get("status") == "accepted"]
     if len(attempts) != 1 or receipt.get("verification_digest") != acceptance_digest(task, attempts[0]):
         return False
@@ -55,10 +58,13 @@ def candidate(store: Any, task_id: str) -> dict[str, Any]:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
         destination.chmod(0o600)
-    store.update(task_id, regression=references[0], regressions=references)
+    store.update(task_id, regression=references[0] if references else None, regressions=references)
     current = source_manifest(root)
     title = "[AI Harness] 修复已复现问题并收录回归验证"
     profile = "fast"
+    if task["source"].get("kind") == "code_health":
+        title = "[Code Health] " + task["source"]["governance_target"]["summary"].replace("\n", " ")[:100]
+        profile = "full"
     receipt = task["accepted_candidate"]
     if len(approved) != 1 or approved[0]["number"] != receipt["attempt"] or approved[0].get("review", {}).get("binding") != receipt["review_binding"]:
         raise HarnessError("incomplete_verification", "交付凭据与审查版本不一致")
@@ -137,11 +143,11 @@ def commit(store: Any, task_id: str) -> str:
 
 def pr_body(task: dict[str, Any]) -> str:
     approval = task["publication_candidate"]
-    counts = task.get("governance_summary", {})
     return ("## 问题与修改\n\n" + approval["title"] + "。\n\n"
             + "\n".join("- `" + p + "`" for p in approval["paths"])
             + "\n\n## 验证\n\n宿主已核验冻结证据与独立审核，验收范围：`" + approval["profile"]
             + "`。GitHub CI 和合并状态以本 PR 当前检查为准。\n\n"
-            + (f"治理已验收 {counts.get('accepted_groups', 0)} 组，剩余 {counts.get('remaining', 0)} 项；覆盖 {counts.get('coverage', 'unknown')}。\n\n" if counts else "")
+            + ("本 PR 处理一个连贯治理主题；宿主核对了前后改善证据与行为保持检查。其他发现保留在私有治理报告中。\n\n"
+               if task["source"].get("kind") == "code_health" else "")
             + "## 来源\n\n由 AI Harness 自动生成；详细原始记录保留在操作者私有任务档案中。\n"
             + f"\n<!-- agentstrata-harness:{task['task_id']} -->\n")

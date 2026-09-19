@@ -41,3 +41,13 @@ def test_empty_evidence_does_not_imply_success():
     index = evidence_index({}, stage="prepare")
     assert index["observed_status_counts"] == {}
     assert index["missing_stage_sections"] == ["source", "reproduction"]
+
+
+def test_inline_sections_have_a_total_budget_and_keep_special_briefs():
+    evidence = {f"section_{number}": {"text": "x" * 3000} for number in range(20)}
+    evidence["source_index"] = {"candidates": [{"path": "src/demo.py", "excerpt": "y" * 8000}]}
+    index = evidence_index(evidence, stage="prepare")
+    assert index["inline_sections"]["source_index"] == evidence["source_index"]
+    ordinary = {key: value for key, value in index["inline_sections"].items() if key != "source_index"}
+    assert sum(len(str(value)) for value in ordinary.values()) < 13_000
+    assert index["omitted_sections"]

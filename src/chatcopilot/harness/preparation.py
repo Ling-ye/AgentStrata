@@ -9,6 +9,14 @@ from chatcopilot.harness.models import HarnessError
 
 
 def acceptance(source: dict[str, Any]) -> dict[str, Any]:
+    if source.get("kind") == "code_health":
+        from chatcopilot.core.private_sqlite import json_text
+        target = source.get("governance_target")
+        expected = ("；".join(target["acceptance_criteria"]) if target else source.get("original_input", ""))
+        return {"original": expected, "sha256": hashlib.sha256(json_text({
+                    "purpose": "governance", "target": target, "goal": expected}).encode()).hexdigest(),
+                "purpose": "governance", "requires_image": False,
+                "items": [{"id": "expected_behavior", "text": expected, "required": True, "verification": "behavior"}]}
     feedback = source.get("feedback", {})
     expected = (feedback.get("expected_behavior") or source.get("case_definition", {}).get("expected_behavior")
                 or source.get("original_input") or "")
@@ -28,6 +36,15 @@ def acceptance(source: dict[str, Any]) -> dict[str, Any]:
                          ("image_delivered", "真实会话发送链路产生图片与完整回执", "pytest")))
     return {"original": expected, "sha256": hashlib.sha256(expected.encode()).hexdigest(),
             "requires_image": image, "items": items}
+
+
+def verification_purpose(source: dict[str, Any]) -> str:
+    return "governance" if source.get("kind") == "code_health" else "repair"
+
+
+def require_purpose(source: dict[str, Any], plan) -> None:
+    if plan.purpose != verification_purpose(source):
+        raise HarnessError("verification_purpose", "验收用途与宿主冻结来源不一致")
 
 
 def review_test(content: bytes) -> None:

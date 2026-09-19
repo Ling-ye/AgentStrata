@@ -39,7 +39,11 @@ _FIXED_CORE = (
 )
 
 
-def writable_paths(root: Path, bot_id: str = "") -> tuple[Path, ...]:
+def writable_paths(root: Path, bot_id: str = "", *, governance: bool = False) -> tuple[Path, ...]:
+    if governance:
+        return tuple(root / name for name in ("src", "console", "deploy", "scripts", "bots", "docs")
+                     if (root / name).is_dir()) + tuple(p for p in root.iterdir()
+                     if p.is_file() and permitted_change(p.name, governance=True))
     configuration = tuple(p for p in ((root / "bots" / bot_id),) if bot_id and p.is_dir())
     return configuration + tuple(
         root / "src" / "chatcopilot" / area
@@ -48,7 +52,13 @@ def writable_paths(root: Path, bot_id: str = "") -> tuple[Path, ...]:
     )
 
 
-def protected_paths(root: Path, bot_id: str = "") -> tuple[Path, ...]:
+def protected_paths(root: Path, bot_id: str = "", *, governance: bool = False) -> tuple[Path, ...]:
+    if governance:
+        from chatcopilot.harness.verification_policy import policy_path, POLICY_PREFIXES, source_files
+        directories = tuple(root / name for name in POLICY_PREFIXES if (root / name).is_dir())
+        return directories + tuple(root / name for name in source_files(root)
+            if (policy_path(name) or not permitted_change(name, governance=True))
+            and not any((root / name).is_relative_to(directory) for directory in directories))
     bot = root / "bots" / bot_id
     configuration = tuple(p for p in bot.iterdir() if p.name not in {"bot.yaml", "prompts"}) if bot_id and bot.is_dir() else ()
     return configuration + tuple(
@@ -58,8 +68,14 @@ def protected_paths(root: Path, bot_id: str = "") -> tuple[Path, ...]:
     )
 
 
-def permitted_change(name: str, bot_id: str | None = None) -> bool:
+def permitted_change(name: str, bot_id: str | None = None, *, governance: bool = False) -> bool:
     parts = Path(name).parts
+    if governance:
+        from chatcopilot.harness.verification_policy import governance_policy_path
+        from chatcopilot.core.source_manifest import is_deployable_source_path
+        return (bool(parts) and not Path(name).is_absolute() and ".." not in parts
+                and is_deployable_source_path(name) and not governance_policy_path(name)
+                and not (parts[:3] == ("src", "chatcopilot", "core") and parts[-1] in _FIXED_CORE))
     return configuration_path(name, bot_id) or (
         len(parts) > 3
         and parts[:2] == ("src", "chatcopilot")
@@ -82,12 +98,12 @@ def prepare(repository: Path, root: Path, task_id: str, commit: str) -> Path:
     return path
 
 
-def delta(worktree: Path, baseline: dict[str, Any], bot_id: str | None = None) -> list[str]:
+def delta(worktree: Path, baseline: dict[str, Any], bot_id: str | None = None, *, governance: bool = False) -> list[str]:
     current = source_manifest(worktree)
     changed = sorted(
         name for name in baseline.keys() | current.keys() if baseline.get(name) != current.get(name)
     )
-    if any(not permitted_change(name, bot_id) for name in changed):
+    if any(not permitted_change(name, bot_id, governance=governance) for name in changed):
         raise HarnessError("protected_change", "候选修改了测试、评分或运行控制文件")
     for name in changed:
         if configuration_path(name) and name.endswith("/bot.yaml"):
@@ -102,8 +118,8 @@ def delta(worktree: Path, baseline: dict[str, Any], bot_id: str | None = None) -
     return changed
 
 
-def save_patch(worktree: Path, baseline: dict[str, Any], output: Path) -> str:
-    changes = delta(worktree, baseline)
+def save_patch(worktree: Path, baseline: dict[str, Any], output: Path, *, governance: bool = False) -> str:
+    changes = delta(worktree, baseline, governance=governance)
     command = ["git", "-C", str(worktree), "diff", "--binary", "HEAD", "--", *changes]
     result = subprocess.run(command, capture_output=True, timeout=30, check=True)
     content = result.stdout
@@ -161,6 +177,8 @@ def restore(worktree: Path, baseline: dict[str, Any], expected_digest: str) -> N
 
 
 def context_key(source: dict[str, Any]) -> str:
+    if source.get("kind") == "code_health":
+        return hashlib.sha256(json_text({"kind": "code_health", "repository": source["repository"]}).encode()).hexdigest()
     if source.get("kind") == "robot_task":
         return hashlib.sha256(
             json_text(

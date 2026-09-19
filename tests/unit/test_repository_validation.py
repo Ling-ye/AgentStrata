@@ -281,10 +281,10 @@ def test_pytest_inventory_tracks_identities_and_skips(tmp_path: Path) -> None:
     report = tmp_path / "tests.xml"
     report.write_text('<testsuites><testsuite><testcase classname="m" name="a"/><testcase classname="m" name="b"><skipped/></testcase></testsuite></testsuites>')
     first = gate._test_inventory(report)
-    assert first['count'] == 2 and first['skipped_ids'] == ['m::b']
-    report.write_text('<testsuites><testsuite><testcase classname="m" name="b"/><testcase classname="m" name="a"/></testsuite></testsuites>')
+    assert first['count'] == 2 and first['skipped_ids'] == ['m::b'] and first['error_ids'] == []
+    report.write_text('<testsuites><testsuite><testcase classname="m" name="b"><error/></testcase><testcase classname="m" name="a"/></testsuite></testsuites>')
     second = gate._test_inventory(report)
-    assert second['sha256'] == first['sha256'] and second['skipped_ids'] == []
+    assert second['sha256'] == first['sha256'] and second['skipped_ids'] == [] and second['error_ids'] == ['m::b']
 
 
 def test_repository_report_collects_real_pytest_inventory(tmp_path: Path, monkeypatch) -> None:

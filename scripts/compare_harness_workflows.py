@@ -66,11 +66,25 @@ def main() -> int:
         from chatcopilot.harness.repair_runtime import run_task
         from chatcopilot.harness import models
         artifacts = ArtifactRepository(store.root / "jobs" / ident)
-        store.update(ident, principles=asdict(artifacts.principles(Path(models.__file__).resolve().parents[3])))
+        governance = sample["source"].get("kind") == "code_health"
+        principles = artifacts.principles(repository if governance else Path(models.__file__).resolve().parents[3])
+        store.update(ident, principles=asdict(principles))
+        if governance:
+            from chatcopilot.core.source_snapshot import copy_sources, source_manifest
+            from chatcopilot.harness.governance_repository import freeze_context
+            from chatcopilot.harness.workspace import permitted_change
+            manifest = source_manifest(repository)
+            copy_sources(repository, artifacts.directory / "source", manifest)
+            context = freeze_context(artifacts, repository, manifest,
+                [name for name in manifest if permitted_change(name, governance=True)], artifacts.read(principles))
+            store.update(ident, governance_context=asdict(context))
     else:
         from chatcopilot.harness.workflow import run_task
     runner = CodexCoder(lambda path, ref: store.register_trace(ident, path, ref))
     verifier = CaseVerification(LocalOnly(), LocalVerifier(store.root), store)
+    if sample["source"].get("kind") == "code_health":
+        from chatcopilot.harness.governance_verification import GovernanceVerification
+        verifier = GovernanceVerification(LocalOnly(), LocalVerifier(store.root), store)
     started = time.monotonic()
     result = run_task(store, ident, verifier, runner)
     attempts = store.attempts(ident)

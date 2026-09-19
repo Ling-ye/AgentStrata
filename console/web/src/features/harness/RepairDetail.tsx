@@ -9,6 +9,7 @@ import { RepairFlow } from "./RepairFlow";
 import { CommandLogs } from "./CommandLogs";
 import { TaskDetailState } from "../architecture/observationDetailState";
 import { RepairProgress } from "./RepairProgress";
+import { GovernanceReport } from "./GovernanceReport";
 const { Text } = Typography;
 const jsonStyle = { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 420, overflow: "auto" } as const;
 
@@ -72,11 +73,14 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
         <Button loading={busy} onClick={() => void action("continue")}>接续修复（累计预算）</Button>}
       {!ACTIVE.includes(task.status) && task.status !== "waiting_input" && (task.source.run_id || task.source.case_instance_id) &&
         <Button disabled={busy} onClick={() => onRestart(task)}>重新发起修复</Button>}
+      {!ACTIVE.includes(task.status) && task.source.kind === "code_health" &&
+        <Button disabled={busy} onClick={() => onRestart(task)}>重新发起治理</Button>}
       {!!task.candidate_checkpoint?.changed_files.length && <a
         href={`/api/harness/tasks/${encodeURIComponent(taskId)}/attempts/${task.candidate_checkpoint.number}/patch`} download>下载保留候选</a>}
       <Button onClick={() => void query.refetch()}>刷新状态</Button>
       {task.source.test_sha256 && <a href={`/api/harness/tasks/${encodeURIComponent(taskId)}/reproducer`} download>下载冻结复现测试</a>}</Space>
     {task.commit_state === "unconfirmed" && <Alert type="warning" content="提交回执尚未核验；继续时会检查实际提交状态。" />}
+    {task.source.kind === "code_health" && <GovernanceReport taskId={taskId} active={deliveryActive(task)} />}
     <RepairFlow key={taskId} taskId={taskId} active={deliveryActive(task)} commands={source => {
       setCommandSelection({ open: true, source });
       window.requestAnimationFrame(() => document.getElementById("repair-command-logs")?.scrollIntoView({ behavior: "smooth", block: "start" }));

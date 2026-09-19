@@ -75,6 +75,39 @@ def test_resumed_thread_usage_is_turn_delta_not_last_request(tmp_path, monkeypat
     assert [item["usage"]["input_tokens"] for item in observed] == [100, 150]
 
 
+def test_new_attempt_starts_a_fresh_thread_in_the_same_private_home(tmp_path, monkeypatch):
+    seen = []
+    def execute(command, **kwargs):
+        seen.append(kwargs["thread_id"])
+        ident = kwargs["thread_id"] or f"thread-{len(seen)}"
+        kwargs["on_thread"](ident)
+        kwargs["on_notification"]("turn/completed", {"threadId": ident, "turn": {"status": "completed"}})
+    monkeypatch.setattr(repair_session, "run_app_server", execute)
+    home = private_directory(tmp_path / "home")
+    for attempt in (1, 1, 2):
+        repair_session.run_session(["fixture"], root=tmp_path, home=home, environment={}, prompt="task",
+            options=RepairOptions("test"), task_id="task", generation=1, role=Role.PLAN, attempt=attempt,
+            observe=lambda _: None, cancel=lambda: None)
+    assert seen == ["", "thread-1", ""]
+
+
+def test_large_command_output_is_bounded_before_harness_observation(tmp_path, monkeypatch):
+    observed = []
+    def execute(command, **kwargs):
+        kwargs["on_thread"]("thread")
+        kwargs["on_notification"]("item/completed", {"threadId": "thread", "item": {
+            "type": "commandExecution", "command": "cat full.log",
+            "aggregatedOutput": "a" * (128 * 1024), "exitCode": 0}})
+        kwargs["on_notification"]("turn/completed", {"threadId": "thread", "turn": {"status": "completed"}})
+    monkeypatch.setattr(repair_session, "run_app_server", execute)
+    repair_session.run_session(["fixture"], root=tmp_path, home=private_directory(tmp_path / "home"),
+        environment={}, prompt="task", options=RepairOptions("test"), task_id="task", generation=1,
+        role=Role.CODING, observe=lambda value: observed.append(json.loads(value)), cancel=lambda: None)
+    output = next(item["item"]["aggregated_output"] for item in observed if item["type"] == "item.completed")
+    assert len(output) < 66 * 1024
+    assert "chars omitted by Harness" in output and output.startswith("a" * 100) and output.endswith("a" * 100)
+
+
 def test_isolated_evaluation_disables_undeclared_native_image_generation():
     from chatcopilot.evals.isolated_executor import _isolated_subagents
     from chatcopilot.contracts.subagents import SubagentSpec

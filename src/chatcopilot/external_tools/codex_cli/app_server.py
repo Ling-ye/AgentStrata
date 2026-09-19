@@ -11,6 +11,10 @@ import threading
 import time
 from typing import Any, Callable
 
+
+_MAX_PROTOCOL_RECORD_BYTES = 8 * 1024 * 1024
+
+
 class AppServerProcess:
     def __init__(self, command: list[str], *, cwd: Path, env: dict[str, str],
                  timeout_seconds: float, on_notification: Callable[[str, dict], None],
@@ -47,10 +51,10 @@ class AppServerProcess:
     def _read(self) -> None:
         try:
             while not self.closed.is_set():
-                line = self.process.stdout.readline(1024 * 1024 + 1)
+                line = self.process.stdout.readline(_MAX_PROTOCOL_RECORD_BYTES + 1)
                 if not line:
                     break
-                if len(line) > 1024 * 1024:
+                if len(line) > _MAX_PROTOCOL_RECORD_BYTES:
                     raise RuntimeError("App Server protocol record exceeds limit")
                 value = json.loads(line)
                 if not isinstance(value, dict):

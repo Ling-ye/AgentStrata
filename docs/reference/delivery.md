@@ -4,7 +4,7 @@
 
 ## 两条受控交付路径
 
-code-worker 由 Owner 明确调用独立代码任务后交付草稿 PR；新的 Harness 修复任务由冻结宿主交付正式 PR，并交由 GitHub 原生 squash 自动合并。
+code-worker 由 Owner 明确调用独立代码任务后交付草稿 PR；新的 Harness 修复与代码治理任务由冻结宿主交付正式 PR，并交由 GitHub 原生 squash 自动合并。
 
 ### Harness
 

@@ -151,6 +151,10 @@ for raw in sys.stdin:
   send({'method':'turn/started','params':{'threadId':'thread-fixture','turn':{'id':'turn-fixture'}}})
   if mode=='interaction':
    send({'id':91,'method':'item/permissions/requestApproval','params':{}})
+  elif mode=='large':
+   send({'method':'item/completed','params':{'threadId':'thread-fixture','turnId':'turn-fixture',
+     'item':{'id':'cmd','type':'commandExecution','command':'cat log','aggregatedOutput':'x'*(2*1024*1024),'exitCode':0}}})
+   send({'method':'turn/completed','params':{'threadId':'thread-fixture','turn':{'id':'turn-fixture','status':'completed'}}})
   elif mode=='complete':
    send({'method':'item/completed','params':{'threadId':'thread-fixture','turnId':'turn-fixture',
      'item':{'id':'answer','type':'agentMessage','phase':'final_answer','text':'done'}}})
@@ -169,6 +173,19 @@ def run_fixture(tmp_path, mode, *, on_poll=lambda: None, thread_id=""):
         prompt="fixture", model="model", effort="medium", thread_id=thread_id, image_paths=(), timeout_seconds=2,
         on_notification=lambda method, params: events.append((method, params)), on_thread=threads.append, on_poll=on_poll)
     return result, threads, events
+
+
+def test_stdio_accepts_bounded_multi_megabyte_command_record(tmp_path):
+    script = tmp_path / "server.py"
+    script.write_text(_SERVER)
+    events = []
+    run_app_server([sys.executable, str(script), "large"], cwd=tmp_path, env=dict(os.environ),
+        prompt="fixture", model="model", effort="medium", thread_id="", image_paths=(), timeout_seconds=3,
+        on_notification=lambda method, params: events.append((method, params)), on_thread=lambda _: None,
+        on_poll=lambda: None)
+    command = next(params["item"] for method, params in events
+                   if method == "item/completed" and params["item"]["type"] == "commandExecution")
+    assert len(command["aggregatedOutput"]) == 2 * 1024 * 1024
 
 
 @pytest.mark.parametrize("thread_id", ["", "thread-fixture"])

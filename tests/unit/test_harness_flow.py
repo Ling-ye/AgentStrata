@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from chatcopilot.harness.api import HarnessController
+from chatcopilot.harness.artifact_repository import ArtifactRepository
 from chatcopilot.harness.command_logs import read_commands
 from chatcopilot.harness.flow import project_flow, step_detail
 from chatcopilot.harness.flow_records import record_step, step_binding
@@ -137,6 +138,23 @@ def test_trace_binding_uses_execution_id_and_does_not_guess_by_time(store):
     assert [t["trace_ref"] for t in step_detail(task, [], ident)["traces"]] == ["bound"]
     with pytest.raises(HarnessError, match="没有该流程"):
         step_detail(task, [], "other-task-step")
+
+
+def test_step_detail_projects_context_metrics_without_private_source_index(store):
+    artifacts = ArtifactRepository(store.root / "jobs/repair-example")
+    output = artifacts.put("plan", 1, {"summary": "bounded plan"})
+    execution = artifacts.put("execution", 1, {"context_metrics": {
+        "prompt_bytes": 100, "source_index_bytes": 200, "command_count": 2,
+        "context_budget_warning": ["plan_command_output"]}})
+    with record_step(store, "repair-example", "plan", "计划", group="attempt-1", inputs={},
+                     source_id="plan-1") as receipt:
+        ident = step_binding()["flow_step_id"]
+        receipt.evidence = {"output": output.__dict__, "execution": execution.__dict__}
+    controller = HarnessController.__new__(HarnessController)
+    controller.store = store
+    detail = controller.flow("repair-example", step_id=ident)
+    assert detail["context_metrics"]["source_index_bytes"] == 200
+    assert "candidates" not in json.dumps(detail["context_metrics"])
 
 
 def test_retry_detail_does_not_read_later_evaluation_result(store):

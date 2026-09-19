@@ -13,11 +13,13 @@ from chatcopilot.harness.control_service import check_cancellation
 from chatcopilot.harness.flow_records import record_step
 from chatcopilot.harness.models import acceptance_digest, VerificationRequest, CandidateRef, Cancelled, HarnessError, RepairOptions, VerificationPlan, review_decision
 from chatcopilot.harness.config import safe_error
-from chatcopilot.harness.preparation import acceptance
+from chatcopilot.harness.preparation import acceptance, require_purpose, verification_purpose
 from chatcopilot.harness.repair_types import failure_signature
 from chatcopilot.harness.agent_types import AcceptedCandidate
 from chatcopilot.harness.artifact_repository import ArtifactRepository
 from chatcopilot.harness.role_service import RoleWorkflow
+from chatcopilot.harness.control_types import external_evaluation_id
+from chatcopilot.harness.context_briefs import build_failure_brief
 
 
 def _passed_checks(attempt: dict[str, Any]) -> set[str]:
@@ -31,6 +33,7 @@ def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str,
     if task["status"] not in {"queued", "running", "cancel_requested"}:
         return task
     options = RepairOptions(**task["options"])
+    governance = verification_purpose(task["source"]) == "governance"
     started, elapsed = time.monotonic(), float(task.get("elapsed_seconds", 0))
     deadline = started + max(0, options.timeout_seconds - elapsed)
     heartbeat = 0.0
@@ -71,7 +74,7 @@ def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str,
                 inputs={"candidate_digest": candidate.digest, "checks": checks},
                 locator={"section": "evaluations", "key": phase}) as step:
             source = current["source"]
-            external = ident + "-agent" if source.get("agent_source") else ident if not source.get("test_sha256") else None
+            external = external_evaluation_id(source, ident)
             store.update(task_id, stage=phase, current_evaluation_id=external)
             # Exceptions retain external execution ownership for reconciliation.
             try:
@@ -172,8 +175,17 @@ def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str,
                     attempt.update(artifacts.capture(number, base_manifest))
                     store.update(task_id, working_digest=attempt["candidate_digest"],
                                  candidate_checkpoint={k: attempt[k] for k in ("number", "candidate_digest", "patch_path", "patch_sha256", "changed_files")})
+                    if governance and proposal["decision"] in {"no_changes", "needs_review"}:
+                        status = proposal["decision"] if not attempt["changed_files"] else "needs_review"
+                        attempt.update(status=status, finished_at=time.time())
+                        store.save_attempt(task_id, number, attempt)
+                        finish(status, message=proposal["summary"])
+                        break
                     capabilities = sorted(set(store.get(task_id).get("goal_capabilities", [])) | set(proposal["goal_capabilities"]))
                     source = {**original, **({"goal_capabilities": capabilities} if capabilities else {})}
+                    if governance:
+                        current_source = store.get(task_id)["source"]
+                        source.update({key: current_source[key] for key in ("governance_target", "governance_report")})
                     requirements = acceptance(source)
                     store.update(task_id, source=source, acceptance=requirements, goal_capabilities=capabilities)
                     if proposal["decision"] == "blocked":
@@ -187,10 +199,13 @@ def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str,
                     store.update(task_id, source=source, verification_plan=plan.to_payload(),
                                  plan_generation=number, reproduction_phase=f"reproduce-r{number}")
                     attempt["verification_plan"] = plan.to_payload()
+                require_purpose(source, plan)
                 stage = "baseline"
                 reproduction = evaluate(baseline, plan, f"reproduce-r{number}", list(plan.checks))
                 source = store.get(task_id)["source"]
                 if not attempt["changed_files"] and set(plan.primary_checks).issubset(reproduction["passed_cases"]):
+                    if governance:
+                        raise HarnessError("needs_replan", "治理计划未产生候选变化，不能声明目标已完成")
                     attempt["status"] = "not_reproduced"
                     store.save_attempt(task_id, number, attempt)
                     finish("not_reproduced", message="冻结基线已满足目标检查，未生成修复")
@@ -230,12 +245,16 @@ def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str,
                     attempt["confirmation"] = confirmation
                     if not (set(plan.primary_checks) | set(protected)).issubset(confirmation["passed_cases"]):
                         raise HarnessError("product_failure", "独立确认未通过")
-                if set(plan.primary_checks).issubset(reproduction["passed_cases"]):
+                if not governance and set(plan.primary_checks).issubset(reproduction["passed_cases"]):
                     gaps.append({"requirement": "baseline_failure", "code": "unverified", "message": "原始基线未复现目标失败"})
                 stage = "review"
                 store.update(task_id, stage=stage)
-                review_evidence = {"source": source, "acceptance": requirements, "reproduction": reproduction,
-                    "verification": {"target": verification, "confirmation": attempt.get("confirmation"),
+                review_evidence = {"source": source, "acceptance": requirements, "baseline_root": str(baseline.path), "reproduction": reproduction,
+                    "verification": {"target": {"required_checks": list(plan.primary_checks),
+                                                   "passed_checks": verification["passed_cases"], "receipt": verification},
+                                     "confirmation": {"required": plan.real_agent,
+                                                      "status": "passed" if attempt.get("confirmation") else "not_required" if not plan.real_agent else "missing",
+                                                      "receipt": attempt.get("confirmation")},
                                      "repository_baseline": library, "repository_regressions": regressions,
                                      "protected_cases": protected},
                     "regression": {"checks": regressions, **artifacts.regression(source)}, "gaps": gaps,
@@ -247,26 +266,27 @@ def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str,
                     "baseline": reproduction["passed_cases"], "verified": verification["passed_cases"],
                     "regressions": attempt["regressions"], "gaps": gaps}).encode()).hexdigest()
                 cached = store.get(task_id).get("review_cache", {}).get(binding)
-                with record_step(store, task_id, "review", "独立审核", group=f"attempt-{number}", attempt=number,
-                        inputs={"binding": binding, "gaps": gaps}, source_id=f"review-{number}",
-                        locator={"section": "attempts", "number": number, "field": "review"}) as step:
-                    try:
-                        reviewed = cached or roles.review(worktree, review_evidence, remaining(), output / "review", cancel)
-                        decision = review_decision({k: reviewed[k] for k in ("decision", "problem", "reason", "evidence_refs") if k in reviewed})
-                    except Exception as exc:
-                        if isinstance(exc, Cancelled) or getattr(exc, "code", "") == "budget_exhausted":
-                            raise
-                        attempt["review"] = {"decision": "inconclusive", "problem": "审核执行未能完成",
-                            "reason": safe_error(exc), "state": "complete", "binding": binding, "evidence_refs": ["verification"]}
-                        raise HarnessError("review_inconclusive", "独立审核未确认；候选已保留") from exc
-                    attempt["review"] = {**decision, "binding": binding, "state": "complete",
-                        "cached": bool(cached),
-                        "execution": {} if cached else {k: reviewed.get("execution", {}).get(k) for k in ("usage", "trace", "session")
-                                                       if k in reviewed.get("execution", {})}}
-                    cache = dict(store.get(task_id).get("review_cache", {}))
-                    cache[binding] = decision
-                    store.update(task_id, review_cache=cache)
-                    step.conclusion = decision["reason"]
+                try:
+                    reviewed = cached or roles.review(worktree, review_evidence, remaining(), output / "review", cancel)
+                    decision = review_decision({k: reviewed[k] for k in ("decision", "problem", "reason", "evidence_refs") if k in reviewed})
+                    if governance and decision["decision"] == "approved":
+                        from chatcopilot.harness.governance_repository import require_improvement
+                        improvement = require_improvement(source["governance_target"], reviewed, baseline.path,
+                                                          candidate.path, attempt["changed_files"])
+                        decision.update(improvement)
+                except Exception as exc:
+                    if isinstance(exc, Cancelled) or getattr(exc, "code", "") == "budget_exhausted":
+                        raise
+                    attempt["review"] = {"decision": "inconclusive", "problem": "审核执行未能完成",
+                        "reason": safe_error(exc), "state": "complete", "binding": binding, "evidence_refs": ["verification"]}
+                    raise HarnessError("review_inconclusive", "独立审核未确认；候选已保留") from exc
+                attempt["review"] = {**decision, "binding": binding, "state": "complete",
+                    "cached": bool(cached),
+                    "execution": {} if cached else {k: reviewed.get("execution", {}).get(k) for k in ("usage", "trace", "session")
+                                                   if k in reviewed.get("execution", {})}}
+                cache = dict(store.get(task_id).get("review_cache", {}))
+                cache[binding] = decision
+                store.update(task_id, review_cache=cache)
                 if artifacts.digest(worktree) != candidate.digest:
                     raise HarnessError("workspace_changed", "审核期间候选发生变化")
                 artifacts.require_git_identity()
@@ -308,12 +328,20 @@ def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str,
                 current_checks = _passed_checks(attempt)
                 repeated = (previous or {}).get("signature") == signature and not current_checks - previous_checks
                 previous_checks = current_checks
+                feedback = {"stage": stage, "code": code, "message": safe_error(exc),
+                            "requirements": keys, "passed_requirements": passed, "signature": signature}
                 attempt.update(status="interrupted" if isinstance(exc, Cancelled) else "rejected", error=safe_error(exc),
-                    error_code=code, finished_at=time.time(), feedback={"stage": stage, "code": code,
-                    "message": safe_error(exc), "requirements": keys, "passed_requirements": passed, "signature": signature})
+                               error_code=code, finished_at=time.time(), feedback=feedback)
+                evidence_ref = None
                 if getattr(exc, "evidence", None):
                     ref = roles.artifacts.put("verification_error", number, exc.evidence)
-                    attempt["feedback"]["evidence_ref"] = roles.artifacts.navigation(ref)
+                    evidence_ref = asdict(ref)
+                brief = build_failure_brief(attempt=attempt, stage=stage, code=code, message=safe_error(exc),
+                    signature=signature, evidence_ref=evidence_ref, evidence=getattr(exc, "evidence", None))
+                brief_ref = roles.artifacts.put("failure_brief", number, brief)
+                attempt["failure_brief"] = asdict(brief_ref)
+                attempt["feedback"] = {**feedback, "brief_ref": asdict(brief_ref)}
+                store.update(task_id, failure_brief_ref=asdict(brief_ref))
                 store.save_attempt(task_id, number, attempt)
                 previous = attempt["feedback"]
                 if isinstance(exc, Cancelled):

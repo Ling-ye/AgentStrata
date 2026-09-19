@@ -171,6 +171,29 @@ def test_publish_cleanup_and_merge_receipt(task):
     assert command(repo, "rev-parse", "main") == base
 
 
+def test_gc_uses_the_same_exact_commit_pr_and_merge_path_without_new_tests(task):
+    from chatcopilot.harness.models import VerificationPlan
+    store, ident, client, repo = task
+    before = command(repo, "rev-parse", "main")
+    target = {"id": "docs", "summary": "校准指南", "affected_paths": ["docs/guide.md"],
+              "acceptance_criteria": ["说明符合现行行为"], "principle_refs": []}
+    store.update(ident, source={"kind": "code_health", "governance_target": target},
+        verification_plan=VerificationPlan(("repository_regressions",), ("repository_regressions",), (), 1,
+                                          purpose="governance").to_payload())
+    refresh_acceptance(store, ident)
+    first = delivery.reconcile(store, ident, client=client)
+    assert first["delivery"]["state"] == "waiting_checks", first.get("delivery")
+    assert first["regressions"] == [] and first["publication_candidate"]["profile"] == "full"
+    assert first["publication_candidate"]["title"].startswith("[Code Health]")
+    assert first["publication_candidate"]["paths"] == ["docs/guide.md"]
+    delivery.reconcile(store, ident, client=client)
+    assert client.creations == 1
+    client.mark_merged(first["delivery"])
+    final = delivery.reconcile(store, ident, client=client)
+    assert final["delivery"]["state"] == "merged"
+    assert command(repo, "rev-parse", "main") == before
+
+
 def test_mixed_repair_adopts_both_exact_frozen_tests(task, tmp_path):
     import hashlib
     from chatcopilot.core.private_sqlite import json_text

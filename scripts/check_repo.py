@@ -258,8 +258,10 @@ def _test_inventory(path: Path) -> dict[str, object]:
         raise ValueError("pytest did not report any executed test identities")
     skipped = sorted({case.get("classname", "") + "::" + case.get("name", "")
                       for case in cases if case.find("skipped") is not None})
+    errors = sorted({case.get("classname", "") + "::" + case.get("name", "")
+                     for case in cases if case.find("error") is not None})
     return {"sha256": hashlib.sha256(json.dumps(identities).encode()).hexdigest(),
-            "count": len(identities), "skipped_ids": skipped}
+            "count": len(identities), "skipped_ids": skipped, "error_ids": errors}
 
 
 def _write_private(path: Path, text: str) -> None:
