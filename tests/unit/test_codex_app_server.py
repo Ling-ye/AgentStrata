@@ -165,12 +165,12 @@ for raw in sys.stdin:
 '''
 
 
-def run_fixture(tmp_path, mode, *, on_poll=lambda: None, thread_id=""):
+def run_fixture(tmp_path, mode, *, on_poll=lambda: None, thread_id="", timeout_seconds=2):
     script = tmp_path / "server.py"
     script.write_text(_SERVER)
     events, threads = [], []
     result = run_app_server([sys.executable, str(script), mode], cwd=tmp_path, env=dict(os.environ),
-        prompt="fixture", model="model", effort="medium", thread_id=thread_id, image_paths=(), timeout_seconds=2,
+        prompt="fixture", model="model", effort="medium", thread_id=thread_id, image_paths=(), timeout_seconds=timeout_seconds,
         on_notification=lambda method, params: events.append((method, params)), on_thread=threads.append, on_poll=on_poll)
     return result, threads, events
 
@@ -189,8 +189,9 @@ def test_stdio_accepts_bounded_multi_megabyte_command_record(tmp_path):
 
 
 @pytest.mark.parametrize("thread_id", ["", "thread-fixture"])
-def test_stdio_handshake_new_and_resume(tmp_path, thread_id):
-    result, threads, events = run_fixture(tmp_path, "complete", thread_id=thread_id)
+@pytest.mark.parametrize("timeout_seconds", [2, None])
+def test_stdio_handshake_new_and_resume(tmp_path, thread_id, timeout_seconds):
+    result, threads, events = run_fixture(tmp_path, "complete", thread_id=thread_id, timeout_seconds=timeout_seconds)
     assert result.returncode == 0 and threads == ["thread-fixture"]
     assert any(method == "item/completed" for method, _ in events)
 

@@ -382,3 +382,15 @@ def test_dispatch_timeout_is_unknown_and_does_not_overwrite_frozen_runtime(contr
     monkeypatch.setattr(subprocess, "run", Mock(side_effect=subprocess.TimeoutExpired("fixture", 30)))
     assert runtime.launch(controller.store.get(ident)).state == "unknown"
     assert marker.read_text() == "frozen worker"
+
+
+def test_reconcile_keeps_prepared_but_undispatched_task_queued(control):
+    controller, workers, _ = control
+    ident = task(controller, status="queued", dispatch="creating")
+    result = controller.reconcile(ident)
+    assert result["status"] == "queued"
+    assert result["dispatch_state"] == "creating"
+    assert occupied(controller, ident)
+    assert workers.delivery_launches == []
+    controller.cancel(ident)
+    assert controller.store.get(ident)["status"] == "cancelled"

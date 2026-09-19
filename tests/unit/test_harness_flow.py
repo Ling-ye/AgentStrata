@@ -319,3 +319,72 @@ def test_commands_skip_oversized_line_explicitly_and_continue_paging(store, monk
         if not page["has_more"]:
             break
     assert clipped and [e["command"] for e in events] == ["printf item-2"]
+
+
+@pytest.mark.parametrize("error_type", [TypeError, ValueError, RuntimeError, FileNotFoundError])
+def test_coder_execution_errors_keep_redacted_cause_in_environment_failure(tmp_path, monkeypatch, error_type):
+    from chatcopilot.harness.codex_adapter import CodexCoder
+    from chatcopilot.harness.agent_types import AgentCall, Role
+    from chatcopilot.harness.models import RepairOptions
+    secret = "fixture-only-startup-secret"
+    monkeypatch.setenv("HARNESS_TEST_API_TOKEN", secret)
+    failure = error_type("transport failed with " + secret)
+    coder = CodexCoder()
+    def execute(*_args):
+        raise failure
+    monkeypatch.setattr(coder, "_execute_impl", execute)
+    output = tmp_path / "role"
+    with pytest.raises(HarnessError) as caught:
+        coder.execute(tmp_path, AgentCall("fixture", Role.MAIN, 1, "fixture", {"source": {"kind": "code_health"}}),
+                      RepairOptions("fixture", timeout_seconds=None), output, lambda: None)
+    assert caught.value.code == "coding_environment"
+    assert caught.value.__cause__ is failure
+    assert error_type.__name__ in str(caught.value) and "transport failed" in str(caught.value)
+    assert secret not in str(caught.value)
+    trace = next(output.glob("traces/*/trace.json")).read_text()
+    assert "coding_environment" in trace and secret not in trace
+
+
+@pytest.mark.parametrize("text", ["not JSON", None])
+def test_coder_only_classifies_final_json_parse_errors_as_invalid_role(tmp_path, monkeypatch, text):
+    from chatcopilot.harness.codex_adapter import CodexCoder
+    from chatcopilot.harness.agent_types import AgentCall, Role
+    from chatcopilot.harness.models import RepairOptions
+    coder = CodexCoder()
+    monkeypatch.setattr(coder, "_execute_impl", lambda *_: {"final_text": text})
+    with pytest.raises(HarnessError) as caught:
+        coder.execute(tmp_path, AgentCall("fixture", Role.MAIN, 1, "fixture", {"source": {}}),
+                      RepairOptions("fixture"), tmp_path / "role", lambda: None)
+    assert caught.value.code == "invalid_role_result"
+
+
+@pytest.mark.parametrize("failure", [Cancelled(), HarnessError("budget_exhausted", "spent"),
+    HarnessError("session_unconfirmed", "uncertain"), HarnessError("protected_change", "protected")])
+def test_coder_keeps_host_control_errors_unchanged(tmp_path, monkeypatch, failure):
+    from chatcopilot.harness.codex_adapter import CodexCoder
+    from chatcopilot.harness.agent_types import AgentCall, Role
+    from chatcopilot.harness.models import RepairOptions
+    coder = CodexCoder()
+    def execute(*_args):
+        raise failure
+    monkeypatch.setattr(coder, "_execute_impl", execute)
+    with pytest.raises(HarnessError) as caught:
+        coder.execute(tmp_path, AgentCall("fixture", Role.MAIN, 1, "fixture", {"source": {}}),
+                      RepairOptions("fixture"), tmp_path / "role", lambda: None)
+    assert caught.value is failure
+
+
+def test_coder_does_not_reclassify_recorded_storage_errors(tmp_path, monkeypatch):
+    from chatcopilot.harness.codex_adapter import CodexCoder
+    from chatcopilot.harness.agent_types import AgentCall, Role
+    from chatcopilot.harness.models import RepairOptions
+    failure = OSError("storage interrupted")
+    failure.storage_details = {"database": "fixture", "phase": "commit"}
+    coder = CodexCoder()
+    def execute(*_args):
+        raise failure
+    monkeypatch.setattr(coder, "_execute_impl", execute)
+    with pytest.raises(OSError) as caught:
+        coder.execute(tmp_path, AgentCall("fixture", Role.MAIN, 1, "fixture", {"source": {}}),
+                      RepairOptions("fixture"), tmp_path / "role", lambda: None)
+    assert caught.value is failure

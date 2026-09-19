@@ -353,3 +353,18 @@ def test_old_gc_worker_and_delivery_are_not_relaunched(batch):
     with pytest.raises(HarnessError, match="旧任务只读"):
         with worker_execution(batch.store, ident, delivery=True):
             pytest.fail("old GC must not execute in the new workflow")
+
+
+def test_lifecycle_tick_between_child_creation_and_launch_cannot_interrupt_batch(batch, monkeypatch):
+    original = batch.port.start
+    def prepare_then_reconcile(*args, **kwargs):
+        child = original(*args, **kwargs)
+        batch.lifecycle.reconcile(child["task_id"])
+        return batch.store.get(child["task_id"])
+    monkeypatch.setattr(batch.port, "start", prepare_then_reconcile)
+    run = batch.service.start(count_options(1))
+    child = batch.store.get(run["current_task_id"])
+    assert child["status"] == "queued"
+    assert child["dispatch_state"] == "scheduled"
+    assert batch.workers.launches == [child["task_id"]]
+    assert run["status"] == "running"

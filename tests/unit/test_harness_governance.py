@@ -369,3 +369,22 @@ def test_count_mode_full_single_issue_workflow_passes_none_to_roles(governance):
     result = run_task(store, ident, GreenVerifier(), CountRoles())
     assert result["status"] == "fixed"
     assert result["remaining_seconds"] is None
+
+
+def test_native_startup_failure_stops_without_repeating_repair_rounds(governance, monkeypatch):
+    from chatcopilot.harness.codex_adapter import CodexCoder
+    store, ident, _ = governance
+    store.update(ident, options=asdict(RepairOptions("fixture", timeout_seconds=None)))
+    coder = CodexCoder()
+    calls = []
+    def fail(_root, call, *_args):
+        calls.append(call.role)
+        raise TypeError("native startup failed")
+    monkeypatch.setattr(coder, "_execute_impl", fail)
+    result = run_task(store, ident, GreenVerifier(), coder)
+    assert result["status"] == "blocked" and result["error_code"] == "coding_environment"
+    assert "TypeError: native startup failed" in result["message"]
+    assert calls == [Role.MAIN]
+    assert len(store.attempts(ident)) == 1
+    assert result["candidate_checkpoint"]["changed_files"] == []
+    assert not result.get("accepted_candidate")

@@ -113,3 +113,97 @@ def test_isolated_evaluation_disables_undeclared_native_image_generation():
     from chatcopilot.contracts.subagents import SubagentSpec
     policy = _isolated_subagents(SubagentSpec()).codex
     assert not policy.image_generation and not policy.connected_apps and not policy.network_access
+
+
+_STDIO_SERVER = '''
+import json, os, pathlib, signal, sys
+root = pathlib.Path(sys.argv[1])
+mode = sys.argv[2]
+(root / "server.pid").write_text(str(os.getpid()))
+if mode == "unresponsive":
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+def send(value):
+    print(json.dumps(value), flush=True)
+for raw in sys.stdin:
+    request = json.loads(raw)
+    method = request.get("method")
+    with (root / "methods.jsonl").open("a") as log:
+        log.write(json.dumps(method) + "\\n")
+    if method == "initialized":
+        continue
+    if method == "initialize":
+        send({"id": request["id"], "result": {}})
+    elif method in ("thread/start", "thread/resume"):
+        send({"id": request["id"], "result": {"thread": {"id": "stdio-thread"}, "instructionSources": []}})
+    elif method == "turn/start":
+        assert "next_role" in request["params"]["outputSchema"]["properties"]
+        send({"id": request["id"], "result": {"turn": {"id": "stdio-turn"}}})
+        send({"method": "turn/started", "params": {"threadId": "stdio-thread", "turn": {"id": "stdio-turn"}}})
+        if mode == "complete":
+            result = {"next_role": "plan", "summary": "Inspect the first supported finding", "unresolved": []}
+            send({"method": "item/completed", "params": {"threadId": "stdio-thread", "turnId": "stdio-turn",
+                "item": {"type": "agentMessage", "phase": "final_answer", "text": json.dumps(result)}}})
+            send({"method": "turn/completed", "params": {"threadId": "stdio-thread", "turn": {"id": "stdio-turn", "status": "completed"}}})
+    elif method == "turn/interrupt" and mode != "unresponsive":
+        send({"id": request["id"], "result": {}})
+        send({"method": "turn/completed", "params": {"threadId": "stdio-thread", "turn": {"id": "stdio-turn", "status": "interrupted"}}})
+'''
+
+
+def _run_stdio_session(tmp_path, mode, *, timeout_seconds, cancel=lambda: None):
+    import os
+    import sys
+    script = tmp_path / "stdio_server.py"
+    script.write_text(_STDIO_SERVER)
+    events = []
+    state = repair_session.run_session([sys.executable, str(script), str(tmp_path), mode],
+        root=tmp_path, home=private_directory(tmp_path / "session"), environment=dict(os.environ),
+        prompt="Find one supported issue", options=RepairOptions("fixture", timeout_seconds=timeout_seconds),
+        task_id="stdio-fixture", generation=1, role=Role.MAIN, governance=True,
+        observe=lambda line: events.append(json.loads(line)), cancel=cancel)
+    return state, events
+
+
+def _assert_stdio_exited(tmp_path):
+    import os
+    pid = int((tmp_path / "server.pid").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_no_deadline_runs_real_stdio_transport_and_returns_structured_role(tmp_path):
+    from chatcopilot.harness.agent_types import role_result
+    state, events = _run_stdio_session(tmp_path, "complete", timeout_seconds=None)
+    assert state["state"] == "completed" and state["thread_id"] == "stdio-thread"
+    output = next(event["item"]["text"] for event in events if event.get("item", {}).get("type") == "agent_message")
+    assert role_result(Role.MAIN, json.loads(output), governance=True)["next_role"] == "plan"
+    methods = [json.loads(line) for line in (tmp_path / "methods.jsonl").read_text().splitlines()]
+    assert methods == ["initialize", "initialized", "thread/start", "turn/start"]
+    _assert_stdio_exited(tmp_path)
+
+
+@pytest.mark.parametrize("mode", ["wait", "unresponsive"])
+def test_no_deadline_cancellation_still_bounds_interrupt_and_process_cleanup(tmp_path, mode):
+    import time
+    from chatcopilot.harness.models import Cancelled
+    def cancel():
+        path = tmp_path / "session/repair-session.json"
+        if path.exists() and json.loads(path.read_text()).get("accepted"):
+            raise Cancelled()
+    started = time.monotonic()
+    with pytest.raises(Cancelled):
+        _run_stdio_session(tmp_path, mode, timeout_seconds=None, cancel=cancel)
+    assert time.monotonic() - started < 8
+    _assert_stdio_exited(tmp_path)
+    assert '"turn/interrupt"' in (tmp_path / "methods.jsonl").read_text()
+    state = json.loads((tmp_path / "session/repair-session.json").read_text())
+    assert state["state"] == ("uncertain" if mode == "unresponsive" else "interrupted")
+
+
+def test_finite_session_deadline_still_times_out_and_cleans_process(tmp_path):
+    import subprocess
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run_stdio_session(tmp_path, "wait", timeout_seconds=2)
+    _assert_stdio_exited(tmp_path)
+    state = json.loads((tmp_path / "session/repair-session.json").read_text())
+    assert state["state"] == "interrupted"

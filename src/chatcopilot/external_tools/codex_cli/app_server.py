@@ -17,10 +17,10 @@ _MAX_PROTOCOL_RECORD_BYTES = 8 * 1024 * 1024
 
 class AppServerProcess:
     def __init__(self, command: list[str], *, cwd: Path, env: dict[str, str],
-                 timeout_seconds: float, on_notification: Callable[[str, dict], None],
+                 timeout_seconds: float | None, on_notification: Callable[[str, dict], None],
                  on_poll: Callable[[], None]) -> None:
         self.command, self.cwd, self.env = command, cwd, env
-        self.deadline = time.monotonic() + timeout_seconds
+        self.deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
         self.on_notification, self.on_poll = on_notification, on_poll
         self.inbox: queue.Queue[Any] = queue.Queue(maxsize=256)
         self.closed = threading.Event()
@@ -94,7 +94,7 @@ class AppServerProcess:
     def receive(self, *, cancelling: bool = False) -> dict | None:
         if not cancelling:
             self.on_poll()
-            if time.monotonic() >= self.deadline:
+            if self.deadline is not None and time.monotonic() >= self.deadline:
                 raise subprocess.TimeoutExpired(self.command, 0)
         try:
             value = self.inbox.get(timeout=.05)
@@ -176,7 +176,7 @@ class AppServerProcess:
 
 def run_app_server(command: list[str], *, cwd: Path, env: dict[str, str], prompt: str,
                    model: str, effort: str, thread_id: str, image_paths: tuple[str, ...],
-                   timeout_seconds: float, on_notification: Callable[[str, dict], None],
+                   timeout_seconds: float | None, on_notification: Callable[[str, dict], None],
                    on_thread: Callable[[str], None], on_poll: Callable[[], None],
                    output_schema: dict[str, Any] | None = None,
                    developer_instructions: str | None = None) -> subprocess.CompletedProcess:

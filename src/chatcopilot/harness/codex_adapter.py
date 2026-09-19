@@ -7,6 +7,7 @@ import hashlib
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import uuid
 import logging
@@ -24,7 +25,7 @@ from chatcopilot.agent.context.prompt_plan import (
 from chatcopilot.contracts.execution_scope import ExecutionScope
 from chatcopilot.contracts.prompt import BotPromptProfile
 from chatcopilot.core.observability_redaction import redact_observability_payload
-from chatcopilot.core.private_sqlite import json_text, private_directory
+from chatcopilot.core.private_sqlite import json_text, private_directory, storage_error_details
 from chatcopilot.core.source_snapshot import git_output
 from chatcopilot.core.scoped_process import require_bubblewrap
 from chatcopilot.harness.codex_environment import check_git, git_metadata, shell_environment, wrap_command
@@ -41,6 +42,7 @@ from chatcopilot.harness.repair_types import ActionProgress
 from chatcopilot.harness.agent_types import AgentCall, AgentResult, Role, role_result
 from chatcopilot.harness.role_prompts import COMMON, PROMPTS, GOVERNANCE_PROMPTS
 from chatcopilot.harness.repair_session import run_session
+from chatcopilot.harness.config import safe_error
 
 
 class CodexCoder:
@@ -77,13 +79,27 @@ class CodexCoder:
         status = "failed"
         try:
             with capture_scope(capture):
-                execution = self._execute_impl(worktree, call, options, output, cancel)
-                payload = role_result(call.role, json.loads(execution.pop("final_text")),
+                try:
+                    execution = self._execute_impl(worktree, call, options, output, cancel)
+                except HarnessError:
+                    # Cancellation, budget and uncertain-session decisions keep
+                    # their existing control semantics.
+                    raise
+                except (ValueError, TypeError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
+                    if isinstance(exc, OSError) and storage_error_details(exc):
+                        raise
+                    message = f"原生会话启动或执行失败：{type(exc).__name__}: {safe_error(exc)}"
+                    capture.record({"kind": "coding_error", "status": "failed", "data": {"error_code": "coding_environment"}},
+                                   {"error": message})
+                    raise HarnessError("coding_environment", message) from exc
+                try:
+                    value = json.loads(execution.pop("final_text"))
+                except (ValueError, TypeError) as exc:
+                    raise HarnessError("invalid_role_result", "角色输出不是有效结构化产物") from exc
+                payload = role_result(call.role, value,
                                       governance=call.evidence.get("source", {}).get("kind") == "code_health")
             status = "completed"
             return AgentResult(payload, execution)
-        except (ValueError, TypeError) as exc:
-            raise HarnessError("invalid_role_result", "角色输出不是有效结构化产物") from exc
         finally:
             try:
                 execution["trace"] = TraceArchive(output / "traces").save(capture, status, retained=True)
