@@ -46,6 +46,7 @@ from .protocol import GATEWAY_EVENTS
 
 SCHEMA_VERSION = 2
 MAX_STATE_JSON_BYTES = 1024 * 1024
+MAX_OUTBOUND_ENVELOPE_JSON_BYTES = 8 * 1024 * 1024
 _INSTANCE_LEASE_FILENAME = "gateway.instance.lock"
 INGRESS_STATES = frozenset({"accepted", "processing", "completed", "failed", "recovery_required"})
 OUTBOX_STATES = frozenset(
@@ -1696,7 +1697,9 @@ class GatewayStateStore:
     ) -> OutboundRecord:
         _required_identity(envelope.outbound_id, "outbound_id", max_chars=256)
         created_at = _timestamp(envelope.created_at)
-        envelope_json = _json_dump(asdict(envelope))
+        envelope_json = _json_dump(
+            asdict(envelope), max_bytes=MAX_OUTBOUND_ENVELOPE_JSON_BYTES,
+        )
         fingerprint = hashlib.sha256(envelope_json.encode("utf-8")).hexdigest()
         with self._write_connection() as connection:
             self._assert_generation(connection, generation)
@@ -2572,7 +2575,7 @@ def _reject_symlink_components(path: Path) -> None:
             raise GatewayStateError("Gateway state path cannot contain a symlink")
 
 
-def _json_dump(value: Any) -> str:
+def _json_dump(value: Any, *, max_bytes: int = MAX_STATE_JSON_BYTES) -> str:
     try:
         encoded = json.dumps(
             value,
@@ -2583,7 +2586,7 @@ def _json_dump(value: Any) -> str:
         )
     except (TypeError, ValueError, RecursionError) as exc:
         raise GatewayStateError("Gateway state value is not valid JSON") from exc
-    if len(encoded.encode("utf-8")) > MAX_STATE_JSON_BYTES:
+    if len(encoded.encode("utf-8")) > max_bytes:
         raise GatewayStateError("Gateway state JSON exceeds the byte limit")
     return encoded
 
