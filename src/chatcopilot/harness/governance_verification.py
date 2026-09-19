@@ -18,17 +18,17 @@ class GovernanceVerification(CaseVerification):
 
     def capabilities(self):
         return {"verification_kinds": ["existing", "pytest"], "purpose": "governance",
-                "existing": "冻结的仓库 full 检查；仅检查通过不能单独证明治理有效"}
+                "existing": "冻结的仓库 full 检查；仅检查通过不能单独证明熵回收有效"}
 
     def prepare(self, task, candidate, output, proposal, check_cancel):
         if task["source"].get("kind") != "code_health":
-            raise HarnessError("verification_purpose", "治理验证器只处理仓库治理来源")
+            raise HarnessError("verification_purpose", "熵回收验证器只处理代码熵回收来源")
         if proposal["verification_kind"] == "existing":
             source = {**task["source"], "verification_kind": "existing"}
             return source, VerificationPlan(("repository_regressions",), ("repository_regressions",), (), 1,
                 coverage={"expected_behavior": ["repository_regressions"]}, purpose="governance")
         if proposal["verification_kind"] != "pytest":
-            raise HarnessError("test_definition", "代码治理使用仓库检查或行为保持测试；语义改变需要独立判断")
+            raise HarnessError("test_definition", "代码熵回收使用仓库检查或行为保持测试；语义改变需要独立判断")
         source, plan = super().prepare(task, candidate, output, proposal, check_cancel)
         return source, replace(plan, purpose="governance")
 
@@ -36,7 +36,7 @@ class GovernanceVerification(CaseVerification):
         if task["source"].get("verification_kind") != "existing":
             return super().run(task, candidate, run_id, checks, check_cancel)
         if checks != ["repository_regressions"]:
-            raise HarnessError("test_definition", "治理仓库验证集合已变化")
+            raise HarnessError("test_definition", "熵回收仓库验证集合已变化")
         report = self.regressions(task, candidate, check_cancel)
         return VerificationResult(run_id, candidate.digest, (
             VerificationCheck("repository_regressions", 1, "passed", evidence=report),), (report["report"],))
@@ -58,7 +58,7 @@ class GovernanceVerification(CaseVerification):
             compare_verification(baseline["repository_report"] if baseline else raw, raw))
         if retained is None:
             error = HarnessError("verification_environment" if any(row["exit_code"] not in {0, 1} for row in raw["checks"])
-                                 else "product_failure", "治理仓库检查出现回归或缺少有效验收证据")
+                                 else "product_failure", "熵回收仓库检查出现回归或缺少有效验收证据")
             error.evidence = raw
             raise error
         result = self._result(raw, retained)
@@ -80,5 +80,5 @@ class GovernanceVerification(CaseVerification):
     def delivery_context(self, task_id, candidate_digest, baseline, verified):
         retained = compare_verification(baseline, verified)
         if retained is None:
-            raise HarnessError("delivery_revalidation_failed", "新主干上的治理保护检查未通过")
+            raise HarnessError("delivery_revalidation_failed", "新主干上的熵回收保护检查未通过")
         self._reports[task_id, candidate_digest] = self._result(verified, retained)

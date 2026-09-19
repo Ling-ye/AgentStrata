@@ -30,7 +30,7 @@ class GovernanceScheduler:
     def _systemctl(self, *args, required=True):
         result = self.command(["systemctl", "--user", *args], capture_output=True, text=True, timeout=15)
         if required and result.returncode:
-            raise HarnessError("schedule_unavailable", "systemd 治理调度操作失败：" + safe_error(Exception(result.stderr)))
+            raise HarnessError("schedule_unavailable", "systemd 熵回收调度操作失败：" + safe_error(Exception(result.stderr)))
         return result
 
     def get(self):

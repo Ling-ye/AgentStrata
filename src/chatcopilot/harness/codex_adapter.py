@@ -39,7 +39,7 @@ from chatcopilot.harness.evidence_context import evidence_index
 from chatcopilot.harness.workspace import protected_paths, writable_paths
 from chatcopilot.harness.repair_types import ActionProgress
 from chatcopilot.harness.agent_types import AgentCall, AgentResult, Role, role_result
-from chatcopilot.harness.role_prompts import COMMON, PROMPTS, GOVERNANCE_PROMPTS
+from chatcopilot.harness.role_prompts import COMMON, PROMPTS, GOVERNANCE_PROMPTS, SINGLE_ISSUE_PROMPTS
 from chatcopilot.harness.repair_session import run_session
 
 
@@ -159,6 +159,8 @@ class CodexCoder:
                                protected_roots=(*protected, *git_roots), native_write=bool(writes))
         profile = BotPromptProfile(identity="AgentStrata Harness " + role.value, response_style="报告有证据的结论和缺口。")
         instructions = PROMPTS[role] + (GOVERNANCE_PROMPTS.get(role, "") if governance else "")
+        if governance and evidence.get("governance_policy", {}).get("single_issue"):
+            instructions += SINGLE_ISSUE_PROMPTS.get(role, "")
         plan = PromptPlanBuilder().build(PromptBuildInput(profile=profile, backend="codex", model=options.model,
             role="owner", channel_kind="private", session_policy=COMMON + instructions))
         prompt = render_codex_prompt(plan, user_message=instructions + (f" draft={draft}" if draft else ""),

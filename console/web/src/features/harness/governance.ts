@@ -12,7 +12,7 @@ export interface GovernanceReport {
 }
 export interface GovernanceSchedule {
   enabled: boolean; interval_hours: number; repair_hint: string;
-  options: { model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number } | null;
+  options: { model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number; single_issue?: boolean } | null;
   last_run?: { status: string; task_id?: string; at: number; message?: string; reason?: string };
   last_error?: string; unit?: string; timer?: Record<string, string>;
 }

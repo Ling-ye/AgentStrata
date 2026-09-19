@@ -6,11 +6,11 @@ export function GovernanceReport({ taskId, active }: { taskId: string; active: b
   const query = useQuery({ queryKey: ["governance-report", taskId],
     queryFn: ({ signal }) => governanceApi.report(taskId, signal),
     retry: false, refetchInterval: active ? 5000 : false });
-  if (query.isPending) return <Spin tip="读取治理依据…" />;
+  if (query.isPending) return <Spin tip="读取熵回收依据…" />;
   if (query.isError) return <Alert type="error" content={String(query.error)} />;
   const report = query.data.report;
-  if (!report) return <Alert type="info" content={active ? "正在调查仓库，治理发现尚未形成。" : "任务已停止，未形成完整调查报告；未覆盖范围尚未确认。"} />;
-  return <Card title="治理依据与调查范围" style={{ minWidth: 0 }}>
+  if (!report) return <Alert type="info" content={active ? "正在调查仓库，熵回收发现尚未形成。" : "任务已停止，未形成完整调查报告；未覆盖范围尚未确认。"} />;
+  return <Card title="熵回收依据与调查范围" style={{ minWidth: 0 }}>
     <Space direction="vertical" style={{ width: "100%", overflowWrap: "anywhere" }}>
       <Typography.Text>{report.summary}</Typography.Text>
       <Typography.Text type="secondary">Agent 报告阅读 {report.inspected_paths.length} 个路径，冻结索引共 {report.inventory_count} 个文件；宿主核实了 {report.evidence_receipts.length} 处源码证据。</Typography.Text>

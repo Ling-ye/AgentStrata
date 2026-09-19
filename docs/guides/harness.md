@@ -4,7 +4,7 @@
 
 ## 单 Case AI Harness
 
-[代码治理](../reference/code-health.md)可自主调查全仓，质量约束统一见[黄金原则](../reference/harness-principles.md)。
+[代码熵回收](../reference/code-health.md)可自主调查全仓，质量约束统一见[黄金原则](../reference/harness-principles.md)。
 
 Harness 是可选的独立模块，通过同 UID Evaluation 客户端读取结果和提交复测，
 按需创建 systemd transient worker，没有常驻 Harness 服务。Console 关闭不取消任务。
@@ -20,7 +20,8 @@ Console 在启动时装载 Harness 配置快照；修改后重启 Console，现�
 
 默认修复数据库位于用户状态目录的 `agentstrata/harness/<repository-hash>/`，
 可通过 `CHATCOPILOT_HARNESS_ROOT` 指定；任务、runtime 快照、补丁和工作区都属于
-该目录。使用用户私有的持久目录；当前 Codex 不在系统临时目录下创建原生辅助程序。
+该目录。Harness 启动时会把当前用户拥有的根目录、`jobs` 和已有 `archives` 收紧为 `0700`；
+符号链接或其他用户拥有的路径仍直接拒绝。当前 Codex 不在系统临时目录下创建原生辅助程序。
 可用 `CHATCOPILOT_HARNESS_MODEL` 设置 CLI 默认修复模型。
 
 在源码仓库运行：
@@ -214,10 +215,11 @@ worker 使用冻结 uv.lock 创建任务专用依赖环境。uv 不在 PATH 且 
 多个版本时，用 CHATCOPILOT_HARNESS_UV_BIN 指定已安装的绝对路径。依赖缺失报告环境错误，
 不会让 Agent 修改宿主依赖。角色分工、预算与验收规则以[修复契约](../reference/harness.md)为准。
 
-## 代码治理与可选定时
+## 代码熵回收与可选定时
 
-Console 的「代码治理」页选择模型与累计预算，可补充治理提示；启动后冻结远端 main，
-自主发现一个治理主题并复用 Harness 修复、验证、独立审查和 PR 自动交付。
+Console 的「代码熵回收」页选择模型与累计预算，可补充回收提示；启动后冻结远端 main，
+自主发现一个代码熵问题并复用 Harness 修复、验证、独立审查和 PR 自动交付。启用单问题模式后，
+Plan 确认第一个有证据的问题即停止继续发现，宿主拒绝包含多个 finding 的报告，只修复该问题后结束。
 
 ```bash
 python -m chatcopilot.harness start-gc --model MODEL --repair-hint "检查重复职责与失效配置"
@@ -228,4 +230,4 @@ python -m chatcopilot.harness gc-schedule --disable
 
 定时默认关闭，开启后使用保存的模型、预算和提示，约一分钟首次触发。已有活动治理或
 待完成 PR 时跳过本次触发；关闭只影响后续创建，不取消已开始任务。完整行为见
-[代码治理契约](../reference/code-health.md)。
+[代码熵回收契约](../reference/code-health.md)。

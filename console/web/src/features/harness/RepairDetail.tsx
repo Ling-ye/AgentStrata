@@ -74,7 +74,7 @@ export function RepairDetail({ taskId, onRestart, onSelect }: { taskId: string; 
       {!ACTIVE.includes(task.status) && task.status !== "waiting_input" && (task.source.run_id || task.source.case_instance_id) &&
         <Button disabled={busy} onClick={() => onRestart(task)}>重新发起修复</Button>}
       {!ACTIVE.includes(task.status) && task.source.kind === "code_health" &&
-        <Button disabled={busy} onClick={() => onRestart(task)}>重新发起治理</Button>}
+        <Button disabled={busy} onClick={() => onRestart(task)}>重新发起熵回收</Button>}
       {!!task.candidate_checkpoint?.changed_files.length && <a
         href={`/api/harness/tasks/${encodeURIComponent(taskId)}/attempts/${task.candidate_checkpoint.number}/patch`} download>下载保留候选</a>}
       <Button onClick={() => void query.refetch()}>刷新状态</Button>

@@ -40,4 +40,4 @@ class ScheduleRepository:
             with private_lock(self.root / "gc-schedule.lock"):
                 yield
         except BlockingIOError as exc:
-            raise HarnessError("schedule_busy", "治理调度正在更新，请稍后重试") from exc
+            raise HarnessError("schedule_busy", "熵回收调度正在更新，请稍后重试") from exc

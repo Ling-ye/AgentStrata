@@ -8,11 +8,12 @@ it("starts GC through the common task API without a fabricated case or robot", a
   const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ task_id: "repair-gc" }) });
   vi.stubGlobal("fetch", fetch);
   await harnessApi.start({ source_kind: "code_health", request_id: "stable-gc", model: "fixture",
-    reasoning_effort: "medium", max_attempts: 3, timeout_seconds: 3600, feedback: { repair_hint: "inspect duplication" } });
+    reasoning_effort: "medium", max_attempts: 3, timeout_seconds: 3600, single_issue: true,
+    feedback: { repair_hint: "inspect duplication" } });
   expect(fetch.mock.calls[0][0]).toBe("/api/harness/tasks");
   expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
     source_kind: "code_health", request_id: "stable-gc", model: "fixture", reasoning_effort: "medium",
-    max_attempts: 3, timeout_seconds: 3600, feedback: { repair_hint: "inspect duplication" },
+    max_attempts: 3, timeout_seconds: 3600, single_issue: true, feedback: { repair_hint: "inspect duplication" },
   });
 });
 
@@ -36,8 +37,8 @@ it("loads governance evidence independently and without caching", async () => {
 
 it("labels green GC outcomes distinctly and stops polling after no changes", () => {
   const task = { source: { kind: "code_health" }, status: "fixed", governance_summary: { topic: "消除重复" } } as RepairTask;
-  expect(sourceLabel(task)).toBe("代码治理 · 消除重复");
-  expect(repairStatusLabel(task)).toBe("治理验收通过");
+  expect(sourceLabel(task)).toBe("代码熵回收 · 消除重复");
+  expect(repairStatusLabel(task)).toBe("熵回收验收通过");
   expect(repairStatusLabel({ ...task, status: "no_changes" })).toBe("无需改动");
   expect(deliveryActive({ ...task, status: "no_changes" })).toBe(false);
 });

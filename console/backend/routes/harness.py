@@ -30,14 +30,17 @@ class CreateRepair(BaseModel):
     reasoning_effort: str = "xhigh"
     max_attempts: int = Field(default=3, ge=1)
     timeout_seconds: int = Field(default=3600, ge=1)
+    single_issue: bool = False
 
     @model_validator(mode="after")
     def selected_source(self):
         if self.source_kind == "code_health":
             valid = not (self.case_instance_id or self.bot_id or self.run_id)
             if self.feedback and self.feedback.expected_behavior.strip():
-                raise ValueError("代码治理不能覆盖 SDD 或黄金原则")
+                raise ValueError("代码熵回收不能覆盖 SDD 或黄金原则")
         elif self.source_kind == "evaluation":
+            if self.single_issue:
+                raise ValueError("单问题模式仅适用于代码熵回收")
             if self.feedback and self.feedback.expected_behavior.strip():
                 raise ValueError("测评 Case 只能补充修复线索，不能覆盖原参考答案")
             valid = (
@@ -45,6 +48,8 @@ class CreateRepair(BaseModel):
                 and not (self.bot_id or self.run_id)
             )
         else:
+            if self.single_issue:
+                raise ValueError("单问题模式仅适用于代码熵回收")
             valid = (
                 self.bot_id
                 and self.run_id
@@ -68,6 +73,7 @@ class GovernanceOptions(BaseModel):
     reasoning_effort: str = "medium"
     max_attempts: int = Field(default=3, ge=1)
     timeout_seconds: int = Field(default=3600, ge=1)
+    single_issue: bool = False
 
 
 class GovernanceScheduleBody(BaseModel):
@@ -124,7 +130,7 @@ def create(request: Request, body: CreateRepair):
     _mutation_access(request)
     options = _call(
         lambda: RepairOptions(
-            body.model, body.reasoning_effort, body.max_attempts, body.timeout_seconds
+            body.model, body.reasoning_effort, body.max_attempts, body.timeout_seconds, body.single_issue
         )
     )
     from chatcopilot.harness.models import RepairRequest

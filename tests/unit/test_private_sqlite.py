@@ -10,11 +10,26 @@ from types import SimpleNamespace
 
 import pytest
 
-from chatcopilot.core.private_sqlite import PrivateDatabase, private_file
+from chatcopilot.core.private_sqlite import PrivateDatabase, private_file, repair_owned_private_directory
 
 
 SCHEMA = "CREATE TABLE IF NOT EXISTS counters (id INTEGER PRIMARY KEY, value INTEGER NOT NULL);"
 TASK_ID = "repair-" + "a" * 32
+
+
+def test_owned_private_directory_repairs_mode_without_following_symlinks(tmp_path):
+    owned = tmp_path / "owned"
+    owned.mkdir(mode=0o755)
+    owned.chmod(0o775)
+    assert repair_owned_private_directory(owned) == owned
+    assert owned.stat().st_mode & 0o777 == 0o700
+
+    target = tmp_path / "target"
+    target.mkdir(mode=0o700)
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        repair_owned_private_directory(link)
 
 
 @pytest.fixture

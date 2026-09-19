@@ -83,7 +83,7 @@ class HarnessController:
                           feedback: RepairFeedback | None = None, launch: bool = True):
         from chatcopilot.harness.governance_repository import GOAL
         if feedback and feedback.expected_behavior.strip():
-            raise ValueError("代码治理不能覆盖 SDD 或黄金原则")
+            raise ValueError("代码熵回收不能覆盖 SDD 或黄金原则")
         source = {"kind": "code_health", "repository": str(self.repository), "original_input": GOAL,
                   "failure_signature": [], "warnings": [], "blockers": []}
         return self._start(lambda: ProblemEvidence(str(self.repository), "code_health", _digest(source), source),
@@ -192,6 +192,8 @@ class HarnessController:
             return self.get(previous["task_id"])
         evidence = source_loader()
         source = evidence.material
+        if source.get("kind") != "code_health" and options.single_issue:
+            raise ValueError("单问题模式仅适用于代码熵回收")
         if source.get("blockers"):
             raise HarnessError("source_incomplete", "；".join(source["blockers"]))
         if feedback_payload:
@@ -449,7 +451,7 @@ class HarnessController:
         from chatcopilot.harness.artifact_repository import ArtifactRepository
         task = self.store.get(task_id)
         if task["source"].get("kind") != "code_health":
-            raise HarnessError("not_found", "此任务不是代码治理")
+            raise HarnessError("not_found", "此任务不是代码熵回收")
         reference = task.get("governance_report")
         return {"state": "available" if reference else "pending", "base_commit": task["base_commit"],
                 "report": ArtifactRepository(self.store.root / "jobs" / task_id).read(reference) if reference else None}

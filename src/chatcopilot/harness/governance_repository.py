@@ -13,7 +13,7 @@ from chatcopilot.harness.models import HarnessError
 from chatcopilot.harness.verification_policy import governance_policy_path
 
 
-GOAL = "依据现行 SDD 和黄金原则自主调查全仓，选择一个有证据的治理主题，消除偏离并保持原有行为。"
+GOAL = "依据现行 SDD 和黄金原则自主调查全仓，选择一个有证据的代码熵问题，消除偏离并保持原有行为。"
 
 
 def rule_path(reference: str) -> str:
@@ -41,14 +41,16 @@ def _relative(name: str) -> bool:
     return bool(name) and not path.is_absolute() and ".." not in path.parts and path.as_posix() == name
 
 
-def validate_report(value: dict, context: dict, baseline: Path) -> dict:
+def validate_report(value: dict, context: dict, baseline: Path, *, single_issue: bool = False) -> dict:
     files = context["files"]
     reported = {Path(name).as_posix() for name in value["inspected_paths"]}
     inspected = reported & set(files)
     uninspected = [*value["uninspected"], *("未逐文件核实的报告路径：" + name for name in sorted(reported - set(files)))]
     ids = [finding["id"] for finding in value["findings"]]
+    if single_issue and len(ids) > 1:
+        raise HarnessError("invalid_role_result", "单问题模式最多报告一个代码熵问题")
     if len(ids) != len(set(ids)) or any(not ident.strip() for ident in ids):
-        raise HarnessError("invalid_role_result", "治理发现标识为空或重复")
+        raise HarnessError("invalid_role_result", "熵回收发现标识为空或重复")
     rules = {row["path"] for row in context["rules"]}
     receipts = []
     findings = []
@@ -56,24 +58,24 @@ def validate_report(value: dict, context: dict, baseline: Path) -> dict:
         if (not finding["principle_refs"] or not finding["acceptance_criteria"]
                 or not finding["affected_paths"] or not finding["summary"].strip()
                 or not finding["impact"].strip()):
-            raise HarnessError("invalid_role_result", "治理发现缺少规则、影响、修改范围或验收依据")
+            raise HarnessError("invalid_role_result", "熵回收发现缺少规则、影响、修改范围或验收依据")
         if any(rule_path(ref) not in rules for ref in finding["principle_refs"]):
-            raise HarnessError("invalid_role_result", "治理依据必须引用冻结的黄金原则或现行 SDD")
+            raise HarnessError("invalid_role_result", "熵回收依据必须引用冻结的黄金原则或现行 SDD")
         if any(not _relative(path) for path in finding["affected_paths"]):
-            raise HarnessError("invalid_role_result", "治理修改范围必须为仓库相对路径")
+            raise HarnessError("invalid_role_result", "熵回收修改范围必须为仓库相对路径")
         if any(path.startswith("tests/") and path not in files for path in finding["affected_paths"]):
-            raise HarnessError("invalid_role_result", "Test 草案由独立角色和宿主收录，不能列为治理产品改动")
+            raise HarnessError("invalid_role_result", "Test 草案由独立角色和宿主收录，不能列为熵回收产品改动")
         extracts = []
         for evidence in finding["evidence"]:
             name = Path(evidence["path"]).as_posix()
             if name not in files:
-                raise HarnessError("invalid_role_result", "治理源码引用不在冻结仓库中：" + name)
+                raise HarnessError("invalid_role_result", "熵回收源码引用不在冻结仓库中：" + name)
             inspected.add(name)
             content = (baseline / name).read_text(errors="replace")
             lines = content.splitlines(keepends=True)
             start, end = evidence["start_line"], evidence["end_line"]
             if not 1 <= start <= end <= len(lines):
-                raise HarnessError("invalid_role_result", f"治理源码引用 {name}:{start}-{end} 超出冻结基线（共 {len(lines)} 行）")
+                raise HarnessError("invalid_role_result", f"熵回收源码引用 {name}:{start}-{end} 超出冻结基线（共 {len(lines)} 行）")
             excerpt = "".join(lines[start - 1:end])
             extracts.append({**evidence, "path": name, "excerpt": excerpt})
             receipts.append({"finding_id": finding["id"], "path": name,
@@ -85,7 +87,7 @@ def validate_report(value: dict, context: dict, baseline: Path) -> dict:
     selected = next((item for item in findings if item["id"] == value["selected_finding_id"]), None)
     decision = value["decision"]
     if decision == "proceed" and selected is None:
-        raise HarnessError("invalid_role_result", "继续治理必须选择一个明确主题")
+        raise HarnessError("invalid_role_result", "继续熵回收必须选择一个明确主题")
     if selected and selected["disposition"] == "needs_decision":
         decision = "needs_review"
     if decision == "no_changes" and any(item["disposition"] == "automatic" for item in findings):
@@ -103,7 +105,8 @@ def validate_report(value: dict, context: dict, baseline: Path) -> dict:
 def bind_report(store, task_id: str, artifacts, value: dict, baseline: Path) -> dict:
     task = store.get(task_id)
     context = artifacts.read(task["governance_context"])
-    report = validate_report(value, context, baseline)
+    report = validate_report(value, context, baseline,
+                             single_issue=bool(task.get("options", {}).get("single_issue")))
     reference = artifacts.put("governance_report", task["current_attempt"], report)
     source = {**task["source"], "governance_target": report["selected"],
               "governance_report": asdict(reference)}
@@ -118,9 +121,9 @@ def bind_report(store, task_id: str, artifacts, value: dict, baseline: Path) -> 
 def require_improvement(target: dict, review: dict, baseline: Path, candidate: Path, changed: list[str]) -> dict:
     if (review.get("finding_id") != target["id"] or not review.get("behavior_preserved")
             or not review.get("improvements")):
-        raise HarnessError("review_inconclusive", "治理审核缺少目标对应的改善与行为保持证据")
+        raise HarnessError("review_inconclusive", "熵回收审核缺少目标对应的改善与行为保持证据")
     if not set(changed).issubset(target["affected_paths"]):
-        raise HarnessError("needs_replan", "候选修改超出已冻结治理主题的文件范围")
+        raise HarnessError("needs_replan", "候选修改超出已冻结熵回收主题的文件范围")
     evidence = []
     for row in review["improvements"]:
         path = row["path"]

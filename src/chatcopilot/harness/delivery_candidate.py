@@ -63,7 +63,7 @@ def candidate(store: Any, task_id: str) -> dict[str, Any]:
     title = "[AI Harness] 修复已复现问题并收录回归验证"
     profile = "fast"
     if task["source"].get("kind") == "code_health":
-        title = "[Code Health] " + task["source"]["governance_target"]["summary"].replace("\n", " ")[:100]
+        title = "[代码熵回收] " + task["source"]["governance_target"]["summary"].replace("\n", " ")[:100]
         profile = "full"
     receipt = task["accepted_candidate"]
     if len(approved) != 1 or approved[0]["number"] != receipt["attempt"] or approved[0].get("review", {}).get("binding") != receipt["review_binding"]:
@@ -147,7 +147,7 @@ def pr_body(task: dict[str, Any]) -> str:
             + "\n".join("- `" + p + "`" for p in approval["paths"])
             + "\n\n## 验证\n\n宿主已核验冻结证据与独立审核，验收范围：`" + approval["profile"]
             + "`。GitHub CI 和合并状态以本 PR 当前检查为准。\n\n"
-            + ("本 PR 处理一个连贯治理主题；宿主核对了前后改善证据与行为保持检查。其他发现保留在私有治理报告中。\n\n"
+            + ("本 PR 处理一个连贯的代码熵问题；宿主核对了前后改善证据与行为保持检查。其他发现保留在私有熵回收报告中。\n\n"
                if task["source"].get("kind") == "code_health" else "")
             + "## 来源\n\n由 AI Harness 自动生成；详细原始记录保留在操作者私有任务档案中。\n"
             + f"\n<!-- agentstrata-harness:{task['task_id']} -->\n")

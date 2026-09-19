@@ -11,7 +11,14 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from chatcopilot.core.private_sqlite import PrivateDatabase, json_text, private_directory, private_lock, storage_error_details
+from chatcopilot.core.private_sqlite import (
+    PrivateDatabase,
+    json_text,
+    private_directory,
+    private_lock,
+    repair_owned_private_directory,
+    storage_error_details,
+)
 from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError
 
 _SCHEMA = """
@@ -34,7 +41,10 @@ CREATE TABLE IF NOT EXISTS repair_steps (
 
 class HarnessStore:
     def __init__(self, root: Path) -> None:
-        self.root = root.absolute()
+        self.root = repair_owned_private_directory(root)
+        repair_owned_private_directory(self.root / "jobs")
+        if (self.root / "archives").exists():
+            repair_owned_private_directory(self.root / "archives")
         self.database = PrivateDatabase(self.root / "harness.sqlite3", _SCHEMA)
 
     def _dump(self, task: dict[str, Any]) -> str:

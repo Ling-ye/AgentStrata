@@ -1,8 +1,8 @@
-# 代码治理与持续 GC
+# 代码熵回收
 
-代码治理从冻结的远端 main 自主调查全仓，以现行 SDD 和[黄金原则](harness-principles.md)
+代码熵回收从冻结的远端 main 自主调查全仓，以现行 SDD 和[黄金原则](harness-principles.md)
 识别死代码、重复职责、失效配置、结构漂移与文档失真。一次选择一个连贯主题，其他发现
-保留给后续任务，不按文件切片或问题数量配额推进。规格见[治理 GC](../../specs/harness-code-health/spec.md)。
+保留给后续任务，不按文件切片或问题数量配额推进。规格见[熵回收 SDD](../../specs/harness-code-health/spec.md)。
 
 ## 共用 Harness
 
@@ -10,7 +10,8 @@ code_health 是[Harness](harness.md)的第三类来源。Main 安排任务，Pla
 追踪调用者并提供原始片段，Coding 实现候选，Test 按需建立验证，Review 独立审查。
 同一运行器、worktree、预算、取消与恢复、产物索引和[PR 交付](delivery.md)服务全部来源。
 
-调查记录包含规则引用、影响、文件范围、验收目标、其他发现、未决项与未覆盖范围。
+调查记录包含规则引用、影响、文件范围、验收目标、其他发现、未决项与未覆盖范围。启用单问题模式时，
+Plan 确认第一个有充分证据的问题后停止继续发现，报告最多包含一个 finding；宿主拒绝多问题报告。
 宿主按结构化文件与行引用提取原文并绑定冻结文件身份；Agent 报告的阅读路径仍需结合命令日志核对，目录清单
 不构成全仓阅读或健康结论。没有可执行发现为 no_changes；只有敏感项为 needs_review。
 首轮 SourceIndex 只提供与当前证据和规则相关的有界导航；无明确线索时提供领域地图与规则入口，
@@ -18,7 +19,7 @@ code_health 是[Harness](harness.md)的第三类来源。Main 安排任务，Pla
 
 ## 验收与写入范围
 
-GC 可从测试全绿的基线开始，不能仅凭测试全绿、删行数或模型自评交付。宿主冻结治理主题，
+熵回收可从测试全绿的基线开始，不能仅凭测试全绿、删行数或模型自评交付。宿主冻结回收主题，
 检查候选文件范围，执行冻结仓库 full 检查及必要行为保持测试；独立审核必须说明真实
 前后变化与改善理由。证据不足或原有行为无法确认时保留候选，不能自动交付。
 故障修复仍要求有效失败对照；验收用途由宿主来源确定，角色不能切换。
@@ -29,9 +30,9 @@ GC 可从测试全绿的基线开始，不能仅凭测试全绿、删行数或�
 
 ## 可选定时
 
-Console 代码治理页或 CLI 配置定时。默认关闭、默认间隔 24 小时，启用时明确模型、预算
-与提示。systemd 用户 timer 只调用短命 gc-tick，按普通入口创建任务；同仓库有活动治理
-或待完成治理交付时跳过，不累积排队。启用约一分钟后首次触发，之后按间隔运行。
+Console 代码熵回收页或 CLI 配置定时。默认关闭、默认间隔 24 小时，启用时明确模型、预算、
+单问题模式与提示。systemd 用户 timer 只调用短命 gc-tick，按普通入口创建任务；同仓库有活动回收任务
+或待完成回收交付时跳过，不累积排队。启用约一分钟后首次触发，之后按间隔运行。
 关闭调度阻止新触发，不取消已开始任务。调度安装失败会关闭创建入口并记录错误。
 
 本能力沿用 pipeline 9，增量接入，不清空状态库，不恢复归档旧协议。手动启动与定时
@@ -39,8 +40,8 @@ Console 代码治理页或 CLI 配置定时。默认关闭、默认间隔 24 小
 
 ## 源码入口
 
-- [治理证据](../../src/chatcopilot/harness/governance_repository.py)
+- [熵回收证据](../../src/chatcopilot/harness/governance_repository.py)
 - [角色编排](../../src/chatcopilot/harness/role_service.py)
-- [治理验收](../../src/chatcopilot/harness/governance_verification.py)
+- [熵回收验收](../../src/chatcopilot/harness/governance_verification.py)
 - [定时触发](../../src/chatcopilot/harness/schedule_runtime.py)
 - [Console 页面](../../console/web/src/pages/CodeHealthPage.tsx)

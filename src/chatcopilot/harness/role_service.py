@@ -100,6 +100,10 @@ class RoleWorkflow:
         evidence = {"source": {key: original[key] for key in ("kind", "bot_id", "trace_archive", "trace") if key in original},
                     "acceptance": task["acceptance"], "baseline_root": str(baseline),
                     "verification_capabilities": capabilities}
+        if governance:
+            evidence["governance_policy"] = {
+                "single_issue": bool(task.get("options", {}).get("single_issue")),
+            }
         if failure:
             evidence.update(failure_brief=failure, failure_brief_ref=previous.get("brief_ref") if previous else None)
         if index_ref:
@@ -113,7 +117,7 @@ class RoleWorkflow:
                 raise HarnessError("invalid_role_result", "主 Agent 选择了当前不允许的步骤")
             route = Role(action["next_role"])
         if route == Role.PLAN:
-            plan = self.call(Role.PLAN, root, number, "自主调查仓库并选择一个治理主题" if governance else "定位根因并提出最小修复", evidence, options, cancel)
+            plan = self.call(Role.PLAN, root, number, "自主调查仓库并选择一个代码熵问题" if governance else "定位根因并提出最小修复", evidence, options, cancel)
             if plan["decision"] == "blocked" and not governance:
                 raise HarnessError("plan_blocked", "；".join(plan["unresolved"]))
         if governance:

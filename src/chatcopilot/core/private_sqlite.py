@@ -85,6 +85,34 @@ def private_directory(path: Path) -> Path:
     return path
 
 
+def repair_owned_private_directory(path: Path) -> Path:
+    """Create or tighten one application-owned directory without relaxing trust checks."""
+    path = path.absolute()
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise ValueError("private storage path contains a symlink")
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISDIR(opened.st_mode) or opened.st_uid != os.getuid():
+            raise ValueError("private storage directory must be owned by this user with mode 0700")
+        if stat.S_IMODE(opened.st_mode) != 0o700:
+            os.fchmod(descriptor, 0o700)
+        tightened = os.fstat(descriptor)
+        linked = path.lstat()
+        if (
+            stat.S_IMODE(tightened.st_mode) != 0o700
+            or (tightened.st_dev, tightened.st_ino) != (linked.st_dev, linked.st_ino)
+        ):
+            raise ValueError("private storage directory must be owned by this user with mode 0700")
+    finally:
+        os.close(descriptor)
+    return path
+
+
 def _require_private_file(info: os.stat_result, *, allow_unlinked: bool = False) -> None:
     if (
         not stat.S_ISREG(info.st_mode)

@@ -60,7 +60,7 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
         for reference in task["source"]["governance_target"]["principle_refs"]:
             name = rule_path(reference)
             if not (frozen / name).is_file() or hashlib.sha256((frozen / name).read_bytes()).hexdigest() != rules.get(name):
-                raise HarnessError("governance_rules_changed", "主干治理规则已变化，请重新调查并形成治理任务")
+                raise HarnessError("governance_rules_changed", "主干熵回收规则已变化，请重新调查并形成熵回收任务")
         governance_context = {"principles": artifacts.navigation(task["principles"]),
                               "governance_context": artifacts.navigation(task["governance_context"])}
         verifier.delivery_context(task_id, manifest_digest(manifest), baseline, verification)

@@ -24,7 +24,7 @@ def scheduler(tmp_path):
 
 
 def settings(enabled=True):
-    return GovernanceSchedule(enabled, 24, RepairOptions("fixture"), "inspect unused helpers")
+    return GovernanceSchedule(enabled, 24, RepairOptions("fixture", single_issue=True), "inspect unused helpers")
 
 
 def test_default_disabled_never_installs_units_or_submits(scheduler):
@@ -97,7 +97,8 @@ def test_console_schedule_and_gc_creation_use_local_public_entrypoints():
     controller = SimpleNamespace(start_request=Mock(return_value={"task_id": "repair-example"}),
         set_governance_schedule=Mock(return_value={"enabled": True}))
     app.state.harness = controller
-    body = {"source_kind": "code_health", "model": "fixture", "request_id": "gc", "feedback": {"repair_hint": "gc"}}
+    body = {"source_kind": "code_health", "model": "fixture", "request_id": "gc", "single_issue": True,
+            "feedback": {"repair_hint": "gc"}}
     schedule = settings().to_payload()
     with TestClient(app, client=("192.0.2.5", 41000)) as client:
         assert client.post("/api/harness/tasks", json=body).status_code == 403
@@ -105,7 +106,10 @@ def test_console_schedule_and_gc_creation_use_local_public_entrypoints():
     with TestClient(app, client=("127.0.0.1", 41000)) as client:
         assert client.post("/api/harness/tasks", json=body).status_code == 200
         assert controller.start_request.call_args.args[0].source_kind == "code_health"
+        assert controller.start_request.call_args.args[0].options.single_issue is True
         assert client.put("/api/harness/code-health/schedule", json=schedule).status_code == 200
-        assert controller.set_governance_schedule.call_args.args[0].options.model == "fixture"
+        assert controller.set_governance_schedule.call_args.args[0].options.single_issue is True
         assert client.post("/api/harness/tasks", json={**body, "bot_id": "unexpected"}).status_code == 422
         assert client.post("/api/harness/tasks", json={**body, "feedback": {"expected_behavior": "replace rules"}}).status_code == 422
+        assert client.post("/api/harness/tasks", json={**body, "source_kind": "robot_task",
+            "bot_id": "bot", "run_id": "run"}).status_code == 422

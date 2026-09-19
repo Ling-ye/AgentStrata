@@ -49,6 +49,21 @@ def governance(tmp_path):
     return store, ident, repo
 
 
+def test_harness_store_repairs_owned_legacy_top_level_modes(tmp_path):
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    jobs, archives = root / "jobs", root / "archives"
+    jobs.mkdir(mode=0o775)
+    archives.mkdir(mode=0o755)
+    jobs.chmod(0o775)
+    archives.chmod(0o755)
+
+    HarnessStore(root)
+
+    assert jobs.stat().st_mode & 0o777 == 0o700
+    assert archives.stat().st_mode & 0o777 == 0o700
+
+
 class GreenVerifier:
     def __init__(self, purpose="governance"):
         self.purpose, self.results = purpose, []
@@ -119,6 +134,35 @@ def test_green_baseline_gc_is_accepted_without_test_or_extra_main(governance):
     assert accepted(store, result)
     store.update(ident, verification_plan={**result["verification_plan"], "purpose": "repair"})
     assert not accepted(store, store.get(ident))
+
+
+def test_single_issue_mode_is_passed_to_plan_and_accepts_one_finding(governance):
+    store, ident, _ = governance
+    store.update(ident, options=asdict(RepairOptions("fixture", single_issue=True)))
+    roles = GovernanceRoles()
+
+    result = run_task(store, ident, GreenVerifier(), roles)
+
+    assert result["status"] == "fixed", result.get("message")
+    contexts = {role: evidence for role, evidence in roles.contexts}
+    assert contexts[Role.PLAN]["governance_policy"] == {"single_issue": True}
+
+
+def test_single_issue_mode_rejects_multiple_findings(governance):
+    from types import SimpleNamespace
+    from chatcopilot.harness.governance_repository import bind_report
+    from chatcopilot.harness.models import HarnessError
+
+    store, ident, repo = governance
+    store.update(ident, current_attempt=1, options=asdict(RepairOptions("fixture", single_issue=True)))
+    roles = GovernanceRoles()
+    plan = roles.execute(repo, SimpleNamespace(role=Role.PLAN, evidence={}), None, None, lambda: None).payload
+    second = {**plan["findings"][0], "id": "duplicate", "summary": "Second entropy issue"}
+    plan["findings"] = [*plan["findings"], second]
+    artifacts = ArtifactRepository(store.root / "jobs" / ident)
+
+    with pytest.raises(HarnessError, match="单问题模式"):
+        bind_report(store, ident, artifacts, plan, repo)
 
 
 def test_no_findings_has_no_candidate_or_pr_and_retains_partial_scope(governance):

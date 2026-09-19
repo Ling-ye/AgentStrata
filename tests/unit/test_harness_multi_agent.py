@@ -125,6 +125,8 @@ def test_evaluation_cannot_accept_manual_expected_answer():
         RepairRequest("evaluation", RepairOptions("fixture"), "id", case_instance_id="case",
                       feedback=RepairFeedback(expected_behavior="replace the oracle"))
     assert RepairRequest("robot_task", RepairOptions("fixture"), "id", bot_id="bot", run_id="run").feedback == RepairFeedback()
+    with pytest.raises(ValueError, match="单问题模式"):
+        RepairRequest("robot_task", RepairOptions("fixture", single_issue=True), "id", bot_id="bot", run_id="run")
 
 
 @pytest.mark.parametrize("decision,expected", [("proceed", "fixed"), ("blocked", "blocked")])

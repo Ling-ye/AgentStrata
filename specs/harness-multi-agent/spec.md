@@ -9,7 +9,7 @@ created: 2026-09-18
 
 ## Summary
 
-Harness 接受测评 Case、机器人任务与代码治理。代码治理按[GC 规格](../harness-code-health/spec.md)
+Harness 接受测评 Case、机器人任务与代码熵回收。代码熵回收按[GC 规格](../harness-code-health/spec.md)
 自主发现偏离，复用统一修复闭环、黄金原则和固定验收。
 Main、Plan、Coding、Test、Review 共用运行器，按需协作；只有宿主能验收与交付。
 本规格取代隔离修复 v2 的作者职责分配，保留其隔离、取消、证据和 PR 交付边界。

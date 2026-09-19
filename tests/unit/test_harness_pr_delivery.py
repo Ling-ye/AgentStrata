@@ -184,7 +184,7 @@ def test_gc_uses_the_same_exact_commit_pr_and_merge_path_without_new_tests(task)
     first = delivery.reconcile(store, ident, client=client)
     assert first["delivery"]["state"] == "waiting_checks", first.get("delivery")
     assert first["regressions"] == [] and first["publication_candidate"]["profile"] == "full"
-    assert first["publication_candidate"]["title"].startswith("[Code Health]")
+    assert first["publication_candidate"]["title"].startswith("[代码熵回收]")
     assert first["publication_candidate"]["paths"] == ["docs/guide.md"]
     delivery.reconcile(store, ident, client=client)
     assert client.creations == 1

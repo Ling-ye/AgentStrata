@@ -55,7 +55,7 @@ export interface RepairTask {
   message?: string; branch?: string; worktree?: string; verified_digest?: string; verified_at?: number;
   candidate_available?: boolean; elapsed_seconds?: number; error_code?: string; current_evaluation_id?: string;
   heartbeat_at?: number; current_attempt?: number;
-  options: { model: string; max_attempts: number; reasoning_effort: string; timeout_seconds: number };
+  options: { model: string; max_attempts: number; reasoning_effort: string; timeout_seconds: number; single_issue?: boolean };
   evaluations?: Record<string, Verification>;
   attempts?: Array<{ number: number; status: string; changed_files?: string[]; error?: string; checks?: string[];
     review?: Review; repository_regressions?: { passed_cases: string[]; failed_cases: string[] }; patch_sha256?: string; coding?: { events: Array<Record<string, unknown>> }; regressions?: string[]; verification?: Verification }>;
@@ -100,11 +100,11 @@ export function stageLabel(stage: string): string {
     review: "AI 审核", commit: "本地提交", reproduce: "确认当前问题", baseline: "建立回归基线", repository_baseline: "仓库回归基线", coding: "生成候选", done: "完成" } as Record<string, string>)[stage] ?? stage;
 }
 export function sourceLabel(task: RepairTask): string {
-  if (task.source.kind === "code_health") return `代码治理${task.governance_summary?.topic ? " · " + task.governance_summary.topic : ""}`;
+  if (task.source.kind === "code_health") return `代码熵回收${task.governance_summary?.topic ? " · " + task.governance_summary.topic : ""}`;
   return task.source.kind === "robot_task" ? `机器人任务 ${task.source.run_id}` : `测评 ${task.source.evaluation_id} · ${task.source.case_id}`;
 }
 export type StartRepair = { source_kind: SourceKind | "code_health"; case_instance_id?: string;
-  bot_id?: string; run_id?: string; feedback?: RepairFeedback; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number };
+  bot_id?: string; run_id?: string; feedback?: RepairFeedback; request_id: string; model: string; reasoning_effort: string; max_attempts: number; timeout_seconds: number; single_issue?: boolean };
 export async function harnessRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/harness${path}`, init);
   const value = await response.json();
@@ -126,8 +126,8 @@ export const harnessApi = {
 };
 
 export function repairStatusLabel(task: ProgressTask): string {
-  if (task.source?.kind === "code_health" && task.status === "fixed") return "治理验收通过";
-  if (task.source?.kind === "code_health" && task.status === "needs_review") return "治理待判断";
+  if (task.source?.kind === "code_health" && task.status === "fixed") return "熵回收验收通过";
+  if (task.source?.kind === "code_health" && task.status === "needs_review") return "熵回收待判断";
   if (task.next_action === "technical_failure") return "技术失败";
   if (task.status === "running" && task.stage === "auto_correcting") return "自动修正中";
   if (task.local_commit) return task.commit_in_main === true ? "已进入本地 main" : "已本地提交";
