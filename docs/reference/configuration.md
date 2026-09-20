@@ -254,6 +254,10 @@ Application 在 `project_agent_runtime()` 捕获配置与环境、解析研究/�
 `botspec/inspection.py` 解释 BotSpec 字段、环境引用并生成配置投影；`core/inspection.py` 只做通用序列化和指纹。
 Console 将配置与能力统一投影到四层导航，具体归属和编辑入口见 [四层配置工作台](console.md#四层配置工作台)。
 该展示映射不改变 BotSpec 格式、后端 `layer` 或原始实体 ID；历史任务继续保留执行时快照。
+Agent inspection 使用显式实例环境与配置文件查找路径调用 Core 解析器，并复用 Component Catalog
+的子 Agent 定义合并；不读取 Console 的模型环境、不创建模型客户端或连接 MCP。
+`effective_config` 保存解析后的模型、配置档、预算与定义，字段来源及用途为额外展示信息，
+不参与配置应用指纹；运行观测与当前保存配置分别保留，历史缺失字段不回填。
 
 ## 开发命令超时快照
 

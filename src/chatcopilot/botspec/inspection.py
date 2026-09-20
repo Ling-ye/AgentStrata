@@ -15,6 +15,7 @@ from .skills import load_skill_index
 from .rag import load_rag_source_configs
 from .deployment_env import deployment_environment, exported_environment, runtime_environment_keys
 from .runtime_env import resolve_runtime_environment, _source_root
+from .inspection_agent import enrich_agent_configuration
 
 
 LAYERS = (
@@ -139,8 +140,9 @@ def source_revision(spec: BotSpec) -> str:
     return fingerprint({"spec": plain(spec), "references": digests})
 
 
-def declared_configuration(path: Path, environment: Mapping[str, str]) -> dict[str, Any]:
-    from chatcopilot.component_catalog import iter_tool_pack_tools
+def declared_configuration(path: Path, environment: Mapping[str, str], *,
+                           saved_environment: Mapping[str, str] | None = None) -> dict[str, Any]:
+    from chatcopilot.component_catalog import get_tool_pack_entry, iter_tool_pack_tools
     import yaml
 
     spec = load_botspec(path)
@@ -159,7 +161,14 @@ def declared_configuration(path: Path, environment: Mapping[str, str]) -> dict[s
     projection["validation"] = [{"field": issue.field, "level": issue.level, "message": issue.message}
                                 for issue in validate_botspec(spec, environment=dict(environment))]
     for pack in spec.tools.packs:
-        for tool in iter_tool_pack_tools(pack):
+        tools = tuple(iter_tool_pack_tools(pack))
+        entry = get_tool_pack_entry(pack)
+        pack_entity = next(item for item in projection["entities"] if item["id"] == f"pack:{pack}")
+        pack_entity["effective_config"] = {"description": entry.description if entry else "", "tools": [tool.name for tool in tools],
+                                            "dynamic": bool(entry and entry.dynamic)}
+        pack_entity["usage"] = "会话中按需构造工具；实际成员见任务记录。" if entry and entry.dynamic else "工具成员来自同一 provider 目录；按调用者权限进一步筛选。"
+        pack_entity["refs"] = [f"tool:{tool.name}" for tool in tools]
+        for tool in tools:
             name = tool.name
             projection["entities"].append(
                 {
@@ -179,6 +188,7 @@ def declared_configuration(path: Path, environment: Mapping[str, str]) -> dict[s
                 }
             )
     _context_details(spec, projection, environment)
+    enrich_agent_configuration(projection, spec, environment, saved_environment=saved_environment)
     return projection
 
 
@@ -189,7 +199,7 @@ def expected_configuration(path: Path, saved: Mapping[str, str], *, home: Path) 
     exported = exported_environment(provisioned, runtime_environment_keys(spec))
     effective = resolve_runtime_environment(spec, exported, source_root=source_root)
     current = declared_configuration(path, saved)
-    expected = declared_configuration(path, effective)
+    expected = declared_configuration(path, effective, saved_environment=saved)
     current["effective_environment_revision"] = expected["environment_revision"]
     current["reference_revision"] = expected["reference_revision"]
     raw_entities = {item["id"]: item for item in current["entities"]}
@@ -197,8 +207,12 @@ def expected_configuration(path: Path, saved: Mapping[str, str], *, home: Path) 
     current["entities"] = [raw_entities.get(item["id"], {**item}) for item in expected["entities"]]
     for item in current["entities"]:
         resolved = effective_entities.get(item["id"], {})
-        item["effective_environment"] = resolved.get("environment", {})
-        item["effective_config"] = resolved.get("config")
+        item["effective_environment"] = resolved.get("effective_environment", resolved.get("environment", {}))
+        item["effective_config"] = resolved.get("effective_config", resolved.get("config"))
+        for field in ("field_sources", "usage", "applicability", "membership", "refs", "name"):
+            if field in resolved:
+                item[field] = resolved[field]
+    current["model"] = expected["model"]
     by_id = {item["id"]: item for item in current["entities"]}
     service = by_id["service:instance"]["effective_config"]
     service.update({"instance_id": provisioned["CHATCOPILOT_INSTANCE_ID"], "wsl_home": provisioned["CHATCOPILOT_HOME"], "env_file": provisioned["CHATCOPILOT_ENV_FILE"],
@@ -207,10 +221,6 @@ def expected_configuration(path: Path, saved: Mapping[str, str], *, home: Path) 
     code = by_id["model-slot:code"]
     prefix = spec.llm.env_prefix + "_CODE_"
     code["effective_environment"] = {key: value for key, value in effective.items() if key.startswith(prefix)}
-    code_config = code["effective_config"]
-    for field in ("model", "reasoning_effort", "provider", "command", "timeout_seconds"):
-        if prefix + field.upper() in effective:
-            code_config[field] = effective[prefix + field.upper()]
     current["validation"] = expected["validation"]
     return current
 

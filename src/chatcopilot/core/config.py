@@ -207,28 +207,45 @@ def _coerce_code_profiles(
     return profiles
 
 
-def _resolve_config_path(explicit: Optional[Path], *, env_prefix: str = CHAT_ENV_PREFIX) -> Optional[Path]:
+def _resolve_config_path(
+    explicit: Optional[Path], *, env_prefix: str = CHAT_ENV_PREFIX,
+    environment: Mapping[str, str] | None = None, default_paths: tuple[Path, ...] | None = None,
+    working_directory: Path | None = None,
+) -> Optional[Path]:
+    env = os.environ if environment is None else environment
     if explicit is not None:
+        if working_directory is not None and not explicit.is_absolute():
+            explicit = working_directory / explicit
         return explicit if explicit.is_file() else None
 
-    env_path = os.environ.get(f"{env_prefix}_CONFIG", "").strip()
+    env_path = env.get(f"{env_prefix}_CONFIG", "").strip()
     if env_path:
         candidate = Path(env_path).expanduser()
+        if working_directory is not None and not candidate.is_absolute():
+            candidate = working_directory / candidate
         if candidate.is_file():
             return candidate
         return None
 
-    for candidate in _DEFAULT_CONFIG_NAMES:
+    for candidate in _DEFAULT_CONFIG_NAMES if default_paths is None else default_paths:
         if candidate.is_file():
             return candidate
     return None
 
 
-def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_ENV_PREFIX) -> ChatConfig:
+def load_config(
+    config_path: Optional[Path] = None, *, env_prefix: str = CHAT_ENV_PREFIX,
+    environment: Mapping[str, str] | None = None, default_paths: tuple[Path, ...] | None = None,
+    sources: dict[str, str] | None = None,
+    working_directory: Path | None = None,
+) -> ChatConfig:
     """读取配置；缺省时返回内置默认值，environ 永远具备最高优先级。"""
     cfg = ChatConfig()
+    env = os.environ if environment is None else environment
+    data: dict[str, Any] = {}
 
-    yaml_path = _resolve_config_path(config_path, env_prefix=env_prefix)
+    yaml_path = _resolve_config_path(config_path, env_prefix=env_prefix, environment=env,
+                                    default_paths=default_paths, working_directory=working_directory)
     if yaml_path is not None:
         data = _load_yaml(yaml_path)
         llm_raw = data.get("llm", {}) or {}
@@ -343,125 +360,125 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
         if "code_allowed_roles" in routing_raw:
             raise ValueError("routing.code_allowed_roles is retired; model control is Owner-only")
 
-    cfg.llm.base_url = os.environ.get(f"{env_prefix}_BASE_URL", cfg.llm.base_url) or cfg.llm.base_url
-    cfg.llm.model = os.environ.get(f"{env_prefix}_MODEL", cfg.llm.model) or cfg.llm.model
+    cfg.llm.base_url = env.get(f"{env_prefix}_BASE_URL", cfg.llm.base_url) or cfg.llm.base_url
+    cfg.llm.model = env.get(f"{env_prefix}_MODEL", cfg.llm.model) or cfg.llm.model
     cfg.llm.api_key = (
-        os.environ.get(f"{env_prefix}_API_KEY", cfg.llm.api_key) or cfg.llm.api_key
+        env.get(f"{env_prefix}_API_KEY", cfg.llm.api_key) or cfg.llm.api_key
     )
-    cfg.llm.timeout = _coerce_int(os.environ.get(f"{env_prefix}_TIMEOUT"), cfg.llm.timeout)
+    cfg.llm.timeout = _coerce_int(env.get(f"{env_prefix}_TIMEOUT"), cfg.llm.timeout)
     cfg.runtime.max_tool_retries = _coerce_int(
-        os.environ.get(f"{env_prefix}_MAX_RETRIES"), cfg.runtime.max_tool_retries
+        env.get(f"{env_prefix}_MAX_RETRIES"), cfg.runtime.max_tool_retries
     )
     cfg.runtime.max_context_tokens = _coerce_int(
-        os.environ.get(f"{env_prefix}_MAX_CONTEXT_TOKENS"), cfg.runtime.max_context_tokens
+        env.get(f"{env_prefix}_MAX_CONTEXT_TOKENS"), cfg.runtime.max_context_tokens
     )
     cfg.runtime.sliding_window_turns = _coerce_int(
-        os.environ.get(f"{env_prefix}_SLIDING_WINDOW_TURNS"), cfg.runtime.sliding_window_turns
+        env.get(f"{env_prefix}_SLIDING_WINDOW_TURNS"), cfg.runtime.sliding_window_turns
     )
     cfg.runtime.tool_result_summary_max_tokens = _coerce_int(
-        os.environ.get(f"{env_prefix}_TOOL_RESULT_SUMMARY_MAX_TOKENS"),
+        env.get(f"{env_prefix}_TOOL_RESULT_SUMMARY_MAX_TOKENS"),
         cfg.runtime.tool_result_summary_max_tokens,
     )
     cfg.runtime.max_tool_iterations = _coerce_int(
-        os.environ.get(f"{env_prefix}_MAX_TOOL_ITERATIONS"), cfg.runtime.max_tool_iterations
+        env.get(f"{env_prefix}_MAX_TOOL_ITERATIONS"), cfg.runtime.max_tool_iterations
     )
     cfg.runtime.hard_iteration_cap = _coerce_opt_int(
-        os.environ.get(f"{env_prefix}_HARD_ITERATION_CAP"), cfg.runtime.hard_iteration_cap
+        env.get(f"{env_prefix}_HARD_ITERATION_CAP"), cfg.runtime.hard_iteration_cap
     )
     cfg.runtime.max_tool_calls = _coerce_opt_int(
-        os.environ.get(f"{env_prefix}_MAX_TOOL_CALLS"), cfg.runtime.max_tool_calls
+        env.get(f"{env_prefix}_MAX_TOOL_CALLS"), cfg.runtime.max_tool_calls
     )
     cfg.runtime.turn_timeout_seconds = _coerce_opt_int(
-        os.environ.get(f"{env_prefix}_TURN_TIMEOUT_SECONDS"), cfg.runtime.turn_timeout_seconds
+        env.get(f"{env_prefix}_TURN_TIMEOUT_SECONDS"), cfg.runtime.turn_timeout_seconds
     )
     cfg.runtime.hard_timeout_seconds = _coerce_opt_int(
-        os.environ.get(f"{env_prefix}_HARD_TIMEOUT_SECONDS"), cfg.runtime.hard_timeout_seconds
+        env.get(f"{env_prefix}_HARD_TIMEOUT_SECONDS"), cfg.runtime.hard_timeout_seconds
     )
     cfg.runtime.stall_window_seconds = _coerce_int(
-        os.environ.get(f"{env_prefix}_STALL_WINDOW_SECONDS"), cfg.runtime.stall_window_seconds
+        env.get(f"{env_prefix}_STALL_WINDOW_SECONDS"), cfg.runtime.stall_window_seconds
     )
     cfg.runtime.topic_classifier_enabled = _coerce_bool(
-        os.environ.get(f"{env_prefix}_TOPIC_CLASSIFIER_ENABLED"),
+        env.get(f"{env_prefix}_TOPIC_CLASSIFIER_ENABLED"),
         cfg.runtime.topic_classifier_enabled,
     )
     cfg.runtime.topic_classifier_mode = (
-        os.environ.get(f"{env_prefix}_TOPIC_CLASSIFIER_MODE", cfg.runtime.topic_classifier_mode)
+        env.get(f"{env_prefix}_TOPIC_CLASSIFIER_MODE", cfg.runtime.topic_classifier_mode)
         or cfg.runtime.topic_classifier_mode
     ).strip().lower()
     cfg.runtime.topic_model = (
-        os.environ.get(f"{env_prefix}_TOPIC_MODEL", cfg.runtime.topic_model)
+        env.get(f"{env_prefix}_TOPIC_MODEL", cfg.runtime.topic_model)
         or cfg.runtime.topic_model
     ).strip()
     cfg.runtime.topic_uncertain_mode = (
-        os.environ.get(f"{env_prefix}_TOPIC_UNCERTAIN_MODE", cfg.runtime.topic_uncertain_mode)
+        env.get(f"{env_prefix}_TOPIC_UNCERTAIN_MODE", cfg.runtime.topic_uncertain_mode)
         or cfg.runtime.topic_uncertain_mode
     ).strip().lower()
     cfg.runtime.topic_related_threshold = _coerce_float(
-        os.environ.get(f"{env_prefix}_TOPIC_RELATED_THRESHOLD"),
+        env.get(f"{env_prefix}_TOPIC_RELATED_THRESHOLD"),
         cfg.runtime.topic_related_threshold,
     )
     cfg.runtime.topic_unrelated_threshold = _coerce_float(
-        os.environ.get(f"{env_prefix}_TOPIC_UNRELATED_THRESHOLD"),
+        env.get(f"{env_prefix}_TOPIC_UNRELATED_THRESHOLD"),
         cfg.runtime.topic_unrelated_threshold,
     )
     cfg.runtime.topic_decision_cache_size = _coerce_int(
-        os.environ.get(f"{env_prefix}_TOPIC_DECISION_CACHE_SIZE"),
+        env.get(f"{env_prefix}_TOPIC_DECISION_CACHE_SIZE"),
         cfg.runtime.topic_decision_cache_size,
     )
     cfg.runtime.topic_decision_cache_ttl_seconds = _coerce_int(
-        os.environ.get(f"{env_prefix}_TOPIC_DECISION_CACHE_TTL_SECONDS"),
+        env.get(f"{env_prefix}_TOPIC_DECISION_CACHE_TTL_SECONDS"),
         cfg.runtime.topic_decision_cache_ttl_seconds,
     )
     cfg.runtime.topic_current_max_chars = _coerce_int(
-        os.environ.get(f"{env_prefix}_TOPIC_CURRENT_MAX_CHARS"),
+        env.get(f"{env_prefix}_TOPIC_CURRENT_MAX_CHARS"),
         cfg.runtime.topic_current_max_chars,
     )
     cfg.runtime.topic_previous_user_max_chars = _coerce_int(
-        os.environ.get(f"{env_prefix}_TOPIC_PREVIOUS_USER_MAX_CHARS"),
+        env.get(f"{env_prefix}_TOPIC_PREVIOUS_USER_MAX_CHARS"),
         cfg.runtime.topic_previous_user_max_chars,
     )
     cfg.runtime.topic_previous_assistant_max_chars = _coerce_int(
-        os.environ.get(f"{env_prefix}_TOPIC_PREVIOUS_ASSISTANT_MAX_CHARS"),
+        env.get(f"{env_prefix}_TOPIC_PREVIOUS_ASSISTANT_MAX_CHARS"),
         cfg.runtime.topic_previous_assistant_max_chars,
     )
 
     cfg.routing.code_provider = (
-        os.environ.get(f'{env_prefix}_CODE_PROVIDER', cfg.routing.code_provider)
+        env.get(f'{env_prefix}_CODE_PROVIDER', cfg.routing.code_provider)
         or cfg.routing.code_provider
     ).strip().lower()
     cfg.routing.code_model = (
-        os.environ.get(f'{env_prefix}_CODE_MODEL', cfg.routing.code_model)
+        env.get(f'{env_prefix}_CODE_MODEL', cfg.routing.code_model)
         or cfg.routing.code_model
     ).strip()
     cfg.routing.code_reasoning_effort = (
-        os.environ.get(
+        env.get(
             f'{env_prefix}_CODE_REASONING_EFFORT',
             cfg.routing.code_reasoning_effort,
         )
         or cfg.routing.code_reasoning_effort
     ).strip().lower()
     cfg.routing.code_profiles = _coerce_code_profiles(
-        os.environ.get(f'{env_prefix}_CODE_PROFILES_JSON'),
+        env.get(f'{env_prefix}_CODE_PROFILES_JSON'),
         cfg.routing.code_profiles,
         field=f"{env_prefix}_CODE_PROFILES_JSON",
     )
     cfg.routing.code_task_profile = (
-        os.environ.get(
+        env.get(
             f'{env_prefix}_CODE_TASK_PROFILE',
             cfg.routing.code_task_profile,
         )
         or cfg.routing.code_task_profile
     ).strip().lower()
     cfg.routing.code_command = (
-        os.environ.get(f'{env_prefix}_CODE_COMMAND', cfg.routing.code_command)
+        env.get(f'{env_prefix}_CODE_COMMAND', cfg.routing.code_command)
         or cfg.routing.code_command
     ).strip()
     cfg.routing.code_timeout_seconds = _coerce_positive_int_strict(
-        os.environ.get(f'{env_prefix}_CODE_TIMEOUT_SECONDS'),
+        env.get(f'{env_prefix}_CODE_TIMEOUT_SECONDS'),
         cfg.routing.code_timeout_seconds,
         field=f"{env_prefix}_CODE_TIMEOUT_SECONDS",
     )
-    if f"{env_prefix}_CODE_ALLOWED_ROLES" in os.environ:
+    if f"{env_prefix}_CODE_ALLOWED_ROLES" in env:
         raise ValueError(
             f"{env_prefix}_CODE_ALLOWED_ROLES is retired; remove this environment variable"
         )
@@ -474,6 +491,18 @@ def load_config(config_path: Optional[Path] = None, *, env_prefix: str = CHAT_EN
     cfg.runtime.topic_unrelated_threshold = max(0.0, min(1.0, cfg.runtime.topic_unrelated_threshold))
     _validate_routing_config(cfg.routing)
 
+    if sources is not None:
+        for section in ("llm", "runtime", "routing"):
+            for name in vars(getattr(cfg, section)):
+                suffix = {"max_tool_retries": "MAX_RETRIES", "code_profiles": "CODE_PROFILES_JSON"}.get(name, name.upper())
+                key = f"{env_prefix}_{suffix}"
+                if env.get(key) not in (None, ""):
+                    source = f"环境配置 {key}（解析后）"
+                elif name in (data.get(section) or {}):
+                    source = f"配置文件 {yaml_path} · {section}.{name}"
+                else:
+                    source = "代码默认值"
+                sources[f"{section}.{name}"] = source
     return cfg
 
 

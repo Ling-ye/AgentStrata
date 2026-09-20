@@ -6,7 +6,9 @@ import { botTabFromParams } from "./taskWorkspaceState";
 const entity = (id: string, config: Record<string, unknown> = {}, layer = "application"): InspectionEntity => ({ id, layer, name: id,
   configured: true, loaded: null, connected: null, available: null, config });
 const input: Configuration = { layers: [], entities: [
-  entity("agent:main", { backend: "codex", defaults: { max_tool_calls: 5 }, presets: ["worker"], overrides: { worker: { timeout_seconds: 40 }, unused: { timeout_seconds: 10 } }, search_providers: [{ id: "brave" }], search_budget: { max_tool_calls: 2 } }, "agent"),
+  entity("agent:main", { backend: "codex", model: "codex-fixture", reasoning_effort: "medium", model_slot: "code" }, "agent"),
+  entity("agent:delegation", { defaults: { max_tool_calls: 5 } }, "agent"),
+  entity("agent:search-budget", { max_tool_calls: 2 }, "agent"),
   entity("subagent:worker", { timeout_seconds: 40 }), entity("mcp:lookup", { catalog_ref: "lookup", command: "fixture" }),
   entity("context:wiki", { enabled: true, root_env: "WIKI_ROOT" }), entity("context:memory_store", { provider: "file" }),
   entity("context:playbooks", { manifest: "skills.yaml" }), entity("rag:docs", { path: "docs", include: ["*.md"] }), entity("skill:career", { description: "Skill fixture" }),
@@ -31,22 +33,20 @@ describe("four-layer configuration ownership", () => {
     ["channel:qq", "channel", "channel"], ["policy:instance", "gateway", "access"], ["gateway:instance", "gateway", "gateway"],
     ["context:wiki", "application", "memory"], ["rag:docs", "application", "memory"], ["context:memory_store", "application", "memory"],
     ["skill:career", "application", "resources"], ["context:dev", "application", "resources"], ["codebase:sample", "application", "resources"],
-    ["feature:chat.image_inputs", "application", "features"], ["prompts:instance", "agent", "model"], ["mcp:lookup", "agent", "mcp"],
+    ["feature:chat.image_inputs", "application", "features"], ["prompts:instance", "agent", "prompts"], ["mcp:lookup", "agent", "mcp"],
     ["pack:dev.tools", "agent", "packs"], ["tool:lookup", "agent", "tools"], ["search:brave", "agent", "search"],
   ])("maps %s to its responsibility without rewriting the original layer", (id, layer, group) => {
     const row = configurationViews(input).find((item) => item.id === id)!;
     expect([row.displayLayer, row.group]).toEqual([layer, group]);
     expect(row.layer).toBe(input.entities.find((item) => item.id === id)!.layer);
   });
-  it("splits mixed agent fields once and does not mutate source or historical snapshots", () => {
+  it("keeps normalized fields in one location without changing source or historical snapshots", () => {
     const original = JSON.stringify(input);
     const rows = configurationViews(input);
-    const agent = rows.filter((item) => item.id === "agent:main");
-    expect(agent.map((item) => item.group)).toEqual(["model", "delegation", "search"]);
-    expect(agent[0].config).toEqual({ backend: "codex" });
-    expect(agent[1].config).toEqual({ defaults: { max_tool_calls: 5 }, overrides: { unused: { timeout_seconds: 10 } } });
-    expect(agent[2].config).toEqual({ search_budget: { max_tool_calls: 2 } });
-    expect(rows.find((item) => item.id === "pack:dev.tools")?.config).toEqual({});
+    expect(rows.filter((item) => item.id === "agent:main")).toHaveLength(1);
+    expect(rows.find((item) => item.id === "agent:delegation")?.group).toBe("delegation");
+    expect(rows.find((item) => item.id === "agent:search-budget")?.group).toBe("search");
+    expect(configurationSummary(rows[0])).toContain("实例默认模型 codex-fixture / medium");
     expect(JSON.stringify(input)).toBe(original);
   });
   it("shows unconfigured resources and marks unavailable platform adapters separately", () => {
@@ -55,10 +55,15 @@ describe("four-layer configuration ownership", () => {
     expect(rows.find((item) => item.id === "context:rag")?.applicable).toBe(true);
     expect(configurationSummary(rows.find((item) => item.id === "platform:instance")!)).toBe("当前实例不适用");
   });
-  it("places normalized unified-search switches and budgets in search, not delegation", () => {
-    const rows = configurationViews({ layers: [], entities: [entity("agent:main", { backend: "native", research_enabled: true, research_budget: { max_tool_calls: 3 }, defaults: { max_model_turns: 5 } })] });
-    expect(rows.find((item) => item.group === "search")?.config).toEqual({ research_enabled: true, research_budget: { max_tool_calls: 3 } });
-    expect(rows.find((item) => item.group === "delegation")?.config).toEqual({ defaults: { max_model_turns: 5 } });
+  it("keeps research overrides and custom agents independent of editable preset membership", () => {
+    const research = { ...entity("model-slot:research", { model: "default" }), effective_config: { model: "override" },
+      effective_environment: { DEMO_RESEARCH_MODEL: "override" }, field_sources: { model: "环境覆盖 DEMO_RESEARCH_MODEL" } };
+    const custom = { ...entity("subagent:custom", { model: "custom-model" }), membership: "custom" as const };
+    const draft = { tools: { packs: [], features: [], hide: [], mcp: { servers: [] } }, agents: { presets: [], workflows: [] } };
+    const rows = configurationViews({ layers: [], entities: [research, custom] }, draft);
+    expect(configurationSummary(rows[0])).toBe("override");
+    expect(rows[0].environment).toEqual({ DEMO_RESEARCH_MODEL: "override" });
+    expect(rows[1].id).toBe("subagent:custom");
   });
   it("projects changes across layers from one draft while keeping observed dynamic tools", () => {
     const draft = { tools: { packs: ["new-pack"], features: ["images"], hide: ["hidden"], mcp: { servers: [{ ref: "lookup", enabled: false }] } }, agents: { presets: ["new-worker"], workflows: [] } };
@@ -70,6 +75,9 @@ describe("four-layer configuration ownership", () => {
     expect(rows.some((item) => item.id === "subagent:worker")).toBe(false);
     expect(rows.some((item) => item.id === "subagent:new-worker")).toBe(true);
     expect(rows.find((item) => item.id === "tool:lookup")?.configured).toBeNull();
+    const hidden = { ...entity("tool:hidden"), configured: false };
+    const hiddenRows = configurationViews({ layers: [], entities: [hidden] }, { ...draft, tools: { ...draft.tools, hide: [] } });
+    expect(hiddenRows[0].configured).toBe(true);
   });
 });
 
@@ -81,9 +89,9 @@ describe("configuration navigation and search", () => {
     expect(configurationSelection(rows, new URLSearchParams(), "missing").layer).toBe("channel");
   });
   it("uses entity ownership over a mismatching layer and disambiguates split fields", () => {
-    const params = new URLSearchParams(configurationLink("bot", "agent:main", "delegation").split("?")[1]);
+    const params = new URLSearchParams(configurationLink("bot", "agent:delegation", "delegation").split("?")[1]);
     params.set("layer", "channel");
-    expect(configurationSelection(rows, params).selected?.viewKey).toBe("delegation:agent:main");
+    expect(configurationSelection(rows, params).selected?.viewKey).toBe("delegation:agent:delegation");
     expect(configurationSelection(rows, params).layer).toBe("agent");
     expect(botTabFromParams(params)).toBe("configuration");
   });
@@ -95,7 +103,7 @@ describe("configuration navigation and search", () => {
   });
   it("searches fields, values and resolved environment across all layers", () => {
     expect(configurationSearch(rows, "max_read_bytes").map((item) => item.id)).toEqual(["codebase:sample"]);
-    expect(configurationSearch(rows, " FIXTURE ").map((item) => item.id)).toEqual(["mcp:lookup", "skill:career", "policy:instance"]);
+    expect(configurationSearch(rows, " FIXTURE ").map((item) => item.id)).toEqual(["agent:main", "mcp:lookup", "skill:career", "policy:instance"]);
     expect(configurationSearch(rows, "nonexistent")).toEqual([]);
     expect(configurationSearch(rows, " ")).toEqual([]);
     expect(configurationSearch([{ ...rows[0], environment: { DEMO_MODEL: "unique-model" } }], "unique-model")).toHaveLength(1);

@@ -6,6 +6,7 @@ export interface InspectionEntity {
   configured: boolean | null; loaded: boolean | null; connected: boolean | null; available: boolean | null;
   source_config?: Record<string, unknown> | null; source_environment?: Record<string, unknown>;
   effective_environment?: Record<string, unknown>; effective_config?: Record<string, unknown> | null;
+  field_sources?: Record<string, string>; usage?: string; applicability?: string; membership?: "preset" | "custom";
   config: Record<string, unknown> | null; runtime?: Record<string, unknown>; environment?: Record<string, unknown>;
 }
 export interface Configuration {

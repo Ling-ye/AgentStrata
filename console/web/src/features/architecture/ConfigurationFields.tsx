@@ -1,5 +1,6 @@
 import { ConfigFields, Disclosure, FIELD_NAMES, TextPreview } from "./ObservationContent";
 import type { InspectionEntity } from "./workbenchModel";
+import AgentConfigurationValues from "./AgentConfigurationValues";
 
 export function ConfigurationValues({ value }: { value: unknown }) {
   if (value == null) return <span className="obs-muted">未配置</span>;
@@ -23,7 +24,7 @@ function envLabel(key: string) {
   return ENV_NAMES[key] ?? key.replace(/^(CHATCOPILOT_|QQ_)/, "").replace(/_/g, " ").toLowerCase()
     .replace(/api key$/, "API 凭据").replace(/base url$/, "服务地址").replace(/model$/, "模型").replace(/timeout$/, "超时（秒）");
 }
-export default function ConfigurationFields({ entity }: { entity: InspectionEntity }) {
+export default function ConfigurationFields({ entity, inline = false }: { entity: InspectionEntity; inline?: boolean }) {
   const values = entity.environment ?? {};
   const used = new Set<string>();
   const resolve = (value: unknown): unknown => {
@@ -50,13 +51,17 @@ export default function ConfigurationFields({ entity }: { entity: InspectionEnti
   const schema = parameters && typeof parameters === "object" ? parameters as Record<string, unknown> : null;
   const properties = schema?.properties && typeof schema.properties === "object" ? schema.properties as Record<string, Record<string, unknown>> : null;
   return <>
-    <ConfigurationValues value={fields} />
-    {!!Object.keys(remainder).length && <ConfigurationValues value={remainder} />}
+    {inline && !entity.field_sources && <p className="config-field-source">{entity.configured == null ? "来源：运行时发现；不代表所有调用者均可使用" : "来源：实例声明与组件目录"}</p>}
+    {entity.field_sources ? <AgentConfigurationValues entity={entity} /> : <ConfigurationValues value={fields} />}
+    {!entity.field_sources && !!Object.keys(remainder).length && <ConfigurationValues value={remainder} />}
+    {!entity.field_sources && <>
     {parameters != null && <Disclosure title="工具参数">{properties ? <div className="obs-parameter-table"><table className="obs-table"><thead><tr><th>参数</th><th>类型</th><th>必填</th><th>说明</th></tr></thead>
       <tbody>{Object.entries(properties).map(([name, field]) => <tr key={name}><td>{name}</td><td>{String(field.type ?? "未记录")}</td>
         <td>{Array.isArray(schema?.required) && schema.required.includes(name) ? "是" : "否"}</td><td>{String(field.description ?? "—")}</td></tr>)}</tbody></table>
       <Disclosure title="原始参数定义"><TextPreview text={JSON.stringify(parameters, null, 2)} /></Disclosure></div> : <ConfigFields value={parameters} />}</Disclosure>}
-    <Disclosure title="配置来源"><ConfigFields value={entity.source_config ?? entity.config} missingLabel="未配置" />
+    </>}
+    {!inline && <Disclosure title="配置来源"><ConfigFields value={entity.source_config ?? entity.config} missingLabel="未配置" />
       <ConfigFields value={entity.source_environment ?? entity.environment} missingLabel="未配置" /></Disclosure>
+    }
   </>;
 }

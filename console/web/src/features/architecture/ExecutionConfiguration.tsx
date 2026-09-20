@@ -24,7 +24,7 @@ export default function ExecutionConfiguration({ instanceId, runId, event, activ
           {(config.capture_state === "truncated" || query.data.sanitization_truncated) && <p className="obs-muted">配置记录已截断，当前仅显示已取得的字段。</p>}
           {config.entities.map((entity) => <DetailScope id={`config:${entity.id}`} key={entity.id}><div className="obs-execution-config-item">
             <h4>{FIELD_NAMES[entity.name] ?? entity.name}</h4>
-            <ConfigFields value={entity.config} missingLabel={config.visibility === "operator" ? "未设置" : "未记录"} />
+            <ConfigFields value={entity.effective_config ?? entity.config} missingLabel={config.visibility === "operator" ? "未设置" : "未记录"} />
             {entity.runtime && <DetailScope id="runtime"><h4>执行时运行参数</h4><ConfigFields value={entity.runtime} /></DetailScope>}
             {entity.environment && !!Object.keys(entity.environment).length && <DetailScope id="environment"><h4>执行时环境配置</h4><ConfigFields value={entity.environment} missingLabel={config.visibility === "operator" ? "未设置" : "未记录"} /></DetailScope>}
           </div></DetailScope>)}</>}

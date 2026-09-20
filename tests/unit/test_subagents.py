@@ -293,7 +293,7 @@ class SubagentTests(unittest.TestCase):
         expected = BUILTIN_SUBAGENTS["developer"]
 
         with mock.patch(
-            "chatcopilot.agent.subagents.definition_catalog.get_subagent_preset",
+            "chatcopilot.component_catalog.subagent_resolution.get_subagent_preset",
             return_value=expected,
         ) as lookup:
             definitions = list(iter_definitions(configured))

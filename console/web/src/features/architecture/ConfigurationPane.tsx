@@ -12,11 +12,14 @@ import {
 
 export function EntityState({ entity }: { entity: InspectionEntity & { applicable?: boolean } }) {
   if (entity.applicable === false) return <Tag size="small">不适用</Tag>;
+  const observedComponent = /^(pack:|mcp:|tool:)/.test(entity.id);
   return <span className="obs-entity-states">
-    <Tag size="small" color={entity.configured ? "blue" : "gray"}>{entity.configured == null ? "运行时发现" : entity.configured ? "已配置" : "未启用"}</Tag>
-    {entity.runtime_stale ? <Tag size="small">运行快照已过期</Tag> : entity.loaded == null ? <Tag size="small">运行状态未知</Tag> :
-      <Tag size="small" color={entity.loaded ? "green" : "orange"}>{entity.loaded ? "已加载" : "未加载"}</Tag>}
-    {!entity.id.startsWith("skill:") && entity.connected != null && <Tag size="small" color={entity.connected ? "green" : "red"}>{entity.connected ? "已连接" : "未连接"}</Tag>}
+    {entity.configured == null ? <Tag size="small">运行时发现</Tag> : entity.configured === false ?
+      <Tag size="small">{entity.id.startsWith("tool:") ? "已隐藏" : "未启用"}</Tag> : null}
+    {entity.membership === "custom" && <Tag size="small">自定义</Tag>}
+    {observedComponent && !entity.runtime_stale && entity.loaded != null &&
+      <Tag size="small" color={entity.loaded ? "green" : "orange"}>{entity.loaded ? entity.id.startsWith("tool:") ? "已注册" : "已加载" : "未加载"}</Tag>}
+    {entity.id.startsWith("mcp:") && !entity.runtime_stale && entity.connected != null && <Tag size="small" color={entity.connected ? "green" : "red"}>{entity.connected ? "已连接" : "未连接"}</Tag>}
   </span>;
 }
 
@@ -146,6 +149,7 @@ export default function ConfigurationPane({ instanceId, visible, infoVisible, on
             options={CONFIGURATION_LAYERS.map((item) => ({ value: item.id, label: item.name }))} /></div>
           <div className="config-layer-content">
             <header><h3>{layerDefinition.name}</h3><p className="obs-muted">{layerDefinition.description}</p></header>
+            {layer === "agent" && <p className="config-value-heading">保存配置解析值 · 模型及参数只读。实例默认值不代表每个会话的实际选择。</p>}
             {layerDefinition.groups.map(([id, name]) => {
               const rows = entities.filter((entity) => entity.group === id);
               return <section key={id} className="config-group" aria-label={name}>
@@ -156,6 +160,11 @@ export default function ConfigurationPane({ instanceId, visible, infoVisible, on
                     <span className="config-row-summary" title={configurationSummary(entity)}>{configurationSummary(entity)}</span></div>
                   <EntityState entity={entity} />
                   <Button size="small" aria-label={`查看 ${entityName(entity)}`} onClick={(event) => openEntity(entity, event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined)}>查看详情</Button>
+                  {layer === "agent" && <div className="config-row-fields">
+                    {entity.usage && <p className="config-usage">{entity.usage}</p>}
+                    {entity.applicability && <p className="config-applicability">{entity.applicability}</p>}
+                    <ConfigurationFields entity={entity} inline />
+                  </div>}
                 </article>) : <p className="config-group-empty">未配置</p>}
                 {groupFooter(id)}
               </section>;
@@ -165,13 +174,16 @@ export default function ConfigurationPane({ instanceId, visible, infoVisible, on
       </>}
     </section>
     <Drawer title={selected ? entityName(selected) : "配置详情"} visible={visible && !!selected?.displayLayer} width={narrow ? "100vw" : 520}
-      className="config-detail-drawer" footer={null} onCancel={closeDetail} afterClose={restoreFocus} escToExit unmountOnExit>
+      className="config-detail-drawer" footer={null} onCancel={closeDetail} afterClose={restoreFocus} escToExit autoFocus unmountOnExit>
       {selected && <>
         <p className="obs-muted">{entityLocation(selected)}</p>
         <EntityState entity={selected} />
         <div className="config-detail-actions">{entityActions(selected, navigate)}</div>
+        {selected.usage && <p className="config-usage">{selected.usage}</p>}
+        {selected.applicability && <p className="config-applicability">{selected.applicability}</p>}
+        {selected.runtime_stale && <p className="obs-muted">运行快照过期，服务当前值暂无法确认。</p>}
         <ConfigurationFields entity={selected} />
-        {selected.runtime && <><h4>运行信息</h4><ConfigurationValues value={selected.runtime} /></>}
+        {selected.runtime && !selected.field_sources && <><h4>运行信息</h4><ConfigurationValues value={selected.runtime} /></>}
       </>}
     </Drawer>
     <Drawer title="实例信息" visible={infoOpen} width={narrow ? "100vw" : 520} className="config-detail-drawer"

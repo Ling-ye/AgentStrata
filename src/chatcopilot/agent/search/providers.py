@@ -15,22 +15,16 @@ from typing import Any, Mapping, Sequence
 from chatcopilot.agent.search.models import DEFAULT_SEARCH_BUDGET
 from chatcopilot.agent.search.relevance import filter_relevant_items
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
-from chatcopilot.contracts.subagents import SearchProviderSpec
+from chatcopilot.contracts.subagents import (
+    SearchProviderSpec,
+    DEFAULT_PROVIDER_ENDPOINTS as DEFAULT_PROVIDER_ENDPOINTS,
+    DEFAULT_PROVIDER_CREDENTIAL_ENVS as DEFAULT_PROVIDER_CREDENTIAL_ENVS,
+)
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult
 
 _LOG = logging.getLogger(__name__)
 
 WEB_PROVIDER_PRIORITY = ("tavily", "brave", "searxng")
-DEFAULT_PROVIDER_ENDPOINTS = {
-    "tavily": "https://api.tavily.com/search",
-    "brave": "https://api.search.brave.com/res/v1/web/search",
-    "searxng": "http://127.0.0.1:18064",
-}
-DEFAULT_PROVIDER_CREDENTIAL_ENVS = {
-    "tavily": "TAVILY_API_KEY",
-    "brave": "BRAVE_API_KEY",
-    "searxng": "",
-}
 DIRECT_SEARCH_SERVERS: dict[str, tuple[str, ...]] = {
     "web": WEB_PROVIDER_PRIORITY,
     "experience": ("xiaohongshu",),

@@ -24,6 +24,17 @@ from typing import Any
 from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
 
 
+DEFAULT_PROVIDER_ENDPOINTS = {
+    "tavily": "https://api.tavily.com/search",
+    "brave": "https://api.search.brave.com/res/v1/web/search",
+    "searxng": "http://127.0.0.1:18064",
+}
+DEFAULT_PROVIDER_CREDENTIAL_ENVS = {
+    "tavily": "TAVILY_API_KEY",
+    "brave": "BRAVE_API_KEY",
+    "searxng": "",
+}
+
 TASK_PACK_FIELDS: tuple[str, ...] = (
     "objective",
     "user_intent",

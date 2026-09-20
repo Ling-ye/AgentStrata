@@ -352,6 +352,7 @@ def _rows(connection: Any, sql: str, params: tuple[Any, ...]) -> list[dict[str, 
 
 
 def runtime_configuration(runtime: Any, agent: Any, environment: Mapping[str, str]) -> dict[str, Any]:
+    from chatcopilot.botspec.inspection_agent import enrich_agent_configuration
     config = configuration_projection(runtime.spec, mcp=runtime.mcp_servers, skills=runtime.skills,
                                       rag=runtime.rag_sources, environment=environment)
     config["backend"] = str(agent.agent_backend)
@@ -413,4 +414,10 @@ def runtime_configuration(runtime: Any, agent: Any, environment: Mapping[str, st
             entity = entities.get(f"mcp:{status['id']}")
             if entity:
                 entity.update(connected=status["running"], loaded=bool(status["tools_count"]), runtime=status)
+    enrich_agent_configuration(config, runtime.spec, environment, chat_config=agent.runtime_config,
+        backend=agent.agent_backend, research_config=research_config,
+        search_config=getattr(getattr(agent, "search_llm", None), "config", None))
+    for entity in config["entities"]:
+        if entity["id"].startswith(("agent:", "search:", "subagent:", "workflow:")):
+            entity["runtime"] = entity.get("effective_config", entity["config"])
     return config

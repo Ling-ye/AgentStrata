@@ -81,6 +81,7 @@ tests/unit/test_harness_context_briefs.py
 tests/unit/test_console_task_flow.py
 tests/unit/test_gateway_observation.py
 tests/unit/test_console_configuration_resolution.py
+tests/unit/test_console_agent_configuration.py
 tests/unit/test_console_health.py
 tests/unit/test_console_operator_values.py
 
