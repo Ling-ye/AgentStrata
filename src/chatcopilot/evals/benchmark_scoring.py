@@ -114,6 +114,7 @@ def score_benchmark(
             "quality_reason": "仅原生评分" if mode == "native" else "",
             "judge_usage": getattr(model, "usage", {}),
             "judge_calls": getattr(model, "calls", 0),
+            "judge_attempts": getattr(model, "judge_attempts", []),
             "judging_seconds": time.monotonic() - started,
         }
         if native is not None:

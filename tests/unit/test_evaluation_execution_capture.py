@@ -156,3 +156,62 @@ def test_agent_usage_does_not_absorb_judge_usage(tmp_path):
     trial = core._trial_from_case_result(request, result)
     assert trial.usage_totals == {"prompt_tokens": 10, "completion_tokens": 5}
     assert trial.evidence["judge_evidence"]["usage"]["prompt_tokens"] == 90
+
+
+def _judge_request_or_backoff_wait(request):
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import httpx
+    from openai import APIConnectionError
+
+    from chatcopilot.core.llm_client import LLMClient
+    from chatcopilot.evals import deepeval_engine as engine
+
+    record_turn({"input": "frozen input", "final_text": "already executed",
+                 "completed": True, "stop_reason": "end_turn",
+                 "conversation_id": "actor", "turn_index": 0})
+    wait_for = request.options["wait_for"]
+
+    def wait(seconds):
+        set_phase("judge_" + wait_for)
+        time.sleep(30)
+        raise AssertionError("supervisor must stop the Judge before it continues")
+
+    def chat(*args, **kwargs):
+        with (request.output / "judge-requests.txt").open("a") as marker:
+            marker.write("request\n")
+        if wait_for == "request":
+            wait(0)
+        raise APIConnectionError(request=httpx.Request("POST", "https://judge.test/v1"))
+
+    with engine._local_sdk(), patch.object(LLMClient, "chat", chat), patch.object(
+        engine, "time", SimpleNamespace(monotonic=time.monotonic, sleep=wait)
+    ):
+        model = engine._model(engine.JudgeConfig("controlled", "https://judge.test/v1", "fixture"))
+        try:
+            model.generate("Score the completed observation")
+        finally:
+            model.model.close()
+
+
+@pytest.mark.parametrize("wait_for", ["request", "backoff"])
+@pytest.mark.parametrize("cancel", [True, False])
+def test_supervisor_stops_judge_request_and_retry_wait(tmp_path, wait_for, cancel):
+    from dataclasses import replace
+
+    request = replace(_request(tmp_path / "judge"), options={"wait_for": wait_for})
+    seen = []
+    phase = "judge_" + wait_for
+    with pytest.raises(
+        core._TrialExecutionCancelled if cancel else core._TrialExecutionDeadlineExceeded
+    ):
+        core._execute_supervised_trial(
+            request, budget=core._TrialExecutionBudget(seconds=10 if cancel else 5, scope="case"),
+            cancel_check=lambda: cancel and any(s.get("phase") == phase for s in seen),
+            executor=_judge_request_or_backoff_wait, observation_callback=seen.append,
+        )
+    assert any(s.get("phase") == phase for s in seen)
+    assert seen[-1]["turns"][0]["final_text"] == "already executed"
+    assert (request.output / "judge-requests.txt").read_text() == "request\n"
+    assert not (request.output / "result.json").exists()

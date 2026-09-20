@@ -157,8 +157,42 @@ def _local_sdk() -> Iterator[None]:
             os.environ.update(environment)
 
 
+def _judge_request_error(exc: Exception) -> dict[str, Any]:
+    """Keep transport diagnostics without exception text, URLs or response bodies."""
+    from openai import APIStatusError
+
+    detail: dict[str, Any] = {"error_type": type(exc).__name__}
+    if isinstance(exc, APIStatusError):
+        detail["http_status"] = exc.status_code
+    chain: list[dict[str, Any]] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(chain) < 8:
+        seen.add(id(current))
+        item: dict[str, Any] = {"error_type": type(current).__name__}
+        if isinstance(current, OSError) and type(current.errno) is int:
+            item["errno"] = current.errno
+        chain.append(item)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    detail["causes"] = chain
+    return detail
+
+
+def _judge_request_summary(detail: dict[str, Any], attempts: int) -> str:
+    parts = [detail["error_type"], f"attempts={attempts}"]
+    if "http_status" in detail:
+        parts.append(f"HTTP {detail['http_status']}")
+    causes = [row["error_type"] + (f"(errno={row['errno']})" if "errno" in row else "")
+              for row in detail["causes"]]
+    parts.append("causes=" + " -> ".join(causes))
+    return "judge request failed: " + "; ".join(parts)
+
+
 def _model(config: JudgeConfig) -> Any:
     from deepeval.models import DeepEvalBaseLLM
+    from openai import APIConnectionError, APIStatusError
     from chatcopilot.agent.context.prompt_plan import (
         PromptBuildInput,
         PromptPlanBuilder,
@@ -171,6 +205,8 @@ def _model(config: JudgeConfig) -> Any:
         def __init__(self) -> None:
             self.usage: dict[str, int] = {}
             self.calls = 0
+            self.judge_attempts: list[dict[str, Any]] = []
+            self._requests = 0
             super().__init__(model=config.model)
 
         def load_model(self) -> Any:
@@ -214,10 +250,31 @@ def _model(config: JudgeConfig) -> Any:
                         + json.dumps(schema.model_json_schema()),
                     }
                 )
-            result = cast(LLMClient, self.model).chat(
-                messages=messages, tools=None, stream=False, max_retries=0, timeout=config.timeout,
-                reasoning_effort=config.reasoning_effort,
-            )
+            self._requests += 1
+            for attempt in range(1, 4):
+                started = time.monotonic()
+                row: dict[str, Any] = {"request": self._requests, "attempt": attempt}
+                try:
+                    result = cast(LLMClient, self.model).chat(
+                        messages=messages, tools=None, stream=False, max_retries=0,
+                        timeout=config.timeout, reasoning_effort=config.reasoning_effort,
+                    )
+                except Exception as exc:
+                    detail = _judge_request_error(exc)
+                    retryable = isinstance(exc, APIConnectionError) or (
+                        isinstance(exc, APIStatusError)
+                        and (exc.status_code in {408, 429} or 500 <= exc.status_code < 600)
+                    )
+                    self.judge_attempts.append({**row, **detail, "outcome": "error",
+                        "elapsed_seconds": time.monotonic() - started, "retryable": retryable})
+                    if not retryable or attempt == 3:
+                        # DeepEval captures str(exc); never forward provider payloads.
+                        raise RuntimeError(_judge_request_summary(detail, attempt)) from None
+                    time.sleep(0.8 * attempt)
+                else:
+                    row.update(outcome="succeeded", elapsed_seconds=time.monotonic() - started)
+                    self.judge_attempts.append(row)
+                    break
             self.calls += 1
             for key, value in (getattr(result, "usage", None) or {}).items():
                 if type(value) is int:
@@ -227,7 +284,11 @@ def _model(config: JudgeConfig) -> Any:
                 return content
             if content.startswith("```") and content.endswith("```"):
                 content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-            return schema.model_validate_json(content)
+            try:
+                return schema.model_validate_json(content)
+            except Exception as exc:
+                row.update(outcome="invalid_response", error_type=type(exc).__name__)
+                raise ValueError(f"judge response invalid: {type(exc).__name__}") from None
 
         async def a_generate(self, prompt: str, schema: Any = None, **kwargs: Any) -> Any:
             return self.generate(prompt, schema=schema, **kwargs)
@@ -457,5 +518,6 @@ def score(
         "error": error,
         "usage": getattr(model, "usage", {}),
         "calls": getattr(model, "calls", 0),
+        "judge_attempts": getattr(model, "judge_attempts", []),
         **({"judge_input": judge_input} if judge_input else {}),
     }

@@ -51,7 +51,12 @@ def score(case: EvalCase, observation: TrialObservation) -> tuple[JudgeResult, d
         evidence.update(semantic)
         metrics = [m for m in semantic["metrics"] if m["kind"] == "quality"]
         if not metrics or any(m.get("error") or m.get("passed") is None for m in metrics):
-            evidence["error"] = "semantic judge did not produce valid evidence"
+            from chatcopilot.evals.redaction import collect_env_secrets, sanitize_text
+            diagnostic = "; ".join(str(m["error"]) for m in metrics if m.get("error"))
+            evidence["error"] = "semantic judge did not produce valid evidence" + (
+                ": " + sanitize_text(diagnostic, secrets=collect_env_secrets())[:2048]
+                if diagnostic else ""
+            )
             return facts, evidence
         passed = facts.passed and all(m["passed"] is True for m in metrics)
         return JudgeResult(float(passed), 1.0, passed,

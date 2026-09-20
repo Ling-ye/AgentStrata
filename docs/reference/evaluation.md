@@ -35,6 +35,18 @@ BFCL 固定 V4 单轮 13 类 3,641 题与官方 AST/相关性核心；IFEval 固
 
 直接 Agent 轨道统一使用 DeepEval 4.2.2 的用例与指标执行，确定性事实加 Case 声明的默认质量评分；独立评分模型从 Evaluation 配置捕获，不继承被测 Bot 的评分设置。SDK 只在 Trial 内运行，禁用 dotenv、遥测、云上报与缓存，不能接管生命周期。Core 的 observation 仅保存可读执行证据，不进入完整组 checkpoint/resume。公开基准经 DeepEval 分别保存原生评分和 GEval，不以语义分覆盖原生结果；GAIA 使用官方数字、列表、字符串匹配。工作台冻结题单、框架和评分配置；趋势默认按题集、环境及指标协议区分可比条件，探索视图保留自由拆线，Git 为变化元数据；完整性、通过率分母和严格 compare/resume 保持。契约见 `docs/reference/evaluation.md`、`docs/reference/evaluation.md` 和 `docs/reference/evaluation.md`。
 
+## 评分连接恢复
+
+Evaluation Judge 对同一评分 API 请求最多尝试三次，重试前分别等待 0.8 秒、1.6 秒。
+仅连接异常、请求超时和 HTTP 408、429、5xx 可以重试；鉴权、参数、响应格式错误及正常低分不重试。
+恢复只调用评分模型，不重跑被测 Agent、工具或 Trial；SDK 与 DeepEval 的额外自动重试关闭。
+单次请求沿用 Judge timeout，全部尝试仍受已有 Trial/Evaluation 期限及取消监督约束。
+
+评分证据中的 `judge_attempts` 记录请求序号、尝试序号、耗时、结果和受控错误字段
+（异常类型、HTTP 状态、底层异常类型和系统错误码），不记录请求头、密钥、私有端点或响应正文。
+既有成功调用计数和 token usage 含义不变。耗尽重试后保留 `judge_error`、未评分的语义结果和
+已完成的确定性检查、执行证据；不会把评分不可用解释为产品通过，也不改写历史测评。
+
 ## 评测 backend override 例外
 
 只有 Evaluation 执行层可在评测子进程内把同一 Bot 投影为 Codex/Native Target；不得写回 BotSpec、部署实例或复用线上 session。 Profile Case 使用稳定版本化定义，Suite 继续使用官方动态数据和数据准备流程。 Target 必须记录 executor、backend、model、reasoning effort 与包含 Bot runtime 行为摘要的稳定 fingerprint；Case coverage 按 Bot + Case + Target fingerprint 聚合。 Resume 必须在任何写入前核对完整请求、Case 快照、Target fingerprint 和已有 Trial 结构，任一漂移都拒绝；已完成 Evaluation 不可 Resume，未 checkpoint 的 workspace 必须清理后再执行，不能修改请求后复用旧 Trial。 非 Resume 禁止复用已有 Evaluation 证据目录；外部 Case ID 只作领域标识，不得直接形成 workspace 或 artifact 路径，但包含 `/` 时仍须可查询；Evaluation 持久化前必须统一脱敏，禁止落盘原始事件、凭据字段、通用 token、已知 secret 和机器绝对路径；不完整 Target 组不得计入胜负。
