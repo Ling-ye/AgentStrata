@@ -222,8 +222,8 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
         <code>{receipt.outbound_id}</code>{receipt.error_code && <span className="obs-step-error">{receipt.error_code}</span>}</li>)}</ol> :
         <p className="obs-muted">尚未记录交付回执</p>}
       {!!detail.outbox.length && <ConfigFields value={{ "出站状态": detail.outbox }} />}
-      {!!view.permissions.length && <section aria-label="任务权限记录"><h4>任务权限记录</h4>
-        <p className="obs-muted">以下记录未绑定到具体调用。</p><Permissions events={view.permissions} scope={scope} /></section>}
+      {!!view.permissions.length && <Disclosure title="任务权限记录">
+        <p className="obs-muted">以下记录未绑定到具体调用。</p><Permissions events={view.permissions} scope={scope} /></Disclosure>}
       {!!detail.approvals.length && <Disclosure title="任务审批"><ConfigFields value={detail.approvals} /></Disclosure>}
       {!!view.logs.length && <section aria-label="任务日志"><h4>任务日志</h4><Logs events={view.logs} scope={scope} /></section>}
       <Disclosure title="任务状态记录"><ConfigFields value={{ "采集状态": bodyState(run.capture_state ?? "not_recorded"),
