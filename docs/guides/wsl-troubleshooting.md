@@ -70,6 +70,15 @@ dpkg -s dbus-user-session
 
 系统 manager 正常、但用户命令报 `Failed to connect to bus` 时：
 
+日常 Console 部署入口会先检查 user bus。默认部署、`--update-only` 和
+`--restart-only` 会在 `dbus-user-session` 已安装且 PID 1 为 systemd 时自动执行
+`restart user@<uid>.service`；若 restart 失败，会等待一秒后继续执行
+`reset-failed` 和 `start`，确认 user bus 恢复后才更新服务。恢复需要 sudo，非交互环境
+没有现成 sudo 凭据时会明确失败。`--status` 只检查，`--dry-run` 只展示命令，二者都不会
+重启 user manager。
+
+自动恢复仍失败时，手工检查并执行：
+
 ```bash
 sudo apt-get install -y dbus-user-session
 sudo systemctl restart "user@$(id -u).service"
