@@ -7,6 +7,14 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- AI Harness retains actionable draft diagnostics and continuation evidence,
+  distinguishes pending validation from missing prerequisites, and prepares
+  complete dependencies and disk-backed temporary storage for repository regression.
+- Frozen Harness regression tests and repository static checks enforce Ruff;
+  the large-image delivery regression uses valid helper imports.
+
 ### Added
 
 - New code-governance and AI Harness tasks start from remote main and deliver

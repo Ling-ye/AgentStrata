@@ -199,3 +199,49 @@ def test_environment_failure_prevents_model_start(repository, tmp_path, monkeypa
             RepairOptions("unused"), tmp_path / "output", lambda: None)
     assert exc.value.code == "coding_environment"
     model.assert_not_called()
+
+
+@pytest.mark.parametrize("role", [Role.CODING, Role.TEST])
+def test_role_pytest_runs_without_socket_plugin(repository, tmp_path, monkeypatch, native_binary, role):
+    """Local checks run in the actual nested sandbox without granting networking."""
+    pytest.importorskip("pytest_rerunfailures")
+    adapter = intercept_adapter(monkeypatch, native_binary, tmp_path)
+    permissions = codex_adapter.permission_config
+    seen = {}
+
+    def capture_permissions(scope, **kwargs):
+        config = permissions(scope, **kwargs)
+        if kwargs.get("private_paths"):
+            seen["config"] = config
+        return config
+
+    monkeypatch.setattr(codex_adapter, "permission_config", capture_permissions)
+    script = "\n".join([
+        "import socket, subprocess, sys",
+        "try:",
+        "    socket.socket(socket.AF_INET, socket.SOCK_STREAM)",
+        "except PermissionError:",
+        "    pass",
+        "else:",
+        "    raise AssertionError('role networking was enabled')",
+        "result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', 'tests/test_probe.py'], capture_output=True, text=True)",
+        "assert result.returncode == 0, result.stdout + result.stderr",
+        "assert '1 passed' in result.stdout, result.stdout",
+    ])
+
+    def process(outer, **kwargs):
+        native = [str(native_binary), "sandbox", "-P", "agentstrata", "-C", str(repository)]
+        for entry in seen["config"]:
+            native += ["-c", entry]
+        native += ["--", str(Path(sys.executable).parent.resolve() / Path(sys.executable).name), "-c", script]
+        result = subprocess.run(outer[:outer.index("--") + 1] + native,
+                                capture_output=True, text=True, timeout=30, env=kwargs["environment"])
+        assert result.returncode == 0, result.stdout + result.stderr
+        seen["executed"] = True
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(codex_adapter, "run_session", process)
+    head = git_output(repository, "rev-parse", "HEAD")
+    adapter._execute_impl(repository, AgentCall("fixture", role, 1, "fixture", {"source": {}, "base_commit": head}),
+                          RepairOptions("unused"), tmp_path / "output", lambda: None)
+    assert seen["executed"]

@@ -55,7 +55,8 @@ class HarnessStore:
         value = dict(task)
         refs = dict(value.pop("artifact_fields", {}))
         for key in ("baseline_manifest", "verified_manifest", "preparation_input", "evaluations",
-                    "evaluation_history", "regression_baseline", "regression_baseline_versions"):
+                    "evaluation_history", "regression_baseline", "regression_baseline_versions",
+                    "prior_material", "prior_evaluations"):
             if key in value:
                 refs[key] = asdict(artifacts.put(key, task.get("current_attempt") or 0, value.pop(key)))
         source = value.get("source")

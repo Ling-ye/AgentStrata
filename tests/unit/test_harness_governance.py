@@ -267,8 +267,9 @@ def test_unverified_coding_status_is_not_a_gc_prerequisite_gap():
              "gaps": [{"requirement": "expected_behavior", "code": "unverified", "message": "awaiting host checks"}]}
     with pytest.raises(HarnessError):
         role_result(Role.CODING, value, governance=True)
-    # Ordinary repair keeps its existing evidence contract.
-    assert role_result(Role.CODING, value)["gaps"]
+    # Repair and governance both leave pending validation to the host.
+    with pytest.raises(HarnessError):
+        role_result(Role.CODING, value)
 
 
 def test_cancel_during_discovery_cannot_produce_a_candidate(governance):

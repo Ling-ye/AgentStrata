@@ -126,7 +126,13 @@ class CaseVerification:
     def regressions(self, task: VerificationRequest, candidate: CandidateRef,
                     check_cancel: Callable[[], None], checks: list[str] | None = None) -> dict[str, Any]:
         value = self.local_verifier.regressions(task, candidate.path, check_cancel, checks)
-        for row in value.get("rows", {}).values():
+        for name, row in value.get("rows", {}).items():
             if row["outcome"] == "error":
                 raise HarnessError("verification_environment", "仓库回归发生执行环境错误")
+            if name.startswith("repository:") and row["outcome"] != "passed":
+                error = HarnessError("verification_evidence" if checks is None else "product_failure",
+                                     "仓库静态检查未通过：" + name)
+                error.evidence = {"checks": [{"name": name, "exit_code": row.get("exit_code", 1),
+                    "failed_ids": [name], "diagnostic": row.get("message", "")} ]}
+                raise error
         return value

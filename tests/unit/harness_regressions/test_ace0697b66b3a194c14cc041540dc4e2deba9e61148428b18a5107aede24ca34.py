@@ -32,10 +32,6 @@ _UNIT_TESTS = Path.cwd() / "tests" / "unit"
 if str(_UNIT_TESTS) not in sys.path:
     sys.path.insert(0, str(_UNIT_TESTS))
 
-from test_application_actor_runtime import _FakeAgentRuntime, _principal, _runtime
-from test_gateway_runtime_host import _FakeServer, _environment
-
-
 _LARGE_PNG_BYTES = 3_755_181
 
 
@@ -47,6 +43,9 @@ def _large_png() -> bytes:
 
 
 def _production_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from test_application_actor_runtime import _FakeAgentRuntime, _runtime
+    from test_gateway_runtime_host import _FakeServer, _environment
+
     config = _runtime(tmp_path)
     config.gateway, config.channels = GatewaySpec(), ChannelsSpec(qq=QQChannelSpec())
     config.spec.workspace = WorkspaceSpec()
@@ -72,6 +71,8 @@ def _production_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def test_large_image_through_production_gateway_is_delivered_and_persisted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A valid >1 MiB image reaches OneBot, receives an acknowledgement, and survives a state-store reopen."""
+    from test_application_actor_runtime import _principal
+
     host, agent, connection = _production_host(tmp_path, monkeypatch)
     image_bytes = _large_png()
     encoded = base64.b64encode(image_bytes).decode("ascii")

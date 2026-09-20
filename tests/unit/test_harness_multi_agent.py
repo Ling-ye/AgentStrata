@@ -41,6 +41,8 @@ def test_host_advances_without_repeated_main_calls(repair):
     assert result["accepted_candidate"]["candidate_digest"] == result["verified_digest"]
     assert len(store.attempts(ident)) == 2
     assert result["source_index_ref"]["kind"] == "source_index"
+    plan_input = next(evidence for role, evidence in roles.evidence if role == Role.PLAN)
+    assert plan_input["source"]["runtime_entrypoint"] == "src/chatcopilot/gateway/runtime.py"
     assert store.attempts(ident)[0]["failure_brief"]["kind"] == "failure_brief"
     retry = [evidence for role, evidence in roles.evidence if role == Role.CODING][1]
     assert retry["failure_brief"]["recommended_role"] == "coding"
@@ -54,13 +56,57 @@ def test_test_definition_retry_does_not_rewrite_product(repair):
         def prepare(self, *args):
             self.calls += 1
             if self.calls == 1:
-                raise HarnessError("test_definition", "bad fixture")
+                error = HarnessError("verification_test_definition", "bad fixture")
+                error.evidence = {"phase": "definition", "result": {"rows": {
+                    "test_target": {"outcome": "failed", "message": "KeyError: 'failure_category'"}}, "errors": []}}
+                raise error
             return super().prepare(*args)
     roles = Roles()
     result = run_task(store, ident, BadFirstDefinition(), roles)
     assert result["status"] == "fixed", result
     assert roles.roles.count(Role.CODING) == roles.roles.count(Role.MAIN) == 1
     assert roles.roles.count(Role.TEST) == 2
+    retry = [evidence for role, evidence in roles.evidence if role == Role.TEST][1]
+    brief = retry["failure_brief"]
+    assert brief["failed_checks"] == ["test_target"]
+    assert brief["diagnostics"] == [{"check": "test_target", "text": "KeyError: 'failure_category'"}]
+    assert brief["evidence_refs"][0]["kind"] == "verification_error"
+    artifacts = ArtifactRepository(store.root / "jobs" / ident)
+    assert artifacts.read(brief["evidence_refs"][0])["result"]["rows"]["test_target"]["outcome"] == "failed"
+
+
+def test_repair_feedback_remains_visible_when_original_navigation_is_omitted(repair):
+    from chatcopilot.harness.evidence_context import evidence_index
+    store, ident, _ = repair
+    feedback = {"repair_hint": "Check the actual Gateway outbox before changing the transport."}
+    store.update(ident, source={**store.get(ident)["source"], "feedback": feedback, "extra_notes": "x" * 4000})
+    roles = Roles()
+    result = run_task(store, ident, Verifier(), roles)
+    assert result["status"] == "fixed", result
+    for role, evidence in roles.evidence:
+        if role not in {Role.PLAN, Role.CODING, Role.TEST}:
+            continue
+        context = evidence_index(evidence, stage="prepare" if role != Role.CODING else "repair")
+        assert "original_source" in context["omitted_sections"]
+        assert context["inline_sections"]["feedback"] == feedback
+
+
+def test_continuation_exposes_prior_draft_without_reusing_old_acceptance(repair):
+    from chatcopilot.harness.evidence_context import evidence_index
+    store, ident, _ = repair
+    material = {"test": "# previous draft\n" * 1000, "checks": [{"rows": {"old": {"outcome": "passed"}}}]}
+    store.update(ident, prior_material=material, prior_evaluations={"verify-1": {"complete": True, "passed_cases": ["target"]}})
+    light = store.control_state(ident)
+    assert "prior_material" not in light and "prior_evaluations" not in light
+    assert {"prior_material", "prior_evaluations"}.issubset(light["artifact_fields"])
+    roles, verifier = Roles(), Verifier()
+    result = run_task(store, ident, verifier, roles)
+    assert result["status"] == "fixed", result
+    assert roles.calls == 1 and len(verifier.paths) == 2
+    supplied = next(evidence for role, evidence in roles.evidence if role == Role.TEST)
+    reference = evidence_index(supplied, stage="prepare")["inline_sections"]["prior_validation"]
+    assert reference["sections"]["test"]["pointer"] == "/test"
+    assert reference["sha256"] == light["artifact_fields"]["prior_material"]["sha256"]
 
 
 def test_invalid_test_first_still_retains_exploratory_candidate(repair):
@@ -177,13 +223,28 @@ def test_local_tool_warnings_are_notes_not_new_acceptance_goals(repair):
     assert result["verification_gaps"] == []
 
 
-@pytest.mark.parametrize("code", ["unverified", "permission_missing"])
+@pytest.mark.parametrize("code", ["fixture_missing", "material_missing", "permission_missing"])
 def test_passing_checks_cannot_erase_reported_acceptance_gaps(repair, code):
     from test_harness_repair_v2 import proposal
     store, ident, _ = repair
     roles = Roles(proposed=proposal(gaps=[{"requirement": "expected_behavior", "code": code, "message": "needs evidence"}]))
     result = run_task(store, ident, Verifier(), roles)
     assert result["status"] == "needs_review", result
+
+
+@pytest.mark.parametrize("role", [Role.CODING, Role.TEST])
+@pytest.mark.parametrize("governance", [False, True])
+def test_pending_host_verification_is_not_a_role_prerequisite_gap(role, governance):
+    from chatcopilot.harness.agent_types import role_result
+    from test_harness_repair_v2 import proposal
+    gap = {"requirement": "expected_behavior", "code": "unverified", "message": "awaiting host checks"}
+    payload = ({"summary": "candidate ready", "notes": [], "needs_replan": False, "gaps": [gap]}
+               if role == Role.CODING else proposal(gaps=[gap]))
+    with pytest.raises(HarnessError, match="完整结构化产物"):
+        role_result(role, payload, governance=governance)
+    payload["gaps"] = []
+    payload["notes"] = ["awaiting host checks"]
+    assert role_result(role, payload, governance=governance)["notes"] == ["awaiting host checks"]
 
 
 def test_partial_check_progress_allows_the_third_round(repair):
@@ -202,3 +263,33 @@ def test_partial_check_progress_allows_the_third_round(repair):
     result = run_task(store, ident, TwoChecks(), roles)
     assert result["status"] == "fixed", result
     assert roles.calls == 3
+
+
+@pytest.mark.parametrize("improves", [True, False])
+def test_draft_progress_uses_valid_behavior_checks_not_changing_filenames(repair, improves):
+    store, ident, _ = repair
+
+    class DraftVerifier(Verifier):
+        calls = 0
+
+        def prepare(self, *args):
+            self.calls += 1
+            if self.calls < 3:
+                error = HarnessError("verification_test_definition", "draft still has an invalid check")
+                prefix = f"tests/unit/harness_regressions/test_{self.calls}.py::"
+                error.evidence = {"result": {"rows": {
+                    prefix + "test_control": {"outcome": "passed"},
+                    prefix + "test_primary": {"outcome": "failed", "assertion_failure": improves and self.calls == 2},
+                    prefix + "test_auxiliary": {"outcome": "failed", "exception_chain": [{"type": "KeyError"}]}}}}
+                raise error
+            return super().prepare(*args)
+
+    roles = Roles()
+    result = run_task(store, ident, DraftVerifier(), roles)
+    assert result["status"] == ("fixed" if improves else "blocked"), result
+    assert roles.roles.count(Role.CODING) == 1
+    assert roles.roles.count(Role.TEST) == (3 if improves else 2)
+    assert store.attempts(ident)[0]["valid_definition_checks"] == ["test_control"]
+    assert store.attempts(ident)[1]["valid_definition_checks"] == (["test_control", "test_primary"] if improves else ["test_control"])
+    if not improves:
+        assert result["error_code"] == "no_progress"

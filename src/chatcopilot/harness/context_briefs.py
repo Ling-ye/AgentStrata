@@ -56,7 +56,10 @@ def _path_name(value: str) -> str:
 
 
 def _seed_values(source: dict[str, Any], manifest: dict[str, Any], failure: dict[str, Any] | None) -> tuple[list[dict[str, str]], set[str], int]:
-    values = _strings(source)
+    # Configuration projections can exhaust the bounded walk before the user's
+    # repair clue or the known runtime entrypoint is reached.
+    values = _strings({key: source[key] for key in ("feedback", "original_input", "runtime_entrypoint") if key in source})
+    values.extend(_strings(source))
     if failure:
         values.extend(_strings({key: failure.get(key) for key in ("failed_checks", "changed_paths", "diagnostics")}))
     explicit: set[str] = set()
@@ -255,6 +258,25 @@ def build_failure_brief(*, attempt: dict[str, Any], stage: str, code: str, messa
                 diagnostic_count += 1
                 if len(diagnostics) < 4:
                     diagnostics.append({"check": str(row.get("name", "unknown")), "text": _clip(diagnostic, 800)})
+    # Draft preparation can fail before a VerificationPlan exists. Preserve its
+    # actual pytest diagnostics so the next Test turn can correct the definition.
+    from chatcopilot.harness.config import safe_error
+    trial = (evidence or {}).get("result") or {}
+    for name, row in trial.get("rows", {}).items():
+        if row.get("outcome") == "passed":
+            passed.append(name)
+            continue
+        failed.append(name)
+        diagnostic = str(row.get("message") or row.get("exception_chain") or row.get("outcome", ""))
+        if diagnostic:
+            diagnostic_count += 1
+            if len(diagnostics) < 4:
+                diagnostics.append({"check": name, "text": _clip(safe_error(Exception(diagnostic)), 800)})
+    for diagnostic in trial.get("errors", []):
+        failed.append("pytest_collection")
+        diagnostic_count += 1
+        if len(diagnostics) < 4:
+            diagnostics.append({"check": "pytest_collection", "text": _clip(safe_error(Exception(str(diagnostic))), 800)})
     if evidence_ref:
         refs.append({key: evidence_ref[key] for key in ("kind", "path", "sha256", "revision") if key in evidence_ref})
     failed_rows, failed_omitted = _unique(failed, 8)

@@ -129,12 +129,19 @@ class LocalVerifier:
             prepared.update(target_id="local-pytest", case_id="reproduction", passed_cases=[], repetitions=1,
                 test_path=str(frozen), test_sha256=sha,
                 test_relative_path=f"tests/unit/harness_regressions/test_{sha}.py")
-            trial = self._pytest({**task, "source": prepared}, worktree, [prepared["test_relative_path"]], check_cancel)
+            trial = self._pytest({**task, "source": prepared}, worktree, [prepared["test_relative_path"]], check_cancel,
+                                 lint_paths=[prepared["test_relative_path"]])
             if not trial["collected"] or set(trial["collected"]) != set(trial["rows"]):
-                raise HarnessError("test_definition", "测试未完整收集和执行")
+                error = HarnessError("test_definition", "测试未完整收集和执行")
+                error.evidence = {"phase": "definition", "result": trial,
+                                  "evidence_directory": trial.get("evidence_directory", "")}
+                raise error
             invalid = [classify(row) for row in trial["rows"].values() if classify(row) not in {"", "product"}]
             if invalid:
-                raise HarnessError("verification_" + invalid[0], "基线测试未形成产品行为证据")
+                error = HarnessError("verification_" + invalid[0], "基线测试未形成产品行为证据")
+                error.evidence = {"phase": "definition", "result": trial,
+                                  "evidence_directory": trial.get("evidence_directory", "")}
+                raise error
             nodes = trial["collected"]
             ids = {name: "reproduction" if len(nodes) == 1 else
                    "reproduction-" + hashlib.sha256(name.split("::", 1)[-1].encode()).hexdigest()[:16] for name in nodes}
@@ -229,6 +236,8 @@ class LocalVerifier:
         commands = {"repository:" + name: [self.python, str(worktree / "scripts" / name)]
                     for name in ("check_architecture.py", "check_sdd_specs.py")
                     if (worktree / "scripts" / name).is_file()}
+        if (worktree / "pyproject.toml").is_file():
+            commands["repository:ruff"] = [self.python, "-I", "-m", "ruff", "check", "--no-cache", "."]
         for path in sorted((worktree / "bots").glob("*/bot.yaml")):
             commands["repository:" + path.relative_to(worktree).as_posix()] = [
                 self.python, "-m", "chatcopilot", "botspec", "validate", str(path)]
@@ -277,6 +286,7 @@ class LocalVerifier:
         collect: bool = False,
         selected: list[str] | None = None,
         manifest: dict[str, Any] | None = None,
+        lint_paths: list[str] | None = None,
     ) -> dict[str, Any]:
         output = private_directory(
             self.root / "jobs" / task["task_id"] / "checks" / uuid.uuid4().hex
@@ -316,7 +326,8 @@ class LocalVerifier:
         request = output / "request.json"
         request.write_text(
             json_text(
-                {"root": str(worktree), "paths": paths, "collect": collect, "selected": selected}
+                {"root": str(worktree), "paths": paths, "collect": collect, "selected": selected,
+                 "lint_paths": lint_paths}
             )
         )
         request.chmod(0o600)
@@ -346,6 +357,12 @@ class LocalVerifier:
         runtime_bindings += ["--setenv", "USER", os.environ.get("USER", "evaluation"),
                              "--setenv", "LOGNAME", os.environ.get("USER", "evaluation"),
                              "--setenv", "DEEPEVAL_TELEMETRY_OPT_OUT", "YES", "--setenv", "DO_NOT_TRACK", "1"]
+        # Match RepositoryChecks: full regression fixtures outgrow a small tmpfs.
+        command_tmp = private_directory(output / "tmp")
+        # Mount before the scoped paths, which may themselves live under /tmp.
+        temporary_mount = command.index("--tmpfs")
+        command[temporary_mount:temporary_mount + 2] = ["--bind", str(command_tmp), "/tmp"]
+        boundary = command.index("--")
         command[boundary:boundary] = [
             *runtime_bindings,
             "--unshare-net",
@@ -357,23 +374,26 @@ class LocalVerifier:
             "1",
         ]
         log = output / "pytest.log"
-        with log.open("xb") as stream:
-            process = subprocess.Popen(
-                command,
-                stdout=stream,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                env={"PATH": os.defpath},
-            )
-            try:
-                while process.poll() is None:
+        try:
+            with log.open("xb") as stream:
+                process = subprocess.Popen(
+                    command,
+                    stdout=stream,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    env={"PATH": os.defpath},
+                )
+                try:
+                    while process.poll() is None:
+                        check_cancel()
+                        time.sleep(0.2)
                     check_cancel()
-                    time.sleep(0.2)
-                check_cancel()
-            finally:
-                if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
+                finally:
+                    if process.poll() is None:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+        finally:
+            shutil.rmtree(command_tmp, ignore_errors=True)
         if not report.exists():
             raise HarnessError(
                 "test_runtime_unavailable",

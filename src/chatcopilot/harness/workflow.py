@@ -13,7 +13,7 @@ from chatcopilot.harness.task_budget import TaskBudget
 from chatcopilot.harness.flow_records import record_step
 from chatcopilot.harness.models import acceptance_digest, VerificationRequest, CandidateRef, Cancelled, HarnessError, RepairOptions, VerificationPlan, review_decision
 from chatcopilot.harness.config import safe_error
-from chatcopilot.harness.preparation import acceptance, require_purpose, verification_purpose
+from chatcopilot.harness.preparation import acceptance, classify, require_purpose, verification_purpose
 from chatcopilot.harness.repair_types import failure_signature
 from chatcopilot.harness.agent_types import AcceptedCandidate
 from chatcopilot.harness.artifact_repository import ArtifactRepository
@@ -24,8 +24,9 @@ from chatcopilot.harness.context_briefs import build_failure_brief
 
 def _passed_checks(attempt: dict[str, Any]) -> set[str]:
     """Count host-observed check progress even before a whole goal passes."""
-    return {f"{phase}:{check}" for phase in ("verification", "confirmation", "repository_regressions")
-            for check in (attempt.get(phase, {}).get("passed_cases") or ())}
+    return ({f"{phase}:{check}" for phase in ("verification", "confirmation", "repository_regressions")
+             for check in (attempt.get(phase, {}).get("passed_cases") or ())}
+            | {f"definition:{check}" for check in attempt.get("valid_definition_checks", ())})
 
 
 def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str, Any]:
@@ -316,6 +317,13 @@ def run_task(store, task_id, verifier, coder, *, workspace_factory) -> dict[str,
                 keys = sorted(k for k, row in attempt.get("acceptance_coverage", {}).items() if not row["passed"]) or [stage]
                 signature = failure_signature(stage, code, keys)
                 passed = sorted(k for k, row in attempt.get("acceptance_coverage", {}).items() if row["passed"])
+                if stage == "definition":
+                    rows = (getattr(exc, "evidence", None) or {}).get("result", {}).get("rows", {})
+                    # A corrected baseline assertion is new usable evidence,
+                    # even when another draft test still needs correction.
+                    # Ignore the content-addressed filename when comparing rounds.
+                    attempt["valid_definition_checks"] = sorted(
+                        name.split("::", 1)[-1] for name, row in rows.items() if classify(row) in {"", "product"})
                 current_checks = _passed_checks(attempt)
                 repeated = (previous or {}).get("signature") == signature and not current_checks - previous_checks
                 previous_checks = current_checks
