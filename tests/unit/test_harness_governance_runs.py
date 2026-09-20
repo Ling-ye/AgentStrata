@@ -41,7 +41,7 @@ class Tasks:
 
     def start(self, run, sequence, options):
         request = f"{run['run_id']}-{sequence}"
-        task, created = self.store.create({"task_id": "repair-" + request, "pipeline_version": 9,
+        task, created = self.store.create({"task_id": "repair-" + request, "pipeline_version": 10,
             "request_key": request, "request_digest": request, "context_key": "repository", "match_key": request,
             "active_key": request, "source": {"kind": "code_health"}, "options": asdict(options),
             "repository": run["repository"], "base_commit": self.main, "unit": request,

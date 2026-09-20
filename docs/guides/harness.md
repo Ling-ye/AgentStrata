@@ -41,7 +41,7 @@ python -m chatcopilot.harness resume <repair-id>
 取消显示「取消中」时，不代表进程已经停止；存活未知或外部测评尚未确认结束时保留任务占用，
 排除运行环境故障后再次取消或核对即可。恢复与接续会先确认原执行停止。
 交付复测中的取消显示在交付状态中，保留原修复结果；外部测评确认结束前，不释放占用或清理工作区。
-升级到 pipeline 9 时通过现有维护流程切换宿主，之后创建新任务；旧记录只读，不迁移或恢复旧冻结 worker。
+升级到 pipeline 10 时通过现有维护流程切换宿主，之后创建新任务；旧任务按显式授权清空，不迁移或恢复旧冻结 worker。
 
 创建时可设置 `--max-attempts`（默认三个完整修复轮次）、`--timeout-seconds`（默认 3600）、
 `--reasoning-effort` 和稳定 `--request-id`。继续使用原冻结代码和剩余预算；编程阶段
@@ -104,9 +104,9 @@ pytest 在无网络、无实例状态或凭据的隔离副本中执行。Agent C
 页面加载机器人任务后，可填写「修复提示」和「参考答案／预期行为」。前者提供待验证
 的调查线索，后者记录你希望得到的答案或行为，可附解释与来源线索，默认允许语义等价。
 两项均可留空；切换来源会清空，提交失败保留。内容在修复详情及来源证据中可查，
-启动后固定；更正时重新发起任务，不沿用旧参考答案下的候选验收结论。pipeline 9 的
+启动后固定；更正时重新发起任务，不沿用旧参考答案下的候选验收结论。pipeline 10 的
 「接续修复（累计预算）」沿用来源与剩余额度，恢复前核对会话、源码、环境与外部执行身份；
-未知执行不重复派发。旧 pipeline 记录和冻结 worker 只读保留，使用原来源重新发起任务。
+未知执行不重复派发。旧 pipeline 记录在维护切换时清空，使用原来源重新发起任务。
 补图 API 为 `POST /api/harness/tasks/{task_id}/image`（原始图片字节），接续入口为
 `POST /api/harness/tasks/{task_id}/continue`；均沿用本机同源操作边界。
 API 的机器人任务请求可携带 `feedback.repair_hint`、`feedback.expected_behavior`，
@@ -129,7 +129,7 @@ python -m chatcopilot.harness list --page 2 --search <source-id> --status blocke
 
 新任务统一进行独立审核、公开边界与秘密检查，然后提交和普通推送任务分支、创建目标为 main 的
 正式 PR，启用 squash 自动合并。旧 `--review-and-commit` / `review_and_commit` 不再接受。
-历史任务、旧补丁和旧 worktree 只读保留，不自动续跑或发布。
+当前协议的历史证据按交付归档规则保留，不自动续跑或发布；旧协议的显式清空见下文[一次性维护切换](#一次性维护切换)。
 
 机器人复现测试从生成时就采用离线合成数据，在隔离副本按最终回归路径执行，并在
 审核批准后原样收录到 `tests/unit/harness_regressions/`；完整 pytest / CI 和后续
@@ -200,7 +200,7 @@ worker 凭据目录，不自动继承机器人的 `local.env`。Console 安装�
 ## 一次性维护切换
 
 先安装新代码，停止旧任务并完成旧 PR 的合并或关闭；不会自动停止任务或关闭 PR。
-检查并归档旧协议记录：
+先检查清理清单，再显式清空旧协议记录和任务产物：
 
 ```bash
 python -m chatcopilot.harness cutover
@@ -208,7 +208,7 @@ python -m chatcopilot.harness cutover --apply
 ```
 
 命令在 Harness 维护锁内确认 worker 与外部执行已停止，实际切换期间持有 Evaluation
-维护租约。归档包含一致性数据库和工作区源码/Git bundle；旧任务证据目录保留原位。
+维护租约。删除旧任务、批次、产物、归档和专属 worktree；不保留旧数据。原始机器人观测、独立 Evaluation 数据和人工工作区保留。
 任何存活、PR 或来源身份未知都会停止切换。新任务存在时拒绝再次清空。
 
 worker 使用冻结 uv.lock 创建任务专用依赖环境。uv 不在 PATH 且 WSL 安装目录存在

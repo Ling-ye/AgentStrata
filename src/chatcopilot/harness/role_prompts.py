@@ -10,6 +10,7 @@ COMMON = (
     "不得提交、推送、发布、调用其他 Agent 或自行运行返修循环。需要重新分工时报告宿主。"
     "不得模拟最终回答、硬编码题目答案或把环境故障改成产品断言。"
     "不运行全套 fast/full 或自行启动商用模型测评；正式执行与判定由宿主完成。"
+    "故障修复作用域与三层验收要求以冻结 docs/reference/harness.md 为准；GC 仍遵循全仓治理规则。"
 )
 
 PROMPTS = {
@@ -22,7 +23,9 @@ PROMPTS = {
                "先使用 source_index；索引已经定位的内容不得重新全仓搜索。不要重新读取完整 AGENTS、全部黄金原则或全部 SDD。"
                "补充检索一次只查具体模式和领域，使用结果上限（如 rg -n -m 20），不要串联输出多份完整文档、测试或日志。"
                "返修先使用 failure_brief.diagnostics，摘要不足时才按精确引用读取对应片段。"
-               "已有冻结测评使用 existing；需新测试可选 test_first；已有明确证据可选 code_first，允许先探索候选。"
+               "故障修复必须准备目标相关的三层回放，可选 test_first 或 code_first；原测评由宿主额外保留。"
+               "收到 rediagnosis 时是本任务唯一一次重诊断；引用失败结果产物路径及实际 JSON pointer，说明不同的具体 changes，"
+               "输出 next_role=coding 或 test。没有新依据返回 blocked，不能仅改写结论或要求再试一次。"
                "输出图片任务声明 image_delivery，输入原图与输出图片交付是不同要求。"
                "不编造预期、不扩大目标。通常 decision=proceed，待验证假设写 unresolved 并交后续测试验证。"
                "尚未完成复现或尚未发现额外调用方不构成阻塞。只有缺必要材料、权限或必须人工确定契约时"
@@ -42,7 +45,9 @@ PROMPTS = {
                "原始失败点名具体本地验证器且当前环境可用时，草案必须实际调用该验证器，不能只写字符串近似断言或把执行推给宿主说明。"
                "Agent Case 使用 agentstrata.agent-case/v1，原始输入、声明工具、受信 fixtures、expected_behavior；"
                "开放语义用 semantic=true，断言使用 Evaluation capabilities 支持的类型。参考答案不得进入 input/context。"
-               "verification_kind 是 pytest/agent/mixed/existing。coverage 的 requirement 使用 acceptance.items[].id，"
+               "故障修复 verification_kind 必须为 agent/mixed，GC 才可 pytest/existing。三层入口由宿主绑定。"
+               "不向 context 添加原来源不存在的图片 URL、搜索结果或历史；搜索须走真实工具和 HTTP fixture。"
+               "coverage 的 requirement 使用 acceptance.items[].id，"
                "checks 使用 pytest 函数名、agent_case 或原 Case ID。mixed 必须提供两份草案。"
                "需要原图时只使用宿主提供资源；输出图片要求验证真实发送链路和回执。"
                "无法覆盖 acceptance.items 的目标才列 gaps，requirement 必须使用对应目标 id。"

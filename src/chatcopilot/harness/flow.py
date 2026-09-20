@@ -230,7 +230,7 @@ def step_detail(task: dict[str, Any], attempts: list[dict[str, Any]], step_id: s
         binding = record.get("source", {}).get("flow_step_id")
         if binding == step_id or (not binding and expected and record.get("directory") == expected):
             traces.append({k: v for k, v in record.items() if k != "directory"})
-    return {"id": step_id, "status": row["status"], "input": row.get("input"),
+    return {"id": step_id, "attempt": row.get("attempt"), "status": row["status"], "input": row.get("input"),
             "input_truncated": row.get("input_truncated", False), "conclusion": row["conclusion"],
             "evidence": row.get("evidence"), "result": _without_commands(value), "traces": traces,
             "source_id": row.get("source_id"), "detail_state": "available" if value is not None else "pending" if row["status"] == "running" else "not_recorded"}

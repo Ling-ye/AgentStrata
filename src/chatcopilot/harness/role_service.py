@@ -77,9 +77,12 @@ class RoleWorkflow:
         governance = original.get("kind") == "code_health"
         # Robot-task evidence is ingested from Gateway observations. The legacy
         # ACP adapter is not the execution entrypoint for this source kind.
-        runtime_entrypoint = "src/chatcopilot/gateway/runtime.py" if original.get("kind") == "robot_task" else ""
+        runtime_entrypoint = "src/chatcopilot/gateway/runtime.py" if not governance else ""
         plan = self._read("plan")
         route = retry_role(previous["stage"], previous["code"]) if previous else Role.MAIN
+        rediagnosis = bool(previous and previous.get("rediagnosis"))
+        if rediagnosis:
+            route = Role.PLAN
         if not plan:
             route = Role.MAIN
         failure = None
@@ -115,6 +118,10 @@ class RoleWorkflow:
                 evidence["frozen_finding"] = self.artifacts.read(task["frozen_finding"])
         if failure:
             evidence.update(failure_brief=failure, failure_brief_ref=previous.get("brief_ref") if previous else None)
+        if rediagnosis:
+            evidence["rediagnosis"] = {"previous_plan": plan,
+                "instruction": "本任务唯一一次无进展重诊断。引用失败结果产物及 JSON pointer，说明原假设或验证缺口，"
+                               "给出不同的具体 changes 和 next_role=coding/test；无新依据返回 blocked。"}
         if index_ref:
             evidence.update(source_index=index, source_index_ref=asdict(index_ref))
         if route == Role.MAIN:
@@ -126,7 +133,31 @@ class RoleWorkflow:
                 raise HarnessError("invalid_role_result", "主 Agent 选择了当前不允许的步骤")
             route = Role(action["next_role"])
         if route == Role.PLAN:
+            prior_plan = plan
             plan = self.call(Role.PLAN, root, number, "自主调查仓库并选择一个代码熵问题" if governance else "定位根因并提出最小修复", evidence, options, cancel)
+            if rediagnosis:
+                result_paths = [ref["path"] for ref in (failure or {}).get("evidence_refs", []) if ref.get("sha256")]
+                references = plan["evidence_refs"]
+                bound = False
+                for ref in (failure or {}).get("evidence_refs", []):
+                    if not ref.get("sha256"):
+                        continue
+                    for reference in references:
+                        if not reference.startswith(ref["path"] + "#/"):
+                            continue
+                        try:
+                            body = self.artifacts.read(ref)
+                            for part in reference.split("#", 1)[1].lstrip("/").split("/"):
+                                part = part.replace("~1", "/").replace("~0", "~")
+                                body = body[int(part)] if isinstance(body, list) else body[part]
+                            bound = True
+                        except (KeyError, IndexError, ValueError, TypeError):
+                            continue
+                if (plan["decision"] != "proceed" or not result_paths or not bound
+                        or plan["changes"] == (prior_plan or {}).get("changes")
+                        or not plan["changes"] or plan.get("next_role") not in {"coding", "test"}):
+                    raise HarnessError("no_progress", "重诊断未提供绑定失败证据的新修正行动")
+                route = Role(plan["next_role"])
             if plan["decision"] == "blocked" and not governance:
                 raise HarnessError("plan_blocked", "；".join(plan["unresolved"]))
         if governance:
@@ -157,7 +188,7 @@ class RoleWorkflow:
         self.store.update(self.task_id, acceptance=requirements, goal_capabilities=goal_capabilities,
                           hypothesis=asdict(RepairHypothesis(plan["summary"], requirements["original"], tuple(plan["evidence_refs"]))))
         evidence["acceptance"] = requirements
-        existing = original.get("kind", "evaluation") == "evaluation" or governance and plan["verification_order"] == "existing"
+        existing = governance and plan["verification_order"] == "existing"
         test = self._read("test")
         needs_test = not existing and (not test or route in {Role.TEST, Role.PLAN})
         coding = self._read("coding") or {"gaps": []}

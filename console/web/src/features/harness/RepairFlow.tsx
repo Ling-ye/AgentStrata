@@ -41,6 +41,18 @@ function StepBody({ taskId, step, active, commands }: { taskId: string; step: Fl
   if (query.isError) return <Alert type="error" content={String(query.error)} action={<Button onClick={() => void query.refetch()}>重试</Button>} />;
   const data = query.data;
   return <div className="repair-step-body">
+    {!!data.verification_comparison?.length && <section aria-label="验收结果对比"><h4>验收结果对比</h4>
+      <Text type="secondary">逐次通过数用于解释结果；完整验收以宿主结论为准。</Text>
+      <div style={{ overflowX: "auto" }}><table className="repair-check-comparison"><thead><tr><th>检查</th><th>基线</th><th>上一轮</th><th>本轮</th></tr></thead>
+        <tbody>{data.verification_comparison.map(row => <tr key={row.check}><td>{row.check}
+          {row.execution_summaries?.map(summary => <div key={summary}><Text type="secondary">{summary}</Text></div>)}</td>
+          {(["baseline", "previous", "candidate"] as const).map(key => <td key={key}>{row[key] ? `${row[key].passed}/${row[key].total}` : "未记录"}</td>)}</tr>)}</tbody></table></div></section>}
+    {data.failure_brief && <section aria-label="失败与返工依据"><h4>失败与返工依据</h4>
+      <p>{data.failure_brief.message}</p><p>{data.failure_brief.recommended_role === "stop" ? "宿主决定停止" : `下一角色：${data.failure_brief.recommended_role}`} · {data.failure_brief.retry_reason}</p>
+      <ul className="repair-failure-diagnostics">{data.failure_brief.diagnostics.map((row, index) => <li key={index}>
+        <Text type="secondary">{row.check}</Text><p>{row.text}</p></li>)}</ul>
+      {data.failure_brief.limits.truncated && <Text type="secondary">摘要已裁剪，完整证据见引用。</Text>}
+      <details><summary>完整验证结果引用</summary><StructuredData value={data.failure_brief.evidence_refs} /></details></section>}
     <div className="repair-step-columns"><section><h4>输入</h4><DetailScope id="input"><StructuredData value={data.input ?? undefined} missingLabel="此步骤的输入未记录" /></DetailScope>
       {data.input_truncated && <Alert type="warning" content="关键输入保存时已有截断，以下内容并非完整输入。" />}</section>
       <section><h4>结论</h4><p>{data.conclusion}</p><h4>依据与结果</h4><DetailScope id="result"><StructuredData value={data.result ?? data.evidence ?? undefined}

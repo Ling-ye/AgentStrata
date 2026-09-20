@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 
-PIPELINE_VERSION = 9
+PIPELINE_VERSION = 10
 
 ACTIVE = frozenset({"queued", "running", "cancel_requested"})
 TERMINAL = frozenset({"fixed", "needs_review", "no_changes", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})

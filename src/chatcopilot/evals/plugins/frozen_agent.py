@@ -23,6 +23,8 @@ def preflight(*, cases):
 def open_case(case, *, bot, workspace_root, options):
     from chatcopilot.evals.frozen_agent_runtime import run
     from chatcopilot.evals.frozen_agent_scoring import score
+    if case.metadata["agent_case"].get("runtime_replay"):
+        from chatcopilot.evals.gateway_replay import run
     observation = run(case, bot=bot, workspace_root=workspace_root)
     yield PreparedCase(observation, lambda: score(case, observation))
 

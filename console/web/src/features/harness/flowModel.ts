@@ -11,6 +11,8 @@ export interface StepDetail {
   id: string; status: string; input: unknown; conclusion: string; evidence: unknown; result: unknown;
   detail_state: string; input_truncated: boolean; context_metrics?: unknown;
   traces: Array<{ trace_ref: string; capture_state: string }>;
+  failure_brief?: { message: string; recommended_role: string; retry_reason: string; diagnostics: Array<{ check: string; text: string }>; evidence_refs: unknown[]; limits: { truncated: boolean } };
+  verification_comparison?: Array<{ check: string; execution_summaries?: string[]; baseline?: { passed: number; total: number }; previous?: { passed: number; total: number }; candidate?: { passed: number; total: number } }>;
 }
 export interface CommandSource { id: string; kind: string; number: number | null; current: boolean; label?: string }
 export interface CommandEvent { id: string; command: string; aggregated_output?: string; exit_code?: number | null; truncated: boolean }

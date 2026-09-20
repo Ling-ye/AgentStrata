@@ -49,6 +49,8 @@ from .protocol import (
     StaticGatewayCredentialAuthority,
 )
 from chatcopilot.channels.qq_onebot.resources import QqCdnResourceFetcher
+from chatcopilot.channels.qq_onebot.driver import ConnectionFactory
+from chatcopilot.contracts.resources import ResourceFetcherPort
 from .server import (
     GatewayClientContext,
     GatewayDispatchError,
@@ -573,6 +575,8 @@ def build_gateway_runtime_host(
     runtime: BotRuntimeContext,
     *,
     environ: Mapping[str, str] | None = None,
+    onebot_connection_factory: ConnectionFactory | None = None,
+    resource_fetcher: ResourceFetcherPort | None = None,
 ) -> GatewayRuntimeHost:
     """Materialize one production host without opening either external listener."""
 
@@ -668,7 +672,7 @@ def build_gateway_runtime_host(
             file_sender_factory=file_sender_factory,
         )
         actor_executor = ActorTurnExecutor(actor_factory, resource_materializer=ResourceMaterializationService(
-            QqCdnResourceFetcher()))
+            resource_fetcher if resource_fetcher is not None else QqCdnResourceFetcher()))
         coordinator = GatewayTurnCoordinator(
             state_store=state_store,
             sessions=sessions,
@@ -692,8 +696,8 @@ def build_gateway_runtime_host(
             writer_generation=generation,
         )
         driver: ChannelDriver = OneBotForwardWebSocketDriver(
-            config.onebot,
-            channel_runtime.handle_inbound,
+            config.onebot, channel_runtime.handle_inbound,
+            **({"connection_factory": onebot_connection_factory} if onebot_connection_factory is not None else {}),
         )
         channel_runtime.register(driver)
         coordinator.set_channel_runtime(channel_runtime)

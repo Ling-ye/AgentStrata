@@ -40,7 +40,7 @@ def repair(tmp_path):
     store = HarnessStore(tmp_path / "private")
     ident = "repair-" + "a" * 32
     source = {"kind": "robot_task", "original_input": "Return one", "bot_id": "fixture"}
-    store.create({"task_id": ident, "pipeline_version": 9, "request_key": "request", "request_digest": "req",
+    store.create({"task_id": ident, "pipeline_version": 10, "request_key": "request", "request_digest": "req",
                   "match_key": "match", "context_key": "context", "active_key": "active", "source": source,
                   "repository": str(repo), "base_commit": git("rev-parse", "HEAD"), "options": asdict(RepairOptions("fixture"))})
     from chatcopilot.harness.artifact_repository import ArtifactRepository
@@ -159,9 +159,10 @@ def test_two_rounds_without_evidence_stop_before_third(repair):
     assert result["error_code"] == "no_progress", result
     assert coder.calls == 2
     feedback = store.attempts(ident)[-1]["feedback"]
-    assert set(feedback) == {"stage", "code", "message", "requirements", "passed_requirements", "signature", "brief_ref"}
+    assert set(feedback) == {"stage", "code", "message", "requirements", "passed_requirements", "signature", "brief_ref", "next_role", "retry_reason"}
+    assert feedback["next_role"] == "stop"
     brief = ArtifactRepository(store.root / "jobs" / ident).read(feedback["brief_ref"])
-    assert brief["recommended_role"] == "coding" and len(json_text(brief).encode()) <= 8192
+    assert brief["recommended_role"] == "stop" and len(json_text(brief).encode()) <= 8192
 
 
 def test_budget_is_cumulative_and_does_not_start_model(repair):

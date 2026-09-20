@@ -100,7 +100,7 @@ class RoleFixture:
             value = {'next_role': 'plan', 'summary': 'investigate cause', 'unresolved': []}
         elif call.role == Role.PLAN:
             value = {'decision': 'proceed', 'summary': 'controlled root cause', 'evidence_refs': ['source'], 'changes': ['product'],
-                     'verification_order': 'code_first', 'goal_capabilities': [], 'unresolved': []}
+                     'verification_order': 'code_first', 'goal_capabilities': [], 'unresolved': [], 'next_role': None}
         elif call.role == Role.CODING:
             result = self.run(root, evidence, options, output, cancel)
             self._role_submission = result.get('submission') or candidate_submission()['submission']

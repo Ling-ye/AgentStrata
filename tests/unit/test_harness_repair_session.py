@@ -57,6 +57,19 @@ def test_uncertain_acceptance_never_replays_a_turn(tmp_path, monkeypatch):
     assert state["state"] == "uncertain"
 
 
+def test_provider_turn_failure_is_an_environment_error(tmp_path, monkeypatch):
+    def reject(command, **kwargs):
+        kwargs["on_thread"]("rejected-schema")
+        kwargs["on_notification"]("turn/completed", {"threadId": "rejected-schema",
+            "turn": {"status": "failed", "error": {"message": "invalid_json_schema"}}})
+    monkeypatch.setattr(repair_session, "run_app_server", reject)
+    with pytest.raises(HarnessError) as error:
+        repair_session.run_session(["fixture"], root=tmp_path, home=private_directory(tmp_path / "home"),
+            environment={}, prompt="task", options=RepairOptions("fixture"), task_id="task", generation=1,
+            role=Role.PLAN, observe=lambda _: None, cancel=lambda: None)
+    assert error.value.code == "coding_environment"
+
+
 def test_resumed_thread_usage_is_turn_delta_not_last_request(tmp_path, monkeypatch):
     totals = iter([100, 250])
     observed = []

@@ -90,6 +90,27 @@ class ImageDeliveryFixture:
     def __enter__(self):
         if not self.enabled:
             return self
+        self.install_http()
+        try:
+            self.loop = asyncio.new_event_loop()
+            self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
+            self.thread.start()
+            asyncio.run_coroutine_threadsafe(self._start(), self.loop).result(timeout=5)
+            def dispatch(segments):
+                future = asyncio.run_coroutine_threadsafe(self._send(segments), self.loop)
+                try:
+                    return future.result(timeout=5)
+                except BaseException:
+                    future.cancel()
+                    raise
+            self.sender = create_file_sender(self.workspace, dispatch)
+            return self
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+
+    def install_http(self):
+        """Install only external HTTP boundaries, also used by Gateway replay."""
         responses = self.spec.get("http", {})
 
         class Connection:
@@ -120,23 +141,6 @@ class ImageDeliveryFixture:
         self.stack.enter_context(patch("chatcopilot.agent.tools.builtin.workspace.images._resolve_image_dns", resolve))
         self.stack.enter_context(patch("chatcopilot.agent.tools.builtin.workspace.images._PinnedHTTPConnection", Connection))
         self.stack.enter_context(patch("chatcopilot.agent.tools.builtin.workspace.images._PinnedHTTPSConnection", Connection))
-        try:
-            self.loop = asyncio.new_event_loop()
-            self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
-            self.thread.start()
-            asyncio.run_coroutine_threadsafe(self._start(), self.loop).result(timeout=5)
-            def dispatch(segments):
-                future = asyncio.run_coroutine_threadsafe(self._send(segments), self.loop)
-                try:
-                    return future.result(timeout=5)
-                except BaseException:
-                    future.cancel()
-                    raise
-            self.sender = create_file_sender(self.workspace, dispatch)
-            return self
-        except BaseException:
-            self.__exit__(None, None, None)
-            raise
 
     async def _start(self):
         self.connection = OneBotFixtureConnection(self.spec.get("delivery", "acknowledged"))

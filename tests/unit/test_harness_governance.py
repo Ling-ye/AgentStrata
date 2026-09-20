@@ -36,7 +36,7 @@ def governance(tmp_path):
     store = HarnessStore(tmp_path / "private")
     ident = "repair-" + "a" * 32
     source = {"kind": "code_health", "repository": str(repo), "original_input": GOAL}
-    store.create({"task_id": ident, "pipeline_version": 9, "request_key": "gc", "request_digest": "gc",
+    store.create({"task_id": ident, "pipeline_version": 10, "request_key": "gc", "request_digest": "gc",
                   "context_key": "repo", "match_key": "repo", "active_key": "gc", "source": source,
                   "repository": str(repo), "base_commit": git("rev-parse", "HEAD"),
                   "options": asdict(RepairOptions("fixture"))})

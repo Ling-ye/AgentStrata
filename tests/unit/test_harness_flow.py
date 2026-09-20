@@ -157,6 +157,32 @@ def test_step_detail_projects_context_metrics_without_private_source_index(store
     assert "candidates" not in json.dumps(detail["context_metrics"])
 
 
+def test_flow_detail_reads_same_failure_brief_as_next_role(store):
+    from chatcopilot.harness.context_briefs import build_failure_brief
+    artifacts = ArtifactRepository(store.root / "jobs/repair-example")
+    previous = {"number": 1, "status": "rejected", "verification": {"checks": [
+        {"check_id": "image", "outcome": outcome} for outcome in ("passed", "passed", "failed")]}}
+    attempt = {"number": 2, "status": "rejected", "verification": {"checks": [
+        {"check_id": "image", "outcome": "failed"} for _ in range(3)]},
+        "feedback": {"next_role": "plan", "retry_reason": "两轮无进展，重诊断一次"}}
+    brief = build_failure_brief(attempt=attempt, previous=previous, stage="verification", code="product_failure",
+                                message="图片未投递", signature="same")
+    reference = artifacts.put("failure_brief", 2, brief).__dict__
+    store.save_attempt("repair-example", 1, previous)
+    store.save_attempt("repair-example", 2, {**attempt, "failure_brief": reference})
+    with record_step(store, "repair-example", "verify-2", "复测", group="attempt-2", attempt=2,
+                     inputs={}, locator={"section": "attempts", "number": 2, "field": "verification"}):
+        ident = step_binding()["flow_step_id"]
+    controller = HarnessController.__new__(HarnessController)
+    controller.store = store
+    detail = controller.flow("repair-example", step_id=ident)
+    assert detail["failure_brief"] == artifacts.read(reference) == brief
+    assert detail["failure_brief"]["recommended_role"] == "plan"
+    assert detail["verification_comparison"] == brief["comparison"]
+    assert detail["verification_comparison"][0]["previous"] == {"passed": 2, "total": 3}
+    assert detail["verification_comparison"][0]["candidate"] == {"passed": 0, "total": 3}
+
+
 def test_retry_detail_does_not_read_later_evaluation_result(store):
     with record_step(store, "repair-example", "verify-1", "复测", group="attempt-1", inputs={},
                      locator={"section": "evaluations", "key": "verify-1"}):

@@ -107,7 +107,7 @@ def run_session(command, *, root: Path, home: Path, environment: dict[str, str],
             on_thread=thread, on_poll=cancel, output_schema=role_schema(role, governance=governance),
             developer_instructions=developer_instructions)
         if turn_status != "completed":
-            raise HarnessError("coding_failed", "修复会话未成功完成" + (": " + state["error"] if state.get("error") else ""))
+            raise HarnessError("coding_environment", "修复会话未成功完成" + (": " + state["error"] if state.get("error") else ""))
     except BaseException:
         state["state"] = "interrupted" if turn_status in {"completed", "failed", "interrupted"} else "uncertain"
         if not observed_thread and not state.get("accepted"):

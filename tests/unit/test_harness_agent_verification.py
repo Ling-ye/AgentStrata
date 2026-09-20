@@ -99,6 +99,29 @@ def test_trial_identity_and_failure_category_are_independent(tmp_path):
         result.require_valid(["x"], 3)
 
 
+def test_agent_only_replay_keeps_one_publishable_frozen_case(tmp_path):
+    from chatcopilot.harness.verification import CaseVerification
+    from chatcopilot.harness.local_commit import regression_refs
+    from chatcopilot.harness.preparation import acceptance
+    data = declaration(role="user", channel_kind="group")
+    output = private_directory(tmp_path / "output")
+    draft = private_directory(output / "draft")
+    (draft / "agent_case.json").write_text(json.dumps(data))
+    (draft / "agent_case.json").chmod(0o600)
+    source = {"kind": "robot_task", "bot_id": "fixture", "original_input": data["input"],
+              "case_id": "reproduction", "case_ids": ["reproduction"], "passed_cases": [], "repetitions": 1}
+    verifier = CaseVerification(FakeEvaluator(), LocalVerifier(tmp_path), SimpleNamespace())
+    prepared, plan = verifier.prepare({"task_id": "repair-fixture", "source": source, "acceptance": acceptance(source)},
+        CandidateRef(tmp_path, "candidate", "base"), output,
+        {"verification_kind": "agent", "summary": "replay", "coverage": [{"requirement": "expected_behavior", "checks": ["agent_case"]}]},
+        lambda: None)
+    assert prepared["agent_case"]["runtime_replay"]
+    assert "agent_source" not in prepared
+    assert plan.checks == (prepared["case_snapshot_id"],)
+    refs = regression_refs({"source": prepared})
+    assert len(refs) == 1 and refs[0]["kind"] == "agent_case"
+
+
 def test_case_registration_is_content_addressed_and_survives_restart(tmp_path):
     case = declaration()
     store = EvaluationResultStore(tmp_path)
@@ -307,7 +330,8 @@ def test_model_confirmation_failure_prevents_acceptance(repository, tmp_path):
             value = super().run(task, worktree, identifier, cases, check_cancel)
             rows = value["result"]["trials"]
             for case in cases:
-                rows.append({**next(row for row in rows if row["case_id"] == case), "attempt": 3})
+                if not any(row["case_id"] == case and row["attempt"] == 3 for row in rows):
+                    rows.append({**next(row for row in rows if row["case_id"] == case), "attempt": 3})
             if "confirm" in identifier:
                 for row in rows:
                     if row["case_id"] == "b":
@@ -318,6 +342,6 @@ def test_model_confirmation_failure_prevents_acceptance(repository, tmp_path):
     result = run_task(controller.store, identifier, evaluator, coder)
     assert result["status"] == "failed", result.get("message")
     assert result["verification_plan"]["repetitions"] == 3
-    assert result["evaluations"]["verify-1"]["passed_cases"] == ["a", "b"]
+    assert result["evaluations"]["verify-1"]["passed_cases"] == ["a", "b", result["source"]["agent_source"]["case_id"]]
     assert result["evaluations"]["confirm-1"]["failed_cases"] == ["b", "c"]
     assert not result.get("local_commit")

@@ -411,12 +411,11 @@ class HarnessController:
             return SystemdWorkerControl.maintenance(command, descriptor)
 
     def cutover(self, *, apply: bool = False):
-        from chatcopilot.harness.cutover_runtime import cutover
+        from chatcopilot.harness.cutover_runtime import cutover, _inventory
         from chatcopilot.harness.github_delivery import DeliveryConfig, GitHubDelivery
-        with self.store.database.connect() as connection:
-            remote = connection.execute("SELECT 1 FROM tasks WHERE json_extract(payload, '$.delivery.pr_number') IS NOT NULL LIMIT 1").fetchone()
+        remote = any(task.get("delivery", {}).get("pr_number") for task in _inventory(self.store)[0].values())
         client = GitHubDelivery(DeliveryConfig.load(self.settings)) if remote else None
-        return cutover(self.store, self.lifecycle.workers, self.evaluator, apply=apply, github=client)
+        return cutover(self.store, self.lifecycle.workers, self.evaluator, apply=apply, github=client, repository=self.repository)
 
     def get(self, task_id: str) -> dict[str, Any]:
         task = self.store.get(task_id)
@@ -463,6 +462,15 @@ class HarnessController:
         if not step_id:
             return project_flow(task, attempts)
         result = step_detail(task, attempts, step_id)
+        number = result.get("attempt")
+        attempt = next((row for row in attempts if row["number"] == number), {})
+        if attempt:
+            from chatcopilot.harness.artifact_repository import ArtifactRepository
+            from chatcopilot.harness.context_briefs import verification_comparison
+            previous = next((row for row in reversed(attempts) if row["number"] < number), None)
+            result["verification_comparison"] = verification_comparison(attempt, previous)
+            if attempt.get("failure_brief"):
+                result["failure_brief"] = ArtifactRepository(self.store.root / "jobs" / task_id).read(attempt["failure_brief"])
         ref = (result.get("evidence") or {}).get("output")
         if ref:
             from chatcopilot.harness.artifact_repository import ArtifactRepository

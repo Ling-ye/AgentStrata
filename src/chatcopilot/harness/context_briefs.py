@@ -237,19 +237,97 @@ def _unique(values: Iterable[Any], limit: int) -> tuple[list[str], int]:
     return rows[:limit], max(0, len(rows) - limit)
 
 
+def _execution_summary(execution: dict[str, Any]) -> str:
+    replay = execution.get("metadata", {}).get("runtime_replay")
+    if not replay:
+        return ("三层执行记录缺失；模型与投递边界未确认"
+                if execution.get("metadata", {}).get("case_source", {}).get("kind") == "agent_regression" else "")
+    labels = {"gateway": "Gateway", "application": "Application", "agent": "Agent"}
+    layers = replay.get("layers", [])
+    summary = " → ".join(labels.get(layer, layer) for layer in layers) or "未记录运行层"
+    if replay.get("admission") == "denied":
+        return summary + "；准入拒绝，后续未执行"
+    missing = [name for layer, name in labels.items() if layer not in layers]
+    if missing:
+        summary += "；缺少执行记录：" + ", ".join(missing)
+    models = sorted({event["model"] for event in execution.get("events", [])
+                     if event.get("type") == "LlmCallFinished" and event.get("model")})
+    summary += "；真实模型：" + ", ".join(models) if models else "；模型调用完成记录缺失"
+    return summary + "；模拟投递"
+
+
+def verification_comparison(attempt: dict[str, Any], previous: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Project recorded trials only; counts never participate in acceptance."""
+    grouped: dict[str, dict[str, Any]] = {}
+    for phase, result in (("baseline", attempt.get("reproduction", {})),
+                          ("previous", (previous or {}).get("verification", {})),
+                          ("candidate", attempt.get("verification", {}))):
+        for check in result.get("checks", []):
+            row = grouped.setdefault(check["check_id"], {"check": check["check_id"]})
+            counts = row.setdefault(phase, {"passed": 0, "total": 0})
+            counts["total"] += 1
+            counts["passed"] += check["outcome"] == "passed"
+            summary = _execution_summary(check.get("evidence", {}).get("execution", {}))
+            if phase == "candidate" and summary:
+                summaries = row.setdefault("execution_summaries", [])
+                if summary not in summaries:
+                    summaries.append(summary)
+    return list(grouped.values())
+
+
+def _trial_diagnostic(check: dict[str, Any]) -> str:
+    evidence = check.get("evidence") or {}
+    execution = evidence.get("execution") or {}
+    events = execution.get("events") or []
+    assertions = (evidence.get("assessment") or {}).get("evidence", {}).get("assertions", [])
+    failures = [str(row["assertion"]) for row in assertions if not row.get("passed")]
+    tools = sorted({name for event in events if event.get("type") == "ToolCatalogObserved"
+                    and event.get("phase") == "list_response_prepared" for name in event.get("tools", [])})
+    calls = [event.get("name", "") for event in events if event.get("type") == "ToolStarted"]
+    parts = []
+    if failures:
+        parts.append("失败断言：" + "; ".join(failures))
+    if tools:
+        parts.append("目录已返回：" + ", ".join(tools))
+    if events:
+        parts.append("实际工具调用：" + (", ".join(calls) or "未记录调用"))
+    summary = _execution_summary(execution)
+    if summary:
+        parts.append(summary)
+    detail = evidence.get("evidence") or {}
+    text = execution.get("final_text") or detail.get("message") or evidence.get("error")
+    if text:
+        parts.append(str(text))
+    return _clip("；".join(parts), 800)
+
+
 def build_failure_brief(*, attempt: dict[str, Any], stage: str, code: str, message: str, signature: str,
-                        evidence_ref: dict[str, Any] | None = None, evidence: dict[str, Any] | None = None) -> dict[str, Any]:
+                        evidence_ref: dict[str, Any] | None = None, evidence: dict[str, Any] | None = None,
+                        previous: dict[str, Any] | None = None) -> dict[str, Any]:
     failed: list[str] = []
     passed: list[str] = []
     diagnostics: list[dict[str, str]] = []
     diagnostic_count = 0
     refs: list[dict[str, Any]] = []
-    for phase in ("verification", "confirmation", "repository_regressions"):
+    phases = ("reproduction",) if stage == "baseline" else ("verification", "confirmation", "repository_regressions")
+    for phase in phases:
         row = attempt.get(phase) or {}
         failed.extend(row.get("failed_cases") or ())
         passed.extend(row.get("passed_cases") or ())
         if row.get("report"):
             refs.append({"kind": phase + "_report", "path": row["report"]})
+        if row.get("result_ref"):
+            refs.append(row["result_ref"])
+        for index, check in enumerate(row.get("checks", [])):
+            if check.get("outcome") == "passed":
+                continue
+            diagnostic = _trial_diagnostic(check)
+            diagnostic_count += 1
+            if len(diagnostics) < 4:
+                diagnostics.append({"check": check["check_id"], "repetition": check.get("repetition"),
+                    "text": diagnostic or "执行诊断未记录", "pointer": f"/checks/{index}",
+                    "result_ref": row.get("result_ref"),
+                    "evaluation_id": row.get("evaluation_id", "")})
     for row in (evidence or {}).get("checks", []):
         if row.get("exit_code"):
             failed.extend(row.get("failed_ids") or [row.get("name")])
@@ -284,19 +362,25 @@ def build_failure_brief(*, attempt: dict[str, Any], stage: str, code: str, messa
     paths, paths_omitted = _unique(attempt.get("changed_files") or (), 16)
     missing, missing_omitted = _unique((attempt.get("feedback") or {}).get("requirements") or [stage], 8)
     passed_req, passed_req_omitted = _unique((attempt.get("feedback") or {}).get("passed_requirements") or (), 8)
+    comparison = verification_comparison(attempt, previous)
     value = {
         "version": 1, "attempt": attempt.get("number"), "stage": stage, "code": code,
         "message": _clip(message, 1000), "signature": signature,
-        "recommended_role": retry_role(stage, code).value,
+        "recommended_role": (attempt.get("feedback") or {}).get("next_role") or retry_role(stage, code).value,
+        "retry_reason": _clip((attempt.get("feedback") or {}).get("retry_reason", message), 1000),
         "missing_requirements": missing, "passed_requirements": passed_req, "changed_paths": paths,
         "failed_checks": failed_rows, "passed_checks": passed_rows, "diagnostics": diagnostics,
-        "evidence_refs": refs,
+        "evidence_refs": refs, "comparison": comparison[:8],
         "omitted_counts": {"missing_requirements": missing_omitted, "passed_requirements": passed_req_omitted,
                            "changed_paths": paths_omitted, "failed_checks": failed_omitted,
-                           "passed_checks": passed_omitted, "diagnostics": max(0, diagnostic_count - len(diagnostics))},
+                           "passed_checks": passed_omitted, "diagnostics": max(0, diagnostic_count - len(diagnostics)),
+                           "comparison": max(0, len(comparison) - 8)},
         "limits": {"bytes": FAILURE_BRIEF_BYTES, "truncated": False},
     }
-    return _fit(value, limit=FAILURE_BRIEF_BYTES, removable=("diagnostics", "failed_checks", "passed_checks", "changed_paths"))
+    from chatcopilot.core.observability_redaction import redact_observability_payload
+    value = redact_observability_payload(value).value
+    return _fit(value, limit=FAILURE_BRIEF_BYTES,
+                removable=("changed_paths", "passed_checks", "comparison", "diagnostics", "failed_checks", "evidence_refs"))
 
 
 def build_target_context(target: dict[str, Any], rules: list[dict[str, Any]]) -> dict[str, Any]:

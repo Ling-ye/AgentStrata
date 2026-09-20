@@ -42,8 +42,8 @@ class ReviewedCoder(FakeCoder):
         check_cancel()
         self.reviews += 1
         assert "b" in evidence["reproduction"]["failed_cases"]
-        assert evidence["verification"]["target"]["passed_checks"] == ["a", "b"]
-        assert evidence["verification"]["confirmation"]["status"] == "not_required"
+        assert evidence["verification"]["target"]["passed_checks"] == sorted({"a", *evidence["verification"]["target"]["required_checks"]})
+        assert evidence["verification"]["confirmation"]["status"] == "passed"
         assert "harness_probe.py" in evidence["patch"]
         if self.change:
             self.change(worktree)
@@ -285,7 +285,9 @@ def test_robot_fix_and_identical_frozen_regression_share_one_commit(repository, 
     def repair(worktree, evidence, *args):
         assert evidence["source"]["feedback"] == feedback.to_payload()
         run(worktree, evidence, *args)
-        return candidate_submission()
+        value = candidate_submission()
+        value["submission"]["verification_kind"] = "mixed"
+        return value
 
     coder.run = repair
 
@@ -313,7 +315,7 @@ def test_robot_fix_and_identical_frozen_regression_share_one_commit(repository, 
     result = run_task(
         controller.store,
         task["task_id"],
-        Mock(),
+        FakeEvaluator(),
         coder,
         local_verifier=Verifier(),
         committer=publisher,

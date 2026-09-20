@@ -20,12 +20,10 @@ _AREAS = (
     "authorization",
     "botspec",
     "channels",
+    "contracts",
     "core",
     "external_tools",
     "gateway",
-    "harness",
-    "middleware",
-    "platforms",
     "protocols",
     "tool_packs",
 )
@@ -37,6 +35,7 @@ _FIXED_CORE = (
     "inspection.py",
     "candidate_configuration.py",
 )
+_FIXED_AUTHORITY = ("src/chatcopilot/authorization/policy.py", "src/chatcopilot/contracts/execution_scope.py")
 
 
 def writable_paths(root: Path, bot_id: str = "", *, governance: bool = False) -> tuple[Path, ...]:
@@ -61,7 +60,7 @@ def protected_paths(root: Path, bot_id: str = "", *, governance: bool = False) -
             and not any((root / name).is_relative_to(directory) for directory in directories))
     bot = root / "bots" / bot_id
     configuration = tuple(p for p in bot.iterdir() if p.name not in {"bot.yaml", "prompts"}) if bot_id and bot.is_dir() else ()
-    return configuration + tuple(
+    return configuration + tuple(root / name for name in _FIXED_AUTHORITY if (root / name).exists()) + tuple(
         root / "src" / "chatcopilot" / "core" / name
         for name in _FIXED_CORE
         if (root / "src" / "chatcopilot" / "core" / name).exists()
@@ -80,6 +79,7 @@ def permitted_change(name: str, bot_id: str | None = None, *, governance: bool =
         len(parts) > 3
         and parts[:2] == ("src", "chatcopilot")
         and parts[2] in _AREAS
+        and name not in _FIXED_AUTHORITY
         and not (parts[2] == "core" and parts[-1] in _FIXED_CORE)
     )
 

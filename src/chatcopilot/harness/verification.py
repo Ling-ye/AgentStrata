@@ -49,24 +49,38 @@ class CaseVerification:
         source = task["source"]
         if task.get("verification_plan"):
             return source, VerificationPlan.from_payload(task["verification_plan"])
-        if not source.get("test_sha256") and (source.get("kind", "evaluation") == "evaluation" or not source.get("case_snapshot_id")):
-            source = self.local_verifier.prepare(task, candidate.path, output, proposal, check_cancel)
-        real_agent = source.get("kind") == "evaluation" and source.get("executor") in {"agent_isolated", "agent_configured"}
-        if source.get("agent_case") and source.get("kind") == "robot_task" and not source.get("case_snapshot_id"):
-            prepare = getattr(self.evaluator, "prepare_agent_case")
-            agent_source = prepare(source, check_cancel)
-            source = {**source, "agent_source": agent_source} if source.get("test_sha256") else agent_source
-            real_agent = True
-        real_agent = real_agent or bool(source.get("case_snapshot_id"))
-        repetitions = max(3, source["repetitions"]) if real_agent else source["repetitions"]
-        primary = tuple(source.get("reproduction_ids") or (source["case_id"],))
-        checks = tuple(source["case_ids"])
-        repeat_map = {}
-        if source.get("agent_source"):
-            agent_ids = tuple(source["agent_source"]["case_ids"])
-            primary = (*primary, *agent_ids)
-            checks = (*checks, *agent_ids)
-            repeat_map = {name: 3 if name in agent_ids else 1 for name in checks}
+        governance = source.get("kind") == "code_health"
+        original = source if source.get("kind", "evaluation") == "evaluation" else None
+        if not governance and proposal.get("verification_kind") not in {"agent", "mixed"}:
+            raise HarnessError("test_definition", "故障修复必须提供目标相关的三层 Agent Case；局部 pytest 不能替代")
+        preparation_source = source
+        if not governance:
+            definition = source.get("case_definition", {})
+            preparation_source = {**source, "kind": "robot_task", "runtime_replay_required": True,
+                "original_input": source.get("original_input") or definition.get("input", "")}
+            if not preparation_source["original_input"]:
+                raise HarnessError("material_missing", "原始任务输入缺失，无法建立三层回放")
+        source = self.local_verifier.prepare({**task, "source": preparation_source}, candidate.path,
+                                             output, proposal, check_cancel)
+        if governance:
+            agent_ids = ()
+        else:
+            source["kind"] = original.get("kind", "evaluation") if original else "robot_task"
+            agent_source = self.evaluator.prepare_agent_case(source, check_cancel)
+            source = {**source, "agent_source": agent_source} if original or source.get("test_sha256") else agent_source
+            if original:
+                source["original_case_source"] = original
+            agent_ids = tuple(agent_source["case_ids"])
+        local_ids = tuple(source.get("reproduction_ids", ()))
+        original_ids = (original["case_id"],) if original else ()
+        primary = tuple(dict.fromkeys((*local_ids, *original_ids, *agent_ids)))
+        protected = tuple((original or source).get("passed_cases", ()))
+        local_checks = source.get("case_ids", ()) if source.get("test_sha256") else ()
+        checks = tuple(dict.fromkeys((*primary, *protected, *local_checks, *((original or {}).get("case_ids", ())))))
+        real_agent = not governance
+        repetitions = 3 if real_agent else 1
+        repeat_map = {name: 3 if name in agent_ids else
+                      int(original["repetitions"]) if original and name in original["case_ids"] else 1 for name in checks}
         coverage = {}
         declared = {row["requirement"]: row["checks"] for row in proposal["coverage"]}
         for item in (task.get("acceptance") or {}).get("items", []):
@@ -86,8 +100,10 @@ class CaseVerification:
                     elif name == "agent_case" and real_agent:
                         resolved.extend(agent_ids)
             coverage[item["id"]] = sorted(set(resolved)) if (item["verification"] != "agent" or real_agent) else []
-        plan = VerificationPlan(primary, checks, tuple(source["passed_cases"]),
-                                repetitions, real_agent, source.get("case_snapshot_id", ""), repeat_map, coverage)
+        if not governance:
+            coverage["expected_behavior"] = sorted(set(coverage.get("expected_behavior", [])) | set(agent_ids) | set(original_ids))
+        plan = VerificationPlan(primary, checks, protected,
+                                repetitions, real_agent, source.get("agent_source", source).get("case_snapshot_id", ""), repeat_map, coverage)
         if source.get("kind", "evaluation") == "evaluation":
             source = {key: value for key, value in source.items() if key not in {"diagnosis", "preparation"}}
         return source, plan
@@ -98,14 +114,24 @@ class CaseVerification:
         if source.get("agent_source"):
             agent_source = source["agent_source"]
             agent_ids = [name for name in checks if name in agent_source["case_ids"]]
-            local_ids = [name for name in checks if name not in agent_ids]
+            original = source.get("original_case_source")
+            original_ids = [name for name in checks if original and name in original["case_ids"]]
+            local_ids = [name for name in checks if name not in agent_ids and name not in original_ids]
             results = []
             if local_ids:
                 receipt = self.local_verifier.run(task, candidate.path, run_id + "-local", local_ids, check_cancel)
                 results.append(result_from_trials(receipt, "local-pytest", candidate))
-            if agent_ids:
-                receipt = self.evaluator.run({**task, "source": agent_source}, candidate.path, run_id + "-agent", agent_ids, check_cancel)
+            if original_ids:
+                self._bind_external(task["task_id"], run_id + "-original")
+                receipt = self.evaluator.run({**task, "source": original}, candidate.path,
+                                             run_id + "-original", original_ids, check_cancel)
                 results.append(result_from_trials(receipt, receipt["target_id"], candidate))
+            if agent_ids:
+                self._bind_external(task["task_id"], run_id + "-agent")
+                receipt = self.evaluator.run({**task, "source": agent_source}, candidate.path, run_id + "-agent", agent_ids, check_cancel)
+                observed = result_from_trials(receipt, receipt["target_id"], candidate)
+                self._require_runtime_evidence(observed, agent_source)
+                results.append(observed)
                 if not agent_source.get("conditions"):
                     if not receipt.get("conditions"):
                         raise HarnessError("verification_evidence", "首次 Agent 验证缺少冻结条件")
@@ -121,7 +147,30 @@ class CaseVerification:
                 raise HarnessError("verification_evidence", "首次 Agent 验证缺少冻结条件")
             source = {**source, "conditions": receipt["conditions"], "target_id": receipt["target_id"]}
             self.store.update(task["task_id"], source=source)
-        return replace(result_from_trials(receipt, source["target_id"] or receipt["target_id"], candidate), run_id=run_id)
+        result = replace(result_from_trials(receipt, source["target_id"] or receipt["target_id"], candidate), run_id=run_id)
+        if source.get("runtime_replay_required"):
+            self._require_runtime_evidence(result, source)
+        return result
+
+    @staticmethod
+    def _require_runtime_evidence(result: VerificationResult, source: dict[str, Any]) -> None:
+        for check in result.checks:
+            if check.outcome != "passed":
+                continue
+            replay = check.evidence.get("execution", {}).get("metadata", {}).get("runtime_replay", {})
+            denied = source["agent_case"].get("admission") == "denied"
+            covered = replay.get("layers") == ["gateway"] and replay.get("admission") == "denied" if denied else (
+                set(replay.get("layers", [])) == {"gateway", "application", "agent"})
+            if not covered:
+                raise HarnessError("verification_evidence", "通过结果缺少实际三层执行依据")
+
+    def _bind_external(self, task_id: str, evaluation_id: str) -> None:
+        current = self.store.get(task_id)
+        delivery = current.get("delivery_evaluation")
+        if delivery:
+            self.store.update(task_id, delivery_evaluation={**delivery, "id": evaluation_id})
+        else:
+            self.store.update(task_id, current_evaluation_id=evaluation_id)
 
     def regressions(self, task: VerificationRequest, candidate: CandidateRef,
                     check_cancel: Callable[[], None], checks: list[str] | None = None) -> dict[str, Any]:

@@ -12,13 +12,14 @@ from chatcopilot.evals.models import EvalCase
 
 SCHEMA = "agentstrata.agent-case/v1"
 SUITE = "agentstrata-regression-v1"
-_FIELDS = {"schema", "title", "input", "context", "role", "channel_kind", "allowed_tools", "fixtures", "assertions", "expected_behavior", "semantic", "resources", "external_fixtures"}
+_FIELDS = {"schema", "title", "input", "context", "role", "channel_kind", "allowed_tools", "fixtures", "assertions", "expected_behavior", "semantic", "resources", "external_fixtures", "runtime_replay", "admission"}
 _ASSERTIONS = {
     "final_contains": {"kind", "value"}, "final_not_contains": {"kind", "value"},
     "tool_called": {"kind", "name", "arguments"}, "tool_not_called": {"kind", "name"},
     "tool_result_contains": {"kind", "name", "value"},
     "file_equals": {"kind", "path", "value"}, "file_exists": {"kind", "path"},
     "image_delivered": {"kind"},
+    "admission_denied": {"kind"},
 }
 # These tools operate through the real product handlers and the trial workspace.
 # External tools require a purpose-built dependency fixture before registration.
@@ -31,7 +32,8 @@ IMAGE_TOOLS = frozenset({"download_image_urls", "send_image_urls_to_user", "send
 
 
 def capabilities() -> dict[str, Any]:
-    return {"schema": SCHEMA, "tools": sorted(ISOLATED_TOOLS | IMAGE_TOOLS), "fixtures": ["workspace", "input_image", "http", "delivery"],
+    return {"schema": SCHEMA, "tools": sorted(ISOLATED_TOOLS | IMAGE_TOOLS | {"search_information"}), "fixtures": ["workspace", "input_image", "http", "delivery"],
+            "runtime_replay": {"entrypoint": "gateway_application_agent", "production_delivery": False},
             "external_network": False, "production_delivery": False,
             "case_fields": sorted(_FIELDS), "assertions": sorted(_ASSERTIONS)}
 
@@ -62,13 +64,20 @@ def validate_case(value: Any) -> dict[str, Any]:
         raise ValueError("invalid isolated actor")
     if type(case["semantic"]) is not bool:
         raise ValueError("semantic must be boolean")
+    if "runtime_replay" in case and type(case["runtime_replay"]) is not bool:
+        raise ValueError("runtime_replay must be boolean")
+    if case.get("admission", "allowed") not in {"allowed", "denied"}:
+        raise ValueError("invalid replay admission")
     names = case["allowed_tools"]
     if not isinstance(names, list) or any(not isinstance(n, str) or not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]*", n) for n in names) or len(names) != len(set(names)):
         raise ValueError("invalid allowed tools")
     if "external_fixtures" in case:
         from chatcopilot.evals.image_delivery_fixture import validate_fixtures
         validate_fixtures(case["external_fixtures"])
-    if set(names) - (ISOLATED_TOOLS | (IMAGE_TOOLS if case.get("external_fixtures") else frozenset())):
+    supported = ISOLATED_TOOLS | (IMAGE_TOOLS if case.get("external_fixtures") else frozenset())
+    if case.get("runtime_replay") and case.get("external_fixtures"):
+        supported = supported | {"search_information"}
+    if set(names) - supported:
         raise CaseCapabilityUnavailable("required tool has no isolated dependency fixture")
     if not isinstance(case["fixtures"], dict):
         raise ValueError("fixtures must map relative paths to text")

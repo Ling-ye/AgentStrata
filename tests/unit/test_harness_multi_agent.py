@@ -11,6 +11,23 @@ from chatcopilot.harness.repair_runtime import run_task
 from test_harness_repair_v2 import Coder, Verifier, repair as repair_fixture
 
 
+def test_role_output_schemas_require_every_declared_property():
+    from chatcopilot.harness.agent_types import role_schema
+    def check(value):
+        if isinstance(value, dict):
+            if value.get("type") == "object":
+                assert set(value["required"]) == set(value["properties"])
+                assert value["additionalProperties"] is False
+            for item in value.values():
+                check(item)
+        elif isinstance(value, list):
+            for item in value:
+                check(item)
+    for governance in (False, True):
+        for role in Role:
+            check(role_schema(role, governance=governance))
+
+
 @pytest.fixture
 def repair(tmp_path):
     return repair_fixture.__wrapped__(tmp_path)
@@ -47,6 +64,105 @@ def test_host_advances_without_repeated_main_calls(repair):
     retry = [evidence for role, evidence in roles.evidence if role == Role.CODING][1]
     assert retry["failure_brief"]["recommended_role"] == "coding"
     assert "previous_failure" not in retry and "source_index" not in retry
+
+
+def test_invalid_baseline_trials_keep_original_error_and_stop_reason_in_brief(repair):
+    from chatcopilot.harness.models import VerificationCheck, VerificationResult
+    store, ident, _ = repair
+    class UnavailableModel(Verifier):
+        def run(self, task, candidate, run_id, checks, cancel):
+            return VerificationResult(run_id, candidate.digest, (VerificationCheck(
+                "target", 1, "error", "environment", {"error": {"message": "missing model configuration"}}),))
+    result = run_task(store, ident, UnavailableModel(), Roles())
+    assert result["error_code"] == "verification_environment"
+    attempt = store.attempts(ident)[0]
+    artifacts = ArtifactRepository(store.root / "jobs" / ident)
+    brief = artifacts.read(attempt["failure_brief"])
+    assert brief["recommended_role"] == "stop"
+    assert "missing model configuration" in brief["diagnostics"][0]["text"]
+    reference = brief["diagnostics"][0]["result_ref"]
+    assert reference == attempt["reproduction"]["result_ref"]
+    assert artifacts.read(reference)["checks"][0]["failure_kind"] == "environment"
+    assert brief["comparison"][0]["baseline"] == {"passed": 0, "total": 1}
+
+
+class ReplanningRoles(Roles):
+    def execute(self, root, call, *args):
+        result = super().execute(root, call, *args)
+        if call.role == Role.PLAN and call.evidence.get("rediagnosis"):
+            ref = call.evidence["failure_brief"]["evidence_refs"][0]
+            result.payload.update(changes=["Correct the value selected by the recorded failing target"],
+                                  evidence_refs=[ref["path"] + "#/checks/0"], next_role="coding")
+        return result
+
+
+def test_repeated_failure_replans_once_using_remaining_attempt(repair):
+    store, ident, _ = repair
+    roles = ReplanningRoles((2, 3, 1))
+    result = run_task(store, ident, Verifier(), roles)
+    assert result["status"] == "fixed", result.get("message")
+    assert roles.roles.count(Role.PLAN) == 2
+    assert roles.roles.count(Role.MAIN) == 1
+    assert roles.roles.count(Role.TEST) == 1
+    assert store.attempts(ident)[1]["feedback"]["rediagnosis"]
+    assert result["evaluations"]["reproduce-r3"]["reused_from"].endswith("reproduce-r1")
+
+
+def test_paraphrased_plan_without_bound_evidence_stops_before_third_edit(repair):
+    store, ident, _ = repair
+    roles = Roles((2, 3, 1))
+    result = run_task(store, ident, Verifier(), roles)
+    assert result["error_code"] == "no_progress"
+    assert roles.calls == 2 and roles.roles.count(Role.PLAN) == 2
+
+
+def test_no_second_rediagnosis_even_with_extra_attempt_budget(repair):
+    store, ident, _ = repair
+    store.update(ident, options=asdict(RepairOptions("fixture", max_attempts=5)))
+    roles = ReplanningRoles((2, 3, 4, 1))
+    result = run_task(store, ident, Verifier(), roles)
+    assert result["error_code"] == "no_progress"
+    assert roles.calls == 3 and roles.roles.count(Role.PLAN) == 2
+
+
+def test_repair_scope_keeps_permission_authority_read_only(tmp_path):
+    from chatcopilot.harness.workspace import permitted_change, protected_paths, writable_paths
+    names = ["src/chatcopilot/authorization/policy.py", "src/chatcopilot/contracts/execution_scope.py"]
+    for name in names:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# fixed host policy\n")
+    assert all(tmp_path / name in protected_paths(tmp_path) for name in names)
+    assert all(tmp_path / name not in writable_paths(tmp_path) for name in names)
+    assert not any(permitted_change(name) for name in names)
+    assert not permitted_change("src/chatcopilot/harness/workflow.py")
+    assert permitted_change("src/chatcopilot/contracts/agent.py")
+
+
+def test_repeated_definition_failure_can_replan_test_without_rewriting_product(repair):
+    store, ident, _ = repair
+    class Definitions(Verifier):
+        calls = 0
+        def prepare(self, *args):
+            self.calls += 1
+            if self.calls < 3:
+                error = HarnessError("verification_test_definition", "wrong fixture API")
+                error.evidence = {"result": {"rows": {"test_target": {"outcome": "error", "message": "KeyError: field"}}}}
+                raise error
+            return super().prepare(*args)
+    class RolesWithTestReplan(Roles):
+        def execute(self, root, call, *args):
+            result = super().execute(root, call, *args)
+            if call.role == Role.PLAN and call.evidence.get("rediagnosis"):
+                ref = call.evidence["failure_brief"]["evidence_refs"][0]
+                result.payload.update(changes=["Use the actual fixture field"], next_role="test",
+                                      evidence_refs=[ref["path"] + "#/result/rows/test_target"])
+            return result
+    roles = RolesWithTestReplan()
+    result = run_task(store, ident, Definitions(), roles)
+    assert result["status"] == "fixed", result.get("message")
+    assert roles.calls == 1 and roles.roles.count(Role.TEST) == 3
+    assert roles.roles.count(Role.PLAN) == 2
 
 
 def test_test_definition_retry_does_not_rewrite_product(repair):

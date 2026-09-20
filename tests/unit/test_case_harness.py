@@ -49,7 +49,7 @@ def source_record():
         "case_id": "b",
         "target_id": "main",
         "case_ids": ["a", "b", "c"],
-        "case_definition": {"expected_behavior": "Return the expected value"},
+        "case_definition": {"input": "Return the expected value", "expected_behavior": "Return the expected value"},
         "repetitions": 2,
         "passed_cases": ["a"],
         "trials": [],
@@ -83,18 +83,30 @@ class FakeEvaluator:
         rows = []
         for case in case_ids:
             passed = (case == "a" and "regression" not in content) or (
-                case == "b" and (self.current_passes or "fixed" in content)
+                (case == "b" or case.startswith("snapshot-")) and (self.current_passes or "fixed" in content)
             )
-            for attempt in range(1, 3):
+            for attempt in range(1, 4 if case.startswith("snapshot-") else 3):
                 rows.append(
                     {
                         "case_id": case,
                         "target_id": "main",
                         "attempt": attempt,
                         "outcome": "passed" if passed else "failed",
+                        "execution": {"metadata": {"runtime_replay": {"layers": ["gateway", "application", "agent"]}}},
                     }
                 )
-        return {"result": {"trials": rows}}
+        return {"result": {"trials": rows}, "target_id": "main", "conditions": {"fixture": True}}
+
+    def validate_agent_case(self, case):
+        from chatcopilot.evals.agent_case import validate_case
+        return validate_case(case)
+
+    def prepare_agent_case(self, source, check_cancel):
+        from chatcopilot.evals.agent_case import case_identity, validate_case
+        case = validate_case(source["agent_case"])
+        ident = case_identity(case)
+        return {**source, "agent_case": case, "case_id": ident, "case_ids": [ident],
+                "case_snapshot_id": ident, "repetitions": 3, "target_id": "main", "conditions": None}
 
     def cancel(self, evaluation_id):
         pass
@@ -117,6 +129,11 @@ class FakeCoder(RoleFixture):
         path = draft / "diagnosis.json"
         path.write_text(json.dumps({"reproducible": True, "reason": "controlled diagnosis", "expected_behavior": "frozen behavior"}))
         path.chmod(0o600)
+        (draft / "agent_case.json").write_text(json.dumps({"schema": "agentstrata.agent-case/v1",
+            "title": "Target runtime replay", "input": "Return the expected value", "expected_behavior": "expected value",
+            "role": "owner", "channel_kind": "private", "allowed_tools": [], "fixtures": {},
+            "assertions": [{"kind": "final_contains", "value": "expected value"}], "semantic": False}))
+        (draft / "agent_case.json").chmod(0o600)
         return {}
 
     def run(self, worktree, evidence, options, output, check_cancel):
@@ -124,7 +141,7 @@ class FakeCoder(RoleFixture):
         text = self.candidates[min(self.calls, len(self.candidates) - 1)]
         self.calls += 1
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text(f"VALUE = {text!r}\n")
-        return {"submission": {"decision": "candidate", "summary": text, "verification_kind": "existing",
+        return {"submission": {"decision": "candidate", "summary": text, "verification_kind": "agent",
             "goal_capabilities": [], "coverage": [{"requirement": "expected_behavior", "checks": ["b"]}], "gaps": []}}
 
     def review(self, worktree, evidence, options, output, check_cancel):
@@ -224,8 +241,8 @@ def test_sqlite_journal_churn_does_not_interrupt_or_repeat_coding(repository, tm
     coder = CodingWithPolls()
     result = run_task(controller.store, task_id, evaluator, coder)
     assert result["status"] == "fixed"
-    assert coder.preparations == 0 and coder.calls == 1
-    assert len(interleavings) == 4
+    assert coder.preparations == 1 and coder.calls == 1
+    assert len(interleavings) == 8
     assert len(controller.store.attempts(task_id)) == 1
     with controller.store.database.connect() as connection:
         assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
@@ -237,11 +254,11 @@ def test_fix_preserves_original_failure_and_allows_other_existing_failures(repos
     original = copy.deepcopy(controller.store.get(task_id)["source"])
     result = run_task(controller.store, task_id, evaluator, coder)
     assert result["status"] == "fixed"
-    assert result["source"] == original
+    assert result["source"]["original_case_source"] == original
     assert coder.calls == 1
     attempt = controller.store.attempts(task_id)[0]
     assert attempt["verification"]["failed_cases"] == ["c"]
-    assert attempt["verification"]["passed_cases"] == ["a", "b"]
+    assert attempt["verification"]["passed_cases"] == ["a", "b", result["source"]["agent_source"]["case_id"]]
     assert controller.get(task_id)["candidate_available"] is True
     assert b"harness_probe.py" in controller.patch(task_id, 1)
     assert git_output(Path(result["worktree"]), "rev-parse", "HEAD") == result["base_commit"]

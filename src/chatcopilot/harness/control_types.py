@@ -15,6 +15,8 @@ def external_evaluation_id(source: dict[str, Any], run_id: str | None) -> str | 
         return None
     if source.get("kind") == "code_health":
         return None
+    if run_id.endswith(("-agent", "-original")):
+        return run_id
     if source.get("agent_source"):
         return run_id + "-agent"
     return None if source.get("test_sha256") else run_id

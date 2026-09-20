@@ -19,7 +19,7 @@ from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
 from chatcopilot.harness.gateway_adapter import task_source
 from chatcopilot.harness.local_verifier import LocalVerifier
 from chatcopilot.harness.models import HarnessError, RepairFeedback, RepairOptions
-from test_case_harness import run_task
+from test_case_harness import FakeEvaluator, run_task
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -312,6 +312,11 @@ class LocalFixture:
         return {
             **frozen_test_source(task, worktree),
             "case_ids": ["reproduction", "protected", "old_failure"],
+            "reproduction_ids": ["reproduction"],
+            "agent_case": {"schema": "agentstrata.agent-case/v1", "runtime_replay": True,
+                "title": "fixture", "input": task["source"]["original_input"], "expected_behavior": "expected behavior",
+                "role": "user", "channel_kind": "group", "allowed_tools": [], "fixtures": {},
+                "assertions": [{"kind": "final_contains", "value": "expected"}], "semantic": False},
         }
 
     def run(self, task, worktree, evaluation_id, case_ids, check_cancel):
@@ -352,10 +357,12 @@ def test_daily_task_fix_is_gated_by_target_and_previously_passing_tests(
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text(
             "VALUE = 'fixed " + ("regression" if regression else "") + "'\n"
         )
-        return candidate_submission()
+        value = candidate_submission()
+        value["submission"]["verification_kind"] = "mixed"
+        return value
 
     coder = RoleNamespace(run=code, review=approve_fixture)
-    evaluator = Mock()
+    evaluator = Mock(wraps=FakeEvaluator())
     result = run_task(
         controller.store, task["task_id"], evaluator, coder, local_verifier=LocalFixture()
     )
@@ -363,7 +370,7 @@ def test_daily_task_fix_is_gated_by_target_and_previously_passing_tests(
     assert result["protected_cases"] == ["protected"]
     assert result["current_evaluation_id"] is None
     assert result["evaluations"]["verify-1"]["test_sha256"] == result["source"]["test_sha256"]
-    evaluator.run.assert_not_called()
+    evaluator.run.assert_called()
     assert not evaluator.cancel.called
 
 
@@ -385,8 +392,10 @@ def test_repository_skip_is_not_a_target_failure_or_a_passing_regression(reposit
     task = controller.start_task("sample", "run-example", RepairOptions("test-model", max_attempts=1), launch=False)
     def code(worktree, *_):
         (worktree / "src/chatcopilot/core/harness_probe.py").write_text("VALUE = 'fixed'\n")
-        return candidate_submission()
-    result = run_task(controller.store, task["task_id"], Mock(), RoleNamespace(run=code, review=approve_fixture), local_verifier=Local())
+        value = candidate_submission()
+        value["submission"]["verification_kind"] = "mixed"
+        return value
+    result = run_task(controller.store, task["task_id"], FakeEvaluator(), RoleNamespace(run=code, review=approve_fixture), local_verifier=Local())
     assert result["status"] == status
     assert result["regression_baseline"]["passed_cases"] == ["required"]
     assert result["regression_baseline"]["rows"]["platform-only"]["outcome"] == "skipped"

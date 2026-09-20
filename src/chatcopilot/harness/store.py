@@ -127,7 +127,7 @@ class HarnessStore:
         with self.creation_guard(), self.database.connect(write=True) as connection:
             from chatcopilot.harness.models import PIPELINE_VERSION
             if connection.execute("SELECT 1 FROM tasks WHERE COALESCE(json_extract(payload, '$.pipeline_version'), 0) != ? LIMIT 1", (PIPELINE_VERSION,)).fetchone():
-                raise HarnessError("cutover_required", "旧 Harness 记录需要先执行维护归档切换")
+                raise HarnessError("cutover_required", "旧 Harness 记录需要先执行维护清空与协议切换")
             if task.get("source", {}).get("kind") == "code_health":
                 for row in connection.execute("SELECT payload FROM tasks WHERE json_extract(payload, '$.source.kind')='code_health'"):
                     value = json.loads(row[0])

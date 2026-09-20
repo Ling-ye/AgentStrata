@@ -61,6 +61,11 @@ for _role in (Role.CODING, Role.TEST):
         "type": "string", "enum": ["fixture_missing", "material_missing", "permission_missing"],
         "description": "A concrete missing prerequisite; pending host verification belongs in notes."}
 
+SCHEMAS[Role.PLAN]["properties"]["next_role"] = {
+    "type": ["string", "null"], "enum": ["coding", "test", None],
+    "description": "Use coding/test for evidence-backed re-diagnosis; otherwise null."}
+SCHEMAS[Role.PLAN]["required"].append("next_role")
+
 
 def role_schema(role: Role, *, governance: bool = False) -> dict[str, Any]:
     return ({Role.PLAN: GC_PLAN, Role.REVIEW: GC_REVIEW}.get(role, SCHEMAS[role])

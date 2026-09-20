@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 from chatcopilot.core.private_sqlite import json_text
@@ -143,3 +144,62 @@ def test_special_artifacts_inline_with_their_own_bounds(tmp_path):
     ordinary_navigation = artifacts.navigation(artifacts.put("verification_error", 1, ordinary))
     assert source_navigation["inline"] == source
     assert "inline" not in ordinary_navigation
+
+
+def test_failed_agent_trials_retain_counts_assertions_catalog_and_exact_references(tmp_path):
+    data = json.loads((Path(__file__).parents[1] / "fixtures/harness/image_delivery_retry.json").read_text())
+    artifacts = ArtifactRepository(tmp_path / "task")
+    from dataclasses import asdict
+    def result(outcomes):
+        checks = [{"check_id": "image", "repetition": n, "outcome": outcome, "evidence": {
+            "execution": {"final_text": data["failure_response"], "events": [
+                {"type": "ToolCatalogObserved", "phase": "list_response_prepared", "tools": data["catalog_tools"]}]},
+            "assessment": {"evidence": {"assertions": [{"assertion": {"kind": kind}, "passed": False}
+                                                        for kind in data["failed_assertions"]]}}}}
+                  for n, outcome in enumerate(outcomes, 1)]
+        value = {"checks": checks, "passed_cases": [], "failed_cases": ["image"], "evaluation_id": "eval-fixture"}
+        return {**value, "result_ref": asdict(artifacts.put("verification", 1, value))}
+    before = {"verification": result(data["first_candidate"])}
+    attempt = {"number": 2, "reproduction": result(data["baseline"]), "verification": result(data["second_candidate"])}
+    brief = build_failure_brief(attempt=attempt, previous=before, stage="verification", code="product_failure",
+                                message="image not delivered", signature="same")
+    assert brief["comparison"] == [{"check": "image", "baseline": {"passed": 1, "total": 3},
+                                   "previous": {"passed": 2, "total": 3}, "candidate": {"passed": 0, "total": 3}}]
+    assert "send_image_urls_to_user" in brief["diagnostics"][0]["text"]
+    assert "未记录调用" in brief["diagnostics"][0]["text"]
+    assert "image_delivered" in brief["diagnostics"][0]["text"]
+    assert brief["diagnostics"][0]["pointer"] == "/checks/0"
+    assert artifacts.read(brief["diagnostics"][0]["result_ref"])["checks"][0]["outcome"] == "failed"
+    assert len(json_text(brief).encode()) <= FAILURE_BRIEF_BYTES
+
+
+def test_trial_summary_shares_recorded_model_boundary_and_layer_gaps():
+    execution = {"events": [{"type": "LlmCallFinished", "model": "gpt-5.6-sol"}],
+                 "metadata": {"runtime_replay": {"layers": ["gateway", "application"], "admission": "allowed"}}}
+    attempt = {"number": 1, "verification": {"checks": [
+        {"check_id": "target", "outcome": "failed", "evidence": {"execution": execution}}]}}
+    brief = build_failure_brief(attempt=attempt, stage="verification", code="product_failure",
+                                message="missing Agent evidence", signature="failed")
+    summary = brief["comparison"][0]["execution_summaries"][0]
+    assert "Gateway → Application" in summary and "缺少执行记录：Agent" in summary
+    assert "真实模型：gpt-5.6-sol；模拟投递" in summary
+    assert summary in brief["diagnostics"][0]["text"]
+    execution["events"] = []
+    brief = build_failure_brief(attempt=attempt, stage="verification", code="product_failure",
+                                message="missing model evidence", signature="failed")
+    assert "模型调用完成记录缺失" in brief["diagnostics"][0]["text"]
+    assert "真实模型" not in brief["diagnostics"][0]["text"]
+    execution["metadata"] = {"case_source": {"kind": "agent_regression"}}
+    brief = build_failure_brief(attempt=attempt, stage="verification", code="verification_environment",
+                                message="runtime assembly failed", signature="failed")
+    assert "三层执行记录缺失" in brief["diagnostics"][0]["text"]
+
+
+def test_brief_records_omitted_comparisons_and_bounds_retry_reason():
+    attempt = {"number": 1, "verification": {"checks": [
+        {"check_id": f"check-{n}", "outcome": "passed", "evidence": {}} for n in range(12)]}}
+    brief = build_failure_brief(attempt=attempt, stage="verification", code="product_failure",
+                                message="失败" * 9000, signature="failed")
+    assert len(json_text(brief).encode()) <= FAILURE_BRIEF_BYTES
+    assert brief["omitted_counts"]["comparison"] >= 4
+    assert brief["limits"]["truncated"]

@@ -132,6 +132,8 @@ class HarnessLifecycle:
         self.require_current(task)
         if task["status"] not in ACTIVE or task.get("delivery_evaluation"):
             return task
+        if task["status"] == "queued" and task.get("dispatch_state") == "creating":
+            return task
         if task["status"] == "cancel_requested":
             external_stopped = self._cancel_evaluation(task)
         else:

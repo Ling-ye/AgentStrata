@@ -87,6 +87,13 @@ class LocalVerifier:
         draft = output / "draft"
         if agent:
             case = json.loads(_read(draft / "agent_case.json"))
+            if source.get("runtime_replay_required"):
+                case["runtime_replay"] = True
+                context = source.get("case_definition", {}).get("context", "")
+                if case.get("context", "") != context:
+                    raise HarnessError("test_definition", "三层回放不能添加原来源不存在的 context；外部搜索应使用 HTTP fixture")
+                if context:
+                    raise HarnessError("fixture_missing", "原始历史上下文尚无三层回放材料")
             if case.get("resources") and not source.get("image_resources"):
                 raise HarnessError("image_scope", "草案只能使用宿主绑定的原图")
             if source.get("original_input"):
@@ -103,7 +110,7 @@ class LocalVerifier:
             try:
                 prepared["agent_case"] = self.validate_case(case)
             except (ValueError, HarnessError) as exc:
-                if local and getattr(exc, "code", "") == "fixture_missing":
+                if local and not source.get("runtime_replay_required") and getattr(exc, "code", "") == "fixture_missing":
                     prepared["verification_gaps"] = [{"requirement": "expected_behavior",
                         "code": "fixture_missing", "message": str(exc)}]
                 else:

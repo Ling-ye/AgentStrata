@@ -216,7 +216,9 @@ class ServiceEvaluator:
 
     def prepare_agent_case(self, source: dict[str, Any], check_cancel: Callable[[], None]) -> dict[str, Any]:
         check_cancel()
-        case = source["agent_case"]
+        case = {**source["agent_case"], "runtime_replay": True}
+        if case.get("admission", "allowed") != source.get("evidence", {}).get("admission", "allowed"):
+            raise HarnessError("source_mismatch", "复现不能改变原任务的准入条件")
         # The draft may use synthetic inputs, but cannot change the observed actor's role.
         role = (source.get("evidence", {}).get("run") or {}).get("role")
         if role and case["role"] != role:
@@ -227,7 +229,8 @@ class ServiceEvaluator:
             raise HarnessError("source_mismatch", "复现不能改变原任务的会话类型")
         snapshot = self.client.register_case(case)
         case = snapshot["case"]
-        return {**source, "agent_case": case, "case_snapshot_id": snapshot["snapshot_id"],
+        return {**{key: value for key, value in source.items() if key not in {"conditions", "agent_source", "original_case_source"}},
+                "agent_case": case, "case_snapshot_id": snapshot["snapshot_id"],
                 "case_id": snapshot["snapshot_id"], "case_ids": [snapshot["snapshot_id"]],
                 "target_id": "", "passed_cases": [], "repetitions": 3,
                 "suite_id": "agentstrata-regression-v1", "case_ref": "agentstrata-regression-v1:" + snapshot["snapshot_id"],

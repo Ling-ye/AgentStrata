@@ -39,6 +39,7 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("frozen-agent", "agent_configured"): (
         "chatcopilot.evals.agent_case", "chatcopilot.evals.frozen_agent_runtime",
         "chatcopilot.evals.frozen_agent_scoring", "chatcopilot.evals.isolated_executor",
+        "chatcopilot.evals.gateway_replay", "chatcopilot.evals.image_delivery_fixture",
         "chatcopilot.evals.trial_capture",
     ),
     ("agent-tasks", "agent_configured"): (
