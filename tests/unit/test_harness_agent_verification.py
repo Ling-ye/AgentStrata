@@ -189,7 +189,7 @@ def test_multiple_pytest_assertions_are_frozen_and_reused(tmp_path):
     def prepare(_root, _evidence, _options, output, _check):
         draft = private_directory(output / "draft")
         (draft / "diagnosis.json").write_text(json.dumps({"reproducible": True, "reason": "fixture", "expected_behavior": "one"}))
-        (draft / "test_reproduction.py").write_text("from probe import VALUE\ndef test_one(): assert VALUE == 1\ndef test_two(): assert VALUE > 0\n")
+        (draft / "test_reproduction.py").write_text("from probe import VALUE\n\n\ndef test_one(): assert VALUE == 1\ndef test_two(): assert VALUE > 0\n")
         for file in draft.iterdir():
             file.chmod(0o600)
         return {}
@@ -224,6 +224,17 @@ def test_pytest_source_uses_repository_protection_without_promoting_skips(tmp_pa
     port.local_verifier = SimpleNamespace(regressions=lambda *args: baseline)
     with pytest.raises(HarnessError, match="环境错误"):
         port.regressions(task, candidate, lambda: None)
+
+
+@pytest.mark.parametrize("checks,code", [(None, "verification_evidence"), (["repository:ruff"], "product_failure")])
+def test_static_failures_cannot_be_retained_as_baseline_debt(tmp_path, checks, code):
+    from chatcopilot.harness.verification import CaseVerification
+    report = {"rows": {"repository:ruff": {"outcome": "failed", "exit_code": 1, "message": "E402 misplaced import"}}}
+    port = CaseVerification(None, SimpleNamespace(regressions=lambda *args: report), None)
+    with pytest.raises(HarnessError) as caught:
+        port.regressions({"source": {}}, CandidateRef(tmp_path, "digest", "base"), lambda: None, checks)
+    assert caught.value.code == code
+    assert caught.value.evidence["checks"][0]["diagnostic"] == "E402 misplaced import"
 
 
 def test_evaluation_hint_does_not_replace_the_frozen_expectation(repository, tmp_path):

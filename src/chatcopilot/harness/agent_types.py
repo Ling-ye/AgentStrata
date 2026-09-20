@@ -55,16 +55,15 @@ GC_REVIEW = object_schema(**{
     "finding_id": TEXT, "behavior_preserved": {"type": "boolean"},
     "improvements": {"type": "array", "items": object_schema(path=TEXT, before=TEXT, after=TEXT, reason=TEXT)},
 })
-GC_CODING = deepcopy(SCHEMAS[Role.CODING])
-GC_TEST = deepcopy(SCHEMAS[Role.TEST])
-for contract in (GC_CODING, GC_TEST):
+for _role in (Role.CODING, Role.TEST):
+    contract = SCHEMAS[_role] = deepcopy(SCHEMAS[_role])
     contract["properties"]["gaps"]["items"]["properties"]["code"] = {
         "type": "string", "enum": ["fixture_missing", "material_missing", "permission_missing"],
         "description": "A concrete missing prerequisite; pending host verification belongs in notes."}
 
 
 def role_schema(role: Role, *, governance: bool = False) -> dict[str, Any]:
-    return ({Role.PLAN: GC_PLAN, Role.CODING: GC_CODING, Role.TEST: GC_TEST, Role.REVIEW: GC_REVIEW}.get(role, SCHEMAS[role])
+    return ({Role.PLAN: GC_PLAN, Role.REVIEW: GC_REVIEW}.get(role, SCHEMAS[role])
             if governance else SCHEMAS[role])
 
 

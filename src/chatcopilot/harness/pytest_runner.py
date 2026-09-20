@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -83,10 +84,17 @@ def main() -> int:
     ]
     if request.get("collect"):
         args.append("--collect-only")
-    code = int(pytest.main(args, plugins=[Reporter()]))
+    lint = None
+    if request.get("lint_paths"):
+        checked = subprocess.run([sys.executable, "-I", "-m", "ruff", "check", "--no-cache", *request["lint_paths"]],
+                                 cwd=request["root"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        lint = {"exit_code": checked.returncode, "paths": request["lint_paths"]}
+        if checked.returncode:
+            errors.append("Frozen regression failed Ruff:\n" + checked.stdout[-6000:])
+    code = 2 if errors else int(pytest.main(args, plugins=[Reporter()]))
     descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, "w") as stream:
-        json.dump({"exit_code": code, "collected": collected, "rows": rows, "errors": errors}, stream)
+        json.dump({"exit_code": code, "collected": collected, "rows": rows, "errors": errors, "lint": lint}, stream)
     return code
 
 

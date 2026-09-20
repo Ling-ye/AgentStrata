@@ -211,7 +211,7 @@ def test_frozen_test_uses_final_repository_path_before_and_after_fix(tmp_path):
             "evidence": {},
         },
     }
-    content = b"from probe import VALUE\ndef test_regression(): assert VALUE == 1\n"
+    content = b"from probe import VALUE\n\n\ndef test_regression(): assert VALUE == 1\n"
 
     def prepare(_root, _evidence, _options, output, _check):
         draft = private_directory(output / "draft")

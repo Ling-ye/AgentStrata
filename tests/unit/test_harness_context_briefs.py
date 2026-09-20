@@ -67,6 +67,18 @@ def test_source_index_caps_matches_and_reports_omissions(tmp_path):
     assert len(json_text(value).encode()) <= SOURCE_INDEX_BYTES
 
 
+def test_large_configuration_cannot_hide_repair_hint_paths(tmp_path):
+    root, manifest, rules = repository(tmp_path)
+    path = "src/chatcopilot/harness/schedule_runtime.py"
+    source = {"kind": "robot_task",
+              "evidence": {"configuration": {str(n): f"configuration-entry-{n}" for n in range(400)}},
+              "feedback": {"repair_hint": f"Investigate GovernanceScheduler in {path}"},
+              "runtime_entrypoint": path}
+    value = build_source_index(baseline=root, manifest=manifest, source=source, rules=rules, attempt=1)
+    assert value["seeds"][0] == {"value": path, "kind": "path"}
+    assert value["candidates"][0]["path"] == path
+
+
 def test_empty_source_has_repository_map_without_inventing_candidates(tmp_path):
     root, manifest, rules = repository(tmp_path)
     value = build_source_index(baseline=root, manifest=manifest, source={"kind": "code_health"}, rules=rules, attempt=1)
@@ -89,6 +101,24 @@ def test_failure_brief_drops_raw_report_and_keeps_routing():
     assert len(value["diagnostics"]) <= 4 and len(json_text(value).encode()) <= FAILURE_BRIEF_BYTES
     assert "never-inline" not in json_text(value)
     assert value["omitted_counts"]["failed_checks"] > 0
+
+
+def test_draft_failure_brief_includes_bounded_redacted_pytest_diagnostics():
+    evidence = {"result": {"rows": {
+        "test_passed": {"outcome": "passed"},
+        **{f"test_failed_{n}": {"outcome": "failed", "message": "KeyError: 'failure_category' " + "x" * 4000}
+           for n in range(12)}}, "errors": ["ImportError: missing_fixture"]}}
+    value = build_failure_brief(attempt={"number": 1}, stage="definition", code="verification_test_definition",
+                                message="bad draft", signature="signature", evidence=evidence)
+    assert value["recommended_role"] == "test"
+    assert value["passed_checks"] == ["test_passed"]
+    assert len(value["diagnostics"]) == 4 and "KeyError" in value["diagnostics"][0]["text"]
+    assert value["omitted_counts"]["diagnostics"] == 9
+    assert len(json_text(value).encode()) <= FAILURE_BRIEF_BYTES
+    collection = build_failure_brief(attempt={"number": 2}, stage="definition", code="test_collection_error",
+        message="collection error", signature="signature", evidence={"result": {"errors": ["ImportError: missing_fixture"]}})
+    assert collection["failed_checks"] == ["pytest_collection"]
+    assert collection["diagnostics"][0]["text"] == "ImportError: missing_fixture"
 
 
 def test_target_context_keeps_only_referenced_rules_and_bounded_excerpts():

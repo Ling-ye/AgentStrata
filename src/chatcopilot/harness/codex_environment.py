@@ -25,7 +25,10 @@ def git_metadata(root: Path) -> tuple[Path, ...]:
 def shell_environment(binary: Path, helper: Path | None) -> dict[str, str]:
     paths = ["/sandbox-tools", *((str(helper),) if helper else ()), str(binary.parent),
              f"{sys.prefix}/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-    return {"PATH": ":".join(paths), "TMPDIR": "/tmp", "GIT_OPTIONAL_LOCKS": "0"}
+    # pytest-rerunfailures opens an INET socket during configuration, before any
+    # test runs. Native role tools deliberately deny that socket capability.
+    return {"PATH": ":".join(paths), "TMPDIR": "/tmp", "GIT_OPTIONAL_LOCKS": "0",
+            "PYTEST_ADDOPTS": "-p no:rerunfailures"}
 
 
 def wrap_command(command: list[str], *, scope: ExecutionScope, cwd: Path,

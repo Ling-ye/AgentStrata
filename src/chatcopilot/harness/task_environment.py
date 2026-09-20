@@ -14,6 +14,8 @@ import time
 from chatcopilot.core.private_sqlite import json_text, private_directory, private_file
 from chatcopilot.harness.models import HarnessError
 
+EXTRAS = ("agent", "acp", "dev", "evaluation")
+
 
 def prepare_environment(directory: Path, source: Path, cancel) -> dict[str, str]:
     root = private_directory(directory / "environment")
@@ -23,7 +25,8 @@ def prepare_environment(directory: Path, source: Path, cancel) -> dict[str, str]
     if receipt.exists():
         private_file(receipt)
         state = json.loads(receipt.read_text())
-        if state.get("declarations") != identity or state.get("base_python") != sys.executable or not python.is_file():
+        if (state.get("declarations") != identity or state.get("base_python") != sys.executable
+                or state.get("extras") != ",".join(EXTRAS) or not python.is_file()):
             raise HarnessError("environment_changed", "任务依赖环境与冻结声明不符")
         return state
     configured = os.environ.get("CHATCOPILOT_HARNESS_UV_BIN") or shutil.which("uv")
@@ -34,7 +37,7 @@ def prepare_environment(directory: Path, source: Path, cancel) -> dict[str, str]
         raise HarnessError("dependencies_missing", "需要 uv；请安装 WSL 声明工具或配置 CHATCOPILOT_HARNESS_UV_BIN")
     command = [configured, "sync", "--project", str(source), "--frozen", "--no-config",
                "--no-install-project", "--no-editable", "--no-python-downloads", "--python", sys.executable,
-               "--link-mode", "copy", "--extra", "agent", "--extra", "acp", "--extra", "dev"]
+               "--link-mode", "copy", *(part for extra in EXTRAS for part in ("--extra", extra))]
     environment = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(root / "venv")}
     log = root / "prepare.log"
     with log.open("wb") as stream:
@@ -52,7 +55,8 @@ def prepare_environment(directory: Path, source: Path, cancel) -> dict[str, str]
     log.chmod(0o600)
     if process.returncode or not python.is_file():
         raise HarnessError("dependencies_missing", "冻结依赖准备未完成；查看任务 environment/prepare.log")
-    state = {"declarations": identity, "base_python": sys.executable, "python": str(python), "root": str(root)}
+    state = {"declarations": identity, "base_python": sys.executable, "python": str(python), "root": str(root),
+             "extras": ",".join(EXTRAS)}
     receipt.write_text(json_text(state))
     receipt.chmod(0o600)
     return state

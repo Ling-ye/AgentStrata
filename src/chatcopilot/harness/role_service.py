@@ -75,6 +75,9 @@ class RoleWorkflow:
         task = self.store.get(self.task_id)
         original = self.artifacts.read(task["problem_ref"])
         governance = original.get("kind") == "code_health"
+        # Robot-task evidence is ingested from Gateway observations. The legacy
+        # ACP adapter is not the execution entrypoint for this source kind.
+        runtime_entrypoint = "src/chatcopilot/gateway/runtime.py" if original.get("kind") == "robot_task" else ""
         plan = self._read("plan")
         route = retry_role(previous["stage"], previous["code"]) if previous else Role.MAIN
         if not plan:
@@ -93,13 +96,20 @@ class RoleWorkflow:
         index = None
         index_ref = None
         if route in {Role.MAIN, Role.PLAN}:
-            index = build_source_index(baseline=baseline, manifest=task["baseline_manifest"], source=original,
+            navigation_source = {**original, **({"runtime_entrypoint": runtime_entrypoint} if runtime_entrypoint else {})}
+            index = build_source_index(baseline=baseline, manifest=task["baseline_manifest"], source=navigation_source,
                                        rules=rules, attempt=number, failure=failure)
             index_ref = self.artifacts.put("source_index", number, index)
             self.store.update(self.task_id, source_index_ref=asdict(index_ref))
-        evidence = {"source": {key: original[key] for key in ("kind", "bot_id", "trace_archive", "trace") if key in original},
+        evidence = {"source": {key: original[key] for key in ("kind", "bot_id", "original_input", "trace_archive", "trace") if key in original},
+                    "feedback": original.get("feedback", {}),
                     "acceptance": task["acceptance"], "baseline_root": str(baseline),
                     "verification_capabilities": capabilities}
+        if runtime_entrypoint:
+            evidence["source"]["runtime_entrypoint"] = runtime_entrypoint
+        if task.get("prior_material"):
+            prior = self.artifacts.put("prior_validation", 1, task["prior_material"])
+            evidence["prior_validation"] = self.artifacts.navigation(prior)
         if governance:
             if task.get("frozen_finding"):
                 evidence["frozen_finding"] = self.artifacts.read(task["frozen_finding"])

@@ -427,6 +427,68 @@ def test_behavior():
     assert test.read_text() == content
 
 
+def test_isolated_pytest_uses_host_storage_and_cleans_temporary_fixtures(local_test):
+    verifier, task, worktree = local_test
+    test = worktree / "tests/unit/test_storage.py"
+    test.write_text(f"""from pathlib import Path
+import tempfile
+def test_disk_backed_tmp(tmp_path):
+    assert Path(tempfile.gettempdir()).stat().st_dev == {verifier.root.stat().st_dev}
+    (tmp_path / 'fixture.bin').write_bytes(b'x' * (16 * 1024 * 1024))
+    assert (tmp_path / 'fixture.bin').stat().st_size == 16 * 1024 * 1024
+""")
+    result = verifier._pytest(task, worktree, ["tests/unit"], lambda: None)
+    assert result["exit_code"] == 0, result
+    assert result["rows"]["tests/unit/test_storage.py::test_disk_backed_tmp"]["outcome"] == "passed"
+    assert not (Path(result["evidence_directory"]) / "tmp").exists()
+
+
+def test_isolated_pytest_cancel_cleans_host_temporary_storage(local_test):
+    from chatcopilot.harness.models import Cancelled
+    verifier, task, worktree = local_test
+    (worktree / "tests/unit/test_wait.py").write_text("""from pathlib import Path
+import time
+def test_wait():
+    Path('/tmp/started').touch()
+    while True:
+        time.sleep(1)
+""")
+    checks = verifier.root / "jobs" / task["task_id"] / "checks"
+    started = time.monotonic()
+
+    def cancel_when_running():
+        if list(checks.glob("*/tmp/started")):
+            raise Cancelled()
+        assert time.monotonic() - started < 15, "isolated pytest did not start"
+
+    with pytest.raises(Cancelled):
+        verifier._pytest(task, worktree, ["tests/unit"], cancel_when_running)
+    assert not list(checks.glob("*/tmp"))
+
+
+def test_generated_regression_must_pass_ruff_before_pytest(local_test):
+    from chatcopilot.harness.preparation import acceptance
+    verifier, task, worktree = local_test
+    (worktree / "pyproject.toml").write_text('[tool.ruff.lint]\nselect = ["E4", "E7", "E9", "F"]\n')
+    task = {**task, "source": {"kind": "robot_task"}, "acceptance": acceptance({"original_input": "fixture"})}
+    output = private_directory(verifier.root / "jobs" / task["task_id"] / "attempt-1")
+    draft = private_directory(output / "draft") / "test_reproduction.py"
+    draft.write_text("import sys\nEXTRA = 'fixture'\nsys.path.append(EXTRA)\nimport os\ndef test_behavior(): assert os.name\n")
+    draft.chmod(0o600)
+    proposal = {"verification_kind": "pytest", "summary": "fixture",
+                "coverage": [{"requirement": "expected_behavior", "checks": ["test_behavior"]}]}
+    with pytest.raises(HarnessError) as caught:
+        verifier.prepare(task, worktree, output, proposal, lambda: None)
+    report = caught.value.evidence["result"]
+    assert report["lint"]["exit_code"] == 1
+    assert report["rows"] == {} and "E402" in "\n".join(report["errors"])
+
+    draft.write_text("import os\nimport sys\nEXTRA = 'fixture'\nsys.path.append(EXTRA)\ndef test_behavior(): assert os.name\n")
+    prepared = verifier.prepare(task, worktree, output, proposal, lambda: None)
+    assert prepared["preparation_trial"]["lint"]["exit_code"] == 0
+    assert {row["outcome"] for row in prepared["preparation_trial"]["rows"].values()} == {"passed"}
+
+
 @pytest.mark.parametrize(
     "outcome, assertion", [("error", False), ("skipped", False), ("failed", False)]
 )
@@ -497,7 +559,7 @@ def test_generated_test_is_frozen_and_reused_with_real_candidate_import(local_te
     task["source"] = robot_source()
     feedback = RepairFeedback("检查数值", "VALUE equals one").to_payload()
     task["source"]["feedback"] = feedback
-    test_bytes = b"from probe import VALUE\ndef test_repro(): assert VALUE == 1\n"
+    test_bytes = b"from probe import VALUE\n\n\ndef test_repro(): assert VALUE == 1\n"
 
     def prepare(_worktree, _evidence, _options, output, _check):
         assert _evidence["source"]["feedback"] == feedback

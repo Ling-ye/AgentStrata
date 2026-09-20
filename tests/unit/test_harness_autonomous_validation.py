@@ -165,9 +165,11 @@ def test_domain_exception_returns_to_bounded_round_owner(tmp_path, monkeypatch):
 def test_repeated_draft_is_not_executed_again(tmp_path, monkeypatch):
     verifier, task, repo, coder, calls, executed = make_preparer(tmp_path, [b"def test_value(): product()\n"], monkeypatch,
         [{"outcome": "failed", "exception_chain": [{"type": "NameError"}]}])
-    with pytest.raises(HarnessError, match="产品行为证据"):
+    with pytest.raises(HarnessError, match="产品行为证据") as caught:
         freeze_fixture(verifier, task, repo, coder, RepairOptions("test"), lambda: None)
     assert len(calls) == len(executed) == 1
+    assert caught.value.evidence["phase"] == "definition"
+    assert caught.value.evidence["result"]["rows"]["test_value"]["exception_chain"] == [{"type": "NameError"}]
 
 
 def test_preparation_budget_is_not_reset(tmp_path, monkeypatch):
