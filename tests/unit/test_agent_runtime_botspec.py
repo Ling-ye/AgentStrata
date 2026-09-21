@@ -34,30 +34,30 @@ def _write_bot(base: Path, agents_block: str = "") -> Path:
     return bot_yaml
 
 
-class AgentBackendBotSpecTests(unittest.TestCase):
-    def test_default_agent_backend_is_native(self) -> None:
+class RuntimeAdapterBotSpecTests(unittest.TestCase):
+    def test_default_agent_runtime_is_native(self) -> None:
         with TemporaryDirectory(dir="/tmp") as tmp:
             spec = load_botspec(_write_bot(Path(tmp)))
             errors = [issue for issue in validate_botspec(spec) if issue.level == "error"]
 
-        self.assertEqual(spec.agents.backend, "native")
+        self.assertEqual(spec.agents.runtime, "native")
         self.assertEqual(errors, [])
 
     def test_langgraph_backend_is_parsed_and_assembled(self) -> None:
         with TemporaryDirectory(dir="/tmp") as tmp:
-            spec = load_botspec(_write_bot(Path(tmp), "backend: langgraph"))
+            spec = load_botspec(_write_bot(Path(tmp), "runtime: langgraph"))
             runtime = assemble_runtime_context(spec)
 
-        self.assertEqual(spec.agents.backend, "langgraph")
-        self.assertEqual(runtime.agent_backend, "langgraph")
+        self.assertEqual(spec.agents.runtime, "langgraph")
+        self.assertEqual(runtime.runtime_id, "langgraph")
 
     def test_codex_backend_is_parsed_and_assembled(self) -> None:
         with TemporaryDirectory(dir="/tmp") as tmp:
-            spec = load_botspec(_write_bot(Path(tmp), "backend: codex"))
+            spec = load_botspec(_write_bot(Path(tmp), "runtime: codex"))
             runtime = assemble_runtime_context(spec)
 
-        self.assertEqual(spec.agents.backend, "codex")
-        self.assertEqual(runtime.agent_backend, "codex")
+        self.assertEqual(spec.agents.runtime, "codex")
+        self.assertEqual(runtime.runtime_id, "codex")
 
     def test_retired_codex_permission_fields_explain_migration(self) -> None:
         fields = {
@@ -72,16 +72,16 @@ class AgentBackendBotSpecTests(unittest.TestCase):
                     ValueError, "retired permission fields; remove this block"
                 ):
                     load_botspec(
-                        _write_bot(Path(tmp), f"backend: codex\ncodex:\n  {name}: {value}")
+                        _write_bot(Path(tmp), f"runtime: codex\ncodex:\n  {name}: {value}")
                     )
 
-    def test_unknown_agent_backend_is_validation_error(self) -> None:
+    def test_unknown_agent_runtime_is_validation_error(self) -> None:
         with TemporaryDirectory(dir="/tmp") as tmp:
-            spec = load_botspec(_write_bot(Path(tmp), "backend: unknown"))
+            spec = load_botspec(_write_bot(Path(tmp), "runtime: unknown"))
             errors = [
                 issue
                 for issue in validate_botspec(spec)
-                if issue.level == "error" and issue.field == "agents.backend"
+                if issue.level == "error" and issue.field == "agents.runtime"
             ]
 
         self.assertEqual(len(errors), 1)
@@ -101,7 +101,7 @@ class AgentBackendBotSpecTests(unittest.TestCase):
 
     def test_removed_default_route_is_an_immediate_validation_error(self) -> None:
         with TemporaryDirectory(dir="/tmp") as tmp:
-            path = _write_bot(Path(tmp), "backend: native")
+            path = _write_bot(Path(tmp), "runtime: native")
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(
                     "llm:\n  code:\n    default_route: code\n"
@@ -126,7 +126,7 @@ class AgentBackendBotSpecTests(unittest.TestCase):
             ("research", "web_search", "live"),
         ):
             with self.subTest(slot=slot, name=name), TemporaryDirectory(dir="/tmp") as tmp:
-                path = _write_bot(Path(tmp), "backend: native")
+                path = _write_bot(Path(tmp), "runtime: native")
                 with path.open("a", encoding="utf-8") as handle:
                     handle.write(f"llm:\n  {slot}:\n    {name}: {value}\n")
                 errors = [issue.field for issue in validate_botspec(load_botspec(path))

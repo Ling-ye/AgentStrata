@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.botspec.model import LLMSpec, ModelSpec
 
 from chatcopilot.evals.trial_runner import run_case
 
@@ -328,8 +329,8 @@ class _FakeSession:
         if image_resources:
             on_event(
                 InputResourcesDispatched(
-                    backend="codex",
-                    turn_index=int(task.metadata.get("eval_turn", 0)),
+                    runtime_id="codex",
+                    turn_index=int(task.execution.turn_index),
                     request_id="fake-dispatch-0123456789abcdef",
                     resources=tuple(
                         InputResourceReceipt(
@@ -548,7 +549,7 @@ class _FakeSession:
             assert __import__("json").loads(probed)["value"] == "new"
             return AgentResult("隔离服务已测试、重启一次并确认新行为。", "end_turn")
         if case_id == "code-failure-no-false-success":
-            if int(task.metadata.get("eval_turn", 0)) == 0:
+            if int(task.execution.turn_index) == 0:
                 return AgentResult(
                     "修改方案：关闭 instant_reply 并删除“喵喵喵，正在分析中...”；"
                     "统一先给方案、用户确认后才启动代码任务的语义；"
@@ -641,7 +642,7 @@ class _FakeAgentRuntime:
         self.tasks = tasks
         self.closed = False
 
-    def new_session(self, **kwargs: Any) -> _FakeSession:
+    def open_session(self, **kwargs: Any) -> _FakeSession:
         policy_filter = kwargs.get("permission_filter")
         visible_tools = tuple(
             tool for tool in self.tools if policy_filter is None or policy_filter(tool) is None
@@ -663,7 +664,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch, deepeval_judge, request) -> list
     selected_backend = getattr(request, "param", "native")
     runtime = SimpleNamespace(
         spec=SimpleNamespace(
-            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")
+            context=ContextSpec(), llm=LLMSpec(env_prefix="CHATCOPILOT_TEST", chat=ModelSpec(provider="openai", api="openai_responses"))
         ),
         tool_packs=("dev.files", "persona.control"),
         exclude_tools=(),
@@ -671,7 +672,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch, deepeval_judge, request) -> list
         rag_sources=("configured-rag",),
         mcp_servers=("configured-mcp",),
         subagents=SubagentSpec(),
-        agent_backend=selected_backend,
+        runtime_id=selected_backend,
         platform_type="qq",
         prompt_profile=BotPromptProfile(identity="system", response_style="concise"),
         capability_policies=(),
@@ -683,7 +684,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch, deepeval_judge, request) -> list
 
     def build_runtime(runtime_context: Any, **kwargs: Any) -> _FakeAgentRuntime:
         projection = project_agent_runtime(runtime_context, **kwargs)
-        if projection.agent_backend != selected_backend:
+        if projection.route.runtime_id != selected_backend:
             raise AssertionError("selected Bot backend was not preserved")
         tools = tuple(
             tool
@@ -756,7 +757,7 @@ def test_all_generic_agent_cases_execute_through_fake_selected_runtime(
             for item in result.metadata["observation_evidence"]
             if item["kind"] == "input_resource_dispatch"
         )
-        assert dispatched["backend"] == "codex"
+        assert dispatched["runtime_id"] == "codex"
         assert dispatched["resources"] == [
             {
                 "sequence": 0,
@@ -1215,7 +1216,7 @@ def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
     config.llm.api_key = "eval-local-placeholder"
     runtime = SimpleNamespace(
         spec=SimpleNamespace(
-            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST")
+            context=ContextSpec(), llm=LLMSpec(env_prefix="CHATCOPILOT_TEST", chat=ModelSpec(provider="openai", api="openai_responses"))
         ),
         tool_packs=(),
         exclude_tools=(),
@@ -1223,7 +1224,7 @@ def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
         rag_sources=(),
         mcp_servers=(),
         subagents=SubagentSpec(),
-        agent_backend="codex",
+        runtime_id="codex",
         platform_type="qq",
         prompt_profile=BotPromptProfile(identity="system", response_style="concise"),
         capability_policies=(),
@@ -1231,30 +1232,30 @@ def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
     monkeypatch.setattr(executor, "load_evaluation_runtime", lambda _bot: runtime)
     monkeypatch.setattr(executor, "load_config", lambda **_kwargs: config)
 
-    original_build_backend = agent_runtime_module.build_backend
+    original_build_runtime_adapter = agent_runtime_module.build_runtime_adapter
     captured: dict[str, Any] = {}
 
-    def build_backend_probe(backend_id: str, **kwargs: Any) -> Any:
-        backend = original_build_backend(backend_id, **kwargs)
+    def build_runtime_adapter_probe(runtime_id: str, **kwargs: Any) -> Any:
+        backend = original_build_runtime_adapter(runtime_id, **kwargs)
         original_open_session = backend.open_session
 
         def open_session_probe(request: Any) -> Any:
             captured["request"] = request
             session_ref = original_open_session(request)
             captured["session_ref"] = session_ref
-            captured["workdir"] = backend.native_session(session_ref).workdir
+            captured["workdir"] = backend._resolve(session_ref).workdir
             return session_ref
 
         backend.open_session = open_session_probe
-        backend.stream_turn = lambda _session, _task, *, on_event: AgentResult(
+        backend.stream_turn = lambda _session, _task, *, on_event, cancellation=None: AgentResult(
             '{"name":"fixture","value":7}',
             "end_turn",
         )
-        captured["backend"] = backend
-        captured["policy"] = kwargs["backend_policy"]
+        captured["runtime_id"] = backend
+        captured["policy"] = kwargs["runtime_policy"]
         return backend
 
-    monkeypatch.setattr(agent_runtime_module, "build_backend", build_backend_probe)
+    monkeypatch.setattr(agent_runtime_module, "build_runtime_adapter", build_runtime_adapter_probe)
     try:
         observation = executor._execute_agent_definition(
             _definition("dialogue-strict-json"),
@@ -1265,7 +1266,7 @@ def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
             resource_evidence=(),
         )
     finally:
-        backend = captured.get("backend")
+        backend = captured.get("runtime_id")
         session_ref = captured.get("session_ref")
         if backend is not None and session_ref is not None:
             backend.close_session(session_ref)
@@ -1274,8 +1275,8 @@ def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
     assert observation.final_text == '{"name":"fixture","value":7}'
     assert request.options["execution_scope"].project_roots == (evaluation_workspace,)
     assert request.options["workspace_root"] == evaluation_workspace
-    assert request.options["backend_state_root"] == (
-        evaluation_workspace / ".backend-sessions"
+    assert request.options["runtime_state_root"] == (
+        evaluation_workspace / ".runtime-sessions"
     )
     assert captured["workdir"] == evaluation_workspace
     assert list(live_source.iterdir()) == []

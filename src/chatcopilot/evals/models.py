@@ -158,7 +158,7 @@ class EvalCaseRequirements:
     """Preflight requirements expressed without secret values or endpoints."""
 
     features: tuple[str, ...] = ()
-    backends: tuple[str, ...] = ()
+    runtime_ids: tuple[str, ...] = ()
     platforms: tuple[str, ...] = ()
     tool_packs: tuple[str, ...] = ()
     tools: tuple[str, ...] = ()
@@ -303,7 +303,7 @@ class TrialObservation:
     structured_error: dict[str, Any] | None = None
 
 
-RESULT_SCHEMA_VERSION = 2
+RESULT_SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -401,11 +401,15 @@ class EvaluationTarget:
     target_id: str
     label: str
     executor: TargetExecutor
-    backend: str
+    runtime_id: str
     model: str
     reasoning_effort: str
     fingerprint: str
     config_fingerprint: str = ""
+    provider: str = ""
+    model_api: str = ""
+    auth_mode: str = ""
+    capability_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -492,7 +496,7 @@ class EvaluationTrial:
     target_id: str
     target_fingerprint: str
     executor: TargetExecutor
-    backend: str
+    runtime_id: str
     model: str
     reasoning_effort: str
     attempt: int

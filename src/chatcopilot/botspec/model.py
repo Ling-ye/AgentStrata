@@ -18,7 +18,21 @@ from chatcopilot.contracts.subagents import (
     SubagentSpec as SubagentSpec,
     ToolSelectorSpec as ToolSelectorSpec,
 )
-from chatcopilot.contracts.model_selection import CodeModelProfile
+from chatcopilot.contracts.model_selection import WorkerModelProfile
+from chatcopilot.contracts.model_runtime import AuthRef
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    inherit_env_prefix: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    api: str | None = None
+    base_url: str | None = None
+    auth: AuthRef | None = None
+    reasoning_effort: str | None = None
+    timeout: int | None = None
+    profiles: dict[str, WorkerModelProfile] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -67,13 +81,14 @@ class ChannelsSpec:
 
 @dataclass(frozen=True)
 class CodeLLMSpec:
-    """Versioned non-secret Codex model controls and backend execution settings."""
+    """Versioned non-secret code-worker model and execution settings."""
 
     enabled: bool = False
+    env_prefix: str | None = None
     provider: str = "codex_cli"
     model: str = "gpt-5.5"
     reasoning_effort: str = "medium"
-    profiles: dict[str, CodeModelProfile] = field(default_factory=dict)
+    profiles: dict[str, WorkerModelProfile] = field(default_factory=dict)
     code_task_profile: str | None = None
     command: str = "codex exec --model {model} --cd {workdir}"
     timeout_seconds: int = 900
@@ -85,7 +100,8 @@ class LLMSpec:
 
     env_prefix: str = "CHATCOPILOT_CHAT"
     research_env_prefix: str | None = None
-    research_model: str | None = None
+    chat: ModelSpec = field(default_factory=ModelSpec)
+    research: ModelSpec = field(default_factory=ModelSpec)
     code: CodeLLMSpec = field(default_factory=CodeLLMSpec)
 
 

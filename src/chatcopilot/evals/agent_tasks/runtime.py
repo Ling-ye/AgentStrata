@@ -14,7 +14,7 @@ from chatcopilot.application.agent_runtime import (
 )
 from chatcopilot.application.execution_scope import execution_scope
 from chatcopilot.contracts.agent import AgentTask
-from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
+from chatcopilot.contracts.runtime_adapter import CodexMainSessionPolicy
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.subagents import CustomSubagentSpec, SubagentBudgetSpec, ToolSelectorSpec
 from chatcopilot.core.config import load_config
@@ -74,7 +74,7 @@ def run(definition, *, suite_id: str, bot: str, workspace_root: Path) -> TrialOb
     runtime = load_evaluation_runtime(bot)
     check_runtime_requirements([definition], runtime)
     config = load_config(env_prefix=runtime.spec.llm.env_prefix)
-    # State and supervisor artifacts stay outside the backend's ordinary workdir.
+    # State and supervisor artifacts stay outside the runtime's ordinary workdir.
     workspace_root = workspace_root / (
         "task-" + hashlib.sha256(definition.case_id.encode()).hexdigest()[:20]
     )
@@ -211,7 +211,7 @@ def run(definition, *, suite_id: str, bot: str, workspace_root: Path) -> TrialOb
             service.persistent_state = state
             plan = PromptBuildInput(
                 profile=runtime.prompt_profile,
-                backend=runtime.agent_backend,
+                runtime_id=runtime.runtime_id,
                 model=None,
                 role=role,
                 channel_kind="group" if group else "private",
@@ -229,7 +229,7 @@ def run(definition, *, suite_id: str, bot: str, workspace_root: Path) -> TrialOb
                 port = PersonaPort(workspace.user_id, workspace.chat_id)
                 ports[actor] = port
                 original = build_persona_provider(
-                    port, llm=agent.research_llm, coordinator_factory=lambda: None
+                    port, llm=agent.research_model_client, coordinator_factory=lambda: None
                 )
                 bound = replace(
                     original,
@@ -243,7 +243,7 @@ def run(definition, *, suite_id: str, bot: str, workspace_root: Path) -> TrialOb
             generation[actor] = generation.get(actor, 0) + 1
             session_id = f"{session_prefix}-{actor}-{generation[actor]}"
             with _trial_environment(workspace, target_root):
-                session = agent.new_session(
+                session = agent.open_session(
                     session_id=session_id,
                     prompt_input=plan,
                     workspace_service=service,
@@ -262,7 +262,7 @@ def run(definition, *, suite_id: str, bot: str, workspace_root: Path) -> TrialOb
             if family == "persona":
 
                 def refresh():
-                    session.set_prompt_plan(
+                    session.update_context(
                         PromptPlanBuilder().build(
                             replace(
                                 plan,

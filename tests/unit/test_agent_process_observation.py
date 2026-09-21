@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from chatcopilot.agent.backends.codex_events import CodexJsonlProjector
+from chatcopilot.agent.runtimes.codex_events import CodexJsonlProjector
 from chatcopilot.agent.langgraph_session import LangGraphAgentSession
 from chatcopilot.agent.process import ProcessMessage
 from chatcopilot.agent.session import AgentSession
@@ -93,7 +93,7 @@ def test_actual_rounds_and_filtered_tool_messages_reach_observation_index(record
 
 def test_context_input_references_only_describe_actual_tool_messages():
     event = ContextSnapshotPrepared(
-        snapshot_id='ctx', backend='native', model='fixture', iteration=1,
+        snapshot_id='ctx', runtime_id='native', model='fixture', iteration=1,
         session_messages=({'role': 'tool', 'tool_call_id': 'removed-by-context'},),
         effective_messages=(
             {'role': 'user', 'tool_call_id': 'not-a-tool'},
@@ -135,11 +135,11 @@ def test_codex_adapter_records_public_items_without_delivery_events():
     adapter = AgentProcessAdapter()
     records = [adapter.project(x) for x in captured]
     assert {x.event['data']['process_kind'] for x in records} >= {
-        'command', 'file_change', 'mcp_tool', 'web_search', 'plan', 'reasoning', 'message', 'backend_execution'}
+        'command', 'file_change', 'mcp_tool', 'web_search', 'plan', 'reasoning', 'message', 'runtime_execution'}
     assert 'private reasoning' not in repr(records)
     assert 'public explanation' in repr(records)
     assert 'sample.py' in repr(records) and 'sample query' in repr(records)
-    assert next(x for x in captured if isinstance(x, LlmCallFinished)).execution_kind == 'backend_execution'
+    assert next(x for x in captured if isinstance(x, LlmCallFinished)).execution_kind == 'runtime_execution'
 
 
 def test_live_message_revisions_paginate_and_duplicate_completion_is_idempotent(recorded):
@@ -172,7 +172,7 @@ def test_observation_stream_is_bounded_and_does_not_emit_delivery(monkeypatch):
     captured = []
     ticks = iter(range(1000))
     monkeypatch.setattr('chatcopilot.agent.process.time.monotonic', lambda: next(ticks) * 2)
-    message = ProcessMessage(captured.append, trace_id='t', parent_span_id='model', backend='native', depth=0)
+    message = ProcessMessage(captured.append, trace_id='t', parent_span_id='model', runtime_id='native', depth=0)
     for _ in range(100):
         message.append('x' * 1024)
     message.finish()

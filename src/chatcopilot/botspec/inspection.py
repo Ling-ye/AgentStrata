@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from chatcopilot.contracts.execution_scope import RUNTIME_ACCESS_POLICY_VERSION
-from chatcopilot.core.inspection import fingerprint, plain
+from chatcopilot.core.inspection import fingerprint, plain, public_configuration
+from chatcopilot.core.observability_redaction import collect_observability_secrets, redact_observability_payload
 from chatcopilot.core.mcp_catalog import resolve_catalog_server
 from .loader import load_botspec, validate_botspec
 from .model import BotSpec
@@ -64,9 +65,8 @@ def configuration_projection(
     agents = data.get("agents") or {}
     add("agent", "agent:main", "主 Agent", agents)
     llm = data.get("llm") or {}
-    chat = llm.get("chat") or {"env_prefix": llm.get("env_prefix")}
-    research = llm.get("research") or {"env_prefix": llm.get("research_env_prefix"),
-                                       "model": llm.get("research_model")}
+    chat = {**(llm.get("chat") or {}), "env_prefix": llm.get("env_prefix", (llm.get("chat") or {}).get("env_prefix"))}
+    research = {**(llm.get("research") or {}), "env_prefix": llm.get("research_env_prefix", (llm.get("research") or {}).get("env_prefix"))}
     for slot, config in (("chat", chat), ("research", research), ("code", llm.get("code", {}))):
         add("agent", f"model-slot:{slot}", f"模型 · {slot}", config)
     add("agent", "prompts:instance", "提示词配置", data.get("prompts", {}))
@@ -102,7 +102,7 @@ def configuration_projection(
               "visibility": "operator", "environment_revision_version": 2,
               "environment_revision": fingerprint({"access": access, "environment": {
                   entity["id"]: entity["environment"] for entity in entities}})}
-    return result
+    return public_configuration(result, secrets=collect_observability_secrets(values))
 
 
 def environment_values(value: Any, values: Mapping[str, str]) -> dict[str, Any]:
@@ -112,6 +112,9 @@ def environment_values(value: Any, values: Mapping[str, str]) -> dict[str, Any]:
             if key.endswith("_env") and isinstance(item, str):
                 if item:
                     result[item] = values.get(item)
+                    if key == "key_env" or redact_observability_payload({key: "reference"}).value[key] == "[REDACTED]":
+                        if result[item]:
+                            result[item] = "[REDACTED]"
             elif key.endswith("env_prefix") and isinstance(item, str) and item:
                 result.update({name: raw for name, raw in values.items() if name.startswith(item + "_")})
             else:
@@ -129,7 +132,8 @@ def environment_values(value: Any, values: Mapping[str, str]) -> dict[str, Any]:
 def source_revision(spec: BotSpec) -> str:
     references = [spec.prompts.identity, spec.prompts.response_style, spec.prompts.refusal_style,
                   *spec.prompts.role_styles.values(), *spec.prompts.mode_styles.values(),
-                  spec.tools.mcp.servers, spec.context.rag.sources, spec.context.playbooks.manifest]
+                  spec.tools.mcp.servers, spec.context.rag.sources, spec.context.playbooks.manifest,
+                  spec.agents.codex_extensions]
     digests = {}
     for reference in references:
         path = spec.resolve_path(reference)
@@ -157,7 +161,7 @@ def declared_configuration(path: Path, environment: Mapping[str, str], *,
     skills = load_skill_index(manifest) if manifest and manifest.is_file() else ()
     projection = configuration_projection(spec, mcp=mcp, skills=skills, environment=environment)
     projection["configuration_revision"] = source_revision(spec)
-    projection["backend"] = spec.agents.backend
+    projection["runtime_id"] = spec.agents.runtime
     projection["validation"] = [{"field": issue.field, "level": issue.level, "message": issue.message}
                                 for issue in validate_botspec(spec, environment=dict(environment))]
     for pack in spec.tools.packs:
@@ -189,7 +193,7 @@ def declared_configuration(path: Path, environment: Mapping[str, str], *,
             )
     _context_details(spec, projection, environment)
     enrich_agent_configuration(projection, spec, environment, saved_environment=saved_environment)
-    return projection
+    return public_configuration(projection, secrets=collect_observability_secrets(environment))
 
 
 def expected_configuration(path: Path, saved: Mapping[str, str], *, home: Path) -> dict[str, Any]:

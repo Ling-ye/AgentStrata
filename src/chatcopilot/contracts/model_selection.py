@@ -29,7 +29,7 @@ CODEX_REASONING_EFFORTS = {
 
 
 @dataclass(frozen=True)
-class CodeModelProfile:
+class WorkerModelProfile:
     """One BotSpec-allowlisted Codex model and reasoning combination."""
 
     model: str
@@ -52,7 +52,7 @@ class CodeModelProfile:
 
 
 @dataclass(frozen=True)
-class CodeModelSelection:
+class WorkerModelSelection:
     """Frozen effective model selection attached to a queued Codex job."""
 
     provider: str
@@ -96,7 +96,7 @@ class CodeModelSelection:
         }
 
     @classmethod
-    def from_payload(cls, payload: Any) -> "CodeModelSelection":
+    def from_payload(cls, payload: Any) -> "WorkerModelSelection":
         if not isinstance(payload, dict):
             raise ValueError("model selection must be an object")
         return cls(
@@ -119,8 +119,8 @@ class CodeModelSelection:
 __all__ = [
     "CODE_MODEL_LANE",
     "CODEX_REASONING_EFFORTS",
-    "CodeModelProfile",
-    "CodeModelSelection",
+    "WorkerModelProfile",
+    "WorkerModelSelection",
     "MODEL_SELECTION_SCOPE_ONCE",
     "MODEL_SELECTION_SCOPE_SESSION",
     "MODEL_SELECTION_SCOPES",

@@ -12,13 +12,14 @@ from chatcopilot.botspec.model import (
     CodebaseSpec,
     ContextSpec,
     LLMSpec,
+    ModelSpec,
     PlatformSpec,
     PromptSpec,
     WikiSpec,
 )
 from chatcopilot.botspec.runtime import BotRuntimeContext
 from chatcopilot.botspec.runtime_env import apply_runtime_env, load_research_llm_config
-from chatcopilot.contracts.model_selection import CodeModelProfile
+from chatcopilot.contracts.model_selection import WorkerModelProfile
 from chatcopilot.contracts.prompt import BotPromptProfile
 from chatcopilot.core.config import LLMConfig
 from chatcopilot.external_tools.codebase.config import load_registry, reset_cache
@@ -34,7 +35,7 @@ class BotSpecRuntimeEnvTests(unittest.TestCase):
         )
         spec = LLMSpec(
             research_env_prefix="CHATCOPILOT_TEST_RESEARCH",
-            research_model="botspec-research",
+            research=ModelSpec(model="botspec-research"),
         )
         with mock.patch.dict(os.environ, {}, clear=True):
             configured = load_research_llm_config(spec, fallback=fallback)
@@ -235,7 +236,7 @@ class BotSpecRuntimeEnvTests(unittest.TestCase):
                         model="botspec-code-model",
                         reasoning_effort="high",
                         profiles={
-                            "sol-high": CodeModelProfile(
+                            "sol-high": WorkerModelProfile(
                                 model="gpt-5.6-sol",
                                 reasoning_effort="high",
                             )

@@ -1,6 +1,6 @@
-"""Backend-neutral AgentEvent projection for process observers.
+"""Runtime-neutral AgentEvent projection for process observers.
 
-Backend adapters own native formats. This pure projection owns the shared
+Runtime adapters own native formats. This pure projection owns the shared
 observation shape; storage owners only add their task and stage bindings.
 """
 from __future__ import annotations
@@ -57,7 +57,7 @@ class AgentProcessAdapter:
         if not isinstance(event, supported):
             return None
         data = {key: getattr(event, key) for key in (
-            "name", "model", "backend", "trace_id", "span_id", "parent_span_id", "depth", "iteration",
+            "name", "model", "runtime_id", "trace_id", "span_id", "parent_span_id", "depth", "iteration",
             "coverage", "omitted", "code", "input_message_count", "input_estimated_tokens", "context_snapshot_id",
             "context_kind", "finish_reason", "estimated_tokens", "model_selection", "tool_schema_count",
             "system_estimated_tokens", "tool_schema_estimated_tokens", "estimator_version", "execution_kind",
@@ -107,13 +107,15 @@ class AgentProcessAdapter:
         elif isinstance(event, (LlmCallStarted, LlmCallFinished)):
             process_kind = event.execution_kind
             entity = f"model:{event.model}"
-            data["source"] = "adapter" if event.execution_kind == "backend_execution" else "host"
+            data["source"] = "adapter" if event.execution_kind == "runtime_execution" else "host"
             if isinstance(event, LlmCallStarted) and event.request_parameters is not None:
                 body = {"request_parameters": event.request_parameters}
             if isinstance(event, LlmCallFinished) and event.visible_response is not None:
                 body = {"visible_response": event.visible_response}
                 body_state = event.visible_response.get("capture_state")
             if isinstance(event, LlmCallFinished) and event.usage:
+                data["usage_scope"] = event.usage_scope
+                data["usage_coverage"] = event.usage_coverage
                 usage = dict(event.usage)
                 details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
                 if isinstance(details, dict) and type(details.get("cached_tokens")) is int:
@@ -169,7 +171,7 @@ class AgentProcessAdapter:
         elif isinstance(event, InputResourcesDispatched):
             process_kind = "resources"
             data.update(request_id=event.request_id, resource_count=len(event.resources))
-            body = {"backend": event.backend, "request_id": event.request_id,
+            body = {"runtime_id": event.runtime_id, "request_id": event.request_id,
                     "turn_index": event.turn_index, "resources": [asdict(item) for item in event.resources]}
         data["process_kind"] = process_kind
         observed_at = (getattr(event, "observed_at", None) or getattr(event, "finished_at", None)

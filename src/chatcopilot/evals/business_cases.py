@@ -183,7 +183,9 @@ class BusinessFixture:
             return ()
         self.persona_port = PersonaPort(workspace.user_id, workspace.chat_id)
         provider = build_persona_provider(
-            self.persona_port, llm=agent_runtime.research_llm, coordinator_factory=lambda: None
+            self.persona_port,
+            llm=agent_runtime.research_model_client,
+            coordinator_factory=lambda: None,
         )
         return (
             replace(

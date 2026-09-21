@@ -530,7 +530,7 @@ class EvalRunnerTests(unittest.TestCase):
                     {
                         "target_id": "configured",
                         "executor": "agent_configured",
-                        "backend": "native",
+                        "runtime_id": "native",
                         "fingerprint": "same-target-fingerprint",
                     }
                 ],
@@ -575,7 +575,7 @@ class EvalRunnerTests(unittest.TestCase):
                 {
                     "target_id": "configured",
                     "executor": "agent_configured",
-                    "backend": "native",
+                    "runtime_id": "native",
                 }
             ],
             "selected_cases": ["ifeval:ifeval-json-format"],
@@ -610,7 +610,7 @@ class EvalRunnerTests(unittest.TestCase):
                         {
                             "target_id": "other-target",
                             "executor": "agent_configured",
-                            "backend": "native",
+                            "runtime_id": "native",
                         }
                     ],
                 },
@@ -648,7 +648,7 @@ class EvalRunnerTests(unittest.TestCase):
                 {
                     "target_id": "configured",
                     "executor": "agent_configured",
-                    "backend": "native",
+                    "runtime_id": "native",
                 }
             ],
             "selected_cases": ["ifeval:ifeval-json-format"],
@@ -679,7 +679,7 @@ class EvalRunnerTests(unittest.TestCase):
         judge["config_snapshot"]["judge"] = "changed-judge"
         variants.append(("judge", judge))
         backend = json.loads(json.dumps(base_payload))
-        backend["targets"][0]["backend"] = "codex"
+        backend["targets"][0]["runtime_id"] = "codex"
         variants.append(("Targets", backend))
         sample = json.loads(json.dumps(base_payload))
         sample["trials"][0]["attempt"] = 2
@@ -705,12 +705,12 @@ class EvalRunnerTests(unittest.TestCase):
                 {
                     "target_id": "codex",
                     "executor": "agent_isolated",
-                    "backend": "codex",
+                    "runtime_id": "codex",
                 },
                 {
                     "target_id": "native",
                     "executor": "agent_isolated",
-                    "backend": "native",
+                    "runtime_id": "native",
                 },
             ],
             "selected_cases": ["ifeval:ifeval-json-format"],
@@ -743,7 +743,7 @@ class EvalRunnerTests(unittest.TestCase):
                 {
                     "target_id": "configured",
                     "executor": "agent_configured",
-                    "backend": "native",
+                    "runtime_id": "native",
                 }
             ],
             "selected_cases": ["ifeval:ifeval-json-format"],

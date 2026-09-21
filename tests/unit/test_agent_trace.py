@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.contracts.execution import TurnExecutionContext, TraceContext
 
 from tests.prompt_plan_fixture import prompt_plan
 
@@ -81,7 +82,7 @@ def _call(name: str, args: dict, call_id: str = "c1") -> ChatResult:
 class AgentTraceTests(unittest.TestCase):
     def test_native_and_langgraph_record_each_public_model_response(self) -> None:
         for session_type in (AgentSession, LangGraphAgentSession):
-            with self.subTest(backend=session_type.__name__):
+            with self.subTest(runtime_id=session_type.__name__):
                 tool = _tool("ping", category="agent")
                 first = _call("ping", {"reasoning": "public tool argument"}, call_id="first-call")
                 first.content = "先查询工具"
@@ -117,7 +118,7 @@ class AgentTraceTests(unittest.TestCase):
             (AgentSession, "native"),
             (LangGraphAgentSession, "langgraph"),
         ):
-            with self.subTest(backend=backend):
+            with self.subTest(runtime_id=backend):
                 session = session_type(
                     session_id=f"sid-{backend}",
                     llm=_ScriptedLLM([ChatResult(content="完成")]),
@@ -128,7 +129,7 @@ class AgentTraceTests(unittest.TestCase):
                 events: list[object] = []
 
                 session.run_task(
-                    AgentTask(text="go", metadata={"trace_id": f"trace-{backend}", "parent_span_id": "host:actor"}),
+                    AgentTask(text="go", execution=TurnExecutionContext(trace=TraceContext(f"trace-{backend}", "host:actor"))),
                     on_event=events.append,
                 )
 
@@ -143,16 +144,16 @@ class AgentTraceTests(unittest.TestCase):
                 for started in starts:
                     self.assertIn(started.context_snapshot_id, snapshots)
                     snapshot = snapshots[started.context_snapshot_id]
-                    self.assertEqual(snapshot.backend, backend)
+                    self.assertEqual(snapshot.runtime_id, backend)
                     self.assertEqual(snapshot.span_id, started.span_id)
                     self.assertEqual(started.parent_span_id, "host:actor")
                     self.assertEqual(snapshot.parent_span_id, "host:actor")
                 self.assertEqual(snapshot.trace_id, started.trace_id)
-                self.assertEqual(started.backend, backend)
+                self.assertEqual(started.runtime_id, backend)
 
     def test_top_level_calls_do_not_reference_an_unrecorded_root(self) -> None:
         for session_type in (AgentSession, LangGraphAgentSession):
-            with self.subTest(backend=session_type.__name__):
+            with self.subTest(runtime_id=session_type.__name__):
                 session = session_type(
                     session_id="standalone",
                     llm=_ScriptedLLM([ChatResult(content="done")]),
@@ -173,7 +174,7 @@ class AgentTraceTests(unittest.TestCase):
             (AgentSession, "native"),
             (LangGraphAgentSession, "langgraph"),
         ):
-            with self.subTest(backend=backend):
+            with self.subTest(runtime_id=backend):
                 session = session_type(
                     session_id=f"sid-failed-{backend}",
                     llm=_FailingLLM(),
@@ -184,7 +185,7 @@ class AgentTraceTests(unittest.TestCase):
                 events: list[object] = []
 
                 result = session.run_task(
-                    AgentTask(text="go", metadata={"trace_id": f"trace-failed-{backend}"}),
+                    AgentTask(text="go", execution=TurnExecutionContext(trace=TraceContext(f"trace-failed-{backend}"))),
                     on_event=events.append,
                 )
 
@@ -200,7 +201,7 @@ class AgentTraceTests(unittest.TestCase):
                 self.assertFalse(finishes[0].ok)
                 self.assertEqual(finishes[0].finish_reason, "failed")
                 self.assertEqual(finishes[0].visible_response["error"]["code"], "RuntimeError")
-                self.assertEqual(finishes[0].backend, backend)
+                self.assertEqual(finishes[0].runtime_id, backend)
                 self.assertEqual(finishes[0].trace_id, starts[0].trace_id)
                 self.assertEqual(finishes[0].span_id, starts[0].span_id)
                 self.assertEqual(
@@ -250,7 +251,7 @@ class AgentTraceTests(unittest.TestCase):
         )
         events = []
         session.run_task(
-            AgentTask(text="go", metadata={"trace_id": "trace_fixed"}), on_event=events.append
+            AgentTask(text="go", execution=TurnExecutionContext(trace=TraceContext("trace_fixed"))), on_event=events.append
         )
 
         started = [e for e in events if isinstance(e, ToolStarted)]
@@ -266,7 +267,7 @@ class AgentTraceTests(unittest.TestCase):
         self.assertEqual(len(llm_starts), len(llm_calls))
         self.assertEqual(len(contexts), len(llm_calls))
         self.assertEqual(contexts[0].coverage, "exact_model_input")
-        self.assertEqual(contexts[0].backend, "native")
+        self.assertEqual(contexts[0].runtime_id, "native")
         self.assertEqual(contexts[0].span_id, llm_starts[0].span_id)
         self.assertEqual(contexts[0].snapshot_id, llm_starts[0].context_snapshot_id)
         self.assertEqual(contexts[0].effective_messages[0]["role"], "system")
@@ -321,7 +322,7 @@ class AgentTraceTests(unittest.TestCase):
             prompt_plan=prompt_plan("baseline"),
         )
         events = []
-        session.run_task(AgentTask(text="go", metadata={"trace_id": "T"}), on_event=events.append)
+        session.run_task(AgentTask(text="go", execution=TurnExecutionContext(trace=TraceContext("T"))), on_event=events.append)
 
         span_started = [e for e in events if isinstance(e, SpanStarted)]
         span_finished = [e for e in events if isinstance(e, SpanFinished)]

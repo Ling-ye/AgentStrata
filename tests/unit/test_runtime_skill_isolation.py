@@ -16,6 +16,7 @@ from chatcopilot.contracts.tools import (
     object_schema,
 )
 from chatcopilot.core.config import ChatConfig
+from tests.prompt_plan_fixture import runtime_route
 
 
 @pytest.fixture(autouse=True)
@@ -48,11 +49,13 @@ def test_agent_runtimes_bind_distinct_playbook_indexes(tmp_path: Path) -> None:
     config = ChatConfig()
     first_runtime = build_agent_runtime(
         chat_config=config,
+        route=runtime_route("native", config.llm),
         tool_packs=("playbooks.reader",),
         skill_index=(first,),
     )
     second_runtime = build_agent_runtime(
         chat_config=config,
+        route=runtime_route("native", config.llm),
         tool_packs=("playbooks.reader",),
         skill_index=(second,),
     )
@@ -70,6 +73,7 @@ def test_duplicate_runtime_pack_selection_is_idempotent(tmp_path: Path) -> None:
     skill = _skill(tmp_path, "deduplicated")
     runtime = build_agent_runtime(
         chat_config=ChatConfig(),
+        route=runtime_route(),
         tool_packs=("playbooks.reader", "playbooks.reader"),
         skill_index=(skill,),
     )
@@ -109,6 +113,7 @@ def test_runtime_projects_main_and_subagent_tools_in_both_directions() -> None:
     )
     runtime = build_agent_runtime(
         chat_config=ChatConfig(),
+        route=runtime_route(),
         tool_packs=(),
         runtime_providers=(provider,),
     )

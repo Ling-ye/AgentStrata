@@ -14,7 +14,7 @@ from chatcopilot.core.trace_transfer import frames, TraceReceiver
 def capture() -> TraceCapture:
     value = TraceCapture({"kind": "robot_task", "run_id": "synthetic-run"}, secrets=("synthetic-private-value",))
     value.agent_event(LlmCallStarted(model="synthetic", iteration=0, trace_id="t", span_id="m"))
-    value.agent_event(ContextSnapshotPrepared(snapshot_id="ctx", backend="native", model="synthetic", iteration=0,
+    value.agent_event(ContextSnapshotPrepared(snapshot_id="ctx", runtime_id="native", model="synthetic", iteration=0,
         trace_id="t", span_id="m", session_messages=({"role": "user", "content": "内容" * 90000},),
         effective_messages=({"role": "user", "content": "内容" * 90000},), tool_schemas=()))
     value.agent_event(LlmCallFinished(model="synthetic", iteration=0, finish_reason="stop", usage={"input_tokens": 3},

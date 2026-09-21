@@ -28,10 +28,10 @@ from chatcopilot.contracts.agent import ResourceRef
 from chatcopilot.contracts.identity import TurnIdentity
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.contracts.model_selection import (
-    CodeModelSelection,
     MODEL_SELECTION_SCOPE_ONCE,
     MODEL_SELECTION_SCOPE_SESSION,
 )
+from chatcopilot.contracts.model_runtime import ModelSelection, ResolvedModelRoute
 from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.contracts.persona_control import PendingPersonaProposal
 from chatcopilot.middleware.access_control import AssistantMode, Role
@@ -63,9 +63,10 @@ class SessionState:
     session: AgentSessionProtocol | None = None
     llm_model: str | None = None
     routing_config: RoutingConfig | None = None
+    main_model_route: ResolvedModelRoute | None = None
     execution_session_id: str | None = None
-    code_model_selection: CodeModelSelection | None = None
-    code_model_once: CodeModelSelection | None = None
+    model_selection: ModelSelection | None = None
+    model_once: ModelSelection | None = None
     debug_mode: bool = False
     pending_image_resources: tuple[ResourceRef, ...] = field(
         default=(),
@@ -174,7 +175,7 @@ class SessionState:
         group_sequence: int | None = None
         if self.turn_identity is not None and self.conversation_journal is not None:
             # Commit the protected conversation record before advancing this
-            # actor's backend. If the journal is unavailable, the backend stays
+            # actor's runtime. If the journal is unavailable, the runtime stays
             # untouched and the turn fails closed instead of forking history.
             group_sequence = self.conversation_journal.append(
                 identity=self.turn_identity,
@@ -200,11 +201,11 @@ class SessionState:
                     try:
                         action()
                     except Exception:  # noqa: BLE001 - preserve original failure
-                        _LOGGER.exception("failed to discard inconsistent group backend")
+                        _LOGGER.exception("failed to discard inconsistent group runtime")
                 raise
         if group_sequence is not None:
             # This deterministic exchange is now present in both the journal
-            # and this actor's backend. Advance so only newer actors' turns are
+            # and this actor's runtime. Advance so only newer actors' turns are
             # injected on the next prompt.
             self.conversation_cursor = group_sequence
         self.persist_transcript()
@@ -225,7 +226,7 @@ class SessionState:
         user_text: str,
         assistant_text: str,
     ) -> None:
-        """Persist one model turn without duplicating it in the backend history."""
+        """Persist one model turn without duplicating it in the runtime history."""
 
         self._append_group_exchange(user_text, assistant_text, advance_cursor=True)
         self.persist_transcript()
@@ -247,37 +248,37 @@ class SessionState:
         if advance_cursor:
             self.conversation_cursor = sequence
 
-    def set_code_model_selection(self, selection: CodeModelSelection) -> None:
+    def set_model_selection(self, selection: ModelSelection) -> None:
         """Store a session or one-shot Codex selection without touching the chat LLM."""
         if selection.scope == MODEL_SELECTION_SCOPE_ONCE:
-            self.code_model_once = selection
+            self.model_once = selection
         elif selection.scope == MODEL_SELECTION_SCOPE_SESSION:
-            self.code_model_selection = selection
+            self.model_selection = selection
         else:
             raise ValueError(f"unsupported model-selection scope: {selection.scope}")
         self.persist_transcript()
 
-    def clear_code_model_selection(self) -> None:
-        self.code_model_selection = None
-        self.code_model_once = None
+    def clear_model_selection(self) -> None:
+        self.model_selection = None
+        self.model_once = None
         self.persist_transcript()
 
-    def effective_code_model_selection(
+    def effective_model_selection(
         self,
-        default: CodeModelSelection,
-    ) -> CodeModelSelection:
-        return self.code_model_once or self.code_model_selection or default
+        default: ModelSelection,
+    ) -> ModelSelection:
+        return self.model_once or self.model_selection or default
 
-    def consume_code_model_once(self, selection: CodeModelSelection) -> None:
+    def consume_model_once(self, selection: ModelSelection) -> None:
         """Consume a one-shot selection only after its job was queued successfully."""
-        if self.code_model_once == selection:
-            self.code_model_once = None
+        if self.model_once == selection:
+            self.model_once = None
             self.persist_transcript()
 
-    def copy_code_model_state_from(self, other: "SessionState") -> None:
+    def copy_model_state_from(self, other: "SessionState") -> None:
         """Preserve conversational model overrides across workspace identity refreshes."""
-        self.code_model_selection = other.code_model_selection
-        self.code_model_once = other.code_model_once
+        self.model_selection = other.model_selection
+        self.model_once = other.model_once
 
     def set_assistant_mode(
         self,
@@ -290,7 +291,8 @@ class SessionState:
     def _messages(self) -> list:
         """直接代理 AgentSession 的内部 messages 列表（供 transcript / 调试只读）。"""
         if self.session is not None:
-            return self.session._messages
+            from chatcopilot.contracts.model_runtime import json_value
+            return json_value(self.session.snapshot_transcript().messages)
         messages: list[dict[str, str]] = []
         for user_text, assistant_text in self._pending_exchanges:
             messages.extend(
@@ -314,29 +316,27 @@ class SessionState:
             return
         shared_group = self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
         now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        messages = (
-            self.session.snapshot_messages() if self.session is not None else list(self._messages)
-        )
+        messages = list(self._messages)
         meta = {
             "_meta": {
                 "session_id": self.session_id,
                 "role": None if shared_group else self.role.value,
                 "assistant_mode": self.assistant_mode.value,
                 "debug_mode": self.debug_mode,
-                "code_model_selection": (
-                    self.code_model_selection.to_payload()
-                    if self.code_model_selection is not None
+                "model_selection": (
+                    self.model_selection.to_payload()
+                    if self.model_selection is not None
                     else None
                 ),
-                "code_model_once": (
-                    self.code_model_once.to_payload() if self.code_model_once is not None else None
+                "model_once": (
+                    self.model_once.to_payload() if self.model_once is not None else None
                 ),
                 "user_id": None if shared_group else self.workspace.user_id,
                 "user_name": None if shared_group else self.workspace.user_name,
                 "chat_kind": self.workspace.chat_kind,
                 "chat_id": self.workspace.chat_id,
                 "message_count": len(messages),
-                "backend_session_ref": (None if shared_group else self._backend_session_payload()),
+                "runtime_session_ref": (None if shared_group else self._runtime_session_payload()),
                 "workspace_scope": self.workspace.scope,
                 "execution_session_id": None if shared_group else self.execution_session_id,
                 "turn_actor": self._turn_actor_payload(),
@@ -381,14 +381,14 @@ class SessionState:
             payload["sender_user_id"] = identity.sender_user_id
         return payload
 
-    def _backend_session_payload(self) -> dict[str, str] | None:
+    def _runtime_session_payload(self) -> dict[str, str] | None:
         if self.session is None:
             return None
-        ref = getattr(self.session, "backend_session_ref", None)
+        ref = getattr(self.session, "runtime_session_ref", None)
         if ref is None:
             return None
         return {
-            "backend": str(getattr(ref, "backend", "")),
+            "runtime_id": str(getattr(ref, "runtime_id", "")),
             "value": str(getattr(ref, "value", "")),
         }
 
@@ -419,7 +419,7 @@ def _make_test_session_state(
     plan = PromptPlanBuilder().build(
         PromptBuildInput(
             profile=profile,
-            backend="native",
+            runtime_id="native",
             model=None,
             role=(role or Role.USER).value,
             channel_kind="group" if workspace.chat_kind == "group" else "private",
@@ -443,7 +443,7 @@ def _make_test_session_state(
         role=role or Role.USER,
         assistant_mode=assistant_mode or AssistantMode.PERFORMANCE,
         runtime=SimpleNamespace(
-            agent_backend="native",
+            runtime_id="native",
             platform_type="test",
             prompt_profile=profile,
             capability_policies=(),

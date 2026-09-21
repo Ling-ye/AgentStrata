@@ -296,6 +296,9 @@ class GatewayTurnCoordinator:
         )
         run_id = _channel_run_id(event)
         canonical_text = _inbound_text(event)
+        interactions = getattr(self, "interactions", None)
+        if interactions is not None and interactions.respond_text(canonical_text, principal, session.session_id):
+            return
         token = CancellationToken()
         self._begin_run(
             session_id=session.session_id,
@@ -614,7 +617,8 @@ class GatewayTurnCoordinator:
             self._finish_aborted(session_id=session_id, run_id=run_id)
             return
         final_text = _final_text(result.final_text)
-        code = "agent_llm_error" if result.stop_reason == "llm_error" else None
+        code = ("agent_llm_error" if result.stop_reason == "llm_error" else
+                "agent_runtime_error" if result.stop_reason == "runtime_error" else None)
         self._state_store.finish_run(
             generation=self._generation,
             session_id=session_id,

@@ -26,7 +26,7 @@ def fixture(tmp_path, name="fixture"):
     (folder / "mcp.yaml").write_text("servers:\n- id: fixture-server\n  command: fixture-command\n  args: [serve]\n  enabled: true\n")
     data = {"id": name, "prompts": {"schema_version": 2, "identity": "identity.md"},
             "gateway": {}, "channels": {"qq": {"type": "qq_personal", "provider": "onebot_v11"}},
-            "agents": {"backend": "native"}, "tools": {"mcp": {"servers": "mcp.yaml"}},
+            "agents": {"runtime": "native"}, "tools": {"mcp": {"servers": "mcp.yaml"}},
             "context": {"rag": {"sources": "rag.yaml"}, "codebases": {"registry": "repos.yaml"}}}
     path = folder / "bot.yaml"
     path.write_text(yaml.safe_dump(data))
@@ -144,7 +144,7 @@ def test_shared_save_keeps_other_groups_mcp_overrides_and_custom_file(tmp_path):
                       mcp_servers=config["tools"]["mcp"]["servers"], agent_presets=config["agents"]["presets"])
     saved = yaml.safe_load(path.read_text())
     assert saved["context"]["rag"]["sources"] == "rag.yaml"
-    assert saved["agents"]["backend"] == "native"
+    assert saved["agents"]["runtime"] == "native"
     assert saved["agents"]["presets"] == ["mcp_query"]
     assert saved["tools"]["packs"] == ["workspace.read_write"]
     servers = yaml.safe_load(mcp.read_text())["servers"]

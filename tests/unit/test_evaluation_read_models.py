@@ -37,7 +37,7 @@ def seed(application, number=1, *, bot="bot-a"):
             {
                 "target_id": "main",
                 "executor": "agent_configured",
-                "backend": "native",
+                "runtime_id": "native",
                 "model": "controlled",
             }
         ],

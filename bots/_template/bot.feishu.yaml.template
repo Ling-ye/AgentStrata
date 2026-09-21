@@ -28,7 +28,7 @@ tools:
     servers: mcp/servers.yaml
 
 agents:
-  backend: native
+  runtime: native
   presets:
     - mcp_query
 

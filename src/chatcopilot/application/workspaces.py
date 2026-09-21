@@ -36,7 +36,7 @@ class ActorWorkspaceBinding:
 
     workspace: Workspace
     service: MiddlewareWorkspaceService
-    backend_state_root: Path | None
+    runtime_state_root: Path | None
 
 
 @dataclass(frozen=True)
@@ -73,24 +73,24 @@ def build_actor_workspace(
     chat_id = _identity_segment(principal.conversation.chat_id, field="chat_id")
     chat_kind = str(principal.conversation.chat_kind or "").strip().lower()
 
-    backend_state_root: Path | None = None
-    isolate_backend_state = False
+    runtime_state_root: Path | None = None
+    isolate_runtime_state = False
     if chat_kind == "p2p":
         workspace_path = _ensure_data_directory(root, f"p2p_{actor_id}")
         sessions_root = _ensure_private_directory(
-            _ensure_private_directory(root, ".conversation-state"), "backend-sessions"
+            _ensure_private_directory(root, ".conversation-state"), "runtime-sessions"
         )
         digest = hashlib.sha256(
             f"{platform}\0{principal.account_id}\0{actor_id}".encode()
         ).hexdigest()
-        backend_state_root = _ensure_private_directory(sessions_root, digest)
-        isolate_backend_state = True
+        runtime_state_root = _ensure_private_directory(sessions_root, digest)
+        isolate_runtime_state = True
         scope = WORKSPACE_SCOPE_ACTOR
     elif chat_kind == "group":
         group_root = _ensure_data_directory(root, f"group_{chat_id}")
         workspace_path = _ensure_data_directory(group_root, "shared")
         state_root = _ensure_private_directory(group_root, ".conversation-state")
-        sessions_root = _ensure_private_directory(state_root, "backend-sessions")
+        sessions_root = _ensure_private_directory(state_root, "runtime-sessions")
         digest = hashlib.sha256(
             "\0".join(
                 (
@@ -101,8 +101,8 @@ def build_actor_workspace(
                 )
             ).encode("utf-8")
         ).hexdigest()
-        backend_state_root = _ensure_private_directory(sessions_root, digest)
-        isolate_backend_state = True
+        runtime_state_root = _ensure_private_directory(sessions_root, digest)
+        isolate_runtime_state = True
         scope = WORKSPACE_SCOPE_GROUP_SHARED
     else:
         raise WorkspaceAssemblyError(
@@ -127,15 +127,15 @@ def build_actor_workspace(
     service = MiddlewareWorkspaceService(
         workspace=workspace,
         workspace_root=root,
-        backend_state_root=backend_state_root,
-        isolate_backend_state=isolate_backend_state,
+        runtime_state_root=runtime_state_root,
+        isolate_runtime_state=isolate_runtime_state,
         platform_type=platform,
         persistent_state=persistent_state,
     )
     return ActorWorkspaceBinding(
         workspace=workspace,
         service=service,
-        backend_state_root=backend_state_root,
+        runtime_state_root=runtime_state_root,
     )
 
 
@@ -214,7 +214,7 @@ def _ensure_private_directory(parent: Path, name: str) -> Path:
     ):
         raise WorkspaceAssemblyError(
             "backend_state_unsafe",
-            "Protected backend state has unsafe type, ownership, or permissions",
+            "Protected runtime state has unsafe type, ownership, or permissions",
         )
     _assert_contained(parent, path, code="backend_state_unsafe")
     return path

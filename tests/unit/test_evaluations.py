@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.botspec.model import LLMSpec
 
 from tests.evaluation_fixtures import trial_result, replace_trial
 
@@ -77,6 +78,8 @@ def _available_codex_cli(
         "CHATCOPILOT_LINGYE_API_KEY",
         "test-" + "credential",
     )
+    monkeypatch.setattr("chatcopilot.core.model_credentials.credential_status",
+                        lambda *args, **kwargs: SimpleNamespace(state="ready"))
     monkeypatch.setattr(
         "chatcopilot.external_tools.codex_cli.command.shutil.which",
         lambda _binary: str(codex),
@@ -137,7 +140,7 @@ def _trial(
         target_id=request.target.target_id,
         target_fingerprint=request.target.fingerprint,
         executor=(request.driver_id or request.target.executor),  # type: ignore[arg-type]
-        backend=request.target.backend,
+        runtime_id=request.target.runtime_id,
         model=request.target.model,
         reasoning_effort=request.target.reasoning_effort,
         attempt=request.attempt,
@@ -173,7 +176,7 @@ def _supervisor_trial_request(tmp_path: Path) -> TrialExecutionRequest:
             target_id="suite",
             label="Suite",
             executor="dry_run",
-            backend="suite",
+            runtime_id="suite",
             model="",
             reasoning_effort="",
             fingerprint="f" * 64,
@@ -221,7 +224,7 @@ def _trace_capture_executor(request: TrialExecutionRequest) -> EvaluationTrial:
     from chatcopilot.evals.event_projection import project_evaluation_event
     text = "完整上下文" * 100000
     project_evaluation_event(LlmCallStarted(model="synthetic", iteration=0, trace_id="t", span_id="m"))
-    project_evaluation_event(ContextSnapshotPrepared(snapshot_id="ctx", backend="native", model="synthetic", iteration=0,
+    project_evaluation_event(ContextSnapshotPrepared(snapshot_id="ctx", runtime_id="native", model="synthetic", iteration=0,
         trace_id="t", span_id="m", session_messages=({"role": "user", "content": text},),
         effective_messages=({"role": "user", "content": text},)))
     project_evaluation_event(LlmCallFinished(model="synthetic", iteration=0, ok=True,
@@ -301,7 +304,7 @@ def _write_managed_comparison_bootstrap(
     bot_id = bot_path.parent.name if bot_path.name == "bot.yaml" else bot_path.name
     stored_request = {
         "evaluation_id": parsed.evaluation_id,
-            "result_schema_version": 2,
+            "result_schema_version": 3,
         "kind": parsed.kind,
         "bot_id": bot_id,
         "bot_spec": bot_spec,
@@ -660,6 +663,7 @@ def test_codex_preflight_uses_explicit_binary_outside_service_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     codex = tmp_path / "codex"
+    monkeypatch.setattr("chatcopilot.external_tools.codex_cli.command.shutil.which", lambda _binary: str(codex))
     codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     codex.chmod(0o755)
     monkeypatch.setenv("CHATCOPILOT_CODEX_BIN", str(codex))
@@ -689,6 +693,9 @@ def test_codex_preflight_rejects_unusable_configured_binary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     codex = tmp_path / "codex"
+    monkeypatch.setenv("CHATCOPILOT_CODEX_BIN", str(codex))
+    monkeypatch.setattr("chatcopilot.external_tools.codex_cli.command.shutil.which", lambda _binary: None)
+    monkeypatch.setattr("chatcopilot.external_tools.codex_cli.command._codex_candidates", lambda: [codex])
     monkeypatch.setenv(
         "CHATCOPILOT_LINGYE_CODE_COMMAND",
         f"{codex} exec --model {{model}} --cd {{workdir}}",
@@ -720,7 +727,7 @@ def test_codex_preflight_rejects_unusable_configured_binary(
 
 
 @pytest.mark.usefixtures("deepeval_judge")
-def test_codex_preflight_rejects_malformed_positional_command_template(
+def test_codex_preflight_does_not_consume_worker_command_template(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CHATCOPILOT_LINGYE_CODE_COMMAND", "codex exec {}")
@@ -735,9 +742,7 @@ def test_codex_preflight_rejects_malformed_positional_command_template(
     )
 
     executor = next(item for item in result["checks"] if item["code"] == "executor")
-    assert result["ready"] is False
-    assert executor["ok"] is False
-    assert "command=missing" in executor["detail"]
+    assert executor["ok"] is True
 
 
 @pytest.mark.parametrize(
@@ -923,7 +928,7 @@ def _capability_case_preflight(
         if item.case_id == case_id
     )
     runtime = SimpleNamespace(
-        agent_backend="codex",
+        runtime_id="codex",
         platform_type="qq",
         tool_features=(),
         memory_namespace="",
@@ -953,7 +958,7 @@ def test_qq_persona_preflight_projects_enabled_tool_pack() -> None:
         if item.case_id == "qq-persona-persistence-next-turn"
     )
     runtime = SimpleNamespace(
-        agent_backend="codex",
+        runtime_id="codex",
         platform_type="qq",
         tool_features=(),
         memory_namespace="",
@@ -1925,7 +1930,7 @@ def test_suite_resume_validates_the_case_driver_not_the_mixed_target_driver() ->
         target_id="codex-configured",
         label="Codex configured",
         executor="agent_configured",
-        backend="codex",
+        runtime_id="codex",
         model="configured-model",
         reasoning_effort="medium",
         fingerprint="a" * 64,
@@ -2083,10 +2088,10 @@ def test_private_runtime_fingerprint_ignores_removed_group_list_and_binds_privat
 ) -> None:
     runtime = SimpleNamespace(
         spec=SimpleNamespace(
-            context=ContextSpec(), llm=SimpleNamespace(env_prefix="TEST_EVAL_GROUP")
+            context=ContextSpec(), llm=LLMSpec(env_prefix="TEST_EVAL_GROUP")
         ),
     )
-    config = SimpleNamespace(llm=SimpleNamespace(api_key="fallback-eval-key-123456"))
+    config = ChatConfig(llm=LLMConfig(api_key="fallback-eval-key-123456"))
     monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)
     monkeypatch.setattr(evaluation_module, "load_config", lambda **_kwargs: config)
     monkeypatch.setenv("QQ_ALLOW_FROM", "10017")
@@ -2114,10 +2119,10 @@ def _configure_private_runtime(
 ) -> None:
     runtime = SimpleNamespace(
         spec=SimpleNamespace(
-            context=ContextSpec(), llm=SimpleNamespace(env_prefix="TEST_EVAL_PRIVATE")
+            context=ContextSpec(), llm=LLMSpec(env_prefix="TEST_EVAL_PRIVATE")
         ),
     )
-    config = SimpleNamespace(llm=SimpleNamespace(api_key=api_key))
+    config = ChatConfig(llm=LLMConfig(api_key=api_key))
     monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)
     monkeypatch.setattr(evaluation_module, "load_config", lambda **_kwargs: config)
     monkeypatch.setattr(evaluation_module, "collect_env_secrets", lambda: ())
@@ -2408,7 +2413,7 @@ def test_target_runtime_fingerprint_covers_resolved_chat_behavior(
         tool_packs=(),
         tool_features=(),
         exclude_tools=(),
-        agent_backend="native",
+        runtime_id="native",
         subagents={},
         memory_namespace="",
         access={},
@@ -2848,7 +2853,7 @@ def test_dimension_aggregation_accumulates_multiple_cases() -> None:
                     target_id=target.target_id,
                     target_fingerprint=target.fingerprint,
                     executor=target.executor,
-                    backend=target.backend,
+                    runtime_id=target.runtime_id,
                     model=target.model,
                     reasoning_effort=target.reasoning_effort,
                     attempt=1,
@@ -2991,7 +2996,7 @@ def test_external_case_id_cannot_escape_suite_workspace(
         target_id="dry-run",
         label="Dry Run",
         executor="dry_run",
-        backend="none",
+        runtime_id="none",
         model="",
         reasoning_effort="",
         fingerprint="a" * 64,
@@ -3053,7 +3058,7 @@ def test_suite_workspace_rejects_symlink_escape(
         target_id="dry-run",
         label="Dry Run",
         executor="dry_run",
-        backend="none",
+        runtime_id="none",
         model="",
         reasoning_effort="",
         fingerprint="a" * 64,
@@ -3137,7 +3142,7 @@ def test_product_suite_summary_never_reports_a_partial_green_or_total_score() ->
         target_id="dry-run",
         label="Dry Run",
         executor="dry_run",
-        backend="none",
+        runtime_id="none",
         model="",
         reasoning_effort="",
         fingerprint="b" * 64,

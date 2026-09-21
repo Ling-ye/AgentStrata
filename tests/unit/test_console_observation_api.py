@@ -23,7 +23,7 @@ def test_observation_http_scope_filter_snapshot_and_no_store(tmp_path, monkeypat
         (folder / 'identity.md').write_text('A configured fixture bot')
         (folder / 'style.md').write_text('Respond clearly')
         spec = folder / 'bot.yaml'
-        spec.write_text(f'id: fixture-{index}\nprompts:\n  schema_version: 2\n  identity: identity.md\n  response_style: style.md\nagents:\n  backend: native\ngateway: {{}}\nchannels:\n  qq:\n    type: qq_personal\n    provider: onebot_v11\n')
+        spec.write_text(f'id: fixture-{index}\nprompts:\n  schema_version: 2\n  identity: identity.md\n  response_style: style.md\nagents:\n  runtime: native\ngateway: {{}}\nchannels:\n  qq:\n    type: qq_personal\n    provider: onebot_v11\n')
         state = GatewayStateStore(folder / 'gateway')
         generation = state.acquire_writer_generation()
         config = declared_configuration(spec, {})

@@ -26,9 +26,9 @@ def build_dev_shell_pack() -> tuple[ToolPackPolicy, ...]:
 def build_dev_code_tasks_pack() -> tuple[ToolPackPolicy, ...]:
     return tool_pack_policies(
         "dev.code_tasks",
-        "Repository changes run only in an isolated code task. A direct implementation "
-        "request submits one complete objective and observable acceptance criteria; a "
-        "plan-only request waits for explicit approval, then submits the entire approved "
+        "Authorized native file and shell tools may modify project resources directly. "
+        "Use an isolated code task when the user wants independent execution or the controlled delivery workflow. A "
+        "plan-only request waits for explicit approval before any changes; an isolated task submits the entire approved "
         "plan exactly once. Progress, cancellation, and corrective continuation stay "
         "bound to the returned task id. External adapter import additionally requires a "
         "reviewed source envelope and digest, an unchanged one-shot Owner approval, and "

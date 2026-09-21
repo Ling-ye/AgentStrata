@@ -74,7 +74,7 @@ COMMAND_CATALOG = (
     _CommandHelp("help", "/help", "显示当前实例可用的指令", "operator"),
     _CommandHelp("state", "/state", "查看当前会话与宿主状态", "operator"),
     _CommandHelp("restart", "/restart", "安全请求重启当前机器人实例", "restart"),
-    _CommandHelp("model", "/model code ...", "查看或切换本会话的 Codex 开发模型", "passthrough"),
+    _CommandHelp("model", "/model <profile> [once]", "查看或切换主模型配置档，不改变 runtime、认证或 worker", "passthrough"),
     _CommandHelp("task", "/task [job_id]", "查看代码任务状态", "passthrough"),
     _CommandHelp("cancel", "/cancel [job_id]", "取消代码任务", "passthrough"),
     _CommandHelp(
@@ -240,7 +240,7 @@ def format_state(
         allowed={"general", "performance"},
     )
     platform = _safe_identifier(getattr(runtime, "platform_type", None))
-    backend = _safe_identifier(getattr(runtime, "agent_backend", None))
+    runtime_id = _safe_identifier(getattr(runtime, "runtime_id", None))
     display_name = _safe_display_name(getattr(runtime, "display_name", None))
     instance_id = _safe_identifier(getattr(runtime, "instance_id", None))
     message_count = _message_count(session)
@@ -250,8 +250,8 @@ def format_state(
     lines = [
         "当前机器人状态：",
         f"- 机器人：{display_name}（实例 {instance_id}）",
-        f"- 运行包络：平台 {platform}；Agent backend {backend}",
-        f"- 模型：chat {chat_model}；Codex profile {code_profile}",
+        f"- 运行包络：平台 {platform}；Agent runtime {runtime_id}",
+        f"- 模型：chat {chat_model}；main profile {code_profile}",
         f"- 会话：{chat_label}；角色 Owner；业务模式 {assistant_mode}",
         (
             f"- Workspace：{scope_label}；"
@@ -274,10 +274,7 @@ def _code_model_available(session: SessionState) -> bool:
     runtime = getattr(session, "runtime", None)
     spec = getattr(runtime, "spec", None)
     llm = getattr(spec, "llm", None)
-    code = getattr(llm, "code", None)
-    if code is None or not bool(getattr(code, "enabled", False)):
-        return False
-    return True
+    return getattr(llm, "chat", None) is not None
 
 
 def _legacy_command_available(
@@ -375,9 +372,9 @@ def _safe_model_label(value: object) -> str:
 
 
 def _selected_code_profile(session: SessionState) -> str:
-    selection = getattr(session, "code_model_once", None) or getattr(
+    selection = getattr(session, "model_once", None) or getattr(
         session,
-        "code_model_selection",
+        "model_selection",
         None,
     )
     profile = _safe_identifier(getattr(selection, "profile", None))

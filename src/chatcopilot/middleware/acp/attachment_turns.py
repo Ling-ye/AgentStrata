@@ -62,7 +62,7 @@ async def handle_upload_only_turn(
     if recovered_ws is not None:
         previous_session = session
         session = build_session(session_id=session_id, ws=recovered_ws)
-        session.copy_code_model_state_from(previous_session)
+        session.copy_model_state_from(previous_session)
         store_session(session_id, session)
 
     if not session.workspace.user_id:

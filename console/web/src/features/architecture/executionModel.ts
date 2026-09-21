@@ -43,7 +43,7 @@ export interface AgentExecutionScope {
 
 export const spanKey = (trace?: string, span?: string) => trace && span ? JSON.stringify([trace, span]) : undefined;
 export const PROCESS_LABELS: Record<string, string> = { stage: "阶段", agent: "主 Agent", model_call: "模型调用",
-  backend_execution: "后端执行", tool: "工具", subagent: "子 Agent", workflow: "工作流", message: "消息",
+  runtime_execution: "Runtime 执行", tool: "工具", subagent: "子 Agent", workflow: "工作流", message: "消息",
   reasoning: "公开摘要", command: "命令", file_change: "文件变更", mcp_tool: "MCP 调用", web_search: "搜索",
   plan: "计划", tool_catalog: "工具接入", resources: "输入资源", context: "上下文", error: "异常", event: "事件" };
 export function executionTitle(item: FlowItem) {
@@ -87,7 +87,7 @@ export function buildExecutionModel(flow: FlowItem[]): ExecutionModel {
     const seen = new Set<string>();
     while (!seen.has(current.id)) {
       seen.add(current.id);
-      if (["subagent", "workflow", "backend_execution"].includes(current.kind) || current.item.operation === "agent.execute") return current.id;
+      if (["subagent", "workflow", "runtime_execution"].includes(current.kind) || current.item.operation === "agent.execute") return current.id;
       if (!current.parentId) return spanKey(current.item.step.event.trace_id,
         current.item.step.event.parent_span_id ?? current.item.step.start?.parent_span_id) ?? current.id;
       const parent = byId.get(current.parentId);

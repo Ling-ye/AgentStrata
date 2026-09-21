@@ -252,7 +252,7 @@ def test_cases_are_declarative_and_do_not_embed_execution_targets() -> None:
     for case in document["cases"]:
         assert set(case["requirements"]) <= {
             "features",
-            "backends",
+            "runtime_ids",
             "tools",
             "tool_packs",
             "platforms",
@@ -352,7 +352,7 @@ def test_code_recovery_cases_declare_atomic_eval_only_tool_surfaces() -> None:
 
     for case_id, tool_names in expected.items():
         case = cases[case_id]
-        assert case["requirements"] == {"backends": ["native", "langgraph", "codex"]}
+        assert case["requirements"] == {"runtime_ids": ["native", "langgraph", "codex"]}
         assert case["policy"]["allowed_tools"] == tool_names
         assert case["policy"]["required_tools"] == tool_names
         assert "development" not in case["requirements"].get("tool_packs", [])

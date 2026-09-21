@@ -126,6 +126,25 @@ class AgentSession:
     def close(self) -> None:
         self.executor.close()
 
+    def update_context(self, plan: PromptPlan) -> None:
+        self.set_prompt_plan(plan)
+
+    def snapshot_transcript(self):
+        from chatcopilot.contracts.execution import TranscriptSnapshot
+        from chatcopilot.core.observability_redaction import omit_private_reasoning_messages
+        return TranscriptSnapshot(
+            tuple(omit_private_reasoning_messages(self.snapshot_messages()).messages),
+            "host_history",
+        )
+
+    def discard(self) -> None:
+        self.close()
+
+    def cancel(self) -> None:
+        token = getattr(self, "_active_cancellation", None)
+        if token is not None:
+            token.cancel()
+
     @property
     def message_count(self) -> int:
         return len(self._messages)

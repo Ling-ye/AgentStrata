@@ -294,10 +294,10 @@ def _comparable_targets(
         if target_id in targets:
             raise ValueError("Evaluation result.targets contains duplicate target_id")
         executor = str(item.get("executor") or "").strip()
-        backend = str(item.get("backend") or "").strip()
-        if not executor or not backend:
-            raise ValueError("Evaluation Target must have executor and backend")
-        targets[target_id] = (executor, backend)
+        runtime_id = str(item.get("runtime_id") or "").strip()
+        if not executor or not runtime_id:
+            raise ValueError("Evaluation Target must have executor and runtime_id")
+        targets[target_id] = (executor, runtime_id)
     return targets
 
 

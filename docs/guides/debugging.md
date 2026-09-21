@@ -85,10 +85,10 @@ PYTHONPATH=src .venv/bin/python -m chatcopilot bot route-explain \
   "要检查的用户文本"
 ```
 
-`route-explain` 是保留的 CLI 名称。输出中的 backend 由 BotSpec 实例固定，用户文本不能
-跨 backend 路由。`main.model/main.reasoning_effort` 表示主 Codex 默认档，
-`code_task.profile/model/reasoning_effort` 表示独立 code-worker 档；Codex backend 下的
-`chat.model` 只是共享 chat 槽，不是 fallback。能力不足时检查当前 backend 与
+`route-explain` 是保留的 CLI 名称。输出中的 runtime_id 由 BotSpec 实例固定，用户文本不能
+跨 runtime 路由。`main.model/main.reasoning_effort` 始终来自 `llm.chat`，
+`code_task.profile/model/reasoning_effort` 表示独立 code-worker 档；Codex runtime 同样
+使用 `chat.model`，不是 code-worker fallback。能力不足时检查当前 runtime 与
 ToolAccessPolicy，不寻找隐式 fallback，也不推断文本会触发模型切换。
 
 ## 读取顺序

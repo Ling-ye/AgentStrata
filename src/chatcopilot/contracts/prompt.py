@@ -1,6 +1,6 @@
 """Provider-neutral prompt plan contracts.
 
-Prompt policy is assembled once into an immutable plan.  Backends may render
+Prompt policy is assembled once into an immutable plan. Runtime adapters may render
 the plan for their transport, but may not append policy of their own.
 """
 
@@ -44,7 +44,7 @@ _KIND_TRUST = {
 _KINDS = frozenset(_KIND_TRUST)
 _TRUST = frozenset(_KIND_TRUST.values())
 _CACHE_SCOPES = frozenset({"global", "bot", "session", "turn"})
-_BACKENDS = frozenset({"native", "langgraph", "codex"})
+_RUNTIME_IDS = frozenset({"native", "langgraph", "codex"})
 _ROLES = frozenset({"owner", "admin", "user"})
 _CHANNELS = frozenset({"private", "group"})
 
@@ -86,19 +86,21 @@ class PromptLayer:
 @dataclass(frozen=True)
 class PromptPlan:
     layers: tuple[PromptLayer, ...]
-    effective_backend: str
+    effective_runtime_id: str
     effective_model: str | None
     role: str
     channel_kind: str
     tool_projection_digest: str = ""
     estimated_tokens: int = 0
-    schema_version: int = 1
+    schema_version: int = 2
+    capability_digest: str = ""
+    policy_revision: str = ""
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1:
-            raise ValueError("prompt plan schema_version must be 1")
-        if self.effective_backend not in _BACKENDS:
-            raise ValueError(f"unsupported prompt backend: {self.effective_backend!r}")
+        if self.schema_version != 2:
+            raise ValueError("prompt plan schema_version must be 2")
+        if self.effective_runtime_id not in _RUNTIME_IDS:
+            raise ValueError(f"unsupported prompt runtime: {self.effective_runtime_id!r}")
         if self.role not in _ROLES:
             raise ValueError(f"unsupported prompt role: {self.role!r}")
         if self.channel_kind not in _CHANNELS:

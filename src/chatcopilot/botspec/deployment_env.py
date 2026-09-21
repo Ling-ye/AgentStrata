@@ -153,6 +153,7 @@ def runtime_environment_keys(spec) -> tuple[str, ...]:
         "CHATCOPILOT_DISPLAY_NAME",
         "CHATCOPILOT_GATEWAY_PORT",
         "CHATCOPILOT_GATEWAY_TOKEN",
+        "CHATCOPILOT_GATEWAY_OPERATOR_TOKEN",
         "CHATCOPILOT_GATEWAY_STATE_ROOT",
         "CHATCOPILOT_GATEWAY_URL",
         "CHATCOPILOT_CC_CONNECT_BIN",
@@ -183,6 +184,13 @@ def runtime_environment_keys(spec) -> tuple[str, ...]:
         "TAVILY_API_KEY",
         "GITHUB_MCP_AUTHORIZATION",
         *mcp_env_ref_keys(spec),
+        *(f"{prefix}_{suffix}" for prefix in (
+            spec.llm.env_prefix, spec.llm.research_env_prefix, spec.llm.research.inherit_env_prefix,
+            spec.llm.code.env_prefix, spec.agents.native_env_prefix,
+            *(budget.model_env_prefix for budget in (spec.agents.defaults, *spec.agents.agents.values())))
+          if prefix for suffix in ("API_KEY", "BASE_URL", "MODEL", "TIMEOUT", "REASONING_EFFORT")),
+        *(auth.key_env for auth in (spec.llm.chat.auth, spec.llm.research.auth)
+          if auth is not None and auth.mode == "api_key"),
     )))
 
 

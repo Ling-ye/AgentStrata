@@ -359,7 +359,7 @@ class CodexJsonlProjector:
         if not from_completion:
             self.on_event(SpanStarted(name=projected.name, kind=projected.kind,
                 trace_id=self.trace_id, span_id=projected.span_id, parent_span_id=self.llm_span_id,
-                depth=self.depth + 1, backend="codex", source="provider", observed_at=time.time(),
+                depth=self.depth + 1, runtime_id="codex", source="provider", observed_at=time.time(),
                 data=_item_payload(item, item_type, completed=False)))
         return projected
 
@@ -395,7 +395,7 @@ class CodexJsonlProjector:
                 span_id=projected.span_id,
                 parent_span_id=self.llm_span_id,
                 depth=self.depth + 1,
-                data=data, backend="codex", source="provider", observed_at=time.time(),
+                data=data, runtime_id="codex", source="provider", observed_at=time.time(),
             )
         )
 
@@ -421,7 +421,7 @@ class CodexJsonlProjector:
             return
         self.on_event(SpanUpdated(name=projected.name, kind=kind,
             trace_id=self.trace_id, span_id=projected.span_id, parent_span_id=self.llm_span_id,
-            depth=self.depth + 1, backend="codex", source="provider", observed_at=time.time(),
+            depth=self.depth + 1, runtime_id="codex", source="provider", observed_at=time.time(),
             revision=self._revision(identity), data=_item_payload(item, item_type, completed=False)))
 
     def _message_item(self, identity: str, item: Mapping[str, Any], *, completed: bool) -> None:
@@ -450,7 +450,7 @@ class CodexJsonlProjector:
             phase="finish" if completed else "update", status="succeeded" if completed else "running",
             message_kind="progress" if item.get("phase") == "commentary" else
                 "final" if item.get("phase") == "final_answer" else "response",
-            backend="codex", source="provider", depth=self.depth + 1, observed_at=time.time(),
+            runtime_id="codex", source="provider", depth=self.depth + 1, observed_at=time.time(),
             capture_state="truncated" if len(raw) > 48 * 1024 else "available")
         if completed:
             self._active_messages.pop(identity, None)
@@ -475,7 +475,7 @@ class CodexJsonlProjector:
                     span_id=projected.span_id,
                     parent_span_id=self.llm_span_id,
                     depth=self.depth + 1,
-                    backend="codex", source="provider", observed_at=time.time(),
+                    runtime_id="codex", source="provider", observed_at=time.time(),
                     data={
                         "status": (
                             "incomplete"
@@ -502,8 +502,10 @@ class CodexJsonlProjector:
             LlmCallFinished(
                 model=self.model,
                 iteration=self.iteration,
-                backend="codex",
-                execution_kind="backend_execution",
+                runtime_id="codex",
+                execution_kind="runtime_execution",
+                usage_scope="runtime_turn",
+                usage_coverage="unknown",
                 finish_reason=finish_reason,
                 usage=usage,
                 trace_id=self.trace_id,

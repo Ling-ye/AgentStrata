@@ -1,4 +1,4 @@
-"""Native and LangGraph backend adapters."""
+"""Explicit Native and LangGraph runtime adapters."""
 from __future__ import annotations
 
 import uuid
@@ -14,26 +14,27 @@ from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.llm_client import LLMClient
 
 from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
-from chatcopilot.contracts.agent_backend import (
-    BackendCapabilities,
-    BackendOpenRequest,
-    BackendSessionRef,
+from chatcopilot.contracts.runtime_adapter import (
+    RuntimeCapabilities,
+    RuntimeOpenRequest,
+    RuntimeSessionRef,
     CAPABILITY_CHAT,
     CAPABILITY_REPOSITORY_MUTATION,
     CAPABILITY_TOOLS,
-    require_backend_capabilities,
+    require_runtime_capabilities,
 )
 from chatcopilot.contracts.cancellation import CancellationProbe
+from chatcopilot.contracts.model_runtime import ResolvedRuntimeRoute
 
 
-class InProcessAgentBackend:
+class _InProcessRuntimeAdapter:
     def __init__(
-        self, backend_id: str, *, tool_names: set[str],
-        session_factory: Callable[[BackendOpenRequest], Any] | None = None,
+        self, runtime_id: str, *, tool_names: set[str],
+        session_factory: Callable[[RuntimeOpenRequest], Any] | None = None,
     ) -> None:
-        self.backend_id = backend_id
+        self.runtime_id = runtime_id
         self._session_factory = session_factory
-        self._capabilities = BackendCapabilities(
+        self._capabilities = RuntimeCapabilities(
             names=frozenset(
                 {CAPABILITY_CHAT, CAPABILITY_TOOLS, CAPABILITY_REPOSITORY_MUTATION}
             ),
@@ -42,81 +43,93 @@ class InProcessAgentBackend:
         self._sessions: dict[str, Any] = {}
 
     @property
-    def capabilities(self) -> BackendCapabilities:
+    def capabilities(self) -> RuntimeCapabilities:
         return self._capabilities
 
-    def open_session(self, request: BackendOpenRequest) -> BackendSessionRef:
-        require_backend_capabilities(
-            self.backend_id, self.capabilities, request.required_capabilities
+    def open_session(self, request: RuntimeOpenRequest) -> RuntimeSessionRef:
+        if request.route.runtime_id != self.runtime_id:
+            raise ValueError("runtime route does not match adapter")
+        require_runtime_capabilities(
+            self.runtime_id, self.capabilities, request.required_capabilities
         )
         if self._session_factory is None:
-            raise TypeError("in-process backend requires a session_factory")
-        value = f"{self.backend_id}:{uuid.uuid4().hex}"
+            raise TypeError("in-process runtime requires a session_factory")
+        value = f"{self.runtime_id}:{uuid.uuid4().hex}"
         self._sessions[value] = self._session_factory(request)
-        return BackendSessionRef(self.backend_id, value)
+        return RuntimeSessionRef(self.runtime_id, value)
 
     def stream_turn(
         self,
-        session: BackendSessionRef,
+        session: RuntimeSessionRef,
         task: AgentTask,
         *,
         on_event: EventSink,
         cancellation: CancellationProbe | None = None,
     ) -> AgentResult:
         if cancellation is None:
-            return self.native_session(session).run_task(task, on_event=on_event)
-        return self.native_session(session).run_task(
+            return self._resolve(session).run_task(task, on_event=on_event)
+        return self._resolve(session).run_task(
             task,
             on_event=on_event,
             cancellation=cancellation,
         )
 
-    def close_session(self, session: BackendSessionRef) -> None:
+    def close_session(self, session: RuntimeSessionRef) -> None:
         concrete = self._sessions.pop(session.value, None)
         close = getattr(concrete, "close", None)
         if callable(close):
             close()
 
-    def native_session(self, session: BackendSessionRef) -> Any:
-        if session.backend != self.backend_id or session.value not in self._sessions:
-            raise KeyError("unknown or cross-backend session reference")
+    def cancel(self, session: RuntimeSessionRef) -> None:
+        self._resolve(session).cancel()
+
+    def discard_session(self, session: RuntimeSessionRef) -> None:
+        self.close_session(session)
+
+    def is_busy(self, session: RuntimeSessionRef) -> bool:
+        return False  # Active turn ownership is held by RuntimeAgentSession.
+
+    def _resolve(self, session: RuntimeSessionRef) -> Any:
+        if session.runtime_id != self.runtime_id or session.value not in self._sessions:
+            raise KeyError("unknown or cross-runtime session reference")
         return self._sessions[session.value]
 
-    def current_session_ref(self, session: BackendSessionRef) -> BackendSessionRef:
-        self.native_session(session)
+    def current_session_ref(self, session: RuntimeSessionRef) -> RuntimeSessionRef:
+        self._resolve(session)
         return session
 
-    def set_prompt_plan(self, session: BackendSessionRef, plan: Any) -> None:
-        self.native_session(session).set_prompt_plan(plan)
+    def set_prompt_plan(self, session: RuntimeSessionRef, plan: Any) -> None:
+        self._resolve(session).set_prompt_plan(plan)
 
     def record_exchange(
-        self, session: BackendSessionRef, user_text: str, assistant_text: str
+        self, session: RuntimeSessionRef, user_text: str, assistant_text: str
     ) -> None:
-        self.native_session(session).record_exchange(user_text, assistant_text)
+        self._resolve(session).record_exchange(user_text, assistant_text)
 
-    def snapshot_messages(self, session: BackendSessionRef) -> list[dict[str, Any]]:
-        return self.native_session(session).snapshot_messages()
+    def snapshot_messages(self, session: RuntimeSessionRef) -> list[dict[str, Any]]:
+        return self._resolve(session).snapshot_messages()
+
+    def snapshot_transcript(self, session: RuntimeSessionRef):
+        return self._resolve(session).snapshot_transcript()
 
 
-def build_inprocess_backend(
-    backend_id: str, *, tool_names: set[str], llm: LLMClient | None = None,
+def _build_inprocess_runtime_adapter(
+    adapter_type: type[_InProcessRuntimeAdapter], session_cls: type[AgentSession], *,
+    route: ResolvedRuntimeRoute,
+    tool_names: set[str], llm: LLMClient | None = None,
     runtime_config: ChatConfig | None = None,
     tool_executor: ToolExecutor | None = None,
     tools_schema: list[dict[str, Any]] | None = None,
     tool_payload_filter: ToolPayloadFilter | None = None,
     retriever: Retriever | None = None,
     **_: Any,
-) -> InProcessAgentBackend:
-    def create_session(request: BackendOpenRequest) -> AgentSession:
+) -> _InProcessRuntimeAdapter:
+    expected_runtime_id = "native" if adapter_type is NativeRuntimeAdapter else "langgraph"
+    if route.runtime_id != expected_runtime_id:
+        raise ValueError("runtime route does not match in-process adapter")
+    def create_session(request: RuntimeOpenRequest) -> AgentSession:
         if llm is None or runtime_config is None or tool_executor is None:
-            raise TypeError("in-process backend requires model, config and executor")
-        session_cls: type[AgentSession]
-        if backend_id == "langgraph":
-            from chatcopilot.agent.langgraph_session import LangGraphAgentSession
-
-            session_cls = LangGraphAgentSession
-        else:
-            session_cls = AgentSession
+            raise TypeError("in-process runtime requires model, config and executor")
 
         rt = runtime_config.runtime
         _defaults = ContextManager()
@@ -192,9 +205,33 @@ def build_inprocess_backend(
             retriever=retriever,
         )
 
-    return InProcessAgentBackend(
-        backend_id, tool_names=tool_names, session_factory=create_session,
+    return adapter_type(
+        tool_names=tool_names, session_factory=create_session,
     )
 
 
-__all__ = ["InProcessAgentBackend", "build_inprocess_backend"]
+class NativeRuntimeAdapter(_InProcessRuntimeAdapter):
+    def __init__(self, *, tool_names, session_factory=None):
+        super().__init__("native", tool_names=tool_names, session_factory=session_factory)
+
+
+class LangGraphRuntimeAdapter(_InProcessRuntimeAdapter):
+    def __init__(self, *, tool_names, session_factory=None):
+        super().__init__("langgraph", tool_names=tool_names, session_factory=session_factory)
+
+
+def build_native_runtime_adapter(**kwargs) -> NativeRuntimeAdapter:
+    return _build_inprocess_runtime_adapter(NativeRuntimeAdapter, AgentSession, **kwargs)
+
+
+def build_langgraph_runtime_adapter(**kwargs) -> LangGraphRuntimeAdapter:
+    from chatcopilot.agent.langgraph_session import LangGraphAgentSession
+    return _build_inprocess_runtime_adapter(LangGraphRuntimeAdapter, LangGraphAgentSession, **kwargs)
+
+
+__all__ = [
+    "NativeRuntimeAdapter",
+    "LangGraphRuntimeAdapter",
+    "build_native_runtime_adapter",
+    "build_langgraph_runtime_adapter",
+]

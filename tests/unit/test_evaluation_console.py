@@ -76,7 +76,7 @@ def _ready_validator(
                     {
                         "target_id": "codex",
                         "executor": "agent",
-                        "backend": "codex",
+                        "runtime_id": "codex",
                         "model": "gpt-5",
                         "reasoning_effort": "high",
                         "fingerprint": "target-codex-v1",
@@ -84,7 +84,7 @@ def _ready_validator(
                     {
                         "target_id": "native",
                         "executor": "agent",
-                        "backend": "native",
+                        "runtime_id": "native",
                         "model": "gpt-5",
                         "reasoning_effort": "high",
                         "fingerprint": "target-native-v1",
@@ -104,7 +104,7 @@ def _ready_validator(
                 {
                     "target_id": "dry-run",
                     "executor": "dry-run",
-                    "backend": "none",
+                    "runtime_id": "none",
                     "model": "",
                     "reasoning_effort": "",
                     "fingerprint": "target-dry-run-v1",
@@ -244,7 +244,7 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     if path.name == "result.json":
         payload = result_payload(payload)
     if path.name == "request.json":
-        payload = {**payload, "result_schema_version": 2}
+        payload = {**payload, "result_schema_version": 3}
     path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
     if os.name != "nt":
         path.parent.chmod(0o700)

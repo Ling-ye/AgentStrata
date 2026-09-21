@@ -1,4 +1,4 @@
-"""Compile one caller's configured resource view for every execution backend."""
+"""Compile one caller's configured resource view for every Agent runtime."""
 
 from pathlib import Path
 
@@ -18,7 +18,7 @@ def execution_scope(
     protected: list[Path] = []
     hidden: list[Path] = []
     for root in readable:
-        for name in (".git", ".conversation-state", ".backend-sessions"):
+        for name in (".git", ".conversation-state", ".runtime-sessions"):
             path = root / name
             (protected if owner and name == ".git" else hidden).append(path)
     hidden.extend(

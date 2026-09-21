@@ -1,8 +1,9 @@
-"""Provider-neutral contracts for the three main-agent backends."""
+"""Provider-neutral contracts for the three main-agent runtimes."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Protocol, TypedDict, runtime_checkable
 
 from chatcopilot.contracts.execution_scope import ExecutionScope
@@ -10,9 +11,12 @@ from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
 from chatcopilot.contracts.cancellation import CancellationProbe
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.prompt import PromptPlan
+from chatcopilot.contracts.execution import CapabilitySnapshot, HostRuntimePolicy
+from chatcopilot.contracts.execution import TranscriptSnapshot
+from chatcopilot.contracts.model_runtime import ResolvedRuntimeRoute
 
 
-AGENT_BACKEND_IDS: tuple[str, ...] = ("native", "langgraph", "codex")
+RUNTIME_IDS: tuple[str, ...] = ("native", "langgraph", "codex")
 CAPABILITY_CHAT = "chat"
 CAPABILITY_TOOLS = "tools"
 CAPABILITY_NATIVE_RESUME = "native_resume"
@@ -62,104 +66,122 @@ class CodexMainSessionPolicy:
 
 
 @dataclass(frozen=True)
-class BackendCapabilities:
+class RuntimeCapabilities:
     """Capabilities registered by code, never supplied by BotSpec."""
 
     names: frozenset[str]
     tool_names: frozenset[str] = frozenset()
 
-    def intersect_tools(self, allowed_tool_names: set[str] | frozenset[str]) -> "BackendCapabilities":
+    def intersect_tools(self, allowed_tool_names: set[str] | frozenset[str]) -> "RuntimeCapabilities":
         allowed = frozenset(allowed_tool_names)
-        return BackendCapabilities(names=self.names, tool_names=self.tool_names & allowed)
+        return RuntimeCapabilities(names=self.names, tool_names=self.tool_names & allowed)
 
 
 @dataclass(frozen=True)
-class BackendSessionRef:
-    """Opaque backend-native session reference.
+class RuntimeSessionRef:
+    """Opaque runtime-native session reference.
 
     Middleware may persist and compare the value, but must not parse it.
     """
 
-    backend: str
+    runtime_id: str
     value: str
 
 
-class BackendSessionOptions(TypedDict, total=False):
+class RuntimeSessionOptions(TypedDict, total=False):
     workspace_root: str | Path | None
     source_root: str | Path | None
-    backend_state_root: str | Path | None
-    isolate_backend_state: bool
+    runtime_state_root: str | Path | None
+    isolate_runtime_state: bool
     restore_persisted_native_session: bool
     role_hint: str
     execution_scope: ExecutionScope | None
 
 
 @dataclass(frozen=True)
-class BackendOpenRequest:
+class RuntimeOpenRequest:
     session_id: str
     prompt_plan: PromptPlan
+    route: ResolvedRuntimeRoute
     allowed_tool_names: frozenset[str] = frozenset()
     required_capabilities: frozenset[str] = frozenset({CAPABILITY_CHAT})
     caller_identity: SessionIdentity | None = None
-    options: BackendSessionOptions = field(default_factory=BackendSessionOptions)
+    options: RuntimeSessionOptions = field(default_factory=RuntimeSessionOptions)
+    capability_snapshot: CapabilitySnapshot = field(default_factory=CapabilitySnapshot)
+    host_policy: HostRuntimePolicy = field(default_factory=HostRuntimePolicy)
+
+    def __post_init__(self):
+        object.__setattr__(self, "options", MappingProxyType(dict(self.options)))
 
 
-class BackendCapabilityError(RuntimeError):
-    def __init__(self, backend: str, capability: str, *, suggestion: str) -> None:
+class RuntimeCapabilityError(RuntimeError):
+    def __init__(self, runtime_id: str, capability: str, *, suggestion: str) -> None:
         super().__init__(
-            f"backend {backend!r} does not provide capability {capability!r}; {suggestion}"
+            f"runtime {runtime_id!r} does not provide capability {capability!r}; {suggestion}"
         )
-        self.backend = backend
+        self.runtime_id = runtime_id
         self.capability = capability
         self.suggestion = suggestion
-        self.error_code = "backend_capability_missing"
+        self.error_code = "runtime_capability_missing"
 
 
-def require_backend_capabilities(
-    backend: str,
-    capabilities: BackendCapabilities,
+def require_runtime_capabilities(
+    runtime_id: str,
+    capabilities: RuntimeCapabilities,
     required: frozenset[str],
 ) -> None:
     missing = sorted(required - capabilities.names)
     if missing:
         capability = missing[0]
-        raise BackendCapabilityError(
-            backend,
+        raise RuntimeCapabilityError(
+            runtime_id,
             capability,
             suggestion=(
-                "select an instance backend that registers this capability in "
-                "BotSpec agents.backend"
+                "select an instance runtime that registers this capability in "
+                "BotSpec agents.runtime"
             ),
         )
 
 
 @runtime_checkable
-class AgentBackend(Protocol):
+class RuntimeAdapter(Protocol):
     @property
-    def capabilities(self) -> BackendCapabilities: ...
+    def capabilities(self) -> RuntimeCapabilities: ...
 
-    def open_session(self, request: BackendOpenRequest) -> BackendSessionRef: ...
+    def open_session(self, request: RuntimeOpenRequest) -> RuntimeSessionRef: ...
 
     def stream_turn(
         self,
-        session: BackendSessionRef,
+        session: RuntimeSessionRef,
         task: AgentTask,
         *,
         on_event: EventSink,
         cancellation: CancellationProbe | None = None,
     ) -> AgentResult: ...
 
-    def close_session(self, session: BackendSessionRef) -> None: ...
+    def close_session(self, session: RuntimeSessionRef) -> None: ...
+
+    def discard_session(self, session: RuntimeSessionRef) -> None: ...
+
+    def cancel(self, session: RuntimeSessionRef) -> None: ...
+
+    def is_busy(self, session: RuntimeSessionRef) -> bool: ...
+
+    def set_prompt_plan(self, session: RuntimeSessionRef, plan: PromptPlan) -> None: ...
+
+    def record_exchange(self, session: RuntimeSessionRef, user_text: str, assistant_text: str) -> None: ...
+
+    def snapshot_transcript(self, session: RuntimeSessionRef) -> TranscriptSnapshot: ...
 
 
 __all__ = [
-    "AGENT_BACKEND_IDS",
-    "AgentBackend",
-    "BackendCapabilities",
-    "BackendCapabilityError",
-    "BackendOpenRequest",
-    "BackendSessionRef",
-    "BackendSessionOptions",
+    "RUNTIME_IDS",
+    "RuntimeAdapter",
+    "RuntimeCapabilities",
+    "RuntimeCapabilityError",
+    "RuntimeOpenRequest",
+    "RuntimeSessionRef",
+    "RuntimeSessionOptions",
     "CAPABILITY_CHAT",
     "CAPABILITY_NATIVE_RESUME",
     "CAPABILITY_REPOSITORY_MUTATION",
@@ -170,5 +192,5 @@ __all__ = [
     "CODEX_COMMAND_SANDBOX_MODES",
     "CODEX_WEB_SEARCH_MODES",
     "CodexMainSessionPolicy",
-    "require_backend_capabilities",
+    "require_runtime_capabilities",
 ]

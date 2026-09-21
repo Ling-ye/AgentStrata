@@ -24,10 +24,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from chatcopilot.agent.backends.registry import backend_ids
+from chatcopilot.agent.runtimes.registry import runtime_ids
 from chatcopilot.agent.tools.registry import ToolMaterializationError, discover_tools
 from chatcopilot.core.allowlists import parse_numeric_allowlist
-from chatcopilot.core.config import ChatConfig, load_config
+from chatcopilot.core.config import ChatConfig, LLMConfig, load_config
 from chatcopilot.evals.artifact_ids import (
     contained_artifact_path,
     safe_artifact_component,
@@ -669,11 +669,11 @@ def _current_suite_target(request: TrialExecutionRequest) -> EvaluationTarget:
             raise ValueError("configured Suite Target has no BotSpec")
         with _preserved_environment():
             runtime = load_evaluation_runtime(request.bot)
-            config = load_config(env_prefix=runtime.spec.llm.env_prefix)
+            config = _load_runtime_config(runtime)
             current_config_fingerprint = _runtime_behavior_fingerprint(
                 runtime,
                 config,
-                backend=request.target.backend,
+                runtime_id=request.target.runtime_id,
             )
     if current_config_fingerprint != request.target.config_fingerprint:
         raise _EvaluationDefinitionDrift(
@@ -685,10 +685,12 @@ def _current_suite_target(request: TrialExecutionRequest) -> EvaluationTarget:
         target_id=request.target.target_id,
         label=request.target.label,
         executor=request.target.executor,
-        backend=request.target.backend,
+        runtime_id=request.target.runtime_id,
         model=request.target.model,
         reasoning_effort=request.target.reasoning_effort,
         config_fingerprint=current_config_fingerprint,
+        model_config=config.llm if request.target.executor in {"agent_configured", "agent_isolated", "direct_llm"} else None,
+        capability_digest=request.target.capability_digest,
     )
     if current.fingerprint != request.target.fingerprint:
         raise _EvaluationDefinitionDrift("Target identity does not match its frozen fingerprint")
@@ -799,15 +801,17 @@ def execute_evaluation_trial(request: TrialExecutionRequest) -> EvaluationTrial:
     isolated = None
     if request.profile_case is not None:
         isolated = IsolatedTrialRequest(request.bot, request.evaluation_id, request.output,
-            request.profile_case, IsolatedTarget(request.target.target_id, request.target.backend,
+            request.profile_case, IsolatedTarget(request.target.target_id, request.target.runtime_id,
                 request.target.label, request.target.fingerprint, request.target.model,
                 request.target.reasoning_effort), request.attempt, request.order)
     else:
         _assert_suite_trial_definition_current(request)
-    result = run_case(request.case, suite_id=request.suite_id, bot=request.bot,
-        workspace_root=contained_artifact_path(request.output, "workspaces", _trial_id(request)),
-        options=request.options, driver=executor, dry_run=request.dry_run,
-        confirm_external_write=request.confirm_external_write, profile_request=isolated)
+    from chatcopilot.core.log_context import bind_log_context
+    with bind_log_context(task_id=_trial_id(request), trace_id=_trial_id(request)):
+        result = run_case(request.case, suite_id=request.suite_id, bot=request.bot,
+            workspace_root=contained_artifact_path(request.output, "workspaces", _trial_id(request)),
+            options=request.options, driver=executor, dry_run=request.dry_run,
+            confirm_external_write=request.confirm_external_write, profile_request=isolated)
     if isolated is None:
         _assert_suite_trial_definition_current(request)
     return _trial_from_case_result(request, result)
@@ -1112,13 +1116,13 @@ def _validate_comparison(
     try:
         with _preserved_environment():
             runtime = load_evaluation_runtime(request.bot)
-            config = load_config(env_prefix=runtime.spec.llm.env_prefix)
+            config = _load_runtime_config(runtime)
             checks.append(_check("botspec", "BotSpec", True, runtime.source_path.parent.name))
             for target_id in request.targets:
                 config_fingerprint = _runtime_behavior_fingerprint(
                     runtime,
                     config,
-                    backend=target_id,
+                    runtime_id=target_id,
                 )
                 target, target_check = _isolated_target(
                     target_id,
@@ -1299,7 +1303,7 @@ def _validate_suite(
             target_id="dry-run",
             label="Dry Run",
             executor="dry_run",
-            backend="none",
+            runtime_id="none",
             model="",
             reasoning_effort="",
             config_fingerprint=_hash_json({"executor": "dry_run", "suite": request.suite}),
@@ -1310,7 +1314,7 @@ def _validate_suite(
     try:
         with _preserved_environment():
             runtime = load_evaluation_runtime(request.bot)
-            config = load_config(env_prefix=runtime.spec.llm.env_prefix)
+            config = _load_runtime_config(runtime)
             case_checks = _suite_case_preflight(
                 manifest=manifest,
                 cases=selected,
@@ -1321,54 +1325,58 @@ def _validate_suite(
             checks.extend(case_checks)
             if any(not bool(item.get("ok")) for item in case_checks):
                 return ()
-            backend = str(getattr(runtime, "agent_backend", "native"))
+            runtime_id = str(getattr(runtime, "runtime_id", "native"))
             selected_drivers = {_case_plugin_driver(manifest, case)[1] for case in selected}
             needs_agent = bool(
                 selected_drivers.intersection({"agent_configured", "agent_isolated"})
             )
-            fingerprint_backend = "direct" if selected_drivers == {"direct_llm"} else backend
+            fingerprint_runtime_id = "direct" if selected_drivers == {"direct_llm"} else runtime_id
             config_fingerprint = _runtime_behavior_fingerprint(
                 runtime,
                 config,
-                backend=fingerprint_backend,
+                runtime_id=fingerprint_runtime_id,
             )
             if selected_drivers == {"direct_llm"}:
                 target = _make_target(
                     target_id="chat-direct",
                     label="Chat LLM",
                     executor="direct_llm",
-                    backend="direct",
+                    runtime_id="direct",
                     model=str(config.llm.model or ""),
                     reasoning_effort="",
                     config_fingerprint=config_fingerprint,
+                    model_config=config.llm,
                 )
-                credential_ready = bool(str(config.llm.api_key or "").strip())
+                credential_ready = _model_auth_ready(config.llm)
                 ready = bool(target.model) and credential_ready
                 detail = (
                     f"executor=direct_llm, model={target.model or 'missing'}, "
                     f"credential={'configured' if credential_ready else 'missing'}"
                 )
             elif needs_agent:
-                model, effort = _configured_model(backend, config)
+                model, effort = _configured_model(runtime_id, config)
                 target = _make_target(
-                    target_id=f"{backend}-configured",
-                    label=f"{backend.title()} configured",
+                    target_id=f"{runtime_id}-configured",
+                    label=f"{runtime_id.title()} configured",
                     executor="agent_configured",
-                    backend=backend,
+                    runtime_id=runtime_id,
                     model=model,
                     reasoning_effort=effort,
                     config_fingerprint=config_fingerprint,
+                    model_config=config.llm,
+                    capability_digest=_hash_json({"packs": runtime.tool_packs, "hidden": runtime.exclude_tools,
+                                                  "native": to_jsonable(runtime.subagents.codex)}),
                 )
-                ready = backend in backend_ids() and bool(model)
-                detail = f"executor=agent_configured, backend={backend}, model={model or 'missing'}"
-                if backend == "codex":
+                ready = runtime_id in runtime_ids() and bool(model)
+                detail = f"executor=agent_configured, runtime_id={runtime_id}, model={model or 'missing'}"
+                if runtime_id == "codex":
                     command_ready = _codex_command_available(config, model, effort)
                     ready = ready and command_ready
                     detail += (
                         f", command={'available' if command_ready else 'missing'}"
                     )
                 else:
-                    credential_ready = bool(str(config.llm.api_key or "").strip())
+                    credential_ready = _model_auth_ready(config.llm)
                     ready = ready and credential_ready
                     detail += f", credential={'configured' if credential_ready else 'missing'}"
             else:
@@ -1386,7 +1394,7 @@ def _validate_suite(
                         else "ACP scenario"
                     ),
                     executor=executor,
-                    backend=backend,
+                    runtime_id=runtime_id,
                     model="",
                     reasoning_effort="",
                     config_fingerprint=config_fingerprint,
@@ -1402,7 +1410,7 @@ def _validate_suite(
                     "执行器",
                     ready,
                     detail,
-                    "检查 Bot LLM、backend 与凭据配置",
+                    "检查 Bot LLM、runtime 与凭据配置",
                 )
             )
             return (target,)
@@ -1553,7 +1561,7 @@ def _suite_case_preflight(
         # Keep direct callers fail-closed while the public validation path
         # loads this once, before dry-run/external-write branching.
         definitions = _validated_capability_definitions(manifest, cases)
-    backend = str(getattr(runtime, "agent_backend", "native"))
+    runtime_id = str(getattr(runtime, "runtime_id", "native"))
     platform = str(getattr(runtime, "platform_type", ""))
     features = set(str(value) for value in getattr(runtime, "tool_features", ()))
     # Case requirements use product-capability names while BotSpec keeps its
@@ -1600,9 +1608,9 @@ def _suite_case_preflight(
         if definitions:
             if capability_definition is None:
                 missing.append("executor:definition_missing")
-        required_backends = set(str(value) for value in requirements.get("backends", ()))
-        if required_backends and backend not in required_backends:
-            missing.append("backend")
+        required_runtime_ids = set(str(value) for value in requirements.get("runtime_ids", ()))
+        if required_runtime_ids and runtime_id not in required_runtime_ids:
+            missing.append("runtime_id")
         required_platforms = set(str(value) for value in requirements.get("platforms", ()))
         available_platforms = {platform, "acp"}
         if not required_platforms.issubset(available_platforms):
@@ -1666,7 +1674,7 @@ def _suite_case_preflight(
                     if not missing
                     else "missing=" + ",".join(missing)
                 ),
-                "启用 Case 所需 backend、feature、tool pack、tool 或 env key",
+                "启用 Case 所需 runtime、feature、tool pack、tool 或 env key",
             )
         )
 
@@ -1815,7 +1823,7 @@ def _trial_from_case_result(
         target_id=request.target.target_id,
         target_fingerprint=request.target.fingerprint,
         executor=(request.driver_id or request.target.executor),  # type: ignore[arg-type]
-        backend=request.target.backend,
+        runtime_id=request.target.runtime_id,
         model=request.target.model,
         reasoning_effort=request.target.reasoning_effort,
         attempt=request.attempt,
@@ -2346,7 +2354,7 @@ def _validated_resume_trials(
             )
         if (
             trial.executor != expected_executor
-            or trial.backend != target.backend
+            or trial.runtime_id != target.runtime_id
             or trial.model != target.model
             or trial.reasoning_effort != target.reasoning_effort
         ):
@@ -2556,39 +2564,40 @@ def _isolated_target(
 ) -> tuple[EvaluationTarget, dict[str, Any]]:
     normalized = str(target_id).strip().lower()
     if normalized == "codex":
-        model = str(config.routing.code_model or "")
-        effort = str(config.routing.code_reasoning_effort or "")
+        model, effort = _configured_model(normalized, config)
         command_ready = _codex_command_available(config, model, effort)
         ready = bool(model and command_ready)
         detail = (
-            f"backend=codex, model={model or 'missing'}, "
+            f"runtime_id=codex, model={model or 'missing'}, "
             f"command={'available' if command_ready else 'missing'}"
         )
         target = _make_target(
             target_id="codex",
             label="Codex",
             executor="agent_isolated",
-            backend="codex",
+            runtime_id="codex",
             model=model,
             reasoning_effort=effort,
             config_fingerprint=config_fingerprint,
+            model_config=config.llm,
         )
     elif normalized == "native":
         model = str(config.llm.model or "")
-        credential_ready = bool(str(config.llm.api_key or "").strip())
+        credential_ready = _model_auth_ready(config.llm)
         ready = bool(model) and credential_ready
         detail = (
-            f"backend=native, model={model or 'missing'}, "
+            f"runtime_id=native, model={model or 'missing'}, "
             f"credential={'configured' if credential_ready else 'missing'}"
         )
         target = _make_target(
             target_id="native",
             label="Native Agent",
             executor="agent_isolated",
-            backend="native",
+            runtime_id="native",
             model=model,
             reasoning_effort="",
             config_fingerprint=config_fingerprint,
+            model_config=config.llm,
         )
     else:
         raise ValueError(f"unsupported comparison Target: {target_id}")
@@ -2604,7 +2613,7 @@ def _isolated_target(
 def _codex_command_available(config: Any, model: str, effort: str) -> bool:
     try:
         command = build_codex_command(
-            str(config.routing.code_command or ""),
+            "codex exec --model {model} --cd {workdir}",
             model=model,
             workdir=Path.cwd(),
             reasoning_effort=effort,
@@ -2615,13 +2624,28 @@ def _codex_command_available(config: Any, model: str, effort: str) -> bool:
         return False
 
 
-def _configured_model(backend: str, config: Any) -> tuple[str, str]:
-    if backend == "codex":
-        return (
-            str(config.routing.code_model or ""),
-            str(config.routing.code_reasoning_effort or ""),
-        )
-    return str(config.llm.model or ""), ""
+def _load_runtime_config(runtime):
+    from chatcopilot.core.model_routes import resolve_model_config
+    config = load_config(env_prefix=runtime.spec.llm.env_prefix)
+    config.llm = resolve_model_config(runtime.spec.llm.chat, fallback=config.llm,
+        prefix=runtime.spec.llm.env_prefix, environment=os.environ)
+    if runtime.spec.llm.code.env_prefix:
+        config.routing = load_config(env_prefix=runtime.spec.llm.code.env_prefix).routing
+    return config
+
+
+def _model_auth_ready(llm):
+    if llm.auth_mode == "api_key":
+        return bool(llm.api_key.strip())
+    from chatcopilot.core.model_credentials import credential_status, CredentialError
+    try:
+        return credential_status(Path(llm.credential_root), llm.auth_profile).state == "ready"
+    except (ValueError, OSError, CredentialError):
+        return False
+
+
+def _configured_model(runtime_id: str, config: Any) -> tuple[str, str]:
+    return str(config.llm.model or ""), str(config.llm.reasoning_effort or "")
 
 
 _RUNTIME_CONFIG_FINGERPRINT_FIELDS = (
@@ -2692,11 +2716,11 @@ def _runtime_behavior_fingerprint(
     runtime: Any,
     config: ChatConfig,
     *,
-    backend: str | None = None,
+    runtime_id: str | None = None,
 ) -> str:
     """Hash resolved, non-secret behavior that can affect an Evaluation Target."""
 
-    effective_backend = str(backend or runtime.agent_backend).strip().lower()
+    effective_runtime_id = str(runtime_id or runtime.runtime_id).strip().lower()
 
     mcp_servers: list[dict[str, Any]] = []
     for server in runtime.mcp_servers:
@@ -2727,6 +2751,7 @@ def _runtime_behavior_fingerprint(
     ]
     payload = {
         "bot_spec_hash": _hash_json(_behavior_json_value(runtime.spec.raw)),
+        "model_route": config.llm.model_route().to_payload(),
         # Keep the deliberately whitelisted resolved configuration opaque to
         # the generic path/secret redactor so slash-prefixed routing commands
         # cannot collapse to the same redacted value.
@@ -2747,10 +2772,10 @@ def _runtime_behavior_fingerprint(
             "mcp_servers": mcp_servers,
         },
         "agent": {
-            "backend": effective_backend,
+            "runtime_id": effective_runtime_id,
             "subagents": _behavior_json_value(to_jsonable(runtime.subagents)),
         },
-        "runtime_implementation": runtime_implementation_snapshot(effective_backend),
+        "runtime_implementation": runtime_implementation_snapshot(effective_runtime_id),
         "context": {
             "spec": _behavior_json_value(to_jsonable(runtime.spec.context)),
             "memory_namespace": runtime.memory_namespace,
@@ -2795,18 +2820,24 @@ def _make_target(
     target_id: str,
     label: str,
     executor: TargetExecutor,
-    backend: str,
+    runtime_id: str,
     model: str,
     reasoning_effort: str,
     config_fingerprint: str,
+    model_config: LLMConfig | None = None,
+    capability_digest: str = "",
 ) -> EvaluationTarget:
+    route_fields = ({"provider": model_config.provider, "model_api": model_config.api,
+                     "auth_mode": model_config.auth_mode} if model_config is not None else {})
     fingerprint_payload = {
         "target_id": target_id,
         "executor": executor,
-        "backend": backend,
+        "runtime_id": runtime_id,
         "model": model,
         "reasoning_effort": reasoning_effort,
         "config_fingerprint": config_fingerprint,
+        **route_fields,
+        "capability_digest": capability_digest,
     }
     fingerprint = hashlib.sha256(
         json.dumps(
@@ -2820,11 +2851,13 @@ def _make_target(
         target_id=target_id,
         label=label,
         executor=executor,
-        backend=backend,
+        runtime_id=runtime_id,
         model=model,
         reasoning_effort=reasoning_effort,
         fingerprint=fingerprint,
         config_fingerprint=config_fingerprint,
+        **route_fields,
+        capability_digest=capability_digest,
     )
 
 
@@ -2845,7 +2878,7 @@ def _config_snapshot(
     if request.bot:
         with _preserved_environment():
             runtime = load_evaluation_runtime(request.bot)
-            config = load_config(env_prefix=runtime.spec.llm.env_prefix)
+            config = _load_runtime_config(runtime)
             raw = configuration_invariants(runtime.spec.raw)
             environment_names: set[str] = {"CHATCOPILOT_CODEX_BOT_HOME"}
             def collect_environment(value):
@@ -2940,7 +2973,7 @@ def _private_runtime_configuration_snapshot(
         return {}
     with _preserved_environment():
         runtime = load_evaluation_runtime(bot)
-        config = load_config(env_prefix=runtime.spec.llm.env_prefix)
+        config = _load_runtime_config(runtime)
         user_allowlist = parse_numeric_allowlist(
             os.environ.get("QQ_ALLOW_FROM"),
             field="QQ_ALLOW_FROM",
@@ -3240,7 +3273,7 @@ def _error_trial(request: TrialExecutionRequest, exc: BaseException) -> Evaluati
         target_id=request.target.target_id,
         target_fingerprint=request.target.fingerprint,
         executor=(request.driver_id or request.target.executor),  # type: ignore[arg-type]
-        backend=request.target.backend,
+        runtime_id=request.target.runtime_id,
         model=request.target.model,
         reasoning_effort=request.target.reasoning_effort,
         attempt=request.attempt,

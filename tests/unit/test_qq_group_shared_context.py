@@ -1,7 +1,7 @@
 from __future__ import annotations
 from chatcopilot.contracts.execution_scope import CommandTimeouts
 
-from tests.prompt_plan_fixture import prompt_input
+from tests.prompt_plan_fixture import prompt_input, runtime_route
 
 import asyncio
 import hashlib
@@ -20,14 +20,14 @@ from unittest import mock
 import pytest
 
 
-from chatcopilot.agent.backends.codex import CodexAgentBackend
+from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.tools.builtin import workspace_tools
 from chatcopilot.agent.tools.workspace_context import bind_workspace_service
 from chatcopilot.contracts import AssistantMode, Role
-from chatcopilot.contracts.agent_backend import (
-    BackendCapabilities,
-    BackendSessionRef,
+from chatcopilot.contracts.runtime_adapter import (
+    RuntimeCapabilities,
+    RuntimeSessionRef,
     CAPABILITY_CHAT,
 )
 from chatcopilot.contracts.identity import ConversationIdentity, TurnIdentity
@@ -59,7 +59,8 @@ from chatcopilot.middleware.acp.tool_permissions import (
 from chatcopilot.middleware.acp.workspace_service import (
     build_workspace_service as _make_workspace_service,
 )
-from chatcopilot.core.config import ChatConfig
+from chatcopilot.core.config import ChatConfig, LLMConfig
+from chatcopilot.contracts.execution import HostRuntimePolicy
 from chatcopilot.middleware.acp.group_conversation import (
     GroupConversationJournal,
     SenderEnvelopeError,
@@ -832,7 +833,7 @@ def test_group_actor_cache_keeps_role_and_execution_session_actor_scoped(
     }
 
 
-def test_group_backend_state_is_outside_member_visible_shared_root(
+def test_group_runtime_state_is_outside_member_visible_shared_root(
     tmp_path: Path,
 ) -> None:
     workspace = Workspace(
@@ -843,16 +844,16 @@ def test_group_backend_state_is_outside_member_visible_shared_root(
         scope=WORKSPACE_SCOPE_GROUP_SHARED,
     ).ensure()
     service = _make_workspace_service(workspace)
-    protected = service.resolve_backend_state_root()
+    protected = service.resolve_runtime_state_root()
     actor_digest = hashlib.sha256(f"qq\0{_MEMBER_ID}".encode()).hexdigest()
     assert protected == (
-        workspace.root.parent / ".conversation-state" / "backend-sessions" / actor_digest
+        workspace.root.parent / ".conversation-state" / "runtime-sessions" / actor_digest
     )
     assert protected is not None
     with pytest.raises(ValueError):
         protected.relative_to(workspace.root)
     assert protected.stat().st_mode & 0o777 == 0o700
-    assert not (workspace.root / ".backend-sessions").exists()
+    assert not (workspace.root / ".runtime-sessions").exists()
     other_actor_workspace = Workspace(
         root=workspace.root,
         chat_kind="group",
@@ -861,41 +862,42 @@ def test_group_backend_state_is_outside_member_visible_shared_root(
         scope=WORKSPACE_SCOPE_GROUP_SHARED,
     ).ensure()
     other_actor_service = _make_workspace_service(other_actor_workspace)
-    other_protected = other_actor_service.resolve_backend_state_root()
+    other_protected = other_actor_service.resolve_runtime_state_root()
     assert other_protected is not None
     assert other_protected != protected
-    assert service.requires_backend_state_isolation() is True
-    assert other_actor_service.requires_backend_state_isolation() is True
+    assert service.requires_runtime_state_isolation() is True
+    assert other_actor_service.requires_runtime_state_isolation() is True
 
     captured: dict[str, object] = {}
 
     class _Backend:
-        capabilities = BackendCapabilities(names=frozenset({CAPABILITY_CHAT}))
+        capabilities = RuntimeCapabilities(names=frozenset({CAPABILITY_CHAT}))
 
-        def open_session(self, request: object) -> BackendSessionRef:
+        def open_session(self, request: object) -> RuntimeSessionRef:
             captured.update(getattr(request, "options"))
-            return BackendSessionRef("codex", "session")
+            return RuntimeSessionRef("codex", "session")
 
-        def close_session(self, _session: BackendSessionRef) -> None:
+        def close_session(self, _session: RuntimeSessionRef) -> None:
             return None
 
     runtime = AgentRuntime(
-        llm=object(),
+        main_model_client=None,
+        subagent_default_model_client=object(),  # type: ignore[arg-type]
         tools=(),
         tools_schema=(),
         runtime_config=ChatConfig(),
-        agent_backend="codex",
+        route=runtime_route("codex"),
     )
-    with mock.patch("chatcopilot.agent.runtime.build_backend", return_value=_Backend()):
-        session = runtime.new_session(
+    with mock.patch("chatcopilot.agent.runtime.build_runtime_adapter", return_value=_Backend()):
+        session = runtime.open_session(
             session_id="actor-session",
-            prompt_input=prompt_input("baseline", backend="codex"),
+            prompt_input=prompt_input("baseline", runtime_id="codex"),
             workspace_service=service,
         )
 
     assert captured["workspace_root"] == workspace.root
-    assert captured["backend_state_root"] == protected
-    assert captured["isolate_backend_state"] is True
+    assert captured["runtime_state_root"] == protected
+    assert captured["isolate_runtime_state"] is True
     assert captured["restore_persisted_native_session"] is False
     session.close()
 
@@ -1375,7 +1377,7 @@ def test_group_turn_tasks_and_owner_jobs_use_protected_actor_storage(
     )
     recorder.context_snapshot(
         snapshot_id="ctx_group_redaction",
-        backend="codex",
+        runtime_id="codex",
         model="test-model",
         iteration=1,
         session_messages=[
@@ -1706,8 +1708,8 @@ def test_group_owner_deterministic_controls_keep_owner_permissions(
         assert updates
     else:
         assert expected_callback in callbacks
-    assert state.code_model_selection is None
-    assert state.code_model_once is None
+    assert state.model_selection is None
+    assert state.model_once is None
 
 
 def test_group_normal_turn_does_not_replay_background_jobs(tmp_path: Path) -> None:
@@ -1853,7 +1855,7 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
         prompt_profile=BotPromptProfile(identity="bot baseline", response_style="concise"),
         capability_policies=(ToolPackPolicy(id="private", content="PRIVATE CAPABILITY"),),
         skills=("PRIVATE SKILL",),
-        agent_backend="native",
+        runtime_id="native",
     )
     captures: list[dict[str, object]] = []
 
@@ -1876,20 +1878,25 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
                 ]
             )
 
-        def set_prompt_plan(self, _plan) -> None:
+        def snapshot_transcript(self):
+            from chatcopilot.contracts.execution import TranscriptSnapshot
+            return TranscriptSnapshot((), "host_history")
+
+        def update_context(self, _plan) -> None:
             return None
 
-    def new_session(**kwargs: object) -> _AgentSession:
+    def open_session(**kwargs: object) -> _AgentSession:
         captures.append(kwargs)
         return _AgentSession()
 
     canary_retriever = object()
     fake_agent_runtime = SimpleNamespace(
         retriever=canary_retriever,
+        runtime_config=ChatConfig(),
         project_roots=(),
         command_timeouts=CommandTimeouts(75, 900),
-        agent_backend="native",
-        new_session=new_session,
+        runtime_id="native",
+        open_session=open_session,
         tools=(),
     )
     adapter = SimpleNamespace(
@@ -1967,21 +1974,30 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
 
 def test_agent_runtime_none_retriever_override_is_explicit_disable() -> None:
     runtime = AgentRuntime(
-        llm=mock.Mock(),
+        main_model_client=mock.Mock(),
         tools=(),
         tools_schema=(),
         runtime_config=ChatConfig(),
+        route=runtime_route(),
         retriever=mock.Mock(),
     )
 
-    session = runtime.new_session(
-        session_id="group-projection",
-        prompt_input=prompt_input("baseline"),
-        retriever_override=None,
-    )
+    from chatcopilot.agent.runtimes.registry import build_runtime_adapter
 
-    concrete = session.backend.native_session(session.backend_session_ref)
-    assert concrete.retriever is None
+    captured = {}
+
+    def build(route, **kwargs):
+        captured["retriever"] = kwargs.get("retriever")
+        return build_runtime_adapter(route, **kwargs)
+
+    with mock.patch("chatcopilot.agent.runtime.build_runtime_adapter", side_effect=build):
+        runtime.open_session(
+            session_id="group-projection",
+            prompt_input=prompt_input("baseline"),
+            retriever_override=None,
+        )
+
+    assert captured["retriever"] is None
 
 
 @pytest.mark.parametrize(
@@ -2008,7 +2024,7 @@ def test_group_codex_command_has_read_only_namespace_and_strict_config(
     legacy = group_root / f"user_{_MEMBER_ID}"
     legacy.mkdir()
     (legacy / "secret.txt").write_text("legacy secret", encoding="utf-8")
-    state_root = group_root / ".conversation-state" / "backend-sessions" / "actor"
+    state_root = group_root / ".conversation-state" / "runtime-sessions" / "actor"
     state_root.mkdir(parents=True, mode=0o700)
     state_root.chmod(0o700)
     gateway_config = state_root / "gateway.json"
@@ -2027,19 +2043,28 @@ def test_group_codex_command_has_read_only_namespace_and_strict_config(
         code_timeout_seconds=30,
         code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
     )
-    backend = CodexAgentBackend(
+    config = ChatConfig(
+        routing=routing,
+        llm=LLMConfig(provider="openai", api="openai_responses", model="gpt-test"),
+    )
+    route = runtime_route("codex", config.llm)
+    backend = CodexRuntimeAdapter(
+        route=route,
         tool_names=set(),
-        runtime_config=SimpleNamespace(routing=routing),
+        runtime_config=config,
     )
     state = SimpleNamespace(
         execution_scope=None,
-        isolate_backend_state=True,
+        isolate_runtime_state=True,
+        extensions="", extension_env={}, host_policy=HostRuntimePolicy(network_access=True,
+            native_capabilities=frozenset({"files", "shell", "subagents", "image", "web_search"})),
         access_mode="workspace",
         allowed_tool_names=frozenset(),
         workdir=workdir.resolve(),
         gateway_config=gateway_config.resolve(),
         codex_home=codex_home.resolve(),
         native_session_id="",
+        route=route,
     )
     try:
         backend._require_isolated_main_codex_sandbox()
@@ -2102,7 +2127,7 @@ if not project_config_existed:
 assert not legacy.exists()
 assert not protected.exists()
 assert not pathlib.Path(f'/proc/{host_pid}/root{protected}').exists()
-assert pathlib.Path('/run/chatcopilot-gateway.json').read_text() == '{}'
+assert not pathlib.Path('/run/chatcopilot-gateway.json').exists()
 for name in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'):
     assert name not in os.environ
 """
@@ -2157,19 +2182,20 @@ def test_group_codex_mounts_absolute_venv_python_runtime(tmp_path: Path) -> None
     fake_codex.chmod(0o755)
     state = SimpleNamespace(
         execution_scope=None,
+        extension_env={},
         workdir=workdir.resolve(),
         codex_home=codex_home.resolve(),
         gateway_config=gateway_config.resolve(),
     )
 
     with (
-        mock.patch("chatcopilot.agent.backends.codex.sys.prefix", str(gateway_venv)),
+        mock.patch("chatcopilot.core.scoped_process.sys.prefix", str(gateway_venv)),
         mock.patch(
-            "chatcopilot.agent.backends.codex.sys.base_prefix",
+            "chatcopilot.core.scoped_process.sys.base_prefix",
             str(python_runtime),
         ),
     ):
-        command = CodexAgentBackend._wrap_isolated_command(
+        command = CodexRuntimeAdapter._wrap_isolated_command(
             state,  # type: ignore[arg-type]
             [str(fake_codex)],
         )
@@ -2183,7 +2209,9 @@ def test_group_codex_mounts_absolute_venv_python_runtime(tmp_path: Path) -> None
         command[index : index + len(runtime_mount)] == runtime_mount
         for index in range(len(command) - len(runtime_mount) + 1)
     )
-    assert command.count(str(tmp_path.resolve())) == 1
+    # Only parent directories, never a broad bind of the temporary root.
+    assert not any(command[i] in {"--bind", "--ro-bind"} and command[i + 1] == str(tmp_path.resolve())
+                   for i in range(len(command) - 1))
 
 
 @pytest.mark.parametrize(
@@ -2231,6 +2259,7 @@ def test_group_codex_rejects_unsafe_project_config_mountpoint(
     fake_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     state = SimpleNamespace(
         execution_scope=None,
+        extension_env={},
         workdir=workdir.resolve(),
         codex_home=codex_home.resolve(),
         gateway_config=gateway_config.resolve(),
@@ -2246,7 +2275,7 @@ def test_group_codex_rejects_unsafe_project_config_mountpoint(
             match="project config must be an owner-owned real directory",
         ),
     ):
-        CodexAgentBackend._wrap_isolated_command(
+        CodexRuntimeAdapter._wrap_isolated_command(
             state,  # type: ignore[arg-type]
             [str(fake_codex)],
         )

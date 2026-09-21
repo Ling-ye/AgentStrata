@@ -14,7 +14,7 @@ from typing import Mapping
 
 from chatcopilot.botspec.model import BotSpec, LLMSpec
 from chatcopilot.botspec.runtime import BotRuntimeContext
-from chatcopilot.core.config import LLMConfig, load_llm_profile
+from chatcopilot.core.config import LLMConfig
 from chatcopilot.project import ENV_PREFIX
 
 _SOURCE_ROOT_ENV = f"{ENV_PREFIX}_SOURCE_ROOT"
@@ -54,10 +54,10 @@ def apply_runtime_env(runtime: BotRuntimeContext) -> None:
 def llm_runtime_env_defaults(llm: LLMSpec) -> dict[str, str]:
     """Project the active Codex model and execution settings into runtime env."""
 
-    prefix = llm.env_prefix
     code = getattr(llm, "code", None)
     if code is None:
         return {}
+    prefix = code.env_prefix or llm.env_prefix
     values = {
         f"{prefix}_CODE_PROVIDER": code.provider,
         f"{prefix}_CODE_MODEL": code.model,
@@ -86,17 +86,9 @@ def load_research_llm_config(
 ) -> LLMConfig:
     """Resolve the versioned research model default, then apply machine overrides."""
 
-    configured = LLMConfig(
-        base_url=fallback.base_url,
-        model=getattr(llm, "research_model", None) or fallback.model,
-        api_key=fallback.api_key,
-        timeout=fallback.timeout,
-    )
-    prefix = getattr(llm, "research_env_prefix", None)
-    return (
-        load_llm_profile(prefix, fallback=configured, environment=environment)
-        if prefix else configured
-    )
+    from chatcopilot.core.model_routes import resolve_model_config
+    return resolve_model_config(llm.research, fallback=fallback,
+        prefix=llm.research_env_prefix, environment=os.environ if environment is None else environment)
 
 
 def _source_root(source_path: Path) -> Path:

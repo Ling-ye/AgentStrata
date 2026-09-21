@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
+from chatcopilot.contracts.model_selection import WorkerModelSelection
 
 StageUpdater = Callable[[str, str, str, Mapping[str, object] | None], None]
 
@@ -13,6 +14,7 @@ class JobExecutionContext:
     job_id: str
     job_dir: Path
     update_status: StageUpdater
+    worker_model_selection: WorkerModelSelection | None = None
 
     @property
     def worktree(self) -> Path:

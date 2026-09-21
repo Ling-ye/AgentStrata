@@ -450,7 +450,7 @@ def _context_snapshot_summaries(data: Dict[str, object]) -> List[Dict[str, objec
         snapshots.append(
             {
                 "snapshot_id": snapshot_id,
-                "backend": str(raw.get("backend") or ""),
+                "runtime_id": str(raw.get("runtime_id") or ""),
                 "model": str(raw.get("model") or ""),
                 "iteration": _coerce_non_negative_int(raw.get("iteration")),
                 "coverage": str(raw.get("coverage") or "provider_opaque"),

@@ -221,9 +221,9 @@ TOOLS = [
         name="start_code_task",
         summary=(
             "Start an asynchronous isolated code-development task for this repository. "
-            "Use for natural-language requests that require source, test, specification, "
-            "documentation, BotSpec, adapter, dependency, or deployment changes. Return "
-            "the task id immediately; do not edit source in the main conversation. When "
+            "Use when the user wants an independent task or controlled draft-PR delivery. "
+            "Authorized native tools may otherwise make project changes directly. Return "
+            "the task id immediately after submission. When "
             "the user requested a plan before later confirmation, do not call this tool "
             "until that confirmation arrives, then submit the complete approved plan."
         ),

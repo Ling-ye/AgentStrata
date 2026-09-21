@@ -24,7 +24,7 @@ def _session(*, role: Role = Role.OWNER) -> SimpleNamespace:
             instance_id="qq-bot",
             display_name="Test Bot",
             platform_type="qq",
-            agent_backend="codex",
+            runtime_id="codex",
             tool_packs=("dev.code_tasks", "persona.control"),
             spec=SimpleNamespace(
                 context=ContextSpec(),
@@ -37,8 +37,8 @@ def _session(*, role: Role = Role.OWNER) -> SimpleNamespace:
         is_workspace_materialized=False,
         is_materialized=False,
         llm_model="chat-model",
-        code_model_once=None,
-        code_model_selection=None,
+        model_once=None,
+        model_selection=None,
         message_count=lambda: 0,
     )
 

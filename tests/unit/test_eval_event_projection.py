@@ -17,7 +17,7 @@ def _sensitive_context_event() -> tuple[ContextSnapshotPrepared, str]:
     secret = "-".join(("synthetic", "context", "credential", "value"))
     event = ContextSnapshotPrepared(
         snapshot_id="ctx_eval_projection",
-        backend="native",
+        runtime_id="native",
         model="test-model",
         iteration=2,
         session_messages=({"role": "user", "content": secret},),
@@ -76,7 +76,7 @@ def test_context_snapshot_projection_omits_sensitive_bodies_in_all_eval_paths() 
         assert set(projected) == {
             "type",
             "snapshot_id",
-            "backend",
+            "runtime_id",
             "model",
             "iteration",
             "coverage",
@@ -124,7 +124,7 @@ def test_context_snapshot_mapping_reprojection_cannot_restore_sensitive_bodies()
     unsafe_mapping.update(
         {
             "snapshot_id": "s" * 10_000,
-            "backend": "b" * 10_000,
+            "runtime_id": "b" * 10_000,
             "model": "m" * 10_000,
             "iteration": 10**5000,
             "coverage": "c" * 10_000,
@@ -153,7 +153,7 @@ def test_context_snapshot_mapping_reprojection_cannot_restore_sensitive_bodies()
     assert secret not in serialized
     assert omitted_overflow_secret not in serialized
     assert projected["snapshot_id"] == "s" * 512
-    assert projected["backend"] == "b" * 512
+    assert projected["runtime_id"] == "b" * 512
     assert projected["model"] == "m" * 512
     assert projected["coverage"] == "c" * 512
     assert projected["context_kind"] == "k" * 512

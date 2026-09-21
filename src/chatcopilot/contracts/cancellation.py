@@ -41,6 +41,15 @@ class CancellationToken:
             raise CancellationRequested()
 
 
+class CombinedCancellation:
+    def __init__(self, *probes: CancellationProbe | None):
+        self.probes = tuple(probe for probe in probes if probe is not None)
+
+    def raise_if_cancelled(self) -> None:
+        for probe in self.probes:
+            probe.raise_if_cancelled()
+
+
 __all__ = [
     "CancellationProbe",
     "CancellationRequested",

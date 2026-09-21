@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Mapping, TypeAlias, Union
+from chatcopilot.contracts.execution import TurnExecutionContext, ResponseIntegrity, RuntimeFailure
+from chatcopilot.contracts.model_runtime import freeze_json
 
 
 AgentStopReason: TypeAlias = Literal[
@@ -13,6 +15,7 @@ AgentStopReason: TypeAlias = Literal[
     "timeout_cap",
     "llm_error",
     "cancelled",
+    "runtime_error",
 ]
 
 
@@ -26,6 +29,10 @@ class ResourceRef:
     size_bytes: int | None = None
     sha256: str | None = None
 
+    def __post_init__(self):
+        if self.schema is not None:
+            object.__setattr__(self, "schema", freeze_json(self.schema))
+
 
 @dataclass(frozen=True)
 class AgentTask:
@@ -33,6 +40,11 @@ class AgentTask:
     resources: tuple[ResourceRef, ...] = ()
     turn_context: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    execution: TurnExecutionContext = field(default_factory=TurnExecutionContext)
+
+    def __post_init__(self):
+        object.__setattr__(self, "resources", tuple(self.resources))
+        object.__setattr__(self, "metadata", freeze_json(self.metadata))
 
 
 @dataclass(frozen=True)
@@ -54,7 +66,7 @@ class ToolCatalogObserved:
     span_id: str | None = None
     observed_at: float | None = None
     source: str = "session_gateway"
-    backend: str = "codex"
+    runtime_id: str = "codex"
     error_code: str = ""
 
 
@@ -72,7 +84,7 @@ class AgentContentDelta:
     section: int = 0
     name: str = ""
     message_kind: str = "response"
-    backend: str = "codex"
+    runtime_id: str = "codex"
     source: str = "provider"
     depth: int = 1
     observed_at: float | None = None
@@ -92,7 +104,7 @@ class AgentMessageObserved:
     phase: Literal["start", "update", "finish"] = "finish"
     status: str = "succeeded"
     message_kind: str = "response"
-    backend: str = ""
+    runtime_id: str = ""
     source: str = "host"
     depth: int = 0
     observed_at: float | None = None
@@ -110,7 +122,7 @@ class ToolStarted:
     started_at: float | None = None
     tool_call_id: str | None = None
     model_span_id: str | None = None
-    backend: str = ""
+    runtime_id: str = ""
     source: str = "host"
 
 
@@ -130,7 +142,7 @@ class ToolFinished:
     model_span_id: str | None = None
     model_result: Mapping[str, Any] | None = None
     execution_result: Mapping[str, Any] | None = None
-    backend: str = ""
+    runtime_id: str = ""
     source: str = "host"
 
 
@@ -155,7 +167,7 @@ class SpanStarted:
     parent_span_id: str | None = None
     depth: int = 0
     data: Mapping[str, Any] | None = None
-    backend: str = ""
+    runtime_id: str = ""
     source: str = "host"
     observed_at: float | None = None
 
@@ -170,7 +182,7 @@ class SpanUpdated:
     revision: int
     depth: int = 0
     data: Mapping[str, Any] | None = None
-    backend: str = ""
+    runtime_id: str = ""
     source: str = "host"
     observed_at: float | None = None
 
@@ -186,7 +198,7 @@ class SpanFinished:
     parent_span_id: str | None = None
     depth: int = 0
     data: Mapping[str, Any] | None = None
-    backend: str = ""
+    runtime_id: str = ""
     source: str = "host"
     observed_at: float | None = None
 
@@ -207,7 +219,7 @@ class LlmCallStarted:
     estimator_version: str = ""
     context_kind: str = ""
     context_snapshot_id: str = ""
-    backend: str = ""
+    runtime_id: str = ""
     execution_kind: str = "model_call"
     request_parameters: Mapping[str, Any] | None = None
 
@@ -231,14 +243,16 @@ class LlmCallFinished:
     context_kind: str = ""
     context_snapshot_id: str = ""
     ok: bool = True
-    backend: str = ""
+    runtime_id: str = ""
     visible_response: Mapping[str, Any] | None = None
     execution_kind: str = "model_call"
+    usage_scope: Literal["model_call", "runtime_turn", "subagent"] = "model_call"
+    usage_coverage: Literal["exclusive", "inclusive", "unknown"] = "exclusive"
 
 
 @dataclass(frozen=True)
 class InputResourceReceipt:
-    """Path-free identity for one image actually included in a backend request."""
+    """Path-free identity for one image actually included in a runtime request."""
 
     sequence: int
     media_type: str
@@ -248,9 +262,9 @@ class InputResourceReceipt:
 
 @dataclass(frozen=True)
 class InputResourcesDispatched:
-    """Evidence emitted only after the backend request carrying images returned."""
+    """Evidence emitted only after the runtime request carrying images returned."""
 
-    backend: str
+    runtime_id: str
     turn_index: int
     request_id: str
     resources: tuple[InputResourceReceipt, ...]
@@ -260,7 +274,7 @@ class InputResourcesDispatched:
 class ContextSnapshotPrepared:
     """AgentStrata-visible context captured at one model request boundary.
 
-    ``coverage`` describes what the backend can prove. Native and LangGraph
+    ``coverage`` describes what the runtime can prove. Native and LangGraph
     use ``exact_model_input`` for text-only calls and ``partial`` when private
     reasoning or binary resource payloads are intentionally omitted. Adapters
     around provider-managed sessions use ``adapter_visible`` and enumerate
@@ -268,7 +282,7 @@ class ContextSnapshotPrepared:
     """
 
     snapshot_id: str
-    backend: str
+    runtime_id: str
     model: str
     iteration: int
     session_messages: tuple[Mapping[str, Any], ...]
@@ -344,7 +358,8 @@ class AgentResult:
     stop_reason: AgentStopReason
     produced_resources: tuple[ResourceRef, ...] = ()
     message_count: int = 0
-    response_integrity: Any = None
+    response_integrity: ResponseIntegrity | None = None
+    failure: RuntimeFailure | None = None
     lifecycle_intents: tuple[DeferredLifecycleIntent, ...] = ()
 
 

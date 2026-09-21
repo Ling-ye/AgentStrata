@@ -6,7 +6,7 @@ import { botTabFromParams } from "./taskWorkspaceState";
 const entity = (id: string, config: Record<string, unknown> = {}, layer = "application"): InspectionEntity => ({ id, layer, name: id,
   configured: true, loaded: null, connected: null, available: null, config });
 const input: Configuration = { layers: [], entities: [
-  entity("agent:main", { backend: "codex", model: "codex-fixture", reasoning_effort: "medium", model_slot: "code" }, "agent"),
+  entity("agent:main", { runtime_id: "codex", model: "chat-fixture", reasoning_effort: "medium", model_slot: "chat" }, "agent"),
   entity("agent:delegation", { defaults: { max_tool_calls: 5 } }, "agent"),
   entity("agent:search-budget", { max_tool_calls: 2 }, "agent"),
   entity("subagent:worker", { timeout_seconds: 40 }), entity("mcp:lookup", { catalog_ref: "lookup", command: "fixture" }),
@@ -46,7 +46,7 @@ describe("four-layer configuration ownership", () => {
     expect(rows.filter((item) => item.id === "agent:main")).toHaveLength(1);
     expect(rows.find((item) => item.id === "agent:delegation")?.group).toBe("delegation");
     expect(rows.find((item) => item.id === "agent:search-budget")?.group).toBe("search");
-    expect(configurationSummary(rows[0])).toContain("实例默认模型 codex-fixture / medium");
+    expect(configurationSummary(rows[0])).toContain("实例默认模型 chat-fixture / medium");
     expect(JSON.stringify(input)).toBe(original);
   });
   it("shows unconfigured resources and marks unavailable platform adapters separately", () => {

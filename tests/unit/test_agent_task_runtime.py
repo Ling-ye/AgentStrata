@@ -1,6 +1,7 @@
 """Assembly/capture tests with controlled sessions and real workspace/state boundaries."""
 
 from dataclasses import replace
+from chatcopilot.botspec.model import LLMSpec
 from types import SimpleNamespace
 import pytest
 
@@ -15,11 +16,11 @@ def test_runtime_binds_role_scope_and_actor_sessions_without_model(monkeypatch, 
     definitions = load_case_definitions(get_manifest("agentstrata-agent-tasks-v1"))
     base = next(d for d in definitions if d.case_id == "session-cross-user-isolation")
     config = SimpleNamespace(
-        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST")),
+        spec=SimpleNamespace(llm=LLMSpec(env_prefix="TEST")),
         subagents=SubagentSpec(),
         skills=(),
         prompt_profile=BotPromptProfile(identity="fixture", response_style="concise"),
-        agent_backend="native",
+        runtime_id="native",
         capability_policies=(),
         mcp_servers=(),
     )
@@ -28,7 +29,7 @@ def test_runtime_binds_role_scope_and_actor_sessions_without_model(monkeypatch, 
     closed = []
 
     class Agent:
-        def new_session(self, **kwargs):
+        def open_session(self, **kwargs):
             opened.append(kwargs)
             actor = kwargs["caller_identity"].user_id
 
@@ -83,7 +84,7 @@ def test_native_session_executes_real_registry_and_fact_scoring(monkeypatch, tmp
 
     runtime = replace(
         load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False),
-        agent_backend="native",
+        runtime_id="native",
     )
     monkeypatch.setattr(target, "load_evaluation_runtime", lambda _: runtime)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "controlled-native-fixture")
@@ -131,13 +132,13 @@ def test_runtime_collects_native_source_and_host_file_readback(monkeypatch, tmp_
     d = next(d for d in load_case_definitions(get_manifest("agentstrata-agent-tasks-v1"))
              if d.case_id == "artifact-document-report")
     config = SimpleNamespace(
-        spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST")), subagents=SubagentSpec(),
+        spec=SimpleNamespace(llm=LLMSpec(env_prefix="TEST")), subagents=SubagentSpec(),
         skills=(), prompt_profile=BotPromptProfile(identity="fixture", response_style="concise"),
-        agent_backend="codex", capability_policies=(), mcp_servers=(),
+        runtime_id="codex", capability_policies=(), mcp_servers=(),
     )
 
     class Agent:
-        def new_session(self, **kwargs):
+        def open_session(self, **kwargs):
             root = kwargs["workspace_service"].resolve_workspace_root()
 
             class Session:
@@ -173,7 +174,7 @@ def test_member_persona_attack_runs_real_native_session_without_mutation(monkeyp
     from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
     import httpx
 
-    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), agent_backend="native")
+    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="native")
     monkeypatch.setattr(target, "load_evaluation_runtime", lambda _: runtime)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "controlled-native-fixture")
     calls = []
@@ -253,7 +254,7 @@ def test_owner_persona_task_runs_real_native_provider_and_persistence(monkeypatc
     from chatcopilot.evals.agent_tasks.verifier import verify
     from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 
-    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), agent_backend="native")
+    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="native")
     monkeypatch.setattr(target, "load_evaluation_runtime", lambda _: runtime)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "controlled-native-fixture")
     calls = {"main": 0, "draft": 0}
@@ -286,7 +287,7 @@ def test_group_memory_is_persisted_and_injected_only_into_its_new_session(monkey
     from chatcopilot.evals.agent_tasks.verifier import verify
     from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 
-    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), agent_backend="native")
+    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="native")
     monkeypatch.setattr(target, "load_evaluation_runtime", lambda _: runtime)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "controlled-memory-fixture")
     requests = []
@@ -325,7 +326,7 @@ def test_native_injection_exposes_write_tool_and_excludes_host_setup(monkeypatch
     from chatcopilot.evals.agent_tasks.verifier import verify
     from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 
-    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), agent_backend="native")
+    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="native")
     monkeypatch.setattr(target, "load_evaluation_runtime", lambda _: runtime)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "controlled-injection-fixture")
     calls = []

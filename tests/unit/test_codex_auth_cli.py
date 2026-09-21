@@ -14,7 +14,7 @@ from chatcopilot.external_tools.codex_cli.auth_cli import (
     login_lanes,
     validate_auth_root,
 )
-from chatcopilot.external_tools.codex_cli.credentials import (
+from chatcopilot.core.model_credentials import (
     credential_lock,
     credential_status,
     install_login_credential,

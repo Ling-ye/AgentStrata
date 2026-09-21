@@ -1,7 +1,9 @@
 from pathlib import Path
+from contextlib import nullcontext
 import os
 import subprocess
 from types import SimpleNamespace
+from unittest import mock
 
 import pytest
 
@@ -12,6 +14,12 @@ from chatcopilot.contracts.authorization import (
     AuthorizationOperation,
 )
 from chatcopilot.contracts.identity import Role, ConversationIdentity
+from chatcopilot.contracts.runtime_adapter import (
+    CAPABILITY_CHAT,
+    CAPABILITY_TOOLS,
+    RuntimeCapabilities,
+    RuntimeSessionRef,
+)
 from chatcopilot.contracts.tools import ToolDef, ToolResult, object_schema
 from chatcopilot.application.execution_scope import execution_scope
 from chatcopilot.core.scoped_process import sandbox_command, scope_mounts
@@ -98,13 +106,13 @@ def test_owner_project_hardlinks_allow_confined_processes(tmp_path, backend, lin
     os.link(original, project / "linked")
     (project / ".git").mkdir()
     (project / ".git" / "config").write_text("protected")
-    (project / ".backend-sessions").mkdir()
-    (project / ".backend-sessions" / "auth").write_text("hidden")
+    (project / ".runtime-sessions").mkdir()
+    (project / ".runtime-sessions" / "auth").write_text("hidden")
     scope = execution_scope(Role.OWNER, workspace, (project,))
     script = (
         'set -eu\n'
         'test ! -e "$1"\n'
-        'test ! -e .backend-sessions/auth\n'
+        'test ! -e .runtime-sessions/auth\n'
         'test ! -w .git/config\n'
         'printf updated > linked\n'
     )
@@ -114,7 +122,7 @@ def test_owner_project_hardlinks_allow_confined_processes(tmp_path, backend, lin
             scope=scope, cwd=project,
         )
     else:
-        from chatcopilot.agent.backends.codex import CodexAgentBackend
+        from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
 
         executable = tmp_path / "probe"
         executable.write_text("#!/bin/sh\n" + script)
@@ -124,11 +132,12 @@ def test_owner_project_hardlinks_allow_confined_processes(tmp_path, backend, lin
         gateway_config = tmp_path / "gateway.json"
         gateway_config.write_text("{}")
         state = SimpleNamespace(
+            extensions="", extension_env={},
             execution_scope=scope, workdir=project,
             codex_home=codex_home, gateway_config=gateway_config,
         )
-        CodexAgentBackend._prepare_app_server_home(state)
-        command = CodexAgentBackend._wrap_isolated_command(
+        CodexRuntimeAdapter._prepare_app_server_home(state)
+        command = CodexRuntimeAdapter._wrap_isolated_command(
             state, [str(executable), str(cache / "original")]
         )
     result = subprocess.run(command, capture_output=True, text=True, timeout=10)
@@ -137,7 +146,7 @@ def test_owner_project_hardlinks_allow_confined_processes(tmp_path, backend, lin
     # The authorized relaxation intentionally allows writes to the shared inode.
     assert original.read_text() == "updated"
     assert (project / ".git" / "config").read_text() == "protected"
-    assert (project / ".backend-sessions" / "auth").read_text() == "hidden"
+    assert (project / ".runtime-sessions" / "auth").read_text() == "hidden"
     assert scope.project_roots == (project,)
 
 
@@ -184,33 +193,21 @@ def test_actual_caller_role_reaches_handler_without_shared_mutation():
 
 
 def test_mcp_catalog_receipt_is_separate_and_generation_bound():
-    from chatcopilot.agent.backends.session_relay import SessionToolRelay, call_session_relay
-    from chatcopilot.agent.backends.codex import CodexAgentBackend
+    from chatcopilot.agent.runtimes.dynamic_tools import DynamicToolBridge
+    from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
     from chatcopilot.agent.tools.executor import ToolExecutor
     from chatcopilot.contracts.agent import ToolCatalogObserved
 
     item = tool()
-    relay = SessionToolRelay(tools=(item,), executor=ToolExecutor(tools=[item]))
-    endpoint = relay.start()
+    relay = DynamicToolBridge(tools=(item,), executor=ToolExecutor(tools=[item]))
     generation = relay.begin_turn(
         trace_id="run-a", parent_span_id="model-a", depth=0, request_text="request"
     )
     try:
-        listed = call_session_relay(endpoint.to_dict(), {"action": "list_tools"})
-        assert listed["generation"] == generation
-        for current in (generation - 1, generation):
-            call_session_relay(
-                endpoint.to_dict(),
-                {
-                    "action": "catalog_observed",
-                    "phase": "list_response_prepared",
-                    "tools": ["sample"],
-                    "generation": current,
-                },
-            )
+        assert relay.schemas()[0]["tools"][0]["name"] == "sample"
         captured = []
         assert (
-            CodexAgentBackend._emit_relay_tool_events(
+            CodexRuntimeAdapter._emit_relay_tool_events(
                 relay,
                 captured.append,
                 generation=generation,
@@ -220,7 +217,7 @@ def test_mcp_catalog_receipt_is_separate_and_generation_bound():
             == ""
         )
         assert len(captured) == 1 and isinstance(captured[0], ToolCatalogObserved)
-        assert captured[0].tools == ("sample",) and captured[0].phase == "list_response_prepared"
+        assert captured[0].tools == ("sample",) and captured[0].phase == "host_prepared"
     finally:
         relay.end_turn(generation)
         relay.close()
@@ -231,7 +228,7 @@ def test_migration_preview_leaves_input_untouched():
 
     raw = {
         "agents": {
-            "backend": "codex",
+            "runtime": "codex",
             "codex": {"owner_access": "worktree", "member_access": "workspace"},
         },
         "context": {"dev": {"root_env": "PROJECT_ROOT", "allowed_paths": ["src/**"]}},
@@ -239,7 +236,7 @@ def test_migration_preview_leaves_input_untouched():
     updated, removed = preview_permission_migration(raw)
     assert raw["agents"]["codex"]["owner_access"] == "worktree"
     assert updated == {
-        "agents": {"backend": "codex"},
+        "agents": {"runtime": "codex"},
         "context": {"dev": {"root_env": "PROJECT_ROOT"}},
     }
     assert set(removed) == {
@@ -303,11 +300,11 @@ def test_hidden_state_created_after_scope_is_never_exposed(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     scope = execution_scope(Role.OWNER, workspace)
-    state = workspace / ".backend-sessions"
+    state = workspace / ".runtime-sessions"
     state.mkdir()
     (state / "auth").write_text("private")
     assert not scope.permits(state / "auth")
-    command = ["/bin/bash", "-c", "test ! -e .backend-sessions/auth && echo ordinary > file"]
+    command = ["/bin/bash", "-c", "test ! -e .runtime-sessions/auth && echo ordinary > file"]
     result = subprocess.run(
         sandbox_command(command, scope=scope, cwd=workspace), capture_output=True, text=True
     )
@@ -315,10 +312,10 @@ def test_hidden_state_created_after_scope_is_never_exposed(tmp_path):
     assert (state / "auth").read_text() == "private"
 
 
-@pytest.mark.parametrize("backend", ["native", "langgraph"])
+@pytest.mark.parametrize("runtime_id", ["native", "langgraph"])
 @pytest.mark.parametrize("role", [Role.OWNER, Role.USER])
-def test_agent_model_tool_flow_writes_only_bound_resources(tmp_path, backend, role):
-    from tests.prompt_plan_fixture import prompt_input
+def test_agent_model_tool_flow_writes_only_bound_resources(tmp_path, runtime_id, role):
+    from tests.prompt_plan_fixture import prompt_input, runtime_route
     from chatcopilot.agent.runtime import AgentRuntime
     from chatcopilot.core.config import ChatConfig
     from chatcopilot.core.llm_client import ChatResult
@@ -365,13 +362,13 @@ def test_agent_model_tool_flow_writes_only_bound_resources(tmp_path, backend, ro
 
     model = Model()
     runtime = AgentRuntime(
-        llm=model,
+        main_model_client=model,
         tools=tuple(TOOLS),
         tools_schema=(),
         runtime_config=ChatConfig(),
-        agent_backend=backend,
+        route=runtime_route(runtime_id),
     )
-    session = runtime.new_session(
+    session = runtime.open_session(
         session_id="actor",
         prompt_input=prompt_input(role=role.value),
         workspace_service=service,
@@ -389,13 +386,13 @@ def test_agent_model_tool_flow_writes_only_bound_resources(tmp_path, backend, ro
         runtime.close()
 
 
-@pytest.mark.parametrize("backend", ["native", "langgraph", "codex"])
+@pytest.mark.parametrize("runtime_id", ["native", "langgraph", "codex"])
 @pytest.mark.parametrize("kind", ["group", "p2p"])
 def test_persona_research_commits_and_next_turn_loads_in_each_backend(
-    tmp_path, monkeypatch, backend, kind
+    tmp_path, monkeypatch, runtime_id, kind
 ):
     import json
-    from tests.prompt_plan_fixture import prompt_input
+    from tests.prompt_plan_fixture import prompt_input, runtime_route
     from tests.unit.test_persona_tools import _DraftAgent, _Port
     from chatcopilot.agent.persona import tools as persona_tools
     from chatcopilot.agent.runtime import AgentRuntime
@@ -403,7 +400,6 @@ def test_persona_research_commits_and_next_turn_loads_in_each_backend(
     from chatcopilot.core.config import ChatConfig
     from chatcopilot.core.llm_client import ChatResult
     from chatcopilot.core.workspace_runtime import Workspace, MiddlewareWorkspaceService
-    from chatcopilot.agent.backends.session_relay import call_session_relay
     from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 
     request = (
@@ -422,7 +418,7 @@ def test_persona_research_commits_and_next_turn_loads_in_each_backend(
         workspace=workspace,
         workspace_root=tmp_path,
         platform_type="qq",
-        backend_state_root=tmp_path / "backend",
+        runtime_state_root=tmp_path / "backend",
         execution_scope=execution_scope(Role.OWNER, workspace.root),
     )
     monkeypatch.setattr(persona_tools, "PersonaDraftAgent", _DraftAgent)
@@ -458,30 +454,44 @@ def test_persona_research_commits_and_next_turn_loads_in_each_backend(
         def close(self):
             pass
 
+    model = Model()
     runtime = AgentRuntime(
-        llm=Model(), tools=(), tools_schema=(), runtime_config=ChatConfig(), agent_backend=backend
+        main_model_client=None if runtime_id == "codex" else model,
+        subagent_default_model_client=model,
+        tools=(),
+        tools_schema=(),
+        runtime_config=ChatConfig(),
+        route=runtime_route(runtime_id),
     )
-    session = runtime.new_session(
-        session_id="owner",
-        prompt_input=prompt_input(
-            role="owner", channel_kind="group" if kind == "group" else "private"
-        ),
-        session_providers=(provider,),
-        workspace_service=service,
-        caller_role_hint="owner",
+    adapter = mock.Mock()
+    adapter.capabilities = RuntimeCapabilities(
+        names=frozenset({CAPABILITY_CHAT, CAPABILITY_TOOLS}),
+        tool_names=frozenset({"persona_manage"}),
     )
+    adapter.open_session.return_value = RuntimeSessionRef("codex", "persona-session")
+    adapter.current_session_ref.side_effect = lambda ref: ref
+    adapter.is_busy.return_value = False
+    adapter.snapshot_transcript.return_value = SimpleNamespace(messages=())
+    adapter_context = (
+        mock.patch("chatcopilot.agent.runtime.build_runtime_adapter", return_value=adapter)
+        if runtime_id == "codex"
+        else nullcontext()
+    )
+    with adapter_context as _adapter_patch:
+        session = runtime.open_session(
+            session_id="owner",
+            prompt_input=prompt_input(
+                role="owner", channel_kind="group" if kind == "group" else "private"
+            ),
+            session_providers=(provider,),
+            workspace_service=service,
+            caller_role_hint="owner",
+        )
     try:
-        if backend == "codex":
-            native = session.backend.native_session(session.backend_session_ref)
-            generation = native.relay.begin_turn(
-                trace_id="persona", parent_span_id="agent", depth=0, request_text=request
-            )
-            response = call_session_relay(
-                json.loads(native.gateway_config.read_text())["relay"],
-                {"action": "call_tool", "name": "persona_manage", "arguments": params},
-            )
-            native.relay.end_turn(generation)
-            assert response["ok"] and response["result"]["data"]["committed"] is True
+        if runtime_id == "codex":
+            executor = _adapter_patch.call_args.kwargs["tool_executor"]
+            response = executor.execute("persona_manage", params, request_text=request)
+            assert response.ok and response.data["committed"] is True
         else:
             events = []
             result = session.run_task(AgentTask(request), on_event=events.append)

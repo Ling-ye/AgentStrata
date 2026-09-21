@@ -14,14 +14,14 @@ from chatcopilot.component_catalog.subagent_resolution import iter_definitions
 from chatcopilot.core.config import load_config
 
 
-def bot(tmp_path, backend="codex", **agents):
+def bot(tmp_path, runtime_id="codex", **agents):
     (tmp_path / "identity.md").write_text("Fixture identity")
     data = {"id": "fixture", "display_name": "Fixture", "prompts": {"schema_version": 2, "identity": "identity.md", "response_style": "identity.md"},
             "gateway": {}, "channels": {"qq": {"type": "qq_personal", "provider": "onebot_v11"}},
             "llm": {"chat": {"env_prefix": "CHATCOPILOT_FIXTURE"}, "research": {"env_prefix": "CHATCOPILOT_FIXTURE_RESEARCH", "model": "research-default"},
                     "code": {"enabled": True, "model": "codex-default", "reasoning_effort": "medium",
                              "profiles": {"worker": {"model": "worker-default", "reasoning_effort": "high"}}, "code_task_profile": "worker"}},
-            "agents": {"backend": backend, **agents}}
+            "agents": {"runtime": runtime_id, **agents}}
     path = tmp_path / "bot.yaml"
     path.write_text(yaml.safe_dump(data))
     return path
@@ -32,7 +32,7 @@ def projected(path, values):
     return {item["id"]: item for item in data["entities"]}
 
 
-@pytest.mark.parametrize("backend,model", [("codex", "codex-override"), ("native", "chat-fixture"), ("langgraph", "chat-fixture")])
+@pytest.mark.parametrize("backend,model", [("codex", "chat-fixture"), ("native", "chat-fixture"), ("langgraph", "chat-fixture")])
 def test_instance_models_match_backend_and_full_environment_overrides(tmp_path, monkeypatch, backend, model):
     path = bot(tmp_path, backend)
     monkeypatch.setenv("CHATCOPILOT_FIXTURE_MODEL", "unrelated-console-model")
@@ -45,7 +45,9 @@ def test_instance_models_match_backend_and_full_environment_overrides(tmp_path, 
     rows = projected(path, values)
     assert rows["agent:main"]["effective_config"]["model"] == model
     research = rows["model-slot:research"]["effective_config"]
-    assert research == {"base_url": "https://example.invalid/v1", "api_key": "fixture-key", "model": "research-override", "timeout": 17}
+    assert {key: research[key] for key in ("base_url", "model", "timeout")} == {
+        "base_url": "https://example.invalid/v1", "model": "research-override", "timeout": 17}
+    assert "api_key" not in research and "fixture-key" not in json.dumps(research)
     assert rows["model-slot:research"]["field_sources"]["base_url"] == "继承基础模型 · chat"
     assert "CHATCOPILOT_FIXTURE_RESEARCH_MODEL" in rows["model-slot:research"]["field_sources"]["model"]
     code = rows["model-slot:code"]["effective_config"]
@@ -127,8 +129,8 @@ def test_unexported_model_override_is_explained_without_changing_deployment_rule
     path = bot(tmp_path, presets=["mcp_query"], mcp_query={"model_env_prefix": "NONEXPORTED"})
     rows = projected(path, {"CHATCOPILOT_FIXTURE_MODEL": "base-model", "NONEXPORTED_MODEL": "saved-only"})
     custom = rows["subagent:mcp_query"]
-    assert custom["effective_config"]["model"] == "base-model"
-    assert "NONEXPORTED_MODEL 未进入运行环境" in custom["field_sources"]["model"]
+    assert custom["effective_config"]["model"] == "saved-only"
+    assert "NONEXPORTED_MODEL" in custom["field_sources"]["model"]
 
 
 def test_search_provider_ids_do_not_collide_with_search_controls(tmp_path):

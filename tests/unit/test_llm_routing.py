@@ -108,7 +108,7 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
     def test_lingye_uses_direct_codex_with_inprocess_search_providers(self) -> None:
         spec = load_botspec(_REPO_ROOT / "bots/lingye-copilot-qq/bot.yaml")
 
-        self.assertEqual(spec.agents.backend, "codex")
+        self.assertEqual(spec.agents.runtime, "codex")
         self.assertEqual(spec.agents.include, ())
         self.assertTrue(spec.agents.research_enabled)
         self.assertEqual(
@@ -133,7 +133,7 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
             "max",
         )
 
-    def test_route_explain_reports_instance_backend_without_secrets(self) -> None:
+    def test_route_explain_reports_instance_runtime_without_secrets(self) -> None:
         with TemporaryDirectory() as tmp:
             bot_dir = Path(tmp) / "route-demo"
             bot_dir.mkdir()
@@ -165,7 +165,7 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
                         "tools:",
                         "  packs: []",
                         "agents:",
-                        "  backend: codex",
+                        "  runtime: codex",
                     ]
                 )
                 + "\n",
@@ -184,10 +184,10 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
 
         rendered = output.getvalue()
         self.assertEqual(code, 0)
-        self.assertIn("backend=codex", rendered)
+        self.assertIn("runtime_id=codex", rendered)
         self.assertIn("selection_scope=instance", rendered)
-        self.assertIn("cross_backend_routing=false", rendered)
-        self.assertIn("main.model=code-from-botspec", rendered)
+        self.assertIn("cross_runtime_routing=false", rendered)
+        self.assertIn("main.model=chat-model", rendered)
         self.assertIn("main.reasoning_effort=medium", rendered)
         self.assertIn("code_task.profile=sol-max", rendered)
         self.assertIn("code_task.model=gpt-5.6-sol", rendered)

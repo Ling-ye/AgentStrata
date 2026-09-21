@@ -15,6 +15,7 @@ import pytest
 from chatcopilot.contracts.tools import ToolHandlerError
 from chatcopilot.contracts.tools import ToolContext
 from chatcopilot.contracts.code_tasks import validate_code_task_transition
+from chatcopilot.contracts.model_selection import WorkerModelSelection
 from chatcopilot.core.jobs import (
     BackgroundJob,
     code_task_state_lock,
@@ -97,6 +98,11 @@ class _JobContext:
     def __init__(self, job_dir: Path) -> None:
         self.job_dir = job_dir
         self.job_id = job_dir.name
+        self.worker_model_selection = WorkerModelSelection(
+            provider="codex_cli",
+            model="gpt-test",
+            reasoning_effort="medium",
+        )
 
     def update_stage(
         self,
@@ -332,8 +338,10 @@ def test_worker_credential_generation_invalidates_resume_and_uses_worker_lane(
         *,
         native_session_id: str,
         limits: object,
+        selection: WorkerModelSelection,
     ) -> tuple[str, str]:
         del paths, limits
+        assert selection.model == "gpt-test"
         invocation["prompt"] = prompt
         invocation["native_session_id"] = native_session_id
         return "worker completed", "thread-new-account"
@@ -404,8 +412,9 @@ def test_worker_credential_lease_exits_when_codex_invocation_fails(
         *,
         native_session_id: str,
         limits: object,
+        selection: WorkerModelSelection,
     ) -> tuple[str, str]:
-        del native_session_id, limits
+        del native_session_id, limits, selection
         raise ToolHandlerError(
             "Codex stopped",
             error_code="code_task_codex_failed",

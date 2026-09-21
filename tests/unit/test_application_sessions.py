@@ -18,7 +18,8 @@ from chatcopilot.application.sessions import (
 from chatcopilot.contracts.authorization import Principal, stable_payload_digest
 from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef
 from chatcopilot.contracts.identity import ConversationIdentity, Role
-from chatcopilot.contracts.model_selection import CodeModelSelection
+from chatcopilot.contracts.model_runtime import ModelSelection
+from chatcopilot.core.config import LLMConfig
 from chatcopilot.contracts.workspace import (
     WORKSPACE_SCOPE_GROUP_SHARED,
     WorkspaceView,
@@ -243,10 +244,8 @@ def test_two_actors_in_one_group_do_not_share_execution_state(tmp_path) -> None:
     first = replace(
         _actor_state("session-1", first_principal, agent_session=first_agent),
         workspace=shared_workspace,
-        model_selection=CodeModelSelection(
-            provider="openai",
-            model="gpt-test",
-            reasoning_effort="medium",
+        model_selection=ModelSelection(
+            LLMConfig(model="gpt-test", api_key="fixture").model_route(),
         ),
         journal_cursor=3,
     )

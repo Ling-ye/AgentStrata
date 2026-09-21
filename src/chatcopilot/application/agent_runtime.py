@@ -17,6 +17,7 @@ from chatcopilot.botspec.runtime import BotRuntimeContext
 from chatcopilot.botspec.runtime_env import load_research_llm_config, project_resource_roots, project_readonly_resource_roots
 from chatcopilot.contracts.runtime import McpServerConfig, RagSourceConfig
 from chatcopilot.contracts.execution_scope import CommandTimeouts
+from chatcopilot.contracts.model_runtime import ResolvedRuntimeRoute
 from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.tool_packs import ToolPackProjectionProfile, ToolProvider
@@ -40,7 +41,7 @@ class AgentRuntimeOverrides:
     rag_sources: tuple[RagSourceConfig, ...] | None = None
     mcp_servers: tuple[McpServerConfig, ...] | None = None
     subagents: SubagentSpec | None = None
-    agent_backend: str | None = None
+    runtime_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ class AgentRuntimeProjection:
     rag_sources: tuple[RagSourceConfig, ...]
     mcp_servers: tuple[McpServerConfig, ...]
     subagents: SubagentSpec
-    agent_backend: str
+    route: ResolvedRuntimeRoute
     assembly_profile: ToolPackProjectionProfile
     project_roots: tuple[Path, ...] = ()
     readonly_roots: tuple[Path, ...] = ()
@@ -80,7 +81,23 @@ def project_agent_runtime(
     selected = overrides or AgentRuntimeOverrides()
     env = dict(os.environ if environment is None else environment)
     chat_config = copy.deepcopy(chat_config)
+    from chatcopilot.core.model_routes import resolve_model_config
+    chat_config.llm = resolve_model_config(runtime.spec.llm.chat, fallback=chat_config.llm,
+        prefix=runtime.spec.llm.env_prefix, environment=env)
+    helper_fallback = chat_config.llm
+    if runtime.spec.llm.research.inherit_env_prefix:
+        from chatcopilot.core.config import load_config
+        helper_fallback = load_config(env_prefix=runtime.spec.llm.research.inherit_env_prefix, environment=env).llm
     subagents = copy.deepcopy(runtime.subagents if selected.subagents is None else selected.subagents)
+    if subagents.codex_extensions and (selected.runtime_id or runtime.runtime_id) == "codex":
+        from chatcopilot.core.codex_extensions import read_extensions, extension_environment
+        chat_config.codex_extensions = read_extensions(runtime.spec.resolve_path(subagents.codex_extensions))
+        chat_config.codex_extension_env = extension_environment(chat_config.codex_extensions, env)
+    from chatcopilot.core.config import load_config
+    if runtime.spec.llm.code.env_prefix:
+        chat_config.routing = load_config(env_prefix=runtime.spec.llm.code.env_prefix, environment=env).routing
+    if subagents.native_env_prefix:
+        chat_config.runtime = load_config(env_prefix=subagents.native_env_prefix, environment=env).runtime
     research_llm_config = load_research_llm_config(
         runtime.spec.llm, fallback=chat_config.llm, environment=env,
     )
@@ -92,6 +109,9 @@ def project_agent_runtime(
     budgets = [subagents.agents.get(name, subagents.defaults) for name in subagents.include]
     budgets.extend(custom.budget for custom in subagents.custom)
     mcp_servers = tuple(runtime.mcp_servers) if selected.mcp_servers is None else tuple(selected.mcp_servers)
+    if chat_config.codex_extensions:
+        from chatcopilot.core.codex_extensions import validate_extension_ownership
+        validate_extension_ownership(chat_config.codex_extensions, (server.id for server in mcp_servers if server.enabled))
     if any(getattr(server, "risk", "") == "search" for server in mcp_servers):
         budgets.append(subagents.search_budget)
     prefixes = sorted({budget.model_env_prefix for budget in budgets if budget.model_env_prefix})
@@ -105,10 +125,17 @@ def project_agent_runtime(
     )
     return AgentRuntimeProjection(
         chat_config=chat_config,
+        route=ResolvedRuntimeRoute(
+            str(selected.runtime_id or runtime.runtime_id),
+            chat_config.llm.model_route(),
+            subagents.codex_turn_timeout_seconds
+            if (selected.runtime_id or runtime.runtime_id) == "codex"
+            else None,
+        ),
         research_llm_config=research_llm_config,
         search_llm_config=search_llm_config,
         subagent_llm_configs=tuple(
-            (prefix, load_llm_profile(prefix, fallback=chat_config.llm, environment=env))
+            (prefix, load_llm_profile(prefix, fallback=helper_fallback, environment=env))
             for prefix in prefixes
         ),
         search_provider_credentials=tuple(
@@ -136,11 +163,6 @@ def project_agent_runtime(
         ),
         mcp_servers=mcp_servers,
         subagents=subagents,
-        agent_backend=(
-            str(runtime.agent_backend)
-            if selected.agent_backend is None
-            else str(selected.agent_backend)
-        ),
         assembly_profile=profile.value,
         project_roots=project_resource_roots(runtime.spec, env),
         readonly_roots=project_readonly_resource_roots(projected_packs, env),
@@ -157,6 +179,7 @@ def materialize_agent_runtime(projection: AgentRuntimeProjection) -> AgentRuntim
 
     return build_agent_runtime(
         chat_config=projection.chat_config,
+        route=projection.route,
         research_llm_config=projection.research_llm_config,
         search_llm_config=projection.search_llm_config,
         subagent_llm_configs=projection.subagent_llm_configs,
@@ -169,7 +192,6 @@ def materialize_agent_runtime(projection: AgentRuntimeProjection) -> AgentRuntim
         rag_sources=projection.rag_sources,
         mcp_servers=projection.mcp_servers,
         subagents=projection.subagents,
-        agent_backend=projection.agent_backend,
         assembly_profile=projection.assembly_profile,
         project_roots=projection.project_roots,
         readonly_roots=projection.readonly_roots,

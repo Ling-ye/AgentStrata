@@ -9,11 +9,11 @@ from chatcopilot.agent.turn_support import safe_emit
 
 class ProcessMessage:
     def __init__(self, sink: EventSink, *, trace_id: str, parent_span_id: str,
-                 backend: str, depth: int) -> None:
+                 runtime_id: str, depth: int) -> None:
         self.sink = sink
         self.trace_id = trace_id
         self.parent = parent_span_id
-        self.backend = backend
+        self.runtime_id = runtime_id
         self.depth = depth
         self.text = ""
         self.truncated = False
@@ -43,6 +43,6 @@ class ProcessMessage:
             text=self.text, message_id=f"message:{self.parent}",
             trace_id=self.trace_id, span_id=f"message:{self.parent}", parent_span_id=self.parent,
             revision=self.revision, phase="finish" if phase == "finish" else "update", status=status,
-            backend=self.backend, depth=self.depth + 1, observed_at=time.time(),
+            runtime_id=self.runtime_id, depth=self.depth + 1, observed_at=time.time(),
             capture_state="truncated" if self.truncated else "available",
         ))

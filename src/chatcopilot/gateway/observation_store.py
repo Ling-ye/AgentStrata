@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS runs(
  run_id TEXT PRIMARY KEY, state TEXT NOT NULL, error_code TEXT,
  created_at REAL NOT NULL, started_at REAL, finished_at REAL, updated_at REAL NOT NULL,
  generation INTEGER, channel TEXT, conversation_kind TEXT,
- config_id TEXT, config_revision TEXT, backend TEXT, model TEXT, role TEXT,
+ config_id TEXT, config_revision TEXT, runtime_id TEXT, model TEXT, role TEXT,
  capture_state TEXT NOT NULL DEFAULT 'not_recorded', body_bytes INTEGER NOT NULL DEFAULT 0,
  details_expired INTEGER NOT NULL DEFAULT 0, result_ref TEXT, input_ref TEXT,
  receipts TEXT NOT NULL DEFAULT '[]', outbox TEXT NOT NULL DEFAULT '[]', approvals TEXT NOT NULL DEFAULT '[]');
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS events(
  seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
  kind TEXT NOT NULL, layer TEXT NOT NULL, entity_id TEXT, refs TEXT NOT NULL DEFAULT '[]',
  status TEXT, created_at REAL NOT NULL, trace_id TEXT, span_id TEXT, parent_span_id TEXT,
- phase TEXT, name TEXT, model TEXT, backend TEXT, error_code TEXT,
+ phase TEXT, name TEXT, model TEXT, runtime_id TEXT, error_code TEXT,
  elapsed_ms REAL, input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER, total_tokens INTEGER,
  metadata TEXT NOT NULL, body_ref TEXT, body_state TEXT NOT NULL DEFAULT 'not_recorded',
  event_key TEXT UNIQUE);
@@ -93,9 +93,9 @@ class ObservationStore:
             with self.connection(write=True) as connection:
                 connection.executescript(_SCHEMA)
                 row = connection.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-                if row and row[0] != "1":
+                if row and row[0] != "2":
                     raise GatewayStateError("Unsupported observation schema")
-                connection.execute("INSERT OR IGNORE INTO meta VALUES('schema_version','1')")
+                connection.execute("INSERT OR IGNORE INTO meta VALUES('schema_version','2')")
 
     @contextmanager
     def connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
@@ -118,7 +118,7 @@ class ObservationStore:
                 connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
                 connection.execute("BEGIN")
                 row = connection.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-                if not row or row[0] != "1":
+                if not row or row[0] != "2":
                     raise GatewayStateError("Unsupported observation schema")
             yield connection
             if write:
@@ -184,15 +184,15 @@ class ObservationStore:
             self.append(run["run_id"], {"kind": "run_state", "layer": "gateway", "entity_id": "gateway:instance",
                         "status": run["state"], "created_at": run["updated_at"], "data": {"code": run.get("error_code")}})
 
-    def bind_run(self, run_id: str, *, config_id: str, backend: str = "", model: str = "", role: str = "") -> None:
+    def bind_run(self, run_id: str, *, config_id: str, runtime_id: str = "", model: str = "", role: str = "") -> None:
         with self.lock, self.connection(write=True) as connection:
             snapshot = connection.execute("SELECT payload FROM configurations WHERE config_id=?", (config_id,)).fetchone()
             revision = decoded(snapshot[0]).get("configuration_revision", config_id) if snapshot else config_id
             connection.execute("UPDATE runs SET config_id=COALESCE(config_id,?),config_revision=COALESCE(config_revision,?),"
-                               "backend=CASE WHEN ?!='' THEN ? ELSE backend END,model=CASE WHEN ?!='' THEN ? ELSE model END,"
+                               "runtime_id=CASE WHEN ?!='' THEN ? ELSE runtime_id END,model=CASE WHEN ?!='' THEN ? ELSE model END,"
                                "role=CASE WHEN ?!='' THEN ? ELSE role END,capture_state=CASE WHEN capture_state='not_recorded' "
                                "THEN 'recording' ELSE capture_state END WHERE run_id=?",
-                               (config_id, revision, backend, backend, model, model, role, role, run_id))
+                               (config_id, revision, runtime_id, runtime_id, model, model, role, role, run_id))
 
     def body(self, run_id: str, body_id: str) -> dict[str, Any] | None:
         checked_run_id(run_id)
@@ -322,11 +322,11 @@ class ObservationStore:
                         elapsed = max(0, (now - start[0]) * 1000)
                 cursor = connection.execute(
                     "INSERT OR IGNORE INTO events(run_id,kind,layer,entity_id,refs,status,created_at,trace_id,span_id,parent_span_id,"
-                    "phase,name,model,backend,error_code,elapsed_ms,input_tokens,output_tokens,cached_tokens,total_tokens,metadata,body_ref,body_state,event_key) "
+                    "phase,name,model,runtime_id,error_code,elapsed_ms,input_tokens,output_tokens,cached_tokens,total_tokens,metadata,body_ref,body_state,event_key) "
                     "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (run_id, event["kind"], event.get("layer", "gateway"), event.get("entity_id"), encoded(event.get("refs", [])),
                      event.get("status"), now, trace, span, data.get("parent_span_id"), phase, data.get("name"),
-                     data.get("model"), data.get("backend"), data.get("code"), elapsed,
+                     data.get("model"), data.get("runtime_id"), data.get("code"), elapsed,
                      count("input_tokens", "prompt_tokens"), count("output_tokens", "completion_tokens"),
                      count("cached_tokens", "cache_read_tokens"), count("total_tokens"), encoded(data), body_ref, body_state, event_key),
                 )

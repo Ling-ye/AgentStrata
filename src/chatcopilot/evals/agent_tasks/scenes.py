@@ -591,7 +591,7 @@ class Scene:
         return tuple(tools)
 
     def ordinary_files(self):
-        """Observe ordinary fixture files, excluding backend/private state directories."""
+        """Observe ordinary fixture files, excluding runtime/private state directories."""
         result = {}
         for directory, dirs, files in os.walk(self.root):
             dirs[:] = [name for name in dirs if not name.startswith(".")]

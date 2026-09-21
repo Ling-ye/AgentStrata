@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from chatcopilot.external_tools.codex_cli import credentials
-from chatcopilot.external_tools.codex_cli.credentials import (
+from chatcopilot.core import model_credentials as credentials
+from chatcopilot.core.model_credentials import (
     CredentialBusyError,
     CredentialError,
     authoritative_auth_path,

@@ -25,7 +25,7 @@ from chatcopilot.contracts.agent import (
     TopicDecisionMade,
     TurnError,
 )
-from chatcopilot.contracts.agent_backend import AGENT_BACKEND_IDS
+from chatcopilot.contracts.runtime_adapter import RUNTIME_IDS
 from chatcopilot.contracts.cancellation import (
     CancellationProbe,
     CancellationRequested,
@@ -45,8 +45,8 @@ from chatcopilot.contracts.identity import (
 from chatcopilot.contracts.model_selection import (
     CODE_MODEL_LANE,
     CODEX_REASONING_EFFORTS,
-    CodeModelProfile,
-    CodeModelSelection,
+    WorkerModelProfile,
+    WorkerModelSelection,
     MODEL_SELECTION_SCOPE_ONCE,
     MODEL_SELECTION_SCOPE_SESSION,
     MODEL_SELECTION_SOURCE_DEFAULT,
@@ -150,7 +150,7 @@ from chatcopilot.contracts.workspace import (
 )
 
 __all__ = [
-    "AGENT_BACKEND_IDS",
+    "RUNTIME_IDS",
     "CAPABILITY_PROVIDER_FACTORY",
     "AgentEvent",
     "AgentResult",
@@ -174,8 +174,8 @@ __all__ = [
     "CodeTaskAttempt",
     "CodeTaskLimits",
     "CodeTaskStatus",
-    "CodeModelProfile",
-    "CodeModelSelection",
+    "WorkerModelProfile",
+    "WorkerModelSelection",
     "ContextSnapshotPrepared",
     "DeferredLifecycleIntent",
     "DevelopmentTaskScope",

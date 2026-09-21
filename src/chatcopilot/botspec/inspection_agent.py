@@ -31,15 +31,25 @@ def enrich_agent_configuration(
     projection: dict[str, Any], spec: BotSpec, environment: Mapping[str, str],
     *, chat_config: ChatConfig | None = None, sources: dict[str, str] | None = None,
     saved_environment: Mapping[str, str] | None = None,
-    backend: str | None = None, research_config: LLMConfig | None = None, search_config: LLMConfig | None = None,
+    runtime_id: str | None = None, research_config: LLMConfig | None = None, search_config: LLMConfig | None = None,
 ) -> None:
     if chat_config is None:
         chat_config, sources = resolve_inspection_config(spec, environment)
+    from chatcopilot.core.model_routes import resolve_model_config
+    from dataclasses import replace
+    chat_config = replace(chat_config, llm=resolve_model_config(spec.llm.chat, fallback=chat_config.llm,
+        prefix=spec.llm.env_prefix, environment=environment))
+    if spec.llm.code.env_prefix:
+        chat_config.routing = load_config(env_prefix=spec.llm.code.env_prefix, environment=environment).routing
+    if spec.agents.native_env_prefix:
+        chat_config.runtime = load_config(env_prefix=spec.agents.native_env_prefix, environment=environment).runtime
+    helper_fallback = (load_config(env_prefix=spec.llm.research.inherit_env_prefix, environment=environment).llm
+                       if spec.llm.research.inherit_env_prefix else chat_config.llm)
     sources = sources or {}
     saved = environment if saved_environment is None else saved_environment
     entities = {item["id"]: item for item in projection["entities"]}
     prefix = spec.llm.env_prefix
-    backend = spec.agents.backend if backend is None else backend
+    runtime_id = spec.agents.runtime if runtime_id is None else runtime_id
     research = research_config or load_research_llm_config(spec.llm, fallback=chat_config.llm, environment=environment)
     raw_agents = spec.raw.get("agents") or {}
 
@@ -69,7 +79,7 @@ def enrich_agent_configuration(
             key = f"{model_prefix}_{field.upper()}" if model_prefix else ""
             if key and environment.get(key):
                 result[field] = "环境覆盖 " + key
-            elif research_slot and field == "model" and spec.llm.research_model:
+            elif research_slot and field == "model" and spec.llm.research.model:
                 result[field] = "BotSpec · llm.research.model"
             else:
                 result[field] = fallback
@@ -89,10 +99,10 @@ def enrich_agent_configuration(
         return result
 
     chat = add("model-slot:chat", "基础模型 · chat", plain(chat_config.llm),
-        usage="Native / LangGraph 主模型；也是辅助模型的继承基础。Codex 主会话使用 code 槽。",
+        usage="当前实例的主模型。Native / LangGraph 直接推理，Codex 由 App Server 执行。",
         field_sources={key: sources.get("llm." + key, "运行装配配置") for key in vars(chat_config.llm)})
     chat["effective_environment"] = {f"{prefix}_{key.upper()}": environment.get(f"{prefix}_{key.upper()}")
-                                       for key in vars(chat_config.llm)}
+                                       for key in ("model", "base_url", "timeout", "reasoning_effort")}
     add("model-slot:research", "研究模型 · research", plain(research),
         usage="供统一搜索、人格研究等能力使用；未覆盖的连接参数逐字段继承基础模型。",
         field_sources=model_sources(spec.llm.research_env_prefix, "继承基础模型 · chat", research_slot=True))
@@ -103,35 +113,35 @@ def enrich_agent_configuration(
     code_sources = {}
     for field in code:
         suffix = "CODE_PROFILES_JSON" if field == "profiles" else "CODE_TASK_PROFILE" if field == "code_task_profile" else "CODE_" + field.upper()
-        key = f"{prefix}_{suffix}"
+        key = f"{spec.llm.code.env_prefix or prefix}_{suffix}"
         code_sources[field] = ("环境覆盖 " + key if field != "enabled" and saved.get(key) else spec_source("llm.code." + field))
     add("model-slot:code", "Codex 模型与配置档 · code", code,
-        usage="Codex 实例默认模型与可选配置档。模型切换命令只改变当前会话；代码任务按独立配置档执行。",
+        usage="仅供独立 code-worker 使用；不控制主 Agent 的模型、认证或整轮超时。",
         field_sources=code_sources,
-        applicability="当前 Backend 为 Codex" if backend == "codex" else "不适用于当前主 Agent；保留 Codex 配置")
-    slot = "code" if backend == "codex" else "chat"
-    add("agent:main", "主 Agent", {"backend": backend, "model": code["model"] if slot == "code" else chat_config.llm.model,
-        "reasoning_effort": code["reasoning_effort"] if slot == "code" else None, "model_slot": slot},
+        applicability="独立 worker 配置")
+    slot = "chat"
+    add("agent:main", "主 Agent", {"runtime_id": runtime_id, "model": chat_config.llm.model,
+        "reasoning_effort": chat_config.llm.reasoning_effort, "model_slot": slot},
         usage="实例默认模型；会话切换后的实际模型请查看对应任务记录。",
-        field_sources={"backend": spec_source("agents.backend"), "model": f"引用模型槽 · {slot}",
-                       "reasoning_effort": "引用模型槽 · code" if slot == "code" else "当前 Backend 不适用"},
+        field_sources={"runtime_id": spec_source("agents.runtime"), "model": f"引用模型槽 · {slot}",
+                       "reasoning_effort": "引用模型槽 · chat"},
         refs=[f"model-slot:{slot}"])
     budget = plain(chat_config.runtime)
     # Topic routing belongs to Application, not to the Agent loop.
     add("agent:runtime", "循环与上下文参数", {key: value for key, value in budget.items() if not key.startswith("topic_")},
-        usage="Native / LangGraph 主循环及辅助 Agent 的上下文与预算。软限制触发健康检查，硬限制终止执行；Codex 整轮超时见 code 槽。",
+        usage="Native / LangGraph 循环预算；不控制 Codex 原生 loop。Codex 整轮超时由 agents.runtime_options.codex 声明。",
         field_sources={key: sources.get("runtime." + key, "运行装配配置") for key in budget if not key.startswith("topic_")},
-        applicability="不控制 Codex 主会话的循环" if slot == "code" else "适用于当前主 Agent")
+        applicability="不控制 Codex 主会话的循环" if runtime_id == "codex" else "适用于当前主 Agent")
     policy = plain(spec.agents.codex)
     web_search = policy.pop("web_search_mode")
     add("agent:host-policy", "Codex 宿主固定策略", policy,
         usage="由宿主代码决定；BotSpec 不接受 agents.codex 配置块。资源权限仍由宿主绑定。",
         field_sources={key: "宿主固定策略" for key in policy},
-        applicability="适用于 Codex" if slot == "code" else "当前 Backend 不适用")
+        applicability="适用于 Codex" if runtime_id == "codex" else "当前 Runtime 不适用")
     add("agent:codex-web-search", "Codex 原生 Web 搜索", {"web_search_mode": web_search},
-        usage="Codex 原生搜索策略，与 search_information 统一搜索是两个入口。",
+        usage="启用宿主管理的 search_information 时关闭重复原生搜索入口。",
         field_sources={"web_search_mode": "宿主固定策略"},
-        applicability="适用于 Codex" if slot == "code" else "当前 Backend 不适用")
+        applicability="适用于 Codex" if runtime_id == "codex" else "当前 Runtime 不适用")
     search_prefix = spec.agents.research_budget.model_env_prefix
     search_model = search_config or (load_llm_profile(search_prefix, fallback=research, environment=environment) if search_prefix else research)
     add("agent:unified-search", "统一搜索", {"enabled": spec.agents.research_enabled, "model": search_model.model,
@@ -159,7 +169,7 @@ def enrich_agent_configuration(
                        "model": "引用 code 槽配置档", "reasoning_effort": "引用 code 槽配置档"}, refs=["model-slot:code", "pack:dev.code_tasks"])
     custom_names = {item.name for item in spec.agents.custom}
     for definition, limits in iter_definitions(spec.agents):
-        model = load_llm_profile(limits.model_env_prefix, fallback=chat_config.llm, environment=environment) if limits.model_env_prefix else chat_config.llm
+        model = load_llm_profile(limits.model_env_prefix, fallback=helper_fallback, environment=environment) if limits.model_env_prefix else chat_config.llm
         config = {**plain(definition), "model": model.model, "budget": plain(limits)}
         custom = next((item for item in spec.agents.custom if item.name == definition.name), None)
         override = spec.agents.overrides.get(definition.name)
@@ -196,5 +206,5 @@ def enrich_agent_configuration(
             provider_entity["field_sources"]["endpoint"] = "代码默认地址"
         provider_entity["field_sources"]["credential_env"] = source if provider.credential_env is not None else "代码默认凭据引用"
         provider_entity["field_sources"]["credential_configured"] = "实例环境 · " + credential_key if credential_key else "此来源不要求凭据"
-    projection["backend"] = backend
-    projection["model"] = code["model"] if slot == "code" else chat_config.llm.model
+    projection["runtime_id"] = runtime_id
+    projection["model"] = chat_config.llm.model

@@ -35,11 +35,12 @@ def _session(
         instance_id="qq-bot",
         display_name="Test Bot",
         platform_type="qq",
-        agent_backend="codex",
+        runtime_id="codex",
         tool_packs=packs,
         spec=SimpleNamespace(
             context=ContextSpec(),
             llm=SimpleNamespace(
+                chat=SimpleNamespace(profiles={}),
                 code=SimpleNamespace(
                     enabled=code_enabled,
                     allowed_roles=code_roles,
@@ -64,8 +65,8 @@ def _session(
         session_id="raw-session-id",
         execution_session_id="raw-executor-id",
         llm_model="chat-model",
-        code_model_once=None,
-        code_model_selection=SimpleNamespace(profile="sol-max", source="profile"),
+        model_once=None,
+        model_selection=SimpleNamespace(profile="sol-max", source="profile"),
         message_count=lambda: 4,
     )
 
@@ -161,7 +162,8 @@ def test_unknown_owner_command_is_not_passed_to_the_agent() -> None:
 def test_legacy_passthrough_requires_the_same_runtime_capability_as_help() -> None:
     session = _session(packs=(), code_enabled=False)
 
-    for name in ("model", "task", "cancel", "persona", "debug"):
+    assert handle_operator_command(session, "/model", supports_debug=False).action == "passthrough"
+    for name in ("task", "cancel", "persona", "debug"):
         decision = handle_operator_command(
             session,
             f"/{name}",
@@ -176,6 +178,7 @@ def test_legacy_passthrough_requires_the_same_runtime_capability_as_help() -> No
         "可用斜杠指令（仅限 Owner）：",
         "- /help：显示当前实例可用的指令",
         "- /state：查看当前会话与宿主状态",
+        "- /model <profile> [once]：查看或切换主模型配置档，不改变 runtime、认证或 worker",
     ]
 
 
@@ -188,7 +191,7 @@ def test_help_uses_capability_filtered_command_catalog() -> None:
         "/help",
         "/state",
         "/restart",
-        "/model code ...",
+        "/model <profile> [once]",
         "/task [job_id]",
         "/cancel [job_id]",
         "/persona ...",
@@ -231,7 +234,7 @@ def test_state_is_bounded_and_excludes_actor_paths_units_and_pid() -> None:
     assert "实例 qq-bot" in state
     assert "群聊" in state
     assert "群共享" in state
-    assert "Codex profile sol-max" in state
+    assert "main profile sol-max" in state
     assert "load=loaded；active=active；sub=running" in state
     for protected in (
         "raw-chat-id",

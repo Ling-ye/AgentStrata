@@ -124,7 +124,7 @@ def _persona_session_providers(
     return (
         build_persona_provider(
             _SessionPersonaToolPort(session_getter),
-            llm=agent_runtime.research_llm,
+            llm=agent_runtime.research_model_client,
             coordinator_factory=lambda: agent_runtime.build_unified_search_coordinator(
                 max_wall_seconds=60.0
             ),
@@ -477,22 +477,12 @@ def _prompt_input(
     ]
     if group:
         session_lines.append("群共享空间不提升成员角色；不得读取其它群、私聊或旧成员目录。")
-    backend = str(runtime.agent_backend or "native").strip().lower()
-    if backend == "codex":
-        model = (
-            str(
-                getattr(routing_config, "code_model", "")
-                or getattr(runtime.spec.llm.code, "model", "")
-                or ""
-            ).strip()
-            or None
-        )
-    else:
-        model = (llm_model or "").strip() or None
+    runtime_id = str(runtime.runtime_id or "native").strip().lower()
+    model = (llm_model or "").strip() or None
     policies, _ = _prompt_projection(runtime, role, ws)
     return PromptBuildInput(
         profile=runtime.prompt_profile,
-        backend=backend,
+        runtime_id=runtime_id,
         model=model,
         role=role_name,
         channel_kind=channel,
@@ -548,6 +538,7 @@ def _build_session_for_workspace(
     llm_model: str | None = None,
     routing_config: Any | None = None,
     execution_session_id: str | None = None,
+    main_model_route: Any = None,
 ) -> SessionState:
     """Build a side-effect-free control session, then optionally materialize it."""
     platform_type = _runtime_platform_type(runtime)
@@ -567,6 +558,7 @@ def _build_session_for_workspace(
         session=None,
         llm_model=llm_model,
         routing_config=routing_config,
+        main_model_route=main_model_route,
         execution_session_id=execution_session_id,
         debug_mode=False,
     )
@@ -591,6 +583,7 @@ def _materialize_session_for_workspace(
     if state.is_materialized:
         return state
     runtime = state.runtime
+    state.main_model_route = agent_runtime.runtime_config.llm.model_route()
     platform_type = _runtime_platform_type(runtime)
     adapter = _platform_router.get_adapter(platform_type)
     effective_role = state.role
@@ -643,7 +636,7 @@ def _materialize_session_for_workspace(
             ),
             _build_set_debug_mode_tool(lambda: state),
         )
-    agent_session = agent_runtime.new_session(
+    agent_session = agent_runtime.open_session(
         session_id=state.execution_session_id or state.session_id,
         prompt_input=prompt_input,
         session_providers=_main_session_providers(
@@ -697,7 +690,7 @@ def _refresh_session_prompt_plan(session: SessionState) -> None:
     )
     tool_names = tuple(session.require_session().capabilities.tool_names)
     plan = PromptPlanBuilder().build(replace(prompt_input, tool_names=tool_names))
-    session.require_session().set_prompt_plan(plan)
+    session.require_session().update_context(plan)
 
 
 _extract_persona_snippet = extract_persona_snippet

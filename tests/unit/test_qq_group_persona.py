@@ -74,7 +74,7 @@ def test_every_turn_refreshes_group_persona_and_memory_for_all_actors(
         prompt_profile=BotPromptProfile(identity="baseline", response_style="concise"),
         capability_policies=(),
         skills=(),
-        agent_backend="native",
+        runtime_id="native",
     )
     captures: list[tuple[str, str]] = []
 
@@ -84,7 +84,7 @@ def test_every_turn_refreshes_group_persona_and_memory_for_all_actors(
 
         capabilities = SimpleNamespace(tool_names=frozenset())
 
-        def set_prompt_plan(self, plan) -> None:
+        def update_context(self, plan) -> None:
             persona = next((layer.content for layer in plan.layers if layer.id == "persona.dynamic"), "")
             history = next((layer.content for layer in plan.layers if layer.id == "context.history"), "")
             captures.append((persona, history))

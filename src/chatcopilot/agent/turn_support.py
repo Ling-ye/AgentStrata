@@ -18,7 +18,7 @@ FINALIZE_SELF_UPDATE_TOOL = "finalize_self_update"
 
 
 def task_trace_id(task: AgentTask) -> str | None:
-    value = task.metadata.get("trace_id") if task.metadata else None
+    value = task.execution.trace.trace_id
     text = str(value).strip() if value else ""
     return text or None
 

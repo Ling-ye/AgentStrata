@@ -26,8 +26,8 @@ class MiddlewareWorkspaceService:
 
     workspace: Workspace | None = None
     workspace_root: Path | None = None
-    backend_state_root: Path | None = None
-    isolate_backend_state: bool = False
+    runtime_state_root: Path | None = None
+    isolate_runtime_state: bool = False
     platform_type: str = "unknown"
     persistent_state: Any = None
     execution_scope: ExecutionScope | None = None
@@ -47,13 +47,13 @@ class MiddlewareWorkspaceService:
     def cleanup_workspace(self, workspace: Workspace) -> None:
         cleanup_workspace(workspace)
 
-    def resolve_backend_state_root(self) -> Path | None:
-        if self.backend_state_root is None:
+    def resolve_runtime_state_root(self) -> Path | None:
+        if self.runtime_state_root is None:
             return None
-        return self.backend_state_root.expanduser().resolve()
+        return self.runtime_state_root.expanduser().resolve()
 
-    def requires_backend_state_isolation(self) -> bool:
-        return self.isolate_backend_state
+    def requires_runtime_state_isolation(self) -> bool:
+        return self.isolate_runtime_state
 
     def describe_workspace(self, workspace: Workspace) -> str:
         return describe_workspace(workspace)

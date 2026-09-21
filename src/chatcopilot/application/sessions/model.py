@@ -7,13 +7,13 @@ from typing import Protocol, TypeAlias
 
 from chatcopilot.contracts.authorization import Principal
 from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef
-from chatcopilot.contracts.model_selection import CodeModelSelection
+from chatcopilot.contracts.model_runtime import ModelSelection
 from chatcopilot.contracts.persona_control import PendingPersonaProposal
 from chatcopilot.contracts.workspace import WorkspaceView
 
 
 class DiscardableExecutionSession(Protocol):
-    """Execution handle that can discard backend resume state during eviction."""
+    """Execution handle that can discard runtime resume state during eviction."""
 
     def discard(self) -> None: ...
 
@@ -92,8 +92,8 @@ class ActorExecutionState:
     writer_generation: int
     workspace: WorkspaceView | None = field(default=None, repr=False)
     agent_session: ExecutionSession | None = field(default=None, repr=False)
-    model_selection: CodeModelSelection | None = None
-    one_shot_model_selection: CodeModelSelection | None = None
+    model_selection: ModelSelection | None = None
+    one_shot_model_selection: ModelSelection | None = None
     journal_cursor: int = 0
     persona_proposal: PendingPersonaProposal | None = field(default=None, repr=False)
     turn_context: str = field(default="", repr=False)

@@ -54,8 +54,8 @@ def test_command_artifacts_pass_the_real_executor_output_contract(tmp_path, monk
 
 @pytest.mark.parametrize("role", ["owner", "user", "admin"])
 def test_codex_native_permissions_enforce_resources_with_defaults(tmp_path, role):
-    from chatcopilot.agent.backends.codex import CodexAgentBackend
-    from chatcopilot.agent.backends.codex_permissions import permission_config
+    from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
+    from chatcopilot.agent.runtimes.codex_permissions import permission_config
 
     binary = shutil.which("codex")
     if binary is None or shutil.which("bwrap") is None:
@@ -74,8 +74,8 @@ def test_codex_native_permissions_enforce_resources_with_defaults(tmp_path, role
     protected.mkdir()
     (protected / "private").write_text("synthetic-state")
     scope = execution_scope(role, work, (project,))
-    state = SimpleNamespace(workdir=work, codex_home=home, gateway_config=config_file, execution_scope=scope)
-    CodexAgentBackend._prepare_app_server_home(state)
+    state = SimpleNamespace(workdir=work, codex_home=home, execution_scope=scope, extensions="", extension_env={})
+    CodexRuntimeAdapter._prepare_app_server_home(state)
     (home / "rules" / "injected.rules").write_text("untrusted rule")
     config = permission_config(
         scope, workdir=work, network_access=False,
@@ -95,7 +95,7 @@ def test_codex_native_permissions_enforce_resources_with_defaults(tmp_path, role
     for entry in config:
         command.extend(["-c", entry])
     command.extend(["--", "/bin/sh", "-c", " && ".join(checks)])
-    completed = subprocess.run(CodexAgentBackend._wrap_isolated_command(state, command),
+    completed = subprocess.run(CodexRuntimeAdapter._wrap_isolated_command(state, command),
                                capture_output=True, text=True, timeout=30)
     assert completed.returncode == 0, completed.stderr + completed.stdout
     assert (work / "changed").read_text() == "changed\n"
@@ -186,7 +186,7 @@ def test_default_agent_can_complete_beyond_thirty_turns_and_explicit_cap_still_s
 def test_long_result_has_full_storage_and_bounded_rpc_projection():
     from chatcopilot.gateway.result_text import result_preview
     from chatcopilot.gateway.rpc_validation import MAX_RPC_TEXT_CHARS
-    from chatcopilot.agent.backends.codex_events import CodexJsonlProjector
+    from chatcopilot.agent.runtimes.codex_events import CodexJsonlProjector
 
     # Transport records are bounded separately; successive valid records may
     # form a larger final answer without an extra aggregate text cap.

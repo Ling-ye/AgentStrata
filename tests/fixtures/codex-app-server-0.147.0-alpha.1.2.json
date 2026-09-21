@@ -1,0 +1,807 @@
+{
+  "codex_version": "0.147.0-alpha.1.2",
+  "schemas": {
+    "ThreadStartParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ThreadStartParams",
+      "type": "object",
+      "properties": {
+        "serviceName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approvalPolicy": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AskForApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvalsReviewer": {
+          "description": "Override where approval requests are routed for review on this thread and subsequent turns.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ApprovalsReviewer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baseInstructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "config": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "developerInstructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionStartSource": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadStartSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "serviceTier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ephemeral": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "threadSource": {
+          "description": "Optional client-supplied analytics source classification for this thread.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "personality": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Personality"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandbox": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SandboxMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modelProvider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "definitions": {
+        "AbsolutePathBuf": {
+          "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
+          "type": "string"
+        },
+        "ApprovalsReviewer": {
+          "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `auto_review` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request. The legacy value `guardian_subagent` is accepted for compatibility.",
+          "type": "string",
+          "enum": [
+            "user",
+            "auto_review",
+            "guardian_subagent"
+          ]
+        },
+        "AskForApproval": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "untrusted",
+                "on-request",
+                "never"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "granular"
+              ],
+              "properties": {
+                "granular": {
+                  "type": "object",
+                  "required": [
+                    "mcp_elicitations",
+                    "rules",
+                    "sandbox_approval"
+                  ],
+                  "properties": {
+                    "mcp_elicitations": {
+                      "type": "boolean"
+                    },
+                    "request_permissions": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "rules": {
+                      "type": "boolean"
+                    },
+                    "sandbox_approval": {
+                      "type": "boolean"
+                    },
+                    "skill_approval": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "title": "GranularAskForApproval"
+            }
+          ]
+        },
+        "CapabilityRootLocation": {
+          "description": "Location used to resolve a selected capability root.",
+          "oneOf": [
+            {
+              "description": "A path owned by an execution environment.",
+              "type": "object",
+              "required": [
+                "environmentId",
+                "path",
+                "type"
+              ],
+              "properties": {
+                "environmentId": {
+                  "type": "string"
+                },
+                "path": {
+                  "description": "Absolute path for the root in the selected environment.",
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "environment"
+                  ],
+                  "title": "EnvironmentCapabilityRootLocationType"
+                }
+              },
+              "title": "EnvironmentCapabilityRootLocation"
+            }
+          ]
+        },
+        "DynamicToolNamespaceTool": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "description",
+                "inputSchema",
+                "name",
+                "type"
+              ],
+              "properties": {
+                "deferLoading": {
+                  "type": "boolean"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "inputSchema": true,
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "function"
+                  ],
+                  "title": "FunctionDynamicToolNamespaceToolType"
+                }
+              },
+              "title": "FunctionDynamicToolNamespaceTool"
+            }
+          ]
+        },
+        "DynamicToolSpec": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "description",
+                "inputSchema",
+                "name",
+                "type"
+              ],
+              "properties": {
+                "deferLoading": {
+                  "type": "boolean"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "inputSchema": true,
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "function"
+                  ],
+                  "title": "FunctionDynamicToolSpecType"
+                }
+              },
+              "title": "FunctionDynamicToolSpec"
+            },
+            {
+              "type": "object",
+              "required": [
+                "description",
+                "name",
+                "tools",
+                "type"
+              ],
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "tools": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/DynamicToolNamespaceTool"
+                  }
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "namespace"
+                  ],
+                  "title": "NamespaceDynamicToolSpecType"
+                }
+              },
+              "title": "NamespaceDynamicToolSpec"
+            }
+          ]
+        },
+        "LegacyAppPathString": {
+          "type": "string"
+        },
+        "MultiAgentMode": {
+          "description": "Controls the effective multi-agent delegation instructions for a turn. `custom` means the configured mode hint defines the policy instead of a built-in policy.",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "explicitRequestOnly",
+                "proactive"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "custom"
+              ],
+              "properties": {
+                "custom": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "title": "CustomMultiAgentMode"
+            }
+          ]
+        },
+        "Personality": {
+          "type": "string",
+          "enum": [
+            "none",
+            "friendly",
+            "pragmatic"
+          ]
+        },
+        "SandboxMode": {
+          "type": "string",
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "danger-full-access"
+          ]
+        },
+        "SelectedCapabilityRoot": {
+          "description": "A user-selected root that can expose one or more runtime capabilities.",
+          "type": "object",
+          "required": [
+            "id",
+            "location"
+          ],
+          "properties": {
+            "id": {
+              "description": "Stable identifier supplied by the capability selection platform.",
+              "type": "string"
+            },
+            "location": {
+              "description": "Where the selected root can be resolved.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/CapabilityRootLocation"
+                }
+              ]
+            }
+          }
+        },
+        "ThreadHistoryMode": {
+          "type": "string",
+          "enum": [
+            "legacy",
+            "paginated"
+          ]
+        },
+        "ThreadSource": {
+          "type": "string"
+        },
+        "ThreadStartSource": {
+          "type": "string",
+          "enum": [
+            "startup",
+            "clear"
+          ]
+        },
+        "TurnEnvironmentParams": {
+          "type": "object",
+          "required": [
+            "cwd",
+            "environmentId"
+          ],
+          "properties": {
+            "cwd": {
+              "$ref": "#/definitions/LegacyAppPathString"
+            },
+            "environmentId": {
+              "type": "string"
+            },
+            "runtimeWorkspaceRoots": {
+              "description": "Environment-native runtime workspace roots. Omitted defaults to `cwd`.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/definitions/LegacyAppPathString"
+              }
+            }
+          }
+        }
+      }
+    },
+    "LoginAccountParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "LoginAccountParams",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "apiKey",
+            "type"
+          ],
+          "properties": {
+            "apiKey": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "apiKey"
+              ],
+              "title": "ApiKeyv2::LoginAccountParamsType"
+            }
+          },
+          "title": "ApiKeyv2::LoginAccountParams"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "appBrand": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/LoginAppBrand"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "codexStreamlinedLogin": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "chatgpt"
+              ],
+              "title": "Chatgptv2::LoginAccountParamsType"
+            },
+            "useHostedLoginSuccessPage": {
+              "type": "boolean"
+            }
+          },
+          "title": "Chatgptv2::LoginAccountParams"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "chatgptDeviceCode"
+              ],
+              "title": "ChatgptDeviceCodev2::LoginAccountParamsType"
+            }
+          },
+          "title": "ChatgptDeviceCodev2::LoginAccountParams"
+        },
+        {
+          "description": "[UNSTABLE] FOR OPENAI INTERNAL USE ONLY - DO NOT USE. The access token must contain the same scopes that Codex-managed ChatGPT auth tokens have.",
+          "type": "object",
+          "required": [
+            "accessToken",
+            "chatgptAccountId",
+            "type"
+          ],
+          "properties": {
+            "accessToken": {
+              "description": "Access token (JWT) supplied by the client. This token is used for backend API requests and email extraction.",
+              "type": "string"
+            },
+            "chatgptAccountId": {
+              "description": "Workspace/account identifier supplied by the client.",
+              "type": "string"
+            },
+            "chatgptPlanType": {
+              "description": "Optional plan type supplied by the client.\n\nWhen `null`, Codex attempts to derive the plan type from access-token claims. If unavailable, the plan defaults to `unknown`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "chatgptAuthTokens"
+              ],
+              "title": "ChatgptAuthTokensv2::LoginAccountParamsType"
+            }
+          },
+          "title": "ChatgptAuthTokensv2::LoginAccountParams"
+        },
+        {
+          "description": "[UNSTABLE] Managed Amazon Bedrock login is experimental.",
+          "type": "object",
+          "required": [
+            "apiKey",
+            "region",
+            "type"
+          ],
+          "properties": {
+            "apiKey": {
+              "type": "string"
+            },
+            "region": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "amazonBedrock"
+              ],
+              "title": "AmazonBedrockv2::LoginAccountParamsType"
+            }
+          },
+          "title": "AmazonBedrockv2::LoginAccountParams"
+        }
+      ],
+      "definitions": {
+        "LoginAppBrand": {
+          "type": "string",
+          "enum": [
+            "codex",
+            "chatgpt"
+          ]
+        }
+      }
+    },
+    "ToolRequestUserInputParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ToolRequestUserInputParams",
+      "description": "EXPERIMENTAL. Params sent with a request_user_input event.",
+      "type": "object",
+      "required": [
+        "itemId",
+        "questions",
+        "threadId",
+        "turnId"
+      ],
+      "properties": {
+        "autoResolutionMs": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ToolRequestUserInputQuestion"
+          }
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "definitions": {
+        "ToolRequestUserInputOption": {
+          "description": "EXPERIMENTAL. Defines a single selectable option for request_user_input.",
+          "type": "object",
+          "required": [
+            "description",
+            "label"
+          ],
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        },
+        "ToolRequestUserInputQuestion": {
+          "description": "EXPERIMENTAL. Represents one request_user_input question and its required options.",
+          "type": "object",
+          "required": [
+            "header",
+            "id",
+            "question"
+          ],
+          "properties": {
+            "header": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "isOther": {
+              "default": false,
+              "type": "boolean"
+            },
+            "isSecret": {
+              "default": false,
+              "type": "boolean"
+            },
+            "options": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/definitions/ToolRequestUserInputOption"
+              }
+            },
+            "question": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "DynamicToolCallParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "DynamicToolCallParams",
+      "type": "object",
+      "required": [
+        "arguments",
+        "callId",
+        "threadId",
+        "tool",
+        "turnId"
+      ],
+      "properties": {
+        "arguments": true,
+        "callId": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      }
+    },
+    "DynamicToolCallResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "DynamicToolCallResponse",
+      "type": "object",
+      "required": [
+        "contentItems",
+        "success"
+      ],
+      "properties": {
+        "contentItems": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DynamicToolCallOutputContentItem"
+          }
+        },
+        "success": {
+          "type": "boolean"
+        }
+      },
+      "definitions": {
+        "DynamicToolCallOutputContentItem": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "text",
+                "type"
+              ],
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "inputText"
+                  ],
+                  "title": "InputTextDynamicToolCallOutputContentItemType"
+                }
+              },
+              "title": "InputTextDynamicToolCallOutputContentItem"
+            },
+            {
+              "type": "object",
+              "required": [
+                "imageUrl",
+                "type"
+              ],
+              "properties": {
+                "imageUrl": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "inputImage"
+                  ],
+                  "title": "InputImageDynamicToolCallOutputContentItemType"
+                }
+              },
+              "title": "InputImageDynamicToolCallOutputContentItem"
+            },
+            {
+              "type": "object",
+              "required": [
+                "audioUrl",
+                "type"
+              ],
+              "properties": {
+                "audioUrl": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "inputAudio"
+                  ],
+                  "title": "InputAudioDynamicToolCallOutputContentItemType"
+                }
+              },
+              "title": "InputAudioDynamicToolCallOutputContentItem"
+            }
+          ]
+        }
+      }
+    },
+    "ChatgptAuthTokensRefreshResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ChatgptAuthTokensRefreshResponse",
+      "type": "object",
+      "required": [
+        "accessToken",
+        "chatgptAccountId"
+      ],
+      "properties": {
+        "accessToken": {
+          "type": "string"
+        },
+        "chatgptAccountId": {
+          "type": "string"
+        },
+        "chatgptPlanType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

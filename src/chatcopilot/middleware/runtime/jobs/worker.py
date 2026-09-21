@@ -87,9 +87,16 @@ def run_worker(request_path: Path) -> int:
             )
             # local import 避免 worker 启动期 import agent runtime 的额外开销
             from chatcopilot.contracts.jobs import JobExecutionContext
+            from chatcopilot.contracts.model_selection import WorkerModelSelection
+            from chatcopilot.core.model_selection import WORKER_MODEL_SELECTION_FIELD
             from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService
 
             workspace_service = MiddlewareWorkspaceService()
+            worker_model_selection = (
+                WorkerModelSelection.from_payload(request.get(WORKER_MODEL_SELECTION_FIELD))
+                if tool_name == CODE_TASK_TOOL
+                else None
+            )
             from chatcopilot.application.execution_scope import execution_scope
             project_roots = request.get("project_roots", [])
             readonly_roots = request.get("readonly_roots", [])
@@ -124,6 +131,7 @@ def run_worker(request_path: Path) -> int:
                 job_id=job_id,
                 job_dir=job_dir,
                 update_status=update_job_stage,
+                worker_model_selection=worker_model_selection,
             )
             executor, agent_runtime = _build_background_executor(
                 tool_name=tool_name,
@@ -280,11 +288,11 @@ def _build_background_executor(
         chat_config=chat_config,
         profile=AgentRuntimeAssemblyProfile.DETACHED,
     )
-    session = agent_runtime.new_session(
+    session = agent_runtime.open_session(
         session_id=f"background-{job_id}",
         prompt_input=PromptBuildInput(
             profile=runtime_context.prompt_profile,
-            backend=runtime_context.agent_backend,
+            runtime_id=runtime_context.runtime_id,
             model=None,
             role=caller_role,
             channel_kind="private",
@@ -295,7 +303,7 @@ def _build_background_executor(
         workspace_service=workspace_service,
         caller_role_hint=caller_role,
     )
-    return session.tool_executor, agent_runtime
+    return session.host_tools, agent_runtime
 
 
 def _finish_attempt(

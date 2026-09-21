@@ -69,7 +69,7 @@ def test_context_snapshot_is_redacted_bounded_private_and_summarized(
 
     recorder.context_snapshot(
         snapshot_id="ctx_span123",
-        backend="native",
+        runtime_id="native",
         model="test-model",
         iteration=0,
         session_messages=[
@@ -192,7 +192,7 @@ def test_oversized_context_snapshot_is_truncated_below_reader_limit(
 
     recorder.context_snapshot(
         snapshot_id="ctx_large",
-        backend="native",
+        runtime_id="native",
         model="test-model",
         iteration=0,
         session_messages=[
@@ -239,7 +239,7 @@ def test_task_size_fallback_preserves_context_artifact_index(
     )
     recorder.context_snapshot(
         snapshot_id="ctx_preserved",
-        backend="native",
+        runtime_id="native",
         model="test-model",
         iteration=0,
         session_messages=[{"role": "user", "content": "hello"}],
@@ -261,7 +261,7 @@ def test_task_size_fallback_preserves_context_artifact_index(
     ]
     payload["input_resources"] = [
         {
-            "backend": hostile,
+            "runtime_id": hostile,
             "request_id": "req-1",
             "metadata": {"blob": hostile},
             "resources": [{"media_type": hostile, "sha256": "a" * 64}],
@@ -295,7 +295,7 @@ def test_task_size_fallback_preserves_context_artifact_index(
     assert persisted["summary_limits"]["unknown_fields_omitted"] == 1
     assert persisted["llm_calls"][0]["context_snapshot_id"] == "ctx_preserved"
     assert len(persisted["llm_calls"][0]["model"]) <= 512
-    assert len(persisted["input_resources"][0]["backend"]) <= 128
+    assert len(persisted["input_resources"][0]["runtime_id"]) <= 128
     assert (recorder.path.parent / "contexts" / "ctx_preserved.json").is_file()
 
 
@@ -314,7 +314,7 @@ def test_task_summary_caps_retain_latest_context_artifact_index(
     )
     recorder.context_snapshot(
         snapshot_id="ctx_5000",
-        backend="native",
+        runtime_id="native",
         model="latest-model",
         iteration=5000,
         session_messages=[{"role": "user", "content": "latest"}],
@@ -329,7 +329,7 @@ def test_task_summary_caps_retain_latest_context_artifact_index(
     payload["context_snapshots"] = [
         {
             "snapshot_id": f"ctx_{index}",
-            "backend": "native",
+            "runtime_id": "native",
             "model": f"model-{index}",
             "iteration": index,
             "coverage": "exact_model_input",
@@ -348,7 +348,7 @@ def test_task_summary_caps_retain_latest_context_artifact_index(
     ]
     payload["input_resources"] = [
         {
-            "backend": "native",
+            "runtime_id": "native",
             "request_id": f"req_{index}",
             "recorded_at": float(index),
             "resources": [],
@@ -409,7 +409,7 @@ def test_context_snapshot_persistence_failure_is_indexed_as_unavailable(
 
     recorder.context_snapshot(
         snapshot_id="ctx_unavailable",
-        backend="native",
+        runtime_id="native",
         model="test-model",
         iteration=0,
         session_messages=[{"role": "user", "content": "sensitive prompt"}],
@@ -449,7 +449,7 @@ def test_llm_start_without_snapshot_creates_correlated_unavailable_summary(
     )
 
     recorder.llm_call_started(
-        backend="future-backend",
+        runtime_id="future-backend",
         model="future-model",
         iteration=0,
         trace_id="trace-future",
@@ -462,7 +462,7 @@ def test_llm_start_without_snapshot_creates_correlated_unavailable_summary(
     payload = recorder.to_payload()
     snapshot = payload["context_snapshots"][0]
     step = payload["steps"][0]
-    assert snapshot["backend"] == "future-backend"
+    assert snapshot["runtime_id"] == "future-backend"
     assert snapshot["capture_status"] == "unavailable"
     assert snapshot["omitted"] == ["snapshot_id_missing"]
     assert snapshot["span_id"] == "span-future"
@@ -1199,7 +1199,7 @@ def test_context_snapshot_exposes_observability_budget_truncation(
 
     recorder.context_snapshot(
         snapshot_id="ctx_budget",
-        backend="native",
+        runtime_id="native",
         model="test-model",
         iteration=0,
         session_messages=[
@@ -1425,7 +1425,7 @@ def test_turn_task_persists_llm_backend_on_lifecycle_events_and_summary(
     )
     recorder.llm_call_started(
         model="test-model",
-        backend="future-backend",
+        runtime_id="future-backend",
         iteration=0,
         trace_id="trace-backend",
         span_id="span-backend",
@@ -1433,7 +1433,7 @@ def test_turn_task_persists_llm_backend_on_lifecycle_events_and_summary(
     )
     recorder.llm_call_finished(
         model="test-model",
-        backend="future-backend",
+        runtime_id="future-backend",
         iteration=0,
         finish_reason="stop",
         trace_id="trace-backend",
@@ -1443,7 +1443,7 @@ def test_turn_task_persists_llm_backend_on_lifecycle_events_and_summary(
     recorder.finish(status="succeeded", progress="backend recorded")
 
     persisted = json.loads(recorder.path.read_text(encoding="utf-8"))
-    assert persisted["llm_calls"][0]["backend"] == "future-backend"
+    assert persisted["llm_calls"][0]["runtime_id"] == "future-backend"
     events = [
         json.loads(line)
         for line in (recorder.path.parent / task_runtime.EVENTS_FILENAME)
@@ -1455,8 +1455,8 @@ def test_turn_task_persists_llm_backend_on_lifecycle_events_and_summary(
         for event in events
         if event["event"] in {"llm_call_started", "llm_call_finished"}
     }
-    assert lifecycle["llm_call_started"]["backend"] == "future-backend"
-    assert lifecycle["llm_call_finished"]["backend"] == "future-backend"
+    assert lifecycle["llm_call_started"]["runtime_id"] == "future-backend"
+    assert lifecycle["llm_call_finished"]["runtime_id"] == "future-backend"
 
 
 def test_turn_task_usage_totals_and_inclusive_usage_saturate_at_int64(

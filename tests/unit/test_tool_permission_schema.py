@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from tests.prompt_plan_fixture import prompt_input
+from tests.prompt_plan_fixture import prompt_input, runtime_route
 
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 from chatcopilot.agent.runtime import AgentRuntime
-from chatcopilot.agent.context.prompt_plan import render_native_prefix
+from chatcopilot.core.config import ChatConfig
 from chatcopilot.contracts import Role, role_ge, role_value
 from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.contracts.tools import (
@@ -48,10 +47,11 @@ def _permission_filter(role: Role):
 
 def _runtime(*tools: ToolDef) -> AgentRuntime:
     return AgentRuntime(
-        llm=object(),
+        main_model_client=object(),  # type: ignore[arg-type]
         tools=tuple(tools),
         tools_schema=tuple(build_openai_schema(tool) for tool in tools),
-        runtime_config=SimpleNamespace(runtime=SimpleNamespace(max_tool_retries=1)),
+        runtime_config=ChatConfig(),
+        route=runtime_route(),
     )
 
 
@@ -61,40 +61,34 @@ def test_unknown_roles_fail_closed() -> None:
     assert role_ge("unknown", "unknown") is False
 
 
-def _native(session):
-    return session.backend.native_session(session.backend_session_ref)
-
-
 def test_user_session_cannot_see_or_call_owner_only_tool() -> None:
     runtime = _runtime(_tool("normal_tool"), _tool("owner_tool", access="owner"))
-    session = runtime.new_session(
+    session = runtime.open_session(
         session_id="s1",
         prompt_input=prompt_input("baseline"),
         permission_filter=_permission_filter(Role.USER),
     )
 
-    concrete = _native(session)
-    schema_names = {entry["function"]["name"] for entry in concrete.tools_schema}
+    schema_names = set(session.capabilities.tool_names)
     assert schema_names == {"normal_tool"}
 
-    result = session.tool_executor.execute("owner_tool", {})
+    result = session.host_tools.execute("owner_tool", {})
     assert result.ok is False
     assert "需要 owner" in (result.error or "")
 
 
 def test_owner_session_can_see_and_call_owner_only_tool() -> None:
     runtime = _runtime(_tool("normal_tool"), _tool("owner_tool", access="owner"))
-    session = runtime.new_session(
+    session = runtime.open_session(
         session_id="s1",
         prompt_input=prompt_input("baseline"),
         permission_filter=_permission_filter(Role.OWNER),
     )
 
-    concrete = _native(session)
-    schema_names = {entry["function"]["name"] for entry in concrete.tools_schema}
+    schema_names = set(session.capabilities.tool_names)
     assert schema_names == {"normal_tool", "owner_tool"}
 
-    result = session.tool_executor.execute("owner_tool", {})
+    result = session.host_tools.execute("owner_tool", {})
     assert result.ok is True
 
 
@@ -103,12 +97,11 @@ def test_runtime_passes_retriever_without_changing_tool_schema() -> None:
     runtime = _runtime(_tool("normal_tool"))
     runtime.retriever = retriever
 
-    session = runtime.new_session(session_id="s1", prompt_input=prompt_input("baseline"))
+    session = runtime.open_session(session_id="s1", prompt_input=prompt_input("baseline"))
 
-    concrete = _native(session)
-    schema_names = {entry["function"]["name"] for entry in concrete.tools_schema}
+    schema_names = set(session.capabilities.tool_names)
     assert schema_names == {"normal_tool"}
-    assert concrete.retriever is retriever
+    assert runtime.retriever is retriever
 
 
 def test_session_can_explicitly_hide_bot_skill_index() -> None:
@@ -123,17 +116,17 @@ def test_session_can_explicitly_hide_bot_skill_index() -> None:
     )
 
     owner_input = replace(prompt_input("baseline"), skill_index=runtime.skill_index)
-    owner = runtime.new_session(session_id="owner", prompt_input=owner_input)
-    member = runtime.new_session(
+    owner = runtime.open_session(session_id="owner", prompt_input=owner_input)
+    member = runtime.open_session(
         session_id="member",
         prompt_input=prompt_input("baseline"),
     )
 
     owner_text = "\n".join(
-        message["content"] for message in render_native_prefix(_native(owner).prompt_plan)
+        message["content"] for message in owner.snapshot_transcript().messages
     )
     member_text = "\n".join(
-        message["content"] for message in render_native_prefix(_native(member).prompt_plan)
+        message["content"] for message in member.snapshot_transcript().messages
     )
     assert "internal-playbook" in owner_text
     assert "internal-playbook" not in member_text

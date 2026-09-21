@@ -65,7 +65,7 @@ def _inst(tmp_path: Path, *, platform: str, env_prefix: str = "CHATCOPILOT_CHAT"
                 "  packs: []",
                 "  features: []",
                 "agents:",
-                "  backend: native",
+                "  runtime: native",
                 "workspace:",
                 "  root_env: CHATCOPILOT_WORKSPACE_ROOT",
                 "deploy:",
@@ -134,7 +134,7 @@ def _starter_inst(tmp_path: Path) -> BotInstance:
         "    provider: markdown\n"
         "    namespace: sample-qq\n"
         "agents:\n"
-        "  backend: native\n"
+        "  runtime: native\n"
         "  presets: []\n"
         "workspace:\n"
         "  root_env: CHATCOPILOT_WORKSPACE_ROOT\n"
@@ -408,7 +408,7 @@ def test_provision_schema_v2_is_dynamic_and_reports_configured_fields(
         "required": True,
         "secret": True,
         "default": None,
-        "description": "OpenAI-compatible API key",
+        "description": "Explicit model API-key credential",
         "configured": True,
         "host_generated": False,
         "value": "configured",

@@ -1,4 +1,4 @@
-"""One strict v2 result codec at IPC, persistence and service read boundaries."""
+"""One strict v3 result codec at IPC, persistence and service read boundaries."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def trial_from_dict(payload: Mapping[str, Any]) -> EvaluationTrial:
 
 def validate_trial(trial: EvaluationTrial) -> None:
     for name in ("trial_id", "evaluation_id", "kind", "bot", "profile", "suite_id", "case_ref", "case_id",
-                 "dimension", "target_id", "target_fingerprint", "executor", "backend", "model", "reasoning_effort"):
+                 "dimension", "target_id", "target_fingerprint", "executor", "runtime_id", "model", "reasoning_effort"):
         if not isinstance(getattr(trial, name), str):
             raise ResultContractError(f"{name}: expected string")
     if trial.outcome not in {"passed", "failed", "error", "skipped"}:
@@ -133,7 +133,7 @@ def _number(value: Any, name: str, *, nullable: bool = True) -> None:
 
 
 def trial_projection(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Read model derived only from v2, not a legacy-format conversion."""
+    """Read model derived only from v3, not a legacy-format conversion."""
     trial = trial_from_dict(payload)
     return {**dict(payload), "score": trial.score, "max_score": trial.max_score,
             "passed": trial.passed, "final_text": trial.final_text, "stop_reason": trial.stop_reason,

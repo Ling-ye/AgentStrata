@@ -36,7 +36,7 @@ def _write_bot(tmp_path: Path, unified_search: str) -> Path:
         "tools:\n"
         "  packs: []\n"
         "agents:\n"
-        "  backend: native\n"
+        "  runtime: native\n"
         "  unified_search:\n"
         f"{body}\n"
         "deploy:\n"

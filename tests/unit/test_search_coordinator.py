@@ -213,7 +213,7 @@ def test_parallel_search_steps_replay_nested_trace_events_serially_in_plan_order
             trace.sink(
                 ContextSnapshotPrepared(
                     snapshot_id=snapshot_id,
-                    backend=f"search-step-{step.source}",
+                    runtime_id=f"search-step-{step.source}",
                     model="nested-search-model",
                     iteration=0,
                     session_messages=(),
@@ -228,7 +228,7 @@ def test_parallel_search_steps_replay_nested_trace_events_serially_in_plan_order
                 LlmCallStarted(
                     model="nested-search-model",
                     iteration=0,
-                    backend=f"search-step-{step.source}",
+                    runtime_id=f"search-step-{step.source}",
                     trace_id=trace.trace_id,
                     span_id=span_id,
                     parent_span_id=trace.span_id,
@@ -277,7 +277,7 @@ def test_parallel_search_steps_replay_nested_trace_events_serially_in_plan_order
     assert all(trace.span_id == "span_search_information" for trace in worker_contexts)
     assert all(worker_thread != caller_thread for _, _, worker_thread in observed_contexts)
     assert replay_threads == [caller_thread] * 4
-    assert [event.backend for event in replayed] == [
+    assert [event.runtime_id for event in replayed] == [
         "search-step-web",
         "search-step-web",
         "search-step-github",
@@ -308,7 +308,7 @@ def test_parallel_search_event_overflow_and_sink_failure_preserve_success() -> N
                     LlmCallStarted(
                         model="overflow-search-model",
                         iteration=index,
-                        backend="overflow-search-step",
+                        runtime_id="overflow-search-step",
                         trace_id=trace.trace_id,
                         span_id=f"span_overflow_search_{index}",
                         parent_span_id=trace.span_id,
@@ -361,7 +361,7 @@ def test_parallel_search_event_overflow_and_sink_failure_preserve_success() -> N
     retained = [
         event
         for event in replayed
-        if isinstance(event, LlmCallStarted) and event.backend == "overflow-search-step"
+        if isinstance(event, LlmCallStarted) and event.runtime_id == "overflow-search-step"
     ]
     assert len(retained) == 1024
     omissions = [

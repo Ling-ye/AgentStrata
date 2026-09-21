@@ -1,8 +1,8 @@
-"""Shared per-turn runtime operations for agent backends.
+"""Shared per-turn runtime operations for agent runtimes.
 
-Backends decide control flow: native uses a Python loop, LangGraph uses a
+Runtime adapters decide control flow: Native uses a Python loop, LangGraph uses a
 ``StateGraph``.  This module owns the common Agent-layer semantics that should
-not vary by backend: task framing, ``AgentEvent`` emission, tool-result
+not vary by runtime: task framing, ``AgentEvent`` emission, tool-result
 messages, lifecycle intents, produced resources, and ``AgentResult`` assembly.
 """
 
@@ -77,6 +77,7 @@ from chatcopilot.agent.trace import (
     set_trace,
 )
 
+from chatcopilot.contracts.execution import RuntimeFailure
 _LOGGER = logging.getLogger("chatcopilot.agent.turn")
 
 
@@ -85,8 +86,8 @@ class TurnState:
     """Mutable state for one AgentTask run.
 
     The state intentionally contains only Agent-layer values.  Platform
-    delivery remains in middleware, and backend-specific execution details stay
-    in the backend session.
+    delivery remains in middleware, and runtime-specific execution details stay
+    in the runtime session.
     """
 
     messages: list[dict[str, Any]]
@@ -98,6 +99,7 @@ class TurnState:
     llm_view: list[dict[str, Any]] | None = None
     final_text: str = ""
     stop_reason: AgentStopReason = "end_turn"
+    failure: RuntimeFailure | None = None
     consecutive_failures: int = 0
     tool_calls_used: int = 0
     produced_paths: list[tuple[str, str]] = field(default_factory=list)
@@ -117,7 +119,7 @@ class TurnState:
 
 @dataclass
 class TurnOps:
-    """Common operations used by Agent backends during one turn."""
+    """Common operations used by Agent runtimes during one turn."""
 
     session: Any
     task: AgentTask
@@ -143,7 +145,7 @@ class TurnOps:
 
         trace_id = self.session.trace_id or _task_trace_id(self.task) or new_trace_id()
         root_span = self.session.trace_parent_span_id or (
-            str(self.task.metadata.get("parent_span_id") or "").strip() or None
+            self.task.execution.trace.parent_span_id
             if _task_trace_id(self.task) == trace_id else None
         )
         started_at = time.monotonic()
@@ -214,11 +216,12 @@ class TurnOps:
         call_messages = self._build_llm_call_messages(state)
         self.session._repair_orphan_tool_calls(call_messages)
         iteration = state.iteration
-        model = getattr(self.session.llm, "model", "")
+        model = (self.task.execution.model_selection.model if self.task.execution.model_selection is not None
+                 else getattr(self.session.llm, "model", ""))
         call_span_id = new_span_id()
         state.model_span_id = call_span_id
         observed_message = ProcessMessage(self.on_event, trace_id=state.trace_id,
-            parent_span_id=call_span_id, backend=str(getattr(self.session, "backend_name", "native")),
+            parent_span_id=call_span_id, runtime_id=str(getattr(self.session, "backend_name", "native")),
             depth=self.session.trace_depth)
         image_receipts = validated_image_resource_receipts(self.task)
         prompt_estimate = estimate_prompt_tokens(call_messages, self.session.tools_schema)
@@ -245,10 +248,9 @@ class TurnOps:
         partial_capture = bool(
             image_receipts or reasoning_omission_count or resource_path_omission_count
         )
-        self.emit(
-            ContextSnapshotPrepared(
+        snapshot = ContextSnapshotPrepared(
                 snapshot_id=snapshot_id,
-                backend=str(getattr(self.session, "backend_name", "native")),
+                runtime_id=str(getattr(self.session, "backend_name", "native")),
                 model=model,
                 iteration=iteration,
                 session_messages=path_safe_session.messages,
@@ -263,16 +265,39 @@ class TurnOps:
                 parent_span_id=state.root_span,
                 depth=self.session.trace_depth,
                 estimated_tokens=int(prompt_estimate["tokens"]),
-                model_selection={"model": model},
+                model_selection=(self.task.execution.model_selection.to_payload()
+                                 if self.task.execution.model_selection else {"model": model}),
                 private_reasoning_omission_count=reasoning_omission_count,
                 resource_path_omission_count=resource_path_omission_count,
             )
-        )
+        response_transport = getattr(getattr(self.session.llm, "config", None), "api", "chat_completions") in {"openai_responses", "chatgpt_responses"}
+        if not response_transport:
+            self.emit(snapshot)
+
+        def prepared_wire(payload):
+            from dataclasses import replace
+            def omit_binary(value):
+                if isinstance(value, dict):
+                    return {key: ("[image binary omitted]" if key == "image_url" and isinstance(item, str) and item.startswith("data:")
+                                  else omit_binary(item)) for key, item in value.items()}
+                if isinstance(value, (tuple, list)):
+                    return [omit_binary(item) for item in value]
+                return value
+            cleaned = omit_private_reasoning_messages(({"role": "assistant", "content": omit_binary(payload)},))
+            safe = omit_local_resource_paths(cleaned.messages)
+            body = safe.messages[0]["content"]
+            omitted_fields = tuple(snapshot.omitted)
+            if cleaned.omission_count:
+                omitted_fields += ("provider_private_reasoning",)
+            self.emit(replace(snapshot, effective_messages=({"protocol": "responses", "request": body},),
+                context_kind="responses_request", coverage="partial" if image_receipts or omitted_fields else "exact_model_input",
+                omitted=omitted_fields))
+
         self.emit(
             LlmCallStarted(
                 model=model,
                 iteration=iteration,
-                backend=str(getattr(self.session, "backend_name", "native")),
+                runtime_id=str(getattr(self.session, "backend_name", "native")),
                 trace_id=state.trace_id,
                 span_id=call_span_id,
                 parent_span_id=state.root_span,
@@ -300,6 +325,12 @@ class TurnOps:
         }
         if self.cancellation is not None:
             chat_kwargs["cancellation"] = self.cancellation
+        if response_transport:
+            chat_kwargs["on_request_prepared"] = prepared_wire
+        if self.task.execution.model_selection is not None:
+            selection = self.task.execution.model_selection
+            chat_kwargs["model"] = selection.model
+            chat_kwargs["reasoning_effort"] = selection.reasoning_effort
         self.raise_if_cancelled()
         try:
             result = self.session.llm.chat(**chat_kwargs)
@@ -307,18 +338,24 @@ class TurnOps:
             observed_message.finish(status="cancelled")
             self.emit(LlmCallFinished(model=model, iteration=iteration, ok=False, finish_reason="cancelled",
                 trace_id=state.trace_id, span_id=call_span_id, parent_span_id=state.root_span,
-                depth=self.session.trace_depth, backend=str(getattr(self.session, "backend_name", "native")),
+                depth=self.session.trace_depth, runtime_id=str(getattr(self.session, "backend_name", "native")),
                 context_snapshot_id=snapshot_id))
             raise
         except Exception as exc:  # noqa: BLE001
             observed_message.finish(status="failed")
-            _LOGGER.exception("LLM 调用失败")
-            err_text = f"（与模型通信失败：{type(exc).__name__}: {exc}；请稍后再试）"
+            _LOGGER.error("LLM 调用失败: %s", type(exc).__name__)
+            err_text = "（与模型通信失败；请检查模型配置、凭据或连接状态后再试）"
+            from chatcopilot.core.observability_redaction import redact_observability_payload, collect_observability_secrets
+            private = getattr(getattr(self.session.llm, "config", None), "api_key", "")
+            detail = redact_observability_payload(str(exc), secrets=(*collect_observability_secrets(), private)).value
+            from chatcopilot.core.model_credentials import CredentialError
+            state.failure = RuntimeFailure(type(exc).__name__, "authentication" if isinstance(exc, CredentialError) else "model",
+                err_text, isinstance(exc, CredentialError), False)
             self.emit(
                 LlmCallFinished(
                     model=model,
                     iteration=iteration,
-                    backend=str(getattr(self.session, "backend_name", "native")),
+                    runtime_id=str(getattr(self.session, "backend_name", "native")),
                     finish_reason="failed",
                     usage=None,
                     ok=False,
@@ -334,21 +371,21 @@ class TurnOps:
                     estimator_version=str(prompt_estimate["estimator_version"]),
                     context_kind=state.context_kind,
                     context_snapshot_id=snapshot_id,
-                    visible_response={"error": {"code": type(exc).__name__, "message": str(exc)}},
+                    visible_response={"error": {"code": type(exc).__name__, "message": detail}},
                 )
             )
-            self.emit(TurnError(code=type(exc).__name__, message=str(exc)))
+            self.emit(TurnError(code=type(exc).__name__, message=detail))
             self.finish_text(state, err_text, stop_reason="llm_error")
             return None
 
         observed_message.finish(result.content)
 
         if image_receipts:
-            raw_turn = self.task.metadata.get("eval_turn", 0)
+            raw_turn = self.task.execution.turn_index
             turn_index = raw_turn if isinstance(raw_turn, int) and raw_turn >= 0 else 0
             self.emit(
                 InputResourcesDispatched(
-                    backend=str(getattr(self.session, "backend_name", "native")),
+                    runtime_id=str(getattr(self.session, "backend_name", "native")),
                     turn_index=turn_index,
                     request_id=call_span_id,
                     resources=image_receipts,
@@ -359,7 +396,7 @@ class TurnOps:
             LlmCallFinished(
                 model=model,
                 iteration=iteration,
-                backend=str(getattr(self.session, "backend_name", "native")),
+                runtime_id=str(getattr(self.session, "backend_name", "native")),
                 finish_reason=result.finish_reason,
                 usage=result.usage,
                 visible_response=project_visible_response(
@@ -422,7 +459,7 @@ class TurnOps:
                 parent_span_id=state.root_span,
                 depth=self.session.trace_depth,
                 tool_call_id=tool_call.get("id"), model_span_id=state.model_span_id,
-                backend=str(getattr(self.session, "backend_name", "native")),
+                runtime_id=str(getattr(self.session, "backend_name", "native")),
             )
         )
 
@@ -446,7 +483,7 @@ class TurnOps:
                 execution_result=tool_result.to_llm_payload(),
                 model_result=model_result,
                 tool_call_id=tool_call.get("id"), model_span_id=state.model_span_id,
-                backend=str(getattr(self.session, "backend_name", "native")),
+                runtime_id=str(getattr(self.session, "backend_name", "native")),
             )
         )
 
@@ -551,6 +588,7 @@ class TurnOps:
             message_count=len(self.session._messages),
             response_integrity=state.response_integrity,
             lifecycle_intents=tuple(state.lifecycle_intents),
+            failure=state.failure,
         )
 
     def cancelled_result(self, state: TurnState | None = None) -> AgentResult:

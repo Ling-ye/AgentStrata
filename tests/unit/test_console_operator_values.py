@@ -40,10 +40,11 @@ def test_operator_projection_preserves_lists_empty_values_references_and_paths(t
     assert policy['QQ_ALLOW_FROM'] == '*'
     assert policy['CHATCOPILOT_OWNERS'] == ''
     assert entity(config, 'channel:qq')['environment'] == {'UNSET_ACCOUNT': None}
-    assert entity(config, 'gateway:instance')['environment'] == {'FIXTURE_TOKEN': private}
-    assert entity(config, 'mcp:lookup')['environment'] == {'FIXTURE_TOKEN': private}
+    assert entity(config, 'gateway:instance')['environment'] == {'FIXTURE_TOKEN': '[REDACTED]'}
+    assert entity(config, 'mcp:lookup')['environment'] == {'FIXTURE_TOKEN': '[REDACTED]'}
     assert entity(config, 'model-slot:chat')['environment'] == {
-        'FIXTURE_CHAT_API_KEY': private, 'FIXTURE_CHAT_MODEL': 'configured-model'}
+        'FIXTURE_CHAT_API_KEY': '[REDACTED]', 'FIXTURE_CHAT_MODEL': 'configured-model'}
+    assert private not in json.dumps(config)
     assert 'not-part-of-instance' not in json.dumps(config)
     assert plain(tmp_path / 'model') == str(tmp_path / 'model')
     assert config['visibility'] == 'operator'
@@ -84,7 +85,7 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
         spec = folder / 'bot.yaml'
         spec.write_text(f'id: fixture-{index}\nprompts:\n  schema_version: 2\n  identity: identity.md\n'
             'gateway: {}\nchannels:\n  qq:\n    type: qq_personal\n    provider: onebot_v11\n'
-            'llm:\n  chat:\n    env_prefix: FIXTURE_CHAT\nagents:\n  backend: native\n')
+            'llm:\n  chat:\n    env_prefix: FIXTURE_CHAT\nagents:\n  runtime: native\n')
         state = GatewayStateStore(folder / 'gateway')
         generation = state.acquire_writer_generation()
         values = {'CHATCOPILOT_GATEWAY_STATE_ROOT': str(state.root),
@@ -133,7 +134,8 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
         current = client.get(base + '/inspection')
         assert current.headers['cache-control'] == 'no-store'
         assert entity(current.json()['current'], 'policy:instance')['config']['CHATCOPILOT_ADMINS'] == environments[0]['CHATCOPILOT_ADMINS']
-        assert entity(current.json()['current'], 'channel:qq')['environment']['QQ_ACCESS_TOKEN'] == environments[0]['QQ_ACCESS_TOKEN']
+        assert entity(current.json()['current'], 'channel:qq')['environment']['QQ_ACCESS_TOKEN'] == '[REDACTED]'
+        assert environments[0]['QQ_ACCESS_TOKEN'] not in json.dumps(current.json())
         assert not current.json()['pending_changes']
         detail = client.get(base + '/gateway-observation/runs/run-values').json()
         payloads = []

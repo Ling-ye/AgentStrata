@@ -9,7 +9,9 @@ from chatcopilot.botspec.inspection import expected_configuration
 from chatcopilot.botspec.provisioning import read_private_env_file
 from chatcopilot.core.observability_redaction import (
     bound_observability_payload,
+    collect_observability_secrets,
 )
+from chatcopilot.core.inspection import public_configuration
 from chatcopilot.gateway.state_store import GatewayStateError
 from chatcopilot.gateway.observation_store import ObservationStore
 from chatcopilot.gateway import observation_queries
@@ -133,13 +135,13 @@ def inspection(inst: BotInstance, *, run_id: str | None = None, event_seq: int |
         errors.append({"source": "loaded", "code": type(exc).__name__, "message": "运行快照读取失败"})
     stale = runtime_stopped or not loaded_meta or not 0 <= time.time() - loaded_meta["observed_at"] <= 15
     comparison, reason = configuration_comparison(current, loaded, stale=stale)
-    return _safe(inst, {"current": current, "loaded": loaded, "execution": execution,
+    return _safe(inst, public_configuration({"current": current, "loaded": loaded, "execution": execution,
         "loaded_meta": loaded_meta, "run_id": run_id, "errors": errors, "generated_at": time.time(),
         "sources": {"current": "botspec", "loaded": "runtime_projection", "execution": "task_record"},
         "pending_changes": comparison == "pending",
         "configuration_status": comparison, "configuration_status_reason": reason,
         "loaded_stale": stale,
-    })
+    }, secrets=collect_observability_secrets(values)))
 
 
 def configuration_comparison(current, loaded, *, stale: bool) -> tuple[str, str]:

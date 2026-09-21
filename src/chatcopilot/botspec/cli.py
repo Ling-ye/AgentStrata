@@ -314,7 +314,7 @@ def _render_bot_yaml(
         f"    namespace: {bot_id}\n"
         "\n"
         "agents:\n"
-        "  backend: native\n"
+        "  runtime: native\n"
         "  presets: []\n"
         "\n"
         "workspace:\n"
@@ -392,8 +392,8 @@ def _cmd_configure(args: argparse.Namespace) -> int:
     if spec.platform.type != "qq":
         print("[ERR] 引导式 configure 当前只支持 QQ")
         return 2
-    if spec.agents.backend != "native" or "dev.code_tasks" in spec.tools.packs:
-        print("[ERR] 该 Bot 含高级 backend 或代码任务配置，请使用 docs/guides/deployment.md 高级流程")
+    if spec.agents.runtime != "native" or "dev.code_tasks" in spec.tools.packs:
+        print("[ERR] 该 Bot 含高级 runtime 或代码任务配置，请使用 docs/guides/deployment.md 高级流程")
         return 2
 
     by_id = {item.field: item for item in plan.fields}
@@ -730,21 +730,18 @@ def _cmd_route_explain(args: argparse.Namespace) -> int:
         if spec.llm.research_env_prefix and research_config != config.llm
         else "chat"
     )
-    print(f"backend={spec.agents.backend}")
+    print(f"runtime_id={spec.agents.runtime}")
     print("selection_scope=instance")
-    print("cross_backend_routing=false")
+    print("cross_runtime_routing=false")
     print("request_override=false")
     print(f"chat.prefix={spec.llm.env_prefix}")
     print(f"chat.model={config.llm.model}")
     print(f"research.source={research_agent_source}")
     print(f"research.model={research_config.model}")
-    if spec.agents.backend == "codex":
-        print(f"main.model={config.routing.code_model}")
-        print(f"main.reasoning_effort={config.routing.code_reasoning_effort}")
-    else:
-        print(f"main.model={config.llm.model}")
+    print(f"main.model={config.llm.model}")
+    print(f"main.reasoning_effort={config.llm.reasoning_effort or 'medium'}")
     print(
-        "codex.profiles="
+        "worker.profiles="
         + (",".join(sorted(config.routing.code_profiles)) or "-")
     )
     print(f"code_task.profile={config.routing.code_task_profile or '-'}")
@@ -925,7 +922,7 @@ def _required_env_keys(spec) -> list[str]:
     if spec.gateway is not None and spec.context.wiki.enabled:
         required.append(spec.context.wiki.root_env)
     if (
-        spec.agents.backend == "codex"
+        spec.agents.runtime == "codex"
     ):
         required.extend(
             [
@@ -1097,18 +1094,18 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
         print(f"[ERR] runtime_env_write_failed:{_safe_error_code(exc)}")
         return 1
 
-    from chatcopilot.botspec.backend_state import prepare_backend_deployment
+    from chatcopilot.botspec.runtime_state import prepare_runtime_deployment
 
-    transition = prepare_backend_deployment(
+    transition = prepare_runtime_deployment(
         instance_id=values["CHATCOPILOT_INSTANCE_ID"],
-        target_backend=spec.agents.backend,
+        target_runtime_id=spec.agents.runtime,
         workspace_root=values["CHATCOPILOT_WORKSPACE_ROOT"],
     )
     if transition.state_deleted:
         print(
-            "[OK] main-agent backend changed; old conversation state was deleted "
-            f"before target deployment: {transition.previous_backend} -> "
-            f"{transition.target_backend}"
+            "[OK] main-agent runtime changed; old conversation state was deleted "
+            f"before target deployment: {transition.previous_runtime_id} -> "
+            f"{transition.target_runtime_id}"
         )
 
     print(f"[OK] runtime env 已写入：{env_file} (chmod 600)")

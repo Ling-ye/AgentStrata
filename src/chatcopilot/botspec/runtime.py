@@ -51,7 +51,7 @@ class BotRuntimeContext:
     source_path: Path
     gateway: GatewaySpec | None = None
     channels: ChannelsSpec = field(default_factory=ChannelsSpec)
-    agent_backend: str = "native"
+    runtime_id: str = "native"
     mcp_servers: tuple[McpServerConfig, ...] = ()
     rag_sources: tuple[RagSourceConfig, ...] = ()
     skills: tuple[SkillIndexEntry, ...] = ()
@@ -113,7 +113,7 @@ def assemble_runtime_context(spec: BotSpec) -> BotRuntimeContext:
         source_path=spec.source_path,
         gateway=spec.gateway,
         channels=spec.channels,
-        agent_backend=spec.agents.backend,
+        runtime_id=spec.agents.runtime,
         mcp_servers=load_mcp_server_configs(spec),
         rag_sources=load_rag_source_configs(spec),
         skills=skills,

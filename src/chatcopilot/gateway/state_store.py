@@ -44,7 +44,7 @@ from chatcopilot.contracts.identity import ConversationIdentity, Role
 from .protocol import GATEWAY_EVENTS
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_STATE_JSON_BYTES = 1024 * 1024
 MAX_OUTBOUND_ENVELOPE_JSON_BYTES = 8 * 1024 * 1024
 _INSTANCE_LEASE_FILENAME = "gateway.instance.lock"
@@ -83,7 +83,7 @@ RUN_STATES = frozenset(
 )
 ACTIVE_RUN_STATES = frozenset({"accepted", "running", "abort_requested", "recovery_required"})
 TERMINAL_RUN_STATES = frozenset({"completed", "aborted", "failed"})
-APPROVAL_STATUSES = frozenset({"pending", "resolved", "expired"})
+APPROVAL_STATUSES = frozenset({"pending", "resolved", "expired", "cancelled"})
 RunState: TypeAlias = Literal[
     "accepted",
     "running",
@@ -244,7 +244,7 @@ class RunRecord:
 @dataclass(frozen=True)
 class ApprovalRecord:
     request: ApprovalRequest
-    status: Literal["pending", "resolved", "expired"]
+    status: Literal["pending", "resolved", "expired", "cancelled"]
     challenge: str | None = field(repr=False)
     decision_id: str | None = None
     accepted: bool | None = None
@@ -1464,6 +1464,10 @@ class GatewayStateStore:
                     observed_at,
                 ),
             )
+            if cursor.rowcount == 1 and resolution.responder is not None:
+                connection.execute("UPDATE input_requests SET decision=?,responder=? WHERE approval_id=? AND decision IS NULL",
+                    (_json_dump({"decision": "approve" if resolution.accepted else "deny"}),
+                     _json_dump(dict(resolution.responder)), request.approval_id))
             return cursor.rowcount == 1
 
     def reserve_ingress(
@@ -2172,7 +2176,7 @@ class GatewayStateStore:
                     challenge_digest TEXT NOT NULL,
                     challenge TEXT NOT NULL,
                     expires_at REAL NOT NULL,
-                    state TEXT NOT NULL CHECK(state IN ('pending', 'resolved', 'expired')),
+                    state TEXT NOT NULL CHECK(state IN ('pending', 'resolved', 'expired', 'cancelled')),
                     decision_id TEXT,
                     accepted INTEGER CHECK(accepted IS NULL OR accepted IN (0, 1)),
                     decided_at REAL,
@@ -2185,7 +2189,7 @@ class GatewayStateStore:
                         OR (state = 'resolved' AND decision_id IS NOT NULL
                             AND accepted IS NOT NULL AND decided_at IS NOT NULL
                             AND challenge = '')
-                        OR (state = 'expired' AND decision_id IS NULL AND accepted IS NULL
+                        OR (state IN ('expired', 'cancelled') AND decision_id IS NULL AND accepted IS NULL
                             AND decided_at IS NULL AND challenge = '')
                     )
                 );
@@ -2267,6 +2271,8 @@ class GatewayStateStore:
                 );
                 """
             )
+            from chatcopilot.gateway.interaction_schema import INTERACTION_SCHEMA
+            connection.executescript(INTERACTION_SCHEMA)
             if row is None:
                 connection.execute(
                     "INSERT INTO gateway_meta(key, value) VALUES('schema_version', ?)",
@@ -2545,6 +2551,10 @@ def _validate_sqlite_files(database_path: Path) -> None:
         try:
             metadata = path.lstat()
         except FileNotFoundError:
+            continue
+        if metadata.st_nlink == 0:
+            # SQLite unlinks its transient sidecar as another connection closes.
+            # No pathname refers to this inode anymore; this is not a hard link.
             continue
         _validate_private_file_metadata(metadata, path)
 
@@ -3002,7 +3012,7 @@ def _approval_record(
     except ValueError as exc:
         raise GatewayStateError("Gateway approval binding is corrupt") from exc
     stored_state = str(row[11])
-    if stored_state not in {"pending", "resolved", "expired"}:
+    if stored_state not in {"pending", "resolved", "expired", "cancelled"}:
         raise GatewayStateError("Gateway approval state is corrupt")
     challenge = str(row[9])
     decision_id = str(row[12]) if row[12] is not None else None
@@ -3037,11 +3047,11 @@ def _approval_record(
     else:
         if challenge or decision_id is not None or accepted is not None or decided_at is not None:
             raise GatewayStateError("Gateway expired approval state is corrupt")
-        status = "expired"
+        status = stored_state
         visible_challenge = None
     return ApprovalRecord(
         request=request,
-        status=cast(Literal["pending", "resolved", "expired"], status),
+        status=cast(Literal["pending", "resolved", "expired", "cancelled"], status),
         challenge=visible_challenge,
         decision_id=decision_id,
         accepted=accepted,

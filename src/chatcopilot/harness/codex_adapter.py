@@ -15,7 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
-from chatcopilot.agent.backends.codex_permissions import permission_config
+from chatcopilot.agent.runtimes.codex_permissions import permission_config
 from chatcopilot.agent.context.prompt_plan import (
     PromptBuildInput,
     PromptPlanBuilder,
@@ -175,7 +175,7 @@ class CodexCoder:
                                protected_roots=(*protected, *git_roots), native_write=bool(writes))
         profile = BotPromptProfile(identity="AgentStrata Harness " + role.value, response_style="报告有证据的结论和缺口。")
         instructions = PROMPTS[role] + (GOVERNANCE_PROMPTS.get(role, "") if governance else "")
-        plan = PromptPlanBuilder().build(PromptBuildInput(profile=profile, backend="codex", model=options.model,
+        plan = PromptPlanBuilder().build(PromptBuildInput(profile=profile, runtime_id="codex", model=options.model,
             role="owner", channel_kind="private", session_policy=COMMON + instructions))
         prompt = render_codex_prompt(plan, user_message=instructions + (f" draft={draft}" if draft else ""),
                                      turn_context=evidence_text, trusted_separately=True)

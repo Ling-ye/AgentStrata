@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.prompt_plan_fixture import prompt_input, prompt_plan
+from tests.prompt_plan_fixture import prompt_input, prompt_plan, runtime_route
 
 import importlib.util
 import json
@@ -8,7 +8,6 @@ import unittest
 
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.agent.langgraph_session import LangGraphAgentSession
-from chatcopilot.agent.backends import BackendAgentSession
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.contracts.agent import (
     AgentTask,
@@ -77,18 +76,16 @@ class LangGraphRuntimeTests(unittest.TestCase):
     def test_runtime_selects_langgraph_session_class(self) -> None:
         tool = _make_tool()
         runtime = AgentRuntime(
-            llm=_FakeLLM([]),  # type: ignore[arg-type]
+            main_model_client=_FakeLLM([]),  # type: ignore[arg-type]
             tools=(tool,),
             tools_schema=(build_openai_schema(tool),),
             runtime_config=ChatConfig(),
-            agent_backend="langgraph",
+            route=runtime_route("langgraph"),
         )
 
-        session = runtime.new_session(session_id="sid", prompt_input=prompt_input("system"))
+        session = runtime.open_session(session_id="sid", prompt_input=prompt_input("system"))
 
-        self.assertIsInstance(session, BackendAgentSession)
-        self.assertEqual(session.backend_id, "langgraph")
-        self.assertIsInstance(session.backend.native_session(session.backend_session_ref), LangGraphAgentSession)
+        self.assertEqual(session.runtime_id, "langgraph")
 
 
 @unittest.skipUnless(_has_langgraph(), "langgraph is not installed")

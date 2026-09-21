@@ -172,18 +172,6 @@ async def handle_deterministic_replies(
     if not shared_group or owner_turn:
         await send_unnotified_completed_jobs(session_id, session)
 
-    if shared_group and not owner_turn and _model_commands._parse_request(user_text) is not None:
-        text = "Codex 开发模型查看与切换仅限 Owner；群号加白不会授予该权限。"
-        await _send_text(conn, session_id, text, make_text_update)
-        session.record_exchange(user_text, text)
-        finish_turn_task(
-            turn_task,
-            progress="已拒绝群聊 Codex 模型命令。",
-            final_text=text,
-            stop_reason="end_turn",
-        )
-        return PromptResponse(stop_reason="end_turn", user_message_id=message_id)
-
     model_reply = _model_commands.handle_model_command(session, user_text)
     if model_reply is not None:
         _LOGGER.info(

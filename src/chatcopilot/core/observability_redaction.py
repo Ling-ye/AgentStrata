@@ -530,6 +530,7 @@ def omit_local_resource_paths(
 
 
 _PRIVATE_REASONING_KEYS = {
+    "providercontinuation",
     "analysis",
     "reasoning",
     "reasoningcontent",

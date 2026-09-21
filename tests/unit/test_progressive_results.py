@@ -4,8 +4,10 @@ import json
 from dataclasses import replace
 
 import pytest
+from tests.prompt_plan_fixture import runtime_route
 
-from chatcopilot.agent.backends.session_relay import SessionToolRelay, call_session_relay
+from chatcopilot.agent.runtimes.dynamic_tools import DynamicToolBridge
+from tests.dynamic_tool_fixture import call_dynamic_tool
 from chatcopilot.agent.context.manager import _summarize_tool_message
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.tools.result_reader import (
@@ -150,19 +152,14 @@ def test_codex_relay_filters_before_caching_and_does_not_reexecute():
     def filtered(payload):
         return json.loads(json.dumps(payload).replace("sensitive-value", "[redacted]"))
 
-    relay = SessionToolRelay(tools=tools, executor=executor, payload_filter=filtered)
-    endpoint = relay.start().to_dict()
+    relay = DynamicToolBridge(tools=tools, executor=executor, payload_filter=filtered)
+    relay.begin_turn(trace_id="test", parent_span_id="parent", depth=0)
     try:
-        response = call_session_relay(
-            endpoint, {"action": "call_tool", "name": tool.name, "arguments": {}}
-        )
-        result = response["result"]
+        result = call_dynamic_tool(relay, tool.name, {})
         assert result["truncated"] is True and "sensitive-value" not in json.dumps(result)
         ref = result["result_ref"]["id"]
-        read = call_session_relay(
-            endpoint, {"action": "call_tool", "name": reader.name, "arguments": {"result_id": ref}}
-        )
-        assert "[redacted]" in read["result"]["data"]["text"]
+        read = call_dynamic_tool(relay, reader.name, {"result_id": ref})
+        assert "[redacted]" in read["data"]["text"]
         assert "sensitive-value" not in json.dumps(read)
         tail = store.read({"result_id": ref, "query": "tail-marker"}, ToolContext())
         assert tail.data["text"] == "tail-marker" and len(calls) == 1
@@ -171,13 +168,13 @@ def test_codex_relay_filters_before_caching_and_does_not_reexecute():
         executor.close()
 
 
-@pytest.mark.parametrize("backend_id", ["native", "langgraph"])
-def test_inprocess_backends_share_projection_and_clear_on_close(backend_id):
+@pytest.mark.parametrize("runtime_id", ["native", "langgraph"])
+def test_inprocess_backends_share_projection_and_clear_on_close(runtime_id):
     from unittest.mock import Mock
 
-    from chatcopilot.agent.backends.registry import build_backend
+    from chatcopilot.agent.runtimes.registry import build_runtime_adapter
     from chatcopilot.contracts.agent import AgentTask
-    from chatcopilot.contracts.agent_backend import BackendOpenRequest
+    from chatcopilot.contracts.runtime_adapter import RuntimeOpenRequest
     from chatcopilot.core.config import ChatConfig
     from chatcopilot.core.llm_client import ChatResult
     from tests.prompt_plan_fixture import prompt_plan
@@ -200,8 +197,9 @@ def test_inprocess_backends_share_projection_and_clear_on_close(backend_id):
         ),
         ChatResult(content="done"),
     ]
-    backend = build_backend(
-        backend_id,
+    route = runtime_route(runtime_id)
+    backend = build_runtime_adapter(
+        route,
         tool_names={tool.name, reader.name},
         llm=model,
         runtime_config=ChatConfig(),
@@ -209,14 +207,16 @@ def test_inprocess_backends_share_projection_and_clear_on_close(backend_id):
         tools_schema=[],
     )
     session_ref = backend.open_session(
-        BackendOpenRequest(session_id="test", prompt_plan=prompt_plan("fixture"))
+        RuntimeOpenRequest(
+            session_id="test", prompt_plan=prompt_plan("fixture"), route=route
+        )
     )
     try:
         result = backend.stream_turn(
             session_ref, AgentTask("read the document"), on_event=lambda _: None
         )
         assert result.final_text == "done" and len(calls) == 1
-        messages = backend.native_session(session_ref).snapshot_messages()
+        messages = backend._resolve(session_ref).snapshot_messages()
         payload = json.loads(next(msg["content"] for msg in messages if msg.get("role") == "tool"))
         ref = payload["result_ref"]["id"]
         assert store.read({"result_id": ref, "query": "last"}, ToolContext()).data["text"] == "last"
@@ -234,31 +234,27 @@ def test_runtime_registers_reader_only_with_accessible_sources_and_isolates_acto
 
     tool = source_tool("actor result", access="owner")
     runtime = AgentRuntime(
-        llm=Mock(model="fixture"), tools=(tool,), tools_schema=(), runtime_config=ChatConfig()
+        main_model_client=Mock(model="fixture"), tools=(tool,), tools_schema=(),
+        runtime_config=ChatConfig(), route=runtime_route()
     )
-    owner = runtime.new_session(
+    owner = runtime.open_session(
         session_id="owner-a", prompt_input=prompt_input("fixture", role="owner")
     )
-    other = runtime.new_session(
+    other = runtime.open_session(
         session_id="owner-b", prompt_input=prompt_input("fixture", role="owner")
     )
-    member = runtime.new_session(
+    member = runtime.open_session(
         session_id="member", prompt_input=prompt_input("fixture", role="user")
     )
     try:
-        first = owner.backend.native_session(owner.backend_session_ref)
-        second = other.backend.native_session(other.backend_session_ref)
-        restricted = member.backend.native_session(member.backend_session_ref)
-        assert "read_tool_result" in {item["function"]["name"] for item in first.tools_schema}
-        assert "read_tool_result" not in {
-            item["function"]["name"] for item in restricted.tools_schema
-        }
-        result = first.executor.execute(tool.name, {})
-        projected = first.executor.project_result(tool.name, result.to_llm_payload())
+        assert "read_tool_result" in owner.capabilities.tool_names
+        assert "read_tool_result" not in member.capabilities.tool_names
+        result = owner.host_tools.execute(tool.name, {})
+        projected = owner.host_tools.project_result(tool.name, result.to_llm_payload())
         ref = projected["result_ref"]["id"]
-        assert first.executor.execute("read_tool_result", {"result_id": ref}).ok
+        assert owner.host_tools.execute("read_tool_result", {"result_id": ref}).ok
         assert (
-            second.executor.execute("read_tool_result", {"result_id": ref}).error_code
+            other.host_tools.execute("read_tool_result", {"result_id": ref}).error_code
             == "tool_result_unavailable"
         )
     finally:

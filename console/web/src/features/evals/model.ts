@@ -163,7 +163,7 @@ export interface EvaluationTarget {
   target_id: string;
   label: string;
   executor: string;
-  backend: string;
+  runtime_id: string;
   model: string;
   reasoning_effort: string;
   fingerprint: string;
@@ -713,7 +713,7 @@ function normalizeTarget(value: unknown, index: number): EvaluationTarget {
     target_id: targetId,
     label: asString(item.label, targetId),
     executor: asString(item.executor),
-    backend: asString(item.backend),
+    runtime_id: asString(item.runtime_id),
     model: asString(item.model),
     reasoning_effort: asString(item.reasoning_effort),
     fingerprint: asString(item.fingerprint),

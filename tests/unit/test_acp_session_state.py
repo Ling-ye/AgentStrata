@@ -7,10 +7,12 @@ from unittest import mock
 
 from chatcopilot.contracts import AssistantMode, Role
 from chatcopilot.contracts.model_selection import (
-    CodeModelSelection,
     MODEL_SELECTION_SCOPE_ONCE,
     MODEL_SELECTION_SOURCE_PROFILE,
 )
+from chatcopilot.contracts.model_runtime import ModelSelection
+from chatcopilot.contracts.execution import TranscriptSnapshot
+from chatcopilot.core.config import LLMConfig
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.core.workspace_runtime import Workspace
 
@@ -32,10 +34,10 @@ class _FakeAgentSession:
             ]
         )
 
-    def snapshot_messages(self) -> list[dict[str, str]]:
-        return [dict(item) for item in self._messages]
+    def snapshot_transcript(self):
+        return TranscriptSnapshot(tuple(self._messages), "host_history")
 
-    def set_prompt_plan(self, value) -> None:
+    def update_context(self, value) -> None:
         self.prompt_plan = value
 
 
@@ -123,41 +125,34 @@ def test_control_plane_mode_change_applies_when_session_materializes(tmp_path: P
 
 def test_one_shot_code_model_is_consumed_only_by_matching_selection(tmp_path: Path) -> None:
     state = _state(tmp_path)
-    selection = CodeModelSelection(
-        provider="codex_cli",
-        model="gpt-5.6-sol",
-        reasoning_effort="high",
+    selection = ModelSelection(
+        route=LLMConfig(model="gpt-5.6-sol", reasoning_effort="high").model_route(),
         scope=MODEL_SELECTION_SCOPE_ONCE,
         source=MODEL_SELECTION_SOURCE_PROFILE,
         profile="sol-high",
     )
-    state.set_code_model_selection(selection)
+    state.set_model_selection(selection)
 
-    state.consume_code_model_once(
-        CodeModelSelection(
-            provider="codex_cli",
-            model="gpt-5.5",
-            reasoning_effort="medium",
-        )
+    state.consume_model_once(
+        ModelSelection(LLMConfig(model="gpt-5.5", reasoning_effort="medium").model_route())
     )
-    assert state.code_model_once == selection
+    assert state.model_once == selection
 
-    state.consume_code_model_once(selection)
-    assert state.code_model_once is None
+    state.consume_model_once(selection)
+    assert state.model_once is None
 
 
 def test_workspace_refresh_can_copy_code_model_overrides(tmp_path: Path) -> None:
     source = _state(tmp_path / "source")
     target = _state(tmp_path / "target")
-    selection = CodeModelSelection(
-        provider="codex_cli",
-        model="gpt-5.6-sol",
-        reasoning_effort="high",
+    selection = ModelSelection(
+        route=LLMConfig(model="gpt-5.6-sol", reasoning_effort="high").model_route(),
         source=MODEL_SELECTION_SOURCE_PROFILE,
+        scope="session",
         profile="sol-high",
     )
-    source.set_code_model_selection(selection)
+    source.set_model_selection(selection)
 
-    target.copy_code_model_state_from(source)
+    target.copy_model_state_from(source)
 
-    assert target.code_model_selection == selection
+    assert target.model_selection == selection

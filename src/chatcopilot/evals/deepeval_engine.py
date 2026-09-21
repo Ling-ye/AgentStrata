@@ -229,7 +229,7 @@ def _model(config: JudgeConfig) -> Any:
                         identity="AgentStrata evaluation judge.",
                         response_style="Concise, structured evaluation responses.",
                     ),
-                    backend="native",
+                    runtime_id="native",
                     model=config.model,
                     role="user",
                     channel_kind="private",

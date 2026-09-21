@@ -1038,7 +1038,7 @@ class AcpTurnOrchestrator:
             title="任务已交给主 Agent",
             summary="后续模型、工具、子 Agent 和流程活动由统一 AgentEvent 契约记录。",
             payload={
-                "backend": str(getattr(runtime, "agent_backend", "") or "unknown"),
+                "runtime_id": str(getattr(runtime, "runtime_id", "") or "unknown"),
                 "resource_count": len(task_resources),
             },
         )

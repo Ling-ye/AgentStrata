@@ -4,6 +4,7 @@ from types import MappingProxyType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from tests.prompt_plan_fixture import runtime_route
 
 from chatcopilot.agent import runtime as runtime_module
 from chatcopilot.agent.capabilities import assembly as capability_assembly
@@ -53,7 +54,7 @@ def _context() -> SessionCapabilityContext:
     llm = cast(LLMClient, object())
     return SessionCapabilityContext(
         session_id="session-1",
-        backend_id="native",
+        runtime_id="native",
         main_llm=llm,
         research_llm=llm,
         runtime_config=ChatConfig(),
@@ -268,16 +269,17 @@ def test_runtime_threads_detached_profile_into_session_materialization(
     )
     llm = cast(LLMClient, object())
     runtime = AgentRuntime(
-        llm=llm,
+        main_model_client=llm,
         tools=(),
         tools_schema=(),
         runtime_config=ChatConfig(),
+        route=runtime_route(),
         assembly_profile="detached",
         session_capability_packs=("tests.session",),
     )
 
     with pytest.raises(StopAfterProjection):
-        runtime.new_session(
+        runtime.open_session(
             session_id="session-1",
             prompt_input=cast(Any, SimpleNamespace(memory="", role="owner")),
         )
@@ -300,14 +302,15 @@ def test_direct_runtime_does_not_select_future_session_capabilities_by_default(
         capture_projection,
     )
     runtime = AgentRuntime(
-        llm=cast(LLMClient, object()),
+        main_model_client=cast(LLMClient, object()),
         tools=(),
         tools_schema=(),
         runtime_config=ChatConfig(),
+        route=runtime_route(),
     )
 
     with pytest.raises(StopAfterProjection):
-        runtime.new_session(
+        runtime.open_session(
             session_id="session-1",
             prompt_input=cast(Any, SimpleNamespace(memory="", role="owner")),
         )
@@ -327,6 +330,7 @@ def test_invalid_profile_fails_before_mcp_materialization(
     with pytest.raises(ValueError, match="assembly profile"):
         runtime_module.build_agent_runtime(
             chat_config=ChatConfig(),
+            route=runtime_route(),
             mcp_servers=(cast(Any, object()),),
             assembly_profile=cast(Any, "invalid"),
         )
@@ -344,6 +348,7 @@ def test_detached_runtime_rejects_reintroduced_interactive_provider() -> None:
     with pytest.raises(ValueError, match="persona.control"):
         runtime_module.build_agent_runtime(
             chat_config=ChatConfig(),
+            route=runtime_route(),
             tool_packs=(),
             runtime_providers=(persona_provider,),
             assembly_profile="detached",
@@ -359,6 +364,7 @@ def test_detached_runtime_allows_unknown_local_provider_pack() -> None:
 
     runtime = runtime_module.build_agent_runtime(
         chat_config=ChatConfig(llm=LLMConfig(api_key="test-key")),
+        route=runtime_route("native", LLMConfig(api_key="test-key")),
         tool_packs=(),
         runtime_providers=(local_provider,),
         assembly_profile="detached",
@@ -394,6 +400,7 @@ def test_runtime_closes_mcp_when_loaded_provider_fails_validation(
     with pytest.raises(ToolMaterializationError, match="invalid_tool_audiences"):
         runtime_module.build_agent_runtime(
             chat_config=ChatConfig(llm=LLMConfig(api_key="test-key")),
+            route=runtime_route("native", LLMConfig(api_key="test-key")),
             tool_packs=(),
             mcp_servers=(McpServerConfig(id="invalid-provider"),),
         )
@@ -425,6 +432,7 @@ def test_successful_runtime_owns_mcp_until_close(
 
     runtime = runtime_module.build_agent_runtime(
         chat_config=ChatConfig(llm=LLMConfig(api_key="test-key")),
+        route=runtime_route("native", LLMConfig(api_key="test-key")),
         tool_packs=(),
         mcp_servers=(McpServerConfig(id="valid-provider"),),
     )

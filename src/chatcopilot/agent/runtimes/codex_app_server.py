@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import time
 from typing import Callable
 
-from chatcopilot.agent.backends.codex_events import CodexJsonlProjector, _item_span_id
+from chatcopilot.agent.runtimes.codex_events import CodexJsonlProjector, _item_span_id
 from chatcopilot.contracts.agent import AgentContentDelta, AgentMessageObserved, SpanFinished, SpanStarted, SpanUpdated
 
 
@@ -83,7 +83,7 @@ class AppServerProjector(CodexJsonlProjector):
             if self._plan is not None:
                 self.on_event(SpanFinished(name="Codex plan", kind="plan", ok=self.terminal_status == "completed",
                     trace_id=self.trace_id, span_id=_item_span_id(self.trace_id, self.turn_id + ":plan"),
-                    parent_span_id=self.llm_span_id, depth=1, backend="codex", source="provider", data={"output": self._plan}))
+                    parent_span_id=self.llm_span_id, depth=1, runtime_id="codex", source="provider", data={"output": self._plan}))
             usage = None
             if self._usage_total is not None and self.initial_usage is not None:
                 if all(self._usage_total[k] >= self.initial_usage.get(k, 0) for k in _TOKEN_KEYS):
@@ -108,11 +108,11 @@ class AppServerProjector(CodexJsonlProjector):
             span_id = _item_span_id(self.trace_id, identity)
             if self._plan is None:
                 self.on_event(SpanStarted(name="Codex plan", kind="plan", trace_id=self.trace_id,
-                    span_id=span_id, parent_span_id=self.llm_span_id, depth=1, backend="codex", source="provider"))
+                    span_id=span_id, parent_span_id=self.llm_span_id, depth=1, runtime_id="codex", source="provider"))
             self._plan = {"plan": params.get("plan"), "explanation": params.get("explanation")}
             self.on_event(SpanUpdated(name="Codex plan", kind="plan", trace_id=self.trace_id,
                 span_id=span_id, parent_span_id=self.llm_span_id, revision=self._revision(identity),
-                depth=1, backend="codex", source="provider", data={"output": self._plan}))
+                depth=1, runtime_id="codex", source="provider", data={"output": self._plan}))
         self.flush()
 
     def _item(self, item: dict, *, completed: bool) -> None:
@@ -147,7 +147,7 @@ class AppServerProjector(CodexJsonlProjector):
                 # tool or summary cannot overtake this message in the timeline.
                 self.on_event(AgentMessageObserved(text="", message_id=identity, trace_id=self.trace_id,
                     span_id=_item_span_id(self.trace_id, identity), parent_span_id=self.llm_span_id,
-                    revision=self._revision(identity), phase="start", status="running", backend="codex",
+                    revision=self._revision(identity), phase="start", status="running", runtime_id="codex",
                     source="provider", depth=1, observed_at=time.time(),
                     message_kind="progress" if item.get("phase") == "commentary" else "response"))
                 if isinstance(item.get("text"), str) and item["text"]:
@@ -163,7 +163,7 @@ class AppServerProjector(CodexJsonlProjector):
                 self.on_event(SpanFinished(name="subagent:" + str(item.get("tool", "Codex")), kind=kind,
                     ok=item.get("status") not in {"failed", "cancelled"}, trace_id=self.trace_id,
                     span_id=_item_span_id(self.trace_id, identity), parent_span_id=self.llm_span_id,
-                    depth=1, backend="codex", source="provider", data={"input": {"prompt": item.get("prompt")},
+                    depth=1, runtime_id="codex", source="provider", data={"input": {"prompt": item.get("prompt")},
                         "output": {"agents_states": item.get("agentsStates"), "thread_ids": item.get("receiverThreadIds")}}))
                 self._active_spans.pop(identity, None)
                 self._completed_items.add(identity)
@@ -185,7 +185,7 @@ class AppServerProjector(CodexJsonlProjector):
             message_id=identity, trace_id=self.trace_id, span_id=_item_span_id(self.trace_id, identity),
             parent_span_id=self.llm_span_id, revision=self._revision(identity),
             phase="finish" if completed else "update", message_kind=message_kind,
-            backend="codex", source="provider", depth=1, observed_at=time.time(),
+            runtime_id="codex", source="provider", depth=1, observed_at=time.time(),
             capture_state="truncated" if len(raw) > _CONTENT_BYTES else "available"))
 
     def _delta(self, identity: str, content_kind: str, section: int, delta: str) -> None:
@@ -235,7 +235,7 @@ class AppServerProjector(CodexJsonlProjector):
                 self.on_event(AgentMessageObserved(text=text, message_id=identity,
                     trace_id=self.trace_id, span_id=_item_span_id(self.trace_id, identity),
                     parent_span_id=self.llm_span_id, revision=self._revision(identity),
-                    status=status, backend="codex", source="provider", depth=1, capture_state=capture))
+                    status=status, runtime_id="codex", source="provider", depth=1, capture_state=capture))
                 self._message_completed.add(identity)
             else:
                 active = self._active_spans.pop(identity, None)
@@ -243,7 +243,7 @@ class AppServerProjector(CodexJsonlProjector):
                     output = {"public_summary": [text]} if active.kind == "reasoning" else {"aggregated_output": text}
                     self.on_event(SpanFinished(name=active.name, kind=active.kind, ok=False,
                         trace_id=self.trace_id, span_id=active.span_id, parent_span_id=self.llm_span_id,
-                        depth=1, backend="codex", source="provider", summary=summary,
+                        depth=1, runtime_id="codex", source="provider", summary=summary,
                         data={"output": output, "status": status, "capture_state": capture}))
                     self._completed_items.add(identity)
         super()._close_active_spans(ok=ok, summary=summary)

@@ -21,7 +21,7 @@ export function latestConfiguration(inspection?: Inspection): Configuration | nu
       return { ...entity, loaded: inspection.loaded_stale ? null : runtime?.loaded ?? null, connected: inspection.loaded_stale ? null : runtime?.connected ?? null,
         runtime_stale: inspection.loaded_stale,
         runtime: inspection.loaded_stale ? undefined : entity.id === "agent:main" ?
-          { backend: inspection.loaded!.backend, model: inspection.loaded!.model } : runtime?.runtime };
+          { runtime_id: inspection.loaded!.runtime_id, model: inspection.loaded!.model } : runtime?.runtime };
     }),
     ...inspection.loaded.entities.filter((entity) => !declared.has(entity.id))
       .map((entity) => ({ ...entity, configured: null, available: null,

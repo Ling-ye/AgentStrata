@@ -162,7 +162,7 @@ def test_provider_exposes_one_structured_owner_main_agent_tool() -> None:
 
 def test_main_session_provider_is_controlled_only_by_persona_pack() -> None:
     agent_runtime = SimpleNamespace(
-        research_llm=object(),
+        research_model_client=object(),
         build_unified_search_coordinator=lambda **_kwargs: None,
     )
 

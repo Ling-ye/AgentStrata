@@ -440,7 +440,7 @@ cases:
     turns:
       - text: Observe the configured runtime without mutation.
     requirements:
-      backends: [native, codex]
+      runtime_ids: [native, codex]
       env_keys: [CHATCOPILOT_EVAL_TEST_VALUE]
     policy:
       side_effect: none
@@ -455,7 +455,7 @@ cases:
         source="observational.yaml",
     )
     assert definitions[0].severity == "observational"
-    assert definitions[0].requirements.backends == ("native", "codex")
+    assert definitions[0].requirements.runtime_ids == ("native", "codex")
     assert definitions[0].requirements.env_keys == ("CHATCOPILOT_EVAL_TEST_VALUE",)
 
 
@@ -1055,11 +1055,11 @@ def test_runtime_implementation_snapshot_covers_real_agent_and_capability_depend
 
     assert common_modules.issubset(native["modules"])
     assert common_modules.issubset(codex["modules"])
-    assert "chatcopilot.agent.backends.inprocess" in native["modules"]
-    assert "chatcopilot.agent.backends.codex" in codex["modules"]
-    assert "chatcopilot.agent.backends.codex_events" in codex["modules"]
-    assert "chatcopilot.agent.backends.session_relay" in codex["modules"]
-    assert "chatcopilot.agent.backends.session_relay" not in native["modules"]
+    assert "chatcopilot.agent.runtimes.inprocess" in native["modules"]
+    assert "chatcopilot.agent.runtimes.codex" in codex["modules"]
+    assert "chatcopilot.agent.runtimes.codex_events" in codex["modules"]
+    assert "chatcopilot.agent.runtimes.dynamic_tools" in codex["modules"]
+    assert "chatcopilot.agent.runtimes.dynamic_tools" not in native["modules"]
     assert "chatcopilot.middleware.acp.admission" not in native["modules"]
     assert "chatcopilot.middleware.acp.agent_bridge" not in native["modules"]
     assert "chatcopilot.platforms.qq.at_proxy" not in native["modules"]

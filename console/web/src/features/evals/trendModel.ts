@@ -44,7 +44,7 @@ export function buildTrendPoints(records: EvaluationRecord[], selectedCases: str
 export function groupTrendPoints(points: TrendPoint[], dimensions: SplitDimension[], metric?: TrendMetric): TrendLine[] {
   const lines = new Map<string, TrendLine>();
   for (const point of points) {
-    const values = dimensions.map(d => d === "agent" ? `${point.record.bot_id} / ${point.backend}` : d === "model" ? pointModel(point) : pointScale(point));
+    const values = dimensions.map(d => d === "agent" ? `${point.record.bot_id} / ${point.runtime_id}` : d === "model" ? pointModel(point) : pointScale(point));
     const contract = metric ? point.record.insights.comparison_keys?.[metric] : undefined;
     if (metric && !contract) continue;
     const subject = subjectForRecord(point.record);

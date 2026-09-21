@@ -24,7 +24,7 @@ export const FIELD_NAMES: Record<string, string> = {
   require_at_in_group: "群聊需要 @", max_output_chars: "输出长度上限", max_workflow_depth: "Workflow 深度上限",
   identity: "身份提示词", response_style: "回复风格", refusal_style: "拒答风格", role_styles: "角色风格", mode_styles: "模式风格",
   description: "说明", body_path: "内容来源", schema_version: "配置版本", max_chunk_chars: "分块字符上限",
-  version: "运行版本", ready_at: "就绪时间（Unix 秒）", pid: "进程 PID", backend: "执行后端", model: "模型",
+  version: "运行版本", ready_at: "就绪时间（Unix 秒）", pid: "进程 PID", runtime_id: "Agent Runtime", model: "模型",
   timeout_seconds: "超时（秒）", max_concurrency: "最大并发", enabled: "启用", access: "使用权限",
   private_chat_only: "仅私聊", read_role: "读取角色", max_results: "最大结果数", reasoning_effort: "推理强度",
   profiles: "模型配置档", code_task_profile: "代码任务配置档", env_prefix: "环境变量前缀", tool_prefix: "工具前缀",

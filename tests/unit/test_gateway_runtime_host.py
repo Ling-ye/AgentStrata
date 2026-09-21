@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.botspec.model import LLMSpec
 
 import asyncio
 from pathlib import Path
@@ -68,7 +69,7 @@ def _runtime(*, wiki_enabled: bool = True) -> BotRuntimeContext:
     spec = SimpleNamespace(
         workspace=WorkspaceSpec(),
         context=SimpleNamespace(wiki=WikiSpec(enabled=wiki_enabled)),
-        llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST"),
+        llm=LLMSpec(env_prefix="CHATCOPILOT_TEST"),
     )
     return cast(
         BotRuntimeContext,

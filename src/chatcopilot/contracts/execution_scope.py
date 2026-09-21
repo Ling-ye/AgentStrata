@@ -1,4 +1,4 @@
-"""Host-bound filesystem resources, independent of Backend and role policy."""
+"""Host-bound filesystem resources, independent of Agent runtime and role policy."""
 
 from __future__ import annotations
 

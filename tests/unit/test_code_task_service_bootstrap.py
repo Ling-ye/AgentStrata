@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from chatcopilot.botspec.model import ContextSpec
+from chatcopilot.botspec.model import ContextSpec, LLMSpec
 
 import os
 from types import SimpleNamespace
 from unittest import mock
 
-from chatcopilot.contracts.model_selection import CodeModelProfile
+from chatcopilot.contracts.model_selection import WorkerModelProfile
 from chatcopilot.core.config import RoutingConfig
 import chatcopilot.code_task_service as code_task_service
 
@@ -16,7 +16,7 @@ def test_code_task_service_derives_worker_model_from_effective_profile() -> None
         instance_id="demo",
         tool_packs=("dev.code_tasks",),
         spec=SimpleNamespace(
-            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_DEMO")
+            context=ContextSpec(), llm=LLMSpec(env_prefix="CHATCOPILOT_DEMO")
         ),
     )
     config = SimpleNamespace(
@@ -24,7 +24,7 @@ def test_code_task_service_derives_worker_model_from_effective_profile() -> None
             code_model="gpt-5.6-terra",
             code_reasoning_effort="medium",
             code_profiles={
-                "sol-max": CodeModelProfile(
+                "sol-max": WorkerModelProfile(
                     model="gpt-5.6-sol",
                     reasoning_effort="max",
                 )
@@ -76,7 +76,7 @@ def test_code_task_service_keeps_non_code_instance_idle_without_profile() -> Non
         instance_id="demo",
         tool_packs=(),
         spec=SimpleNamespace(
-            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_DEMO")
+            context=ContextSpec(), llm=LLMSpec(env_prefix="CHATCOPILOT_DEMO")
         ),
     )
 

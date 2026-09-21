@@ -1,4 +1,4 @@
-"""Compact v2 result construction for controlled test scenarios."""
+"""Compact v3 result construction for controlled test scenarios."""
 
 from dataclasses import fields, replace
 
@@ -9,7 +9,7 @@ from chatcopilot.evals.models import (
 
 
 def trial_result(**values):
-    """Accept scenario facts, construct the four explicit v2 result sections."""
+    """Accept scenario facts, construct the four explicit v3 result sections."""
     names = {field.name for field in fields(EvaluationTrial)}
     identity = {name: value for name, value in values.items() if name in names}
     outcome = values.get("outcome", "error")
@@ -60,13 +60,13 @@ def trial_payload(description, *, evaluation_id="eval-fixture", kind="suite"):
         return description
     defaults = dict(trial_id="trial-fixture", evaluation_id=evaluation_id, kind=kind, bot="controlled",
         profile="", suite_id="fixture-suite", case_ref="fixture-suite:a", case_id="a", dimension="test",
-        target_id="main", target_fingerprint="fingerprint", executor="agent_configured", backend="native",
+        target_id="main", target_fingerprint="fingerprint", executor="agent_configured", runtime_id="native",
         model="controlled", reasoning_effort="", attempt=1, order=1, outcome="passed")
     return to_jsonable(trial_result(**{**defaults, **description}))
 
 
 def result_payload(description):
-    return {**description, "schema_version": 2,
+    return {**description, "schema_version": 3,
         "trials": [trial_payload(t, evaluation_id=description.get("evaluation_id", "eval-fixture"),
                                  kind=description.get("kind", "suite")) for t in description.get("trials", [])]}
 

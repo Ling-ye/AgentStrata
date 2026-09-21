@@ -28,7 +28,7 @@ Codex 回合不等于底层模型调用，未提供摘要、采集失败、截�
 当前会话收到源配置写入成功回执后可保留应用入口；这不改变上方运行观测的“暂无法确认”状态。
 组件目录统一打开分层配置并定位对应条目，地址规则见 Console 正文。任务页不再展示“实例准入审计 · 最近 100 条”；后端继续记录准入拒绝，任务内权限决定仍在对应步骤展示，准入前拒绝不会创建任务。
 
-“任务”左侧列表直接选择历史任务，右侧在原工作台显示对应流程。列表显示开始时间、执行状态、短任务 ID、耗时和模型，悬停 ID 可查看完整值，也可点击复制。时间范围、状态和任务 ID 搜索始终显示；“更多筛选”原处展开配置版本、Backend、模型、组件、错误码和最短耗时。默认最近 24 小时，也可选择 7 天、30 天或自定义范围，全部在服务端筛选，每页 50 条。
+“任务”左侧列表直接选择历史任务，右侧在原工作台显示对应流程。列表显示开始时间、执行状态、短任务 ID、耗时和模型，悬停 ID 可查看完整值，也可点击复制。时间范围、状态和任务 ID 搜索始终显示；“更多筛选”原处展开配置版本、Runtime、模型、组件、错误码和最短耗时。默认最近 24 小时，也可选择 7 天、30 天或自定义范围，全部在服务端筛选，每页 50 条。
 
 首次进入恢复该实例上次选择，没有历史选择时使用列表第一条。新任务、自动刷新、修改筛选或翻页都不会替换当前任务；当前任务不在列表时，详情头部显示“当前任务不在此列表中”。任务选择、筛选和列表位置按实例保留，各任务的步骤展开状态与阅读位置分别保留，首次查看从详情顶部开始。列表和详情分别显示读取错误，可以独立重试；查看其他页签时停止任务轮询。浏览器会话只持久保存这些界面状态，不保存任务正文和配置内容。旧 `tab=observation`、`tab=history` 链接保留实例与任务参数，统一进入 `tab=tasks`。
 
@@ -56,7 +56,7 @@ Agent 执行内部使用统一过程卡片展示 Native、LangGraph 和 Codex。
 
 Codex 过程适配器识别命令、文件变更、MCP、搜索、计划、思考活动及逐条公开消息。已提供的活动正文和错误可展开；思考没有公开摘要时显示未提供正文。一次 Codex exec 标为“Agent 后端执行”，只有实际模型调用边界才标号。宿主工具执行与 Provider 活动标明来源，没有共享 ID 时不按名称合并；不采集隐藏推理或推断未公开轮次。
 
-卡片收起时仍提供可见区域的有界输入输出预览；展开直接显示已采集正文。流式消息按同一消息 ID 更新，结束或补页不会产生重复卡片；新增观测消息不用于聊天交付。三种 Backend 的格式在运行端适配，Console 统一读取现有事件和正文接口，历史未采集的信息不回填。
+卡片收起时仍提供可见区域的有界输入输出预览；展开直接显示已采集正文。流式消息按同一消息 ID 更新，结束或补页不会产生重复卡片；新增观测消息不用于聊天交付。三种 Runtime 的格式在运行端适配，Console 统一读取现有事件和正文接口，历史未采集的信息不回填。
 
 Gateway 运行进程持续写入独立的 `observability/index.sqlite3` 和按任务保存的详情文件，Console 关闭不影响记录、恢复校对或定期清理。任务生命周期、审批及消息交付由原有业务状态持有者决定，观测只保存投影；诊断失败不改写权限、任务结果或交付事实。成功、失败、取消和等待恢复的任务均记录，准入前拒绝单独进入实例审计。
 
@@ -70,7 +70,7 @@ Gateway 运行进程持续写入独立的 `observability/index.sqlite3` 和按�
 支持 `Last-Event-ID`，只发送该实例任务的持久事件及有界增量正文，禁止缓存。
 
 - `GET /api/bots/{instance_id}/inspection?run_id=...&event_seq=...`：当前、已加载与任务/阶段执行时配置；阶段必须属于选中任务。当前条目补充 `effective_config/effective_environment`，比较结果通过 `configuration_status`（`applied/pending/unknown`）及原因返回；原始字段和 `pending_changes` 保持兼容。
-- `GET /api/bots/{instance_id}/gateway-observation`：分页历史和最多 100 条实例准入审计。筛选参数为 `since/until/state/config_id/backend/model/component/error_code/search/min_ms/page/limit`；时间使用 Unix 秒，单页最多 100 条。
+- `GET /api/bots/{instance_id}/gateway-observation`：分页历史和最多 100 条实例准入审计。筛选参数为 `since/until/state/config_id/runtime_id/model/component/error_code/search/min_ms/page/limit`；时间使用 Unix 秒，单页最多 100 条。
 - `GET /api/bots/{instance_id}/gateway-observation/metrics`：同一筛选范围的聚合指标、组件分组和趋势。
 - `GET /api/bots/{instance_id}/gateway-observation/runs/{run_id}`：任务摘要、首批阶段、审批、出站状态和交付回执。
 - `GET /api/bots/{instance_id}/gateway-observation/runs/{run_id}/events?after=...&limit=...`：按序号增量读取，默认 200 条、最多 500 条。

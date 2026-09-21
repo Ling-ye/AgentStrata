@@ -135,6 +135,7 @@ class GatewayApprovalService:
         conversation_ref: str,
         decision: str,
         challenge: str,
+        responder: dict[str, str] | None = None,
         now: float | None = None,
     ) -> ApprovalReceipt:
         """Resolve only after the caller binding matches the stored trusted request."""
@@ -173,6 +174,7 @@ class GatewayApprovalService:
                 policy_version=request.policy_version,
                 challenge=challenge,
                 accepted=decision == "approve",
+                responder=responder,
             ),
             now=now,
         )

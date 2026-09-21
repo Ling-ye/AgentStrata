@@ -69,8 +69,8 @@ export default function TaskRecordList({ instanceId, selected, data, loading, er
         <Input aria-label="模型筛选" placeholder="模型" allowClear value={filters.model ?? ""} onChange={(model) => onFilter({ model })} />
         <Input aria-label="组件筛选" placeholder="工具 / 插件 ID" allowClear value={filters.component ?? ""} onChange={(component) => onFilter({ component })} />
         <Input aria-label="错误码筛选" placeholder="错误码" allowClear value={filters.error_code ?? ""} onChange={(error_code) => onFilter({ error_code })} />
-        <Select aria-label="后端筛选" value={filters.backend || ""} onChange={(backend) => onFilter({ backend })} options={[
-          { value: "", label: "全部 Backend" }, ...["native", "langgraph", "codex"].map((value) => ({ value, label: value }))]} />
+        <Select aria-label="Runtime 筛选" value={filters.runtime_id || ""} onChange={(runtime_id) => onFilter({ runtime_id })} options={[
+          { value: "", label: "全部 Runtime" }, ...["native", "langgraph", "codex"].map((value) => ({ value, label: value }))]} />
         <Input aria-label="最短耗时" placeholder="最短耗时（毫秒）" value={filters.min_ms == null ? "" : String(filters.min_ms)}
           onChange={(value) => { if (!value || /^\d+$/.test(value)) onFilter({ min_ms: value ? Number(value) : undefined }); }} />
       </div></details>

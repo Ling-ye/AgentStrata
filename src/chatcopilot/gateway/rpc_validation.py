@@ -92,7 +92,7 @@ _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _OPAQUE_RESOURCE_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _RESOURCE_KINDS = frozenset({"image", "audio", "video", "file"})
 _CHANNEL_STATES = frozenset({"starting", "connected", "disconnected", "degraded", "failed"})
-_APPROVAL_STATUSES = frozenset({"pending", "resolved", "expired"})
+_APPROVAL_STATUSES = frozenset({"pending", "resolved", "expired", "cancelled"})
 _APPROVAL_DECISIONS = frozenset({"approve", "deny"})
 _STOP_REASONS = frozenset({"completed", "aborted"})
 _RUN_STATES = frozenset(
@@ -1548,7 +1548,37 @@ def _reject_mutation_identity_claims(value: Mapping[str, Any]) -> None:
                 stack.extend(child for child in item if isinstance(child, Mapping))
 
 
+def _parse_interaction(params, operation):
+    from chatcopilot.contracts.gateway_rpc import InteractionsParams
+    required = {"interactionId", "resolution"} if operation == "resolve" else {"interactionId"} if operation == "get" else set()
+    _exact_keys(params, required=required, optional={"sessionId"}, label="interaction params")
+    resolution = _object(params["resolution"], "resolution") if operation == "resolve" else None
+    return InteractionsParams(operation, _optional_id(params, "sessionId"),
+                              _required_id(params["interactionId"], "interactionId") if "interactionId" in params else None, resolution)
+
+
+def _serialize_interaction(params):
+    from chatcopilot.contracts.gateway_rpc import InteractionsParams
+    value = _expect_type(params, InteractionsParams, "interaction params")
+    result = {}
+    _put_optional(result, "sessionId", value.session_id)
+    _put_optional(result, "interactionId", value.interaction_id)
+    _put_optional(result, "resolution", value.resolution)
+    return result
+
+
+def _parse_interaction_result(value):
+    from chatcopilot.contracts.gateway_rpc import InteractionsResult
+    return InteractionsResult(_object(value, "interaction result"))
+
+
+def _serialize_interaction_result(value):
+    from chatcopilot.contracts.gateway_rpc import InteractionsResult
+    return dict(_expect_type(value, InteractionsResult, "interaction result").payload)
+
+
 _REQUEST_PARSERS: dict[str, _RequestParser] = {
+    **{"interactions." + op: (lambda value, op=op: _parse_interaction(value, op)) for op in ("list", "get", "resolve")},
     "health": _parse_health,
     "status": _parse_status,
     "channels.list": _parse_channels_list,
@@ -1567,6 +1597,7 @@ _REQUEST_PARSERS: dict[str, _RequestParser] = {
 }
 
 _REQUEST_SERIALIZERS: dict[str, Callable[[GatewayRequestParams], dict[str, Any]]] = {
+    **{"interactions." + op: _serialize_interaction for op in ("list", "get", "resolve")},
     "health": _serialize_health,
     "status": _serialize_status,
     "channels.list": _serialize_channels_list,
@@ -1585,6 +1616,7 @@ _REQUEST_SERIALIZERS: dict[str, Callable[[GatewayRequestParams], dict[str, Any]]
 }
 
 _RESULT_PARSERS: dict[str, _ResultParser] = {
+    **{"interactions." + op: _parse_interaction_result for op in ("list", "get", "resolve")},
     "health": _parse_health_result,
     "status": _parse_status_result,
     "channels.list": _parse_channels_result,
@@ -1603,6 +1635,7 @@ _RESULT_PARSERS: dict[str, _ResultParser] = {
 }
 
 _RESULT_SERIALIZERS: dict[str, Callable[[GatewayMethodResult], dict[str, Any]]] = {
+    **{"interactions." + op: _serialize_interaction_result for op in ("list", "get", "resolve")},
     "health": _serialize_health_result,
     "status": _serialize_status_result,
     "channels.list": _serialize_channels_result,

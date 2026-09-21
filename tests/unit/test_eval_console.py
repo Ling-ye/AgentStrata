@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.botspec.model import LLMSpec
 
 
 import json
@@ -207,9 +208,9 @@ def test_agent_runtime_closes_when_session_creation_fails(tmp_path, message):
     from chatcopilot.evals.models import EvalCase
     from chatcopilot.evals.plugins import get_evaluation_plugin
     agent = MagicMock()
-    agent.new_session.side_effect = RuntimeError(message)
-    runtime = SimpleNamespace(agent_backend="native", prompt_profile=BotPromptProfile(identity="test", response_style="concise"),
-        capability_policies=(), skills=(), spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="TEST")))
+    agent.open_session.side_effect = RuntimeError(message)
+    runtime = SimpleNamespace(runtime_id="native", prompt_profile=BotPromptProfile(identity="test", response_style="concise"),
+        capability_policies=(), skills=(), spec=SimpleNamespace(llm=LLMSpec(env_prefix="TEST")))
     with patch("chatcopilot.evals.evaluation_runtime.load_evaluation_runtime", return_value=runtime), \
          patch("chatcopilot.core.config.load_config", return_value=MagicMock()), \
          patch("chatcopilot.application.agent_runtime.assemble_agent_runtime", return_value=agent):

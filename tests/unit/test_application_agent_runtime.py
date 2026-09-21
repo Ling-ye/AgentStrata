@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from chatcopilot.botspec.model import ContextSpec
+from chatcopilot.botspec.model import ContextSpec, LLMSpec, ModelSpec
 
 from dataclasses import fields
 from types import SimpleNamespace
@@ -15,15 +15,17 @@ from chatcopilot.application.agent_runtime import (
 )
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.core.config import ChatConfig
+from dataclasses import replace
 
 
 def _runtime() -> SimpleNamespace:
     return SimpleNamespace(
         spec=SimpleNamespace(
             context=ContextSpec(),
-            llm=SimpleNamespace(
-                research_model="research-model",
+            llm=LLMSpec(
+                chat=ModelSpec(provider="openai", api="openai_responses"),
                 research_env_prefix=None,
+                research=ModelSpec(model="research-model"),
             ),
         ),
         tool_packs=("workspace.read_write", "persona.control", "memory.chat"),
@@ -32,7 +34,7 @@ def _runtime() -> SimpleNamespace:
         rag_sources=("rag-a",),
         mcp_servers=("mcp-a",),
         subagents=SubagentSpec(include=("developer",)),
-        agent_backend="codex",
+        runtime_id="codex",
     )
 
 
@@ -41,7 +43,7 @@ def test_interactive_projection_preserves_selected_bot_runtime() -> None:
 
     projection = project_agent_runtime(_runtime(), chat_config=chat_config)
 
-    assert projection.chat_config == chat_config
+    assert projection.chat_config == replace(chat_config, llm=replace(chat_config.llm, provider="openai", api="openai_responses"))
     assert projection.chat_config is not chat_config
     assert projection.research_llm_config.model == "research-model"
     assert projection.tool_packs == (
@@ -54,7 +56,7 @@ def test_interactive_projection_preserves_selected_bot_runtime() -> None:
     assert projection.rag_sources == ("rag-a",)
     assert projection.mcp_servers == ("mcp-a",)
     assert projection.subagents.include == ("developer",)
-    assert projection.agent_backend == "codex"
+    assert projection.route.runtime_id == "codex"
     assert projection.assembly_profile == "interactive"
 
 
@@ -69,7 +71,7 @@ def test_detached_profile_and_overrides_are_explicit() -> None:
             rag_sources=(),
             mcp_servers=(),
             subagents=replacement_subagents,
-            agent_backend="native",
+            runtime_id="native",
         ),
     )
 
@@ -78,7 +80,7 @@ def test_detached_profile_and_overrides_are_explicit() -> None:
     assert projection.mcp_servers == ()
     assert projection.subagents == replacement_subagents
     assert projection.subagents is not replacement_subagents
-    assert projection.agent_backend == "native"
+    assert projection.route.runtime_id == "native"
     assert projection.assembly_profile == "detached"
 
 
@@ -122,6 +124,7 @@ def test_materialization_forwards_the_complete_projection(monkeypatch) -> None:
 
     assert materialize_agent_runtime(projection) is expected
     assert captured == {
+        "route": projection.route,
         "chat_config": projection.chat_config,
         "research_llm_config": projection.research_llm_config,
         "search_llm_config": projection.search_llm_config,
@@ -135,7 +138,6 @@ def test_materialization_forwards_the_complete_projection(monkeypatch) -> None:
         "rag_sources": projection.rag_sources,
         "mcp_servers": projection.mcp_servers,
         "subagents": projection.subagents,
-        "agent_backend": projection.agent_backend,
         "assembly_profile": projection.assembly_profile,
         "project_roots": projection.project_roots,
         "readonly_roots": projection.readonly_roots,
@@ -180,7 +182,7 @@ def test_assembly_surface_has_no_unused_override_or_post_bind_axes() -> None:
         "rag_sources",
         "mcp_servers",
         "subagents",
-        "agent_backend",
+        "runtime_id",
     }
     assert not hasattr(AgentRuntime, "bind_payload_filter_factory")
     assert not hasattr(AgentRuntime, "bind_background_submitter_factory")

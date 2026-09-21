@@ -55,7 +55,7 @@ def _test_prompt_plan(workspace: Workspace, **kwargs):
                     for key, value in mode_prompts.items()
                 },
             ),
-            backend="native",
+            runtime_id="native",
             model=None,
             role=role.value if hasattr(role, "value") else str(role),
             channel_kind=(
@@ -335,7 +335,7 @@ class DebugModeAccessTests(unittest.TestCase):
             role=role,
             assistant_mode=assistant_mode,
             runtime=SimpleNamespace(
-                agent_backend="native",
+                runtime_id="native",
                 prompt_profile=BotPromptProfile(
                     identity="Test assistant",
                     response_style="Return concise test responses.",

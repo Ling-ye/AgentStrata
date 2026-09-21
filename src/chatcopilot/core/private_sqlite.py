@@ -146,7 +146,11 @@ class PrivateDatabase:
             raise
 
     def _initialize(self, schema: str) -> None:
-        with private_lock(self.path.with_name(self.path.name + ".init.lock"), timeout=5):
+        # Initialization is a trusted one-time critical section. The kernel
+        # releases the advisory lock if its owner dies, so waiting avoids a
+        # false storage failure while another process is legitimately finishing
+        # a transaction during concurrent startup.
+        with private_lock(self.path.with_name(self.path.name + ".init.lock"), timeout=None):
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             except FileExistsError:
@@ -218,7 +222,10 @@ class PrivateDatabase:
                 # SQLite can unlink these files when another connection commits
                 # or closes. Only their absence is optional, not their safety.
                 pass
-        connection = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True, timeout=5)
+        # Independent Console/worker processes legitimately serialize on the
+        # same private DB. Give SQLite enough time to hand the writer lease over
+        # under the repository's documented stress envelope.
+        connection = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True, timeout=30)
         connection.row_factory = sqlite3.Row
         try:
             after = private_file(self.path)

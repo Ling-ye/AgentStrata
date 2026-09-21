@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.botspec.model import LLMSpec
 
 from chatcopilot.botspec.model import ContextSpec
 
@@ -14,10 +15,9 @@ import pytest
 
 from chatcopilot.application.agent_runtime import AgentRuntimeAssemblyProfile
 from chatcopilot.contracts.agent import AgentResult, FinalText, TurnError
-from chatcopilot.contracts.model_selection import CodeModelSelection
+from chatcopilot.contracts.model_runtime import ModelSelection
 from chatcopilot.contracts.subagents import SubagentSpec
-from chatcopilot.core.config import ChatConfig
-from chatcopilot.core.model_selection import CODE_MODEL_SELECTION_METADATA_KEY
+from chatcopilot.core.config import ChatConfig, LLMConfig
 from chatcopilot.middleware.acp.server import AcpChatAgent
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder
@@ -34,9 +34,9 @@ def _runtime() -> SimpleNamespace:
         rag_sources=(),
         mcp_servers=(object(),),
         subagents=SubagentSpec(),
-        agent_backend="native",
+        runtime_id="native",
         spec=SimpleNamespace(
-            context=ContextSpec(), llm=SimpleNamespace(env_prefix="CHATCOPILOT_LAZYTEST")
+            context=ContextSpec(), llm=LLMSpec(env_prefix="CHATCOPILOT_LAZYTEST")
         ),
     )
 
@@ -429,6 +429,7 @@ def test_llm_error_keeps_raw_diagnostic_private_and_delivers_safe_text(
     backend_session = _Session()
     session = SimpleNamespace(
         debug_mode=False,
+        main_model_route=None,
         workspace=workspace,
         require_session=lambda: backend_session,
         persist_transcript=lambda: None,
@@ -506,6 +507,7 @@ def test_once_model_selection_is_consumed_only_after_run_task_returns(
             self._backend = backend
             self.workspace = workspace
             self.selection = selection
+            self.main_model_route = selection.route
             self.consumed = []
 
         def require_session(self):
@@ -514,10 +516,10 @@ def test_once_model_selection_is_consumed_only_after_run_task_returns(
         def persist_transcript(self) -> None:
             return None
 
-        def effective_code_model_selection(self, _default):
+        def effective_model_selection(self, _default):
             return self.selection
 
-        def consume_code_model_once(self, selection) -> None:
+        def consume_model_once(self, selection) -> None:
             self.consumed.append(selection)
 
     workspace = Workspace(
@@ -526,10 +528,8 @@ def test_once_model_selection_is_consumed_only_after_run_task_returns(
         chat_id="chat-model-selection",
         user_id="owner-model-selection",
     ).ensure()
-    selection = CodeModelSelection(
-        provider="codex_cli",
-        model="gpt-5.6-sol",
-        reasoning_effort="max",
+    selection = ModelSelection(
+        route=LLMConfig(model="gpt-5.6-sol", reasoning_effort="max").model_route(),
         scope="once",
         source="profile",
         profile="sol-max",
@@ -539,7 +539,7 @@ def test_once_model_selection_is_consumed_only_after_run_task_returns(
     config.routing.code_reasoning_effort = "medium"
     agent = AcpChatAgent.__new__(AcpChatAgent)
     agent._conn = _Conn()
-    agent._runtime = SimpleNamespace(agent_backend="codex")
+    agent._runtime = SimpleNamespace(runtime_id="codex")
     agent._chat_config = config
 
     successful_backend = _BackendSession()
@@ -558,8 +558,7 @@ def test_once_model_selection_is_consumed_only_after_run_task_returns(
     )
 
     assert (
-        successful_backend.tasks[0].metadata[CODE_MODEL_SELECTION_METADATA_KEY]
-        == selection.to_payload()
+        successful_backend.tasks[0].execution.model_selection == selection
     )
     assert successful_session.consumed == [selection]
     assert config.routing.code_model == "gpt-5.6-terra"
@@ -603,10 +602,11 @@ def test_rejected_explicit_memory_never_retries_or_false_reports(
 
     class _State:
         debug_mode = False
+        main_model_route = None
         role = SimpleNamespace(value="user")
 
         def __init__(self, backend) -> None:
-            self.backend = backend
+            self.runtime_id = backend
             self.workspace = Workspace(
                 root=tmp_path / "p2p_member-1",
                 chat_kind="p2p",
@@ -615,7 +615,7 @@ def test_rejected_explicit_memory_never_retries_or_false_reports(
             ).ensure()
 
         def require_session(self):
-            return self.backend
+            return self.runtime_id
 
         def persist_transcript(self) -> None:
             return None

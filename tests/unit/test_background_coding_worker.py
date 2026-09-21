@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.botspec.model import LLMSpec
 
 import json
 import os
@@ -149,10 +150,10 @@ class BackgroundCodingWorkerTests(unittest.TestCase):
     ) -> None:
         executor = object()
         runtime = mock.Mock()
-        runtime.new_session.return_value = SimpleNamespace(tool_executor=executor)
+        runtime.open_session.return_value = SimpleNamespace(host_tools=executor)
         assemble_agent_runtime.return_value = runtime
         spec = SimpleNamespace(
-            llm=SimpleNamespace(env_prefix="CHATCOPILOT_TEST"),
+            llm=LLMSpec(env_prefix="CHATCOPILOT_TEST"),
             context=SimpleNamespace(
                 codebases=SimpleNamespace(registry="codebases/repositories.yaml"),
                 dev=SimpleNamespace(
@@ -185,7 +186,7 @@ class BackgroundCodingWorkerTests(unittest.TestCase):
             rag_sources=(),
             mcp_servers=mcp_servers,
             subagents=SimpleNamespace(include=("code_implementer", "code_publisher")),
-            agent_backend="native",
+            runtime_id="native",
             prompt_profile=BotPromptProfile(
                 identity="system",
                 response_style="concise",
@@ -212,13 +213,13 @@ class BackgroundCodingWorkerTests(unittest.TestCase):
             assemble_agent_runtime.call_args.kwargs["profile"],
             AgentRuntimeAssemblyProfile.DETACHED,
         )
-        runtime.new_session.assert_called_once_with(
+        runtime.open_session.assert_called_once_with(
             session_id="background-job-1",
             prompt_input=mock.ANY,
             workspace_service=workspace_service,
             caller_role_hint="owner",
         )
-        built_prompt = runtime.new_session.call_args.kwargs["prompt_input"]
+        built_prompt = runtime.open_session.call_args.kwargs["prompt_input"]
         self.assertEqual(built_prompt.profile.identity, "system")
         self.assertEqual(built_prompt.role, "owner")
         self.assertEqual(built_prompt.channel_kind, "private")

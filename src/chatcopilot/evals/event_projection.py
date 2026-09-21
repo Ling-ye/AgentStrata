@@ -62,7 +62,7 @@ def _project_context_snapshot(
     return {
         "type": ContextSnapshotPrepared.__name__,
         "snapshot_id": _text(get("snapshot_id")),
-        "backend": _text(get("backend")),
+        "runtime_id": _text(get("runtime_id")),
         "model": _text(get("model")),
         "iteration": _nonnegative_int(get("iteration")),
         "coverage": _text(get("coverage")),

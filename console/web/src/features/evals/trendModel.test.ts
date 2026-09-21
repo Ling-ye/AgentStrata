@@ -7,7 +7,7 @@ import { recordedInput } from "./trialModel";
 function record(id: string, model = "model-a", bot = "bot-a", count = 2) {
   return normalizeEvaluation({ evaluation_id: id, bot_id: bot, kind: "suite", status: "completed", created_at: `2026-09-0${id}T00:00:00Z`,
     source_revision: { commit: id.repeat(40) }, insights: { series_key: `old-group-${id}`, trend_eligible: true,
-      targets: [{ target_id: "main", backend: "native", model, observed: count, repetitions: 1,
+      targets: [{ target_id: "main", runtime_id: "native", model, observed: count, repetitions: 1,
         counts: { passed: 1, failed: count - 1, error: 0, skipped: 0 }, pass_rate: 1 / count,
         quality: { score: .9, scored: 1, expected: 2 }, case_ids: Array.from({ length: count }, (_, i) => `case-${i}`),
         cases: [{ case_id: "case-0", counts: { passed: 1, failed: 0, error: 0, skipped: 0 }, quality: { score: .9, scored: 1, expected: 1 }, agent_duration_seconds: 2 }],

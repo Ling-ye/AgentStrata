@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from chatcopilot.application.execution_scope import execution_scope
 from chatcopilot.contracts.execution_scope import CommandTimeouts
+from chatcopilot.contracts.execution import TranscriptSnapshot
+from chatcopilot.core.config import ChatConfig
 
 
 import os
@@ -294,7 +296,7 @@ def test_control_session_materialization_replays_buffered_exchange(tmp_path: Pat
         prompt_profile=BotPromptProfile(identity="system", response_style="concise"),
         capability_policies=(),
         skills=(),
-        agent_backend="native",
+        runtime_id="native",
     )
     workspace = replace(_workspace(tmp_path, "p2p"), user_name="Example User")
     state = _build_session_for_workspace(
@@ -309,20 +311,21 @@ def test_control_session_materialization_replays_buffered_exchange(tmp_path: Pat
     messages: list[tuple[str, str]] = []
     agent_session = SimpleNamespace(
         record_exchange=lambda user, assistant: messages.append((user, assistant)),
-        snapshot_messages=lambda: [
+        snapshot_transcript=lambda: TranscriptSnapshot(tuple(
             {"role": role, "content": text}
             for user, assistant in messages
             for role, text in (("user", user), ("assistant", assistant))
-        ],
+        ), "host_history"),
         message_count=2,
         _messages=[],
-        set_prompt_plan=lambda _value: None,
+        update_context=lambda _value: None,
     )
     agent_runtime = SimpleNamespace(
         retriever=None,
+        runtime_config=ChatConfig(),
         project_roots=(),
         command_timeouts=CommandTimeouts(90, 1200),
-        new_session=mock.Mock(return_value=agent_session),
+        open_session=mock.Mock(return_value=agent_session),
     )
 
     _materialize_session_for_workspace(state, agent_runtime=agent_runtime)
@@ -330,8 +333,8 @@ def test_control_session_materialization_replays_buffered_exchange(tmp_path: Pat
     assert state.is_materialized
     assert state.role == Role.USER
     assert messages == [("job status?", "delegated")]
-    agent_runtime.new_session.assert_called_once()
-    open_kwargs = agent_runtime.new_session.call_args.kwargs
+    agent_runtime.open_session.assert_called_once()
+    open_kwargs = agent_runtime.open_session.call_args.kwargs
     assert open_kwargs["workspace_service"].execution_scope.command_timeouts == CommandTimeouts(90, 1200)
     assert open_kwargs["caller_role_hint"] == "user"
     assert open_kwargs["caller_identity"].user_id == "owner-1"

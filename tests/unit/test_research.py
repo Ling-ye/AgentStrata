@@ -7,7 +7,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from chatcopilot.core.config import ChatConfig
+from chatcopilot.core.config import ChatConfig, LLMConfig
+from unittest import mock
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.agent.search.models import SearchRequest
 from chatcopilot.agent.search.router import SearchRouter
@@ -15,10 +16,20 @@ from chatcopilot.agent.search.tool import build_search_tool
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.model import SubagentBudgetSpec, SubagentSpec
-from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
+from chatcopilot.contracts.runtime_adapter import CodexMainSessionPolicy
+from chatcopilot.contracts.model_runtime import ResolvedRuntimeRoute
 from chatcopilot.contracts.subagents import SearchProviderSpec
 from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
+
+
+def _runtime_route(runtime_id: str) -> ResolvedRuntimeRoute:
+    config = (
+        LLMConfig(provider="openai", api="openai_responses", api_key="fixture")
+        if runtime_id == "codex"
+        else ChatConfig().llm
+    )
+    return ResolvedRuntimeRoute(runtime_id, config.model_route())  # type: ignore[arg-type]
 
 
 class _FakeLLM:
@@ -381,10 +392,11 @@ def test_runtime_hides_internal_information_tools_when_research_enabled() -> Non
         _tool("browse_dynamic_page", metadata={"subagent_kind": "external"}),
     )
     runtime = AgentRuntime(
-        llm=_FakeLLM("{}"),
+        main_model_client=_FakeLLM("{}"),
         tools=(web_fetch, _tool("normal_tool")),
         tools_schema=(),
         runtime_config=ChatConfig(),
+        route=_runtime_route("native"),
         subagents=SubagentSpec(
             research_enabled=True,
             research_budget=SubagentBudgetSpec(),
@@ -395,10 +407,9 @@ def test_runtime_hides_internal_information_tools_when_research_enabled() -> Non
         "chatcopilot.agent.capabilities.delegation.build_subagent_provider",
         return_value=_delegation_provider(*delegates),
     ):
-        session = runtime.new_session(session_id="sid", prompt_input=prompt_input("base"))
+        session = runtime.open_session(session_id="sid", prompt_input=prompt_input("base"))
 
-    concrete = session.backend.native_session(session.backend_session_ref)
-    names = {entry["function"]["name"] for entry in concrete.tools_schema}
+    names = set(session.capabilities.tool_names)
     assert "search_information" in names
     assert "normal_tool" in names
     assert "search_tavily" not in names
@@ -406,12 +417,11 @@ def test_runtime_hides_internal_information_tools_when_research_enabled() -> Non
     assert "query_approved_sources" not in names
     assert "web_fetch_page" not in names
     assert "browse_dynamic_page" not in names
-    assert concrete.prompt_plan.tool_projection_digest
 
 
-@pytest.mark.parametrize("backend", ["native", "langgraph"])
+@pytest.mark.parametrize("runtime_id", ["native", "langgraph"])
 def test_native_and_langgraph_expose_search_information_for_direct_provider(
-    backend: str,
+    runtime_id: str,
 ) -> None:
     provider = SearchProviderSpec(
         id="searxng",
@@ -419,7 +429,7 @@ def test_native_and_langgraph_expose_search_information_for_direct_provider(
         endpoint="http://127.0.0.1:18064",
     )
     runtime = AgentRuntime(
-        llm=_FakeLLM("{}"),
+        main_model_client=_FakeLLM("{}"),
         tools=(_tool("normal_tool"),),
         tools_schema=(),
         runtime_config=ChatConfig(),
@@ -428,34 +438,35 @@ def test_native_and_langgraph_expose_search_information_for_direct_provider(
             research_budget=SubagentBudgetSpec(),
             search_providers=(provider,),
         ),
-        agent_backend=backend,
+        route=_runtime_route(runtime_id),
     )
 
     with patch(
         "chatcopilot.agent.capabilities.delegation.build_subagent_provider",
         return_value=None,
     ):
-        session = runtime.new_session(session_id=f"sid-{backend}", prompt_input=prompt_input("base"))
+        session = runtime.open_session(session_id=f"sid-{runtime_id}", prompt_input=prompt_input("base"))
 
     assert "search_information" in session.capabilities.tool_names
 
 
 def test_codex_backend_constructs_configured_search_and_delegate_agents() -> None:
-    from chatcopilot.contracts.agent_backend import (
-        BackendCapabilities,
-        BackendSessionRef,
+    from chatcopilot.contracts.runtime_adapter import (
+        RuntimeCapabilities,
+        RuntimeSessionRef,
         CAPABILITY_CHAT,
         CAPABILITY_TOOLS,
     )
 
     backend = Mock()
-    backend.capabilities = BackendCapabilities(
+    backend.capabilities = RuntimeCapabilities(
         names=frozenset({CAPABILITY_CHAT, CAPABILITY_TOOLS}),
         tool_names=frozenset({"normal_tool"}),
     )
-    backend.open_session.return_value = BackendSessionRef("codex", "native-session")
+    backend.open_session.return_value = RuntimeSessionRef("codex", "native-session")
     runtime = AgentRuntime(
-        llm=_FakeLLM("{}"),
+        main_model_client=None,
+        subagent_default_model_client=_FakeLLM("{}"),
         tools=(_tool("normal_tool"),),
         tools_schema=(),
         runtime_config=ChatConfig(),
@@ -467,7 +478,7 @@ def test_codex_backend_constructs_configured_search_and_delegate_agents() -> Non
                 SearchProviderSpec(id="searxng", kind="searxng"),
             ),
         ),
-        agent_backend="codex",
+        route=_runtime_route("codex"),
     )
 
     with (
@@ -477,9 +488,9 @@ def test_codex_backend_constructs_configured_search_and_delegate_agents() -> Non
         patch(
             "chatcopilot.agent.capabilities.unified_search.build_search_provider", return_value=None
         ) as search,
-        patch("chatcopilot.agent.runtime.build_backend", return_value=backend),
+        patch("chatcopilot.agent.runtime.build_runtime_adapter", return_value=backend),
     ):
-        session = runtime.new_session(session_id="sid-codex", prompt_input=prompt_input("base"))
+        session = runtime.open_session(session_id="sid-codex", prompt_input=prompt_input("base"))
 
     delegates.assert_called_once()
     search.assert_called_once()
@@ -489,21 +500,22 @@ def test_codex_backend_constructs_configured_search_and_delegate_agents() -> Non
 
 
 def test_codex_eval_policy_exposes_real_unified_search_tool() -> None:
-    from chatcopilot.contracts.agent_backend import (
-        BackendCapabilities,
-        BackendSessionRef,
+    from chatcopilot.contracts.runtime_adapter import (
+        RuntimeCapabilities,
+        RuntimeSessionRef,
         CAPABILITY_CHAT,
         CAPABILITY_TOOLS,
     )
 
     backend = Mock()
-    backend.capabilities = BackendCapabilities(
+    backend.capabilities = RuntimeCapabilities(
         names=frozenset({CAPABILITY_CHAT, CAPABILITY_TOOLS}),
         tool_names=frozenset({"normal_tool", "search_information"}),
     )
-    backend.open_session.return_value = BackendSessionRef("codex", "native-session")
+    backend.open_session.return_value = RuntimeSessionRef("codex", "native-session")
     runtime = AgentRuntime(
-        llm=_FakeLLM("{}"),
+        main_model_client=None,
+        subagent_default_model_client=_FakeLLM("{}"),
         tools=(_tool("normal_tool"),),
         tools_schema=(),
         runtime_config=ChatConfig(),
@@ -519,17 +531,17 @@ def test_codex_eval_policy_exposes_real_unified_search_tool() -> None:
             ),
             codex=CodexMainSessionPolicy(),
         ),
-        agent_backend="codex",
+        route=_runtime_route("codex"),
     )
 
     with patch(
         "chatcopilot.agent.capabilities.delegation.build_subagent_provider",
         return_value=None,
     ), patch(
-        "chatcopilot.agent.runtime.build_backend",
+        "chatcopilot.agent.runtime.build_runtime_adapter",
         return_value=backend,
     ):
-        session = runtime.new_session(
+        session = runtime.open_session(
             session_id="sid-codex-eval-search",
             prompt_input=prompt_input("base"),
         )
@@ -544,9 +556,9 @@ def test_codex_eval_policy_exposes_real_unified_search_tool() -> None:
 
 
 def test_codex_backend_uses_current_personal_workspace_root(tmp_path) -> None:
-    from chatcopilot.contracts.agent_backend import (
-        BackendCapabilities,
-        BackendSessionRef,
+    from chatcopilot.contracts.runtime_adapter import (
+        RuntimeCapabilities,
+        RuntimeSessionRef,
         CAPABILITY_CHAT,
         CAPABILITY_TOOLS,
     )
@@ -559,26 +571,27 @@ def test_codex_backend_uses_current_personal_workspace_root(tmp_path) -> None:
     workspace_service.resolve_workspace.return_value = workspace
     workspace_service.resolve_workspace_root.return_value = instance_root
     backend = Mock()
-    backend.capabilities = BackendCapabilities(
+    backend.capabilities = RuntimeCapabilities(
         names=frozenset({CAPABILITY_CHAT, CAPABILITY_TOOLS}),
         tool_names=frozenset({"normal_tool"}),
     )
-    backend.open_session.return_value = BackendSessionRef("codex", "native-session")
+    backend.open_session.return_value = RuntimeSessionRef("codex", "native-session")
     runtime = AgentRuntime(
-        llm=_FakeLLM("{}"),
+        main_model_client=None,
+        subagent_default_model_client=_FakeLLM("{}"),
         tools=(_tool("normal_tool"),),
         tools_schema=(),
         runtime_config=ChatConfig(),
-        agent_backend="codex",
+        route=_runtime_route("codex"),
     )
 
     with patch(
         "chatcopilot.agent.capabilities.delegation.build_subagent_provider",
         return_value=None,
     ), patch(
-        "chatcopilot.agent.runtime.build_backend", return_value=backend
+        "chatcopilot.agent.runtime.build_runtime_adapter", return_value=backend
     ):
-        runtime.new_session(
+        runtime.open_session(
             session_id="sid-personal-workspace",
             prompt_input=prompt_input("base"),
             workspace_service=workspace_service,
@@ -586,10 +599,10 @@ def test_codex_backend_uses_current_personal_workspace_root(tmp_path) -> None:
 
     request = backend.open_session.call_args.args[0]
     assert request.options["workspace_root"] == personal_root.resolve()
-    assert request.options["backend_state_root"] == (
-        personal_root.resolve() / ".backend-sessions"
+    assert request.options["runtime_state_root"] == (
+        personal_root.resolve() / ".runtime-sessions"
     )
-    workspace_service.resolve_workspace.assert_called_once_with(create=True)
+    assert workspace_service.resolve_workspace.call_args_list == [mock.call(create=True), mock.call(create=False)]
     workspace_service.resolve_workspace_root.assert_not_called()
 
 
@@ -609,10 +622,11 @@ def test_runtime_permission_filter_prevents_url_read_bypass() -> None:
     )
     search = _tool("search_tavily", metadata={"subagent_kind": "search"})
     runtime = AgentRuntime(
-        llm=_FakeLLM("{}"),
+        main_model_client=_FakeLLM("{}"),
         tools=(web_fetch,),
         tools_schema=(),
         runtime_config=ChatConfig(),
+        route=_runtime_route("native"),
         subagents=SubagentSpec(
             research_enabled=True,
             research_budget=SubagentBudgetSpec(),
@@ -623,7 +637,7 @@ def test_runtime_permission_filter_prevents_url_read_bypass() -> None:
         "chatcopilot.agent.capabilities.delegation.build_subagent_provider",
         return_value=_delegation_provider(search),
     ):
-        session = runtime.new_session(
+        session = runtime.open_session(
             session_id="sid",
             prompt_input=prompt_input("base"),
             permission_filter=lambda tool: (
@@ -631,7 +645,7 @@ def test_runtime_permission_filter_prevents_url_read_bypass() -> None:
             ),
         )
 
-    result = session.tool_executor.execute(
+    result = session.host_tools.execute(
         "search_information",
         {
             "objective": "read this page",

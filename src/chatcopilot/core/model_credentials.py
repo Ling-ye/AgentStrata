@@ -1,14 +1,17 @@
 """Private, lane-scoped Codex credential storage and refresh leases."""
+
 from __future__ import annotations
 
 import contextlib
+import base64
 import fcntl
 import json
 import os
 import re
 import stat
 import sys
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO, Iterator, Literal, Mapping, cast
@@ -77,6 +80,115 @@ class CredentialLease:
     lane: CredentialLane
     generation: int
     runtime_home: Path
+
+
+@dataclass(frozen=True)
+class AccessCredential:
+    access_token: str = field(repr=False)
+    account_id: str = field(repr=False)
+    identity_epoch: int
+    plan_type: str | None = None
+
+    def handoff(self) -> dict[str, str]:
+        return {
+            "type": "chatgptAuthTokens",
+            "accessToken": self.access_token,
+            "chatgptAccountId": self.account_id,
+            **({"chatgptPlanType": self.plan_type} if self.plan_type else {}),
+        }
+
+
+def _token_claims(token: str) -> dict:
+    try:
+        raw = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        return claims if isinstance(claims, dict) else {}
+    except (ValueError, IndexError, UnicodeDecodeError):
+        return {}
+
+
+def access_credential(
+    auth_root: Path,
+    lane: CredentialLane = "main",
+    *,
+    previous_token: str | None = None,
+    now: float | None = None,
+) -> AccessCredential:
+    """One refresh owner; the cross-process lock is released before inference."""
+    root = validate_auth_root_path(auth_root)
+    with credential_lock(root, lane, create=False):
+        home = authoritative_home(root, lane)
+        _validate_private_directory(home, "authority_home")
+        payload = json.loads(_read_credential(home / _AUTH_FILE))
+        tokens = payload["tokens"]
+        token = tokens["access_token"]
+        claims = _token_claims(token)
+        expires = claims.get("exp", 0)
+        moment = time.time() if now is None else now
+        refresh = not isinstance(expires, (int, float)) or expires <= moment + 60
+        refresh = refresh or (previous_token is not None and token == previous_token)
+        if refresh:
+            import requests
+
+            try:
+                response = requests.post(
+                    "https://auth.openai.com/oauth/token",
+                    json={
+                        "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+                        "grant_type": "refresh_token",
+                        "refresh_token": tokens["refresh_token"],
+                    },
+                    timeout=8,
+                    allow_redirects=False,
+                )
+                if response.status_code != 200:
+                    raise CredentialError("refresh_rejected")
+                refreshed = response.json()
+                if (
+                    not isinstance(refreshed.get("access_token"), str)
+                    or not refreshed["access_token"]
+                ):
+                    raise CredentialError("refresh_invalid")
+                previous_account = tokens.get("account_id") or claims.get(
+                    "https://api.openai.com/auth", {}
+                ).get("chatgpt_account_id")
+                refreshed_account = (
+                    _token_claims(refreshed["access_token"])
+                    .get("https://api.openai.com/auth", {})
+                    .get("chatgpt_account_id")
+                )
+                if not previous_account or previous_account != refreshed_account:
+                    raise CredentialError("account_identity_changed")
+                tokens.update(
+                    {
+                        key: refreshed[key]
+                        for key in ("access_token", "refresh_token", "id_token")
+                        if refreshed.get(key)
+                    }
+                )
+                _validate_credential_payload(
+                    json.dumps(payload).encode(), code_prefix="refreshed_auth"
+                )
+                _atomic_write_json(home / _AUTH_FILE, payload)
+                _write_refresh_metadata(
+                    home / _METADATA_FILE, _read_metadata(home / _METADATA_FILE)
+                )
+                token = tokens["access_token"]
+                claims = _token_claims(token)
+            except CredentialError:
+                raise
+            except Exception:
+                raise CredentialError("refresh_failed") from None
+        account = claims.get("https://api.openai.com/auth", {})
+        account_id = tokens.get("account_id") or account.get("chatgpt_account_id")
+        if not isinstance(account_id, str) or not account_id:
+            raise CredentialError("account_identity_missing")
+        if account.get("chatgpt_account_id") and account["chatgpt_account_id"] != account_id:
+            raise CredentialError("account_identity_changed")
+        metadata = _read_metadata(home / _METADATA_FILE) or {}
+        return AccessCredential(
+            token, account_id, int(metadata.get("generation", 0)), account.get("chatgpt_plan_type")
+        )
 
 
 @dataclass
@@ -274,9 +386,7 @@ def install_login_credential_data(
     authority_metadata = authority_home / _METADATA_FILE
     _reject_symlink_if_present(authority_auth, "auth_symlink")
     previous_auth = (
-        _read_auth_rollback_snapshot(authority_auth)
-        if os.path.lexists(authority_auth)
-        else None
+        _read_auth_rollback_snapshot(authority_auth) if os.path.lexists(authority_auth) else None
     )
     metadata = _read_metadata(authority_metadata)
     generation = (cast(int, metadata["generation"]) if metadata is not None else 0) + 1
@@ -309,9 +419,7 @@ def install_login_credential_data(
                 # Keep the new generation metadata when credential identity
                 # restoration is uncertain. This invalidates stale resumes
                 # instead of pairing them with an unknown credential.
-                raise CredentialError(
-                    "credential_install_rollback_failed"
-                ) from rollback_error
+                raise CredentialError("credential_install_rollback_failed") from rollback_error
         try:
             if metadata is None:
                 _remove_private_file(authority_metadata)
@@ -586,10 +694,7 @@ def _validate_file_stat(
 ) -> None:
     if not stat.S_ISREG(info.st_mode):
         raise CredentialError(f"{code_prefix}_not_regular")
-    if (
-        require_private_permissions
-        and stat.S_IMODE(info.st_mode) != 0o600
-    ):
+    if require_private_permissions and stat.S_IMODE(info.st_mode) != 0o600:
         raise CredentialError(f"{code_prefix}_permissions")
     if info.st_uid != os.geteuid():
         raise CredentialError(f"{code_prefix}_owner")

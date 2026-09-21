@@ -4,10 +4,12 @@ import os
 import subprocess
 import sys
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from chatcopilot.agent.backends.codex_app_server import AppServerProjector
+from chatcopilot.agent.runtimes.codex_app_server import AppServerProjector
 from chatcopilot.contracts.agent import AgentContentDelta, AgentMessageObserved, LlmCallFinished, SpanFinished, SpanUpdated
 from chatcopilot.contracts.cancellation import CancellationRequested
 from chatcopilot.core.agent_process import AgentProcessAdapter
@@ -212,3 +214,69 @@ def test_stdio_cancellation_and_timeout_are_bounded(tmp_path):
     assert time.monotonic() - started < 4
     with pytest.raises(subprocess.TimeoutExpired):
         run_fixture(tmp_path, "wait")
+
+
+_DUPLEX_SERVER = '''
+import json,sys
+turn=0
+waiting=set()
+def send(v): print(json.dumps(v), flush=True)
+def done():
+ send({'method':'turn/completed','params':{'threadId':'thread','turn':{'id':str(turn),'status':'completed'}}})
+ send({'id':'idle-refresh','method':'account/chatgptAuthTokens/refresh','params':{}})
+for line in sys.stdin:
+ r=json.loads(line);m=r.get('method');p=r.get('params',{})
+ if m=='initialized': continue
+ if m in ('initialize','account/login/start'): send({'id':r['id'],'result':{}})
+ elif m in ('thread/start','thread/resume'):
+  if m=='thread/start': assert p['dynamicTools'][0]['name']=='agentstrata'
+  send({'id':r['id'],'result':{'thread':{'id':'thread'}}})
+ elif m=='turn/start':
+  turn+=1
+  send({'id':r['id'],'result':{'turn':{'id':str(turn)}}})
+  if turn==1:
+   waiting={'tool','input','refresh'}
+   for i,m in [('tool','item/tool/call'),('input','item/tool/requestUserInput'),('refresh','account/chatgptAuthTokens/refresh')]:
+    send({'id':i,'method':m,'params':{'threadId':'thread','turnId':str(turn)}})
+  else: done()
+ elif m=='turn/interrupt':
+  send({'id':r['id'],'result':{}})
+  send({'method':'turn/completed','params':{'threadId':'thread','turn':{'id':str(turn),'status':'interrupted'}}})
+ elif not m:
+  waiting.discard(r.get('id'))
+  if r.get('id')!='idle-refresh' and not waiting: done()
+'''
+
+
+def test_duplex_requests_do_not_block_refresh_and_idle_connection_reuses(tmp_path):
+    script = tmp_path / "duplex.py"
+    script.write_text(_DUPLEX_SERVER)
+    release, tool_ready, input_ready, refreshed, idle_refreshed = (threading.Event() for _ in range(5))
+    connection = []
+    def handler(method, params):
+        if method == "account/chatgptAuthTokens/refresh":
+            (refreshed if params else idle_refreshed).set()
+            return {"accessToken": "fixture", "chatgptAccountId": "account"}
+        (tool_ready if method == "item/tool/call" else input_ready).set()
+        assert release.wait(3)
+        return {"success": True} if method == "item/tool/call" else {"answers": {}}
+    def run(thread_id):
+        return run_app_server([sys.executable, str(script)], cwd=tmp_path, env=dict(os.environ),
+            prompt="test", model="test", effort="medium", thread_id=thread_id, image_paths=(), timeout_seconds=5,
+            on_notification=lambda *args: None, on_thread=lambda *args: None, on_poll=lambda: None,
+            on_request=handler, connection=connection, dynamic_tools=[{"type":"namespace", "name":"agentstrata", "tools":[]}])
+    try:
+        with ThreadPoolExecutor() as pool:
+            future = pool.submit(run, "")
+            assert tool_ready.wait(3) and input_ready.wait(3) and refreshed.wait(3)
+            assert not future.done()
+            release.set()
+            assert future.result(timeout=3).returncode == 0
+        assert idle_refreshed.wait(3)
+        pid = connection[0].process.pid
+        assert run("thread").returncode == 0
+        assert len(connection) == 1 and connection[0].process.pid == pid
+    finally:
+        release.set()
+        for item in connection:
+            item.__exit__(None, None, None)

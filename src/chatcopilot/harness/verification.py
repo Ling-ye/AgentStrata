@@ -1,4 +1,4 @@
-"""Translate backend verification evidence into Harness-owned contracts."""
+"""Translate runtime verification evidence into Harness-owned contracts."""
 from __future__ import annotations
 
 from dataclasses import replace

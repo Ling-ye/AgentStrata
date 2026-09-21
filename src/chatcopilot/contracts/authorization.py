@@ -110,6 +110,7 @@ class ApprovalResolution:
     policy_version: str
     challenge: str
     accepted: bool
+    responder: Mapping[str, str] | None = None
 
 
 @dataclass(frozen=True)

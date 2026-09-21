@@ -1,6 +1,6 @@
 """LangGraph-backed main agent session implementation.
 
-The LangGraph backend owns only the directed control flow.  Agent-layer public
+The LangGraph runtime owns only the directed control flow.  Agent-layer public
 semantics such as event emission, tool-result messages, lifecycle intents, and
 ``AgentResult`` assembly live in :mod:`chatcopilot.agent.turn`.
 """
@@ -61,7 +61,7 @@ class LangGraphAgentSession(AgentSession):
             from langgraph.graph import END, START, StateGraph
         except ImportError as exc:  # pragma: no cover - depends on deployment env
             raise RuntimeError(
-                "BotSpec selected agents.backend=langgraph but langgraph is not installed. "
+                "BotSpec selected agents.runtime=langgraph but langgraph is not installed. "
                 "Install them with python -m pip install 'agentstrata[agent]'."
             ) from exc
 

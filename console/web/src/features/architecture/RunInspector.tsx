@@ -12,6 +12,7 @@ import { JsonData } from "./StructuredData";
 import AgentStreamContent from "./AgentStreamContent";
 import ExecutionWorkspace from "./ExecutionWorkspace";
 import { executionTitle } from "./executionModel";
+import { RuntimeInteractions } from "./RuntimeInteractions";
 
 const METADATA = new Set(["name", "model", "trace_id", "span_id", "parent_span_id", "depth", "configuration_id", "context_snapshot_id", "snapshot_id", "flow_version", "runtime_layer", "stage_span_id"]);
 function visibleMetadata(event?: GatewayObservation) {
@@ -102,7 +103,7 @@ function StepCard({ item, index, terminal, scope, hasMore }: {
         <span className="obs-step-main"><span className="obs-step-title"><span className="obs-step-index">{String(index + 1).padStart(2, "0")}</span><strong>{executionTitle(item)}</strong><Tag size="small" color={state.color}>{state.label}</Tag></span>
           {!process.supported && <span className="obs-step-route">{item.layer && <b>{RUNTIME_LAYERS[item.layer]} · </b>}{route(boundary) || (!item.layer ? "职责归属未记录" : "层内调用")}</span>}
           {summary && <span className="obs-step-summary">{summary}</span>}
-          {process.supported && <span className="obs-step-route">{step.agentName}{process.source ? " · " + process.source : ""}{event.data?.backend ? " · " + String(event.data.backend) : ""}
+          {process.supported && <span className="obs-step-route">{step.agentName}{process.source ? " · " + process.source : ""}{event.data?.runtime_id ? " · " + String(event.data.runtime_id) : ""}
             {step.modelIteration != null ? ` · 来自第 ${step.modelIteration + 1} 轮模型调用` : ""}</span>}
           {error && <span className="obs-step-error">{error}</span>}
           {step.finish && !step.start && !process.message && <span className="obs-step-gap">{hasMore ? "开始记录尚未取得" : "开始未记录"}</span>}
@@ -194,10 +195,11 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
     return () => window.clearInterval(timer);
   }, [terminal, visible]);
   return <TaskDetailState instanceId={instanceId} runId={run.run_id}><section className="obs-run" aria-label="任务运行过程">
+    {visible && !terminal && <RuntimeInteractions instanceId={instanceId} />}
     <header className="obs-run-heading"><div><strong>任务运行</strong><code title={run.run_id}>{run.run_id}</code></div>
       <Tag color={runState(run.state).color}>{runState(run.state).label}</Tag></header>
     <div className="obs-run-meta"><span>开始 {dateTime(run.started_at ?? run.created_at)}</span><span>耗时 {duration(runDuration(run))}</span>
-      <span>{run.backend ?? "Backend 未记录"} · {run.model ?? "模型未记录"}</span><span>角色 {run.role ?? "未记录"}</span>
+      <span>{run.runtime_id ?? "Backend 未记录"} · {run.model ?? "模型未记录"}</span><span>角色 {run.role ?? "未记录"}</span>
       <span>配置 {(run.config_revision ?? run.config_id)?.slice(0, 10) ?? "未记录"}</span>
       <span>实际 Token {run.total_tokens?.toLocaleString() ?? "未记录"}</span></div>
     {!!run.details_expired && <Alert type="info" content="详细正文已到期；任务摘要和阶段指标仍保留。" />}

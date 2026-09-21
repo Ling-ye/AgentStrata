@@ -49,7 +49,7 @@ def _starter_spec(tmp_path: Path) -> BotSpec:
             packs=("workspace.read_write", "memory.chat"),
             features=("chat.file_uploads", "chat.private_workspace"),
         ),
-        agents=SubagentSpec(backend="native"),
+        agents=SubagentSpec(runtime="native"),
         context=ContextSpec(
             memory_store=MemorySpec(
                 provider="markdown",
@@ -99,7 +99,8 @@ def test_plan_uses_real_llm_prefix_and_worker_condition(tmp_path: Path) -> None:
     built_in = load_botspec(repo_root / "bots/lingye-copilot-qq/bot.yaml")
     advanced = build_provision_plan(built_in, adapter)
     advanced_by_id = {field.field: field for field in advanced.fields}
-    assert advanced_by_id["chat_api_key"].env_key == "CHATCOPILOT_LINGYE_API_KEY"
+    assert "chat_api_key" not in advanced_by_id
+    assert advanced_by_id["research_api_key"].env_key == "CHATCOPILOT_LINGYE_API_KEY"
     assert advanced.requires_code_worker is True
     assert advanced_by_id["qq_access_token"].host_generated is False
     assert advanced_by_id["gateway_token"].host_generated is True

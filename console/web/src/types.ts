@@ -210,7 +210,7 @@ export interface BotConfig {
 }
 
 export interface BotInventory {
-  structure?: { backend: string; prompt_schema_version: number | null; prompt_sections: string[]; context_sources: string[] };
+  structure?: { runtime_id: string; prompt_schema_version: number | null; prompt_sections: string[]; context_sources: string[] };
   instance_id: string;
   display_name: string;
   platform: string;
@@ -512,7 +512,7 @@ export interface BotTaskJobResult {
 
 export interface ContextSnapshotSummary {
   snapshot_id: string;
-  backend: string;
+  runtime_id: string;
   model: string;
   iteration: number;
   coverage: "exact_model_input" | "adapter_visible" | "provider_opaque" | string;

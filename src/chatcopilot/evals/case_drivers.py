@@ -94,8 +94,8 @@ def _agent(case, *, plugin, suite_id, bot, workspace_root, options):
         workspace = Workspace(root=Path(workspace_root).resolve(), chat_kind="p2p", chat_id=f"eval:{suite_id}",
                               user_id="eval-user", user_name="Eval Runner").ensure()
         with _EvalWorkspaceEnv(workspace):
-            session = agent.new_session(session_id=f"eval-{suite_id}-{case.case_id}",
-                prompt_input=PromptBuildInput(profile=runtime.prompt_profile, backend=runtime.agent_backend,
+            session = agent.open_session(session_id=f"eval-{suite_id}-{case.case_id}",
+                prompt_input=PromptBuildInput(profile=runtime.prompt_profile, runtime_id=runtime.runtime_id,
                     model=None, role="owner", channel_kind="private",
                     session_policy="这是隔离 Evaluation 会话；只处理当前评测 Case。",
                     capability_policies=runtime.capability_policies, skill_index=runtime.skills),
@@ -215,4 +215,3 @@ class _EvalWorkspaceEnv:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = old_value
-

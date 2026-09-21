@@ -1,4 +1,4 @@
-"""The single prompt-plan builder and backend renderers."""
+"""The single prompt-plan builder and runtime renderers."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ _SUBAGENT_POLICY = """## 内部委托边界
 @dataclass(frozen=True)
 class PromptBuildInput:
     profile: BotPromptProfile
-    backend: str
+    runtime_id: str
     model: str | None
     role: str
     channel_kind: str
@@ -52,6 +52,8 @@ class PromptBuildInput:
     mode: str = ""
     tool_names: tuple[str, ...] = ()
     is_subagent: bool = False
+    capability_digest: str = ""
+    policy_revision: str = ""
 
 
 class PromptPlanBuilder:
@@ -174,11 +176,14 @@ class PromptPlanBuilder:
         chars = sum(len(layer.content) for layer in layers)
         return PromptPlan(
             layers=tuple(layers),
-            effective_backend=data.backend,
+            effective_runtime_id=data.runtime_id,
+            schema_version=2,
             effective_model=data.model,
             role=data.role,
             channel_kind=data.channel_kind,
             tool_projection_digest=digest,
+            capability_digest=data.capability_digest,
+            policy_revision=data.policy_revision,
             estimated_tokens=max(1, chars // 4),
         )
 

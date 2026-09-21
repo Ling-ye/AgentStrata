@@ -20,7 +20,7 @@ from chatcopilot.project import CHAT_ENV_PREFIX, DEFAULT_CONFIG_DIR
 from chatcopilot.contracts.execution_scope import CommandTimeouts
 from chatcopilot.contracts.model_selection import (
     CODEX_REASONING_EFFORTS,
-    CodeModelProfile,
+    WorkerModelProfile,
 )
 
 _CHAT_DIR = Path(__file__).resolve().parents[1] / "agent"
@@ -51,8 +51,21 @@ def load_command_timeouts(
 class LLMConfig:
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
-    api_key: str = ""
+    api_key: str = field(default="", repr=False, metadata={"secret": True})
     timeout: int = 120
+    provider: str = "openai_compatible"
+    api: str = "chat_completions"
+    auth_mode: str = "api_key"
+    auth_profile: str = "main"
+    key_env: str = "CHATCOPILOT_CHAT_API_KEY"
+    reasoning_effort: str | None = None
+    credential_root: str = field(default="", repr=False, metadata={"private": True})
+
+    def model_route(self):
+        from chatcopilot.contracts.model_runtime import ApiKeyAuthRef, ChatGPTAuthRef, ResolvedModelRoute
+        auth = ChatGPTAuthRef(self.auth_profile) if self.auth_mode == "chatgpt" else ApiKeyAuthRef(self.key_env)
+        return ResolvedModelRoute(self.provider, self.model, self.api, self.base_url,
+                                  auth, self.reasoning_effort, self.timeout)
 
 
 @dataclass
@@ -90,7 +103,7 @@ class RoutingConfig:
     code_provider: str = 'codex_cli'
     code_model: str = 'gpt-5.5'
     code_reasoning_effort: str = 'medium'
-    code_profiles: dict[str, CodeModelProfile] = field(default_factory=dict)
+    code_profiles: dict[str, WorkerModelProfile] = field(default_factory=dict)
     code_task_profile: str = ''
     code_command: str = 'codex exec --model {model} --cd {workdir}'
     code_timeout_seconds: int = 900
@@ -100,6 +113,8 @@ class ChatConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     routing: RoutingConfig = field(default_factory=RoutingConfig)
+    codex_extensions: str = field(default="", repr=False, metadata={"private": True})
+    codex_extension_env: dict[str, str] = field(default_factory=dict, repr=False, metadata={"secret": True})
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -173,10 +188,10 @@ def _coerce_float(raw: Any, fallback: float) -> float:
 
 def _coerce_code_profiles(
     raw: Any,
-    fallback: dict[str, CodeModelProfile],
+    fallback: dict[str, WorkerModelProfile],
     *,
     field: str,
-) -> dict[str, CodeModelProfile]:
+) -> dict[str, WorkerModelProfile]:
     if raw is None or raw == "":
         return dict(fallback)
     if isinstance(raw, str):
@@ -188,7 +203,7 @@ def _coerce_code_profiles(
         data = raw
     if not isinstance(data, dict):
         raise ValueError(f"{field} must be an object")
-    profiles: dict[str, CodeModelProfile] = {}
+    profiles: dict[str, WorkerModelProfile] = {}
     for raw_name, raw_profile in data.items():
         name = str(raw_name or "").strip().lower()
         if (
@@ -198,7 +213,7 @@ def _coerce_code_profiles(
             raise ValueError(f"{field} contains an invalid profile name: {raw_name!r}")
         if not isinstance(raw_profile, dict):
             raise ValueError(f"{field}.{name} must be an object")
-        profiles[name] = CodeModelProfile(
+        profiles[name] = WorkerModelProfile(
             model=str(raw_profile.get("model") or "").strip(),
             reasoning_effort=str(
                 raw_profile.get("reasoning_effort") or "medium"
@@ -241,6 +256,7 @@ def load_config(
 ) -> ChatConfig:
     """读取配置；缺省时返回内置默认值，environ 永远具备最高优先级。"""
     cfg = ChatConfig()
+    cfg.llm.key_env = f"{env_prefix}_API_KEY"
     env = os.environ if environment is None else environment
     data: dict[str, Any] = {}
 
@@ -514,12 +530,8 @@ def load_llm_profile(
 ) -> LLMConfig:
     """Overlay one optional model slot on an existing LLM configuration."""
 
-    cfg = LLMConfig(
-        base_url=fallback.base_url,
-        model=fallback.model,
-        api_key=fallback.api_key,
-        timeout=fallback.timeout,
-    )
+    from dataclasses import replace
+    cfg = replace(fallback)
     env = os.environ if environment is None else environment
     values = {
         "base_url": env.get(f"{env_prefix}_BASE_URL"),
@@ -531,8 +543,9 @@ def load_llm_profile(
         cfg.base_url = str(values["base_url"]).strip()
     if values["model"]:
         cfg.model = str(values["model"]).strip()
-    if values["api_key"]:
+    if values["api_key"] and cfg.auth_mode == "api_key":
         cfg.api_key = str(values["api_key"]).strip()
+        cfg.key_env = f"{env_prefix}_API_KEY"
     if values["timeout"] not in {None, ""}:
         cfg.timeout = _coerce_positive_int_strict(
             values["timeout"],

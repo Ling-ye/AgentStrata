@@ -7,7 +7,7 @@ export interface DurationSummary {
   recorded: number; partial: number; expected: number; complete: boolean;
 }
 export interface TargetSummary {
-  target_id: string; backend: string; model: string; reasoning_effort: string;
+  target_id: string; runtime_id: string; model: string; reasoning_effort: string;
   counts: OutcomeCounts; observed: number; pass_rate: number | null;
   quality: QualitySummary; agent_duration_seconds: number | null; duration?: DurationSummary;
   case_ids: string[]; repetitions: number; scoring: Record<string, unknown>;
@@ -65,7 +65,7 @@ export function durationSummary(value: unknown, fallback: number | null, expecte
 
 function targetSummary(value: unknown): TargetSummary {
   const item = object(value);
-  return { target_id: text(item.target_id) ?? "", backend: text(item.backend) ?? "", model: text(item.model) ?? "",
+  return { target_id: text(item.target_id) ?? "", runtime_id: text(item.runtime_id) ?? "", model: text(item.model) ?? "",
     reasoning_effort: text(item.reasoning_effort) ?? "", counts: counts(item.counts) ?? { passed: 0, failed: 0, error: 0, skipped: 0 },
     observed: number(item.observed) ?? 0, pass_rate: number(item.pass_rate), quality: quality(item.quality),
     duration: durationSummary(item.duration, number(item.agent_duration_seconds), number(item.observed) ?? 0),
@@ -110,7 +110,7 @@ export function evaluationSuiteId(record: EvaluationRecord): string {
   return text(record.selection.id) ?? text(record.request.suite_id) ?? text(record.result?.suite) ?? "";
 }
 export function modelLabel(record: EvaluationRecord): string {
-  return record.targets.map(target => [target.backend, target.model, target.reasoning_effort].filter(Boolean).join(" / ")).join(" · ") || "模型未记录";
+  return record.targets.map(target => [target.runtime_id, target.model, target.reasoning_effort].filter(Boolean).join(" / ")).join(" · ") || "模型未记录";
 }
 export function revisionLabel(record: EvaluationRecord): string {
   const source = record.source_revision;

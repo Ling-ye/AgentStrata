@@ -70,6 +70,16 @@ def submit_tool_job(
             raise ValueError("start_code_task requires prompt")
         title = validate_code_task_title(str((args or {}).get("title") or ""))
         args = {**(args or {}), "prompt": prompt, "title": title}
+        from chatcopilot.contracts.model_selection import WorkerModelSelection
+        from chatcopilot.core.model_selection import WORKER_MODEL_SELECTION_FIELD
+
+        worker_model_selection = WorkerModelSelection(
+            provider="codex_cli",
+            model=os.environ.get(f"{ENV_PREFIX}_CODE_MODEL", "").strip(),
+            reasoning_effort=os.environ.get(
+                f"{ENV_PREFIX}_CODE_REASONING_EFFORT", ""
+            ).strip().lower(),
+        )
 
     job_id = f"job_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     job_dir = job_storage_root(workspace, create=True) / job_id
@@ -109,6 +119,7 @@ def submit_tool_job(
     }
     if tool_name == CODE_TASK_TOOL:
         request["instance_id"] = instance_id
+        request[WORKER_MODEL_SELECTION_FIELD] = worker_model_selection.to_payload()
         request["attempts"] = [
             {
                 "number": 1,

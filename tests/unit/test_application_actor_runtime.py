@@ -54,6 +54,8 @@ class _FakeSession:
         self.creation = creation
         self.runtime = runtime
         self.capabilities = SimpleNamespace(tool_names=frozenset({"search_public"}))
+        from chatcopilot.contracts.execution import CapabilitySnapshot
+        self.capability_snapshot = CapabilitySnapshot()
         self.prompt_plans: list[Any] = []
         self.tasks: list[Any] = []
         self.cancellations: list[Any] = []
@@ -84,7 +86,7 @@ class _FakeSession:
             message_count=self.message_count,
         )
 
-    def set_prompt_plan(self, plan) -> None:
+    def update_context(self, plan) -> None:
         self.prompt_plans.append(plan)
 
     def record_exchange(self, user_text: str, assistant_text: str) -> None:
@@ -102,17 +104,17 @@ class _FakeSession:
 
 class _FakeAgentRuntime:
     def __init__(self) -> None:
-        self.agent_backend = "native"
+        self.runtime_id = "native"
         self.retriever = object()
-        self.research_llm = None
-        self.llm = SimpleNamespace(model="test-model")
+        self.research_model_client = None
+        self.route = SimpleNamespace(model=SimpleNamespace(model="test-model"))
         self.runtime_config = SimpleNamespace(routing=SimpleNamespace(code_model=""))
         self.creations: list[dict[str, Any]] = []
         self.sessions: list[_FakeSession] = []
         self.stop_reason = "end_turn"
         self.run_hook = None
 
-    def new_session(self, **kwargs):
+    def open_session(self, **kwargs):
         self.creations.append(kwargs)
         session = _FakeSession(kwargs, self)
         self.sessions.append(session)
@@ -137,7 +139,7 @@ def _runtime(tmp_path: Path) -> Any:
             identity="Test assistant",
             response_style="Be concise.",
         ),
-        agent_backend="native",
+        runtime_id="native",
         access=SimpleNamespace(owner_only_project_access=True),
         capability_policies=(policy,),
         skills=(skill,),
@@ -332,8 +334,8 @@ def test_real_actor_execution_boundary_isolated_by_actor_and_shares_journal(
 
     first_service = agent.creations[0]["workspace_service"]
     second_service = agent.creations[1]["workspace_service"]
-    assert first_service.resolve_backend_state_root() != second_service.resolve_backend_state_root()
-    assert first_service.requires_backend_state_isolation() is True
+    assert first_service.resolve_runtime_state_root() != second_service.resolve_runtime_state_root()
+    assert first_service.requires_runtime_state_isolation() is True
     assert agent.creations[0]["prompt_input"].capability_policies == ()
     assert agent.creations[0]["prompt_input"].skill_index == ()
     assert agent.creations[0]["retriever_override"] is None
@@ -341,7 +343,9 @@ def test_real_actor_execution_boundary_isolated_by_actor_and_shares_journal(
     assert first.user_id not in agent.creations[1]["prompt_input"].conversation_journal
     assert agent.sessions[0].tasks[0].resources == (resource,)
     assert agent.sessions[0].tasks[0].turn_context == "validated resource context"
-    assert agent.sessions[0].tasks[0].metadata == {"run_id": "run-1"}
+    assert agent.sessions[0].tasks[0].metadata == {}
+    assert agent.sessions[0].tasks[0].execution.execution_id == first_request.run_id
+    assert agent.sessions[0].tasks[0].execution.actor_ref == first.actor_ref
     assert agent.sessions[0].cancellations == [token]
     assert [event.text for event in events] == ["stream", "stream"]
 

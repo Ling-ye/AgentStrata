@@ -22,7 +22,7 @@ from chatcopilot.gateway.state_store import GatewayStateError, GatewayStateStore
 def recorded(tmp_path):
     state = GatewayStateStore(tmp_path / 'gateway')
     generation = state.acquire_writer_generation()
-    recorder = ObservationRecorder(state, generation, configuration={'layers': [], 'entities': [], 'backend': 'native'})
+    recorder = ObservationRecorder(state, generation, configuration={'layers': [], 'entities': [], 'runtime_id': 'native'})
     return state, generation, recorder
 
 
@@ -35,7 +35,7 @@ def make_run(recorded, suffix='one', *, at=None, complete=False):
                          account=ChannelAccountRef('fixture', 'account'), conversation=ConversationRef('p2p', suffix))
     state.begin_run(generation=generation, session_id=session_id, run_id=run_id,
                     input_fingerprint=hashlib.sha256(suffix.encode()).hexdigest(), now=now)
-    recorder.store.bind_run(run_id, config_id=recorder.config_id, backend='native', model='fixture-model', role='owner')
+    recorder.store.bind_run(run_id, config_id=recorder.config_id, runtime_id='native', model='fixture-model', role='owner')
     state.start_run(generation=generation, session_id=session_id, run_id=run_id, now=now + 1)
     if complete:
         state.finish_run(generation=generation, session_id=session_id, run_id=run_id, outcome='completed',
@@ -330,8 +330,8 @@ def test_runtime_observation_failure_preserves_business_exception_and_context(re
 
 
 def test_configuration_instances_have_different_entities_and_values():
-    one = configuration_projection({'agents': {'backend': 'native'}, 'tools': {'packs': ['workspace.read_write']}})
-    two = configuration_projection({'agents': {'backend': 'codex'}, 'tools': {'packs': ['memory.chat']}})
+    one = configuration_projection({'agents': {'runtime_id': 'native'}, 'tools': {'packs': ['workspace.read_write']}})
+    two = configuration_projection({'agents': {'runtime_id': 'codex'}, 'tools': {'packs': ['memory.chat']}})
     assert one != two
     assert any(item['id'] == 'pack:memory.chat' for item in two['entities'])
     assert not any(item['id'] == 'pack:memory.chat' for item in one['entities'])
@@ -341,10 +341,10 @@ def test_configuration_snapshots_are_immutable(recorded):
     _, _, recorder = recorded
     run = make_run(recorded)
     key = detail(recorder.store, run)['run']['config_id']
-    recorder.configuration = {'layers': [], 'entities': [], 'backend': 'codex'}
+    recorder.configuration = {'layers': [], 'entities': [], 'runtime_id': 'codex'}
     recorder.refresh()
     assert recorder.config_id != key
-    assert recorder.store.configuration(key)['backend'] == 'native'
+    assert recorder.store.configuration(key)['runtime_id'] == 'native'
     assert detail(recorder.store, run)['run']['config_id'] == key
 
 
@@ -447,16 +447,20 @@ def test_loaded_instances_use_effective_models_registry_and_plugin_health(tmp_pa
     from chatcopilot.botspec.loader import load_botspec
     from chatcopilot.core.config import ChatConfig, LLMConfig
     from chatcopilot.gateway.observation_runtime import runtime_configuration
+    from tests.prompt_plan_fixture import runtime_route
     projections = []
     for index, pack in enumerate(('workspace.read_write', 'memory.chat')):
         folder = tmp_path / str(index)
         folder.mkdir()
         (folder / 'identity.md').write_text('fixture identity')
         spec_path = folder / 'bot.yaml'
-        spec_path.write_text(f'id: fixture-{index}\nprompts:\n  schema_version: 2\n  identity: identity.md\nagents:\n  backend: native\ntools:\n  packs: [{pack}]\n')
+        spec_path.write_text(f'id: fixture-{index}\nprompts:\n  schema_version: 2\n  identity: identity.md\nagents:\n  runtime: native\ntools:\n  packs: [{pack}]\n')
         spec = load_botspec(spec_path)
-        agent = build_agent_runtime(chat_config=ChatConfig(llm=LLMConfig(api_key='fixture', model=f'model-{index}')),
-                                    tool_packs=(pack,), agent_backend='native')
+        llm_config = LLMConfig(api_key='fixture', model=f'model-{index}')
+        agent = build_agent_runtime(
+            chat_config=ChatConfig(llm=llm_config), route=runtime_route("native", llm_config),
+            tool_packs=(pack,),
+        )
         try:
             agent.mcp_provider = SimpleNamespace(status=lambda: [{'id': 'fixture-plugin', 'running': False,
                 'tools_count': 0, 'error': 'fixture_timeout'}])

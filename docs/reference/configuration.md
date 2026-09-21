@@ -29,7 +29,7 @@ tools:
     servers: mcp/servers.yaml
 
 agents:
-  backend: native
+  runtime: native
 
 context:
   memory_store:
@@ -123,14 +123,13 @@ OneBot provider 不解释私聊名单或分配角色。Gateway 先认证 transpo
 
 ### `llm`
 
-- `llm.chat`：日常对话模型，`env_prefix` 决定 API key/base URL/model 的变量前缀。
+- `llm.chat`：所有 runtime 的主模型。声明 provider、model、api、base_url、auth、reasoning_effort、timeout 和 profiles；`env_prefix` 提供机器覆盖前缀。
 - `llm.research`：研究模型槽；`model` 是纳入版本管理的默认模型，`env_prefix` 指向机器覆盖配置；
   未提供的 base URL、API key 和 timeout 继承 `chat`。统一搜索路由和 `PersonaDraftAgent` 使用该槽，
   不能误用主 Codex 模型名或日常模型槽。
-- `llm.code`：Codex lane 的模型、reasoning effort、profile 白名单、任务 profile、
-  执行命令和超时；`enabled` 控制模型命令可用性，模型控制固定为 Owner。
+- `llm.code`：只控制独立 worker 的模型、profile、执行命令与超时；可通过独立 `env_prefix` 保留原配置。主模型命令不依赖 worker 开关。
 
-主 Agent 由 `agents.backend` 选择。模型槽不再提供 `llm.code.mode/prefixes/chat_prefixes/workdir_env`
+主 Agent 由 `agents.runtime` 选择。模型槽不再提供 `llm.code.mode/prefixes/chat_prefixes/workdir_env`
 或 `llm.research.execution/prefixes/web_search`；搜索策略由 `agents.unified_search` 管理。
 Core 不再解析无执行消费者的 `runtime.default_auto_mode/stream` 与旧路由开关，也不再
 导出对应环境默认值或把它们计入测评行为指纹。Codex 工作区由宿主执行请求确定。配置清理范围见
@@ -138,6 +137,41 @@ Core 不再解析无执行消费者的 `runtime.default_auto_mode/stream` 与旧
 
 启用 `dev.code_tasks` 时必须用 `llm.code.code_task_profile` 引用已声明 profile。机器
 环境变量优先级高于 BotSpec 默认值；secret 只进入 `local.env` 或 credential store。
+
+订阅认证示例（把 runtime 改成 codex 即由 Codex 执行 loop，模型槽不变）：
+
+```yaml
+agents:
+  runtime: native
+llm:
+  chat:
+    provider: openai
+    model: gpt-5.6-terra
+    reasoning_effort: medium
+    auth:
+      mode: chatgpt
+      profile: main
+```
+
+API Key 模式使用 `auth: {mode: api_key, key_env: CHATCOPILOT_LINGYE_API_KEY}`；两种 auth 不能混填。兼容服务显式声明 `provider: openai_compatible`、`api: chat_completions` 和 base_url。订阅模式仅接受官方 ChatGPT Responses 端点。OAuth 秘密不得写入 YAML。
+
+`agents.runtime_options.codex.turn_timeout_seconds` 控制主 Codex 整轮截止时间；Native loop 的预算仍由 Native 解析。`agents.runtime_options.native.env_prefix` 仅用于独立保留 Native 预算配置。可选的 `codex.extensions` 指向实例审核的原生扩展 TOML，具体限制见 [Agent](agent.md)。
+
+### 显式 runtime 迁移
+
+旧 `agents.backend` 和 Gateway schema 2 不在启动时自动转换。先停对应实例，再使用 inventory 绑定的 cutover 入口；`check` 只读取，`apply` 要求所有实例状态库的独占 lease。主 Codex 迁入 chat 槽前解析旧 CODE_MODEL/CODE_REASONING_EFFORT 覆盖；辅助模型保留旧前缀继承，worker 继续使用原前缀。inventory 只保存私有环境文件的路径，秘密不写入计划或 receipt。
+
+预检输出解析后的主模型与辅助模型 route；研究、统一搜索、MCP 搜索、预设和自定义子代理均通过同一配置解析器比较迁移前后结果。继承路径先展开再冻结，发现 model、协议、端点、认证引用或参数漂移时拒绝迁移，不只比较模型名或机械复制公共前缀。
+
+```bash
+agentstrata runtime-cutover check --inventory /absolute/runtime-cutover.yaml
+agentstrata runtime-cutover apply --inventory /absolute/runtime-cutover.yaml --plan-digest <sha256>
+agentstrata runtime-cutover verify --inventory /absolute/runtime-cutover.yaml --receipt /absolute/runtime-cutover.yaml.receipt.json
+```
+
+数据库通过 SQLite backup API 生成私有备份；旧 Observation、Evaluation、transcript、worker 记录及 session binding 按原字节移入 `runtime-cutover-*` 私有归档并生成 SHA-256 manifest。journal、人格和记忆保留。此命令不启动、部署或重启实例；受控 Gateway 回放仍须单独执行并保留 `production_delivery: false` 证据。出现部分失败时保持停机，先检查 receipt、归档 manifest、备份和配置/数据库状态再恢复。
+
+Console 交互操作另需 `CHATCOPILOT_GATEWAY_OPERATOR_TOKEN`，不能复用或扩大原 ACP token 的权限；该秘密只在 Console 服务端与 Gateway 使用。
 
 ### `prompts`
 
@@ -172,19 +206,19 @@ Registry 快照，Agent 与 Console 使用对应 surface 的同源投影。BotSp
 
 ### `agents`
 
-- `backend`：`native`、`langgraph` 或 `codex`。
+- `runtime`：`native`、`langgraph` 或 `codex`。
 - `presets`：公开内置 preset 为 `adapter_forge`、`browser_reader`、`developer`、
   `mcp_query`。
 - budget/override/custom：限制 model turn、tool call、timeout、selector、context 和
   cache。
-- `unified_search.enabled`：为三个 Backend 启用同一 `search_information` 入口。
+- `unified_search.enabled`：为三个 Runtime 启用同一 `search_information` 入口。
 - `unified_search.providers`：按顺序声明进程内 Web provider；每项使用
   `id / kind / enabled / endpoint / credential_env / timeout_seconds / max_results`。
   BotSpec 只保存凭据环境变量名，不保存凭据值。Tavily 与 Brave 只接受审核过的官方
   HTTPS endpoint；SearXNG 只接受回环 endpoint。
 
 Codex 同样装配已启用的统一搜索和委托能力，经 Session Gateway MCP 提供。Evaluation 可以在
-隔离进程把同一 BotSpec 投影为 Native target，但不得写回线上 backend。小红书等
+隔离进程把同一 BotSpec 投影为 Native target，但不得写回线上 runtime。小红书等
 `risk: search` MCP binding 仍由统一搜索机制作为受限垂直来源执行。
 
 ### `context`
@@ -243,7 +277,7 @@ tenant、文档 ID、账号或 endpoint。
 
 ## BotSpec 四面模型
 
-`prompts` 管机器人提示词，`tools` 管本地工具包/MCP/工具特性/隐藏工具，`agents` 管主 Agent backend（`native` / `langgraph` / `codex`）、subagent 与搜索能力，`context` 管 RAG、可写私有 Wiki、记忆存储、代码仓库、playbooks 和 dev tools 配置（`context.dev`）。当前内置 workflow registry 为空，文档和配置示例不要写不存在的 `coding` / `research` workflow。
+`prompts` 管机器人提示词，`tools` 管本地工具包/MCP/工具特性/隐藏工具，`agents` 管主 Agent runtime（`native` / `langgraph` / `codex`）、subagent 与搜索能力，`context` 管 RAG、可写私有 Wiki、记忆存储、代码仓库、playbooks 和 dev tools 配置（`context.dev`）。当前内置 workflow registry 为空，文档和配置示例不要写不存在的 `coding` / `research` workflow。
 
 ## 配置解析与模型生命周期
 

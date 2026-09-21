@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import shutil
 import socket
 import unittest
@@ -9,16 +8,17 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from tests.prompt_plan_fixture import prompt_plan
+from tests.prompt_plan_fixture import prompt_plan, runtime_route
 
-from chatcopilot.agent.backends.codex import CodexAgentBackend
-from chatcopilot.agent.backends.session_relay import call_session_relay
+from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
+from tests.dynamic_tool_fixture import call_dynamic_tool
+from chatcopilot.core.config import LLMConfig, ChatConfig
 from chatcopilot.agent.subagents.selector import is_user_facing
 from chatcopilot.agent.tools.builtin.workspace import images as image_tools
 from chatcopilot.agent.tools.builtin.workspace_tools import TOOLS
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.tools.file_delivery import FileDeliveryResult
-from chatcopilot.contracts.agent_backend import BackendOpenRequest
+from chatcopilot.contracts.runtime_adapter import RuntimeOpenRequest
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.core.workspace_runtime import Workspace
 
@@ -297,16 +297,26 @@ class ImageUrlDeliveryToolTests(unittest.TestCase):
             code_timeout_seconds=30,
             code_workdir_env="CHATCOPILOT_UNUSED_WORKDIR",
         )
-        backend = CodexAgentBackend(
+        config = ChatConfig(
+            routing=routing,
+            llm=LLMConfig(
+                provider="openai", api="openai_responses",
+                model="gpt-test", api_key="fixture",
+            ),
+        )
+        route = runtime_route("codex", config.llm)
+        backend = CodexRuntimeAdapter(
+            route=route,
             tool_names={tool.name},
-            runtime_config=SimpleNamespace(routing=routing),
+            runtime_config=config,
             tools=(tool,),
             tool_executor=executor,
         )
         ref = backend.open_session(
-            BackendOpenRequest(
+            RuntimeOpenRequest(
                 session_id="group-image-delivery",
                 prompt_plan=prompt_plan("system"),
+                route=route,
                 allowed_tool_names=frozenset({tool.name}),
                 caller_identity=SessionIdentity(
                     user_id="actor-test",
@@ -315,30 +325,22 @@ class ImageUrlDeliveryToolTests(unittest.TestCase):
                 ),
                 options={
                     "workspace_root": self.root,
-                    "backend_state_root": self.root / ".state",
+                    "runtime_state_root": self.root / ".state",
                     "role_hint": "user",
                 },
             )
         )
         try:
-            gateway = json.loads(
-                backend.native_session(ref).gateway_config.read_text(encoding="utf-8")
-            )
-            self.assertEqual(gateway["allowed_tools"], ["send_image_urls_to_user"])
+            bridge = backend._resolve(ref).relay
+            bridge.begin_turn(trace_id="image", parent_span_id="parent", depth=0)
+            self.assertEqual(list(bridge.tools), ["send_image_urls_to_user"])
             with self._public_dns(), mock.patch(
                 "chatcopilot.agent.tools.builtin.workspace.images._request_image_once",
                 return_value=_png_response(),
             ):
-                response = call_session_relay(
-                    gateway["relay"],
-                    {
-                        "action": "call_tool",
-                        "name": "send_image_urls_to_user",
-                        "arguments": {"urls": ["https://example.com/a.png"]},
-                    },
-                )
-            self.assertTrue(response["result"]["ok"])
-            self.assertEqual(response["result"]["data"]["sent_count"], 1)
+                response = call_dynamic_tool(bridge, "send_image_urls_to_user", {"urls": ["https://example.com/a.png"]})
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["data"]["sent_count"], 1)
             self.assertEqual(len(sent), 1)
         finally:
             backend.close_session(ref)

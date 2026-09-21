@@ -71,6 +71,7 @@ class _FakeAgentSession:
 
 class _FakeSession:
     """模拟 SessionState 的接口：暴露 .session（AgentSession-like）+ debug_mode + workspace。"""
+    main_model_route = None
 
     def __init__(
         self,

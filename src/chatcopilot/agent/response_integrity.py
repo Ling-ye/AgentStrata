@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from dataclasses import dataclass
+from chatcopilot.contracts.execution import ResponseIntegrity as ResponseIntegrityResult
 
 
 _SUSPICIOUS_URL = re.compile(
@@ -63,14 +63,6 @@ def _claims_operation(text: str, pattern: re.Pattern[str]) -> bool:
                 if not _NON_ASSERTION.search(part[:match.start()]):
                     return True
     return False
-
-
-@dataclass(frozen=True)
-class ResponseIntegrityResult:
-    ok: bool
-    issues: tuple[str, ...] = ()
-    evidence_digest: str = ""
-    elapsed_ms: int = 0
 
 
 class ResponseIntegrityCheck:

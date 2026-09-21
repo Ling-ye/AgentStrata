@@ -304,9 +304,9 @@ def _structure_config(data: dict[str, Any]) -> dict[str, Any]:
     agents = data.get("agents") if isinstance(data.get("agents"), dict) else {}
     prompts = data.get("prompts") if isinstance(data.get("prompts"), dict) else {}
     context = data.get("context") if isinstance(data.get("context"), dict) else {}
-    backend = agents.get("backend")
+    runtime_id = agents.get("runtime")
     return {
-        "backend": backend if backend in {"native", "langgraph", "codex"} else "unknown",
+        "runtime_id": runtime_id if runtime_id in {"native", "langgraph", "codex"} else "unknown",
         "prompt_schema_version": prompts.get("schema_version") if type(prompts.get("schema_version")) is int else None,
         "prompt_sections": [key for key in ("identity", "response_style", "refusal_style", "role_styles", "mode_styles") if prompts.get(key)],
         "context_sources": [key for key in ("rag", "wiki", "memory_store", "codebases", "playbooks", "dev") if context.get(key)],

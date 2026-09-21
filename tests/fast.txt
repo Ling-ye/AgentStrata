@@ -36,7 +36,7 @@ tests/unit/test_qq_token_sync.py
 tests/unit/test_operator_commands.py
 tests/unit/test_deterministic_operator_commands.py
 
-# Agent, backend, prompt and tool contracts
+# Agent, runtime, prompt and tool contracts
 tests/unit/test_tool_registry.py
 tests/unit/test_tool_executor_contract.py
 tests/unit/test_progressive_results.py
@@ -51,7 +51,8 @@ tests/unit/test_prompt_plan.py
 tests/unit/test_prompt_plan_architecture.py
 tests/unit/test_agent_cancellation.py
 tests/unit/test_concurrency.py
-tests/unit/test_main_agent_backend_unification.py
+tests/unit/test_main_agent_runtime_unification.py
+tests/unit/test_runtime_cutover.py
 tests/unit/test_codex_cli_runner.py
 tests/unit/test_mcp_client_provider.py
 tests/unit/test_search_coordinator.py

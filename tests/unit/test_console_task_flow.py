@@ -111,7 +111,7 @@ def test_task_flow_projects_runtime_boundaries_without_claiming_qq_display(
                 "recorded_at": 102,
                 "data": {
                     "snapshot_id": "ctx_main_1",
-                    "backend": "native",
+                    "runtime_id": "native",
                     "model": "example-model",
                     "coverage": "exact_model_input",
                     "capture_status": "captured",

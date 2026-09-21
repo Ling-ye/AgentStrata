@@ -643,7 +643,7 @@ def test_gateway_task_evidence_reads_real_observation_database_without_writes(tm
     state = GatewayStateStore(tmp_path / "gateway")
     generation = state.acquire_writer_generation()
     recorder = ObservationRecorder(
-        state, generation, configuration={"layers": [], "entities": [], "backend": "native"}
+        state, generation, configuration={"layers": [], "entities": [], "runtime_id": "native"}
     )
     state.create_session(
         generation=generation,
@@ -660,7 +660,7 @@ def test_gateway_task_evidence_reads_real_observation_database_without_writes(tm
     recorder.store.bind_run(
         "run-source",
         config_id=recorder.config_id,
-        backend="native",
+        runtime_id="native",
         model="test-model",
         role="owner",
     )

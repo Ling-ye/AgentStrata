@@ -91,10 +91,6 @@ from chatcopilot.botspec import BotRuntimeContext, load_runtime_context
 from chatcopilot.contracts.agent import ResourceRef
 from chatcopilot.contracts.identity import ConversationIdentity, TurnIdentity
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
-from chatcopilot.core.model_selection import (
-    CODE_MODEL_SELECTION_METADATA_KEY,
-    default_code_model_selection,
-)
 from chatcopilot.core.tasks import format_task_status
 from chatcopilot.middleware.acp import agent_bridge as _agent_bridge
 from chatcopilot.middleware.acp import attachment_pipeline as _attachment
@@ -266,6 +262,10 @@ class AcpChatAgent(Agent):
         """统一的 SessionState 工厂；封装 background_submitter 工厂调用。"""
         chat_config = getattr(self, "_chat_config", None)
         llm = getattr(chat_config, "llm", None)
+        from chatcopilot.core.model_routes import resolve_model_config
+        if llm is not None:
+            llm = resolve_model_config(self._runtime.spec.llm.chat, fallback=llm,
+                prefix=self._runtime.spec.llm.env_prefix, environment=os.environ)
         return _build_session_for_workspace(
             session_id=session_id,
             ws=ws,
@@ -273,6 +273,7 @@ class AcpChatAgent(Agent):
             runtime=self._runtime,
             llm_model=getattr(llm, "model", None),
             routing_config=getattr(chat_config, "routing", None),
+            main_model_route=llm.model_route() if llm is not None else None,
             execution_session_id=execution_session_id,
         )
 
@@ -430,7 +431,7 @@ class AcpChatAgent(Agent):
             history, _latest_sequence = journal.context_since(actor_session.conversation_cursor)
         except (GroupConversationJournalError, OSError, RuntimeError, ValueError) as exc:
             # A journal/metadata mismatch is conversation-wide, not specific to
-            # the actor who happened to observe it.  Drop every cached backend
+            # the actor who happened to observe it.  Drop every cached runtime
             # for this ACP group session so no actor can continue from a cursor
             # that belongs to a missing or older journal generation.
             self._invalidate_group_conversation_sessions(session_id=session_id)
@@ -475,7 +476,7 @@ class AcpChatAgent(Agent):
                     close()
                 except Exception:  # noqa: BLE001 - eviction must still make progress
                     _LOGGER.exception(
-                        "group actor backend close failed | sid=%s",
+                        "group actor runtime close failed | sid=%s",
                         key[0],
                     )
 
@@ -491,7 +492,7 @@ class AcpChatAgent(Agent):
         session_id: str,
         session: SessionState,
     ) -> None:
-        """Drop a group actor whose backend and journal can no longer agree."""
+        """Drop a group actor whose runtime and journal can no longer agree."""
 
         identity = session.turn_identity
         if identity is not None:
@@ -514,10 +515,10 @@ class AcpChatAgent(Agent):
             try:
                 action()
             except Exception:  # noqa: BLE001 - state stays evicted even if close fails
-                _LOGGER.exception("group actor backend discard failed | sid=%s", session_id)
+                _LOGGER.exception("group actor runtime discard failed | sid=%s", session_id)
 
     def _invalidate_group_conversation_sessions(self, *, session_id: str) -> None:
-        """Discard every actor backend bound to one inconsistent group journal."""
+        """Discard every actor runtime bound to one inconsistent group journal."""
 
         cache = getattr(self, "_group_actor_sessions", {})
         states: list[SessionState] = []
@@ -556,7 +557,7 @@ class AcpChatAgent(Agent):
                     action()
                 except Exception:  # noqa: BLE001 - all states remain evicted
                     _LOGGER.exception(
-                        "group conversation backend discard failed | sid=%s",
+                        "group conversation runtime discard failed | sid=%s",
                         session_id,
                     )
 
@@ -869,7 +870,7 @@ class AcpChatAgent(Agent):
             )
             # The accepted upload turn is recorded synchronously while the ACP
             # session lock is held. This delayed delivery task must not mutate
-            # backend history or the group journal: the same actor may already
+            # runtime history or the group journal: the same actor may already
             # be processing a newer message with a different TurnIdentity.
         except asyncio.CancelledError:
             _LOGGER.info(
@@ -1208,7 +1209,7 @@ class AcpChatAgent(Agent):
             elif isinstance(event, ContextSnapshotPrepared):
                 recorder.context_snapshot(
                     snapshot_id=event.snapshot_id,
-                    backend=event.backend,
+                    runtime_id=event.runtime_id,
                     model=event.model,
                     iteration=event.iteration,
                     session_messages=[dict(item) for item in event.session_messages],
@@ -1237,7 +1238,7 @@ class AcpChatAgent(Agent):
                 )
             elif isinstance(event, InputResourcesDispatched):
                 recorder.input_resources_dispatched(
-                    backend=event.backend,
+                    runtime_id=event.runtime_id,
                     turn_index=event.turn_index,
                     request_id=event.request_id,
                     resources=[
@@ -1254,7 +1255,7 @@ class AcpChatAgent(Agent):
                 recorder.llm_call_started(
                     model=event.model,
                     iteration=event.iteration,
-                    backend=event.backend,
+                    runtime_id=event.runtime_id,
                     trace_id=event.trace_id,
                     span_id=event.span_id,
                     parent_span_id=event.parent_span_id,
@@ -1272,7 +1273,7 @@ class AcpChatAgent(Agent):
                 recorder.llm_call_finished(
                     model=event.model,
                     iteration=event.iteration,
-                    backend=event.backend,
+                    runtime_id=event.runtime_id,
                     finish_reason=event.finish_reason,
                     usage=dict(event.usage) if event.usage else None,
                     trace_id=event.trace_id,
@@ -1348,7 +1349,7 @@ class AcpChatAgent(Agent):
             previous_session = session
             old_workspace = session.workspace
             session = self._build_session(session_id=session_id, ws=latest_ws)
-            session.copy_code_model_state_from(previous_session)
+            session.copy_model_state_from(previous_session)
             self._sessions[session_id] = session
             _LOGGER.info(
                 "prompt | sid=%s refreshed SessionState identity | old=%s -> new=%s | role=%s",
@@ -1426,11 +1427,14 @@ class AcpChatAgent(Agent):
         task_metadata = dict(task_metadata or {})
         if turn_task is not None:
             task_metadata["trace_id"] = turn_task.task_id
-        code_model_selection = None
-        if getattr(getattr(self, "_runtime", None), "agent_backend", "") == "codex":
-            default_selection = default_code_model_selection(self._chat_config.routing)
-            code_model_selection = session.effective_code_model_selection(default_selection)
-            task_metadata[CODE_MODEL_SELECTION_METADATA_KEY] = code_model_selection.to_payload()
+        from chatcopilot.contracts.execution import TurnExecutionContext, TraceContext
+        from chatcopilot.contracts.model_runtime import ModelSelection
+        model_selection = (session.effective_model_selection(ModelSelection(session.main_model_route))
+                           if session.main_model_route is not None else None)
+        execution = TurnExecutionContext(execution_id=turn_task.task_id if turn_task else session_id,
+            session_id=session_id, origin="legacy", model_selection=model_selection,
+            actor_ref=(session.turn_identity.actor_ref if getattr(session, "turn_identity", None) else ""),
+            trace=TraceContext(turn_task.task_id if turn_task else session_id))
         try:
             role_object = getattr(session, "role", "user")
             receipt_requirement = classify_memory_receipt_requirement(
@@ -1456,6 +1460,7 @@ class AcpChatAgent(Agent):
                             resources=task_resources,
                             turn_context=task_turn_context,
                             metadata=task_metadata,
+                            execution=execution,
                         ),
                         on_event=dispatch,
                     )
@@ -1482,6 +1487,7 @@ class AcpChatAgent(Agent):
                                 resources=(),
                                 turn_context=retry_context,
                                 metadata=retry_metadata,
+                                execution=execution,
                             ),
                             on_event=dispatch,
                         )
@@ -1511,15 +1517,15 @@ class AcpChatAgent(Agent):
                     lifecycle_intents=(),
                 )
                 translator.replace_final_text(failure_text)
-            if code_model_selection is not None:
-                session.consume_code_model_once(code_model_selection)
+            if model_selection is not None:
+                session.consume_model_once(model_selection)
             if getattr(session.workspace, "scope", "actor") == WORKSPACE_SCOPE_GROUP_SHARED:
                 try:
                     session.record_group_model_exchange(
                         user_text,
                         result.final_text,
                     )
-                except Exception:  # noqa: BLE001 - backend advanced but journal did not
+                except Exception:  # noqa: BLE001 - runtime advanced but journal did not
                     self._invalidate_group_actor_session(
                         session_id=session_id,
                         session=session,

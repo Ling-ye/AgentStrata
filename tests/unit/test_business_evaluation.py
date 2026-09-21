@@ -317,7 +317,7 @@ def test_native_agent_registry_tool_execution_and_sdk_judge(monkeypatch, tmp_pat
 
     runtime = replace(
         load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False),
-        agent_backend="native",
+        runtime_id="native",
     )
     monkeypatch.setattr(environment_agent, "load_evaluation_runtime", lambda _bot: runtime)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "controlled-native-fixture")

@@ -75,7 +75,7 @@ task diagnostics and never becomes `final_text`.
 
  The former desktop-import command is retired and must fail closed with a pointer
 to the independent login workflow. Current access modes are `workspace` and
-`worktree`, as defined by [Backend contracts](../../src/chatcopilot/contracts/agent_backend.py).
+`worktree`, as defined by [Runtime contracts](../../src/chatcopilot/contracts/runtime_adapter.py).
 Neither may copy from, mount, inspect or fall back to a desktop or personal Codex
 home; there is no `host` access-mode exception.
 

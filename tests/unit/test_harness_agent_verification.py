@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.botspec.model import LLMSpec
 
 import copy
 import json
@@ -172,7 +173,7 @@ def test_scoring_uses_actual_tools_and_final_state():
 
 def test_candidate_configuration_preserves_authority_and_model():
     before = {"prompts": {"schema_version": 2, "identity": "prompts/identity.md"},
-              "llm": {"chat": {"env_prefix": "EXAMPLE"}}, "agents": {"backend": "native"},
+              "llm": {"chat": {"env_prefix": "EXAMPLE"}}, "agents": {"runtime": "native"},
               "workspace": {"root_env": "EXAMPLE_WORKSPACE"}, "tools": {"packs": ["workspace.read_write"]}}
     candidate = copy.deepcopy(before)
     candidate["prompts"]["identity"] = "prompts/new.md"
@@ -180,7 +181,7 @@ def test_candidate_configuration_preserves_authority_and_model():
     def encode(value):
         return json.dumps(value).encode()
     validate_configuration(encode(before), encode(candidate))
-    for key, value in [("agents", {"backend": "codex"}), ("workspace", {"root_env": "OTHER"}),
+    for key, value in [("agents", {"runtime_id": "codex"}), ("workspace", {"root_env": "OTHER"}),
                        ("llm", {"chat": {"env_prefix": "OTHER"}})]:
         invalid = {**candidate, key: value}
         with pytest.raises(ValueError, match="candidate changes"):
@@ -189,7 +190,7 @@ def test_candidate_configuration_preserves_authority_and_model():
 
 def test_comparison_allows_product_fingerprint_only_with_fixed_invariants():
     original = {"cases": {"x": "hash"}, "grading": {}, "environment": "env",
-                "configuration_invariants": "same", "targets": {"t": {"model": "m", "backend": "native", "config_fingerprint": "old"}}}
+                "configuration_invariants": "same", "targets": {"t": {"model": "m", "runtime_id": "native", "config_fingerprint": "old"}}}
     candidate = copy.deepcopy(original)
     candidate["targets"]["t"]["config_fingerprint"] = "new"
     verify_conditions(original, candidate)
@@ -293,11 +294,11 @@ def test_agent_input_never_receives_grading_oracle(tmp_path, monkeypatch):
     from chatcopilot.contracts.agent import AgentResult
     from chatcopilot.contracts.prompt import BotPromptProfile
     seen = {}
-    runtime = SimpleNamespace(spec=SimpleNamespace(llm=SimpleNamespace(env_prefix="EXAMPLE")),
+    runtime = SimpleNamespace(spec=SimpleNamespace(llm=LLMSpec(env_prefix="EXAMPLE")),
         tool_packs=(), subagents=object(), prompt_profile=BotPromptProfile(identity="candidate identity", response_style="concise"),
-        agent_backend="native", capability_policies=(), skills=())
+        runtime_id="native", capability_policies=(), skills=())
     class Agent:
-        def new_session(self, **kwargs):
+        def open_session(self, **kwargs):
             seen["prompt"] = kwargs["prompt_input"]
             return self
         def run_task(self, task, **kwargs):

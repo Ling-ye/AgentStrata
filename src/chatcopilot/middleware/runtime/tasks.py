@@ -1349,7 +1349,7 @@ class TurnTaskRecorder:
         self,
         *,
         snapshot_id: str,
-        backend: str,
+        runtime_id: str,
         model: str,
         iteration: int,
         session_messages: List[Dict[str, Any]],
@@ -1430,7 +1430,7 @@ class TurnTaskRecorder:
             "task_id": self.task_id,
             "snapshot_id": snapshot_id,
             "captured_at": captured_at,
-            "backend": backend,
+            "runtime_id": runtime_id,
             "model": model,
             "iteration": iteration,
             "coverage": effective_coverage,
@@ -1475,7 +1475,7 @@ class TurnTaskRecorder:
                 "task_id": self.task_id,
                 "snapshot_id": snapshot_id,
                 "captured_at": captured_at,
-                "backend": backend,
+                "runtime_id": runtime_id,
                 "model": model,
                 "iteration": iteration,
             }
@@ -1523,7 +1523,7 @@ class TurnTaskRecorder:
         )
         summary = {
             "snapshot_id": snapshot_id,
-            "backend": backend,
+            "runtime_id": runtime_id,
             "model": model,
             "iteration": iteration,
             "coverage": effective_coverage,
@@ -1621,7 +1621,7 @@ class TurnTaskRecorder:
         self,
         *,
         snapshot_id: str,
-        backend: str,
+        runtime_id: str,
         model: str,
         iteration: int,
         trace_id: Optional[str],
@@ -1651,7 +1651,7 @@ class TurnTaskRecorder:
         reason = "snapshot_event_missing" if snapshot_id else "snapshot_id_missing"
         summary = {
             "snapshot_id": valid_id,
-            "backend": backend or "unknown",
+            "runtime_id": runtime_id or "unknown",
             "model": model,
             "iteration": max(0, int(iteration)),
             "coverage": "provider_opaque",
@@ -1679,13 +1679,13 @@ class TurnTaskRecorder:
     def input_resources_dispatched(
         self,
         *,
-        backend: str,
+        runtime_id: str,
         turn_index: int,
         request_id: str,
         resources: List[Dict[str, Any]],
     ) -> None:
         receipt = {
-            "backend": backend,
+            "runtime_id": runtime_id,
             "turn_index": turn_index,
             "request_id": request_id,
             "resources": list(resources),
@@ -1700,7 +1700,7 @@ class TurnTaskRecorder:
         *,
         model: str,
         iteration: int,
-        backend: str = "",
+        runtime_id: str = "",
         trace_id: Optional[str] = None,
         span_id: Optional[str] = None,
         parent_span_id: Optional[str] = None,
@@ -1716,7 +1716,7 @@ class TurnTaskRecorder:
     ) -> None:
         context_snapshot_id = self._ensure_context_snapshot_reference(
             snapshot_id=context_snapshot_id,
-            backend=backend,
+            runtime_id=runtime_id,
             model=model,
             iteration=iteration,
             trace_id=trace_id,
@@ -1756,7 +1756,7 @@ class TurnTaskRecorder:
             self._forecast = next_forecast
         call = {
             "model": model,
-            "backend": backend,
+            "runtime_id": runtime_id,
             "iteration": iteration,
             "trace_id": trace_id,
             "span_id": span_id,
@@ -1807,7 +1807,7 @@ class TurnTaskRecorder:
         *,
         model: str,
         iteration: int,
-        backend: str = "",
+        runtime_id: str = "",
         finish_reason: str = "",
         usage: Optional[Dict[str, Any]] = None,
         trace_id: Optional[str] = None,
@@ -1835,7 +1835,7 @@ class TurnTaskRecorder:
             effective_span_id = f"{span_id}:{iteration}" if span_id else None
         call = {
             "model": model,
-            "backend": backend,
+            "runtime_id": runtime_id,
             "iteration": iteration,
             "finish_reason": finish_reason,
             "usage": normalized,
@@ -1861,7 +1861,7 @@ class TurnTaskRecorder:
             self.llm_call_started(
                 model=model,
                 iteration=iteration,
-                backend=backend,
+                runtime_id=runtime_id,
                 trace_id=trace_id,
                 span_id=effective_span_id,
                 parent_span_id=parent_span_id,
@@ -2607,7 +2607,7 @@ def _task_llm_call_summaries(values: Any) -> tuple[list[Dict[str, Any]], int, bo
         summaries.append(
             {
                 "model": _bounded_text(item.get("model"), 512),
-                "backend": _bounded_text(item.get("backend"), 128),
+                "runtime_id": _bounded_text(item.get("runtime_id"), 128),
                 "iteration": _bounded_nonnegative_integer(item.get("iteration")),
                 "finish_reason": _bounded_text(item.get("finish_reason"), 512),
                 "usage": _normalize_usage_payload(usage),
@@ -2662,7 +2662,7 @@ def _task_context_snapshot_summaries(
             # separate context artifact and must survive total-size fallback.
             "snapshot_id": _bounded_text(item.get("snapshot_id"), 128),
             "capture_status": _bounded_text(item.get("capture_status"), 64),
-            "backend": _bounded_text(item.get("backend"), 128),
+            "runtime_id": _bounded_text(item.get("runtime_id"), 128),
             "model": _bounded_text(item.get("model"), 128 if minimal else 512),
             "coverage": _bounded_text(item.get("coverage"), 64),
             "truncated": bool(item.get("truncated")),
@@ -2733,7 +2733,7 @@ def _task_input_resource_summaries(
             )
         summaries.append(
             {
-                "backend": _bounded_text(item.get("backend"), 128),
+                "runtime_id": _bounded_text(item.get("runtime_id"), 128),
                 "turn_index": _bounded_nonnegative_integer(item.get("turn_index")),
                 "request_id": _bounded_text(item.get("request_id"), 256),
                 "recorded_at": _bounded_observed_number(item.get("recorded_at")),
@@ -3862,7 +3862,7 @@ def _truncated_context_payload(
         "task_id": _bounded_text(payload.get("task_id"), 256),
         "snapshot_id": _bounded_text(payload.get("snapshot_id"), 256),
         "captured_at": payload.get("captured_at"),
-        "backend": _bounded_text(payload.get("backend"), 256),
+        "runtime_id": _bounded_text(payload.get("runtime_id"), 256),
         "model": _bounded_text(payload.get("model"), 1024),
         "iteration": payload.get("iteration"),
         "coverage": _bounded_text(payload.get("coverage"), 256),

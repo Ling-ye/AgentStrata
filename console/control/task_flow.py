@@ -202,7 +202,7 @@ def _project_event(
             occurred_at=occurred_at,
             payload={
                 "snapshot_id": _clip(data.get("snapshot_id"), 160),
-                "backend": _clip(data.get("backend"), 80),
+                "runtime_id": _clip(data.get("runtime_id"), 80),
                 "model": _clip(data.get("model"), 120),
                 "coverage": _clip(coverage, 80),
                 "capture_status": _clip(data.get("capture_status"), 80),
@@ -228,7 +228,7 @@ def _project_event(
             summary=_model_summary(data, finished=finished),
             occurred_at=occurred_at,
             payload={
-                "backend": _clip(data.get("backend"), 80),
+                "runtime_id": _clip(data.get("runtime_id"), 80),
                 "model": _clip(data.get("model") or data.get("name"), 120),
                 "iteration": _safe_count(data.get("iteration")),
                 "role": _clip(data.get("role"), 40),
@@ -309,7 +309,7 @@ def _project_event(
             summary=f"{_safe_count(data.get('resource_count'))} 个受控资源。",
             occurred_at=occurred_at,
             payload={
-                "backend": _clip(data.get("backend"), 80),
+                "runtime_id": _clip(data.get("runtime_id"), 80),
                 "resource_count": _safe_count(data.get("resource_count")),
             },
             evidence=evidence,
@@ -639,7 +639,7 @@ def _safe_payload(value: object) -> Dict[str, object]:
         return {}
     allowed = (
         "adapter",
-        "backend",
+        "runtime_id",
         "chat_kind",
         "correlation",
         "message_kind",

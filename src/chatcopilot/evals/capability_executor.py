@@ -34,10 +34,12 @@ from chatcopilot.application.agent_runtime import (
     assemble_agent_runtime,
 )
 from chatcopilot.contracts.agent import AgentTask, ResourceRef
+from chatcopilot.contracts.execution import TurnExecutionContext, TraceContext
+from chatcopilot.core.log_context import current_log_context
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput
 from chatcopilot.agent.tools.file_delivery import FileDeliveryResult
 from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
+from chatcopilot.contracts.runtime_adapter import CodexMainSessionPolicy
 from chatcopilot.contracts.code_tasks import validate_code_task_title
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.subagents import (
@@ -465,7 +467,7 @@ def _input_resource_dispatch_evidence(
         receipts.append(
             {
                 "kind": "input_resource_dispatch",
-                "backend": str(event.get("backend") or ""),
+                "runtime_id": str(event.get("runtime_id") or ""),
                 "turn_index": event.get("turn_index"),
                 "request_id": str(event.get("request_id") or ""),
                 "resources": normalized,
@@ -2204,8 +2206,8 @@ def _workspace_environment(workspace: Workspace) -> Iterator[None]:
 class _EvaluationWorkspaceService(MiddlewareWorkspaceService):
     """Pin every workspace lookup to one Evaluation-owned directory.
 
-    The configured Codex backend consumes the workspace returned here through
-    ``BackendOpenRequest.options['workspace_root']``.  Keeping that value
+    The configured Codex runtime consumes the workspace returned here through
+    ``RuntimeOpenRequest.options['workspace_root']``.  Keeping that value
     explicit prevents host project environment defaults from redirecting an
     Evaluation session into the live source tree.
     """
@@ -2850,11 +2852,11 @@ def _execute_agent_definition(
         ).ensure()
 
     def open_session(workspace: Workspace, *, session_id: str) -> Any:
-        # Session construction resolves the backend workdir and state root. Pin its
+        # Session construction resolves the runtime workdir and state root. Pin its
         # WorkspaceService so AgentRuntime writes an explicit evaluation-owned
-        # workspace_root into BackendOpenRequest.options. The environment binding is
+        # workspace_root into RuntimeOpenRequest.options. The environment binding is
         # retained for code that legitimately consumes the current session identity,
-        # but it is no longer the authority for backend workdir selection.
+        # but it is no longer the authority for runtime workdir selection.
         workspace_service = _EvaluationWorkspaceService(workspace)
         extra_session_options: dict[str, Any] = {}
         if business:
@@ -2863,7 +2865,7 @@ def _execute_agent_definition(
             extra_session_options['retriever_override'] = business if definition.case_id.startswith('evidence-') else None
         prompt_input = PromptBuildInput(
                     profile=runtime.prompt_profile,
-                    backend=runtime.agent_backend,
+                    runtime_id=runtime.runtime_id,
                     model=None,
                     role="owner",
                     channel_kind="group" if definition.case_id == "decision-persona" else "private",
@@ -2878,7 +2880,7 @@ def _execute_agent_definition(
                     ),
                 )
         with _workspace_environment(workspace):
-            session = agent_runtime.new_session(
+            session = agent_runtime.open_session(
                 session_id=session_id,
                 **extra_session_options,
                 prompt_input=prompt_input,
@@ -2902,7 +2904,7 @@ def _execute_agent_definition(
             from dataclasses import replace as replace_prompt
             def refresh_persona() -> None:
                 names = tuple(getattr(getattr(session, "capabilities", None), "tool_names", ()))
-                session.set_prompt_plan(PromptPlanBuilder().build(replace_prompt(
+                session.update_context(PromptPlanBuilder().build(replace_prompt(
                     prompt_input, dynamic_persona=business.persistent.persona_snapshot('group'), tool_names=names)))
             business.persona_port.refresh = refresh_persona
         execution_session_ids[id(session)] = session_id
@@ -2951,8 +2953,10 @@ def _execute_agent_definition(
             metadata={
                 "eval_suite": suite_id,
                 "eval_case": definition.case_id,
-                "eval_turn": turn_index,
             },
+            execution=TurnExecutionContext(execution_id=current_log_context().get("task_id", ""),
+                session_id=workspace.chat_id or "", origin="evaluation", turn_index=turn_index,
+                trace=TraceContext(current_log_context().get("trace_id", ""))),
         )
         captured_turn = {"turn_index": turn_index, "conversation_id": workspace.chat_id,
             "input": text, "resources": [{"id": item, "name": resources_by_id[item].name,
@@ -2993,7 +2997,7 @@ def _execute_agent_definition(
                 ),
                 {},
             )
-            error_code = str(latest_error.get("code") or "agent_backend_error")
+            error_code = str(latest_error.get("code") or "agent_runtime_error")
             error_message = sanitize_text(
                 str(latest_error.get("message") or ""),
                 secrets=collect_env_secrets(),
@@ -3001,8 +3005,8 @@ def _execute_agent_definition(
             )
             detail = f" ({error_code}: {error_message[-1200:]})" if error_message else ""
             raise CapabilityExecutionError(
-                "capability_agent_backend_error",
-                "selected Agent backend returned llm_error before deterministic judging"
+                "capability_agent_runtime_error",
+                "selected Agent runtime returned llm_error before deterministic judging"
                 + detail,
             )
         for resource in result.produced_resources:

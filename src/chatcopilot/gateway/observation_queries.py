@@ -15,7 +15,7 @@ class RunFilter:
     until: float | None = None
     state: str = ""
     config_id: str = ""
-    backend: str = ""
+    runtime_id: str = ""
     model: str = ""
     component: str = ""
     error_code: str = ""
@@ -33,13 +33,13 @@ class RunFilter:
         if self.since is not None and self.until is not None and self.since > self.until:
             raise ValueError("Invalid observation time range")
         clauses, params = [], []
-        if any(len(getattr(self, name)) > 256 for name in ("state", "backend", "config_id", "model", "component", "error_code", "search")):
+        if any(len(getattr(self, name)) > 256 for name in ("state", "runtime_id", "config_id", "model", "component", "error_code", "search")):
             raise ValueError("Observation filter is too long")
         for name, value, operator in (("created_at", self.since, ">="), ("created_at", self.until, "<=")):
             if value is not None:
                 clauses.append(f"r.{name}{operator}?")
                 params.append(value)
-        for name in ("state", "backend"):
+        for name in ("state", "runtime_id"):
             value = getattr(self, name)
             if len(value) > 256:
                 raise ValueError("Observation filter is too long")
@@ -160,18 +160,18 @@ def metrics(store: ObservationStore, filters: RunFilter) -> dict[str, Any]:
             "SUM(e.elapsed_ms IS NOT NULL) AS timing_samples FROM events e JOIN runs r ON e.run_id=r.run_id "
             "WHERE e.phase='finish' AND " + clause + " GROUP BY e.layer,e.entity_id ORDER BY failures DESC,mean_ms DESC LIMIT 101", params)]
         trends = [dict(row) for row in connection.execute(
-            "WITH filtered AS (SELECT date(r.created_at,'unixepoch') AS day,r.config_revision AS config_id,r.backend,r.model,r.state,"
+            "WITH filtered AS (SELECT date(r.created_at,'unixepoch') AS day,r.config_revision AS config_id,r.runtime_id,r.model,r.state,"
             "CASE WHEN r.state IN ('completed','failed','aborted') AND r.finished_at>=r.started_at THEN "
             "(r.finished_at-r.started_at)*1000 END AS ms FROM runs r WHERE " + clause + "),"
-            "ranked AS (SELECT *,ROW_NUMBER() OVER(PARTITION BY day,config_id,backend,model ORDER BY ms) AS position,"
-            "COUNT(*) OVER(PARTITION BY day,config_id,backend,model) AS samples FROM filtered WHERE ms IS NOT NULL),"
-            "percentiles AS (SELECT day,config_id,backend,model,MAX(CASE WHEN samples>=20 AND position=(samples*50+99)/100 "
+            "ranked AS (SELECT *,ROW_NUMBER() OVER(PARTITION BY day,config_id,runtime_id,model ORDER BY ms) AS position,"
+            "COUNT(*) OVER(PARTITION BY day,config_id,runtime_id,model) AS samples FROM filtered WHERE ms IS NOT NULL),"
+            "percentiles AS (SELECT day,config_id,runtime_id,model,MAX(CASE WHEN samples>=20 AND position=(samples*50+99)/100 "
             "THEN ms END) AS p50_ms,MAX(CASE WHEN samples>=20 AND position=(samples*95+99)/100 THEN ms END) AS p95_ms "
-            "FROM ranked GROUP BY day,config_id,backend,model) "
-            "SELECT f.day,f.config_id,f.backend,f.model,COUNT(*) AS total,SUM(f.state='failed') AS failed,"
+            "FROM ranked GROUP BY day,config_id,runtime_id,model) "
+            "SELECT f.day,f.config_id,f.runtime_id,f.model,COUNT(*) AS total,SUM(f.state='failed') AS failed,"
             "AVG(f.ms) AS mean_ms,COUNT(f.ms) AS sample_count,p.p50_ms,p.p95_ms FROM filtered f LEFT JOIN percentiles p "
-            "ON f.day IS p.day AND f.config_id IS p.config_id AND f.backend IS p.backend AND f.model IS p.model "
-            "GROUP BY f.day,f.config_id,f.backend,f.model ORDER BY f.day DESC LIMIT 367", params)]
+            "ON f.day IS p.day AND f.config_id IS p.config_id AND f.runtime_id IS p.runtime_id AND f.model IS p.model "
+            "GROUP BY f.day,f.config_id,f.runtime_id,f.model ORDER BY f.day DESC LIMIT 367", params)]
     return {"totals": totals, "components": components[:100], "trends": trends[:366], "generated_at": time.time(),
             "components_truncated": len(components) > 100, "trends_truncated": len(trends) > 366,
             "since": filters.since, "until": filters.until, "source": "observation_index"}

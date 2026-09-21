@@ -147,7 +147,7 @@ class ObservationRecorder:
                     with self.store.connection(write=True) as observed:
                         observed.execute("UPDATE runs SET capture_state='truncated' WHERE run_id=? AND capture_state!='capture_failed'", (selected,))
                 if run_id and run["state"] == "accepted":
-                    self.store.bind_run(selected, config_id=self.config_id, backend=str(self.configuration.get("backend", "")),
+                    self.store.bind_run(selected, config_id=self.config_id, runtime_id=str(self.configuration.get("runtime_id", "")),
                                         model=str(self.configuration.get("model", "")))
                 if run_id and run["finished_at"] is not None and run["finished_at"] + 30 * 86400 > time.time():
                     result = connection.execute("SELECT result_json FROM runs WHERE run_id=?", (selected,)).fetchone()
@@ -164,7 +164,7 @@ class ObservationRecorder:
         self.refresh()
         role = request.principal.role.value
         self.store.bind_run(run_id, config_id=self.config_id, role=role,
-                            backend=str(self.configuration.get("backend", "")), model=str(self.configuration.get("model", "")))
+                            runtime_id=str(self.configuration.get("runtime_id", "")), model=str(self.configuration.get("model", "")))
         self.store.attach_body(run_id, "input", {"text": request.canonical_text})
         resources = getattr(request, "resource_refs", ())
         if resources:
@@ -180,7 +180,7 @@ class ObservationRecorder:
     def accepted(self, run_id: str, text: str, role: str, *, secrets: tuple[str, ...] = (),
                  roots: dict[str, Any] | None = None) -> None:
         self.store.bind_run(run_id, config_id=self.config_id, role=role,
-                            backend=str(self.configuration.get("backend", "")), model=str(self.configuration.get("model", "")))
+                            runtime_id=str(self.configuration.get("runtime_id", "")), model=str(self.configuration.get("model", "")))
         self.store.attach_body(run_id, "input", {"text": text})
         if run_id not in self._traces and not self.store.meta("trace:" + run_id):
             capture = TraceCapture({"kind": "robot_task", "run_id": run_id}, secrets=secrets, roots=roots)
@@ -325,7 +325,7 @@ class ObservationRecorder:
                     config["entities"] = [item for item in config.get("entities", []) if item["id"] != identity]
                     config["entities"].append({"id": identity, "name": data["model"], "layer": "agent", "configured": True,
                         "loaded": True, "available": True, "connected": None,
-                        "config": {"model": data["model"], "backend": data.get("backend"), "model_selection": data.get("model_selection")}})
+                        "config": {"model": data["model"], "runtime_id": data.get("runtime_id"), "model_selection": data.get("model_selection")}})
                     key = self.store.put_configuration(config)
                     data["configuration_id"] = key
                     with self.store.connection(write=True) as connection:
@@ -355,8 +355,15 @@ def runtime_configuration(runtime: Any, agent: Any, environment: Mapping[str, st
     from chatcopilot.botspec.inspection_agent import enrich_agent_configuration
     config = configuration_projection(runtime.spec, mcp=runtime.mcp_servers, skills=runtime.skills,
                                       rag=runtime.rag_sources, environment=environment)
-    config["backend"] = str(agent.agent_backend)
-    config["model"] = str(agent.runtime_config.routing.code_model if agent.agent_backend == "codex" else agent.runtime_config.llm.model)
+    config["runtime_id"] = str(agent.runtime_id)
+    config["model"] = str(agent.route.model.model)
+    config["auth_mode"] = agent.route.model.auth.mode
+    config["runtime_route"] = {
+        "runtime_id": agent.route.runtime_id,
+        "model": agent.route.model.to_payload(),
+        "turn_timeout_seconds": agent.route.turn_timeout_seconds,
+        "behavior_fingerprint": agent.route.behavior_fingerprint,
+    }
     config["configuration_revision"] = fingerprint(configuration_projection(runtime.spec, mcp=runtime.mcp_servers,
         skills=runtime.skills, rag=runtime.rag_sources, environment=environment))
     config["tool_bindings"] = {}
@@ -370,12 +377,23 @@ def runtime_configuration(runtime: Any, agent: Any, environment: Mapping[str, st
     entities["prompts:instance"]["config"]["content_hash"] = fingerprint(plain(runtime.prompt_profile))
     entities["model-slot:chat"]["runtime"] = plain(agent.runtime_config.llm)
     entities["model-slot:code"]["runtime"] = plain(agent.runtime_config.routing)
-    research_config = getattr(getattr(agent, "research_llm", None), "config", None)
+    research_config = getattr(getattr(agent, "research_model_client", None), "config", None)
     if research_config is not None:
         entities["model-slot:research"]["runtime"] = plain(research_config)
     if agent.tool_registry is not None:
         snapshot = agent.tool_registry.snapshot(tool_packs=agent.tool_packs, exclude_tools=agent.exclude_tools,
                                                require_all_selected=False)
+        config["capability_digest"] = fingerprint(
+            [
+                {
+                    "name": tool.name,
+                    "provider": snapshot.sources[tool.name].provider_id,
+                    "pack": snapshot.sources[tool.name].pack_id,
+                    "access": plain(tool.access),
+                }
+                for tool in snapshot.tools
+            ]
+        )
         materialized_packs = {source.pack_id for source in snapshot.sources.values()}
         for identity, entity in entities.items():
             if identity.startswith("pack:"):
@@ -415,8 +433,8 @@ def runtime_configuration(runtime: Any, agent: Any, environment: Mapping[str, st
             if entity:
                 entity.update(connected=status["running"], loaded=bool(status["tools_count"]), runtime=status)
     enrich_agent_configuration(config, runtime.spec, environment, chat_config=agent.runtime_config,
-        backend=agent.agent_backend, research_config=research_config,
-        search_config=getattr(getattr(agent, "search_llm", None), "config", None))
+        runtime_id=agent.runtime_id, research_config=research_config,
+        search_config=getattr(getattr(agent, "search_model_client", None), "config", None))
     for entity in config["entities"]:
         if entity["id"].startswith(("agent:", "search:", "subagent:", "workflow:")):
             entity["runtime"] = entity.get("effective_config", entity["config"])

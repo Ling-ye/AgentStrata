@@ -104,7 +104,7 @@ def test_lingye_prompt_and_tool_schema_budgets(monkeypatch: pytest.MonkeyPatch) 
             plan = PromptPlanBuilder().build(
                 PromptBuildInput(
                     profile=runtime.prompt_profile,
-                    backend="codex",
+                    runtime_id="codex",
                     model="gpt-5.6-terra",
                     role=role,
                     channel_kind=channel,

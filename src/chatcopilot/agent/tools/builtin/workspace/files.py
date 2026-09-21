@@ -12,7 +12,7 @@ from chatcopilot.agent.tools.builtin.workspace.common import _is_unsafe_member, 
 
 _UNZIP_SUFFIXES = (".zip", ".tar.gz", ".tgz", ".tar")
 _GROUP_RESERVED_PATHS = frozenset(
-    {"jobs", "tasks", "transcripts", ".backend-sessions", ".conversation-state"}
+    {"jobs", "tasks", "transcripts", ".runtime-sessions", ".conversation-state"}
 )
 
 

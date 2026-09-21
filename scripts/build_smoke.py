@@ -61,21 +61,38 @@ def main() -> int:
     status = 0
     with tempfile.TemporaryDirectory(prefix="agentstrata-distributions-") as temp_dir:
         output_dir = Path(temp_dir)
-        completed = subprocess.run(
+        sdist = subprocess.run(
             (
                 sys.executable,
                 "-m",
                 "build",
                 "--no-isolation",
                 "--sdist",
-                "--wheel",
                 "--outdir",
                 str(output_dir),
             ),
             cwd=ROOT,
             check=False,
         )
-        status = completed.returncode
+        status = sdist.returncode
+        if status == 0:
+            build_base = output_dir / "build"
+            wheel_build = subprocess.run(
+                (
+                    sys.executable,
+                    "-m",
+                    "build",
+                    "--no-isolation",
+                    "--wheel",
+                    "--outdir",
+                    str(output_dir),
+                    "-C--build-option=build",
+                    f"-C--build-option=--build-base={build_base}",
+                ),
+                cwd=ROOT,
+                check=False,
+            )
+            status = wheel_build.returncode
         if status == 0:
             wheel = _single_artifact(output_dir, "agentstrata-*.whl", "wheel")
             sdist = _single_artifact(output_dir, "agentstrata-*.tar.gz", "sdist")

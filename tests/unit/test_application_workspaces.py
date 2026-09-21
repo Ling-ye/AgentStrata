@@ -86,20 +86,20 @@ def test_explicit_workspace_paths_separate_actor_and_group_state(tmp_path: Path)
     assert first.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
     assert first.workspace.user_id == "20002"
     assert second.workspace.user_id == "20003"
-    assert first.backend_state_root is not None
-    assert second.backend_state_root is not None
-    assert first.backend_state_root != second.backend_state_root
-    assert first.backend_state_root.parent == (
-        root / "group_30003" / ".conversation-state" / "backend-sessions"
+    assert first.runtime_state_root is not None
+    assert second.runtime_state_root is not None
+    assert first.runtime_state_root != second.runtime_state_root
+    assert first.runtime_state_root.parent == (
+        root / "group_30003" / ".conversation-state" / "runtime-sessions"
     )
-    assert first.service.requires_backend_state_isolation() is True
+    assert first.service.requires_runtime_state_isolation() is True
     assert first.service.resolve_workspace_root() == root
     assert not (first.workspace.root / ".cc-connect").exists()
     for protected in (
-        first.backend_state_root.parent.parent,
-        first.backend_state_root.parent,
-        first.backend_state_root,
-        second.backend_state_root,
+        first.runtime_state_root.parent.parent,
+        first.runtime_state_root.parent,
+        first.runtime_state_root,
+        second.runtime_state_root,
     ):
         assert stat.S_IMODE(protected.stat().st_mode) == 0o700
 

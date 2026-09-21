@@ -15,7 +15,7 @@ def test_openai_sdk_retries_are_disabled_and_owned_by_agentstrata(monkeypatch) -
             self.chat = SimpleNamespace(completions=SimpleNamespace())
 
     monkeypatch.setattr("openai.OpenAI", _OpenAI)
-    LLMClient(
+    client = LLMClient(
         LLMConfig(
             base_url="https://example.invalid/v1",
             api_key="test-key",
@@ -24,6 +24,8 @@ def test_openai_sdk_retries_are_disabled_and_owned_by_agentstrata(monkeypatch) -
         )
     )
 
+    assert captured == {}
+    client._build_client()
     assert captured["max_retries"] == 0
     assert captured["timeout"] == 17
 

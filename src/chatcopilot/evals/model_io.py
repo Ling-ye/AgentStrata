@@ -14,7 +14,7 @@ def invoke(case, *, chat_config, messages: list[dict], tools: list[dict] | None)
 
     plan = PromptPlanBuilder().build(PromptBuildInput(
         profile=BotPromptProfile(identity="Independent model evaluation assistant.", response_style="Follow the benchmark task requirements."),
-        backend="native", model=chat_config.llm.model, role="user", channel_kind="private", skill_index=(),
+        runtime_id="native", model=chat_config.llm.model, role="user", channel_kind="private", skill_index=(),
         tool_names=tuple(t["function"]["name"] for t in tools or []),
         session_policy="Generate the requested answer or function calls. No tools are executed in this model evaluation.",
     ))

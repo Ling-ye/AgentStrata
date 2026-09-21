@@ -913,7 +913,7 @@ validate_resume_text_shape() {
             fail()
         }
         section == "agents" {
-            if ($0 == "  backend: native") { backend++; next }
+            if ($0 == "  runtime: native") { backend++; next }
             # This exact empty-list scalar is emitted by the starter generator;
             # all other YAML flow syntax is rejected by the section whitelists.
             if ($0 == "  presets: []") { presets++; next }

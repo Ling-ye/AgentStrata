@@ -71,7 +71,7 @@ def test_scored_result_survives_real_supervisor_codec_and_store(tmp_path, passed
     assert trial_from_dict(payload).score == float(passed)
     store = EvaluationResultStore(tmp_path / "database")
     store.register({"evaluation_id": request.evaluation_id})
-    store.synchronize(request.evaluation_id, result={"schema_version": 2,
+    store.synchronize(request.evaluation_id, result={"schema_version": 3,
         "evaluation_id": request.evaluation_id, "trials": [payload]}, state={"status": "completed"})
     assert store.get(request.evaluation_id)["result"]["trials"][0] == payload
 
@@ -179,7 +179,7 @@ def test_batch_stops_for_shared_failures_and_continues_case_failures(tmp_path, m
             case_ref="ifeval:" + request.case.case_id, case_id=request.case.case_id,
             dimension="test", target_id=request.target.target_id,
             target_fingerprint=request.target.fingerprint, executor="dry_run",
-            backend=request.target.backend, model=request.target.model,
+            runtime_id=request.target.runtime_id, model=request.target.model,
             reasoning_effort=request.target.reasoning_effort, attempt=1, order=1, outcome="error",
             error=EvaluationError("result_validation" if fatal else "execution",
                 "result_contract_error" if fatal else "execution_error", "controlled failure"))

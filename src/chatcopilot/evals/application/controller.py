@@ -1269,7 +1269,7 @@ class EvaluationApplication:
                     "target_id": target_id,
                     "target_fingerprint": fingerprint,
                     "executor": str(trial.get("executor") or ""),
-                    "backend": str(trial.get("backend") or ""),
+                    "runtime_id": str(trial.get("runtime_id") or ""),
                     "model": str(trial.get("model") or ""),
                     "reasoning_effort": str(trial.get("reasoning_effort") or ""),
                     "outcome": str(trial.get("outcome") or ""),

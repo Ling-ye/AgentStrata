@@ -41,7 +41,7 @@ def test_starter_scaffold_is_valid_and_contains_only_beginner_capabilities(tmp_p
 
     assert not [item for item in validate_botspec(spec) if item.level == "error"]
     assert spec.llm.env_prefix == "CHATCOPILOT_CHAT"
-    assert spec.agents.backend == "native"
+    assert spec.agents.runtime == "native"
     assert spec.tools.packs == ("workspace.read_write", "memory.chat")
     assert spec.tools.features == ("chat.file_uploads", "chat.private_workspace")
     assert not hasattr(spec, "access")

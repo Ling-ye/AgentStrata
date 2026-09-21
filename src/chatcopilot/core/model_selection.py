@@ -6,19 +6,19 @@ from collections.abc import Mapping
 from typing import Any
 
 from chatcopilot.contracts.model_selection import (
-    CodeModelProfile,
-    CodeModelSelection,
+    WorkerModelProfile,
+    WorkerModelSelection,
     MODEL_SELECTION_SCOPE_SESSION,
     MODEL_SELECTION_SOURCE_DEFAULT,
     MODEL_SELECTION_SOURCE_PROFILE,
 )
 
 _MODEL_COMPACT_RE = re.compile(r"[^a-z0-9]+")
-CODE_MODEL_SELECTION_METADATA_KEY = "code_model_selection"
+WORKER_MODEL_SELECTION_FIELD = "worker_model_selection"
 
 
-def default_code_model_selection(config: Any) -> CodeModelSelection:
-    return CodeModelSelection(
+def default_worker_model_selection(config: Any) -> WorkerModelSelection:
+    return WorkerModelSelection(
         provider=str(
             getattr(config, "code_provider", "codex_cli") or "codex_cli"
         ).strip().lower(),
@@ -34,15 +34,15 @@ def default_code_model_selection(config: Any) -> CodeModelSelection:
 def selection_from_profile(
     *,
     provider: str,
-    profiles: Mapping[str, CodeModelProfile],
+    profiles: Mapping[str, WorkerModelProfile],
     profile_name: str,
     scope: str,
-) -> CodeModelSelection:
+) -> WorkerModelSelection:
     normalized = normalize_profile_name(profile_name)
     profile = profiles.get(normalized)
     if profile is None:
         raise ValueError(f"unknown Codex model profile: {profile_name}")
-    return CodeModelSelection(
+    return WorkerModelSelection(
         provider=provider.strip().lower(),
         model=profile.model,
         reasoning_effort=profile.reasoning_effort,
@@ -52,7 +52,7 @@ def selection_from_profile(
     )
 
 
-def code_task_model_selection(config: Any) -> CodeModelSelection:
+def code_task_model_selection(config: Any) -> WorkerModelSelection:
     profile_name = normalize_profile_name(
         str(getattr(config, "code_task_profile", "") or "")
     )
@@ -67,7 +67,7 @@ def code_task_model_selection(config: Any) -> CodeModelSelection:
 
 
 def find_profile_for_model_effort(
-    profiles: Mapping[str, CodeModelProfile],
+    profiles: Mapping[str, WorkerModelProfile],
     *,
     model: str,
     reasoning_effort: str,
@@ -84,14 +84,14 @@ def find_profile_for_model_effort(
     return None
 
 
-def validate_frozen_code_model_selection(
+def validate_worker_model_selection(
     config: Any,
     payload: Any,
-) -> CodeModelSelection:
-    default = default_code_model_selection(config)
+) -> WorkerModelSelection:
+    default = default_worker_model_selection(config)
     if payload is None:
         return default
-    selection = CodeModelSelection.from_payload(payload)
+    selection = WorkerModelSelection.from_payload(payload)
     if selection.provider != default.provider:
         raise ValueError(
             "frozen Codex provider no longer matches configured provider"
@@ -131,7 +131,7 @@ def normalize_model_identifier(value: str) -> str:
     return compact[3:] if compact.startswith("gpt") else compact
 
 
-def format_code_model_selection(selection: CodeModelSelection) -> str:
+def format_worker_model_selection(selection: WorkerModelSelection) -> str:
     profile = selection.profile or "default"
     return (
         f"profile={profile}, model={selection.model}, "
@@ -140,13 +140,13 @@ def format_code_model_selection(selection: CodeModelSelection) -> str:
 
 
 __all__ = [
-    "CODE_MODEL_SELECTION_METADATA_KEY",
+    "WORKER_MODEL_SELECTION_FIELD",
     "code_task_model_selection",
-    "default_code_model_selection",
+    "default_worker_model_selection",
     "find_profile_for_model_effort",
-    "format_code_model_selection",
+    "format_worker_model_selection",
     "normalize_model_identifier",
     "normalize_profile_name",
     "selection_from_profile",
-    "validate_frozen_code_model_selection",
+    "validate_worker_model_selection",
 ]

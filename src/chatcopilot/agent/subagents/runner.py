@@ -134,7 +134,7 @@ class SubagentRunner:
         depth = parent.depth + 1 if parent is not None else 0
         safe_emit(sink, SpanStarted(name=f"subagent:{subagent_name}", kind="subagent",
             trace_id=trace_id, span_id=span_id, parent_span_id=parent_span, depth=depth,
-            observed_at=time.time(), backend="native",
+            observed_at=time.time(), runtime_id="native",
             data={"input": task.to_dict(), "configuration": asdict(config)}))
         details: dict = {}
         try:
@@ -170,7 +170,7 @@ class SubagentRunner:
                     parent_span_id=parent_span,
                     depth=depth,
                     observed_at=time.time(),
-                    backend="native",
+                    runtime_id="native",
                     summary=str(exc),
                     data={
                         "status": "cancelled"
@@ -187,7 +187,7 @@ class SubagentRunner:
             output = result.summary
         safe_emit(sink, SpanFinished(name=f"subagent:{subagent_name}", kind="subagent", ok=result.ok,
             trace_id=trace_id, span_id=span_id, parent_span_id=parent_span, depth=depth,
-            observed_at=time.time(), backend="native",
+            observed_at=time.time(), runtime_id="native",
             summary=str(output.get("summary", "")) if isinstance(output, dict) else str(output),
             data={"result": output, "cache_status": result.cache_status, "error_code": result.error_code, **details}))
         return result
@@ -338,7 +338,7 @@ class SubagentRunner:
                     identity=role_prompt,
                     response_style="Return the final result only through submit_result.",
                 ),
-                backend="native",
+                runtime_id="native",
                 model=model_name,
                 role=caller_role,
                 channel_kind="private",

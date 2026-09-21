@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from chatcopilot.botspec.model import ContextSpec
+from chatcopilot.botspec.model import ContextSpec, LLMSpec, ModelSpec
 
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from tests.prompt_plan_fixture import runtime_route
 
 from chatcopilot.agent.search.providers import SearchProviderRegistry
 from chatcopilot.agent import runtime as runtime_module
@@ -35,9 +36,9 @@ def _runtime() -> SimpleNamespace:
     return SimpleNamespace(
         spec=SimpleNamespace(
             context=ContextSpec(),
-            llm=SimpleNamespace(
-                research_model="research-default",
+            llm=LLMSpec(
                 research_env_prefix="RESEARCH",
+                research=ModelSpec(model="research-default"),
             ),
         ),
         tool_packs=("search.unified", "agent.delegation"),
@@ -62,7 +63,7 @@ def _runtime() -> SimpleNamespace:
             ),
             search_providers=(SearchProviderSpec(id="web", kind="tavily"),),
         ),
-        agent_backend="native",
+        runtime_id="native",
     )
 
 
@@ -180,6 +181,9 @@ def test_llm_client_copies_config_preserves_shared_limiter_and_closes_once(monke
     assert first.model == "a"
     assert first._limiter.root == second._limiter.root == tmp_path / "shared" / "llm"
     assert first._limiter.max_concurrency == second._limiter.max_concurrency == 2
+    assert transports == []
+    first._client = first._build_client()
+    second._client = second._build_client()
     first.close()
     first.close()
     transports[0].close.assert_called_once_with()
@@ -202,6 +206,7 @@ def test_runtime_reuses_equal_profiles_only_within_each_instance(monkeypatch):
     research = replace(chat, model="research")
     options = {
         "chat_config": ChatConfig(llm=chat), "research_llm_config": research,
+        "route": runtime_route("native", chat),
         "search_llm_config": replace(research),
         "subagent_llm_configs": (("CHAT", replace(chat)), ("RESEARCH", replace(research))),
         "tool_packs": (),
@@ -210,10 +215,11 @@ def test_runtime_reuses_equal_profiles_only_within_each_instance(monkeypatch):
     second = build_agent_runtime(**options, assembly_profile="detached")
 
     assert len(created) == 4
-    assert first.llm is first.subagent_llms["CHAT"]
-    assert first.research_llm is first.search_llm is first.subagent_llms["RESEARCH"]
-    assert first.llm is not second.llm
-    assert first.research_llm is not second.research_llm
+    assert first.main_model_client is first.subagent_model_clients["CHAT"]
+    assert (first.research_model_client is first.search_model_client
+            is first.subagent_model_clients["RESEARCH"])
+    assert first.main_model_client is not second.main_model_client
+    assert first.research_model_client is not second.research_model_client
     first.close()
     first.close()
     for item in created[:2]:
@@ -254,6 +260,7 @@ def test_runtime_assembly_closes_completed_resources_after_failure(monkeypatch, 
     with pytest.raises(RuntimeError, match=failure):
         build_agent_runtime(
             chat_config=ChatConfig(), research_llm_config=LLMConfig(model="different"),
+            route=runtime_route(),
             tool_packs=(), rag_sources=(object(),), mcp_servers=(McpServerConfig(id="test"),),
         )
     assert len(created) == (1 if failure == "model" else 2)
@@ -269,8 +276,9 @@ def test_runtime_close_continues_after_one_resource_fails():
     llm = SimpleNamespace(close=Mock())
     mcp = SimpleNamespace(close=Mock(side_effect=RuntimeError("close failed")))
     runtime = AgentRuntime(
-        llm=llm, tools=(), tools_schema=(), runtime_config=ChatConfig(), mcp_provider=mcp,
-        subagent_llms={"ALIAS": llm},
+        main_model_client=llm, tools=(), tools_schema=(), runtime_config=ChatConfig(),
+        route=runtime_route(), mcp_provider=mcp,
+        subagent_model_clients={"ALIAS": llm},
     )
     with pytest.raises(RuntimeError, match="close failed"):
         runtime.close()
@@ -287,9 +295,12 @@ def test_direct_runtime_defaults_do_not_resolve_ambient_profiles(monkeypatch):
         "chatcopilot.core.config.load_llm_profile",
         Mock(side_effect=AssertionError("direct runtime read a profile")),
     )
-    runtime = AgentRuntime(llm=client, tools=(), tools_schema=(), runtime_config=ChatConfig())
-    assert runtime.research_llm is runtime.search_llm is client
-    assert not runtime.subagent_llms
+    runtime = AgentRuntime(
+        main_model_client=client, tools=(), tools_schema=(), runtime_config=ChatConfig(),
+        route=runtime_route(),
+    )
+    assert runtime.research_model_client is runtime.search_model_client is client
+    assert not runtime.subagent_model_clients
     runtime.close()
 
 
@@ -302,5 +313,7 @@ def test_unresolved_model_override_is_rejected_before_materialization(monkeypatc
     else:
         subagents = SubagentSpec(research_enabled=True, research_budget=SubagentBudgetSpec(model_env_prefix="MISSING"))
     with pytest.raises(ValueError, match="(?i)(profile|resolved|materializ)"):
-        build_agent_runtime(chat_config=ChatConfig(), tool_packs=(), subagents=subagents)
+        build_agent_runtime(
+            chat_config=ChatConfig(), route=runtime_route(), tool_packs=(), subagents=subagents
+        )
     create.assert_not_called()

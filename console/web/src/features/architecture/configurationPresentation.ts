@@ -61,10 +61,10 @@ export function configurationSummary(entity: DisplayEntity): string {
   if (!entity.applicable) return "当前实例不适用";
   const config = entity.config ?? {};
   const values = entity.environment ?? {};
-  if (entity.id === "agent:main") return `${config.backend ?? "未记录"} · 实例默认模型 ${config.model ?? "未记录"}${config.reasoning_effort ? " / " + config.reasoning_effort : ""}`;
+  if (entity.id === "agent:main") return `${config.runtime_id ?? "未记录"} · 实例默认模型 ${config.model ?? "未记录"}${config.reasoning_effort ? " / " + config.reasoning_effort : ""}`;
   if (entity.id === "agent:code-task") return `${config.code_task_profile || "未选择配置档"} · ${config.model ?? "未配置"}${config.reasoning_effort ? " / " + config.reasoning_effort : ""}`;
   if (entity.id.startsWith("pack:")) return config.description ? String(config.description) : config.dynamic ? "按会话构造工具" : Array.isArray(config.tools) ? `${config.tools.length} 个声明工具` : "工具包";
-  const fields = ["backend", "model", "provider", "type", "transport", "command", "endpoint", "endpoint_env", "root_env", "namespace", "ref", "registry", "manifest", "identity"];
+  const fields = ["runtime_id", "model", "provider", "type", "transport", "command", "endpoint", "endpoint_env", "root_env", "namespace", "ref", "registry", "manifest", "identity"];
   const summary = fields.flatMap((field) => {
     const raw = config[field];
     const value = field.endsWith("_env") && typeof raw === "string" ? values[raw] : raw;

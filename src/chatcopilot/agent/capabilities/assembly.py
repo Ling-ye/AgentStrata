@@ -55,7 +55,7 @@ class SessionCapabilityContext:
     """Narrow immutable ports available to Agent-owned session contributors."""
 
     session_id: str
-    backend_id: str
+    runtime_id: str
     main_llm: LLMClient
     research_llm: LLMClient
     runtime_config: ChatConfig

@@ -11,7 +11,7 @@ export interface InspectionEntity {
 }
 export interface Configuration {
   layers: Array<{ id: string; name: string }>; entities: InspectionEntity[];
-  configuration_revision?: string; backend?: string; model?: string;
+  configuration_revision?: string; runtime_id?: string; model?: string;
   environment_revision?: string; visibility?: "operator";
   capture_state?: string;
   validation?: Array<{ field: string; level: string; message: string }>;
@@ -25,7 +25,7 @@ export interface Inspection {
   errors: Array<{ source: string; code: string; message: string }>;
 }
 export interface ObservationFilters {
-  since?: number; until?: number; state?: string; config_id?: string; backend?: string; model?: string;
+  since?: number; until?: number; state?: string; config_id?: string; runtime_id?: string; model?: string;
   component?: string; error_code?: string; search?: string; min_ms?: number; page?: number; limit?: number;
 }
 export interface EventPage {
@@ -36,7 +36,7 @@ export interface ObservationMetrics {
   totals: Record<string, number | null>;
   components_truncated?: boolean; trends_truncated?: boolean;
   components: Array<{ layer: string; entity_id: string; calls: number; failures: number; mean_ms: number | null; timing_samples: number }>;
-  trends: Array<{ day: string; config_id: string | null; backend: string | null; model: string | null; total: number; failed: number; mean_ms: number | null; sample_count: number; p50_ms: number | null; p95_ms: number | null }>;
+  trends: Array<{ day: string; config_id: string | null; runtime_id: string | null; model: string | null; total: number; failed: number; mean_ms: number | null; sample_count: number; p50_ms: number | null; p95_ms: number | null }>;
   since: number | null; until: number | null; generated_at: number;
 }
 export interface RunStep {

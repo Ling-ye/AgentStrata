@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.prompt_plan_fixture import prompt_input
+from tests.prompt_plan_fixture import prompt_input, runtime_route
 
 from dataclasses import replace
 import json
@@ -11,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from chatcopilot.agent.runtime import AgentRuntime
-from chatcopilot.core.config import ChatConfig
+from chatcopilot.core.config import ChatConfig, LLMConfig
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.agent.search_policy import SEARCH_DOMAINS
 from chatcopilot.agent.subagents.definition_catalog import iter_definitions
@@ -32,9 +32,9 @@ from chatcopilot.botspec.mcp import McpServerConfig
 from chatcopilot.botspec.model import CustomSubagentSpec, SubagentBudgetSpec, SubagentSpec
 from chatcopilot.component_catalog.subagents import BUILTIN_SUBAGENTS
 from chatcopilot.contracts.adapter_approval import AdapterApprovalEnvelope
-from chatcopilot.contracts.agent_backend import (
-    BackendCapabilities,
-    BackendSessionRef,
+from chatcopilot.contracts.runtime_adapter import (
+    RuntimeCapabilities,
+    RuntimeSessionRef,
     CAPABILITY_CHAT,
     CAPABILITY_TOOLS,
     CodexMainSessionPolicy,
@@ -147,7 +147,7 @@ class SubagentTests(unittest.TestCase):
         errors = [issue for issue in validate_botspec(spec) if issue.level == "error"]
 
         self.assertEqual(errors, [])
-        self.assertEqual(spec.agents.backend, "codex")
+        self.assertEqual(spec.agents.runtime, "codex")
         self.assertEqual(spec.agents.include, ())
         self.assertEqual(spec.agents.agents, {})
         self.assertTrue(spec.agents.research_enabled)
@@ -493,17 +493,18 @@ class SubagentTests(unittest.TestCase):
         captured_tool_names: set[str] = set()
 
         class Backend:
-            capabilities = BackendCapabilities(
+            capabilities = RuntimeCapabilities(
                 names=frozenset({CAPABILITY_CHAT, CAPABILITY_TOOLS}),
                 tool_names=frozenset({"forge_open_source_adapter", "start_code_task"}),
             )
 
             def open_session(self, request):
                 captured_tool_names.update(request.allowed_tool_names)
-                return BackendSessionRef("codex", "session")
+                return RuntimeSessionRef("codex", "session")
 
         runtime = AgentRuntime(
-            llm=_FakeLLM(ChatResult(content="done")),
+            main_model_client=None,
+            subagent_default_model_client=_FakeLLM(ChatResult(content="done")),
             tools=(_tool("start_code_task", category="development.task.write"),),
             tools_schema=(),
             runtime_config=ChatConfig(),
@@ -517,11 +518,11 @@ class SubagentTests(unittest.TestCase):
                     "mcp_query": SubagentBudgetSpec(max_model_turns=1, max_tool_calls=1),
                 },
             ),
-            agent_backend="codex",
+            route=runtime_route("codex"),
         )
 
-        with mock.patch("chatcopilot.agent.runtime.build_backend", return_value=Backend()):
-            runtime.new_session(
+        with mock.patch("chatcopilot.agent.runtime.build_runtime_adapter", return_value=Backend()):
+            runtime.open_session(
                 session_id="sid",
                 prompt_input=prompt_input("baseline"),
                 permission_filter=lambda _tool: None,
@@ -534,7 +535,7 @@ class SubagentTests(unittest.TestCase):
         captured_tool_names: set[str] = set()
 
         class Backend:
-            capabilities = BackendCapabilities(
+            capabilities = RuntimeCapabilities(
                 names=frozenset({CAPABILITY_CHAT, CAPABILITY_TOOLS}),
                 tool_names=frozenset(
                     {
@@ -547,10 +548,11 @@ class SubagentTests(unittest.TestCase):
 
             def open_session(self, request):
                 captured_tool_names.update(request.allowed_tool_names)
-                return BackendSessionRef("codex", "session")
+                return RuntimeSessionRef("codex", "session")
 
         runtime = AgentRuntime(
-            llm=_FakeLLM(ChatResult(content="done")),
+            main_model_client=None,
+            subagent_default_model_client=_FakeLLM(ChatResult(content="done")),
             tools=(_tool("start_code_task", category="development.task.write"),),
             tools_schema=(),
             runtime_config=ChatConfig(),
@@ -568,11 +570,11 @@ class SubagentTests(unittest.TestCase):
                 },
                 codex=CodexMainSessionPolicy(),
             ),
-            agent_backend="codex",
+            route=runtime_route("codex"),
         )
 
-        with mock.patch("chatcopilot.agent.runtime.build_backend", return_value=Backend()):
-            runtime.new_session(
+        with mock.patch("chatcopilot.agent.runtime.build_runtime_adapter", return_value=Backend()):
+            runtime.open_session(
                 session_id="sid-eval-delegates",
                 prompt_input=prompt_input("baseline"),
                 permission_filter=lambda _tool: None,
@@ -780,10 +782,11 @@ class SubagentTests(unittest.TestCase):
             }
         )
         runtime = AgentRuntime(
-            llm=fake_llm,
+            main_model_client=fake_llm,
             tools=(normal,),
             tools_schema=(),
             runtime_config=SimpleNamespace(
+                llm=LLMConfig(model="fixture"),
                 runtime=SimpleNamespace(
                     max_context_tokens=16000,
                     sliding_window_turns=3,
@@ -791,6 +794,7 @@ class SubagentTests(unittest.TestCase):
                     max_tool_retries=1,
                 )
             ),
+            route=runtime_route("native"),
             subagents=SubagentSpec(
                 include=("mcp_query",),
                 agents={"mcp_query": SubagentBudgetSpec(max_model_turns=1, max_tool_calls=1)},
@@ -798,15 +802,14 @@ class SubagentTests(unittest.TestCase):
             subagent_tools=(normal, github),
         )
 
-        session = runtime.new_session(session_id="sid", prompt_input=prompt_input("baseline"))
-        concrete = session.backend.native_session(session.backend_session_ref)
-        schema_names = {entry["function"]["name"] for entry in concrete.tools_schema}
+        session = runtime.open_session(session_id="sid", prompt_input=prompt_input("baseline"))
+        schema_names = set(session.capabilities.tool_names)
 
         self.assertIn("normal_tool", schema_names)
         self.assertIn("query_approved_sources", schema_names)
         self.assertNotIn("github_search_repositories", schema_names)
 
-        result = session.tool_executor.execute("query_approved_sources", {"objective": "查 repo"})
+        result = session.host_tools.execute("query_approved_sources", {"objective": "查 repo"})
         payload = result.data
 
         self.assertTrue(payload["ok"])

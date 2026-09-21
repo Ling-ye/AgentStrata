@@ -1,4 +1,4 @@
-"""Shared repository mutation service for every main-agent backend."""
+"""Shared repository mutation service for every main-agent runtime."""
 from __future__ import annotations
 
 from chatcopilot.external_tools.repository_tasks.runtime import (

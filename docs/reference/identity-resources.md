@@ -40,11 +40,11 @@ QQ Channel 从已认证 OneBot 结构化帧产生不可变 transport evidence；
 
 ## QQ 群共享上下文与目录
 
-同一 QQ 群共享有界 conversation journal 和 `<workspace-root>/group_<safe-chat-id>/shared/` 中的普通文件，不同群、QQ 私聊与其它平台继续隔离；旧 `group_<id>/user_<id>/` 不自动迁移，也不能从 shared root 穿越。说话人变化时选择该 actor 绑定的执行 `SessionState`，通过 journal 注入群历史，不得复用其他 actor 的 executor、Codex resume、调用者身份或受保护任务。成员可写的 shared root 不保存权威 `IDENTITY.json`、`MEMORY.md`、backend state、job/task 控制记录或 persona；权威群 persona 与群 memory 位于 workspace 根的 `.conversation-state/persistent/` 保护域，以平台、会话类型和稳定群号摘要寻址，不暴露原始群号。群 Codex 只在同一 live actor session 内 resume；未获得 provider acknowledgement 的交换必须逐出对应 live actor state，不能污染下一轮；成功投递后的 journal 写入使用稳定 outbound identity 幂等。
+同一 QQ 群共享有界 conversation journal 和 `<workspace-root>/group_<safe-chat-id>/shared/` 中的普通文件，不同群、QQ 私聊与其它平台继续隔离；旧 `group_<id>/user_<id>/` 不自动迁移，也不能从 shared root 穿越。说话人变化时选择该 actor 绑定的执行 `SessionState`，通过 journal 注入群历史，不得复用其他 actor 的 executor、Codex resume、调用者身份或受保护任务。成员可写的 shared root 不保存权威 `IDENTITY.json`、`MEMORY.md`、runtime state、job/task 控制记录或 persona；权威群 persona 与群 memory 位于 workspace 根的 `.conversation-state/persistent/` 保护域，以平台、会话类型和稳定群号摘要寻址，不暴露原始群号。群 Codex 只在同一 live actor session 内 resume；未获得 provider acknowledgement 的交换必须逐出对应 live actor state，不能污染下一轮；成功投递后的 journal 写入使用稳定 outbound identity 幂等。
 
 ## 统一执行权限
 
-业务权限只有 Owner/member。Owner 在实例资源与已配置项目范围内使用全部已装配工具，三个 Backend、群聊与私聊一致；Admin/User 只使用明确声明 `access: member` 的公共查询、当前会话普通文件及记忆 read/append。ToolDef 默认 `access: owner`，不再按工具名、Backend、private_chat_only 或旧访问模式叠加 Owner 限制。Application 下发 ExecutionScope；文件工具与命令进程必须执行资源范围，cwd 不能代替隔离。Owner Codex 可写获准目录；所有角色恢复 Codex 默认原生功能；成员原生读写只限当前普通工作区，项目仍仅授权 Owner。内层权限配置禁止原生命令读取 Codex auth.json 与 MCP relay 配置，外层 bubblewrap 执行资源挂载。保持 actor/resume 隔离，群输出独立脱敏，不替换可信角色。权威人格、记忆和状态仍经管理服务操作。规格见 `docs/reference/identity-resources.md`。
+业务权限只有 Owner/member。Owner 在实例资源与已配置项目范围内使用全部已装配工具，三个 Runtime、群聊与私聊一致；Admin/User 只使用明确声明 `access: member` 的公共查询、当前会话普通文件及记忆 read/append。ToolDef 默认 `access: owner`，不再按工具名、Runtime、private_chat_only 或旧访问模式叠加 Owner 限制。Application 下发 ExecutionScope；文件工具与命令进程必须执行资源范围，cwd 不能代替隔离。Owner Codex 可写获准目录；所有角色恢复 Codex 默认原生功能；成员原生读写只限当前普通工作区，项目仍仅授权 Owner。内层权限配置禁止原生命令读取 Codex auth.json 与 MCP relay 配置，外层 bubblewrap 执行资源挂载。保持 actor/resume 隔离，群输出独立脱敏，不替换可信角色。权威人格、记忆和状态仍经管理服务操作。规格见 `docs/reference/identity-resources.md`。
 
 ## 项目硬链接与执行终态
 

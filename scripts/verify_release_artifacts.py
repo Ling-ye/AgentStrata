@@ -100,6 +100,10 @@ REMOVED_PACKAGE_STEMS = (
     "agent/config", "agent/concurrency", "agent/llm_client", "agent/protocol",
     "botspec/mcp_catalog", "core/workspace", "agent/subagents/presets",
     "agent/tools/builtin/mcp_tools", "middleware/runtime/workspace",
+    "agent/backends", "contracts/agent_backend", "botspec/backend_state",
+    "runtime_migration", "gateway/state_migration",
+    "external_tools/codex_cli/credentials",
+    "external_tools/codex_cli/session_gateway", "middleware/mcp/session_gateway",
 )
 _ENV_OVERRIDES = (
     "CHATCOPILOT_UNITY_PROJECTS",
@@ -716,7 +720,16 @@ def _assert_exact_resources(resources: frozenset[str], *, archive_label: str) ->
 def _source_package_projection() -> frozenset[str]:
     package_root = ROOT / "src" / "chatcopilot"
     completed = subprocess.run(
-        ("git", "ls-files", "-z", "--", "src/chatcopilot"),
+        (
+            "git",
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "src/chatcopilot",
+        ),
         cwd=ROOT,
         check=False,
         capture_output=True,
@@ -736,7 +749,11 @@ def _source_package_projection() -> frozenset[str]:
         if path.suffix not in {".py", ".pyi"}:
             continue
         if not path.is_file():
-            raise VerificationError(f"tracked package source is missing: {repo_relative}")
+            # An unstaged deletion is part of the reviewed candidate tree. The
+            # repository gate already records it as a source change; release
+            # projection must compare artifacts with that candidate, not with
+            # the unchanged index.
+            continue
         if path.is_symlink():
             raise VerificationError(f"source package contains symlink: {path}")
         python_members.add(relative.as_posix())

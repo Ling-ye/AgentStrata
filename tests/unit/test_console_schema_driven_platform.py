@@ -50,7 +50,7 @@ def test_provision_schema_is_adapter_driven(monkeypatch, tmp_path: Path) -> None
         "  packs: []\n"
         "  features: []\n"
         "agents:\n"
-        "  backend: native\n",
+        "  runtime: native\n",
         encoding="utf-8",
     )
     inst = BotInstance(

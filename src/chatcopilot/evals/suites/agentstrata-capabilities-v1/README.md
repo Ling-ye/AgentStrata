@@ -25,7 +25,7 @@ built-in Bot keeps that source disabled.
 Image understanding uses four digest-pinned PNG fixtures in `fixtures/`. They
 cover Chinese order-number OCR, exact shape count and spatial position, and the
 ordering of two image inputs. PNG is one of the formats accepted by every
-current image-input backend. Image generation is deliberately not configured
+current image-input runtime. Image generation is deliberately not configured
 in v1 and must be reported as `capability_not_configured`, not as an Agent
 failure.
 

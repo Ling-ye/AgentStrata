@@ -35,10 +35,10 @@ def _read(response: Response, operation: Callable[[], Any]):
 
 def run_filters(
     since: float | None = None, until: float | None = None, state: str = "", config_id: str = "",
-    backend: str = "", model: str = "", component: str = "", error_code: str = "", search: str = "",
+    runtime_id: str = "", model: str = "", component: str = "", error_code: str = "", search: str = "",
     min_ms: float | None = None, page: int = Query(1, ge=1, le=100000), limit: int = Query(50, ge=1, le=100),
 ) -> RunFilter:
-    return RunFilter(since, until, state, config_id, backend, model, component, error_code, search, min_ms, page, limit)
+    return RunFilter(since, until, state, config_id, runtime_id, model, component, error_code, search, min_ms, page, limit)
 
 
 Filters = Annotated[RunFilter, Depends(run_filters)]

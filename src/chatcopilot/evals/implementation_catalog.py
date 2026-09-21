@@ -145,9 +145,14 @@ _COMMON_RUNTIME_IMPLEMENTATIONS = (
     "chatcopilot.botspec.runtime_env",
     "chatcopilot.core.config",
     "chatcopilot.core.llm_client",
+    "chatcopilot.core.responses_client",
+    "chatcopilot.core.model_routes",
+    "chatcopilot.core.model_credentials",
+    "chatcopilot.contracts.model_runtime",
+    "chatcopilot.contracts.execution",
     "chatcopilot.core.visible_model_response",
     "chatcopilot.contracts.agent",
-    "chatcopilot.agent.backends.registry",
+    "chatcopilot.agent.runtimes.registry",
     "chatcopilot.agent.capabilities.assembly",
     "chatcopilot.agent.capabilities.delegation",
     "chatcopilot.agent.capabilities.unified_search",
@@ -164,16 +169,18 @@ _COMMON_RUNTIME_IMPLEMENTATIONS = (
     "chatcopilot.agent.tools.registry",
     "chatcopilot.agent.turn",
 )
-_BACKEND_RUNTIME_IMPLEMENTATIONS: dict[str, tuple[str, ...]] = {
+_RUNTIME_IMPLEMENTATIONS: dict[str, tuple[str, ...]] = {
     "codex": (
-        "chatcopilot.agent.backends.codex",
-        "chatcopilot.agent.backends.codex_events",
-        "chatcopilot.agent.backends.codex_permissions",
-        "chatcopilot.agent.backends.session_relay",
+        "chatcopilot.agent.runtimes.codex",
+        "chatcopilot.agent.runtimes.codex_events",
+        "chatcopilot.agent.runtimes.codex_permissions",
+        "chatcopilot.agent.runtimes.dynamic_tools",
+        "chatcopilot.external_tools.codex_cli.app_server",
+        "chatcopilot.core.model_credentials",
     ),
-    "direct": ("chatcopilot.core.llm_client",),
-    "langgraph": ("chatcopilot.agent.backends.inprocess",),
-    "native": ("chatcopilot.agent.backends.inprocess",),
+    "direct": ("chatcopilot.core.llm_client", "chatcopilot.core.responses_client", "chatcopilot.core.model_routes", "chatcopilot.core.model_credentials"),
+    "langgraph": ("chatcopilot.agent.runtimes.inprocess",),
+    "native": ("chatcopilot.agent.runtimes.inprocess",),
     "none": (),
 }
 
@@ -265,23 +272,23 @@ def comparison_implementation_snapshot() -> dict[str, object]:
     }
 
 
-def runtime_implementation_snapshot(backend: str) -> dict[str, object]:
+def runtime_implementation_snapshot(runtime_id: str) -> dict[str, object]:
     """Return source identities for the exact trusted Agent runtime lane."""
 
-    normalized = str(backend).strip().lower()
+    normalized = str(runtime_id).strip().lower()
     try:
-        backend_modules = _BACKEND_RUNTIME_IMPLEMENTATIONS[normalized]
+        runtime_modules = _RUNTIME_IMPLEMENTATIONS[normalized]
     except KeyError as exc:
-        raise ValueError(f"runtime implementation backend is unsupported: {backend!r}") from exc
+        raise ValueError(f"runtime implementation is unsupported: {runtime_id!r}") from exc
     common_modules = (
         _COMMON_RUNTIME_IMPLEMENTATIONS
         if normalized in {"codex", "langgraph", "native"}
         else ()
     )
-    modules = sorted(set(common_modules).union(backend_modules))
+    modules = sorted(set(common_modules).union(runtime_modules))
     return {
         "catalog_version": RUNTIME_IMPLEMENTATION_CATALOG_VERSION,
-        "backend": normalized,
+        "runtime_id": normalized,
         "modules": {
             module_name: trusted_runtime_module_sha256(module_name)
             for module_name in modules

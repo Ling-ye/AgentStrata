@@ -20,7 +20,7 @@ describe("Agent process presentation adapter", () => {
     expect(model.panels[0].select?.({ tools, source: "session_gateway", error_code: "fixture-error" })).toBe(tools);
     }
   });
-  it("uses real rounds and direct effective input instead of a backend-specific component", () => {
+  it("uses real rounds and direct effective input instead of a runtime-specific component", () => {
     const view = buildRunView([
       event(1, { phase: "start", data: { process_kind: "model_call", iteration: 1, context_snapshot_id: "ctx" } }),
       event(2, { kind: "ContextSnapshotPrepared", data: { snapshot_id: "ctx" } }),
@@ -32,7 +32,7 @@ describe("Agent process presentation adapter", () => {
     expect(model.panels[0].select?.({ effective_messages: [{ role: "tool", content: "result" }] })).toEqual([{ role: "tool", content: "result" }]);
   });
   it("keeps adapter execution distinct from internal model rounds", () => {
-    const model = agentProcess(buildRunView([event(1, { data: { process_kind: "backend_execution", iteration: 0 } })]).steps[0]);
+    const model = agentProcess(buildRunView([event(1, { data: { process_kind: "runtime_execution", iteration: 0 } })]).steps[0]);
     expect(model.title).toContain("后端执行");
     expect(model.title).not.toContain("第 1 轮");
   });

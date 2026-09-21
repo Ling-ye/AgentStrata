@@ -108,7 +108,7 @@ def _metadata(data: Any, secrets: tuple[str, ...], *, operator: bool = False) ->
     if not isinstance(data, dict):
         return {}
     safe: dict[str, Any] = {}
-    for key in ("model", "backend", "name", "trace_id", "span_id", "parent_span_id", "coverage", "code", "gate", "outcome",
+    for key in ("model", "runtime_id", "name", "trace_id", "span_id", "parent_span_id", "coverage", "code", "gate", "outcome",
                 "outbound_id", "receipt_id", "stage", "runtime_layer", "operation", "stage_span_id",
                 "source", "target", "entrypoint", "run_state"):
         if isinstance(data.get(key), str):

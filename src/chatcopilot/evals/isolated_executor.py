@@ -23,7 +23,7 @@ from chatcopilot.application.agent_runtime import (
 )
 from chatcopilot.contracts.agent import AgentTask
 from chatcopilot.agent.context.prompt_plan import PromptBuildInput
-from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
+from chatcopilot.contracts.runtime_adapter import CodexMainSessionPolicy
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
@@ -44,7 +44,7 @@ _usage_summary = usage_summary
 @dataclass(frozen=True)
 class IsolatedTarget:
     target_id: str
-    backend: str
+    runtime_id: str
     label: str
     fingerprint: str
     model: str = ""
@@ -105,14 +105,14 @@ def open_isolated_case(request: IsolatedTrialRequest):
                     rag_sources=(),
                     mcp_servers=(),
                     subagents=subagents,
-                    agent_backend=request.target.backend,
+                    runtime_id=request.target.runtime_id,
                 ),
             )
-            session = agent_runtime.new_session(
+            session = agent_runtime.open_session(
                 session_id=f"eval-{request.evaluation_id}-{trial_id}",
                 prompt_input=PromptBuildInput(
                     profile=runtime.prompt_profile,
-                    backend=request.target.backend,
+                    runtime_id=request.target.runtime_id,
                     model=None,
                     role="owner",
                     channel_kind="private",

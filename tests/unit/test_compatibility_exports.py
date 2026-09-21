@@ -7,11 +7,11 @@ import pytest
 
 
 
-def test_contracts_root_exports_canonical_agent_backend_ids() -> None:
-    from chatcopilot.contracts import AGENT_BACKEND_IDS as root_backend_ids
-    from chatcopilot.contracts.agent_backend import AGENT_BACKEND_IDS
+def test_contracts_root_exports_canonical_agent_runtime_ids() -> None:
+    from chatcopilot.contracts import RUNTIME_IDS as root_runtime_ids
+    from chatcopilot.contracts.runtime_adapter import RUNTIME_IDS
 
-    assert root_backend_ids is AGENT_BACKEND_IDS
+    assert root_runtime_ids is RUNTIME_IDS
 
 
 def test_legacy_research_exports_alias_canonical_search_types() -> None:

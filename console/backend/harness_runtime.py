@@ -18,4 +18,3 @@ def create_controller() -> HarnessController:
     from console.control.gateway_observability import retained_task_images
     return HarnessController(repo_root(), task_reader=task_reader,
                              image_reader=lambda bot_id, run_id: retained_task_images(get_instance(bot_id), run_id))
-

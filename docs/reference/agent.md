@@ -1,14 +1,17 @@
-# Agent 与执行 Backend
+# Agent 与执行 Runtime
 
-修改模型、Backend、PromptPlan 或委托执行时阅读。BotSpec 选择能力，Application 完成实例到 Agent 的受控投影。
+修改模型、Runtime、PromptPlan 或委托执行时阅读。BotSpec 选择能力，Application 完成实例到 Agent 的受控投影。
+
+AgentRuntime 重构的目标、结构化交接与迁移验收见
+[runtime 路由规格](../../specs/agent-runtime-routing/spec.md)。
 
 ## 一条执行契约
 
-Native、LangGraph 和 Codex 共用任务、事件、结果与 PromptPlan 契约。Backend 私有协议由 adapter 解释，平台身份与交付事实留在外层。能力不足时明确报不可用，不通过文本隐式切换 Backend。
+Native、LangGraph 和 Codex 共用任务、事件、结果与 PromptPlan 契约。Runtime 私有协议由 adapter 解释，平台身份与交付事实留在外层。能力不足时明确报不可用，不通过文本隐式切换 Runtime。
 
 ## 源码入口
 
-- [src/chatcopilot/agent/backends](../../src/chatcopilot/agent/backends)
+- [src/chatcopilot/agent/runtimes](../../src/chatcopilot/agent/runtimes)
 - [src/chatcopilot/agent/context/prompt_plan.py](../../src/chatcopilot/agent/context/prompt_plan.py)
 - [src/chatcopilot/contracts/agent.py](../../src/chatcopilot/contracts/agent.py)
 - [src/chatcopilot/contracts/prompt.py](../../src/chatcopilot/contracts/prompt.py)
@@ -16,7 +19,9 @@ Native、LangGraph 和 Codex 共用任务、事件、结果与 PromptPlan 契约
 
 ## Agent 流式观测
 
-主 Codex 使用每回合隔离的 App Server stdio，沿用 actor、PromptPlan、ExecutionScope 和凭据租约。公开消息、摘要和命令输出通过 AgentContentDelta 进入既有观测索引，Console SSE 只读续传；过程不进入渠道最终回复，不采集 raw/encrypted reasoning，不重放已开始的 turn。独立 worker/research 保留 exec，规格见 `docs/reference/observability.md`。
+主 Codex 使用 actor 级懒启动、可复用的 App Server stdio；一个原生 thread 只有一个活动写入者。同 conversation 继续串行，独立 conversation 可以并发。Application 绑定 PromptPlan、ExecutionScope 和 HostRuntimePolicy，主 lane 在宿主刷新凭据，锁只覆盖读取、刷新和原子写回，不覆盖 turn；只 handoff access token，不复制 refresh token 到 actor home。
+
+公开消息、摘要和命令输出通过 AgentContentDelta 进入既有观测索引，Console SSE 只读续传；过程不进入渠道最终回复，不采集 raw/encrypted reasoning，不重放已开始但结果未知的 turn。独立 worker 保持单独认证 lineage。取消发出原生 interrupt，再关闭连接。
 
 ## Agent 层禁止 import
 
@@ -30,17 +35,35 @@ Native、LangGraph 和 Codex 共用任务、事件、结果与 PromptPlan 契约
 
 BotSpec `prompts.schema_version` 只接受 `2`，Bot 文件只声明 `identity/response_style/refusal_style/role_styles/mode_styles`，不得声明安全、授权、记忆、人格持久化、搜索触发或工具规则。
 
-middleware 只提供可信结构化输入，所有 main Agent、subagent、backend 和 Evaluation 模型入口都经唯一 `PromptPlanBuilder`；Native/LangGraph/Codex renderer 只渲染不可变 plan，禁止追加第二份规则。
+middleware 只提供可信结构化输入，所有 main Agent、subagent、runtime 和 Evaluation 模型入口都经唯一 `PromptPlanBuilder`；Native/LangGraph/Codex renderer 只渲染不可变 plan，禁止追加第二份规则。
 
 Prompt trust 必须保持 `host policy / runtime facts / bot instructions / untrusted data` 四分区：只有宿主策略和可信运行时事实进入 Native system envelope，Bot identity/style/Skills 使用独立 user-context envelope；Codex 使用 schema v2 的独立字段。
 
 Bot 文本只能形成 identity/style，persona、memory、journal、网页和用户正文始终是不可信数据。
 
-禁止恢复旧 prompt assembler、旧导出、旧字段转换、自由文本 capability fragments 或 backend appendix。
+禁止恢复旧 prompt assembler、旧导出、旧字段转换、自由文本 capability fragments 或 runtime appendix。
 
 ## LLM 三槽配置
 
-BotSpec 的 `llm.chat / llm.research / llm.code` 分别声明日常模型前缀、研究模型前缀和 Codex 路由策略；非密钥默认值进入版本库，secret 留在 `local.env`。research 只覆盖实际提供的字段，其余配置继承 chat；机器 env 仍是最高优先级。`llm.code.reasoning_effort` 与 `llm.code.profiles` 形成对话可选白名单，`/model` 只修改当前 ACP session 的主 Codex lane，不能改变共享 chat LLM 或独立 code-worker。启用 `dev.code_tasks` 的实例必须用 `llm.code.code_task_profile` 引用现有 profile；worker 启动时从实例前缀 env 解析该 profile，再内部派生 `CHATCOPILOT_CODE_MODEL` / `CHATCOPILOT_CODE_REASONING_EFFORT`，不得从 `local.env` 直接导入这两个全局变量。
+`llm.chat` 是所有 runtime 的主模型；`llm.research` 是辅助模型；`llm.code` 只供独立 worker。`agents.runtime` 只选择谁执行 loop，模型名、API Key 和历史记录不能改变它。Native/LangGraph 的模型传输可选 Chat Completions、Platform Responses 或 ChatGPT Responses；这些传输只做一次推理，不启动 Codex Agent 或执行工具。
+
+认证使用互斥的 `auth: {mode: chatgpt, profile: main}` 或 `auth: {mode: api_key, key_env: ENV_NAME}`。BotSpec、配置快照和 DTO 只保存引用；订阅 token 不会发送到自定义端点，也不会被环境 API Key 覆盖。请求序列化完成后才生成 Responses 模型输入观察，私有 continuation 只用于协议回传。
+
+`llm.chat.profiles` 形成主模型选择白名单。Owner 使用 `/model <profile> [once]` 或 `/model default`；不会改变认证、runtime 或 worker。启用 `dev.code_tasks` 时，仍须用 `llm.code.code_task_profile` 引用 worker profile。worker 使用 `llm.code.env_prefix`，与主会话超时、命令和选模隔离。
+
+## 能力与结构化交接
+
+`AgentTask.execution` 显式携带执行 ID、session、actor、来源、turn_index、trace 与冻结的模型选择；metadata 不参与身份、授权或路由。`HostRuntimePolicy` 是权限权威，PromptPlan 仅引用 capability digest 与 policy revision，仍保留四个信任分区。
+
+ToolRegistry 是宿主工具唯一注册来源，CapabilitySnapshot 只是当前会话的有效投影。Codex 使用原生文件、命令、图片和普通子代理；人格、记忆、Wiki、业务服务与渠道交付继续经过 `agentstrata` dynamicTools → ToolExecutor。配置了宿主管理搜索时关闭重复原生搜索。main-only 工具在执行时拒绝原生子代理调用。
+
+可选原生扩展文件由 `agents.runtime_options.codex.extensions` 声明，只接受 `mcp_servers/plugins/skills/apps` 表；不能覆盖身份、模型或权限。MCP 秘密只能通过显式环境引用传入，当前只授予 Owner，成员不可访问扩展。连接应用必须声明 `apps._default.enabled=false` 并逐个启用，只有 MCP 声明不会顺带开放整个账号的应用。自动推荐安装和 Skill 自动安装 MCP 关闭，未声明的个人配置不导入。
+
+Application 只通过 `AgentRuntime.open_session()` 取得显式的公开 session 与宿主工具执行端口；session 仅暴露 `run_task/update_context/record_exchange/snapshot_transcript/cancel/close/discard`。transcript 明确标注 host_history 或 adapter_visible，不充当原生恢复状态。RuntimeSessionBinding 记录 actor、认证身份代际、能力和策略摘要；普通 token 刷新不失效，重新登录或不兼容权限变化失效。群 actor 只支持进程内恢复。
+
+## 交互请求
+
+Gateway 持久化审批和输入请求，`interactions.list/get/resolve` 返回统一投影。QQ 的“答复/批准/拒绝 + 编号”在身份与准入完成后直接处理，不排在等待中的 conversation 后面。Console 使用单独的 `interactions.operator` 凭据及同源校验；操作员单独署名，不能冒充 QQ actor。决定持久化、provider RPC 回应和工具成功是三个独立事实。重启取消等待，不重发旧 RPC ID。
 
 ## 大模块保留 facade
 
@@ -48,15 +71,15 @@ BotSpec 的 `llm.chat / llm.research / llm.code` 分别声明日常模型前缀�
 
 ## 当前导出与 Legacy 退出
 
-内部代码使用 canonical imports：`core.config` / `core.llm_client` / `core.concurrency`、`core.mcp_catalog`、`core.workspace_runtime`、`component_catalog`、`contracts.agent` 和 `agent.search`。L01 的 15 个旧转发文件已删除，完整名单与替换关系见 `docs/reference/runtime.md`；生产代码、测试和安装包均不得恢复旧模块、空存根或动态回退。`agent.research`、`agent.tools.workspace_context`、`external_tools.shared.tool_spec`、`middleware.mcp.session_gateway` 仍在后续审议范围，不能借 L01 顺带删除。旧 Codex turn routing 模块也不得恢复。
+内部代码使用 canonical imports：`core.config` / `core.llm_client` / `core.concurrency`、`core.mcp_catalog`、`core.workspace_runtime`、`component_catalog`、`contracts.agent` 和 `agent.search`。旧主 Codex TCP/MCP session relay 已由 dynamicTools 替代，不能恢复旧模块、空存根或动态回退。worker 协议仍独立维护。
 
 ## Subagent 是 Agent 层基础能力
 
 BotSpec 只通过 `agents` 声明 preset、workflow 和预算；主 Agent 通过委托工具调用；subagent 禁止 import middleware、platforms、Workspace。
 
-## Lingye 固定 Codex backend
+## Lingye 固定 Codex runtime
 
-`lingye-copilot-qq` 使用 `agents.backend: codex`；选择作用于整个实例，不按角色、命令或单回合切换。 切回 Native 或 LangGraph 必须修改 BotSpec 并重新部署；部署前删除旧 backend 状态，失败后不恢复旧会话。 Native 的会话、工具执行、仓库任务和发布能力是长期保留的一等能力。
+`lingye-copilot-qq` 使用 `agents.runtime: codex`，主模型位于 chat 槽。选择作用于整个实例，不按角色、命令或单回合切换。旧配置和 Gateway schema 2 须在停机、独占 lease 下显式迁移，归档旧 runtime binding，保留 journal、人格、记忆、worker 和历史证据；部署不会自动删除历史。迁移入口见[配置](configuration.md)。Native 仍是一等执行实现。
 
 ## 主会话与可选代码任务
 
@@ -76,11 +99,11 @@ Git author/committer 使用独立的公开 AgentStrata AI Coding Bot 身份，co
 
 caller 摘要、角色、策略或 credential generation 变化必须使旧 resume ID 失效，不能只信任 `role_hint`。
 
-## 主 Agent backend
+## 主 Agent runtime
 
-`agents.backend` 默认 `native`，也可设为 `langgraph` 或 `codex`；三个 backend 必须共享 `AgentTask` / `AgentEvent` / `AgentResult` 协议和现有工具注册/权限 hook。选择只发生在实例配置，不按回合自动切换。
+`agents.runtime` 默认 `native`，也可设为 `langgraph` 或 `codex`；三个 runtime 必须共享 `AgentTask` / `AgentEvent` / `AgentResult` 协议和现有工具注册/权限 hook。选择只发生在实例配置，不按回合自动切换。
 
-Native/LangGraph 复用 `agent/turn.py` 的 `TurnOps`；主 Codex 将 App Server 的公开事件投影为相同事件、工具结果、生命周期 intent 和最终 `AgentResult`，不得让 Console 解析 backend 私有日志。
+Native/LangGraph 复用 `agent/turn.py` 的 `TurnOps`；主 Codex 将 App Server 的公开事件投影为相同事件、工具结果、生命周期 intent 和最终 `AgentResult`，不得让 Console 解析 runtime 私有日志。
 
 ## Subagent
 

@@ -1,4 +1,4 @@
-"""Codex CLI main-agent backend with native resume and a scoped MCP gateway."""
+"""Codex native App Server loop with actor-bound state and host dynamic tools."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import json
 import os
 import stat
 import subprocess
-import sys
 import tempfile
 import threading
 import uuid
@@ -15,8 +14,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from chatcopilot.agent.backends.codex_app_server import AppServerProjector
-from chatcopilot.agent.backends.session_relay import SessionToolRelay
+from chatcopilot.agent.runtimes.codex_app_server import AppServerProjector
+from chatcopilot.agent.runtimes.dynamic_tools import DynamicToolBridge
 from chatcopilot.agent.context import (
     frame_task_message,
     validated_image_resource_receipts,
@@ -26,8 +25,8 @@ from chatcopilot.agent.response_integrity import ResponseIntegrityCheck
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.turn_support import safe_emit
 from chatcopilot.contracts.execution_scope import ExecutionScope
-from chatcopilot.core.scoped_process import scope_mounts, require_bubblewrap
-from chatcopilot.agent.backends.codex_permissions import permission_config
+from chatcopilot.core.scoped_process import require_bubblewrap
+from chatcopilot.agent.runtimes.codex_permissions import permission_config
 from chatcopilot.contracts.agent import (
     AgentResult,
     AgentTask,
@@ -42,33 +41,27 @@ from chatcopilot.contracts.agent import (
     ToolStarted,
     TurnError,
 )
-from chatcopilot.contracts.agent_backend import (
-    BackendCapabilities,
-    BackendOpenRequest,
-    BackendSessionRef,
+from chatcopilot.contracts.runtime_adapter import (
+    RuntimeCapabilities,
+    RuntimeOpenRequest,
+    RuntimeSessionRef,
     CAPABILITY_CHAT,
     CAPABILITY_NATIVE_RESUME,
     CAPABILITY_REPOSITORY_MUTATION,
     CAPABILITY_TOOLS,
     CodexMainSessionPolicy,
     CODEX_ACCESS_MODES,
-    require_backend_capabilities,
+    require_runtime_capabilities,
 )
 from chatcopilot.contracts.cancellation import (
     CancellationProbe,
     CancellationRequested,
 )
-from chatcopilot.contracts.model_selection import CodeModelSelection
-from chatcopilot.contracts.tools import ToolDef, build_mcp_schema
+from chatcopilot.contracts.tools import ToolDef
 from chatcopilot.core.image_content import (
     SUPPORTED_IMAGE_MEDIA_TYPES,
     normalize_image_media_type,
     validate_image_file,
-)
-from chatcopilot.core.model_selection import (
-    CODE_MODEL_SELECTION_METADATA_KEY,
-    default_code_model_selection,
-    validate_frozen_code_model_selection,
 )
 from chatcopilot.contracts.prompt import PromptPlan
 from chatcopilot.agent.context.prompt_plan import render_codex_prompt, render_codex_developer
@@ -76,13 +69,16 @@ from chatcopilot.external_tools.codex_cli.command import (
     build_app_server_command,
     build_codex_subprocess_env,
 )
-from chatcopilot.external_tools.codex_cli.credentials import (
+from chatcopilot.core.model_credentials import (
     CredentialError,
-    credential_lease,
+    access_credential,
     validate_auth_root_path,
 )
 from chatcopilot.external_tools.codex_cli.app_server import run_app_server
-from chatcopilot.external_tools.codex_cli import session_gateway as _standalone_gateway
+from chatcopilot.contracts.model_runtime import ModelSelection, ResolvedRuntimeRoute
+from chatcopilot.core.codex_extensions import extension_digest, managed_extension_config
+from chatcopilot.contracts.cancellation import CancellationToken, CombinedCancellation
+from chatcopilot.contracts.execution import RuntimeSessionBinding, CapabilitySnapshot, HostRuntimePolicy, RuntimeFailure
 
 if TYPE_CHECKING:
     from chatcopilot.agent.session import ToolPayloadFilter
@@ -92,56 +88,71 @@ if TYPE_CHECKING:
 class _CodexSession:
     acp_session_id: str
     prompt_plan: PromptPlan
+    route: ResolvedRuntimeRoute
     allowed_tool_names: frozenset[str]
-    gateway_config: Path
-    audit_path: Path
     state_root: Path
     workdir: Path
     codex_home: Path
     session_state_path: Path
-    relay: SessionToolRelay
+    relay: DynamicToolBridge
     relay_tools: tuple[ToolDef, ...]
     relay_executor: ToolExecutor
     role_hint: str
     access_mode: str
     policy_fingerprint: str
-    isolate_backend_state: bool = False
+    isolate_runtime_state: bool = False
     execution_scope: ExecutionScope | None = None
     native_session_id: str = ""
     credential_generation: int = 0
     messages: list[dict[str, Any]] = field(default_factory=list)
+    pending_exchanges: list[dict[str, str]] = field(default_factory=list)
+    turn_lock: Any = field(default_factory=threading.Lock, repr=False)
     usage_totals: dict[str, int] | None = None
+    connection: list = field(default_factory=list)
+    auth: Any = field(default=None, repr=False)
+    capability_snapshot: CapabilitySnapshot = field(default_factory=CapabilitySnapshot)
+    host_policy: HostRuntimePolicy = field(default_factory=HostRuntimePolicy)
+    restore_persisted_native_session: bool = True
+    extensions: str = field(default="", repr=False)
+    extension_env: dict[str, str] = field(default_factory=dict, repr=False)
 
 
-_ISOLATED_GATEWAY_CONFIG = "/run/chatcopilot-gateway.json"
 _ISOLATED_CODEX_HOME = "/sandbox-home/agent/.codex"
-_ISOLATED_GATEWAY_VENV = "/opt/chatcopilot-gateway-venv"
-_ISOLATED_GATEWAY_SCRIPT = "/opt/chatcopilot-gateway/session_gateway.py"
 _ISOLATED_CODEX_BINARY = "/opt/chatcopilot-codex/codex"
 _BWRAP_PROBED: set[str] = set()
 
 
-class CodexAgentBackend:
-    backend_id = "codex"
+class CodexRuntimeAdapter:
+    runtime_id = "codex"
 
     def __init__(
         self,
         *,
+        route: ResolvedRuntimeRoute,
         tool_names: set[str],
         runtime_config: Any,
         tools: tuple[Any, ...] = (),
         tool_executor: ToolExecutor | None = None,
         tool_payload_filter: ToolPayloadFilter | None = None,
-        backend_policy: CodexMainSessionPolicy | None = None,
+        runtime_policy: CodexMainSessionPolicy | None = None,
+        turn_timeout_seconds: float | None = 21600,
+        interaction_handler: Any = None,
         **_: Any,
     ) -> None:
+        if route.runtime_id != "codex":
+            raise ValueError("Codex adapter requires a codex runtime route")
+        if runtime_config.llm.model_route() != route.model:
+            raise ValueError("Codex adapter route does not match its credential configuration")
+        self._route = route
         self._runtime_config = runtime_config
+        self._turn_timeout = turn_timeout_seconds
+        self._interaction_handler = interaction_handler
         self._tool_names = frozenset(tool_names)
         self._tools = tuple(tools)
         self._tool_executor = tool_executor
         self._tool_payload_filter = tool_payload_filter
-        self._policy = backend_policy or CodexMainSessionPolicy()
-        self._capabilities = BackendCapabilities(
+        self._policy = runtime_policy or CodexMainSessionPolicy()
+        self._capabilities = RuntimeCapabilities(
             names=frozenset(
                 {
                     CAPABILITY_CHAT,
@@ -156,18 +167,24 @@ class CodexAgentBackend:
         self._aliases: dict[str, str] = {}
 
     @property
-    def capabilities(self) -> BackendCapabilities:
+    def capabilities(self) -> RuntimeCapabilities:
         return self._capabilities
 
-    def open_session(self, request: BackendOpenRequest) -> BackendSessionRef:
-        require_backend_capabilities(
-            self.backend_id, self.capabilities, request.required_capabilities
+    def open_session(self, request: RuntimeOpenRequest) -> RuntimeSessionRef:
+        if request.route != self._route:
+            raise ValueError("runtime open request route does not match Codex adapter")
+        require_runtime_capabilities(
+            self.runtime_id, self.capabilities, request.required_capabilities
         )
         session_key = hashlib.sha256(request.session_id.encode("utf-8")).hexdigest()[:24]
         stable_id = f"acp-{session_key}"
         options = request.options
         role_hint = str(options.get("role_hint") or "user").strip().lower()
         scope = options.get("execution_scope")
+        if request.host_policy.scope is not None:
+            if scope is not None and scope != request.host_policy.scope:
+                raise ValueError("execution scope disagrees with host policy")
+            scope = request.host_policy.scope
         access_mode = "worktree" if scope is not None and scope.project_roots else "workspace"
         if access_mode not in CODEX_ACCESS_MODES:
             raise ValueError(f"unsupported Codex access mode: {access_mode}")
@@ -181,39 +198,38 @@ class CodexAgentBackend:
             access_mode,
             caller_user_id=caller_user_id,
         )
+        policy_fingerprint = hashlib.sha256((policy_fingerprint + request.capability_snapshot.fingerprint +
+            request.route.behavior_fingerprint +
+            request.host_policy.fingerprint + extension_digest(self._runtime_config.codex_extensions) + str(self._turn_timeout) +
+            json.dumps(sorted(request.allowed_tool_names))).encode()).hexdigest()
         if scope is not None:
             policy_fingerprint = hashlib.sha256(
-                (policy_fingerprint + repr(scope)).encode()
+                (policy_fingerprint + replace(request.host_policy, scope=scope).fingerprint).encode()
             ).hexdigest()
         existing = self._sessions.get(stable_id)
         if existing is not None:
             if existing.policy_fingerprint == policy_fingerprint:
-                return self.current_session_ref(BackendSessionRef(self.backend_id, stable_id))
-            self.close_session(BackendSessionRef(self.backend_id, stable_id))
+                return self.current_session_ref(RuntimeSessionRef(self.runtime_id, stable_id))
+            self.close_session(RuntimeSessionRef(self.runtime_id, stable_id))
         if scope is not None and scope.project_roots:
             workdir = scope.project_roots[0]
         else:
             workdir = self._resolve_workspace_workdir(options.get("workspace_root"))
         state_root = (
-            Path(options.get("backend_state_root") or workdir / ".chatcopilot" / "backend-sessions")
+            Path(options.get("runtime_state_root") or workdir / ".chatcopilot" / "runtime-sessions")
             .expanduser()
             .resolve()
         )
-        isolate_backend_state = bool(options.get("isolate_backend_state"))
-        if isolate_backend_state:
+        isolate_runtime_state = bool(options.get("isolate_runtime_state"))
+        if isolate_runtime_state:
             self._require_isolated_main_codex_sandbox()
         state_root.mkdir(parents=True, exist_ok=True)
         try:
             state_root.chmod(0o700)
         except OSError:
             pass
-        if isolate_backend_state:
+        if isolate_runtime_state:
             self._validate_isolated_roots(workdir=workdir, state_root=state_root)
-        gateway_config = state_root / f"{stable_id}.gateway.json"
-        audit_root = state_root / "audit"
-        audit_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        audit_root.chmod(0o700)
-        audit_path = audit_root / f"{stable_id}.audit.jsonl"
         session_state_path = state_root / f"{stable_id}.session.json"
         if bool(options.get("restore_persisted_native_session", True)):
             native_session_id, credential_generation = self._load_native_session_state(
@@ -229,37 +245,17 @@ class CodexAgentBackend:
             tools=list(selected_tools),
             caller_role_hint=role_hint,
         )
-        relay = SessionToolRelay(
+        relay = DynamicToolBridge(
             tools=selected_tools,
             executor=executor,
             payload_filter=self._tool_payload_filter,
         )
-        relay_endpoint = relay.start()
-        payload = {
-            "schema_version": 1,
-            "session_id": request.session_id,
-            "allowed_tools": sorted(tool.name for tool in selected_tools),
-            "role_hint": role_hint,
-            "access_mode": access_mode,
-            "policy_fingerprint": policy_fingerprint,
-            # The host relay is the authoritative group tool-event recorder.
-            # Do not expose a writable audit file inside the model namespace.
-            "audit_path": "" if isolate_backend_state else str(audit_path),
-            "relay": relay_endpoint.to_dict(),
-            "relay_timeout_seconds": self._runtime_config.routing.code_timeout_seconds,
-        }
-        self._write_json_atomic(gateway_config, payload)
-        try:
-            gateway_config.chmod(0o600)
-        except OSError:
-            pass
         codex_home = state_root / f"{stable_id}.codex-home"
         session = _CodexSession(
             acp_session_id=request.session_id,
             prompt_plan=request.prompt_plan,
+            route=request.route,
             allowed_tool_names=frozenset(tool.name for tool in selected_tools),
-            gateway_config=gateway_config,
-            audit_path=audit_path,
             state_root=state_root,
             workdir=workdir,
             codex_home=codex_home,
@@ -270,21 +266,26 @@ class CodexAgentBackend:
             role_hint=role_hint,
             access_mode=access_mode,
             policy_fingerprint=policy_fingerprint,
-            isolate_backend_state=isolate_backend_state,
+            isolate_runtime_state=isolate_runtime_state,
             execution_scope=scope,
             native_session_id=native_session_id,
             credential_generation=credential_generation,
+            capability_snapshot=request.capability_snapshot,
+            host_policy=request.host_policy,
+            restore_persisted_native_session=bool(options.get("restore_persisted_native_session", True)),
+            extensions=self._runtime_config.codex_extensions if "apps" in request.host_policy.extension_grants else "",
+            extension_env=dict(self._runtime_config.codex_extension_env) if "apps" in request.host_policy.extension_grants else {},
         )
         self._sessions[stable_id] = session
         self._aliases[stable_id] = stable_id
         if native_session_id:
             self._aliases[native_session_id] = stable_id
         self._persist_session_state(session)
-        return self.current_session_ref(BackendSessionRef(self.backend_id, stable_id))
+        return self.current_session_ref(RuntimeSessionRef(self.runtime_id, stable_id))
 
     def stream_turn(
         self,
-        session: BackendSessionRef,
+        session: RuntimeSessionRef,
         task: AgentTask,
         *,
         on_event: EventSink,
@@ -293,17 +294,30 @@ class CodexAgentBackend:
         if cancellation is not None:
             cancellation.raise_if_cancelled()
         state = self._resolve(session)
+        if not state.turn_lock.acquire(blocking=False):
+            raise RuntimeError("Codex thread already has an active writer")
+        try:
+            return self._run_owned_turn(state, task, on_event=on_event, cancellation=cancellation)
+        finally:
+            state.turn_lock.release()
+
+    def _run_owned_turn(self, state, task, *, on_event, cancellation):
         buffered_delivery_events: list[Any] = []
         event_lock = threading.RLock()
 
         def safe_on_event(event: Any) -> None:
             with event_lock:
+                if isinstance(event, TurnError):
+                    from chatcopilot.core.observability_redaction import redact_observability_payload
+                    secrets = (self._runtime_config.llm.api_key,
+                               state.auth.access_token if state.auth is not None else "",
+                               *state.extension_env.values())
+                    event = replace(event, message=redact_observability_payload(event.message, secrets=secrets).value)
                 safe_emit(on_event, event)
 
-        def emit_during_lease(event: Any) -> None:
-            # Context/trace events are safe to surface while Codex is running.
-            # User-visible output and diagnostics remain gated on successful
-            # credential copy-back, preserving the existing fail-closed lease.
+        def emit_during_turn(event: Any) -> None:
+            # Final delivery remains buffered until the native turn and its
+            # host-tool audit finish; observation events stream independently.
             with event_lock:
                 if isinstance(event, (TextDelta, FinalText, TurnError)):
                     buffered_delivery_events.append(event)
@@ -311,19 +325,18 @@ class CodexAgentBackend:
                 safe_emit(on_event, event)
 
         try:
-            with credential_lease(
-                self._bot_credential_root(),
-                "main",
-                state.codex_home,
-            ) as lease:
-                self._sync_credential_generation(state, lease.generation)
-                result = self._stream_turn(
-                    state,
-                    task,
-                    on_event=emit_during_lease,
-                    cancellation=cancellation,
-                )
+            config = self._runtime_config.llm
+            if config.auth_mode == "chatgpt":
+                state.auth = access_credential(Path(config.credential_root), config.auth_profile)
+                self._sync_credential_generation(state, state.auth.identity_epoch)
+            else:
+                if not config.api_key:
+                    raise CredentialError("api_key_missing")
+                identity_epoch = int(hashlib.sha256(config.api_key.encode()).hexdigest()[:15], 16)
+                self._sync_credential_generation(state, identity_epoch)
+            result = self._stream_turn(state, task, on_event=emit_during_turn, cancellation=cancellation)
         except CredentialError as exc:
+            self._close_connection(state)
             self._clear_native_session(state)
             diagnostic = "\n".join(
                 event.message
@@ -357,7 +370,7 @@ class CodexAgentBackend:
         )
         try:
             self._ensure_clean_session_relay(state)
-        except Exception as exc:  # noqa: BLE001 - return a safe backend failure
+        except Exception as exc:  # noqa: BLE001 - return a safe runtime failure
             detail = f"Codex session relay recovery failed: {type(exc).__name__}: {exc}"
             message = self._safe_cli_failure(detail)
             on_event(TurnError(code="codex_tool_audit_failed", message=detail[-4000:]))
@@ -365,19 +378,19 @@ class CodexAgentBackend:
             state.messages.append({"role": "assistant", "content": message})
             return AgentResult(
                 final_text=message,
-                stop_reason="llm_error",
+                stop_reason="runtime_error",
+                failure=RuntimeFailure("codex_tool_audit_failed", "tool", message),
                 message_count=len(state.messages),
             )
         try:
-            selection = validate_frozen_code_model_selection(
-                self._runtime_config.routing,
-                task.metadata.get(CODE_MODEL_SELECTION_METADATA_KEY),
-            )
+            selection = task.execution.model_selection or ModelSelection(state.route.model)
+            if selection.route.auth != state.route.model.auth:
+                raise ValueError("turn cannot change its authentication route")
         except (TypeError, ValueError) as exc:
             detail = f"Invalid Codex model selection: {exc}"[-4000:]
             message = (
                 "The configured Codex model selection is invalid. "
-                "Reset it with `/model code default` or ask the operator to fix "
+                "Reset it with `/model default` or ask the operator to fix "
                 "the BotSpec profile."
             )
             on_event(TurnError(code="invalid_model_selection", message=detail))
@@ -385,15 +398,25 @@ class CodexAgentBackend:
             state.messages.append({"role": "assistant", "content": message})
             return AgentResult(
                 final_text=message,
-                stop_reason="llm_error",
+                stop_reason="runtime_error",
+                failure=RuntimeFailure("invalid_model_selection", "configuration", message, True, True),
                 message_count=len(state.messages),
             )
         projector: AppServerProjector | None = None
-        trace_id = str(task.metadata.get("trace_id") or state.acp_session_id)
+        turn_lifetime = CancellationToken()
+        interaction_cancellation = CombinedCancellation(cancellation, turn_lifetime)
+        trace_id = task.execution.trace.trace_id or state.acp_session_id
         llm_span_id: str | None = None
-        turn_relay: SessionToolRelay | None = None
+        turn_relay: DynamicToolBridge | None = None
         relay_generation: int | None = None
         successful_operations: list[str] = []
+        def provider_event(event):
+            if isinstance(event, SpanFinished) and event.source == "provider" and event.ok:
+                if event.kind == "file_change":
+                    successful_operations.append("native_write_file")
+                elif event.kind == "web_search":
+                    successful_operations.append("native_web_search")
+            on_event(event)
         try:
             image_paths = self._image_paths(task)
             self._prepare_app_server_home(state)
@@ -435,7 +458,7 @@ class CodexAgentBackend:
             on_event(
                 ContextSnapshotPrepared(
                     snapshot_id=snapshot_id,
-                    backend=self.backend_id,
+                    runtime_id=self.runtime_id,
                     model=selection.model,
                     iteration=0,
                     session_messages=tuple(captured_messages["session"]),
@@ -458,8 +481,8 @@ class CodexAgentBackend:
                 LlmCallStarted(
                     model=selection.model,
                     iteration=0,
-                    backend=self.backend_id,
-                    execution_kind="backend_execution",
+                    runtime_id=self.runtime_id,
+                    execution_kind="runtime_execution",
                     request_parameters={"model": selection.model, "reasoning_effort": selection.reasoning_effort,
                                         "resume": resumed, "summary": "auto", "transport": "app_server_stdio"},
                     trace_id=trace_id,
@@ -492,7 +515,7 @@ class CodexAgentBackend:
                 llm_span_id=llm_span_id,
                 parent_span_id=parent_span_id,
                 context_snapshot_id=snapshot_id,
-                on_event=on_event,
+                on_event=provider_event,
                 on_thread_started=lambda native_id: self._record_native_session_id(
                     state, native_id
                 ),
@@ -528,11 +551,43 @@ class CodexAgentBackend:
                 if cancellation is not None:
                     cancellation.raise_if_cancelled()
 
+            def host_request(method, params):
+                if method != "account/chatgptAuthTokens/refresh":
+                    interaction_cancellation.raise_if_cancelled()
+                if method == "item/tool/call":
+                    return turn_relay.call(params, main_thread_id=projector.thread_id, generation=relay_generation)
+                if method == "account/chatgptAuthTokens/refresh":
+                    if params.get("previousAccountId") not in {None, state.auth.account_id}:
+                        raise CredentialError("account_identity_changed")
+                    config = self._runtime_config.llm
+                    refreshed = access_credential(Path(config.credential_root), config.auth_profile,
+                        previous_token=state.auth.access_token)
+                    if refreshed.identity_epoch != state.credential_generation:
+                        raise CredentialError("account_identity_changed")
+                    state.auth = refreshed
+                    payload = refreshed.handoff()
+                    payload.pop("type")
+                    return payload
+                if self._interaction_handler is not None:
+                    return self._interaction_handler(method, params, task, interaction_cancellation)
+                if method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
+                    return {"decision": "decline"}
+                if method == "item/permissions/requestApproval":
+                    return {"permissions": {}, "scope": "turn"}
+                if method == "mcpServer/elicitation/request":
+                    return {"action": "decline", "content": None}
+                if method == "item/tool/requestUserInput":
+                    return {"answers": {}}
+                raise ValueError("unsupported App Server request")
+
+            config = self._runtime_config.llm
+            authentication = (state.auth.handoff() if config.auth_mode == "chatgpt"
+                              else {"type": "apiKey", "apiKey": config.api_key})
             completed = run_app_server(
                 command,
                 cwd=state.workdir,
                 prompt=prompt,
-                timeout_seconds=self._runtime_config.routing.code_timeout_seconds,
+                timeout_seconds=self._turn_timeout,
                 env=subprocess_env,
                 model=selection.model,
                 effort=selection.reasoning_effort,
@@ -542,6 +597,9 @@ class CodexAgentBackend:
                 on_thread=projector.bind_thread,
                 on_poll=poll_codex_process,
                 developer_instructions=developer,
+                connection=state.connection, on_request=host_request,
+                dynamic_tools=state.relay.schemas(), authentication=authentication,
+                approval_policy="on-request" if state.host_policy.interactions_enabled else "never",
             )
             if cancellation is not None:
                 cancellation.raise_if_cancelled()
@@ -556,8 +614,10 @@ class CodexAgentBackend:
             )
             if audit_error:
                 raise RuntimeError(f"Codex relay audit failed: {audit_error}")
+            state.pending_exchanges.clear()
             projector.finish(returncode=completed.returncode)
         except CancellationRequested:
+            self._close_connection(state)
             if projector is not None:
                 projector.fail(reason="cancelled")
             self._clear_native_session(state)
@@ -610,34 +670,38 @@ class CodexAgentBackend:
                         f"{type(reset_exc).__name__}: {reset_exc}"
                     )
             if projector is not None:
-                projector.fail(reason="codex_backend_failed")
-            detail = f"Codex backend failed: {type(exc).__name__}: {exc}"
+                projector.fail(reason="codex_runtime_failed")
+            self._close_connection(state)
+            detail = f"Codex runtime failed: {type(exc).__name__}: {exc}"
             if audit_error:
                 detail = f"{detail}; relay audit failed: {audit_error}"
             if relay_reset_error:
                 detail = f"{detail}; relay reset failed: {relay_reset_error}"
             message = self._safe_cli_failure(detail)
             error_code = (
-                "codex_auth_invalid" if self._is_auth_failure(detail) else "codex_backend_failed"
+                "codex_auth_invalid" if self._is_auth_failure(detail) else "codex_runtime_failed"
             )
             on_event(TurnError(code=error_code, message=detail[-4000:]))
             on_event(FinalText(message))
             state.messages.append({"role": "assistant", "content": message})
             return AgentResult(
                 final_text=message,
-                stop_reason="llm_error",
+                stop_reason="runtime_error",
+                failure=RuntimeFailure(error_code, "authentication" if error_code == "codex_auth_invalid" else "protocol", message,
+                    error_code == "codex_auth_invalid", False),
                 message_count=len(state.messages),
             )
         finally:
+            turn_lifetime.cancel()
             if turn_relay is not None and relay_generation is not None:
                 turn_relay.end_turn(relay_generation)
 
         if image_receipts:
-            raw_turn = task.metadata.get("eval_turn", 0)
+            raw_turn = task.execution.turn_index
             turn_index = raw_turn if isinstance(raw_turn, int) and raw_turn >= 0 else 0
             on_event(
                 InputResourcesDispatched(
-                    backend="codex",
+                    runtime_id="codex",
                     turn_index=turn_index,
                     request_id=llm_span_id,
                     resources=image_receipts,
@@ -677,11 +741,12 @@ class CodexAgentBackend:
             stop_reason="llm_error" if codex_failed else "end_turn",
             message_count=len(state.messages),
             response_integrity=integrity,
+            failure=RuntimeFailure("codex_turn_failed", "model", self._generic_cli_failure()) if codex_failed else None,
         )
 
     @staticmethod
     def _emit_relay_tool_events(
-        relay: SessionToolRelay,
+        relay: DynamicToolBridge,
         on_event: EventSink,
         *,
         generation: int,
@@ -785,7 +850,7 @@ class CodexAgentBackend:
                         span_id=call_id,
                         parent_span_id=parent_span_id,
                         depth=event_depth,
-                        backend="codex", source="host", tool_call_id=call_id,
+                        runtime_id="codex", source="host", tool_call_id=call_id,
                         started_at=(
                             float(event["started_at"])
                             if isinstance(event.get("started_at"), (int, float))
@@ -823,7 +888,7 @@ class CodexAgentBackend:
                     span_id=call_id,
                     parent_span_id=parent_span_id,
                     depth=event_depth,
-                    backend="codex", source="host", tool_call_id=call_id,
+                    runtime_id="codex", source="host", tool_call_id=call_id,
                     data=dict(data) if isinstance(data, dict) else None,
                     execution_result=event.get("execution_result"),
                     model_result={"role": "tool", "tool_call_id": call_id,
@@ -848,32 +913,23 @@ class CodexAgentBackend:
             self._reset_session_relay(state)
 
     def _reset_session_relay(self, state: _CodexSession) -> None:
-        replacement = SessionToolRelay(
-            tools=state.relay_tools,
-            executor=state.relay_executor,
-        )
-        endpoint = replacement.start()
-        try:
-            payload = json.loads(state.gateway_config.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict):
-                raise ValueError("Codex gateway config must contain an object")
-            payload["relay"] = endpoint.to_dict()
-            self._write_json_atomic(state.gateway_config, payload)
-            try:
-                state.gateway_config.chmod(0o600)
-            except OSError:
-                pass
-        except Exception:
-            replacement.close()
-            raise
-        retired = state.relay
-        state.relay = replacement
-        try:
-            retired.close()
-        except Exception:  # noqa: BLE001 - new generation is already authoritative
-            pass
+        state.relay.close()
+        state.relay = DynamicToolBridge(tools=state.relay_tools, executor=state.relay_executor,
+                                       payload_filter=self._tool_payload_filter)
 
-    def close_session(self, session: BackendSessionRef) -> None:
+    @staticmethod
+    def _close_connection(state: _CodexSession) -> None:
+        while state.connection:
+            connection = state.connection.pop()
+            try:
+                try:
+                    connection.interrupt()
+                except (OSError, RuntimeError, ValueError):
+                    pass  # A disconnected provider cannot acknowledge interrupt.
+            finally:
+                connection.__exit__(None, None, None)
+
+    def close_session(self, session: RuntimeSessionRef) -> None:
         stable = self._stable_key(session)
         state = self._sessions.pop(stable, None)
         for alias, target in tuple(self._aliases.items()):
@@ -881,28 +937,37 @@ class CodexAgentBackend:
                 self._aliases.pop(alias, None)
         if state is not None:
             try:
+                self._close_connection(state)
                 state.relay.close()
-                state.gateway_config.unlink(missing_ok=True)
             finally:
                 state.relay_executor.close()
 
-    def discard_session(self, session: BackendSessionRef) -> None:
+    def cancel(self, session: RuntimeSessionRef) -> None:
+        state = self._resolve(session)
+        if state.connection:
+            state.connection[0].interrupt()
+
+    def is_busy(self, session: RuntimeSessionRef) -> bool:
+        state = self._resolve(session)
+        return bool(state.relay.active or any(connection.busy for connection in state.connection))
+
+    def discard_session(self, session: RuntimeSessionRef) -> None:
         """Invalidate native resume before closing a consistency-poisoned session."""
 
         state = self._resolve(session)
         self._clear_native_session(state)
         self.close_session(session)
 
-    def current_session_ref(self, session: BackendSessionRef) -> BackendSessionRef:
+    def current_session_ref(self, session: RuntimeSessionRef) -> RuntimeSessionRef:
         state = self._resolve(session)
         value = state.native_session_id or self._stable_key(session)
-        return BackendSessionRef(self.backend_id, value)
+        return RuntimeSessionRef(self.runtime_id, value)
 
-    def set_prompt_plan(self, session: BackendSessionRef, plan: PromptPlan) -> None:
+    def set_prompt_plan(self, session: RuntimeSessionRef, plan: PromptPlan) -> None:
         self._resolve(session).prompt_plan = plan
 
     def record_exchange(
-        self, session: BackendSessionRef, user_text: str, assistant_text: str
+        self, session: RuntimeSessionRef, user_text: str, assistant_text: str
     ) -> None:
         state = self._resolve(session)
         state.messages.extend(
@@ -911,91 +976,80 @@ class CodexAgentBackend:
                 {"role": "assistant", "content": assistant_text},
             ]
         )
+        state.pending_exchanges.extend([{"role": "user", "content": user_text},
+                                        {"role": "assistant", "content": assistant_text}])
 
-    def snapshot_messages(self, session: BackendSessionRef) -> list[dict[str, Any]]:
+    def snapshot_messages(self, session: RuntimeSessionRef) -> list[dict[str, Any]]:
         return [dict(item) for item in self._resolve(session).messages]
 
-    def native_session(self, session: BackendSessionRef) -> _CodexSession:
-        return self._resolve(session)
+    def snapshot_transcript(self, session: RuntimeSessionRef):
+        from chatcopilot.contracts.execution import TranscriptSnapshot
+        return TranscriptSnapshot(tuple(self.snapshot_messages(session)), "adapter_visible")
 
     def _command(
         self,
         state: _CodexSession,
         *,
-        selection: CodeModelSelection | None = None,
+        selection: ModelSelection | None = None,
         image_paths: tuple[str, ...] = (),
     ) -> list[str]:
-        routing = self._runtime_config.routing
-        effective_selection = selection or default_code_model_selection(routing)
-        isolate_backend_state = bool(
-            getattr(state, "isolate_backend_state", False)
-        )
-        if isolate_backend_state:
-            gateway_command = _ISOLATED_GATEWAY_VENV + "/bin/python"
-            gateway_argv = [
-                _ISOLATED_GATEWAY_SCRIPT,
-                _ISOLATED_GATEWAY_CONFIG,
-            ]
-        else:
-            gateway_command = sys.executable
-            gateway_argv = [
-                "-m",
-                "chatcopilot",
-                "mcp-session-gateway",
-                str(state.gateway_config),
-            ]
-        gateway_args = json.dumps(gateway_argv, ensure_ascii=False)
+        effective_selection = selection or ModelSelection(state.route.model)
+        isolate_runtime_state = state.isolate_runtime_state or state.execution_scope is not None
         scope = state.execution_scope
-        extra_config = [
-            "mcp_servers={}",
-            f"mcp_servers.chatcopilot.command={json.dumps(gateway_command)}",
-            f"mcp_servers.chatcopilot.args={gateway_args}",
-            "mcp_servers.chatcopilot.required=true",
-            (
-                "mcp_servers.chatcopilot.enabled_tools="
-                + json.dumps(sorted(state.allowed_tool_names), ensure_ascii=False)
-            ),
-            'mcp_servers.chatcopilot.default_tools_approval_mode="approve"',
-        ]
-        if isolate_backend_state:
+        network_access = self._policy.network_access and state.host_policy.network_access
+        extra_config = [] if state.extensions else ["mcp_servers={}"]
+        if isolate_runtime_state:
             extra_config.append("project_doc_max_bytes=0")
             extra_config.extend(permission_config(
                 scope, workdir=state.workdir,
-                private_paths=(_ISOLATED_CODEX_HOME + "/auth.json", _ISOLATED_GATEWAY_CONFIG,
+                private_paths=(_ISOLATED_CODEX_HOME + "/auth.json",
                                _ISOLATED_CODEX_HOME + "/config.toml"),
-                network_access=self._policy.network_access,
+                network_access=network_access,
                 read_only=self._policy.sandbox_mode == "read-only",
             ))
-        if not isolate_backend_state:
+        if not isolate_runtime_state:
             extra_config.extend(permission_config(scope, workdir=state.workdir,
-                private_paths=(str(state.codex_home / "auth.json"), str(state.gateway_config), str(state.codex_home / "config.toml")),
-                network_access=self._policy.network_access, read_only=self._policy.sandbox_mode == "read-only"))
-        if not self._policy.connected_apps:
+                private_paths=(str(state.codex_home / "auth.json"), str(state.codex_home / "config.toml")),
+                network_access=network_access, read_only=self._policy.sandbox_mode == "read-only"))
+        if not self._policy.connected_apps or "apps" not in state.host_policy.extension_grants:
             extra_config.append("features.apps=false")
-        if not self._policy.image_generation:
+        if "apps" not in state.host_policy.extension_grants:
+            extra_config.append("features.plugins=false")
+        # Native extensions are configured by the instance operator, not installed
+        # implicitly by model suggestions or a newly encountered Skill.
+        extra_config.extend(["features.tool_suggest=false", "features.skill_mcp_dependency_install=false"])
+        if not self._policy.image_generation or "image_generation" not in state.host_policy.native_capabilities:
             extra_config.append("features.image_generation=false")
+        if "subagents" not in state.host_policy.native_capabilities:
+            extra_config.extend(["features.multi_agent=false", "features.multi_agent_v2=false"])
+        if "shell" not in state.host_policy.native_capabilities:
+            extra_config.extend(["features.shell_tool=false", "features.unified_exec=false"])
+        if state.host_policy.interactions_enabled:
+            extra_config.append("features.default_mode_request_user_input=true")
         command = build_app_server_command(
-            template=routing.code_command,
+            template="codex exec --model {model} --cd {workdir}",
             model=effective_selection.model,
             workdir=state.workdir,
             reasoning_effort=effective_selection.reasoning_effort,
-            web_search_mode=self._policy.web_search_mode,
+            web_search_mode=self._policy.web_search_mode if "web_search" in state.host_policy.native_capabilities else "disabled",
             shell_env_overrides=(
                 {
                     "PATH": "/usr/local/bin:/usr/bin:/bin",
                     "TMPDIR": "/tmp",
                 }
-                if isolate_backend_state
+                if isolate_runtime_state
                 else None
             ),
             extra_config=tuple(extra_config),
         )
-        if isolate_backend_state:
+        if isolate_runtime_state:
             return self._wrap_isolated_command(state, command)
         return command
 
     @staticmethod
     def _prepare_app_server_home(state: _CodexSession) -> None:
+        state.codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+        state.codex_home.chmod(0o700)
         # App Server has no exec --ignore-user-config flag. Only this owned home
         # supplies config; the namespace masks workspace configs and rules.
         for name in ("rules",):
@@ -1010,17 +1064,17 @@ class CodexAgentBackend:
         fd, temporary = tempfile.mkstemp(prefix=".config-", dir=state.codex_home)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write("# Managed by AgentStrata.\n")
+                stream.write("# Managed by AgentStrata.\n" + managed_extension_config(state.extensions))
             os.replace(temporary, config)
         finally:
             Path(temporary).unlink(missing_ok=True)
 
     @staticmethod
     def _subprocess_env(state: _CodexSession, executable: str) -> dict[str, str]:
-        return build_codex_subprocess_env(
+        return {**build_codex_subprocess_env(
             executable,
             runtime_home=state.codex_home,
-        )
+        ), **state.extension_env}
 
     @staticmethod
     def _require_isolated_main_codex_sandbox() -> None:
@@ -1068,200 +1122,47 @@ class CodexAgentBackend:
         except ValueError:
             pass
         else:
-            raise RuntimeError("shared-group Codex workdir must be outside backend state")
+            raise RuntimeError("shared-group Codex workdir must be outside runtime state")
 
     @staticmethod
     def _wrap_isolated_command(state: _CodexSession, command: list[str]) -> list[str]:
-        bwrap = require_bubblewrap()
-        host_codex = Path(command[0]).expanduser().resolve()
-        gateway_venv = Path(sys.prefix).expanduser().resolve()
-        gateway_python_runtime = Path(sys.base_prefix).expanduser().resolve()
-        gateway_script = Path(_standalone_gateway.__file__).resolve()
-        for path, label in (
-            (host_codex, "Codex executable"),
-            (gateway_script, "session gateway"),
-        ):
-            if not path.is_file() or path.is_symlink():
-                raise RuntimeError(f"isolated {label} must be a real file")
-        if not gateway_venv.is_dir() or gateway_venv.is_symlink():
-            raise RuntimeError("isolated session gateway environment must be a real directory")
-        gateway_python = gateway_venv / "bin" / "python"
-        try:
-            resolved_gateway_python = gateway_python.resolve(strict=True)
-        except OSError as exc:
-            raise RuntimeError(
-                "isolated session gateway Python executable is unavailable"
-            ) from exc
-        if not resolved_gateway_python.is_file():
-            raise RuntimeError("isolated session gateway Python executable must be a file")
-        if not gateway_python_runtime.is_dir() or gateway_python_runtime.is_symlink():
-            raise RuntimeError("isolated session gateway Python runtime must be a real directory")
-        try:
-            resolved_gateway_python.relative_to(gateway_python_runtime)
-        except ValueError as exc:
-            raise RuntimeError(
-                "isolated session gateway Python executable is outside its runtime"
-            ) from exc
-        for path, label in (
-            (state.codex_home, "Codex runtime home"),
-        ):
-            if not path.is_dir() or path.is_symlink():
-                raise RuntimeError(f"isolated {label} must be a real directory")
-            info = path.stat()
-            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
-                raise RuntimeError(f"isolated {label} must be owner-only mode 0700")
-        if not state.gateway_config.is_file() or state.gateway_config.is_symlink():
-            raise RuntimeError("isolated session gateway config must be a real file")
-
-        wrapped = [
-            str(Path(bwrap).resolve()),
-            "--die-with-parent",
-            "--new-session",
-            "--clearenv",
-            "--unshare-pid",
-            "--unshare-ipc",
-            "--unshare-uts",
-            "--proc",
-            "/proc",
-            "--dev",
-            "/dev",
-            "--tmpfs",
-            "/tmp",
-            "--tmpfs",
-            "/run",
-            "--dir",
-            "/etc",
-            "--dir",
-            "/opt",
-            "--dir",
-            "/opt/chatcopilot-codex",
-            "--dir",
-            "/opt/chatcopilot-gateway",
-            "--dir",
-            "/sandbox-home",
-            "--dir",
-            "/sandbox-home/agent",
-        ]
-        for system_path in ("/usr", "/bin", "/lib", "/lib64"):
-            if Path(system_path).exists():
-                wrapped.extend(["--ro-bind", system_path, system_path])
-        for system_path in (
-            "/etc/ca-certificates",
-            "/etc/group",
-            "/etc/hosts",
-            "/etc/ld.so.cache",
-            "/etc/localtime",
-            "/etc/nsswitch.conf",
-            "/etc/passwd",
-            "/etc/resolv.conf",
-            "/etc/ssl",
-        ):
-            if Path(system_path).exists():
-                wrapped.extend(["--ro-bind", system_path, system_path])
-        runtime_needs_bind = not _covered_by_isolated_system_mount(
-            gateway_python_runtime
-        )
-        parent_targets = (
-            (state.workdir, gateway_python_runtime)
-            if runtime_needs_bind
-            else (state.workdir,)
-        )
-        wrapped.extend(_sandbox_parent_dirs(*parent_targets))
-        if runtime_needs_bind:
-            # A venv may use an absolute Python symlink outside the venv. Mount
-            # that exact base runtime so the fixed in-sandbox venv remains executable.
-            wrapped.extend(
-                [
-                    "--ro-bind",
-                    str(gateway_python_runtime),
-                    str(gateway_python_runtime),
-                ]
-            )
-        if state.execution_scope is not None:
-            scope = state.execution_scope
-            wrapped.extend(
-                scope_mounts(scope if scope.native_write else replace(scope, writable_roots=()))
-            )
-        else:
-            wrapped.extend(["--ro-bind", str(state.workdir), str(state.workdir)])
-        roots = {state.workdir}
-        if state.execution_scope is not None:
-            roots.update(state.execution_scope.readable_roots)
-            roots.update(state.execution_scope.writable_roots)
-        for root in sorted(roots, key=str):
-            project_codex = Path(root) / ".codex"
-            try:
-                info = project_codex.lstat()
-            except FileNotFoundError:
-                continue
-            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
-                raise RuntimeError("Codex project config must be an owner-owned real directory")
-            wrapped.extend(["--tmpfs", str(project_codex)])
-        wrapped.extend(
-            [
-                "--ro-bind",
-                str(host_codex),
-                _ISOLATED_CODEX_BINARY,
-                "--ro-bind",
-                str(gateway_venv),
-                _ISOLATED_GATEWAY_VENV,
-                "--ro-bind",
-                str(gateway_script),
-                _ISOLATED_GATEWAY_SCRIPT,
-                "--ro-bind",
-                str(state.gateway_config),
-                _ISOLATED_GATEWAY_CONFIG,
-                "--bind",
-                str(state.codex_home),
-                _ISOLATED_CODEX_HOME,
-                "--ro-bind",
-                str(state.codex_home / "config.toml"),
-                _ISOLATED_CODEX_HOME + "/config.toml",
-                "--tmpfs",
-                _ISOLATED_CODEX_HOME + "/rules",
-                "--setenv",
-                "HOME",
-                "/sandbox-home/agent",
-                "--setenv",
-                "CODEX_HOME",
-                _ISOLATED_CODEX_HOME,
-                "--setenv",
-                "CODEX_SQLITE_HOME",
-                _ISOLATED_CODEX_HOME,
-                "--setenv",
-                "PATH",
-                "/opt/chatcopilot-codex:/usr/local/bin:/usr/bin:/bin",
-                "--setenv",
-                "TMPDIR",
-                "/tmp",
-                "--setenv",
-                "LANG",
-                "C.UTF-8",
-                "--setenv",
-                "LC_ALL",
-                "C.UTF-8",
-                "--setenv",
-                "USER",
-                "agentstrata",
-                "--setenv",
-                "LOGNAME",
-                "agentstrata",
-                "--chdir",
-                str(state.workdir),
-                "--",
-            ]
-        )
-        command = list(command)
-        command[0] = _ISOLATED_CODEX_BINARY
-        wrapped.extend(command)
+        from chatcopilot.core.scoped_process import sandbox_command
+        executable = Path(command[0]).resolve(strict=True)
+        scope = state.execution_scope or ExecutionScope(readable_roots=(state.workdir,))
+        if not scope.native_write:
+            scope = replace(scope, writable_roots=())
+        inner = [_ISOLATED_CODEX_BINARY, *command[1:]]
+        wrapped = sandbox_command(inner, scope=scope, cwd=state.workdir)
+        if state.extension_env:
+            # Parent env is already an explicit allowlist. Avoid putting secret
+            # values on bwrap argv; native shell children still inherit none.
+            wrapped.remove("--clearenv")
+        boundary = wrapped.index("--")
+        extra = ["--dir", "/opt/chatcopilot-codex", "--ro-bind", str(executable), _ISOLATED_CODEX_BINARY,
+                 "--dir", "/sandbox-home/agent", "--bind", str(state.codex_home), _ISOLATED_CODEX_HOME,
+                 "--tmpfs", _ISOLATED_CODEX_HOME + "/rules",
+                 "--ro-bind", str(state.codex_home / "config.toml"), _ISOLATED_CODEX_HOME + "/config.toml",
+                 "--setenv", "CODEX_HOME", _ISOLATED_CODEX_HOME,
+                 "--setenv", "CODEX_SQLITE_HOME", _ISOLATED_CODEX_HOME]
+        for root in set((*scope.readable_roots, *scope.writable_roots)):
+            project_config = root / ".codex"
+            if project_config.exists():
+                metadata = project_config.lstat()
+                if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+                    raise RuntimeError("project config must be an owner-owned real directory")
+                extra.extend(["--tmpfs", str(project_config)])
+        wrapped[boundary:boundary] = extra
         return wrapped
 
     def _prompt(self, state: _CodexSession, task: AgentTask) -> str:
+        context = task.turn_context or ""
+        if state.pending_exchanges:
+            context += "\n" + json.dumps({"host_recorded_exchanges": state.pending_exchanges}, ensure_ascii=False)
         return render_codex_prompt(
             state.prompt_plan,
             user_message=frame_task_message(task),
             execution_policy=self._execution_policy_prompt(state),
-            turn_context=task.turn_context or "",
+            turn_context=context,
             trusted_separately=True,
         )
 
@@ -1269,11 +1170,7 @@ class CodexAgentBackend:
         self,
         state: _CodexSession,
     ) -> tuple[dict[str, Any], ...]:
-        selected = sorted(
-            (tool for tool in self._tools if tool.name in state.allowed_tool_names),
-            key=lambda tool: tool.name,
-        )
-        return tuple(build_mcp_schema(tool) for tool in selected)
+        return tuple(state.relay.schemas()) if state.relay is not None else ()
 
     @staticmethod
     def _turn_trace_ids(
@@ -1282,7 +1179,7 @@ class CodexAgentBackend:
         *,
         prompt: str,
     ) -> tuple[str, str | None, str, str]:
-        explicit_trace = str(task.metadata.get("trace_id") or "").strip()
+        explicit_trace = task.execution.trace.trace_id
         if explicit_trace:
             trace_id = explicit_trace
         else:
@@ -1297,7 +1194,7 @@ class CodexAgentBackend:
             trace_id = "trace_" + hashlib.sha256(
                 trace_seed.encode("utf-8")
             ).hexdigest()[:16]
-        parent_span_id = (str(task.metadata.get("parent_span_id") or "").strip() or None) if explicit_trace else None
+        parent_span_id = task.execution.trace.parent_span_id if explicit_trace else None
         llm_span_id = "span_" + hashlib.sha256(
             f"{trace_id}\0codex-llm\00".encode("utf-8")
         ).hexdigest()[:12]
@@ -1389,15 +1286,15 @@ class CodexAgentBackend:
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def _stable_key(self, session: BackendSessionRef) -> str:
-        if session.backend != self.backend_id:
-            raise KeyError("cross-backend session reference")
+    def _stable_key(self, session: RuntimeSessionRef) -> str:
+        if session.runtime_id != self.runtime_id:
+            raise KeyError("cross-runtime session reference")
         stable = self._aliases.get(session.value)
         if stable is None:
             raise KeyError("unknown Codex session reference")
         return stable
 
-    def _resolve(self, session: BackendSessionRef) -> _CodexSession:
+    def _resolve(self, session: RuntimeSessionRef) -> _CodexSession:
         return self._sessions[self._stable_key(session)]
 
     @staticmethod
@@ -1410,29 +1307,25 @@ class CodexAgentBackend:
         if not path.is_file():
             return "", 0
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if int(payload.get("schema_version") or 0) != 2:
-            return "", 0
-        if str(payload.get("acp_session_id") or "") != acp_session_id:
+        binding = RuntimeSessionBinding.from_payload(payload)
+        if binding.actor_key != acp_session_id:
             raise ValueError(f"Codex session state identity mismatch: {path}")
-        if str(payload.get("policy_fingerprint") or "") != policy_fingerprint:
+        if binding.scope_digest != policy_fingerprint or binding.status != "active" or binding.resume_policy != "restartable":
             return "", 0
-        generation = payload.get("credential_generation", 0)
+        generation = binding.auth_identity_epoch
         if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
             return "", 0
-        return str(payload.get("native_session_id") or "").strip(), generation
+        return binding.native_thread_id, generation
 
     def _persist_session_state(self, state: _CodexSession) -> None:
         self._write_json_atomic(
             state.session_state_path,
-            {
-                "schema_version": 2,
-                "acp_session_id": state.acp_session_id,
-                "native_session_id": state.native_session_id,
-                "role_hint": state.role_hint,
-                "access_mode": state.access_mode,
-                "policy_fingerprint": state.policy_fingerprint,
-                "credential_generation": state.credential_generation,
-            },
+            RuntimeSessionBinding(binding_id=state.session_state_path.stem, actor_key=state.acp_session_id,
+                runtime_id="codex", native_thread_id=state.native_session_id,
+                auth_identity_epoch=state.credential_generation, scope_digest=state.policy_fingerprint,
+                capability_digest=state.capability_snapshot.fingerprint,
+                runtime_config_digest=state.route.behavior_fingerprint,
+                resume_policy="restartable" if state.restore_persisted_native_session else "live_only").to_payload(),
         )
 
     @staticmethod
@@ -1450,6 +1343,7 @@ class CodexAgentBackend:
         if state.credential_generation == generation:
             return
         self._clear_native_session(state)
+        self._close_connection(state)
         state.credential_generation = generation
         self._persist_session_state(state)
 
@@ -1495,7 +1389,8 @@ class CodexAgentBackend:
             )
         return AgentResult(
             final_text=message,
-            stop_reason="llm_error",
+            stop_reason="runtime_error",
+            failure=RuntimeFailure(code, "authentication", message, True, True),
             message_count=len(state.messages),
         )
 
@@ -1541,7 +1436,7 @@ class CodexAgentBackend:
     @staticmethod
     def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         if path.is_symlink():
-            raise RuntimeError("Codex backend state file must not be a symlink")
+            raise RuntimeError("Codex runtime state file must not be a symlink")
         temp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
         temp.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
@@ -1638,4 +1533,4 @@ def _safe_task_ledger_message(task: AgentTask) -> str:
     return str(safe_message)
 
 
-__all__ = ["CodexAgentBackend"]
+__all__ = ["CodexRuntimeAdapter"]

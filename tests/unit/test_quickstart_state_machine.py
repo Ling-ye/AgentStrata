@@ -144,7 +144,7 @@ def _canonical_starter_text(bot_id: str = "my-assistant-qq") -> str:
         f"    namespace: {bot_id}\n"
         "\n"
         "agents:\n"
-        "  backend: native\n"
+        "  runtime: native\n"
         "  presets: []\n"
         "\n"
         "workspace:\n"

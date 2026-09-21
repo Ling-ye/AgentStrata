@@ -18,7 +18,7 @@ def fixture_result() -> tuple[dict, dict]:
                "suite_id": "fixture-suite", "repetitions": 1, "seed": 0, "max_wall_seconds": 600,
                "bot_spec_sha256": "config-a", "case_ids": ["a", "b"], "dry_run": False}
     result = {"kind": "suite", "selected_cases": ["fixture-suite:a", "fixture-suite:b"],
-              "targets": [{"target_id": "main", "executor": "agent_configured", "backend": "native",
+              "targets": [{"target_id": "main", "executor": "agent_configured", "runtime_id": "native",
                            "model": "fixture-model", "reasoning_effort": "", "config_fingerprint": "runtime-a"}],
               "summary": {"verdict": "failed"},
               "config_snapshot": {"case_hash": "cases-a", "judge": "suite-or-profile-defined",
@@ -95,7 +95,7 @@ def test_repetitions_are_counted_and_missing_attempts_are_detected():
     assert insight(request, result, planned=4)["trend_eligible"] is False
 
 
-@pytest.mark.parametrize("field", ["case_hash", "judge", "implementation", "model", "backend", "repetitions", "seed", "budget", "options", "cases"])
+@pytest.mark.parametrize("field", ["case_hash", "judge", "implementation", "model", "runtime_id", "repetitions", "seed", "budget", "options", "cases"])
 def test_changed_test_conditions_split_series(field):
     request, result = fixture_result()
     original = insight(request, result)["series_key"]
@@ -103,7 +103,7 @@ def test_changed_test_conditions_split_series(field):
         result["config_snapshot"][field] += "-changed"
     elif field == "implementation":
         result["config_snapshot"]["definition_snapshot"]["execution_implementations"]["scorer"] = "source-b"
-    elif field in ("model", "backend"):
+    elif field in ("model", "runtime_id"):
         result["targets"][0][field] += "-changed"
     elif field in ("repetitions", "seed"):
         request[field] += 1

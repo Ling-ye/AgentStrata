@@ -154,15 +154,15 @@ def build_provision_plan(
 
     llm_prefix = spec.llm.env_prefix
     starter = is_guided_starter_spec(spec)
-    add(
-        f"{llm_prefix}_API_KEY",
-        field="chat_api_key",
-        label="LLM API Key",
-        group="llm",
-        required=True,
-        description="OpenAI-compatible API key",
-        secret=True,
-    )
+    subscription = spec.llm.chat.auth is not None and spec.llm.chat.auth.mode == "chatgpt"
+    if not subscription:
+        key_env = spec.llm.chat.auth.key_env if spec.llm.chat.auth is not None else f"{llm_prefix}_API_KEY"
+        add(key_env, field="chat_api_key", label="LLM API Key", group="llm", required=True,
+            description="Explicit model API-key credential", secret=True)
+    elif spec.llm.research.inherit_env_prefix:
+        add(f"{spec.llm.research.inherit_env_prefix}_API_KEY", field="research_api_key",
+            label="辅助模型 API Key", group="llm", required=False, secret=True,
+            description="Only auxiliary model calls use this credential; main chat uses subscription auth")
     add(
         f"{llm_prefix}_BASE_URL",
         field="chat_base_url",
@@ -199,17 +199,17 @@ def build_provision_plan(
                 description=f"Credential for enabled search provider {provider.id}",
             )
 
-    if spec.agents.backend == "codex":
+    if spec.agents.runtime == "codex":
         add(
             "CHATCOPILOT_CODEX_BIN",
-            group="backend",
+            group="runtime",
             required=True,
             description="Fixed Codex executable",
             secret=False,
         )
         add(
             "CHATCOPILOT_CODEX_BOT_HOME",
-            group="backend",
+            group="runtime",
             required=True,
             description="Bot-owned Codex authentication root",
             secret=False,
@@ -224,7 +224,7 @@ def build_provision_plan(
         ):
             add(
                 key,
-                group="backend",
+                group="worker",
                 required=False,
                 description=description,
             )
@@ -315,7 +315,7 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
             and _mapping_keys_at_most(raw, "context", {"memory_store"})
             and isinstance(memory_raw, dict)
             and set(memory_raw).issubset({"provider", "namespace"})
-            and _mapping_keys_at_most(raw, "agents", {"backend", "presets"})
+            and _mapping_keys_at_most(raw, "agents", {"runtime", "presets"})
             and _mapping_keys_at_most(raw, "workspace", {"root_env"})
             and _mapping_keys_at_most(
                 raw,
@@ -356,7 +356,7 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         and spec.prompts.refusal_style == "prompts/refusal-style.md"
         and not spec.prompts.role_styles
         and not spec.prompts.mode_styles
-        and spec.agents.backend == "native"
+        and spec.agents.runtime == "native"
         and set(spec.tools.packs) == {"workspace.read_write", "memory.chat"}
         and set(spec.tools.features) == {
             "chat.file_uploads",
@@ -373,7 +373,7 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         and not spec.agents.workflows
         and not spec.llm.code.enabled
         and spec.llm.research_env_prefix is None
-        and spec.llm.research_model is None
+        and spec.llm.research.model is None
         and spec.context.rag.sources is None
         and not spec.context.wiki.enabled
         and spec.context.codebases.registry is None

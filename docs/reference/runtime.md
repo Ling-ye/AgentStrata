@@ -20,14 +20,14 @@ Channel 转换平台帧并负责实际传输；Gateway 采信身份、调用准�
 
 Application 的 `ActorTurnExecutor` 准备回合、管理 actor 和待确认交换，`execute()` 只返回 `TurnOutcome(result, exchange)`，不暴露 actor_state。`ExchangeRef` 是绑定本进程、本轮、session 和 Principal 的不透明引用；Gateway 保留准入、run、取消、outbox、交付和 writer generation。Provider 确认且 generation 仍有效后调用 `commit_exchange()`，Application 复检 envelope/receipt 绑定并幂等提交；未确认群交换由 `discard_exchange()` 丢弃并逐出 actor。交付已确认而 journal 失败不能改写为未送达或自动重发。
 
-## Backend 创建具体 session
+## RuntimeAdapter 创建具体 session
 
 生产 QQ 会话通过 ActorSessionFactory 注入绑定工作区与 Gateway session 的 FileSender。
 文件在工作区内读取并校验，投递经真实 ChannelRuntime 与 OneBot driver；只有当前 run 仍活动且
 完整 provider acknowledgement 匹配时返回成功。图片工具与最终文本拥有各自的出站和回执，不将文本
 回复回执当成图片交付证据。发送结果未知时不自动重试。
 
-通用 AgentRuntime 只准备公共输入，Native/LangGraph/Codex adapter 创建各自 session；`BackendOpenRequest.options` 只承载类型化目录、隔离、恢复和角色提示参数，不传构造函数。
+通用 AgentRuntime 只准备公共输入，Native/LangGraph/Codex adapter 创建各自 session；`RuntimeOpenRequest.options` 只承载类型化目录、隔离、恢复和角色提示参数，不传构造函数。
 
 ## 新增 Gateway 通道
 
@@ -45,7 +45,7 @@ Application 的 `ActorTurnExecutor` 准备回合、管理 actor 和待确认交�
 
 `/help` 必须从当前 Bot 实际注册且启用的同一命令目录生成；`/state` 只投影当前会话和可信 runtime 绑定的当前 Bot systemd unit 的有界脱敏状态。
 
-`/restart` 不接受目标或参数，只重启当前 Bot unit，不清理 workspace、journal、memory、persona、backend resume 或 task/job 状态，也不操作外部 OneBot provider；仅在接受回复送达和指令 task 终态持久化后，才允许通过 Bot cgroup 外的 systemd transient unit 延迟执行，任何身份、投递、持久化、systemd、同实例 transient-unit 冲突或调度异常都失败关闭，禁止用进程内后台任务、`nohup` 或 `setsid` 降级，也不得把“请求已接受”描述为“重启已完成”。
+`/restart` 不接受目标或参数，只重启当前 Bot unit，不清理 workspace、journal、memory、persona、runtime resume 或 task/job 状态，也不操作外部 OneBot provider；仅在接受回复送达和指令 task 终态持久化后，才允许通过 Bot cgroup 外的 systemd transient unit 延迟执行，任何身份、投递、持久化、systemd、同实例 transient-unit 冲突或调度异常都失败关闭，禁止用进程内后台任务、`nohup` 或 `setsid` 降级，也不得把“请求已接受”描述为“重启已完成”。
 
 timer 注册后的回执落盘失败只能 best-effort 停止 transient units；即使目标 generation 尚未变化也不得声称已撤销，因为 systemd manager 可能已经排队 restart。
 

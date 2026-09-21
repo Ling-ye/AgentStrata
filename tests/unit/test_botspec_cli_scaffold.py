@@ -17,7 +17,7 @@ def test_bot_scaffold_uses_current_llm_slots_and_backend() -> None:
     payload = yaml.safe_load(rendered)
 
     assert payload["llm"] == {"chat": {"env_prefix": "CHATCOPILOT_CHAT"}}
-    assert payload["agents"]["backend"] == "native"
+    assert payload["agents"]["runtime"] == "native"
     assert payload["prompts"] == {
         "schema_version": 2,
         "identity": "prompts/identity.md",

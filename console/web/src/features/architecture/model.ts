@@ -57,7 +57,7 @@ export const runState = (state: string) => RUN_STATES[state] ?? { label: "状态
 export interface GatewayRun {
   run_id: string; state: string; error_code: string | null; created_at: number; started_at: number | null;
   finished_at: number | null; updated_at: number; channel?: string; conversation_kind?: string;
-  config_revision?: string; config_id?: string; backend?: string; model?: string; role?: string; capture_state?: string;
+  config_revision?: string; config_id?: string; runtime_id?: string; model?: string; role?: string; capture_state?: string;
   details_expired?: boolean; details_expires_at?: number | null; input_ref?: string; result_ref?: string;
   model_calls?: number; tool_calls?: number; total_tokens?: number | null;
   generation?: number; final_text?: string; final_text_truncated?: boolean;

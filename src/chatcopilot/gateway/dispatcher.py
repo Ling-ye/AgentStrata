@@ -120,6 +120,28 @@ class GatewayApplicationDispatcher:
         try:
             self._sessions.assert_current_generation()
             params = parse_request_params(request.method, request.params)
+            if request.method.startswith("interactions."):
+                from chatcopilot.contracts.gateway_rpc import InteractionsResult
+                from chatcopilot.contracts.interactions import ActorResponder, OperatorResponder
+                service = self._coordinator.interactions
+                if "interactions.operator" in client.scopes:
+                    responder = OperatorResponder(client.client_id, client.client_id)
+                else:
+                    if not params.session_id:
+                        raise GatewayDispatchError("session_required", "Interaction requires a bound session")
+                    session = self._sessions.get_visible(client=client, session_id=params.session_id)
+                    principal = self._sessions.principal_for_client(client=client, session=session)
+                    responder = ActorResponder(principal.actor_ref, principal.evidence_digest)
+                try:
+                    if params.operation == "list":
+                        payload = {"interactions": service.list(responder, params.session_id)}
+                    elif params.operation == "get":
+                        payload = {"interaction": service.get(params.interaction_id, responder)}
+                    else:
+                        payload = service.resolve(params.interaction_id, params.resolution, responder)
+                except ValueError as exc:
+                    raise GatewayDispatchError("invalid_interaction", "Interaction is unavailable or response is invalid") from exc
+                return serialize_method_result(request.method, InteractionsResult(payload))
             result = await self._dispatch_typed(request, params=params, client=client)
             return serialize_method_result(request.method, result)
         except GatewayDispatchError:

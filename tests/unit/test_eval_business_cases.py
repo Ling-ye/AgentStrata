@@ -48,7 +48,7 @@ class ScriptedSession:
         self.capabilities = SimpleNamespace(tool_names=tuple(self.tools))
         self.plan = None
 
-    def set_prompt_plan(self, plan):
+    def update_context(self, plan):
         self.plan = plan
 
     def close(self):
@@ -56,7 +56,7 @@ class ScriptedSession:
 
     def run_task(self, task, on_event):
         ident = task.metadata["eval_case"]
-        index = task.metadata["eval_turn"]
+        index = task.execution.turn_index
         context = ToolContext(
             workspace=self.service.resolve_workspace(),
             workspace_root=self.service.resolve_workspace_root(),
@@ -193,10 +193,10 @@ class ScriptedRuntime:
     def __init__(self, bot, overrides):
         self.bot = bot
         self.providers = overrides.runtime_providers
-        self.research_llm = DraftModel()
+        self.research_model_client = DraftModel()
         self.sessions = []
 
-    def new_session(self, **kwargs):
+    def open_session(self, **kwargs):
         session = ScriptedSession(self, kwargs)
         self.sessions.append(session)
         return session
@@ -238,7 +238,7 @@ def test_business_positive_and_missing_evidence(
         resource_evidence=evidence,
     )
     checks = business_checks(case_id, observation)
-    assert all(checks.values()), checks
+    assert all(checks.values()), (checks, observation.tool_calls)
     result, details = score(definition, observation)
     assert result.passed, details
     assert details["judge_kind"] == "deepeval"
@@ -278,7 +278,7 @@ def test_real_backend_two_model_turns_use_actual_tool_result(backend, tmp_path, 
     from chatcopilot.core.config import ChatConfig
     from chatcopilot.core.llm_client import LLMClient
     runtime = executor.load_evaluation_runtime('lingye-copilot-qq', load_local_environment=False, inherit_environment=False)
-    runtime = replace(runtime, agent_backend=backend)
+    runtime = replace(runtime, runtime_id=backend)
     monkeypatch.setattr(executor, 'load_evaluation_runtime', lambda *a, **kw: runtime)
     monkeypatch.setattr(executor, 'load_config', lambda **kw: ChatConfig())
     calls = []

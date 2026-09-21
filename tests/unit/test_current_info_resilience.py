@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.prompt_plan_fixture import prompt_input, prompt_plan
+from tests.prompt_plan_fixture import prompt_input, prompt_plan, runtime_route
 
 import json
 import unittest
@@ -10,7 +10,7 @@ from unittest.mock import patch
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.agent.runtime import AgentRuntime
-from chatcopilot.agent.context.prompt_plan import PromptPlanBuilder, render_native_prefix
+from chatcopilot.agent.context.prompt_plan import PromptPlanBuilder
 from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.subagents.registry import (
     SearchCircuitBreaker,
@@ -74,20 +74,20 @@ def _delegate(name: str, payloads: list[dict], calls: list[str]) -> ToolDef:
 class CurrentDatePromptTests(unittest.TestCase):
     def test_runtime_prompt_plan_preserves_date_after_plan_refresh(self) -> None:
         runtime = AgentRuntime(
-            llm=_FakeLLM(),
+            main_model_client=_FakeLLM(),
             tools=(),
             tools_schema=(),
             runtime_config=ChatConfig(),
+            route=runtime_route(),
         )
         with patch("chatcopilot.agent.context.prompt_plan.date") as mocked_date:
             mocked_date.today.return_value = date(2026, 6, 22)
             first_input = prompt_input("platform-v1")
-            session = runtime.new_session(session_id="sid", prompt_input=first_input)
-            concrete = session.backend.native_session(session.backend_session_ref)
-            first_messages = render_native_prefix(concrete.prompt_plan)
+            session = runtime.open_session(session_id="sid", prompt_input=first_input)
+            first_messages = list(session.snapshot_transcript().messages)
             first = "\n".join(message["content"] for message in first_messages)
             session.set_prompt_plan(PromptPlanBuilder().build(prompt_input("platform-v2")))
-            second_messages = render_native_prefix(concrete.prompt_plan)
+            second_messages = list(session.snapshot_transcript().messages)
             second = "\n".join(message["content"] for message in second_messages)
 
         self.assertIn("准确性与搜索", first)
@@ -96,25 +96,25 @@ class CurrentDatePromptTests(unittest.TestCase):
         self.assertIn("platform-v2", second)
         self.assertIn("准确性与搜索", second)
         self.assertIn("今天是 2026-06-22", second)
-        self.assertEqual(second_messages, session.snapshot_messages()[: len(second_messages)])
+        self.assertEqual(second_messages, list(session.snapshot_transcript().messages[: len(second_messages)]))
 
     def test_runtime_refresh_replaces_persona_and_memory_without_duplication(self) -> None:
         runtime = AgentRuntime(
-            llm=_FakeLLM(), tools=(), tools_schema=(), runtime_config=ChatConfig()
+            main_model_client=_FakeLLM(), tools=(), tools_schema=(),
+            runtime_config=ChatConfig(), route=runtime_route()
         )
         old_input = prompt_input("stable")
         old_input = old_input.__class__(
             **{**old_input.__dict__, "dynamic_persona": "old persona", "memory": "old memory"}
         )
-        session = runtime.new_session(session_id="sid-dynamic", prompt_input=old_input)
+        session = runtime.open_session(session_id="sid-dynamic", prompt_input=old_input)
         new_input = prompt_input("stable-v2")
         new_input = new_input.__class__(
             **{**new_input.__dict__, "dynamic_persona": "new persona", "memory": "new memory"}
         )
         session.set_prompt_plan(PromptPlanBuilder().build(new_input))
-        concrete = session.backend.native_session(session.backend_session_ref)
         rendered = "\n".join(
-            message["content"] for message in render_native_prefix(concrete.prompt_plan)
+            message["content"] for message in session.snapshot_transcript().messages
         )
 
         self.assertIn("stable-v2", rendered)

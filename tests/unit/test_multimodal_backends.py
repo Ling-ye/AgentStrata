@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.prompt_plan_fixture import prompt_plan
+from tests.prompt_plan_fixture import prompt_plan, runtime_route
 
 import hashlib
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from chatcopilot.agent.backends.codex import CodexAgentBackend
+from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
 from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.contracts.agent import (
@@ -19,6 +19,8 @@ from chatcopilot.contracts.agent import (
     ResourceRef,
 )
 from chatcopilot.core.llm_client import ChatResult, LLMClient
+from chatcopilot.core.config import ChatConfig, LLMConfig
+from chatcopilot.contracts.execution import TurnExecutionContext, HostRuntimePolicy
 from chatcopilot.contracts.tools import (
     ToolContext,
     ToolDef,
@@ -77,7 +79,7 @@ def _image_resource(path: Path) -> ResourceRef:
 def _llm_client(completions: _Completions) -> LLMClient:
     client = object.__new__(LLMClient)
     client._closed = False
-    client._cfg = SimpleNamespace(model="vision-test")
+    client._cfg = LLMConfig(model="vision-test")
     client._client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     client._limiter = _Limiter()
     return client
@@ -102,7 +104,7 @@ def test_native_expands_image_only_at_request_boundary(tmp_path: Path) -> None:
         AgentTask(
             text="describe this image",
             resources=(resource,),
-            metadata={"eval_turn": 3},
+            execution=TurnExecutionContext(origin="evaluation", turn_index=3),
         ),
         on_event=events.append,
     )
@@ -123,7 +125,7 @@ def test_native_expands_image_only_at_request_boundary(tmp_path: Path) -> None:
     assert "data:image" not in transcript
     assert "base64," not in transcript
     dispatch = next(event for event in events if isinstance(event, InputResourcesDispatched))
-    assert dispatch.backend == "native"
+    assert dispatch.runtime_id == "native"
     assert dispatch.turn_index == 3
     assert dispatch.request_id
     assert dispatch.resources[0].sequence == 0
@@ -200,11 +202,18 @@ def test_codex_images_remain_typed_rpc_inputs_instead_of_command_arguments(tmp_p
         code_model="gpt-test",
         code_reasoning_effort="medium",
     )
-    backend = CodexAgentBackend(
+    config = ChatConfig(
+        routing=routing,
+        llm=LLMConfig(provider="openai", api="openai_responses", model="gpt-test"),
+    )
+    route = runtime_route("codex", config.llm)
+    backend = CodexRuntimeAdapter(
+        route=route,
         tool_names=set(),
-        runtime_config=SimpleNamespace(routing=routing),
+        runtime_config=config,
     )
     state = SimpleNamespace(
+        extensions="", extension_env={}, pending_exchanges=[], host_policy=HostRuntimePolicy(), isolate_runtime_state=False,
         execution_scope=None,
         role_hint="user",
         gateway_config=tmp_path / "gateway.json",
@@ -214,11 +223,12 @@ def test_codex_images_remain_typed_rpc_inputs_instead_of_command_arguments(tmp_p
         access_mode="workspace",
         workdir=tmp_path,
         native_session_id="",
+        route=route,
     )
     image_paths = backend._image_paths(task)
 
     with mock.patch(
-        "chatcopilot.agent.backends.codex.build_app_server_command",
+        "chatcopilot.agent.runtimes.codex.build_app_server_command",
         side_effect=lambda **_kwargs: ["codex", "app-server"],
     ):
         initial = backend._command(state, image_paths=image_paths)

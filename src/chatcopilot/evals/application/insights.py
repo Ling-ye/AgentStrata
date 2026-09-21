@@ -130,10 +130,10 @@ def _series(request: Mapping[str, Any], result: Mapping[str, Any]) -> tuple[str 
         lane = _mapping(target)
         model_optional = (request.get("suite_id", result.get("suite")) == "agentstrata-qq-message-flow-v1"
                           and lane.get("executor") == "qq_message_flow")
-        if not all(lane.get(key) for key in ("target_id", "executor", "backend")) or (not model_optional and not lane.get("model")):
+        if not all(lane.get(key) for key in ("target_id", "executor", "runtime_id")) or (not model_optional and not lane.get("model")):
             return None, "missing_target"
         lanes.append({key: lane.get(key, "") for key in (
-            "target_id", "executor", "backend", "model", "reasoning_effort",
+            "target_id", "executor", "runtime_id", "model", "reasoning_effort",
         )})
     # Retained as descriptive comparison identity; UI grouping is selected explicitly.
     for key in ("target_fingerprint", "environment_identity", "base_fingerprint"):
@@ -357,7 +357,7 @@ def target_summaries(result: Mapping[str, Any], request: Mapping[str, Any]) -> l
         cases = sorted({str(_mapping(t).get("case_id") or "") for t in trials})
         duration = execution_duration(trials, kind=kind)
         rows.append({
-            "target_id": lane.get("target_id"), "backend": lane.get("backend"),
+            "target_id": lane.get("target_id"), "runtime_id": lane.get("runtime_id"),
             "model": lane.get("model"), "reasoning_effort": lane.get("reasoning_effort", ""),
             "counts": counts, "observed": len(trials),
             "pass_rate": counts["passed"] / len(trials) if trials and valid else None,

@@ -230,7 +230,9 @@ class SessionManager:
             self._assert_agent_session_available(state)
             evicted: ActorExecutionState | None = None
             if len(bucket) >= self._max_actors_per_session:
-                _, candidate = next(iter(bucket.items()))
+                candidate = next((item for item in bucket.values() if not getattr(item.agent_session, "busy", False)), None)
+                if candidate is None:
+                    raise ActorEvictionError("actors_busy", "All actor sessions have active turns, tools or interactions")
                 self._discard_execution_session(candidate)
                 bucket.pop(candidate.key.actor_ref)
                 self._unbind_agent_session(candidate)

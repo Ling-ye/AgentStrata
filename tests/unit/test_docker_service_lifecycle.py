@@ -50,7 +50,7 @@ def _write_bot(
                 "  mcp:",
                 "    servers: mcp/servers.yaml",
                 "agents:",
-                "  backend: native",
+                "  runtime: native",
                 f"  {search_block_name}:",
                 *(
                     (f"    enabled: {unified_enabled}",)

@@ -55,6 +55,8 @@ from chatcopilot.application.workspaces import (
 )
 from chatcopilot.botspec.runtime import BotRuntimeContext
 from chatcopilot.contracts.agent import AgentEvent, AgentResult, AgentTask
+from chatcopilot.contracts.execution import TurnExecutionContext, TraceContext, HostRuntimePolicy
+from chatcopilot.contracts.model_runtime import ModelSelection
 from chatcopilot.contracts.authorization import Principal
 from chatcopilot.contracts.cancellation import CancellationProbe, CancellationRequested
 from chatcopilot.contracts.identity import Role, SessionIdentity, TurnIdentity, role_value
@@ -152,6 +154,7 @@ class ActorSessionFactory:
         file_sender_factory: FileSenderFactory | None = None,
         background_submitter_factory: BackgroundSubmitterFactory | None = None,
         on_authorization_decision: DecisionSink | None = None,
+        interaction_factory: Callable | None = None,
     ) -> None:
         if not str(policy_version or "").strip():
             raise ValueError("policy_version must not be empty")
@@ -164,6 +167,7 @@ class ActorSessionFactory:
         self._file_sender_factory = file_sender_factory
         self._background_submitter_factory = background_submitter_factory
         self._decision_sink = on_authorization_decision
+        self._interaction_factory = interaction_factory
         self._journals: dict[tuple[str, str, str], GroupConversationJournal] = {}
         self._journal_lock = threading.RLock()
 
@@ -218,7 +222,7 @@ class ActorSessionFactory:
         if current is not None and current.agent_session is not None:
             agent_session = cast(AgentSessionProtocol, current.agent_session)
             try:
-                agent_session.set_prompt_plan(
+                agent_session.update_context(
                     PromptPlanBuilder().build(
                         replace(
                             prompt_input,
@@ -259,7 +263,7 @@ class ActorSessionFactory:
                 if self._background_submitter_factory is not None
                 else None
             )
-            agent_session = self.agent_runtime.new_session(
+            agent_session = self.agent_runtime.open_session(
                 session_id=_execution_session_id(key),
                 prompt_input=prompt_input,
                 session_providers=session_providers,
@@ -276,6 +280,13 @@ class ActorSessionFactory:
                 background_submitter=background_submitter,
                 file_sender=file_sender,
                 workspace_service=binding.service,
+                host_policy=HostRuntimePolicy(scope=binding.service.execution_scope, network_access=True,
+                    native_capabilities=frozenset({"files", "shell", "web_search", "image", "image_generation", "subagents"}),
+                    extension_grants=("apps",) if (principal.role is Role.OWNER and self.runtime.runtime_id == "codex"
+                                                   and self.runtime.subagents.codex_extensions) else (),
+                    interactions_enabled=self._interaction_factory is not None),
+                interaction_handler=(self._interaction_factory(principal, session_id, binding.service.execution_scope)
+                                     if self._interaction_factory else None),
                 caller_role_hint=role_value(principal.role),
                 caller_identity=SessionIdentity(
                     user_id=principal.user_id,
@@ -330,7 +341,7 @@ class ActorSessionFactory:
             conversation_journal=current.turn_context,
         )
         agent_session = cast(AgentSessionProtocol, current.agent_session)
-        agent_session.set_prompt_plan(
+        agent_session.update_context(
             PromptPlanBuilder().build(
                 replace(prompt_input, tool_names=_session_tool_names(agent_session))
             )
@@ -401,7 +412,7 @@ class ActorSessionFactory:
                 "The actor runtime could not close every execution handle",
             ) from exc
 
-    def _store_actor(self, state: ActorExecutionState) -> None:
+    def _store_actor(self, state: ActorExecutionState) -> ActorExecutionState:
         try:
             self.session_manager.store_actor(
                 state,
@@ -409,6 +420,7 @@ class ActorSessionFactory:
             )
         except SessionManagerError as exc:
             raise ActorRuntimeError(exc.code, str(exc)) from exc
+        return state
 
     def _evict_key(self, key: ActorSessionKey) -> ActorExecutionState | None:
         try:
@@ -428,7 +440,7 @@ class ActorSessionFactory:
         return (
             build_persona_provider(
                 port,
-                llm=cast(Any, self.agent_runtime.research_llm),
+                llm=cast(Any, self.agent_runtime.research_model_client),
                 coordinator_factory=lambda: self.agent_runtime.build_unified_search_coordinator(
                     max_wall_seconds=60.0
                 ),
@@ -467,7 +479,7 @@ class ActorSessionFactory:
         gateway_session = self.session_manager.get_session(session_id)
         return PromptBuildInput(
             profile=self.runtime.prompt_profile,
-            backend=str(self.runtime.agent_backend or "native").strip().lower(),
+            runtime_id=str(self.runtime.runtime_id or "native").strip().lower(),
             model=_effective_model(self.runtime, self.agent_runtime),
             role=role_value(principal.role),
             channel_kind="group" if group else "private",
@@ -594,15 +606,48 @@ class ActorTurnExecutor:
                         "The actor Agent session is unavailable",
                     )
                 agent_session = cast(AgentSessionProtocol, state.agent_session)
+                command_result = None
+                parts = request.canonical_text.strip().split()
+                if parts and parts[0] == "/model":
+                    if request.principal.role is not Role.OWNER:
+                        command_result = AgentResult(final_text="模型选择仅限 Owner。", stop_reason="end_turn")
+                    else:
+                        base = self.factory.agent_runtime.runtime_config.llm.model_route()
+                        profiles = self.factory.runtime.spec.llm.chat.profiles
+                        selection = state.one_shot_model_selection or state.model_selection or ModelSelection(base)
+                        if len(parts) == 2 and parts[1] == "default":
+                            state = self.factory._store_actor(replace(state, model_selection=None, one_shot_model_selection=None))
+                            selection = ModelSelection(base)
+                        elif len(parts) in {2, 3} and parts[1] in profiles and (len(parts) == 2 or parts[2] == "once"):
+                            profile = profiles[parts[1]]
+                            selection = ModelSelection(replace(base, model=profile.model, reasoning_effort=profile.reasoning_effort),
+                                scope="once" if len(parts) == 3 else "session", source="profile", profile=parts[1])
+                            state = self.factory._store_actor(replace(state, **{
+                                "one_shot_model_selection" if selection.scope == "once" else "model_selection": selection}))
+                        command_result = AgentResult(final_text=(f"主模型：{selection.model} / {selection.reasoning_effort}；"
+                            f"runtime={self.factory.agent_runtime.runtime_id}。配置档：{', '.join(profiles) or '无'}。"
+                            "用法：/model <配置档> [once] 或 /model default。"), stop_reason="end_turn")
+                    agent_session.record_exchange(request.canonical_text, command_result.final_text)
                 capabilities = getattr(agent_session, "capabilities", None)
+                selected_model = state.one_shot_model_selection or state.model_selection
+                if selected_model is not None:
+                    binding = build_actor_workspace(workspace_root=self.factory.workspace_root, principal=request.principal)
+                    selected_prompt = self.factory._build_prompt_input(session_id=request.session_id,
+                        principal=request.principal, binding=binding, conversation_journal=state.turn_context)
+                    agent_session.update_context(PromptPlanBuilder().build(replace(selected_prompt,
+                        model=selected_model.model, tool_names=_session_tool_names(agent_session))))
                 if capabilities is not None:
                     observe("session_capabilities", tools=sorted(capabilities.tool_names),
-                            role=request.principal.role.value, workspace_scope=state.workspace.scope)
+                            role=request.principal.role.value, workspace_scope=state.workspace.scope,
+                            capability_snapshot=agent_session.capability_snapshot.to_payload())
                 task = AgentTask(
                     text=str(request.canonical_text),
                     resources=tuple(request.resource_refs),
                     turn_context=str(request.turn_context or "") or None,
-                    metadata=dict(request.metadata or {}),
+                    execution=TurnExecutionContext(execution_id=request.run_id,
+                        session_id=request.session_id, actor_ref=request.principal.actor_ref,
+                        origin="gateway", trace=TraceContext(request.run_id, AGENT_EXECUTION_SPAN_ID),
+                        model_selection=state.one_shot_model_selection or state.model_selection),
                 )
                 stage.complete(capture_payload(lambda: {
                     "session_id": request.session_id, "role": request.principal.role.value,
@@ -613,12 +658,14 @@ class ActorTurnExecutor:
                                span_id=AGENT_EXECUTION_SPAN_ID, input=turn_summary(request),
                                source="application", target="agent") as stage:
                 try:
-                    result = await asyncio.to_thread(
+                    result = command_result or await asyncio.to_thread(
                         agent_session.run_task,
                         task,
                         on_event=on_event,
                         cancellation=cancellation,
                     )
+                    if command_result is None and state.one_shot_model_selection is not None:
+                        state = self.factory._store_actor(replace(state, one_shot_model_selection=None))
                 except CancellationRequested:
                     result = AgentResult(
                         final_text="",
@@ -632,7 +679,7 @@ class ActorTurnExecutor:
                         "The actor Agent turn failed before returning a result",
                     ) from exc
                 stage.complete(result_summary(result), stop_reason=result.stop_reason,
-                               status="aborted" if result.stop_reason == "cancelled" else "failed" if result.stop_reason == "llm_error" else "succeeded")
+                               status="aborted" if result.stop_reason == "cancelled" else "failed" if result.stop_reason in {"llm_error", "runtime_error"} else "succeeded")
             reference = ExchangeRef()
             self._exchanges[reference] = _PendingExchange(request, result, state)
             return TurnOutcome(result=result, exchange=reference)
@@ -761,15 +808,7 @@ def _memory_snippet(state: Any) -> str:
 
 
 def _effective_model(runtime: BotRuntimeContext, agent_runtime: AgentRuntime) -> str | None:
-    backend = str(runtime.agent_backend or "native").strip().lower()
-    if backend == "codex":
-        candidate = str(
-            getattr(agent_runtime.runtime_config.routing, "code_model", "")
-            or getattr(runtime.spec.llm.code, "model", "")
-            or ""
-        ).strip()
-    else:
-        candidate = str(getattr(agent_runtime.llm, "model", "") or "").strip()
+    candidate = str(agent_runtime.route.model.model or "").strip()
     return candidate or None
 
 

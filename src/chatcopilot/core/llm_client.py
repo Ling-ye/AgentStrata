@@ -11,7 +11,7 @@ import copy
 
 import logging
 import time
-from dataclasses import dataclass, field
+import threading
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from chatcopilot.core.config import LLMConfig
@@ -27,35 +27,9 @@ from chatcopilot.contracts.cancellation import (
     CancellationRequested,
 )
 from chatcopilot.project import CHAT_ENV_PREFIX
+from chatcopilot.contracts.chat_result import ChatResult
 
 _LOGGER = logging.getLogger("chatcopilot.core.llm_client")
-
-
-@dataclass
-class ChatResult:
-    """一次 LLM 调用的最终结果。"""
-    content: str = ""
-    reasoning_content: str = ""
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    finish_reason: str = ""
-    usage: Dict[str, int] | None = None
-
-    def to_message(self) -> Dict[str, Any]:
-        """转成 OpenAI messages 数组里的 assistant 消息。
-
-        DeepSeek V4 thinking mode 要求在含 tool_calls 的轮次里把
-        reasoning_content 原样回传，否则 API 返回 400。
-        """
-        msg: Dict[str, Any] = {"role": "assistant"}
-        if self.content:
-            msg["content"] = self.content
-        else:
-            msg["content"] = None
-        if self.reasoning_content:
-            msg["reasoning_content"] = self.reasoning_content
-        if self.tool_calls:
-            msg["tool_calls"] = self.tool_calls
-        return msg
 
 
 class LLMClient:
@@ -64,14 +38,16 @@ class LLMClient:
     def __init__(self, cfg: LLMConfig) -> None:
         self._cfg = copy.copy(cfg)
         self._limiter = build_llm_limiter()
-        self._client = self._build_client()
+        self._client = None
+        self._client_lock = threading.Lock()
         self._closed = False
 
     def close(self) -> None:
         """Release the instance-owned SDK transport once after its users stop."""
         if not self._closed:
             self._closed = True
-            self._client.close()
+            if self._client is not None:
+                self._client.close()
 
     @property
     def model(self) -> str:
@@ -81,15 +57,49 @@ class LLMClient:
     def config(self) -> LLMConfig:
         """Return a snapshot used to inherit an optional model profile."""
 
-        return LLMConfig(
-            base_url=self._cfg.base_url,
-            model=self._cfg.model,
-            api_key=self._cfg.api_key,
-            timeout=self._cfg.timeout,
-        )
+        return copy.copy(self._cfg)
 
     def set_model(self, model: str) -> None:
         self._cfg.model = model
+
+    def complete(self, request):
+        """Typed single-inference port; conversation/tool execution remains with the caller."""
+        import json
+        from chatcopilot.contracts.model_runtime import ModelResponse, ModelToolCall, TokenUsage, json_value
+        own = self._cfg.model_route()
+        if any(getattr(own, key) != getattr(request.route, key) for key in ("provider", "api", "base_url", "auth")):
+            raise ValueError("model request cannot change its client's credential or endpoint")
+        messages = []
+        for message in request.messages:
+            item = {"role": message.role, "content": []}
+            for frozen_part in message.content:
+                part = json_value(frozen_part)
+                kind = part.get("type")
+                if kind in {"text", "local_image", "image_url"}:
+                    item["content"].append(part)
+                elif kind == "tool_call":
+                    item.setdefault("tool_calls", []).append({"id": part["call_id"], "type": "function",
+                        "function": {"name": part["name"], "arguments": json.dumps(part["arguments"])}})
+                elif kind == "tool_result":
+                    item["tool_call_id"] = part["call_id"]
+                    item["content"] = part["content"]
+                else:
+                    raise ValueError("unsupported model content part")
+            if isinstance(item["content"], list) and all(part.get("type") == "text" for part in item["content"]):
+                item["content"] = "\n".join(part["text"] for part in item["content"])
+            messages.append(item)
+        if request.continuation:
+            assistant = next((item for item in reversed(messages) if item["role"] == "assistant"), None)
+            if assistant is None:
+                raise ValueError("provider continuation requires its assistant message")
+            assistant["_provider_continuation"] = json_value(request.continuation)
+        result = self.chat(messages, tools=[json_value(tool) for tool in request.tools],
+                           model=request.route.model, reasoning_effort=request.route.reasoning_effort)
+        usage = result.usage or {}
+        return ModelResponse(result.content, tuple(ModelToolCall(call["id"], call["function"]["name"],
+            json.loads(call["function"]["arguments"])) for call in result.tool_calls), result.finish_reason,
+            TokenUsage(usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("cached_tokens"),
+                       usage.get("reasoning_tokens")), result.provider_continuation)
 
     def _build_client(self):
         try:
@@ -125,6 +135,7 @@ class LLMClient:
         timeout: Optional[float] = None,
         cancellation: CancellationProbe | None = None,
         reasoning_effort: Optional[str] = None,
+        on_request_prepared: Optional[Callable[[dict], None]] = None,
     ) -> ChatResult:
         """统一入口；首选流式，失败时自动降级非流式。"""
         if self._closed:
@@ -132,6 +143,16 @@ class LLMClient:
         if cancellation is not None:
             cancellation.raise_if_cancelled()
         outbound_messages = _expand_local_image_blocks(messages)
+        if self._cfg.api != "chat_completions":
+            from chatcopilot.core.responses_client import responses_chat
+            return responses_chat(self._cfg, outbound_messages, tools or [],
+                on_content_delta=on_content_delta, cancellation=cancellation,
+                model=model, reasoning_effort=reasoning_effort, timeout=timeout,
+                on_request_prepared=on_request_prepared)
+        if self._client is None:
+            with self._client_lock:
+                if self._client is None:
+                    self._client = self._build_client()
         with self._limiter.slot():
             if stream:
                 try:

@@ -898,7 +898,7 @@ def test_task_detail_merges_job_stages_and_events(tmp_path: Path) -> None:
             "context_snapshots": [
                 {
                     "snapshot_id": "ctx_call_1",
-                    "backend": "codex",
+                    "runtime_id": "codex",
                     "model": "gpt-5",
                     "iteration": 0,
                     "coverage": "adapter_visible",
@@ -978,7 +978,7 @@ def test_task_detail_merges_job_stages_and_events(tmp_path: Path) -> None:
     assert detail["context_snapshots"] == [
         {
             "snapshot_id": "ctx_call_1",
-            "backend": "codex",
+            "runtime_id": "codex",
             "model": "gpt-5",
             "iteration": 0,
             "coverage": "adapter_visible",

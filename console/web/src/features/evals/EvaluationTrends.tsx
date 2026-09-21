@@ -138,7 +138,7 @@ export default function EvaluationTrends({ initialBot, bots, suites, visible, on
         </svg>
         {!numeric.length && <Empty description={metric === "duration" ? "所选记录没有已采集的执行耗时；历史缺项不会从总耗时反推。" : "所选记录未采集此指标。"} />}
         {focused && <div className="eval-trend-point-detail"><Space wrap>
-          <Text>{dateLabel(focused.record.started_at || focused.record.created_at)}</Text><Text>{focused.record.bot_id} / {focused.backend}</Text>
+          <Text>{dateLabel(focused.record.started_at || focused.record.created_at)}</Text><Text>{focused.record.bot_id} / {focused.runtime_id}</Text>
           <Text>{pointModel(focused)} · {pointScale(focused)}</Text><Tag>{revisionLabel(focused.record)}</Tag>
           {metric === "duration" && <Text>{durationTitle}：{durationPointLabel(focused)} · {durationCoverage(focused)}</Text>}
           <Text>通过 {focused.counts.passed} / {focused.observed}</Text><Text>{llmPrimary ? "LLM 判定 " : "质量 "}{llmPrimary ? rateLabel(focused.quality.score) : focused.quality.score === null ? "—" : focused.quality.score.toFixed(2)} · 已评分 {focused.quality.scored} / {focused.quality.expected}</Text>
@@ -149,7 +149,7 @@ export default function EvaluationTrends({ initialBot, bots, suites, visible, on
       <Text type="secondary">已加载 {points.length} 个测试点。每点为一次评测中的一个执行目标；版本和测试条件变化保留在记录中。</Text>
       <Table rowKey="key" size="small" data={[...points].reverse()} pagination={{ pageSize: 10 }} scroll={{ x: 1000 }} columns={[
         { title: "评测时间", width: 180, render: (_, p) => <Button size="small" type="text" onClick={() => onOpen(p.record)}>{dateLabel(p.record.started_at || p.record.created_at)}</Button> },
-        { title: "Agent / 模型", width: 230, render: (_, p) => `${p.record.bot_id} / ${p.backend} / ${pointModel(p)}` },
+        { title: "Agent / 模型", width: 230, render: (_, p) => `${p.record.bot_id} / ${p.runtime_id} / ${pointModel(p)}` },
         { title: "规模", width: 115, render: (_, p) => pointScale(p) },
         { title: llmPrimary ? "LLM 判定通过率" : "原生 / 工程通过率", width: 145, render: (_, p) => `${rateLabel(llmPrimary ? p.quality.score : p.pass_rate)} (${p.counts.passed}/${llmPrimary ? p.quality.scored : p.observed})` },
         { title: llmPrimary ? "LLM 评分覆盖" : "独立质量分", width: 140, render: (_, p) => llmPrimary ? `${p.quality.scored}/${p.quality.expected}` : `${p.quality.score === null ? "—" : p.quality.score.toFixed(2)} (${p.quality.scored}/${p.quality.expected})` },

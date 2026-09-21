@@ -253,7 +253,7 @@ _BUILTIN_TOOL_FEATURES_DATA: dict[str, ToolFeatureEntry] = {
     ),
     "chat.image_inputs": ToolFeatureEntry(
         name="chat.image_inputs",
-        description="Validated multimodal image input for vision-capable agent backends.",
+        description="Validated multimodal image input for vision-capable agent runtimes.",
     ),
     "chat.private_workspace": ToolFeatureEntry(
         name="chat.private_workspace",

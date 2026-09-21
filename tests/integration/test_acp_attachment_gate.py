@@ -799,7 +799,7 @@ class AttachmentGateTests(unittest.TestCase):
                     identity="Test assistant",
                     response_style="简洁回复。",
                 ),
-                backend="native",
+                runtime_id="native",
                 model=None,
                 role="owner",
                 channel_kind="private",

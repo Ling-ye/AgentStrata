@@ -167,6 +167,13 @@ class _DeterministicAgentSession:
         self.prompt_plan = plan
         self.prompt_plan_set_count += 1
 
+    def update_context(self, plan: Any) -> None:
+        self.set_prompt_plan(plan)
+
+    def snapshot_transcript(self):
+        from chatcopilot.contracts.execution import TranscriptSnapshot
+        return TranscriptSnapshot(tuple(self.snapshot_messages()), "host_history")
+
     def record_exchange(self, user_text: str, assistant_text: str) -> None:
         self._messages.extend(
             (
@@ -180,13 +187,15 @@ class _DeterministicAgentSession:
 
 
 class _DeterministicAgentRuntime:
-    def __init__(self, *, agent_backend: str) -> None:
-        self.agent_backend = agent_backend
+    def __init__(self, *, runtime_id: str) -> None:
+        self.runtime_id = runtime_id
+        from chatcopilot.core.config import ChatConfig, LLMConfig
+        self.runtime_config = ChatConfig(llm=LLMConfig(model="qq-flow-controlled"))
         self.retriever = None
-        self.research_llm = SimpleNamespace(model="qq-flow-persona-draft-stub")
+        self.research_model_client = SimpleNamespace(model="qq-flow-persona-draft-stub")
         self.sessions: list[_DeterministicAgentSession] = []
 
-    def new_session(
+    def open_session(
         self,
         *,
         prompt_input: Any,
@@ -466,7 +475,7 @@ async def _run_owned_roundtrip(
                 content=content,
             )
             deterministic_runtime = _DeterministicAgentRuntime(
-                agent_backend=runtime.agent_backend,
+                runtime_id=runtime.runtime_id,
             )
             client = _CapturingClient()
             host = AcpChatAgent(runtime=runtime)
@@ -501,7 +510,6 @@ async def _run_owned_roundtrip(
             sessions = deterministic_runtime.sessions
             agent_tasks = [task for session in sessions for task in session.tasks]
             agent_task = agent_tasks[0] if len(agent_tasks) == 1 else None
-            metadata = agent_task.metadata if agent_task is not None else {}
             turn_identity = state.turn_identity
             continuation.update(
                 {
@@ -551,9 +559,8 @@ async def _run_owned_roundtrip(
                         submitted.get("status") == "succeeded"
                         and isinstance(agent_task, AgentTask)
                         and agent_task.text == content
-                        and metadata.get("conversation_platform") == "qq"
-                        and metadata.get("conversation_chat_kind") == "group"
-                        and bool(metadata.get("turn_actor_ref"))
+                        and agent_task.execution.origin == "legacy"
+                        and bool(agent_task.execution.actor_ref)
                     ),
                     "deterministic_agent_invocation_count": len(agent_tasks),
                     "agent_result_returned": (
@@ -651,7 +658,7 @@ async def _run_attestation_mismatch(
     forged_text = f"forged-{secrets.token_hex(12)}"
     message_id = f"mismatch-{secrets.token_hex(12)}"
     deterministic_runtime = _DeterministicAgentRuntime(
-        agent_backend=runtime.agent_backend,
+        runtime_id=runtime.runtime_id,
     )
     client = _CapturingClient()
     _write_message_attestation(
@@ -790,7 +797,7 @@ async def _run_persona_roundtrip(
     second_message_id = f"ordinary-{secrets.token_hex(12)}"
     draft_factory = _DeterministicPersonaDraftFactory(marker)
 
-    first_runtime = _DeterministicAgentRuntime(agent_backend=runtime.agent_backend)
+    first_runtime = _DeterministicAgentRuntime(runtime_id=runtime.runtime_id)
     first_client = _CapturingClient()
     _write_message_attestation(
         inputs,
@@ -889,7 +896,7 @@ async def _run_persona_roundtrip(
     mutation_hash = str(persona_receipt.get("content_sha256") or "")
     snapshot_hash = hashlib.sha256(snapshot_after_first.encode("utf-8")).hexdigest()
 
-    second_runtime = _DeterministicAgentRuntime(agent_backend=runtime.agent_backend)
+    second_runtime = _DeterministicAgentRuntime(runtime_id=runtime.runtime_id)
     second_client = _CapturingClient()
     _write_message_attestation(
         inputs,

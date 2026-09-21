@@ -64,7 +64,7 @@ _避免使用_: Suite（当它指代跨套件任务选择时）、套餐
 _避免使用_: Profile、任务集（当它指代单一基准标准时）
 
 **被测配置（Target）**:
-评测记录中接受任务的一个不可变受测配置快照，可表示 Agent backend、Chat LLM lane 或 dry-run 校验器。
+评测记录中接受任务的一个不可变受测配置快照，可表示 Agent runtime、Chat LLM lane 或 dry-run 校验器。
 _避免使用_: 模型（Target 不只包含模型）、机器人（Target 不等于 Bot 实例）
 
 **评测记录（Evaluation）**:

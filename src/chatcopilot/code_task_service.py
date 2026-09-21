@@ -20,7 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     model_env = f"{ENV_PREFIX}_CODE_MODEL"
     effort_env = f"{ENV_PREFIX}_CODE_REASONING_EFFORT"
     if "dev.code_tasks" in runtime.tool_packs:
-        config = load_config(env_prefix=runtime.spec.llm.env_prefix)
+        config = load_config(env_prefix=runtime.spec.llm.code.env_prefix or runtime.spec.llm.env_prefix)
         selection = code_task_model_selection(config.routing)
         os.environ[model_env] = selection.model
         os.environ[effort_env] = selection.reasoning_effort

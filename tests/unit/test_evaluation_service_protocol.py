@@ -329,11 +329,15 @@ def _write_comparison_test_sitecustomize(tmp_path: Path) -> Path:
                     "target_id": target_id,
                     "label": target_id.title(),
                     "executor": "dry_run",
-                    "backend": backend,
+                    "runtime_id": backend,
                     "model": "test-model",
                     "reasoning_effort": "test",
                     "fingerprint": fingerprint,
                     "config_fingerprint": "f" * 64,
+                    "provider": "",
+                    "model_api": "",
+                    "auth_mode": "",
+                    "capability_digest": "",
                 }
 
 
@@ -384,7 +388,7 @@ def _write_comparison_test_sitecustomize(tmp_path: Path) -> Path:
                     target_id=request.target.target_id,
                     target_fingerprint=request.target.fingerprint,
                     executor=request.target.executor,
-                    backend=request.target.backend,
+                    runtime_id=request.target.runtime_id,
                     model=request.target.model,
                     reasoning_effort=request.target.reasoning_effort,
                     attempt=request.attempt,

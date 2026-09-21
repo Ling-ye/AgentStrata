@@ -2,25 +2,27 @@ from __future__ import annotations
 
 from chatcopilot.application.execution_scope import execution_scope
 
-from tests.prompt_plan_fixture import prompt_input, prompt_plan
+from tests.prompt_plan_fixture import prompt_plan, runtime_route
 from tests.codex_app_server_fixture import app_server_replay
 
 import json
+import base64
+import time
+from dataclasses import replace
+from chatcopilot.contracts.execution import TurnExecutionContext, TraceContext, HostRuntimePolicy
+from chatcopilot.contracts.model_runtime import ModelSelection
 import os
 import subprocess
-import threading
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase, mock
 
-from chatcopilot.agent.backends.codex import CodexAgentBackend
-from chatcopilot.agent.backends.codex_events import CodexJsonlProjector
-from chatcopilot.agent.backends.registry import backend_ids, build_backend
-from chatcopilot.agent.runtime import AgentRuntime
-from chatcopilot.agent.trace import current_trace
+from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter as _CodexRuntimeAdapter
+from chatcopilot.agent.runtimes.codex_events import CodexJsonlProjector
+from chatcopilot.agent.runtimes.registry import runtime_ids, build_runtime_adapter
 from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.botspec.backend_state import prepare_backend_deployment
+from chatcopilot.botspec.runtime_state import prepare_runtime_deployment
 from chatcopilot.contracts.agent import (
     AgentTask,
     ContextSnapshotPrepared,
@@ -31,29 +33,21 @@ from chatcopilot.contracts.agent import (
     SpanFinished,
     SpanStarted,
     ToolFinished,
-    ToolStarted,
     TurnError,
 )
-from chatcopilot.contracts.agent_backend import (
-    AGENT_BACKEND_IDS,
-    BackendCapabilityError,
-    BackendCapabilities,
-    BackendOpenRequest,
-    BackendSessionRef,
-    CAPABILITY_CHAT,
+from chatcopilot.contracts.runtime_adapter import (
+    RUNTIME_IDS,
+    RuntimeCapabilityError,
+    RuntimeOpenRequest as _RuntimeOpenRequest,
+    RuntimeSessionRef,
     CAPABILITY_NATIVE_RESUME,
     CodexMainSessionPolicy,
 )
 from chatcopilot.contracts.identity import SessionIdentity
-from chatcopilot.contracts.model_selection import (
-    CodeModelProfile,
-    CodeModelSelection,
-)
-from chatcopilot.core.model_selection import CODE_MODEL_SELECTION_METADATA_KEY
-from chatcopilot.core.config import ChatConfig
+from chatcopilot.core.config import ChatConfig, LLMConfig
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
-from chatcopilot.external_tools.codex_cli.credentials import (
+from chatcopilot.core.model_credentials import (
     CredentialError,
     install_login_credential,
 )
@@ -64,10 +58,21 @@ from chatcopilot.middleware.acp.turn_pipeline import (
     TurnContext,
     TurnOutcome,
 )
-from chatcopilot.agent.backends.session_relay import (
-    SessionToolRelay,
-    call_session_relay,
-)
+
+
+_active_test_route = runtime_route("codex")
+
+
+def CodexRuntimeAdapter(**kwargs):
+    global _active_test_route
+    kwargs.setdefault("route", runtime_route("codex", kwargs["runtime_config"].llm))
+    _active_test_route = kwargs["route"]
+    return _CodexRuntimeAdapter(**kwargs)
+
+
+def RuntimeOpenRequest(**kwargs):
+    kwargs.setdefault("route", _active_test_route)
+    return _RuntimeOpenRequest(**kwargs)
 
 
 def _dynamic_tool(calls: list[str] | None = None) -> ToolDef:
@@ -106,7 +111,7 @@ def _codex_auth_payload(token: str) -> dict[str, object]:
         "OPENAI_API_KEY": None,
         "tokens": {
             "id_token": f"id-{token}",
-            "access_token": f"access-{token}",
+            "access_token": _access_token(token),
             "refresh_token": token,
             "account_id": "test-account",
         },
@@ -114,14 +119,31 @@ def _codex_auth_payload(token: str) -> dict[str, object]:
     }
 
 
+def _access_token(label="test", *, account="test-account"):
+    payload = {"exp": time.time() + 3600, "label": label,
+               "https://api.openai.com/auth": {"chatgpt_account_id": account}}
+    return "fixture." + base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=") + ".fixture"
+
+
+def _runtime_config(routing, auth_root=None):
+    return SimpleNamespace(routing=routing, codex_extensions="", codex_extension_env={}, llm=LLMConfig(
+        provider="openai", model=routing.code_model, api="chatgpt_responses" if auth_root else "openai_responses",
+        base_url="https://chatgpt.com/backend-api/codex" if auth_root else "https://api.openai.com/v1",
+        api_key="" if auth_root else "fixture-api-key", auth_mode="chatgpt" if auth_root else "api_key",
+        credential_root=str(auth_root or ""), reasoning_effort=routing.code_reasoning_effort))
+
+
+
 class BackendRegistryTests(TestCase):
     def test_explanatory_answer_survives_native_integrity_check(self) -> None:
         answer = "我能解释运行框架；没有回执不能声称文件已修改、消息已发送或任务已完成。"
         llm = mock.Mock(model="fixture-model")
         llm.chat.return_value = ChatResult(content=answer)
-        backend = build_backend("native", tool_names=set(), llm=llm, runtime_config=ChatConfig(),
+        backend = build_runtime_adapter(runtime_route(), tool_names=set(), llm=llm, runtime_config=ChatConfig(),
                                 tool_executor=ToolExecutor(caller_role_hint="owner", tools=[]), tools_schema=[])
-        session = backend.open_session(BackendOpenRequest(session_id="integrity", prompt_plan=prompt_plan("system")))
+        session = backend.open_session(RuntimeOpenRequest(
+            session_id="integrity", prompt_plan=prompt_plan("system"), route=runtime_route()
+        ))
         events = []
         result = backend.stream_turn(session, AgentTask("解释框架设计"), on_event=events.append)
         self.assertEqual(result.final_text, answer)
@@ -130,45 +152,48 @@ class BackendRegistryTests(TestCase):
         backend.close_session(session)
 
     def test_three_main_backends_are_code_registered(self) -> None:
-        self.assertEqual(AGENT_BACKEND_IDS, ("native", "langgraph", "codex"))
-        self.assertEqual(backend_ids(), frozenset(AGENT_BACKEND_IDS))
+        self.assertEqual(RUNTIME_IDS, ("native", "langgraph", "codex"))
+        self.assertEqual(runtime_ids(), frozenset(RUNTIME_IDS))
 
-    def test_unknown_backend_fails_without_fallback(self) -> None:
-        with self.assertRaisesRegex(ValueError, "unsupported agent backend"):
-            build_backend("other", tool_names=set())
+    def test_unknown_runtime_fails_without_fallback(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown Agent runtime"):
+            runtime_route("other")
 
     def test_missing_capability_is_deterministic_and_does_not_fallback(self) -> None:
-        backend = build_backend("native", tool_names=set())
-        with self.assertRaises(BackendCapabilityError) as caught:
+        backend = build_runtime_adapter(runtime_route(), tool_names=set())
+        with self.assertRaises(RuntimeCapabilityError) as caught:
             backend.open_session(
-                BackendOpenRequest(
+                RuntimeOpenRequest(
                     session_id="sid",
                     prompt_plan=prompt_plan("system"),
+                    route=runtime_route(),
                     required_capabilities=frozenset({CAPABILITY_NATIVE_RESUME}),
                 )
             )
-        self.assertEqual(caught.exception.error_code, "backend_capability_missing")
-        self.assertIn("agents.backend", str(caught.exception))
+        self.assertEqual(caught.exception.error_code, "runtime_capability_missing")
+        self.assertIn("agents.runtime", str(caught.exception))
 
     def test_inprocess_factory_binds_each_open_request_and_isolates_messages(self) -> None:
-        for backend_id in ("native", "langgraph"):
-            with self.subTest(backend=backend_id):
+        for runtime_id in ("native", "langgraph"):
+            with self.subTest(runtime_id=runtime_id):
                 llm = mock.Mock(model="fixture-model")
                 llm.chat.return_value = ChatResult(content="completed")
-                backend = build_backend(
-                    backend_id,
+                backend = build_runtime_adapter(
+                    runtime_route(runtime_id),
                     tool_names=set(),
                     llm=llm,
                     runtime_config=ChatConfig(),
                     tool_executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                     tools_schema=[],
                 )
-                first = backend.open_session(BackendOpenRequest(
-                    session_id="session-first", prompt_plan=prompt_plan("first")))
-                second = backend.open_session(BackendOpenRequest(
-                    session_id="session-second", prompt_plan=prompt_plan("second")))
-                first_session = backend.native_session(first)
-                second_session = backend.native_session(second)
+                first = backend.open_session(RuntimeOpenRequest(
+                    session_id="session-first", prompt_plan=prompt_plan("first"),
+                    route=runtime_route(runtime_id)))
+                second = backend.open_session(RuntimeOpenRequest(
+                    session_id="session-second", prompt_plan=prompt_plan("second"),
+                    route=runtime_route(runtime_id)))
+                first_session = backend._resolve(first)
+                second_session = backend._resolve(second)
                 self.assertIsNot(first_session, second_session)
                 self.assertEqual(first_session.session_id, "session-first")
                 self.assertEqual(second_session.session_id, "session-second")
@@ -178,8 +203,8 @@ class BackendRegistryTests(TestCase):
                 self.assertEqual(second_session.snapshot_messages(), second_messages)
                 backend.close_session(first)
                 with self.assertRaises(KeyError):
-                    backend.native_session(first)
-                self.assertIs(backend.native_session(second), second_session)
+                    backend._resolve(first)
+                self.assertIs(backend._resolve(second), second_session)
                 backend.close_session(second)
                 llm.close.assert_not_called()
 
@@ -193,9 +218,9 @@ class CodexBackendResumeTests(TestCase):
             routing = SimpleNamespace(code_command="codex exec --model {model} --cd {workdir}",
                 code_model="gpt-test", code_reasoning_effort="medium", code_timeout_seconds=30,
                 code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR")
-            backend = CodexAgentBackend(tool_names=set(), runtime_config=SimpleNamespace(routing=routing), tools=())
-            session = backend.open_session(BackendOpenRequest(session_id="integrity", prompt_plan=prompt_plan("system"),
-                options={"workspace_root": root, "backend_state_root": root / "state", "role_hint": "owner"}))
+            backend = CodexRuntimeAdapter(tool_names=set(), runtime_config=_runtime_config(routing, auth_root), tools=())
+            session = backend.open_session(RuntimeOpenRequest(session_id="integrity", prompt_plan=prompt_plan("system"),
+                options={"workspace_root": root, "runtime_state_root": root / "state", "role_hint": "owner"}))
             response = subprocess.CompletedProcess(["codex"], 0, "\n".join([
                 json.dumps({"type": "thread.started", "thread_id": "thread-integrity"}),
                 json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": answer}}),
@@ -203,9 +228,9 @@ class CodexBackendResumeTests(TestCase):
             events = []
             with (
                 mock.patch.dict(os.environ, {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)}),
-                mock.patch("chatcopilot.external_tools.codex_cli.command._resolve_executable", return_value="/usr/bin/codex"),
-                mock.patch("chatcopilot.agent.backends.codex.build_codex_subprocess_env", return_value={}),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay([response])),
+                mock.patch("chatcopilot.external_tools.codex_cli.command._resolve_executable", return_value="/usr/bin/true"),
+                mock.patch("chatcopilot.agent.runtimes.codex.build_codex_subprocess_env", return_value={}),
+                mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=app_server_replay([response])),
             ):
                 result = backend.stream_turn(session, AgentTask("解释框架设计"), on_event=events.append)
             self.assertEqual(result.final_text, answer)
@@ -221,7 +246,7 @@ class CodexBackendResumeTests(TestCase):
             ),
             self.assertRaisesRegex(CredentialError, "auth_root_personal_forbidden"),
         ):
-            CodexAgentBackend._bot_credential_root()
+            _CodexRuntimeAdapter._bot_credential_root()
 
     def test_main_credential_root_rejects_personal_home_descendant(self) -> None:
         with (
@@ -232,7 +257,7 @@ class CodexBackendResumeTests(TestCase):
             ),
             self.assertRaisesRegex(CredentialError, "auth_root_personal_forbidden"),
         ):
-            CodexAgentBackend._bot_credential_root()
+            _CodexRuntimeAdapter._bot_credential_root()
 
     def test_codex_native_session_id_is_reused_for_second_turn(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -245,19 +270,19 @@ class CodexBackendResumeTests(TestCase):
                 code_timeout_seconds=30,
                 code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
             )
-            backend = CodexAgentBackend(
+            backend = CodexRuntimeAdapter(
                 tool_names={"dynamic_echo", "denied"},
-                runtime_config=SimpleNamespace(routing=routing),
+                runtime_config=_runtime_config(routing, auth_root),
                 tools=(_dynamic_tool(),),
             )
             ref = backend.open_session(
-                BackendOpenRequest(
+                RuntimeOpenRequest(
                     session_id="acp-1",
                     prompt_plan=prompt_plan("system"),
                     allowed_tool_names=frozenset({"dynamic_echo"}),
                     options={
                         "workspace_root": root,
-                        "backend_state_root": root / "state",
+                        "runtime_state_root": root / "state",
                         "role_hint": "owner",
                     },
                 )
@@ -305,13 +330,13 @@ class CodexBackendResumeTests(TestCase):
                 ),
                 mock.patch(
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
+                    return_value="/usr/bin/true",
                 ),
                 mock.patch(
-                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                    "chatcopilot.agent.runtimes.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay([first, second])) as run,
+                mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=app_server_replay([first, second])) as run,
             ):
                 result1 = backend.stream_turn(
                     ref,
@@ -349,196 +374,42 @@ class CodexBackendResumeTests(TestCase):
                 )
                 self.assertNotIn(private_resource_path, serialized)
                 self.assertIn("$RESOURCE_aaaaaaaaaaaa", serialized)
-            gateway = json.loads(
-                backend.native_session(native_ref).gateway_config.read_text(encoding="utf-8")
-            )
-            self.assertEqual(gateway["allowed_tools"], ["dynamic_echo"])
+            schemas = run.call_args_list[0].kwargs["dynamic_tools"]
+            self.assertEqual(schemas[0]["name"], "agentstrata")
+            self.assertEqual([tool["name"] for tool in schemas[0]["tools"]], ["dynamic_echo"])
             backend.close_session(native_ref)
 
-    def test_session_relay_tool_receipts_are_emitted_as_agent_events(self) -> None:
+    def test_dynamic_tool_receipts_are_emitted_as_agent_events(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             auth_root = _main_auth_root(root)
-            handler_threads: list[int] = []
+            routing = SimpleNamespace(code_model="gpt-test", code_reasoning_effort="medium")
+            config = _runtime_config(routing, auth_root)
+            calls = []
+            tool = _dynamic_tool(calls)
+            backend = CodexRuntimeAdapter(tool_names={tool.name}, runtime_config=config, tools=(tool,),
+                tool_executor=ToolExecutor(tools=[tool], caller_role_hint="owner"))
+            ref = backend.open_session(RuntimeOpenRequest(session_id="session", prompt_plan=prompt_plan("system"),
+                allowed_tool_names=frozenset({tool.name}),
+                options={"workspace_root": root, "runtime_state_root": root / "state", "role_hint": "owner"}))
 
-            def traced_handler(args: dict, _context: ToolContext) -> ToolResult:
-                trace = current_trace()
-                self.assertIsNotNone(trace)
-                assert trace is not None
-                self.assertIsNotNone(trace.sink)
-                assert trace.sink is not None
-                handler_threads.append(threading.get_ident())
-                nested_span_id = "span_nested_relay_llm"
-                trace.sink(
-                    ContextSnapshotPrepared(
-                        snapshot_id="ctx_nested_relay",
-                        backend="nested-test",
-                        model="nested-model",
-                        iteration=0,
-                        session_messages=(),
-                        effective_messages=(),
-                        trace_id=trace.trace_id,
-                        span_id=nested_span_id,
-                        parent_span_id=trace.span_id,
-                        depth=trace.depth + 1,
-                    )
-                )
-                trace.sink(
-                    LlmCallStarted(
-                        model="nested-model",
-                        iteration=0,
-                        backend="nested-test",
-                        trace_id=trace.trace_id,
-                        span_id=nested_span_id,
-                        parent_span_id=trace.span_id,
-                        depth=trace.depth + 1,
-                        context_snapshot_id="ctx_nested_relay",
-                    )
-                )
-                value = str(args.get("value") or "")
-                return ToolResult(ok=True, summary=f"dynamic:{value}")
-
-            traced_tool = ToolDef(
-                name="dynamic_echo",
-                summary="Emit nested trace events through the live relay.",
-                input_schema=object_schema(
-                    {"value": {"type": "string"}},
-                    required=("value",),
-                ),
-                output_schema=object_schema(),
-                handler=traced_handler,
-            )
-            routing = SimpleNamespace(
-                code_command="codex exec --model {model} --cd {workdir}",
-                code_model="gpt-test",
-                code_reasoning_effort="medium",
-                code_timeout_seconds=30,
-                code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
-            )
-            backend = CodexAgentBackend(
-                tool_names={"dynamic_echo"},
-                runtime_config=SimpleNamespace(routing=routing),
-                tools=(traced_tool,),
-            )
-            ref = backend.open_session(
-                BackendOpenRequest(
-                    session_id="relay-evidence",
-                    prompt_plan=prompt_plan("system"),
-                    allowed_tool_names=frozenset({"dynamic_echo"}),
-                    options={
-                        "workspace_root": root,
-                        "backend_state_root": root / "state",
-                        "role_hint": "owner",
-                    },
-                )
-            )
-            events: list[object] = []
-            event_threads: list[int] = []
-
-            def collect_event(event: object) -> None:
-                event_threads.append(threading.get_ident())
-                events.append(event)
-
-            def run_with_relay(*_args, **kwargs):
-                gateway = json.loads(
-                    backend.native_session(ref).gateway_config.read_text(encoding="utf-8")
-                )
-                response = call_session_relay(
-                    gateway["relay"],
-                    {
-                        "action": "call_tool",
-                        "name": "dynamic_echo",
-                        "arguments": {"value": "bridge-evidence"},
-                    },
-                )
-                self.assertTrue(response["result"]["ok"])
-                kwargs["on_poll"]()
-                self.assertTrue(any(isinstance(event, ToolStarted) for event in events))
-                self.assertTrue(any(isinstance(event, ToolFinished) for event in events))
-                return subprocess.CompletedProcess(
-                    ["codex"],
-                    0,
-                    json.dumps(
-                        {
-                            "type": "item.completed",
-                            "item": {"type": "agent_message", "text": "done"},
-                        }
-                    ),
-                    "",
-                )
-
-            with (
-                mock.patch.dict(
-                    os.environ,
-                    {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
-                    clear=False,
-                ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
-                ),
-                mock.patch(
-                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
-                    return_value={},
-                ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(run_with_relay)),
-            ):
-                result = backend.stream_turn(
-                    ref,
-                    AgentTask("use the tool"),
-                    on_event=collect_event,
-                )
-
-            started = next(event for event in events if isinstance(event, ToolStarted))
-            finished = next(event for event in events if isinstance(event, ToolFinished))
-            context = next(
-                event for event in events if isinstance(event, ContextSnapshotPrepared)
-            )
-            llm_started = next(
-                event for event in events if isinstance(event, LlmCallStarted)
-            )
-            llm_finished = next(
-                event for event in events if isinstance(event, LlmCallFinished)
-            )
-            nested_context = next(
-                event
-                for event in events
-                if isinstance(event, ContextSnapshotPrepared)
-                and event.backend == "nested-test"
-            )
-            nested_llm_started = next(
-                event
-                for event in events
-                if isinstance(event, LlmCallStarted)
-                and event.backend == "nested-test"
-            )
-            self.assertEqual(started.name, "dynamic_echo")
-            self.assertEqual(started.arguments, {"value": "bridge-evidence"})
-            self.assertEqual(started.trace_id, finished.trace_id)
-            self.assertEqual(started.trace_id, context.trace_id)
-            self.assertEqual(started.trace_id, llm_started.trace_id)
-            self.assertEqual(started.parent_span_id, llm_started.span_id)
-            self.assertEqual(finished.parent_span_id, llm_started.span_id)
-            self.assertEqual(started.depth, 1)
-            self.assertEqual(finished.depth, 1)
-            self.assertTrue(finished.ok)
-            self.assertEqual(finished.data["summary"], "dynamic:bridge-evidence")
-            self.assertIsNotNone(started.started_at)
-            self.assertIsNotNone(finished.finished_at)
-            self.assertLessEqual(started.started_at, finished.finished_at)
-            self.assertEqual(nested_context.trace_id, started.trace_id)
-            self.assertEqual(nested_llm_started.trace_id, started.trace_id)
-            self.assertEqual(nested_context.parent_span_id, started.span_id)
-            self.assertEqual(nested_llm_started.parent_span_id, started.span_id)
-            self.assertEqual(nested_context.depth, started.depth + 1)
-            self.assertEqual(nested_llm_started.depth, started.depth + 1)
-            self.assertLess(events.index(started), events.index(nested_context))
-            self.assertLess(events.index(nested_context), events.index(nested_llm_started))
-            self.assertLess(events.index(nested_llm_started), events.index(finished))
-            self.assertLess(events.index(finished), events.index(llm_finished))
-            self.assertEqual(len(handler_threads), 1)
-            self.assertNotIn(handler_threads[0], set(event_threads))
-            self.assertEqual(result.final_text, "done")
+            def run(command, **kw):
+                kw["on_thread"]("thread")
+                reply = kw["on_request"]("item/tool/call", {"threadId": "thread", "namespace": "agentstrata",
+                    "tool": "dynamic_echo", "arguments": {"value": "bound"}, "callId": "call-one"})
+                self.assertTrue(reply["success"])
+                return app_server_replay(subprocess.CompletedProcess(command, 0,
+                    json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "done"}}), ""))(command, **kw)
+            events = []
+            with mock.patch("chatcopilot.external_tools.codex_cli.command._resolve_executable", return_value="/usr/bin/true"), \
+                 mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=run):
+                result = backend.stream_turn(ref, AgentTask("request"), on_event=events.append)
+            self.assertEqual(calls, ["bound"])
+            self.assertEqual(result.stop_reason, "end_turn")
+            receipts = [e for e in events if isinstance(e, ToolFinished)]
+            self.assertEqual(len(receipts), 1)
+            self.assertTrue(receipts[0].ok)
+            self.assertEqual(receipts[0].source, "host")
             backend.close_session(ref)
 
     def test_codex_event_sink_failure_does_not_turn_success_into_backend_failure(
@@ -554,17 +425,17 @@ class CodexBackendResumeTests(TestCase):
                 code_timeout_seconds=30,
                 code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
             )
-            backend = CodexAgentBackend(
+            backend = CodexRuntimeAdapter(
                 tool_names=set(),
-                runtime_config=SimpleNamespace(routing=routing),
+                runtime_config=_runtime_config(routing, auth_root),
             )
             ref = backend.open_session(
-                BackendOpenRequest(
+                RuntimeOpenRequest(
                     session_id="failing-event-sink",
                     prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
-                        "backend_state_root": root / "state",
+                        "runtime_state_root": root / "state",
                     },
                 )
             )
@@ -591,13 +462,13 @@ class CodexBackendResumeTests(TestCase):
                 ),
                 mock.patch(
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
+                    return_value="/usr/bin/true",
                 ),
                 mock.patch(
-                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                    "chatcopilot.agent.runtimes.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)),
+                mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=app_server_replay(completed)),
                 mock.patch("chatcopilot.agent.turn_support.LOGGER.exception"),
             ):
                 result = backend.stream_turn(
@@ -610,208 +481,33 @@ class CodexBackendResumeTests(TestCase):
             self.assertEqual(result.final_text, "done")
             backend.close_session(ref)
 
-    def test_codex_replaces_poisoned_relay_generation_after_timeout(self) -> None:
+    def test_codex_transport_failure_does_not_replay_tools(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             auth_root = _main_auth_root(root)
-            tool_started = threading.Event()
-            release_tool = threading.Event()
+            routing = SimpleNamespace(code_model="gpt-test", code_reasoning_effort="medium")
+            config = _runtime_config(routing, auth_root)
+            calls = []
+            tool = _dynamic_tool(calls)
+            backend = CodexRuntimeAdapter(tool_names={tool.name}, runtime_config=config, tools=(tool,),
+                tool_executor=ToolExecutor(tools=[tool], caller_role_hint="owner"))
+            ref = backend.open_session(RuntimeOpenRequest(session_id="session", prompt_plan=prompt_plan("system"),
+                allowed_tool_names=frozenset({tool.name}),
+                options={"workspace_root": root, "runtime_state_root": root / "state", "role_hint": "owner"}))
 
-            def blocked_handler(_args: dict, _context: ToolContext) -> ToolResult:
-                trace = current_trace()
-                self.assertIsNotNone(trace)
-                assert trace is not None
-                self.assertIsNotNone(trace.sink)
-                assert trace.sink is not None
-                trace.sink(
-                    ContextSnapshotPrepared(
-                        snapshot_id="ctx_retired_generation_early",
-                        backend="nested-timeout-test",
-                        model="nested-model",
-                        iteration=0,
-                        session_messages=(),
-                        effective_messages=(),
-                        trace_id=trace.trace_id,
-                        span_id="span_retired_generation",
-                        parent_span_id=trace.span_id,
-                        depth=trace.depth + 1,
-                    )
-                )
-                tool_started.set()
-                release_tool.wait(timeout=5)
-                trace.sink(
-                    LlmCallStarted(
-                        model="late-nested-model",
-                        iteration=1,
-                        backend="nested-timeout-test",
-                        trace_id=trace.trace_id,
-                        span_id="span_retired_generation_late",
-                        parent_span_id=trace.span_id,
-                        depth=trace.depth + 1,
-                    )
-                )
-                return ToolResult(ok=True, summary="late result")
-
-            tool = ToolDef(
-                name="blocked_tool",
-                summary="Block until the test releases the retired relay generation.",
-                input_schema=object_schema(),
-                output_schema=object_schema(),
-                handler=blocked_handler,
-            )
-            routing = SimpleNamespace(
-                code_command="codex exec --model {model} --cd {workdir}",
-                code_model="gpt-test",
-                code_reasoning_effort="medium",
-                code_timeout_seconds=1,
-                code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
-            )
-            backend = CodexAgentBackend(
-                tool_names={"blocked_tool"},
-                runtime_config=SimpleNamespace(routing=routing),
-                tools=(tool,),
-            )
-            ref = backend.open_session(
-                BackendOpenRequest(
-                    session_id="relay-timeout-recovery",
-                    prompt_plan=prompt_plan("system"),
-                    allowed_tool_names=frozenset({"blocked_tool"}),
-                    options={
-                        "role_hint": "owner",
-                        "workspace_root": root / "workspace",
-                        "backend_state_root": root / "state",
-                    },
-                )
-            )
-            invocation = 0
-            relay_threads: list[threading.Thread] = []
-
-            def run_turn(*_args, **_kwargs):
-                nonlocal invocation
-                invocation += 1
-                if invocation == 1:
-                    gateway = json.loads(
-                        backend.native_session(ref).gateway_config.read_text(
-                            encoding="utf-8"
-                        )
-                    )
-
-                    def call_blocked_tool() -> None:
-                        try:
-                            call_session_relay(
-                                gateway["relay"],
-                                {
-                                    "action": "call_tool",
-                                    "name": "blocked_tool",
-                                    "arguments": {},
-                                },
-                                timeout_seconds=5,
-                            )
-                        except Exception:
-                            pass
-
-                    relay_thread = threading.Thread(
-                        target=call_blocked_tool,
-                        daemon=True,
-                    )
-                    relay_threads.append(relay_thread)
-                    relay_thread.start()
-                    self.assertTrue(tool_started.wait(timeout=2))
-                    raise subprocess.TimeoutExpired(["codex"], 1)
-                return subprocess.CompletedProcess(
-                    ["codex"],
-                    0,
-                    json.dumps(
-                        {
-                            "type": "item.completed",
-                            "item": {"type": "agent_message", "text": "recovered"},
-                        }
-                    ),
-                    "",
-                )
-
-            first_events: list[object] = []
-            second_events: list[object] = []
-            try:
-                with (
-                    mock.patch.dict(
-                        os.environ,
-                        {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
-                        clear=False,
-                    ),
-                    mock.patch(
-                        "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                        return_value="/usr/bin/codex",
-                    ),
-                    mock.patch(
-                        "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
-                        return_value={},
-                    ),
-                    mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(run_turn)),
-                ):
-                    first = backend.stream_turn(
-                        ref,
-                        AgentTask("timeout"),
-                        on_event=first_events.append,
-                    )
-                    release_tool.set()
-                    for thread in relay_threads:
-                        thread.join(timeout=2)
-                    second = backend.stream_turn(
-                        ref,
-                        AgentTask("retry"),
-                        on_event=second_events.append,
-                    )
-            finally:
-                release_tool.set()
-
-            self.assertEqual(first.stop_reason, "llm_error")
-            self.assertEqual(second.stop_reason, "end_turn")
-            self.assertEqual(second.final_text, "recovered")
-            first_tool_started = next(
-                event for event in first_events if isinstance(event, ToolStarted)
-            )
-            first_tool_finished = next(
-                event for event in first_events if isinstance(event, ToolFinished)
-            )
-            self.assertEqual(first_tool_finished.span_id, first_tool_started.span_id)
-            self.assertFalse(first_tool_finished.ok)
-            self.assertEqual(
-                first_tool_finished.error,
-                "outcome_unknown_late_completion",
-            )
-            self.assertEqual(
-                first_tool_finished.data,
-                {
-                    "outcome": "unknown",
-                    "late_completion_possible": True,
-                },
-            )
-            early_nested = next(
-                event
-                for event in first_events
-                if isinstance(event, ContextSnapshotPrepared)
-                and event.snapshot_id == "ctx_retired_generation_early"
-            )
-            self.assertEqual(early_nested.trace_id, first_tool_started.trace_id)
-            self.assertEqual(early_nested.parent_span_id, first_tool_started.span_id)
-            self.assertLess(first_events.index(first_tool_started), first_events.index(early_nested))
-            self.assertFalse(
-                any(
-                    isinstance(event, LlmCallStarted)
-                    and event.backend == "nested-timeout-test"
-                    for event in first_events
-                )
-            )
-            self.assertFalse(
-                any(isinstance(event, (ToolStarted, ToolFinished)) for event in second_events)
-            )
-            self.assertFalse(
-                any(
-                    getattr(event, "backend", "") == "nested-timeout-test"
-                    for event in second_events
-                )
-            )
+            def run(command, **kw):
+                kw["on_thread"]("thread")
+                kw["on_request"]("item/tool/call", {"threadId": "thread", "namespace": "agentstrata",
+                    "tool": "dynamic_echo", "arguments": {"value": "once"}})
+                raise RuntimeError("transport disconnected")
+            events = []
+            with mock.patch("chatcopilot.external_tools.codex_cli.command._resolve_executable", return_value="/usr/bin/true"), \
+                 mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=run):
+                result = backend.stream_turn(ref, AgentTask("request"), on_event=events.append)
+            self.assertEqual(calls, ["once"])
+            self.assertEqual(result.stop_reason, "runtime_error")
+            self.assertEqual(result.failure.stage, "protocol")
+            self.assertEqual(backend._resolve(ref).connection, [])
             backend.close_session(ref)
 
     def test_codex_jsonl_projects_context_usage_and_safe_item_lifecycles(self) -> None:
@@ -825,19 +521,19 @@ class CodexBackendResumeTests(TestCase):
                 code_timeout_seconds=30,
                 code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
             )
-            backend = CodexAgentBackend(
+            backend = CodexRuntimeAdapter(
                 tool_names={"dynamic_echo"},
-                runtime_config=SimpleNamespace(routing=routing),
+                runtime_config=_runtime_config(routing, auth_root),
                 tools=(_dynamic_tool(),),
             )
             ref = backend.open_session(
-                BackendOpenRequest(
+                RuntimeOpenRequest(
                     session_id="observable-codex",
                     prompt_plan=prompt_plan("system baseline"),
                     allowed_tool_names=frozenset({"dynamic_echo"}),
                     options={
                         "workspace_root": root / "workspace",
-                        "backend_state_root": root / "state",
+                        "runtime_state_root": root / "state",
                     },
                 )
             )
@@ -940,17 +636,17 @@ class CodexBackendResumeTests(TestCase):
                 ),
                 mock.patch(
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
+                    return_value="/usr/bin/true",
                 ),
                 mock.patch(
-                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                    "chatcopilot.agent.runtimes.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)),
+                mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=app_server_replay(completed)),
             ):
                 result = backend.stream_turn(
                     ref,
-                    AgentTask("inspect context", metadata={"trace_id": "trace-request-1", "parent_span_id": "host:actor"}),
+                    AgentTask("inspect context", execution=TurnExecutionContext(trace=TraceContext("trace-request-1", "host:actor"))),
                     on_event=events.append,
                 )
 
@@ -960,7 +656,7 @@ class CodexBackendResumeTests(TestCase):
             started = next(event for event in events if isinstance(event, LlmCallStarted))
             finished = next(event for event in events if isinstance(event, LlmCallFinished))
             self.assertLess(events.index(context), events.index(started))
-            self.assertEqual(context.backend, "codex")
+            self.assertEqual(context.runtime_id, "codex")
             self.assertEqual(context.coverage, "adapter_visible")
             self.assertEqual(context.omitted, ("provider_internal_instructions",))
             self.assertEqual(context.trace_id, "trace-request-1")
@@ -979,7 +675,8 @@ class CodexBackendResumeTests(TestCase):
             self.assertEqual(context.effective_messages[1]["role"], "user")
             self.assertIn("system baseline", context.effective_messages[1]["content"])
             self.assertIn("inspect context", context.effective_messages[1]["content"])
-            self.assertEqual(context.tool_schemas[0]["name"], "dynamic_echo")
+            self.assertEqual(context.tool_schemas[0]["name"], "agentstrata")
+            self.assertEqual(context.tool_schemas[0]["tools"][0]["name"], "dynamic_echo")
             self.assertGreater(context.estimated_tokens, 0)
             self.assertEqual(
                 finished.usage,
@@ -1023,17 +720,17 @@ class CodexBackendResumeTests(TestCase):
                 code_timeout_seconds=30,
                 code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
             )
-            backend = CodexAgentBackend(
+            backend = CodexRuntimeAdapter(
                 tool_names=set(),
-                runtime_config=SimpleNamespace(routing=routing),
+                runtime_config=_runtime_config(routing, auth_root),
             )
             ref = backend.open_session(
-                BackendOpenRequest(
+                RuntimeOpenRequest(
                     session_id="resume-context",
                     prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
-                        "backend_state_root": root / "state",
+                        "runtime_state_root": root / "state",
                     },
                 )
             )
@@ -1077,13 +774,13 @@ class CodexBackendResumeTests(TestCase):
                 ),
                 mock.patch(
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
+                    return_value="/usr/bin/true",
                 ),
                 mock.patch(
-                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                    "chatcopilot.agent.runtimes.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(outputs)),
+                mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=app_server_replay(outputs)),
             ):
                 backend.stream_turn(ref, AgentTask("first"), on_event=lambda _: None)
                 backend.stream_turn(
@@ -1108,113 +805,34 @@ class CodexBackendResumeTests(TestCase):
             )
             backend.close_session(backend.current_session_ref(ref))
 
-    def test_codex_observability_streams_while_user_visible_output_stays_lease_gated(
-        self,
-    ) -> None:
+    def test_codex_public_progress_and_final_delivery_remain_separate(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             auth_root = _main_auth_root(root)
-            routing = SimpleNamespace(
-                code_command="codex exec --model {model} --cd {workdir}",
-                code_model="gpt-test",
-                code_reasoning_effort="medium",
-                code_timeout_seconds=30,
-                code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
-            )
-            backend = CodexAgentBackend(
-                tool_names=set(),
-                runtime_config=SimpleNamespace(routing=routing),
-            )
-            ref = backend.open_session(
-                BackendOpenRequest(
-                    session_id="live-observability",
-                    prompt_plan=prompt_plan("system"),
-                    options={
-                        "workspace_root": root / "workspace",
-                        "backend_state_root": root / "state",
-                    },
-                )
-            )
-            events: list[object] = []
+            routing = SimpleNamespace(code_model="gpt-test", code_reasoning_effort="medium")
+            config = _runtime_config(routing, auth_root)
+            calls = []
+            tool = _dynamic_tool(calls)
+            backend = CodexRuntimeAdapter(tool_names={tool.name}, runtime_config=config, tools=(tool,),
+                tool_executor=ToolExecutor(tools=[tool], caller_role_hint="owner"))
+            ref = backend.open_session(RuntimeOpenRequest(session_id="session", prompt_plan=prompt_plan("system"),
+                allowed_tool_names=frozenset({tool.name}),
+                options={"workspace_root": root, "runtime_state_root": root / "state", "role_hint": "owner"}))
 
-            def run_live(*_args, **kwargs):
-                callback = kwargs["on_stdout_line"]
-                self.assertTrue(
-                    any(isinstance(event, ContextSnapshotPrepared) for event in events)
-                )
-                self.assertTrue(any(isinstance(event, LlmCallStarted) for event in events))
-                self.assertFalse(any(isinstance(event, FinalText) for event in events))
-                callback(
-                    json.dumps(
-                        {
-                            "type": "item.started",
-                            "item": {
-                                "id": "live-command",
-                                "type": "command_execution",
-                                "status": "in_progress",
-                            },
-                        }
-                    )
-                )
-                self.assertTrue(any(isinstance(event, SpanStarted) for event in events))
-                callback(
-                    json.dumps(
-                        {
-                            "type": "item.completed",
-                            "item": {
-                                "id": "live-command",
-                                "type": "command_execution",
-                                "exit_code": 0,
-                                "status": "completed",
-                            },
-                        }
-                    )
-                )
-                callback(
-                    json.dumps(
-                        {
-                            "type": "item.completed",
-                            "item": {"type": "agent_message", "text": "live done"},
-                        }
-                    )
-                )
-                callback(json.dumps({"type": "turn.completed"}))
-                self.assertFalse(any(isinstance(event, LlmCallFinished) for event in events))
-                self.assertFalse(any(isinstance(event, FinalText) for event in events))
-                completed = subprocess.CompletedProcess(["codex"], 0, "", "")
-                return completed
-
-            with (
-                mock.patch.dict(
-                    os.environ,
-                    {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
-                    clear=False,
-                ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
-                ),
-                mock.patch(
-                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
-                    return_value={},
-                ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(run_live)),
-            ):
-                result = backend.stream_turn(
-                    ref,
-                    AgentTask("stream it"),
-                    on_event=events.append,
-                )
-
-            self.assertEqual(result.final_text, "live done")
-            self.assertEqual(result.stop_reason, "end_turn")
-            self.assertEqual(
-                [event.text for event in events if isinstance(event, FinalText)],
-                ["live done"],
-            )
-            self.assertTrue(any(isinstance(event, LlmCallFinished) for event in events))
-            self.assertTrue(any(isinstance(event, SpanFinished) and event.kind == "command" for event in events))
-            self.assertEqual(sum(isinstance(event, LlmCallFinished) for event in events), 1)
+            events = []
+            def run(command, **kw):
+                kw["on_thread"]("thread")
+                kw["on_notification"]("turn/started", {"threadId": "thread", "turn": {"id": "fixture-turn"}})
+                kw["on_notification"]("item/started", {"threadId": "thread", "turnId": "fixture-turn",
+                    "item": {"id": "message", "type": "agentMessage", "phase": "commentary", "text": "working"}})
+                self.assertFalse(any(isinstance(e, FinalText) for e in events))
+                return app_server_replay(subprocess.CompletedProcess(command, 0,
+                    json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "done"}}), ""))(command, **kw)
+            with mock.patch("chatcopilot.external_tools.codex_cli.command._resolve_executable", return_value="/usr/bin/true"), \
+                 mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=run):
+                result = backend.stream_turn(ref, AgentTask("request"), on_event=events.append)
+            self.assertEqual(result.final_text, "done")
+            self.assertEqual(sum(isinstance(e, FinalText) for e in events), 1)
             backend.close_session(ref)
 
     def test_codex_oversized_jsonl_record_fails_explicitly(self) -> None:
@@ -1228,17 +846,17 @@ class CodexBackendResumeTests(TestCase):
                 code_timeout_seconds=30,
                 code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
             )
-            backend = CodexAgentBackend(
+            backend = CodexRuntimeAdapter(
                 tool_names=set(),
-                runtime_config=SimpleNamespace(routing=routing),
+                runtime_config=_runtime_config(routing, auth_root),
             )
             ref = backend.open_session(
-                BackendOpenRequest(
+                RuntimeOpenRequest(
                     session_id="oversized-jsonl",
                     prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
-                        "backend_state_root": root / "state",
+                        "runtime_state_root": root / "state",
                     },
                 )
             )
@@ -1254,13 +872,13 @@ class CodexBackendResumeTests(TestCase):
                 ),
                 mock.patch(
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
+                    return_value="/usr/bin/true",
                 ),
                 mock.patch(
-                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                    "chatcopilot.agent.runtimes.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=RuntimeError("App Server protocol record exceeds limit")),
+                mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=RuntimeError("App Server protocol record exceeds limit")),
             ):
                 result = backend.stream_turn(
                     ref,
@@ -1269,7 +887,7 @@ class CodexBackendResumeTests(TestCase):
                 )
 
             error = next(event for event in events if isinstance(event, TurnError))
-            self.assertEqual(result.stop_reason, "llm_error")
+            self.assertEqual(result.stop_reason, "runtime_error")
             self.assertIn("protocol record exceeds limit", error.message)
             self.assertNotEqual(
                 result.final_text,
@@ -1622,92 +1240,33 @@ class CodexBackendResumeTests(TestCase):
         self.assertEqual(projector.provider_item_omission_count, 1)
         self.assertEqual(omission.data.get("omitted_count"), 1)
 
-    def test_task_metadata_selects_model_without_mutating_runtime_default(self) -> None:
+    def test_typed_turn_selection_does_not_mutate_runtime_default(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             auth_root = _main_auth_root(root)
-            routing = SimpleNamespace(
-                code_command="codex exec --model {model} --cd {workdir}",
-                code_model="gpt-5.6-terra",
-                code_reasoning_effort="medium",
-                code_profiles={
-                    "sol-max": CodeModelProfile(
-                        model="gpt-5.6-sol",
-                        reasoning_effort="max",
-                    )
-                },
-                code_timeout_seconds=30,
-                code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
-            )
-            backend = CodexAgentBackend(
-                tool_names=set(),
-                runtime_config=SimpleNamespace(routing=routing),
-            )
-            ref = backend.open_session(
-                BackendOpenRequest(
-                    session_id="model-selection",
-                    prompt_plan=prompt_plan("system"),
-                    options={
-                        "workspace_root": root / "workspace",
-                        "backend_state_root": root / "state",
-                    },
-                )
-            )
-            selection = CodeModelSelection(
-                provider="codex_cli",
-                model="gpt-5.6-sol",
-                reasoning_effort="max",
-                scope="once",
-                source="profile",
-                profile="sol-max",
-            )
-            completed = subprocess.CompletedProcess(
-                ["codex"],
-                0,
-                json.dumps(
-                    {
-                        "type": "item.completed",
-                        "item": {"type": "agent_message", "text": "done"},
-                    }
-                ),
-                "",
-            )
-            with (
-                mock.patch.dict(
-                    os.environ,
-                    {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
-                    clear=False,
-                ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
-                ),
-                mock.patch(
-                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
-                    return_value={},
-                ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)) as run,
-            ):
-                result = backend.stream_turn(
-                    ref,
-                    AgentTask(
-                        "use selected model",
-                        metadata={CODE_MODEL_SELECTION_METADATA_KEY: selection.to_payload()},
-                    ),
-                    on_event=lambda _: None,
-                )
+            routing = SimpleNamespace(code_model="gpt-test", code_reasoning_effort="medium")
+            config = _runtime_config(routing, auth_root)
+            calls = []
+            tool = _dynamic_tool(calls)
+            backend = CodexRuntimeAdapter(tool_names={tool.name}, runtime_config=config, tools=(tool,),
+                tool_executor=ToolExecutor(tools=[tool], caller_role_hint="owner"))
+            ref = backend.open_session(RuntimeOpenRequest(session_id="session", prompt_plan=prompt_plan("system"),
+                allowed_tool_names=frozenset({tool.name}),
+                options={"workspace_root": root, "runtime_state_root": root / "state", "role_hint": "owner"}))
 
-            command = run.call_args.args[0]
-            self.assertEqual(result.final_text, "done")
-            self.assertEqual(
-                command[:4],
-                ["/usr/bin/codex", "app-server", "--listen", "stdio://"],
-            )
-            self.assertIn('model="gpt-5.6-sol"', command)
-            self.assertEqual(run.call_args.kwargs["model"], "gpt-5.6-sol")
-            self.assertIn('model_reasoning_effort="max"', command)
-            self.assertEqual(routing.code_model, "gpt-5.6-terra")
-            self.assertEqual(routing.code_reasoning_effort, "medium")
+            chosen = ModelSelection(replace(config.llm.model_route(), model="selected", reasoning_effort="high"),
+                                    scope="once", source="profile", profile="test")
+            observed = []
+            def run(command, **kw):
+                observed.append((kw["model"], kw["effort"]))
+                return app_server_replay(subprocess.CompletedProcess(command, 0,
+                    json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "done"}}), ""))(command, **kw)
+            with mock.patch("chatcopilot.external_tools.codex_cli.command._resolve_executable", return_value="/usr/bin/true"), \
+                 mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=run):
+                backend.stream_turn(ref, AgentTask("request", execution=TurnExecutionContext(model_selection=chosen)), on_event=lambda _: None)
+                backend.stream_turn(ref, AgentTask("request"), on_event=lambda _: None)
+            self.assertEqual(observed, [("selected", "high"), ("gpt-test", "medium")])
+            self.assertEqual(config.llm.model, "gpt-test")
             backend.close_session(ref)
 
     def test_resume_id_survives_backend_object_reconstruction(self) -> None:
@@ -1723,19 +1282,20 @@ class CodexBackendResumeTests(TestCase):
             )
             kwargs = {
                 "tool_names": {"dynamic_echo"},
-                "runtime_config": SimpleNamespace(routing=routing),
+                "runtime_config": _runtime_config(routing, auth_root),
                 "tools": (_dynamic_tool(),),
             }
-            request = BackendOpenRequest(
+            request = RuntimeOpenRequest(
                 session_id="acp-persisted",
-                prompt_plan=prompt_plan("system", backend="codex"),
+                prompt_plan=prompt_plan("system", runtime_id="codex"),
+                route=runtime_route("codex", kwargs["runtime_config"].llm),
                 allowed_tool_names=frozenset({"dynamic_echo"}),
                 options={
                     "workspace_root": root,
-                    "backend_state_root": root / "state",
+                    "runtime_state_root": root / "state",
                 },
             )
-            backend = CodexAgentBackend(**kwargs)
+            backend = CodexRuntimeAdapter(**kwargs)
             ref = backend.open_session(request)
             completed = subprocess.CompletedProcess(
                 ["codex"],
@@ -1751,28 +1311,28 @@ class CodexBackendResumeTests(TestCase):
                 ),
                 mock.patch(
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
+                    return_value="/usr/bin/true",
                 ),
                 mock.patch(
-                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                    "chatcopilot.agent.runtimes.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)),
+                mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=app_server_replay(completed)),
             ):
                 backend.stream_turn(ref, AgentTask("one"), on_event=lambda _: None)
             native_ref = backend.current_session_ref(ref)
             backend.close_session(native_ref)
 
-            reconstructed = CodexAgentBackend(**kwargs)
+            reconstructed = CodexRuntimeAdapter(**kwargs)
             restored_ref = reconstructed.open_session(request)
             self.assertEqual(restored_ref.value, "persisted-native-id")
             with mock.patch(
                 "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                return_value="/usr/bin/codex",
+                return_value="/usr/bin/true",
             ):
-                command = reconstructed._command(reconstructed.native_session(restored_ref))
+                command = reconstructed._command(reconstructed._resolve(restored_ref))
             self.assertEqual(command[1], "app-server")
-            self.assertEqual(reconstructed.native_session(restored_ref).native_session_id, "persisted-native-id")
+            self.assertEqual(reconstructed._resolve(restored_ref).native_session_id, "persisted-native-id")
             reconstructed.close_session(restored_ref)
 
     def test_disabled_persisted_resume_starts_fresh_after_reconstruction(self) -> None:
@@ -1788,20 +1348,21 @@ class CodexBackendResumeTests(TestCase):
             )
             kwargs = {
                 "tool_names": {"dynamic_echo"},
-                "runtime_config": SimpleNamespace(routing=routing),
+                "runtime_config": _runtime_config(routing, auth_root),
                 "tools": (_dynamic_tool(),),
             }
-            request = BackendOpenRequest(
+            request = RuntimeOpenRequest(
                 session_id="acp-no-persisted-resume",
-                prompt_plan=prompt_plan("system", backend="codex"),
+                prompt_plan=prompt_plan("system", runtime_id="codex"),
+                route=runtime_route("codex", kwargs["runtime_config"].llm),
                 allowed_tool_names=frozenset({"dynamic_echo"}),
                 options={
                     "workspace_root": root,
-                    "backend_state_root": root / "state",
+                    "runtime_state_root": root / "state",
                     "restore_persisted_native_session": False,
                 },
             )
-            backend = CodexAgentBackend(**kwargs)
+            backend = CodexRuntimeAdapter(**kwargs)
             ref = backend.open_session(request)
             completed = subprocess.CompletedProcess(
                 ["codex"],
@@ -1819,24 +1380,24 @@ class CodexBackendResumeTests(TestCase):
                 ),
                 mock.patch(
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
+                    return_value="/usr/bin/true",
                 ),
                 mock.patch(
-                    "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                    "chatcopilot.agent.runtimes.codex.build_codex_subprocess_env",
                     return_value={},
                 ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)),
+                mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=app_server_replay(completed)),
             ):
                 backend.stream_turn(ref, AgentTask("one"), on_event=lambda _: None)
             backend.close_session(backend.current_session_ref(ref))
 
-            reconstructed = CodexAgentBackend(**kwargs)
+            reconstructed = CodexRuntimeAdapter(**kwargs)
             fresh_ref = reconstructed.open_session(request)
-            fresh_state = reconstructed.native_session(fresh_ref)
+            fresh_state = reconstructed._resolve(fresh_ref)
             self.assertEqual(fresh_state.native_session_id, "")
             with mock.patch(
                 "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                return_value="/usr/bin/codex",
+                return_value="/usr/bin/true",
             ):
                 command = reconstructed._command(fresh_state)
             self.assertNotIn("resume", command)
@@ -1854,39 +1415,41 @@ class CodexBackendResumeTests(TestCase):
             )
             kwargs = {
                 "tool_names": set(),
-                "runtime_config": SimpleNamespace(routing=routing),
+                "runtime_config": _runtime_config(routing),
             }
-            user_request = BackendOpenRequest(
+            user_request = RuntimeOpenRequest(
                 session_id="role-change",
                 prompt_plan=prompt_plan("system"),
+                route=runtime_route("codex", kwargs["runtime_config"].llm),
                 options={
                     "workspace_root": root,
-                    "backend_state_root": root / "state",
+                    "runtime_state_root": root / "state",
                     "role_hint": "user",
                 },
             )
-            backend = CodexAgentBackend(**kwargs)
+            backend = CodexRuntimeAdapter(**kwargs)
             ref = backend.open_session(user_request)
-            state = backend.native_session(ref)
+            state = backend._resolve(ref)
             state.native_session_id = "old-elevated-thread"
             backend._persist_session_state(state)
             backend.close_session(ref)
 
-            owner_request = BackendOpenRequest(
+            owner_request = RuntimeOpenRequest(
                 session_id="role-change",
                 prompt_plan=prompt_plan("system"),
+                route=runtime_route("codex", kwargs["runtime_config"].llm),
                 options={
                     "workspace_root": root,
-                    "backend_state_root": root / "state",
+                    "runtime_state_root": root / "state",
                     "role_hint": "admin",
                 },
             )
-            reconstructed = CodexAgentBackend(**kwargs)
+            reconstructed = CodexRuntimeAdapter(**kwargs)
             restored_ref = reconstructed.open_session(owner_request)
 
             self.assertNotEqual(restored_ref.value, "old-elevated-thread")
             self.assertEqual(
-                reconstructed.native_session(restored_ref).native_session_id,
+                reconstructed._resolve(restored_ref).native_session_id,
                 "",
             )
             reconstructed.close_session(restored_ref)
@@ -1903,40 +1466,41 @@ class CodexBackendResumeTests(TestCase):
             )
             kwargs = {
                 "tool_names": set(),
-                "runtime_config": SimpleNamespace(routing=routing),
+                "runtime_config": _runtime_config(routing),
             }
-            request = BackendOpenRequest(
+            request = RuntimeOpenRequest(
                 session_id="identity-change",
                 prompt_plan=prompt_plan("system"),
+                route=runtime_route("codex", kwargs["runtime_config"].llm),
                 caller_identity=SessionIdentity(user_id="caller-a"),
                 options={
                     "workspace_root": root,
-                    "backend_state_root": root / "state",
+                    "runtime_state_root": root / "state",
                 },
             )
-            backend = CodexAgentBackend(**kwargs)
+            backend = CodexRuntimeAdapter(**kwargs)
             ref = backend.open_session(request)
-            state = backend.native_session(ref)
+            state = backend._resolve(ref)
             state.native_session_id = "old-caller-thread"
             backend._persist_session_state(state)
             backend.close_session(ref)
 
-            reconstructed = CodexAgentBackend(**kwargs)
+            reconstructed = CodexRuntimeAdapter(**kwargs)
             restored_ref = reconstructed.open_session(
-                BackendOpenRequest(
+                RuntimeOpenRequest(
                     session_id="identity-change",
                     prompt_plan=prompt_plan("system"),
                     caller_identity=SessionIdentity(user_id="caller-b"),
                     options={
                         "workspace_root": root,
-                        "backend_state_root": root / "state",
+                        "runtime_state_root": root / "state",
                     },
                 )
             )
 
             self.assertNotEqual(restored_ref.value, "old-caller-thread")
             self.assertEqual(
-                reconstructed.native_session(restored_ref).native_session_id,
+                reconstructed._resolve(restored_ref).native_session_id,
                 "",
             )
             reconstructed.close_session(restored_ref)
@@ -1952,17 +1516,17 @@ class CodexBackendResumeTests(TestCase):
                 code_timeout_seconds=30,
                 code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
             )
-            backend = CodexAgentBackend(
+            backend = CodexRuntimeAdapter(
                 tool_names=set(),
-                runtime_config=SimpleNamespace(routing=routing),
+                runtime_config=_runtime_config(routing, auth_root),
             )
             ref = backend.open_session(
-                BackendOpenRequest(
+                RuntimeOpenRequest(
                     session_id="generation-change",
                     prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
-                        "backend_state_root": root / "state",
+                        "runtime_state_root": root / "state",
                     },
                 )
             )
@@ -1986,9 +1550,9 @@ class CodexBackendResumeTests(TestCase):
                 ),
                 mock.patch(
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
+                    return_value="/usr/bin/true",
                 ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay([first, second])) as run,
+                mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=app_server_replay([first, second])) as run,
             ):
                 backend.stream_turn(ref, AgentTask("first"), on_event=lambda _: None)
                 old_ref = backend.current_session_ref(ref)
@@ -2006,82 +1570,35 @@ class CodexBackendResumeTests(TestCase):
                 backend.current_session_ref(old_ref).value,
                 "new-account-thread",
             )
-            state = backend.native_session(BackendSessionRef("codex", "new-account-thread"))
+            state = backend._resolve(RuntimeSessionRef("codex", "new-account-thread"))
             self.assertEqual(state.credential_generation, 2)
             self.assertEqual(state.native_session_id, "new-account-thread")
-            backend.close_session(BackendSessionRef("codex", "new-account-thread"))
+            backend.close_session(RuntimeSessionRef("codex", "new-account-thread"))
 
-    def test_auth_stderr_is_diagnostic_only_and_refresh_is_persisted(self) -> None:
+    def test_subscription_tokens_are_handed_off_without_runtime_auth_file(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             auth_root = _main_auth_root(root)
-            routing = SimpleNamespace(
-                code_command="codex exec --model {model} --cd {workdir}",
-                code_model="gpt-test",
-                code_reasoning_effort="medium",
-                code_timeout_seconds=30,
-                code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
-            )
-            backend = CodexAgentBackend(
-                tool_names=set(),
-                runtime_config=SimpleNamespace(routing=routing),
-            )
-            ref = backend.open_session(
-                BackendOpenRequest(
-                    session_id="auth-error",
-                    prompt_plan=prompt_plan("system"),
-                    options={
-                        "workspace_root": root / "workspace",
-                        "backend_state_root": root / "state",
-                    },
-                )
-            )
-            raw_error = (
-                "401 Unauthorized: refresh token already used; secret-token-must-stay-private"
-            )
+            routing = SimpleNamespace(code_model="gpt-test", code_reasoning_effort="medium")
+            config = _runtime_config(routing, auth_root)
+            calls = []
+            tool = _dynamic_tool(calls)
+            backend = CodexRuntimeAdapter(tool_names={tool.name}, runtime_config=config, tools=(tool,),
+                tool_executor=ToolExecutor(tools=[tool], caller_role_hint="owner"))
+            ref = backend.open_session(RuntimeOpenRequest(session_id="session", prompt_plan=prompt_plan("system"),
+                allowed_tool_names=frozenset({tool.name}),
+                options={"workspace_root": root, "runtime_state_root": root / "state", "role_hint": "owner"}))
 
-            def failed_with_refresh(*_args, **kwargs):
-                runtime_auth = Path(kwargs["env"]["CODEX_HOME"]) / "auth.json"
-                runtime_auth.write_text(
-                    json.dumps(_codex_auth_payload("rotated-on-failure")),
-                    encoding="utf-8",
-                )
-                runtime_auth.chmod(0o600)
-                return subprocess.CompletedProcess(["codex"], 1, "", raw_error)
-
-            events: list[object] = []
-            with (
-                mock.patch.dict(
-                    os.environ,
-                    {"CHATCOPILOT_CODEX_BOT_HOME": str(auth_root)},
-                    clear=False,
-                ),
-                mock.patch(
-                    "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
-                ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(failed_with_refresh)),
-            ):
-                result = backend.stream_turn(
-                    ref,
-                    AgentTask("hello"),
-                    on_event=events.append,
-                )
-
+            def run(command, **kw):
+                self.assertEqual(kw["authentication"]["type"], "chatgptAuthTokens")
+                self.assertNotIn("refreshToken", kw["authentication"])
+                self.assertFalse((backend._resolve(ref).codex_home / "auth.json").exists())
+                return app_server_replay(subprocess.CompletedProcess(command, 1, "", "401 Unauthorized fixture"))(command, **kw)
+            with mock.patch("chatcopilot.external_tools.codex_cli.command._resolve_executable", return_value="/usr/bin/true"), \
+                 mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=run):
+                result = backend.stream_turn(ref, AgentTask("request"), on_event=lambda _: None)
+            self.assertNotIn("401", result.final_text)
             self.assertEqual(result.stop_reason, "llm_error")
-            self.assertIn("codex-auth login", result.final_text)
-            self.assertNotIn("secret-token", result.final_text)
-            errors = [event for event in events if isinstance(event, TurnError)]
-            finals = [event for event in events if isinstance(event, FinalText)]
-            self.assertEqual(len(errors), 1)
-            self.assertEqual(errors[0].code, "codex_auth_invalid")
-            self.assertIn("secret-token-must-stay-private", errors[0].message)
-            self.assertEqual([event.text for event in finals], [result.final_text])
-            authority = json.loads((auth_root / "auth.json").read_text(encoding="utf-8"))
-            self.assertEqual(
-                authority["tokens"]["refresh_token"],
-                "rotated-on-failure",
-            )
             backend.close_session(ref)
 
     def test_success_without_agent_message_never_promotes_stderr(self) -> None:
@@ -2095,17 +1612,17 @@ class CodexBackendResumeTests(TestCase):
                 code_timeout_seconds=30,
                 code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
             )
-            backend = CodexAgentBackend(
+            backend = CodexRuntimeAdapter(
                 tool_names=set(),
-                runtime_config=SimpleNamespace(routing=routing),
+                runtime_config=_runtime_config(routing, auth_root),
             )
             ref = backend.open_session(
-                BackendOpenRequest(
+                RuntimeOpenRequest(
                     session_id="empty-success",
                     prompt_plan=prompt_plan("system"),
                     options={
                         "workspace_root": root / "workspace",
-                        "backend_state_root": root / "state",
+                        "runtime_state_root": root / "state",
                     },
                 )
             )
@@ -2123,9 +1640,9 @@ class CodexBackendResumeTests(TestCase):
                 ),
                 mock.patch(
                     "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-                    return_value="/usr/bin/codex",
+                    return_value="/usr/bin/true",
                 ),
-                mock.patch("chatcopilot.agent.backends.codex.run_app_server", side_effect=app_server_replay(completed)),
+                mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=app_server_replay(completed)),
             ):
                 result = backend.stream_turn(
                     ref,
@@ -2160,14 +1677,14 @@ class CodexBackendPolicyTests(TestCase):
         role_hint: str = "user",
         caller_user_id: str | None = "123",
     ) -> tuple[list[str], str]:
-        backend = CodexAgentBackend(
+        backend = CodexRuntimeAdapter(
             tool_names={"dynamic_echo"},
-            runtime_config=SimpleNamespace(routing=self._routing()),
+            runtime_config=_runtime_config(self._routing()),
             tools=(_dynamic_tool(),),
-            backend_policy=policy,
+            runtime_policy=policy,
         )
         ref = backend.open_session(
-            BackendOpenRequest(
+            RuntimeOpenRequest(
                 session_id="policy-session",
                 prompt_plan=prompt_plan("system"),
                 allowed_tool_names=frozenset({"dynamic_echo"}),
@@ -2177,18 +1694,21 @@ class CodexBackendPolicyTests(TestCase):
                 options={
                     "workspace_root": root,
                     "source_root": root,
-                    "backend_state_root": root / "state",
+                    "runtime_state_root": root / "state",
                     "role_hint": role_hint,
                     "execution_scope": execution_scope(
                         role_hint, root, (root,) if role_hint == "owner" else ()
                     ),
                 },
+                host_policy=HostRuntimePolicy(network_access=True,
+                    native_capabilities=frozenset({"web_search", "image_generation"})),
             )
         )
-        state = backend.native_session(ref)
+        state = backend._resolve(ref)
+        backend._prepare_app_server_home(state)
         with mock.patch(
             "chatcopilot.external_tools.codex_cli.command._resolve_executable",
-            return_value="/usr/bin/codex",
+            return_value="/usr/bin/true",
         ):
             command = backend._command(state)
         from chatcopilot.agent.context.prompt_plan import render_codex_developer
@@ -2198,10 +1718,10 @@ class CodexBackendPolicyTests(TestCase):
         return command, prompt
 
     def _policy_fingerprint(self, policy: CodexMainSessionPolicy) -> str:
-        backend = CodexAgentBackend(
+        backend = CodexRuntimeAdapter(
             tool_names=set(),
-            runtime_config=SimpleNamespace(routing=self._routing()),
-            backend_policy=policy,
+            runtime_config=_runtime_config(self._routing()),
+            runtime_policy=policy,
         )
         return backend._policy_fingerprint(
             "user",
@@ -2225,28 +1745,12 @@ class CodexBackendPolicyTests(TestCase):
         self.assertIn('shell_environment_policy.inherit="none"', command)
         self.assertIn("current-conversation ordinary files", prompt)
 
-    def test_owner_scope_is_writable_and_uses_gateway(self) -> None:
-        policy = CodexMainSessionPolicy()
+    def test_owner_scope_uses_native_permissions_without_session_gateway(self):
         with TemporaryDirectory() as tmp:
-            command, prompt = self._command_and_prompt(Path(tmp), policy, role_hint="owner")
-
+            command, prompt = self._command_and_prompt(Path(tmp), CodexMainSessionPolicy(), role_hint="owner")
         self.assertIn('default_permissions="agentstrata"', command)
         self.assertIn("--strict-config", command)
-        self.assertIn("project_doc_max_bytes=0", command)
-        self.assertIn("mcp_servers={}", command)
-        self.assertTrue(any("mcp_servers.chatcopilot.command" in item for item in command))
-        self.assertIn("mcp_servers.chatcopilot.required=true", command)
-        self.assertIn(
-            'mcp_servers.chatcopilot.default_tools_approval_mode="approve"',
-            command,
-        )
-        enabled_tools = next(
-            item
-            for item in command
-            if item.startswith("mcp_servers.chatcopilot.enabled_tools=")
-        )
-        self.assertIn('"dynamic_echo"', enabled_tools)
-        self.assertIn('shell_environment_policy.inherit="none"', command)
+        self.assertFalse(any("mcp_servers.chatcopilot" in item for item in command))
         self.assertIn("configured instance and project resources", prompt)
 
     def test_eval_confinement_disables_command_network_and_web_search(self) -> None:
@@ -2304,457 +1808,20 @@ class CodexBackendPolicyTests(TestCase):
         self.assertTrue(any('"read"' in item and "permissions.agentstrata.filesystem" in item for item in command))
 
 
-class SessionToolRelayTests(TestCase):
-    def test_agent_runtime_passes_session_payload_filter_to_codex_backend(self) -> None:
-        payload_filter = lambda payload: dict(payload)  # noqa: E731
-        runtime = AgentRuntime(
-            llm=mock.Mock(),
-            tools=(),
-            tools_schema=(),
-            runtime_config=ChatConfig(),
-            agent_backend="codex",
-        )
-        backend = mock.Mock()
-        backend.capabilities = BackendCapabilities(
-            names=frozenset({CAPABILITY_CHAT}),
-            tool_names=frozenset(),
-        )
-        backend.open_session.return_value = BackendSessionRef("codex", "relay-filter")
-
-        with mock.patch(
-            "chatcopilot.agent.runtime.build_backend",
-            return_value=backend,
-        ) as build:
-            session = runtime.new_session(
-                session_id="relay-filter",
-                prompt_input=prompt_input("system", backend="codex"),
-                payload_filter=payload_filter,
-            )
-
-        self.assertIs(build.call_args.kwargs["tool_payload_filter"], payload_filter)
-        session.close()
-
-    def test_dynamic_tool_uses_live_executor_and_wrong_token_fails_closed(self) -> None:
-        calls: list[str] = []
-        tool = _dynamic_tool(calls)
-        relay = SessionToolRelay(
-            tools=(tool,),
-            executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
-        )
-        endpoint = relay.start()
-        try:
-            listed = call_session_relay(endpoint.to_dict(), {"action": "list_tools"})
-            called = call_session_relay(
-                endpoint.to_dict(),
-                {
-                    "action": "call_tool",
-                    "name": "dynamic_echo",
-                    "arguments": {"value": "same-executor"},
-                },
-            )
-            invalid = endpoint.to_dict()
-            invalid["token"] = "wrong"
-            denied = call_session_relay(invalid, {"action": "list_tools"})
-        finally:
-            relay.close()
-
-        self.assertEqual([tool["name"] for tool in listed["tools"]], ["dynamic_echo"])
-        self.assertTrue(called["result"]["ok"])
-        self.assertEqual(calls, ["same-executor"])
-        events = relay.drain_tool_events()
-        self.assertEqual([event["type"] for event in events], ["tool_started", "tool_finished"])
-        self.assertEqual(events[0]["arguments"], {"value": "same-executor"})
-        self.assertEqual(events[0]["call_id"], events[1]["call_id"])
-        self.assertLessEqual(events[0]["started_at"], events[1]["finished_at"])
-        self.assertTrue(events[1]["ok"])
-        self.assertEqual(events[1]["data"]["summary"], "dynamic:same-executor")
-        self.assertFalse(denied["ok"])
-        self.assertIn("authentication", denied["error"])
-
-    def test_session_relay_binds_original_request_text_to_tool_context(self) -> None:
-        request_texts: list[str] = []
-
-        def handler(_args: dict, context: ToolContext) -> ToolResult:
-            request_texts.append(context.request_text)
-            return ToolResult(ok=True, summary="captured")
-
-        tool = ToolDef(
-            name="capture_request",
-            summary="Capture the trusted relay request text.",
-            input_schema=object_schema(),
-            output_schema=object_schema(),
-            handler=handler,
-        )
-        relay = SessionToolRelay(
-            tools=(tool,),
-            executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
-        )
-        endpoint = relay.start()
-        generation = relay.begin_turn(
-            trace_id="trace_request_text",
-            parent_span_id="span_codex_llm",
-            depth=1,
-            request_text="/persona confirm 原始 Codex 请求",
-        )
-        try:
-            response = call_session_relay(
-                endpoint.to_dict(),
-                {"action": "call_tool", "name": tool.name, "arguments": {}},
-            )
-        finally:
-            relay.end_turn(generation)
-            relay.close()
-
-        self.assertTrue(response["result"]["ok"])
-        self.assertEqual(request_texts, ["/persona confirm 原始 Codex 请求"])
-
-    def test_codex_relay_uses_committed_receipt_for_success_evidence(self) -> None:
-        generation = 7
-        trace_id = "trace_committed_receipt"
-        parent_span_id = "span_codex_llm"
-
-        def finished(name: str, committed: bool) -> dict[str, object]:
-            return {
-                "generation": generation,
-                "type": "tool_finished",
-                "call_id": f"call_{name}",
-                "name": name,
-                "trace_id": trace_id,
-                "parent_span_id": parent_span_id,
-                "depth": 1,
-                "ok": False,
-                "summary": "",
-                "error": "confirmation state",
-                "data": {
-                    "ok": False,
-                    "error": "confirmation state",
-                    "data": {"committed": committed},
-                },
-            }
-
-        relay = mock.Mock()
-        relay.drain_tool_events.return_value = (
-            finished("persona_committed", True),
-            finished("persona_not_committed", False),
-        )
-        projected: list[object] = []
-        successful_operations: list[str] = []
-
-        error = CodexAgentBackend._emit_relay_tool_events(
-            relay,
-            projected.append,
-            generation=generation,
-            trace_id=trace_id,
-            parent_span_id=parent_span_id,
-            successful_operations=successful_operations,
-        )
-
-        self.assertEqual(error, "")
-        self.assertEqual(successful_operations, ["persona_committed"])
-        self.assertEqual(len([event for event in projected if isinstance(event, ToolFinished)]), 2)
-
-    def test_filtered_handler_result_is_used_for_response_and_audit_event(self) -> None:
-        private_path = str((Path.cwd() / "relay-sensitive" / "source.py").resolve())
-
-        def handler(_args: dict, _context: ToolContext) -> ToolResult:
-            raise RuntimeError(f"failed at {private_path}")
-
-        tool = ToolDef(
-            name="sensitive_tool",
-            summary="Sensitive failure.",
-            input_schema=object_schema(),
-            output_schema=object_schema(),
-            handler=handler,
-        )
-        seen: list[dict[str, object]] = []
-
-        def sanitize(payload):
-            seen.append(dict(payload))
-            return {
-                "ok": False,
-                "error": "request failed",
-                "error_code": "request_failed",
-            }
-
-        relay = SessionToolRelay(
-            tools=(tool,),
-            executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
-            payload_filter=sanitize,
-        )
-        endpoint = relay.start()
-        try:
-            response = call_session_relay(
-                endpoint.to_dict(),
-                {"action": "call_tool", "name": "sensitive_tool", "arguments": {}},
-            )
-        finally:
-            relay.close()
-
-        events = relay.drain_tool_events()
-        serialized = json.dumps({"response": response, "events": events})
-        self.assertIn(private_path, str(seen[0]["error"]))
-        self.assertIn(private_path, serialized)
-        self.assertNotIn(private_path, json.dumps(response))
-        finish = next(item for item in events if item["type"] == "tool_finished")
-        self.assertNotIn(private_path, json.dumps(finish["data"]))
-        self.assertIn(private_path, json.dumps(finish["execution_result"]))
-        self.assertEqual(
-            response["result"],
-            {
-                "tool": "sensitive_tool",
-                "ok": False,
-                "error": "request failed",
-                "error_code": "request_failed",
-            },
-        )
-        self.assertEqual(events[1]["error"], "request failed")
-        expected_event_data = dict(response["result"])
-        expected_event_data.pop("tool")
-        self.assertEqual(events[1]["data"], expected_event_data)
-
-    def test_identity_filter_preserves_success_payload(self) -> None:
-        private_path = str((Path.cwd() / "relay-owner" / "report.txt").resolve())
-
-        def owner_handler(_args: dict, _context: ToolContext) -> ToolResult:
-            return ToolResult(
-                ok=True,
-                summary=f"created {private_path}",
-                outputs=[private_path],
-                console=f"created {private_path}",
-                doc_links=[],
-            )
-
-        tool = ToolDef(
-            name="owner_tool",
-            summary="Owner-only result.",
-            input_schema=object_schema(),
-            output_schema=object_schema(),
-            handler=owner_handler,
-        )
-        relay = SessionToolRelay(
-            tools=(tool,),
-            executor=ToolExecutor(tools=[tool], caller_role_hint="owner"),
-            payload_filter=lambda payload: dict(payload),
-        )
-        endpoint = relay.start()
-        try:
-            response = call_session_relay(
-                endpoint.to_dict(),
-                {"action": "call_tool", "name": "owner_tool", "arguments": {}},
-            )
-        finally:
-            relay.close()
-
-        events = relay.drain_tool_events()
-        self.assertEqual(response["result"]["outputs"], [private_path])
-        self.assertIn(private_path, response["result"]["summary"])
-        self.assertIn(private_path, response["result"]["console_tail"])
-        self.assertEqual(events[1]["data"]["outputs"], [private_path])
-
-    def test_executor_or_filter_exception_returns_only_generic_payload(self) -> None:
-        secret = str((Path.cwd() / "relay-private" / "traceback.py").resolve())
-        tool = _dynamic_tool()
-
-        class ExplodingExecutor:
-            def execute(self, _name, _arguments, *, request_text=""):
-                del request_text
-                raise RuntimeError(f"traceback at {secret}")
-
-        def exploding_filter(_payload):
-            raise RuntimeError(f"filter failed at {secret}")
-
-        cases = (
-            (ExplodingExecutor(), None),
-            (ToolExecutor(caller_role_hint="owner", tools=[tool]), exploding_filter),
-        )
-        for executor, payload_filter in cases:
-            with self.subTest(payload_filter=payload_filter is not None):
-                relay = SessionToolRelay(
-                    tools=(tool,),
-                    executor=executor,
-                    payload_filter=payload_filter,
-                )
-                endpoint = relay.start()
-                try:
-                    response = call_session_relay(
-                        endpoint.to_dict(),
-                        {
-                            "action": "call_tool",
-                            "name": "dynamic_echo",
-                            "arguments": {"value": "value"},
-                        },
-                    )
-                finally:
-                    relay.close()
-
-                events = relay.drain_tool_events()
-                serialized = json.dumps({"response": response, "events": events})
-                self.assertNotIn(secret, serialized)
-                self.assertNotIn("traceback", serialized.lower())
-                self.assertEqual(
-                    response["result"],
-                    {
-                        "tool": "dynamic_echo",
-                        "ok": False,
-                        "error": "tool execution failed",
-                        "error_code": "tool_execution_failed",
-                    },
-                )
-                self.assertEqual(events[1]["data"], {
-                    "ok": False,
-                    "error": "tool execution failed",
-                    "error_code": "tool_execution_failed",
-                })
-
-    def test_nested_event_overflow_preserves_tool_result_and_projects_one_omission(
-        self,
-    ) -> None:
-        nested_event_count = 1027
-        overflow_recorded = threading.Event()
-        release_tool = threading.Event()
-
-        def handler(_args: dict, _context: ToolContext) -> ToolResult:
-            trace = current_trace()
-            self.assertIsNotNone(trace)
-            assert trace is not None
-            self.assertIsNotNone(trace.sink)
-            assert trace.sink is not None
-            for index in range(nested_event_count):
-                trace.sink(
-                    LlmCallStarted(
-                        model="nested-overflow-model",
-                        iteration=index,
-                        backend="nested-overflow-test",
-                        trace_id=trace.trace_id,
-                        span_id=f"span_nested_overflow_{index}",
-                        parent_span_id=trace.span_id,
-                        depth=trace.depth + 1,
-                    )
-                )
-            overflow_recorded.set()
-            release_tool.wait(timeout=5)
-            return ToolResult(
-                ok=True,
-                summary="tool succeeded despite telemetry overflow",
-            )
-
-        tool = ToolDef(
-            name="overflow_tool",
-            summary="Emit more nested events than the bounded relay can retain.",
-            input_schema=object_schema(),
-            output_schema=object_schema(),
-            handler=handler,
-        )
-        relay = SessionToolRelay(
-            tools=(tool,),
-            executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
-        )
-        endpoint = relay.start()
-        generation = relay.begin_turn(
-            trace_id="trace_relay_overflow",
-            parent_span_id="span_codex_llm",
-            depth=1,
-        )
-        projected: list[object] = []
-        sink_calls = 0
-        called_holder: dict[str, object] = {}
-
-        def intermittently_failing_sink(event: object) -> None:
-            nonlocal sink_calls
-            sink_calls += 1
-            projected.append(event)
-            if sink_calls == 2:
-                raise RuntimeError("recorder unavailable once")
-
-        def call_tool() -> None:
-            called_holder["response"] = call_session_relay(
-                endpoint.to_dict(),
-                {
-                    "action": "call_tool",
-                    "name": "overflow_tool",
-                    "arguments": {},
-                },
-            )
-
-        caller = threading.Thread(target=call_tool, daemon=True)
-        try:
-            caller.start()
-            self.assertTrue(overflow_recorded.wait(timeout=2))
-            with mock.patch("chatcopilot.agent.turn_support.LOGGER.exception") as logged:
-                live_audit_error = CodexAgentBackend._emit_relay_tool_events(
-                    relay,
-                    intermittently_failing_sink,
-                    generation=generation,
-                    trace_id="trace_relay_overflow",
-                    parent_span_id="span_codex_llm",
-                    require_complete=False,
-                )
-                release_tool.set()
-                caller.join(timeout=2)
-                audit_error = CodexAgentBackend._emit_relay_tool_events(
-                    relay,
-                    intermittently_failing_sink,
-                    generation=generation,
-                    trace_id="trace_relay_overflow",
-                    parent_span_id="span_codex_llm",
-                    require_complete=True,
-                )
-        finally:
-            release_tool.set()
-            caller.join(timeout=2)
-            relay.end_turn(generation)
-            relay.close()
-
-        self.assertFalse(caller.is_alive())
-        called = called_holder["response"]
-        self.assertIsInstance(called, dict)
-        assert isinstance(called, dict)
-        self.assertTrue(called["result"]["ok"])
-        self.assertEqual(
-            called["result"]["summary"],
-            "tool succeeded despite telemetry overflow",
-        )
-        self.assertEqual(live_audit_error, "")
-        self.assertEqual(audit_error, "")
-        logged.assert_called_once()
-        nested = [
-            event
-            for event in projected
-            if isinstance(event, LlmCallStarted)
-            and event.backend == "nested-overflow-test"
-        ]
-        self.assertEqual(len(nested), 1022)
-        finished = next(event for event in projected if isinstance(event, ToolFinished))
-        self.assertTrue(finished.ok)
-        omissions = [
-            event
-            for event in projected
-            if isinstance(event, SpanFinished)
-            and event.kind == "provider_omission"
-            and event.data.get("reason") == "relay_nested_event_buffer_limit"
-        ]
-        self.assertEqual(len(omissions), 1)
-        self.assertEqual(omissions[0].trace_id, "trace_relay_overflow")
-        self.assertEqual(omissions[0].parent_span_id, finished.span_id)
-        self.assertEqual(omissions[0].data.get("omitted_count"), 5)
-        self.assertEqual(omissions[0].data.get("projected_event_limit"), 1024)
-        self.assertLess(projected.index(omissions[0]), projected.index(finished))
-
-
 class BackendStateTransitionTests(TestCase):
     def test_switch_deletes_old_state_before_target_start_and_never_restores(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"
-            prepare_backend_deployment(
-                instance_id="demo", target_backend="native", workspace_root=root
+            prepare_runtime_deployment(
+                instance_id="demo", target_runtime_id="native", workspace_root=root
             )
             transcript = root / "p2p_user" / "transcripts"
-            backend_state = root / "p2p_user" / ".backend-sessions"
-            group_backend_state = (
+            runtime_state = root / "p2p_user" / ".runtime-sessions"
+            group_runtime_state = (
                 root
                 / "group_demo"
                 / ".conversation-state"
-                / "backend-sessions"
+                / "runtime-sessions"
                 / "actor-digest"
             )
             group_journal = (
@@ -2764,44 +1831,33 @@ class BackendStateTransitionTests(TestCase):
                 / "group-conversation.jsonl"
             )
             transcript.mkdir(parents=True)
-            backend_state.mkdir(parents=True)
-            group_backend_state.mkdir(parents=True)
+            runtime_state.mkdir(parents=True)
+            group_runtime_state.mkdir(parents=True)
             group_journal.write_text("shared history", encoding="utf-8")
             (transcript / "turn.jsonl").write_text("history", encoding="utf-8")
 
-            transition = prepare_backend_deployment(
-                instance_id="demo", target_backend="codex", workspace_root=root
-            )
-            try:
-                raise RuntimeError("target deployment failed")
-            except RuntimeError:
-                pass
-
-            self.assertTrue(transition.state_deleted)
-            self.assertFalse(transcript.exists())
-            self.assertFalse(backend_state.exists())
-            self.assertFalse(group_backend_state.exists())
+            with self.assertRaisesRegex(ValueError, "explicit.*runtime-migrate"):
+                prepare_runtime_deployment(
+                    instance_id="demo", target_runtime_id="codex", workspace_root=root
+                )
+            self.assertTrue(transcript.exists())
+            self.assertTrue(runtime_state.exists())
+            self.assertTrue(group_runtime_state.exists())
             self.assertTrue(group_journal.is_file())
-            marker = json.loads((root / ".agent-backend.json").read_text(encoding="utf-8"))
-            self.assertEqual(marker["backend"], "codex")
-            events = [
-                json.loads(line)["event"]
-                for line in transition.audit_path.read_text(encoding="utf-8").splitlines()
-            ]
-            switch_events = events[-2:]
-            self.assertEqual(switch_events, ["state_deleted", "target_deploy_started"])
+            marker = json.loads((root / ".agent-runtime.json").read_text(encoding="utf-8"))
+            self.assertEqual(marker["runtime_id"], "native")
 
     def test_unchanged_backend_preserves_histories(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"
-            prepare_backend_deployment(
-                instance_id="demo", target_backend="native", workspace_root=root
+            prepare_runtime_deployment(
+                instance_id="demo", target_runtime_id="native", workspace_root=root
             )
             transcript = root / "user" / "transcripts"
             transcript.mkdir(parents=True)
             (transcript / "turn.jsonl").write_text("history", encoding="utf-8")
-            transition = prepare_backend_deployment(
-                instance_id="demo", target_backend="native", workspace_root=root
+            transition = prepare_runtime_deployment(
+                instance_id="demo", target_runtime_id="native", workspace_root=root
             )
             self.assertFalse(transition.state_deleted)
             self.assertTrue(transcript.exists())

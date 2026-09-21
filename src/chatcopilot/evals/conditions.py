@@ -24,7 +24,7 @@ def evaluation_conditions(
         "targets": {
             str(target["target_id"]): {
                 key: target.get(key)
-                for key in ("model", "backend", "reasoning_effort", "config_fingerprint")
+                for key in ("model", "runtime_id", "reasoning_effort", "config_fingerprint")
             }
             for target in targets
         },

@@ -555,7 +555,7 @@ export default function TaskEvidencePanel({
                                 )}
                               </span>
                               <span className="context-snapshot-subtitle">
-                                {snapshot.backend || "未知 backend"} · {contextOwner} · 第 {snapshot.iteration + 1} 次调用
+                                {snapshot.runtime_id || "未知 runtime"} · {contextOwner} · 第 {snapshot.iteration + 1} 次调用
                                 {snapshot.reasoning_effort ? ` · ${snapshot.reasoning_effort}` : ""}
                               </span>
                             </span>

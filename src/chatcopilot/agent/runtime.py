@@ -4,7 +4,7 @@
 会话调用 :meth:`AgentRuntime.new_session` 取得 ``AgentSession``。AgentRuntime
 持有：
 
-- LLMClient
+- Native/LangGraph 主模型客户端与显式命名的宿主辅助模型客户端
 - ToolExecutor + 全量 tools schema（融合 builtin + external_tools + mcp client）
 - 可信 PromptBuildInput（由唯一 PromptPlanBuilder 构造不可变 plan）
 - 可选的 SkillIndex（形成唯一 capability.skills layer）
@@ -34,8 +34,7 @@ from chatcopilot.agent.rag.provider import LocalTextRetriever, Retriever
 from chatcopilot.agent.search.coordinator import SearchCoordinator
 from chatcopilot.agent.search.tool import build_search_coordinator
 from chatcopilot.agent.session import ToolPayloadFilter
-from chatcopilot.agent.session_protocol import AgentSessionProtocol
-from chatcopilot.agent.backends import BackendAgentSession, build_backend
+from chatcopilot.agent.runtimes import RuntimeAgentSession, build_runtime_adapter
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.agent.tools.executor import BackgroundSubmitter, PermissionFilter, ToolExecutor
 from chatcopilot.agent.tools.file_delivery import FileSender
@@ -43,7 +42,9 @@ from chatcopilot.agent.tools.registry import ToolRegistry
 from chatcopilot.agent.tools.workspace_context import WorkspaceService
 from chatcopilot.contracts.runtime import McpServerConfig, RagSourceConfig
 from chatcopilot.contracts.execution_scope import CommandTimeouts
-from chatcopilot.contracts.agent_backend import BackendOpenRequest, BackendSessionOptions
+from chatcopilot.contracts.runtime_adapter import RuntimeOpenRequest, RuntimeSessionOptions
+from chatcopilot.contracts.execution import Capability, CapabilitySnapshot, HostRuntimePolicy
+from chatcopilot.contracts.model_runtime import ResolvedRuntimeRoute
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.subagents import SubagentSpec
 from chatcopilot.contracts.skills import SkillIndexEntry
@@ -79,11 +80,13 @@ _USE_DEFAULT_RETRIEVER = _UseDefaultRetriever()
 class AgentRuntime:
     """Agent 顶层入口：装配 LLM + tools schema + executor + skill/memory hooks。"""
 
-    llm: LLMClient
+    main_model_client: LLMClient | None
     tools: tuple[ToolDef, ...]
     tools_schema: tuple[Dict[str, Any], ...]
     runtime_config: ChatConfig
-    research_llm: LLMClient | None = None
+    route: ResolvedRuntimeRoute
+    subagent_default_model_client: LLMClient | None = None
+    research_model_client: LLMClient | None = None
     retriever: Optional[Retriever] = None
     skill_index: tuple[SkillIndexEntry, ...] = ()
     subagents: SubagentSpec = field(default_factory=SubagentSpec)
@@ -93,24 +96,31 @@ class AgentRuntime:
     search_circuit: SearchCircuitBreaker = field(default_factory=SearchCircuitBreaker, repr=False)
     project_roots: tuple[Path, ...] = ()
     readonly_roots: tuple[Path, ...] = ()
-    agent_backend: str = "native"
     tool_registry: ToolRegistry | None = field(default=None, repr=False)
     tool_packs: tuple[str, ...] = ()
     exclude_tools: tuple[str, ...] = ()
     assembly_profile: ToolPackProjectionProfile = "interactive"
     session_capability_packs: tuple[str, ...] = ()
-    search_llm: LLMClient | None = None
-    subagent_llms: Mapping[str, LLMClient] = field(default_factory=dict, repr=False)
+    search_model_client: LLMClient | None = None
+    subagent_model_clients: Mapping[str, LLMClient] = field(default_factory=dict, repr=False)
     search_provider_credentials: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     command_timeouts: CommandTimeouts = field(default_factory=CommandTimeouts)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.research_llm is None:
-            self.research_llm = self.llm
-        if self.search_llm is None:
-            self.search_llm = self.research_llm
-        self.subagent_llms = MappingProxyType(dict(self.subagent_llms))
+        if self.runtime_id == "codex" and self.main_model_client is not None:
+            raise ValueError("Codex runtime cannot own a host main-model client")
+        if self.runtime_id != "codex" and self.main_model_client is None:
+            raise ValueError("Native and LangGraph runtimes require a main-model client")
+        if self.subagent_default_model_client is None:
+            if self.main_model_client is None:
+                raise ValueError("Codex runtime requires an explicit host auxiliary-model client")
+            self.subagent_default_model_client = self.main_model_client
+        if self.research_model_client is None:
+            self.research_model_client = self.subagent_default_model_client
+        if self.search_model_client is None:
+            self.search_model_client = self.research_model_client
+        self.subagent_model_clients = MappingProxyType(dict(self.subagent_model_clients))
         if self.tool_registry is None:
             registry = ToolRegistry()
             if self.tools:
@@ -124,13 +134,18 @@ class AgentRuntime:
                 self.tool_packs = ("runtime.session",)
             self.tool_registry = registry
 
+    @property
+    def runtime_id(self) -> str:
+        return self.route.runtime_id
+
     def close(self) -> None:
         """Release instance resources, including aliased model clients, once."""
         if self._closed:
             return
         self._closed = True
-        _close_resources((self.mcp_provider, self.retriever, self.llm,
-                          self.research_llm, self.search_llm, *self.subagent_llms.values()))
+        _close_resources((self.mcp_provider, self.retriever, self.main_model_client,
+                          self.subagent_default_model_client, self.research_model_client,
+                          self.search_model_client, *self.subagent_model_clients.values()))
 
     def build_unified_search_coordinator(
         self,
@@ -153,7 +168,8 @@ class AgentRuntime:
             and str(tool.metadata.get("mcp_risk", "")) == "search"
         )
         return build_search_coordinator(
-            main_llm=self.search_llm or self.research_llm or self.llm,
+            main_llm=(self.search_model_client or self.research_model_client
+                      or self.subagent_default_model_client),
             budget=self.subagents.research_budget,
             tools=self.tools,
             raw_mcp_tools=raw_mcp_search_tools,
@@ -165,7 +181,7 @@ class AgentRuntime:
             provider_credentials=dict(self.search_provider_credentials),
         )
 
-    def new_session(
+    def open_session(
         self,
         *,
         session_id: str,
@@ -181,7 +197,9 @@ class AgentRuntime:
         retriever_override: Retriever | None | _UseDefaultRetriever = (
             _USE_DEFAULT_RETRIEVER
         ),
-    ) -> AgentSessionProtocol:
+        interaction_handler: Any = None,
+        host_policy: HostRuntimePolicy | None = None,
+    ) -> "OpenedAgentSession":
         """装配一个 AgentSession 实例。
 
         Args:
@@ -215,7 +233,7 @@ class AgentRuntime:
             effective_retriever = self.retriever
         else:
             effective_retriever = cast(Retriever | None, retriever_override)
-        backend_id = (self.agent_backend or "native").strip().lower()
+        runtime_id = self.route.runtime_id
         if self.tool_registry is None:
             raise RuntimeError("AgentRuntime tool registry is not initialized")
         session_registry = ToolRegistry(self.tool_registry.providers.values())
@@ -228,12 +246,12 @@ class AgentRuntime:
         agent_providers = materialize_session_providers(
             SessionCapabilityContext(
                 session_id=session_id,
-                backend_id=backend_id,
-                main_llm=self.llm,
-                research_llm=self.research_llm or self.llm,
+                runtime_id=runtime_id,
+                main_llm=self.subagent_default_model_client,
+                research_llm=self.research_model_client or self.subagent_default_model_client,
                 runtime_config=self.runtime_config,
-                search_llm=self.search_llm,
-                subagent_llms=self.subagent_llms,
+                search_llm=self.search_model_client,
+                subagent_llms=self.subagent_model_clients,
                 search_provider_credentials=self.search_provider_credentials,
                 subagents=self.subagents,
                 base_tools=self.tools,
@@ -265,6 +283,10 @@ class AgentRuntime:
             audience=TOOL_AUDIENCE_MAIN,
         )
         merged_tools = list(snapshot.tools)
+        host_policy = host_policy or HostRuntimePolicy(scope=getattr(workspace_service, "execution_scope", None),
+            network_access=self.subagents.codex.network_access,
+            native_capabilities=frozenset({"files", "shell", "web_search", "image", "image_generation", "subagents"}) if runtime_id == "codex" else frozenset(),
+            interactions_enabled=interaction_handler is not None)
         search_tool = snapshot.index.get("search_information")
         visible_tools = [
             tool
@@ -272,11 +294,35 @@ class AgentRuntime:
             if permission_filter is None or permission_filter(tool) is None
             if search_tool is None or not _hidden_by_search_entry(tool)
         ]
+        native_equivalents = {"read_file", "write_file", "edit_file", "delete_file", "list_directory", "search_content", "run_command"} if runtime_id == "codex" else set()
+        visible_tools = [tool for tool in visible_tools if tool.name not in native_equivalents]
         merged_schema = sorted(
             (build_openai_schema(tool) for tool in visible_tools),
             key=lambda entry: str((entry.get("function") or {}).get("name") or ""),
         )
         visible_names = {tool.name for tool in visible_tools}
+        from chatcopilot.contracts.model_runtime import digest
+        capability_snapshot = CapabilitySnapshot(tuple(Capability(
+            capability_id="host:" + tool.name, execution_owner="host", host_tool_name=tool.name,
+            source_ref=snapshot.sources[tool.name].provider_id + ":" + snapshot.sources[tool.name].pack_id,
+            supported=True, authorized=permission_filter is None or permission_filter(tool) is None,
+            availability="available" if tool.name in visible_names else "unavailable",
+            loading="deferred" if runtime_id == "codex" and tool.name not in {"send_files_to_user", "persona_manage"} else "direct",
+            reason_code="native_equivalent" if tool.name in native_equivalents else "",
+            schema_digest=digest({"input": build_openai_schema(tool), "output": tool.output_schema}),
+        ) for tool in merged_tools))
+        if runtime_id == "codex":
+            native_names = ("files", "shell", "image", "subagents") + (() if search_tool else ("web_search",))
+            capability_snapshot = CapabilitySnapshot((*capability_snapshot.entries, *(Capability(
+                capability_id="codex:" + name, execution_owner="codex", native_capability=name,
+                source_ref="codex-app-server", supported=True, authorized=name in host_policy.native_capabilities,
+            ) for name in native_names)))
+            capability_snapshot = CapabilitySnapshot((*capability_snapshot.entries, Capability(
+                capability_id="codex:extensions", execution_owner="codex", native_capability="extensions",
+                source_ref="instance-extensions", configured=bool(self.runtime_config.codex_extensions),
+                authorized="apps" in host_policy.extension_grants,
+                availability="unobserved" if "apps" in host_policy.extension_grants else "unavailable",
+                reason_code="" if "apps" in host_policy.extension_grants else "extension_not_authorized")))
         observe(
             "session_registry",
             tools=[
@@ -292,17 +338,15 @@ class AgentRuntime:
                 for tool in merged_tools
             ],
         )
-        effective_model = (
-            str(self.runtime_config.routing.code_model or "").strip() or None
-            if backend_id == "codex"
-            else str(getattr(self.llm, "model", "") or "").strip() or None
-        )
+        effective_model = str(self.route.model.model or "").strip() or None
         prompt_plan = PromptPlanBuilder().build(
             replace(
                 prompt_input,
-                backend=backend_id,
+                runtime_id=runtime_id,
                 model=effective_model,
                 memory=memory_snippet or "",
+                capability_digest=capability_snapshot.fingerprint,
+                policy_revision=host_policy.revision,
                 tool_names=tuple(tool.name for tool in visible_tools),
             )
         )
@@ -318,17 +362,17 @@ class AgentRuntime:
         )
 
         workspace_root = None
-        backend_state_root = None
-        isolate_backend_state = False
+        runtime_state_root = None
+        isolate_runtime_state = False
         if workspace_service is not None:
-            requires_backend_state_isolation = getattr(
+            requires_runtime_state_isolation = getattr(
                 workspace_service,
-                "requires_backend_state_isolation",
+                "requires_runtime_state_isolation",
                 None,
             )
             isolation_required = (
-                requires_backend_state_isolation() is True
-                if callable(requires_backend_state_isolation)
+                requires_runtime_state_isolation() is True
+                if callable(requires_runtime_state_isolation)
                 else False
             )
 
@@ -341,14 +385,14 @@ class AgentRuntime:
                 # used by Owner inventory tools. A member Codex sandbox must stay
                 # inside the current chat/user workspace instead.
                 resolved_workspace_root = Path(object_root).expanduser().resolve()
-                resolve_backend_state_root = getattr(
+                resolve_runtime_state_root = getattr(
                     workspace_service,
-                    "resolve_backend_state_root",
+                    "resolve_runtime_state_root",
                     None,
                 )
                 protected_root = (
-                    resolve_backend_state_root()
-                    if callable(resolve_backend_state_root)
+                    resolve_runtime_state_root()
+                    if callable(resolve_runtime_state_root)
                     else None
                 )
                 if not isinstance(protected_root, (str, Path)):
@@ -358,67 +402,141 @@ class AgentRuntime:
                 elif isolation_required:
                     resolved_state_root = None
                 else:
-                    resolved_state_root = resolved_workspace_root / ".backend-sessions"
+                    resolved_state_root = resolved_workspace_root / ".runtime-sessions"
                 return resolved_workspace_root, resolved_state_root
 
             if isolation_required:
-                workspace_root, backend_state_root = resolve_workspace_options()
-                if workspace_root is None or backend_state_root is None:
+                workspace_root, runtime_state_root = resolve_workspace_options()
+                if workspace_root is None or runtime_state_root is None:
                     raise RuntimeError(
-                        "isolated backend requires exact workspace and state roots"
+                        "isolated runtime requires exact workspace and state roots"
                     )
-                isolate_backend_state = True
+                isolate_runtime_state = True
             else:
                 try:
-                    workspace_root, backend_state_root = resolve_workspace_options()
+                    workspace_root, runtime_state_root = resolve_workspace_options()
                 except Exception:  # noqa: BLE001 - legacy non-isolated fallback
                     workspace_root = None
-                    backend_state_root = None
-        backend = build_backend(
-            backend_id,
+                    runtime_state_root = None
+        adapter = build_runtime_adapter(
+            self.route,
             tool_names={tool.name for tool in visible_tools},
             runtime_config=self.runtime_config,
             tools=tuple(visible_tools),
             tool_executor=executor,
             tool_payload_filter=payload_filter,
-            backend_policy=self.subagents.codex,
-            llm=self.llm,
+            runtime_policy=(replace(self.subagents.codex, web_search_mode="disabled")
+                            if runtime_id == "codex" and search_tool is not None else self.subagents.codex),
+            turn_timeout_seconds=self.route.turn_timeout_seconds,
+            interaction_handler=interaction_handler,
+            llm=self.main_model_client,
             tools_schema=merged_schema,
             retriever=effective_retriever,
         )
-        options: BackendSessionOptions = {
+        options: RuntimeSessionOptions = {
             "workspace_root": workspace_root,
-            "backend_state_root": backend_state_root,
-            "isolate_backend_state": isolate_backend_state,
+            "runtime_state_root": runtime_state_root,
+            "isolate_runtime_state": isolate_runtime_state,
             # A shared-group actor cursor currently lives in the in-process
             # SessionState.  Reusing a persisted native thread after eviction
             # or process restart would therefore inject journal history from
             # sequence zero into a thread that already contains it.  Keep live
             # multi-turn resume, but start a fresh native thread whenever an
-            # isolated actor backend is materialized again.
-            "restore_persisted_native_session": not isolate_backend_state,
+            # isolated actor runtime is materialized again.
+            "restore_persisted_native_session": (
+                getattr(workspace_service.resolve_workspace(create=False), "scope", "actor") != "group_shared"
+                if workspace_service is not None else True),
             "role_hint": caller_role_hint or "user",
             "execution_scope": getattr(workspace_service, "execution_scope", None),
         }
-        session_ref = backend.open_session(
-            BackendOpenRequest(
+        session_ref = adapter.open_session(
+            RuntimeOpenRequest(
                 session_id=session_id,
                 prompt_plan=prompt_plan,
+                route=self.route,
                 allowed_tool_names=frozenset(tool.name for tool in visible_tools),
                 caller_identity=caller_identity,
                 options=options,
+                capability_snapshot=capability_snapshot,
+                host_policy=host_policy,
             )
         )
-        return BackendAgentSession(
-            backend,
-            session_ref,
-            allowed_tool_names=frozenset(tool.name for tool in visible_tools),
+        return OpenedAgentSession(
+            session=RuntimeAgentSession(
+                adapter,
+                session_ref,
+                allowed_tool_names=frozenset(tool.name for tool in visible_tools),
+                capability_snapshot=capability_snapshot,
+                policy_revision=host_policy.revision,
+            ),
+            host_tools=executor,
         )
+
+
+@dataclass(frozen=True)
+class OpenedAgentSession:
+    """Explicit result of AgentRuntime assembly: public session plus host tool port."""
+
+    session: RuntimeAgentSession
+    host_tools: ToolExecutor
+
+    @property
+    def capabilities(self):
+        return self.session.capabilities
+
+    @property
+    def capability_snapshot(self):
+        return self.session.capability_snapshot
+
+    @property
+    def policy_revision(self) -> str:
+        return self.session.policy_revision
+
+    @property
+    def runtime_session_ref(self):
+        return self.session.runtime_session_ref
+
+    @property
+    def runtime_id(self) -> str:
+        return self.session.runtime_id
+
+    @property
+    def busy(self) -> bool:
+        return self.session.busy
+
+    @property
+    def message_count(self) -> int:
+        return self.session.message_count
+
+    def run_task(self, *args, **kwargs):
+        return self.session.run_task(*args, **kwargs)
+
+    def update_context(self, plan):
+        return self.session.update_context(plan)
+
+    def set_prompt_plan(self, plan):
+        return self.session.set_prompt_plan(plan)
+
+    def record_exchange(self, user_text: str, assistant_text: str) -> None:
+        self.session.record_exchange(user_text, assistant_text)
+
+    def snapshot_transcript(self):
+        return self.session.snapshot_transcript()
+
+    def cancel(self) -> None:
+        self.session.cancel()
+
+    def close(self) -> None:
+        self.session.close()
+
+    def discard(self) -> None:
+        self.session.discard()
 
 
 def build_agent_runtime(
     *,
     chat_config: ChatConfig,
+    route: ResolvedRuntimeRoute,
     research_llm_config: LLMConfig | None = None,
     search_llm_config: LLMConfig | None = None,
     subagent_llm_configs: Sequence[tuple[str, LLMConfig]] = (),
@@ -431,7 +549,6 @@ def build_agent_runtime(
     rag_sources: Sequence[RagSourceConfig] = (),
     mcp_servers: Sequence[McpServerConfig] = (),
     subagents: Optional[SubagentSpec] = None,
-    agent_backend: str = "native",
     assembly_profile: ToolPackProjectionProfile = "interactive",
     project_roots: tuple[Path, ...] = (),
     readonly_roots: tuple[Path, ...] = (),
@@ -449,11 +566,13 @@ def build_agent_runtime(
         rag_sources: BotSpec 声明的本地 RAG 知识源；为空时检索能力 no-op。
         mcp_servers: BotSpec 声明的 MCP server 绑定。
         subagents: BotSpec 声明的委托 Agent 配置。
-        agent_backend: 主 Agent 实现选择；当前支持 native / langgraph / codex。
+        route: 已冻结的主 Agent Runtime、模型和运行参数唯一事实源。
         assembly_profile: 宿主信任边界对应的能力投影；直接调用默认保持交互行为。
     """
     if assembly_profile not in TOOL_PACK_PROJECTION_PROFILES:
         raise ValueError(f"unknown Agent runtime assembly profile: {assembly_profile}")
+    if chat_config.llm.model_route() != route.model:
+        raise ValueError("ResolvedRuntimeRoute.model does not match the frozen chat model configuration")
     configured_subagents = subagents or SubagentSpec()
     budgets = [configured_subagents.agents.get(name, configured_subagents.defaults)
                for name in configured_subagents.include]
@@ -542,18 +661,25 @@ def build_agent_runtime(
         for existing_config, client in clients:
             if config == existing_config:
                 return client
-        client = LLMClient(config)
+        if route.runtime_id == "codex" and config == chat_config.llm:
+            from chatcopilot.core.deferred_model import DeferredModelClient
+            client = DeferredModelClient(config, LLMClient)
+        else:
+            client = LLMClient(config)
         clients.append((replace(config), client))
         return client
 
     retriever = None
     mcp_provider = None
     try:
-        llm = model_client(chat_config.llm)
+        helper_default_model_client = model_client(chat_config.llm)
+        main_model_client = (
+            None if route.runtime_id == "codex" else helper_default_model_client
+        )
         effective_research_config = research_llm_config or chat_config.llm
-        research_llm = model_client(effective_research_config)
-        search_llm = model_client(search_llm_config or effective_research_config)
-        subagent_llms = {prefix: model_client(config) for prefix, config in subagent_llm_configs}
+        research_model_client = model_client(effective_research_config)
+        search_model_client = model_client(search_llm_config or effective_research_config)
+        subagent_model_clients = {prefix: model_client(config) for prefix, config in subagent_llm_configs}
         search_circuit = SearchCircuitBreaker(quota_max_ttl=search_quota_max_ttl)
         retriever = LocalTextRetriever(rag_sources) if rag_sources else None
         mcp_provider = McpToolProvider(tuple(mcp_servers)) if mcp_servers else None
@@ -589,13 +715,15 @@ def build_agent_runtime(
             audience=TOOL_AUDIENCE_SUBAGENT,
         )
         return AgentRuntime(
-            llm=llm,
+            main_model_client=main_model_client,
+            subagent_default_model_client=helper_default_model_client,
             tools=snapshot.tools,
             tools_schema=snapshot.openai_schema,
             runtime_config=chat_config,
-            research_llm=research_llm,
-            search_llm=search_llm,
-            subagent_llms=subagent_llms,
+            route=route,
+            research_model_client=research_model_client,
+            search_model_client=search_model_client,
+            subagent_model_clients=subagent_model_clients,
             search_provider_credentials=search_provider_credentials,
             search_circuit=search_circuit,
             retriever=retriever,
@@ -604,7 +732,6 @@ def build_agent_runtime(
             subagent_tools=subagent_snapshot.tools,
             mcp_provider=mcp_provider,
             mcp_configs=tuple(mcp_servers),
-            agent_backend=agent_backend,
             tool_registry=registry,
             tool_packs=tuple(selected_packs),
             exclude_tools=tuple(exclude_tools or ()),
@@ -650,4 +777,4 @@ def _hidden_by_search_entry(tool: ToolDef) -> bool:
     return tool.metadata.get("subagent_kind") == "search"
 
 
-__all__ = ["AgentRuntime", "build_agent_runtime"]
+__all__ = ["AgentRuntime", "OpenedAgentSession", "build_agent_runtime"]

@@ -115,7 +115,7 @@ _CASE_FIELDS = {
 _TURN_FIELDS = {"text", "resources"}
 _REQUIREMENT_FIELDS = {
     "features",
-    "backends",
+    "runtime_ids",
     "platforms",
     "tool_packs",
     "tools",
@@ -505,19 +505,19 @@ def _parse_case_requirements(
 ) -> EvalCaseRequirements:
     raw = _strict_mapping(value, source, f"{field}.requirements")
     _reject_unknown(raw, _REQUIREMENT_FIELDS, f"{source}: {field}.requirements")
-    backends = _string_list(raw.get("backends"), source, f"{field}.requirements.backends")
-    unknown_backends = sorted(set(backends) - {"native", "langgraph", "codex"})
-    if unknown_backends:
+    runtime_ids = _string_list(raw.get("runtime_ids"), source, f"{field}.requirements.runtime_ids")
+    unknown_runtime_ids = sorted(set(runtime_ids) - {"native", "langgraph", "codex"})
+    if unknown_runtime_ids:
         raise ValueError(
-            f"{source}: {field}.requirements.backends contains unsupported values: "
-            f"{', '.join(unknown_backends)}"
+            f"{source}: {field}.requirements.runtime_ids contains unsupported values: "
+            f"{', '.join(unknown_runtime_ids)}"
         )
     env_keys = _string_list(raw.get("env_keys"), source, f"{field}.requirements.env_keys")
     if any(not _ENV_KEY_RE.fullmatch(item) for item in env_keys):
         raise ValueError(f"{source}: {field}.requirements.env_keys contains an invalid name")
     return EvalCaseRequirements(
         features=_string_list(raw.get("features"), source, f"{field}.requirements.features"),
-        backends=backends,
+        runtime_ids=runtime_ids,
         platforms=_string_list(raw.get("platforms"), source, f"{field}.requirements.platforms"),
         tool_packs=_string_list(raw.get("tool_packs"), source, f"{field}.requirements.tool_packs"),
         tools=_string_list(raw.get("tools"), source, f"{field}.requirements.tools"),

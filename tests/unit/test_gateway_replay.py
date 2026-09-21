@@ -17,7 +17,7 @@ from chatcopilot.evals.trial_capture import capture
 @pytest.fixture
 def runtime(monkeypatch):
     runtime = load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False)
-    runtime = replace(runtime, agent_backend="native")
+    runtime = replace(runtime, runtime_id="native")
     monkeypatch.setattr(gateway_replay, "load_evaluation_runtime", lambda _: runtime)
     class Calls(list):
         responses = []
@@ -124,3 +124,63 @@ def test_original_image_traverses_materialization_and_backend_dispatch(tmp_path,
     assert verdict.passed, evidence
     dispatched = [event for event in result.events if event["type"] == "InputResourcesDispatched"]
     assert dispatched and dispatched[0]["resources"][0]["sha256"] == reference["sha256"]
+
+
+def test_codex_question_reply_bypasses_waiting_conversation_via_real_gateway(tmp_path, monkeypatch):
+    """Only process/auth/OneBot peers are controlled; no actor/session substitute."""
+    import asyncio
+    import re
+    import subprocess
+    from chatcopilot.core.model_credentials import AccessCredential
+    from chatcopilot.evals.image_delivery_fixture import OneBotFixtureConnection
+    from chatcopilot.contracts.interactions import OperatorResponder
+    selected = load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False)
+    monkeypatch.setattr(gateway_replay, "load_evaluation_runtime", lambda _: selected)
+    monkeypatch.setattr("chatcopilot.agent.runtimes.codex.access_credential", lambda *a, **k: AccessCredential("fixture", "fixture-account", 1))
+    executable = tmp_path / "codex"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    monkeypatch.setenv("CHATCOPILOT_CODEX_BIN", str(executable))
+    holder = {}
+    build = gateway_replay.build_gateway_runtime_host
+    def capture_host(*args, **kwargs):
+        holder["host"] = build(*args, **kwargs)
+        return holder["host"]
+    monkeypatch.setattr(gateway_replay, "build_gateway_runtime_host", capture_host)
+    original_send = OneBotFixtureConnection.send
+    async def send(self, raw):
+        await original_send(self, raw)
+        request = json.loads(raw)
+        text = json.dumps(request.get("params", {}).get("message", []), ensure_ascii=False)
+        found = re.search(r"interaction_[a-f0-9]+", text)
+        if found:
+            await self.queue.put(json.dumps({"post_type": "message", "message_type": "group", "self_id": "10001",
+                "message_id": "reply-2", "group_id": "30003", "user_id": "20002",
+                "sender": {"user_id": "20002", "nickname": "Evaluation"},
+                "message": [{"type": "at", "data": {"qq": "10001"}},
+                    {"type": "text", "data": {"text": "答复 " + found.group() + " selected"}}]}))
+    monkeypatch.setattr(OneBotFixtureConnection, "send", send)
+    def native_turn(command, **kwargs):
+        kwargs["on_thread"]("fixture-thread")
+        notify = kwargs["on_notification"]
+        notify("turn/started", {"threadId": "fixture-thread", "turn": {"id": "fixture-turn"}})
+        resolution = kwargs["on_request"]("item/tool/requestUserInput", {"threadId": "fixture-thread",
+            "turnId": "fixture-turn", "itemId": "question", "questions": [{"id": "q", "header": "Choice", "question": "Which?"}]})
+        assert resolution == {"answers": {"q": {"answers": ["selected"]}}}
+        rows = holder["host"].coordinator.interactions.list(OperatorResponder("fixture", "fixture"))
+        holder["interaction"] = rows[0]
+        notify("item/completed", {"threadId": "fixture-thread", "turnId": "fixture-turn",
+            "item": {"id": "answer", "type": "agentMessage", "phase": "final_answer", "text": "actual reply"}})
+        notify("turn/completed", {"threadId": "fixture-thread", "turn": {"id": "fixture-turn", "status": "completed"}})
+        return subprocess.CompletedProcess(command, 0, "", "")
+    monkeypatch.setattr("chatcopilot.agent.runtimes.codex.run_app_server", native_turn)
+    # A broken bypass must fail quickly, not hold a test for the interaction TTL.
+    execute_async = gateway_replay._execute
+    async def bounded(*args, **kwargs):
+        return await asyncio.wait_for(execute_async(*args, **kwargs), timeout=15)
+    monkeypatch.setattr(gateway_replay, "_execute", bounded)
+    result, verdict = execute(tmp_path, declaration())
+    assert verdict.passed, result
+    assert holder["interaction"]["state"] == "answered"
+    assert holder["interaction"]["responder"]["kind"] == "actor"
+    assert not result.evidence[0]["runtime_replay"]["production_delivery"]

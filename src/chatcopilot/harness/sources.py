@@ -1,4 +1,4 @@
-"""Source port: freeze provenance independently from any execution backend."""
+"""Source port: freeze provenance independently from any Agent runtime."""
 from __future__ import annotations
 
 import hashlib

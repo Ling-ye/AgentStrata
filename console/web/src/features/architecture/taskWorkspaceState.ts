@@ -20,7 +20,7 @@ export function taskWorkspaceState(instanceId: string, params: URLSearchParams, 
   const range = ["1", "7", "30", "custom"].includes(String(record.range)) ? String(record.range) : "1";
   const raw = record.filters && typeof record.filters === "object" ? record.filters as Record<string, unknown> : {};
   const filters: ObservationFilters = {};
-  for (const key of ["state", "config_id", "backend", "model", "component", "error_code", "search"] as const) {
+  for (const key of ["state", "config_id", "runtime_id", "model", "component", "error_code", "search"] as const) {
     if (typeof raw[key] === "string") filters[key] = raw[key].slice(0, 256);
   }
   for (const key of ["since", "until", "min_ms", "page"] as const) {

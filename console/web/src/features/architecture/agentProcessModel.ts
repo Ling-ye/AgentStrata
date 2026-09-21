@@ -45,8 +45,8 @@ export function agentProcess(step: DisplayStep) {
   const kind = String(event.data?.process_kind ?? "");
   const name = event.name ?? String(event.data?.name ?? "");
   const model = event.model ?? String(event.data?.model ?? "未记录模型");
-  const modelCall = kind === "model_call" || event.kind.startsWith("LlmCall") && kind !== "backend_execution";
-  const execution = kind === "backend_execution";
+  const modelCall = kind === "model_call" || event.kind.startsWith("LlmCall") && kind !== "runtime_execution";
+  const execution = kind === "runtime_execution";
   const catalog = kind === "tool_catalog";
   const tool = kind === "tool" || event.kind === "ToolStarted" || event.kind === "ToolFinished";
   const message = kind === "message";

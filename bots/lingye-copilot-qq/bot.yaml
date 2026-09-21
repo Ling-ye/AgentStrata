@@ -20,11 +20,23 @@ channels:
 
 llm:
   chat:
-    env_prefix: CHATCOPILOT_LINGYE
+    env_prefix: CHATCOPILOT_LINGYE_MAIN
+    provider: openai
+    model: gpt-5.6-terra
+    reasoning_effort: medium
+    profiles:
+      sol-max:
+        model: gpt-5.6-sol
+        reasoning_effort: max
+    auth:
+      mode: chatgpt
+      profile: main
   research:
+    inherit_env_prefix: CHATCOPILOT_LINGYE
     env_prefix: CHATCOPILOT_LINGYE_RESEARCH
     model: gpt-5.6-terra
   code:
+    env_prefix: CHATCOPILOT_LINGYE
     enabled: true
     model: gpt-5.6-terra
     reasoning_effort: medium
@@ -62,7 +74,12 @@ tools:
     servers: mcp/servers.yaml
 
 agents:
-  backend: codex
+  runtime: codex
+  runtime_options:
+    native:
+      env_prefix: CHATCOPILOT_LINGYE
+    codex:
+      turn_timeout_seconds: 21600
   unified_search:
     enabled: true
     providers:

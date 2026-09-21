@@ -231,7 +231,7 @@ def _image_dispatch_matches_staged_resources(observation: TrialObservation) -> b
         if (
             isinstance(resources, list)
             and resources == staged
-            and receipt.get("backend") in {"native", "langgraph", "codex"}
+            and receipt.get("runtime_id") in {"native", "langgraph", "codex"}
             and isinstance(receipt.get("turn_index"), int)
             and bool(str(receipt.get("request_id") or ""))
         ):
@@ -862,7 +862,7 @@ def _image_exact_answer(
     ):
         return _passed(image_dispatched=True, normalized_exact=True)
     return _failed(
-        "image answer lacks matching backend dispatch evidence or normalized exact text",
+        "image answer lacks matching runtime dispatch evidence or normalized exact text",
         missing=("input_resource_dispatch",),
     )
 

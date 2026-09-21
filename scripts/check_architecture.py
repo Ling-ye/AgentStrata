@@ -188,7 +188,7 @@ RULES = (
             ("evaluation_adapter.py", ("chatcopilot.evals.service",)),
             ("repair_session.py", ("chatcopilot.external_tools.codex_cli",)),
             ("gateway_adapter.py", ("chatcopilot.gateway.observation_queries", "chatcopilot.gateway.observation_store")),
-            ("codex_adapter.py", ("chatcopilot.agent.backends.codex_permissions", "chatcopilot.agent.context.prompt_plan",
+            ("codex_adapter.py", ("chatcopilot.agent.runtimes.codex_permissions", "chatcopilot.agent.context.prompt_plan",
                                   "chatcopilot.external_tools.codex_cli", "chatcopilot.external_tools.codex_cli.process_runner")),
         ) for module in modules),
     ),
@@ -646,6 +646,48 @@ def _compatibility_import_checks() -> dict[str, dict[str, list[str]]]:
 
 def _semantic_invariants() -> dict[str, dict[str, list[str]]]:
     violations: dict[str, dict[str, list[str]]] = {}
+
+    retired_runtime_vocabulary = (
+        "agent_backend",
+        "AGENT_BACKEND_IDS",
+        "build_backend",
+        "AgentBackend",
+        "BackendOpenRequest",
+        "BackendSessionRef",
+        "BackendAgentSession",
+        "CodeModelSelection",
+        "code_model_selection",
+    )
+    cutover_readers = {
+        SRC / "runtime_cutover.py",
+        SRC / "botspec" / "runtime_cutover.py",
+        SRC / "gateway" / "runtime_cutover.py",
+    }
+    vocabulary_violations: dict[str, list[str]] = {}
+    for path in SRC.rglob("*.py"):
+        if path in cutover_readers:
+            continue
+        source = path.read_text(encoding="utf-8-sig")
+        found = [token for token in retired_runtime_vocabulary if token in source]
+        if found:
+            vocabulary_violations[path.relative_to(ROOT).as_posix()] = found
+    if vocabulary_violations:
+        violations["retired_agent_runtime_vocabulary"] = vocabulary_violations
+
+    retired_runtime_paths = (
+        SRC / "agent" / "backends",
+        SRC / "contracts" / "agent_backend.py",
+        SRC / "botspec" / "backend_state.py",
+        SRC / "runtime_migration.py",
+        SRC / "gateway" / "state_migration.py",
+    )
+    present_runtime_paths = [
+        path.relative_to(ROOT).as_posix() for path in retired_runtime_paths if path.exists()
+    ]
+    if present_runtime_paths:
+        violations["retired_agent_runtime_paths"] = {
+            "repository": present_runtime_paths
+        }
 
     turn_path = SRC / "agent" / "turn.py"
     if turn_path.exists() and "chatcopilot.agent.session" in _imports(turn_path):

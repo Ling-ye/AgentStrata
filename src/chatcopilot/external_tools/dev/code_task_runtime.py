@@ -21,7 +21,6 @@ from chatcopilot.contracts.code_tasks import (
     CodeTaskLimits,
     validate_code_task_title,
 )
-from chatcopilot.contracts.model_selection import CODEX_REASONING_EFFORTS
 from chatcopilot.contracts.tools import ToolContext, ToolHandlerError, ToolResult
 from chatcopilot.core.jobs import (
     code_task_state_lock,
@@ -31,7 +30,7 @@ from chatcopilot.core.jobs import (
     write_json_atomic,
 )
 from chatcopilot.core.source_manifest import filter_source_paths
-from chatcopilot.external_tools.codex_cli.credentials import (
+from chatcopilot.core.model_credentials import (
     CredentialError,
     credential_lease,
     validate_auth_root_path,
@@ -168,6 +167,7 @@ def execute_code_task(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
                     rendered_prompt,
                     native_session_id=native_session_id,
                     limits=limits,
+                    selection=ctx.job.worker_model_selection,
                 )
                 _write_codex_session(
                     job_dir,
@@ -816,17 +816,18 @@ def _run_codex_stream(
     *,
     native_session_id: str,
     limits: CodeTaskLimits,
+    selection: Any,
 ) -> tuple[str, str]:
-    model = os.environ.get(f"{ENV_PREFIX}_CODE_MODEL", "").strip()
-    effort = os.environ.get(
-        f"{ENV_PREFIX}_CODE_REASONING_EFFORT", ""
-    ).strip().lower()
-    if not model or effort not in CODEX_REASONING_EFFORTS:
+    from chatcopilot.contracts.model_selection import WorkerModelSelection
+
+    if not isinstance(selection, WorkerModelSelection):
         raise ToolHandlerError(
-            "code-worker model policy was not derived from BotSpec",
+            "code-worker task is missing its frozen worker_model_selection",
             error_code="code_task_model_policy_invalid",
             stage="preparing",
         )
+    model = selection.model
+    effort = selection.reasoning_effort
     codex_args = [
         "/opt/codex/codex",
         "exec",

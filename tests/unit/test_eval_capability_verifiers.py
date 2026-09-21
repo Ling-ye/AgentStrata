@@ -197,7 +197,7 @@ def _input_resource(
 def _image_dispatch(*resources: dict[str, object]) -> dict[str, object]:
     return {
         "kind": "input_resource_dispatch",
-        "backend": "codex",
+        "runtime_id": "codex",
         "turn_index": 0,
         "request_id": "dispatch-0123456789abcdef",
         "resources": [

@@ -60,7 +60,7 @@ def _write_starter_bot(tmp_path: Path, extra_lines: str = "") -> tuple[Path, Pat
                 provider: markdown
                 namespace: token-test-qq
             agents:
-              backend: native
+              runtime: native
               presets: []
             workspace:
               root_env: CHATCOPILOT_WORKSPACE_ROOT

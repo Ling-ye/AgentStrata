@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Literal, Mapping
 
-from chatcopilot.external_tools.codex_cli.credentials import (
+from chatcopilot.core.model_credentials import (
     CredentialBusyError,
     CredentialError,
     CredentialLane,

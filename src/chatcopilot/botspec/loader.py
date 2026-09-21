@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from chatcopilot.component_catalog.subagents import get_subagent_preset, get_workflow
-from chatcopilot.contracts.agent_backend import AGENT_BACKEND_IDS
+from chatcopilot.contracts.runtime_adapter import RUNTIME_IDS
 from chatcopilot.contracts.subagents import (
     CachePolicySpec,
     CodexMainSessionPolicy,
@@ -21,7 +21,7 @@ from chatcopilot.contracts.subagents import (
 )
 from chatcopilot.contracts.model_selection import (
     CODEX_REASONING_EFFORTS,
-    CodeModelProfile,
+    WorkerModelProfile,
 )
 from chatcopilot.botspec.model import (
     BotSpec,
@@ -496,11 +496,23 @@ def _validate_gateway_channels(
         )
 
 
+def _parse_model_spec(raw: dict):
+    from chatcopilot.botspec.model import ModelSpec
+    from chatcopilot.contracts.model_runtime import parse_auth
+    auth = parse_auth(_mapping(raw["auth"], "model.auth")) if "auth" in raw else None
+    return ModelSpec(inherit_env_prefix=_optional_str(raw.get("inherit_env_prefix")),
+                     provider=_optional_str(raw.get("provider")), model=_optional_str(raw.get("model")),
+                     api=_optional_str(raw.get("api")), base_url=_optional_str(raw.get("base_url")),
+                     auth=auth, reasoning_effort=_optional_str(raw.get("reasoning_effort")),
+                     timeout=_strict_positive_int(raw["timeout"], "model.timeout", 120) if "timeout" in raw else None,
+                     profiles=_parse_code_model_profiles(raw.get("profiles", {})))
+
+
 def _validate_llm_spec(spec: BotSpec, issues: list[ValidationIssue]) -> None:
     raw_llm = spec.raw.get("llm") or {}
     for slot, allowed in (
-        ("chat", {"env_prefix"}),
-        ("research", {"env_prefix", "model"}),
+        ("chat", {"env_prefix", "inherit_env_prefix", "provider", "model", "api", "base_url", "auth", "reasoning_effort", "timeout", "profiles"}),
+        ("research", {"env_prefix", "inherit_env_prefix", "provider", "model", "api", "base_url", "auth", "reasoning_effort", "timeout", "profiles"}),
         ("code", {item.name for item in fields(CodeLLMSpec)} | {"default_route"}),
     ):
         raw = raw_llm.get(slot) or {}
@@ -532,7 +544,7 @@ def _validate_llm_spec(spec: BotSpec, issues: list[ValidationIssue]) -> None:
         issues.append(
             ValidationIssue(
                 "error",
-                "llm.code.default_route is removed; select the instance backend with agents.backend",
+                "llm.code.default_route is removed; select the instance runtime with agents.runtime",
                 "llm.code.default_route",
             )
         )
@@ -752,8 +764,10 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         llm=LLMSpec(
             env_prefix=chat_env_prefix,
             research_env_prefix=research_env_prefix,
-            research_model=_optional_str(llm_research.get("model")),
+            chat=_parse_model_spec(llm_chat),
+            research=_parse_model_spec(llm_research),
             code=CodeLLMSpec(
+                env_prefix=_optional_str(llm_code.get("env_prefix")),
                 enabled=_strict_bool(
                     llm_code.get("enabled", _MISSING),
                     "llm.code.enabled",
@@ -947,22 +961,22 @@ def _optional_str(value: Any) -> str | None:
     return text or None
 
 
-def _parse_code_model_profiles(raw: Any) -> dict[str, CodeModelProfile]:
+def _parse_code_model_profiles(raw: Any) -> dict[str, WorkerModelProfile]:
     profiles = _mapping(raw, "llm.code.profiles")
-    parsed: dict[str, CodeModelProfile] = {}
+    parsed: dict[str, WorkerModelProfile] = {}
     for raw_name, raw_profile in profiles.items():
         name = str(raw_name or "").strip().lower()
         profile = _mapping(raw_profile, f"llm.code.profiles.{name}")
         model = str(profile.get("model") or "").strip()
         effort = str(profile.get("reasoning_effort") or "medium").strip().lower()
         try:
-            parsed[name] = CodeModelProfile(
+            parsed[name] = WorkerModelProfile(
                 model=model,
                 reasoning_effort=effort,
             )
         except ValueError:
             # Preserve invalid values for validate_botspec() to report with a field path.
-            parsed[name] = object.__new__(CodeModelProfile)
+            parsed[name] = object.__new__(WorkerModelProfile)
             object.__setattr__(parsed[name], "model", model)
             object.__setattr__(parsed[name], "reasoning_effort", effort)
     return parsed
@@ -974,11 +988,42 @@ def _parse_subagents(
     field_prefix: str = "agents",
     research_env_prefix: str | None = None,
 ) -> SubagentSpec:
+    include = tuple(_str_list(raw.get("presets", raw.get("include", []))))
+    supported_fields = {
+        "runtime",
+        "runtime_options",
+        "presets",
+        "include",
+        "defaults",
+        "custom",
+        "search_budget",
+        "unified_search",
+        "research_router",
+        "workflows",
+        "max_workflow_depth",
+        "codex",
+        "persona_control",
+        *include,
+    }
+    unknown_fields = sorted(set(raw) - supported_fields)
+    if unknown_fields:
+        raise ValueError(
+            f"{field_prefix} contains unsupported field(s): "
+            + ", ".join(unknown_fields)
+        )
+    options = _mapping(raw.get("runtime_options", {}), "agents.runtime_options")
+    if set(options) - {"codex", "native"}:
+        raise ValueError("unsupported agents.runtime_options entry")
+    native_options = _mapping(options.get("native", {}), "agents.runtime_options.native")
+    if set(native_options) - {"env_prefix"}:
+        raise ValueError("unsupported Native runtime option")
+    codex_options = _mapping(options.get("codex", {}), "agents.runtime_options.codex")
+    if set(codex_options) - {"turn_timeout_seconds", "extensions"}:
+        raise ValueError("unsupported Codex runtime option")
     if "persona_control" in raw:
         raise ValueError(
             f"{field_prefix}.persona_control was removed; enable persona.control in tools.packs"
         )
-    include = tuple(_str_list(raw.get("presets", raw.get("include", []))))
     defaults = _parse_subagent_budget(
         _mapping(raw.get("defaults", {}), f"{field_prefix}.defaults"),
         SubagentBudgetSpec(),
@@ -1018,7 +1063,11 @@ def _parse_subagents(
         field_prefix=f"{field_prefix}.unified_search.providers",
     )
     return SubagentSpec(
-        backend=str(raw.get("backend", "native")).strip().lower() or "native",
+        runtime=str(raw.get("runtime", "native")).strip().lower() or "native",
+        native_env_prefix=_optional_str(native_options.get("env_prefix")),
+        codex_extensions=_optional_str(codex_options.get("extensions")),
+        codex_turn_timeout_seconds=_strict_positive_int(codex_options.get("turn_timeout_seconds"),
+            "agents.runtime_options.codex.turn_timeout_seconds", 21600),
         codex=_parse_codex_main_session_policy(raw, field_prefix=field_prefix),
         include=include,
         defaults=defaults,
@@ -1413,12 +1462,12 @@ def _is_loopback_host(hostname: str) -> bool:
 
 
 def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
-    if spec.agents.backend not in AGENT_BACKEND_IDS:
+    if spec.agents.runtime not in RUNTIME_IDS:
         issues.append(
             ValidationIssue(
                 "error",
-                "agents.backend must be one of: " + ", ".join(AGENT_BACKEND_IDS),
-                "agents.backend",
+                "agents.runtime must be one of: " + ", ".join(RUNTIME_IDS),
+                "agents.runtime",
             )
         )
 
@@ -1451,11 +1500,11 @@ def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
                 "agents.codex",
             )
         )
-    if spec.agents.backend != "codex" and policy != CodexMainSessionPolicy():
+    if spec.agents.runtime != "codex" and policy != CodexMainSessionPolicy():
         issues.append(
             ValidationIssue(
                 "error",
-                "agents.codex policy requires agents.backend=codex",
+                "agents.codex policy requires agents.runtime=codex",
                 "agents.codex",
             )
         )

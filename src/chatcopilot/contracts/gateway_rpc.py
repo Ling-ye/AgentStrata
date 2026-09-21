@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, TypeAlias, Union
+from typing import Any, Literal, Mapping, TypeAlias, Union
 
 from chatcopilot.contracts.gateway import (
     ChannelAccountRef,
@@ -20,7 +20,7 @@ ChannelConnectionState: TypeAlias = Literal[
     "degraded",
     "failed",
 ]
-ApprovalStatus: TypeAlias = Literal["pending", "resolved", "expired"]
+ApprovalStatus: TypeAlias = Literal["pending", "resolved", "expired", "cancelled"]
 ApprovalDecisionValue: TypeAlias = Literal["approve", "deny"]
 ApprovalDecisionOption: TypeAlias = Literal["approve", "deny"]
 ChatStopReason: TypeAlias = Literal["completed", "aborted"]
@@ -188,7 +188,21 @@ class ApprovalsResolveParams:
     challenge: str
 
 
+@dataclass(frozen=True)
+class InteractionsParams:
+    operation: str
+    session_id: str | None = None
+    interaction_id: str | None = None
+    resolution: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class InteractionsResult:
+    payload: Mapping[str, Any]
+
+
 GatewayRequestParams = Union[
+    InteractionsParams,
     HealthParams,
     StatusParams,
     ChannelsListParams,
@@ -400,6 +414,7 @@ class EventsReplayResult:
 
 
 GatewayMethodResult = Union[
+    InteractionsResult,
     HealthResult,
     StatusResult,
     ChannelsListResult,

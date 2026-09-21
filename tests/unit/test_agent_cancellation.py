@@ -10,18 +10,18 @@ import time
 import unittest
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from chatcopilot.core.config import LLMConfig, ChatConfig
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from tests.prompt_plan_fixture import prompt_plan
+from tests.prompt_plan_fixture import prompt_plan, runtime_route
 
-from chatcopilot.agent.backends import BackendAgentSession
-from chatcopilot.agent.backends.codex import CodexAgentBackend
-from chatcopilot.agent.backends.inprocess import InProcessAgentBackend
+from chatcopilot.agent.runtimes import RuntimeAgentSession
+from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
+from chatcopilot.agent.runtimes.inprocess import NativeRuntimeAdapter
 from chatcopilot.agent.langgraph_session import LangGraphAgentSession
 from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.tools.executor import ToolExecutor
@@ -31,7 +31,7 @@ from chatcopilot.contracts.agent import (
     TextDelta,
     ToolFinished,
 )
-from chatcopilot.contracts.agent_backend import BackendOpenRequest
+from chatcopilot.contracts.runtime_adapter import RuntimeOpenRequest
 from chatcopilot.contracts.cancellation import (
     CancellationProbe,
     CancellationRequested,
@@ -251,16 +251,17 @@ class CancellationContractTests(unittest.TestCase):
     def test_inprocess_backend_propagates_probe_to_native_session(self) -> None:
         llm = _FakeLLM([ChatResult(content="must not run")])
         native = _make_session(llm)
-        backend = InProcessAgentBackend(
-            "native", tool_names=set(), session_factory=lambda _request: native,
+        backend = NativeRuntimeAdapter(
+            tool_names=set(), session_factory=lambda _request: native,
         )
         ref = backend.open_session(
-            BackendOpenRequest(
+            RuntimeOpenRequest(
                 session_id="sid",
                 prompt_plan=prompt_plan("system"),
+                route=runtime_route(),
             )
         )
-        session = BackendAgentSession(backend, ref)
+        session = RuntimeAgentSession(backend, ref)
         token = CancellationToken()
         token.cancel()
 
@@ -306,27 +307,32 @@ class CodexCancellationTests(unittest.TestCase):
                 code_timeout_seconds=30,
                 code_workdir_env="CHATCOPILOT_TEST_UNUSED_WORKDIR",
             )
-            backend = CodexAgentBackend(
+            config = ChatConfig(
+                routing=routing,
+                llm=LLMConfig(
+                    provider="openai", api="openai_responses",
+                    model="gpt-test", api_key="fixture",
+                ),
+            )
+            route = runtime_route("codex", config.llm)
+            backend = CodexRuntimeAdapter(
+                route=route,
                 tool_names=set(),
-                runtime_config=SimpleNamespace(routing=routing),
+                runtime_config=config,
             )
             ref = backend.open_session(
-                BackendOpenRequest(
+                RuntimeOpenRequest(
                     session_id="codex-cancel",
                     prompt_plan=prompt_plan("system"),
+                    route=route,
                     options={
                         "workspace_root": root,
-                        "backend_state_root": root / "state",
+                        "runtime_state_root": root / "state",
                     },
                 )
             )
-            session = BackendAgentSession(backend, ref)
+            session = RuntimeAgentSession(backend, ref)
             token = CancellationToken()
-
-            @contextmanager
-            def fake_credential_lease(*_args, **_kwargs):
-                backend.native_session(ref).codex_home.mkdir(mode=0o700)
-                yield SimpleNamespace(generation=0)
 
             def cancel_from_poll(*_args, **kwargs):
                 token.cancel()
@@ -342,19 +348,15 @@ class CodexCancellationTests(unittest.TestCase):
                         return_value=root,
                     ),
                     mock.patch(
-                        "chatcopilot.agent.backends.codex.credential_lease",
-                        side_effect=fake_credential_lease,
-                    ),
-                    mock.patch(
                         "chatcopilot.external_tools.codex_cli.command._resolve_executable",
                         return_value="/usr/bin/codex",
                     ),
                     mock.patch(
-                        "chatcopilot.agent.backends.codex.build_codex_subprocess_env",
+                        "chatcopilot.agent.runtimes.codex.build_codex_subprocess_env",
                         return_value={},
                     ),
                     mock.patch(
-                        "chatcopilot.agent.backends.codex.run_app_server",
+                        "chatcopilot.agent.runtimes.codex.run_app_server",
                         side_effect=cancel_from_poll,
                     ),
                 ):

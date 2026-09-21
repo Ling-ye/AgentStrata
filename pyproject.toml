@@ -37,6 +37,7 @@ dependencies = [
     "Requests>=2.32,<3",
     "mcp-server-git>=0.6",
     "websockets>=12",
+    "tomli>=2; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

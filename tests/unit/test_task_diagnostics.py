@@ -203,6 +203,8 @@ def test_code_task_submitter_requires_and_persists_instance_id(
     assert not (workspace.root / "jobs").exists()
 
     monkeypatch.setenv("CHATCOPILOT_INSTANCE_ID", "test-instance")
+    monkeypatch.setenv("CHATCOPILOT_CODE_MODEL", "gpt-worker")
+    monkeypatch.setenv("CHATCOPILOT_CODE_REASONING_EFFORT", "high")
     job = job_submitter.submit_tool_job(
         tool_name="start_code_task",
         args=args,
@@ -211,6 +213,16 @@ def test_code_task_submitter_requires_and_persists_instance_id(
     )
     request = json.loads(job.request_path.read_text(encoding="utf-8"))
     assert request["instance_id"] == "test-instance"
+    assert request["worker_model_selection"] == {
+        "lane": "code",
+        "provider": "codex_cli",
+        "model": "gpt-worker",
+        "reasoning_effort": "high",
+        "scope": "session",
+        "source": "default",
+        "profile": "",
+    }
+    assert "code_model_selection" not in request
 
 def test_background_request_persists_source_task_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = Workspace(

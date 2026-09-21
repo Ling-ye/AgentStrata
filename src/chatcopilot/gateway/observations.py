@@ -131,7 +131,7 @@ class RunObserver:
                     _LOG.warning("Gateway Agent observation failure could not be recorded")
             return
         data: dict[str, Any] = {}
-        for name in ("model", "backend", "name", "trace_id", "span_id", "parent_span_id", "coverage", "code"):
+        for name in ("model", "runtime_id", "name", "trace_id", "span_id", "parent_span_id", "coverage", "code"):
             value = getattr(event, name, None)
             if isinstance(value, str):
                 data[name] = value

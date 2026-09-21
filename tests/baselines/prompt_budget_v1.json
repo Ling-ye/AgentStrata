@@ -3,15 +3,15 @@
   "maximum_growth_percent": 10,
   "profiles": {
     "owner_private": {
-      "prompt_chars": 3987,
+      "prompt_chars": 4048,
       "prompt_limit": 4325,
-      "tool_schema_chars": 20329,
+      "tool_schema_chars": 20303,
       "tool_schema_limit": 22366
     },
     "owner_group": {
-      "prompt_chars": 3985,
+      "prompt_chars": 4046,
       "prompt_limit": 4323,
-      "tool_schema_chars": 20329,
+      "tool_schema_chars": 20303,
       "tool_schema_limit": 22366
     },
     "user_private": {

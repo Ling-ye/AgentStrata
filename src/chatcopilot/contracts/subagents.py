@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from chatcopilot.contracts.agent_backend import CodexMainSessionPolicy
+from chatcopilot.contracts.runtime_adapter import CodexMainSessionPolicy
 
 
 DEFAULT_PROVIDER_ENDPOINTS = {
@@ -239,7 +239,10 @@ class CustomSubagentSpec:
 class SubagentSpec:
     """Bot-level subagent configuration."""
 
-    backend: str = "native"
+    runtime: str = "native"
+    codex_turn_timeout_seconds: int = 21600
+    native_env_prefix: str | None = None
+    codex_extensions: str | None = None
     include: tuple[str, ...] = ()
     defaults: SubagentBudgetSpec = field(default_factory=SubagentBudgetSpec)
     search_budget: SubagentBudgetSpec = field(default_factory=SubagentBudgetSpec)

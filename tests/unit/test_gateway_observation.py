@@ -161,7 +161,7 @@ def test_observer_keeps_metadata_and_never_stores_arguments_or_context(state, mo
     monkeypatch.setenv("TEST_API_KEY", private)
     observer = RunObserver(store, generation, run)
     observer(ToolStarted(name="lookup", arguments={"private_body": private, "reasoning_content": "hidden"}))
-    observer(ContextSnapshotPrepared(snapshot_id="ctx-1", backend="native", model="fixture-model", iteration=1,
+    observer(ContextSnapshotPrepared(snapshot_id="ctx-1", runtime_id="native", model="fixture-model", iteration=1,
                                      session_messages=({"content": private},), effective_messages=({"content": "hidden"},)))
     observer(LlmCallFinished(model=private, iteration=1, usage={"total_tokens": 123, "private": private}))
     payload = gateway_run(store.root, run)

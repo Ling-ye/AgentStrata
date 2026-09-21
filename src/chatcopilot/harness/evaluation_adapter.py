@@ -294,8 +294,9 @@ class ServiceEvaluator:
         target = source["target_id"] or result["targets"][0]["target_id"]
         observed = (source.get("evidence", {}).get("run") or {})
         actual_target = next((item for item in result["targets"] if item["target_id"] == target), {})
-        if any(observed.get(key) and actual_target.get(key) != observed[key] for key in ("model", "backend")):
-            raise HarnessError("source_mismatch", "验证模型或 backend 与原任务不同，不能作为原目标的验收证据")
+        if any(observed.get(key) and actual_target.get(key) != observed[key]
+               for key in ("model", "runtime_id", "provider", "model_api", "auth_mode", "capability_digest")):
+            raise HarnessError("source_mismatch", "验证模型或 runtime 与原任务不同，不能作为原目标的验收证据")
         passed_cases(result, target, case_ids, source["repetitions"])
         return {
             "evaluation_id": evaluation_id,
