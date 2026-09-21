@@ -3,25 +3,25 @@
   "maximum_growth_percent": 10,
   "profiles": {
     "owner_private": {
-      "prompt_chars": 4048,
+      "prompt_chars": 4245,
       "prompt_limit": 4325,
       "tool_schema_chars": 20303,
       "tool_schema_limit": 22366
     },
     "owner_group": {
-      "prompt_chars": 4046,
+      "prompt_chars": 4243,
       "prompt_limit": 4323,
       "tool_schema_chars": 20303,
       "tool_schema_limit": 22366
     },
     "user_private": {
-      "prompt_chars": 3195,
+      "prompt_chars": 3392,
       "prompt_limit": 3479,
       "tool_schema_chars": 7323,
       "tool_schema_limit": 8059
     },
     "user_group": {
-      "prompt_chars": 3193,
+      "prompt_chars": 3390,
       "prompt_limit": 3477,
       "tool_schema_chars": 7323,
       "tool_schema_limit": 8059

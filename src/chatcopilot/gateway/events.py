@@ -8,7 +8,6 @@ from typing import Any, Protocol
 
 from chatcopilot.contracts.gateway_protocol import EventFrame
 from chatcopilot.contracts.gateway_rpc import (
-    ApprovalRequestedEvent,
     ChatErrorEvent,
     ChatFinalEvent,
     ChatUpdateEvent,
@@ -220,8 +219,6 @@ def _event_session_id(payload: GatewayEventPayload) -> str | None:
         return payload.session.session_id
     if isinstance(payload, (ChatUpdateEvent, ChatFinalEvent, ChatErrorEvent)):
         return payload.session_id
-    if isinstance(payload, ApprovalRequestedEvent):
-        return payload.approval.session_id
     if isinstance(payload, DeliveryUpdatedEvent):
         return payload.session_id
     return None

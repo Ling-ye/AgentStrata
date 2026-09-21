@@ -2,10 +2,8 @@
 
 import base64
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
 import json
 from pathlib import Path
-import sqlite3
 import time
 from types import SimpleNamespace
 
@@ -14,8 +12,6 @@ import pytest
 from chatcopilot.core import model_credentials as credentials
 from chatcopilot.core.codex_extensions import read_extensions
 from chatcopilot.core.codex_extensions import validate_extension_ownership, extension_digest
-from chatcopilot.botspec.runtime_cutover import migrate_declaration, archive_bindings
-from chatcopilot.gateway.runtime_cutover import migrate_database
 from chatcopilot.gateway.state_store import GatewayStateStore
 from chatcopilot.contracts.execution import (
     Capability,
@@ -139,129 +135,6 @@ def test_extension_file_cannot_override_policy_or_embed_header_secret(tmp_path):
     from chatcopilot.core.codex_extensions import managed_extension_config
 
     assert "enabled = false" in managed_extension_config("")
-
-
-def test_migration_freezes_main_environment_without_exposing_secret():
-    old = {
-        "agents": {"backend": "codex"},
-        "llm": {"chat": {"env_prefix": "BOT"}, "code": {"model": "old"}},
-    }
-    value = migrate_declaration(
-        old,
-        environment={
-            "BOT_CODE_MODEL": "selected",
-            "BOT_CODE_REASONING_EFFORT": "high",
-            "BOT_API_KEY": "private-secret",
-            "BOT_CODE_TIMEOUT_SECONDS": "3600",
-        },
-    )
-    assert value["llm"]["chat"]["model"] == "selected"
-    assert value["llm"]["code"]["model"] == "old"
-    assert value["agents"]["runtime_options"]["codex"]["turn_timeout_seconds"] == 3600
-    assert "private-secret" not in json.dumps(value)
-
-
-def test_database_migration_is_explicit_backed_up_and_preserves_history(tmp_path):
-    root = tmp_path / "state"
-    store = GatewayStateStore(root)
-    database = root / "gateway.sqlite3"
-    from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef
-    from chatcopilot.contracts.authorization import ApprovalRequest
-    from chatcopilot.authorization.approvals import hash_approval_challenge
-
-    generation = store.acquire_writer_generation()
-    store.create_session(
-        generation=generation,
-        session_id="session",
-        account=ChannelAccountRef("qq", "100"),
-        conversation=ConversationRef("p2p", "200"),
-        mode="default",
-        debug=False,
-    )
-    challenge = "c" * 48
-    store.create_approval(
-        generation=generation,
-        challenge=challenge,
-        request=ApprovalRequest(
-            approval_id="approval",
-            session_id="session",
-            operation="write",
-            target="workspace",
-            params_digest="sha256:" + "a" * 64,
-            actor_ref="actor",
-            conversation_ref="200",
-            policy_version="runtime-access-v3",
-            challenge_digest=hash_approval_challenge(challenge),
-            expires_at=time.time() + 3600,
-        ),
-    )
-    # A stopped schema-2 fixture; only the schema-3 extension is removed.
-    with closing(sqlite3.connect(database)) as connection:
-        old_schema = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='approvals'"
-        ).fetchone()[0]
-        old_schema = old_schema.replace(
-            "('pending', 'resolved', 'expired', 'cancelled')", "('pending', 'resolved', 'expired')"
-        )
-        old_schema = old_schema.replace("state IN ('expired', 'cancelled')", "state = 'expired'")
-        before_sessions = connection.execute("SELECT * FROM sessions").fetchall()
-        before_approvals = connection.execute("SELECT * FROM approvals").fetchall()
-        connection.executescript(
-            "BEGIN; DROP TABLE input_requests; ALTER TABLE approvals RENAME TO fixture_approvals;"
-            + old_schema
-            + "; INSERT INTO approvals SELECT * FROM fixture_approvals; DROP TABLE fixture_approvals;"
-            "UPDATE gateway_meta SET value='2' WHERE key='schema_version'; COMMIT;"
-        )
-    assert migrate_database(root)["applied"] is False
-    result = migrate_database(root, apply=True)
-    assert result["applied"] and (root / result["backup_name"]).stat().st_mode & 0o777 == 0o600
-    with closing(sqlite3.connect(root / result["backup_name"])) as backup:
-        assert (
-            backup.execute("SELECT value FROM gateway_meta WHERE key='schema_version'").fetchone()[
-                0
-            ]
-            == "2"
-        )
-    assert GatewayStateStore(root).database_path == store.database_path
-    with closing(sqlite3.connect(database)) as connection:
-        assert connection.execute("SELECT * FROM sessions").fetchall() == before_sessions
-        assert connection.execute("SELECT * FROM approvals").fetchall() == before_approvals
-        connection.execute(
-            "UPDATE approvals SET state='cancelled',challenge='' WHERE approval_id='approval'"
-        )
-        connection.commit()
-    assert (
-        store.get_approval(
-            "approval", actor_ref="actor", conversation_ref="200", session_id="session"
-        ).status
-        == "cancelled"
-    )
-
-
-def test_migration_refuses_active_instance_and_keeps_bindings_recoverable(tmp_path):
-    root = tmp_path / "state"
-    store = GatewayStateStore(root)
-    with closing(sqlite3.connect(store.database_path)) as connection:
-        connection.executescript(
-            "DROP TABLE input_requests; UPDATE gateway_meta SET value='2' WHERE key='schema_version';"
-        )
-    from chatcopilot.gateway.runtime_cutover import migration_session
-
-    with migration_session(root):
-        with pytest.raises(Exception, match="owns this instance"):
-            migrate_database(root, apply=True)
-    workspace = tmp_path / "workspace"
-    directory = workspace / "group_1/.conversation-state/runtime-sessions/actor"
-    directory.mkdir(parents=True)
-    binding = directory / "session.session.json"
-    binding.write_text('{"schema_version":2}')
-    journal = directory.parent.parent / "journal.jsonl"
-    journal.write_text("history")
-    assert archive_bindings(workspace) == 1
-    assert not binding.exists() and len(list(directory.glob("*.archived-*"))) == 1
-    assert journal.read_text() == "history"
-    with pytest.raises(ValueError):
-        archive_bindings(Path.home())
 
 
 def test_provider_auth_error_cannot_echo_handoff_secret(tmp_path, monkeypatch):

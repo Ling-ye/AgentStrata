@@ -17,7 +17,7 @@ Native 直接调用模型，Codex 使用原生 App Server。宿主继续拥有�
 遵守[四层运行时](../runtime-four-layer-definition/spec.md)与
 [六层源码依赖](../domain-layered-dependencies/spec.md)。Contracts 定义不可变 DTO 与端口；
 Core 负责模型传输和凭据；Application 绑定 actor、资源和权限；Agent 选择执行实现；
-Gateway 持有交互决定、取消和交付事实。Console 与 Evaluation 只使用公开控制和查询入口。
+Gateway 持有取消和交付事实。所有 Agent 固定非交互执行；Console 与 Evaluation 只使用公开控制和查询入口。
 
 权威路由链固定为：
 
@@ -49,26 +49,21 @@ Codex 动态工具调用经同一个 ToolRegistry/ToolExecutor；原生工具与
 refresh lineage 保留。actor 连接可复用，conversation lane 仍串行。恢复记录绑定 actor、
 认证身份代际、权限和能力摘要。群会话仍只在 live actor 内恢复，未知执行不自动重放。
 
-交互请求区分审批、澄清与 MCP elicitation；决定绑定请求及已认证 responder。操作员不是 QQ
-actor。Gateway 原子记录决定后回应当前连接，重启关闭遗留等待者而不重放 RPC。审批沿用
-现有 approvals，普通输入单独持久化。QQ 回复在准入后分流，不能排在等待它的 turn 之后。
+Codex 固定使用 `approvalPolicy=never`，宿主策略内操作直接执行；权限扩张、越界访问、用户输入
+请求和 MCP elicitation 立即拒绝。Native、LangGraph、Codex、Evaluation 与后台 Agent 都不创建
+等待中的审批或澄清。信息不足时采用安全默认值，无法可靠完成时直接说明限制，不向用户提问。
 
 迁移先固定辅助模型的有效配置，归档旧 runtime binding，保留业务历史、人格、记忆与 worker
 记录。数据库迁移要求停机及独占 lease，并通过 SQLite backup API 保留备份；启动不隐式迁移。
 
-结构化版本固定为 PromptPlan 2、Observation 2、Evaluation result 3 和
+结构化版本固定为 PromptPlan 2、Observation 3、Evaluation result 3、Gateway 4 和
 RuntimeSessionBinding 4。AgentEvent、Console wire、Evaluation Target/Trial、transcript
 session ref 与活动数据库只使用 `runtime_id`。独立 code-worker 的冻结选择使用
 `WorkerModelSelection` 和 `worker_model_selection`；公开 `llm.code` 与 `*_CODE_*` 环境变量
 保持 worker 语义。
 
-阶段 A 仅由 `runtime-cutover check/apply/verify --inventory ...` 读取旧格式。check 绑定
-BotSpec/env/路径摘要和 plan digest；apply 在实例 lease 内用 SQLite backup API 备份 Gateway，
-把旧 Observation、Evaluation、transcript、worker 与 session state 原字节移入私有归档并
-写 mode 0600 manifest/receipt；verify 复核摘要、strict-load 新 schema，并通过生产 Gateway
-装配执行 admission-denied 受控回放，固定 `production_delivery: false`。在线程序没有旧格式
-fallback。阶段 B 只有在所有 inventory 实例 receipt 成功后才能删除 cutover reader；归档永远
-没有在线 reader。
+历史 runtime cutover 已离线归档并完成验证；在线程序和最终源码不包含旧 schema reader、迁移器
+或 fallback。现行数据库只接受上述结构化版本，旧文件只能按既有私有 manifest 离线审计。
 
 ## Acceptance
 
@@ -76,12 +71,12 @@ fallback。阶段 B 只有在所有 inventory 实例 receipt 成功后才能删�
 - Codex 主会话不创建无用 API 客户端，不运行 Native loop；Native 不启动 Codex agent。
 - 宿主工具、能力投影、PromptPlan 和执行授权一致，秘密不进入 DTO、日志或浏览器响应。
 - 独立 conversation 可并行刷新与执行，同群 journal 顺序保留。
-- QQ/Console 可处理绑定的交互，重复、冒领、取消、超时和重启不能产生第二次决定。
+- QQ/Console 不展示或处理 Runtime 待办请求，所有 turn 在既有策略边界内自行完成或直接说明限制。
 - 执行、业务提交和 provider acknowledgement 分别记录；历史缺字段不回填当前配置。
 - 静态 vocabulary gate 拒绝退役 Agent Backend 符号与目录；通用 HTTP/database backend 不受限。
 
 ## Verification
 
-执行 DTO/codec、模型 SSE、认证、Runtime、Gateway 交互、cutover 与 Console 定向回归，再运行
+执行 DTO/codec、模型 SSE、认证、Runtime、Gateway 协议与 Console 定向回归，再运行
 仓库 full 检查。复用生产 Gateway 装配回放，受控证据保留 `production_delivery: false`。
 真实模型四组合与真实 QQ 验收独立记录，不以 mock 或局部测试替代。

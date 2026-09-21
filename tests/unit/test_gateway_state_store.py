@@ -40,6 +40,24 @@ from chatcopilot.gateway.state_store import (
 )
 
 
+def test_schema_four_has_no_runtime_interaction_tables(tmp_path: Path) -> None:
+    store = GatewayStateStore(tmp_path / "state")
+    with sqlite3.connect(store.database_path) as connection:
+        version = connection.execute(
+            "SELECT value FROM gateway_meta WHERE key='schema_version'"
+        ).fetchone()[0]
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+
+    assert version == "4"
+    assert "input_requests" not in tables
+    assert "approvals" not in tables
+
+
 def _inbound(*, event_id: str = "event-1", body: str = "hello") -> CanonicalInboundEvent:
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     account = ChannelAccountRef(channel="qq_personal", account_id="10001")

@@ -72,7 +72,7 @@ class RunFilter:
 
 def _run(row: Any) -> dict[str, Any]:
     result = dict(row)
-    for key in ("receipts", "outbox", "approvals"):
+    for key in ("receipts", "outbox"):
         if key in result:
             result[key] = decoded(result[key])
     result["details_expires_at"] = result["finished_at"] + RETENTION_SECONDS if result.get("finished_at") is not None else None
@@ -128,7 +128,7 @@ def detail(store: ObservationStore, run_id: str) -> dict[str, Any] | None:
     event_page = events(store, run_id)
     return {"run": run, **event_page, "observations_available": bool(event_page["observations"]),
             "events": [], "receipts": run.pop("receipts"), "outbox": run.pop("outbox"),
-            "approvals": run.pop("approvals"), "source": "observation_index", "truncated": False}
+            "source": "observation_index", "truncated": False}
 
 
 def metrics(store: ObservationStore, filters: RunFilter) -> dict[str, Any]:

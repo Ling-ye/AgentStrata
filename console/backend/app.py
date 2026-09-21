@@ -21,7 +21,6 @@ from console.backend.routes import (  # noqa: E402
     evals,
     infra,
     harness,
-    interactions,
     overview,
     shared_services,
     tasks,
@@ -73,7 +72,6 @@ app.include_router(evals.router)
 app.include_router(evaluations.router)
 app.include_router(infra.router)
 app.include_router(harness.router)
-app.include_router(interactions.router)
 
 _DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
 if _DIST.is_dir():

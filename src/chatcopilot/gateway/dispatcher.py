@@ -10,10 +10,6 @@ from chatcopilot.gateway.result_text import result_preview
 from chatcopilot.contracts.gateway_protocol import EventFrame, RequestFrame
 from chatcopilot.contracts.authorization import Principal
 from chatcopilot.contracts.gateway_rpc import (
-    ApprovalsListParams,
-    ApprovalsListResult,
-    ApprovalsResolveParams,
-    ApprovalsResolveResult,
     ChannelConnectionState,
     ChannelSnapshot,
     ChannelsListParams,
@@ -55,10 +51,8 @@ from .application import (
     GatewayApplicationError,
     GatewaySessionService,
     client_account,
-    conversation_authority_ref,
     is_gateway_admin,
 )
-from .approvals import GatewayApprovalService
 from .channels import ChannelRuntimeManager
 from .coordinator import GatewayTurnCoordinator, GatewayTurnCoordinatorError
 from .events import GatewayEventPublisher, GatewaySessionEventVisibility
@@ -94,7 +88,6 @@ class GatewayApplicationDispatcher:
         events: GatewayEventPublisher,
         coordinator: GatewayTurnCoordinator,
         channel_runtime: ChannelRuntimeManager,
-        approval_service: GatewayApprovalService,
         event_visibility: GatewaySessionEventVisibility,
         generation: int,
         ready: Callable[[], bool] | None = None,
@@ -106,7 +99,6 @@ class GatewayApplicationDispatcher:
         self._events = events
         self._coordinator = coordinator
         self._channel_runtime = channel_runtime
-        self._approval_service = approval_service
         self._event_visibility = event_visibility
         self._generation = generation
         self._ready = ready or self._default_ready
@@ -120,28 +112,6 @@ class GatewayApplicationDispatcher:
         try:
             self._sessions.assert_current_generation()
             params = parse_request_params(request.method, request.params)
-            if request.method.startswith("interactions."):
-                from chatcopilot.contracts.gateway_rpc import InteractionsResult
-                from chatcopilot.contracts.interactions import ActorResponder, OperatorResponder
-                service = self._coordinator.interactions
-                if "interactions.operator" in client.scopes:
-                    responder = OperatorResponder(client.client_id, client.client_id)
-                else:
-                    if not params.session_id:
-                        raise GatewayDispatchError("session_required", "Interaction requires a bound session")
-                    session = self._sessions.get_visible(client=client, session_id=params.session_id)
-                    principal = self._sessions.principal_for_client(client=client, session=session)
-                    responder = ActorResponder(principal.actor_ref, principal.evidence_digest)
-                try:
-                    if params.operation == "list":
-                        payload = {"interactions": service.list(responder, params.session_id)}
-                    elif params.operation == "get":
-                        payload = {"interaction": service.get(params.interaction_id, responder)}
-                    else:
-                        payload = service.resolve(params.interaction_id, params.resolution, responder)
-                except ValueError as exc:
-                    raise GatewayDispatchError("invalid_interaction", "Interaction is unavailable or response is invalid") from exc
-                return serialize_method_result(request.method, InteractionsResult(payload))
             result = await self._dispatch_typed(request, params=params, client=client)
             return serialize_method_result(request.method, result)
         except GatewayDispatchError:
@@ -333,43 +303,6 @@ class GatewayApplicationDispatcher:
             return DeliveriesGetResult(
                 tuple(self._delivery_snapshot(record) for record in records)
             )
-        if isinstance(params, ApprovalsListParams):
-            if params.session_id is None:
-                raise GatewayDispatchError(
-                    "approval_session_required",
-                    "Approval listing requires one visible Gateway session",
-                )
-            session = self._sessions.get_visible(
-                client=client,
-                session_id=params.session_id,
-            )
-            principal = self._sessions.principal_for_client(client=client, session=session)
-            approvals, next_cursor = self._approval_service.list(
-                actor_ref=principal.actor_ref,
-                conversation_ref=conversation_authority_ref(principal),
-                session_id=session.session_id,
-                cursor=params.cursor,
-                limit=params.limit,
-            )
-            return ApprovalsListResult(approvals=approvals, next_cursor=next_cursor)
-        if isinstance(params, ApprovalsResolveParams):
-            principal, _session_id = self._approval_principal(
-                client=client,
-                approval_id=params.approval_id,
-            )
-            receipt = self._approval_service.resolve_bound(
-                approval_id=params.approval_id,
-                actor_ref=principal.actor_ref,
-                conversation_ref=conversation_authority_ref(principal),
-                decision=params.decision,
-                challenge=params.challenge,
-            )
-            return ApprovalsResolveResult(
-                approval_id=receipt.approval_id,
-                resolved=receipt.resolved,
-                accepted=receipt.accepted,
-                code=receipt.code,
-            )
         raise GatewayDispatchError("unknown_method", "Gateway method is not recognized")
 
     def _replay(
@@ -421,30 +354,6 @@ class GatewayApplicationDispatcher:
             )
         health = self._channel_runtime.health()
         return tuple(_channel_snapshot(item) for item in health.channels)
-
-    def _approval_principal(
-        self,
-        *,
-        client: GatewayClientContext,
-        approval_id: str,
-    ) -> tuple[Principal, str]:
-        for session in self._all_visible_sessions(client):
-            try:
-                principal = self._sessions.principal_for_client(
-                    client=client,
-                    session=session,
-                )
-            except GatewayDispatchError:
-                continue
-            snapshot = self._approval_service.get(
-                approval_id,
-                actor_ref=principal.actor_ref,
-                conversation_ref=conversation_authority_ref(principal),
-                session_id=session.session_id,
-            )
-            if snapshot is not None:
-                return principal, session.session_id
-        raise GatewayDispatchError("approval_not_found", "Gateway approval does not exist")
 
     def _all_visible_sessions(self, client: GatewayClientContext):
         records: list[SessionRecord] = []

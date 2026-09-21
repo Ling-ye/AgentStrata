@@ -14,15 +14,6 @@ from chatcopilot.contracts.gateway import (
     ResourceKind,
 )
 from chatcopilot.contracts.gateway_rpc import (
-    ApprovalDecisionOption,
-    ApprovalDecisionValue,
-    ApprovalRequestedEvent,
-    ApprovalSnapshot,
-    ApprovalStatus,
-    ApprovalsListParams,
-    ApprovalsListResult,
-    ApprovalsResolveParams,
-    ApprovalsResolveResult,
     CanonicalRpcSegment,
     ChannelConnectionState,
     ChannelSnapshot,
@@ -92,8 +83,6 @@ _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _OPAQUE_RESOURCE_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _RESOURCE_KINDS = frozenset({"image", "audio", "video", "file"})
 _CHANNEL_STATES = frozenset({"starting", "connected", "disconnected", "degraded", "failed"})
-_APPROVAL_STATUSES = frozenset({"pending", "resolved", "expired", "cancelled"})
-_APPROVAL_DECISIONS = frozenset({"approve", "deny"})
 _STOP_REASONS = frozenset({"completed", "aborted"})
 _RUN_STATES = frozenset(
     {
@@ -365,36 +354,6 @@ def _parse_deliveries_get(params: Mapping[str, Any]) -> DeliveriesGetParams:
     )
 
 
-def _parse_approvals_list(params: Mapping[str, Any]) -> ApprovalsListParams:
-    _exact_keys(
-        params,
-        required=set(),
-        optional={"sessionId", "cursor", "limit"},
-        label="approvals.list params",
-    )
-    return ApprovalsListParams(
-        session_id=_optional_id(params, "sessionId"),
-        cursor=_optional_int(params, "cursor", default=0, minimum=0),
-        limit=_optional_int(params, "limit", default=50, minimum=1, maximum=100),
-    )
-
-
-def _parse_approvals_resolve(params: Mapping[str, Any]) -> ApprovalsResolveParams:
-    _exact_keys(
-        params,
-        required={"approvalId", "decision", "challenge"},
-        label="approvals.resolve params",
-    )
-    return ApprovalsResolveParams(
-        approval_id=_required_id(params["approvalId"], "approvalId"),
-        decision=cast(
-            ApprovalDecisionValue,
-            _required_enum(params["decision"], "decision", _APPROVAL_DECISIONS),
-        ),
-        challenge=_required_text(params["challenge"], "challenge", max_chars=512),
-    )
-
-
 def _serialize_health(params: GatewayRequestParams) -> dict[str, Any]:
     _expect_type(params, HealthParams, "health params")
     return {}
@@ -472,22 +431,6 @@ def _serialize_deliveries_get(params: GatewayRequestParams) -> dict[str, Any]:
     _put_optional(payload, "runId", value.run_id)
     _put_optional(payload, "outboundId", value.outbound_id)
     return payload
-
-
-def _serialize_approvals_list(params: GatewayRequestParams) -> dict[str, Any]:
-    value = _expect_type(params, ApprovalsListParams, "approvals.list params")
-    payload: dict[str, Any] = {"cursor": value.cursor, "limit": value.limit}
-    _put_optional(payload, "sessionId", value.session_id)
-    return payload
-
-
-def _serialize_approvals_resolve(params: GatewayRequestParams) -> dict[str, Any]:
-    value = _expect_type(params, ApprovalsResolveParams, "approvals.resolve params")
-    return {
-        "approvalId": value.approval_id,
-        "decision": value.decision,
-        "challenge": value.challenge,
-    }
 
 
 def _parse_health_result(result: Mapping[str, Any]) -> HealthResult:
@@ -752,37 +695,6 @@ def _parse_run_snapshot(value: Any) -> RunSnapshot:
     )
 
 
-def _parse_approvals_list_result(result: Mapping[str, Any]) -> ApprovalsListResult:
-    _exact_keys(
-        result,
-        required={"approvals"},
-        optional={"nextCursor"},
-        label="approvals.list result",
-    )
-    rows = _array(result["approvals"], "approvals", maximum=MAX_RPC_COLLECTION_ITEMS)
-    next_cursor = (
-        _required_int(result["nextCursor"], "nextCursor", 0) if "nextCursor" in result else None
-    )
-    return ApprovalsListResult(
-        approvals=tuple(_parse_approval_snapshot(item) for item in rows),
-        next_cursor=next_cursor,
-    )
-
-
-def _parse_approvals_resolve_result(result: Mapping[str, Any]) -> ApprovalsResolveResult:
-    _exact_keys(
-        result,
-        required={"approvalId", "resolved", "accepted", "code"},
-        label="approvals.resolve result",
-    )
-    return ApprovalsResolveResult(
-        approval_id=_required_id(result["approvalId"], "approvalId"),
-        resolved=_required_bool(result["resolved"], "resolved"),
-        accepted=_required_bool(result["accepted"], "accepted"),
-        code=_required_id(result["code"], "code"),
-    )
-
-
 def _serialize_health_result(result: GatewayMethodResult) -> dict[str, Any]:
     value = _expect_type(result, HealthResult, "health result")
     return {
@@ -914,25 +826,6 @@ def _serialize_run_snapshot(run: RunSnapshot) -> dict[str, Any]:
     return payload
 
 
-def _serialize_approvals_list_result(result: GatewayMethodResult) -> dict[str, Any]:
-    value = _expect_type(result, ApprovalsListResult, "approvals.list result")
-    payload: dict[str, Any] = {
-        "approvals": [_serialize_approval_snapshot(item) for item in value.approvals]
-    }
-    _put_optional(payload, "nextCursor", value.next_cursor)
-    return payload
-
-
-def _serialize_approvals_resolve_result(result: GatewayMethodResult) -> dict[str, Any]:
-    value = _expect_type(result, ApprovalsResolveResult, "approvals.resolve result")
-    return {
-        "approvalId": value.approval_id,
-        "resolved": value.resolved,
-        "accepted": value.accepted,
-        "code": value.code,
-    }
-
-
 def _parse_channel_status_event(payload: Mapping[str, Any]) -> ChannelStatusEvent:
     _exact_keys(payload, required={"channel"}, label="channel.status payload")
     return ChannelStatusEvent(_parse_channel_snapshot(payload["channel"]))
@@ -986,11 +879,6 @@ def _parse_chat_error_event(payload: Mapping[str, Any]) -> ChatErrorEvent:
         message=_required_text(payload["message"], "message", max_chars=4096),
         retryable=_required_bool(payload["retryable"], "retryable"),
     )
-
-
-def _parse_approval_requested_event(payload: Mapping[str, Any]) -> ApprovalRequestedEvent:
-    _exact_keys(payload, required={"approval"}, label="approval.requested payload")
-    return ApprovalRequestedEvent(_parse_approval_snapshot(payload["approval"]))
 
 
 def _parse_delivery_updated_event(payload: Mapping[str, Any]) -> DeliveryUpdatedEvent:
@@ -1063,11 +951,6 @@ def _serialize_chat_error_event(payload: GatewayEventPayload) -> dict[str, Any]:
         "message": value.message,
         "retryable": value.retryable,
     }
-
-
-def _serialize_approval_requested_event(payload: GatewayEventPayload) -> dict[str, Any]:
-    value = _expect_type(payload, ApprovalRequestedEvent, "approval.requested payload")
-    return {"approval": _serialize_approval_snapshot(value.approval)}
 
 
 def _serialize_delivery_updated_event(payload: GatewayEventPayload) -> dict[str, Any]:
@@ -1183,81 +1066,6 @@ def _serialize_session_snapshot(value: SessionSnapshot) -> dict[str, Any]:
         "eventCursor": value.event_cursor,
     }
     _put_optional(result, "activeRunId", value.active_run_id)
-    return result
-
-
-def _parse_approval_snapshot(value: Any) -> ApprovalSnapshot:
-    payload = _object(value, "approval snapshot")
-    _exact_keys(
-        payload,
-        required={
-            "approvalId",
-            "sessionId",
-            "operation",
-            "target",
-            "policyVersion",
-            "expiresAtMs",
-            "status",
-            "allowedDecisions",
-        },
-        optional={"challenge", "runId"},
-        label="approval snapshot",
-    )
-    decisions = _id_tuple(
-        payload["allowedDecisions"],
-        "allowedDecisions",
-        minimum=0,
-        maximum=2,
-        allowed=_APPROVAL_DECISIONS,
-    )
-    status = cast(
-        ApprovalStatus,
-        _required_enum(payload["status"], "status", _APPROVAL_STATUSES),
-    )
-    challenge = (
-        _required_text(payload["challenge"], "challenge", max_chars=512)
-        if "challenge" in payload
-        else None
-    )
-    if status == "pending":
-        if decisions != ("approve", "deny") or challenge is None:
-            raise GatewayProtocolError(
-                "invalid_rpc",
-                "pending approval requires approve/deny decisions and a challenge"
-            )
-    elif decisions or challenge is not None:
-        raise GatewayProtocolError(
-            "invalid_rpc",
-            "terminal approval cannot expose decisions or a challenge"
-        )
-    return ApprovalSnapshot(
-        approval_id=_required_id(payload["approvalId"], "approvalId"),
-        session_id=_required_id(payload["sessionId"], "sessionId"),
-        operation=_required_id(payload["operation"], "operation"),
-        target=_required_text(payload["target"], "target", max_chars=512),
-        policy_version=_required_id(payload["policyVersion"], "policyVersion"),
-        expires_at_ms=_required_int(payload["expiresAtMs"], "expiresAtMs", 1),
-        status=status,
-        allowed_decisions=cast(tuple[ApprovalDecisionOption, ...], decisions),
-        challenge=challenge,
-        run_id=_optional_id(payload, "runId"),
-    )
-
-
-def _serialize_approval_snapshot(value: ApprovalSnapshot) -> dict[str, Any]:
-    value = _expect_type(value, ApprovalSnapshot, "approval snapshot")
-    result: dict[str, Any] = {
-        "approvalId": value.approval_id,
-        "sessionId": value.session_id,
-        "operation": value.operation,
-        "target": value.target,
-        "policyVersion": value.policy_version,
-        "expiresAtMs": value.expires_at_ms,
-        "status": value.status,
-        "allowedDecisions": list(value.allowed_decisions),
-    }
-    _put_optional(result, "challenge", value.challenge)
-    _put_optional(result, "runId", value.run_id)
     return result
 
 
@@ -1548,37 +1356,7 @@ def _reject_mutation_identity_claims(value: Mapping[str, Any]) -> None:
                 stack.extend(child for child in item if isinstance(child, Mapping))
 
 
-def _parse_interaction(params, operation):
-    from chatcopilot.contracts.gateway_rpc import InteractionsParams
-    required = {"interactionId", "resolution"} if operation == "resolve" else {"interactionId"} if operation == "get" else set()
-    _exact_keys(params, required=required, optional={"sessionId"}, label="interaction params")
-    resolution = _object(params["resolution"], "resolution") if operation == "resolve" else None
-    return InteractionsParams(operation, _optional_id(params, "sessionId"),
-                              _required_id(params["interactionId"], "interactionId") if "interactionId" in params else None, resolution)
-
-
-def _serialize_interaction(params):
-    from chatcopilot.contracts.gateway_rpc import InteractionsParams
-    value = _expect_type(params, InteractionsParams, "interaction params")
-    result = {}
-    _put_optional(result, "sessionId", value.session_id)
-    _put_optional(result, "interactionId", value.interaction_id)
-    _put_optional(result, "resolution", value.resolution)
-    return result
-
-
-def _parse_interaction_result(value):
-    from chatcopilot.contracts.gateway_rpc import InteractionsResult
-    return InteractionsResult(_object(value, "interaction result"))
-
-
-def _serialize_interaction_result(value):
-    from chatcopilot.contracts.gateway_rpc import InteractionsResult
-    return dict(_expect_type(value, InteractionsResult, "interaction result").payload)
-
-
 _REQUEST_PARSERS: dict[str, _RequestParser] = {
-    **{"interactions." + op: (lambda value, op=op: _parse_interaction(value, op)) for op in ("list", "get", "resolve")},
     "health": _parse_health,
     "status": _parse_status,
     "channels.list": _parse_channels_list,
@@ -1592,12 +1370,9 @@ _REQUEST_PARSERS: dict[str, _RequestParser] = {
     "runs.get": _parse_runs_get,
     "runs.latest": _parse_runs_latest,
     "deliveries.get": _parse_deliveries_get,
-    "approvals.list": _parse_approvals_list,
-    "approvals.resolve": _parse_approvals_resolve,
 }
 
 _REQUEST_SERIALIZERS: dict[str, Callable[[GatewayRequestParams], dict[str, Any]]] = {
-    **{"interactions." + op: _serialize_interaction for op in ("list", "get", "resolve")},
     "health": _serialize_health,
     "status": _serialize_status,
     "channels.list": _serialize_channels_list,
@@ -1611,12 +1386,9 @@ _REQUEST_SERIALIZERS: dict[str, Callable[[GatewayRequestParams], dict[str, Any]]
     "runs.get": _serialize_runs_get,
     "runs.latest": _serialize_runs_latest,
     "deliveries.get": _serialize_deliveries_get,
-    "approvals.list": _serialize_approvals_list,
-    "approvals.resolve": _serialize_approvals_resolve,
 }
 
 _RESULT_PARSERS: dict[str, _ResultParser] = {
-    **{"interactions." + op: _parse_interaction_result for op in ("list", "get", "resolve")},
     "health": _parse_health_result,
     "status": _parse_status_result,
     "channels.list": _parse_channels_result,
@@ -1630,12 +1402,9 @@ _RESULT_PARSERS: dict[str, _ResultParser] = {
     "runs.get": _parse_runs_get_result,
     "runs.latest": _parse_runs_latest_result,
     "deliveries.get": _parse_deliveries_get_result,
-    "approvals.list": _parse_approvals_list_result,
-    "approvals.resolve": _parse_approvals_resolve_result,
 }
 
 _RESULT_SERIALIZERS: dict[str, Callable[[GatewayMethodResult], dict[str, Any]]] = {
-    **{"interactions." + op: _serialize_interaction_result for op in ("list", "get", "resolve")},
     "health": _serialize_health_result,
     "status": _serialize_status_result,
     "channels.list": _serialize_channels_result,
@@ -1649,8 +1418,6 @@ _RESULT_SERIALIZERS: dict[str, Callable[[GatewayMethodResult], dict[str, Any]]] 
     "runs.get": _serialize_runs_get_result,
     "runs.latest": _serialize_runs_latest_result,
     "deliveries.get": _serialize_deliveries_get_result,
-    "approvals.list": _serialize_approvals_list_result,
-    "approvals.resolve": _serialize_approvals_resolve_result,
 }
 
 _EVENT_PARSERS: dict[str, _EventParser] = {
@@ -1659,7 +1426,6 @@ _EVENT_PARSERS: dict[str, _EventParser] = {
     "chat.update": _parse_chat_update_event,
     "chat.final": _parse_chat_final_event,
     "chat.error": _parse_chat_error_event,
-    "approval.requested": _parse_approval_requested_event,
     "delivery.updated": _parse_delivery_updated_event,
 }
 
@@ -1669,7 +1435,6 @@ _EVENT_SERIALIZERS: dict[str, Callable[[GatewayEventPayload], dict[str, Any]]] =
     "chat.update": _serialize_chat_update_event,
     "chat.final": _serialize_chat_final_event,
     "chat.error": _serialize_chat_error_event,
-    "approval.requested": _serialize_approval_requested_event,
     "delivery.updated": _serialize_delivery_updated_event,
 }
 

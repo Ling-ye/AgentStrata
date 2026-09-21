@@ -12,7 +12,6 @@ import { JsonData } from "./StructuredData";
 import AgentStreamContent from "./AgentStreamContent";
 import ExecutionWorkspace from "./ExecutionWorkspace";
 import { executionTitle } from "./executionModel";
-import { RuntimeInteractions } from "./RuntimeInteractions";
 
 const METADATA = new Set(["name", "model", "trace_id", "span_id", "parent_span_id", "depth", "configuration_id", "context_snapshot_id", "snapshot_id", "flow_version", "runtime_layer", "stage_span_id"]);
 function visibleMetadata(event?: GatewayObservation) {
@@ -195,7 +194,6 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
     return () => window.clearInterval(timer);
   }, [terminal, visible]);
   return <TaskDetailState instanceId={instanceId} runId={run.run_id}><section className="obs-run" aria-label="任务运行过程">
-    {visible && !terminal && <RuntimeInteractions instanceId={instanceId} />}
     <header className="obs-run-heading"><div><strong>任务运行</strong><code title={run.run_id}>{run.run_id}</code></div>
       <Tag color={runState(run.state).color}>{runState(run.state).label}</Tag></header>
     <div className="obs-run-meta"><span>开始 {dateTime(run.started_at ?? run.created_at)}</span><span>耗时 {duration(runDuration(run))}</span>
@@ -226,7 +224,6 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
       {!!detail.outbox.length && <ConfigFields value={{ "出站状态": detail.outbox }} />}
       {!!view.permissions.length && <Disclosure title="任务权限记录">
         <p className="obs-muted">以下记录未绑定到具体调用。</p><Permissions events={view.permissions} scope={scope} /></Disclosure>}
-      {!!detail.approvals.length && <Disclosure title="任务审批"><ConfigFields value={detail.approvals} /></Disclosure>}
       {!!view.logs.length && <section aria-label="任务日志"><h4>任务日志</h4><Logs events={view.logs} scope={scope} /></section>}
       <Disclosure title="任务状态记录"><ConfigFields value={{ "采集状态": bodyState(run.capture_state ?? "not_recorded"),
         "结束时间": dateTime(run.finished_at), "详情到期": dateTime(run.details_expires_at) }} />

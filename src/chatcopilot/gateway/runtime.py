@@ -39,7 +39,6 @@ from chatcopilot.core.config import load_config
 from .observation_runtime import ObservationRecorder, runtime_configuration
 from chatcopilot.core.inspection import plain, fingerprint
 from .application import GatewaySessionService
-from .approvals import GatewayApprovalService
 from .channels import ChannelRuntimeHealth, ChannelRuntimeManager
 from .coordinator import GatewayTurnCoordinator
 from .events import GatewayEventPublisher, GatewaySessionEventVisibility
@@ -84,6 +83,7 @@ _LEGACY_QQ_ENV_KEYS = (
     "CHATCOPILOT_CC_HOME",
     "CHATCOPILOT_CC_CONNECT_CONFIG_DIR",
     "CHATCOPILOT_SESSION_ENV_DIR",
+    "CHATCOPILOT_GATEWAY_OPERATOR_TOKEN",
 )
 
 
@@ -661,24 +661,6 @@ def build_gateway_runtime_host(
                     raise
             return create_file_sender(workspace, dispatch)
 
-        approval_service = GatewayApprovalService(state_store, generation=generation)
-        from chatcopilot.gateway.interactions import GatewayInteractionService
-        interactions = GatewayInteractionService(state_store, approval_service, generation=generation)
-
-        def interaction_factory(principal, session_id, scope):
-            loop = asyncio.get_running_loop()
-            def notify(_principal, sid, run_id, snapshot):
-                from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef, MessageSegment
-                from chatcopilot.gateway.interactions import format_interaction
-                text = format_interaction(snapshot)
-                envelope = OutboundEnvelope("outbound_" + uuid.uuid4().hex,
-                    ChannelAccountRef(principal.channel, principal.account_id),
-                    ConversationRef(kind=principal.conversation.chat_kind, conversation_id=principal.conversation.chat_id),
-                    (MessageSegment(kind="text", text=text),), time.time(), session_id=sid, run_id=run_id)
-                future = asyncio.run_coroutine_threadsafe(channel_runtime.send(envelope), loop)
-                future.result(timeout=config.onebot.action_timeout_seconds + 5)
-            return interactions.handler(principal, session_id, scope, notify)
-
         actor_factory = ActorSessionFactory(
             runtime=runtime,
             agent_runtime=agent_runtime,
@@ -688,7 +670,6 @@ def build_gateway_runtime_host(
             policy_version=config.policy_version,
             on_authorization_decision=record_authorization_decision,
             file_sender_factory=file_sender_factory,
-            interaction_factory=interaction_factory,
         )
         actor_executor = ActorTurnExecutor(actor_factory, resource_materializer=ResourceMaterializationService(
             resource_fetcher if resource_fetcher is not None else QqCdnResourceFetcher()))
@@ -720,11 +701,6 @@ def build_gateway_runtime_host(
         )
         channel_runtime.register(driver)
         coordinator.set_channel_runtime(channel_runtime)
-        coordinator.interactions = interactions
-        approval_service = GatewayApprovalService(
-            state_store,
-            generation=generation,
-        )
         readiness = _RuntimeReadiness(
             generation=generation,
             channels=channel_runtime,
@@ -736,7 +712,6 @@ def build_gateway_runtime_host(
             events=events,
             coordinator=coordinator,
             channel_runtime=channel_runtime,
-            approval_service=approval_service,
             event_visibility=visibility,
             generation=generation,
             ready=readiness,
@@ -745,9 +720,6 @@ def build_gateway_runtime_host(
             application_dispatcher,
             ready=readiness,
         )
-        operator_token = values.get("CHATCOPILOT_GATEWAY_OPERATOR_TOKEN", "")
-        operator_bindings = ((GatewayCredentialBinding(token=operator_token, client_id="console-operator",
-            client_mode="operator", scopes=("interactions.operator",)),) if operator_token else ())
         credential_authority = StaticGatewayCredentialAuthority(
             (
                 GatewayCredentialBinding(
@@ -756,7 +728,6 @@ def build_gateway_runtime_host(
                     client_mode=_ACP_CLIENT_MODE,
                     scopes=_ACP_SCOPES,
                 ),
-                *operator_bindings,
             )
         )
         server = GatewayWebSocketServer(

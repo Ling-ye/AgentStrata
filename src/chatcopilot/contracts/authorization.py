@@ -18,7 +18,6 @@ class AuthorizationOperation(str, Enum):
     TOOL = "tool"
     WORKSPACE = "workspace"
     LIFECYCLE = "lifecycle"
-    APPROVAL = "approval"
 
 
 def stable_payload_digest(payload: Mapping[str, Any]) -> str:
@@ -87,42 +86,6 @@ class AuthorizationDecision:
 
 
 @dataclass(frozen=True)
-class ApprovalRequest:
-    approval_id: str
-    session_id: str
-    operation: str
-    target: str
-    params_digest: str
-    actor_ref: str
-    conversation_ref: str
-    policy_version: str
-    challenge_digest: str
-    expires_at: float
-    run_id: str | None = None
-
-
-@dataclass(frozen=True)
-class ApprovalResolution:
-    approval_id: str
-    actor_ref: str
-    conversation_ref: str
-    params_digest: str
-    policy_version: str
-    challenge: str
-    accepted: bool
-    responder: Mapping[str, str] | None = None
-
-
-@dataclass(frozen=True)
-class ApprovalReceipt:
-    approval_id: str
-    decision_id: str
-    resolved: bool
-    accepted: bool
-    code: str
-
-
-@dataclass(frozen=True)
 class MutationReceipt:
     """Only ``committed`` proves the domain mutation reached durable state."""
 
@@ -134,9 +97,6 @@ class MutationReceipt:
 
 
 __all__ = [
-    "ApprovalReceipt",
-    "ApprovalRequest",
-    "ApprovalResolution",
     "AuthorizationDecision",
     "AuthorizationOperation",
     "AuthorizationRequest",

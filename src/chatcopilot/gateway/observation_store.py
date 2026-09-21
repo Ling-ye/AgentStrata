@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS runs(
  config_id TEXT, config_revision TEXT, runtime_id TEXT, model TEXT, role TEXT,
  capture_state TEXT NOT NULL DEFAULT 'not_recorded', body_bytes INTEGER NOT NULL DEFAULT 0,
  details_expired INTEGER NOT NULL DEFAULT 0, result_ref TEXT, input_ref TEXT,
- receipts TEXT NOT NULL DEFAULT '[]', outbox TEXT NOT NULL DEFAULT '[]', approvals TEXT NOT NULL DEFAULT '[]');
+ receipts TEXT NOT NULL DEFAULT '[]', outbox TEXT NOT NULL DEFAULT '[]');
 CREATE INDEX IF NOT EXISTS observation_runs_time ON runs(created_at DESC,run_id DESC);
 CREATE INDEX IF NOT EXISTS observation_runs_config ON runs(config_id,created_at);
 CREATE INDEX IF NOT EXISTS observation_runs_state ON runs(state,created_at);
@@ -93,9 +93,9 @@ class ObservationStore:
             with self.connection(write=True) as connection:
                 connection.executescript(_SCHEMA)
                 row = connection.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-                if row and row[0] != "2":
+                if row and row[0] != "3":
                     raise GatewayStateError("Unsupported observation schema")
-                connection.execute("INSERT OR IGNORE INTO meta VALUES('schema_version','2')")
+                connection.execute("INSERT OR IGNORE INTO meta VALUES('schema_version','3')")
 
     @contextmanager
     def connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
@@ -118,7 +118,7 @@ class ObservationStore:
                 connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
                 connection.execute("BEGIN")
                 row = connection.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-                if not row or row[0] != "2":
+                if not row or row[0] != "3":
                     raise GatewayStateError("Unsupported observation schema")
             yield connection
             if write:
@@ -166,9 +166,9 @@ class ObservationStore:
     def project_run(self, run: dict[str, Any]) -> None:
         checked_run_id(run["run_id"])
         allowed = ("run_id", "state", "error_code", "created_at", "started_at", "finished_at",
-                   "updated_at", "generation", "channel", "conversation_kind", "receipts", "outbox", "approvals")
+                   "updated_at", "generation", "channel", "conversation_kind", "receipts", "outbox")
         safe = self.safe({key: run.get(key) for key in allowed})
-        for key in ("receipts", "outbox", "approvals"):
+        for key in ("receipts", "outbox"):
             safe[key] = encoded(safe[key] or [])
         with self.lock, self.connection(write=True) as connection:
             previous = connection.execute("SELECT state FROM runs WHERE run_id=?", (run["run_id"],)).fetchone()

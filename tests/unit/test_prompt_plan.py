@@ -45,6 +45,7 @@ def test_builder_emits_each_fixed_layer_once_in_contract_order() -> None:
     ids = [layer.id for layer in plan.layers]
     assert ids == [
         "runtime.boundary",
+        "runtime.non_interactive",
         "runtime.session",
         "bot.identity",
         "capability.files.receipt",
@@ -55,6 +56,20 @@ def test_builder_emits_each_fixed_layer_once_in_contract_order() -> None:
         "runtime.session_facts",
     ]
     assert all("[KNOWN]" not in layer.content for layer in plan.layers)
+
+
+def test_search_information_adds_host_managed_search_policy() -> None:
+    plan = PromptPlanBuilder().build(
+        _input(tool_names=("search_information", "send_image_urls_to_user"))
+    )
+    layer = next(item for item in plan.layers if item.id == "runtime.search_routing")
+
+    assert "统一调用 `search_information`" in layer.content
+    assert "不要使用 Shell、`curl` 或 `wget`" in layer.content
+    non_interactive = next(
+        item for item in plan.layers if item.id == "runtime.non_interactive"
+    )
+    assert "不向用户索取链接、截图、偏好或补充信息" in non_interactive.content
 
 
 def test_untrusted_persona_memory_and_history_never_render_as_system_policy() -> None:

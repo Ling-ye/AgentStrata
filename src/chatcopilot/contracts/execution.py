@@ -40,8 +40,7 @@ class HostRuntimePolicy:
     network_access: bool = False
     native_capabilities: frozenset[str] = frozenset()
     extension_grants: tuple[str, ...] = ()
-    interactions_enabled: bool = False
-    revision: str = "runtime-access-v3"
+    revision: str = "runtime-access-v4"
 
     def __post_init__(self):
         object.__setattr__(self, "native_capabilities", frozenset(self.native_capabilities))
@@ -72,7 +71,6 @@ class HostRuntimePolicy:
                 "network_access": self.network_access,
                 "native_capabilities": sorted(self.native_capabilities),
                 "extension_grants": sorted(self.extension_grants),
-                "interactions_enabled": self.interactions_enabled,
                 "revision": self.revision,
             }
         )

@@ -26,7 +26,6 @@ from chatcopilot.contracts.gateway_rpc import (
 )
 from chatcopilot.contracts.identity import Identity, Role
 from chatcopilot.gateway.application import GatewaySessionService
-from chatcopilot.gateway.approvals import GatewayApprovalService
 from chatcopilot.gateway.channels import ChannelRuntimeManager
 from chatcopilot.gateway.coordinator import GatewayTurnCoordinator
 from chatcopilot.gateway.dispatcher import GatewayApplicationDispatcher
@@ -229,7 +228,6 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record
             events=events,
             coordinator=coordinator,
             channel_runtime=channels,
-            approval_service=GatewayApprovalService(state, generation=generation),
             event_visibility=visibility,
             generation=generation,
             ready=lambda: channels.health().state == "ready",

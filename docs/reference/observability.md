@@ -58,7 +58,7 @@ Codex 过程适配器识别命令、文件变更、MCP、搜索、计划、思�
 
 卡片收起时仍提供可见区域的有界输入输出预览；展开直接显示已采集正文。流式消息按同一消息 ID 更新，结束或补页不会产生重复卡片；新增观测消息不用于聊天交付。三种 Runtime 的格式在运行端适配，Console 统一读取现有事件和正文接口，历史未采集的信息不回填。
 
-Gateway 运行进程持续写入独立的 `observability/index.sqlite3` 和按任务保存的详情文件，Console 关闭不影响记录、恢复校对或定期清理。任务生命周期、审批及消息交付由原有业务状态持有者决定，观测只保存投影；诊断失败不改写权限、任务结果或交付事实。成功、失败、取消和等待恢复的任务均记录，准入前拒绝单独进入实例审计。
+Gateway 运行进程持续写入独立的 `observability/index.sqlite3` 和按任务保存的详情文件，Console 关闭不影响记录、恢复校对或定期清理。任务生命周期、授权决定及消息交付由原有业务状态持有者决定，观测只保存投影；诊断失败不改写权限、任务结果或交付事实。成功、失败、取消和等待恢复的任务均记录，准入前拒绝单独进入实例审计。
 
 任务摘要、结构化阶段指标、错误分类和私有配置原值快照长期保留。任务输入输出、工具参数与结果、上下文与提示词正文、关联日志按任务结束时间保留 30 天；运行中与等待恢复的任务不进入到期清理。单条正文上限 64 KiB、上下文每份 8 MiB、每任务详情合计 64 MiB，同时服从有界复制的结构和聚合字符串预算。到期、未采集、已截断、采集失败分别显示。清理只操作观测详情，保留业务任务状态、交付回执原件、会话记忆、人格和工作区文件。
 
@@ -72,7 +72,7 @@ Gateway 运行进程持续写入独立的 `observability/index.sqlite3` 和按�
 - `GET /api/bots/{instance_id}/inspection?run_id=...&event_seq=...`：当前、已加载与任务/阶段执行时配置；阶段必须属于选中任务。当前条目补充 `effective_config/effective_environment`，比较结果通过 `configuration_status`（`applied/pending/unknown`）及原因返回；原始字段和 `pending_changes` 保持兼容。
 - `GET /api/bots/{instance_id}/gateway-observation`：分页历史和最多 100 条实例准入审计。筛选参数为 `since/until/state/config_id/runtime_id/model/component/error_code/search/min_ms/page/limit`；时间使用 Unix 秒，单页最多 100 条。
 - `GET /api/bots/{instance_id}/gateway-observation/metrics`：同一筛选范围的聚合指标、组件分组和趋势。
-- `GET /api/bots/{instance_id}/gateway-observation/runs/{run_id}`：任务摘要、首批阶段、审批、出站状态和交付回执。
+- `GET /api/bots/{instance_id}/gateway-observation/runs/{run_id}`：任务摘要、首批阶段、出站状态和交付回执。
 - `GET /api/bots/{instance_id}/gateway-observation/runs/{run_id}/events?after=...&limit=...`：按序号增量读取，默认 200 条、最多 500 条。
 - `GET /api/bots/{instance_id}/gateway-observation/runs/{run_id}/details/{body_id}`：按需读取当前实例、当前任务范围内的不透明正文引用。
 

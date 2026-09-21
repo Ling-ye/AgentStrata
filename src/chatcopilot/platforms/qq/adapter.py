@@ -216,6 +216,7 @@ class QQAdapter(PlatformAdapter):
             "CHATCOPILOT_CC_HOME",
             "CHATCOPILOT_CC_CONNECT_CONFIG_DIR",
             "CHATCOPILOT_SESSION_ENV_DIR",
+            "CHATCOPILOT_GATEWAY_OPERATOR_TOKEN",
         ):
             if legacy_key in env:
                 errors.append(

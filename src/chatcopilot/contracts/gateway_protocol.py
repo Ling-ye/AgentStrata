@@ -7,12 +7,9 @@ from typing import Any, Literal, Mapping, TypeAlias, Union
 
 
 GatewayScope: TypeAlias = Literal[
-    "interactions.respond",
-    "interactions.operator",
     "gateway.read",
     "chat.write",
     "chat.abort",
-    "approvals.respond",
     "gateway.admin",
 ]
 

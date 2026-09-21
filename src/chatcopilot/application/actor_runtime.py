@@ -154,7 +154,6 @@ class ActorSessionFactory:
         file_sender_factory: FileSenderFactory | None = None,
         background_submitter_factory: BackgroundSubmitterFactory | None = None,
         on_authorization_decision: DecisionSink | None = None,
-        interaction_factory: Callable | None = None,
     ) -> None:
         if not str(policy_version or "").strip():
             raise ValueError("policy_version must not be empty")
@@ -167,7 +166,6 @@ class ActorSessionFactory:
         self._file_sender_factory = file_sender_factory
         self._background_submitter_factory = background_submitter_factory
         self._decision_sink = on_authorization_decision
-        self._interaction_factory = interaction_factory
         self._journals: dict[tuple[str, str, str], GroupConversationJournal] = {}
         self._journal_lock = threading.RLock()
 
@@ -283,10 +281,7 @@ class ActorSessionFactory:
                 host_policy=HostRuntimePolicy(scope=binding.service.execution_scope, network_access=True,
                     native_capabilities=frozenset({"files", "shell", "web_search", "image", "image_generation", "subagents"}),
                     extension_grants=("apps",) if (principal.role is Role.OWNER and self.runtime.runtime_id == "codex"
-                                                   and self.runtime.subagents.codex_extensions) else (),
-                    interactions_enabled=self._interaction_factory is not None),
-                interaction_handler=(self._interaction_factory(principal, session_id, binding.service.execution_scope)
-                                     if self._interaction_factory else None),
+                                                   and self.runtime.subagents.codex_extensions) else ()),
                 caller_role_hint=role_value(principal.role),
                 caller_identity=SessionIdentity(
                     user_id=principal.user_id,

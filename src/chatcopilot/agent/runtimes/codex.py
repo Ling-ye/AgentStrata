@@ -136,7 +136,6 @@ class CodexRuntimeAdapter:
         tool_payload_filter: ToolPayloadFilter | None = None,
         runtime_policy: CodexMainSessionPolicy | None = None,
         turn_timeout_seconds: float | None = 21600,
-        interaction_handler: Any = None,
         **_: Any,
     ) -> None:
         if route.runtime_id != "codex":
@@ -146,7 +145,6 @@ class CodexRuntimeAdapter:
         self._route = route
         self._runtime_config = runtime_config
         self._turn_timeout = turn_timeout_seconds
-        self._interaction_handler = interaction_handler
         self._tool_names = frozenset(tool_names)
         self._tools = tuple(tools)
         self._tool_executor = tool_executor
@@ -568,8 +566,6 @@ class CodexRuntimeAdapter:
                     payload = refreshed.handoff()
                     payload.pop("type")
                     return payload
-                if self._interaction_handler is not None:
-                    return self._interaction_handler(method, params, task, interaction_cancellation)
                 if method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
                     return {"decision": "decline"}
                 if method == "item/permissions/requestApproval":
@@ -599,7 +595,7 @@ class CodexRuntimeAdapter:
                 developer_instructions=developer,
                 connection=state.connection, on_request=host_request,
                 dynamic_tools=state.relay.schemas(), authentication=authentication,
-                approval_policy="on-request" if state.host_policy.interactions_enabled else "never",
+                approval_policy="never",
             )
             if cancellation is not None:
                 cancellation.raise_if_cancelled()
@@ -1024,8 +1020,7 @@ class CodexRuntimeAdapter:
             extra_config.extend(["features.multi_agent=false", "features.multi_agent_v2=false"])
         if "shell" not in state.host_policy.native_capabilities:
             extra_config.extend(["features.shell_tool=false", "features.unified_exec=false"])
-        if state.host_policy.interactions_enabled:
-            extra_config.append("features.default_mode_request_user_input=true")
+        extra_config.append("features.default_mode_request_user_input=false")
         command = build_app_server_command(
             template="codex exec --model {model} --cd {workdir}",
             model=effective_selection.model,

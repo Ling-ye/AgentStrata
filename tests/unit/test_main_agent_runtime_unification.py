@@ -1744,6 +1744,7 @@ class CodexBackendPolicyTests(TestCase):
         self.assertIn('web_search="live"', command)
         self.assertIn("project_doc_max_bytes=0", command)
         self.assertIn("mcp_servers={}", command)
+        self.assertIn("features.default_mode_request_user_input=false", command)
         self.assertIn('shell_environment_policy.inherit="none"', command)
         self.assertIn("current-conversation ordinary files", prompt)
 

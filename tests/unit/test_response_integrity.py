@@ -30,6 +30,17 @@ def test_side_effect_claim_requires_matching_success_receipt() -> None:
     assert proven.ok is True
 
 
+def test_image_delivery_claim_requires_send_receipt() -> None:
+    missing = ResponseIntegrityCheck().check("我已发送一张非官方玩法示意图。")
+    assert "missing_receipt:message" in missing.issues
+
+    proven = ResponseIntegrityCheck().check(
+        "我已发送一张非官方玩法示意图。",
+        successful_operations=("send_image_urls_to_user",),
+    )
+    assert proven.ok is True
+
+
 def test_verification_claim_requires_search_evidence() -> None:
     missing = ResponseIntegrityCheck().check("我已核实，这项信息有效。")
     assert "verification_claim_without_evidence" in missing.issues

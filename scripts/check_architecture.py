@@ -323,6 +323,14 @@ REMOVED_IMPORTS = (
     "chatcopilot.agent.subagents.presets",
     "chatcopilot.agent.tools.builtin.mcp_tools",
     "chatcopilot.middleware.runtime.workspace",
+    "chatcopilot.authorization.approvals",
+    "chatcopilot.botspec.runtime_cutover",
+    "chatcopilot.contracts.interactions",
+    "chatcopilot.gateway.approvals",
+    "chatcopilot.gateway.interaction_schema",
+    "chatcopilot.gateway.interactions",
+    "chatcopilot.gateway.runtime_cutover",
+    "chatcopilot.runtime_cutover",
 )
 COMPATIBILITY_IMPORTS = (
     "chatcopilot.agent.research",
@@ -658,16 +666,15 @@ def _semantic_invariants() -> dict[str, dict[str, list[str]]]:
         "CodeModelSelection",
         "code_model_selection",
         "backend_name",
+        "GatewayInteractionService",
+        "GatewayApprovalService",
+        "InteractionSnapshot",
+        "interactions_enabled",
+        "interaction_handler",
+        "interaction_factory",
     )
-    cutover_readers = {
-        SRC / "runtime_cutover.py",
-        SRC / "botspec" / "runtime_cutover.py",
-        SRC / "gateway" / "runtime_cutover.py",
-    }
     vocabulary_violations: dict[str, list[str]] = {}
     for path in SRC.rglob("*.py"):
-        if path in cutover_readers:
-            continue
         source = path.read_text(encoding="utf-8-sig")
         found = [token for token in retired_runtime_vocabulary if token in source]
         if found:

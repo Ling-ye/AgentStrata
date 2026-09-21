@@ -232,7 +232,6 @@ def test_gateway_adapter_paginates_and_does_not_read_business_state(monkeypatch)
         "next_cursor": 1,
         "receipts": [],
         "outbox": [],
-        "approvals": [],
     }
     reader = SimpleNamespace(
         meta=Mock(return_value=None),
@@ -282,7 +281,7 @@ def test_trace_gaps_allow_diagnosis_but_tampered_evidence_does_not(tmp_path, mon
         reference["sha256"] = "0" * 64
     record = {"run": {"run_id": "run-example", "state": "completed", "input_ref": "input", "config_id": "cfg"},
               "observations": [{"seq": 1, "body_ref": "input"}], "has_more": False,
-              "receipts": [], "outbox": [], "approvals": []}
+              "receipts": [], "outbox": []}
     reader = SimpleNamespace(root=tmp_path, meta=lambda _: reference,
                              body=lambda *_: {"state": "available", "payload": {"text": "synthetic input"}},
                              configuration=lambda _: {"revision": "cfg"})

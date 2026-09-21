@@ -12,10 +12,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     command = args.pop(0)
-    if command == "runtime-cutover":
-        from chatcopilot.runtime_cutover import main as cutover_main
-        cutover_main(args)
-        return 0
     if command == "botspec":
         from chatcopilot.botspec.__main__ import main as botspec_main
 
@@ -73,7 +69,6 @@ def _print_help() -> None:
         "  agentstrata run --bot bots/<bot-id>/bot.yaml\n"
         "  agentstrata acp-edge\n"
         "  agentstrata mcp-server\n"
-        "  agentstrata runtime-cutover check --inventory /absolute/cutover.yaml\n"
         "  agentstrata evals list\n"
         "  agentstrata evals run --suite ifeval --bot bots/<bot-id>/bot.yaml "
         "--output reports/evals/manual/ifeval-run\n"

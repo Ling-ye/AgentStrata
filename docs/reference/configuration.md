@@ -157,22 +157,6 @@ API Key 模式使用 `auth: {mode: api_key, key_env: CHATCOPILOT_LINGYE_API_KEY}
 
 `agents.runtime_options.codex.turn_timeout_seconds` 控制主 Codex 整轮截止时间；Native loop 的预算仍由 Native 解析。`agents.runtime_options.native.env_prefix` 仅用于独立保留 Native 预算配置。可选的 `codex.extensions` 指向实例审核的原生扩展 TOML，具体限制见 [Agent](agent.md)。
 
-### 显式 runtime 迁移
-
-旧 `agents.backend` 和 Gateway schema 2 不在启动时自动转换。先停对应实例，再使用 inventory 绑定的 cutover 入口；`check` 只读取，`apply` 要求所有实例状态库的独占 lease。主 Codex 迁入 chat 槽前解析旧 CODE_MODEL/CODE_REASONING_EFFORT 覆盖；辅助模型保留旧前缀继承，worker 继续使用原前缀。inventory 只保存私有环境文件的路径，秘密不写入计划或 receipt。
-
-预检输出解析后的主模型与辅助模型 route；研究、统一搜索、MCP 搜索、预设和自定义子代理均通过同一配置解析器比较迁移前后结果。继承路径先展开再冻结，发现 model、协议、端点、认证引用或参数漂移时拒绝迁移，不只比较模型名或机械复制公共前缀。
-
-```bash
-agentstrata runtime-cutover check --inventory /absolute/runtime-cutover.yaml
-agentstrata runtime-cutover apply --inventory /absolute/runtime-cutover.yaml --plan-digest <sha256>
-agentstrata runtime-cutover verify --inventory /absolute/runtime-cutover.yaml --receipt /absolute/runtime-cutover.yaml.receipt.json
-```
-
-数据库通过 SQLite backup API 生成私有备份；旧 Observation、Evaluation、transcript、worker 记录及 session binding 按原字节移入 `runtime-cutover-*` 私有归档并生成 SHA-256 manifest。journal、人格和记忆保留。此命令不启动、部署或重启实例；受控 Gateway 回放仍须单独执行并保留 `production_delivery: false` 证据。出现部分失败时保持停机，先检查 receipt、归档 manifest、备份和配置/数据库状态再恢复。
-
-Console 交互操作另需 `CHATCOPILOT_GATEWAY_OPERATOR_TOKEN`，不能复用或扩大原 ACP token 的权限；该秘密只在 Console 服务端与 Gateway 使用。
-
 ### `prompts`
 
 - `schema_version` 必须为 `2`。

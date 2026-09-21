@@ -232,7 +232,7 @@ class SessionManager:
             if len(bucket) >= self._max_actors_per_session:
                 candidate = next((item for item in bucket.values() if not getattr(item.agent_session, "busy", False)), None)
                 if candidate is None:
-                    raise ActorEvictionError("actors_busy", "All actor sessions have active turns, tools or interactions")
+                    raise ActorEvictionError("actors_busy", "All actor sessions have active turns or tools")
                 self._discard_execution_session(candidate)
                 bucket.pop(candidate.key.actor_ref)
                 self._unbind_agent_session(candidate)

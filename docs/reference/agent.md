@@ -61,9 +61,9 @@ ToolRegistry 是宿主工具唯一注册来源，CapabilitySnapshot 只是当前
 
 Application 只通过 `AgentRuntime.open_session()` 取得显式的公开 session 与宿主工具执行端口；session 仅暴露 `run_task/update_context/record_exchange/snapshot_transcript/cancel/close/discard`。transcript 明确标注 host_history 或 adapter_visible，不充当原生恢复状态。RuntimeSessionBinding 记录 actor、认证身份代际、能力和策略摘要；普通 token 刷新不失效，重新登录或不兼容权限变化失效。群 actor 只支持进程内恢复。
 
-## 交互请求
+## 非交互执行
 
-Gateway 持久化审批和输入请求，`interactions.list/get/resolve` 返回统一投影。QQ 的“答复/批准/拒绝 + 编号”在身份与准入完成后直接处理，不排在等待中的 conversation 后面。Console 使用单独的 `interactions.operator` 凭据及同源校验；操作员单独署名，不能冒充 QQ actor。决定持久化、provider RPC 回应和工具成功是三个独立事实。重启取消等待，不重发旧 RPC ID。
+所有 Agent Runtime 固定使用非交互模式。宿主权限和沙箱已授权的操作直接执行；权限扩张、越界访问、MCP elicitation 和原生用户输入请求立即拒绝，不创建等待中的 QQ 或 Console 请求。信息不足时采用安全默认值，无法可靠完成时直接说明限制，不向用户索取补充材料。Adapter 导入、Harness 交付和发布部署等独立业务授权不受此规则影响。
 
 ## 大模块保留 facade
 

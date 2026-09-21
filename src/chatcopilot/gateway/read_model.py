@@ -165,10 +165,6 @@ def gateway_run(root: Path, run_id: str, *, secrets: tuple[str, ...] = (), opera
         run["final_text"] = final_text[:8000]
         run["final_text_truncated"] = len(final_text) > 8000
         session_id = run.pop("session_id")
-        approvals = _rows(connection,
-                          "SELECT operation, state, accepted, created_at, decided_at "
-                          "FROM approvals WHERE run_id=? AND session_id=? ORDER BY created_at LIMIT 101",
-                          (run_id, session_id))
         receipts = _rows(connection,
                          "SELECT d.receipt_id, d.outbound_id, d.stage, d.observed_at, d.error_code "
                          "FROM delivery_receipts d JOIN outbox o ON o.outbound_id=d.outbound_id "
@@ -209,7 +205,7 @@ def gateway_run(root: Path, run_id: str, *, secrets: tuple[str, ...] = (), opera
         return {"run": run, "observations": events, "events": wire_events,
                 "observations_available": has_observations and bool(observations),
                 "truncated": len(observations) > 300 or len(wire) > 300 or any(
-                    len(items) > 100 for items in (approvals, receipts, outbox)
+                    len(items) > 100 for items in (receipts, outbox)
                 ) or any(item.get("kind") == "observations_truncated" for item in events),
-                "approvals": approvals[:100], "receipts": receipts[:100], "outbox": outbox[:100],
+                "receipts": receipts[:100], "outbox": outbox[:100],
                 "generated_at": time.time()}

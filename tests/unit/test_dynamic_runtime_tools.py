@@ -56,7 +56,7 @@ def test_payloads_match_schema_exported_by_pinned_local_codex():
         tools=(tool,), executor=ToolExecutor(tools=[tool], caller_role_hint="user")
     )
     jsonschema.validate(
-        {"dynamicTools": bridge.schemas(), "approvalPolicy": "on-request"},
+        {"dynamicTools": bridge.schemas(), "approvalPolicy": "never"},
         schemas["ThreadStartParams"],
     )
     from chatcopilot.core.model_credentials import AccessCredential

@@ -11,7 +11,6 @@ tests/unit/test_gateway_channels.py
 tests/unit/test_gateway_runtime_host.py
 tests/unit/test_gateway_application_dispatcher.py
 tests/unit/test_gateway_acp_edge.py
-tests/unit/test_gateway_durable_approvals.py
 tests/unit/test_qq_onebot_codec.py
 tests/unit/test_qq_onebot_driver.py
 
@@ -26,7 +25,6 @@ tests/unit/test_group_conversation_journal_generation.py
 # Identity, permissions and operator lifecycle
 tests/unit/test_authorization_policy.py
 tests/unit/test_authorization_tools.py
-tests/unit/test_authorization_approvals.py
 tests/unit/test_runtime_permission_profiles.py
 tests/unit/test_execution_policy_consolidation.py
 tests/unit/test_development_task_scope.py
@@ -52,7 +50,6 @@ tests/unit/test_prompt_plan_architecture.py
 tests/unit/test_agent_cancellation.py
 tests/unit/test_concurrency.py
 tests/unit/test_main_agent_runtime_unification.py
-tests/unit/test_runtime_cutover.py
 tests/unit/test_codex_cli_runner.py
 tests/unit/test_mcp_client_provider.py
 tests/unit/test_search_coordinator.py

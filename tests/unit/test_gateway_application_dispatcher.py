@@ -33,7 +33,6 @@ from chatcopilot.contracts.gateway_rpc import ChatUpdateEvent
 from chatcopilot.contracts.identity import Role
 from chatcopilot.gateway import (
     GatewayApplicationDispatcher,
-    GatewayApprovalService,
     GatewayClientContext,
     GatewayCredentialBinding,
     GatewayDispatchError,
@@ -66,7 +65,6 @@ def _client(client_id: str, *, admin: bool = False) -> GatewayClientContext:
         "gateway.read",
         "chat.write",
         "chat.abort",
-        "approvals.respond",
     )
     if admin:
         scopes += ("gateway.admin",)
@@ -385,7 +383,6 @@ def _runtime(
         events=events,
         coordinator=coordinator,
         channel_runtime=channels,
-        approval_service=GatewayApprovalService(state, generation=generation),
         event_visibility=visibility,
         generation=generation,
         ready=lambda: True,

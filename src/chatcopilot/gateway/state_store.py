@@ -16,13 +16,11 @@ import stat
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypeAlias, cast
 
 from chatcopilot.contracts.authorization import (
-    ApprovalRequest,
-    ApprovalResolution,
     AuthorizationDecision,
     Principal,
 )
@@ -44,7 +42,7 @@ from chatcopilot.contracts.identity import ConversationIdentity, Role
 from .protocol import GATEWAY_EVENTS
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MAX_STATE_JSON_BYTES = 1024 * 1024
 MAX_OUTBOUND_ENVELOPE_JSON_BYTES = 8 * 1024 * 1024
 _INSTANCE_LEASE_FILENAME = "gateway.instance.lock"
@@ -83,7 +81,6 @@ RUN_STATES = frozenset(
 )
 ACTIVE_RUN_STATES = frozenset({"accepted", "running", "abort_requested", "recovery_required"})
 TERMINAL_RUN_STATES = frozenset({"completed", "aborted", "failed"})
-APPROVAL_STATUSES = frozenset({"pending", "resolved", "expired", "cancelled"})
 RunState: TypeAlias = Literal[
     "accepted",
     "running",
@@ -96,7 +93,6 @@ RunState: TypeAlias = Literal[
 RunOutcome: TypeAlias = Literal["completed", "aborted", "failed"]
 
 _SESSION_MODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
-_APPROVAL_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{24,128}$")
 _SESSION_COLUMNS = (
     "channel, account_id, conversation_kind, conversation_id, writer_generation, "
     "mode, debug, event_cursor, active_run_id, created_at, updated_at"
@@ -104,11 +100,6 @@ _SESSION_COLUMNS = (
 _RUN_COLUMNS = (
     "session_id, input_fingerprint, state, generation, result_json, error_code, "
     "recovery_from_state, created_at, started_at, abort_requested_at, finished_at, updated_at"
-)
-_APPROVAL_COLUMNS = (
-    "session_id, run_id, operation, target, params_digest, actor_ref, conversation_ref, "
-    "policy_version, challenge_digest, challenge, expires_at, state, decision_id, "
-    "accepted, decided_at, generation, created_at, updated_at"
 )
 
 
@@ -142,10 +133,6 @@ class SessionConflict(GatewayStateError):
 
 class RunConflict(GatewayStateError):
     """Raised when a run identity or lifecycle transition conflicts."""
-
-
-class ApprovalConflict(GatewayStateError):
-    """Raised when an approval identity or immutable binding conflicts."""
 
 
 @dataclass(frozen=True)
@@ -239,19 +226,6 @@ class RunRecord:
     abort_requested_at: float | None
     finished_at: float | None
     updated_at: float
-
-
-@dataclass(frozen=True)
-class ApprovalRecord:
-    request: ApprovalRequest
-    status: Literal["pending", "resolved", "expired", "cancelled"]
-    challenge: str | None = field(repr=False)
-    decision_id: str | None = None
-    accepted: bool | None = None
-    decided_at: float | None = None
-    generation: int = 0
-    created_at: float = 0.0
-    updated_at: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -1145,165 +1119,6 @@ class GatewayStateStore:
             ).fetchall()
         return tuple(_run_record(str(row[0]), row[1:]) for row in rows)
 
-    @_project_observation
-    def create_approval(
-        self,
-        *,
-        generation: int,
-        request: ApprovalRequest,
-        challenge: str,
-        now: float | None = None,
-    ) -> bool:
-        """Persist an approval and its opaque prompt before notifying any client."""
-
-        observed_at = _timestamp(now)
-        _validate_approval_request(request)
-        _validate_approval_challenge(challenge)
-        if not hmac.compare_digest(
-            _challenge_digest(challenge),
-            request.challenge_digest,
-        ):
-            raise ValueError("approval challenge does not match its digest")
-        if request.expires_at <= observed_at:
-            raise ValueError("approval must expire after it is created")
-        with self._write_connection() as connection:
-            self._assert_generation(connection, generation)
-            self._require_session(connection, request.session_id)
-            if request.run_id is not None:
-                run = self._require_run(connection, request.run_id)
-                _assert_run_session(run, request.session_id)
-                if run.state not in ACTIVE_RUN_STATES:
-                    raise ApprovalConflict("approval run is no longer active")
-            row = connection.execute(
-                f"SELECT {_APPROVAL_COLUMNS} FROM approvals WHERE approval_id = ?",
-                (request.approval_id,),
-            ).fetchone()
-            if row is not None:
-                existing = _approval_record(request.approval_id, row, now=observed_at)
-                if existing.request == request and hmac.compare_digest(
-                    existing.challenge or "",
-                    challenge,
-                ):
-                    return False
-                raise ApprovalConflict(
-                    "approval identity is already bound to different request facts"
-                )
-            try:
-                connection.execute(
-                    "INSERT INTO approvals("
-                    "approval_id, session_id, run_id, operation, target, params_digest, "
-                    "actor_ref, conversation_ref, policy_version, challenge_digest, "
-                    "challenge, expires_at, state, decision_id, accepted, decided_at, "
-                    "generation, created_at, updated_at"
-                    ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, "
-                    "NULL, NULL, ?, ?, ?)",
-                    (
-                        request.approval_id,
-                        request.session_id,
-                        request.run_id,
-                        request.operation,
-                        request.target,
-                        request.params_digest,
-                        request.actor_ref,
-                        request.conversation_ref,
-                        request.policy_version,
-                        request.challenge_digest,
-                        challenge,
-                        request.expires_at,
-                        generation,
-                        observed_at,
-                        observed_at,
-                    ),
-                )
-            except sqlite3.IntegrityError as exc:
-                raise ApprovalConflict("approval binding is invalid") from exc
-        return True
-
-    def get_approval(
-        self,
-        approval_id: str,
-        *,
-        actor_ref: str,
-        conversation_ref: str,
-        session_id: str,
-        now: float | None = None,
-    ) -> ApprovalRecord | None:
-        """Return one approval only through its exact actor/conversation/session binding."""
-
-        observed_at = _timestamp(now)
-        _required_identity(approval_id, "approval_id", max_chars=256)
-        _validate_approval_access(
-            actor_ref=actor_ref,
-            conversation_ref=conversation_ref,
-            session_id=session_id,
-        )
-        with self._read_connection() as connection:
-            row = connection.execute(
-                f"SELECT {_APPROVAL_COLUMNS} FROM approvals "
-                "WHERE approval_id = ? AND actor_ref = ? AND conversation_ref = ? "
-                "AND session_id = ?",
-                (approval_id, actor_ref, conversation_ref, session_id),
-            ).fetchone()
-        return (
-            _approval_record(approval_id, row, now=observed_at)
-            if row is not None
-            else None
-        )
-
-    def list_approvals(
-        self,
-        *,
-        actor_ref: str,
-        conversation_ref: str,
-        session_id: str | None = None,
-        offset: int = 0,
-        limit: int = 100,
-        now: float | None = None,
-    ) -> tuple[ApprovalRecord, ...]:
-        """List only approvals visible to one exact trusted actor and conversation."""
-
-        observed_at = _timestamp(now)
-        _validate_approval_access(
-            actor_ref=actor_ref,
-            conversation_ref=conversation_ref,
-            session_id=session_id,
-        )
-        _validate_page(offset=offset, limit=limit)
-        params: list[Any] = [actor_ref, conversation_ref]
-        session_filter = ""
-        if session_id is not None:
-            session_filter = "AND session_id = ? "
-            params.append(session_id)
-        params.extend((limit, offset))
-        with self._read_connection() as connection:
-            rows = connection.execute(
-                f"SELECT approval_id, {_APPROVAL_COLUMNS} FROM approvals "
-                "WHERE actor_ref = ? AND conversation_ref = ? "
-                f"{session_filter}ORDER BY created_at ASC, approval_id ASC LIMIT ? OFFSET ?",
-                tuple(params),
-            ).fetchall()
-        return tuple(
-            _approval_record(str(row[0]), row[1:], now=observed_at) for row in rows
-        )
-
-    def expire_approvals(
-        self,
-        *,
-        generation: int,
-        now: float | None = None,
-    ) -> int:
-        """Make expiry durable and erase no-longer-usable plaintext challenges."""
-
-        observed_at = _timestamp(now)
-        with self._write_connection() as connection:
-            self._assert_generation(connection, generation)
-            cursor = connection.execute(
-                "UPDATE approvals SET state = 'expired', challenge = '', generation = ?, "
-                "updated_at = ? WHERE state = 'pending' AND expires_at <= ?",
-                (generation, observed_at, observed_at),
-            )
-            return cursor.rowcount
-
     def record_authorization_decision(
         self,
         *,
@@ -1391,84 +1206,6 @@ class GatewayStateStore:
         return tuple(
             _authorization_decision_record(str(row[0]), row[1:]) for row in rows
         )
-
-    def _get_approval_request(self, approval_id: str) -> ApprovalRequest | None:
-        _required_identity(approval_id, "approval_id", max_chars=256)
-        with self._read_connection() as connection:
-            row = connection.execute(
-                f"SELECT {_APPROVAL_COLUMNS} FROM approvals WHERE approval_id = ?",
-                (approval_id,),
-            ).fetchone()
-        return (
-            _approval_record(approval_id, row, now=0.0).request
-            if row is not None
-            else None
-        )
-
-    @_project_observation
-    def resolve_approval_once(
-        self,
-        *,
-        generation: int,
-        request: ApprovalRequest,
-        resolution: ApprovalResolution,
-        decision_id: str,
-        decided_at: float,
-    ) -> bool:
-        """Atomically consume an approval only if every immutable binding still matches."""
-
-        observed_at = _timestamp(decided_at)
-        _validate_approval_request(request)
-        _validate_approval_resolution(resolution)
-        _required_identity(decision_id, "decision_id", max_chars=256)
-        if (
-            resolution.approval_id != request.approval_id
-            or resolution.actor_ref != request.actor_ref
-            or resolution.conversation_ref != request.conversation_ref
-            or resolution.params_digest != request.params_digest
-            or resolution.policy_version != request.policy_version
-            or not hmac.compare_digest(
-                _challenge_digest(resolution.challenge),
-                request.challenge_digest,
-            )
-        ):
-            return False
-        with self._write_connection() as connection:
-            self._assert_generation(connection, generation)
-            cursor = connection.execute(
-                "UPDATE approvals SET state = 'resolved', challenge = '', decision_id = ?, "
-                "accepted = ?, decided_at = ?, generation = ?, updated_at = ? "
-                "WHERE approval_id = ? AND session_id = ? AND run_id IS ? "
-                "AND operation = ? AND target = ? AND params_digest = ? "
-                "AND actor_ref = ? AND conversation_ref = ? AND policy_version = ? "
-                "AND challenge_digest = ? AND challenge = ? AND expires_at = ? "
-                "AND state = 'pending' AND expires_at > ?",
-                (
-                    decision_id,
-                    int(resolution.accepted),
-                    observed_at,
-                    generation,
-                    observed_at,
-                    request.approval_id,
-                    request.session_id,
-                    request.run_id,
-                    request.operation,
-                    request.target,
-                    request.params_digest,
-                    resolution.actor_ref,
-                    resolution.conversation_ref,
-                    resolution.policy_version,
-                    request.challenge_digest,
-                    resolution.challenge,
-                    request.expires_at,
-                    observed_at,
-                ),
-            )
-            if cursor.rowcount == 1 and resolution.responder is not None:
-                connection.execute("UPDATE input_requests SET decision=?,responder=? WHERE approval_id=? AND decision IS NULL",
-                    (_json_dump({"decision": "approve" if resolution.accepted else "deny"}),
-                     _json_dump(dict(resolution.responder)), request.approval_id))
-            return cursor.rowcount == 1
 
     def reserve_ingress(
         self,
@@ -2163,38 +1900,6 @@ class GatewayStateStore:
                 WHERE state IN (
                     'accepted', 'running', 'abort_requested', 'recovery_required'
                 );
-                CREATE TABLE IF NOT EXISTS approvals(
-                    approval_id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL REFERENCES sessions(session_id),
-                    run_id TEXT REFERENCES runs(run_id),
-                    operation TEXT NOT NULL,
-                    target TEXT NOT NULL,
-                    params_digest TEXT NOT NULL,
-                    actor_ref TEXT NOT NULL,
-                    conversation_ref TEXT NOT NULL,
-                    policy_version TEXT NOT NULL,
-                    challenge_digest TEXT NOT NULL,
-                    challenge TEXT NOT NULL,
-                    expires_at REAL NOT NULL,
-                    state TEXT NOT NULL CHECK(state IN ('pending', 'resolved', 'expired', 'cancelled')),
-                    decision_id TEXT,
-                    accepted INTEGER CHECK(accepted IS NULL OR accepted IN (0, 1)),
-                    decided_at REAL,
-                    generation INTEGER NOT NULL,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL,
-                    CHECK(
-                        (state = 'pending' AND decision_id IS NULL AND accepted IS NULL
-                            AND decided_at IS NULL AND challenge != '')
-                        OR (state = 'resolved' AND decision_id IS NOT NULL
-                            AND accepted IS NOT NULL AND decided_at IS NOT NULL
-                            AND challenge = '')
-                        OR (state IN ('expired', 'cancelled') AND decision_id IS NULL AND accepted IS NULL
-                            AND decided_at IS NULL AND challenge = '')
-                    )
-                );
-                CREATE INDEX IF NOT EXISTS approvals_actor_conversation
-                ON approvals(actor_ref, conversation_ref, session_id, created_at, approval_id);
                 CREATE TABLE IF NOT EXISTS authorization_decisions(
                     decision_id TEXT PRIMARY KEY,
                     request_id TEXT NOT NULL,
@@ -2271,8 +1976,6 @@ class GatewayStateStore:
                 );
                 """
             )
-            from chatcopilot.gateway.interaction_schema import INTERACTION_SCHEMA
-            connection.executescript(INTERACTION_SCHEMA)
             if row is None:
                 connection.execute(
                     "INSERT INTO gateway_meta(key, value) VALUES('schema_version', ?)",
@@ -2836,39 +2539,6 @@ def _validate_run_terminal_payload(
     return result_json
 
 
-def _validate_approval_request(request: ApprovalRequest) -> None:
-    if not isinstance(request, ApprovalRequest):
-        raise ValueError("request must be an ApprovalRequest")
-    _required_identity(request.approval_id, "approval_id", max_chars=256)
-    _required_identity(request.session_id, "approval session_id", max_chars=256)
-    if request.run_id is not None:
-        _required_identity(request.run_id, "approval run_id", max_chars=256)
-    _required_identity(request.operation, "approval operation", max_chars=256)
-    _required_identity(request.target, "approval target", max_chars=512)
-    _require_prefixed_sha256(request.params_digest, "approval params_digest")
-    _required_identity(request.actor_ref, "approval actor_ref", max_chars=512)
-    _required_identity(
-        request.conversation_ref,
-        "approval conversation_ref",
-        max_chars=512,
-    )
-    _required_identity(
-        request.policy_version,
-        "approval policy_version",
-        max_chars=256,
-    )
-    _require_prefixed_sha256(
-        request.challenge_digest,
-        "approval challenge_digest",
-    )
-    if (
-        type(request.expires_at) not in {int, float}
-        or not math.isfinite(request.expires_at)
-        or request.expires_at <= 0
-    ):
-        raise ValueError("approval expires_at is invalid")
-
-
 def _validate_authorization_decision(decision: AuthorizationDecision) -> None:
     if not isinstance(decision, AuthorizationDecision):
         raise ValueError("decision must be an AuthorizationDecision")
@@ -2920,55 +2590,6 @@ def _authorization_decision_record(
     )
 
 
-def _validate_approval_resolution(resolution: ApprovalResolution) -> None:
-    if not isinstance(resolution, ApprovalResolution):
-        raise ValueError("resolution must be an ApprovalResolution")
-    _required_identity(resolution.approval_id, "approval_id", max_chars=256)
-    _required_identity(resolution.actor_ref, "approval actor_ref", max_chars=512)
-    _required_identity(
-        resolution.conversation_ref,
-        "approval conversation_ref",
-        max_chars=512,
-    )
-    _require_prefixed_sha256(
-        resolution.params_digest,
-        "approval params_digest",
-    )
-    _required_identity(
-        resolution.policy_version,
-        "approval policy_version",
-        max_chars=256,
-    )
-    _validate_approval_challenge(resolution.challenge)
-    if type(resolution.accepted) is not bool:
-        raise ValueError("approval decision must be a boolean")
-
-
-def _validate_approval_access(
-    *,
-    actor_ref: str,
-    conversation_ref: str,
-    session_id: str | None,
-) -> None:
-    _required_identity(actor_ref, "approval actor_ref", max_chars=512)
-    _required_identity(
-        conversation_ref,
-        "approval conversation_ref",
-        max_chars=512,
-    )
-    if session_id is not None:
-        _required_identity(session_id, "approval session_id", max_chars=256)
-
-
-def _validate_approval_challenge(challenge: str) -> None:
-    if not isinstance(challenge, str) or _APPROVAL_CHALLENGE_RE.fullmatch(challenge) is None:
-        raise ValueError("approval challenge must be an opaque URL-safe value")
-
-
-def _challenge_digest(challenge: str) -> str:
-    return "sha256:" + hashlib.sha256(challenge.encode("utf-8")).hexdigest()
-
-
 def _require_prefixed_sha256(value: str, label: str) -> None:
     if not isinstance(value, str) or not value.startswith("sha256:"):
         raise ValueError(f"{label} must be a prefixed lowercase SHA-256 digest")
@@ -2977,89 +2598,6 @@ def _require_prefixed_sha256(value: str, label: str) -> None:
         _require_sha256(digest, label)
     except ValueError as exc:
         raise ValueError(f"{label} must be a prefixed lowercase SHA-256 digest") from exc
-
-
-def _approval_record(
-    approval_id: str,
-    row: sqlite3.Row | tuple[Any, ...],
-    *,
-    now: float,
-) -> ApprovalRecord:
-    try:
-        expires_at = _stored_timestamp(row[10], "approval expires_at")
-        generation = int(row[15])
-        created_at = _stored_timestamp(row[16], "approval created_at")
-        updated_at = _stored_timestamp(row[17], "approval updated_at")
-    except (TypeError, ValueError) as exc:
-        raise GatewayStateError("Gateway approval state is corrupt") from exc
-    if generation < 1 or expires_at <= created_at or updated_at < created_at:
-        raise GatewayStateError("Gateway approval state is corrupt")
-    request = ApprovalRequest(
-        approval_id=approval_id,
-        session_id=str(row[0]),
-        run_id=str(row[1]) if row[1] is not None else None,
-        operation=str(row[2]),
-        target=str(row[3]),
-        params_digest=str(row[4]),
-        actor_ref=str(row[5]),
-        conversation_ref=str(row[6]),
-        policy_version=str(row[7]),
-        challenge_digest=str(row[8]),
-        expires_at=expires_at,
-    )
-    try:
-        _validate_approval_request(request)
-    except ValueError as exc:
-        raise GatewayStateError("Gateway approval binding is corrupt") from exc
-    stored_state = str(row[11])
-    if stored_state not in {"pending", "resolved", "expired", "cancelled"}:
-        raise GatewayStateError("Gateway approval state is corrupt")
-    challenge = str(row[9])
-    decision_id = str(row[12]) if row[12] is not None else None
-    accepted_raw = row[13]
-    accepted = bool(accepted_raw) if accepted_raw is not None else None
-    decided_at = _optional_stored_timestamp(row[14], "approval decided_at")
-    if stored_state == "pending":
-        try:
-            _validate_approval_challenge(challenge)
-        except ValueError as exc:
-            raise GatewayStateError("Gateway pending approval challenge is corrupt") from exc
-        if (
-            not hmac.compare_digest(_challenge_digest(challenge), request.challenge_digest)
-            or decision_id is not None
-            or accepted is not None
-            or decided_at is not None
-        ):
-            raise GatewayStateError("Gateway pending approval state is corrupt")
-        status = "expired" if now >= expires_at else "pending"
-        visible_challenge = challenge if status == "pending" else None
-    elif stored_state == "resolved":
-        if (
-            challenge
-            or decision_id is None
-            or accepted_raw not in {0, 1}
-            or decided_at is None
-            or decided_at >= expires_at
-        ):
-            raise GatewayStateError("Gateway resolved approval state is corrupt")
-        status = "resolved"
-        visible_challenge = None
-    else:
-        if challenge or decision_id is not None or accepted is not None or decided_at is not None:
-            raise GatewayStateError("Gateway expired approval state is corrupt")
-        status = stored_state
-        visible_challenge = None
-    return ApprovalRecord(
-        request=request,
-        status=cast(Literal["pending", "resolved", "expired", "cancelled"], status),
-        challenge=visible_challenge,
-        decision_id=decision_id,
-        accepted=accepted,
-        decided_at=decided_at,
-        generation=generation,
-        created_at=created_at,
-        updated_at=updated_at,
-    )
 
 
 def _assert_terminal_run_replay(
@@ -3327,8 +2865,6 @@ def _delivery_stage(value: str) -> DeliveryStage:
 
 
 __all__ = [
-    "ApprovalConflict",
-    "ApprovalRecord",
     "AuthorizationDecisionRecord",
     "GatewayEventRecord",
     "GatewayEventReplay",

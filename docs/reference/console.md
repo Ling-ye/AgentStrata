@@ -54,7 +54,7 @@ AI Harness 修复记录按业务阶段、准备版本与修复轮次展开。步
 | 端点 | 方法 | 用途 |
 | --- | --- | --- |
 | `/api/bots/{id}/gateway-observation` | GET | 当前实例 Gateway run 和独立准入审计 |
-| `/api/bots/{id}/gateway-observation/runs/{run_id}` | GET | 当前 run 的诊断事件、审批和交付回执 |
+| `/api/bots/{id}/gateway-observation/runs/{run_id}` | GET | 当前 run 的诊断事件和交付回执 |
 | `/api/catalog` | GET | 统一组件目录（tools + prompts + agents + context） |
 | `/api/catalog/{item_id}` | GET | 单个目录条目 |
 | `/api/bots/{id}/tools` | GET | 读取实例当前工具配置 |

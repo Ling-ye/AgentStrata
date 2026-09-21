@@ -51,7 +51,7 @@ timer 注册后的回执落盘失败只能 best-effort 停止 transient units；
 
 ## 任务诊断与 Gateway durable state 分层
 
-只有经过 transport verification、identity 与 admission 的消息才能创建 `task_...` 并进入 Agent；拒绝只保留有界、无正文的 authorization decision receipt。Gateway SQLite 另行拥有 ingress、session、run、event cursor、outbox 与 delivery receipt，不能把 task JSON 当成平台投递事实。`job_...` 仍是后台长任务，Owner job 按 actor digest 位于受保护状态；群内 workspace 不可读取。Gateway 运行端持续写独立观测索引与任务正文，Console 只读查询分层配置快照、分页历史、阶段、指标、审批和回执；正文按终态结束时间保留 30 天，活动及恢复任务不清理，摘要长期保留；禁止推进 generation、读取原始 ingress 或套用 legacy ACP 八层证据。无 run 关联键的准入审计只能作为实例审计；诊断写失败不改变权限或交付结果，历史缺记录与截断必须显示。
+只有经过 transport verification、identity 与 admission 的消息才能创建 `task_...` 并进入 Agent；拒绝只保留有界、无正文的 authorization decision receipt。Gateway SQLite 另行拥有 ingress、session、run、event cursor、outbox 与 delivery receipt，不能把 task JSON 当成平台投递事实。`job_...` 仍是后台长任务，Owner job 按 actor digest 位于受保护状态；群内 workspace 不可读取。Gateway 运行端持续写独立观测索引与任务正文，Console 只读查询分层配置快照、分页历史、阶段、指标和交付回执；正文按终态结束时间保留 30 天，活动及恢复任务不清理，摘要长期保留；禁止推进 generation、读取原始 ingress 或套用 legacy ACP 八层证据。无 run 关联键的准入审计只能作为实例审计；诊断写失败不改变权限或交付结果，历史缺记录与截断必须显示。
 
 ## ACP 是 Gateway client edge
 

@@ -501,6 +501,30 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             self.assertIn("qq_legacy_gateway_env_removed", output.getvalue())
             self.assertNotIn(private_value, output.getvalue())
 
+    def test_provision_env_rejects_removed_gateway_operator_token(self) -> None:
+        with TemporaryDirectory() as tmp:
+            private_value = "operator-private-value"
+            bot_yaml, runtime_env = self._write_qq_bot(
+                Path(tmp),
+                textwrap.dedent(
+                    f"""\
+                    export CHATCOPILOT_CHAT_API_KEY="sk-test"
+                    export QQ_ACCOUNT="10001"
+                    export QQ_ACCESS_TOKEN="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    export CHATCOPILOT_GATEWAY_OPERATOR_TOKEN="{private_value}"
+                    """
+                ),
+            )
+            output = StringIO()
+
+            with redirect_stdout(output):
+                code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
+
+            self.assertEqual(code, 1)
+            self.assertFalse(runtime_env.exists())
+            self.assertIn("CHATCOPILOT_GATEWAY_OPERATOR_TOKEN", output.getvalue())
+            self.assertNotIn(private_value, output.getvalue())
+
     def test_qq_gateway_state_root_does_not_use_legacy_runtime_root(self) -> None:
         with TemporaryDirectory() as tmp:
             base = Path(tmp)

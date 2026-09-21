@@ -197,7 +197,6 @@ class AgentRuntime:
         retriever_override: Retriever | None | _UseDefaultRetriever = (
             _USE_DEFAULT_RETRIEVER
         ),
-        interaction_handler: Any = None,
         host_policy: HostRuntimePolicy | None = None,
     ) -> "OpenedAgentSession":
         """装配一个 AgentSession 实例。
@@ -285,8 +284,7 @@ class AgentRuntime:
         merged_tools = list(snapshot.tools)
         host_policy = host_policy or HostRuntimePolicy(scope=getattr(workspace_service, "execution_scope", None),
             network_access=self.subagents.codex.network_access,
-            native_capabilities=frozenset({"files", "shell", "web_search", "image", "image_generation", "subagents"}) if runtime_id == "codex" else frozenset(),
-            interactions_enabled=interaction_handler is not None)
+            native_capabilities=frozenset({"files", "shell", "web_search", "image", "image_generation", "subagents"}) if runtime_id == "codex" else frozenset())
         search_tool = snapshot.index.get("search_information")
         visible_tools = [
             tool
@@ -428,7 +426,6 @@ class AgentRuntime:
             runtime_policy=(replace(self.subagents.codex, web_search_mode="disabled")
                             if runtime_id == "codex" and search_tool is not None else self.subagents.codex),
             turn_timeout_seconds=self.route.turn_timeout_seconds,
-            interaction_handler=interaction_handler,
             llm=self.main_model_client,
             tools_schema=merged_schema,
             retriever=effective_retriever,

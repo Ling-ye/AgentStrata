@@ -138,6 +138,7 @@ def render_search_routing_policy(tool_names: Iterable[str]) -> str:
                 "",
                 "事实查证、最新信息、网页读取、GitHub 查询、商品与生活体验检索，"
                 "统一调用 `search_information`。",
+                "不要使用 Shell、`curl` 或 `wget` 替代宿主管理的搜索入口。",
                 "传入具体 `objective`；已有 URL 写入 `urls`；用户明确指定来源时使用"
                 "逻辑 `source_hints`：`web`、`experience`、`commerce`、`github`、`url`。",
                 "用户明确要求小红书 / XHS / Xiaohongshu 时，必须设置"

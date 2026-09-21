@@ -296,9 +296,6 @@ class GatewayTurnCoordinator:
         )
         run_id = _channel_run_id(event)
         canonical_text = _inbound_text(event)
-        interactions = getattr(self, "interactions", None)
-        if interactions is not None and interactions.respond_text(canonical_text, principal, session.session_id):
-            return
         token = CancellationToken()
         self._begin_run(
             session_id=session.session_id,

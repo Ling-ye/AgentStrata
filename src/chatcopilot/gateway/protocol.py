@@ -34,16 +34,12 @@ MAX_STRING_CHARS = 256 * 1024
 MAX_PENDING_CHALLENGES = 1024
 
 GATEWAY_SCOPES: tuple[GatewayScope, ...] = (
-    "interactions.respond",
-    "interactions.operator",
     "gateway.read",
     "chat.write",
     "chat.abort",
-    "approvals.respond",
     "gateway.admin",
 )
 GATEWAY_METHODS = (
-    "interactions.list", "interactions.get", "interactions.resolve",
     "health",
     "status",
     "channels.list",
@@ -57,8 +53,6 @@ GATEWAY_METHODS = (
     "runs.get",
     "runs.latest",
     "deliveries.get",
-    "approvals.list",
-    "approvals.resolve",
 )
 GATEWAY_EVENTS = (
     "channel.status",
@@ -66,16 +60,12 @@ GATEWAY_EVENTS = (
     "chat.update",
     "chat.final",
     "chat.error",
-    "approval.requested",
     "delivery.updated",
 )
 CONNECT_METHOD = "connect"
 CONNECT_CHALLENGE_EVENT = "connect.challenge"
 
 METHOD_SCOPE: Mapping[str, GatewayScope] = {
-    "interactions.list": "interactions.respond",
-    "interactions.get": "interactions.respond",
-    "interactions.resolve": "interactions.respond",
     "health": "gateway.read",
     "status": "gateway.read",
     "channels.list": "gateway.read",
@@ -89,8 +79,6 @@ METHOD_SCOPE: Mapping[str, GatewayScope] = {
     "runs.get": "gateway.read",
     "runs.latest": "gateway.read",
     "deliveries.get": "gateway.read",
-    "approvals.list": "approvals.respond",
-    "approvals.resolve": "approvals.respond",
 }
 EVENT_SCOPE: Mapping[str, GatewayScope] = {
     "channel.status": "gateway.read",
@@ -98,17 +86,14 @@ EVENT_SCOPE: Mapping[str, GatewayScope] = {
     "chat.update": "gateway.read",
     "chat.final": "gateway.read",
     "chat.error": "gateway.read",
-    "approval.requested": "approvals.respond",
     "delivery.updated": "gateway.read",
 }
 MUTATION_METHODS = frozenset(
     {
-        "interactions.resolve",
         "sessions.create",
         "sessions.patch",
         "chat.send",
         "chat.abort",
-        "approvals.resolve",
     }
 )
 
@@ -401,7 +386,7 @@ def parse_connect_request(frame: RequestFrame) -> ConnectRequest:
 def methods_for_scopes(scopes: Collection[GatewayScope]) -> tuple[str, ...]:
     granted = frozenset(scopes)
     return tuple(method for method in GATEWAY_METHODS if METHOD_SCOPE[method] in granted
-                 or method.startswith("interactions.") and "interactions.operator" in granted)
+                )
 
 
 def events_for_scopes(scopes: Collection[GatewayScope]) -> tuple[str, ...]:
@@ -422,7 +407,7 @@ def validate_request_access(
     required = METHOD_SCOPE.get(frame.method)
     if required is None:
         raise GatewayProtocolError("unknown_method", "Gateway method is not recognized")
-    if required not in scopes and not (frame.method.startswith("interactions.") and "interactions.operator" in scopes):
+    if required not in scopes:
         raise GatewayProtocolError("scope_denied", "Gateway scope does not allow this method")
     if frame.method in MUTATION_METHODS:
         if frame.idempotency_key is None:

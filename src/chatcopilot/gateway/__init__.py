@@ -1,7 +1,5 @@
 """Long-lived AgentStrata Gateway protocol and durable state primitives."""
 
-from .approvals import GatewayApprovalService, GatewayApprovalStore
-
 from .application import (
     CLIENT_CHANNEL,
     GatewayApplicationError,
@@ -63,8 +61,6 @@ from .server import (
     GatewayWebSocketServer,
 )
 from .state_store import (
-    ApprovalConflict,
-    ApprovalRecord,
     AuthorizationDecisionRecord,
     GatewayEventRecord,
     GatewayEventReplay,
@@ -87,8 +83,6 @@ from .state_store import (
 )
 
 __all__ = [
-    "ApprovalConflict",
-    "ApprovalRecord",
     "AuthorizationDecisionRecord",
     "ActorTurnExecutorPort",
     "GatewayIngressPort",
@@ -114,8 +108,6 @@ __all__ = [
     "GatewayDispatchError",
     "GatewayEventVisibilityPolicy",
     "GatewayMutationReconciliation",
-    "GatewayApprovalService",
-    "GatewayApprovalStore",
     "GatewayEventRecord",
     "GatewayEventPublisher",
     "GatewayEventReplay",

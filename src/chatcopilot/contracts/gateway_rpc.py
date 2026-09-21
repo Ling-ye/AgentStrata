@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, TypeAlias, Union
+from typing import Literal, TypeAlias, Union
 
 from chatcopilot.contracts.gateway import (
     ChannelAccountRef,
@@ -20,9 +20,6 @@ ChannelConnectionState: TypeAlias = Literal[
     "degraded",
     "failed",
 ]
-ApprovalStatus: TypeAlias = Literal["pending", "resolved", "expired", "cancelled"]
-ApprovalDecisionValue: TypeAlias = Literal["approve", "deny"]
-ApprovalDecisionOption: TypeAlias = Literal["approve", "deny"]
 ChatStopReason: TypeAlias = Literal["completed", "aborted"]
 ChatRunState: TypeAlias = Literal[
     "accepted",
@@ -81,20 +78,6 @@ class SessionSnapshot:
     debug: bool
     event_cursor: int
     active_run_id: str | None = None
-
-
-@dataclass(frozen=True)
-class ApprovalSnapshot:
-    approval_id: str
-    session_id: str
-    operation: str
-    target: str
-    policy_version: str
-    expires_at_ms: int
-    status: ApprovalStatus
-    allowed_decisions: tuple[ApprovalDecisionOption, ...]
-    challenge: str | None = None
-    run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -174,35 +157,7 @@ class DeliveriesGetParams:
     outbound_id: str | None = None
 
 
-@dataclass(frozen=True)
-class ApprovalsListParams:
-    session_id: str | None = None
-    cursor: int = 0
-    limit: int = 50
-
-
-@dataclass(frozen=True)
-class ApprovalsResolveParams:
-    approval_id: str
-    decision: ApprovalDecisionValue
-    challenge: str
-
-
-@dataclass(frozen=True)
-class InteractionsParams:
-    operation: str
-    session_id: str | None = None
-    interaction_id: str | None = None
-    resolution: Mapping[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class InteractionsResult:
-    payload: Mapping[str, Any]
-
-
 GatewayRequestParams = Union[
-    InteractionsParams,
     HealthParams,
     StatusParams,
     ChannelsListParams,
@@ -216,8 +171,6 @@ GatewayRequestParams = Union[
     RunsGetParams,
     RunsLatestParams,
     DeliveriesGetParams,
-    ApprovalsListParams,
-    ApprovalsResolveParams,
 ]
 
 
@@ -322,20 +275,6 @@ class DeliveriesGetResult:
 
 
 @dataclass(frozen=True)
-class ApprovalsListResult:
-    approvals: tuple[ApprovalSnapshot, ...]
-    next_cursor: int | None = None
-
-
-@dataclass(frozen=True)
-class ApprovalsResolveResult:
-    approval_id: str
-    resolved: bool
-    accepted: bool
-    code: str
-
-
-@dataclass(frozen=True)
 class ChannelStatusEvent:
     channel: ChannelSnapshot
 
@@ -370,11 +309,6 @@ class ChatErrorEvent:
 
 
 @dataclass(frozen=True)
-class ApprovalRequestedEvent:
-    approval: ApprovalSnapshot
-
-
-@dataclass(frozen=True)
 class DeliveryUpdatedEvent:
     outbound_id: str
     receipt_id: str
@@ -393,7 +327,6 @@ GatewayEventPayload = Union[
     ChatUpdateEvent,
     ChatFinalEvent,
     ChatErrorEvent,
-    ApprovalRequestedEvent,
     DeliveryUpdatedEvent,
 ]
 
@@ -414,7 +347,6 @@ class EventsReplayResult:
 
 
 GatewayMethodResult = Union[
-    InteractionsResult,
     HealthResult,
     StatusResult,
     ChannelsListResult,
@@ -428,21 +360,10 @@ GatewayMethodResult = Union[
     RunsGetResult,
     RunsLatestResult,
     DeliveriesGetResult,
-    ApprovalsListResult,
-    ApprovalsResolveResult,
 ]
 
 
 __all__ = [
-    "ApprovalDecisionOption",
-    "ApprovalDecisionValue",
-    "ApprovalRequestedEvent",
-    "ApprovalSnapshot",
-    "ApprovalStatus",
-    "ApprovalsListParams",
-    "ApprovalsListResult",
-    "ApprovalsResolveParams",
-    "ApprovalsResolveResult",
     "CanonicalRpcSegment",
     "ChannelConnectionState",
     "ChannelSnapshot",

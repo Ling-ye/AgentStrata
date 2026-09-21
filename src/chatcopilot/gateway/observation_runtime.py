@@ -137,10 +137,8 @@ class ObservationRecorder:
                     (selected, session_id))
                 run["outbox"] = _rows(connection, "SELECT outbound_id,state,error_code,created_at,updated_at FROM outbox "
                                      "WHERE run_id=? AND session_id=? ORDER BY rowid LIMIT 1001", (selected, session_id))
-                run["approvals"] = _rows(connection, "SELECT operation,state,accepted,created_at,decided_at FROM approvals "
-                                        "WHERE run_id=? AND session_id=? ORDER BY created_at LIMIT 1001", (selected, session_id))
-                overflow = any(len(run[key]) > 1000 for key in ("receipts", "outbox", "approvals"))
-                for key in ("receipts", "outbox", "approvals"):
+                overflow = any(len(run[key]) > 1000 for key in ("receipts", "outbox"))
+                for key in ("receipts", "outbox"):
                     run[key] = run[key][:1000]
                 self.store.project_run(run)
                 if overflow:

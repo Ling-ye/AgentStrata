@@ -7,7 +7,6 @@ import pytest
 
 from chatcopilot.botspec.loader import load_botspec
 from chatcopilot.botspec.model import ModelSpec
-from chatcopilot.botspec.runtime_cutover import migrate_declaration, migration_model_snapshot
 from chatcopilot.contracts.model_runtime import (
     ApiKeyAuthRef,
     ChatGPTAuthRef,
@@ -231,67 +230,6 @@ def test_duplicate_response_tool_call_ids_fail_before_tool_execution(monkeypatch
         responses_chat(
             LLMConfig(provider="openai", api="openai_responses", api_key="fixture"), [], []
         )
-
-
-def test_migration_preserves_auxiliary_environment_and_worker():
-    old = {
-        "agents": {"runtime": "codex"},
-        "llm": {
-            "chat": {"env_prefix": "BOT"},
-            "research": {"env_prefix": "RESEARCH", "model": "research-model"},
-            "code": {"model": "main-model", "code_task_profile": "worker"},
-        },
-    }
-    new = migrate_declaration(old)
-    assert new["agents"]["runtime"] == "codex" and "backend" not in new["agents"]
-    assert new["llm"]["chat"]["model"] == "main-model"
-    assert new["llm"]["research"]["inherit_env_prefix"] == "BOT"
-    assert all(new["llm"]["code"][key] == value for key, value in old["llm"]["code"].items())
-    assert new["llm"]["code"]["env_prefix"] == "BOT"
-    assert migrate_declaration(new) == new
-
-
-@pytest.mark.parametrize("research_prefix", [None, "RESEARCH"])
-@pytest.mark.parametrize("default_prefix", [None, "SUBAGENT"])
-def test_migration_preserves_fully_resolved_auxiliary_routes(research_prefix, default_prefix):
-    raw = {
-        "agents": {
-            "backend": "codex",
-            "presets": ["developer", "browser_reader"],
-            "defaults": {"model_env_prefix": default_prefix},
-            "unified_search": {"enabled": True},
-            "custom": [
-                {
-                    "name": "reviewer",
-                    "tool_name": "delegate_reviewer",
-                    "budget": {"model_env_prefix": None},
-                }
-            ],
-        },
-        "llm": {
-            "chat": {"env_prefix": "BOT"},
-            "research": {"env_prefix": research_prefix, "model": "research-model"},
-            "code": {"model": "main-codex"},
-        },
-    }
-    env = {
-        "BOT_MODEL": "chat-model",
-        "BOT_BASE_URL": "https://fixture.invalid/v1",
-        "BOT_API_KEY": "fixture-private",
-        "RESEARCH_MODEL": "research-env-model",
-        "RESEARCH_API_KEY": "research-private",
-        "SUBAGENT_MODEL": "worker-model",
-        "SUBAGENT_API_KEY": "worker-private",
-    }
-    before = migration_model_snapshot(raw, env)
-    migrated = migrate_declaration(raw, environment=env)
-    after = migration_model_snapshot(migrated, env)
-    assert before["auxiliary"] == after["auxiliary"]
-    assert after["main"]["model"] == "main-codex" and after["main"]["auth"]["mode"] == "chatgpt"
-    assert not any(
-        value in json.dumps(after)
-        for value in ("fixture-private", "research-private", "worker-private")
-    )
 
 
 def test_old_backend_field_fails_instead_of_silently_switching(tmp_path):

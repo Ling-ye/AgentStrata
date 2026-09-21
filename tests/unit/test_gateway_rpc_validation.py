@@ -6,12 +6,6 @@ import pytest
 
 from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef
 from chatcopilot.contracts.gateway_rpc import (
-    ApprovalRequestedEvent,
-    ApprovalSnapshot,
-    ApprovalsListParams,
-    ApprovalsListResult,
-    ApprovalsResolveParams,
-    ApprovalsResolveResult,
     ChannelSnapshot,
     ChannelStatusEvent,
     ChannelsListParams,
@@ -86,21 +80,6 @@ def _channel() -> ChannelSnapshot:
     )
 
 
-def _approval() -> ApprovalSnapshot:
-    return ApprovalSnapshot(
-        approval_id="approval-1",
-        session_id="session-1",
-        run_id="run-1",
-        operation="tool.execute",
-        target="workspace mutation",
-        policy_version="policy-v1",
-        expires_at_ms=2_000_000,
-        status="pending",
-        allowed_decisions=("approve", "deny"),
-        challenge="confirm-action",
-    )
-
-
 def _delivery() -> DeliverySnapshot:
     return DeliverySnapshot(
         outbound_id="outbound-1",
@@ -154,11 +133,6 @@ def _delivery() -> DeliverySnapshot:
             "deliveries.get",
             DeliveriesGetParams("session-1", outbound_id="outbound-1"),
         ),
-        ("approvals.list", ApprovalsListParams("session-1", cursor=2, limit=10)),
-        (
-            "approvals.resolve",
-            ApprovalsResolveParams("approval-1", "approve", "confirm-action"),
-        ),
     ],
 )
 def test_request_dtos_round_trip_with_camel_case(method: str, params: object) -> None:
@@ -204,11 +178,6 @@ def test_request_dtos_round_trip_with_camel_case(method: str, params: object) ->
         ),
         ("runs.latest", RunsLatestResult(None)),
         ("deliveries.get", DeliveriesGetResult((_delivery(),))),
-        ("approvals.list", ApprovalsListResult((_approval(),), next_cursor=2)),
-        (
-            "approvals.resolve",
-            ApprovalsResolveResult("approval-1", True, True, "approval-accepted"),
-        ),
     ],
 )
 def test_method_result_dtos_round_trip(method: str, result: object) -> None:
@@ -236,7 +205,6 @@ def test_method_result_dtos_round_trip(method: str, result: object) -> None:
             "chat.error",
             ChatErrorEvent("session-1", "run-1", "model_failed", "failed", False),
         ),
-        ("approval.requested", ApprovalRequestedEvent(_approval())),
         (
             "delivery.updated",
             DeliveryUpdatedEvent(
@@ -434,51 +402,6 @@ def test_delivery_run_reference_requires_a_session_reference() -> None:
                 "stage": "provider_submitted",
                 "observedAtMs": 1,
                 "runId": "run-1",
-            },
-        )
-
-
-def test_approval_snapshot_exposes_challenge_only_while_pending() -> None:
-    terminal = {
-        "approvalId": "approval-1",
-        "sessionId": "session-1",
-        "operation": "conversation.reset",
-        "target": "current-conversation",
-        "policyVersion": "policy-v1",
-        "expiresAtMs": 2_000_000,
-        "status": "resolved",
-        "allowedDecisions": [],
-    }
-    parsed = parse_method_result(
-        "approvals.list",
-        {"approvals": [terminal]},
-    )
-    assert parsed.approvals[0].challenge is None  # type: ignore[union-attr]
-
-    with pytest.raises(GatewayProtocolError, match="pending approval requires"):
-        parse_method_result(
-            "approvals.list",
-            {
-                "approvals": [
-                    {
-                        **terminal,
-                        "status": "pending",
-                        "allowedDecisions": ["approve", "deny"],
-                    }
-                ]
-            },
-        )
-    with pytest.raises(GatewayProtocolError, match="terminal approval cannot expose"):
-        parse_method_result(
-            "approvals.list",
-            {
-                "approvals": [
-                    {
-                        **terminal,
-                        "allowedDecisions": ["approve", "deny"],
-                        "challenge": _approval().challenge,
-                    }
-                ]
             },
         )
 

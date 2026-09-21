@@ -52,7 +52,7 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
         if bundle and reference.get("capture_state") == "available":
             evidence = redact_observability_payload({"run": run, "trace": reference,
                 "configuration": store.configuration(run["config_id"]) if run.get("config_id") else None,
-                "receipts": record["receipts"], "outbox": record["outbox"], "approvals": record["approvals"]}).value
+                "receipts": record["receipts"], "outbox": record["outbox"]}).value
             revision = hashlib.sha256(json_text(evidence).encode()).hexdigest()
             return {**input_fields, "kind": "robot_task", "bot_id": bot_id, "run_id": run_id, "revision": revision,
                     "evidence": evidence, "trace_bundle": bundle, "blockers": blockers, "warnings": warnings,
@@ -102,7 +102,6 @@ def task_source(store: ObservationStore, bot_id: str, run_id: str) -> dict[str, 
             "configuration": configuration,
             "receipts": record["receipts"],
             "outbox": record["outbox"],
-            "approvals": record["approvals"],
         }
     )
     if evidence.truncated:

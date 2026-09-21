@@ -80,7 +80,6 @@ export interface GatewayRunDetail {
   instance_id: string; source: "observation_index"; generated_at: number; truncated: boolean; sanitization_truncated: boolean;
   run: GatewayRun; observations: GatewayObservation[]; observations_available: boolean;
   events: Array<{ seq: number; event: string; created_at: number; data: Record<string, unknown> }>;
-  approvals: Array<{ operation: string; state: string; accepted: number | null; created_at: number; decided_at: number | null }>;
   receipts: Array<{ receipt_id: string; outbound_id: string; stage: string; observed_at: number; error_code: string | null }>;
   outbox: Array<{ outbound_id: string; state: string; error_code: string | null; created_at: number; updated_at: number }>;
 }

@@ -41,17 +41,13 @@ _CREDENTIAL_TOKENS: Mapping[tuple[str, str, frozenset[str]], str] = {
     ("acp-edge", "acp", frozenset({"gateway.read", "chat.write"})): "d" * 32,
     ("acp-edge", "acp", frozenset({"chat.write"})): "w" * 32,
     ("reader", "acp", frozenset({"gateway.read"})): "r" * 32,
-    ("approver", "acp", frozenset({"approvals.respond"})): "a" * 32,
     ("acp-a", "acp", frozenset({"gateway.read"})): "u" * 32,
     ("acp-b", "acp", frozenset({"gateway.read"})): "v" * 32,
-    ("approval-viewer", "acp", frozenset({"approvals.respond"})): "p" * 32,
-    ("approval-denied", "acp", frozenset({"approvals.respond"})): "q" * 32,
 }
 _SCOPE_ORDER: tuple[GatewayScope, ...] = (
     "gateway.read",
     "chat.write",
     "chat.abort",
-    "approvals.respond",
     "gateway.admin",
 )
 
@@ -72,10 +68,8 @@ class ScopedEventVisibilityPolicy:
         self,
         *,
         sessions: Mapping[str, frozenset[str]] | None = None,
-        approvals: Mapping[str, frozenset[str]] | None = None,
     ) -> None:
         self.sessions = sessions or {}
-        self.approvals = approvals or {}
 
     def can_view(
         self,
@@ -85,15 +79,6 @@ class ScopedEventVisibilityPolicy:
     ) -> bool:
         if event.event == "channel.status":
             return True
-        if event.event == "approval.requested":
-            approval_id = event.payload.get("approvalId")
-            session_id = event.payload.get("sessionId")
-            return (
-                isinstance(approval_id, str)
-                and isinstance(session_id, str)
-                and approval_id in self.approvals.get(client.client_id, frozenset())
-                and session_id in self.sessions.get(client.client_id, frozenset())
-            )
         session_id = event.payload.get("sessionId")
         return isinstance(session_id, str) and session_id in self.sessions.get(
             client.client_id,
@@ -436,12 +421,6 @@ def test_scope_gate_and_mutation_idempotency_replay_and_drift(tmp_path: Path) ->
             )
             assert hello.ok
 
-            await _send(websocket, RequestFrame("scope-1", "approvals.list", {}))
-            denied = await _receive(websocket)
-            assert isinstance(denied, ResponseFrame)
-            assert denied.error is not None
-            assert denied.error.code == "scope_denied"
-
             await _send(websocket, RequestFrame("missing-1", "chat.send", {"text": "hello"}))
             missing = await _receive(websocket)
             assert isinstance(missing, ResponseFrame)
@@ -686,8 +665,7 @@ def test_event_publish_filters_scopes_and_replay_advances_over_hidden_events(
 ) -> None:
     async def scenario() -> None:
         visibility = ScopedEventVisibilityPolicy(
-            sessions={"approver": frozenset({"session-1"})},
-            approvals={"approver": frozenset({"approval-1"})},
+            sessions={"acp-a": frozenset({"session-1"})},
         )
         async with _running_server(
             tmp_path,
@@ -695,37 +673,36 @@ def test_event_publish_filters_scopes_and_replay_advances_over_hidden_events(
             event_visibility_policy=visibility,
         ) as (server, store):
             read_socket, read_hello = await _connect(server, client_id="reader")
-            approval_socket, approval_hello = await _connect(
-                server,
-                client_id="approver",
-                scopes=("approvals.respond",),
-            )
-            assert read_hello.ok and approval_hello.ok
+            scoped_socket, scoped_hello = await _connect(server, client_id="acp-a")
+            assert read_hello.ok and scoped_hello.ok
             generation = store.current_writer_generation()
             channel = store.append_event(
                 generation=generation,
                 event="channel.status",
                 payload={"ready": True},
             )
-            approval = store.append_event(
+            scoped = store.append_event(
                 generation=generation,
-                event="approval.requested",
-                payload={"approvalId": "approval-1", "sessionId": "session-1"},
+                event="chat.update",
+                payload={"sessionId": "session-1", "text": "update"},
             )
 
-            approval_result = server.publish(
-                EventFrame(approval.event, approval.seq, approval.payload)
+            scoped_result = server.publish(
+                EventFrame(scoped.event, scoped.seq, scoped.payload)
             )
-            assert approval_result.queued_connections == 1
-            delivered = await _receive(approval_socket)
-            assert delivered == EventFrame(approval.event, approval.seq, approval.payload)
+            assert scoped_result.queued_connections == 1
+            delivered = await _receive(scoped_socket)
+            assert delivered == EventFrame(scoped.event, scoped.seq, scoped.payload)
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(read_socket.recv(), timeout=0.05)
 
             channel_result = server.publish(EventFrame(channel.event, channel.seq, channel.payload))
-            assert channel_result.queued_connections == 1
+            assert channel_result.queued_connections == 2
             delivered = await _receive(read_socket)
             assert delivered == EventFrame(channel.event, channel.seq, channel.payload)
+            assert await _receive(scoped_socket) == EventFrame(
+                channel.event, channel.seq, channel.payload
+            )
 
             reader = GatewayClientContext(
                 client_id="reader",
@@ -737,27 +714,32 @@ def test_event_publish_filters_scopes_and_replay_advances_over_hidden_events(
             )
             read_replay = server.replay_events(after_seq=0, client=reader, limit=2)
             assert [event.seq for event in read_replay.events] == [channel.seq]
-            assert read_replay.next_cursor == approval.seq
-            assert read_replay.current_cursor == approval.seq
+            assert read_replay.next_cursor == scoped.seq
+            assert read_replay.current_cursor == scoped.seq
 
-            approver = GatewayClientContext(
-                client_id="approver",
+            scoped_client = GatewayClientContext(
+                client_id="acp-a",
                 client_version="0.1",
                 client_mode="acp",
                 protocol=1,
-                scopes=("approvals.respond",),
+                scopes=("gateway.read",),
                 capabilities=("event-replay",),
             )
-            approval_replay = server.replay_events(after_seq=0, client=approver, limit=2)
-            assert [event.seq for event in approval_replay.events] == [approval.seq]
-            assert approval_replay.next_cursor == approval.seq
+            scoped_replay = server.replay_events(
+                after_seq=0, client=scoped_client, limit=2
+            )
+            assert [event.seq for event in scoped_replay.events] == [
+                channel.seq,
+                scoped.seq,
+            ]
+            assert scoped_replay.next_cursor == scoped.seq
 
             store.prune_events(generation=generation, retain_last=1)
             pruned = server.replay_events(after_seq=0, client=reader, limit=2)
             assert pruned.resync_required
             assert pruned.events == ()
             await read_socket.close()
-            await approval_socket.close()
+            await scoped_socket.close()
 
     _run(scenario())
 
@@ -770,10 +752,7 @@ def test_event_visibility_is_session_bound_for_live_publish_and_replay(
             sessions={
                 "acp-a": frozenset({"session-a"}),
                 "acp-b": frozenset({"session-b"}),
-                "approval-viewer": frozenset({"session-a"}),
-                "approval-denied": frozenset({"session-a"}),
             },
-            approvals={"approval-viewer": frozenset({"approval-1", "approval-unbound"})},
         )
         async with _running_server(
             tmp_path,
@@ -782,17 +761,7 @@ def test_event_visibility_is_session_bound_for_live_publish_and_replay(
         ) as (server, store):
             acp_a, hello_a = await _connect(server, client_id="acp-a")
             acp_b, hello_b = await _connect(server, client_id="acp-b")
-            approval_viewer, approval_hello = await _connect(
-                server,
-                client_id="approval-viewer",
-                scopes=("approvals.respond",),
-            )
-            approval_denied, denied_hello = await _connect(
-                server,
-                client_id="approval-denied",
-                scopes=("approvals.respond",),
-            )
-            assert hello_a.ok and hello_b.ok and approval_hello.ok and denied_hello.ok
+            assert hello_a.ok and hello_b.ok
             generation = store.current_writer_generation()
             chat_a = store.append_event(
                 generation=generation,
@@ -808,16 +777,6 @@ def test_event_visibility_is_session_bound_for_live_publish_and_replay(
                 generation=generation,
                 event="session.updated",
                 payload={"sessionId": "session-a", "mode": "chat"},
-            )
-            approval = store.append_event(
-                generation=generation,
-                event="approval.requested",
-                payload={"sessionId": "session-a", "approvalId": "approval-1"},
-            )
-            unbound_approval = store.append_event(
-                generation=generation,
-                event="approval.requested",
-                payload={"approvalId": "approval-unbound"},
             )
 
             assert (
@@ -848,30 +807,6 @@ def test_event_visibility_is_session_bound_for_live_publish_and_replay(
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(acp_a.recv(), timeout=0.05)
 
-            assert (
-                server.publish(
-                    EventFrame(approval.event, approval.seq, approval.payload)
-                ).queued_connections
-                == 1
-            )
-            assert await _receive(approval_viewer) == EventFrame(
-                approval.event,
-                approval.seq,
-                approval.payload,
-            )
-            with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(approval_denied.recv(), timeout=0.05)
-            assert (
-                server.publish(
-                    EventFrame(
-                        unbound_approval.event,
-                        unbound_approval.seq,
-                        unbound_approval.payload,
-                    )
-                ).queued_connections
-                == 0
-            )
-
             def client(client_id: str, scope: GatewayScope) -> GatewayClientContext:
                 return GatewayClientContext(
                     client_id=client_id,
@@ -897,24 +832,8 @@ def test_event_visibility_is_session_bound_for_live_publish_and_replay(
                 limit=5,
             )
             assert [event.seq for event in replay_b.events] == [delivery_b.seq]
-            approval_replay = server.replay_events(
-                after_seq=0,
-                client=client("approval-viewer", "approvals.respond"),
-                limit=5,
-            )
-            assert [event.seq for event in approval_replay.events] == [approval.seq]
-            denied_replay = server.replay_events(
-                after_seq=0,
-                client=client("approval-denied", "approvals.respond"),
-                limit=5,
-            )
-            assert denied_replay.events == ()
-            assert denied_replay.next_cursor == unbound_approval.seq
-
             await acp_a.close()
             await acp_b.close()
-            await approval_viewer.close()
-            await approval_denied.close()
 
     _run(scenario())
 
