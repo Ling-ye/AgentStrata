@@ -287,6 +287,97 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             self.assertTrue(workspace_root.is_dir())
             self.assertEqual(stat.S_IMODE(workspace_root.stat().st_mode), 0o700)
 
+    def test_qq_provision_chatgpt_auth_does_not_require_main_api_key(self) -> None:
+        for runtime_id in ("native", "codex"):
+            with self.subTest(runtime_id=runtime_id), TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                codex_env = (
+                    'export CHATCOPILOT_CODEX_BIN="/usr/bin/codex"\n'
+                    f'export CHATCOPILOT_CODEX_BOT_HOME="{base / "codex-home"}"\n'
+                    if runtime_id == "codex"
+                    else ""
+                )
+                bot_yaml, runtime_env = self._write_qq_bot(
+                    base,
+                    textwrap.dedent(
+                        f"""\
+                        export QQ_ACCOUNT="10001"
+                        export QQ_ACCESS_TOKEN="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                        {codex_env}
+                        """
+                    ),
+                )
+                content = bot_yaml.read_text(encoding="utf-8").replace(
+                    "prompts:\n",
+                    textwrap.dedent(
+                        f"""\
+                        llm:
+                          chat:
+                            env_prefix: CHATCOPILOT_MAIN
+                            provider: openai
+                            model: gpt-5.6-terra
+                            auth:
+                              mode: chatgpt
+                              profile: main
+                        agents:
+                          runtime: {runtime_id}
+                        prompts:
+                        """
+                    ),
+                    1,
+                )
+                bot_yaml.write_text(content, encoding="utf-8")
+
+                output = StringIO()
+                with redirect_stdout(output):
+                    code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
+
+                self.assertEqual(code, 0, output.getvalue())
+                self.assertTrue(runtime_env.is_file())
+                self.assertNotIn("CHATCOPILOT_MAIN_API_KEY", output.getvalue())
+
+    def test_qq_provision_requires_declared_api_key_reference(self) -> None:
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bot_yaml, runtime_env = self._write_qq_bot(
+                base,
+                textwrap.dedent(
+                    """\
+                    export QQ_ACCOUNT="10001"
+                    export QQ_ACCESS_TOKEN="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    """
+                ),
+            )
+            content = bot_yaml.read_text(encoding="utf-8").replace(
+                "prompts:\n",
+                textwrap.dedent(
+                    """\
+                    llm:
+                      chat:
+                        env_prefix: CHATCOPILOT_MAIN
+                        provider: openai
+                        model: gpt-5.6-terra
+                        auth:
+                          mode: api_key
+                          key_env: DECLARED_MAIN_API_KEY
+                    agents:
+                      runtime: native
+                    prompts:
+                    """
+                ),
+                1,
+            )
+            bot_yaml.write_text(content, encoding="utf-8")
+            output = StringIO()
+
+            with redirect_stdout(output):
+                code = bot_cli_main(["provision-env", "--bot", str(bot_yaml)])
+
+            self.assertEqual(code, 1)
+            self.assertFalse(runtime_env.exists())
+            self.assertIn("DECLARED_MAIN_API_KEY", output.getvalue())
+            self.assertNotIn("CHATCOPILOT_MAIN_API_KEY", output.getvalue())
+
     def test_qq_provision_creates_enabled_wiki_root_privately(self) -> None:
         with TemporaryDirectory() as tmp:
             base = Path(tmp)

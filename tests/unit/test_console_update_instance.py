@@ -178,6 +178,7 @@ def _make_update_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
         "fi\n"
         "exit 0\n",
     )
+    _write_executable(fake_bin / "sleep", "#!/usr/bin/env bash\nexit 0\n")
     return source, runtime, stage_log, fake_bin
 
 
@@ -385,9 +386,10 @@ def test_update_script_enable_is_post_start_and_fail_closed() -> None:
     enable = text.index('systemctl --user enable "$UNIT"', restart)
     assert enable > restart
     assert 'echo "[ERR] systemctl not found"' in text
-    assert 'systemctl --user is-active --quiet "$UNIT"' in text
-    assert text.count("systemctl --user is-active --quiet") == 2
-    assert 'systemctl --user is-active --quiet "$CODE_WORKER_UNIT"' in text
+    assert 'wait_for_stable_unit "$UNIT"' in text
+    assert 'wait_for_stable_unit "$CODE_WORKER_UNIT"' in text
+    assert "required_consecutive=3" in text
+    assert "max_attempts=15" in text
     assert 'export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$user_uid}"' in text
     assert 'export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$user_uid/bus}"' in text
     assert 'fail_stage "register service" "$rc"' in text
@@ -697,7 +699,13 @@ def test_changed_files_mode_rechecks_bot_after_source_dependency_refresh(
             "register",
         ),
         ("restart", 25, "restart service failed (exit 25)", "restart detail", None),
-        ("inactive", 1, "restart service failed (exit 1)", "service is not active after restart", None),
+        (
+            "inactive",
+            1,
+            "restart service failed (exit 1)",
+            "service did not remain active after restart",
+            None,
+        ),
     ),
 )
 def test_update_script_reports_stage_failures(

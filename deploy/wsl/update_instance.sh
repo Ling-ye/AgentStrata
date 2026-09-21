@@ -70,6 +70,31 @@ fail_stage() {
     exit "$rc"
 }
 
+wait_for_stable_unit() {
+    local unit="$1"
+    local required_consecutive=3
+    local max_attempts=15
+    local consecutive=0
+    local attempt
+
+    for attempt in $(seq 1 "$max_attempts"); do
+        if systemctl --user is-active --quiet "$unit"; then
+            consecutive=$((consecutive + 1))
+            if [ "$consecutive" -ge "$required_consecutive" ]; then
+                return 0
+            fi
+        else
+            consecutive=0
+        fi
+        sleep 1
+    done
+
+    systemctl --user show "$unit" \
+        --property=ActiveState --property=SubState --property=Result \
+        --property=ExecMainStatus --property=MainPID --no-pager >&2 || true
+    return 1
+}
+
 read_code_worker_requirement() {
     local python_bin="$1"
     local bot_path="$2"
@@ -427,8 +452,8 @@ rc=$?
 if [ "$rc" -ne 0 ]; then
     fail_stage "restart service" "$rc"
 fi
-if ! systemctl --user is-active --quiet "$UNIT"; then
-    echo "[ERR] service is not active after restart: $UNIT" >&2
+if ! wait_for_stable_unit "$UNIT"; then
+    echo "[ERR] service did not remain active after restart: $UNIT" >&2
     fail_stage "restart service" 1
 fi
 if [ "$REQUIRES_CODE_WORKER" = 1 ]; then
@@ -440,8 +465,8 @@ if [ "$REQUIRES_CODE_WORKER" = 1 ]; then
         echo "[ERR] code worker failed to restart: $CODE_WORKER_UNIT" >&2
         fail_stage "restart code worker" 1
     fi
-    if ! systemctl --user is-active --quiet "$CODE_WORKER_UNIT"; then
-        echo "[ERR] code worker is not active after restart: $CODE_WORKER_UNIT" >&2
+    if ! wait_for_stable_unit "$CODE_WORKER_UNIT"; then
+        echo "[ERR] code worker did not remain active after restart: $CODE_WORKER_UNIT" >&2
         fail_stage "restart code worker" 1
     fi
 fi

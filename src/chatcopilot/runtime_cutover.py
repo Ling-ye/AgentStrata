@@ -8,7 +8,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import sqlite3
 import stat
@@ -34,6 +34,9 @@ from chatcopilot.gateway.runtime_cutover import (
 INVENTORY_SCHEMA_VERSION = 1
 CUTOVER_RECEIPT_SCHEMA_VERSION = 1
 _ACTIVE_JOB_STATES = frozenset({"queued", "running", "cancelling", "waiting_approval"})
+_UNVERSIONED_EVALUATION_FIELDS = frozenset(
+    {"evaluation_id", "status", "targets", "trials", "config_snapshot"}
+)
 
 
 @dataclass(frozen=True)
@@ -125,18 +128,26 @@ def _sqlite_schema(path: Path, table: str) -> int | None:
     return int(row[0]) if row is not None else None
 
 
-def _evaluation_schemas(root: Path) -> tuple[int, ...]:
-    schemas: set[int] = set()
+def _evaluation_schemas(root: Path) -> tuple[int | None, ...]:
+    schemas: set[int | None] = set()
     for path in root.glob("*/result.json"):
         if path.is_symlink() or path.stat().st_nlink != 1:
             raise ValueError(f"unsafe Evaluation artifact: {path}")
-        version = json.loads(path.read_text(encoding="utf-8")).get("schema_version")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"Evaluation result is not an object: {path}")
+        if "schema_version" not in payload:
+            if not _UNVERSIONED_EVALUATION_FIELDS.issubset(payload):
+                raise ValueError(f"Unrecognized unversioned Evaluation result: {path}")
+            schemas.add(None)
+            continue
+        version = payload["schema_version"]
         if type(version) is not int:
-            raise ValueError(f"Evaluation result has no schema version: {path}")
+            raise ValueError(f"Evaluation result has an invalid schema version: {path}")
         schemas.add(version)
-    if not schemas.issubset({2, RESULT_SCHEMA_VERSION}):
+    if not schemas.issubset({None, 2, RESULT_SCHEMA_VERSION}):
         raise ValueError("Evaluation store contains an unsupported source schema")
-    return tuple(sorted(schemas))
+    return tuple(sorted(schemas, key=lambda item: -1 if item is None else item))
 
 
 def _job_inventory(root: Path) -> tuple[Path, ...]:
@@ -202,12 +213,13 @@ def _validate_tree(root: Path) -> None:
     if not root.exists():
         return
     for path in (root, *root.rglob("*")):
-        if path.is_symlink():
-            raise ValueError(f"cutover source contains a symlink: {path}")
-        info = path.stat()
+        info = path.lstat()
         if os.name == "posix" and info.st_uid != os.getuid():
             raise ValueError(f"cutover source has the wrong owner: {path}")
-        if path.is_file() and info.st_nlink != 1:
+        if stat.S_ISLNK(info.st_mode):
+            os.readlink(path)
+            continue
+        if stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
             raise ValueError(f"cutover source contains a hard-linked file: {path}")
 
 
@@ -235,8 +247,30 @@ def _archive_targets(instance: CutoverInstance) -> tuple[tuple[str, Path], ...]:
 
 
 def _archive_manifest(root: Path, sources: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
-    files = [{"path": path.relative_to(root).as_posix(), "size": path.stat().st_size, "sha256": _file_sha256(path)}
-             for path in sorted(root.rglob("*")) if path.is_file()]
+    files = []
+    for path in sorted(root.rglob("*")):
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            target = os.readlink(path)
+            encoded = os.fsencode(target)
+            files.append(
+                {
+                    "path": path.relative_to(root).as_posix(),
+                    "type": "symlink",
+                    "size": len(encoded),
+                    "sha256": hashlib.sha256(encoded).hexdigest(),
+                    "link_target": target,
+                }
+            )
+        elif stat.S_ISREG(info.st_mode):
+            files.append(
+                {
+                    "path": path.relative_to(root).as_posix(),
+                    "type": "file",
+                    "size": info.st_size,
+                    "sha256": _file_sha256(path),
+                }
+            )
     return {"schema_version": 1, "archived_at": datetime.now(timezone.utc).isoformat(), "sources": dict(sources), "record_count": len(files), "files": files}
 
 
@@ -343,9 +377,28 @@ def verify_inventory(inventory: Path, receipt_path: Path) -> dict[str, Any]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         archive = manifest_path.parent
         for item in manifest.get("files", []):
-            path = (archive / str(item["path"])).resolve()
-            if archive not in path.parents:
-                raise ValueError(f"archive manifest path escapes its archive: {path}")
+            relative = PurePosixPath(str(item["path"]))
+            if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+                raise ValueError(f"archive manifest path escapes its archive: {relative}")
+            path = archive.joinpath(*relative.parts)
+            kind = item.get("type")
+            if kind == "symlink":
+                try:
+                    info = path.lstat()
+                    target = os.readlink(path)
+                except OSError as exc:
+                    raise ValueError(f"archive symlink is unavailable: {path}") from exc
+                encoded = os.fsencode(target)
+                if (
+                    not stat.S_ISLNK(info.st_mode)
+                    or target != item.get("link_target")
+                    or len(encoded) != item.get("size")
+                    or hashlib.sha256(encoded).hexdigest() != item.get("sha256")
+                ):
+                    raise ValueError(f"archive symlink changed: {path}")
+                continue
+            if kind != "file":
+                raise ValueError(f"archive manifest file type is unsupported: {path}")
             if path.is_symlink() or not path.is_file() or path.stat().st_nlink != 1 or path.stat().st_size != item["size"] or _file_sha256(path) != item["sha256"]:
                 raise ValueError(f"archive content changed: {path}")
         marker = json.loads((instance.workspace_root / ".agent-runtime.json").read_text())

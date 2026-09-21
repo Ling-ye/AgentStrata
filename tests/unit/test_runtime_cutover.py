@@ -58,6 +58,7 @@ def _fixture(tmp_path: Path, *, active_worker: bool = False) -> Path:
     binding = workspace / "p2p_fixture" / ".runtime-sessions"
     binding.mkdir()
     (binding / "legacy.session.json").write_text("{}", encoding="utf-8")
+    (binding / "codex-entrypoint").symlink_to("/opt/fixture/codex")
     if active_worker:
         job = workspace / "p2p_fixture" / "jobs" / "job_fixture"
         job.mkdir(parents=True)
@@ -122,6 +123,21 @@ def test_inventory_cutover_archives_old_evidence_and_strict_loads_new_state(
     assert (archive / "gateway" / "observability" / "index.sqlite3").is_file()
     assert (archive / "evaluations" / "eval-old" / "result.json").is_file()
     assert (archive / "workspace" / "p2p_fixture" / "transcripts" / "turn.jsonl").is_file()
+    archived_link = (
+        archive
+        / "workspace"
+        / "p2p_fixture"
+        / ".runtime-sessions"
+        / "codex-entrypoint"
+    )
+    assert archived_link.is_symlink()
+    assert archived_link.readlink() == Path("/opt/fixture/codex")
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    link_record = next(
+        item for item in manifest["files"] if item["path"].endswith("codex-entrypoint")
+    )
+    assert link_record["type"] == "symlink"
+    assert link_record["link_target"] == "/opt/fixture/codex"
     assert not (tmp_path / "workspaces" / "p2p_fixture" / ".runtime-sessions").exists()
     assert ObservationStore(tmp_path / "state").meta("missing") is None
     with sqlite3.connect(tmp_path / "state" / "observability" / "index.sqlite3") as connection:
@@ -148,4 +164,36 @@ def test_cutover_check_rejects_active_worker(tmp_path: Path) -> None:
     inventory = _fixture(tmp_path, active_worker=True)
 
     with pytest.raises(ValueError, match="unfinished worker"):
+        check_inventory(inventory)
+
+
+def test_cutover_records_recognized_unversioned_evaluation_as_unknown(
+    tmp_path: Path,
+) -> None:
+    inventory = _fixture(tmp_path)
+    result = tmp_path / "evaluations" / "eval-old" / "result.json"
+    result.write_text(
+        json.dumps(
+            {
+                "evaluation_id": "eval-old",
+                "status": "completed",
+                "targets": [],
+                "trials": [],
+                "config_snapshot": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    plan = check_inventory(inventory)
+
+    assert plan["instances"][0]["evaluation_schemas"] == [None]
+
+
+def test_cutover_rejects_unrecognized_unversioned_evaluation(tmp_path: Path) -> None:
+    inventory = _fixture(tmp_path)
+    result = tmp_path / "evaluations" / "eval-old" / "result.json"
+    result.write_text(json.dumps({"trials": []}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Unrecognized unversioned Evaluation"):
         check_inventory(inventory)

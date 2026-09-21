@@ -913,26 +913,6 @@ def _runtime_env_values(spec, local_env: Mapping[str, str]) -> dict[str, str]:
                                   runtime_root=os.environ.get("AGENTSTRATA_RUNTIME_ROOT", "").strip())
 
 
-def _required_env_keys(spec) -> list[str]:
-    adapter = _registry.get_adapter(spec.platform.type)
-    required = [f"{spec.llm.env_prefix}_API_KEY"]
-    required.extend(secret.env_key for secret in adapter.required_secrets() if secret.required)
-    if spec.platform.type.lower() == "qq":
-        required.append("QQ_ACCOUNT")
-    if spec.gateway is not None and spec.context.wiki.enabled:
-        required.append(spec.context.wiki.root_env)
-    if (
-        spec.agents.runtime == "codex"
-    ):
-        required.extend(
-            [
-                "CHATCOPILOT_CODEX_BIN",
-                "CHATCOPILOT_CODEX_BOT_HOME",
-            ]
-        )
-    return list(dict.fromkeys(required))
-
-
 def _render_runtime_env(values: Mapping[str, str], ordered_keys: Iterable[str]) -> str:
     ordered_keys = tuple(ordered_keys)
     values = exported_environment(values, ordered_keys)
@@ -1054,12 +1034,17 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"[ERR] {_safe_error_code(exc)}")
         return 1
-    missing = [key for key in _required_env_keys(spec) if not values.get(key, "").strip()]
+    adapter = _registry.get_adapter(spec.platform.type)
+    plan = build_provision_plan(spec, adapter, values)
+    missing = [
+        item.env_key
+        for item in plan.fields
+        if item.required and not str(values.get(item.env_key, "") or "").strip()
+    ]
     if missing:
         print("[ERR] 缺少必填配置：" + ", ".join(missing))
         print(f"      请检查：{local_env_path}")
         return 1
-    adapter = _registry.get_adapter(spec.platform.type)
     platform_errors = adapter.validate_runtime_env(values)
     if platform_errors:
         for error in platform_errors:

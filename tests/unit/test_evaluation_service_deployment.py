@@ -22,6 +22,21 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
+def _copy_console_deploy_sources(repository: Path) -> Path:
+    entrypoint = repository / "deploy/wsl/deploy_console.sh"
+    for relative in (
+        "deploy/wsl/deploy_console.sh",
+        "deploy/wsl/lib/console_deploy_systemd.sh",
+        "deploy/wsl/lib/console_deploy_services.sh",
+        "deploy/wsl/lib/console_deploy_bots.sh",
+    ):
+        target = repository / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_read(relative), encoding="utf-8")
+    entrypoint.chmod(0o755)
+    return entrypoint
+
+
 def test_evaluation_unit_uses_private_unix_socket_and_preserves_workers() -> None:
     unit = _read("console/systemd/chatcopilot-evaluation.service")
 
@@ -168,13 +183,7 @@ esac
 
 def _deploy_harness(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
     repository = tmp_path / "repo"
-    script = repository / "deploy/wsl/deploy_console.sh"
-    script.parent.mkdir(parents=True)
-    script.write_text(
-        _read("deploy/wsl/deploy_console.sh"),
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
+    script = _copy_console_deploy_sources(repository)
     _write_executable(repository / "deploy/wsl/install_wsl_env.sh", "#!/usr/bin/env bash\nprintf 'dependency-sync %s\\n' \"$*\" >> \"$CALL_LOG\"\n")
     (repository / "console").mkdir()
     (repository / "src/chatcopilot").mkdir(parents=True)
@@ -522,9 +531,10 @@ def test_console_update_fails_closed_without_transient_unit_and_starts_no_fallba
 
 
 def test_deploy_status_checks_direct_socket_and_console_bff() -> None:
-    script = _read("deploy/wsl/deploy_console.sh")
+    entrypoint = _read("deploy/wsl/deploy_console.sh")
+    services = _read("deploy/wsl/lib/console_deploy_services.sh")
 
-    assert 'info "checking $EVALUATION_UNIT_NAME ..."' in script
-    assert "-m chatcopilot.evals.service health" in script
-    assert 'EVALUATION_BFF_URL="http://127.0.0.1:8910/api/evals/health"' in script
-    assert 'wait_for_http "$EVALUATION_BFF_URL"' in script
+    assert 'info "checking $EVALUATION_UNIT_NAME ..."' in services
+    assert "-m chatcopilot.evals.service health" in services
+    assert 'EVALUATION_BFF_URL="http://127.0.0.1:8910/api/evals/health"' in entrypoint
+    assert 'wait_for_http "$EVALUATION_BFF_URL"' in services

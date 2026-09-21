@@ -17,6 +17,21 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
+def _copy_console_deploy_sources(repository: Path) -> Path:
+    entrypoint = repository / "deploy/wsl/deploy_console.sh"
+    for relative in (
+        "deploy/wsl/deploy_console.sh",
+        "deploy/wsl/lib/console_deploy_systemd.sh",
+        "deploy/wsl/lib/console_deploy_services.sh",
+        "deploy/wsl/lib/console_deploy_bots.sh",
+    ):
+        target = repository / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_read(relative), encoding="utf-8")
+    entrypoint.chmod(0o755)
+    return entrypoint
+
+
 def _deploy_environment(
     tmp_path: Path,
     *,
@@ -25,10 +40,7 @@ def _deploy_environment(
     pid1: str = "systemd",
 ) -> tuple[Path, dict[str, str], Path]:
     repository = tmp_path / "repo"
-    script = repository / "deploy/wsl/deploy_console.sh"
-    script.parent.mkdir(parents=True)
-    script.write_text(_read("deploy/wsl/deploy_console.sh"), encoding="utf-8")
-    script.chmod(0o755)
+    script = _copy_console_deploy_sources(repository)
     (repository / "console").mkdir()
     (repository / "src/chatcopilot").mkdir(parents=True)
 
