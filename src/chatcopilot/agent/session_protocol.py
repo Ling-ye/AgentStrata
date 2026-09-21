@@ -7,6 +7,7 @@ from chatcopilot.contracts.agent import AgentResult, AgentTask, EventSink
 from chatcopilot.contracts.cancellation import CancellationProbe
 from chatcopilot.contracts.prompt import PromptPlan
 from chatcopilot.contracts.execution import TranscriptSnapshot
+from chatcopilot.contracts.model_runtime import RuntimeId
 
 
 class AgentSessionProtocol(Protocol):
@@ -15,6 +16,10 @@ class AgentSessionProtocol(Protocol):
     Native ``AgentSession`` and the LangGraph-backed session both implement this
     interface so middleware can stay independent from the selected agent runtime.
     """
+
+    @property
+    def runtime_id(self) -> RuntimeId:
+        """Immutable execution Runtime identity bound by the resolved route."""
 
     @property
     def message_count(self) -> int:

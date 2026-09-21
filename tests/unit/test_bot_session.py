@@ -84,10 +84,50 @@ def _make_session(llm: _FakeLLM, tools: list[ToolDef]) -> AgentSession:
         executor=ToolExecutor(caller_role_hint="owner", tools=list(tools)),
         tools_schema=[build_openai_schema(tool) for tool in tools],
         prompt_plan=prompt_plan("system baseline"),
+        resolved_runtime_id="native",
     )
 
 
 class AgentSessionTests(unittest.TestCase):
+    def test_runtime_identity_is_required_read_only_and_matches_prompt(self) -> None:
+        with self.assertRaises(TypeError):
+            AgentSession(
+                session_id="sid",
+                llm=_FakeLLM([]),
+                executor=ToolExecutor(caller_role_hint="owner", tools=[]),
+                tools_schema=[],
+                prompt_plan=prompt_plan("system baseline"),
+            )
+
+        with self.assertRaisesRegex(ValueError, "native or langgraph"):
+            AgentSession(
+                session_id="sid",
+                llm=_FakeLLM([]),
+                executor=ToolExecutor(caller_role_hint="owner", tools=[]),
+                tools_schema=[],
+                prompt_plan=prompt_plan("system baseline"),
+                resolved_runtime_id="codex",  # type: ignore[arg-type]
+            )
+
+        with self.assertRaisesRegex(ValueError, "PromptPlan runtime_id"):
+            AgentSession(
+                session_id="sid",
+                llm=_FakeLLM([]),
+                executor=ToolExecutor(caller_role_hint="owner", tools=[]),
+                tools_schema=[],
+                prompt_plan=prompt_plan("system baseline", runtime_id="langgraph"),
+                resolved_runtime_id="native",
+            )
+
+        session = _make_session(_FakeLLM([]), [])
+        self.assertEqual(session.runtime_id, "native")
+        with self.assertRaises(AttributeError):
+            session.runtime_id = "langgraph"  # type: ignore[misc]
+        with self.assertRaisesRegex(ValueError, "PromptPlan runtime_id"):
+            session.update_context(
+                prompt_plan("other runtime", runtime_id="langgraph")
+            )
+
     def test_constructor_cannot_preload_messages_without_prompt_provenance(self) -> None:
         with self.assertRaises(TypeError):
             AgentSession(
@@ -96,6 +136,7 @@ class AgentSessionTests(unittest.TestCase):
                 executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                 tools_schema=[],
                 prompt_plan=prompt_plan("system baseline"),
+                resolved_runtime_id="native",
                 _messages=[{"role": "user", "content": "bypass"}],
             )
 
@@ -611,6 +652,7 @@ class AgentSessionTests(unittest.TestCase):
             executor=ToolExecutor(caller_role_hint="owner", tools=[]),
             tools_schema=[],
             prompt_plan=prompt_plan("system baseline"),
+            resolved_runtime_id="native",
             context_manager=ContextManager(max_context_tokens=50000, sliding_window_turns=10),
             topic_classifier=classifier,
         )
@@ -657,6 +699,7 @@ class AgentSessionTests(unittest.TestCase):
                     executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                     tools_schema=[],
                     prompt_plan=prompt_plan("system baseline"),
+                    resolved_runtime_id="native",
                     context_manager=ContextManager(
                         max_context_tokens=50000,
                         sliding_window_turns=10,

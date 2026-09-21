@@ -581,6 +581,7 @@ def test_member_cannot_schedule_hidden_lifecycle_tool(tmp_path):
         executor=ToolExecutor(tools=[], caller_role_hint="user"),
         tools_schema=[],
         prompt_plan=prompt_plan(role="user"),
+        resolved_runtime_id="native",
     )
     result = session.run_task(AgentTask("ordinary task"), on_event=lambda e: None)
     assert result.lifecycle_intents == ()

@@ -262,6 +262,19 @@ def test_empty_retired_modules_and_replacement_packages_are_rejected(checker, tm
     assert "src/chatcopilot/middleware/runtime/workspace/replacement.py" in rejected
 
 
+def test_retired_runtime_vocabulary_rejects_backend_name(checker, tmp_path, monkeypatch) -> None:
+    source_root = tmp_path / "src/chatcopilot"
+    probe = source_root / "agent/session.py"
+    probe.parent.mkdir(parents=True)
+    probe.write_text('backend_name = "native"\n', encoding="utf-8")
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", source_root)
+
+    rejected = checker._semantic_invariants()["retired_agent_runtime_vocabulary"]
+
+    assert rejected["src/chatcopilot/agent/session.py"] == ["backend_name"]
+
+
 @pytest.fixture
 def runtime_architecture_workspace(tmp_path: Path, monkeypatch, checker):
     original_root = checker.ROOT

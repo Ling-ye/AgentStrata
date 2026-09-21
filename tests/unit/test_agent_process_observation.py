@@ -28,8 +28,13 @@ def recorded(tmp_path):
     return _recorded.__wrapped__(tmp_path)
 
 
-@pytest.mark.parametrize('session_type', [AgentSession, LangGraphAgentSession])
-def test_actual_rounds_and_filtered_tool_messages_reach_observation_index(recorded, session_type):
+@pytest.mark.parametrize(
+    ("session_type", "runtime_id"),
+    [(AgentSession, "native"), (LangGraphAgentSession, "langgraph")],
+)
+def test_actual_rounds_and_filtered_tool_messages_reach_observation_index(
+    recorded, session_type, runtime_id
+):
     state, generation, recorder = recorded
     run_id = make_run(recorded)
     calls = []
@@ -51,7 +56,8 @@ def test_actual_rounds_and_filtered_tool_messages_reach_observation_index(record
         llm=Model(),
         executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
         tools_schema=[],
-        prompt_plan=prompt_plan("baseline"),
+        prompt_plan=prompt_plan("baseline", runtime_id=runtime_id),
+        resolved_runtime_id=runtime_id,
         tool_payload_filter=lambda data: {**data, "summary": "model-output"},
     )
     observer = RunObserver(state, generation, run_id, agent_stage_span_id='host:actor')

@@ -103,7 +103,8 @@ class LangGraphSessionTests(unittest.TestCase):
             llm=llm,  # type: ignore[arg-type]
             executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
             tools_schema=[build_openai_schema(tool)],
-            prompt_plan=prompt_plan("system"),
+            prompt_plan=prompt_plan("system", runtime_id="langgraph"),
+            resolved_runtime_id="langgraph",
         )
         events: list[object] = []
 
@@ -117,5 +118,9 @@ class LangGraphSessionTests(unittest.TestCase):
         self.assertTrue(any(isinstance(event, FinalText) and event.text == "完成" for event in events))
         llm_events = [event for event in events if isinstance(event, LlmCallFinished)]
         self.assertEqual(len(llm_events), 2)
+        self.assertEqual(
+            {event.runtime_id for event in events if hasattr(event, "runtime_id")},
+            {"langgraph"},
+        )
         self.assertEqual(llm_events[-1].context_kind, "sliding_window")
         self.assertEqual(session.snapshot_messages()[-1]["content"], "完成")

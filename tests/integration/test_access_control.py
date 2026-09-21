@@ -325,6 +325,7 @@ class DebugModeAccessTests(unittest.TestCase):
                 assistant_mode=assistant_mode,
                 mode_prompts=_MODE_PROMPTS,
             ),
+            resolved_runtime_id="native",
         )
         agent_session.capabilities = SimpleNamespace(  # type: ignore[attr-defined]
             tool_names=frozenset(tool.name for tool in tools)

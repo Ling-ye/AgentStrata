@@ -26,8 +26,6 @@ class _GraphState(TypedDict):
 class LangGraphAgentSession(AgentSession):
     """AgentSessionProtocol implementation powered by LangGraph StateGraph."""
 
-    backend_name = "langgraph"
-
     def run_task(
         self,
         task: AgentTask,

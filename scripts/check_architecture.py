@@ -657,6 +657,7 @@ def _semantic_invariants() -> dict[str, dict[str, list[str]]]:
         "BackendAgentSession",
         "CodeModelSelection",
         "code_model_selection",
+        "backend_name",
     )
     cutover_readers = {
         SRC / "runtime_cutover.py",

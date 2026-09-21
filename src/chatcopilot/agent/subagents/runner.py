@@ -363,6 +363,7 @@ class SubagentRunner:
             ),
             tools_schema=tools_schema,
             prompt_plan=prompt_plan,
+            resolved_runtime_id="native",
             context_manager=ContextManager(
                 max_context_tokens=min(
                     self._main_config.runtime.max_context_tokens,

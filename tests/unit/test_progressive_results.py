@@ -208,7 +208,9 @@ def test_inprocess_backends_share_projection_and_clear_on_close(runtime_id):
     )
     session_ref = backend.open_session(
         RuntimeOpenRequest(
-            session_id="test", prompt_plan=prompt_plan("fixture"), route=route
+            session_id="test",
+            prompt_plan=prompt_plan("fixture", runtime_id=runtime_id),
+            route=route,
         )
     )
     try:

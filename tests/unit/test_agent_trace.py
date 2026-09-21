@@ -81,8 +81,11 @@ def _call(name: str, args: dict, call_id: str = "c1") -> ChatResult:
 
 class AgentTraceTests(unittest.TestCase):
     def test_native_and_langgraph_record_each_public_model_response(self) -> None:
-        for session_type in (AgentSession, LangGraphAgentSession):
-            with self.subTest(runtime_id=session_type.__name__):
+        for session_type, runtime_id in (
+            (AgentSession, "native"),
+            (LangGraphAgentSession, "langgraph"),
+        ):
+            with self.subTest(runtime_id=runtime_id):
                 tool = _tool("ping", category="agent")
                 first = _call("ping", {"reasoning": "public tool argument"}, call_id="first-call")
                 first.content = "先查询工具"
@@ -93,7 +96,8 @@ class AgentTraceTests(unittest.TestCase):
                     llm=_ScriptedLLM([first, ChatResult(content="最终回答")]),
                     executor=ToolExecutor(caller_role_hint="owner", tools=[tool]),
                     tools_schema=[build_openai_schema(tool)],
-                    prompt_plan=prompt_plan("baseline"),
+                    prompt_plan=prompt_plan("baseline", runtime_id=runtime_id),
+                    resolved_runtime_id=runtime_id,
                 )
                 events = []
                 outcome = session.run_task(AgentTask("go"), on_event=events.append)
@@ -124,7 +128,8 @@ class AgentTraceTests(unittest.TestCase):
                     llm=_ScriptedLLM([ChatResult(content="完成")]),
                     executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                     tools_schema=[],
-                    prompt_plan=prompt_plan("baseline"),
+                    prompt_plan=prompt_plan("baseline", runtime_id=backend),
+                    resolved_runtime_id=backend,
                 )
                 events: list[object] = []
 
@@ -152,14 +157,18 @@ class AgentTraceTests(unittest.TestCase):
                 self.assertEqual(started.runtime_id, backend)
 
     def test_top_level_calls_do_not_reference_an_unrecorded_root(self) -> None:
-        for session_type in (AgentSession, LangGraphAgentSession):
-            with self.subTest(runtime_id=session_type.__name__):
+        for session_type, runtime_id in (
+            (AgentSession, "native"),
+            (LangGraphAgentSession, "langgraph"),
+        ):
+            with self.subTest(runtime_id=runtime_id):
                 session = session_type(
                     session_id="standalone",
                     llm=_ScriptedLLM([ChatResult(content="done")]),
                     executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                     tools_schema=[],
-                    prompt_plan=prompt_plan("baseline"),
+                    prompt_plan=prompt_plan("baseline", runtime_id=runtime_id),
+                    resolved_runtime_id=runtime_id,
                 )
                 events = []
                 session.run_task(AgentTask(text="go"), on_event=events.append)
@@ -180,7 +189,8 @@ class AgentTraceTests(unittest.TestCase):
                     llm=_FailingLLM(),
                     executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                     tools_schema=[],
-                    prompt_plan=prompt_plan("baseline"),
+                    prompt_plan=prompt_plan("baseline", runtime_id=backend),
+                    resolved_runtime_id=backend,
                 )
                 events: list[object] = []
 
@@ -223,6 +233,7 @@ class AgentTraceTests(unittest.TestCase):
             executor=ToolExecutor(caller_role_hint="owner", tools=[ping]),
             tools_schema=[build_openai_schema(ping)],
             prompt_plan=prompt_plan("baseline"),
+            resolved_runtime_id="native",
         )
         events: list[object] = []
 
@@ -248,6 +259,7 @@ class AgentTraceTests(unittest.TestCase):
             executor=ToolExecutor(caller_role_hint="owner", tools=[ping]),
             tools_schema=[build_openai_schema(ping)],
             prompt_plan=prompt_plan("baseline"),
+            resolved_runtime_id="native",
         )
         events = []
         session.run_task(
@@ -320,6 +332,7 @@ class AgentTraceTests(unittest.TestCase):
             executor=ToolExecutor(caller_role_hint="owner", tools=[delegate]),
             tools_schema=[build_openai_schema(delegate)],
             prompt_plan=prompt_plan("baseline"),
+            resolved_runtime_id="native",
         )
         events = []
         session.run_task(AgentTask(text="go", execution=TurnExecutionContext(trace=TraceContext("T"))), on_event=events.append)
@@ -335,6 +348,14 @@ class AgentTraceTests(unittest.TestCase):
         depths = {e.name: e.depth for e in tool_started}
         self.assertEqual(depths.get(delegate.name), 0)
         self.assertEqual(depths.get("read_file"), 2)
+        nested_runtime_events = [
+            event
+            for event in events
+            if isinstance(event, (LlmCallStarted, LlmCallFinished, ToolStarted, ToolFinished))
+            and event.depth > 0
+        ]
+        self.assertTrue(nested_runtime_events)
+        self.assertEqual({event.runtime_id for event in nested_runtime_events}, {"native"})
 
         # SpanFinished 携带 transcript 与结构化结果，供 recorder 落盘。
         self.assertTrue(span_finished[0].ok)

@@ -159,8 +159,8 @@ def test_memory_durability_is_not_a_keyword_rejection():
     assert not evaluate_memory_content("我的手机号属于个人隐私", scope="group").allowed
 
 
-@pytest.mark.parametrize("backend", ["native", "langgraph"])
-def test_default_agent_can_complete_beyond_thirty_turns_and_explicit_cap_still_stops(backend):
+@pytest.mark.parametrize("runtime_id", ["native", "langgraph"])
+def test_default_agent_can_complete_beyond_thirty_turns_and_explicit_cap_still_stops(runtime_id):
     from chatcopilot.agent.session import AgentSession
     from chatcopilot.agent.langgraph_session import LangGraphAgentSession
     from chatcopilot.agent.tools.executor import ToolExecutor
@@ -170,13 +170,15 @@ def test_default_agent_can_complete_beyond_thirty_turns_and_explicit_cap_still_s
     from tests.prompt_plan_fixture import prompt_plan
     from tests.unit.test_langgraph_session import _FakeLLM, _tool_call, _make_tool
 
-    cls = AgentSession if backend == "native" else LangGraphAgentSession
+    cls = AgentSession if runtime_id == "native" else LangGraphAgentSession
     tool = _make_tool()
     for cap, reason, calls in ((None, "end_turn", 36), (4, "iteration_cap", 4)):
         llm = _FakeLLM([ChatResult(tool_calls=[_tool_call(tool.name, {"value": str(i)})])
                        for i in range(35)] + [ChatResult(content="finished")])
         session = cls(session_id="budget", llm=llm, executor=ToolExecutor(tools=[tool], caller_role_hint="owner"),
-                      tools_schema=[build_openai_schema(tool)], prompt_plan=prompt_plan("test"),
+                      tools_schema=[build_openai_schema(tool)],
+                      prompt_plan=prompt_plan("test", runtime_id=runtime_id),
+                      resolved_runtime_id=runtime_id,
                       hard_iteration_cap=cap)
         result = session.run_task(AgentTask("complete"), on_event=lambda _: None)
         assert result.stop_reason == reason

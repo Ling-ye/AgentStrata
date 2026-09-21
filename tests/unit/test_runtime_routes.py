@@ -374,6 +374,7 @@ def test_native_responses_loop_executes_tools_and_keeps_continuation_private(mon
         executor=ToolExecutor(tools=[tool], caller_role_hint="user"),
         tools_schema=[build_openai_schema(tool)],
         prompt_plan=prompt_plan("host"),
+        resolved_runtime_id="native",
     )
     try:
         result = session.run_task(AgentTask("lookup"), on_event=events.append)
@@ -388,6 +389,9 @@ def test_native_responses_loop_executes_tools_and_keeps_continuation_private(mon
         assert len(snapshots) == 2 and all(
             event.context_kind == "responses_request" for event in snapshots
         )
+        assert {
+            event.runtime_id for event in events if hasattr(event, "runtime_id")
+        } == {"native"}
         assert "private-continuation" not in repr(snapshots)
         assert "private-key" not in repr(snapshots)
     finally:

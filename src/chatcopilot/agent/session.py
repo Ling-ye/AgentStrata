@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from chatcopilot.agent.context.manager import ContextManager
@@ -45,6 +45,7 @@ from chatcopilot.agent.response_integrity import (
     ResponseIntegrityResult,
 )
 from chatcopilot.contracts.prompt import PromptPlan
+from chatcopilot.contracts.model_runtime import RuntimeId
 from chatcopilot.agent.rag.provider import Retriever, render_rag_snippet
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.turn import TurnOps, TurnState
@@ -61,13 +62,12 @@ ToolPayloadFilter = Callable[[Dict[str, Any]], Dict[str, Any]]
 class AgentSession:
     """单次会话的状态容器与 chat loop 调度器。"""
 
-    backend_name = "native"
-
     session_id: str
     llm: LLMClient
     executor: ToolExecutor
     tools_schema: List[Dict[str, Any]]
     prompt_plan: PromptPlan
+    resolved_runtime_id: InitVar[RuntimeId]
     tool_payload_filter: Optional[ToolPayloadFilter] = None
     context_manager: Optional[ContextManager] = None
     topic_classifier: Optional[TopicRelevanceClassifier] = None
@@ -88,10 +88,16 @@ class AgentSession:
     trace_id: Optional[str] = None
     trace_parent_span_id: Optional[str] = None
     trace_depth: int = 0
+    _runtime_id: RuntimeId = field(init=False, repr=False)
     _messages: List[Dict[str, Any]] = field(default_factory=list, init=False)
     _prompt_prefix_length: int = field(default=0, init=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, resolved_runtime_id: RuntimeId) -> None:
+        if resolved_runtime_id not in {"native", "langgraph"}:
+            raise ValueError("in-process AgentSession requires native or langgraph runtime_id")
+        if self.prompt_plan.effective_runtime_id != resolved_runtime_id:
+            raise ValueError("PromptPlan runtime_id does not match AgentSession runtime_id")
+        self._runtime_id = resolved_runtime_id
         prefix = render_native_prefix(self.prompt_plan)
         self._messages.extend(prefix)
         self._prompt_prefix_length = len(prefix)
@@ -99,9 +105,17 @@ class AgentSession:
     # ------------------------------------------------------------------
     # 公共状态控制
     # ------------------------------------------------------------------
+    @property
+    def runtime_id(self) -> RuntimeId:
+        """Return the immutable execution Runtime identity bound at session creation."""
+
+        return self._runtime_id
+
     def set_prompt_plan(self, plan: PromptPlan) -> None:
         """Replace the immutable prompt plan while preserving conversation turns."""
 
+        if plan.effective_runtime_id != self.runtime_id:
+            raise ValueError("PromptPlan runtime_id does not match AgentSession runtime_id")
         prefix = render_native_prefix(plan)
         old_prefix_length = self._prompt_prefix_length
         self._messages[:old_prefix_length] = prefix

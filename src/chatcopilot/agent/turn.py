@@ -221,7 +221,7 @@ class TurnOps:
         call_span_id = new_span_id()
         state.model_span_id = call_span_id
         observed_message = ProcessMessage(self.on_event, trace_id=state.trace_id,
-            parent_span_id=call_span_id, runtime_id=str(getattr(self.session, "backend_name", "native")),
+            parent_span_id=call_span_id, runtime_id=self.session.runtime_id,
             depth=self.session.trace_depth)
         image_receipts = validated_image_resource_receipts(self.task)
         prompt_estimate = estimate_prompt_tokens(call_messages, self.session.tools_schema)
@@ -250,7 +250,7 @@ class TurnOps:
         )
         snapshot = ContextSnapshotPrepared(
                 snapshot_id=snapshot_id,
-                runtime_id=str(getattr(self.session, "backend_name", "native")),
+                runtime_id=self.session.runtime_id,
                 model=model,
                 iteration=iteration,
                 session_messages=path_safe_session.messages,
@@ -297,7 +297,7 @@ class TurnOps:
             LlmCallStarted(
                 model=model,
                 iteration=iteration,
-                runtime_id=str(getattr(self.session, "backend_name", "native")),
+                runtime_id=self.session.runtime_id,
                 trace_id=state.trace_id,
                 span_id=call_span_id,
                 parent_span_id=state.root_span,
@@ -338,7 +338,7 @@ class TurnOps:
             observed_message.finish(status="cancelled")
             self.emit(LlmCallFinished(model=model, iteration=iteration, ok=False, finish_reason="cancelled",
                 trace_id=state.trace_id, span_id=call_span_id, parent_span_id=state.root_span,
-                depth=self.session.trace_depth, runtime_id=str(getattr(self.session, "backend_name", "native")),
+                depth=self.session.trace_depth, runtime_id=self.session.runtime_id,
                 context_snapshot_id=snapshot_id))
             raise
         except Exception as exc:  # noqa: BLE001
@@ -355,7 +355,7 @@ class TurnOps:
                 LlmCallFinished(
                     model=model,
                     iteration=iteration,
-                    runtime_id=str(getattr(self.session, "backend_name", "native")),
+                    runtime_id=self.session.runtime_id,
                     finish_reason="failed",
                     usage=None,
                     ok=False,
@@ -385,7 +385,7 @@ class TurnOps:
             turn_index = raw_turn if isinstance(raw_turn, int) and raw_turn >= 0 else 0
             self.emit(
                 InputResourcesDispatched(
-                    runtime_id=str(getattr(self.session, "backend_name", "native")),
+                    runtime_id=self.session.runtime_id,
                     turn_index=turn_index,
                     request_id=call_span_id,
                     resources=image_receipts,
@@ -396,7 +396,7 @@ class TurnOps:
             LlmCallFinished(
                 model=model,
                 iteration=iteration,
-                runtime_id=str(getattr(self.session, "backend_name", "native")),
+                runtime_id=self.session.runtime_id,
                 finish_reason=result.finish_reason,
                 usage=result.usage,
                 visible_response=project_visible_response(
@@ -459,7 +459,7 @@ class TurnOps:
                 parent_span_id=state.root_span,
                 depth=self.session.trace_depth,
                 tool_call_id=tool_call.get("id"), model_span_id=state.model_span_id,
-                runtime_id=str(getattr(self.session, "backend_name", "native")),
+                runtime_id=self.session.runtime_id,
             )
         )
 
@@ -483,7 +483,7 @@ class TurnOps:
                 execution_result=tool_result.to_llm_payload(),
                 model_result=model_result,
                 tool_call_id=tool_call.get("id"), model_span_id=state.model_span_id,
-                runtime_id=str(getattr(self.session, "backend_name", "native")),
+                runtime_id=self.session.runtime_id,
             )
         )
 

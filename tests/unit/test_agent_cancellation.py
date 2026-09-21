@@ -76,6 +76,7 @@ def _make_session(llm, tools: list[ToolDef] | None = None) -> AgentSession:
         executor=ToolExecutor(caller_role_hint="owner", tools=selected),
         tools_schema=[build_openai_schema(tool) for tool in selected],
         prompt_plan=prompt_plan("system"),
+        resolved_runtime_id="native",
     )
 
 
@@ -281,7 +282,8 @@ class CancellationContractTests(unittest.TestCase):
             llm=llm,  # type: ignore[arg-type]
             executor=ToolExecutor(caller_role_hint="owner", tools=[]),
             tools_schema=[],
-            prompt_plan=prompt_plan("system"),
+            prompt_plan=prompt_plan("system", runtime_id="langgraph"),
+            resolved_runtime_id="langgraph",
         )
         token = CancellationToken()
         token.cancel()

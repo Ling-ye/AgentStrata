@@ -187,10 +187,12 @@ class BackendRegistryTests(TestCase):
                     tools_schema=[],
                 )
                 first = backend.open_session(RuntimeOpenRequest(
-                    session_id="session-first", prompt_plan=prompt_plan("first"),
+                    session_id="session-first",
+                    prompt_plan=prompt_plan("first", runtime_id=runtime_id),
                     route=runtime_route(runtime_id)))
                 second = backend.open_session(RuntimeOpenRequest(
-                    session_id="session-second", prompt_plan=prompt_plan("second"),
+                    session_id="session-second",
+                    prompt_plan=prompt_plan("second", runtime_id=runtime_id),
                     route=runtime_route(runtime_id)))
                 first_session = backend._resolve(first)
                 second_session = backend._resolve(second)

@@ -166,6 +166,7 @@ def _build_inprocess_runtime_adapter(
             executor=tool_executor,
             tools_schema=tools_schema or [],
             prompt_plan=request.prompt_plan,
+            resolved_runtime_id=request.route.runtime_id,
             tool_payload_filter=tool_payload_filter,
             context_manager=ctx_mgr,
             topic_classifier=topic_classifier,

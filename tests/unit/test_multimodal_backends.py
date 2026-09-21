@@ -96,6 +96,7 @@ def test_native_expands_image_only_at_request_boundary(tmp_path: Path) -> None:
         executor=ToolExecutor(caller_role_hint="owner", tools=[]),
         tools_schema=[],
         prompt_plan=prompt_plan("system"),
+        resolved_runtime_id="native",
         stream_first_turn=False,
     )
     events: list[object] = []
@@ -173,6 +174,7 @@ def test_native_tool_loop_keeps_resource_receipts_on_every_context_snapshot(
         executor=ToolExecutor(caller_role_hint="owner", tools=[ping]),
         tools_schema=[build_openai_schema(ping)],
         prompt_plan=prompt_plan("system"),
+        resolved_runtime_id="native",
         stream_first_turn=False,
     )
     events: list[object] = []

@@ -433,6 +433,7 @@ def _make_test_session_state(
         executor=ToolExecutor(tools=[]),
         tools_schema=[],
         prompt_plan=plan,
+        resolved_runtime_id="native",
     )
     fake_session.capabilities = SimpleNamespace(  # type: ignore[attr-defined]
         tool_names=frozenset()

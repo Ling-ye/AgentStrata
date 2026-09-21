@@ -206,6 +206,7 @@ class SearchFallbackTests(unittest.TestCase):
             executor=ToolExecutor(caller_role_hint="owner", tools=[]),
             tools_schema=[],
             prompt_plan=prompt_plan("system"),
+            resolved_runtime_id="native",
         )
         session._messages.append(
             {"role": "tool", "content": json.dumps(nested, ensure_ascii=False)}
