@@ -48,6 +48,7 @@ from chatcopilot.contracts.prompt import PromptPlan
 from chatcopilot.contracts.model_runtime import RuntimeId
 from chatcopilot.agent.rag.provider import Retriever, render_rag_snippet
 from chatcopilot.agent.tools.executor import ToolExecutor
+from chatcopilot.agent.tools.disclosure import ToolDisclosureView
 from chatcopilot.agent.turn import TurnOps, TurnState
 from chatcopilot.agent.turn_support import (
     EMPTY_MODEL_REPLY_TEXT as _EMPTY_MODEL_REPLY_TEXT,
@@ -69,6 +70,7 @@ class AgentSession:
     prompt_plan: PromptPlan
     resolved_runtime_id: InitVar[RuntimeId]
     tool_payload_filter: Optional[ToolPayloadFilter] = None
+    disclosure: ToolDisclosureView | None = None
     context_manager: Optional[ContextManager] = None
     topic_classifier: Optional[TopicRelevanceClassifier] = None
     # Dual-layer iteration budget

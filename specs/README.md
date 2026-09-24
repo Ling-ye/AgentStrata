@@ -6,6 +6,7 @@
 
 - [四层运行时职责](runtime-four-layer-definition/spec.md)
 - [领域内部六层依赖](domain-layered-dependencies/spec.md)
+- [工具按需披露](tool-progressive-disclosure/spec.md)
 - [文档结构与治理](documentation-governance/spec.md)
 - [Harness 控制与生命周期边界](harness-control-lifecycle/spec.md)
 

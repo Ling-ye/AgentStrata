@@ -349,8 +349,8 @@ def test_agent_model_tool_flow_writes_only_bound_resources(tmp_path, runtime_id,
                             "id": "write-one",
                             "type": "function",
                             "function": {
-                                "name": "write_file",
-                                "arguments": '{"path":"written.txt","content":"actual output"}',
+                                "name": "tool_call",
+                                "arguments": '{"name":"write_file","arguments":{"path":"written.txt","content":"actual output"}}',
                             },
                         }
                     ],

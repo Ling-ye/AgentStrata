@@ -37,6 +37,7 @@ from chatcopilot.agent.session import ToolPayloadFilter
 from chatcopilot.agent.runtimes import RuntimeAgentSession, build_runtime_adapter
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.agent.tools.executor import BackgroundSubmitter, PermissionFilter, ToolExecutor
+from chatcopilot.agent.tools.disclosure import ToolDisclosureView
 from chatcopilot.agent.tools.file_delivery import FileSender
 from chatcopilot.agent.tools.registry import ToolRegistry
 from chatcopilot.agent.tools.workspace_context import WorkspaceService
@@ -294,10 +295,11 @@ class AgentRuntime:
         ]
         native_equivalents = {"read_file", "write_file", "edit_file", "delete_file", "list_directory", "search_content", "run_command"} if runtime_id == "codex" else set()
         visible_tools = [tool for tool in visible_tools if tool.name not in native_equivalents]
-        merged_schema = sorted(
-            (build_openai_schema(tool) for tool in visible_tools),
-            key=lambda entry: str((entry.get("function") or {}).get("name") or ""),
+        disclosure = ToolDisclosureView(
+            tuple(visible_tools),
+            {tool.name: snapshot.sources[tool.name].pack_id for tool in visible_tools},
         )
+        merged_schema = disclosure.model_schemas()
         visible_names = {tool.name for tool in visible_tools}
         from chatcopilot.contracts.model_runtime import digest
         capability_snapshot = CapabilitySnapshot(tuple(Capability(
@@ -305,7 +307,7 @@ class AgentRuntime:
             source_ref=snapshot.sources[tool.name].provider_id + ":" + snapshot.sources[tool.name].pack_id,
             supported=True, authorized=permission_filter is None or permission_filter(tool) is None,
             availability="available" if tool.name in visible_names else "unavailable",
-            loading="deferred" if runtime_id == "codex" and tool.name not in {"send_files_to_user", "persona_manage"} else "direct",
+            loading=tool.disclosure,
             reason_code="native_equivalent" if tool.name in native_equivalents else "",
             schema_digest=digest({"input": build_openai_schema(tool), "output": tool.output_schema}),
         ) for tool in merged_tools))
@@ -428,6 +430,7 @@ class AgentRuntime:
             turn_timeout_seconds=self.route.turn_timeout_seconds,
             llm=self.main_model_client,
             tools_schema=merged_schema,
+            disclosure=disclosure,
             retriever=effective_retriever,
         )
         options: RuntimeSessionOptions = {

@@ -91,6 +91,8 @@ EXECUTION_USER_SERIAL_BACKGROUND = "user_serial_background"
 ToolAudience = Literal["main", "subagent"]
 TOOL_AUDIENCE_MAIN: ToolAudience = "main"
 TOOL_AUDIENCE_SUBAGENT: ToolAudience = "subagent"
+TOOL_DISCLOSURE_BRIDGE_NAMES = frozenset({"tool_search", "tool_describe", "tool_call"})
+
 TOOL_AUDIENCES: Tuple[ToolAudience, ...] = (
     TOOL_AUDIENCE_MAIN,
     TOOL_AUDIENCE_SUBAGENT,
@@ -149,6 +151,7 @@ class ToolDef:
     artifact_kinds: Tuple[str, ...] = ("file", "directory")
     metadata: Dict[str, Any] = field(default_factory=dict)
     audiences: Tuple[ToolAudience, ...] = TOOL_AUDIENCES
+    disclosure: Literal["direct", "deferred"] = "deferred"
 
     @property
     def properties(self) -> Dict[str, Dict[str, Any]]:

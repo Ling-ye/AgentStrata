@@ -446,7 +446,7 @@ class CodexRuntimeAdapter:
             )
             resumed = bool(state.native_session_id)
             context_kind = "codex_native_resume" if resumed else "codex_app_server"
-            omitted: tuple[str, ...] = ("provider_internal_instructions",)
+            omitted: tuple[str, ...] = ("provider_internal_instructions", "provider_native_deferred_tool_loading")
             if resumed:
                 omitted += ("provider_managed_resume_context",)
             if image_receipts:

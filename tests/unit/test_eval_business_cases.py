@@ -291,7 +291,7 @@ def test_real_backend_two_model_turns_use_actual_tool_result(backend, tmp_path, 
             messages = kwargs['messages']
             calls.append(messages)
             if len(calls) == 1:
-                return ChatResult(content='', tool_calls=[{'id': 'lookup-1', 'type': 'function', 'function': {'name': 'lookup_catalog', 'arguments': '{"query":"纸灯"}'}}])
+                return ChatResult(content='', tool_calls=[{'id': 'lookup-1', 'type': 'function', 'function': {'name': 'tool_call', 'arguments': json.dumps({'name': 'lookup_catalog', 'arguments': {'query': '纸灯'}}, ensure_ascii=False)}}])
             assert any('17' in str(m.get('content')) and m.get('role') == 'tool' for m in messages)
             return ChatResult(content='当前库存 17 件。')
     monkeypatch.setattr(agent_module, 'LLMClient', Model)

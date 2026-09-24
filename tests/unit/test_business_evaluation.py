@@ -325,7 +325,8 @@ def test_native_agent_registry_tool_execution_and_sdk_judge(monkeypatch, tmp_pat
 
     def response(self, messages, tools=None, **kwargs):
         requests.append(deepcopy(messages))
-        assert {tool["function"]["name"] for tool in tools or []} == {"lookup_eval_fact"}
+        assert "tool_call" in {tool["function"]["name"] for tool in tools or []}
+        assert "lookup_eval_fact" not in {tool["function"]["name"] for tool in tools or []}
         if len(requests) == 1:
             assert "PAIR-42" not in json.dumps(messages)
             return ChatResult(
@@ -334,8 +335,8 @@ def test_native_agent_registry_tool_execution_and_sdk_judge(monkeypatch, tmp_pat
                         "id": "controlled-call",
                         "type": "function",
                         "function": {
-                            "name": "lookup_eval_fact",
-                            "arguments": '{"key":"comparison-token"}',
+                            "name": "tool_call",
+                            "arguments": json.dumps({"name": "lookup_eval_fact", "arguments": {"key": "comparison-token"}}),
                         },
                     }
                 ],

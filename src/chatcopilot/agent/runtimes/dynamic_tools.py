@@ -31,15 +31,16 @@ class DynamicToolBridge:
                 {
                     "type": "namespace",
                     "name": "agentstrata",
-                    "description": "Authorized host services",
+                    "description": "Authorized host services. Areas: " + ", ".join(
+                        sorted({tool.category or "other" for tool in self.tools.values()})
+                    ),
                     "tools": [
                         {
                             "type": "function",
                             "name": tool.name,
                             "description": tool.summary,
                             "inputSchema": tool.input_schema,
-                            "deferLoading": tool.name
-                            not in {"send_files_to_user", "persona_manage"},
+                            "deferLoading": tool.disclosure == "deferred",
                         }
                         for tool in self.tools.values()
                     ],

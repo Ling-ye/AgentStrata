@@ -660,7 +660,7 @@ class CodexBackendResumeTests(TestCase):
             self.assertLess(events.index(context), events.index(started))
             self.assertEqual(context.runtime_id, "codex")
             self.assertEqual(context.coverage, "adapter_visible")
-            self.assertEqual(context.omitted, ("provider_internal_instructions",))
+            self.assertEqual(context.omitted, ("provider_internal_instructions", "provider_native_deferred_tool_loading"))
             self.assertEqual(context.trace_id, "trace-request-1")
             self.assertEqual(context.parent_span_id, "host:actor")
             self.assertEqual(started.parent_span_id, "host:actor")
@@ -799,7 +799,7 @@ class CodexBackendResumeTests(TestCase):
             self.assertEqual(context.context_kind, "codex_native_resume")
             self.assertEqual(
                 context.omitted,
-                ("provider_internal_instructions", "provider_managed_resume_context"),
+                ("provider_internal_instructions", "provider_native_deferred_tool_loading", "provider_managed_resume_context"),
             )
             self.assertEqual(
                 [message["role"] for message in context.session_messages],

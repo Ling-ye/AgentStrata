@@ -14,6 +14,7 @@ from chatcopilot.contracts.tools import (
     EXECUTION_SYNC,
     EXECUTION_USER_SERIAL_BACKGROUND,
     TOOL_AUDIENCES,
+    TOOL_DISCLOSURE_BRIDGE_NAMES,
     ToolDef,
     build_mcp_schema,
     build_openai_schema,
@@ -73,6 +74,8 @@ def validate_tool_contract(
             "invalid_tool_name",
             "ToolDef.name must match [A-Za-z0-9_-]{1,64}.",
         )
+    if isinstance(name, str) and name in TOOL_DISCLOSURE_BRIDGE_NAMES:
+        add("tool.name_reserved", "reserved_tool_name", "Tool name is reserved for disclosure.")
     if not isinstance(tool.summary, str) or not tool.summary.strip():
         add(
             "tool.summary_invalid",
@@ -283,6 +286,13 @@ def validate_tool_contract(
             "tool.metadata_invalid",
             "invalid_tool_metadata",
             "ToolDef.metadata must be a JSON-serializable dict.",
+        )
+
+    if tool.disclosure not in {"direct", "deferred"}:
+        add(
+            "tool.disclosure_invalid",
+            "invalid_tool_disclosure",
+            "ToolDef.disclosure must be direct or deferred.",
         )
 
     schemas: tuple[object, ...]

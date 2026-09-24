@@ -20,6 +20,10 @@ Bot 指令、人格、历史和原请求通过 user 输入投递。开始与续�
 - [src/chatcopilot/agent/search](../../src/chatcopilot/agent/search)
 - [src/chatcopilot/harness/evidence_context.py](../../src/chatcopilot/harness/evidence_context.py)
 
+## 工具 schema 预算
+
+主 Agent 的工具按会话授权后分为直接和延迟披露。Native/LangGraph 的上下文快照记录实际提交的基础工具与三个桥接 schema；Codex 只记录 adapter 交给 App Server 的动态工具声明，不能由此推断原生模型实际载入的 schema 或 Token。模型通过桥接读取的工具简介和参数仍是资料，不提升信任等级；预算和效果须分别看 schema 估算、模型调用次数、延迟与任务结果。参见[工具按需披露](tools.md#工具按需披露)。
+
 ## 人格与会话记忆独立授权
 
 BotSpec 只通过 `tools.packs: persona.control` 向 Owner 主 Agent 注入 session-bound `persona_manage`；自然语言与 `/persona` 原样进入主 Agent，不得恢复 `PersonaCandidateDetector`、解释器、命令 parser 或宿主前置短路，也不得把该工具投影给 subagent。Registry 可见性和 handler 都复检真实 Owner；`set/append/research` 的草案要求直接取自当前可信 `ToolContext.request_text`，不接受模型重复填写 requirement；`global` 由主 Agent 根据当前明确要求选择，不用关键词名单判定，模型不能提供 actor/chat/path/receipt。所有非清空人格操作的完整 Markdown 只由 `PersonaDraftAgent` 生成；宿主不得拼接人格正文，`append` 也必须读取当前层后由 Agent 生成完整替换文档。命名人物由 Agent 使用统一搜索自行查询、消歧并选择实际使用来源，再做唯一一次原子 `set`；无歌词专用 schema、候选库或响应装饰器。明确更新或清空可直接写；只在需求或作用域不清楚时设置 `defer_confirmation=true`，建立绑定真实 actor/chat/scope/hash/TTL 的提案；只有当前真实 raw user text 精确等于 `/persona confirm` 才能确认，cancel 可自然语言。只有 `ToolResult.data.committed=true` 和其中真实 mutation receipt 才能声称已保存或清空；写后 PromptPlan 刷新失败仍必须如实保留 committed receipt。群聊按 `global → group`、私聊按 `global → user` 加载，群内 show 只返回状态/哈希；非 Owner 不能读取或修改。Owner 要求的模仿强度不自动弱化，persona 和网页证据仍不能改变 transport 身份、角色、准入、scope、路径、工具、凭据或执行事实。当前私聊发送者或当前群的非空 memory 每轮作为不可信历史数据注入；所有准入用户可 read/append，私聊与群聊 memory 都只有 Owner 可 clear。秘密、群内个人隐私、persona 和权限指令在持久化入口拒绝；长期价值与临时性由 Agent 判断，不用临时关键词硬拒绝。权威文件只位于 `.conversation-state/persistent/{persona,memory}/`，目录 `0700`、文件 `0600`、no-follow、单硬链接、锁和原子替换异常时失败关闭；旧 persona 和旧 p2p memory 路径完全忽略，不自动迁移或回退读取；磁盘旧数据不由运行时清理。

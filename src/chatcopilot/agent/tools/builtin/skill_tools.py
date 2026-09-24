@@ -37,6 +37,7 @@ def _read_bot_skill(
 def _build_skill_tool(handler: Handler) -> ToolDef:
     return ToolDef(
         name="read_bot_skill",
+        disclosure="direct",
         summary=(
             "按需读取 BotSpec 注册的某个 skill 完整流程文档。"
             "PromptPlan 的可用 Skills 索引列出了 id 与触发条件；"

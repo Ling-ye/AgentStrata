@@ -47,6 +47,7 @@ from chatcopilot.contracts.agent import (
     LlmCallStarted,
     LlmCallFinished,
     TextDelta,
+    ToolCatalogObserved,
     ToolFinished,
     ToolStarted,
     TopicDecisionMade,
@@ -156,6 +157,16 @@ class TurnOps:
             root_span=root_span,
             last_tool_finish_time=started_at,
         )
+
+        if self.session.disclosure is not None:
+            self.emit(ToolCatalogObserved(
+                phase="host_prepared",
+                tools=tuple(tool.name for tool in self.session.disclosure.tools),
+                trace_id=trace_id,
+                parent_span_id=root_span or "",
+                source="session_disclosure",
+                runtime_id=self.session.runtime_id,
+            ))
 
         if self.session.topic_classifier is not None:
             routing_started_at = time.time()
@@ -441,14 +452,35 @@ class TurnOps:
 
     def execute_tool_call(self, state: TurnState, tool_call: dict[str, Any]) -> None:
         self.raise_if_cancelled()
+        model_name, model_args = self.session._parse_tool_call(tool_call)
+        disclosure = self.session.disclosure
+        discovery = disclosure is not None and model_name in {"tool_search", "tool_describe"}
         if (
-            self.session.max_tool_calls is not None
+            not discovery
+            and self.session.max_tool_calls is not None
             and state.tool_calls_used >= self.session.max_tool_calls
         ):
             self.finish_tool_call_cap(state)
             return
 
-        name, args = self.session._parse_tool_call(tool_call)
+        name, args = model_name, model_args
+        prepared: ToolResult | None = None
+        if disclosure is not None:
+            if model_name == "tool_search":
+                prepared = disclosure.search(model_args)
+            elif model_name == "tool_describe":
+                prepared = disclosure.describe(model_args)
+            elif model_name == "tool_call":
+                resolved = disclosure.resolve_call(model_args)
+                if isinstance(resolved, ToolResult):
+                    prepared = resolved
+                else:
+                    name, args = resolved
+            elif model_name in disclosure.deferred:
+                prepared = ToolResult(
+                    ok=False, error="tool unavailable directly", error_code="tool_not_found"
+                )
+
         span_id = new_span_id()
         self.emit(
             ToolStarted(
@@ -463,11 +495,14 @@ class TurnOps:
             )
         )
 
-        tool_result = self._run_tool(state, name, args, span_id)
-        state.tool_calls_used += 1
+        tool_result = prepared if prepared is not None else self._run_tool(state, name, args, span_id)
+        if not discovery:
+            state.tool_calls_used += 1
         state.last_tool_finish_time = time.monotonic()
         state.recent_tool_fingerprints.append(_tool_fingerprint(name, args))
-        model_result = self._append_tool_message(state, tool_call, name, tool_result)
+        model_result = self._append_tool_message(
+            state, tool_call, model_name, tool_result, execution_name=name
+        )
 
         self.emit(
             ToolFinished(
@@ -487,9 +522,10 @@ class TurnOps:
             )
         )
 
-        committed = tool_result.data.get("committed")
-        if committed is True or (tool_result.ok and committed is not False):
-            state.successful_operations.append(name)
+        if not discovery:
+            committed = tool_result.data.get("committed")
+            if committed is True or (tool_result.ok and committed is not False):
+                state.successful_operations.append(name)
 
         if not tool_result.ok:
             state.consecutive_failures += 1
@@ -503,16 +539,17 @@ class TurnOps:
             return
 
         state.consecutive_failures = 0
-        if tool_result.summary:
+        if not discovery and tool_result.summary:
             state.last_successful_tool_summary = tool_result.summary
             if name == _SEARCH_INFORMATION_TOOL:
                 state.last_successful_search_summary = tool_result.summary
-        artifact_kind = _primary_artifact_kind(tool_result.artifact_kinds)
-        if artifact_kind:
-            for output in tool_result.outputs or []:
-                item = (output, artifact_kind) if isinstance(output, str) else None
-                if item is not None and item not in state.produced_paths:
-                    state.produced_paths.append(item)
+        if not discovery:
+            artifact_kind = _primary_artifact_kind(tool_result.artifact_kinds)
+            if artifact_kind:
+                for output in tool_result.outputs or []:
+                    item = (output, artifact_kind) if isinstance(output, str) else None
+                    if item is not None and item not in state.produced_paths:
+                        state.produced_paths.append(item)
         self.raise_if_cancelled()
 
     def finish_without_tool_result(self, state: TurnState, *, result_content: str) -> None:
@@ -721,11 +758,13 @@ class TurnOps:
         tool_call: dict[str, Any],
         name: str,
         tool_result: ToolResult,
+        *,
+        execution_name: str | None = None,
     ) -> dict[str, Any]:
         payload = tool_result.to_llm_payload()
         if self.session.tool_payload_filter is not None:
             payload = self.session.tool_payload_filter(payload)
-        payload = self.session.executor.project_result(name, payload)
+        payload = self.session.executor.project_result(execution_name or name, payload)
         tool_msg = {
             "role": "tool",
             "tool_call_id": tool_call.get("id", ""),

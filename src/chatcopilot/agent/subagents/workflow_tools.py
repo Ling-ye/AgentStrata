@@ -91,6 +91,7 @@ def make_workflow_tool(
         required.append("repository")
     return ToolDef(
         name=workflow.tool_name,
+        disclosure="direct",
         summary=workflow.summary,
         input_schema=object_schema(properties, required=tuple(required)),
         output_schema={

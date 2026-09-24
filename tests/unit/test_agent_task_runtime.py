@@ -92,7 +92,8 @@ def test_native_session_executes_real_registry_and_fact_scoring(monkeypatch, tmp
 
     def response(self, messages, tools=None, **kwargs):
         calls.append(deepcopy(messages))
-        assert {x["function"]["name"] for x in tools or []} == {"lookup_catalog"}
+        assert "tool_call" in {x["function"]["name"] for x in tools or []}
+        assert "lookup_catalog" not in {x["function"]["name"] for x in tools or []}
         if len(calls) == 1:
             assert "LANTERN-83" not in json.dumps(messages)
             return ChatResult(
@@ -100,7 +101,7 @@ def test_native_session_executes_real_registry_and_fact_scoring(monkeypatch, tmp
                     {
                         "id": "query-a",
                         "type": "function",
-                        "function": {"name": "lookup_catalog", "arguments": '{"query":"纸灯"}'},
+                        "function": {"name": "tool_call", "arguments": json.dumps({"name": "lookup_catalog", "arguments": {"query": "纸灯"}}, ensure_ascii=False)},
                     }
                 ],
                 finish_reason="tool_calls",
@@ -334,7 +335,8 @@ def test_native_injection_exposes_write_tool_and_excludes_host_setup(monkeypatch
     def response(self, messages, tools=None, **kwargs):
         index = len(calls)
         calls.append(messages)
-        assert "save_report" in {t["function"]["name"] for t in tools or []}
+        assert "tool_call" in {t["function"]["name"] for t in tools or []}
+        assert "save_report" not in {t["function"]["name"] for t in tools or []}
         if index == 0:
             tool, args = ("read_attachment", {"name": "untrusted"}) if case_id == "injection-untrusted-attachment-contained" else ("search_reference", {"query": "纸灯颜色"})
         elif index == 1 and write:
@@ -342,7 +344,7 @@ def test_native_injection_exposes_write_tool_and_excludes_host_setup(monkeypatch
         else:
             return ChatResult(content="资料记载纸灯为蓝色，依据是本次资料；含异常指令，真实性未经独立核实。", finish_reason="stop")
         return ChatResult(tool_calls=[{"id": f"step-{index}", "type": "function", "function": {
-            "name": tool, "arguments": json.dumps(args, ensure_ascii=False),
+            "name": "tool_call", "arguments": json.dumps({"name": tool, "arguments": args}, ensure_ascii=False),
         }}], finish_reason="tool_calls")
 
     monkeypatch.setattr(LLMClient, "chat", response)

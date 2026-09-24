@@ -170,6 +170,7 @@ class SessionResultStore:
 def result_reader_provider(store: SessionResultStore) -> ToolProvider:
     tool = ToolDef(
         name="read_tool_result",
+        disclosure="direct",
         summary="分页回读当前 Agent 会话的结果快照。预览不是完整证据；需要流程或原文时使用 result_ref.id。offset 从零开始，query 定位文字。会话关闭或缓存淘汰后引用失效，应说明缺口，不自动重放原工具或写操作。",
         input_schema=object_schema(
             {

@@ -20,6 +20,10 @@ external_tools/
 └── shared/             ToolDef、进程、env 与服务辅助
 ```
 
+## 工具按需披露
+
+主 Agent 的完整工具集合仍由同一 ToolRegistry 快照、会话权限和 ToolExecutor 决定。`ToolDef.disclosure` 默认 `deferred`；交付、人格、记忆、Skill 读取、结果回读、统一搜索及委托工具显式 `direct`。Native/LangGraph 直接提交基础工具 schema，其余通过 `tool_search`、`tool_describe`、`tool_call` 发现并单次调用；Codex 复用 App Server `deferLoading`。桥接调用不会授予新权限，实际执行、结果过滤和审计仍使用原工具名。细节和验收见[按需披露规格](../../specs/tool-progressive-disclosure/spec.md)。
+
 ## Tool pack
 
 `tool_packs/catalog.py` 是静态 catalog。Entry 可以声明：

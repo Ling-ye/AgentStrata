@@ -69,6 +69,7 @@ def build_search_tool(
     return ToolDef(
         access="member",
         name="search_information",
+        disclosure="direct",
         summary=(
             "Unified entry for factual search and URL reading. It routes requests, "
             "checks search-provider health, searches Tavily/Brave/SearXNG or vertical "

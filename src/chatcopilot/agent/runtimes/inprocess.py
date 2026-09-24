@@ -10,6 +10,7 @@ from chatcopilot.agent.context.topic import TopicLlm, TopicPolicy, TopicRelevanc
 from chatcopilot.agent.rag.provider import Retriever
 from chatcopilot.agent.session import AgentSession, ToolPayloadFilter
 from chatcopilot.agent.tools.executor import ToolExecutor
+from chatcopilot.agent.tools.disclosure import ToolDisclosureView
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.llm_client import LLMClient
 
@@ -120,6 +121,7 @@ def _build_inprocess_runtime_adapter(
     runtime_config: ChatConfig | None = None,
     tool_executor: ToolExecutor | None = None,
     tools_schema: list[dict[str, Any]] | None = None,
+    disclosure: ToolDisclosureView | None = None,
     tool_payload_filter: ToolPayloadFilter | None = None,
     retriever: Retriever | None = None,
     **_: Any,
@@ -165,6 +167,7 @@ def _build_inprocess_runtime_adapter(
             llm=llm,
             executor=tool_executor,
             tools_schema=tools_schema or [],
+            disclosure=disclosure,
             prompt_plan=request.prompt_plan,
             resolved_runtime_id=request.route.runtime_id,
             tool_payload_filter=tool_payload_filter,

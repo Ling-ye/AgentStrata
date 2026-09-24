@@ -335,6 +335,7 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         access="member",
         name="send_files_to_user",
+        disclosure="direct",
         summary="把当前工作区文件发送到当前会话；只接受已核实的工作区内路径。",
         input_schema=object_schema(
             {
@@ -397,6 +398,7 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         access="member",
         name="send_image_urls_to_user",
+        disclosure="direct",
         summary=(
             "下载已核实的公网图片 URL 并直接发送到当前会话；只有平台返回完整回执后"
             "才报告成功，部分下载失败时发送其余有效图片。"

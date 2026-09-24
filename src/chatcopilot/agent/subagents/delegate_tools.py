@@ -226,6 +226,7 @@ def make_delegate_tool(
 
     return ToolDef(
         name=definition.tool_name,
+        disclosure="direct",
         summary=summary_with_availability(definition.summary, availability_hint),
         input_schema=object_schema(properties, required=tuple(required)),
         output_schema=_delegate_output_schema(),

@@ -667,6 +667,7 @@ def build_persona_provider(
 
     tool = ToolDef(
         name="persona_manage",
+        disclosure="direct",
         summary=(
             "Owner-only 人格管理。用户用自然语言或 /persona 要求查看、设置、补充、检索、"
             "刷新、清空、确认或取消持续人格时必须调用。宿主从当前用户正文取得人格要求；"
