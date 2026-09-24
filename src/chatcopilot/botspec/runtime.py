@@ -45,7 +45,6 @@ class BotRuntimeContext:
     tool_packs: tuple[str, ...]
     tool_features: tuple[str, ...]
     exclude_tools: tuple[str, ...]
-    memory_namespace: str
     workspace_root: str | None
     log_dir: str | None
     source_path: Path
@@ -107,7 +106,6 @@ def assemble_runtime_context(spec: BotSpec) -> BotRuntimeContext:
         tool_packs=spec.tools.packs,
         tool_features=spec.tools.features,
         exclude_tools=spec.tools.hide,
-        memory_namespace=spec.context.memory_store.namespace or spec.id,
         workspace_root=spec.deploy.workspace_root,
         log_dir=spec.deploy.log_dir,
         source_path=spec.source_path,

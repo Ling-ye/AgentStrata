@@ -1412,15 +1412,31 @@ class AcpChatAgent(Agent):
             update_agent_message_text=update_agent_message_text,
         )
         last_turn_error: TurnError | None = None
-        successful_tools: set[str] = set()
+        memory_receipt_matched = False
         memory_receipt_failed = False
+        memory_candidates: list[dict[str, str]] = []
+        receipt_requirement = None
 
         def dispatch(event: AgentEvent) -> None:
-            nonlocal last_turn_error
+            nonlocal last_turn_error, memory_receipt_matched, memory_candidates
             if isinstance(event, TurnError):
                 last_turn_error = event
-            elif isinstance(event, ToolFinished) and event.ok:
-                successful_tools.add(event.name)
+            elif (
+                isinstance(event, ToolFinished)
+                and receipt_requirement is not None
+                and receipt_requirement.matches(event)
+            ):
+                memory_receipt_matched = True
+            if isinstance(event, ToolFinished) and event.name == "manage_memory":
+                outer = event.data
+                business = outer.get("data") if isinstance(outer, dict) else None
+                candidates = business.get("candidates") if isinstance(business, dict) else None
+                if isinstance(candidates, list):
+                    memory_candidates = [
+                        {"item_id": str(item.get("item_id") or ""),
+                         "text": str(item.get("text") or "")[:120]}
+                        for item in candidates[:3] if isinstance(item, dict)
+                    ]
             self._record_turn_event(turn_task, event)
             translator.dispatch(event)
 
@@ -1468,7 +1484,7 @@ class AcpChatAgent(Agent):
                     if (
                         receipt_requirement is not None
                         and receipt_requirement.retry_allowed
-                        and successful_tools.isdisjoint(receipt_requirement.successful_tools)
+                        and not memory_receipt_matched
                     ):
                         translator.reset_text_cache()
                         retry_metadata = dict(task_metadata)
@@ -1494,11 +1510,16 @@ class AcpChatAgent(Agent):
                     return result
 
             result = await asyncio.to_thread(run_agent_turn)
-            if receipt_requirement is not None and successful_tools.isdisjoint(
-                receipt_requirement.successful_tools
-            ):
+            if receipt_requirement is not None and not memory_receipt_matched:
                 memory_receipt_failed = True
                 failure_text = receipt_requirement.failure_text
+                if receipt_requirement.kind == "memory_delete" and memory_candidates:
+                    listing = "；".join(
+                        f"{item['item_id']}：{item['text']}"
+                        for item in memory_candidates if item["item_id"]
+                    )
+                    if listing:
+                        failure_text += f" 候选：{listing}"
                 try:
                     session.require_session().record_exchange(
                         "[运行时持久化回执校验]",

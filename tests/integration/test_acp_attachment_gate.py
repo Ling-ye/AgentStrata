@@ -680,7 +680,7 @@ class AttachmentGateTests(unittest.TestCase):
             original_update = acp_server.update_agent_message_text
             original_refresh = acp_server._refresh_session_prompt_plan
             acp_server.update_agent_message_text = lambda text: text
-            acp_server._refresh_session_prompt_plan = lambda _session: None
+            acp_server._refresh_session_prompt_plan = lambda _session, *, memory_query="": None
             try:
                 with tempfile.TemporaryDirectory() as tmp:
                     user_ws = Workspace(

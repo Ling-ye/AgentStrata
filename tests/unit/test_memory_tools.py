@@ -67,7 +67,7 @@ def test_owner_can_clear_both_scopes_and_private_member_cannot(tmp_path: Path) -
     private = _executor(tmp_path, role=Role.USER, user_id="member-a")
     for executor in (owner, _executor(tmp_path, role=Role.OWNER, user_id="owner-private")):
         assert executor.execute("append_memory", {"text": "可清理内容"}).ok
-        assert executor.execute("clear_memory", {"confirm": True}).ok
+        assert executor.execute("clear_memory", {"confirm": True}, request_text="清空记忆").ok
         assert "尚无长期记忆" in executor.execute("read_memory", {}).summary
     assert not private.execute("clear_memory", {"confirm": True}).ok
 

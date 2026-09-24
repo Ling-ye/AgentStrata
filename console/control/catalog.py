@@ -231,14 +231,6 @@ def _collect_prompt_items() -> list[CatalogItem]:
 def _collect_context_items() -> list[CatalogItem]:
     return [
         CatalogItem(
-            id="context:memory_store",
-            kind="context_source",
-            surface="context",
-            name="Memory Store",
-            description="BotSpec context.memory_store 声明的长期记忆 provider、namespace 和 schema。",
-            category="记忆",
-        ),
-        CatalogItem(
             id="context:rag",
             kind="context_source",
             surface="context",

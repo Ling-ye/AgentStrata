@@ -45,12 +45,6 @@ agents:
   presets:
     - mcp_query
 
-context:
-  memory_store:
-    provider: markdown
-    namespace: __BOT_ID__
-    schema: memory/schema.yaml
-
 workspace:
   root_env: CHATCOPILOT_WORKSPACE_ROOT
 

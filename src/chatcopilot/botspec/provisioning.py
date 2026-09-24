@@ -273,12 +273,6 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         }
         llm_raw = raw.get("llm", {})
         chat_raw = llm_raw.get("chat", {}) if isinstance(llm_raw, dict) else {}
-        context_raw = raw.get("context", {})
-        memory_raw = (
-            context_raw.get("memory_store", {})
-            if isinstance(context_raw, dict)
-            else {}
-        )
         gateway_raw = raw.get("gateway", {})
         channels_raw = raw.get("channels", {})
         qq_raw = channels_raw.get("qq", {}) if isinstance(channels_raw, dict) else {}
@@ -312,9 +306,7 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
                 {"schema_version", "identity", "response_style", "refusal_style"},
             )
             and _mapping_keys_at_most(raw, "tools", {"packs", "features"})
-            and _mapping_keys_at_most(raw, "context", {"memory_store"})
-            and isinstance(memory_raw, dict)
-            and set(memory_raw).issubset({"provider", "namespace"})
+            and _mapping_keys_at_most(raw, "context", set())
             and _mapping_keys_at_most(raw, "agents", {"runtime", "presets"})
             and _mapping_keys_at_most(raw, "workspace", {"root_env"})
             and _mapping_keys_at_most(
@@ -378,9 +370,6 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         and not spec.context.wiki.enabled
         and spec.context.codebases.registry is None
         and spec.context.playbooks.manifest is None
-        and spec.context.memory_store.provider == "markdown"
-        and spec.context.memory_store.schema is None
-        and spec.context.memory_store.namespace in {None, spec.id}
         and spec.workspace.root_env == "CHATCOPILOT_WORKSPACE_ROOT"
         and spec.deploy.target == "wsl2"
         and spec.deploy.instance_id == spec.id

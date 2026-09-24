@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from uuid import uuid4
 from dataclasses import replace
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -768,7 +770,36 @@ class AcpTurnOrchestrator:
 
     async def _session_materialization(self, turn: TurnContext) -> TurnOutcome:
         turn.session = await self._host._ensure_agent_session(turn.session_id, turn.session)
-        self._refresh_prompt_plan(turn.session)
+        if (
+            not turn.metadata.get("has_attachment")
+            and "memory.chat" in tuple(getattr(getattr(turn.session, "runtime", None), "tool_packs", ()) or ())
+        ):
+            try:
+                from chatcopilot.agent.memory.curator import MemoryCurator
+                from chatcopilot.middleware.acp.workspace_service import build_workspace_service
+
+                model = getattr(
+                    getattr(self._host, "_agent_runtime", None),
+                    "subagent_default_model_client",
+                    None,
+                )
+                if model is not None:
+                    persistent = build_workspace_service(
+                        turn.session.workspace, self._platform_type
+                    ).resolve_persistent_state()
+                    await asyncio.to_thread(
+                        MemoryCurator(model).process,
+                        state=persistent,
+                        user_text=turn.user_text,
+                        source_turn=(
+                            str(getattr(turn.turn_task, "task_id", "") or turn.message_id or uuid4().hex)
+                        ),
+                    )
+            except Exception as exc:  # noqa: BLE001 - automatic memory is optional
+                _LOGGER.warning(
+                    "automatic memory skipped | kind=%s", type(exc).__name__
+                )
+        self._refresh_prompt_plan(turn.session, memory_query=turn.user_text)
         turn.metadata["task_metadata"] = build_topic_metadata(
             user_text=turn.user_text,
             chat_kind=turn.session.workspace.chat_kind,

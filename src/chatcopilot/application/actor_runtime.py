@@ -10,6 +10,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 import hashlib
+import logging
 from pathlib import Path
 import threading
 from weakref import WeakKeyDictionary
@@ -61,7 +62,6 @@ from chatcopilot.contracts.authorization import Principal
 from chatcopilot.contracts.cancellation import CancellationProbe, CancellationRequested
 from chatcopilot.contracts.identity import Role, SessionIdentity, TurnIdentity, role_value
 from chatcopilot.contracts.persona_control import PendingPersonaProposal
-from chatcopilot.contracts.persistent_state import has_meaningful_memory
 from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.workspace import (
     WORKSPACE_SCOPE_GROUP_SHARED,
@@ -70,6 +70,9 @@ from chatcopilot.contracts.workspace import (
 )
 from chatcopilot.core.wiki import WikiStore
 from chatcopilot.core.workspace_runtime import Workspace
+
+
+_LOGGER = logging.getLogger("chatcopilot.application.actor_runtime")
 
 
 FileSenderFactory = Callable[[Principal, WorkspaceView, str], FileSender | None]
@@ -449,11 +452,12 @@ class ActorSessionFactory:
         principal: Principal,
         binding: ActorWorkspaceBinding,
         conversation_journal: str,
+        memory_query: str = "",
     ) -> PromptBuildInput:
         workspace = binding.workspace
         state = binding.service.resolve_persistent_state()
         persona = _persona_snippet(state.persona_layers())
-        memory = _memory_snippet(state)
+        memory = _memory_snippet(state, memory_query)
         capability_policies, skills = _prompt_projection(
             self.runtime,
             principal.role,
@@ -601,6 +605,29 @@ class ActorTurnExecutor:
                         "The actor Agent session is unavailable",
                     )
                 agent_session = cast(AgentSessionProtocol, state.agent_session)
+                if (
+                    not request.resource_refs
+                    and "memory.chat" in tuple(self.factory.runtime.tool_packs)
+                ):
+                    try:
+                        from chatcopilot.agent.memory.curator import MemoryCurator
+
+                        model = self.factory.agent_runtime.subagent_default_model_client
+                        if model is not None:
+                            memory_binding = build_actor_workspace(
+                                workspace_root=self.factory.workspace_root,
+                                principal=request.principal,
+                            )
+                            await asyncio.to_thread(
+                                MemoryCurator(model).process,
+                                state=memory_binding.service.resolve_persistent_state(),
+                                user_text=request.canonical_text,
+                                source_turn=request.run_id,
+                            )
+                    except Exception as exc:  # noqa: BLE001 - optional memory cannot fail a turn
+                        _LOGGER.warning(
+                            "automatic memory skipped | kind=%s", type(exc).__name__
+                        )
                 command_result = None
                 parts = request.canonical_text.strip().split()
                 if parts and parts[0] == "/model":
@@ -625,12 +652,21 @@ class ActorTurnExecutor:
                     agent_session.record_exchange(request.canonical_text, command_result.final_text)
                 capabilities = getattr(agent_session, "capabilities", None)
                 selected_model = state.one_shot_model_selection or state.model_selection
-                if selected_model is not None:
-                    binding = build_actor_workspace(workspace_root=self.factory.workspace_root, principal=request.principal)
-                    selected_prompt = self.factory._build_prompt_input(session_id=request.session_id,
-                        principal=request.principal, binding=binding, conversation_journal=state.turn_context)
-                    agent_session.update_context(PromptPlanBuilder().build(replace(selected_prompt,
-                        model=selected_model.model, tool_names=_session_tool_names(agent_session))))
+                binding = build_actor_workspace(
+                    workspace_root=self.factory.workspace_root, principal=request.principal
+                )
+                selected_prompt = self.factory._build_prompt_input(
+                    session_id=request.session_id,
+                    principal=request.principal,
+                    binding=binding,
+                    conversation_journal=state.turn_context,
+                    memory_query=request.canonical_text,
+                )
+                agent_session.update_context(PromptPlanBuilder().build(replace(
+                    selected_prompt,
+                    model=selected_model.model if selected_model is not None else selected_prompt.model,
+                    tool_names=_session_tool_names(agent_session),
+                )))
                 if capabilities is not None:
                     observe("session_capabilities", tools=sorted(capabilities.tool_names),
                             role=request.principal.role.value, workspace_scope=state.workspace.scope,
@@ -789,9 +825,9 @@ def _persona_snippet(layers: tuple[tuple[str, str], ...]) -> str:
     )
 
 
-def _memory_snippet(state: Any) -> str:
-    memory = str(state.memory_snapshot() or "").strip()
-    if not has_meaningful_memory(memory):
+def _memory_snippet(state: Any, query: str = "") -> str:
+    memory = str(state.memory_context(query) or "").strip()
+    if not memory:
         return ""
     return (
         f"## 当前 {state.memory_scope} 作用域长期记忆\n"

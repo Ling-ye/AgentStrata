@@ -45,6 +45,24 @@ class MemoryAppendReceipt:
 
     created: bool
     scope: str
+    item_id: str = ""
+    version: int = 0
+    content_sha256: str = ""
+
+
+@dataclass(frozen=True)
+class MemoryRecord:
+    item_id: str
+    text: str
+    section: str
+    source_actor: str
+    source_turn: str
+    origin: str
+    created_at: str
+    updated_at: str
+    version: int
+    status: str
+    supersedes_id: str = ""
 
 
 _TIMESTAMPED_MEMORY_ENTRY_RE = re.compile(r"^- \d{4}-\d{2}-\d{2} \d{2}:\d{2} .+$")
@@ -95,6 +113,13 @@ class PersistentConversationState(Protocol):
     def memory_snapshot(self) -> str: ...
     def memory_append(self, *, text: str, section: str) -> MemoryAppendReceipt: ...
     def memory_clear(self) -> None: ...
+    def memory_search(self, query: str, *, limit: int = 5) -> tuple[MemoryRecord, ...]: ...
+    def memory_read(self, item_id: str) -> MemoryRecord | None: ...
+    def memory_context(self, query: str = "") -> str: ...
+    def memory_update(
+        self, item_id: str, *, text: str, expected_version: int, source_turn: str = ""
+    ) -> MemoryRecord: ...
+    def memory_delete(self, item_id: str, *, expected_version: int) -> bool: ...
 
 
 __all__ = [
@@ -103,6 +128,7 @@ __all__ = [
     "MEMORY_MAX_ITEM_CHARS",
     "MEMORY_SECTIONS",
     "MemoryAppendReceipt",
+    "MemoryRecord",
     "PERSONA_INITIAL_TEMPLATE",
     "PERSONA_MAX_BYTES",
     "PERSONA_MAX_ITEM_CHARS",

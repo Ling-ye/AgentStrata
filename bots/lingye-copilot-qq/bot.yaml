@@ -116,10 +116,6 @@ context:
     shell:
       timeout_default: 60
       timeout_max: 300
-  memory_store:
-    provider: markdown
-    namespace: lingye-copilot-qq
-    schema: memory/schema.yaml
   playbooks:
     manifest: skills/manifest.yaml
 

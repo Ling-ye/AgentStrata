@@ -1,5 +1,4 @@
-"""Agent 长期记忆能力：Protocol + 具体 provider 实现。"""
-from chatcopilot.agent.memory.markdown import MarkdownMemoryProvider
-from chatcopilot.agent.memory.provider import MemoryProvider
+"""Agent-side bounded conversation-memory extraction."""
+from chatcopilot.agent.memory.curator import MemoryCurator, eligible_for_auto_memory
 
-__all__ = ["MarkdownMemoryProvider", "MemoryProvider"]
+__all__ = ["MemoryCurator", "eligible_for_auto_memory"]

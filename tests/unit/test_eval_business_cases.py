@@ -112,15 +112,18 @@ class ScriptedSession:
                     call("append_memory", text="我的长期偏好：解释时先给结论。")
             elif ident == "memory-new-session":
                 if index == 0:
-                    call("append_memory", text="我的长期偏好：先看表格再看解释。")
+                    call("append_memory", text="我喜欢先看表格再看解释。")
                 else:
                     text = call("read_memory").data["text"]
             else:
                 if index < 2:
                     call(
                         "append_memory",
-                        text="我的长期偏好："
-                        + ("简短回答。" if index == 0 else "更正为详细解释，旧偏好不再适用。"),
+                        text=(
+                            "我的长期偏好：使用简短回答。"
+                            if index == 0
+                            else "以后详细解释，旧的简短回答偏好不再适用"
+                        ),
                     )
                 else:
                     text = call("read_memory").data["text"]

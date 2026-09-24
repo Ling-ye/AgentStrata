@@ -1570,7 +1570,7 @@ def _suite_case_preflight(
     available_features = {*features, "chat", "tool_visibility"}
     if "chat.image_inputs" in features:
         available_features.update({"image_input", "multiple_image_input"})
-    if str(getattr(runtime, "memory_namespace", "")).strip():
+    if "memory.chat" in tuple(getattr(runtime, "tool_packs", ()) or ()):
         available_features.add("session_memory")
     if "persona.control" in tuple(getattr(runtime, "tool_packs", ()) or ()):
         available_features.add("persona_control")
@@ -2778,7 +2778,6 @@ def _runtime_behavior_fingerprint(
         "runtime_implementation": runtime_implementation_snapshot(effective_runtime_id),
         "context": {
             "spec": _behavior_json_value(to_jsonable(runtime.spec.context)),
-            "memory_namespace": runtime.memory_namespace,
             "rag_sources": rag_sources,
             "skills": skills,
         },

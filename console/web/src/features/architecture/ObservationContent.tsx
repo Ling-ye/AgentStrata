@@ -33,7 +33,7 @@ export const FIELD_NAMES: Record<string, string> = {
   max_tool_calls: "工具调用上限", max_model_turns: "模型轮次上限", policy_version: "策略版本", role: "角色",
   gateway: "Gateway", prompts: "提示词", observation: "观测记录", configured: "已配置", reference: "引用",
   provider: "提供方", kind: "类型", namespace: "命名空间", schema: "数据格式", host: "监听地址", count: "数量",
-  memory_store: "记忆存储", wiki: "Wiki", codebases: "代码仓库", playbooks: "Skills", dev: "开发工具", rag: "RAG",
+  wiki: "Wiki", codebases: "代码仓库", playbooks: "Skills", dev: "开发工具", rag: "RAG",
   arguments: "参数", summary: "摘要", data: "结果数据", message: "消息", text: "正文", final_text: "最终回复",
   content: "正文", effective_messages: "模型可见输入", session_messages: "会话历史", tool_schemas: "工具定义",
   resources: "资源", coverage: "采集范围", omitted: "未覆盖内容", context_kind: "上下文类型",

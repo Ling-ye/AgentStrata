@@ -10,7 +10,7 @@ const input: Configuration = { layers: [], entities: [
   entity("agent:delegation", { defaults: { max_tool_calls: 5 } }, "agent"),
   entity("agent:search-budget", { max_tool_calls: 2 }, "agent"),
   entity("subagent:worker", { timeout_seconds: 40 }), entity("mcp:lookup", { catalog_ref: "lookup", command: "fixture" }),
-  entity("context:wiki", { enabled: true, root_env: "WIKI_ROOT" }), entity("context:memory_store", { provider: "file" }),
+  entity("context:wiki", { enabled: true, root_env: "WIKI_ROOT" }),
   entity("context:playbooks", { manifest: "skills.yaml" }), entity("rag:docs", { path: "docs", include: ["*.md"] }), entity("skill:career", { description: "Skill fixture" }),
   entity("search:brave", { endpoint: "configured" }), entity("pack:dev.tools", { hidden_tools: ["hidden"] }), entity("pack:wiki.knowledge"),
   entity("context:dev", { shell: { timeout_max: 50 } }), entity("context:codebases", { registry: "repos.yaml" }), entity("feature:chat.image_inputs"),
@@ -31,7 +31,7 @@ describe("four-layer configuration ownership", () => {
   });
   it.each([
     ["channel:qq", "channel", "channel"], ["policy:instance", "gateway", "access"], ["gateway:instance", "gateway", "gateway"],
-    ["context:wiki", "application", "memory"], ["rag:docs", "application", "memory"], ["context:memory_store", "application", "memory"],
+    ["context:wiki", "application", "memory"], ["rag:docs", "application", "memory"],
     ["skill:career", "application", "resources"], ["context:dev", "application", "resources"], ["codebase:sample", "application", "resources"],
     ["feature:chat.image_inputs", "application", "features"], ["prompts:instance", "agent", "prompts"], ["mcp:lookup", "agent", "mcp"],
     ["pack:dev.tools", "agent", "packs"], ["tool:lookup", "agent", "tools"], ["search:brave", "agent", "search"],

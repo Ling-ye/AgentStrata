@@ -36,7 +36,6 @@ from chatcopilot.botspec.model import (
     GatewaySpec,
     LLMSpec,
     McpSpec,
-    MemorySpec,
     PackagingSpec,
     PlatformSpec,
     PromptSpec,
@@ -241,7 +240,6 @@ def validate_botspec(spec: BotSpec, *, environment: dict[str, str] | None = None
     _check_file_exists(spec, spec.tools.mcp.servers, "tools.mcp.servers", issues, required=False)
     _check_file_exists(spec, spec.context.rag.sources, "context.rag.sources", issues, required=False)
     _check_file_exists(spec, spec.context.codebases.registry, "context.codebases.registry", issues, required=False)
-    _check_file_exists(spec, spec.context.memory_store.schema, "context.memory_store.schema", issues, required=False)
     _check_file_exists(spec, spec.packaging.allowlist, "packaging.allowlist", issues, required=False)
     _check_file_exists(spec, spec.context.playbooks.manifest, "context.playbooks.manifest", issues, required=False)
     _validate_skills_manifest(spec, issues)
@@ -278,15 +276,6 @@ def validate_botspec(spec: BotSpec, *, environment: dict[str, str] | None = None
                 "warning",
                 "未声明任何工具包，机器人将按纯问答运行，不启用本地工具或专业知识能力。",
                 "tools.packs",
-            )
-        )
-
-    if not spec.context.memory_store.namespace:
-        issues.append(
-            ValidationIssue(
-                "warning",
-                "context.memory_store.namespace 未设置，将默认使用 BotSpec id 作为记忆命名空间。",
-                "context.memory_store.namespace",
             )
         )
 
@@ -655,9 +644,12 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         )
     tools_mcp = _mapping(tools.get("mcp", {}), "tools.mcp")
     context = _mapping(data.get("context", {}), "context")
+    if "memory_store" in context:
+        raise ValueError(
+            "context.memory_store 已移除；长期记忆由可信会话身份和 memory.chat 工具包管理"
+        )
     rag = _mapping(context.get("rag", {}), "context.rag")
     codebases = _mapping(context.get("codebases", {}), "context.codebases")
-    memory = _mapping(context.get("memory_store", {}), "context.memory_store")
     wiki = _mapping(context.get("wiki", {}), "context.wiki")
     playbooks = _mapping(context.get("playbooks", {}), "context.playbooks")
     dev = _mapping(context.get("dev", {}), "context.dev")
@@ -834,11 +826,6 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
                 max_chunk_chars=_as_int(wiki.get("max_chunk_chars"), 1200),
             ),
             codebases=CodebaseSpec(registry=_optional_str(codebases.get("registry"))),
-            memory_store=MemorySpec(
-                provider=str(memory.get("provider", "markdown")).strip() or "markdown",
-                namespace=_optional_str(memory.get("namespace")) or bot_id,
-                schema=_optional_str(memory.get("schema")),
-            ),
             playbooks=SkillsSpec(manifest=_optional_str(playbooks.get("manifest"))),
             dev=DevSpec(
                 root_env=str(dev.get("root_env", "CHATCOPILOT_DEV_ROOT")).strip()

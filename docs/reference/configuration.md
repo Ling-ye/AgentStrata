@@ -31,12 +31,6 @@ tools:
 agents:
   runtime: native
 
-context:
-  memory_store:
-    provider: markdown
-    namespace: my-bot
-    schema: memory/schema.yaml
-
 workspace:
   root_env: CHATCOPILOT_WORKSPACE_ROOT
 
@@ -207,8 +201,7 @@ Codex 同样装配已启用的统一搜索和委托能力，经 Session Gateway 
 
 ### `context`
 
-- `memory_store`：长期记忆 provider、namespace 和 schema。运行时目标不由模型或 workspace
-  路径参数选择：私聊绑定当前稳定发送者，群聊绑定当前稳定群；`memory.chat` pack 名称保持兼容。
+- 长期记忆由 `memory.chat` 工具包启用，目标由可信会话身份绑定；不再声明 provider、namespace 或 schema。
 - `wiki`：私有 Markdown Wiki 的 `root_env`、读取角色和私聊限制。
 - `playbooks.manifest`：bot-local Skill manifest。
 - `rag`：只读知识源。
@@ -261,7 +254,7 @@ tenant、文档 ID、账号或 endpoint。
 
 ## BotSpec 四面模型
 
-`prompts` 管机器人提示词，`tools` 管本地工具包/MCP/工具特性/隐藏工具，`agents` 管主 Agent runtime（`native` / `langgraph` / `codex`）、subagent 与搜索能力，`context` 管 RAG、可写私有 Wiki、记忆存储、代码仓库、playbooks 和 dev tools 配置（`context.dev`）。当前内置 workflow registry 为空，文档和配置示例不要写不存在的 `coding` / `research` workflow。
+`prompts` 管机器人提示词，`tools` 管本地工具包/MCP/工具特性/隐藏工具，`agents` 管主 Agent runtime（`native` / `langgraph` / `codex`）、subagent 与搜索能力，`context` 管 RAG、可写私有 Wiki、代码仓库、playbooks 和 dev tools 配置（`context.dev`）。当前内置 workflow registry 为空，文档和配置示例不要写不存在的 `coding` / `research` workflow。
 
 ## 配置解析与模型生命周期
 

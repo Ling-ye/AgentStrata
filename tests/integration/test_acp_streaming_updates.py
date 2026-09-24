@@ -133,7 +133,7 @@ class StreamingUpdateTests(unittest.TestCase):
             original_refresh = acp_server._refresh_session_prompt_plan
             original_latest_workspace = acp_server._latest_workspace_from_session_env
             acp_server.update_agent_message_text = lambda text: text
-            acp_server._refresh_session_prompt_plan = lambda _session: None
+            acp_server._refresh_session_prompt_plan = lambda _session, *, memory_query="": None
             acp_server._latest_workspace_from_session_env = lambda _workspace, *, platform_type: None
             try:
                 agent = AcpChatAgent.__new__(AcpChatAgent)

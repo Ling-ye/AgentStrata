@@ -60,7 +60,7 @@ def test_group_identity_is_actor_independent_and_digest_hides_raw_id(
 
     assert "全群默认先给结论" in second.memory_snapshot()
     memory_path = _only(
-        tmp_path, ".conversation-state/persistent/memory/group/*/MEMORY.md"
+        tmp_path, ".conversation-state/persistent/memory/group/*/memory.db"
     )
     assert "group-secret-42" not in str(memory_path)
     assert memory_path.stat().st_mode & 0o777 == 0o600

@@ -844,7 +844,6 @@ validate_resume_text_shape() {
             if ($0 == "llm:") { section = "llm"; llm_section++; next }
             if ($0 == "prompts:") { section = "prompts"; prompts_section++; next }
             if ($0 == "tools:") { section = "tools"; tools_section++; next }
-            if ($0 == "context:") { section = "context"; context_section++; next }
             if ($0 == "agents:") { section = "agents"; agents_section++; next }
             if ($0 == "workspace:") { section = "workspace"; workspace_section++; next }
             if ($0 == "deploy:") { section = "deploy"; deploy_section++; next }
@@ -902,16 +901,6 @@ validate_resume_text_shape() {
             }
             fail()
         }
-        section == "context" {
-            if ($0 == "  memory_store:") { subsection = "memory"; memory_section++; next }
-            if (subsection == "memory" && $0 == "    provider: markdown") {
-                memory_provider++; next
-            }
-            if (subsection == "memory" && $0 == "    namespace: " bot_id) {
-                memory_namespace++; next
-            }
-            fail()
-        }
         section == "agents" {
             if ($0 == "  runtime: native") { backend++; next }
             # This exact empty-list scalar is emitted by the starter generator;
@@ -946,7 +935,7 @@ validate_resume_text_shape() {
             if (bot_id_count != 1 || display_name_count != 1 \
                 || gateway_section != 1 || channels_section != 1 \
                 || llm_section != 1 || prompts_section != 1 \
-                || tools_section != 1 || context_section != 1 || agents_section != 1 \
+                || tools_section != 1 || agents_section != 1 \
                 || workspace_section != 1 || deploy_section != 1 || access_section != 1 \
                 || gateway_protocol != 1 || gateway_host != 1 || gateway_port != 1 \
                 || gateway_token != 1 || gateway_state != 1 \
@@ -958,7 +947,6 @@ validate_resume_text_shape() {
                 || prompt_refusal != 1 || packs_section != 1 || features_section != 1 \
                 || pack_workspace != 1 || pack_memory != 1 \
                 || feature_uploads != 1 || feature_workspace != 1 \
-                || memory_section != 1 || memory_provider != 1 || memory_namespace != 1 \
                 || backend != 1 || presets != 1 || workspace_root != 1 \
                 || deploy_target != 1 || deploy_instance != 1 || deploy_home != 1 \
                 || deploy_workspace != 1 || deploy_log != 1 || deploy_env != 1 \

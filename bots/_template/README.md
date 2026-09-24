@@ -63,7 +63,6 @@ bots/<bot-id>/
 ├── local.env.example
 ├── package.allowlist.yaml
 ├── mcp/servers.yaml
-├── memory/schema.yaml
 └── prompts/
     ├── identity.md
     ├── response-style.md

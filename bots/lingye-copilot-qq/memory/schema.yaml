@@ -1,6 +1,0 @@
-provider: markdown
-sections:
-  - facts
-  - decisions
-  - sources
-max_bytes: 32768

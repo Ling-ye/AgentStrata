@@ -55,10 +55,6 @@ def _write_starter_bot(tmp_path: Path, extra_lines: str = "") -> tuple[Path, Pat
               features:
               - chat.file_uploads
               - chat.private_workspace
-            context:
-              memory_store:
-                provider: markdown
-                namespace: token-test-qq
             agents:
               runtime: native
               presets: []

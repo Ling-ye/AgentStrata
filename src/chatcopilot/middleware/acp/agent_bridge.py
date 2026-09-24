@@ -31,7 +31,6 @@ from chatcopilot.botspec.wiki import resolve_wiki_root
 from chatcopilot.contracts import role_value
 from chatcopilot.contracts.identity import SessionIdentity
 from chatcopilot.contracts.persona_control import PendingPersonaProposal
-from chatcopilot.contracts.persistent_state import has_meaningful_memory
 from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.tools import ToolResult
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
@@ -417,6 +416,8 @@ def _extract_memory_snippet(
     runtime: Any,
     ws: Workspace,
     workspace_service: MiddlewareWorkspaceService | None = None,
+    *,
+    query: str = "",
 ) -> str:
     """Load current private-user or group memory as non-authoritative history."""
 
@@ -424,8 +425,8 @@ def _extract_memory_snippet(
         ws, str(getattr(runtime, "platform_type", "unknown") or "unknown")
     )
     state = service.resolve_persistent_state()
-    memory = state.memory_snapshot().strip()
-    if not has_meaningful_memory(memory):
+    memory = state.memory_context(query).strip()
+    if not memory:
         return ""
     return (
         f"## 当前 {state.memory_scope} 作用域长期记忆\n"
@@ -672,11 +673,13 @@ def _materialize_session_for_workspace(
     return state
 
 
-def _refresh_session_prompt_plan(session: SessionState) -> None:
+def _refresh_session_prompt_plan(session: SessionState, *, memory_query: str = "") -> None:
     """Rebuild the single prompt plan from current protected snapshots."""
     _, visible_skills = _prompt_projection(session.runtime, session.role, session.workspace)
     persona_snippet = extract_persona_snippet(session.runtime, session.role, session.workspace)
-    memory_snippet = _extract_memory_snippet(session.runtime, session.workspace)
+    memory_snippet = _extract_memory_snippet(
+        session.runtime, session.workspace, query=memory_query
+    )
     prompt_input = _prompt_input(
         runtime=session.runtime,
         role=session.role,

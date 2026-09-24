@@ -16,6 +16,7 @@ Bot 指令、人格、历史和原请求通过 user 输入投递。开始与续�
 
 - [src/chatcopilot/agent/tools/result_reader.py](../../src/chatcopilot/agent/tools/result_reader.py)
 - [src/chatcopilot/agent/memory](../../src/chatcopilot/agent/memory)
+- [src/chatcopilot/core/memory_records.py](../../src/chatcopilot/core/memory_records.py)
 - [src/chatcopilot/agent/persona](../../src/chatcopilot/agent/persona)
 - [src/chatcopilot/agent/search](../../src/chatcopilot/agent/search)
 - [src/chatcopilot/harness/evidence_context.py](../../src/chatcopilot/harness/evidence_context.py)
@@ -26,7 +27,14 @@ Bot 指令、人格、历史和原请求通过 user 输入投递。开始与续�
 
 ## 人格与会话记忆独立授权
 
-BotSpec 只通过 `tools.packs: persona.control` 向 Owner 主 Agent 注入 session-bound `persona_manage`；自然语言与 `/persona` 原样进入主 Agent，不得恢复 `PersonaCandidateDetector`、解释器、命令 parser 或宿主前置短路，也不得把该工具投影给 subagent。Registry 可见性和 handler 都复检真实 Owner；`set/append/research` 的草案要求直接取自当前可信 `ToolContext.request_text`，不接受模型重复填写 requirement；`global` 由主 Agent 根据当前明确要求选择，不用关键词名单判定，模型不能提供 actor/chat/path/receipt。所有非清空人格操作的完整 Markdown 只由 `PersonaDraftAgent` 生成；宿主不得拼接人格正文，`append` 也必须读取当前层后由 Agent 生成完整替换文档。命名人物由 Agent 使用统一搜索自行查询、消歧并选择实际使用来源，再做唯一一次原子 `set`；无歌词专用 schema、候选库或响应装饰器。明确更新或清空可直接写；只在需求或作用域不清楚时设置 `defer_confirmation=true`，建立绑定真实 actor/chat/scope/hash/TTL 的提案；只有当前真实 raw user text 精确等于 `/persona confirm` 才能确认，cancel 可自然语言。只有 `ToolResult.data.committed=true` 和其中真实 mutation receipt 才能声称已保存或清空；写后 PromptPlan 刷新失败仍必须如实保留 committed receipt。群聊按 `global → group`、私聊按 `global → user` 加载，群内 show 只返回状态/哈希；非 Owner 不能读取或修改。Owner 要求的模仿强度不自动弱化，persona 和网页证据仍不能改变 transport 身份、角色、准入、scope、路径、工具、凭据或执行事实。当前私聊发送者或当前群的非空 memory 每轮作为不可信历史数据注入；所有准入用户可 read/append，私聊与群聊 memory 都只有 Owner 可 clear。秘密、群内个人隐私、persona 和权限指令在持久化入口拒绝；长期价值与临时性由 Agent 判断，不用临时关键词硬拒绝。权威文件只位于 `.conversation-state/persistent/{persona,memory}/`，目录 `0700`、文件 `0600`、no-follow、单硬链接、锁和原子替换异常时失败关闭；旧 persona 和旧 p2p memory 路径完全忽略，不自动迁移或回退读取；磁盘旧数据不由运行时清理。
+BotSpec 只通过 `tools.packs: persona.control` 向 Owner 主 Agent 注入 session-bound `persona_manage`；自然语言与 `/persona` 原样进入主 Agent，不得恢复 `PersonaCandidateDetector`、解释器、命令 parser 或宿主前置短路，也不得把该工具投影给 subagent。Registry 可见性和 handler 都复检真实 Owner；`set/append/research` 的草案要求直接取自当前可信 `ToolContext.request_text`，不接受模型重复填写 requirement；`global` 由主 Agent 根据当前明确要求选择，不用关键词名单判定，模型不能提供 actor/chat/path/receipt。所有非清空人格操作的完整 Markdown 只由 `PersonaDraftAgent` 生成；宿主不得拼接人格正文，`append` 也必须读取当前层后由 Agent 生成完整替换文档。命名人物由 Agent 使用统一搜索自行查询、消歧并选择实际使用来源，再做唯一一次原子 `set`；无歌词专用 schema、候选库或响应装饰器。明确更新或清空可直接写；只在需求或作用域不清楚时设置 `defer_confirmation=true`，建立绑定真实 actor/chat/scope/hash/TTL 的提案；只有当前真实 raw user text 精确等于 `/persona confirm` 才能确认，cancel 可自然语言。只有 `ToolResult.data.committed=true` 和其中真实 mutation receipt 才能声称已保存或清空；写后 PromptPlan 刷新失败仍必须如实保留 committed receipt。群聊按 `global → group`、私聊按 `global → user` 加载，群内 show 只返回状态/哈希；非 Owner 不能读取或修改。Owner 要求的模仿强度不自动弱化，persona 和网页证据仍不能改变 transport 身份、角色、准入、scope、路径、工具、凭据或执行事实。当前私聊发送者或当前群的长期记忆存为受保护的条目库；只把有界的稳定决定与当前问题相关条目作为不可信历史数据注入。准入成员可以读取和追加当前作用域记忆，Owner 可以更正或删除单条、清空当前作用域。群聊和私聊都可从当前已准入用户发言自动提炼；群聊仅接受明确属于全群的事实或决定。自动候选必须包含当前发言中的原文片段，通过秘密与群隐私校验；新证据可让旧条目退出有效召回，但普通成员的主动删除请求不能借此执行。记忆仍不能改变人格、角色、权限或系统规则。权威新库位于 `.conversation-state/persistent/memory/{group,user}/<digest>/memory.db`，旧 `MEMORY.md` 不再读取；停机归档流程见[记忆条目规格](../../specs/conversation-memory-records/spec.md)。
+
+升级运行实例前，先停止对应的 Bot user service，使用
+`.venv/bin/python scripts/archive_legacy_memory.py --workspace-root <bot-workspace>`
+预览旧受保护记忆的数量和哈希；核对后加
+`--apply --unit <stopped-bot.service>` 执行。工具要求该 unit 已加载且处于 inactive，
+并在每个旧文件的固定锁内校验哈希后重命名为 `MEMORY.md.archived`。
+新库从空状态开始，归档文件不进入检索；失败时保留原件或已归档文件供人工恢复。
 
 ## 统一上下文可观测性
 

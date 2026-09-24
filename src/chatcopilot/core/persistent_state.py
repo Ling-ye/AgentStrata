@@ -4,20 +4,14 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
-import re
 import stat
 import tempfile
-import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
 from chatcopilot.core.file_integrity import FileMetadataError, require_regular_file
 
 from chatcopilot.contracts.persistent_state import (
-    MEMORY_INITIAL_TEMPLATE,
-    MEMORY_MAX_BYTES,
-    MEMORY_MAX_ITEM_CHARS,
-    MEMORY_SECTIONS,
     PERSONA_INITIAL_TEMPLATE,
     PERSONA_MAX_BYTES,
     PERSONA_MAX_ITEM_CHARS,
@@ -26,14 +20,12 @@ from chatcopilot.contracts.persistent_state import (
     has_meaningful_persona,
 )
 from chatcopilot.contracts.workspace import (
-    MEMORY_FILENAME,
     WorkspaceView,
     normalize_chat_kind,
 )
 
 
 _STATE_RELPATH = (".conversation-state", "persistent")
-_TIMESTAMPED_MEMORY_RE = re.compile(r"^- \d{4}-\d{2}-\d{2} \d{2}:\d{2} (.*)$")
 
 
 class PersistentStateSecurityError(RuntimeError):
@@ -87,46 +79,58 @@ class FilesystemPersistentConversationState:
             max_bytes=PERSONA_MAX_BYTES,
         )
 
+    def _memory_store(self):
+        from chatcopilot.core.memory_records import MemoryRecordStore
+
+        return MemoryRecordStore(self)
+
     def memory_snapshot(self) -> str:
-        path = self._memory_path()
-        return self._read_protected(path, max_bytes=MEMORY_MAX_BYTES)
+        """Full active view for explicit inspection and evaluation, never prompt injection."""
+        return self._memory_store().snapshot()
 
-    def memory_append(self, *, text: str, section: str) -> MemoryAppendReceipt:
-        stripped = (text or "").strip()
-        if not stripped:
-            raise ValueError("text 不能为空")
-        if len(stripped) > MEMORY_MAX_ITEM_CHARS:
-            raise ValueError(
-                f"text 长度 {len(stripped)} 超过单条上限 {MEMORY_MAX_ITEM_CHARS}，请精简后再写。"
-            )
-        normalized_section = (section or "facts").strip() or "facts"
-        if normalized_section not in MEMORY_SECTIONS:
-            raise ValueError(
-                f"section 只能是 {', '.join(MEMORY_SECTIONS)}；收到 {section!r}"
-            )
-        text_oneline = stripped.replace("\r", "").replace("\n", " \\n ")
-        created = False
-        path = self._memory_path()
+    def memory_context(self, query: str = "") -> str:
+        return self._memory_store().context(query)
 
-        def update(current: str) -> str:
-            nonlocal created
-            body = current or MEMORY_INITIAL_TEMPLATE
-            if self._memory_contains(body, text_oneline):
-                return body
-            header = f"## {normalized_section}"
-            new_line = f"- {time.strftime('%Y-%m-%d %H:%M')} {text_oneline}"
-            created = True
-            return _insert_line_under_section(body, header, new_line)
+    def memory_search(self, query: str, *, limit: int = 5):
+        return self._memory_store().search(query, limit=limit)
 
-        self._update_protected(path, update, max_bytes=MEMORY_MAX_BYTES)
-        return MemoryAppendReceipt(created=created, scope=self.memory_scope)
+    def memory_read(self, item_id: str):
+        return self._memory_store().read(item_id)
+
+    def memory_append(
+        self,
+        *,
+        text: str,
+        section: str,
+        source_turn: str = "",
+        origin: str = "explicit",
+        supersedes_id: str = "",
+    ) -> MemoryAppendReceipt:
+        return self._memory_store().append(
+            text=text,
+            section=section,
+            source_actor=str(self.workspace.user_id or ""),
+            source_turn=source_turn,
+            origin=origin,
+            supersedes_id=supersedes_id,
+        )
+
+    def memory_update(
+        self, item_id: str, *, text: str, expected_version: int,
+        source_turn: str = "",
+    ):
+        return self._memory_store().update(
+            item_id, text=text, expected_version=expected_version,
+            source_actor=str(self.workspace.user_id or ""), source_turn=source_turn,
+        )
+
+    def memory_delete(self, item_id: str, *, expected_version: int) -> bool:
+        return self._memory_store().delete(
+            item_id, expected_version=expected_version
+        )
 
     def memory_clear(self) -> None:
-        self._write_protected(
-            self._memory_path(),
-            MEMORY_INITIAL_TEMPLATE,
-            max_bytes=MEMORY_MAX_BYTES,
-        )
+        self._memory_store().clear()
 
     def _persona_path(self, scope: str) -> Path:
         normalized = (scope or "user").strip().lower()
@@ -146,14 +150,14 @@ class FilesystemPersistentConversationState:
             / "PERSONA.md"
         )
 
-    def _memory_path(self) -> Path:
+    def _memory_db_path(self) -> Path:
         scope = self.memory_scope
         return (
             self.state_root
             / "memory"
             / scope
             / self._identity_digest(scope)
-            / MEMORY_FILENAME
+            / "memory.db"
         )
 
     def _identity_digest(self, scope: str) -> str:
@@ -182,15 +186,6 @@ class FilesystemPersistentConversationState:
                 f"text 长度 {len(stripped)} 超过上限 {PERSONA_MAX_ITEM_CHARS}，请精简后再写。"
             )
         return stripped.replace("\r\n", "\n").replace("\r", "\n")
-
-
-    @staticmethod
-    def _memory_contains(body: str, text: str) -> bool:
-        for line in body.splitlines():
-            match = _TIMESTAMPED_MEMORY_RE.match(line.strip())
-            if match is not None and match.group(1) == text:
-                return True
-        return False
 
 
     def _read_protected(self, path: Path, *, max_bytes: int) -> str:

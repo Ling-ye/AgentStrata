@@ -216,15 +216,6 @@ def _bot_config(bot_data: dict[str, Any], base_dir: Path) -> dict[str, Any]:
         roles[str(role_name)] = _file_entry(base_dir, str(role_path))
 
     context = bot_data.get("context") if isinstance(bot_data.get("context"), dict) else {}
-    memory_raw = context.get("memory_store") if isinstance(context.get("memory_store"), dict) else {}
-    memory = None
-    if memory_raw:
-        memory = {
-            "provider": str(memory_raw.get("provider") or ""),
-            "namespace": str(memory_raw.get("namespace") or ""),
-            "schema": str(memory_raw.get("schema") or ""),
-        }
-
     rag_raw = context.get("rag") if isinstance(context.get("rag"), dict) else {}
     rag = {"sources": str(rag_raw.get("sources") or "")} if rag_raw.get("sources") else None
 
@@ -262,7 +253,6 @@ def _bot_config(bot_data: dict[str, Any], base_dir: Path) -> dict[str, Any]:
         "refusal": _file_entry(base_dir, prompts.get("refusal")),
         "safety": _file_entry(base_dir, prompts.get("safety")),
         "roles": roles if roles else None,
-        "memory": memory,
         "rag": rag,
         "wiki": wiki,
         "codebases": codebases,
@@ -309,5 +299,5 @@ def _structure_config(data: dict[str, Any]) -> dict[str, Any]:
         "runtime_id": runtime_id if runtime_id in {"native", "langgraph", "codex"} else "unknown",
         "prompt_schema_version": prompts.get("schema_version") if type(prompts.get("schema_version")) is int else None,
         "prompt_sections": [key for key in ("identity", "response_style", "refusal_style", "role_styles", "mode_styles") if prompts.get(key)],
-        "context_sources": [key for key in ("rag", "wiki", "memory_store", "codebases", "playbooks", "dev") if context.get(key)],
+        "context_sources": [key for key in ("rag", "wiki", "codebases", "playbooks", "dev") if context.get(key)],
     }

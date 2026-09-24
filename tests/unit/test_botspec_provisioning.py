@@ -12,7 +12,6 @@ from chatcopilot.botspec.model import (
     DeploySpec,
     GatewaySpec,
     LLMSpec,
-    MemorySpec,
     PlatformSpec,
     PromptSpec,
     QQChannelSpec,
@@ -50,12 +49,7 @@ def _starter_spec(tmp_path: Path) -> BotSpec:
             features=("chat.file_uploads", "chat.private_workspace"),
         ),
         agents=SubagentSpec(runtime="native"),
-        context=ContextSpec(
-            memory_store=MemorySpec(
-                provider="markdown",
-                namespace="my-assistant-qq",
-            )
-        ),
+        context=ContextSpec(),
         workspace=WorkspaceSpec(root_env="CHATCOPILOT_WORKSPACE_ROOT"),
         deploy=DeploySpec(
             target="wsl2",

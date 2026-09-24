@@ -69,7 +69,7 @@ class ExternalToolsRegistryTests(unittest.TestCase):
 
     def test_builtin_tools_are_selected_by_tool_pack(self) -> None:
         memory_names = {tool.name for tool in discover_tools(tool_packs=("memory.chat",))}
-        self.assertEqual(memory_names, {"read_memory", "append_memory", "clear_memory"})
+        self.assertEqual(memory_names, {"read_memory", "append_memory", "manage_memory", "clear_memory"})
 
         workspace_names = {
             tool.name for tool in discover_tools(tool_packs=("workspace.read_write",))

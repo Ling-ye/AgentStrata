@@ -303,7 +303,6 @@ def _runtime(
         tool_packs=(),
         tool_features=(),
         exclude_tools=(),
-        memory_namespace="demo",
         workspace_root="/tmp/workspace",
         log_dir="/tmp/logs",
         source_path=source_path,

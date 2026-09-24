@@ -931,7 +931,6 @@ def _capability_case_preflight(
         runtime_id="codex",
         platform_type="qq",
         tool_features=(),
-        memory_namespace="",
         tool_packs=(),
         exclude_tools=(),
         subagents=SimpleNamespace(research_enabled=True, search_providers=providers),
@@ -961,7 +960,6 @@ def test_qq_persona_preflight_projects_enabled_tool_pack() -> None:
         runtime_id="codex",
         platform_type="qq",
         tool_features=(),
-        memory_namespace="",
         tool_packs=("persona.control",),
         exclude_tools=(),
         subagents=SimpleNamespace(
@@ -2415,7 +2413,6 @@ def test_target_runtime_fingerprint_covers_resolved_chat_behavior(
         exclude_tools=(),
         runtime_id="native",
         subagents={},
-        memory_namespace="",
         access={},
     )
     config = ChatConfig(

@@ -133,13 +133,6 @@ class CodebaseSpec:
 
 
 @dataclass(frozen=True)
-class MemorySpec:
-    provider: str = "markdown"
-    namespace: str | None = None
-    schema: str | None = None
-
-
-@dataclass(frozen=True)
 class WorkspaceSpec:
     root_env: str = "CHATCOPILOT_WORKSPACE_ROOT"
 
@@ -218,7 +211,6 @@ class ContextSpec:
 
     rag: RagSpec = field(default_factory=RagSpec)
     wiki: WikiSpec = field(default_factory=WikiSpec)
-    memory_store: MemorySpec = field(default_factory=MemorySpec)
     codebases: CodebaseSpec = field(default_factory=CodebaseSpec)
     playbooks: SkillsSpec = field(default_factory=SkillsSpec)
     dev: DevSpec = field(default_factory=DevSpec)

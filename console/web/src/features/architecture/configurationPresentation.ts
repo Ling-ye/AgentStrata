@@ -24,7 +24,7 @@ export function configurationGroup(entity: Pick<InspectionEntity, "id" | "layer"
   if (id.startsWith("pack:")) return "packs";
   if (id.startsWith("feature:")) return "features";
   if (/^(tool:|tools:)/.test(id)) return "tools";
-  if (id.startsWith("rag:") || ["context:rag", "context:rag-details", "context:memory_store", "context:wiki"].includes(id)) return "memory";
+  if (id.startsWith("rag:") || ["context:rag", "context:rag-details", "context:wiki"].includes(id)) return "memory";
   if (id === "prompts:instance") return "prompts";
   if (id.startsWith("agent:") || id.startsWith("model-slot:")) return "model";
   if (id === "platform:instance") return "platform";
@@ -75,7 +75,7 @@ export function configurationSummary(entity: DisplayEntity): string {
 
 export function configurationRelated(entities: DisplayEntity[], entity: DisplayEntity) {
   const resources: Record<string, string[]> = {
-    "context:memory_store": ["pack:memory.chat"], "context:wiki": ["pack:wiki.knowledge"],
+    "context:wiki": ["pack:wiki.knowledge"],
     "context:playbooks": ["pack:playbooks.reader"], "context:codebases": ["pack:codebase.read"],
     "context:dev": ["pack:dev.files", "pack:dev.shell", "pack:dev.code_tasks"],
     "workspace:instance": ["pack:workspace.read_write"],
