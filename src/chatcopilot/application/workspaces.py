@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import fcntl
 import hashlib
 import os
 from pathlib import Path
@@ -20,6 +21,8 @@ from chatcopilot.core.workspace_runtime import MiddlewareWorkspaceService, Works
 
 _IDENTITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$")
 _PRIVATE_MODE = 0o700
+_OWNER_FILE = ".workspace-owner"
+_DEPLOYMENT_FILES = frozenset({".agent-runtime.json", ".agent-runtime-audit.jsonl"})
 
 
 class WorkspaceAssemblyError(RuntimeError):
@@ -68,10 +71,16 @@ def build_actor_workspace(
             "workspace_principal_channel_mismatch",
             "The Principal channel does not match its conversation platform",
         )
-    _identity_segment(principal.account_id, field="account_id")
+    account_id = _identity_segment(principal.account_id, field="account_id")
     actor_id = _identity_segment(principal.user_id, field="user_id")
     chat_id = _identity_segment(principal.conversation.chat_id, field="chat_id")
     chat_kind = str(principal.conversation.chat_kind or "").strip().lower()
+    if chat_kind not in {"p2p", "group"}:
+        raise WorkspaceAssemblyError(
+            "workspace_conversation_kind_unsupported",
+            "Actor workspaces support only p2p and group conversations",
+        )
+    _bind_workspace_owner(root, platform, account_id)
 
     runtime_state_root: Path | None = None
     isolate_runtime_state = False
@@ -81,7 +90,7 @@ def build_actor_workspace(
             _ensure_private_directory(root, ".conversation-state"), "runtime-sessions"
         )
         digest = hashlib.sha256(
-            f"{platform}\0{principal.account_id}\0{actor_id}".encode()
+            f"{platform}\0{account_id}\0{actor_id}".encode()
         ).hexdigest()
         runtime_state_root = _ensure_private_directory(sessions_root, digest)
         isolate_runtime_state = True
@@ -95,7 +104,7 @@ def build_actor_workspace(
             "\0".join(
                 (
                     platform,
-                    principal.account_id,
+                    account_id,
                     chat_id,
                     actor_id,
                 )
@@ -104,12 +113,6 @@ def build_actor_workspace(
         runtime_state_root = _ensure_private_directory(sessions_root, digest)
         isolate_runtime_state = True
         scope = WORKSPACE_SCOPE_GROUP_SHARED
-    else:
-        raise WorkspaceAssemblyError(
-            "workspace_conversation_kind_unsupported",
-            "Actor workspaces support only p2p and group conversations",
-        )
-
     workspace = ApplicationWorkspace(
         root=workspace_path,
         chat_kind=chat_kind,
@@ -166,6 +169,57 @@ def _validate_trusted_root(value: Path) -> Path:
             "The trusted workspace root has unsafe identity, ownership, or permissions",
         )
     return root
+
+
+def _bind_workspace_owner(root: Path, platform: str, account_id: str) -> None:
+    """Claim an unused root once; never infer ownership from existing user data."""
+
+    expected = ("v1:" + hashlib.sha256(f"{platform}\0{account_id}".encode()).hexdigest() + "\n").encode()
+    try:
+        root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise WorkspaceAssemblyError("workspace_owner_unsafe", "Workspace owner is unsafe") from exc
+    try:
+        # Lock the existing directory: no second marker or partially written
+        # owner record is needed when two first turns start together.
+        fcntl.flock(root_fd, fcntl.LOCK_EX)
+        try:
+            marker_fd = os.open(_OWNER_FILE, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_fd)
+        except FileNotFoundError:
+            if set(os.listdir(root_fd)) - _DEPLOYMENT_FILES:
+                raise WorkspaceAssemblyError(
+                    "workspace_owner_unbound", "Existing workspace data requires an explicit reset"
+                )
+            marker_fd = os.open(
+                _OWNER_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600, dir_fd=root_fd,
+            )
+            with os.fdopen(marker_fd, "wb") as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                stream.write(expected)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.fsync(root_fd)
+            marker_fd = os.open(_OWNER_FILE, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_fd)
+        with os.fdopen(marker_fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_size != len(expected)
+            ):
+                raise WorkspaceAssemblyError("workspace_owner_unsafe", "Workspace owner is unsafe")
+            observed = stream.read(len(expected))
+    except OSError as exc:
+        raise WorkspaceAssemblyError("workspace_owner_unsafe", "Workspace owner is unsafe") from exc
+    finally:
+        os.close(root_fd)
+    if re.fullmatch(rb"v1:[0-9a-f]{64}\n", observed) is None:
+        raise WorkspaceAssemblyError("workspace_owner_unsafe", "Workspace owner is unsafe")
+    if observed != expected:
+        raise WorkspaceAssemblyError("workspace_owner_mismatch", "Workspace belongs to another platform account")
 
 
 def _identity_segment(value: str, *, field: str) -> str:

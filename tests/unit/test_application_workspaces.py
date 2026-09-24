@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import os
 from pathlib import Path
 import stat
@@ -22,7 +24,6 @@ from chatcopilot.contracts.workspace import (
     WORKSPACE_SCOPE_ACTOR,
     WORKSPACE_SCOPE_GROUP_SHARED,
 )
-from chatcopilot.core.workspace_runtime.model import Workspace
 from chatcopilot.core.workspace_runtime.cleanup import clear_workspace_files
 
 
@@ -38,11 +39,13 @@ def _principal(
     *,
     kind: str = "group",
     chat_id: str = "30003",
+    platform: str = "qq",
+    account_id: str = "10001",
 ) -> Principal:
     return Principal(
-        channel="qq",
-        account_id="10001",
-        conversation=ConversationIdentity("qq", kind, chat_id),
+        channel=platform,
+        account_id=account_id,
+        conversation=ConversationIdentity(platform, kind, chat_id),
         user_id=actor,
         role=Role.USER,
         evidence_digest=stable_payload_digest({"actor": actor, "chat": chat_id}),
@@ -133,6 +136,10 @@ def test_workspace_rejects_relative_traversal_symlink_and_unsafe_state(
         )
     assert symlink.value.code == "workspace_root_unsafe"
 
+    build_actor_workspace(
+        workspace_root=root,
+        principal=_principal("20002", kind="p2p", chat_id="20002"),
+    )
     group = root / "group_30003"
     group.mkdir(mode=0o700)
     state = group / ".conversation-state"
@@ -152,12 +159,9 @@ def test_shared_workspace_creation_satisfies_gateway_permissions(tmp_path: Path,
     root = _root(tmp_path)
     principal = _principal("20002", kind=kind, chat_id="20002" if kind == "p2p" else "30003")
     path = root / "p2p_20002" if kind == "p2p" else root / "group_30003" / "shared"
-    workspace = Workspace(root=path, chat_kind=kind, chat_id=principal.conversation.chat_id,
-                          user_id=principal.user_id,
-                          scope=WORKSPACE_SCOPE_ACTOR if kind == "p2p" else WORKSPACE_SCOPE_GROUP_SHARED)
     previous = os.umask(umask)
     try:
-        workspace.ensure()
+        workspace = build_actor_workspace(workspace_root=root, principal=principal).workspace
     finally:
         os.umask(previous)
     directories = [path, workspace.downloads, workspace.results, workspace.uploads, workspace.attachments]
@@ -191,14 +195,119 @@ def test_workspace_file_clear_keeps_gateway_directory_permissions(tmp_path: Path
 
 def test_existing_unsafe_workspace_is_not_silently_repaired(tmp_path: Path) -> None:
     root = _root(tmp_path)
-    path = root / "p2p_20002"
-    path.mkdir()
+    path = build_actor_workspace(
+        workspace_root=root,
+        principal=_principal("20002", kind="p2p", chat_id="20002"),
+    ).workspace.root
     path.chmod(0o775)
-    Workspace(root=path, chat_kind="p2p", chat_id="20002", user_id="20002").ensure()
     assert stat.S_IMODE(path.stat().st_mode) == 0o775
     with pytest.raises(WorkspaceAssemblyError) as unsafe:
         build_actor_workspace(workspace_root=root, principal=_principal("20002", kind="p2p", chat_id="20002"))
     assert unsafe.value.code == "workspace_storage_unsafe"
+
+
+@pytest.mark.parametrize("kind", ["p2p", "group"])
+@pytest.mark.parametrize(
+    ("platform", "account_id"),
+    [("qq", "other-account"), ("other-platform", "10001")],
+)
+def test_workspace_root_rejects_different_platform_account_before_actor_layout(
+    tmp_path: Path, kind: str, platform: str, account_id: str,
+) -> None:
+    root = _root(tmp_path)
+    first = _principal("20002", kind=kind, chat_id="20002" if kind == "p2p" else "30003")
+    build_actor_workspace(workspace_root=root, principal=first)
+    marker = (root / ".workspace-owner").read_bytes()
+    second = _principal(
+        "other-actor", kind=kind, chat_id="other-chat",
+        platform=platform, account_id=account_id,
+    )
+
+    with pytest.raises(WorkspaceAssemblyError) as mismatch:
+        build_actor_workspace(workspace_root=root, principal=second)
+
+    assert mismatch.value.code == "workspace_owner_mismatch"
+    assert (root / ".workspace-owner").read_bytes() == marker
+    assert not (root / "p2p_other-actor").exists()
+    assert not (root / "group_other-chat").exists()
+
+
+def test_workspace_root_rejects_unbound_old_data_and_preserves_deployment_control(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    control = root / ".agent-runtime.json"
+    audit = root / ".agent-runtime-audit.jsonl"
+    control.write_text('{"instance_id":"demo"}', encoding="utf-8")
+    audit.write_text("old audit\n", encoding="utf-8")
+    old = root / "group_30003"
+    old.mkdir()
+    (old / "keep.txt").write_text("old data", encoding="utf-8")
+
+    with pytest.raises(WorkspaceAssemblyError) as unbound:
+        build_actor_workspace(workspace_root=root, principal=_principal("20002"))
+
+    assert unbound.value.code == "workspace_owner_unbound"
+    assert (old / "keep.txt").read_text(encoding="utf-8") == "old data"
+    assert not (root / ".workspace-owner").exists()
+    old.joinpath("keep.txt").unlink()
+    old.rmdir()
+
+    binding = build_actor_workspace(workspace_root=root, principal=_principal("20002"))
+    marker = root / ".workspace-owner"
+    assert binding.workspace.root.is_dir()
+    assert marker.stat().st_mode & 0o777 == 0o600
+    assert b"10001" not in marker.read_bytes()
+    assert control.read_text(encoding="utf-8") == '{"instance_id":"demo"}'
+    assert audit.read_text(encoding="utf-8") == "old audit\n"
+
+
+@pytest.mark.parametrize("damage", ["corrupt", "symlink", "hardlink", "mode"])
+def test_workspace_root_rejects_unsafe_owner_record(tmp_path: Path, damage: str) -> None:
+    root = _root(tmp_path)
+    build_actor_workspace(workspace_root=root, principal=_principal("20002"))
+    marker = root / ".workspace-owner"
+    if damage == "corrupt":
+        marker.write_text("bad", encoding="ascii")
+    elif damage == "symlink":
+        marker.unlink()
+        marker.symlink_to(root / ".agent-runtime.json")
+    elif damage == "hardlink":
+        (root / "linked-owner").hardlink_to(marker)
+    else:
+        marker.chmod(0o644)
+
+    with pytest.raises(WorkspaceAssemblyError) as unsafe:
+        build_actor_workspace(
+            workspace_root=root,
+            principal=_principal("20003", chat_id="other-chat"),
+        )
+
+    assert unsafe.value.code == "workspace_owner_unsafe"
+    assert not (root / "group_other-chat").exists()
+
+
+def test_concurrent_first_workspace_owner_claim_keeps_one_account(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    barrier = Barrier(2)
+    principals = [
+        _principal("actor-a", kind="p2p", chat_id="actor-a", account_id="account-a"),
+        _principal("actor-b", kind="p2p", chat_id="actor-b", account_id="account-b"),
+    ]
+
+    def claim(principal: Principal) -> tuple[str, str]:
+        barrier.wait()
+        try:
+            build_actor_workspace(workspace_root=root, principal=principal)
+            return principal.account_id, "bound"
+        except WorkspaceAssemblyError as exc:
+            return principal.account_id, exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(claim, principals))
+
+    assert sorted(code for _, code in results).count("bound") == 1
+    winner = next(account for account, code in results if code == "bound")
+    assert (root / f"p2p_actor-{'a' if winner == 'account-a' else 'b'}").is_dir()
+    assert not (root / f"p2p_actor-{'b' if winner == 'account-a' else 'a'}").exists()
 
 
 def test_group_journal_is_shared_bounded_and_actor_attributed(tmp_path: Path) -> None:

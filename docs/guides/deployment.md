@@ -215,6 +215,8 @@ workspace、Gateway 状态目录和已启用的私有 Wiki：新目录使用 mod
 错误 owner、可被 group/world 写入的 workspace/Wiki，以及非 `0700` 的 Gateway 状态目录都会被拒绝。
 `--dry-run` 不创建这些目录或任何文件。不要手工修改实例副本或运行时 env。
 
+升级会话 workspace 归属边界时，先停止引用该 workspace 根的实例，按实际运行配置核对根目录和所有权，再清空该根内的旧会话数据。保留根目录本身、.agent-runtime.json 和 .agent-runtime-audit.jsonl；不要清理源码仓库、Harness 任务根或其他实例。应用不会自动删除或认领未绑定的旧会话数据，清理完成后才启动新版实例。现行归属与群任务边界见[身份与资源](../reference/identity-resources.md#qq-群共享上下文与目录)。
+
 BotSpec、示例和文档不得包含真实 API Key、平台 token、账号/群号、私有端点或机器绝对路径。
 第三方 MCP/Skill 不会由引导流程自动下载、安装或启用。
 

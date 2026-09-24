@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.core.workspace_runtime import Workspace
 
 EVENTS_FILENAME = "events.jsonl"
@@ -34,6 +35,10 @@ def find_task_dir(workspace: Workspace, task_id: str) -> Path | None:
 
 
 def format_task_status(workspace: Workspace, task_id: str) -> tuple[str, list[str], None]:
+    # Shared files are member-writable; accepted group tasks live in protected
+    # actor storage and are available through Console, not workspace tools.
+    if workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+        return ("群聊单轮任务记录位于受保护状态，请通过 Console 查看。", [], None)
     task_id = str(task_id or "").strip()
     if not is_task_id(task_id):
         return (

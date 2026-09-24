@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 from chatcopilot.agent.tools.workspace_context import resolve_workspace
 from chatcopilot.contracts.tools import ToolContext, ToolResult
+from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.agent.tools.builtin.workspace.common import _format_mtime, _require, _silent_cleanup
 
 def _handler_get_job_status(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
@@ -134,7 +135,11 @@ def _handler_get_task_status(args: Dict[str, Any], _ctx: ToolContext) -> ToolRes
             return ToolResult(
                 ok=False,
                 error=summary,
-                error_code="task_not_found_or_invalid",
+                error_code=(
+                    "group_task_status_private"
+                    if ws.scope == WORKSPACE_SCOPE_GROUP_SHARED
+                    else "task_not_found_or_invalid"
+                ),
                 stage="validation",
                 data={"task_id": task_id},
             )
