@@ -389,3 +389,63 @@ def test_native_startup_failure_stops_without_repeating_repair_rounds(governance
     assert len(store.attempts(ident)) == 1
     assert result["candidate_checkpoint"]["changed_files"] == []
     assert not result.get("accepted_candidate")
+
+
+
+def test_skill_learning_candidate_reuses_governance_verification_with_exact_path(governance):
+    from chatcopilot.harness.skill_context import LESSONS_PATH, SKILL_PATH
+    store, ident, repo = governance
+    skill = repo / SKILL_PATH
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: harness-code-health\ndescription: procedure\n---\n\n# Procedure\n")
+    lesson = repo / LESSONS_PATH
+    lesson.parent.mkdir(parents=True)
+    lesson.write_text("# Lessons\n\nOld guidance.\n")
+    subprocess.check_call(["git", "-C", str(repo), "add", "."])
+    subprocess.check_call(["git", "-C", str(repo), "-c", "user.name=Fixture",
+                           "-c", "user.email=fixture@example.com", "commit", "-qm", "skill baseline"])
+    head = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    source = {"kind": "code_health", "repository": str(repo),
+              "original_input": "Generalize a merged repair lesson",
+              "skill_learning": {"origin_task_id": "repair-origin", "finding": {}, "improvements": []}}
+    artifacts = ArtifactRepository(store.root / "jobs" / ident)
+    manifest = source_manifest(repo)
+    principles = artifacts.principles(repo)
+    context = freeze_context(artifacts, repo, manifest,
+        [name for name in manifest if permitted_change(name, governance=True, learning=True)],
+        artifacts.read(principles), learning=True)
+    store.update(ident, source=source, base_commit=head, principles=asdict(principles),
+                 governance_context=asdict(context))
+
+    class LearningRoles(GovernanceRoles):
+        def execute(self, root, call, options, output, cancel):
+            if call.role == Role.PLAN:
+                return AgentResult({"decision": "proceed", "summary": "A reusable lesson is missing",
+                    "evidence_refs": [LESSONS_PATH], "changes": ["Document the caller check"],
+                    "verification_order": "existing", "goal_capabilities": [], "unresolved": [],
+                    "findings": [{"id": "lesson", "summary": "Record caller ownership check",
+                        "impact": "Avoid repeated ownership mistakes",
+                        "principle_refs": [PRINCIPLE],
+                        "evidence": [{"path": LESSONS_PATH, "start_line": 3, "end_line": 3}],
+                        "affected_paths": [LESSONS_PATH],
+                        "acceptance_criteria": ["Document a reusable caller check"],
+                        "disposition": "automatic"}],
+                    "selected_finding_id": "lesson", "inspected_paths": [LESSONS_PATH],
+                    "uninspected": []}, {})
+            if call.role == Role.CODING:
+                (root / LESSONS_PATH).write_text("# Lessons\n\nOld guidance.\n\nCheck the actual caller before moving validation.\n")
+                return AgentResult({"summary": "Added the general procedure", "notes": [],
+                    "needs_replan": False, "gaps": []}, {})
+            if call.role == Role.REVIEW:
+                return AgentResult({"decision": "approved", "problem": "",
+                    "reason": "A repeatable caller check is now documented",
+                    "evidence_refs": ["source", "verification", "patch"],
+                    "finding_id": "lesson", "behavior_preserved": True,
+                    "improvements": [{"path": LESSONS_PATH, "before": "Old guidance.",
+                        "after": "Check the actual caller before moving validation.",
+                        "reason": "Adds a concrete procedure"}]}, {})
+            return super().execute(root, call, options, output, cancel)
+
+    result = run_task(store, ident, GreenVerifier(), LearningRoles())
+    assert result["status"] == "fixed", result.get("message")
+    assert store.attempts(ident)[0]["changed_files"] == [LESSONS_PATH]

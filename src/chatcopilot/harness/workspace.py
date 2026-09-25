@@ -13,6 +13,7 @@ from chatcopilot.core.private_sqlite import json_text, private_directory
 from chatcopilot.core.source_snapshot import git_output, manifest_digest, source_manifest
 from chatcopilot.harness.models import HarnessError
 from chatcopilot.core.candidate_configuration import configuration_path, validate_configuration
+from chatcopilot.harness.skill_context import LESSONS_PATH
 
 _AREAS = (
     "agent",
@@ -38,7 +39,13 @@ _FIXED_CORE = (
 _FIXED_AUTHORITY = ("src/chatcopilot/authorization/policy.py", "src/chatcopilot/contracts/execution_scope.py")
 
 
-def writable_paths(root: Path, bot_id: str = "", *, governance: bool = False) -> tuple[Path, ...]:
+def writable_paths(root: Path, bot_id: str = "", *, governance: bool = False,
+                   learning: bool = False) -> tuple[Path, ...]:
+    if learning:
+        path = root / LESSONS_PATH
+        if path.is_symlink() or not path.is_file():
+            raise HarnessError("skill_changed", "Skill 学习目标不是冻结的普通文件")
+        return (path,)
     if governance:
         return tuple(root / name for name in ("src", "console", "deploy", "scripts", "bots", "docs")
                      if (root / name).is_dir()) + tuple(p for p in root.iterdir()
@@ -51,12 +58,15 @@ def writable_paths(root: Path, bot_id: str = "", *, governance: bool = False) ->
     )
 
 
-def protected_paths(root: Path, bot_id: str = "", *, governance: bool = False) -> tuple[Path, ...]:
+def protected_paths(root: Path, bot_id: str = "", *, governance: bool = False,
+                    learning: bool = False) -> tuple[Path, ...]:
     if governance:
         from chatcopilot.harness.verification_policy import policy_path, POLICY_PREFIXES, source_files
-        directories = tuple(root / name for name in POLICY_PREFIXES if (root / name).is_dir())
+        directories = tuple(root / name for name in POLICY_PREFIXES
+                            if (root / name).is_dir() and not (learning and name == ".agents/skills"))
         return directories + tuple(root / name for name in source_files(root)
-            if (policy_path(name) or not permitted_change(name, governance=True))
+            if name != LESSONS_PATH or not learning
+            if (policy_path(name) or not permitted_change(name, governance=True, learning=learning))
             and not any((root / name).is_relative_to(directory) for directory in directories))
     bot = root / "bots" / bot_id
     configuration = tuple(p for p in bot.iterdir() if p.name not in {"bot.yaml", "prompts"}) if bot_id and bot.is_dir() else ()
@@ -67,7 +77,10 @@ def protected_paths(root: Path, bot_id: str = "", *, governance: bool = False) -
     )
 
 
-def permitted_change(name: str, bot_id: str | None = None, *, governance: bool = False) -> bool:
+def permitted_change(name: str, bot_id: str | None = None, *, governance: bool = False,
+                     learning: bool = False) -> bool:
+    if learning:
+        return name == LESSONS_PATH
     parts = Path(name).parts
     if governance:
         from chatcopilot.harness.verification_policy import governance_policy_path
@@ -98,12 +111,13 @@ def prepare(repository: Path, root: Path, task_id: str, commit: str) -> Path:
     return path
 
 
-def delta(worktree: Path, baseline: dict[str, Any], bot_id: str | None = None, *, governance: bool = False) -> list[str]:
+def delta(worktree: Path, baseline: dict[str, Any], bot_id: str | None = None, *,
+          governance: bool = False, learning: bool = False) -> list[str]:
     current = source_manifest(worktree)
     changed = sorted(
         name for name in baseline.keys() | current.keys() if baseline.get(name) != current.get(name)
     )
-    if any(not permitted_change(name, bot_id, governance=governance) for name in changed):
+    if any(not permitted_change(name, bot_id, governance=governance, learning=learning) for name in changed):
         raise HarnessError("protected_change", "候选修改了测试、评分或运行控制文件")
     for name in changed:
         if configuration_path(name) and name.endswith("/bot.yaml"):
@@ -118,8 +132,9 @@ def delta(worktree: Path, baseline: dict[str, Any], bot_id: str | None = None, *
     return changed
 
 
-def save_patch(worktree: Path, baseline: dict[str, Any], output: Path, *, governance: bool = False) -> str:
-    changes = delta(worktree, baseline, governance=governance)
+def save_patch(worktree: Path, baseline: dict[str, Any], output: Path, *,
+               governance: bool = False, learning: bool = False) -> str:
+    changes = delta(worktree, baseline, governance=governance, learning=learning)
     command = ["git", "-C", str(worktree), "diff", "--binary", "HEAD", "--", *changes]
     result = subprocess.run(command, capture_output=True, timeout=30, check=True)
     content = result.stdout

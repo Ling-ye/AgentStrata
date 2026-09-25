@@ -34,8 +34,10 @@ def run_task(store, task_id, evaluator, coder, *, local_verifier=None, committer
                 from chatcopilot.harness.workspace import permitted_change
                 current = store.get(task_id)
                 manifest = current["baseline_manifest"]
+                learning = bool(current["source"].get("skill_learning"))
                 context = freeze_context(artifacts, frozen, manifest,
-                    [name for name in manifest if permitted_change(name, governance=True)], artifacts.read(current["principles"]))
+                    [name for name in manifest if permitted_change(name, governance=True, learning=learning)],
+                    artifacts.read(current["principles"]), learning=learning)
                 prior = [row for row in store.history(context_key=current["context_key"])
                          if row["task_id"] != task_id and row.get("governance_report")]
                 recent = None
@@ -47,6 +49,11 @@ def run_task(store, task_id, evaluator, coder, *, local_verifier=None, committer
                               "uninspected": report["uninspected"]}
                 store.update(task_id, governance_context=asdict(context), source={**current["source"],
                              "governance_context": asdict(context), "previous_governance": recent})
+            if governance and not store.get(task_id).get("harness_skill"):
+                from chatcopilot.harness.skill_context import freeze_skill
+                reference = freeze_skill(artifacts, frozen)
+                if reference:
+                    store.update(task_id, harness_skill=reference)
             from chatcopilot.harness.task_environment import prepare_environment
             store.update(task_id, stage="environment")
             environment = prepare_environment(artifacts.directory, artifacts.directory / "source", budget.check)

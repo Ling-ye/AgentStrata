@@ -85,13 +85,18 @@ class GovernanceRunRepository:
 
     def project(self, run):
         tasks = self.tasks(run["run_id"])
-        values = {"found_count": sum(bool(task.get("governance_finding_id")) for task in tasks),
-                  "merged_count": sum(task.get("delivery", {}).get("state") == "merged" for task in tasks),
+        values = {"found_count": sum(bool(task.get("governance_finding_id")) and not task.get("skill_learning_origin")
+                                      for task in tasks),
+                  "merged_count": sum(task.get("delivery", {}).get("state") == "merged" and not task.get("skill_learning_origin")
+                                      for task in tasks),
                   "elapsed_seconds": sum(float(task.get("elapsed_seconds", 0)) for task in tasks),
                   "current_task_id": tasks[-1]["task_id"] if tasks else None, "sequence": len(tasks)}
-        return {**run, **values, "tasks": [{key: task[key] for key in (
-            "task_id", "status", "stage", "base_commit", "governance_sequence", "governance_summary", "governance_finding_id",
-            "message", "stop_reason", "elapsed_seconds", "delivery") if key in task} for task in tasks]}
+        return {**run, **values, "tasks": [{
+            **{key: task[key] for key in (
+                "task_id", "status", "stage", "base_commit", "governance_sequence", "governance_summary", "governance_finding_id",
+                "message", "stop_reason", "elapsed_seconds", "delivery") if key in task},
+            "purpose": "skill_learning" if task.get("skill_learning_origin") else "code_health",
+        } for task in tasks]}
 
     def refresh(self, run_id):
         value = self.project(self.get(run_id))

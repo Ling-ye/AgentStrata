@@ -11,6 +11,11 @@ class GovernanceTasks:
         return self.controller._start_code_health_task(options,
             request_id=f"{run['run_id']}-{sequence}", run_id=run["run_id"], sequence=sequence, launch=False)
 
+    def start_learning(self, run, sequence, options, source):
+        return self.controller._start_code_health_task(options,
+            request_id=f"{run['run_id']}-{sequence}", run_id=run["run_id"], sequence=sequence,
+            launch=False, learning_from=source)
+
     def launch(self, task_id):
         lifecycle = self.controller.lifecycle
         with lifecycle.operation(task_id):

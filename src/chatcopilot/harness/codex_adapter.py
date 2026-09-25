@@ -40,7 +40,7 @@ from chatcopilot.harness.evidence_context import evidence_index
 from chatcopilot.harness.workspace import protected_paths, writable_paths
 from chatcopilot.harness.repair_types import ActionProgress
 from chatcopilot.harness.agent_types import AgentCall, AgentResult, Role, role_result
-from chatcopilot.harness.role_prompts import COMMON, PROMPTS, GOVERNANCE_PROMPTS
+from chatcopilot.harness.role_prompts import COMMON, PROMPTS, GOVERNANCE_PROMPTS, SKILL_LEARNING_PROMPTS
 from chatcopilot.harness.repair_session import run_session
 from chatcopilot.harness.config import safe_error
 
@@ -134,7 +134,9 @@ class CodexCoder:
         execution_directory = worktree
         source = evidence.get("source", {})
         governance = source.get("kind") == "code_health"
-        protected = protected_paths(worktree, str(source.get("bot_id", "")), governance=governance)
+        learning = bool(source.get("skill_learning"))
+        protected = protected_paths(worktree, str(source.get("bot_id", "")),
+                                    governance=governance, learning=learning)
         helper_directory = private_directory(task_root / "sessions" / "bin")
         alias = helper_directory / "codex-linux-sandbox"
         if alias.is_symlink():
@@ -170,11 +172,15 @@ class CodexCoder:
                 readable.append(path)
         if draft:
             readable.append(draft)
-        writes = writable_paths(worktree, str(source.get("bot_id", "")), governance=governance) if role == Role.CODING else (draft,) if draft else ()
+        writes = writable_paths(worktree, str(source.get("bot_id", "")),
+                                governance=governance, learning=learning) if role == Role.CODING else (draft,) if draft else ()
         scope = ExecutionScope(readable_roots=tuple(dict.fromkeys(readable)), writable_roots=writes,
                                protected_roots=(*protected, *git_roots), native_write=bool(writes))
         profile = BotPromptProfile(identity="AgentStrata Harness " + role.value, response_style="报告有证据的结论和缺口。")
-        instructions = PROMPTS[role] + (GOVERNANCE_PROMPTS.get(role, "") if governance else "")
+        instructions = (SKILL_LEARNING_PROMPTS[role] if source.get("skill_learning")
+                        else PROMPTS[role] + (GOVERNANCE_PROMPTS.get(role, "") if governance else ""))
+        if evidence.get("harness_skill"):
+            instructions += "本轮宿主已加载冻结的 Harness Skill。显式使用 $harness-code-health，并按当前角色职责读取所需参考资料。"
         plan = PromptPlanBuilder().build(PromptBuildInput(profile=profile, runtime_id="codex", model=options.model,
             role="owner", channel_kind="private", session_policy=COMMON + instructions))
         prompt = render_codex_prompt(plan, user_message=instructions + (f" draft={draft}" if draft else ""),

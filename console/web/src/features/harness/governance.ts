@@ -11,6 +11,7 @@ export interface GovernanceRun {
   elapsed_seconds: number; created_at: number; updated_at: number;
   tasks: Array<Pick<RepairTask, "task_id" | "status" | "stage" | "base_commit" | "governance_summary" | "delivery"> & {
     governance_sequence: number; elapsed_seconds?: number; message?: string;
+    purpose: "code_health" | "skill_learning";
   }>;
 }
 export const RUN_LABELS: Record<string, string> = {

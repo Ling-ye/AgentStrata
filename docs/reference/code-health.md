@@ -23,6 +23,9 @@ Console 第一项选择停止条件，模型与推理强度共用于整次回收
 
 ## 共用 Harness
 
+Harness 源码治理可按需使用[冻结的 Harness Skill](harness.md#code-health-skill)；
+已合并的改善会另行判断是否形成可复用教训，Skill 学习任务不计入问题发现数。
+
 code_health 仍是 [Harness](harness.md) 的第三类任务来源。每个问题复用既有角色、工作区、
 尝试记录、验收、取消、日志与 [PR 交付](delivery.md)。批次只保存停止条件、当前任务、累计
 发现数、合并数、执行时间和停止原因，与任务共用 Harness 状态库。

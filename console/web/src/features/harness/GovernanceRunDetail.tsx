@@ -40,9 +40,9 @@ export function GovernanceRunDetail({ runId, onRestart }: { runId: string; onRes
     </Space>
     {!!run.tasks.length && <><Select aria-label="查看回收问题" value={taskId ?? undefined} onChange={setSelected}
       options={run.tasks.map(task => ({ value: task.task_id, label:
-        `第 ${task.governance_sequence} 项 · ${task.governance_summary?.topic ?? "调查中"} · ${task.delivery ? deliveryLabel(task.delivery.state) : REPAIR_LABELS[task.status] ?? task.status}` }))} />
+        `${task.purpose === "skill_learning" ? "Skill 学习" : `第 ${task.governance_sequence} 项`} · ${task.governance_summary?.topic ?? "调查中"} · ${task.delivery ? deliveryLabel(task.delivery.state) : REPAIR_LABELS[task.status] ?? task.status}` }))} />
       <Space wrap>{run.tasks.filter(task => task.delivery?.pr_url).map(task => <a key={task.task_id} href={task.delivery!.pr_url} target="_blank" rel="noreferrer">
-        第 {task.governance_sequence} 项 PR #{task.delivery!.pr_number} · {deliveryLabel(task.delivery!.state)}
+        {task.purpose === "skill_learning" ? "Skill 学习" : `第 ${task.governance_sequence} 项`} PR #{task.delivery!.pr_number} · {deliveryLabel(task.delivery!.state)}
       </a>)}</Space></>}
     {taskId && <RepairDetail key={taskId} taskId={taskId} managedRun onRestart={() => onRestart(run)} />}
   </Space>;

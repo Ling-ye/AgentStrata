@@ -47,6 +47,11 @@ class RoleWorkflow:
         elif governance and task.get("target_context_ref"):
             context.setdefault("target_context", self.artifacts.read(task["target_context_ref"]))
             context["target_context_ref"] = self.artifacts.navigation(task["target_context_ref"])
+        if governance and role in {Role.CODING, Role.TEST, Role.REVIEW}:
+            from chatcopilot.harness.skill_context import role_context
+            skill = role_context(self.artifacts, task)
+            if skill:
+                context["harness_skill"] = skill
         output = self.artifacts.directory / f"attempt-{number}" / role.value
         source_id = f"{role.value}-{number}"
         self.store.update(self.task_id, stage=role.value, current_role=role.value)
@@ -61,13 +66,18 @@ class RoleWorkflow:
             cancel()
             result = self.runner.execute(root, AgentCall(self.task_id, role, number, goal, context), options(), output, cancel)
             cancel()
+            if context.get("harness_skill"):
+                skill = context["harness_skill"]
+                result.execution["skill_load"] = {key: skill[key] for key in
+                                                 ("name", "path", "sha256", "reference_sha256")}
             value = role_result(role, result.payload, governance=governance)
             reference = self.artifacts.put(role.value, number, value)
             execution = self.artifacts.put("execution", number, result.execution)
             refs = {**self.store.get(self.task_id).get("role_artifacts", {}), role.value: asdict(reference)}
             self.store.update(self.task_id, role_artifacts=refs, current_role=None)
             step.conclusion = value.get("summary", value.get("reason", ""))
-            step.evidence = {"role": role.value, "output": asdict(reference), "execution": asdict(execution)}
+            step.evidence = {"role": role.value, "output": asdict(reference), "execution": asdict(execution),
+                             **({"skill_load": result.execution["skill_load"]} if result.execution.get("skill_load") else {})}
             return value
 
     def prepare_round(self, root: Path, baseline: Path, number: int, previous: dict | None,

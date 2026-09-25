@@ -155,7 +155,8 @@ export default function CodeHealthPage() {
           { title: "批次", width: 180, render: (_, run) => <Button type="text" onClick={() => openRun(run.run_id)}>{run.run_id.slice(0, 17)}</Button> },
           { title: "停止条件", render: (_, run) => stopLabel(run.options.stop_condition) },
           { title: "进度", render: (_, run) => `发现 ${run.found_count} · 合并 ${run.merged_count}` },
-          { title: "当前问题", render: (_, run) => run.tasks[run.tasks.length - 1]?.governance_summary?.topic ?? "等待调查" },
+          { title: "当前问题", render: (_, run) => run.tasks[run.tasks.length - 1]?.purpose === "skill_learning"
+            ? "Skill 学习" : run.tasks[run.tasks.length - 1]?.governance_summary?.topic ?? "等待调查" },
           { title: "状态", render: (_, run) => <Tag>{RUN_LABELS[run.status] ?? run.status}</Tag> },
           { title: "累计执行", render: (_, run) => `${Math.round(run.elapsed_seconds)} 秒` },
         ]} />

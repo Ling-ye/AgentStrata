@@ -866,7 +866,7 @@ def _harness_control_checks() -> dict[str, dict[str, list[str]]]:
 HARNESS_LAYERS = {
     "types": {"__init__", "models", "agent_types", "repair_types", "control_types", "governance_types", "preparation", "evidence_context"},
     "config": {"config", "role_prompts"},
-    "repo": {"store", "artifact_repository", "flow_records", "flow_receipts", "flow", "progress", "command_logs", "verification_policy", "patches", "governance_repository", "schedule_repository", "governance_run_repository"},
+    "repo": {"store", "artifact_repository", "flow_records", "flow_receipts", "flow", "progress", "command_logs", "verification_policy", "patches", "governance_repository", "schedule_repository", "governance_run_repository", "skill_context"},
     "service": {"workflow", "role_service", "control_service", "context_briefs", "governance_run_service", "task_budget"},
     "runtime": {"api", "assembly", "codex_adapter", "codex_environment", "cutover_runtime", "delivery", "delivery_archive",
                 "delivery_candidate", "delivery_checks", "delivery_runtime", "delivery_validation", "evaluation_adapter",

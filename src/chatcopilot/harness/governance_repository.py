@@ -11,6 +11,7 @@ import yaml
 from chatcopilot.core.private_sqlite import json_text
 from chatcopilot.harness.models import HarnessError
 from chatcopilot.harness.verification_policy import governance_policy_path
+from chatcopilot.harness.skill_context import LESSONS_PATH
 
 
 GOAL = "依据现行 SDD 和黄金原则自主调查全仓，选择一个有证据的代码熵问题，消除偏离并保持原有行为。"
@@ -20,7 +21,8 @@ def rule_path(reference: str) -> str:
     return re.sub(r":\d+(?:-\d+)?$", "", reference.split("#", 1)[0])
 
 
-def freeze_context(artifacts, source: Path, manifest: dict, editable: list[str], principles: dict):
+def freeze_context(artifacts, source: Path, manifest: dict, editable: list[str], principles: dict, *,
+                   learning: bool = False):
     rules = {row["path"]: row for row in principles["documents"]}
     for name in sorted(manifest):
         if not (name.startswith("specs/") and name.endswith("/spec.md")):
@@ -32,6 +34,7 @@ def freeze_context(artifacts, source: Path, manifest: dict, editable: list[str],
             rules[name] = {"path": name, "sha256": manifest[name]["sha256"], "content": content}
     return artifacts.put("governance_context", 1, {
         "files": manifest, "editable_paths": editable, "rules": list(rules.values()),
+        "skill_learning": learning,
         "reading": "先阅读规则索引，自主追踪调用方；范围清单不等于已阅读，不要求按文件切片。",
     })
 
@@ -63,6 +66,8 @@ def validate_report(value: dict, context: dict, baseline: Path) -> dict:
             raise HarnessError("invalid_role_result", "熵回收依据必须引用冻结的黄金原则或现行 SDD")
         if any(not _relative(path) for path in finding["affected_paths"]):
             raise HarnessError("invalid_role_result", "熵回收修改范围必须为仓库相对路径")
+        if context.get("skill_learning") and set(finding["affected_paths"]) != {LESSONS_PATH}:
+            raise HarnessError("invalid_role_result", "Skill 学习任务只能修改指定参考文件")
         if any(path.startswith("tests/") and path not in files for path in finding["affected_paths"]):
             raise HarnessError("invalid_role_result", "Test 草案由独立角色和宿主收录，不能列为熵回收产品改动")
         extracts = []
@@ -81,7 +86,8 @@ def validate_report(value: dict, context: dict, baseline: Path) -> dict:
             receipts.append({"finding_id": finding["id"], "path": name,
                 "sha256": files[name]["sha256"], "line": start, "end_line": end})
         # New product files are checked again by the existing candidate boundary.
-        sensitive = any(governance_policy_path(path) or path in files and path not in context["editable_paths"]
+        sensitive = any((governance_policy_path(path) and not (context.get("skill_learning") and path == LESSONS_PATH))
+                        or path in files and path not in context["editable_paths"]
                         for path in finding["affected_paths"])
         findings.append({**finding, "evidence": extracts, "disposition": "needs_decision" if sensitive else finding["disposition"]})
     selected = next((item for item in findings if item["id"] == value["selected_finding_id"]), None)

@@ -94,3 +94,24 @@ GOVERNANCE_PROMPTS[Role.CODING] += (
 GOVERNANCE_PROMPTS[Role.TEST] += (
     "尚待宿主执行正式验证只写 notes，不写 gaps；无法建立验收依据时说明实际缺少的条件。"
 )
+
+
+SKILL_LEARNING_PROMPTS = {
+    Role.MAIN: "本项是前一项已合并 Harness Code Health 任务的 Skill 学习；先交 Plan 判断是否有可复用教训。",
+    Role.PLAN: (
+        "仅依据 source.skill_learning 中已合并的 finding 与审核结论，判断是否有可推广的新流程或具体失败路径。"
+        "若只是单次事故、现有 Skill 已覆盖或证据不足，返回 no_changes。"
+        "有新教训时只选一个 finding，affected_paths 仅为 .agents/skills/harness-code-health/references/evidence.md，"
+        "引用冻结 Skill 原文行和冻结黄金原则，验收目标是可复用的触发条件、机制和做法，不能放宽宿主规则。"
+        "这是流程文档改动，使用冻结仓库检查与独立审核验证，不新增复述文案的测试。"
+    ),
+    Role.CODING: (
+        "只修改被允许的 Skill 参考文件，写简短、可泛化的触发条件、失败机制和有效做法。"
+        "不得写任务 ID、日期、原始日志、私有材料、权限扩张或本次结果声称；不得改 SKILL.md、代码或测试。"
+    ),
+    Role.TEST: "本项只修改 Skill 流程文档；不要为固定文案补测试。报告需要宿主执行的文档、公开边界和仓库检查。",
+    Role.REVIEW: (
+        "独立判断新教训是否得到已合并任务证据支持，是否比原 Skill 增加具体可复用方法，"
+        "并确认没有事故流水、私有材料或对权限、验收、交付的越权指令。证据不足返回 inconclusive。"
+    ),
+}

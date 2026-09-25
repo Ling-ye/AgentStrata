@@ -70,21 +70,42 @@ class GovernanceRuns:
                 self.lifecycle.reconcile(task["task_id"])
                 task = self.store.get(task["task_id"])
                 delivery = task.get("delivery", {}).get("state")
+                learning = task["source"].get("skill_learning")
                 if task["status"] == "fixed":
-                    self.runs.update(run_id, status="waiting_delivery", message="等待当前问题 PR 合并")
+                    self.runs.update(run_id, status="waiting_delivery",
+                        message="等待 Skill PR 合并" if learning else "等待当前问题 PR 合并")
                 if observed != WorkerState.INACTIVE or task.get("current_evaluation_id") or task.get("delivery_evaluation"):
                     return
                 if task["status"] in ACTIVE:
                     return
-                if task["status"] == "no_changes":
-                    self.runs.update(run_id, status="completed", stop_reason="no_changes", message="未发现可执行问题；调查范围见当前任务")
-                    return
-                if task["status"] != "fixed" or delivery in {"blocked", "paused", "checks_failed", "retryable", "closed", "cancelled"}:
-                    self.runs.update(run_id, status="blocked", stop_reason=task.get("error_code") or delivery or task["status"],
-                        message=task.get("delivery", {}).get("message") if task["status"] == "fixed" else task.get("message") or "当前问题未完成，已停止继续发现")
-                    return
-                if delivery != "merged":
-                    return
+                if learning:
+                    if task["status"] == "fixed" and delivery not in {"merged", "blocked", "paused", "checks_failed", "retryable", "closed", "cancelled"}:
+                        return
+                    state = ("merged" if delivery == "merged" else "no_change" if task["status"] == "no_changes" else "failed")
+                    self.store.update(learning["origin_task_id"], skill_learning={"state": state, "task_id": task["task_id"]})
+                else:
+                    if task["status"] == "no_changes":
+                        self.runs.update(run_id, status="completed", stop_reason="no_changes", message="未发现可执行问题；调查范围见当前任务")
+                        return
+                    if task["status"] != "fixed" or delivery in {"blocked", "paused", "checks_failed", "retryable", "closed", "cancelled"}:
+                        self.runs.update(run_id, status="blocked", stop_reason=task.get("error_code") or delivery or task["status"],
+                            message=task.get("delivery", {}).get("message") if task["status"] == "fixed" else task.get("message") or "当前问题未完成，已停止继续发现")
+                        return
+                    if delivery != "merged":
+                        return
+                    from chatcopilot.harness.skill_context import learning_source
+                    source = learning_source(task, self.store.attempts(task["task_id"]))
+                    if source:
+                        options = GovernanceOptions.from_payload(run["options"])
+                        child_options = RepairOptions(options.model, options.reasoning_effort, 1, 1800)
+                        child = self.tasks.start_learning(run, run["sequence"] + 1, child_options, source)
+                        if child.get("governance_run_id") != run_id or child.get("governance_sequence") != run["sequence"] + 1:
+                            raise HarnessError("governance_active", "Skill 学习任务不属于当前回收批次")
+                        self.store.update(task["task_id"], skill_learning={"state": "queued", "task_id": child["task_id"]})
+                        self.runs.refresh(run_id)
+                        self.runs.update(run_id, status="running", stop_reason="", message="核对已合并改善的可复用教训")
+                        self.tasks.launch(child["task_id"])
+                        return
             run = self.runs.refresh(run_id)
             stop = run["options"]["stop_condition"]
             if stop["mode"] == "findings" and run["found_count"] >= stop["count"]:

@@ -104,14 +104,23 @@ class HarnessController:
         return self._governance_runs().resume(run_id)
 
     def _start_code_health_task(self, options: RepairOptions, *, request_id: str,
-                               run_id: str, sequence: int, launch: bool = True):
+                               run_id: str, sequence: int, launch: bool = True,
+                               learning_from: dict[str, Any] | None = None):
         from chatcopilot.harness.governance_repository import GOAL
-        source = {"kind": "code_health", "repository": str(self.repository), "original_input": GOAL,
-                  "failure_signature": [], "warnings": [], "blockers": []}
+        goal = ("判断已合并 Harness 改善是否形成可复用 Skill 教训；有则仅更新指定参考文件，否则 no_changes。"
+                if learning_from else GOAL)
+        source = {"kind": "code_health", "repository": str(self.repository), "original_input": goal,
+                  "failure_signature": [learning_from["origin_task_id"]] if learning_from else [],
+                  "warnings": [], "blockers": [],
+                  **({"skill_learning": learning_from} if learning_from else {})}
+        identity = {"kind": "code_health", "repository": str(self.repository),
+                    **({"skill_learning_from": learning_from["origin_task_id"]} if learning_from else {})}
         return self._start(lambda: ProblemEvidence(str(self.repository), "code_health", _digest(source), source),
-                           {"kind": "code_health", "repository": str(self.repository)}, options,
+                           identity, options,
                            request_id=request_id, launch=launch,
-                           governance={"governance_run_id": run_id, "governance_sequence": sequence})
+                           governance={"governance_run_id": run_id, "governance_sequence": sequence,
+                                       **({"skill_learning_origin": learning_from["origin_task_id"]}
+                                          if learning_from else {})})
 
     def start(
         self,
@@ -816,6 +825,8 @@ class HarnessController:
             )
             if key in source
         }
+        if source.get("skill_learning"):
+            value["source"]["skill_learning_from"] = source["skill_learning"]["origin_task_id"]
         value["uncommitted"] = (
             False if task.get("local_commit") else None if task.get("commit_intent") else True
         )

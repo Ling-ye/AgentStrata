@@ -54,6 +54,11 @@ class Tasks:
             raise RuntimeError("response lost after durable child creation")
         return task
 
+    def start_learning(self, run, sequence, options, source):
+        task = self.start(run, sequence, options)
+        return self.store.update(task["task_id"], source={"kind": "code_health", "skill_learning": source},
+                                 skill_learning_origin=source["origin_task_id"])
+
     def launch(self, task_id):
         with self.lifecycle.operation(task_id):
             self.lifecycle.launch_locked(task_id)
@@ -368,3 +373,56 @@ def test_lifecycle_tick_between_child_creation_and_launch_cannot_interrupt_batch
     assert child["dispatch_state"] == "scheduled"
     assert batch.workers.launches == [child["task_id"]]
     assert run["status"] == "running"
+
+
+
+def test_merged_harness_improvement_dispatches_one_learning_task_then_no_change(batch):
+    run = batch.service.start(count_options(1))
+    origin = run["current_task_id"]
+    target = {"summary": "Remove duplicated check", "impact": "duplicate work",
+        "principle_refs": ["docs/reference/harness.md"],
+        "affected_paths": ["src/chatcopilot/harness/worker.py"],
+        "evidence": [{"path": "src/chatcopilot/harness/worker.py", "start_line": 1, "end_line": 1}]}
+    batch.store.update(origin, source={"kind": "code_health", "governance_target": target})
+    batch.store.save_attempt(origin, 1, {"number": 1, "status": "accepted",
+        "changed_files": ["src/chatcopilot/harness/worker.py"],
+        "review": {"decision": "approved", "improvements": []}})
+    finish(batch, run)
+    learning_run = batch.service.advance(run["run_id"])
+    child = learning_run["current_task_id"]
+    assert child != origin and learning_run["found_count"] == learning_run["merged_count"] == 1
+    assert batch.store.get(child)["source"]["skill_learning"]["origin_task_id"] == origin
+    batch.service.advance(run["run_id"])
+    assert len(batch.port.started) == 2
+    finish(batch, learning_run, status="no_changes", found=False)
+    done = batch.service.advance(run["run_id"])
+    assert done["status"] == "completed" and done["found_count"] == done["merged_count"] == 1
+    assert batch.store.get(origin)["skill_learning"] == {"state": "no_change", "task_id": child}
+    batch.service.advance(run["run_id"])
+    assert len(batch.port.started) == 2
+
+
+
+def test_merged_skill_pr_is_excluded_from_finding_count_and_next_issue_uses_new_main(batch):
+    run = batch.service.start(count_options(2))
+    origin = run["current_task_id"]
+    target = {"summary": "Remove duplicated check", "impact": "duplicate work",
+        "principle_refs": ["docs/reference/harness.md"],
+        "affected_paths": ["src/chatcopilot/harness/worker.py"],
+        "evidence": [{"path": "src/chatcopilot/harness/worker.py", "start_line": 1, "end_line": 1}]}
+    batch.store.update(origin, source={"kind": "code_health", "governance_target": target})
+    batch.store.save_attempt(origin, 1, {"number": 1, "status": "accepted",
+        "changed_files": ["src/chatcopilot/harness/worker.py"],
+        "review": {"decision": "approved", "improvements": []}})
+    finish(batch, run)
+    learning_run = batch.service.advance(run["run_id"])
+    child = learning_run["current_task_id"]
+    finish(batch, learning_run)
+    batch.port.main = "main-with-new-skill"
+    next_run = batch.service.advance(run["run_id"])
+    assert next_run["current_task_id"] not in {origin, child}, next_run
+    assert next_run["found_count"] == next_run["merged_count"] == 1
+    assert batch.store.get(next_run["current_task_id"])["base_commit"] == "main-with-new-skill"
+    assert batch.store.get(origin)["skill_learning"] == {"state": "merged", "task_id": child}
+    assert next_run["tasks"][1]["purpose"] == "skill_learning"
+    assert next_run["tasks"][2]["purpose"] == "code_health"
