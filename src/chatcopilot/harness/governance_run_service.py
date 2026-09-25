@@ -8,12 +8,12 @@ import uuid
 from chatcopilot.harness.config import safe_error
 from chatcopilot.harness.control_types import WorkerState
 from chatcopilot.harness.governance_run_repository import GovernanceRunRepository
-from chatcopilot.harness.governance_types import GovernanceOptions, GovernanceTaskPort, RUN_ACTIVE
+from chatcopilot.harness.governance_types import GovernanceLifecyclePort, GovernanceOptions, GovernanceTaskPort, RUN_ACTIVE
 from chatcopilot.harness.models import ACTIVE, HarnessError, RepairOptions
 
 
 class GovernanceRuns:
-    def __init__(self, store, lifecycle, tasks: GovernanceTaskPort, repository: str):
+    def __init__(self, store, lifecycle: GovernanceLifecyclePort, tasks: GovernanceTaskPort, repository: str):
         self.store, self.lifecycle, self.tasks, self.repository = store, lifecycle, tasks, repository
         self.runs = GovernanceRunRepository(store)
 
