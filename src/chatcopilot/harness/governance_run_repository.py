@@ -54,6 +54,11 @@ class GovernanceRunRepository:
                 (value["run_id"], request_id, repository, value["status"], json_text(value), now, now))
         return value, True
 
+    def by_request(self, request_id):
+        with self.store.database.connect() as connection:
+            row = connection.execute("SELECT payload FROM governance_runs WHERE request_id=?", (request_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
     def get(self, run_id):
         with self.store.database.connect() as connection:
             row = connection.execute("SELECT payload FROM governance_runs WHERE run_id=?", (run_id,)).fetchone()

@@ -123,6 +123,14 @@ class AppServerProcess:
                 raise RuntimeError(f"App Server {method} returned an invalid result")
             return result
 
+    def initialize(self) -> None:
+        if self.initialized:
+            return
+        self.request("initialize", {"clientInfo": {"name": "agentstrata", "version": "1"},
+                                    "capabilities": {"experimentalApi": True}})
+        self.send({"method": "initialized", "params": {}})
+        self.initialized = True
+
     def receive(self, *, cancelling: bool = False) -> dict | None:
         if not cancelling:
             self.on_poll()
@@ -263,11 +271,7 @@ def run_app_server(command: list[str], *, cwd: Path, env: dict[str, str], prompt
         rpc.deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
         rpc.on_notification, rpc.on_poll, rpc.on_request = on_notification, on_poll, on_request
         rpc.terminal, rpc.turn_id = False, ""
-        if not rpc.initialized:
-            rpc.request("initialize", {"clientInfo": {"name": "agentstrata", "version": "1"},
-                                   "capabilities": {"experimentalApi": True}})
-            rpc.send({"method": "initialized", "params": {}})
-            rpc.initialized = True
+        rpc.initialize()
         if authentication is not None:
             rpc.request("account/login/start", authentication)
         params: dict[str, Any] = {"cwd": str(cwd), "model": model, "approvalPolicy": approval_policy}

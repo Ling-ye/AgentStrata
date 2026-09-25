@@ -1,15 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Drawer, Empty, Input, InputNumber, Select, Space, Switch, Table, Tag, Typography } from "@arco-design/web-react";
-import { api } from "../api";
 import PageSection from "../shared/ui/PageSection";
 import { governanceApi, RUN_LABELS, stopLabel, type GovernanceOptions, type GovernanceRun } from "../features/harness/governance";
 import { GovernanceRunDetail } from "../features/harness/GovernanceRunDetail";
 import { RepairDetail } from "../features/harness/RepairDetail";
-import { repairModels } from "../features/harness/repairModels";
 
 const { Text } = Typography;
-const gpt6Models = ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"];
 const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: 16 } as const;
 const selectionFromHash = () => {
   const query = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
@@ -37,14 +34,7 @@ export default function CodeHealthPage() {
   const submitted = useRef({ body: "", requestId: "" });
   const config = useQuery({ queryKey: ["governance-config"], queryFn: ({ signal }) => governanceApi.config(signal), retry: false });
   const schedule = useQuery({ queryKey: ["governance-schedule"], queryFn: ({ signal }) => governanceApi.schedule(signal), retry: false });
-  const bots = useQuery({ queryKey: ["bots"], queryFn: api.listBots });
-  const defaultBot = bots.data?.[0]?.instance_id;
-  const inspection = useQuery({ queryKey: ["inspection", defaultBot],
-    queryFn: ({ signal }) => api.inspection(defaultBot!, undefined, undefined, signal), enabled: !!defaultBot, retry: false });
-  const models = repairModels(inspection.data?.current);
-  const modelOptions = [...models.options, ...gpt6Models.filter(value => !models.options.some(option => option.value === value))
-    .map(value => ({ value, label: value }))];
-  const model = modelOverride || config.data?.default_model || models.defaultModel;
+  const model = modelOverride || config.data?.default_model || "";
   const valid = !!model.trim() && Number.isInteger(attempts) && attempts >= 1 && (mode === "time"
     ? Number.isFinite(hours) && Math.round(hours * 3600) >= 1 : Number.isInteger(count) && count >= 1);
   const options: GovernanceOptions = { model: model.trim(), reasoning_effort: effort, max_attempts: attempts,
@@ -115,8 +105,8 @@ export default function CodeHealthPage() {
             : <div>问题发现数上限<InputNumber aria-label="熵回收问题发现数" min={1} precision={0} value={count} onChange={setCount} /></div>}
         </div>
         <div style={grid}>
-          <div>回收模型<Select aria-label="熵回收模型" allowCreate showSearch value={model || undefined}
-            placeholder="选择或填写模型名称" options={modelOptions} onChange={setModel} /></div>
+          <div>回收模型<Input aria-label="熵回收模型" value={model}
+            placeholder="填写 Codex 模型 ID" onChange={setModel} /></div>
           <div>推理强度<Select aria-label="熵回收推理强度" value={effort} onChange={setEffort}
             options={["minimal", "low", "medium", "high", "xhigh", "max"]} /></div>
           <div>每个问题的修复尝试上限（含首轮）<InputNumber aria-label="每个问题的修复尝试上限" min={1} precision={0} value={attempts} onChange={setAttempts} /></div>

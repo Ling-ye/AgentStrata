@@ -25,7 +25,7 @@ from chatcopilot.harness.context_briefs import build_failure_brief
 _STOP_CODES = {"budget_exhausted", "no_progress", "fixture_missing", "image_required", "protected_change",
                "workspace_changed", "index_changed", "governance_target_changed", "governance_run_stopped",
                "verification_environment", "verification_judge", "verification_evidence", "evaluation_unavailable",
-               "result_pending", "coding_environment", "review_inconclusive", "plan_blocked", "material_missing",
+               "result_pending", "coding_environment", "model_unavailable", "review_inconclusive", "plan_blocked", "material_missing",
                "session_unconfirmed", "session_changed"}
 
 

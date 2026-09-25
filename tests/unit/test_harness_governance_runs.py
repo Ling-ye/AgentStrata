@@ -38,6 +38,13 @@ class Tasks:
     def __init__(self, store, lifecycle):
         self.store, self.lifecycle = store, lifecycle
         self.main, self.started, self.lose_response = "initial-main", [], False
+        self.preflight_error = None
+        self.preflights = []
+
+    def preflight_model(self, model, reasoning_effort):
+        self.preflights.append((model, reasoning_effort))
+        if self.preflight_error:
+            raise self.preflight_error
 
     def start(self, run, sequence, options):
         request = f"{run['run_id']}-{sequence}"
@@ -300,6 +307,7 @@ def test_controller_run_entrypoint_creates_and_freezes_ordinary_children(tmp_pat
     original = delivery.initialize
     monkeypatch.setattr(delivery, "remote_baseline", baseline)
     monkeypatch.setattr(delivery, "initialize", lambda store, ident: original(store, ident, client=LocalSnapshot()))
+    monkeypatch.setattr("chatcopilot.harness.codex_adapter.preflight_worker_model", lambda *_args: None)
     workers = Workers(None)
     controller = HarnessController(repo, root=tmp_path / "private", worker_control=workers, evaluator=Mock())
     workers.store = controller.store
@@ -426,3 +434,22 @@ def test_merged_skill_pr_is_excluded_from_finding_count_and_next_issue_uses_new_
     assert batch.store.get(origin)["skill_learning"] == {"state": "merged", "task_id": child}
     assert next_run["tasks"][1]["purpose"] == "skill_learning"
     assert next_run["tasks"][2]["purpose"] == "code_health"
+
+
+def test_model_preflight_rejects_before_batch_or_task_creation(batch):
+    batch.port.preflight_error = HarnessError("model_unavailable", "worker cannot use model")
+    with pytest.raises(HarnessError, match="worker cannot use model"):
+        batch.service.start(count_options(), request_id="unsupported")
+    assert batch.service.runs.by_request("unsupported") is None
+    assert batch.port.started == []
+
+
+def test_model_preflight_rechecks_before_next_finding(batch):
+    run = batch.service.start(count_options(), request_id="start")
+    finish(batch, run)
+    batch.port.preflight_error = HarnessError("model_unavailable", "model removed")
+    result = batch.service.advance(run["run_id"])
+    assert result["status"] == "blocked"
+    assert result["stop_reason"] == "model_unavailable"
+    assert len(batch.port.started) == 1
+    assert result["found_count"] == 1

@@ -9,11 +9,12 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from chatcopilot.agent.runtimes.codex_permissions import permission_config
 from chatcopilot.agent.context.prompt_plan import (
@@ -34,7 +35,7 @@ from chatcopilot.external_tools.codex_cli import (
     credential_lease,
     validate_auth_root_path,
 )
-from chatcopilot.external_tools.codex_cli import build_app_server_command
+from chatcopilot.external_tools.codex_cli import AppServerProcess, build_app_server_command
 from chatcopilot.harness.models import HarnessError, RepairOptions, CodingOptions, review_decision
 from chatcopilot.harness.evidence_context import evidence_index
 from chatcopilot.harness.workspace import protected_paths, writable_paths
@@ -304,3 +305,59 @@ class CodexCoder:
             warnings.append("failure_brief_truncated")
         return {"events": events, "usage": usage, "context_metrics": context_metrics,
                 "log": log_path.name, "final_text": final_text, "session": session}
+
+
+def require_available_model(models: list[dict], model: str, effort: str) -> None:
+    entry = next((row for row in models if row.get("model", row.get("id")) == model), None)
+    if entry is None:
+        raise HarnessError("model_unavailable", f"Harness worker 当前不可使用模型 {model}；请核对 Codex CLI 版本和 worker 凭据")
+    efforts = entry.get("supportedReasoningEfforts")
+    if not isinstance(efforts, list):
+        raise HarnessError("model_probe_unavailable", "Codex 模型目录缺少推理强度信息")
+    if effort not in {row.get("reasoningEffort") for row in efforts if isinstance(row, dict)}:
+        raise HarnessError("model_effort_unsupported", f"Harness worker 的模型 {model} 不支持推理强度 {effort}")
+
+
+def worker_models(settings: Mapping[str, str], repository: Path) -> list[dict]:
+    """Use the same Linux binary and credential lane as the repair worker."""
+    try:
+        binary = Path(settings["CHATCOPILOT_CODEX_BIN"]).resolve(strict=True)
+        auth = validate_auth_root_path(settings["CHATCOPILOT_CODEX_BOT_HOME"])
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            raise RuntimeError("Codex binary is unavailable")
+        with binary.open("rb") as stream:
+            if stream.read(4) != b"\x7fELF":
+                raise RuntimeError("Codex binary is not a Linux ELF")
+        with tempfile.TemporaryDirectory(prefix="agentstrata-model-") as temporary:
+            home = Path(temporary) / "codex-home"
+            with credential_lease(auth, "worker", home, blocking=False):
+                command = [str(binary), "app-server", "--listen", "stdio://", "--strict-config",
+                           "--config", "project_doc_max_bytes=0", "--config", "mcp_servers={}",
+                           "--config", "features.hooks=false", "--config", "features.apps=false",
+                           "--config", "features.image_generation=false", "--config", "features.multi_agent=false"]
+                environment = build_codex_subprocess_env(str(binary), runtime_home=home)
+                with AppServerProcess(command, cwd=repository, env=environment, timeout_seconds=20,
+                                      on_notification=lambda _method, _params: None, on_poll=lambda: None) as rpc:
+                    rpc.initialize()
+                    models: list[dict] = []
+                    cursor = None
+                    for _ in range(10):
+                        result = rpc.request("model/list", {"limit": 100, "includeHidden": True,
+                                                            **({"cursor": cursor} if cursor else {})})
+                        rows = result.get("data")
+                        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                            raise RuntimeError("invalid Codex model catalog")
+                        models.extend(rows)
+                        cursor = result.get("nextCursor")
+                        if cursor is None:
+                            return models
+                        if not isinstance(cursor, str) or not cursor:
+                            raise RuntimeError("invalid Codex model cursor")
+                    raise RuntimeError("Codex model catalog exceeds ten pages")
+    except (KeyError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        raise HarnessError("model_probe_unavailable",
+                           "无法查询 Harness worker 的模型目录；请检查 Codex CLI、worker 凭据与网络") from exc
+
+
+def preflight_worker_model(settings: Mapping[str, str], repository: Path, model: str, effort: str) -> None:
+    require_available_model(worker_models(settings, repository), model, effort)

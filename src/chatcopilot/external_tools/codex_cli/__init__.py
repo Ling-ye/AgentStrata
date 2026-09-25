@@ -1,5 +1,5 @@
 from .command import build_codex_command, build_codex_subprocess_env, build_app_server_command
-from .app_server import run_app_server
+from .app_server import AppServerProcess, run_app_server
 from chatcopilot.core.model_credentials import (
     CredentialBusyError,
     CredentialError,
@@ -26,6 +26,7 @@ __all__ = [
     "build_codex_command",
     "build_app_server_command",
     "run_app_server",
+    "AppServerProcess",
     "build_codex_subprocess_env",
     "credential_lease",
     "credential_lock",

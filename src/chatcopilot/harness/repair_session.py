@@ -14,6 +14,20 @@ from chatcopilot.harness.agent_types import Role, role_schema
 _MAX_OBSERVED_COMMAND_CHARS = 64 * 1024
 
 
+def _unsupported_model(error: Any, model: str) -> bool:
+    if not isinstance(error, dict):
+        return False
+    try:
+        details = json.loads(error.get("message", ""))
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(details, dict) or details.get("status") != 400:
+        return False
+    body = details.get("error") or {}
+    return (isinstance(body, dict) and body.get("type") == "invalid_request_error"
+            and f"'{model}' model is not supported when using Codex with a ChatGPT account" in str(body.get("message", "")))
+
+
 def _bounded_command_output(value: Any) -> str:
     text = str(value or "")
     if len(text) <= _MAX_OBSERVED_COMMAND_CHARS:
@@ -86,6 +100,8 @@ def run_session(command, *, root: Path, home: Path, environment: dict[str, str],
             if error:
                 from chatcopilot.harness.config import safe_error
                 state["error"] = safe_error(Exception(str(error)))
+                if _unsupported_model(error, options.model):
+                    state["error_code"] = "model_unavailable"
         if method != "item/completed":
             return
         item = params.get("item") or {}
@@ -107,7 +123,8 @@ def run_session(command, *, root: Path, home: Path, environment: dict[str, str],
             on_thread=thread, on_poll=cancel, output_schema=role_schema(role, governance=governance),
             developer_instructions=developer_instructions)
         if turn_status != "completed":
-            raise HarnessError("coding_environment", "修复会话未成功完成" + (": " + state["error"] if state.get("error") else ""))
+            raise HarnessError(state.get("error_code", "coding_environment"), "修复会话未成功完成"
+                               + (": " + state["error"] if state.get("error") else ""))
     except BaseException:
         state["state"] = "interrupted" if turn_status in {"completed", "failed", "interrupted"} else "uncertain"
         if not observed_thread and not state.get("accepted"):

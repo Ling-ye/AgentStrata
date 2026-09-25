@@ -220,3 +220,25 @@ def test_finite_session_deadline_still_times_out_and_cleans_process(tmp_path):
     _assert_stdio_exited(tmp_path)
     state = json.loads((tmp_path / "session/repair-session.json").read_text())
     assert state["state"] == "interrupted"
+
+
+def test_unsupported_account_model_has_specific_error_and_preserves_session(tmp_path, monkeypatch):
+    calls = []
+    def reject(command, **kwargs):
+        calls.append(kwargs["model"])
+        kwargs["on_thread"]("unsupported-model")
+        kwargs["on_notification"]("turn/completed", {"threadId": "unsupported-model", "turn": {
+            "status": "failed", "error": {"message": json.dumps({"type": "error", "status": 400,
+                "error": {"type": "invalid_request_error", "message":
+                    "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account."}}),
+                "codexErrorInfo": "other"}}})
+    monkeypatch.setattr(repair_session, "run_app_server", reject)
+    home = private_directory(tmp_path / "home")
+    args = dict(root=tmp_path, home=home, environment={}, prompt="task", options=RepairOptions("gpt-6-sol"),
+                task_id="task", generation=1, role=Role.MAIN, observe=lambda _: None, cancel=lambda: None)
+    with pytest.raises(HarnessError) as error:
+        repair_session.run_session(["fixture"], **args)
+    assert error.value.code == "model_unavailable"
+    state = json.loads((home / "repair-session.json").read_text())
+    assert state["state"] == "interrupted" and state["error_code"] == "model_unavailable"
+    assert "gpt-6-sol" in state["error"] and calls == ["gpt-6-sol"]

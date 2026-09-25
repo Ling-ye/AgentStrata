@@ -121,3 +121,15 @@ def test_explicit_resave_replaces_old_schedule_without_migration(scheduler):
         runtime.get()
     assert runtime.configure(settings())["options"]["stop_condition"] == {"mode": "findings", "count": 2}
     assert "repair_hint" not in runtime.store.read()
+
+
+def test_schedule_model_preflight_failure_creates_no_run_and_can_retry(scheduler):
+    runtime, controller, _ = scheduler
+    runtime.configure(settings())
+    controller.start_code_health.side_effect = HarnessError("model_unavailable", "worker model unavailable")
+    with pytest.raises(HarnessError, match="worker model unavailable"):
+        runtime.tick()
+    assert runtime.store.read()["last_run"]["status"] == "failed"
+    controller.start_code_health.side_effect = None
+    assert runtime.tick()["status"] == "created"
+    assert controller.start_code_health.call_count == 2

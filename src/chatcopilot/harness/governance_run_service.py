@@ -28,8 +28,11 @@ class GovernanceRuns:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_id):
             raise ValueError("invalid request ID")
         with self.runs.locked():
+            existing = self.runs.by_request(request_id)
+            if existing is None:
+                self.tasks.preflight_model(options.model, options.reasoning_effort)
             run, _ = self.runs.create(self.repository, options.to_payload(), request_id)
-            self._advance(run["run_id"])
+            self._advance(run["run_id"], preflighted=existing is None)
             return self.get(run["run_id"])
 
     def advance(self, run_id):
@@ -43,7 +46,7 @@ class GovernanceRuns:
         stop = run["options"]["stop_condition"]
         return max(0, stop["seconds"] - run["elapsed_seconds"]) if stop["mode"] == "time" else None
 
-    def _advance(self, run_id):
+    def _advance(self, run_id, *, preflighted=False):
         run = self.runs.refresh(run_id)
         if run["status"] not in RUN_ACTIVE:
             return
@@ -98,6 +101,7 @@ class GovernanceRuns:
                     if source:
                         options = GovernanceOptions.from_payload(run["options"])
                         child_options = RepairOptions(options.model, options.reasoning_effort, 1, 1800)
+                        self.tasks.preflight_model(options.model, options.reasoning_effort)
                         child = self.tasks.start_learning(run, run["sequence"] + 1, child_options, source)
                         if child.get("governance_run_id") != run_id or child.get("governance_sequence") != run["sequence"] + 1:
                             raise HarnessError("governance_active", "Skill 学习任务不属于当前回收批次")
@@ -121,6 +125,8 @@ class GovernanceRuns:
             options = GovernanceOptions.from_payload(run["options"])
             child_options = RepairOptions(options.model, options.reasoning_effort, options.max_attempts,
                                           math.ceil(remaining) if remaining is not None else None)
+            if not preflighted:
+                self.tasks.preflight_model(options.model, options.reasoning_effort)
             child = self.tasks.start(run, run["sequence"] + 1, child_options)
             if child.get("governance_run_id") != run_id or child.get("governance_sequence") != run["sequence"] + 1:
                 raise HarnessError("governance_active", "创建结果不属于当前回收批次，未启动任务")

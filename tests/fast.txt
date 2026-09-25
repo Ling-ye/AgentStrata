@@ -111,4 +111,5 @@ tests/unit/test_harness_delivery_cancellation.py
 
 tests/unit/test_harness_governance.py
 tests/unit/test_harness_governance_schedule.py
+tests/unit/test_harness_model_preflight.py
 tests/unit/test_gateway_replay.py
