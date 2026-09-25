@@ -5,6 +5,7 @@ export type GovernanceStop = { mode: "time"; seconds: number } | { mode: "findin
 export interface GovernanceOptions {
   model: string; reasoning_effort: string; max_attempts: number; stop_condition: GovernanceStop;
 }
+export interface GovernanceModel { model: string; reasoning_efforts: string[] }
 export interface GovernanceRun {
   run_id: string; options: GovernanceOptions; status: string; stop_reason: string; message?: string;
   current_task_id: string | null; sequence: number; found_count: number; merged_count: number;
@@ -47,6 +48,7 @@ export const governanceApi = {
   run: (id: string, signal?: AbortSignal) => harnessRequest<GovernanceRun>(`/code-health/runs/${encodeURIComponent(id)}`, { signal, cache: "no-store" }),
   action: (id: string, action: "cancel" | "resume") => harnessRequest<GovernanceRun>(`/code-health/runs/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
   config: (signal?: AbortSignal) => harnessRequest<{ default_model: string }>("/code-health/config", { signal }),
+  models: (signal?: AbortSignal) => harnessRequest<GovernanceModel[]>("/code-health/models", { signal, cache: "no-store" }),
   report: (id: string, signal?: AbortSignal) => harnessRequest<{ state: string; base_commit: string; report: GovernanceReport | null }>(
     `/tasks/${encodeURIComponent(id)}/governance`, { signal, cache: "no-store" }),
   schedule: (signal?: AbortSignal) => harnessRequest<GovernanceSchedule>("/code-health/schedule", { signal, cache: "no-store" }),

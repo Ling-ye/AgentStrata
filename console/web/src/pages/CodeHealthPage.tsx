@@ -33,9 +33,11 @@ export default function CodeHealthPage() {
   const hydrated = useRef(false);
   const submitted = useRef({ body: "", requestId: "" });
   const config = useQuery({ queryKey: ["governance-config"], queryFn: ({ signal }) => governanceApi.config(signal), retry: false });
+  const models = useQuery({ queryKey: ["governance-models"], queryFn: ({ signal }) => governanceApi.models(signal), retry: false });
   const schedule = useQuery({ queryKey: ["governance-schedule"], queryFn: ({ signal }) => governanceApi.schedule(signal), retry: false });
   const model = modelOverride || config.data?.default_model || "";
-  const valid = !!model.trim() && Number.isInteger(attempts) && attempts >= 1 && (mode === "time"
+  const selectedModel = models.data?.find(item => item.model === model);
+  const valid = !!selectedModel?.reasoning_efforts.includes(effort) && Number.isInteger(attempts) && attempts >= 1 && (mode === "time"
     ? Number.isFinite(hours) && Math.round(hours * 3600) >= 1 : Number.isInteger(count) && count >= 1);
   const options: GovernanceOptions = { model: model.trim(), reasoning_effort: effort, max_attempts: attempts,
     stop_condition: mode === "time" ? { mode, seconds: Math.round(hours * 3600) } : { mode, count } };
@@ -105,8 +107,10 @@ export default function CodeHealthPage() {
             : <div>问题发现数上限<InputNumber aria-label="熵回收问题发现数" min={1} precision={0} value={count} onChange={setCount} /></div>}
         </div>
         <div style={grid}>
-          <div>回收模型<Input aria-label="熵回收模型" value={model}
-            placeholder="填写 Codex 模型 ID" onChange={setModel} /></div>
+          <div>回收模型<Select aria-label="熵回收模型" value={model || undefined} showSearch
+            loading={models.isPending} disabled={models.isPending || models.isError || busy || saving}
+            placeholder="选择 worker 可用模型" options={(models.data ?? []).map(item => ({ value: item.model, label: item.model }))}
+            onChange={setModel} /></div>
           <div>推理强度<Select aria-label="熵回收推理强度" value={effort} onChange={setEffort}
             options={["minimal", "low", "medium", "high", "xhigh", "max"]} /></div>
           <div>每个问题的修复尝试上限（含首轮）<InputNumber aria-label="每个问题的修复尝试上限" min={1} precision={0} value={attempts} onChange={setAttempts} /></div>
@@ -115,7 +119,13 @@ export default function CodeHealthPage() {
           ? "累计执行时间跨问题共享，等待 GitHub 检查或审查不计时。" : "达到发现数后完成最后一项再结束；此模式不附加时间上限。"}</Text>
         <Text type="secondary">每项从最新远端 main 调查，本地未提交改动不纳入。现有测试、依赖和规则调整列为待判断；当前问题未完成时停止继续发现。</Text>
         {(error || config.isError) && <Alert type="error" content={error || String(config.error)} />}
-        <Button type="primary" loading={busy} disabled={!valid || config.isPending || config.isError}
+        {models.isError && <Alert type="error" content="无法读取 Harness worker 模型目录，请检查 Codex CLI、worker 凭据与网络。"
+          action={<Button size="small" onClick={() => void models.refetch()}>重试</Button>} />}
+        {!models.isPending && !models.isError && !!model && !selectedModel &&
+          <Alert type="warning" content="原回收模型当前不可用，请重新选择模型。" />}
+        {!!selectedModel && !selectedModel.reasoning_efforts.includes(effort) &&
+          <Alert type="warning" content="当前模型不支持所选推理强度，请调整后再开始。" />}
+        <Button type="primary" loading={busy} disabled={!valid || config.isPending || config.isError || models.isPending || models.isError}
           onClick={() => void start()}>开始逐项熵回收并自动交付 PR</Button>
       </Space>
     </PageSection>

@@ -509,6 +509,16 @@ class HarnessController:
         return {"default_model": self.default_model, "reasoning_effort": "medium", "max_attempts": 3,
                 "stop_condition": {"mode": "time", "seconds": 3600}, "interval_hours": 24}
 
+    def governance_models(self):
+        from chatcopilot.harness.codex_adapter import worker_models
+        return [{"model": row.get("model", row.get("id")),
+                 "reasoning_efforts": [effort["reasoningEffort"] for effort in row.get("supportedReasoningEfforts", [])
+                                       if isinstance(effort, dict) and isinstance(effort.get("reasoningEffort"), str)]}
+                for row in worker_models(self.settings, self.repository)
+                if isinstance(row.get("model", row.get("id")), str)
+                and row.get("model", row.get("id"))
+                and isinstance(row.get("supportedReasoningEfforts"), list)]
+
     def governance_schedule(self):
         from chatcopilot.harness.schedule_runtime import GovernanceScheduler
         return GovernanceScheduler(self).get()

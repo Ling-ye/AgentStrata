@@ -179,6 +179,11 @@ def governance_config(request: Request):
     return _call(lambda: _controller(request).governance_config())
 
 
+@router.get("/code-health/models")
+def governance_models(request: Request):
+    return _call(lambda: _controller(request).governance_models())
+
+
 @router.post("/code-health/runs")
 def start_governance_run(request: Request, body: CreateGovernanceRun):
     _mutation_access(request)

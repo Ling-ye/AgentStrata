@@ -33,3 +33,23 @@ def test_catalog_failure_is_not_treated_as_model_rejection(monkeypatch, tmp_path
     with pytest.raises(HarnessError) as error:
         preflight_worker_model({}, tmp_path, "gpt-6-sol", "high")
     assert error.value.code == "model_probe_unavailable"
+
+
+def test_governance_model_choices_use_worker_catalog(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from chatcopilot.harness.api import HarnessController
+
+    monkeypatch.setattr("chatcopilot.harness.codex_adapter.worker_models",
+                        lambda settings, repository: [
+                            {"model": "gpt-6-sol", "supportedReasoningEfforts": [
+                                {"reasoningEffort": "medium"}, {"reasoningEffort": "high"}]},
+                            {"id": "alternate", "supportedReasoningEfforts": [{"reasoningEffort": "low"}]},
+                            {"model": "", "supportedReasoningEfforts": []},
+                            {"model": "incomplete"},
+                        ])
+    controller = SimpleNamespace(settings={}, repository=tmp_path)
+    assert HarnessController.governance_models(controller) == [
+        {"model": "gpt-6-sol", "reasoning_efforts": ["medium", "high"]},
+        {"model": "alternate", "reasoning_efforts": ["low"]},
+    ]

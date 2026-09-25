@@ -54,7 +54,8 @@ Main 安排任务，Plan 读取规则、追踪调用者并提交原始片段；C
 
 批次 API 位于 `/api/harness/code-health/runs`，支持创建、分页、详情及 `/{run_id}/cancel`、
 `/{run_id}/resume`。停止条件为 `{mode: "time", seconds}` 或 `{mode: "findings", count}`，
-手动、CLI 和定时共用。子任务证据、日志和 PR 详情继续使用普通任务入口。
+手动、CLI 和定时共用。Console 模型下拉项由 /api/harness/code-health/models 查询 worker 的原生模型目录，
+并附带每个模型支持的推理强度；子任务证据、日志和 PR 详情继续使用普通任务入口。
 
 定时默认关闭、间隔 24 小时；启用约一分钟后首次触发。systemd timer 只创建普通回收批次，
 已有活动批次或待完成交付时跳过，不累积排队。关闭定时不取消当前批次。现有分钟级交付
