@@ -22,7 +22,7 @@ llm:
   chat:
     env_prefix: CHATCOPILOT_LINGYE_MAIN
     provider: openai
-    model: gpt-5.6-terra
+    model: gpt-6-sol
     reasoning_effort: medium
     profiles:
       sol-max:
@@ -34,17 +34,20 @@ llm:
   research:
     inherit_env_prefix: CHATCOPILOT_LINGYE
     env_prefix: CHATCOPILOT_LINGYE_RESEARCH
-    model: gpt-5.6-terra
+    model: gpt-6-sol
   code:
     env_prefix: CHATCOPILOT_LINGYE
     enabled: true
-    model: gpt-5.6-terra
+    model: gpt-6-sol
     reasoning_effort: medium
     profiles:
+      sol-medium:
+        model: gpt-6-sol
+        reasoning_effort: medium
       sol-max:
         model: gpt-5.6-sol
         reasoning_effort: max
-    code_task_profile: sol-max
+    code_task_profile: sol-medium
     timeout_seconds: 21600
 
 prompts:

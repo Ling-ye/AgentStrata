@@ -9,6 +9,7 @@ import { RepairDetail } from "../features/harness/RepairDetail";
 import { repairModels } from "../features/harness/repairModels";
 
 const { Text } = Typography;
+const gpt6Models = ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"];
 const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: 16 } as const;
 const selectionFromHash = () => {
   const query = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
@@ -41,6 +42,8 @@ export default function CodeHealthPage() {
   const inspection = useQuery({ queryKey: ["inspection", defaultBot],
     queryFn: ({ signal }) => api.inspection(defaultBot!, undefined, undefined, signal), enabled: !!defaultBot, retry: false });
   const models = repairModels(inspection.data?.current);
+  const modelOptions = [...models.options, ...gpt6Models.filter(value => !models.options.some(option => option.value === value))
+    .map(value => ({ value, label: value }))];
   const model = modelOverride || config.data?.default_model || models.defaultModel;
   const valid = !!model.trim() && Number.isInteger(attempts) && attempts >= 1 && (mode === "time"
     ? Number.isFinite(hours) && Math.round(hours * 3600) >= 1 : Number.isInteger(count) && count >= 1);
@@ -113,7 +116,7 @@ export default function CodeHealthPage() {
         </div>
         <div style={grid}>
           <div>回收模型<Select aria-label="熵回收模型" allowCreate showSearch value={model || undefined}
-            placeholder="选择或填写模型名称" options={models.options} onChange={setModel} /></div>
+            placeholder="选择或填写模型名称" options={modelOptions} onChange={setModel} /></div>
           <div>推理强度<Select aria-label="熵回收推理强度" value={effort} onChange={setEffort}
             options={["minimal", "low", "medium", "high", "xhigh", "max"]} /></div>
           <div>每个问题的修复尝试上限（含首轮）<InputNumber aria-label="每个问题的修复尝试上限" min={1} precision={0} value={attempts} onChange={setAttempts} /></div>

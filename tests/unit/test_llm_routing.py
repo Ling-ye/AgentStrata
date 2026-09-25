@@ -125,12 +125,16 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
         self.assertNotIn("codebase.change", spec.tools.packs)
         self.assertIn("dev.code_tasks", spec.tools.packs)
         self.assertNotIn("dev.files", spec.tools.packs)
-        self.assertEqual(spec.llm.code.model, "gpt-5.6-terra")
+        self.assertEqual(spec.llm.code.model, "gpt-6-sol")
         self.assertEqual(spec.llm.code.reasoning_effort, "medium")
-        self.assertEqual(spec.llm.code.code_task_profile, "sol-max")
+        self.assertEqual(spec.llm.code.code_task_profile, "sol-medium")
         self.assertEqual(
-            spec.llm.code.profiles["sol-max"].reasoning_effort,
-            "max",
+            spec.llm.code.profiles["sol-medium"].model,
+            "gpt-6-sol",
+        )
+        self.assertEqual(
+            spec.llm.code.profiles["sol-medium"].reasoning_effort,
+            "medium",
         )
 
     def test_route_explain_reports_instance_runtime_without_secrets(self) -> None:
