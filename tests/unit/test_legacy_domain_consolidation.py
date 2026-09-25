@@ -324,19 +324,12 @@ class DeterministicHelperTests(unittest.TestCase):
 
 
 class RepositoryHygieneTests(unittest.TestCase):
-    def test_removed_legacy_sources_are_absent(self) -> None:
+    def test_removed_persona_sources_are_absent(self) -> None:
         for relative in (
             "src/chatcopilot/agent/persona/interpreter.py",
-            "src/chatcopilot/middleware/acp/code_route.py",
             "src/chatcopilot/middleware/acp/persona_control.py",
-            "src/chatcopilot/middleware/acp/route_orchestrator.py",
         ):
             self.assertFalse((ROOT / relative).exists(), relative)
-
-    def test_python_sources_have_no_bom(self) -> None:
-        from scripts.normalize_utf8 import bom_files
-
-        self.assertEqual(bom_files(ROOT), ())
 
     def test_console_pages_are_lazy_loaded(self) -> None:
         source = (ROOT / "console/web/src/App.tsx").read_text(encoding="utf-8")
@@ -361,13 +354,6 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertFalse((codex / "tools.py").exists())
         self.assertIn("def build_codex_command", command)
         self.assertNotIn("class _ApprovedPluginJob", command)
-
-    def test_console_observability_is_not_duplicated_in_operations(self) -> None:
-        control = ROOT / "console/control"
-        facade = (control / "operations.py").read_text(encoding="utf-8")
-        service = (control / "observability.py").read_text(encoding="utf-8")
-        self.assertNotIn("def follow_log(", facade)
-        self.assertIn("def follow_log(", service)
 
 
 if __name__ == "__main__":

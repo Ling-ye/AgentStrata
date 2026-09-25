@@ -55,7 +55,11 @@ def test_validation_profiles_include_static_and_runtime_checks(
     assert all("pytest" not in c.argv and "build" not in c.argv for c in profiles["docs"])
     fast_pytest = profiles["fast"][-1]
     full_pytest = profiles["full"][-2]
-    assert fast_pytest.argv[3:-2] == check_repo._fast_test_paths()
+    fast_paths = check_repo._fast_test_paths()
+    assert fast_pytest.argv[3:3 + len(fast_paths)] == fast_paths
+    assert fast_pytest.argv[3 + len(fast_paths):-1] == (
+        "-q", "-n", "4", "--dist=loadfile",
+    )
     assert "tests/unit" not in fast_pytest.argv
     assert full_pytest.argv[1:4] == ("-m", "pytest", "-q")
     assert f"--basetemp={tmp_path / 'chatcopilot-pytest-fast'}" in fast_pytest.argv

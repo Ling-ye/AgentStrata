@@ -3,7 +3,7 @@
 运行：
     python -m pytest tests/unit/test_feishu_sender.py
 
-仓库目前没有统一的 pytest 设置，这里用 stdlib unittest 跑关键分支：
+使用仓库的 pytest 配置收集 unittest 测试，覆盖以下关键分支：
 - 工作区内：results / downloads / attachments / uploads 路径放行
 - 越权：工作区外路径拒绝
 - 不存在：FileNotFoundError

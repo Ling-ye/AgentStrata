@@ -69,6 +69,7 @@ dev = [
     { name = "mypy" },
     { name = "pip" },
     { name = "pytest" },
+    { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "setuptools" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
@@ -90,6 +91,7 @@ evaluation = [
 test = [
     { name = "httpx2" },
     { name = "pytest" },
+    { name = "pytest-xdist" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
@@ -121,6 +123,8 @@ requires-dist = [
     { name = "pyinstaller", marker = "extra == 'desktop'", specifier = "==6.17.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'test'" },
+    { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.8,<4" },
+    { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8,<4" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "requests", specifier = ">=2.32,<3" },
     { name = "ruamel-yaml", specifier = ">=0.18" },

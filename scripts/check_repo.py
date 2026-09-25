@@ -187,6 +187,7 @@ def _profiles(candidate_root: Path | None = None) -> dict[str, tuple[Check, ...]
                 *test_imports,
                 *_fast_test_paths(),
                 "-q",
+                "-n", "4", "--dist=loadfile",
                 _pytest_basetemp("fast"),
             ),
             cwd=test_root,
