@@ -8,7 +8,7 @@ import time
 import uuid
 
 from chatcopilot.core.private_sqlite import json_text, private_lock
-from chatcopilot.harness.governance_types import RUN_ACTIVE, RUN_ACTIVE_STATUSES
+from chatcopilot.harness.governance_types import RUN_ACTIVE_STATUSES
 from chatcopilot.harness.models import HarnessError
 
 
@@ -92,29 +92,7 @@ class GovernanceRunRepository:
                 "ORDER BY json_extract(payload,'$.governance_sequence')", (run_id,)).fetchall()
         return [json.loads(row[0]) for row in rows]
 
-    def project(self, run):
-        tasks = self.tasks(run["run_id"])
-        values = {"found_count": sum(bool(task.get("governance_finding_id")) and not task.get("skill_learning_origin")
-                                      for task in tasks),
-                  "merged_count": sum(task.get("delivery", {}).get("state") == "merged" and not task.get("skill_learning_origin")
-                                      for task in tasks),
-                  "elapsed_seconds": sum(float(task.get("elapsed_seconds", 0)) for task in tasks),
-                  "current_task_id": tasks[-1]["task_id"] if tasks else None, "sequence": len(tasks)}
-        return {**run, **values, "tasks": [{
-            **{key: task[key] for key in (
-                "task_id", "status", "stage", "base_commit", "governance_sequence", "governance_summary", "governance_finding_id",
-                "message", "stop_reason", "elapsed_seconds", "delivery") if key in task},
-            "purpose": "skill_learning" if task.get("skill_learning_origin") else "code_health",
-        } for task in tasks]}
-
-    def refresh(self, run_id):
-        value = self.project(self.get(run_id))
-        return self.update(run_id, **{key: value[key] for key in (
-            "current_task_id", "sequence", "found_count", "merged_count", "elapsed_seconds")})
-
     def page(self, *, repository, page=1, limit=20, search="", status=""):
-        if page < 1 or not 1 <= limit <= 100 or status and status not in RUN_ACTIVE | {"completed", "blocked", "cancelled"}:
-            raise ValueError("无效的批次分页或状态")
         clause, params = "repository=? AND run_id LIKE ?", [repository, "%" + search + "%"]
         if status:
             clause += " AND status=?"
@@ -123,4 +101,4 @@ class GovernanceRunRepository:
             total = connection.execute("SELECT COUNT(*) FROM governance_runs WHERE " + clause, params).fetchone()[0]
             rows = connection.execute("SELECT payload FROM governance_runs WHERE " + clause + " ORDER BY created_at DESC LIMIT ? OFFSET ?",
                                       (*params, limit, (page - 1) * limit)).fetchall()
-        return {"runs": [self.project(json.loads(row[0])) for row in rows], "total": total}
+        return {"runs": [json.loads(row[0]) for row in rows], "total": total}

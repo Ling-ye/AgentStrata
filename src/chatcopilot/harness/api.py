@@ -88,7 +88,7 @@ class HarnessController:
         return self._governance_runs().get(run_id)
 
     def governance_runs(self, **kwargs):
-        return self._governance_runs().runs.page(repository=str(self.repository), **kwargs)
+        return self._governance_runs().page(**kwargs)
 
     def active_governance_run(self):
         runs = self._governance_runs().runs.active(str(self.repository))

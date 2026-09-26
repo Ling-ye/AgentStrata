@@ -24,8 +24,9 @@ class TaskBudget:
         self.runs = None
         if self.run_id:
             from chatcopilot.harness.governance_run_repository import GovernanceRunRepository
+            from chatcopilot.harness.governance_run_service import project_governance_run
             self.runs = GovernanceRunRepository(self.store)
-            run = self.runs.project(self.runs.get(self.run_id))
+            run = project_governance_run(self.runs.get(self.run_id), self.runs.tasks(self.run_id))
             stop = run["options"]["stop_condition"]
             if stop["mode"] == "time":
                 # Preserve sub-second remainder across child allocations rather
