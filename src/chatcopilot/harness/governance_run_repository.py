@@ -8,8 +8,12 @@ import time
 import uuid
 
 from chatcopilot.core.private_sqlite import json_text, private_lock
-from chatcopilot.harness.governance_types import RUN_ACTIVE
+from chatcopilot.harness.governance_types import RUN_ACTIVE, RUN_ACTIVE_STATUSES
 from chatcopilot.harness.models import HarnessError
+
+
+# Keep literal values for SQLite's partial index and reuse its exact predicate in queries.
+_ACTIVE_STATUS_SQL = "status IN (" + ",".join(f"'{status}'" for status in RUN_ACTIVE_STATUSES) + ")"
 
 
 class GovernanceRunRepository:
@@ -26,8 +30,8 @@ class GovernanceRunRepository:
                         run_id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE,
                         repository TEXT NOT NULL, status TEXT NOT NULL, payload TEXT NOT NULL,
                         created_at REAL NOT NULL, updated_at REAL NOT NULL)""")
-                    connection.execute("""CREATE UNIQUE INDEX IF NOT EXISTS governance_run_active
-                        ON governance_runs(repository) WHERE status IN ('running','waiting_delivery','cancel_requested')""")
+                    connection.execute(f"""CREATE UNIQUE INDEX IF NOT EXISTS governance_run_active
+                        ON governance_runs(repository) WHERE {_ACTIVE_STATUS_SQL}""")
 
     @contextmanager
     def locked(self):
@@ -43,7 +47,7 @@ class GovernanceRunRepository:
                 if value["request_digest"] != digest:
                     raise HarnessError("conflict", "同一请求 ID 的内容已变化")
                 return value, False
-            if connection.execute("SELECT 1 FROM governance_runs WHERE repository=? AND status IN ('running','waiting_delivery','cancel_requested')", (repository,)).fetchone():
+            if connection.execute("SELECT 1 FROM governance_runs WHERE repository=? AND " + _ACTIVE_STATUS_SQL, (repository,)).fetchone():
                 raise HarnessError("governance_active", "此仓库已有活动熵回收批次")
             now = time.time()
             value = {"run_id": "gc-" + uuid.uuid4().hex, "request_id": request_id, "request_digest": digest,
@@ -78,7 +82,7 @@ class GovernanceRunRepository:
 
     def active(self, repository=None):
         with self.store.database.connect() as connection:
-            rows = connection.execute("SELECT payload FROM governance_runs WHERE status IN ('running','waiting_delivery','cancel_requested')"
+            rows = connection.execute("SELECT payload FROM governance_runs WHERE " + _ACTIVE_STATUS_SQL
                 + (" AND repository=?" if repository else ""), (repository,) if repository else ()).fetchall()
         return [json.loads(row[0]) for row in rows]
 
