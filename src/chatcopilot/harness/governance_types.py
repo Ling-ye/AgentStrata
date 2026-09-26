@@ -68,7 +68,8 @@ class GovernanceSchedule:
         return asdict(self)
 
 
-RUN_ACTIVE = frozenset({"running", "waiting_delivery", "cancel_requested"})
+RUN_ACTIVE_STATUSES = ("running", "waiting_delivery", "cancel_requested")
+RUN_ACTIVE = frozenset(RUN_ACTIVE_STATUSES)
 
 
 class GovernanceTaskPort(Protocol):
