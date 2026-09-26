@@ -12,6 +12,22 @@ from chatcopilot.harness.governance_types import GovernanceLifecyclePort, Govern
 from chatcopilot.harness.models import ACTIVE, HarnessError, RepairOptions
 
 
+def project_governance_run(run, tasks):
+    """Derive the public batch view from its stored record and ordered tasks."""
+    values = {"found_count": sum(bool(task.get("governance_finding_id")) and not task.get("skill_learning_origin")
+                                 for task in tasks),
+              "merged_count": sum(task.get("delivery", {}).get("state") == "merged" and not task.get("skill_learning_origin")
+                                  for task in tasks),
+              "elapsed_seconds": sum(float(task.get("elapsed_seconds", 0)) for task in tasks),
+              "current_task_id": tasks[-1]["task_id"] if tasks else None, "sequence": len(tasks)}
+    return {**run, **values, "tasks": [{
+        **{key: task[key] for key in (
+            "task_id", "status", "stage", "base_commit", "governance_sequence", "governance_summary", "governance_finding_id",
+            "message", "stop_reason", "elapsed_seconds", "delivery") if key in task},
+        "purpose": "skill_learning" if task.get("skill_learning_origin") else "code_health",
+    } for task in tasks]}
+
+
 class GovernanceRuns:
     def __init__(self, store, lifecycle: GovernanceLifecyclePort, tasks: GovernanceTaskPort, repository: str):
         self.store, self.lifecycle, self.tasks, self.repository = store, lifecycle, tasks, repository
@@ -21,7 +37,21 @@ class GovernanceRuns:
         run = self.runs.get(run_id)
         if run["repository"] != self.repository:
             raise HarnessError("not_found", "此仓库没有该熵回收批次")
-        return self.runs.project(run)
+        return self._project(run)
+
+    def _project(self, run):
+        return project_governance_run(run, self.runs.tasks(run["run_id"]))
+
+    def _refresh(self, run_id):
+        value = self._project(self.runs.get(run_id))
+        return self.runs.update(run_id, **{key: value[key] for key in (
+            "current_task_id", "sequence", "found_count", "merged_count", "elapsed_seconds")})
+
+    def page(self, *, page=1, limit=20, search="", status=""):
+        if page < 1 or not 1 <= limit <= 100 or status and status not in RUN_ACTIVE | {"completed", "blocked", "cancelled"}:
+            raise ValueError("无效的批次分页或状态")
+        result = self.runs.page(repository=self.repository, page=page, limit=limit, search=search, status=status)
+        return {"runs": [self._project(run) for run in result["runs"]], "total": result["total"]}
 
     def start(self, options: GovernanceOptions, *, request_id=None):
         request_id = request_id or uuid.uuid4().hex
@@ -47,7 +77,7 @@ class GovernanceRuns:
         return max(0, stop["seconds"] - run["elapsed_seconds"]) if stop["mode"] == "time" else None
 
     def _advance(self, run_id, *, preflighted=False):
-        run = self.runs.refresh(run_id)
+        run = self._refresh(run_id)
         if run["status"] not in RUN_ACTIVE:
             return
         try:
@@ -106,11 +136,11 @@ class GovernanceRuns:
                         if child.get("governance_run_id") != run_id or child.get("governance_sequence") != run["sequence"] + 1:
                             raise HarnessError("governance_active", "Skill 学习任务不属于当前回收批次")
                         self.store.update(task["task_id"], skill_learning={"state": "queued", "task_id": child["task_id"]})
-                        self.runs.refresh(run_id)
+                        self._refresh(run_id)
                         self.runs.update(run_id, status="running", stop_reason="", message="核对已合并改善的可复用教训")
                         self.tasks.launch(child["task_id"])
                         return
-            run = self.runs.refresh(run_id)
+            run = self._refresh(run_id)
             stop = run["options"]["stop_condition"]
             if stop["mode"] == "findings" and run["found_count"] >= stop["count"]:
                 self.runs.update(run_id, status="completed", stop_reason="findings_limit", message="已完成设定数量的问题及 PR 交付")
@@ -130,7 +160,7 @@ class GovernanceRuns:
             child = self.tasks.start(run, run["sequence"] + 1, child_options)
             if child.get("governance_run_id") != run_id or child.get("governance_sequence") != run["sequence"] + 1:
                 raise HarnessError("governance_active", "创建结果不属于当前回收批次，未启动任务")
-            self.runs.refresh(run_id)
+            self._refresh(run_id)
             self.runs.update(run_id, status="running", stop_reason="", message="逐项发现并修复中")
             self.tasks.launch(child["task_id"])
         except Exception as exc:
@@ -151,7 +181,7 @@ class GovernanceRuns:
     def resume(self, run_id):
         with self.runs.locked():
             self.get(run_id)
-            run = self.runs.refresh(run_id)
+            run = self._refresh(run_id)
             if run["status"] not in {"blocked", "cancelled"}:
                 raise HarnessError("conflict", "只有停止的回收批次可以恢复")
             if self.runs.active(run["repository"]):
