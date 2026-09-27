@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     gc.add_argument("--max-attempts", type=int, default=3)
     gc_stop = gc.add_mutually_exclusive_group()
     gc_stop.add_argument("--timeout-seconds", type=int, help="整次回收累计执行秒数；默认 3600")
-    gc_stop.add_argument("--findings", type=int, help="问题发现数上限；逐项修复并合并后继续")
+    gc_stop.add_argument("--findings", type=int, help="问题发现数上限；处理失败也计数，安全收尾后继续")
     gc.add_argument("--request-id")
     sub.add_parser("gc-tick", help="执行一次已启用的熵回收定时触发")
     schedule = sub.add_parser("gc-schedule", help="查看或配置熵回收定时；默认关闭")

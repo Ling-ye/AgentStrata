@@ -120,7 +120,8 @@ class CodexCoder:
         role, evidence = call.role, call.evidence
         task_root = worktree.parent
         private_directory(output)
-        draft = private_directory(output / "draft") if role == Role.TEST else None
+        learning = bool(call.evidence.get("source", {}).get("skill_learning"))
+        draft = private_directory(output / "draft") if role == Role.TEST or (learning and role == Role.CODING) else None
         evidence_text = json_text(evidence)
         evidence_bytes = len(evidence_text.encode())
         evidence_path = private_directory(output / "evidence") / "evidence.json"
@@ -135,7 +136,6 @@ class CodexCoder:
         execution_directory = worktree
         source = evidence.get("source", {})
         governance = source.get("kind") == "code_health"
-        learning = bool(source.get("skill_learning"))
         protected = protected_paths(worktree, str(source.get("bot_id", "")),
                                     governance=governance, learning=learning)
         helper_directory = private_directory(task_root / "sessions" / "bin")
@@ -173,8 +173,8 @@ class CodexCoder:
                 readable.append(path)
         if draft:
             readable.append(draft)
-        writes = writable_paths(worktree, str(source.get("bot_id", "")),
-                                governance=governance, learning=learning) if role == Role.CODING else (draft,) if draft else ()
+        writes = ((draft,) if learning else writable_paths(worktree, str(source.get("bot_id", "")),
+                                governance=governance, learning=False)) if role == Role.CODING else (draft,) if draft else ()
         scope = ExecutionScope(readable_roots=tuple(dict.fromkeys(readable)), writable_roots=writes,
                                protected_roots=(*protected, *git_roots), native_write=bool(writes))
         profile = BotPromptProfile(identity="AgentStrata Harness " + role.value, response_style="报告有证据的结论和缺口。")
@@ -184,7 +184,9 @@ class CodexCoder:
             instructions += "本轮宿主已加载冻结的 Harness Skill。显式使用 $harness-code-health，并按当前角色职责读取所需参考资料。"
         plan = PromptPlanBuilder().build(PromptBuildInput(profile=profile, runtime_id="codex", model=options.model,
             role="owner", channel_kind="private", session_policy=COMMON + instructions))
-        prompt = render_codex_prompt(plan, user_message=instructions + (f" draft={draft}" if draft else ""),
+        prompt = render_codex_prompt(plan, user_message=instructions +
+                                     (f" draft={draft} target=evidence.md" if learning and role == Role.CODING else
+                                      f" draft={draft}" if draft else ""),
                                      turn_context=evidence_text, trusted_separately=True)
         events = []
         progress = ActionProgress()

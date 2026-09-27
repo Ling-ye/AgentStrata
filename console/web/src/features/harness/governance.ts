@@ -8,16 +8,17 @@ export interface GovernanceOptions {
 export interface GovernanceModel { model: string; reasoning_efforts: string[] }
 export interface GovernanceRun {
   run_id: string; options: GovernanceOptions; status: string; stop_reason: string; message?: string;
-  current_task_id: string | null; sequence: number; found_count: number; merged_count: number;
+  current_task_id: string | null; sequence: number; found_count: number; merged_count: number; failed_count: number;
   elapsed_seconds: number; created_at: number; updated_at: number;
   tasks: Array<Pick<RepairTask, "task_id" | "status" | "stage" | "base_commit" | "governance_summary" | "delivery"> & {
     governance_sequence: number; elapsed_seconds?: number; message?: string;
-    purpose: "code_health" | "skill_learning";
+    purpose: "code_health" | "skill_learning"; outcome: "pending" | "merged" | "failed" | "no_changes"; error_code?: string;
+    failure?: { code: string; message: string };
   }>;
 }
 export const RUN_LABELS: Record<string, string> = {
   running: "执行中", waiting_delivery: "等待当前 PR 合并", cancel_requested: "取消收尾中",
-  completed: "已结束", blocked: "已停止，待处理", cancelled: "已取消",
+  completed: "已结束", blocked: "已停止，待处理", cancelled: "已取消", failed: "运行失败",
 };
 export const runActive = (run: GovernanceRun) => ["running", "waiting_delivery", "cancel_requested"].includes(run.status);
 export function stopLabel(stop: GovernanceStop) {

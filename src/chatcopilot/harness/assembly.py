@@ -47,8 +47,19 @@ def run_task(store, task_id, evaluator, coder, *, local_verifier=None, committer
                     recent = {"task_id": previous["task_id"], "base_commit": previous["base_commit"],
                               "summary": report["summary"], "findings": report["findings"], "unresolved": report["unresolved"],
                               "uninspected": report["uninspected"]}
+                previous_run_findings = []
+                for row in prior:
+                    if (row.get("governance_run_id") != current.get("governance_run_id")
+                            or row.get("skill_learning_origin") or not row.get("frozen_finding")):
+                        continue
+                    finding = ArtifactRepository(store.root / "jobs" / row["task_id"]).read(row["frozen_finding"])
+                    previous_run_findings.append({"id": finding["id"], "summary": finding["summary"],
+                        "principle_refs": finding["principle_refs"], "affected_paths": finding["affected_paths"],
+                        "evidence": [{key: evidence[key] for key in ("path", "start_line", "end_line")}
+                                     for evidence in finding["evidence"]]})
                 store.update(task_id, governance_context=asdict(context), source={**current["source"],
-                             "governance_context": asdict(context), "previous_governance": recent})
+                             "governance_context": asdict(context), "previous_governance": recent,
+                             "previous_run_findings": previous_run_findings})
             if governance and not store.get(task_id).get("harness_skill"):
                 from chatcopilot.harness.skill_context import freeze_skill
                 reference = freeze_skill(artifacts, frozen)

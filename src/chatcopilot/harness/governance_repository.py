@@ -115,14 +115,36 @@ def bind_report(store, task_id: str, artifacts, value: dict, baseline: Path) -> 
     finding = report["findings"][0] if report["findings"] else None
     if task.get("frozen_finding"):
         frozen = artifacts.read(task["frozen_finding"])
-        if not finding or any(finding[key] != frozen[key] for key in (
-                "id", "principle_refs", "evidence", "affected_paths", "acceptance_criteria")):
-            raise HarnessError("governance_target_changed", "返工不能更换或扩大已冻结的问题，请围绕原问题修复")
+        if (not finding or any(finding[key] != frozen[key] for key in (
+                "id", "summary", "principle_refs", "acceptance_criteria"))
+                or finding["evidence"][:len(frozen["evidence"])] != frozen["evidence"]
+                or finding["affected_paths"][:len(frozen["affected_paths"])] != frozen["affected_paths"]):
+            raise HarnessError("governance_target_changed", "返工不能更换已冻结的问题、规则或验收目标")
+        additions = finding["affected_paths"][len(frozen["affected_paths"]):]
+        if additions or len(finding["evidence"]) != len(frozen["evidence"]):
+            context = artifacts.read(task["governance_context"])
+            new_evidence = finding["evidence"][len(frozen["evidence"]):]
+            if (context.get("skill_learning") or finding["disposition"] != "automatic"
+                    or len(set(finding["affected_paths"])) != len(finding["affected_paths"])
+                    or any(path not in context["editable_paths"] or path not in context["files"]
+                           or path not in {row["path"] for row in new_evidence} for path in additions)):
+                raise HarnessError("governance_target_changed", "新增范围缺少冻结源码证据或涉及受保护文件")
+            frozen = {**frozen, "evidence": finding["evidence"], "affected_paths": finding["affected_paths"]}
+            revisions = task.get("finding_revisions") or [task["frozen_finding"]]
+            reference = artifacts.put("frozen_finding", len(revisions) + 1, frozen)
+            store.update(task_id, frozen_finding=asdict(reference), finding_revisions=[*revisions, asdict(reference)])
         report["findings"] = [frozen]
         report["selected"] = frozen if report["selected"] else None
     elif finding:
+        prior = task["source"].get("previous_run_findings", [])
+        identity = [{key: evidence[key] for key in ("path", "start_line", "end_line")}
+                    for evidence in finding["evidence"]]
+        if any(finding["id"] == row["id"] or (finding["principle_refs"] == row["principle_refs"]
+                and identity == row["evidence"]) for row in prior):
+            raise HarnessError("invalid_role_result", "本批次已发现同一问题，请选择另一项或报告没有新发现")
         reference = artifacts.put("frozen_finding", 1, finding)
-        store.update(task_id, frozen_finding=asdict(reference), governance_finding_id=finding["id"])
+        store.update(task_id, frozen_finding=asdict(reference), finding_revisions=[asdict(reference)],
+                     governance_finding_id=finding["id"])
     reference = artifacts.put("governance_report", task["current_attempt"], report)
     source = {**task["source"], "governance_target": report["selected"],
               "governance_report": asdict(reference)}

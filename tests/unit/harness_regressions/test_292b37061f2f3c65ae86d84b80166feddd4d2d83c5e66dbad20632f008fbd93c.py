@@ -145,14 +145,14 @@ def test_lost_receipt_and_repeated_callbacks_keep_one_child_and_persist_counts(b
     batch.operations.lose_receipt = True
     run = batch.service.start(options(), request_id="lost-receipt")
     task_id = run["current_task_id"]
-    assert run["status"] == "blocked"
+    assert run["status"] == "running"
     assert run["sequence"] == 1
     assert len(batch.operations.started) == 1
 
     restarted_service = batch.controller._governance_runs()
     restarted_service.tasks = batch.operations
-    resumed = restarted_service.resume(run["run_id"])
-    assert resumed["current_task_id"] == task_id
+    continued = restarted_service.advance(run["run_id"])
+    assert continued["current_task_id"] == task_id
     assert len(batch.workers.launches) == 1
     for _ in range(2):
         assert restarted_service.advance(run["run_id"])["current_task_id"] == task_id

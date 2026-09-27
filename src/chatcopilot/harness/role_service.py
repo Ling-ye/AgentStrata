@@ -71,6 +71,12 @@ class RoleWorkflow:
                 result.execution["skill_load"] = {key: skill[key] for key in
                                                  ("name", "path", "sha256", "reference_sha256")}
             value = role_result(role, result.payload, governance=governance)
+            if (governance and role == Role.CODING and task["source"].get("skill_learning")
+                    and not value["needs_replan"] and not value["gaps"]):
+                from chatcopilot.harness.skill_context import LESSONS_PATH, promote_lesson_draft
+                result.execution["skill_draft_sha256"] = promote_lesson_draft(root, output,
+                    task["baseline_manifest"][LESSONS_PATH]["sha256"])
+                cancel()
             reference = self.artifacts.put(role.value, number, value)
             execution = self.artifacts.put("execution", number, result.execution)
             refs = {**self.store.get(self.task_id).get("role_artifacts", {}), role.value: asdict(reference)}
@@ -114,12 +120,14 @@ class RoleWorkflow:
                                        rules=rules, attempt=number, failure=failure)
             index_ref = self.artifacts.put("source_index", number, index)
             self.store.update(self.task_id, source_index_ref=asdict(index_ref))
-        evidence = {"source": {key: original[key] for key in ("kind", "bot_id", "original_input", "trace_archive", "trace") if key in original},
+        evidence = {"source": {key: original[key] for key in ("kind", "bot_id", "original_input", "trace_archive", "trace", "skill_learning") if key in original},
                     "feedback": original.get("feedback", {}),
                     "acceptance": task["acceptance"], "baseline_root": str(baseline),
                     "verification_capabilities": capabilities}
         if runtime_entrypoint:
             evidence["source"]["runtime_entrypoint"] = runtime_entrypoint
+        if governance:
+            evidence["source"]["previous_run_findings"] = task["source"].get("previous_run_findings", [])
         if task.get("prior_material"):
             prior = self.artifacts.put("prior_validation", 1, task["prior_material"])
             evidence["prior_validation"] = self.artifacts.navigation(prior)

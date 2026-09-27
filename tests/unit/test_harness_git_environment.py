@@ -245,3 +245,56 @@ def test_role_pytest_runs_without_socket_plugin(repository, tmp_path, monkeypatc
     adapter._execute_impl(repository, AgentCall("fixture", role, 1, "fixture", {"source": {}, "base_commit": head}),
                           RepairOptions("unused"), tmp_path / "output", lambda: None)
     assert seen["executed"]
+
+
+def test_skill_learning_native_boundary_writes_only_private_draft(repository, tmp_path, monkeypatch, native_binary):
+    """The real nested Codex sandbox cannot patch the Skill source directly."""
+    from chatcopilot.harness.skill_context import LESSONS_PATH, SKILL_PATH
+
+    skill = repository / SKILL_PATH
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: harness-code-health\ndescription: procedure\n---\n")
+    lesson = repository / LESSONS_PATH
+    lesson.parent.mkdir(parents=True)
+    lesson.write_text("# Lessons\n")
+    git(repository, "add", ".")
+    git(repository, "commit", "-qm", "skill fixture")
+    head = git_output(repository, "rev-parse", "HEAD")
+    adapter = intercept_adapter(monkeypatch, native_binary, tmp_path)
+    real_permissions = codex_adapter.permission_config
+    seen = {}
+
+    def permissions(scope, **kwargs):
+        value = real_permissions(scope, **kwargs)
+        if kwargs.get("private_paths"):
+            seen["config"] = value
+            seen["scope"] = scope
+        return value
+
+    monkeypatch.setattr(codex_adapter, "permission_config", permissions)
+    output = tmp_path / "execution"
+    script = ("from pathlib import Path\n"
+        f"draft=Path({str(output / 'draft' / 'evidence.md')!r})\n"
+        f"target=Path({str(lesson)!r})\n"
+        "draft.write_text('# New lesson\\n')\n"
+        "try:\n    target.write_text('forbidden')\n"
+        "except OSError:\n    pass\n"
+        "else:\n    raise AssertionError('Skill target was writable')\n")
+
+    def process(outer, **kwargs):
+        native = [str(native_binary), "sandbox", "-P", "agentstrata", "-C", str(repository)]
+        for entry in seen["config"]:
+            native += ["-c", entry]
+        native += ["--", str(Path(sys.executable).parent.resolve() / Path(sys.executable).name), "-c", script]
+        result = subprocess.run(outer[:outer.index("--") + 1] + native,
+                                capture_output=True, text=True, timeout=30, env=kwargs["environment"])
+        assert result.returncode == 0, result.stdout + result.stderr
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(codex_adapter, "run_session", process)
+    adapter._execute_impl(repository, AgentCall("fixture", Role.CODING, 1, "lesson", {
+        "source": {"kind": "code_health", "skill_learning": {"origin_task_id": "fixture"}},
+        "base_commit": head}), RepairOptions("unused"), output, lambda: None)
+    assert (output / "draft/evidence.md").read_text() == "# New lesson\n"
+    assert lesson.read_text() == "# Lessons\n"
+    assert seen["scope"].writable_roots == (output / "draft",)

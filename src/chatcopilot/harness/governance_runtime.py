@@ -43,6 +43,7 @@ def governance_runs(controller):
 
 def reconcile_runs(controller):
     service = governance_runs(controller)
+    service.release_safety_holds()
     for run in service.runs.active(str(controller.repository)):
         try:
             service.advance(run["run_id"])

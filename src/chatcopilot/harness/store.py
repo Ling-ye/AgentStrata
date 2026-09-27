@@ -174,7 +174,8 @@ class HarnessStore:
     def _governance_busy(task: dict[str, Any]) -> bool:
         delivery = task.get("delivery") or {}
         pending = delivery.get("state") not in {"merged", "closed", "cancelled"}
-        return (task["status"] in ACTIVE or bool(task.get("current_evaluation_id") or task.get("delivery_evaluation"))
+        return (bool(task.get("governance_unsafe")) or task["status"] in ACTIVE
+                or bool(task.get("current_evaluation_id") or task.get("delivery_evaluation"))
                 or pending and bool(task.get("accepted_candidate") or delivery.get("pr_number")
                                     or delivery.get("commit_sha") or task.get("publication_intent")))
 

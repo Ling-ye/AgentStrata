@@ -98,7 +98,7 @@ export default function CodeHealthPage() {
     } finally { setSaving(false); }
   }
   return <Space direction="vertical" size={20} style={{ width: "100%", minWidth: 0 }}>
-    <PageSection title="代码熵回收" description="依据黄金原则与现行 SDD，发现一个问题后立即修复、验证并交付 PR；合并后再发现下一项。">
+    <PageSection title="代码熵回收" description="依据黄金原则与现行 SDD，发现一个问题后尝试修复、验证并交付；处理失败且安全收尾后继续下一项。">
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
         <div style={grid}>
           <div>停止条件<Select aria-label="熵回收停止条件" value={mode} onChange={setMode}
@@ -116,8 +116,8 @@ export default function CodeHealthPage() {
           <div>每个问题的修复尝试上限（含首轮）<InputNumber aria-label="每个问题的修复尝试上限" min={1} precision={0} value={attempts} onChange={setAttempts} /></div>
         </div>
         <Text type="secondary">修复尝试上限只限制同一问题的首次修复和失败返工。{mode === "time"
-          ? "累计执行时间跨问题共享，等待 GitHub 检查或审查不计时。" : "达到发现数后完成最后一项再结束；此模式不附加时间上限。"}</Text>
-        <Text type="secondary">每项从最新远端 main 调查，本地未提交改动不纳入。现有测试、依赖和规则调整列为待判断；当前问题未完成时停止继续发现。</Text>
+          ? "累计执行时间跨问题共享，等待 GitHub 检查或审查不计时。" : "发现数包含处理失败的问题；达到上限后结束，此模式不附加时间上限。"}</Text>
+        <Text type="secondary">每项从最新远端 main 调查，本地未提交改动不纳入。现有测试、依赖和规则调整列为待判断；无法确认 worker 或远端交付已停止时，批次结束为运行失败。</Text>
         {(error || config.isError) && <Alert type="error" content={error || String(config.error)} />}
         {models.isError && <Alert type="error" content="无法读取 Harness worker 模型目录，请检查 Codex CLI、worker 凭据与网络。"
           action={<Button size="small" onClick={() => void models.refetch()}>重试</Button>} />}
@@ -157,7 +157,7 @@ export default function CodeHealthPage() {
         columns={[
           { title: "批次", width: 180, render: (_, run) => <Button type="text" onClick={() => openRun(run.run_id)}>{run.run_id.slice(0, 17)}</Button> },
           { title: "停止条件", render: (_, run) => stopLabel(run.options.stop_condition) },
-          { title: "进度", render: (_, run) => `发现 ${run.found_count} · 合并 ${run.merged_count}` },
+          { title: "进度", render: (_, run) => `发现 ${run.found_count} · 合并 ${run.merged_count} · 失败 ${run.failed_count}` },
           { title: "当前问题", render: (_, run) => run.tasks[run.tasks.length - 1]?.purpose === "skill_learning"
             ? "Skill 学习" : run.tasks[run.tasks.length - 1]?.governance_summary?.topic ?? "等待调查" },
           { title: "状态", render: (_, run) => <Tag>{RUN_LABELS[run.status] ?? run.status}</Tag> },

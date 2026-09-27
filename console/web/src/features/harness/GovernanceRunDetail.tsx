@@ -25,12 +25,15 @@ export function GovernanceRunDetail({ runId, onRestart }: { runId: string; onRes
   if (query.isPending) return <Spin tip="读取回收批次…" />;
   if (!run) return <Alert type="error" content={String(query.error)} />;
   const taskId = selected || run.current_task_id;
+  const selectedTask = run.tasks.find(task => task.task_id === taskId);
   return <Space direction="vertical" size={16} style={{ width: "100%", minWidth: 0 }}>
     <Typography.Text copyable>{run.run_id}</Typography.Text>
     <Space wrap><Tag>{RUN_LABELS[run.status] ?? run.status}</Tag><Typography.Text>{stopLabel(run.options.stop_condition)}</Typography.Text>
-      <Typography.Text>已发现 {run.found_count} 项 · 已合并 {run.merged_count} 项</Typography.Text>
+      <Typography.Text>已发现 {run.found_count} 项 · 已合并 {run.merged_count} 项 · 处理失败 {run.failed_count} 项</Typography.Text>
       <Typography.Text>累计执行 {Math.round(run.elapsed_seconds)} 秒（不含等待）</Typography.Text></Space>
-    {run.message && <Alert type={run.status === "blocked" ? "warning" : "info"} content={run.message} />}
+    {run.message && <Alert type={run.status === "blocked" || run.status === "failed" ? "warning" : "info"} content={run.message} />}
+    {selectedTask?.outcome === "failed" && selectedTask.failure &&
+      <Alert type="warning" content={`当前问题处理失败：${selectedTask.failure.code} · ${selectedTask.failure.message}`} />}
     {(error || query.isError) && <Alert type="error" content={error || String(query.error)} />}
     <Space wrap>
       {(runActive(run) || run.status === "blocked") && <Button status="danger" loading={busy} disabled={run.status === "cancel_requested"}
@@ -40,7 +43,7 @@ export function GovernanceRunDetail({ runId, onRestart }: { runId: string; onRes
     </Space>
     {!!run.tasks.length && <><Select aria-label="查看回收问题" value={taskId ?? undefined} onChange={setSelected}
       options={run.tasks.map(task => ({ value: task.task_id, label:
-        `${task.purpose === "skill_learning" ? "Skill 学习" : `第 ${task.governance_sequence} 项`} · ${task.governance_summary?.topic ?? "调查中"} · ${task.delivery ? deliveryLabel(task.delivery.state) : REPAIR_LABELS[task.status] ?? task.status}` }))} />
+        `${task.purpose === "skill_learning" ? "Skill 学习" : `第 ${task.governance_sequence} 项`} · ${task.governance_summary?.topic ?? "调查中"} · ${task.outcome === "failed" ? `处理失败${task.error_code ? ` (${task.error_code})` : ""}` : task.delivery ? deliveryLabel(task.delivery.state) : REPAIR_LABELS[task.status] ?? task.status}` }))} />
       <Space wrap>{run.tasks.filter(task => task.delivery?.pr_url).map(task => <a key={task.task_id} href={task.delivery!.pr_url} target="_blank" rel="noreferrer">
         {task.purpose === "skill_learning" ? "Skill 学习" : `第 ${task.governance_sequence} 项`} PR #{task.delivery!.pr_number} · {deliveryLabel(task.delivery!.state)}
       </a>)}</Space></>}

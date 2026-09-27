@@ -415,7 +415,7 @@ def test_skill_learning_candidate_reuses_governance_verification_with_exact_path
         [name for name in manifest if permitted_change(name, governance=True, learning=True)],
         artifacts.read(principles), learning=True)
     store.update(ident, source=source, base_commit=head, principles=asdict(principles),
-                 governance_context=asdict(context))
+                 governance_context=asdict(context), baseline_manifest=manifest)
 
     class LearningRoles(GovernanceRoles):
         def execute(self, root, call, options, output, cancel):
@@ -433,7 +433,9 @@ def test_skill_learning_candidate_reuses_governance_verification_with_exact_path
                     "selected_finding_id": "lesson", "inspected_paths": [LESSONS_PATH],
                     "uninspected": []}, {})
             if call.role == Role.CODING:
-                (root / LESSONS_PATH).write_text("# Lessons\n\nOld guidance.\n\nCheck the actual caller before moving validation.\n")
+                draft = output / "draft"
+                draft.mkdir(parents=True, exist_ok=True)
+                (draft / "evidence.md").write_text("# Lessons\n\nOld guidance.\n\nCheck the actual caller before moving validation.\n")
                 return AgentResult({"summary": "Added the general procedure", "notes": [],
                     "needs_replan": False, "gaps": []}, {})
             if call.role == Role.REVIEW:
@@ -449,3 +451,63 @@ def test_skill_learning_candidate_reuses_governance_verification_with_exact_path
     result = run_task(store, ident, GreenVerifier(), LearningRoles())
     assert result["status"] == "fixed", result.get("message")
     assert store.attempts(ident)[0]["changed_files"] == [LESSONS_PATH]
+
+
+def test_same_finding_can_append_evidenced_ordinary_caller(governance):
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from chatcopilot.harness.governance_repository import bind_report
+    from chatcopilot.harness.models import HarnessError
+
+    store, ident, repo = governance
+    caller = "src/chatcopilot/harness/task_budget.py"
+    path = repo / caller
+    path.parent.mkdir(parents=True)
+    path.write_text("from chatcopilot.core.probe import value\n")
+    subprocess.check_call(["git", "-C", str(repo), "add", "."])
+    subprocess.check_call(["git", "-C", str(repo), "-c", "user.name=Fixture",
+                           "-c", "user.email=fixture@example.com", "commit", "-qm", "caller baseline"])
+    artifacts = ArtifactRepository(store.root / "jobs" / ident)
+    manifest = source_manifest(repo)
+    context = freeze_context(artifacts, repo, manifest,
+        [name for name in manifest if permitted_change(name, governance=True)],
+        artifacts.read(store.get(ident)["principles"]))
+    store.update(ident, current_attempt=1, governance_context=asdict(context))
+    plan = GovernanceRoles().execute(repo, SimpleNamespace(role=Role.PLAN, evidence={}), None, None, lambda: None).payload
+    bind_report(store, ident, artifacts, plan, repo)
+    initial = store.get(ident)["frozen_finding"]
+    revised = deepcopy(plan)
+    revised["findings"][0]["affected_paths"].append(caller)
+    revised["findings"][0]["evidence"].append({"path": caller, "start_line": 1, "end_line": 1})
+    revised["findings"][0]["impact"] = "The caller also relies on this rule"
+    store.update(ident, current_attempt=2)
+    report = bind_report(store, ident, artifacts, revised, repo)
+    assert report["selected"]["affected_paths"][-1] == caller
+    assert len(store.get(ident)["finding_revisions"]) == 2
+    assert store.get(ident)["finding_revisions"][0] == initial
+    bind_report(store, ident, artifacts, revised, repo)
+    assert len(store.get(ident)["finding_revisions"]) == 2
+
+    protected = deepcopy(revised)
+    protected["findings"][0]["affected_paths"].append(PRINCIPLE)
+    protected["findings"][0]["evidence"].append({"path": PRINCIPLE, "start_line": 1, "end_line": 1})
+    with pytest.raises(HarnessError, match="新增范围"):
+        bind_report(store, ident, artifacts, protected, repo)
+
+
+def test_new_child_rejects_exact_prior_batch_finding(governance):
+    from types import SimpleNamespace
+    from chatcopilot.harness.governance_repository import bind_report
+    from chatcopilot.harness.models import HarnessError
+
+    store, ident, repo = governance
+    plan = GovernanceRoles().execute(repo, SimpleNamespace(role=Role.PLAN, evidence={}), None, None, lambda: None).payload
+    finding = plan["findings"][0]
+    prior = {"id": finding["id"], "summary": finding["summary"],
+             "principle_refs": finding["principle_refs"], "affected_paths": finding["affected_paths"],
+             "evidence": finding["evidence"]}
+    task = store.get(ident)
+    store.update(ident, current_attempt=1, source={**task["source"], "previous_run_findings": [prior]})
+    with pytest.raises(HarnessError, match="已发现同一问题"):
+        bind_report(store, ident, ArtifactRepository(store.root / "jobs" / ident), plan, repo)
+    assert not store.get(ident).get("governance_finding_id")

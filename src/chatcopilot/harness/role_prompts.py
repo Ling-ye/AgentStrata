@@ -64,13 +64,13 @@ PROMPTS = {
 GOVERNANCE_PROMPTS = {
     Role.MAIN: "本任务是全仓代码熵回收；安排 Plan 依据冻结 SDD 与黄金原则自主调查，一个连贯主题一个 PR。"
                "确认首个有充分证据的问题后停止发现，先完成该问题；调查、实现和返修共用预算。",
-    Role.PLAN: "本任务是代码熵回收。确认首个有充分证据的问题后立即停止继续发现，findings 最多一项；需要人工判断时也停止。未继续调查范围写入 uninspected。若提供 frozen_finding，返工必须保留其身份、规则引用、源码证据、文件范围和验收目标，不得重新发现或换题。先按 governance_context 规则索引理解当前契约，自主搜索和追踪调用者。"
+    Role.PLAN: "本任务是代码熵回收。确认首个有充分证据的问题后立即停止继续发现，findings 最多一项；需要人工判断时也停止。未继续调查范围写入 uninspected。若提供 frozen_finding，返工必须保留其身份、规则引用、原有源码证据、原有文件范围和验收目标，不得重新发现或换题。若真实调用链证明原范围遗漏必要的普通源码文件，仅在原清单末尾追加文件，并在证据末尾追加该文件的冻结源码行；不得改写原项。先按 governance_context 规则索引理解当前契约，自主搜索和追踪调用者。"
                "findings.evidence 使用 baseline_root 中源码的 path、start_line、end_line（1 起始且包含结束行），"
                "宿主会按行提取原文，不要概述或复制成伪源码；principle_refs 使用规则文件路径，可带 :行号 或锚点。"
                "影响、affected_paths（仅 Coding 预计修改的产品文件）和明确 acceptance_criteria。"
                "Test 新建的草案或宿主收录的回归测试不属于产品改动，不得放进 affected_paths；已有测试仍保持冻结。"
                "选择一个 automatic 主题，selected_finding_id 必须对应发现。敏感文件、业务变更或规则调整为 needs_decision。"
-               "无可执行发现返回 no_changes，仅需判断返回 needs_review；不虚构问题。"
+               "若 source.previous_run_findings 含本批次已发现的问题，不再选同一问题；无新发现返回 no_changes，仅需判断返回 needs_review；不虚构问题。"
                "inspected_paths 只报告实际读取路径，未读或不确定范围写 uninspected；不得将目录清单当作阅读。"
                "返修仍须引用 baseline_root 的原始代码行，当前候选代码不能冒充原始偏离。"
                "只有具名的冻结测试或检查已经直接断言每项 acceptance_criteria 时才可使用 verification_order=existing，"
@@ -106,7 +106,7 @@ SKILL_LEARNING_PROMPTS = {
         "这是流程文档改动，使用冻结仓库检查与独立审核验证，不新增复述文案的测试。"
     ),
     Role.CODING: (
-        "只修改被允许的 Skill 参考文件，写简短、可泛化的触发条件、失败机制和有效做法。"
+        "只在指定 draft 目录写 evidence.md，内容为完整参考文件；宿主核验后收录到唯一允许的 Skill 参考文件。写简短、可泛化的触发条件、失败机制和有效做法。"
         "不得写任务 ID、日期、原始日志、私有材料、权限扩张或本次结果声称；不得改 SKILL.md、代码或测试。"
     ),
     Role.TEST: "本项只修改 Skill 流程文档；不要为固定文案补测试。报告需要宿主执行的文档、公开边界和仓库检查。",

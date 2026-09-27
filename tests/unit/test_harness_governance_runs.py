@@ -154,13 +154,22 @@ def test_no_findings_finishes_without_repeated_scanning(batch):
 
 @pytest.mark.parametrize("status,delivery", [("needs_review", "no_changes"), ("failed", "no_changes"),
     ("blocked", "no_changes"), ("fixed", "blocked"), ("fixed", "checks_failed"), ("fixed", "closed")])
-def test_failure_or_sensitive_item_stops_whole_run(batch, status, delivery):
+def test_failed_finding_counts_and_next_item_starts_after_safe_delivery(batch, status, delivery):
     run = batch.service.start(count_options())
+    first = run["current_task_id"]
     finish(batch, run, status=status, delivery=delivery)
-    stopped = batch.service.advance(run["run_id"])
-    assert stopped["status"] == "blocked" and stopped["found_count"] == 1
+    continued = batch.service.advance(run["run_id"])
+    assert (continued["status"], continued["found_count"], continued["failed_count"], continued["merged_count"]) == (
+        "running", 1, 1, 0)
+    assert continued["tasks"][0]["outcome"] == "failed"
+    assert continued["tasks"][0]["failure"]["code"] == (delivery if status == "fixed" else status)
+    assert continued["current_task_id"] != first and len(batch.port.started) == 2
     batch.service.advance(run["run_id"])
-    assert len(batch.port.started) == 1
+    assert len(batch.port.started) == 2
+    finish(batch, continued, status="failed", delivery="no_changes")
+    done = batch.service.advance(run["run_id"])
+    assert (done["status"], done["stop_reason"], done["found_count"], done["failed_count"]) == (
+        "completed", "findings_limit", 2, 2)
 
 
 def test_duplicate_requests_and_concurrent_callbacks_do_not_duplicate_children(batch):
@@ -177,10 +186,10 @@ def test_duplicate_requests_and_concurrent_callbacks_do_not_duplicate_children(b
 def test_lost_creation_receipt_and_service_restart_recover_same_child(batch):
     batch.port.lose_response = True
     run = batch.service.start(count_options(), request_id="lost")
-    assert run["status"] == "blocked" and len(batch.port.started) == 1
+    assert run["status"] == "running" and len(batch.port.started) == 1
     service = GovernanceRuns(batch.store, batch.lifecycle, batch.port, batch.service.repository)
-    resumed = service.resume(run["run_id"])
-    assert resumed["current_task_id"] == run["current_task_id"]
+    continued = service.advance(run["run_id"])
+    assert continued["current_task_id"] == run["current_task_id"]
     assert len(batch.port.started) == len(batch.workers.launches) == 1
     assert service.start(count_options(), request_id="lost")["run_id"] == run["run_id"]
 
@@ -234,9 +243,9 @@ def test_task_budget_accounts_active_segments_and_resume_keeps_usage(batch):
             budget.check()
     assert batch.store.get(ident)["elapsed_seconds"] == 10
     finish(batch, run, status="blocked", elapsed=10)
-    batch.service.advance(run["run_id"])
-    with pytest.raises(HarnessError, match="不会重置"):
-        batch.service.resume(run["run_id"])
+    done = batch.service.advance(run["run_id"])
+    assert done["status"] == "completed" and done["stop_reason"] == "budget_exhausted"
+    assert done["failed_count"] == 1 and done["elapsed_seconds"] == 10
 
 
 def test_count_mode_has_no_hidden_deadline_and_cancel_still_works(batch):
@@ -332,15 +341,15 @@ def test_controller_run_entrypoint_creates_and_freezes_ordinary_children(tmp_pat
         controller.retry_delivery(current["task_id"])
 
 
-def test_resume_preserves_finding_attempts_and_elapsed_time(batch):
+def test_failed_finding_preserves_attempts_and_elapsed_time(batch):
     run = batch.service.start(GovernanceOptions("fixture", stop_condition={"mode": "time", "seconds": 30}))
     ident = run["current_task_id"]
     finish(batch, run, status="blocked", elapsed=7)
     batch.store.save_attempt(ident, 1, {"number": 1, "status": "rejected", "counts_toward_budget": True})
-    batch.service.advance(run["run_id"])
-    resumed = batch.service.resume(run["run_id"])
-    assert resumed["found_count"] == 1 and resumed["elapsed_seconds"] == 7
-    assert resumed["current_task_id"] == ident and len(batch.port.started) == 1
+    continued = batch.service.advance(run["run_id"])
+    assert continued["found_count"] == continued["failed_count"] == 1
+    assert continued["elapsed_seconds"] == 7
+    assert continued["current_task_id"] != ident and len(batch.port.started) == 2
     assert len(batch.store.attempts(ident)) == 1
     assert batch.store.get(ident)["options"]["max_attempts"] == 3
 
@@ -449,7 +458,69 @@ def test_model_preflight_rechecks_before_next_finding(batch):
     finish(batch, run)
     batch.port.preflight_error = HarnessError("model_unavailable", "model removed")
     result = batch.service.advance(run["run_id"])
-    assert result["status"] == "blocked"
+    assert result["status"] == "failed"
     assert result["stop_reason"] == "model_unavailable"
     assert len(batch.port.started) == 1
     assert result["found_count"] == 1
+
+
+def test_unknown_worker_ends_batch_without_creating_next_item(batch):
+    run = batch.service.start(count_options(2))
+    first = run["current_task_id"]
+    finish(batch, run, status="failed", delivery="no_changes")
+    batch.workers.states[first] = WorkerState.UNKNOWN
+    failed = batch.service.advance(run["run_id"])
+    assert (failed["status"], failed["stop_reason"], failed["current_task_id"]) == (
+        "failed", "worker_unavailable", first)
+    assert len(batch.port.started) == 1
+    with pytest.raises(HarnessError, match="未确认停止"):
+        batch.service.start(count_options(), request_id="unsafe-next")
+
+
+def test_unconfirmed_pr_cancellation_ends_batch_without_next_item(batch):
+    run = batch.service.start(count_options(2))
+    first = run["current_task_id"]
+    finish(batch, run, status="fixed", delivery="checks_failed")
+    batch.workers.launch_delivery = lambda _task: DispatchResult("scheduled")
+    waiting = batch.service.advance(run["run_id"])
+    assert waiting["status"] == "waiting_delivery" and waiting["current_task_id"] == first
+    failed = batch.service.advance(run["run_id"])
+    assert (failed["status"], failed["stop_reason"], failed["current_task_id"]) == (
+        "failed", "delivery_unconfirmed", first)
+    assert len(batch.port.started) == 1
+
+
+def test_failure_without_frozen_finding_cannot_count_or_loop(batch):
+    run = batch.service.start(count_options(3))
+    finish(batch, run, status="failed", delivery="no_changes", found=False)
+    result = batch.service.advance(run["run_id"])
+    assert result["status"] == "failed" and result["found_count"] == result["failed_count"] == 0
+    assert len(batch.port.started) == 1
+
+
+def test_failed_batch_releases_safety_hold_only_after_worker_stops(batch):
+    run = batch.service.start(count_options(2))
+    ident = run["current_task_id"]
+    finish(batch, run, status="failed", delivery="no_changes")
+    batch.workers.states[ident] = WorkerState.UNKNOWN
+    assert batch.service.advance(run["run_id"])["status"] == "failed"
+    batch.service.release_safety_holds()
+    assert batch.store.get(ident)["governance_unsafe"] is True
+    batch.workers.states[ident] = WorkerState.INACTIVE
+    batch.service.release_safety_holds()
+    assert batch.store.get(ident)["governance_unsafe"] is False
+    fresh = batch.service.start(count_options(1), request_id="after-safe-stop")
+    assert fresh["status"] == "running"
+    assert batch.service.get(run["run_id"])["status"] == "failed"
+
+
+def test_batch_detail_and_page_are_read_only_and_share_progress(batch):
+    run = batch.service.start(count_options(2))
+    finish(batch, run, status="failed", delivery="no_changes", elapsed=9)
+    before = batch.service.runs.get(run["run_id"])["updated_at"]
+    detail = batch.service.get(run["run_id"])
+    page = batch.service.page(page=1, limit=20)
+    assert page["runs"][0]["tasks"] == detail["tasks"]
+    assert (detail["found_count"], detail["merged_count"], detail["failed_count"], detail["elapsed_seconds"]) == (
+        1, 0, 0, 9)
+    assert batch.service.runs.get(run["run_id"])["updated_at"] == before
