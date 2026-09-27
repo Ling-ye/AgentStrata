@@ -8,7 +8,7 @@ import time
 import uuid
 
 from chatcopilot.core.private_sqlite import json_text, private_lock
-from chatcopilot.harness.governance_types import RUN_ACTIVE_STATUSES
+from chatcopilot.harness.governance_types import RUN_ACTIVE, RUN_ACTIVE_STATUSES
 from chatcopilot.harness.models import HarnessError
 
 
@@ -99,11 +99,8 @@ class GovernanceRunRepository:
         return [json.loads(row[0]) for row in rows]
 
     def page(self, *, repository, page=1, limit=20, search="", status=""):
-<<<<<<< HEAD
         if page < 1 or not 1 <= limit <= 100 or status and status not in RUN_ACTIVE | {"completed", "blocked", "cancelled", "failed"}:
             raise ValueError("无效的批次分页或状态")
-=======
->>>>>>> 5e639abdb83121f1b20dd216e78cdb9706fd45b3
         clause, params = "repository=? AND run_id LIKE ?", [repository, "%" + search + "%"]
         if status:
             clause += " AND status=?"

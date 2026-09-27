@@ -12,7 +12,6 @@ from chatcopilot.harness.governance_types import GovernanceLifecyclePort, Govern
 from chatcopilot.harness.models import ACTIVE, HarnessError, RepairOptions
 
 
-<<<<<<< HEAD
 _DELIVERY_DONE = frozenset({"no_changes", "merged", "closed", "cancelled"})
 _DELIVERY_FAILED = frozenset({"blocked", "paused", "checks_failed", "retryable", "closed", "cancelled"})
 _TASK_FAILED = frozenset({"needs_review", "failed", "blocked", "interrupted", "cancelled"})
@@ -45,21 +44,6 @@ def project_run(run: dict, tasks: list[dict]) -> dict:
         "purpose": "skill_learning" if task.get("skill_learning_origin") else "code_health",
         "outcome": outcome(task),
         **({"failure": task["governance_failure"]} if task.get("governance_failure") else {}),
-=======
-def project_governance_run(run, tasks):
-    """Derive the public batch view from its stored record and ordered tasks."""
-    values = {"found_count": sum(bool(task.get("governance_finding_id")) and not task.get("skill_learning_origin")
-                                 for task in tasks),
-              "merged_count": sum(task.get("delivery", {}).get("state") == "merged" and not task.get("skill_learning_origin")
-                                  for task in tasks),
-              "elapsed_seconds": sum(float(task.get("elapsed_seconds", 0)) for task in tasks),
-              "current_task_id": tasks[-1]["task_id"] if tasks else None, "sequence": len(tasks)}
-    return {**run, **values, "tasks": [{
-        **{key: task[key] for key in (
-            "task_id", "status", "stage", "base_commit", "governance_sequence", "governance_summary", "governance_finding_id",
-            "message", "stop_reason", "elapsed_seconds", "delivery") if key in task},
-        "purpose": "skill_learning" if task.get("skill_learning_origin") else "code_health",
->>>>>>> 5e639abdb83121f1b20dd216e78cdb9706fd45b3
     } for task in tasks]}
 
 
@@ -82,7 +66,6 @@ class GovernanceRuns:
             raise HarnessError("not_found", "此仓库没有该熵回收批次")
         return self._project(run)
 
-<<<<<<< HEAD
     def page(self, **kwargs):
         page = self.runs.page(repository=self.repository, **kwargs)
         return {**page, "runs": [self._project(run) for run in page["runs"]]}
@@ -107,21 +90,6 @@ class GovernanceRuns:
             except Exception:
                 # Keep the hold when the observation or persistence is uncertain.
                 continue
-=======
-    def _project(self, run):
-        return project_governance_run(run, self.runs.tasks(run["run_id"]))
-
-    def _refresh(self, run_id):
-        value = self._project(self.runs.get(run_id))
-        return self.runs.update(run_id, **{key: value[key] for key in (
-            "current_task_id", "sequence", "found_count", "merged_count", "elapsed_seconds")})
-
-    def page(self, *, page=1, limit=20, search="", status=""):
-        if page < 1 or not 1 <= limit <= 100 or status and status not in RUN_ACTIVE | {"completed", "blocked", "cancelled"}:
-            raise ValueError("无效的批次分页或状态")
-        result = self.runs.page(repository=self.repository, page=page, limit=limit, search=search, status=status)
-        return {"runs": [self._project(run) for run in result["runs"]], "total": result["total"]}
->>>>>>> 5e639abdb83121f1b20dd216e78cdb9706fd45b3
 
     def start(self, options: GovernanceOptions, *, request_id=None):
         request_id = request_id or uuid.uuid4().hex
@@ -246,7 +214,8 @@ class GovernanceRuns:
                     if task["status"] == "no_changes":
                         self.runs.update(run_id, status="completed", stop_reason="no_changes", message="未发现可执行问题；调查范围见当前任务")
                         return
-<<<<<<< HEAD
+                    if task["status"] == "fixed" and delivery not in {"merged", *_DELIVERY_FAILED}:
+                        return
                     if task["status"] == "fixed" and delivery == "merged":
                         from chatcopilot.harness.skill_context import learning_source
                         source = learning_source(task, self.store.attempts(task["task_id"]))
@@ -269,28 +238,6 @@ class GovernanceRuns:
                             return
                         if not self._settle_failed_item(run_id, task):
                             return
-=======
-                    if task["status"] != "fixed" or delivery in {"blocked", "paused", "checks_failed", "retryable", "closed", "cancelled"}:
-                        self.runs.update(run_id, status="blocked", stop_reason=task.get("error_code") or delivery or task["status"],
-                            message=task.get("delivery", {}).get("message") if task["status"] == "fixed" else task.get("message") or "当前问题未完成，已停止继续发现")
-                        return
-                    if delivery != "merged":
-                        return
-                    from chatcopilot.harness.skill_context import learning_source
-                    source = learning_source(task, self.store.attempts(task["task_id"]))
-                    if source:
-                        options = GovernanceOptions.from_payload(run["options"])
-                        child_options = RepairOptions(options.model, options.reasoning_effort, 1, 1800)
-                        self.tasks.preflight_model(options.model, options.reasoning_effort)
-                        child = self.tasks.start_learning(run, run["sequence"] + 1, child_options, source)
-                        if child.get("governance_run_id") != run_id or child.get("governance_sequence") != run["sequence"] + 1:
-                            raise HarnessError("governance_active", "Skill 学习任务不属于当前回收批次")
-                        self.store.update(task["task_id"], skill_learning={"state": "queued", "task_id": child["task_id"]})
-                        self._refresh(run_id)
-                        self.runs.update(run_id, status="running", stop_reason="", message="核对已合并改善的可复用教训")
-                        self.tasks.launch(child["task_id"])
-                        return
->>>>>>> 5e639abdb83121f1b20dd216e78cdb9706fd45b3
             run = self._refresh(run_id)
             stop = run["options"]["stop_condition"]
             if stop["mode"] == "findings" and run["found_count"] >= stop["count"]:
@@ -313,11 +260,7 @@ class GovernanceRuns:
             if child.get("governance_run_id") != run_id or child.get("governance_sequence") != run["sequence"] + 1:
                 raise HarnessError("governance_active", "创建结果不属于当前回收批次，未启动任务")
             self._refresh(run_id)
-<<<<<<< HEAD
             self.runs.update(run_id, status="running", stop_reason="", message="逐项发现并处理")
-=======
-            self.runs.update(run_id, status="running", stop_reason="", message="逐项发现并修复中")
->>>>>>> 5e639abdb83121f1b20dd216e78cdb9706fd45b3
             self.tasks.launch(child["task_id"])
         except Exception as exc:
             current = self._refresh(run_id)
