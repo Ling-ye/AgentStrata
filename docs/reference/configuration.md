@@ -2,6 +2,8 @@
 
 修改实例能力、模型或环境投影时阅读。使用方法见 [实例运维](../guides/instances.md)，字段解释以 BotSpec 类型与解析器为准。
 
+统一模型配置与自动发现的待实施设计见[架构草案](../../specs/unified-llm-configuration/spec.md)。
+
 ## 最小示例
 
 ```yaml

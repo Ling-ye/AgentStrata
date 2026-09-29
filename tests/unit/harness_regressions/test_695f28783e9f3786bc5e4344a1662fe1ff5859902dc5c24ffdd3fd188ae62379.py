@@ -232,7 +232,8 @@ def test_service_creation_resume_cancel_and_reconciliation_poll(tmp_path):
 
     workers.states[task_id] = WorkerState.INACTIVE
     store.update(task_id, status="blocked")
-    assert service.advance(run_id)["status"] == "blocked"
+    # A historical stopped batch is resumable; a new pre-finding failure is not.
+    service.runs.update(run_id, status="blocked")
     resumed = service.resume(run_id)
     assert resumed["status"] == "running" and resumed["current_task_id"] == task_id
     assert tasks.started == [task_id]
@@ -261,3 +262,25 @@ def test_service_creation_resume_cancel_and_reconciliation_poll(tmp_path):
     reconcile_runs(controller)
     assert service.get(run_id)["status"] == "cancelled"
     assert service.runs.active(repository) == []
+
+
+def test_pre_finding_blocked_task_fails_batch_and_rejects_resume(tmp_path):
+    store = HarnessStore(tmp_path / "private")
+    workers = _Workers()
+    lifecycle = _Lifecycle(store, workers)
+    tasks = _Tasks(store, workers)
+    repository = str(tmp_path / "repo")
+    service = GovernanceRuns(store, lifecycle, tasks, repository)
+    options = GovernanceOptions("fixture", stop_condition={"mode": "findings", "count": 2})
+
+    started = service.start(options, request_id="pre-finding-failure")
+    run_id, task_id = started["run_id"], started["current_task_id"]
+    workers.states[task_id] = WorkerState.INACTIVE
+    store.update(task_id, status="blocked")
+    failed = service.advance(run_id)
+    assert (failed["status"], failed["stop_reason"], failed["found_count"], failed["failed_count"]) == (
+        "failed", "discovery_failed", 0, 0)
+    assert tasks.started == [task_id]
+    with pytest.raises(HarnessError) as error:
+        service.resume(run_id)
+    assert error.value.code == "conflict"

@@ -90,13 +90,15 @@ def test_controller_detail_and_page_preserve_projection_filters_and_storage(tmp_
 
     stored_before = _stored_run(controller, target)
     detail = controller.governance_run(target)
-    assert (detail["found_count"], detail["merged_count"], detail["elapsed_seconds"]) == (1, 1, 4.0)
+    assert (detail["found_count"], detail["merged_count"], detail["failed_count"], detail["elapsed_seconds"]) == (
+        1, 1, 0, 4.0)
     assert (detail["current_task_id"], detail["sequence"]) == (latest, 3)
     assert [task["task_id"] for task in detail["tasks"]] == [first, learning, latest]
     assert [task["purpose"] for task in detail["tasks"]] == ["code_health", "skill_learning", "code_health"]
+    assert [task["outcome"] for task in detail["tasks"]] == ["merged", "merged", "pending"]
     assert set(detail["tasks"][0]) == {
         "task_id", "status", "stage", "base_commit", "governance_sequence", "governance_summary",
-        "governance_finding_id", "message", "stop_reason", "elapsed_seconds", "delivery", "purpose",
+        "governance_finding_id", "message", "stop_reason", "elapsed_seconds", "delivery", "purpose", "outcome",
     }
     assert detail["tasks"][1]["governance_finding_id"] == "learning-finding"
 
