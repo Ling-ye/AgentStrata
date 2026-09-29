@@ -23,6 +23,7 @@ from console.backend.routes import (  # noqa: E402
     harness,
     overview,
     shared_services,
+    schedules,
     tasks,
 )
 from chatcopilot.evals.service import EvaluationServiceClient  # noqa: E402
@@ -72,6 +73,7 @@ app.include_router(evals.router)
 app.include_router(evaluations.router)
 app.include_router(infra.router)
 app.include_router(harness.router)
+app.include_router(schedules.router)
 
 _DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
 if _DIST.is_dir():

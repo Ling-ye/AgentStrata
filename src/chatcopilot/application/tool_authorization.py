@@ -9,6 +9,7 @@ from chatcopilot.agent.session import ToolPayloadFilter
 from chatcopilot.agent.tools.executor import PermissionFilter
 from chatcopilot.authorization.payloads import sanitize_tool_payload
 from chatcopilot.authorization.tools import ToolAuthorizationPolicy
+from chatcopilot.authorization.policy import make_authorization_decision
 from chatcopilot.contracts.authorization import (
     AuthorizationDecision,
     AuthorizationOperation,
@@ -33,6 +34,7 @@ def build_tool_permission_filter(
     *,
     policy_version: str,
     on_decision: DecisionSink | None = None,
+    research_only: bool = False,
 ) -> PermissionFilter:
     """Bind one trusted Principal to schema projection and executor rechecks."""
 
@@ -60,6 +62,12 @@ def build_tool_permission_filter(
             request,
             tool=tool,
         )
+        if research_only and decision.allowed and tool_name not in {
+            "search_information", "research_information", "web_fetch_page", "read_tool_result",
+            "tool_search", "tool_describe", "tool_call",
+        }:
+            decision = make_authorization_decision(request, allowed=False,
+                code="scheduled-research-only", policy_version=policy_version)
         trace = current_trace()
         evidence = dict(name=tool_name, phase=current_permission_phase(), allowed=decision.allowed,
                         code=decision.code, policy_version=policy_version, role=principal.role.value,

@@ -178,6 +178,7 @@ class ActorSessionFactory:
         session_id: str,
         principal: Principal,
         turn_identity: TurnIdentity,
+        research_only: bool = False,
     ) -> ActorExecutionState:
         """Create or refresh the exact actor handle for this authorized turn."""
 
@@ -253,15 +254,17 @@ class ActorSessionFactory:
             command_timeouts=getattr(self.agent_runtime, "command_timeouts", CommandTimeouts()),
         readonly_roots=getattr(self.agent_runtime, "readonly_roots", ()),
         )
+        if research_only:
+            binding.service.execution_scope = replace(binding.service.execution_scope, writable_roots=(), native_write=False)
         try:
             file_sender = (
                 self._file_sender_factory(principal, binding.workspace, session_id)
-                if self._file_sender_factory is not None
+                if self._file_sender_factory is not None and not research_only
                 else None
             )
             background_submitter = (
                 self._background_submitter_factory(principal, binding.workspace)
-                if self._background_submitter_factory is not None
+                if self._background_submitter_factory is not None and not research_only
                 else None
             )
             agent_session = self.agent_runtime.open_session(
@@ -277,12 +280,14 @@ class ActorSessionFactory:
                     principal,
                     policy_version=RUNTIME_ACCESS_POLICY_VERSION,
                     on_decision=self._decision_sink,
+                    research_only=research_only,
                 ),
                 background_submitter=background_submitter,
                 file_sender=file_sender,
                 workspace_service=binding.service,
                 host_policy=HostRuntimePolicy(scope=binding.service.execution_scope, network_access=True,
-                    native_capabilities=frozenset({"files", "shell", "web_search", "image", "image_generation", "subagents"}),
+                    native_capabilities=(frozenset({"web_search"}) if research_only else
+                        frozenset({"files", "shell", "web_search", "image", "image_generation", "subagents"})),
                     extension_grants=("apps",) if (principal.role is Role.OWNER and self.runtime.runtime_id == "codex"
                                                    and self.runtime.subagents.codex_extensions) else ()),
                 caller_role_hint=role_value(principal.role),
@@ -598,6 +603,7 @@ class ActorTurnExecutor:
                     session_id=request.session_id,
                     principal=request.principal,
                     turn_identity=identity,
+                    **({"research_only": True} if (request.metadata or {}).get("scheduled_research") else {}),
                 )
                 if state.agent_session is None:
                     raise ActorRuntimeError(
@@ -607,6 +613,7 @@ class ActorTurnExecutor:
                 agent_session = cast(AgentSessionProtocol, state.agent_session)
                 if (
                     not request.resource_refs
+                    and not (request.metadata or {}).get("scheduled_research")
                     and "memory.chat" in tuple(self.factory.runtime.tool_packs)
                 ):
                     try:

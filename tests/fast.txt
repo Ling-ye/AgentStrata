@@ -113,3 +113,7 @@ tests/unit/test_harness_governance.py
 tests/unit/test_harness_governance_schedule.py
 tests/unit/test_harness_model_preflight.py
 tests/unit/test_gateway_replay.py
+
+tests/unit/test_bot_schedules.py
+tests/unit/test_gateway_schedules.py
+tests/unit/test_console_schedules.py

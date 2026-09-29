@@ -186,7 +186,7 @@ export function layerSummaries(model: ExecutionModel, terminal: boolean, hasMore
     const failed = states.filter((state) => ["failed", "error", "cancelled", "aborted"].includes(state.status)).length;
     const running = states.filter((state) => ["running", "pending", "submitting"].includes(state.status)).length;
     const notTraversed = layer === "channel" && !nodes.length && model.nodes.some((node) =>
-      node.item.operation === "gateway.accept" && data(node).entrypoint === "client");
+      node.item.operation === "gateway.accept" && ["client", "schedule"].includes(String(data(node).entrypoint)));
     return { layer, nodes: nodes.length, stages: nodes.filter((node) => node.item.kind === "stage").length,
       failed, running, label: failed ? `${failed} 项异常` : running ? `${running} 项进行中` :
         !nodes.length ? notTraversed ? "未经过" : hasMore ? "尚未取得" : "未记录" :

@@ -1,0 +1,36 @@
+.schedules-page, .schedule-workbench { min-width: 0; }
+.schedule-workbench { display: flex; flex-direction: column; gap: 16px; }
+.schedule-toolbar, .schedule-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.schedule-columns { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr); gap: 20px; align-items: start; }
+.schedule-list, .schedule-history { min-width: 0; }
+.schedule-section-heading { margin-bottom: 12px; min-height: 28px; overflow-wrap: anywhere; }
+.schedule-card { border: 1px solid var(--color-border-2); border-radius: 8px; padding: 16px; margin-bottom: 12px; background: var(--color-bg-2); overflow-wrap: anywhere; }
+.schedule-card.selected { border-color: rgb(var(--primary-6)); }
+.schedule-card p { margin: 8px 0; }
+.schedule-task-select, .schedule-run-row { font: inherit; text-align: left; color: var(--color-text-1); cursor: pointer; width: 100%; }
+.schedule-task-select { border: none; background: none; padding: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.schedule-task-select strong { overflow-wrap: anywhere; min-width: 0; }
+.schedule-instruction { white-space: pre-wrap; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.schedule-muted, .schedule-meta, .schedule-run-row small { color: var(--color-text-3); font-size: 12px; }
+.schedule-meta { margin: 6px 0; }
+.schedule-actions { margin-top: 12px; }
+.schedule-run-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 14px; border: 1px solid var(--color-border-2); border-radius: 6px; margin-bottom: 8px; background: var(--color-bg-2); }
+.schedule-run-row:hover { background: var(--color-fill-1); }
+.schedule-run-row > div { min-width: 0; overflow-wrap: anywhere; }
+.schedule-run-row small { display: block; margin-top: 6px; }
+.schedule-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 16px; }
+.schedule-form-grid, .schedule-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.schedule-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
+.schedule-steps li { padding: 14px; border-radius: 6px; background: var(--color-fill-1); display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+.schedule-steps small { color: var(--color-text-3); }
+.schedule-prose { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; margin: 0; padding: 14px; background: var(--color-fill-1); border-radius: 6px; }
+.schedule-receipt { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; overflow-wrap: anywhere; }
+.schedule-detail .arco-descriptions-value { overflow-wrap: anywhere; }
+@media (max-width: 1000px) { .schedule-columns { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) {
+  .schedule-form-grid, .schedule-steps { grid-template-columns: minmax(0, 1fr); }
+  .schedule-run-row { flex-direction: column; }
+  .schedule-editor .arco-checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
+}
+
+.schedule-editor .arco-modal-content { max-height: calc(100dvh - 180px); overflow-y: auto; }

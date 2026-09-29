@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import asdict, replace
 import hashlib
 import math
 import re
@@ -14,7 +14,7 @@ from typing import Protocol
 from chatcopilot.gateway.result_text import result_preview
 from chatcopilot.application.sessions import SessionManagerError
 from chatcopilot.contracts.turns import PreparedTurn, TurnOutcome
-from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
+from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy, make_authorization_decision
 from chatcopilot.channels.base import ChannelDeliveryError
 from chatcopilot.contracts.agent import AgentEvent, AgentResult, TextDelta
 from chatcopilot.contracts.authorization import (
@@ -27,6 +27,8 @@ from chatcopilot.contracts.authorization import (
 from chatcopilot.contracts.cancellation import CancellationProbe, CancellationToken
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
+    ChannelAccountRef,
+    ConversationRef,
     DeliveryReceipt,
     MessageSegment,
     OutboundEnvelope,
@@ -39,7 +41,7 @@ from chatcopilot.contracts.gateway_rpc import (
     ChatUpdateEvent,
     TextRpcSegment,
 )
-from chatcopilot.contracts.identity import ConversationIdentity, TurnIdentity
+from chatcopilot.contracts.identity import ConversationIdentity, Role, TurnIdentity
 from chatcopilot.core.runtime_observation import (
     channel_input_summary, inbound_summary, result_summary, runtime_stage, turn_summary,
 )
@@ -384,6 +386,103 @@ class GatewayTurnCoordinator:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._actor_executor.close()
+
+    async def execute_scheduled(self, *, run_id: str, schedule_id: str, account: ChannelAccountRef,
+                                group_id: str, prompt: str, preview: bool,
+                                on_generated: Callable[[str], bool]) -> dict:
+        """Trusted host entry only; never exposed as a Channel event or client RPC."""
+        if self._closing:
+            raise GatewayTurnCoordinatorError("gateway_stopping", "Gateway is stopping")
+        self._sessions.assert_current_generation()
+        if (account.channel != "qq" or not re.fullmatch(r"[1-9][0-9]{4,19}", group_id)
+                or not re.fullmatch(r"schedule_[a-f0-9]{24}", schedule_id)
+                or not re.fullmatch(r"schedule_run_[a-f0-9]{32}", run_id)):
+            raise GatewayTurnCoordinatorError("schedule_binding_invalid", "Scheduled target binding is invalid")
+        principal = Principal(channel=account.channel, account_id=account.account_id,
+            conversation=ConversationIdentity(platform="qq", chat_kind="group", chat_id=group_id),
+            user_id=schedule_id, role=Role.USER,
+            evidence_digest=stable_payload_digest({"schedule_id": schedule_id, "run_id": run_id, "group_id": group_id}))
+        authorization = AuthorizationRequest(request_id=run_id, principal=principal,
+            operation=AuthorizationOperation.INGRESS, target="host-scheduled-research",
+            params_digest=stable_payload_digest({"prompt": prompt, "preview": preview}))
+        decision = make_authorization_decision(authorization, allowed=True,
+            code="host-schedule-configured", policy_version=self._admission_policy.policy_version)
+        if self._on_admission_decision:
+            self._on_admission_decision(decision)
+        session = self._sessions.ensure_channel_session(account=account,
+            conversation=ConversationRef("group", group_id))
+        self._begin_run(session_id=session.session_id, run_id=run_id,
+            input_fingerprint=_input_fingerprint(canonical_text=prompt, message_id=None, principal=principal))
+        token = CancellationToken()
+        self._tokens[run_id] = token
+        task = asyncio.create_task(self._execute_scheduled_run(run_id=run_id, session_id=session.session_id,
+            principal=principal, prompt=prompt, preview=preview, on_generated=on_generated, cancellation=token))
+        self._tasks[run_id] = task
+        task.add_done_callback(lambda completed: self._task_finished(run_id, completed))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            token.cancel()
+            await task
+            raise
+        finally:
+            self._tokens.pop(run_id, None)
+
+    async def _execute_scheduled_run(self, *, run_id, session_id, principal, prompt, preview,
+                                      on_generated, cancellation) -> dict:
+        observer = RunObserver(self._state_store, self._generation, run_id)
+        observer.accepted(prompt, principal.role.value)
+        outcome = None
+        request = None
+        committed = False
+        try:
+            with observer.scope():
+                with runtime_stage("gateway.accept", "gateway", trace_id=run_id, input={"text": prompt},
+                                   source="scheduler", target="application", entrypoint="schedule") as stage:
+                    stage.complete({"admission": "host-schedule-configured", "role": "user", "preview": preview})
+                with runtime_stage("application.prepare", "application", trace_id=run_id,
+                                   input={"text": prompt}, source="gateway", target="application") as stage:
+                    request = self._actor_executor.prepare_client(session_id=session_id, run_id=run_id,
+                        principal=principal, canonical_text=prompt, message_id=None, request_id=run_id)
+                    stage.complete(turn_summary(request), resource_count=0)
+                request = replace(request, metadata={**(request.metadata or {}), "scheduled_research": True,
+                    "trace_id": run_id, "parent_span_id": ACTOR_SPAN_ID})
+                outcome = await self._execute_actor(request=request, run_id=run_id, cancellation=cancellation)
+                self._sessions.assert_current_generation()
+                result = outcome.result
+                if cancellation.is_cancelled or result.stop_reason == "cancelled":
+                    self._finish_aborted(session_id=session_id, run_id=run_id)
+                    return {"status": "cancelled", "error_code": "cancelled"}
+                if (result.stop_reason != "end_turn" or not result.final_text.strip()
+                        or result.response_integrity is not None and not result.response_integrity.ok):
+                    raise GatewayTurnCoordinatorError("research_failed", "Research did not produce a successful report")
+                if not on_generated(result.final_text):
+                    self._finish_aborted(session_id=session_id, run_id=run_id)
+                    return {"status": "cancelled", "error_code": "configuration_changed"}
+                receipts = []
+                if not preview:
+                    cancellation.raise_if_cancelled()
+                    envelope = OutboundEnvelope(outbound_id=response_outbound_id(run_id),
+                        account=ChannelAccountRef(principal.channel, principal.account_id),
+                        conversation=ConversationRef("group", principal.conversation.chat_id),
+                        segments=(MessageSegment(kind="text", text=result.final_text),), created_at=self._now(),
+                        session_id=session_id, run_id=run_id, metadata={"source": "schedule"})
+                    if self._channel_runtime is None:
+                        raise GatewayTurnCoordinatorError("channel_runtime_unavailable", "Channel is unavailable")
+                    receipt = await self._channel_runtime.send(envelope)
+                    self._sessions.assert_current_generation()
+                    receipts = [asdict(receipt)]
+                    outcome = self._actor_executor.commit_exchange(request, outcome, envelope=envelope, receipt=receipt)
+                    committed = True
+                self._finish_result(session_id=session_id, run_id=run_id, result=outcome.result)
+                return {"status": "previewed" if preview else "delivered", "receipts": receipts, "error_code": ""}
+        except Exception as exc:
+            self._fail_run(session_id=session_id, run_id=run_id, error=exc,
+                           result=outcome.result if outcome else None)
+            raise
+        finally:
+            if outcome is not None and request is not None and not committed:
+                self._actor_executor.discard_exchange(request, outcome)
 
     def _authorize_inbound(self, event: CanonicalInboundEvent) -> Principal:
         evidence = event.evidence

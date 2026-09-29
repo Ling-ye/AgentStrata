@@ -1,6 +1,7 @@
 import { Menu } from "@arco-design/web-react";
 import {
   IconApps,
+  IconClockCircle,
   IconExperiment,
   IconHome,
   IconRobot,
@@ -8,7 +9,7 @@ import {
   IconTool,
 } from "@arco-design/web-react/icon";
 
-export type PageKey = "overview" | "services" | "bots" | "tools" | "evals" | "harness" | "code-health" | "settings";
+export type PageKey = "overview" | "services" | "bots" | "tools" | "evals" | "harness" | "code-health" | "schedules" | "settings";
 
 interface Props {
   current: PageKey;
@@ -19,6 +20,7 @@ const NAV_ITEMS = [
   { itemKey: "overview" as const, text: "总览", icon: <IconHome /> },
   { itemKey: "services" as const, text: "服务管理", icon: <IconApps /> },
   { itemKey: "bots" as const, text: "机器人实例", icon: <IconRobot /> },
+  { itemKey: "schedules" as const, text: "机器人定时任务", icon: <IconClockCircle /> },
   { itemKey: "tools" as const, text: "组件目录", icon: <IconTool /> },
   { itemKey: "evals" as const, text: "测评中心", icon: <IconExperiment /> },
   { itemKey: "harness" as const, text: "AI Harness 修复", icon: <IconTool /> },

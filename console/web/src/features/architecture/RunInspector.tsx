@@ -165,6 +165,8 @@ function StageCard({ item, terminal, scope, hasMore }: { item: FlowItem; termina
     {route(boundary) && <p className="obs-step-route">{route(boundary)}</p>}
     {item.operation === "gateway.accept" && boundary.data?.entrypoint === "client" &&
       <p className="obs-muted">渠道适配未经过 · 本任务通过本地协议入口受理。</p>}
+    {item.operation === "gateway.accept" && boundary.data?.entrypoint === "schedule" &&
+      <p className="obs-muted">宿主定时任务入口；本轮没有 QQ 入站消息，正式推送仍通过 QQ Channel 投递。</p>}
     {!!error && <p className="obs-step-error">{errorText(error)}</p>}
     {step.missingParent && <p className="obs-muted">{hasMore ? "上级阶段尚未取得。" : "上级阶段未记录。"}</p>}
     <div className="obs-step-payloads obs-stage-payloads">

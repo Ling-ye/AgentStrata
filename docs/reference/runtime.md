@@ -56,3 +56,8 @@ timer 注册后的回执落盘失败只能 best-effort 停止 transient units；
 ## ACP 是 Gateway client edge
 
 `protocols/acp/server.py` 只映射 ACP 帧、session lifecycle、prompt/cancel 与 Gateway typed RPC；它不能 import 或重新拥有 Agent、QQ、BotSpec、authorization、workspace 或 task runtime。连接中断恢复使用原始 params/idempotency key、`runs.get` / `runs.latest` 与 `deliveries.get`，不得以新输入替代旧 run。
+
+## 宿主定时任务
+
+机器人宿主可按已保存的[定时计划](schedules.md)提交公共研究回合，并经原有 Channel outbox
+向固定 QQ 群投递。该入口不构造平台入站事件，不授予 Owner；Console 只配置和观察。

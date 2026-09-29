@@ -45,6 +45,7 @@ PUBLIC_URL_HOSTS = frozenset(
         "deb.nodesource.com",
         "developers.openai.com",
         "docs.github.com",
+        "docs.crewai.com",
         "docs.python.org",
         "docs.searxng.org",
         "docs.unity3d.com",

@@ -35,6 +35,9 @@ from chatcopilot.contracts.identity import Role
 from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef, OutboundEnvelope
 from chatcopilot.core.access import get_admins, get_owners
 from chatcopilot.core.config import load_config
+from chatcopilot.schedules.runtime import ScheduleRuntime
+from chatcopilot.schedules.service import ScheduleService
+from .scheduled import GatewayScheduleExecutor
 
 from .observation_runtime import ObservationRecorder, runtime_configuration
 from chatcopilot.core.inspection import plain, fingerprint
@@ -268,6 +271,7 @@ class GatewayRuntimeHost:
         agent_runtime: _AgentRuntimePort,
         instance_lease: _InstanceLeasePort,
         readiness: _RuntimeReadiness,
+        schedules: ScheduleRuntime | None = None,
     ) -> None:
         if type(generation) is not int or generation < 1:
             raise ValueError("generation must be positive")
@@ -290,6 +294,7 @@ class GatewayRuntimeHost:
         self._internal_closed = False
         self._lifecycle_lock = asyncio.Lock()
         self._live_sink = server.publish
+        self.schedules = schedules
 
     @property
     def ready(self) -> bool:
@@ -335,6 +340,8 @@ class GatewayRuntimeHost:
                         "gateway_runtime_not_ready",
                         "Gateway components did not become ready",
                     )
+                if self.schedules is not None:
+                    await self.schedules.start()
             except BaseException as exc:
                 self._readiness.disable()
                 try:
@@ -368,6 +375,11 @@ class GatewayRuntimeHost:
             self._state = "stopping"
             failures: list[str] = []
             try:
+                if self.schedules is not None:
+                    try:
+                        await self.schedules.stop()
+                    except Exception:
+                        failures.append("schedules")
                 if self._channel_start_attempted:
                     try:
                         await self.channels.stop()
@@ -396,6 +408,11 @@ class GatewayRuntimeHost:
                 )
 
     async def _rollback_external(self) -> None:
+        if self.schedules is not None:
+            try:
+                await self.schedules.stop()
+            except Exception:
+                pass
         if self._channel_start_attempted:
             try:
                 await self.channels.stop()
@@ -784,6 +801,9 @@ def build_gateway_runtime_host(
             agent_runtime=agent_runtime,
             instance_lease=instance_lease,
             readiness=readiness,
+            schedules=ScheduleRuntime(ScheduleService(config.state_root),
+                GatewayScheduleExecutor(coordinator, state_store, ChannelAccountRef("qq", config.onebot.account_id)),
+                ready=readiness),
         )
     except BaseException:
         try:

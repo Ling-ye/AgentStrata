@@ -9,6 +9,7 @@
 | 准备开发环境、选择检查 | [开发](guides/development.md) | [架构总览](reference/architecture.md) |
 | 首次部署或管理实例 | [首次部署](guides/deployment.md) / [实例运维](guides/instances.md) | [配置](reference/configuration.md) |
 | QQ 登录、认证或外部服务 | [QQ](guides/qq.md) / [服务](guides/services.md) | [身份与资源](reference/identity-resources.md) / [服务边界](reference/services.md) |
+| 配置机器人定时调查与群推送 | [定时任务](reference/schedules.md) | [运行链](reference/runtime.md) / [Console](reference/console.md) |
 | 修改消息或平台接入 | [运行链](reference/runtime.md) | [身份与资源](reference/identity-resources.md) |
 | 修改 Agent、提示词、记忆 | [Agent](reference/agent.md) | [上下文](reference/context.md) |
 | 新增或修改工具 | [工具](reference/tools.md) | [配置](reference/configuration.md) |

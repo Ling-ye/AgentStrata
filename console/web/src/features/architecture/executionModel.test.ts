@@ -70,8 +70,8 @@ describe("shared execution projection", () => {
     expect(model.relations.filter((edge) => edge.kind === "input")).toHaveLength(0);
     expect(model.gaps.some((gap) => gap.message.includes("工具来源尚未取得"))).toBe(true);
   });
-  it("keeps untraversed, unloaded and unrecorded layers distinct", () => {
-    const model = project([event(1, "accept", undefined, "RuntimeStageFinished", { runtime_layer: "gateway", operation: "gateway.accept", entrypoint: "client" })]);
+  it.each(["client", "schedule"])("keeps untraversed, unloaded and unrecorded layers distinct for %s", (entrypoint) => {
+    const model = project([event(1, "accept", undefined, "RuntimeStageFinished", { runtime_layer: "gateway", operation: "gateway.accept", entrypoint })]);
     expect(layerSummaries(model, true, false).find((layer) => layer.layer === "channel")?.label).toBe("未经过");
     expect(layerSummaries(model, true, true).find((layer) => layer.layer === "agent")?.label).toBe("尚未取得");
     expect(layerSummaries(model, true, false).find((layer) => layer.layer === "agent")?.label).toBe("未记录");

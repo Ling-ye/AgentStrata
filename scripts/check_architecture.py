@@ -199,6 +199,7 @@ RULES = (
 # this declaration is itself checked for cycles before source edges are checked.
 AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     "harness": frozenset({"core", "contracts", "evals", "agent", "external_tools", "gateway"}),
+    "schedules": frozenset({"core"}),
     "contracts": frozenset(),
     "project": frozenset(),
     "core": frozenset({"contracts", "project"}),
@@ -241,6 +242,7 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     ),
     "gateway": frozenset(
         {
+            "schedules",
             "application",
             "authorization",
             "botspec",
@@ -288,6 +290,7 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     ),
     "entrypoints": frozenset(
         {
+            "schedules",
             "harness",
             "agent",
             "application",
